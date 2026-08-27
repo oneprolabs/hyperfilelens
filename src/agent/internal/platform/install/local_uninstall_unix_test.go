@@ -75,6 +75,11 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 			t.Fatalf("script should report structured cleanup residue %q:\n%s", want, body)
 		}
 	}
+	for _, want := range []string{`${failure_items[*]-}`, `${retained_items[*]-}`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("script must safely expand empty arrays under macOS Bash 3.2 set -u: missing %q", want)
+		}
+	}
 	if strings.Contains(body, `gateway sidecar uninstall reported errors; continuing agent uninstall`) {
 		t.Fatalf("script must not remove the Agent after LensNode removal fails:\n%s", body)
 	}
@@ -155,11 +160,14 @@ func TestWriteUnixUserUninstallScriptUsesUserLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(body)
+	trustedInstallRoot, err := vfs.UserInstallDir()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, expected := range []string{
 		"USER_INSTALL=1",
 		"systemctl --user",
 		filepath.Join(home, ".config", "systemd", "user", unixServiceUnit),
-		fmt.Sprintf("USER_INSTALL_ROOT=%q", filepath.Join(home, ".local", "share", "hyperfilelens-agent", "bin")),
 		`is_managed_install_path()`,
 		`"$path" == "$USER_INSTALL_ROOT"`,
 		`is_managed_data_path()`,
@@ -168,6 +176,9 @@ func TestWriteUnixUserUninstallScriptUsesUserLifecycle(t *testing.T) {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("user uninstall script missing %q", expected)
 		}
+	}
+	if !strings.Contains(text, fmt.Sprintf("USER_INSTALL_ROOT=%q", trustedInstallRoot)) {
+		t.Fatal("user uninstall script must use the trusted default install root")
 	}
 	for _, unexpected := range []string{
 		`"$path" == "$USER_HOME"/*`,
@@ -209,7 +220,10 @@ func TestWriteUnixUserUninstallScriptDoesNotTrustConfiguredExternalDataDir(t *te
 		t.Fatal(err)
 	}
 	text := string(body)
-	trustedDefault := filepath.Join(home, ".local", "share", "hyperfilelens-agent")
+	trustedDefault, err := vfs.UserDataDir()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(text, fmt.Sprintf("DEFAULT_DATA_ROOT=%q", trustedDefault)) {
 		t.Fatalf("script must use trusted default data root %q", trustedDefault)
 	}
@@ -319,7 +333,12 @@ func TestCanonicalRemovalPathResolvesIntermediateSymlinkOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(outside, "data"); resolved != want {
+	resolvedOutside, err := filepath.EvalSymlinks(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(resolvedOutside, "data")
+	if resolved != want {
 		t.Fatalf("intermediate symlink resolved to %q, want %q", resolved, want)
 	}
 
@@ -331,7 +350,17 @@ func TestCanonicalRemovalPathResolvesIntermediateSymlinkOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved != finalLink {
+	resolvedFinalLink := filepath.Join(resolvedHomePath(t, root), "inside", "final-link")
+	if resolved != finalLink && resolved != resolvedFinalLink {
 		t.Fatalf("final symlink resolved to %q, want link path %q", resolved, finalLink)
 	}
+}
+
+func resolvedHomePath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }

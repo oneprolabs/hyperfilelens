@@ -2278,6 +2278,45 @@ class StorageRepositoryApiTests(TestCase):
         rows = response.data["data"]["list"]
         self.assertNotIn(repo.id, [row["id"] for row in rows])
 
+    def test_repository_list_includes_tenant_scoped_associated_source_count(self):
+        repo = Repository.objects.create(
+            organization_id=self.org.id,
+            name="direct-nas-with-sources",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            nas_protocol=Repository.NasProtocol.NFS,
+            config={"server_address": "10.0.0.20", "share_path": "/backup"},
+        )
+        for source_ref_id in (101, 102):
+            BackupConfig.objects.create(
+                organization_id=self.org.id,
+                name=f"source-{source_ref_id}",
+                source_type="agent",
+                source_ref_id=source_ref_id,
+                repository_id=repo.id,
+            )
+        other_org = Organization.objects.create(
+            key="storage-count-other-org", name="Storage Count Other Org"
+        )
+        BackupConfig.objects.create(
+            organization_id=other_org.id,
+            name="other-tenant-source",
+            source_type="agent",
+            source_ref_id=103,
+            repository_id=repo.id,
+        )
+
+        response = self.client.get(
+            "/api/v1/storage/repositories/?repo_type=nas",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rows = response.data["data"]["list"]
+        row = next(item for item in rows if item["id"] == repo.id)
+        self.assertEqual(row["associated_source_count"], 2)
+
     def test_delete_repository_with_backup_configs_is_rejected(self):
         repo = Repository.objects.create(
             organization_id=self.org.id,

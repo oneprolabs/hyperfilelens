@@ -64,11 +64,18 @@ describe('BackupCreateWizard restore plan layout', () => {
     expect(compactWizardSource).toContain('class="create-recovery-plan-action hfl-table-no-tooltip"')
   })
 
-  it('shows the final restored path for each configured mapping and in the confirmation summary', () => {
+  it('shows the final restored path only below the Configure Restore Plan editor', () => {
     expect(wizardSource).toContain('function recoveryDirPlanRestoredPaths(')
     expect(compactWizardSource).toContain('class="create-recovery-result-path-hint"')
-    expect(compactWizardSource).toContain('class="create-recovery-result-path-hint create-recovery-result-path-hint--inline"')
-    expect(compactWizardSource).toContain('recoveryDirPlanRestoredPaths(row.recoveryGroup.group, dirPlan)')
+    expect(compactWizardSource).not.toContain('class="create-recovery-result-path-hint create-recovery-result-path-hint--inline"')
+  })
+
+  it('keeps Restore Plan list mappings on one truncated line without default overflow tooltips', () => {
+    expect(wizardSource).toContain('/* List: each mapping stays on one line; the dedicated popover contains the full values. */')
+    expect(wizardSource).toContain('grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);')
+    expect(wizardSource).toContain('.create-recovery-plan-cell--wrap .create-recovery-plan-mapping__endpoint--target {\n  grid-column: 3;')
+    expect(wizardSource).toContain('text-overflow: ellipsis;')
+    expect(compactWizardSource).toContain('class-name="hfl-table-no-tooltip"')
   })
 
   it('disables Windows and macOS restore targets for unbound NAS repositories', () => {

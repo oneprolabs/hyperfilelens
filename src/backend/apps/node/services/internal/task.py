@@ -533,43 +533,74 @@ def _sync_task_info(task: NodeTask) -> None:
         project_node_lifecycle_task(node_task=task)
 
 
-def project_node_lifecycle_task(*, node_task: NodeTask) -> None:
+def _upgrade_node_status(*, node_task: NodeTask) -> str:
+    if node_task.status == NodeTask.Status.SUCCESS:
+        return Node.Status.ACTIVE
+    if node_task.status not in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}:
+        return Node.Status.UPGRADE_FAILED
+    if node_task.status == NodeTask.Status.PENDING:
+        return Node.Status.UPGRADING
+
+    result = node_task.result if isinstance(node_task.result, dict) else {}
+    progress = result.get("last_progress")
+    detached = str(result.get("mode") or "").strip() == "local_detached" or (
+        isinstance(progress, dict)
+        and str(progress.get("mode") or "").strip() == "local_detached"
+    )
+    if not detached:
+        return Node.Status.UPGRADING
+    if result.get("verify_started_at"):
+        return Node.Status.VERIFYING
+    if result.get("reconnect_session_id") or result.get("inventory_session_id"):
+        return Node.Status.VERIFICATION_PENDING
+    return Node.Status.RESTARTING
+
+
+def _update_node_lifecycle_status(*, node_id: int, status: str) -> None:
+    Node.objects.filter(pk=node_id).exclude(status=status).update(status=status)
+    # Always refresh the read model.  The Node row may already contain the
+    # expected status while the Backup Wizard projection is stale (for
+    # example after a worker restart or a missed transaction callback).
+    _sync_agent_source_pipeline_status(node_id=node_id)
+
+
+def project_node_lifecycle_task(
+    *,
+    node_task: NodeTask,
+    status_override: str | None = None,
+) -> None:
     """Project lifecycle task progress into the persisted Node state machine."""
     payload = node_task.payload if isinstance(node_task.payload, dict) else {}
     if node_task.correlation_type != node_conf.LIFECYCLE_CORRELATION_TYPE:
         return
+    latest_id = (
+        NodeTask.objects.filter(
+            node_id=node_task.node_id,
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            kind__in=("agent.upgrade", "agent.uninstall"),
+        )
+        .order_by("-created_at", "-pk")
+        .values_list("pk", flat=True)
+        .first()
+    )
+    if latest_id != node_task.pk:
+        return
     if node_task.kind == "agent.upgrade":
-        status = (
-            Node.Status.UPGRADING
-            if node_task.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}
-            else Node.Status.ACTIVE
-            if node_task.status == NodeTask.Status.SUCCESS
-            else Node.Status.UPGRADE_FAILED
+        _update_node_lifecycle_status(
+            node_id=node_task.node_id,
+            status=status_override or _upgrade_node_status(node_task=node_task),
         )
-        updated = (
-            Node.objects.filter(pk=node_task.node_id)
-            .exclude(status=status)
-            .update(status=status)
-        )
-        if updated:
-            _sync_agent_source_pipeline_status(node_id=node_task.node_id)
         return
     if node_task.kind != "agent.uninstall":
         return
-    status = (
+    status = status_override or (
         Node.Status.REMOVING
         if node_task.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}
         else Node.Status.CLEANING_UP
         if node_task.status == NodeTask.Status.SUCCESS
         else Node.Status.DEREGISTRATION_FAILED
     )
-    updated = (
-        Node.objects.filter(pk=node_task.node_id)
-        .exclude(status=status)
-        .update(status=status)
-    )
-    if updated:
-        _sync_agent_source_pipeline_status(node_id=node_task.node_id)
+    _update_node_lifecycle_status(node_id=node_task.node_id, status=status)
     if payload.get("source_unregister_task_id"):
         return
     try:

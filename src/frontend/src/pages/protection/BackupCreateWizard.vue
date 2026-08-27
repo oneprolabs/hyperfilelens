@@ -8810,21 +8810,6 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 />
                                 <span class="create-recovery-plan-mapping__text">{{ recoveryDirPlanTargetSummary(dirPlan) }}</span>
                               </span>
-                              <span
-                                v-if="recoveryDirPlanRestoredPaths(group, dirPlan).length"
-                                class="create-recovery-result-path-hint create-recovery-result-path-hint--inline"
-                              >
-                                <FolderOpen
-                                  :size="12"
-                                  class="create-recovery-result-path-hint__icon"
-                                />
-                                <span class="create-recovery-result-path-hint__label">{{ recoveryDirPlanRestoredPathLabel(recoveryDirPlanRestoredPaths(group, dirPlan).length) }}:</span>
-                                <code
-                                  v-for="path in recoveryDirPlanRestoredPaths(group, dirPlan)"
-                                  :key="path"
-                                  class="create-recovery-result-path-hint__path"
-                                >{{ path }}</code>
-                              </span>
                             </template>
                             <span
                               v-else
@@ -9409,21 +9394,6 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     class="create-recovery-plan-mapping__text"
                                     :title="recoveryDirPlanTargetSummary(dirPlan)"
                                   >{{ recoveryDirPlanTargetSummary(dirPlan) }}</span>
-                                </span>
-                                <span
-                                  v-if="recoveryDirPlanRestoredPaths(row.recoveryGroup.group, dirPlan).length"
-                                  class="create-recovery-result-path-hint create-recovery-result-path-hint--inline"
-                                >
-                                  <FolderOpen
-                                    :size="12"
-                                    class="create-recovery-result-path-hint__icon"
-                                  />
-                                  <span class="create-recovery-result-path-hint__label">{{ recoveryDirPlanRestoredPathLabel(recoveryDirPlanRestoredPaths(row.recoveryGroup.group, dirPlan).length) }}:</span>
-                                  <code
-                                    v-for="path in recoveryDirPlanRestoredPaths(row.recoveryGroup.group, dirPlan)"
-                                    :key="path"
-                                    class="create-recovery-result-path-hint__path"
-                                  >{{ path }}</code>
                                 </span>
                               </template>
                               <span
@@ -12752,8 +12722,6 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .create-recovery-plan-cell--wrap .create-recovery-plan-cell__policy-text,
-.create-recovery-plan-cell--wrap .create-recovery-plan-mapping__text,
-.create-recovery-plan-cell--wrap .create-recovery-plan-mapping__pending,
 .create-recovery-plan-cell--review .create-recovery-plan-cell__policy-text,
 .create-recovery-plan-cell--review .create-recovery-plan-mapping__text,
 .create-recovery-plan-cell--review .create-recovery-plan-mapping__pending {
@@ -12764,14 +12732,12 @@ function preserveShallowestPathOrder(paths: string[]) {
   overflow-wrap: break-word;
 }
 
-/* List: source → on first row; restore path uses full width below with hanging indent. */
+/* List: each mapping stays on one line; the dedicated popover contains the full values. */
 .create-recovery-plan-cell--wrap .create-recovery-plan-mapping {
   display: grid;
-  grid-template-columns: max-content auto minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
   column-gap: 6px;
-  row-gap: 4px;
 }
 
 .create-recovery-plan-cell--wrap .create-recovery-plan-mapping > .create-recovery-plan-mapping__endpoint:not(.create-recovery-plan-mapping__endpoint--target) {
@@ -12791,19 +12757,21 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .create-recovery-plan-cell--wrap .create-recovery-plan-mapping__endpoint--target {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
+  grid-column: 3;
+  grid-row: 1;
+  display: inline-flex;
+  align-items: center;
   gap: 5px;
   min-width: 0;
 }
 
 .create-recovery-plan-cell--wrap .create-recovery-plan-mapping__text {
-  display: block;
+  display: inline-block;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .create-recovery-plan-cell--review .create-recovery-plan-mapping {

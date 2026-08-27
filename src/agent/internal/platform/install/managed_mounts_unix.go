@@ -75,7 +75,10 @@ unmount_agent_mounts() {
   local -a points=() remaining=()
   local point failed=0
 
-  mapfile -t points < <(
+  # macOS ships Bash 3.2, which does not provide mapfile/readarray.
+  while IFS= read -r point; do
+    [[ -n "$point" ]] && points+=("$point")
+  done < <(
     collect_agent_mount_points "$mounts_root" | sort -u | sort_mount_points_deepest_first
   )
   if [[ ${#points[@]} -eq 0 ]]; then
@@ -89,7 +92,9 @@ unmount_agent_mounts() {
     try_umount_point "$mounts_root" "$point" || failed=1
   done
 
-  mapfile -t remaining < <(
+  while IFS= read -r point; do
+    [[ -n "$point" ]] && remaining+=("$point")
+  done < <(
     collect_agent_mount_points "$mounts_root" | sort -u | sort_mount_points_deepest_first
   )
   if [[ ${#remaining[@]} -gt 0 ]]; then

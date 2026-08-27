@@ -114,6 +114,30 @@ def normalize_s3_object_prefix(value: object) -> str:
     return cleaned + "/"
 
 
+class RepositoryListSerializer(serializers.ListSerializer):
+    def to_representation(self, data):
+        items = list(data)
+        node_ids = {item.bind_node_id for item in items if item.bind_node_id}
+        nodes = Node.objects.filter(id__in=node_ids).in_bulk() if node_ids else {}
+        alert_ids = [str(item.id) for item in items]
+        organization_id = self.context.get("organization_id") or (
+            items[0].organization_id if items else None
+        )
+        alerts = {}
+        for alert in AlertRecord.objects.filter(
+            organization_id=organization_id,
+            resource_type="backup_repository",
+            resource_id__in=alert_ids,
+            status__in=["pending", "firing", "acknowledged"],
+            policy_id__isnull=False,
+        ).order_by("-last_triggered_at"):
+            alerts.setdefault(alert.resource_id, alert)
+        for item in items:
+            item._list_bind_node = nodes.get(item.bind_node_id)
+            item._list_quota_alert = alerts.get(str(item.id))
+        return super().to_representation(items)
+
+
 class RepositorySerializer(serializers.ModelSerializer):
     config = serializers.SerializerMethodField()
     credential_hint = serializers.SerializerMethodField()
@@ -125,9 +149,11 @@ class RepositorySerializer(serializers.ModelSerializer):
     initialization_state = serializers.SerializerMethodField()
     initialized_target_count = serializers.SerializerMethodField()
     quota_alert = serializers.SerializerMethodField()
+    associated_source_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Repository
+        list_serializer_class = RepositoryListSerializer
         fields = [
             "id",
             "organization_id",
@@ -173,17 +199,20 @@ class RepositorySerializer(serializers.ModelSerializer):
             "initialization_state",
             "initialized_target_count",
             "quota_alert",
+            "associated_source_count",
         ]
         read_only_fields = fields
 
     def get_quota_alert(self, obj):
-        alert = AlertRecord.objects.filter(
-            organization_id=obj.organization_id,
-            resource_type="backup_repository",
-            resource_id=str(obj.id),
-            status__in=["pending", "firing", "acknowledged"],
-            policy_id__isnull=False,
-        ).order_by("-last_triggered_at").first()
+        alert = getattr(obj, "_list_quota_alert", None)
+        if not hasattr(obj, "_list_quota_alert"):
+            alert = AlertRecord.objects.filter(
+                organization_id=obj.organization_id,
+                resource_type="backup_repository",
+                resource_id=str(obj.id),
+                status__in=["pending", "firing", "acknowledged"],
+                policy_id__isnull=False,
+            ).order_by("-last_triggered_at").first()
         if not alert:
             return None
         metadata = alert.metadata or {}
@@ -201,12 +230,14 @@ class RepositorySerializer(serializers.ModelSerializer):
     def get_bind_node_display_name(self, obj: Repository) -> str | None:
         if not (obj.bind_node_id and obj.bind_node_type):
             return None
-        node = (
-            Node.objects.filter(id=obj.bind_node_id)
-            .values_list("name", flat=True)
-            .first()
-        )
-        return node
+        node = getattr(obj, "_list_bind_node", None)
+        if not hasattr(obj, "_list_bind_node"):
+            node = (
+                Node.objects.filter(id=obj.bind_node_id)
+                .values_list("name", flat=True)
+                .first()
+            )
+        return node.name if isinstance(node, Node) else node
 
     def get_config(self, obj: Repository) -> dict:
         return sanitize_repository_config(
@@ -219,12 +250,14 @@ class RepositorySerializer(serializers.ModelSerializer):
     def get_bind_node_ip(self, obj: Repository) -> str | None:
         if not (obj.bind_node_id and obj.bind_node_type):
             return None
-        node = (
-            Node.objects.filter(id=obj.bind_node_id)
-            .values_list("ip_address", flat=True)
-            .first()
-        )
-        return node
+        node = getattr(obj, "_list_bind_node", None)
+        if not hasattr(obj, "_list_bind_node"):
+            node = (
+                Node.objects.filter(id=obj.bind_node_id)
+                .values_list("ip_address", flat=True)
+                .first()
+            )
+        return node.ip_address if isinstance(node, Node) else node
 
     def get_cross_proxy_access(self, obj: Repository) -> dict:
         if not repository_uses_bound_proxy(obj):
@@ -241,12 +274,20 @@ class RepositorySerializer(serializers.ModelSerializer):
                 "host": None,
                 "reason": "feature_disabled",
             }
-        node = Node.objects.filter(
-            id=obj.bind_node_id,
-            organization_id=obj.organization_id,
-            role=NodeRole.PROXY,
-            is_deleted=False,
-        ).first()
+        node = getattr(obj, "_list_bind_node", None)
+        if not hasattr(obj, "_list_bind_node"):
+            node = Node.objects.filter(
+                id=obj.bind_node_id,
+                organization_id=obj.organization_id,
+                role=NodeRole.PROXY,
+                is_deleted=False,
+            ).first()
+        elif node is not None and (
+            node.organization_id != obj.organization_id
+            or node.role != NodeRole.PROXY
+            or node.is_deleted
+        ):
+            node = None
         if node is None:
             return {
                 "enabled": True,

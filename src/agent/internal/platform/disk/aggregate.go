@@ -120,7 +120,7 @@ func summarizeStoragePartitions(parts []disk.PartitionStat, readUsage usageReade
 			key = networkStorageKey(part.Fstype, device, mountPoint)
 			target = network
 		} else {
-			key = localStorageKey(localStorageIdentity(mountPoint, device), mountPoint)
+			key = localStorageKey(localStorageIdentity(part.Fstype, mountPoint, device), mountPoint)
 		}
 		if key == "" {
 			continue
@@ -262,6 +262,13 @@ func isSystemOnlyMount(mountPoint string) bool {
 		return false
 	}
 	clean := filepath.Clean(mountPoint)
+	if runtime.GOOS == "darwin" && strings.HasPrefix(clean, "/System/Volumes/") {
+		// Data is the user-visible writable APFS volume. The remaining mounts
+		// are macOS implementation/reserved volumes and are not independent
+		// host capacity available to HyperFileLens.
+		return clean != "/System/Volumes/Data" &&
+			!strings.HasPrefix(clean, "/System/Volumes/Data/")
+	}
 	return clean == "/boot" || strings.HasPrefix(clean, "/boot/")
 }
 

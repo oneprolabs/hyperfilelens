@@ -311,6 +311,12 @@ def record_upgrade_session_observation(
     if changed:
         task.result = result
         task.save(update_fields=["result", "updated_at"])
+    # Re-project even when this session was already observed. Repeated
+    # inventory/heartbeat events are the repair path for a stale Node or
+    # Backup Wizard status left by an interrupted deployment or worker.
+    from apps.node.services.internal.task import project_node_lifecycle_task
+
+    project_node_lifecycle_task(node_task=task)
     return changed
 
 
@@ -528,6 +534,12 @@ def record_upgrade_disconnect(*, node_id: int) -> bool:
         result.pop("verify_started_at", None)
         task.result = result
         task.save(update_fields=["result", "updated_at"])
+        from apps.node.services.internal.task import project_node_lifecycle_task
+
+        project_node_lifecycle_task(
+            node_task=task,
+            status_override=Node.Status.RESTARTING,
+        )
         return True
 
 
@@ -1083,16 +1095,20 @@ def queue_detached_remove_verification(*, node_task: NodeTask) -> bool:
 
 def compute_node_lifecycle(*, org: Organization, node: Node) -> dict[str, Any] | None:
     remove_task = _latest_lifecycle_task(org=org, node=node, kind=LIFECYCLE_KIND_REMOVE)
-    if remove_task is not None:
-        payload = _remove_lifecycle_payload(node=node, task=remove_task)
-        if payload is not None:
-            return payload
-
     upgrade_task = _latest_lifecycle_task(org=org, node=node, kind=LIFECYCLE_KIND_UPGRADE)
-    if upgrade_task is not None:
-        return _upgrade_lifecycle_payload(org=org, node=node, task=upgrade_task)
+    candidates = [task for task in (remove_task, upgrade_task) if task is not None]
+    if not candidates:
+        return None
 
-    return None
+    # Present the most recently started lifecycle operation. A terminal remove
+    # failure must not mask a later upgrade, and a successful later upgrade
+    # must not fall back to that stale failure when its payload is intentionally
+    # empty. Use created_at rather than updated_at so a delayed callback for an
+    # older operation cannot take precedence over a newer operation.
+    latest = max(candidates, key=lambda task: (task.created_at, str(task.pk)))
+    if latest.kind == _LIFECYCLE_TASK_KINDS[LIFECYCLE_KIND_REMOVE]:
+        return _remove_lifecycle_payload(node=node, task=latest)
+    return _upgrade_lifecycle_payload(org=org, node=node, task=latest)
 
 
 def advance_node_lifecycle(
@@ -1220,6 +1236,9 @@ def start_node_upgrade(
             target_version,
             target_commit,
         )
+        from apps.node.services.internal.task import _update_node_lifecycle_status
+
+        _update_node_lifecycle_status(node_id=node.id, status=Node.Status.ACTIVE)
         return {
             "operation_id": None,
             "task_id": None,

@@ -21,6 +21,7 @@ from apps.node.services.internal.node_lifecycle import (
     compute_node_lifecycle,
     preview_batch_operations,
     queue_detached_remove_verification,
+    record_upgrade_disconnect,
     record_upgrade_session_observation,
     start_node_remove,
     start_node_upgrade,
@@ -94,6 +95,73 @@ class NodeLifecycleTests(TestCase):
                 self.assertEqual(self.node.availability, Node.Availability.ONLINE)
                 self.node.status = Node.Status.ACTIVE
                 self.node.save(update_fields=["status", "updated_at"])
+
+    def test_upgrade_task_projects_all_detailed_node_statuses(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+        cases = (
+            ({}, Node.Status.UPGRADING),
+            (
+                {"mode": "local_detached", "detached_at": timezone.now().isoformat()},
+                Node.Status.RESTARTING,
+            ),
+            (
+                {
+                    "mode": "local_detached",
+                    "detached_at": timezone.now().isoformat(),
+                    "reconnect_session_id": "new",
+                },
+                Node.Status.VERIFICATION_PENDING,
+            ),
+            (
+                {
+                    "mode": "local_detached",
+                    "detached_at": timezone.now().isoformat(),
+                    "reconnect_session_id": "new",
+                    "verify_started_at": timezone.now().isoformat(),
+                },
+                Node.Status.VERIFYING,
+            ),
+        )
+        for result, expected in cases:
+            with self.subTest(expected=expected):
+                task.result = result
+                task.save(update_fields=["result", "updated_at"])
+                project_node_lifecycle_task(node_task=task)
+                self.node.refresh_from_db()
+                self.assertEqual(self.node.status, expected)
+
+    def test_older_lifecycle_task_cannot_overwrite_newer_operation_status(self):
+        old_remove = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            status=NodeTask.Status.FAILED,
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+        new_upgrade = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+        project_node_lifecycle_task(node_task=new_upgrade)
+        project_node_lifecycle_task(node_task=old_remove)
+
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.status, Node.Status.UPGRADING)
 
     def test_upgrade_is_blocked_by_active_source_unregister(self):
         self._create_active_source_unregister()
@@ -442,6 +510,44 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(result["state"], "upgrading")
         self.assertEqual(result["target_version"], "1.2.0")
 
+    @patch(
+        "apps.node.services.internal.node_lifecycle.agent_release_commit",
+        return_value="a" * 40,
+    )
+    @patch(
+        "apps.node.services.internal.node_lifecycle.validate_agent_upgrade",
+        return_value="1.0.0",
+    )
+    def test_already_current_upgrade_repairs_stale_failure_status(
+        self,
+        _validate,
+        _release_commit,
+    ):
+        from apps.source.constants import SelectableSourceKind
+        from apps.source.services.internal.source_pipeline import ensure_pipeline_entry
+
+        self.node.status = Node.Status.DEREGISTRATION_FAILED
+        self.node.metadata = {
+            "inventory": {
+                "agent_version": "1.0.0",
+                "agent_commit": "a" * 40,
+            }
+        }
+        self.node.save(update_fields=["status", "metadata", "updated_at"])
+        entry = ensure_pipeline_entry(
+            organization_id=self.org.id,
+            source_kind=SelectableSourceKind.AGENT,
+            ref_id=self.node.id,
+        )
+
+        result = start_node_upgrade(org=self.org, node=self.node, user=self.user)
+
+        self.assertEqual(result["outcome"], "no_op")
+        self.node.refresh_from_db()
+        entry.refresh_from_db()
+        self.assertEqual(self.node.status, Node.Status.ACTIVE)
+        self.assertEqual(entry.source_status, Node.Status.ACTIVE)
+
     @patch("apps.node.services.internal.node_workload.get_node_workload_blockers")
     def test_upgrade_blocked_by_workload(self, mock_blockers):
         from apps.node.services.internal.node_workload import NodeWorkloadBlocker
@@ -590,6 +696,87 @@ class NodeLifecycleTests(TestCase):
         with patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True):
             lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
         self.assertIsNone(lifecycle)
+
+    def test_newer_running_upgrade_replaces_stale_deregistration_failure(self):
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            status=NodeTask.Status.FAILED,
+            last_error="Detached uninstall failed.",
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+        upgrade = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"target_version": "1.2.0"},
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
+
+        self.assertEqual(lifecycle["kind"], "upgrade")
+        self.assertEqual(lifecycle["state"], "upgrading")
+        self.assertEqual(lifecycle["task_id"], str(upgrade.id))
+
+    def test_successful_newer_upgrade_does_not_reveal_stale_remove_failure(self):
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            status=NodeTask.Status.FAILED,
+            last_error="Detached uninstall failed.",
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.SUCCESS,
+            result={"target_version": "1.2.0", "mode": "local_detached"},
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
+
+        self.assertIsNone(lifecycle)
+
+    def test_newer_remove_replaces_stale_upgrade_failure(self):
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.FAILED,
+            last_error="Upgrade failed.",
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+        remove = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+
+        lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
+
+        self.assertEqual(lifecycle["kind"], "remove")
+        self.assertEqual(lifecycle["state"], "removing")
+        self.assertEqual(lifecycle["task_id"], str(remove.id))
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_upgrade_success_clears_when_version_matches_despite_stale_ws(self, _routable):
@@ -824,6 +1011,8 @@ class NodeLifecycleTests(TestCase):
         task.refresh_from_db()
         self.assertEqual(task.result["detached_session_id"], "old")
         self.assertEqual(task.result["reconnect_session_id"], "new")
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.status, Node.Status.VERIFICATION_PENDING)
 
         task.result["verify_started_at"] = timezone.now().isoformat()
         task.save(update_fields=["result"])
@@ -835,6 +1024,61 @@ class NodeLifecycleTests(TestCase):
         task.refresh_from_db()
         self.assertEqual(task.result["inventory_session_id"], "new")
         self.assertNotIn("verify_started_at", task.result)
+
+    def test_repeated_upgrade_session_observation_repairs_stale_node_status(self):
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"pre_upgrade_session_id": "old"},
+            result={
+                "mode": "local_detached",
+                "detached_session_id": "old",
+                "reconnect_session_id": "new",
+                "inventory_session_id": "new",
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+        self.node.status = Node.Status.UPGRADING
+        self.node.save(update_fields=["status", "updated_at"])
+
+        changed = record_upgrade_session_observation(
+            node_id=self.node.id,
+            session_id="new",
+            inventory=True,
+        )
+
+        self.assertFalse(changed)
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.status, Node.Status.VERIFICATION_PENDING)
+
+    def test_upgrade_disconnect_projects_restarting(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            result={
+                "mode": "local_detached",
+                "reconnect_session_id": "new",
+                "inventory_session_id": "new",
+                "verify_started_at": timezone.now().isoformat(),
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        changed = record_upgrade_disconnect(node_id=self.node.id)
+
+        self.assertTrue(changed)
+        task.refresh_from_db()
+        self.assertNotIn("verify_started_at", task.result)
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.status, Node.Status.RESTARTING)
 
     def test_upgrade_session_observation_does_not_mutate_terminal_task(self):
         task = NodeTask.objects.create(

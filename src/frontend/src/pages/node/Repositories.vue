@@ -89,6 +89,7 @@ export type RepositoryRow = {
   health: RepoHealth
   initialization_state: RepositoryInitializationState
   initialized_target_count: number
+  associated_source_count: number
   capacity_bytes: number
   estimated_usage_bytes: number
   physical_usage_bytes?: number | null
@@ -180,6 +181,7 @@ type ApiRepository = {
   health_failures?: number
   initialization_state?: RepositoryInitializationState
   initialized_target_count?: number
+  associated_source_count?: number
   credential_id?: number | null
   s3_platform?: string | null
   s3_bucket?: string | null
@@ -402,6 +404,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
   const organizationId = r.organization_id ?? r.organization ?? 0
   const initializationState = r.initialization_state || 'unverified'
   const initializedTargetCount = Number(r.initialized_target_count || 0)
+  const associatedSourceCount = Number(r.associated_source_count || 0)
   const bucket = r.s3_bucket || configString(config, 'bucket') || r.name
   const prefix = configString(config, 'prefix')
   const mountPath = configString(config, 'mount_path') || r.mount_path || ''
@@ -459,6 +462,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       health,
       initialization_state: initializationState,
       initialized_target_count: initializedTargetCount,
+      associated_source_count: associatedSourceCount,
       capacity_bytes: r.capacity_bytes,
       estimated_usage_bytes: r.estimated_usage_bytes,
       physical_usage_bytes: r.physical_usage_bytes ?? null,
@@ -510,6 +514,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       health,
       initialization_state: initializationState,
       initialized_target_count: initializedTargetCount,
+      associated_source_count: associatedSourceCount,
       capacity_bytes: r.capacity_bytes,
       estimated_usage_bytes: r.estimated_usage_bytes,
       physical_usage_bytes: r.physical_usage_bytes ?? null,
@@ -555,6 +560,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
     health,
     initialization_state: initializationState,
     initialized_target_count: initializedTargetCount,
+    associated_source_count: associatedSourceCount,
     capacity_bytes: r.capacity_bytes,
     estimated_usage_bytes: r.estimated_usage_bytes,
     physical_usage_bytes: r.physical_usage_bytes ?? null,
@@ -720,7 +726,6 @@ const {
 const repositoryTaskDetailOpen = ref(false)
 const repositoryTaskDetailUuid = ref('')
 let repositoryTasksPollTimer: ReturnType<typeof setInterval> | undefined
-const rowAssociatedSourceCounts = ref<Record<number, number>>({})
 const { drawerSize, updateDrawerWidth, bindDrawerResize, unbindDrawerResize } = useResponsiveDrawerWidth()
 const { drawerSize: nestedDrawerSize } = useResponsiveDrawerWidth(2)
 const repositoryTaskDetailDrawerSize = computed(() => {
@@ -1569,7 +1574,7 @@ async function loadAssociatedSources(row = detailRow.value) {
 }
 
 function associatedSourceCountForRow(row: RepositoryRow) {
-  return rowAssociatedSourceCounts.value[row.id] || 0
+  return row.associated_source_count
 }
 
 function proxyBindTipItems(row: RepositoryRow) {
@@ -1581,27 +1586,6 @@ function proxyBindTipItems(row: RepositoryRow) {
     ]
   }
   return bindProxyLeadItems.value
-}
-
-async function loadUnboundNasAssociatedSourceCounts(list: RepositoryRow[], signal?: AbortSignal) {
-  const targets = list.filter((row) => row.kind === 'nas' && !hasBoundProxy(row))
-  if (!targets.length) {
-    rowAssociatedSourceCounts.value = {}
-    return
-  }
-  const entries = await Promise.all(targets.map(async (row) => {
-    try {
-      const result = await listStorageRepositoryAssociatedSources(row.id, {
-        page: 1,
-        page_size: 1,
-      }, { signal })
-      return [row.id, result.count] as const
-    } catch {
-      return [row.id, 0] as const
-    }
-  }))
-  if (signal?.aborted) return
-  rowAssociatedSourceCounts.value = Object.fromEntries(entries)
 }
 
 function onDetailTabChange(name: string | number) {
@@ -2451,12 +2435,10 @@ async function load() {
     const mappedRows = list.results.map(mapApiToRow)
     rows.value = mappedRows
     repositoryTotal.value = list.count
-    await loadUnboundNasAssociatedSourceCounts(mappedRows, signal)
   } catch (err) {
     if (pageRequests.isAbortError(err)) return
     rows.value = []
     repositoryTotal.value = 0
-    rowAssociatedSourceCounts.value = {}
     repositoryListError.value = apiErrorMessage(err)
     ElMessage.error({ message: repositoryListError.value, grouping: true })
   } finally {
