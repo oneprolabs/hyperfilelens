@@ -1,57 +1,56 @@
 ---
 title: 安装 Community
-description: 使用公开在线安装方式部署最新 HyperFileLens Community Tag。
+description: 在自有 Ubuntu 主机上安装并运行 HyperFileLens Community。
 ---
 
 # 安装 Community
 
-如果希望在自己的环境中运行 HyperFileLens，请使用下面的在线安装方式部署最新 Community Tag。
+HyperFileLens Community 可部署在自有 Ubuntu 主机上。在线安装程序会下载并启动最新发布版本。
 
 ## 安装前准备
 
-- 一台 Ubuntu 20.04、22.04 或 24.04 amd64 主机。
-- 已安装且可以正常使用的 Docker Engine 和 Docker Compose V2。
-- 能够访问 Gitee、镜像仓库和产品运行所需的网络地址。
-- 具备 `sudo` 权限，并为 `/opt/hyperfilelens` 和容器数据预留足够空间。
+- Ubuntu 20.04、22.04 或 24.04，amd64 架构。
+- 至少 2 核 CPU 和 4 GiB 内存，建议使用 4 核 CPU 和 8 GiB 以上内存。
+- `/opt` 所在磁盘至少有 20 GiB 可用空间。
+- 已安装并启动 Docker Engine 和 Docker Compose V2。
+- 已安装 `curl`，并具备 `sudo` 权限。
+- 能够访问 Gitee、镜像仓库和 Ubuntu 软件源。
+- 默认服务端口 `11442–11445` 未被其他程序占用。
 
-安装程序会通过 Ubuntu 软件源补齐 Python、rsync、tar、OpenSSL 和 CA
-证书等少量运行所需工具；Docker Engine 和 Compose V2 需要预先安装。
-
-详细要求请查看[系统要求](/zh/docs/deployment/requirements)。
+详细配置和网络要求请查看[系统要求](/zh/docs/deployment/requirements)与[网络和端口](/zh/docs/deployment/network)。
 
 ## 执行安装
 
-在准备好的主机上运行：
+在准备好的主机上运行以下命令：
 
 ```bash
 curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh \
   | sudo bash -s -- --mirror cn
 ```
 
-安装程序从 Gitee 读取最新的语义化版本 Tag，并使用阿里云公共镜像。执行安装或升级前，会显示实际版本、下载来源和镜像仓库并等待确认；正式修改产品安装前还会校验该版本的镜像、资产和代码提交是否完整一致。
+安装程序会显示即将安装的版本和下载来源。确认信息无误后继续，等待安装和服务启动完成。
 
-如需安装一个已经发布的固定版本，可显式指定：
+### 安装指定版本（可选）
+
+如需安装已经发布的指定版本：
 
 ```bash
 curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh \
   | sudo bash -s -- --mirror cn --tag vX.Y.Z
 ```
 
-自动化场景可以额外传入 `--yes` 跳过确认；普通交互安装不建议使用。
-如果最新 Tag 不完整，或指定的 Tag 不存在、源码或镜像不可用，安装程序会列出最多
-10 个最近可用的 Tag，并提示正确的 `--mirror ... --tag vX.Y.Z` 用法。程序不会自动降级，
-由用户明确选择需要重试的版本。
+将 `vX.Y.Z` 替换为实际版本号。
 
-## 确认安装结果
+## 检查安装结果
 
-安装结束后，终端会显示控制台地址和初始登录信息。运行下面的命令确认服务状态：
+运行以下命令确认服务状态：
 
 ```bash
 sudo /opt/hyperfilelens/install.sh status
 ```
 
-确认服务正常后，在浏览器打开安装程序输出的控制台地址，继续[登录控制台](/zh/docs/getting-started/sign-in)。
+确认核心服务处于运行或健康状态。安装异常时，请查看[安装与节点](/zh/docs/troubleshooting/installation-nodes)。
 
-::: warning 保护敏感信息
-不要在截图、聊天或公开 Issue 中提供初始密码、`.env`、访问令牌、客户地址或完整安装日志。排障时只提供版本、错误编号和已经脱敏的必要日志片段。
-:::
+安装程序完成后，命令行会列出访问地址。请将其中标记为 `Tenant` 的完整地址复制到浏览器中，打开 HyperFileLens 控制台。其他地址用于网站访问或系统管理，首次使用无需访问。
+
+使用安装程序提供的初始账户登录后，请立即修改初始密码。

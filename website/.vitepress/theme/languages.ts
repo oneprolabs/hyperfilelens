@@ -20,4 +20,11 @@ export const zhDocA11yLabels = {
   search: '搜索文档',
   sidebar: '侧边栏导航',
   pager: '文档翻页',
+  copyCode: '复制代码',
+  codeCopied: '已复制',
+} as const
+
+export const enDocA11yLabels = {
+  copyCode: 'Copy code',
+  codeCopied: 'Copied',
 } as const

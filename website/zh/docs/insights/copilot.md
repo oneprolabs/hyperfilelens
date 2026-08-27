@@ -5,7 +5,7 @@ description: 选择备份源、快照、数据范围和网关，创建 HyperFile
 
 # 创建洞察会话
 
-打开<span class="hfl-path">洞察 → AI Copilot</span>并选择“新建对话”。
+打开<span class="hfl-path">洞察 → AI Copilot</span>并选择<span class="hfl-ui">新建对话</span>。
 
 ## 创建会话
 

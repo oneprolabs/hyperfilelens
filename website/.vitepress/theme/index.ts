@@ -4,7 +4,32 @@ import Layout from './Layout.vue'
 import './custom.css'
 import './docs.css'
 import { initWebsiteAnalytics, trackWebsitePageView } from './analytics'
-import { zhDocA11yLabels } from './languages'
+import { enDocA11yLabels, zhDocA11yLabels } from './languages'
+
+function localizeDocCopyButtons(path: string) {
+  const labels = path.startsWith('/zh/docs')
+    ? zhDocA11yLabels
+    : path.startsWith('/en/docs')
+      ? enDocA11yLabels
+      : null
+  if (!labels) return
+
+  document.querySelectorAll<HTMLButtonElement>('.vp-doc button.copy').forEach((button) => {
+    const updateLabel = () => {
+      const label = button.classList.contains('copied') ? labels.codeCopied : labels.copyCode
+      button.setAttribute('aria-label', label)
+      button.setAttribute('title', label)
+    }
+
+    updateLabel()
+    if (button.dataset.hflCopyEnhanced) return
+    button.dataset.hflCopyEnhanced = 'true'
+    new MutationObserver(updateLabel).observe(button, {
+      attributes: true,
+      attributeFilter: ['class'],
+    })
+  })
+}
 
 function localizeChineseDocLabels(path: string) {
   if (!path.startsWith('/zh/docs')) return
@@ -28,6 +53,7 @@ function localizeChineseDocLabels(path: string) {
 
   const footerLabel = document.querySelector('#doc-footer-aria-label')
   if (footerLabel) footerLabel.textContent = zhDocA11yLabels.pager
+
 }
 
 function decorateChineseDocSidebar(path: string) {
@@ -118,6 +144,7 @@ function revealActiveSidebarItem(path: string) {
 
 function enhanceDocPage(path: string) {
   window.requestAnimationFrame(() => {
+    localizeDocCopyButtons(path)
     localizeChineseDocLabels(path)
     decorateChineseDocSidebar(path)
     revealActiveSidebarItem(path)

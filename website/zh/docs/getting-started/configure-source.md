@@ -5,7 +5,7 @@ description: 在备份向导中选择 Windows 主机和需要保护的测试目�
 
 # 配置备份源
 
-打开<span class="hfl-path">数据保护 → 备份向导</span>并选择创建备份配置。本次只选择快速开始准备的测试目录，不要选择整个系统盘。
+打开<span class="hfl-path">数据保护 → 备份向导</span>并选择<span class="hfl-ui">创建备份配置</span>。本次只选择快速开始准备的测试目录，不要选择整个系统盘。
 
 ## 选择备份内容
 

@@ -1,25 +1,28 @@
 ---
 title: 使用官方 SaaS
-description: 无需部署，直接进入 HyperFileLens 官方 SaaS 完成首次备份、恢复和智能洞察。
+description: 访问 HyperFileLens 产品主页或直接进入官方 SaaS 控制台。
 ---
 
 # 使用官方 SaaS
 
-官方 SaaS 无需安装控制平面。点击文档右上角的“免费试用”，注册或登录后即可进入 HyperFileLens 控制台。
+<p class="hfl-doc-lead">HyperFileLens 官方 SaaS 由 OnePro Cloud 提供并运营，无需自行部署和维护控制台。你可以先通过产品主页了解产品，也可以直接进入 SaaS 控制台开始使用。</p>
+
+<div class="hfl-doc-grid">
+  <a class="hfl-doc-card" href="https://hyperfilelens.com/zh/" target="_blank" rel="noopener noreferrer">
+    <small>产品主页</small>
+    <strong>了解 HyperFileLens</strong>
+    <span>查看产品能力、应用场景和 Community 安装方式。</span>
+  </a>
+  <a class="hfl-doc-card" href="https://app.hyperfilelens.com/" target="_blank" rel="noopener noreferrer">
+    <small>SaaS 控制台</small>
+    <strong>开始使用</strong>
+    <span>新用户通过 Google 登录开通使用，已有用户按原有方式登录。</span>
+  </a>
+</div>
 
 ## 开始前准备
 
-- 一台用于本次示例的 Windows 测试主机。
-- 一处可用的对象存储。
-- 允许备份节点访问官方 SaaS、目标存储及所需业务网络的网络条件。
-
-## 进入控制台
-
-1. 点击“免费试用”。
-2. 注册账户，或者使用已有账户登录。
-3. 按页面提示进入组织工作台。
-4. 确认可以看到数据保护相关页面。
-
-进入控制台后，继续[登录控制台](/zh/docs/getting-started/sign-in)。后续添加备份源、备份、恢复和智能洞察的主流程与 Community 一致。
-
-当前快速开始提供官方 SaaS 和 Community 两种入口。
+- 新用户准备一个可用的 Google 账户；已有用户准备原有登录账户。
+- 一台需要保护的备份主机，支持 Windows、Linux 或 macOS。
+- 一处可通过公网访问的对象存储，以及服务地址、区域、存储桶和访问凭据等连接信息。
+- 备份主机能够访问官方 SaaS 和对象存储。

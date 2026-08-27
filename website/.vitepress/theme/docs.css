@@ -692,7 +692,62 @@ body .VPLocalSearchBox .search-keyboard-shortcuts kbd {
 }
 
 .vp-doc [class*='language-'] > span.lang {
-  color: var(--vp-c-text-2);
+  display: none;
+}
+
+.vp-doc [class*='language-'] > button.copy {
+  top: 10px;
+  right: 10px;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--vp-c-bg-alt) 88%, transparent);
+  background-size: 17px;
+  opacity: 0;
+  transition: border-color .18s ease, background-color .18s ease, opacity .18s ease, color .18s ease;
+}
+
+.vp-doc [class*='language-']:hover > button.copy,
+.vp-doc [class*='language-'] > button.copy:focus,
+.vp-doc [class*='language-'] > button.copy:hover,
+.vp-doc [class*='language-'] > button.copy:focus-visible {
+  border-color: var(--vp-c-divider);
+  background-color: var(--vp-c-bg-alt);
+  opacity: 1;
+}
+
+.vp-doc [class*='language-'] > button.copy:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--vp-c-brand-1) 60%, transparent);
+  outline-offset: 2px;
+}
+
+.vp-doc [class*='language-'] > button.copy.copied {
+  border-color: color-mix(in srgb, var(--vp-c-brand-1) 30%, var(--vp-c-divider));
+  border-radius: 8px;
+  background-color: var(--vp-c-brand-soft);
+  opacity: 1;
+}
+
+/* The check icon and localized accessible label provide compact copy feedback. */
+.vp-doc [class*='language-'] > button.copy.copied::before,
+.vp-doc [class*='language-'] > button.copy:hover.copied::before {
+  display: none;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .vp-doc [class*='language-'] > button.copy {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    top: 6px;
+    right: 6px;
+    background-size: 18px;
+    opacity: .78;
+  }
 }
 
 .vp-doc [class*='language-'] pre {
@@ -764,17 +819,79 @@ body .VPLocalSearchBox .search-keyboard-shortcuts kbd {
   letter-spacing: .12em;
 }
 
-.hfl-path {
-  display: inline-flex;
-  align-items: center;
-  margin: 2px 0;
-  padding: 3px 8px;
+.hfl-deployment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 20px 0 40px;
+}
+
+.hfl-deployment-card {
+  padding: 22px;
   border: 1px solid var(--vp-c-divider);
-  border-radius: 6px;
-  color: var(--vp-c-text-1);
+  border-radius: var(--hfl-doc-card-radius);
   background: var(--vp-c-bg-soft);
-  font-size: .88em;
+}
+
+.hfl-deployment-card small {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--vp-c-brand-1);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.hfl-deployment-card > strong {
+  display: block;
+  color: var(--vp-c-text-1);
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.hfl-deployment-card dl {
+  margin: 18px 0 0;
+}
+
+.hfl-deployment-card dl > div {
+  padding: 12px 0;
+  border-top: 1px solid var(--vp-c-divider);
+}
+
+.hfl-deployment-card dt {
+  color: var(--vp-c-text-1);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.hfl-deployment-card dd {
+  margin: 4px 0 0;
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.hfl-path,
+.hfl-ui {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--vp-c-text-1);
+  background: transparent;
+  font-size: inherit;
   font-weight: 650;
+  line-height: inherit;
+  white-space: nowrap;
+}
+
+.hfl-path {
+  margin-inline: .14em;
+}
+
+.hfl-ui {
+  margin-inline: .08em;
 }
 
 @media (min-width: 768px) and (max-width: 840px) {
@@ -797,6 +914,10 @@ body .VPLocalSearchBox .search-keyboard-shortcuts kbd {
 
 @media (max-width: 700px) {
   .hfl-doc-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hfl-deployment-grid {
     grid-template-columns: 1fr;
   }
 
@@ -865,11 +986,6 @@ body .VPLocalSearchBox .search-keyboard-shortcuts kbd {
   .vp-doc [class*='language-'] code {
     padding-left: 16px;
     padding-right: 16px;
-  }
-
-  .vp-doc [class*='language-'] > button.copy {
-    min-width: 44px;
-    min-height: 44px;
   }
 
   .vp-doc table th,
