@@ -887,7 +887,72 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(response.data["created_count"], 0)
         self.assertEqual(response.data["results"][0]["status"], "conflict")
 
-    def test_start_backup_task_api_rejects_active_restore(self):
+    def test_start_backup_task_api_rejects_waiting_and_blocked_duplicates(self):
+        for task_status in (Task.Status.WAITING, Task.Status.BLOCKED):
+            with self.subTest(task_status=task_status):
+                task = Task.objects.create(
+                    organization_id=self.org.id,
+                    task_type=Task.Type.BACKUP,
+                    display_name=f"{task_status} backup",
+                    status=task_status,
+                    trigger_type=Task.TriggerType.MANUAL,
+                    request_payload={
+                        "source_type": "agent",
+                        "source_ref_id": self.agent.id,
+                        "backup_config_id": self.config.id,
+                        "repository_id": self.repository.id,
+                    },
+                )
+
+                response = self.client.post(
+                    "/api/v1/protection/backup-tasks/",
+                    {"source_ids": [f"agent:{self.agent.id}"]},
+                    format="json",
+                    **self._headers(),
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+                self.assertEqual(response.data["created_count"], 0)
+                self.assertEqual(response.data["results"][0]["status"], "conflict")
+                task.delete()
+
+    def test_start_backup_task_api_rejects_stopping_duplicate(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Stopping backup",
+            status=Task.Status.CANCELLED,
+            trigger_type=Task.TriggerType.MANUAL,
+            request_payload={
+                "source_type": "agent",
+                "source_ref_id": self.agent.id,
+                "backup_config_id": self.config.id,
+                "repository_id": self.repository.id,
+            },
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.run",
+            correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+            correlation_id=str(task.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            cancel_requested_at=timezone.now(),
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+        )
+
+        response = self.client.post(
+            "/api/v1/protection/backup-tasks/",
+            {"source_ids": [f"agent:{self.agent.id}"]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["created_count"], 0)
+        self.assertEqual(response.data["results"][0]["status"], "conflict")
+
+    def test_start_backup_task_api_allows_active_restore(self):
         restore_task = Task.objects.create(
             organization_id=self.org.id,
             task_type=Task.Type.RESTORE,
@@ -913,15 +978,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(
             response.status_code, status.HTTP_201_CREATED, response.content
         )
-        self.assertEqual(response.data["created_count"], 0)
-        self.assertEqual(response.data["skipped_count"], 1)
-        result = response.data["results"][0]
-        self.assertEqual(result["status"], "conflict")
-        self.assertIn("restore task is active", result["message"].lower())
-        self.assertFalse(
-            Task.objects.filter(task_type=Task.Type.BACKUP).exists()
-        )
-        self.assertFalse(BackupSourceSnapshot.objects.exists())
+        self.assertEqual(response.data["created_count"], 1)
+        self.assertTrue(Task.objects.filter(task_type=Task.Type.BACKUP).exists())
+        self.assertTrue(BackupSourceSnapshot.objects.exists())
 
     @patch(
         "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"
@@ -966,6 +1025,9 @@ class ProtectionBackupTaskApiTests(TestCase):
             idempotency_key="test-run-backup-task",
             directory_count=1,
         )
+        BackupConfigDirectory.objects.filter(backup_config=self.config).update(
+            path="/data/changed-after-acceptance"
+        )
         mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
             [self._async_outcome(kopia_snapshot_id="kopia-snap-1")]
         )
@@ -978,6 +1040,11 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(task.status, Task.Status.SUCCESS)
         self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.AVAILABLE)
         self.assertEqual(directory.kopia_snapshot_id, "kopia-snap-1")
+        self.assertEqual(directory.source_path, "/data/projects")
+        self.assertEqual(
+            mock_run_agent_task_async.call_args.kwargs["payload"]["source_path"],
+            "/data/projects",
+        )
         self.assertEqual(
             directory.status, BackupSourceSnapshotDirectory.Status.AVAILABLE
         )

@@ -191,6 +191,30 @@ def active_source_restore_task(
             for resource in task.resources.all()
         ):
             return task
+    cancelled_tasks = (
+        Task.objects.filter(
+            organization_id=organization_id,
+            task_type__in=RESTORE_TASK_TYPES,
+            status=Task.Status.CANCELLED,
+        )
+        .prefetch_related("resources")
+        .order_by("created_at", "id")
+    )
+    from apps.restore.services.interface import restore_task_is_stopping
+
+    for task in cancelled_tasks:
+        if not restore_task_is_stopping(task=task):
+            continue
+        if any(
+            resource.resource_type == TaskResource.Type.BACKUP_SOURCE
+            and int(resource.resource_id) == int(source_ref_id)
+            and (
+                resource.resource_subtype == source_type
+                or (source_type == "agent" and not resource.resource_subtype)
+            )
+            for resource in task.resources.all()
+        ):
+            return task
     return None
 
 
@@ -283,6 +307,11 @@ def assert_no_active_restore_for_source(
     )
     if blocker is None:
         return
+    from apps.restore.services.interface import restore_task_is_stopping
+
+    blocker_status = (
+        "stopping" if restore_task_is_stopping(task=blocker) else blocker.status
+    )
     raise AppError(
         code="RESTORE.ALREADY_RUNNING",
         status=409,
@@ -297,7 +326,7 @@ def assert_no_active_restore_for_source(
             "task_id": blocker.id,
             "task_type": blocker.task_type,
             "display_name": blocker.display_name,
-            "status": blocker.status,
+            "status": blocker_status,
             "source_type": source_type,
             "source_ref_id": source_ref_id,
             "created_at": blocker.created_at.isoformat()

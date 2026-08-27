@@ -69,7 +69,12 @@ from apps.task.services.interface import (
 )
 from common.errors import AppError
 
-_ACTIVE_TASK_STATUSES = {Task.Status.PENDING, Task.Status.RUNNING}
+_ACTIVE_TASK_STATUSES = {
+    Task.Status.PENDING,
+    Task.Status.WAITING,
+    Task.Status.BLOCKED,
+    Task.Status.RUNNING,
+}
 _TASK_TRIGGER_MAP = {
     BackupSourceSnapshot.TriggerType.MANUAL: Task.TriggerType.MANUAL,
     BackupSourceSnapshot.TriggerType.SCHEDULE: Task.TriggerType.SYSTEM,
@@ -481,6 +486,27 @@ def find_active_backup_task(
             and int(payload.get("backup_config_id") or 0) == backup_config_id
         ):
             return task
+    from apps.source.services.internal.source_operation_fence import (
+        product_task_is_stopping,
+    )
+
+    cancelled_tasks = Task.objects.filter(
+        organization_id=organization_id,
+        task_type=Task.Type.BACKUP,
+        status=Task.Status.CANCELLED,
+    ).order_by("-created_at", "-id")
+    for task in cancelled_tasks:
+        payload = task.request_payload if isinstance(task.request_payload, dict) else {}
+        if (
+            str(payload.get("source_type") or "") == source_type
+            and int(payload.get("source_ref_id") or 0) == source_ref_id
+            and int(payload.get("backup_config_id") or 0) == backup_config_id
+            and product_task_is_stopping(
+                organization_id=organization_id,
+                task=task,
+            )
+        ):
+            return task
     return None
 
 
@@ -773,16 +799,10 @@ def start_backup_tasks(
             try:
                 with transaction.atomic():
                     from apps.source.services.internal.source_operation_fence import (
-                        assert_no_active_restore_for_source,
                         assert_source_product_operation_allowed,
                     )
 
                     assert_source_product_operation_allowed(
-                        organization_id=organization_id,
-                        source_type=source.source_type,
-                        source_ref_id=source.source_ref_id,
-                    )
-                    assert_no_active_restore_for_source(
                         organization_id=organization_id,
                         source_type=source.source_type,
                         source_ref_id=source.source_ref_id,
@@ -883,16 +903,10 @@ def start_backup_tasks(
             try:
                 with transaction.atomic():
                     from apps.source.services.internal.source_operation_fence import (
-                        assert_no_active_restore_for_source,
                         assert_source_product_operation_allowed,
                     )
 
                     assert_source_product_operation_allowed(
-                        organization_id=organization_id,
-                        source_type=source.source_type,
-                        source_ref_id=source.source_ref_id,
-                    )
-                    assert_no_active_restore_for_source(
                         organization_id=organization_id,
                         source_type=source.source_type,
                         source_ref_id=source.source_ref_id,

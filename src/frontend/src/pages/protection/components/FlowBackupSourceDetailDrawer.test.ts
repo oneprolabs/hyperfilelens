@@ -127,15 +127,16 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(loader).toContain('started_to: startedRange.to')
   })
 
-  it('blocks snapshot restore actions while the source backup is active', () => {
+  it('allows snapshot restore actions while the source backup is active', () => {
     const restoreGuard = sourceBetween(
       'function canRestoreSnapshot(row: BackupSourceSnapshot)',
       'function onSnapshotExpandChange',
     )
 
-    expect(drawer).toContain('restoreBlockedByBackup?: boolean')
-    expect(restoreGuard).toContain('!props.restoreBlockedByBackup && isSnapshotRestorable(row)')
-    expect(restoreGuard).toContain("t('protection.backupsPage.msgBackupActiveBlocksActions')")
+    expect(drawer).not.toContain('restoreBlockedByBackup?: boolean')
+    expect(drawer).toContain('restoreBlockedByRestore?: boolean')
+    expect(restoreGuard).toContain('!props.restoreBlockedByRestore && isSnapshotRestorable(row)')
+    expect(restoreGuard).not.toContain('restoreBlockedByBackup')
   })
 
   it('shows storage metrics without the reference explanation header', () => {

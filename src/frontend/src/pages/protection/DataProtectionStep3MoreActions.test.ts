@@ -28,13 +28,13 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(page).not.toContain('const step2PendingCount = computed(() => step2SelectableCount.value)')
   })
 
-  it('blocks conflicting source actions while a selected backup is active', () => {
+  it('keeps duplicate backups fenced while allowing restore/config concurrency', () => {
     const gating = sourceBetween(
       'const startBackupSubmitting',
       'const step3CanStopBackup',
     )
     const startBackup = functionSource('startSelectedBackupTasks', 'flowRowsForSourceIds')
-    const openRecovery = functionSource('openRecovery', 'currentRecBackup')
+    const openRecovery = sourceBetween('async function openRecovery()', 'function currentRecBackup')
     const openRecoveryForSource = functionSource('openRecoveryForSource', 'openSnapshotRestore')
     const editConfig = functionSource('openBackupConfigEditFromStep3', 'onBackupConfigEditPickSelected')
     const resetConfig = functionSource('resetSelectedBackupConfigurations', 'confirmResetBackupConfiguration')
@@ -42,30 +42,29 @@ describe('backup wizard step 3 More Actions refresh', () => {
     const runRecovery = sourceBetween('async function runRecovery', '</script>')
 
     expect(gating).toContain("sourceBackupRuntime(sourceId).running || runtimeStopping(sourceId, 'backup')")
-    expect(gating).toContain('backupStartAwaitingRuntimeSourceIds')
-    expect(gating).toContain('backupStartAwaitingRuntimeSourceIds.value.has(sourceId)')
+    expect(gating).toContain('backupStartAwaitingRuntimeTasks')
+    expect(gating).toContain('backupStartAwaitingRuntimeTasks.value.has(sourceId)')
     expect(gating).toContain('const step3SelectionHasActiveBackup = computed')
     expect(gating).toContain('if (step3SelectionHasActiveBackup.value) return false')
-    expect(gating).toContain('step3LifecycleActionsEnabled.value && !step3SelectionHasActiveBackup.value')
+    expect(gating).toContain('step3LifecycleActionsEnabled.value,')
     expect(gating).toContain("|| runtimeStopping(sourceId, 'restore')")
     expect(startBackup).toContain('sources.some((source) => sourceHasActiveBackup(source.id))')
     expect(startBackup).toContain('sources.some((source) => sourceRuntimeHasActiveBackup(source.id))')
-    expect(openRecovery).toContain('if (step3SelectionHasActiveBackup.value)')
-    expect(openRecoveryForSource).toContain('if (sourceHasActiveBackup(sourceId))')
-    expect(editConfig).toContain('sources.some((source) => sourceHasActiveBackup(source.id))')
+    expect(openRecovery).not.toContain('if (step3SelectionHasActiveBackup.value)')
+    expect(openRecoveryForSource).not.toContain('if (sourceHasActiveBackup(sourceId))')
+    expect(editConfig).not.toContain('sources.some((source) => sourceHasActiveBackup(source.id))')
+    expect(gating).toContain('const step3ResetEnabled = computed')
     expect(resetConfig).toContain('sources.some((source) => sourceHasActiveBackup(source.id))')
     expect(confirmReset).toContain('await handleBackupAlreadyRunning(')
     expect(confirmReset).not.toContain('void refreshStep3AfterMoreAction')
-    expect(startBackup).toContain(".filter((item) => item.status === 'created')")
+    expect(startBackup).toContain('markBackupStartAwaitingRuntime(result.results)')
     expect(startBackup).toContain('markBackupStartAwaitingRuntime')
     expect(startBackup).toContain("t('protection.backupsPage.msgStartBackupAcceptedRefreshFailed')")
-    expect(runRecovery).toContain('await recoveryBlockedByActiveBackup()')
     expect(runRecovery).toContain('await handleBackupAlreadyRunning(')
-    expect(runRecovery).toContain('refreshRecoverySourceRuntime(recoverySourceIds())')
+    expect(runRecovery).toContain('refreshRecoverySourceRuntime(sourceIds)')
     expect(page).toContain('async function refreshRecoverySourceRuntime(sourceIds: string[])')
-    expect(page).toContain('const recoveryHasActiveBackup = computed')
-    expect(page).toContain(':disabled="!selectedRecoveryPlans.length || recoveryHasActiveBackup"')
-    expect(page).toContain(':disabled="recoveryHasActiveBackup"')
+    expect(page).not.toContain('const recoveryHasActiveBackup = computed')
+    expect(page).not.toContain('recoveryBlockedByActiveBackup')
     expect(page).toContain('expand: STEP3_EXPAND')
     expect(page).toContain("t('protection.backupsPage.msgBackupActiveBlocksActions')")
     expect(protectionLocale).toContain("msgBackupActiveBlocksActions:")
@@ -90,6 +89,9 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(loader).toContain('reconcileBackupStartAwaitingRuntime(rows.map((row) => row.id))')
     expect(gating).toContain('function markBackupStartAwaitingRuntime')
     expect(gating).toContain('function reconcileBackupStartAwaitingRuntime')
+    expect(gating).toContain('runtimeBool(runtime.running) || runtimeBool(runtime.stopping)')
+    expect(gating).toContain('acceptedTaskUuids.has(latestTaskUuid)')
+    expect(gating).not.toContain('refreshedSourceIds.forEach((sourceId) => next.delete(sourceId))')
   })
 
   it('disables policy-step detail popovers while a configuration selector is open', () => {
@@ -221,14 +223,57 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(handler.indexOf('enterStartBackupStep')).toBeLessThan(handler.indexOf('reconcileCreatedBackupConfigs'))
   })
 
-  it('reloads the full step 3 list state after stopping backup or restore tasks', () => {
+  it('keeps backup refresh synchronous and restore refresh in the background after stopping', () => {
     const stopBackup = functionSource('stopSelectedBackupTasks', 'stopSelectedRestoreTasks')
     const stopRestore = functionSource('stopSelectedRestoreTasks', 'onBackupTaskSelection')
 
     expect(stopBackup).toContain('await refreshStep3AfterMoreAction()')
-    expect(stopRestore).toContain('await refreshStep3AfterMoreAction()')
+    expect(stopRestore).toContain('void refreshRecoverySourceRuntime(')
+    expect(stopRestore).not.toContain('await refreshRecoverySourceRuntime(')
+    expect(stopRestore.indexOf('notifySuccess({')).toBeLessThan(stopRestore.indexOf('void refreshRecoverySourceRuntime('))
     expect(stopBackup).not.toContain('await refreshStep3State()')
     expect(stopRestore).not.toContain('await refreshStep3State()')
+  })
+
+  it('publishes restore acceptance before background reconciliation', () => {
+    const runRecovery = sourceBetween('async function runRecovery', '</script>')
+    const runtime = functionSource('sourceRestoreRuntime', 'clearFinishedRestoreReconcileTimers')
+    const openRecovery = functionSource('openRecoveryWithBackupIds', 'openRecoveryForSource')
+
+    expect(runRecovery).toContain('restoreTaskLifecycle.accept(sourceId, result)')
+    expect(runRecovery).toContain('scheduleRestoreTaskReconciliation(sourceId, result.task_uuid)')
+    expect(runRecovery).toContain('recOpen.value = false')
+    expect(runRecovery).toContain('void refreshRecoverySourceRuntime(submittedSourceIds)')
+    expect(runRecovery).not.toContain('await refreshBackupConfigs()')
+    expect(runRecovery.indexOf('recOpen.value = false')).toBeLessThan(
+      runRecovery.indexOf('void refreshRecoverySourceRuntime(submittedSourceIds)'),
+    )
+    expect(runtime).toContain('running: runtimeBool(runtime.running) || Boolean(trackedTask)')
+    expect(openRecovery).toContain("runtimeStopping(sourceId, 'restore')")
+  })
+
+  it('keeps restore stopping fenced until the matching task reaches a terminal status', () => {
+    const stopRestore = functionSource('stopSelectedRestoreTasks', 'onBackupTaskSelection')
+    const syncStop = functionSource('syncSourceStopOptimisticFromRuntime', 'runningBackupTaskForSource')
+    const restoreBranch = syncStop.slice(0, syncStop.indexOf("  if (runtimeBool(runtime.running)"))
+
+    expect(stopRestore).toContain("markSourceStopPhase(row.id, 'restore', task.task_uuid)")
+    expect(stopRestore).toContain('restoreTaskLifecycle.rejectStopping(row.id, task.task_uuid)')
+    expect(stopRestore).toContain('if (isExplicitRestoreCancelRejection(toApiError(error)))')
+    expect(syncStop).toContain('restoreTaskLifecycle.reconcile([{')
+    expect(syncStop).toContain('stopping: runtimeBool(runtime.stopping)')
+    expect(restoreBranch).not.toContain("runtimeBool(runtime.running) || runtimeBool(runtime.cancelled)")
+  })
+
+  it('reuses stable restore idempotency keys for the same wizard request', () => {
+    const runRecovery = sourceBetween('async function runRecovery', '</script>')
+    const manualPayload = functionSource('buildManualRestorePayload', 'manualRecoveryDraftProblemNames')
+
+    expect(page).toContain("function restoreIdempotencyKey(mode: 'plan' | 'manual', payload: unknown)")
+    expect(runRecovery).toContain("idempotency_key: restoreIdempotencyKey('plan', payload)")
+    expect(manualPayload).toContain("restoreIdempotencyKey('manual', payload)")
+    expect(runRecovery).not.toContain('idempotency_key: `restore-plan-')
+    expect(manualPayload).not.toContain('Date.now()')
   })
 
   it('reloads and clears stale selection after reset or unregister succeeds', () => {

@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework import status
@@ -1056,12 +1057,12 @@ class RestoreApiTests(TestCase):
         self.assertEqual(listing.data["count"], 1)
         self.assertEqual(listing.data["results"][0]["id"], plan_id)
 
-    def test_restore_plan_mutations_are_blocked_while_backup_is_active(self):
+    def test_restore_plan_mutations_are_allowed_while_backup_is_active(self):
         plan = RestorePlan.objects.create(
             organization_id=self.org.id,
             **self._plan_payload(),
         )
-        task = self._active_backup_task()
+        self._active_backup_task()
 
         create = self.client.post(
             "/api/v1/restore/plans/",
@@ -1080,18 +1081,50 @@ class RestoreApiTests(TestCase):
             **self._headers(),
         )
 
-        self._assert_backup_already_running(create, task)
-        self._assert_backup_already_running(patch_response, task)
-        self._assert_backup_already_running(delete, task)
-        plan.refresh_from_db()
-        self.assertEqual(plan.restore_dir, "/restore/data")
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        self.assertEqual(
+            patch_response.status_code, status.HTTP_200_OK, patch_response.content
+        )
+        self.assertEqual(delete.status_code, status.HTTP_200_OK, delete.content)
+        self.assertFalse(RestorePlan.objects.filter(id=plan.id).exists())
 
-    def test_restore_run_is_blocked_while_backup_is_active(self):
+    def test_restore_plan_mutations_are_allowed_while_restore_is_active(self):
         plan = RestorePlan.objects.create(
             organization_id=self.org.id,
             **self._plan_payload(),
         )
-        task = self._active_backup_task(status_value=Task.Status.PENDING)
+        self._active_restore_task()
+
+        create = self.client.post(
+            "/api/v1/restore/plans/",
+            {**self._plan_payload(), "restore_dir": "/restore/other"},
+            format="json",
+            **self._headers(),
+        )
+        patch_response = self.client.patch(
+            f"/api/v1/restore/plans/{plan.id}/",
+            {"restore_dir": "/restore/updated"},
+            format="json",
+            **self._headers(),
+        )
+        delete = self.client.delete(
+            f"/api/v1/restore/plans/{plan.id}/",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        self.assertEqual(
+            patch_response.status_code, status.HTTP_200_OK, patch_response.content
+        )
+        self.assertEqual(delete.status_code, status.HTTP_200_OK, delete.content)
+        self.assertFalse(RestorePlan.objects.filter(id=plan.id).exists())
+
+    def test_restore_run_is_allowed_while_backup_is_active(self):
+        plan = RestorePlan.objects.create(
+            organization_id=self.org.id,
+            **self._plan_payload(),
+        )
+        self._active_backup_task(status_value=Task.Status.PENDING)
 
         plan_run = self.client.post(
             f"/api/v1/restore/plans/{plan.id}/run/",
@@ -1099,6 +1132,11 @@ class RestoreApiTests(TestCase):
             format="json",
             **self._headers(),
         )
+        self.assertEqual(
+            plan_run.status_code, status.HTTP_201_CREATED, plan_run.content
+        )
+        plan_record = RestoreRecord.objects.get(id=plan_run.data["restore_record_id"])
+        Task.objects.filter(id=plan_record.task_id).update(status=Task.Status.SUCCESS)
         manual_run = self.client.post(
             "/api/v1/restore/records/",
             self._manual_restore_payload(),
@@ -1106,11 +1144,12 @@ class RestoreApiTests(TestCase):
             **self._headers(),
         )
 
-        self._assert_backup_already_running(plan_run, task)
-        self._assert_backup_already_running(manual_run, task)
-        self.assertEqual(RestoreRecord.objects.count(), 0)
+        self.assertEqual(
+            manual_run.status_code, status.HTTP_201_CREATED, manual_run.content
+        )
+        self.assertEqual(RestoreRecord.objects.count(), 2)
 
-    def test_restore_run_is_blocked_while_backup_is_stopping(self):
+    def test_restore_run_is_allowed_while_backup_is_stopping(self):
         plan = RestorePlan.objects.create(
             organization_id=self.org.id,
             **self._plan_payload(),
@@ -1133,6 +1172,11 @@ class RestoreApiTests(TestCase):
             format="json",
             **self._headers(),
         )
+        self.assertEqual(
+            plan_run.status_code, status.HTTP_201_CREATED, plan_run.content
+        )
+        plan_record = RestoreRecord.objects.get(id=plan_run.data["restore_record_id"])
+        Task.objects.filter(id=plan_record.task_id).update(status=Task.Status.SUCCESS)
         manual_run = self.client.post(
             "/api/v1/restore/records/",
             self._manual_restore_payload(),
@@ -1140,11 +1184,10 @@ class RestoreApiTests(TestCase):
             **self._headers(),
         )
 
-        self._assert_backup_already_running(plan_run, task)
-        self._assert_backup_already_running(manual_run, task)
-        self.assertEqual(plan_run.data["data"]["meta"]["status"], "stopping")
-        self.assertEqual(manual_run.data["data"]["meta"]["status"], "stopping")
-        self.assertEqual(RestoreRecord.objects.count(), 0)
+        self.assertEqual(
+            manual_run.status_code, status.HTTP_201_CREATED, manual_run.content
+        )
+        self.assertEqual(RestoreRecord.objects.count(), 2)
 
     def test_create_restore_plan_accepts_zero_sort_order_and_nested_source_path(self):
         payload = self._plan_payload()
@@ -2663,6 +2706,92 @@ class RestoreApiTests(TestCase):
         self._assert_restore_already_running(create, active_task)
         self.assertFalse(RestoreRecord.objects.exists())
 
+    def test_create_manual_restore_record_rejects_same_source_stopping_restore(self):
+        active_task = self._active_restore_task(status_value=Task.Status.CANCELLED)
+        record = RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=self.target.id,
+            restore_uid="rst-stopping-source",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=active_task.id,
+            task_uuid=active_task.task_uuid,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=self.config.id,
+            source_snapshot_id=self.snapshot.id,
+            target_type="agent",
+            target_ref_id=self.target.id,
+            target_path="/restore/stopping",
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.SKIP,
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.target,
+            kind="restore.run",
+            correlation_type="restore.record",
+            correlation_id=str(active_task.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            payload={"restore_record_id": record.id},
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+        )
+
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+
+        self._assert_restore_already_running(create, active_task)
+        self.assertEqual(create.data["data"]["meta"]["status"], "stopping")
+        self.assertEqual(RestoreRecord.objects.count(), 1)
+
+    def test_backup_selectable_reports_restore_stopping(self):
+        active_task = self._active_restore_task(status_value=Task.Status.CANCELLED)
+        record = RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=self.target.id,
+            restore_uid="rst-runtime-stopping",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=active_task.id,
+            task_uuid=active_task.task_uuid,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=self.config.id,
+            source_snapshot_id=self.snapshot.id,
+            target_type="agent",
+            target_ref_id=self.target.id,
+            target_path="/restore/stopping",
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.SKIP,
+        )
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.target,
+            kind="restore.run",
+            correlation_type="restore.record",
+            correlation_id=str(active_task.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            payload={"restore_record_id": record.id},
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+        )
+
+        response = self.client.get(
+            f"/api/v1/source/backup-selectable/?ids=agent:{self.agent.id}&expand=runtime",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        runtime = response.data["results"][0]["runtime"]["restore"]
+        self.assertTrue(runtime["stopping"])
+        self.assertFalse(runtime["cancelled"])
+        self.assertEqual(runtime["latest_task"]["status"], Task.Status.CANCELLED)
+
     def test_create_manual_restore_record_ignores_terminal_same_source_restore(self):
         self._active_restore_task(status_value=Task.Status.CANCELLED)
 
@@ -2675,6 +2804,105 @@ class RestoreApiTests(TestCase):
 
         self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
         self.assertEqual(RestoreRecord.objects.count(), 1)
+
+    def test_manual_restore_idempotency_replays_the_created_record(self):
+        payload = {
+            **self._manual_restore_payload(),
+            "idempotency_key": "manual-restore-replay",
+        }
+
+        first = self.client.post(
+            "/api/v1/restore/records/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+        second = self.client.post(
+            "/api/v1/restore/records/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.content)
+        self.assertEqual(second.status_code, status.HTTP_201_CREATED, second.content)
+        self.assertEqual(second.data["restore_record_id"], first.data["restore_record_id"])
+        self.assertEqual(second.data["task_uuid"], first.data["task_uuid"])
+        self.assertEqual(RestoreRecord.objects.count(), 1)
+
+    def test_manual_restore_idempotency_rejects_changed_payload(self):
+        payload = {
+            **self._manual_restore_payload(),
+            "idempotency_key": "manual-restore-conflict",
+        }
+        first = self.client.post(
+            "/api/v1/restore/records/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        conflict = self.client.post(
+            "/api/v1/restore/records/",
+            {**payload, "target_path": "/restore/changed"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.content)
+        self.assertEqual(conflict.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("idempotency_key", str(conflict.data))
+        self.assertEqual(RestoreRecord.objects.count(), 1)
+
+    def test_manual_restore_idempotency_recovers_concurrent_insert_race(self):
+        payload = {
+            **self._manual_restore_payload(),
+            "idempotency_key": "manual-restore-race",
+        }
+        first = self.client.post(
+            "/api/v1/restore/records/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.content)
+        existing = RestoreRecord.objects.get(pk=first.data["restore_record_id"])
+        Task.objects.filter(pk=existing.task_id).update(status=Task.Status.SUCCESS)
+        task_count = Task.objects.count()
+        real_idempotency_lookup = restore_service._idempotent_restore_record
+        lookup_count = 0
+
+        def delayed_idempotency_lookup(**kwargs):
+            nonlocal lookup_count
+            lookup_count += 1
+            if lookup_count == 1:
+                return None
+            return real_idempotency_lookup(**kwargs)
+
+        with (
+            patch.object(
+                restore_service,
+                "_idempotent_restore_record",
+                side_effect=delayed_idempotency_lookup,
+            ),
+            patch.object(
+                RestoreRecord.objects,
+                "create",
+                side_effect=IntegrityError("duplicate idempotency key"),
+            ),
+        ):
+            replay = self.client.post(
+                "/api/v1/restore/records/",
+                payload,
+                format="json",
+                **self._headers(),
+            )
+
+        self.assertEqual(replay.status_code, status.HTTP_201_CREATED, replay.content)
+        self.assertEqual(replay.data["restore_record_id"], existing.id)
+        self.assertEqual(str(replay.data["task_uuid"]), str(existing.task_uuid))
+        self.assertEqual(RestoreRecord.objects.count(), 1)
+        self.assertEqual(Task.objects.count(), task_count)
 
     def test_create_manual_restore_record_allows_different_source_restore(self):
         self._active_restore_task(
@@ -2770,6 +2998,39 @@ class RestoreApiTests(TestCase):
 
         self._assert_restore_already_running(run, active_task)
         self.assertFalse(RestoreRecord.objects.exists())
+
+    def test_run_restore_plan_batch_replays_idempotency_key(self):
+        RestorePlan.objects.create(
+            organization_id=self.org.id,
+            **self._plan_payload(),
+        )
+        payload = {
+            "backup_config_id": self.config.id,
+            "target_type": "agent",
+            "target_ref_id": self.target.id,
+            "restore_dir": "/restore/data",
+            "conflict_mode": "overwrite",
+            "source_snapshot_id": self.snapshot.id,
+            "idempotency_key": "plan-batch-replay",
+        }
+
+        first = self.client.post(
+            "/api/v1/restore/plans/run-batch/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+        second = self.client.post(
+            "/api/v1/restore/plans/run-batch/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.content)
+        self.assertEqual(second.status_code, status.HTTP_201_CREATED, second.content)
+        self.assertEqual(second.data["restore_record_id"], first.data["restore_record_id"])
+        self.assertEqual(RestoreRecord.objects.count(), 1)
 
     def test_create_manual_restore_record_accepts_partial_snapshot(self):
         self.snapshot.status = BackupSourceSnapshot.Status.PARTIAL

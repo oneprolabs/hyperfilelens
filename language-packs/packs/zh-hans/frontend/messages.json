@@ -1031,6 +1031,8 @@
       "msgPickRecoveryDir": "请选择一个恢复目录",
       "msgRecoverySubmitted": "恢复任务已提交",
       "msgRecoveryPlanSubmitted": "已按恢复计划提交恢复任务",
+      "msgRecoveryPartialSubmitted": "已提交 {done} 个恢复任务；{failed} 个提交失败。",
+      "msgRestoreAcceptedRefreshFailed": "恢复请求已受理，但暂时无法刷新最新状态。在状态恢复前，冲突的恢复操作将保持禁用。",
       "msgRecoveryPlanUnavailable": "当前没有可执行的恢复计划配置。",
       "recoveryPlanMissingTitle": "未配置恢复计划",
       "recoveryPlanMissingDesc": "该主机未配置恢复计划。执行恢复计划时将跳过该主机。",

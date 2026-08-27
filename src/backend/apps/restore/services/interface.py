@@ -108,15 +108,6 @@ _ACTIVE_NODE_STATUSES = frozenset({NodeTask.Status.PENDING, NodeTask.Status.RUNN
 @transaction.atomic
 def create_restore_plan(*, organization_id: int, data: dict[str, Any]) -> RestorePlan:
     payload = _plan_payload(organization_id=organization_id, data=data)
-    from apps.source.services.internal.source_operation_fence import (
-        assert_no_active_backup_for_source,
-    )
-
-    assert_no_active_backup_for_source(
-        organization_id=organization_id,
-        source_type=payload["source_type"],
-        source_ref_id=int(payload["source_ref_id"]),
-    )
     _validate_restore_plan_configuration(
         organization_id=organization_id, payload=payload
     )
@@ -141,17 +132,6 @@ def update_restore_plan(*, plan: RestorePlan, data: dict[str, Any]) -> RestorePl
     }
     merged.update(data)
     payload = _plan_payload(organization_id=plan.organization_id, data=merged)
-    from apps.source.services.internal.source_operation_fence import (
-        assert_no_active_backup_for_sources,
-    )
-
-    assert_no_active_backup_for_sources(
-        organization_id=plan.organization_id,
-        sources=[
-            (plan.source_type, int(plan.source_ref_id)),
-            (payload["source_type"], int(payload["source_ref_id"])),
-        ],
-    )
     _validate_restore_plan_configuration(
         organization_id=plan.organization_id, payload=payload, exclude_plan_id=plan.id
     )
@@ -163,15 +143,6 @@ def update_restore_plan(*, plan: RestorePlan, data: dict[str, Any]) -> RestorePl
 
 @transaction.atomic
 def delete_restore_plan(*, plan: RestorePlan) -> dict[str, Any]:
-    from apps.source.services.internal.source_operation_fence import (
-        assert_no_active_backup_for_source,
-    )
-
-    assert_no_active_backup_for_source(
-        organization_id=plan.organization_id,
-        source_type=plan.source_type,
-        source_ref_id=int(plan.source_ref_id),
-    )
     plan_id = int(plan.id)
     plan.delete()
     return {"deleted": True, "id": plan_id}
@@ -212,11 +183,6 @@ def run_restore_plan(
                 "source_snapshot_id": "No restorable source snapshot found for restore plan."
             }
         )
-    _ensure_no_active_restore_for_source(
-        organization_id=organization_id,
-        source_type=plan.source_type,
-        source_ref_id=int(plan.source_ref_id),
-    )
     item_inputs = _restore_plan_item_inputs(
         organization_id=organization_id,
         snapshot=snapshot,
@@ -244,6 +210,7 @@ def run_restore_plan(
             "idempotency_key": idempotency_key or "",
         },
         created_by_id=user_id,
+        idempotency_key=str(idempotency_key or ""),
     )
     logger.info(
         "restore plan run ok plan_id=%s restore_record_id=%s restore_uid=%s task_uuid=%s",
@@ -267,11 +234,6 @@ def run_restore_plans_for_source(
 ) -> list[RestoreRecord]:
     source_type = _choice({"source_type": source_type}, "source_type", SOURCE_TYPES)
     source_ref_id = int(source_ref_id)
-    _ensure_no_active_restore_for_source(
-        organization_id=organization_id,
-        source_type=source_type,
-        source_ref_id=source_ref_id,
-    )
     plans = list(
         RestorePlan.objects.filter(
             organization_id=organization_id,
@@ -361,6 +323,7 @@ def run_restore_plans_for_source(
                     "idempotency_key": idempotency_key or "",
                 },
                 created_by_id=user_id,
+                idempotency_key=str(idempotency_key or ""),
             )
         )
     return records
@@ -384,11 +347,6 @@ def run_restore_plan_batch(
     ).first()
     if config is None:
         raise ValidationError({"backup_config_id": "Backup config not found."})
-    _ensure_no_active_restore_for_source(
-        organization_id=organization_id,
-        source_type=config.source_type,
-        source_ref_id=int(config.source_ref_id),
-    )
     plans = list(
         RestorePlan.objects.filter(
             organization_id=organization_id,
@@ -457,6 +415,7 @@ def run_restore_plan_batch(
             "idempotency_key": str(data.get("idempotency_key") or ""),
         },
         created_by_id=user_id,
+        idempotency_key=str(data.get("idempotency_key") or ""),
     )
 
 
@@ -557,12 +516,6 @@ def _create_manual_restore_record(
         raise ValidationError(
             {"source_snapshot_id": "Source snapshot does not match restore source."}
         )
-    _ensure_no_active_restore_for_source(
-        organization_id=organization_id,
-        source_type=source_type,
-        source_ref_id=source_ref_id,
-        purpose=purpose,
-    )
     items = data.get("items")
     if not isinstance(items, list) or not items:
         raise ValidationError({"items": "At least one restore item is required."})
@@ -736,6 +689,100 @@ def create_lens_workspace_restore_record(
         return existing
 
 
+def _restore_item_signature(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    keys = (
+        "source_snapshot_directory_id",
+        "backup_config_dir_id",
+        "repository_id",
+        "kopia_snapshot_id",
+        "source_path",
+        "source_path_type",
+        "selected_paths",
+        "target_path",
+        "target_path_semantics",
+        "conflict_mode",
+    )
+    return [{key: item.get(key) for key in keys} for item in items]
+
+
+def _idempotent_restore_record(
+    *,
+    organization_id: int,
+    purpose: str,
+    idempotency_key: str,
+    source_mode: str,
+    plan_id: int | None,
+    source_type: str,
+    source_ref_id: int,
+    backup_config_id: int | None,
+    source_snapshot_id: int,
+    target_type: str,
+    target_ref_id: int,
+    target_path: str,
+    scope: str,
+    conflict_mode: str,
+    request_payload: dict[str, Any],
+    directories: list[dict[str, Any]],
+) -> RestoreRecord | None:
+    if not idempotency_key:
+        return None
+    existing = (
+        RestoreRecord.objects.select_for_update()
+        .filter(
+            organization_id=organization_id,
+            purpose=purpose,
+            idempotency_key=idempotency_key,
+        )
+        .first()
+    )
+    if existing is None:
+        return None
+    expected = (
+        source_mode,
+        plan_id,
+        source_type,
+        int(source_ref_id),
+        backup_config_id,
+        int(source_snapshot_id),
+        target_type,
+        int(target_ref_id),
+        target_path,
+        scope,
+        conflict_mode,
+        request_payload,
+        _restore_item_signature(directories),
+    )
+    expanded = (
+        existing.expanded_payload
+        if isinstance(existing.expanded_payload, dict)
+        else {}
+    )
+    actual = (
+        existing.source_mode,
+        existing.plan_id,
+        existing.source_type,
+        int(existing.source_ref_id),
+        existing.backup_config_id,
+        int(existing.source_snapshot_id),
+        existing.target_type,
+        int(existing.target_ref_id),
+        existing.target_path,
+        existing.scope,
+        existing.conflict_mode,
+        existing.request_payload,
+        _restore_item_signature(expanded.get("items", [])),
+    )
+    if actual != expected:
+        raise ValidationError(
+            {
+                "idempotency_key": (
+                    "Idempotency key is bound to another restore request."
+                )
+            }
+        )
+    return existing
+
+
 def _create_restore_record(
     *,
     organization_id: int,
@@ -780,16 +827,47 @@ def _create_restore_record(
         is_deleted=False,
     ).exists():
         raise ValidationError({"target_ref_id": "Restore execution node not found."})
-    _ensure_no_active_restore_for_source(
+    from apps.source.services.internal.source_operation_fence import (
+        assert_source_product_operation_allowed,
+    )
+
+    assert_source_product_operation_allowed(
         organization_id=organization_id,
         source_type=source_type,
         source_ref_id=source_ref_id,
-        purpose=purpose,
     )
     directories = _expanded_directories(
         organization_id=organization_id,
         source_snapshot=source_snapshot,
         item_inputs=item_inputs,
+    )
+    normalized_idempotency_key = str(idempotency_key or "").strip()
+    idempotency_lookup = {
+        "organization_id": organization_id,
+        "purpose": purpose,
+        "idempotency_key": normalized_idempotency_key,
+        "source_mode": source_mode,
+        "plan_id": plan_id,
+        "source_type": source_type,
+        "source_ref_id": source_ref_id,
+        "backup_config_id": backup_config_id,
+        "source_snapshot_id": source_snapshot.id,
+        "target_type": target_type,
+        "target_ref_id": target_ref_id,
+        "target_path": target_path,
+        "scope": scope,
+        "conflict_mode": conflict_mode,
+        "request_payload": request_payload,
+        "directories": directories,
+    }
+    existing = _idempotent_restore_record(**idempotency_lookup)
+    if existing is not None:
+        return existing
+    _ensure_no_active_restore_for_source(
+        organization_id=organization_id,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+        purpose=purpose,
     )
     repository_ids = sorted(
         {int(directory["repository_id"]) for directory in directories}
@@ -837,31 +915,45 @@ def _create_restore_record(
         ],
         steps=["prepare_restore", "dispatch_agent", "restore", "finalize"],
     )
-    record = RestoreRecord.objects.create(
-        organization_id=organization_id,
-        requesting_organization_id=requesting_organization_id or organization_id,
-        target_execution_organization_id=target_execution_organization_id,
-        target_execution_node_id=target_execution_node_id,
-        purpose=purpose,
-        idempotency_key=idempotency_key,
-        workspace_binding_id=workspace_binding_id,
-        restore_uid=restore_uid,
-        source_mode=source_mode,
-        plan_id=plan_id,
-        task_id=task.id,
-        task_uuid=task.task_uuid,
-        source_type=source_type,
-        source_ref_id=source_ref_id,
-        backup_config_id=backup_config_id,
-        source_snapshot_id=source_snapshot.id,
-        target_type=target_type,
-        target_ref_id=target_ref_id,
-        target_path=target_path,
-        scope=scope,
-        conflict_mode=conflict_mode,
-        request_payload=request_payload,
-        created_by_id=created_by_id,
-    )
+    try:
+        # Keep the uniqueness violation inside a savepoint so an exact
+        # concurrent replay can reuse the committed winner. The provisional
+        # task is removed below before returning that winner.
+        with transaction.atomic():
+            record = RestoreRecord.objects.create(
+                organization_id=organization_id,
+                requesting_organization_id=requesting_organization_id
+                or organization_id,
+                target_execution_organization_id=target_execution_organization_id,
+                target_execution_node_id=target_execution_node_id,
+                purpose=purpose,
+                idempotency_key=normalized_idempotency_key,
+                workspace_binding_id=workspace_binding_id,
+                restore_uid=restore_uid,
+                source_mode=source_mode,
+                plan_id=plan_id,
+                task_id=task.id,
+                task_uuid=task.task_uuid,
+                source_type=source_type,
+                source_ref_id=source_ref_id,
+                backup_config_id=backup_config_id,
+                source_snapshot_id=source_snapshot.id,
+                target_type=target_type,
+                target_ref_id=target_ref_id,
+                target_path=target_path,
+                scope=scope,
+                conflict_mode=conflict_mode,
+                request_payload=request_payload,
+                created_by_id=created_by_id,
+            )
+    except IntegrityError:
+        if not normalized_idempotency_key:
+            raise
+        task.delete()
+        existing = _idempotent_restore_record(**idempotency_lookup)
+        if existing is None:
+            raise
+        return existing
     items = [
         RestoreRecordItem(
             organization_id=organization_id,
@@ -1491,7 +1583,7 @@ def _active_restore_task_for_source(
         .order_by()
         .values("task_id")
     )
-    return (
+    active = (
         Task.objects.filter(
             organization_id=organization_id,
             task_type=Task.Type.RESTORE,
@@ -1504,6 +1596,20 @@ def _active_restore_task_for_source(
         .order_by("created_at", "id")
         .first()
     )
+    if active is not None:
+        return active
+    cancelled = Task.objects.filter(
+        organization_id=organization_id,
+        task_type=Task.Type.RESTORE,
+        status=Task.Status.CANCELLED,
+        resources__resource_type=TaskResource.Type.BACKUP_SOURCE,
+        resources__resource_subtype=source_type,
+        resources__resource_id=source_ref_id,
+    ).exclude(id__in=insight_restore_task_ids).order_by("created_at", "id")
+    for task in cancelled:
+        if restore_task_is_stopping(task=task):
+            return task
+    return None
 
 
 def _ensure_no_active_restore_for_source(
@@ -1514,16 +1620,10 @@ def _ensure_no_active_restore_for_source(
     purpose: str = RestoreRecord.Purpose.USER_DATA,
 ) -> None:
     from apps.source.services.internal.source_operation_fence import (
-        assert_no_active_backup_for_source,
         assert_source_product_operation_allowed,
     )
 
     assert_source_product_operation_allowed(
-        organization_id=organization_id,
-        source_type=source_type,
-        source_ref_id=source_ref_id,
-    )
-    assert_no_active_backup_for_source(
         organization_id=organization_id,
         source_type=source_type,
         source_ref_id=source_ref_id,
@@ -1537,6 +1637,11 @@ def _ensure_no_active_restore_for_source(
     )
     if active_task is None:
         return
+    active_status = (
+        "stopping"
+        if restore_task_is_stopping(task=active_task)
+        else active_task.status
+    )
     record = (
         RestoreRecord.objects.filter(
             organization_id=organization_id,
@@ -1556,7 +1661,7 @@ def _ensure_no_active_restore_for_source(
             "task_id": active_task.id,
             "restore_record_id": record.id if record is not None else None,
             "display_name": active_task.display_name,
-            "status": active_task.status,
+            "status": active_status,
             "source_type": source_type,
             "source_ref_id": source_ref_id,
             "created_at": active_task.created_at.isoformat()

@@ -37,6 +37,7 @@ from apps.protection.services.backup_source_snapshot import (
     record_source_snapshot_directory_result,
     refresh_source_snapshot_summary,
     set_source_snapshot_started,
+    snapshot_config_directories,
 )
 from apps.protection.services.kopia_snapshot_delete import normalize_kopia_snapshot_id
 from apps.protection.services.backup_runtime_policy import backup_runtime_policy_payload
@@ -830,7 +831,10 @@ def _prepare_directory_policies(
 ) -> bool:
     bt = _bt()
     for directory in directories:
-        source_path = bt._clean_path(directory.path)
+        directory_id = int(getattr(directory, "backup_config_dir_id", directory.id))
+        source_path = bt._clean_path(
+            getattr(directory, "source_path", None) or directory.path
+        )
         path_type = str(getattr(directory, "path_type", "") or "unknown")
         agent_source_path = source_path
         if execution_target.root_path:
@@ -839,12 +843,12 @@ def _prepare_directory_policies(
             agent_source_path = to_mount_path(execution_target.root_path, source_path)
         directory_row = BackupSourceSnapshotDirectory.objects.filter(
             source_snapshot=source_snapshot,
-            backup_config_dir_id=directory.id,
+            backup_config_dir_id=directory_id,
         ).first()
         if directory_row is None:
             directory_row = record_source_snapshot_directory_result(
                 source_snapshot=source_snapshot,
-                backup_config_dir_id=directory.id,
+                backup_config_dir_id=directory_id,
                 source_path=source_path,
                 path_type=path_type,
                 display_name=directory.display_name,
@@ -856,7 +860,7 @@ def _prepare_directory_policies(
                 step_name="kopia_snapshot",
                 message="Starting directory snapshot",
                 metadata={
-                    "backup_config_dir_id": directory.id,
+                    "backup_config_dir_id": directory_id,
                     "source_path": source_path,
                     "object_name": source_path,
                 },
@@ -866,7 +870,7 @@ def _prepare_directory_policies(
         if execution_target.root_path and not bt._is_subpath(execution_target.root_path, agent_source_path):
             record_source_snapshot_directory_result(
                 source_snapshot=source_snapshot,
-                backup_config_dir_id=directory.id,
+                backup_config_dir_id=directory_id,
                 source_path=source_path,
                 path_type=path_type,
                 display_name=directory.display_name,
@@ -2048,10 +2052,14 @@ def advance_backup(
 
     try:
         config = get_backup_config_for_snapshot(source_snapshot=source_snapshot)
-        directories = backup_config_directories(
-            backup_config_id=config.id,
-            organization_id=organization_id,
-        )
+        directories = snapshot_config_directories(source_snapshot=source_snapshot)
+        if not directories:
+            # Legacy snapshots created before directory configuration was
+            # captured fall back to the current config for compatibility.
+            directories = backup_config_directories(
+                backup_config_id=config.id,
+                organization_id=organization_id,
+            )
         if not directories:
             raise ValidationError({"directories": "Backup config has no directories."})
         execution_target = bt._resolve_execution_target(source_snapshot=source_snapshot)
@@ -2238,7 +2246,10 @@ def advance_backup(
     ).exists()
 
     for index, directory in enumerate(directories, start=1):
-        source_path = bt._clean_path(directory.path)
+        directory_id = int(getattr(directory, "backup_config_dir_id", directory.id))
+        source_path = bt._clean_path(
+            getattr(directory, "source_path", None) or directory.path
+        )
         path_type = str(getattr(directory, "path_type", "") or "unknown")
         agent_source_path = source_path
         if execution_target.root_path:
@@ -2248,7 +2259,7 @@ def advance_backup(
 
         directory_row = BackupSourceSnapshotDirectory.objects.filter(
             source_snapshot=source_snapshot,
-            backup_config_dir_id=directory.id,
+            backup_config_dir_id=directory_id,
         ).first()
 
         if directory_row is not None and directory_row.status in _DIRECTORY_TERMINAL:
@@ -2257,7 +2268,7 @@ def advance_backup(
         if serial and prior_failed:
             record_source_snapshot_directory_result(
                 source_snapshot=source_snapshot,
-                backup_config_dir_id=directory.id,
+                backup_config_dir_id=directory_id,
                 source_path=source_path,
                 path_type=path_type,
                 display_name=directory.display_name,
@@ -2272,7 +2283,7 @@ def advance_backup(
         if execution_target.root_path and not bt._is_subpath(execution_target.root_path, agent_source_path):
             record_source_snapshot_directory_result(
                 source_snapshot=source_snapshot,
-                backup_config_dir_id=directory.id,
+                backup_config_dir_id=directory_id,
                 source_path=source_path,
                 path_type=path_type,
                 display_name=directory.display_name,
@@ -2287,7 +2298,7 @@ def advance_backup(
         if directory_row is None:
             directory_row = record_source_snapshot_directory_result(
                 source_snapshot=source_snapshot,
-                backup_config_dir_id=directory.id,
+                backup_config_dir_id=directory_id,
                 source_path=source_path,
                 path_type=path_type,
                 display_name=directory.display_name,
@@ -2299,7 +2310,7 @@ def advance_backup(
                 step_name="kopia_snapshot",
                 message="Starting directory snapshot",
                 metadata={
-                    "backup_config_dir_id": directory.id,
+                    "backup_config_dir_id": directory_id,
                     "source_path": source_path,
                     "object_name": source_path,
                 },
