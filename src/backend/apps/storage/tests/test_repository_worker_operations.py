@@ -17,6 +17,7 @@ from apps.storage.services.internal.repository_credential_rotation import (
 from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
 )
+from apps.storage.services.internal.kopia_cli import KopiaRepositoryBusyError
 from apps.task.models import Task, TaskStep
 
 
@@ -99,6 +100,30 @@ class RepositoryWorkerOperationTests(TestCase):
         self.assertEqual(repository_task.task.status, Task.Status.FAILED)
         self.assertNotIn("old-secret", repository_task.task.error_message)
         self.assertIn("******", repository_task.task.error_message)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_check.probe_repository_health"
+    )
+    def test_manual_check_does_not_mark_busy_repository_offline(self, probe_health):
+        repository = self._s3_repository()
+        repository_task = enqueue_repository_check_task(repository=repository)
+        wrapped = RepositoryInitializationError("repository busy")
+        wrapped.__cause__ = KopiaRepositoryBusyError("repository busy")
+        probe_health.side_effect = wrapped
+
+        result = run_repository_check_task(repository_task_id=repository_task.id)
+
+        repository.refresh_from_db()
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "STORAGE.REPOSITORY_BUSY")
+        self.assertEqual(repository.health, Repository.Health.ONLINE)
+        self.assertIsNone(repository.last_checked_at)
+        self.assertEqual(repository_task.task.status, Task.Status.FAILED)
+        self.assertEqual(
+            repository_task.task.error_code,
+            "STORAGE.REPOSITORY_BUSY",
+        )
 
     def test_repeated_manual_check_reuses_the_active_task(self):
         repository = self._s3_repository()

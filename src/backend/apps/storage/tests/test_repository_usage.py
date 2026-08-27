@@ -15,6 +15,7 @@ from apps.storage.repositories.models import (
     RepositoryLocationClaim,
     RepositoryUsageShard,
 )
+from apps.storage.services.internal.kopia_cli import KopiaRepositoryBusyError
 from apps.storage.services.internal.nas_repository import nas_agent_repository_subdir
 from apps.storage.services.internal.repository_location import (
     mark_repository_location_owned,
@@ -26,6 +27,7 @@ from apps.storage.services.internal.repository_usage import (
     assert_repository_quota_available,
     capacity_bytes_from_config,
     kopia_estimated_usage_from_packed,
+    kopia_repository_estimated_usage_bytes,
     parse_kopia_content_stats,
     sync_all_repositories,
     sync_organization_repositories,
@@ -271,6 +273,20 @@ class RepositoryUsageTests(TestCase):
     def test_kopia_estimated_usage_from_packed(self):
         self.assertEqual(kopia_estimated_usage_from_packed(100), 105)
 
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage.connect_s3_repository",
+        side_effect=KopiaRepositoryBusyError("repository busy"),
+    )
+    def test_s3_usage_preserves_repository_busy_signal(self, _connect):
+        repository = Repository(
+            id=17,
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+        )
+
+        with self.assertRaises(KopiaRepositoryBusyError):
+            kopia_repository_estimated_usage_bytes(repository)
+
     def test_parse_agent_repo_status_result(self):
         estimated, total, mount_point, usage_error, capacity_error = _parse_agent_repo_status_result(
             {
@@ -514,6 +530,84 @@ class RepositoryUsageTests(TestCase):
         repo.refresh_from_db()
         self.assertEqual(repo.estimated_usage_bytes, 128)
         self.assertEqual(repo.usage_probe_status, Repository.MetricProbeStatus.FAILED)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage."
+        "kopia_repository_estimated_usage_bytes",
+        side_effect=KopiaRepositoryBusyError("repository busy"),
+    )
+    def test_batch_sync_defers_busy_s3_repository_without_changing_metrics(
+        self,
+        _kopia_estimated,
+    ):
+        repo = Repository.objects.create(
+            organization_id=1,
+            name="s3-busy",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            estimated_usage_bytes=128,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            s3_platform=Repository.S3Platform.AWS,
+            s3_bucket="bucket",
+        )
+
+        result = sync_all_repositories(force=True)
+
+        repo.refresh_from_db()
+        self.assertEqual(result["repositories_deferred"], 1)
+        self.assertEqual(result["deferred_repository_ids"], [repo.id])
+        self.assertEqual(result["repositories_failed"], 0)
+        self.assertEqual(repo.estimated_usage_bytes, 128)
+        self.assertEqual(
+            repo.usage_probe_status,
+            Repository.MetricProbeStatus.SUCCESS,
+        )
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage."
+        "kopia_repository_estimated_usage_bytes",
+        return_value=256,
+    )
+    def test_batch_sync_stops_at_repository_boundary_when_lease_is_lost(
+        self,
+        _kopia_estimated,
+    ):
+        first = Repository.objects.create(
+            organization_id=1,
+            name="s3-first",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.AWS,
+            s3_bucket="first-bucket",
+        )
+        second = Repository.objects.create(
+            organization_id=1,
+            name="s3-second",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.AWS,
+            s3_bucket="second-bucket",
+        )
+        should_continue = mock.Mock(side_effect=[True, False])
+
+        result = sync_all_repositories(
+            force=True,
+            should_continue=should_continue,
+        )
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertTrue(result["stopped_early"])
+        self.assertEqual(result["repositories_attempted"], 1)
+        self.assertEqual(result["repositories_synced"], 1)
+        self.assertEqual(first.usage_probe_status, Repository.MetricProbeStatus.SUCCESS)
+        self.assertNotEqual(
+            second.usage_probe_status,
+            Repository.MetricProbeStatus.SUCCESS,
+        )
 
     @mock.patch(
         "apps.storage.services.internal.repository_usage.kopia_repository_estimated_usage_bytes",

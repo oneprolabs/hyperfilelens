@@ -28,6 +28,7 @@ from apps.storage.services.interface import check_repository
 from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
 )
+from apps.storage.services.internal.kopia_cli import KopiaRepositoryBusyError
 from apps.storage.services.internal.nas_repository import (
     NASRepositoryError,
     check_proxy_nas_repository,
@@ -174,6 +175,14 @@ class RepositoryHealthTaskTests(TestCase):
             key="health-task-org",
             name="Health Task Org",
         )
+        self.background_lease = mock.MagicMock(valid=True)
+        self.background_lease.__enter__.return_value = self.background_lease
+        background_capacity_patcher = mock.patch(
+            "apps.storage.tasks.try_acquire_background_storage_capacity",
+            return_value=self.background_lease,
+        )
+        self.background_capacity = background_capacity_patcher.start()
+        self.addCleanup(background_capacity_patcher.stop)
 
     def _repository(self, name: str, repo_type: str, **kwargs) -> Repository:
         return Repository.objects.create(
@@ -234,6 +243,85 @@ class RepositoryHealthTaskTests(TestCase):
 
         self.assertTrue(result["locked"])
         cache_delete.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.tasks._controller_maintenance_is_running",
+        return_value=True,
+    )
+    @mock.patch("apps.storage.tasks.cache.delete")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=True)
+    def test_s3_health_defers_while_controller_maintenance_is_running(
+        self,
+        _cache_add,
+        _cache_delete,
+        _maintenance_running,
+    ):
+        repository = self._repository(
+            "s3-maintenance",
+            Repository.Type.S3,
+            s3_bucket="bucket",
+            health_failures=1,
+        )
+
+        result = check_storage_repository_health.run(repository_id=repository.id)
+
+        repository.refresh_from_db()
+        self.assertEqual(result["probe_status"], "deferred_maintenance")
+        self.assertEqual(repository.health, Repository.Health.ONLINE)
+        self.assertEqual(repository.health_failures, 1)
+        self.background_capacity.assert_not_called()
+
+    @mock.patch("apps.storage.tasks.probe_repository_health")
+    @mock.patch("apps.storage.tasks.cache.delete")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=True)
+    def test_s3_health_defers_when_background_capacity_is_full(
+        self,
+        _cache_add,
+        _cache_delete,
+        probe,
+    ):
+        repository = self._repository(
+            "s3-capacity",
+            Repository.Type.S3,
+            s3_bucket="bucket",
+            health_failures=1,
+        )
+        self.background_capacity.return_value = None
+
+        result = check_storage_repository_health.run(repository_id=repository.id)
+
+        repository.refresh_from_db()
+        self.assertEqual(
+            result["probe_status"],
+            "deferred_background_capacity",
+        )
+        self.assertEqual(repository.health_failures, 1)
+        probe.assert_not_called()
+
+    @mock.patch("apps.storage.tasks.probe_repository_health")
+    @mock.patch("apps.storage.tasks.cache.delete")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=True)
+    def test_s3_health_treats_busy_kopia_config_as_deferred(
+        self,
+        _cache_add,
+        _cache_delete,
+        probe,
+    ):
+        repository = self._repository(
+            "s3-busy",
+            Repository.Type.S3,
+            s3_bucket="bucket",
+            health_failures=1,
+        )
+        wrapped = RepositoryInitializationError("repository busy")
+        wrapped.__cause__ = KopiaRepositoryBusyError("repository busy")
+        probe.side_effect = wrapped
+
+        result = check_storage_repository_health.run(repository_id=repository.id)
+
+        repository.refresh_from_db()
+        self.assertEqual(result["probe_status"], "deferred_repository_busy")
+        self.assertEqual(repository.health_failures, 1)
 
     @mock.patch("apps.storage.tasks.dispatch_automatic_repository_observation")
     @mock.patch("apps.storage.tasks.cache.delete")
@@ -403,6 +491,7 @@ class RepositoryHealthTaskTests(TestCase):
         self.assertEqual(result["probe_status"], "dispatched")
         self.assertEqual(result["node_task_id"], "node-task-id")
         synchronous_probe.assert_not_called()
+        self.background_capacity.assert_not_called()
 
     @mock.patch("apps.storage.tasks.cache.delete")
     @mock.patch("apps.storage.tasks.cache.add", return_value=True)
@@ -441,6 +530,7 @@ class RepositoryHealthTaskTests(TestCase):
         self.assertEqual(repository.config, original_config)
         self.assertEqual(repository.capacity_bytes, 1000)
         self.assertEqual(repository.estimated_usage_bytes, 250)
+        self.background_lease.__exit__.assert_called_once()
 
     @mock.patch("apps.storage.tasks.dispatch_repository_health_checks.apply_async")
     def test_worker_ready_enqueues_startup_health_dispatch(self, apply_async):

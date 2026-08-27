@@ -25,6 +25,13 @@ REPOSITORY_HEALTH_INTERVAL_ENV = "STORAGE_REPOSITORY_HEALTH_INTERVAL_SECONDS"
 DEFAULT_REPOSITORY_HEALTH_INTERVAL_SECONDS = 300
 MIN_REPOSITORY_HEALTH_INTERVAL_SECONDS = 60
 
+CELERY_WORKER_CONCURRENCY_ENV = "CELERY_WORKER_CONCURRENCY"
+BACKGROUND_STORAGE_CONCURRENCY_ENV = "CELERY_BACKGROUND_STORAGE_CONCURRENCY"
+DEFAULT_CELERY_WORKER_CONCURRENCY = 4
+
+KOPIA_CONFIG_LOCK_TIMEOUT_ENV = "HFL_KOPIA_CONFIG_LOCK_TIMEOUT_SECONDS"
+DEFAULT_KOPIA_CONFIG_LOCK_TIMEOUT_SECONDS = 10
+
 PROVIDER_CATALOG_MAX_BYTES_ENV = "STORAGE_PROVIDER_CATALOG_MAX_BYTES"
 PROVIDER_CATALOG_MAX_DEPTH_ENV = "STORAGE_PROVIDER_CATALOG_MAX_DEPTH"
 PROVIDER_CATALOG_MAX_PROVIDERS_ENV = "STORAGE_PROVIDER_CATALOG_MAX_PROVIDERS"
@@ -74,6 +81,41 @@ def repository_health_interval_seconds() -> int:
             f"{MIN_REPOSITORY_HEALTH_INTERVAL_SECONDS} seconds."
         )
     return value
+
+
+def background_storage_concurrency() -> int:
+    """Return the shared Controller background-storage execution budget."""
+
+    worker_concurrency = _positive_int_setting(
+        CELERY_WORKER_CONCURRENCY_ENV,
+        DEFAULT_CELERY_WORKER_CONCURRENCY,
+    )
+    if worker_concurrency < 2:
+        raise ImproperlyConfigured(
+            f"{CELERY_WORKER_CONCURRENCY_ENV} must be at least 2 when "
+            "background storage work is enabled."
+        )
+    default_background = max(1, worker_concurrency // 2)
+    background_concurrency = _positive_int_setting(
+        BACKGROUND_STORAGE_CONCURRENCY_ENV,
+        default_background,
+    )
+    if background_concurrency >= worker_concurrency:
+        raise ImproperlyConfigured(
+            f"{BACKGROUND_STORAGE_CONCURRENCY_ENV} must be less than "
+            f"{CELERY_WORKER_CONCURRENCY_ENV}: background="
+            f"{background_concurrency}, worker={worker_concurrency}."
+        )
+    return background_concurrency
+
+
+def kopia_config_lock_timeout_seconds() -> int:
+    """Return the finite wait for one Controller-local Kopia config lock."""
+
+    return _positive_int_setting(
+        KOPIA_CONFIG_LOCK_TIMEOUT_ENV,
+        DEFAULT_KOPIA_CONFIG_LOCK_TIMEOUT_SECONDS,
+    )
 
 
 def _positive_int_setting(name: str, default: int) -> int:

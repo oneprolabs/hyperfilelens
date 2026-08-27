@@ -12,12 +12,18 @@ class StorageConfig(AppConfig):
 
     def ready(self) -> None:
         # Fail fast on invalid storage task configuration.
-        from apps.storage.conf import repository_health_interval_seconds
+        from apps.storage.conf import (
+            background_storage_concurrency,
+            kopia_config_lock_timeout_seconds,
+            repository_health_interval_seconds,
+        )
         from apps.storage.services.internal.repository_operations import (
             maintenance_settings,
         )
 
         maintenance_settings()
+        background_storage_concurrency()
+        kopia_config_lock_timeout_seconds()
         repository_health_interval_seconds()
 
         # The release baseline must be valid before this process serves requests.

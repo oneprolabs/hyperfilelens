@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from apps.storage.repositories.models import Repository
+from apps.storage.conf import kopia_config_lock_timeout_seconds
 from apps.storage.services.internal.s3_client import endpoint_for_kopia
 from apps.storage.services.internal.repository_secrets import (
     resolve_repository_secrets,
@@ -36,6 +37,10 @@ class KopiaCliError(Exception):
 
 
 class KopiaRepositoryAlreadyExistsError(KopiaCliError):
+    pass
+
+
+class KopiaRepositoryBusyError(KopiaCliError):
     pass
 
 
@@ -542,7 +547,19 @@ def _repository_config_lock(config_file: Path):
     lock_file = config_file.parent / ".repository.lock"
     lock_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with lock_file.open("a+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        timeout_seconds = kopia_config_lock_timeout_seconds()
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise KopiaRepositoryBusyError(
+                        "Another Controller operation is still using this repository. "
+                        "Please retry after it finishes."
+                    ) from exc
+                time.sleep(0.1)
         handle.truncate(0)
         handle.write(f"{os.getpid()}\n")
         handle.flush()

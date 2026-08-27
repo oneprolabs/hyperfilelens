@@ -20,6 +20,10 @@ from apps.storage.repositories.models import (
     RepositoryExecutionTarget,
     RepositoryTask,
 )
+from apps.storage.services.internal.background_capacity import (
+    BackgroundStorageLease,
+    try_acquire_background_storage_capacity,
+)
 from apps.storage.services.internal.repository_location import (
     invalidate_repository_location_ownership,
 )
@@ -41,6 +45,7 @@ from apps.storage.services.internal.kopia_cli import (
     KopiaCliError,
     KopiaControlDecision,
     KopiaExecutionLeaseLost,
+    KopiaRepositoryBusyError,
     run_maintenance,
 )
 from apps.storage.services.internal.repository_access import repository_payload_for_node
@@ -132,7 +137,7 @@ def enqueue_startup_repository_health_checks(sender=None, **_kwargs) -> None:
 @shared_task(name="apps.storage.tasks.reconcile_storage_repositories")
 @logged_celery_task(
     name="apps.storage.tasks.reconcile_storage_repositories",
-    trace_keys=("organization_id", "repo_type", "limit", "force"),
+    trace_keys=("organization_id", "repo_type", "limit", "force", "background"),
 )
 def reconcile_storage_repositories(
     *,
@@ -142,29 +147,67 @@ def reconcile_storage_repositories(
     limit: int = 200,
     force: bool = False,
     stale_after_seconds: int | None = 900,
+    background: bool = False,
 ):
     """Refresh repository capacity and usage metrics for dashboards and alerts."""
-    recorded_at = timezone.now()
-    if organization_id is not None:
-        result = sync_organization_repositories(
-            organization_id=int(organization_id),
-            repository_ids=repository_ids or None,
+    background_lease = None
+    if background:
+        background_lease = try_acquire_background_storage_capacity(
+            operation="repository-usage-sync",
+            identity=str(uuid4()),
+        )
+        if background_lease is None:
+            return {
+                "repositories_scanned": 0,
+                "repositories_synced": 0,
+                "repositories_failed": 0,
+                "failed_repository_ids": [],
+                "repositories_deferred": 0,
+                "deferred_repository_ids": [],
+                "stopped_early": False,
+                "snapshots_upserted": 0,
+                "snapshots_marked_deleted": 0,
+                "observations_dispatched": 0,
+                "status": "deferred_background_capacity",
+            }
+
+    def synchronize() -> dict:
+        recorded_at = timezone.now()
+        if organization_id is not None:
+            return sync_organization_repositories(
+                organization_id=int(organization_id),
+                repository_ids=repository_ids or None,
+                repo_type=repo_type,
+                limit=limit,
+                force=force,
+                stale_after_seconds=stale_after_seconds,
+                recorded_at=recorded_at,
+                async_agent_probes=True,
+                should_continue=(
+                    (lambda: background_lease.valid)
+                    if background_lease is not None
+                    else None
+                ),
+            )
+        return sync_all_repositories(
             repo_type=repo_type,
             limit=limit,
             force=force,
             stale_after_seconds=stale_after_seconds,
             recorded_at=recorded_at,
             async_agent_probes=True,
+            should_continue=(
+                (lambda: background_lease.valid)
+                if background_lease is not None
+                else None
+            ),
         )
+
+    if background_lease is None:
+        result = synchronize()
     else:
-        result = sync_all_repositories(
-            repo_type=repo_type,
-            limit=limit,
-            force=force,
-            stale_after_seconds=stale_after_seconds,
-            recorded_at=recorded_at,
-            async_agent_probes=True,
-        )
+        with background_lease:
+            result = synchronize()
     return {
         "repositories_scanned": result.get(
             "repositories_attempted", result.get("repositories_synced", 0)
@@ -172,6 +215,9 @@ def reconcile_storage_repositories(
         "repositories_synced": result.get("repositories_synced", 0),
         "repositories_failed": result.get("repositories_failed", 0),
         "failed_repository_ids": result.get("failed_repository_ids", []),
+        "repositories_deferred": result.get("repositories_deferred", 0),
+        "deferred_repository_ids": result.get("deferred_repository_ids", []),
+        "stopped_early": bool(result.get("stopped_early", False)),
         "snapshots_upserted": result.get("snapshots_upserted", 0),
         "snapshots_marked_deleted": 0,
         "observations_dispatched": result.get("observations_dispatched", 0),
@@ -250,6 +296,12 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                 "probe_status": "bound_node_offline",
                 "health_failures": repository.health_failures,
             }
+        if repository.repo_type == Repository.Type.S3:
+            if _controller_maintenance_is_running(repository.id):
+                return _deferred_repository_health_result(
+                    repository,
+                    probe_status="deferred_maintenance",
+                )
         try:
             node_tasks = dispatch_automatic_repository_observation(
                 repository=repository,
@@ -270,9 +322,29 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                 "node_task_ids": [str(node_task.id) for node_task in node_tasks],
                 "node_task_id": str(node_tasks[0].id) if node_tasks else "",
             }
+        background_lease = None
+        if repository.repo_type == Repository.Type.S3:
+            background_lease = try_acquire_background_storage_capacity(
+                operation="repository-health",
+                identity=str(repository.id),
+            )
+            if background_lease is None:
+                return _deferred_repository_health_result(
+                    repository,
+                    probe_status="deferred_background_capacity",
+                )
         try:
-            health = probe_repository_health(repository)
+            if background_lease is None:
+                health = probe_repository_health(repository)
+            else:
+                with background_lease:
+                    health = probe_repository_health(repository)
         except Exception as exc:
+            if _exception_chain_contains(exc, KopiaRepositoryBusyError):
+                return _deferred_repository_health_result(
+                    repository,
+                    probe_status="deferred_repository_busy",
+                )
             logger.warning(
                 "repository health check failed repository_id=%s retry_attempt=%s error_type=%s",
                 repository_id,
@@ -321,6 +393,42 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
         return {"repository_id": repository_id, "status": health}
     finally:
         cache.delete(lock_key)
+
+
+def _controller_maintenance_is_running(repository_id: int) -> bool:
+    return RepositoryTask.objects.filter(
+        repository_id=repository_id,
+        owner_type=RepositoryExecutionTarget.OwnerType.CONTROLLER,
+        operation_type__in=[
+            RepositoryTask.OperationType.MAINTENANCE_QUICK,
+            RepositoryTask.OperationType.MAINTENANCE_FULL,
+        ],
+        task__status=Task.Status.RUNNING,
+    ).exists()
+
+
+def _deferred_repository_health_result(
+    repository: Repository,
+    *,
+    probe_status: str,
+) -> dict:
+    return {
+        "repository_id": repository.id,
+        "status": repository.health,
+        "probe_status": probe_status,
+        "health_failures": repository.health_failures,
+    }
+
+
+def _exception_chain_contains(exc: Exception, expected_type: type[Exception]) -> bool:
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if isinstance(current, expected_type):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _record_repository_health_failure(
@@ -440,12 +548,35 @@ def reconcile_repository_operations(*, limit: int = 100):
 def execute_repository_operation(*, repository_task_id: int):
     task_identity = (
         RepositoryTask.objects.filter(pk=repository_task_id)
-        .values_list("owner_type", "operation_type")
+        .values_list("owner_type", "operation_type", "task__status")
         .first()
     )
     if task_identity is None:
         raise RepositoryTask.DoesNotExist(repository_task_id)
-    owner_type, operation_type = task_identity
+    owner_type, operation_type, task_status = task_identity
+    is_controller_maintenance = (
+        owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER
+        and operation_type
+        in {
+            RepositoryTask.OperationType.MAINTENANCE_QUICK,
+            RepositoryTask.OperationType.MAINTENANCE_FULL,
+        }
+    )
+    if is_controller_maintenance and task_status == Task.Status.PENDING:
+        background_lease = try_acquire_background_storage_capacity(
+            operation="repository-maintenance",
+            identity=str(repository_task_id),
+        )
+        if background_lease is None:
+            return {
+                "status": "deferred_background_capacity",
+                "repository_task_id": repository_task_id,
+            }
+        with background_lease:
+            return _execute_repository_operation(
+                repository_task_id=repository_task_id,
+                background_lease=background_lease,
+            )
     is_cleanup = operation_type in {
         RepositoryTask.OperationType.CLEANUP_TARGET,
         RepositoryTask.OperationType.CLEANUP_REPOSITORY,
@@ -487,7 +618,11 @@ def execute_repository_operation(*, repository_task_id: int):
             cache.delete(lock_key)
 
 
-def _execute_repository_operation(*, repository_task_id: int):
+def _execute_repository_operation(
+    *,
+    repository_task_id: int,
+    background_lease: BackgroundStorageLease | None = None,
+):
     repository_task = RepositoryTask.objects.select_related(
         "task", "repository", "execution_target"
     ).get(pk=repository_task_id)
@@ -590,6 +725,7 @@ def _execute_repository_operation(*, repository_task_id: int):
             repository_task,
             allow_dispatch=started_now,
             execution_token=execution_token,
+            background_lease=background_lease,
         )
         if operation.waiting:
             return {
@@ -666,6 +802,27 @@ def _execute_repository_operation(*, repository_task_id: int):
             "repository_task_id": repository_task.id,
         }
     except KopiaExecutionLeaseLost:
+        if background_lease is not None and not background_lease.valid:
+            logger.warning(
+                "repository operation background capacity lease lost "
+                "repository_task_id=%s task_uuid=%s",
+                repository_task.id,
+                task.task_uuid,
+            )
+            failed_task = finalize_repository_operation(
+                repository_task_id=repository_task.id,
+                succeeded=False,
+                error_code="BACKGROUND_STORAGE_CAPACITY_LOST",
+                error_message=(
+                    "Controller background storage capacity coordination was lost. "
+                    "The maintenance process was stopped and will be retried."
+                ),
+                expected_execution_token=execution_token,
+            )
+            return {
+                "status": failed_task.status,
+                "repository_task_id": repository_task.id,
+            }
         logger.warning(
             "repository operation execution lease lost repository_task_id=%s task_uuid=%s",
             repository_task.id,
@@ -881,6 +1038,7 @@ def _execute_maintenance(
     *,
     allow_dispatch: bool = True,
     execution_token: UUID | None = None,
+    background_lease: BackgroundStorageLease | None = None,
 ) -> RepositoryAgentOperationResult:
     if repository_task.operation_type not in {
         RepositoryTask.OperationType.MAINTENANCE_QUICK,
@@ -898,6 +1056,10 @@ def _execute_maintenance(
             raise KopiaExecutionLeaseLost(
                 "Controller repository maintenance has no execution lease"
             )
+        if background_lease is None or not background_lease.valid:
+            raise KopiaExecutionLeaseLost(
+                "Controller repository maintenance has no background capacity lease"
+            )
         result = run_maintenance(
             repository_task.repository,
             full=full,
@@ -907,8 +1069,13 @@ def _execute_maintenance(
                 repository_task_id=repository_task.id,
                 execution_token=execution_token,
                 heartbeat_interval_seconds=settings.heartbeat_interval_seconds,
+                background_lease=background_lease,
             ),
         )
+        if not background_lease.valid:
+            raise KopiaExecutionLeaseLost(
+                "Controller repository maintenance background capacity lease was lost"
+            )
         return RepositoryAgentOperationResult(
             waiting=False,
             node_task_id=repository_task.remote_task_id,
@@ -973,11 +1140,14 @@ def _controller_execution_control(
     repository_task_id: int,
     execution_token: UUID,
     heartbeat_interval_seconds: int,
+    background_lease: BackgroundStorageLease,
 ):
     next_heartbeat = time.monotonic() + heartbeat_interval_seconds
 
     def control() -> KopiaControlDecision:
         nonlocal next_heartbeat
+        if not background_lease.valid:
+            return KopiaControlDecision.LOST_LEASE
         state = (
             RepositoryTask.objects.filter(
                 pk=repository_task_id,
