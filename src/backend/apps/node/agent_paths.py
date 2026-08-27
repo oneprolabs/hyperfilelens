@@ -6,6 +6,7 @@ DEFAULT_AGENT_DATA_DIR = "/opt/hyperfilelens-agent"
 
 MOUNTS_DIR = "mounts"
 MOUNT_REPOSITORIES_DIR = "repositories"
+MOUNT_RESTORES_DIR = "restores"
 MOUNT_SOURCES_DIR = "sources"
 MOUNT_CUSTOM_DIR = "custom"
 MOUNT_VALIDATIONS_DIR = "validations"
@@ -32,10 +33,20 @@ def repository_mount_point(
     return f"{agent_mounts_dir(data_dir)}/{MOUNT_REPOSITORIES_DIR}/{leaf}"
 
 
+def restore_repository_mount_point(
+    repository_id: int,
+    *,
+    node_id: int,
+    data_dir: str | None = None,
+) -> str:
+    """Return the temporary NAS repository mount used by restore execution."""
+
+    leaf = f"repo-{int(repository_id)}-node-{int(node_id)}"
+    return f"{agent_mounts_dir(data_dir)}/{MOUNT_RESTORES_DIR}/{leaf}"
+
+
 def source_mount_point(resource_id: int, *, data_dir: str | None = None) -> str:
-    return (
-        f"{agent_mounts_dir(data_dir)}/{MOUNT_SOURCES_DIR}/source-{int(resource_id)}"
-    )
+    return f"{agent_mounts_dir(data_dir)}/{MOUNT_SOURCES_DIR}/source-{int(resource_id)}"
 
 
 def validation_mount_point(

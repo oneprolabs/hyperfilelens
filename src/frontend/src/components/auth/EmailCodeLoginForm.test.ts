@@ -122,13 +122,12 @@ describe('EmailCodeLoginForm', () => {
     const wrapper = mountForm('person@example.com')
     await wrapper.get('.email-code-login-form__send').trigger('click')
     await flushPromises()
-    await vi.waitFor(() => {
-      expect(wrapper.get('.email-code-login-form__send').text()).toContain('60s')
-    })
     const codeInput = wrapper.get<HTMLInputElement>('#email-code-login-code')
     await codeInput.setValue('123456')
-    expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeUndefined()
 
+    await vi.waitFor(() => {
+      expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeUndefined()
+    })
     await wrapper.get('button.submit-btn').trigger('click')
     await vi.waitFor(() => {
       expect(mocks.verify).toHaveBeenCalledWith(

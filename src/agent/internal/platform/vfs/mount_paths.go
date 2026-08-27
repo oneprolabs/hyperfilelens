@@ -9,6 +9,7 @@ import (
 const (
 	dirMounts            = "mounts"
 	mountRepositoriesDir = "repositories"
+	mountRestoresDir     = "restores"
 	mountSourcesDir      = "sources"
 	mountCustomDir       = "custom"
 )
@@ -21,6 +22,11 @@ func AgentMountsDir(dataRoot string) string {
 // MountRepositoriesDir is AgentRoot/mounts/repositories.
 func MountRepositoriesDir(dataRoot string) string {
 	return filepath.Join(AgentMountsDir(dataRoot), mountRepositoriesDir)
+}
+
+// MountRestoresDir is AgentRoot/mounts/restores.
+func MountRestoresDir(dataRoot string) string {
+	return filepath.Join(AgentMountsDir(dataRoot), mountRestoresDir)
 }
 
 // MountSourcesDir is AgentRoot/mounts/sources.
@@ -40,6 +46,14 @@ func RepositoryMountPoint(dataRoot string, repositoryID int64, nodeID int64) str
 		leaf = fmt.Sprintf("%s-node-%d", leaf, nodeID)
 	}
 	return filepath.Join(MountRepositoriesDir(dataRoot), leaf)
+}
+
+// RestoreRepositoryMountPoint returns the canonical temporary restore mount path.
+func RestoreRepositoryMountPoint(dataRoot string, repositoryID int64, nodeID int64) string {
+	return filepath.Join(
+		MountRestoresDir(dataRoot),
+		fmt.Sprintf("repo-%d-node-%d", repositoryID, nodeID),
+	)
 }
 
 // SourceMountPoint returns the canonical source mount path.

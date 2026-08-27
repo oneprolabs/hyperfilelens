@@ -40,11 +40,32 @@ describe('mobile header utilities', () => {
     expect(languageSwitcher).toMatch(
       /\.language-switcher--navigation \.language-switcher__trigger,[\s\S]*?border-color:\s*var\(--tz-border/,
     )
+    expect(languageSwitcher).toContain(':title="ariaLabel"')
     expect(login).toMatch(
       /\.login-box-title\s*{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto;[\s\S]*?align-items:\s*center/,
     )
     expect(register).toMatch(
       /\.register-box-title\s*{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto;[\s\S]*?align-items:\s*center/,
+    )
+  })
+
+  it('compacts only the interactive navigation language switcher below 1440px', () => {
+    expect(languageSwitcher).toMatch(
+      /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.language-switcher--navigation \.language-switcher__trigger\s*\{[\s\S]*?width:\s*32px;[\s\S]*?justify-content:\s*center;[\s\S]*?padding:\s*0;/,
+    )
+    expect(languageSwitcher).toMatch(
+      /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.language-switcher__current,[\s\S]*?\.language-switcher--navigation \.language-switcher__trigger \.language-switcher__chevron\s*\{[\s\S]*?display:\s*none;/,
+    )
+  })
+
+  it('uses consistent hover and focus feedback for compact utility icons', () => {
+    expect(topNav).toContain('<div class="alerts-btn">')
+    expect(topNav).not.toContain('<div class="icon-btn alerts-btn">')
+    expect(languageSwitcher).toMatch(
+      /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.language-switcher--navigation \.language-switcher__trigger:hover,[\s\S]*?background:\s*var\(--icon-btn-hover-bg,[\s\S]*?color:\s*var\(--icon-btn-hover-color/,
+    )
+    expect(languageSwitcher).toMatch(
+      /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.language-switcher--navigation \.language-switcher__globe\s*\{[\s\S]*?width:\s*18px;[\s\S]*?height:\s*18px;[\s\S]*?opacity:\s*1;/,
     )
   })
 

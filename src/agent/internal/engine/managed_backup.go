@@ -444,7 +444,11 @@ func (e *Engine) repositoryConfigPath(spec repositorySpec) string {
 			filename = fmt.Sprintf("server-%s.config", token)
 		}
 	} else if spec.Type == "nas" && spec.ID > 0 && strings.TrimSpace(spec.Subdir) != "" {
-		filename = fmt.Sprintf("repo-%d-nas-%s.config", spec.ID, repositoryNamespaceToken(spec.Subdir))
+		namespace := strings.TrimSpace(spec.Subdir)
+		if spec.TargetNAS != nil {
+			namespace += "|" + strings.TrimSpace(spec.TargetNAS.MountPoint)
+		}
+		filename = fmt.Sprintf("repo-%d-nas-%s.config", spec.ID, repositoryNamespaceToken(namespace))
 	} else if spec.ID > 0 {
 		filename = fmt.Sprintf("repo-%d.config", spec.ID)
 	}
@@ -517,10 +521,21 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	mode repositoryPrepareMode,
 ) (string, map[string]string, map[string]any, repositorySpec, string) {
 	allowOwnershipAdoption := false
+	skipOwnershipCheck := false
 	repairMount := false
 	if value, present := p.Extra["allow_ownership_adoption"]; present {
 		if parsed, valid := payloadBoolValue(value); valid {
 			allowOwnershipAdoption = parsed
+		}
+	}
+	if value, present := p.Extra["skip_ownership_check"]; present {
+		if parsed, valid := payloadBoolValue(value); valid {
+			// This relaxation is reserved for the restore target's temporary
+			// read-only probe.  Initialization and ordinary health/cleanup
+			// operations must retain the ownership boundary.
+			probe := stringValue(p.Extra["probe"])
+			skipOwnershipCheck = parsed && mode == repositoryPrepareConnect &&
+				(probe == "restore_target_validation" || probe == "restore_execution")
 		}
 	}
 	if value, present := p.Extra["repair_mount"]; present {
@@ -585,7 +600,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		// modify whatever currently appears at the NAS path; the durable marker
 		// is the physical boundary.  Initialization is different: it owns the
 		// empty path only after the write precheck below succeeds.
-		if mode == repositoryPrepareConnect && spec.Ownership != nil && !allowOwnershipAdoption {
+		if mode == repositoryPrepareConnect && spec.Ownership != nil && !allowOwnershipAdoption && !skipOwnershipCheck {
 			if ownershipErr := verifyFilesystemRepositoryOwnership(spec, false); ownershipErr != nil {
 				return "", nil, map[string]any{
 					"error_code": "REPOSITORY_OWNERSHIP_INVALID",
@@ -659,7 +674,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		"repository_create":  nil,
 		"repository_connect": nil,
 	}
-	if spec.Type == "s3" && mode != repositoryPrepareInitialize {
+	if spec.Type == "s3" && mode != repositoryPrepareInitialize && !skipOwnershipCheck {
 		client, ownershipErr := newS3CleanupClient(spec)
 		if ownershipErr == nil {
 			ownershipErr = verifyS3RepositoryOwnership(ctx, client, spec)
@@ -670,7 +685,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		}
 		result["ownership_verified"] = true
 	}
-	if spec.Type != "s3" && spec.Ownership != nil {
+	if spec.Type != "s3" && spec.Ownership != nil && !skipOwnershipCheck {
 		var ownershipErr error
 		if mode == repositoryPrepareConnect && !allowOwnershipAdoption {
 			ownershipErr = verifyFilesystemRepositoryOwnership(spec, false)
@@ -739,7 +754,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	} else {
 		if _, statErr := os.Stat(configFile); statErr == nil {
 			if _, statusErr := runStatus("status_first"); statusErr == nil {
-				if spec.Type != "s3" && spec.Ownership != nil {
+				if spec.Type != "s3" && spec.Ownership != nil && !skipOwnershipCheck {
 					if ownershipErr := verifyFilesystemRepositoryOwnership(spec, allowOwnershipAdoption); ownershipErr != nil {
 						return "", nil, result, spec, ownershipErr.Error()
 					}
@@ -791,7 +806,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		}
 	}
 	slog.Info("managed_repository", "event", "status_ok", "task_id", taskID, "repo_type", spec.Type)
-	if spec.Type != "s3" && spec.Ownership != nil {
+	if spec.Type != "s3" && spec.Ownership != nil && !skipOwnershipCheck {
 		if ownershipErr := verifyFilesystemRepositoryOwnership(spec, allowOwnershipAdoption); ownershipErr != nil {
 			return "", nil, result, spec, ownershipErr.Error()
 		}

@@ -37,8 +37,10 @@ from apps.storage.repositories.models import Repository, RepositoryLocationClaim
 from apps.storage.services.internal.nas_repository import (
     nas_agent_repository_subdir,
     nas_repository_payload,
+    nas_validation_mount_point,
 )
 from apps.storage.services.internal.repository_access import (
+    RepositoryAccess,
     explicit_repository_server_host,
     repository_uses_bound_proxy,
     resolve_repository_reader,
@@ -99,6 +101,11 @@ _NAS_WRITE_FAILURE_REMEDIATIONS = {
     "NAS_WRITE_PERMISSION_DENIED": "grant_write_access",
     "NAS_REPOSITORY_WRITE_DENIED": "grant_write_access",
 }
+_SMB_CHARSET_FAILURE_MARKERS = (
+    "iocharset=utf8",
+    "nls_utf8",
+    "mount error(79)",
+)
 
 
 @dataclass(frozen=True)
@@ -123,16 +130,28 @@ class _ResolvedAssignment:
     request: TargetValidationInput
     target: ExecutionTarget
     repository: Repository
+    repository_access: RepositoryAccess | None = None
+    probe: str = "backup_target_validation"
 
     @property
-    def route_key(self) -> tuple[int, int, str]:
+    def route_key(self) -> tuple[int, int, str, str]:
         endpoint = ""
         if self.repository.repo_type == Repository.Type.S3:
             endpoint = repository_data_endpoint(
                 self.repository.config,
                 endpoint_type=self.request.repository_endpoint_type,
             )
-        return (self.target.node.id, self.repository.id, endpoint)
+        access = self.repository_access
+        access_key = ""
+        if access is not None:
+            access_key = ":".join(
+                (
+                    str(access.node.id),
+                    str(access.mode),
+                    str(access.repository_payload.get("subdir") or ""),
+                )
+            )
+        return (self.target.node.id, self.repository.id, endpoint, access_key)
 
 
 @dataclass(frozen=True)
@@ -194,7 +213,7 @@ def validate_backup_targets(
         for item in sources
     ]
     results: dict[str, TargetValidationResult] = {}
-    routes: dict[tuple[int, int, str], list[_ResolvedAssignment]] = {}
+    routes: dict[tuple[int, int, str, str], list[_ResolvedAssignment]] = {}
 
     for item in inputs:
         try:
@@ -229,62 +248,14 @@ def validate_backup_targets(
         except Exception as exc:
             results[item.key] = _validation_exception_result(exc)
 
-    jobs: list[Callable[[], dict[tuple[int, int, str], TargetValidationResult]]] = []
-    proxy_groups: dict[int, dict[tuple[int, int, str], list[_ResolvedAssignment]]] = {}
-    for route_key, assignments in routes.items():
-        repository = assignments[0].repository
-        if repository_uses_bound_proxy(repository):
-            proxy_groups.setdefault(repository.id, {})[route_key] = assignments
-            continue
-        jobs.append(
-            _route_job(
-                route_key=route_key,
-                assignment=assignments[0],
-                request_id=request_id,
-                organization_id=organization_id,
-                registry=registry,
-                validation_deadline=validation_deadline,
-                cleanup_deadline=cleanup_deadline,
-            )
-        )
-    for grouped_routes in proxy_groups.values():
-        jobs.append(
-            _proxy_group_job(
-                routes=grouped_routes,
-                request_id=request_id,
-                organization_id=organization_id,
-                registry=registry,
-                validation_deadline=validation_deadline,
-                cleanup_deadline=cleanup_deadline,
-            )
-        )
-
-    route_results: dict[tuple[int, int, str], TargetValidationResult] = {}
-    executor = ThreadPoolExecutor(
-        max_workers=TARGET_VALIDATION_MAX_WORKERS,
-        thread_name_prefix="target-validation",
+    route_results = validate_resolved_repository_routes(
+        organization_id=organization_id,
+        routes=routes,
+        request_id=request_id,
+        registry=registry,
+        validation_deadline=validation_deadline,
+        cleanup_deadline=cleanup_deadline,
     )
-    futures: list[Future[dict[tuple[int, int, str], TargetValidationResult]]] = []
-    try:
-        futures = [executor.submit(_run_thread_job, job) for job in jobs]
-        remaining = max(0.0, cleanup_deadline - time.monotonic())
-        done, not_done = wait(futures, timeout=remaining)
-        if not_done:
-            registry.cancel_all()
-        for future in done:
-            try:
-                route_results.update(future.result())
-            except Exception as exc:
-                logger.warning(
-                    "backup target validation worker failed "
-                    "request_id=%s error_type=%s",
-                    request_id,
-                    type(exc).__name__,
-                )
-        for future in not_done:
-            future.cancel()
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
 
     timeout_result = TargetValidationResult(
         status="failed",
@@ -324,17 +295,151 @@ def validate_backup_targets(
     return {"status": overall, "results": ordered_results}
 
 
+def validate_resolved_repository_routes(
+    *,
+    organization_id: int,
+    routes: dict[tuple[int, int, str, str], list[_ResolvedAssignment]],
+    request_id: str,
+    registry: _ActivityRegistry,
+    validation_deadline: float,
+    cleanup_deadline: float,
+) -> dict[tuple[int, int, str, str], TargetValidationResult]:
+    """Validate already-resolved execution-node to repository routes."""
+
+    jobs: list[
+        Callable[[], dict[tuple[int, int, str, str], TargetValidationResult]]
+    ] = []
+    proxy_groups: dict[
+        tuple[int, int, str],
+        dict[tuple[int, int, str, str], list[_ResolvedAssignment]],
+    ] = {}
+    for route_key, assignments in routes.items():
+        assignment = assignments[0]
+        repository = assignments[0].repository
+        repository_access = assignment.repository_access
+        if (
+            repository_access is not None and repository_access.mode == "bound_proxy"
+        ) or (repository_access is None and repository_uses_bound_proxy(repository)):
+            access_group = (
+                repository.id,
+                repository_access.node.id if repository_access is not None else 0,
+                str(
+                    repository_access.repository_payload.get("subdir") or ""
+                    if repository_access is not None
+                    else ""
+                ),
+            )
+            proxy_groups.setdefault(access_group, {})[route_key] = assignments
+            continue
+        jobs.append(
+            _route_job(
+                route_key=route_key,
+                assignment=assignment,
+                request_id=request_id,
+                organization_id=organization_id,
+                registry=registry,
+                validation_deadline=validation_deadline,
+                cleanup_deadline=cleanup_deadline,
+            )
+        )
+    for grouped_routes in proxy_groups.values():
+        jobs.append(
+            _proxy_group_job(
+                routes=grouped_routes,
+                request_id=request_id,
+                organization_id=organization_id,
+                registry=registry,
+                validation_deadline=validation_deadline,
+                cleanup_deadline=cleanup_deadline,
+            )
+        )
+
+    route_results: dict[tuple[int, int, str, str], TargetValidationResult] = {}
+    executor = ThreadPoolExecutor(
+        max_workers=TARGET_VALIDATION_MAX_WORKERS,
+        thread_name_prefix="target-validation",
+    )
+    futures: list[Future[dict[tuple[int, int, str, str], TargetValidationResult]]] = []
+    try:
+        futures = [executor.submit(_run_thread_job, job) for job in jobs]
+        remaining = max(0.0, cleanup_deadline - time.monotonic())
+        done, not_done = wait(futures, timeout=remaining)
+        if not_done:
+            registry.cancel_all()
+        for future in done:
+            try:
+                route_results.update(future.result())
+            except Exception as exc:
+                logger.warning(
+                    "repository route validation worker failed "
+                    "request_id=%s error_type=%s",
+                    request_id,
+                    type(exc).__name__,
+                )
+        for future in not_done:
+            future.cancel()
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    return route_results
+
+
+def validate_restore_repository_assignments(
+    *,
+    organization_id: int,
+    assignments: list[
+        tuple[TargetValidationInput, ExecutionTarget, Repository, RepositoryAccess]
+    ],
+) -> dict[str, TargetValidationResult]:
+    """Validate snapshot repository access from restore execution nodes."""
+
+    started_at = time.monotonic()
+    validation_deadline = started_at + TARGET_VALIDATION_ACTIVE_SECONDS
+    cleanup_deadline = validation_deadline + TARGET_VALIDATION_CLEANUP_SECONDS
+    request_id = str(uuid.uuid4())
+    registry = _ActivityRegistry()
+    routes: dict[tuple[int, int, str, str], list[_ResolvedAssignment]] = {}
+    for request, target, repository, repository_access in assignments:
+        assignment = _ResolvedAssignment(
+            request=request,
+            target=target,
+            repository=repository,
+            repository_access=repository_access,
+            probe="restore_target_validation",
+        )
+        routes.setdefault(assignment.route_key, []).append(assignment)
+    route_results = validate_resolved_repository_routes(
+        organization_id=organization_id,
+        routes=routes,
+        request_id=request_id,
+        registry=registry,
+        validation_deadline=validation_deadline,
+        cleanup_deadline=cleanup_deadline,
+    )
+    timeout_result = TargetValidationResult(
+        status="failed",
+        code="VALIDATION_TIMEOUT",
+        message="Restore target validation timed out. Try again.",
+    )
+    results: dict[str, TargetValidationResult] = {}
+    for route_key, route_assignments in routes.items():
+        route_result = route_results.get(route_key, timeout_result)
+        for assignment in route_assignments:
+            results[assignment.request.key] = route_result
+    return results
+
+
 def _route_job(
     *,
-    route_key: tuple[int, int, str],
+    route_key: tuple[int, int, str, str],
     assignment: _ResolvedAssignment,
     request_id: str,
     organization_id: int,
     registry: _ActivityRegistry,
     validation_deadline: float,
     cleanup_deadline: float,
-) -> Callable[[], dict[tuple[int, int, str], TargetValidationResult]]:
-    def run() -> dict[tuple[int, int, str], TargetValidationResult]:
+) -> Callable[[], dict[tuple[int, int, str, str], TargetValidationResult]]:
+    def run() -> dict[tuple[int, int, str, str], TargetValidationResult]:
         if assignment.repository.repo_type == Repository.Type.S3:
             result = _validate_s3_route(
                 assignment=assignment,
@@ -342,6 +447,15 @@ def _route_job(
                 organization_id=organization_id,
                 registry=registry,
                 validation_deadline=validation_deadline,
+            )
+        elif assignment.repository_access is not None:
+            result = _validate_restore_direct_route(
+                assignment=assignment,
+                request_id=request_id,
+                organization_id=organization_id,
+                registry=registry,
+                validation_deadline=validation_deadline,
+                cleanup_deadline=cleanup_deadline,
             )
         elif assignment.repository.repo_type == Repository.Type.NAS:
             result = _validate_direct_nas_route(
@@ -365,14 +479,14 @@ def _route_job(
 
 def _proxy_group_job(
     *,
-    routes: dict[tuple[int, int, str], list[_ResolvedAssignment]],
+    routes: dict[tuple[int, int, str, str], list[_ResolvedAssignment]],
     request_id: str,
     organization_id: int,
     registry: _ActivityRegistry,
     validation_deadline: float,
     cleanup_deadline: float,
-) -> Callable[[], dict[tuple[int, int, str], TargetValidationResult]]:
-    def run() -> dict[tuple[int, int, str], TargetValidationResult]:
+) -> Callable[[], dict[tuple[int, int, str, str], TargetValidationResult]]:
+    def run() -> dict[tuple[int, int, str, str], TargetValidationResult]:
         return _validate_proxy_repository_group(
             routes=routes,
             request_id=request_id,
@@ -386,8 +500,8 @@ def _proxy_group_job(
 
 
 def _run_thread_job(
-    job: Callable[[], dict[tuple[int, int, str], TargetValidationResult]],
-) -> dict[tuple[int, int, str], TargetValidationResult]:
+    job: Callable[[], dict[tuple[int, int, str, str], TargetValidationResult]],
+) -> dict[tuple[int, int, str, str], TargetValidationResult]:
     close_old_connections()
     try:
         return job()
@@ -404,10 +518,14 @@ def _validate_s3_route(
     validation_deadline: float,
 ) -> TargetValidationResult:
     try:
-        repository_payload = build_repository_runtime_payload(
-            repository=assignment.repository,
-            execution_target=assignment.target,
-            repository_endpoint_type=assignment.request.repository_endpoint_type,
+        repository_payload = (
+            assignment.repository_access.repository_payload
+            if assignment.repository_access is not None
+            else build_repository_runtime_payload(
+                repository=assignment.repository,
+                execution_target=assignment.target,
+                repository_endpoint_type=assignment.request.repository_endpoint_type,
+            )
         )
         outcome = _execute_agent_task(
             organization_id=organization_id,
@@ -415,8 +533,9 @@ def _validate_s3_route(
             kind="repo.status",
             payload={
                 "repository": repository_payload,
-                "probe": "backup_target_validation",
+                "probe": assignment.probe,
                 "health_only": True,
+                "skip_ownership_check": assignment.probe == "restore_target_validation",
             },
             request_id=request_id,
             registry=registry,
@@ -429,6 +548,101 @@ def _validate_s3_route(
         )
     except Exception as exc:
         return _validation_exception_result(exc, repository=assignment.repository)
+
+
+def _validate_restore_direct_route(
+    *,
+    assignment: _ResolvedAssignment,
+    request_id: str,
+    organization_id: int,
+    registry: _ActivityRegistry,
+    validation_deadline: float,
+    cleanup_deadline: float,
+) -> TargetValidationResult:
+    repository_access = assignment.repository_access
+    if repository_access is None:
+        return TargetValidationResult(
+            status="failed",
+            code="TARGET_CONNECTION_FAILED",
+            message="Restore repository access could not be resolved.",
+        )
+    repository_payload = repository_access.repository_payload
+    cleanup_mount_point = ""
+    if (
+        assignment.repository.repo_type == Repository.Type.NAS
+        and repository_access.mode == "fallback_node"
+        and repository_access.node.id == assignment.target.node.id
+    ):
+        repository_payload = dict(repository_payload)
+        nas_payload = dict(repository_payload.get("nas") or {})
+        cleanup_mount_point = nas_validation_mount_point(
+            assignment.repository,
+            validation_id=request_id,
+            node_id=assignment.target.node.id,
+        )
+        nas_payload["mount_point"] = cleanup_mount_point
+        repository_payload["nas"] = nas_payload
+    validation_result: TargetValidationResult
+    try:
+        outcome = _execute_agent_task(
+            organization_id=organization_id,
+            node_id=assignment.target.node.id,
+            kind="repo.status",
+            payload={
+                "repository": repository_payload,
+                "probe": assignment.probe,
+                "health_only": True,
+                # Restore validation is a temporary read probe. It must not
+                # apply the ownership gate used by repository initialization
+                # or destructive storage checks.
+                "skip_ownership_check": True,
+            },
+            request_id=request_id,
+            registry=registry,
+            deadline=validation_deadline,
+            max_wait_seconds=TARGET_VALIDATION_AGENT_SECONDS,
+        )
+        if assignment.repository.repo_type == Repository.Type.NAS:
+            validation_result = _nas_outcome_result(
+                outcome,
+                repository=assignment.repository,
+                execution_node_name=assignment.target.node.name,
+                execution_node_address=assignment.target.node.ip_address,
+                execution_node_os_name=assignment.target.node.os_name,
+                execution_node_inventory=(assignment.target.node.metadata or {}).get(
+                    "inventory"
+                ),
+            )
+        else:
+            validation_result = _outcome_result(
+                outcome,
+                failure_code="TARGET_CONNECTION_FAILED",
+                repository=assignment.repository,
+            )
+    except Exception as exc:
+        validation_result = _validation_exception_result(
+            exc, repository=assignment.repository
+        )
+    if not cleanup_mount_point:
+        return validation_result
+    cleanup = _execute_agent_task(
+        organization_id=organization_id,
+        node_id=assignment.target.node.id,
+        kind="nas.unmount",
+        payload={"mount_point": cleanup_mount_point},
+        request_id=request_id,
+        registry=registry,
+        deadline=cleanup_deadline,
+        max_wait_seconds=TARGET_VALIDATION_CLEANUP_SECONDS,
+    )
+    if cleanup.ok:
+        return validation_result
+    return _merge_cleanup_failure(
+        validation_result,
+        cleanup,
+        repository=assignment.repository,
+        resource_label="temporary restore repository mount",
+    )
 
 
 def _validate_direct_nas_route(
@@ -524,9 +738,9 @@ def _validate_direct_nas_route(
                 execution_node_name=assignment.target.node.name,
                 execution_node_address=assignment.target.node.ip_address,
                 execution_node_os_name=assignment.target.node.os_name,
-                execution_node_inventory=(
-                    assignment.target.node.metadata or {}
-                ).get("inventory"),
+                execution_node_inventory=(assignment.target.node.metadata or {}).get(
+                    "inventory"
+                ),
             )
         except Exception as exc:
             return _validation_exception_result(exc, repository=repository)
@@ -567,9 +781,9 @@ def _validate_direct_nas_route(
             execution_node_name=assignment.target.node.name,
             execution_node_address=assignment.target.node.ip_address,
             execution_node_os_name=assignment.target.node.os_name,
-            execution_node_inventory=(
-                assignment.target.node.metadata or {}
-            ).get("inventory"),
+            execution_node_inventory=(assignment.target.node.metadata or {}).get(
+                "inventory"
+            ),
         )
     except Exception as exc:
         validation_result = _validation_exception_result(exc, repository=repository)
@@ -596,18 +810,20 @@ def _validate_direct_nas_route(
 
 def _validate_proxy_repository_group(
     *,
-    routes: dict[tuple[int, int, str], list[_ResolvedAssignment]],
+    routes: dict[tuple[int, int, str, str], list[_ResolvedAssignment]],
     request_id: str,
     organization_id: int,
     registry: _ActivityRegistry,
     validation_deadline: float,
     cleanup_deadline: float,
-) -> dict[tuple[int, int, str], TargetValidationResult]:
+) -> dict[tuple[int, int, str, str], TargetValidationResult]:
     assignments = [items[0] for items in routes.values()]
     repository = assignments[0].repository
-    results: dict[tuple[int, int, str], TargetValidationResult] = {}
+    results: dict[tuple[int, int, str, str], TargetValidationResult] = {}
     try:
-        repository_access = resolve_repository_reader(
+        repository_access = assignments[
+            0
+        ].repository_access or resolve_repository_reader(
             repository=repository,
             fallback_node=assignments[0].target.node,
             source_type=assignments[0].target.source_type,
@@ -636,9 +852,11 @@ def _validate_proxy_repository_group(
                 kind="repo.status",
                 payload={
                     "repository": repository_access.repository_payload,
-                    "probe": "backup_target_validation",
+                    "probe": assignment.probe,
                     "health_only": True,
-                    "repair_mount": True,
+                    "repair_mount": assignment.probe == "backup_target_validation",
+                    "skip_ownership_check": assignment.probe
+                    == "restore_target_validation",
                 },
                 request_id=request_id,
                 registry=registry,
@@ -708,7 +926,10 @@ def _validate_proxy_repository_group(
                 "public_host": host,
                 "public_host_source": _host_source,
                 "repository": repository_access.repository_payload,
-                "repair_mount": True,
+                "repair_mount": all(
+                    assignment.probe == "backup_target_validation"
+                    for assignment in assignments
+                ),
             },
             request_id=request_id,
             registry=registry,
@@ -792,8 +1013,10 @@ def _validate_proxy_repository_group(
                     kind="repo.status",
                     payload={
                         "repository": server_payload,
-                        "probe": "backup_target_validation",
+                        "probe": assignment.probe,
                         "health_only": True,
+                        "skip_ownership_check": assignment.probe
+                        == "restore_target_validation",
                     },
                     request_id=request_id,
                     registry=registry,
@@ -1004,8 +1227,7 @@ def _cancel_agent_task_safely(*, task_id: str, reason: str) -> None:
         cancel_agent_task(task_id=task_id, reason=reason)
     except Exception as exc:
         logger.warning(
-            "failed to cancel backup target validation task "
-            "task_id=%s error_type=%s",
+            "failed to cancel backup target validation task task_id=%s error_type=%s",
             task_id,
             type(exc).__name__,
         )
@@ -1112,29 +1334,35 @@ def _nas_outcome_result(
     )
     if result.status != "failed":
         return result
+    execution_details = dict(result.details)
+    execution_details.update(
+        {
+            "execution_node_name": str(execution_node_name or "").strip(),
+            "execution_node_address": str(execution_node_address or "").strip(),
+        }
+    )
     if result.code in _NAS_WRITE_FAILURE_REMEDIATIONS:
-        details = dict(result.details)
-        details.update(
-            {
-                "execution_node_name": str(execution_node_name or "").strip(),
-                "execution_node_address": str(
-                    execution_node_address or ""
-                ).strip(),
-            }
-        )
         return TargetValidationResult(
             status="failed",
             code=result.code,
             message=result.message,
-            details=details,
+            details=execution_details,
         )
     if result.code != "NAS_MOUNT_FAILED":
-        return result
+        return TargetValidationResult(
+            status=result.status,
+            code=result.code,
+            message=result.message,
+            details=execution_details,
+        )
 
-    if (
-        str(outcome.result.get("error_code") or "").strip()
-        == "SMB_CHARSET_UNAVAILABLE"
-    ):
+    smb_charset_unavailable = str(
+        outcome.result.get("error_code") or ""
+    ).strip() == "SMB_CHARSET_UNAVAILABLE" or any(
+        marker in str(outcome.message or "").lower()
+        for marker in _SMB_CHARSET_FAILURE_MARKERS
+    )
+    if smb_charset_unavailable:
         inventory = (
             execution_node_inventory
             if isinstance(execution_node_inventory, dict)
@@ -1168,7 +1396,12 @@ def _nas_outcome_result(
         str(outcome.result.get("helper") or "").strip(),
     )
     if helper_result not in _NAS_MOUNT_HELPER_RESULTS:
-        return result
+        return TargetValidationResult(
+            status=result.status,
+            code=result.code,
+            message=result.message,
+            details=execution_details,
+        )
 
     return TargetValidationResult(
         status=result.status,
@@ -1248,7 +1481,9 @@ def _merge_cleanup_failure(
         return TargetValidationResult(
             status="failed",
             code="CLEANUP_FAILED",
-            message=f"Connection succeeded, but cleanup failed: {cleanup_message}"[:1000],
+            message=f"Connection succeeded, but cleanup failed: {cleanup_message}"[
+                :1000
+            ],
         )
     message = current.message or "Backup target connection failed."
     return TargetValidationResult(
@@ -1313,7 +1548,9 @@ def _sanitize_message(
     repository: Repository | None = None,
 ) -> str:
     extra_values = _secret_values(repository.config) if repository is not None else []
-    safe = str(scrub_secrets(str(message or ""), extra_values=extra_values) or "").strip()
+    safe = str(
+        scrub_secrets(str(message or ""), extra_values=extra_values) or ""
+    ).strip()
     return (safe or "Backup target validation failed.")[:1000]
 
 
