@@ -227,24 +227,25 @@ def _version_matches_target(
     return not expected_commit or _node_installed_commit(node) == expected_commit
 
 
-def _strict_build_matches_target(
+def _task_observed_build_identity(task: NodeTask) -> tuple[str, str]:
+    """Return the build identity captured from this task's new inventory session."""
+    result = task.result if isinstance(task.result, dict) else {}
+    version = str(result.get("observed_agent_version") or "").strip()
+    commit = str(result.get("observed_agent_commit") or "").strip().lower()
+    return version, commit
+
+
+def _task_build_matches_target(
     *,
-    node: Node,
+    task: NodeTask,
     target_version: str,
     target_commit: str = "",
 ) -> bool:
-    """Require the exact build requested by this lifecycle operation.
-
-    ``_version_matches_target`` intentionally retains its historical
-    compatibility semantics for callers that only need an upgrade ordering
-    check. Detached lifecycle verification is stricter: a newer build is not
-    proof that this particular upgrade completed.
-    """
-    current = _node_installed_version(node)
-    if not target_version or not current or current != target_version:
+    current_version, current_commit = _task_observed_build_identity(task)
+    if not target_version or current_version != target_version:
         return False
     expected_commit = str(target_commit or "").strip().lower()
-    return not expected_commit or _node_installed_commit(node) == expected_commit
+    return not expected_commit or current_commit == expected_commit
 
 
 def _current_agent_session(*, node_id: int) -> str | None:
@@ -256,7 +257,7 @@ def record_upgrade_session_observation(
     *,
     node_id: int,
     session_id: str,
-    inventory: bool = False,
+    inventory: dict | None = None,
 ) -> bool:
     """Persist post-detach session evidence without changing task status.
 
@@ -303,11 +304,40 @@ def record_upgrade_session_observation(
             result["reconnect_observed_at"] = now
             result.pop("verify_started_at", None)
             changed = True
-        if inventory and result.get("inventory_session_id") != session_id:
-            result["inventory_session_id"] = session_id
-            result["inventory_observed_at"] = now
-            result.pop("verify_started_at", None)
-            changed = True
+        if inventory is not None:
+            incoming_version = str(inventory.get("agent_version") or "").strip()
+            incoming_commit = str(inventory.get("agent_commit") or "").strip().lower()
+            observed_version = incoming_version
+            observed_commit = incoming_commit
+            if result.get("inventory_session_id") == session_id:
+                previous_version = str(
+                    result.get("observed_agent_version") or ""
+                ).strip()
+                previous_commit = str(
+                    result.get("observed_agent_commit") or ""
+                ).strip().lower()
+                if not incoming_version:
+                    observed_version = previous_version
+                    observed_commit = previous_commit
+                elif incoming_version == previous_version and not incoming_commit:
+                    # Repeated inventory from one process may omit unchanged
+                    # fields. It must not erase complete evidence already
+                    # captured for this exact session and build version.
+                    observed_commit = previous_commit
+            identity_changed = (
+                result.get("inventory_session_id") != session_id
+                or str(result.get("observed_agent_version") or "").strip()
+                != observed_version
+                or str(result.get("observed_agent_commit") or "").strip().lower()
+                != observed_commit
+            )
+            if identity_changed:
+                result["inventory_session_id"] = session_id
+                result["inventory_observed_at"] = now
+                result["observed_agent_version"] = observed_version
+                result["observed_agent_commit"] = observed_commit
+                result.pop("verify_started_at", None)
+                changed = True
     if changed:
         task.result = result
         task.save(update_fields=["result", "updated_at"])
@@ -503,8 +533,8 @@ def _upgrade_verify_ready(*, node: Node, task: NodeTask) -> bool:
     target_version = _target_version_from_task(task)
     if not target_version:
         return False
-    return _strict_build_matches_target(
-        node=node,
+    return _task_build_matches_target(
+        task=task,
         target_version=target_version,
         target_commit=_target_commit_from_task(task),
     )
@@ -655,8 +685,21 @@ def _upgrade_timeout_failure(*, node: Node, task: NodeTask) -> tuple[str, str]:
         return "AGENT_CONNECTION_UNSTABLE", "Agent connection remained unstable during verification."
     target_version = _target_version_from_task(task)
     target_commit = _target_commit_from_task(task)
-    if not _strict_build_matches_target(
-        node=node,
+    observed_version, observed_commit = _task_observed_build_identity(task)
+    if not observed_version:
+        return (
+            "POST_UPGRADE_BUILD_IDENTITY_MISSING",
+            "Agent reconnected but did not report its post-upgrade build identity.",
+        )
+    if observed_version != target_version:
+        return "TARGET_BUILD_MISMATCH", "Agent version does not match the upgrade target."
+    if target_commit and not observed_commit:
+        return (
+            "POST_UPGRADE_BUILD_IDENTITY_MISSING",
+            "Agent reconnected but did not report its post-upgrade build commit.",
+        )
+    if not _task_build_matches_target(
+        task=task,
         target_version=target_version,
         target_commit=target_commit,
     ):

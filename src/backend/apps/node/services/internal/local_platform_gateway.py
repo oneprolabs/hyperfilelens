@@ -117,8 +117,27 @@ def registration_metadata(
     token_note: str = "",
     existing_metadata: object = None,
 ) -> dict:
-    """Preserve trusted installer ownership across Agent heartbeats."""
+    """Preserve trusted build and installer metadata across Agent heartbeats."""
     metadata = dict(payload_metadata) if isinstance(payload_metadata, dict) else {}
+    incoming_version, incoming_commit = _metadata_build_identity(metadata)
+    existing_version, existing_commit = _metadata_build_identity(existing_metadata)
+    if (
+        incoming_version
+        and not incoming_commit
+        and incoming_version == existing_version
+        and existing_commit
+    ):
+        _set_metadata_build_identity(
+            metadata,
+            version=incoming_version,
+            commit=existing_commit,
+        )
+    elif incoming_version:
+        _set_metadata_build_identity(
+            metadata,
+            version=incoming_version,
+            commit=incoming_commit,
+        )
     for key in LOCAL_PLATFORM_GATEWAY_METADATA:
         metadata.pop(key, None)
     installer_managed = (
@@ -128,6 +147,47 @@ def registration_metadata(
     if installer_managed:
         metadata.update(LOCAL_PLATFORM_GATEWAY_METADATA)
     return metadata
+
+
+def _metadata_build_identity(metadata: object) -> tuple[str, str]:
+    if not isinstance(metadata, dict):
+        return "", ""
+    inventory = metadata.get("inventory")
+    if isinstance(inventory, dict):
+        version = str(inventory.get("agent_version") or "").strip()
+        if version:
+            # Version and commit are one identity. Never combine an inventory
+            # version with a potentially stale top-level commit.
+            commit = str(inventory.get("agent_commit") or "").strip().lower()
+            return version, commit
+    return (
+        str(metadata.get("agent_version") or "").strip(),
+        str(metadata.get("agent_commit") or "").strip().lower(),
+    )
+
+
+def _set_metadata_build_identity(
+    metadata: dict,
+    *,
+    version: str,
+    commit: str,
+) -> None:
+    metadata["agent_version"] = version
+    if commit:
+        metadata["agent_commit"] = commit
+    else:
+        metadata.pop("agent_commit", None)
+
+    inventory = metadata.get("inventory")
+    if not isinstance(inventory, dict):
+        return
+    inventory = dict(inventory)
+    inventory["agent_version"] = version
+    if commit:
+        inventory["agent_commit"] = commit
+    else:
+        inventory.pop("agent_commit", None)
+    metadata["inventory"] = inventory
 
 
 @transaction.atomic

@@ -16,6 +16,7 @@ from apps.node.models.base import NodeRole
 from apps.node.services.internal.node_lifecycle import (
     _target_commit_from_task,
     _target_version_from_task,
+    _upgrade_timeout_failure,
     _version_matches_target,
     advance_node_lifecycle,
     compute_node_lifecycle,
@@ -858,7 +859,7 @@ class NodeLifecycleTests(TestCase):
             node=self.node,
             kind="agent.upgrade",
             status=NodeTask.Status.RUNNING,
-            payload={"target_version": "1.0.0"},
+            payload={"target_version": "1.0.0", "target_commit": "a" * 40},
             result={
                 "target_version": "1.0.0",
                 "mode": "local_detached",
@@ -866,6 +867,8 @@ class NodeLifecycleTests(TestCase):
                 "detached_session_id": "old",
                 "reconnect_session_id": "new",
                 "inventory_session_id": "new",
+                "observed_agent_version": "1.0.0",
+                "observed_agent_commit": "a" * 40,
                 "detached_at": timezone.now().isoformat(),
                 "disconnect_observed_at": timezone.now().isoformat(),
                 "verify_started_at": verify_started.isoformat(),
@@ -922,6 +925,7 @@ class NodeLifecycleTests(TestCase):
                 "detached_session_id": "old",
                 "reconnect_session_id": "new",
                 "inventory_session_id": "new",
+                "observed_agent_version": "1.0.0",
                 "detached_at": timezone.now().isoformat(),
                 "disconnect_observed_at": timezone.now().isoformat(),
                 "verify_started_at": timezone.now().isoformat(),
@@ -952,6 +956,7 @@ class NodeLifecycleTests(TestCase):
                 "detached_session_id": "old",
                 "reconnect_session_id": "new",
                 "inventory_session_id": "new",
+                "observed_agent_version": "1.0.0",
                 "detached_at": timezone.now().isoformat(),
                 "disconnect_observed_at": timezone.now().isoformat(),
             },
@@ -1019,10 +1024,15 @@ class NodeLifecycleTests(TestCase):
         record_upgrade_session_observation(
             node_id=self.node.id,
             session_id="new",
-            inventory=True,
+            inventory={
+                "agent_version": "1.2.0",
+                "agent_commit": "A" * 40,
+            },
         )
         task.refresh_from_db()
         self.assertEqual(task.result["inventory_session_id"], "new")
+        self.assertEqual(task.result["observed_agent_version"], "1.2.0")
+        self.assertEqual(task.result["observed_agent_commit"], "a" * 40)
         self.assertNotIn("verify_started_at", task.result)
 
     def test_repeated_upgrade_session_observation_repairs_stale_node_status(self):
@@ -1037,6 +1047,7 @@ class NodeLifecycleTests(TestCase):
                 "detached_session_id": "old",
                 "reconnect_session_id": "new",
                 "inventory_session_id": "new",
+                "observed_agent_version": "1.0.0",
             },
             watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
             correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
@@ -1048,12 +1059,45 @@ class NodeLifecycleTests(TestCase):
         changed = record_upgrade_session_observation(
             node_id=self.node.id,
             session_id="new",
-            inventory=True,
+            inventory={"agent_version": "1.0.0"},
         )
 
         self.assertFalse(changed)
         self.node.refresh_from_db()
         self.assertEqual(self.node.status, Node.Status.VERIFICATION_PENDING)
+
+    def test_repeated_session_inventory_does_not_erase_build_commit(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"target_version": "1.2.0", "target_commit": "a" * 40},
+            result={
+                "mode": "local_detached",
+                "host_upgrade_status": "success",
+                "detached_session_id": "old",
+                "reconnect_session_id": "new",
+                "inventory_session_id": "new",
+                "observed_agent_version": "1.2.0",
+                "observed_agent_commit": "a" * 40,
+                "verify_started_at": timezone.now().isoformat(),
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        changed = record_upgrade_session_observation(
+            node_id=self.node.id,
+            session_id="new",
+            inventory={"agent_version": "1.2.0"},
+        )
+
+        task.refresh_from_db()
+        self.assertFalse(changed)
+        self.assertEqual(task.result["observed_agent_commit"], "a" * 40)
+        self.assertIn("verify_started_at", task.result)
 
     def test_upgrade_disconnect_projects_restarting(self):
         task = NodeTask.objects.create(
@@ -1100,13 +1144,82 @@ class NodeLifecycleTests(TestCase):
         changed = record_upgrade_session_observation(
             node_id=self.node.id,
             session_id="new",
-            inventory=True,
+            inventory={"agent_version": "1.0.0"},
         )
 
         task.refresh_from_db()
         self.assertFalse(changed)
         self.assertNotIn("reconnect_session_id", task.result or {})
         self.assertNotIn("inventory_session_id", task.result or {})
+
+    def test_upgrade_timeout_reports_missing_session_build_commit(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"target_version": "1.2.0", "target_commit": "a" * 40},
+            result={
+                "mode": "local_detached",
+                "host_upgrade_status": "success",
+                "detached_session_id": "old",
+                "reconnect_session_id": "new",
+                "inventory_session_id": "new",
+                "observed_agent_version": "1.2.0",
+            },
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        with (
+            patch(
+                "apps.node.services.internal.node_lifecycle._current_agent_session",
+                return_value="new",
+            ),
+            patch(
+                "apps.node.services.internal.node_lifecycle.agent_ws_routable",
+                return_value=True,
+            ),
+        ):
+            code, _message = _upgrade_timeout_failure(node=self.node, task=task)
+
+        self.assertEqual(code, "POST_UPGRADE_BUILD_IDENTITY_MISSING")
+
+    def test_upgrade_timeout_reports_explicit_commit_mismatch(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"target_version": "1.2.0", "target_commit": "a" * 40},
+            result={
+                "mode": "local_detached",
+                "host_upgrade_status": "success",
+                "detached_session_id": "old",
+                "reconnect_session_id": "new",
+                "inventory_session_id": "new",
+                "observed_agent_version": "1.2.0",
+                "observed_agent_commit": "b" * 40,
+            },
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        with (
+            patch(
+                "apps.node.services.internal.node_lifecycle._current_agent_session",
+                return_value="new",
+            ),
+            patch(
+                "apps.node.services.internal.node_lifecycle.agent_ws_routable",
+                return_value=True,
+            ),
+        ):
+            code, _message = _upgrade_timeout_failure(node=self.node, task=task)
+
+        self.assertEqual(code, "TARGET_BUILD_MISMATCH")
 
     @patch(
         "apps.node.services.internal.task.redis_store.get_agent_session",

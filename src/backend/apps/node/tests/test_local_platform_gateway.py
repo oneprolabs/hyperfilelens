@@ -69,6 +69,61 @@ class LocalPlatformGatewayConfigTests(SimpleTestCase):
         self.assertEqual(managed["install_key"], LOCAL_PLATFORM_GATEWAY_INSTALL_KEY)
         self.assertEqual(managed["hostname"], "gateway-host")
 
+    def test_registration_metadata_preserves_same_version_commit(self):
+        existing = {
+            "agent_version": "1.2.3",
+            "agent_commit": "ABC123",
+            "inventory": {
+                "agent_version": "1.2.3",
+                "agent_commit": "ABC123",
+            },
+        }
+
+        metadata = registration_metadata(
+            {
+                "agent_version": "1.2.3",
+                "inventory": {"agent_version": "1.2.3"},
+            },
+            existing_metadata=existing,
+        )
+
+        self.assertEqual(metadata["agent_commit"], "abc123")
+        self.assertEqual(metadata["inventory"]["agent_commit"], "abc123")
+
+    def test_registration_metadata_does_not_reuse_commit_for_new_version(self):
+        existing = {
+            "agent_version": "1.2.2",
+            "agent_commit": "old123",
+            "inventory": {
+                "agent_version": "1.2.2",
+                "agent_commit": "old123",
+            },
+        }
+
+        metadata = registration_metadata(
+            {
+                "agent_version": "1.2.3",
+                "inventory": {"agent_version": "1.2.3"},
+            },
+            existing_metadata=existing,
+        )
+
+        self.assertNotIn("agent_commit", metadata)
+        self.assertNotIn("agent_commit", metadata["inventory"])
+
+    def test_registration_metadata_does_not_cross_pair_identity_layers(self):
+        metadata = registration_metadata(
+            {
+                "agent_version": "1.2.2",
+                "agent_commit": "old123",
+                "inventory": {"agent_version": "1.2.3"},
+            }
+        )
+
+        self.assertEqual(metadata["agent_version"], "1.2.3")
+        self.assertNotIn("agent_commit", metadata)
+        self.assertNotIn("agent_commit", metadata["inventory"])
+
 
 @override_settings(FRONTEND_URL="https://console.example.com:11443")
 class LocalPlatformGatewayEnrollmentTests(TestCase):

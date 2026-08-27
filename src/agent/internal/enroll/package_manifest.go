@@ -13,11 +13,13 @@ import (
 	"strings"
 
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/selfupdate"
 )
 
 type agentPackageManifest struct {
 	Schema          int               `json:"schema"`
 	AgentVersion    string            `json:"agent_version"`
+	AgentCommit     string            `json:"agent_commit"`
 	Platform        string            `json:"platform"`
 	Arch            string            `json:"arch"`
 	BundleFlavor    string            `json:"bundle_flavor"`
@@ -25,22 +27,54 @@ type agentPackageManifest struct {
 	Files           map[string]string `json:"files"`
 }
 
+func installedAgentBuildIdentity(installedVersion string) (selfupdate.BuildIdentity, error) {
+	manifest, err := readAgentPackageManifest(dataDirForAgent())
+	if err != nil {
+		return selfupdate.BuildIdentity{}, err
+	}
+	manifestVersion := strings.TrimSpace(manifest.AgentVersion)
+	manifestCommit := strings.TrimSpace(manifest.AgentCommit)
+	if manifestVersion == "" || manifestCommit == "" {
+		return selfupdate.BuildIdentity{}, fmt.Errorf("installed package manifest is missing the Agent build identity")
+	}
+	installedVersion = strings.TrimPrefix(strings.TrimSpace(installedVersion), "v")
+	if installedVersion != "" && strings.TrimPrefix(manifestVersion, "v") != installedVersion {
+		return selfupdate.BuildIdentity{}, fmt.Errorf(
+			"installed Agent version %s does not match package manifest version %s",
+			installedVersion,
+			manifestVersion,
+		)
+	}
+	return selfupdate.BuildIdentity{Version: manifestVersion, Commit: manifestCommit}, nil
+}
+
+func readAgentPackageManifest(root string) (agentPackageManifest, error) {
+	manifestPath := filepath.Join(root, "MANIFEST.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return agentPackageManifest{}, fmt.Errorf("read package manifest: %w", err)
+	}
+	var manifest agentPackageManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return agentPackageManifest{}, fmt.Errorf("parse package manifest: %w", err)
+	}
+	return manifest, nil
+}
+
 func validateAgentPackage(root string, role model.Role, expectedVersion string) error {
 	return validateAgentPackageFor(root, runtime.GOOS, runtime.GOARCH, role, expectedVersion)
 }
 
 func validateAgentPackageFor(root, platform, arch string, role model.Role, expectedVersion string) error {
-	manifestPath := filepath.Join(root, "MANIFEST.json")
-	raw, err := os.ReadFile(manifestPath)
+	manifest, err := readAgentPackageManifest(root)
 	if err != nil {
-		return fmt.Errorf("read package manifest: %w", err)
-	}
-	var manifest agentPackageManifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
-		return fmt.Errorf("parse package manifest: %w", err)
+		return err
 	}
 	if manifest.Schema != 1 {
 		return fmt.Errorf("unsupported package manifest schema %d", manifest.Schema)
+	}
+	if strings.TrimSpace(manifest.AgentVersion) == "" || strings.TrimSpace(manifest.AgentCommit) == "" {
+		return fmt.Errorf("package manifest is missing the Agent build identity")
 	}
 	if manifest.Platform != platform || manifest.Arch != arch {
 		return fmt.Errorf(

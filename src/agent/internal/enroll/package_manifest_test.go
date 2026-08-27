@@ -49,6 +49,82 @@ func TestValidateAgentPackageRejectsNonStandardSourceHost(t *testing.T) {
 	}
 }
 
+func TestValidateAgentPackageRejectsMissingBuildCommit(t *testing.T) {
+	root := writeTestAgentPackage(t, "linux", "amd64", "standard")
+	manifestPath := filepath.Join(root, "MANIFEST.json")
+	manifest, err := readAgentPackageManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.AgentCommit = ""
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validateAgentPackageFor(root, "linux", "amd64", model.RoleAgent, "1.2.3"); err == nil {
+		t.Fatal("expected missing build commit to be rejected")
+	}
+}
+
+func TestInstalledAgentBuildIdentityUsesOneManifest(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HFL_DATA_DIR", root)
+	manifest := agentPackageManifest{
+		Schema:       1,
+		AgentVersion: "1.2.3",
+		AgentCommit:  "abc123",
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "MANIFEST.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := installedAgentBuildIdentity("v1.2.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Version != "1.2.3" || identity.Commit != "abc123" {
+		t.Fatalf("identity=%#v", identity)
+	}
+}
+
+func TestInstalledAgentBuildIdentityRejectsMissingManifest(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HFL_DATA_DIR", root)
+
+	if _, err := installedAgentBuildIdentity("1.2.3"); err == nil {
+		t.Fatal("expected a missing installed manifest to be rejected")
+	}
+}
+
+func TestInstalledAgentBuildIdentityRejectsVersionMismatch(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HFL_DATA_DIR", root)
+	manifest := agentPackageManifest{
+		Schema:       1,
+		AgentVersion: "1.2.3",
+		AgentCommit:  "abc123",
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "MANIFEST.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := installedAgentBuildIdentity("1.2.4"); err == nil {
+		t.Fatal("expected installed binary and manifest version mismatch to be rejected")
+	}
+}
+
 func writeTestAgentPackage(t *testing.T, platform, arch, flavor string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -81,6 +157,7 @@ func writeTestAgentPackage(t *testing.T, platform, arch, flavor string) string {
 	manifest := agentPackageManifest{
 		Schema:          1,
 		AgentVersion:    "1.2.3",
+		AgentCommit:     "abc123",
 		Platform:        platform,
 		Arch:            arch,
 		BundleFlavor:    flavor,

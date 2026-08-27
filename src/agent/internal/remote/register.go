@@ -6,6 +6,7 @@ import (
 	"hyperfilelens/agent/internal/enrollmentclient"
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/selfupdate"
 )
 
 // NodeRegistrar persists a control-plane node id after HTTP enrollment.
@@ -23,13 +24,13 @@ func EnsureNodeRegistered(ctx context.Context, provider config.Provider, registr
 func RegisterNodeHTTP(
 	ctx context.Context,
 	cfg *model.AgentConfig,
-	agentVersion string,
+	build selfupdate.BuildIdentity,
 	existingNodeCredential string,
 ) (RegistrationResult, error) {
 	return enrollmentclient.RegisterNodeHTTP(
 		ctx,
 		cfg,
-		agentVersion,
+		build,
 		existingNodeCredential,
 	)
 }

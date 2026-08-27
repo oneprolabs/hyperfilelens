@@ -358,10 +358,14 @@ func finishEnrollment(
 	if err := WriteInstallationID(EnvFilePath(), cfg.InstallationID); err != nil {
 		logFail("Failed to persist the installation identity: "+err.Error(), 5)
 	}
+	buildIdentity, err := installedAgentBuildIdentity(agentVer)
+	if err != nil {
+		logFail("Installed Agent build identity could not be verified: "+err.Error(), 5)
+	}
 	registration, err := enrollmentclient.RegisterNodeHTTP(
 		ctx,
 		agentCfg,
-		agentVer,
+		buildIdentity,
 		existingNodeCredential,
 	)
 	nodeID := registration.NodeID
