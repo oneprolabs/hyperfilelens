@@ -6,6 +6,11 @@
       "id": "zh-hans",
       "path": "packs/zh-hans",
       "status": "bundled"
+    },
+    {
+      "id": "es",
+      "path": "packs/es",
+      "status": "bundled"
     }
   ]
 }

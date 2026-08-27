@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "id": "es",
+  "display_name": "Español",
+  "frontend_code": "es",
+  "backend_code": "es",
+  "aliases": ["es-es", "es-mx", "es-ar", "es-cl", "es-co", "es-pe"],
+  "component_locale": "es"
+}

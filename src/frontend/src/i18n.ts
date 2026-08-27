@@ -84,7 +84,16 @@ export function normalizeStoredLocale(stored: string | null | undefined): string
   if (!stored) return DEFAULT_LOCALE
   const normalized = stored.toLowerCase()
   if (getAvailableLocaleCodes().includes(normalized)) return normalized
-  return localeAliases.get(normalized) ?? DEFAULT_LOCALE
+  const exactAlias = localeAliases.get(normalized)
+  if (exactAlias) return exactAlias
+
+  const [primaryLanguage, region] = normalized.split('-')
+  const hasRegionalSubtag = Boolean(
+    region && (/^[a-z]{2}$/.test(region) || /^\d{3}$/.test(region)),
+  )
+  if (!hasRegionalSubtag) return DEFAULT_LOCALE
+  if (getAvailableLocaleCodes().includes(primaryLanguage)) return primaryLanguage
+  return localeAliases.get(primaryLanguage) ?? DEFAULT_LOCALE
 }
 
 function readStoredLocale(): string | null {

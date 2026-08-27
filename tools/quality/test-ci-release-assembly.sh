@@ -44,8 +44,9 @@ tar -C "${runtime}" -cf "${input}/_internal-runtime-images.tar" images metadata
 
 language_packs="${fixtures}/language-packs"
 mkdir -p "${language_packs}/payload/language-packs"
-LANGUAGE_PACK_ARCHIVE="${language_packs}/payload/language-packs/hyperfilelens-lang-zh-hans-${version}.tar.gz" \
-	LANGUAGE_PACK_VERSION="${version}" python3 - <<'PY'
+for pack_id in zh-hans es; do
+LANGUAGE_PACK_ARCHIVE="${language_packs}/payload/language-packs/hyperfilelens-lang-${pack_id}-${version}.tar.gz" \
+	LANGUAGE_PACK_VERSION="${version}" LANGUAGE_PACK_ID="${pack_id}" python3 - <<'PY'
 import io
 import json
 import os
@@ -54,23 +55,28 @@ import tarfile
 
 archive = pathlib.Path(os.environ["LANGUAGE_PACK_ARCHIVE"])
 version = os.environ["LANGUAGE_PACK_VERSION"]
+pack_id = os.environ["LANGUAGE_PACK_ID"]
+display_name = "Simplified Chinese" if pack_id == "zh-hans" else "Español"
+backend_locale = "zh_Hans" if pack_id == "zh-hans" else "es"
+aliases = ["zh", "zh-cn"] if pack_id == "zh-hans" else ["es-es", "es-mx"]
+component_locale = "zh-cn" if pack_id == "zh-hans" else "es"
 files = {
     "manifest.json": json.dumps(
         {
             "schema": 2,
-            "id": "zh-hans",
-            "display_name": "Simplified Chinese",
+            "id": pack_id,
+            "display_name": display_name,
             "version": version,
             "compatible_app": f"=={version}",
-            "frontend_code": "zh-hans",
-            "backend_code": "zh-hans",
-            "aliases": ["zh", "zh-cn"],
-            "component_locale": "zh-cn",
+            "frontend_code": pack_id,
+            "backend_code": pack_id,
+            "aliases": aliases,
+            "component_locale": component_locale,
         }
     ).encode(),
     "frontend/messages.json": b"{}\n",
     "frontend/element-plus.json": b"{}\n",
-    "backend/locale/zh_Hans/LC_MESSAGES/django.mo": b"compiled-catalog",
+    f"backend/locale/{backend_locale}/LC_MESSAGES/django.mo": b"compiled-catalog",
 }
 with tarfile.open(archive, "w:gz") as package:
     for name, content in files.items():
@@ -79,6 +85,7 @@ with tarfile.open(archive, "w:gz") as package:
         member.mode = 0o644
         package.addfile(member, io.BytesIO(content))
 PY
+done
 tar -C "${language_packs}" -cf "${input}/_internal-language-packs.tar" payload
 
 sl="${fixtures}/sourcelens"
@@ -225,7 +232,7 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 		fi
 	fi
 	jq -e --arg version "${version}" \
-		'(.language_packs | length) == 1 and .language_packs[0].id == "zh-hans" and .language_packs[0].display_name == "Simplified Chinese" and .language_packs[0].version == $version and .language_packs[0].file == ("payload/language-packs/hyperfilelens-lang-zh-hans-" + $version + ".tar.gz") and (.language_packs[0].size > 0) and (.language_packs[0].sha256 | test("^[0-9a-f]{64}$"))' \
+		'(.language_packs | sort_by(.id)) as $packs | ($packs | length) == 2 and $packs[0].id == "es" and $packs[0].display_name == "Español" and $packs[0].file == ("payload/language-packs/hyperfilelens-lang-es-" + $version + ".tar.gz") and $packs[1].id == "zh-hans" and $packs[1].display_name == "Simplified Chinese" and $packs[1].file == ("payload/language-packs/hyperfilelens-lang-zh-hans-" + $version + ".tar.gz") and all($packs[]; .version == $version and (.size > 0) and (.sha256 | test("^[0-9a-f]{64}$")))' \
 		MANIFEST.json >/dev/null
 	sha256sum -c SHA256SUMS
 	[[ -s hyperfilelens-root-ca.crt ]]
@@ -250,6 +257,7 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/root-ca\.crt$' >/dev/null
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/web\.conf$' >/dev/null
 	tar -tzf "${archive}" | grep -F "/payload/language-packs/hyperfilelens-lang-zh-hans-${version}.tar.gz" >/dev/null
+	tar -tzf "${archive}" | grep -F "/payload/language-packs/hyperfilelens-lang-es-${version}.tar.gz" >/dev/null
 	key_mode="$(tar -tvzf "${archive}" | awk '$NF ~ /\/deploy\/nginx\/certs\/tls\.key$/ {mode=$1} END {print mode}')"
 	[[ "${key_mode}" == "-rw-------" ]]
 	tar -tzf "${archive}" | grep -F "/hfl-agent-${version}-linux-amd64-ubuntu2004.tar.gz" >/dev/null

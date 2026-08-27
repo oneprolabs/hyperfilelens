@@ -106,6 +106,7 @@ cat >"${sl_env}" <<'EOF'
 DJANGO_DEBUG=false
 SENTRY_ENABLED=true
 SENTRY_DSN=https://backend@sentry.example.com/41
+LENSNODE_HEAVY_WORK_CONCURRENCY=7
 EOF
 python3 "${ROOT}/deploy/installer/sourcelens/patch-env-runtime.py" "${sl_env}"
 grep -Fx 'SENTRY_ENABLED=true' "${sl_env}" >/dev/null
@@ -114,7 +115,10 @@ grep -Fx 'SENTRY_SEND_DEFAULT_PII=false' "${sl_env}" >/dev/null
 grep -Fx 'LENSNODE_PLANNING_REASONING_EFFORT=medium' "${sl_env}" >/dev/null
 grep -Fx 'LENSNODE_EXECUTION_BACKEND=trusted_container' "${sl_env}" >/dev/null
 grep -Fx 'LENSNODE_MAX_CONCURRENT_RUNS=1' "${sl_env}" >/dev/null
-grep -Fx 'LENSNODE_HEAVY_WORK_CONCURRENCY=1' "${sl_env}" >/dev/null
+if grep -q '^LENSNODE_HEAVY_WORK_CONCURRENCY=' "${sl_env}"; then
+	printf 'ERROR: retired SourceLens heavy-work concurrency remained configured\n' >&2
+	exit 1
+fi
 printf '%s\n' '{"version":"0.20.0"}' >"${tmp}/BUILD_INFO.json"
 python3 "${ROOT}/deploy/installer/sourcelens/sync-sentry-runtime.py" \
 	--parent-env "${env_file}" \

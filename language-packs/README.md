@@ -4,6 +4,10 @@ HyperFileLens keeps English as its built-in and fallback locale. Official
 translations live only below this directory, are built as data-only runtime
 packages, and are bundled into Community and Enterprise offline releases.
 
+Official bundled packs currently include Simplified Chinese (`zh-hans`) and
+Spanish (`es`). Spanish regional browser tags such as `es-ES` and `es-MX`
+resolve to the shared `es` catalog.
+
 The application and language-pack versions are identical. For example, tag
 `v0.2.0` produces `hyperfilelens-lang-zh-hans-0.2.0.tar.gz` with an exact
 `==0.2.0` application compatibility contract.
@@ -44,6 +48,8 @@ sudo ./install.sh lang-pack list
 sudo ./install.sh lang-pack install --id zh-hans
 sudo ./install.sh lang-pack install --file /path/to/language-pack.tar.gz
 sudo ./install.sh lang-pack uninstall zh-hans
+sudo ./install.sh lang-pack install --id es
+sudo ./install.sh lang-pack uninstall es
 ```
 
 English is built into the application and cannot be uninstalled.

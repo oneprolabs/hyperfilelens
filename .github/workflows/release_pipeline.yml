@@ -526,7 +526,9 @@ jobs:
             HFL_PRODUCT_VERSION="${{ needs.prepare.outputs.version }}" \
             uv run python src/backend/manage.py test \
               apps.iam.tests.test_verification_email.VerificationEmailTests.test_chinese_catalog_translates_verification_email \
-              apps.iam.tests.test_verification_email.VerificationEmailTests.test_chinese_accept_language_translates_api_error
+              apps.iam.tests.test_verification_email.VerificationEmailTests.test_chinese_accept_language_translates_api_error \
+              apps.iam.tests.test_verification_email.VerificationEmailTests.test_spanish_catalog_translates_verification_email \
+              apps.iam.tests.test_verification_email.VerificationEmailTests.test_spanish_accept_language_alias_translates_api_error
           cd src/frontend
           npm run lint
           # Community tests define the Host contract and always run with an

@@ -1083,8 +1083,13 @@ for archive in sorted(language_pack_dir.glob("*.tar.gz")):
             "sha256": sha256_file(archive),
         }
     )
-if "zh-hans" not in language_pack_ids:
-    raise SystemExit("required bundled language pack is missing: zh-hans")
+required_pack_ids = {"zh-hans", "es"}
+missing_pack_ids = sorted(required_pack_ids - language_pack_ids)
+if missing_pack_ids:
+    raise SystemExit(
+        "required bundled language pack(s) are missing: "
+        + ", ".join(missing_pack_ids)
+    )
 
 images = [
     {
@@ -1399,6 +1404,8 @@ Bundled language packs are installed with the application, while English remains
 sudo ./install.sh lang-pack list
 sudo ./install.sh lang-pack install --id zh-hans
 sudo ./install.sh lang-pack uninstall zh-hans
+sudo ./install.sh lang-pack install --id es
+sudo ./install.sh lang-pack uninstall es
 \`\`\`
 
 An explicitly uninstalled bundled pack remains disabled across upgrades. Use \`install --id\` to enable it again.

@@ -286,7 +286,6 @@ ${EXTRA_HOSTS_BLOCK}    environment:
       LENSNODE_PLANNING_REASONING_EFFORT: "medium"
       LENSNODE_EXECUTION_BACKEND: "trusted_container"
       LENSNODE_MAX_CONCURRENT_RUNS: "1"
-      LENSNODE_HEAVY_WORK_CONCURRENCY: "1"
       PYTHONPATH: /opt/hfl-sentry
       SENTRY_COMPONENT: sourcelens-lensnode
       SENTRY_DEPLOYMENT_MODE: gateway

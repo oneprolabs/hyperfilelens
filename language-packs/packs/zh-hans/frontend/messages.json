@@ -3341,7 +3341,10 @@
       "agentActivityPath": "路径：{path}",
       "agentActivityTool": "工具：{tool}",
       "agentActivityTokens": "Tokens：{tokens}",
-      "agentActivityDuration": "耗时 {ms}毫秒"
+      "agentActivityDuration": "耗时 {ms}毫秒",
+      "sessionReady": "就绪",
+      "contextNoFilesSelected": "未选择文件",
+      "contextCreatedAt": "创建于 {time}"
     },
     "aiSettings": {
       "btnAdd": "添加",

@@ -136,7 +136,7 @@ jobs:
           ../../language-packs/tooling/build-all.sh \
             --version "$product_version"
           cd ../..
-          # The two backend tests below verify the built language packs
+          # The backend tests below verify the built language packs
           # translate product strings (verification email, API errors).
           uv sync --locked --group dev
           HFL_EXTENSIONS= \
@@ -144,7 +144,9 @@ jobs:
             HFL_PRODUCT_VERSION="$product_version" \
             uv run python src/backend/manage.py test \
               apps.iam.tests.test_verification_email.VerificationEmailTests.test_chinese_catalog_translates_verification_email \
-              apps.iam.tests.test_verification_email.VerificationEmailTests.test_chinese_accept_language_translates_api_error
+              apps.iam.tests.test_verification_email.VerificationEmailTests.test_chinese_accept_language_translates_api_error \
+              apps.iam.tests.test_verification_email.VerificationEmailTests.test_spanish_catalog_translates_verification_email \
+              apps.iam.tests.test_verification_email.VerificationEmailTests.test_spanish_accept_language_alias_translates_api_error
           cd src/frontend
           npm run lint
           # Community tests define the Host contract and always run with an

@@ -26,6 +26,7 @@ describe('loadInstalledLangPacks', () => {
   beforeEach(() => {
     unregisterLocale('zh-hans')
     unregisterLocale('pt-br')
+    unregisterLocale('es')
     installedLangPacks.value = []
     vi.restoreAllMocks()
   })
@@ -47,6 +48,7 @@ describe('loadInstalledLangPacks', () => {
     expect(i18n.global.availableLocales).toContain('zh-hans')
     expect(installedLangPacks.value).toHaveLength(1)
     expect(installedLangPacks.value[0]?.component_messages).toEqual({ name: 'zh-cn' })
+    expect(normalizeStoredLocale('zh-Hant')).toBe('en')
   })
 
   it('maps the backend language identity to the frontend locale', async () => {
@@ -71,6 +73,33 @@ describe('loadInstalledLangPacks', () => {
     expect(i18n.global.availableLocales).toContain('pt-br')
     expect(normalizeStoredLocale('pt')).toBe('pt-br')
     unregisterLocale('pt-br')
+  })
+
+  it('maps unlisted regional tags to an installed primary language', async () => {
+    const spanishPack = {
+      ...zhPack,
+      id: 'es',
+      display_name: 'Español',
+      frontend_code: 'es',
+      backend_code: 'es',
+      aliases: ['es-es', 'es-mx'],
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url === '/locales/installed.json') {
+        return jsonResponse({ app_version: '0.2.0', packs: [spanishPack] })
+      }
+      if (url.endsWith('/frontend/messages.json')) return jsonResponse({ nav: { home: 'Inicio' } })
+      if (url.endsWith('/frontend/element-plus.json')) return jsonResponse({ name: 'es' })
+      return jsonResponse({}, 404)
+    }))
+
+    await loadInstalledLangPacks()
+
+    expect(normalizeStoredLocale('es-VE')).toBe('es')
+    expect(normalizeStoredLocale('es-EC')).toBe('es')
+    expect(normalizeStoredLocale('es-UY')).toBe('es')
+    expect(normalizeStoredLocale('es-419')).toBe('es')
   })
 
   it('does not register a schema 2 pack when its component catalog fails', async () => {
