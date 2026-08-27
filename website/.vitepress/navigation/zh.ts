@@ -118,10 +118,11 @@ export const zhThemeConfig: DefaultTheme.Config = {
   logo: {
     light: '/brand/images/hyperfilelens-lockup-on-light.png',
     dark: '/brand/images/hyperfilelens-lockup-on-dark.png',
+    alt: 'HyperFileLens',
   },
   logoLink: '/zh/',
   siteTitle: false,
-  i18nRouting: false,
+  i18nRouting: true,
   nav: [
     {
       text: '快速开始',
