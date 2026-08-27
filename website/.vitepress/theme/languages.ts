@@ -25,6 +25,10 @@ export const zhDocA11yLabels = {
 } as const
 
 export const enDocA11yLabels = {
+  mobileNavigation: 'Mobile navigation',
+  search: 'Search documentation',
+  sidebar: 'Sidebar navigation',
+  pager: 'Documentation pagination',
   copyCode: 'Copy code',
   codeCopied: 'Copied',
 } as const

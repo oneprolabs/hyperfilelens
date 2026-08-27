@@ -31,17 +31,22 @@ function localizeDocCopyButtons(path: string) {
   })
 }
 
-function localizeChineseDocLabels(path: string) {
-  if (!path.startsWith('/zh/docs')) return
+function localizeDocLabels(path: string) {
+  const labels = path.startsWith('/zh/docs')
+    ? zhDocA11yLabels
+    : path.startsWith('/en/docs')
+      ? enDocA11yLabels
+      : null
+  if (!labels) return
 
   document
     .querySelector('.VPNavBarHamburger')
-    ?.setAttribute('aria-label', zhDocA11yLabels.mobileNavigation)
+    ?.setAttribute('aria-label', labels.mobileNavigation)
 
   const searchButton = document.querySelector('.VPNavBarSearch .DocSearch-Button')
   if (searchButton) {
     if (window.matchMedia('(max-width: 767px)').matches) {
-      searchButton.setAttribute('aria-label', zhDocA11yLabels.search)
+      searchButton.setAttribute('aria-label', labels.search)
     } else {
       // On desktop the visible label already provides the accessible name.
       searchButton.removeAttribute('aria-label')
@@ -49,15 +54,74 @@ function localizeChineseDocLabels(path: string) {
   }
 
   const sidebarLabel = document.querySelector('#sidebar-aria-label')
-  if (sidebarLabel) sidebarLabel.textContent = zhDocA11yLabels.sidebar
+  if (sidebarLabel) sidebarLabel.textContent = labels.sidebar
 
   const footerLabel = document.querySelector('#doc-footer-aria-label')
-  if (footerLabel) footerLabel.textContent = zhDocA11yLabels.pager
+  if (footerLabel) footerLabel.textContent = labels.pager
 
 }
 
-function decorateChineseDocSidebar(path: string) {
-  if (!path.startsWith('/zh/docs')) return
+const englishDocRoutes = new Set([
+  '/docs',
+  '/docs/getting-started/saas',
+  '/docs/getting-started/install',
+  '/docs/product',
+  '/docs/backup-restore',
+  '/docs/insights',
+  '/docs/deployment',
+  '/docs/deployment/requirements',
+  '/docs/deployment/network',
+  '/docs/deployment/post-install',
+  '/docs/deployment/agent',
+  '/docs/deployment/proxy',
+  '/docs/deployment/data-gateway',
+  '/docs/deployment/lifecycle',
+  '/docs/deployment/operations',
+  '/docs/help',
+  '/docs/reference',
+  '/docs/reference/support-matrix',
+  '/docs/reference/limitations-security',
+  '/docs/troubleshooting',
+  '/docs/troubleshooting/account-sign-in',
+  '/docs/troubleshooting/installation-nodes',
+  '/docs/troubleshooting/protection',
+  '/docs/troubleshooting/insights',
+])
+
+function normalizeDocRoute(path: string) {
+  return path.replace(/\/+$/, '') || '/docs'
+}
+
+function englishDocFallback(route: string) {
+  if (route.startsWith('/docs/product/') ||
+      route.startsWith('/docs/backup-restore/') ||
+      route.startsWith('/docs/insights/')) {
+    return '/docs/product'
+  }
+  return '/docs'
+}
+
+function updateDocLanguageLinks(path: string) {
+  const match = path.match(/^\/(en|zh)(\/docs(?:\/.*)?$)/)
+  if (!match) return
+
+  const [, currentLocale, rawRoute] = match
+  const route = normalizeDocRoute(rawRoute)
+  const targetLocale = currentLocale === 'en' ? 'zh' : 'en'
+  const targetRoute = targetLocale === 'en' && !englishDocRoutes.has(route)
+    ? englishDocFallback(route)
+    : route
+  const target = `/${targetLocale}${targetRoute}`
+
+  document
+    .querySelectorAll<HTMLAnchorElement>('.VPNavBarTranslations a, .VPNavScreenTranslations a')
+    .forEach((link) => {
+      link.href = target
+    })
+}
+
+function decorateDocSidebar(path: string) {
+  if (!/^\/(?:en|zh)\/docs(?:\/|$)/.test(path)) return
 
   const iconSets = {
     quickStart: [
@@ -82,15 +146,16 @@ function decorateChineseDocSidebar(path: string) {
     ],
   } as const
 
-  const section = path.startsWith('/zh/docs/deployment/')
+  const docsPath = path.replace(/^\/(?:en|zh)/, '')
+  const section = docsPath.startsWith('/docs/deployment/')
     ? 'operations'
-    : path.startsWith('/zh/docs/product/') ||
-        path.startsWith('/zh/docs/backup-restore/') ||
-        path.startsWith('/zh/docs/insights/')
+    : docsPath.startsWith('/docs/product/') ||
+        docsPath.startsWith('/docs/backup-restore/') ||
+        docsPath.startsWith('/docs/insights/')
       ? 'product'
-      : path.startsWith('/zh/docs/help/') ||
-          path.startsWith('/zh/docs/reference/') ||
-          path.startsWith('/zh/docs/troubleshooting/')
+      : docsPath.startsWith('/docs/help/') ||
+          docsPath.startsWith('/docs/reference/') ||
+          docsPath.startsWith('/docs/troubleshooting/')
         ? 'help'
         : 'quickStart'
   const icons = iconSets[section]
@@ -103,7 +168,7 @@ function decorateChineseDocSidebar(path: string) {
     document.querySelectorAll<HTMLElement>('.VPSidebarItem.level-0 > .item .text').forEach((title, index) => {
       const icon = icons[index]
       const group = title.closest<HTMLElement>('.VPSidebarItem.level-0')
-      if (group && section === 'help' && index === 0 && /^\/zh\/docs\/help\/?$/.test(path)) {
+      if (group && section === 'help' && index === 0 && /^\/(?:en|zh)\/docs\/help\/?$/.test(path)) {
         group.classList.add('hfl-sidebar-current')
       }
       if (group && section === 'help' && index === 0 && !group.querySelector(':scope > .items')) {
@@ -123,7 +188,7 @@ function decorateChineseDocSidebar(path: string) {
 }
 
 function revealActiveSidebarItem(path: string) {
-  if (!path.startsWith('/zh/docs')) return
+  if (!/^\/(?:en|zh)\/docs(?:\/|$)/.test(path)) return
 
   const sidebar = document.querySelector<HTMLElement>('.VPSidebar')
   const activeItem = sidebar?.querySelector<HTMLElement>('.VPSidebarItem.is-active')
@@ -145,9 +210,11 @@ function revealActiveSidebarItem(path: string) {
 function enhanceDocPage(path: string) {
   window.requestAnimationFrame(() => {
     localizeDocCopyButtons(path)
-    localizeChineseDocLabels(path)
-    decorateChineseDocSidebar(path)
+    localizeDocLabels(path)
+    decorateDocSidebar(path)
     revealActiveSidebarItem(path)
+    updateDocLanguageLinks(path)
+    window.setTimeout(() => updateDocLanguageLinks(path), 80)
   })
 }
 

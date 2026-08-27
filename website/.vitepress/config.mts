@@ -1,6 +1,83 @@
 import { defineConfig } from 'vitepress'
 import { zhThemeConfig } from './navigation/zh'
 
+const enQuickStart = [
+  {
+    text: 'Quick Start',
+    items: [
+      { text: 'Getting Started', link: '/en/docs/' },
+      { text: 'Use HyperFileLens SaaS', link: '/en/docs/getting-started/saas' },
+      { text: 'Install Community', link: '/en/docs/getting-started/install' },
+    ],
+  },
+]
+
+const enProduct = [
+  {
+    text: 'Product Usage',
+    items: [
+      { text: 'Product Workflow', link: '/en/docs/product/' },
+    ],
+  },
+]
+
+const enOperations = [
+  {
+    text: 'Deployment & Operations',
+    items: [
+      { text: 'Deployment Guide', link: '/en/docs/deployment/' },
+    ],
+  },
+  {
+    text: 'Deploy Community',
+    items: [
+      { text: 'System Requirements', link: '/en/docs/deployment/requirements' },
+      { text: 'Network and Ports', link: '/en/docs/deployment/network' },
+      { text: 'Post-installation Checks', link: '/en/docs/deployment/post-install' },
+    ],
+  },
+  {
+    text: 'Component Deployment',
+    items: [
+      { text: 'Deploy an Agent', link: '/en/docs/deployment/agent' },
+      { text: 'Deploy a Proxy', link: '/en/docs/deployment/proxy' },
+      { text: 'Deploy a Private Data Gateway', link: '/en/docs/deployment/data-gateway' },
+    ],
+  },
+  {
+    text: 'Operations',
+    items: [
+      { text: 'Upgrade and Recovery', link: '/en/docs/deployment/lifecycle' },
+      { text: 'Jobs, Alerts, and Audit Logs', link: '/en/docs/deployment/operations' },
+    ],
+  },
+]
+
+const enHelp = [
+  {
+    text: 'Help Center',
+    items: [],
+  },
+  {
+    text: 'Product Reference',
+    items: [
+      { text: 'Core Concepts', link: '/en/docs/reference/' },
+      { text: 'Supported Configurations', link: '/en/docs/reference/support-matrix' },
+      { text: 'Security & Limits', link: '/en/docs/reference/limitations-security' },
+    ],
+  },
+  {
+    text: 'Troubleshooting',
+    items: [
+      { text: 'Troubleshooting Guide', link: '/en/docs/troubleshooting/' },
+      { text: 'Accounts and Sign-in', link: '/en/docs/troubleshooting/account-sign-in' },
+      { text: 'Installation and Nodes', link: '/en/docs/troubleshooting/installation-nodes' },
+      { text: 'Backup, Storage, and Restore', link: '/en/docs/troubleshooting/protection' },
+      { text: 'Insights and Data Gateway', link: '/en/docs/troubleshooting/insights' },
+    ],
+  },
+]
+
 export default defineConfig({
   lang: 'en-US',
   title: 'HyperFileLens',
@@ -20,24 +97,39 @@ export default defineConfig({
     logo: {
       light: '/brand/images/hyperfilelens-lockup-on-light.png',
       dark: '/brand/images/hyperfilelens-lockup-on-dark.png',
+      alt: 'HyperFileLens',
     },
     siteTitle: false,
-    i18nRouting: false,
+    i18nRouting: true,
     nav: [
       {
         text: 'Quick Start',
         link: '/en/docs/',
         activeMatch: '^/en/docs/(?:$|getting-started/)',
       },
-      { text: 'Backup & Restore', link: '/en/docs/backup-restore/' },
-      { text: 'Insights', link: '/en/docs/insights/' },
+      {
+        text: 'Product Usage',
+        link: '/en/docs/product/',
+        activeMatch: '^/en/docs/(product|backup-restore|insights)/',
+      },
       { text: 'Deployment & Operations', link: '/en/docs/deployment/' },
       {
-        text: 'Reference & Troubleshooting',
-        link: '/en/docs/reference/',
-        activeMatch: '^/en/docs/(reference|troubleshooting)/',
+        text: 'Help Center',
+        link: '/en/docs/help/',
+        activeMatch: '^/en/docs/(help|reference|troubleshooting)/',
       },
     ],
+    sidebar: {
+      '/en/docs/product/': enProduct,
+      '/en/docs/backup-restore/': enProduct,
+      '/en/docs/insights/': enProduct,
+      '/en/docs/deployment/': enOperations,
+      '/en/docs/help/': enHelp,
+      '/en/docs/reference/': enHelp,
+      '/en/docs/troubleshooting/': enHelp,
+      '/en/docs/': enQuickStart,
+      '/en/docs/getting-started/': enQuickStart,
+    },
     socialLinks: [
       { icon: 'github', link: 'https://github.com/oneprolabs/hyperfilelens' },
     ],
