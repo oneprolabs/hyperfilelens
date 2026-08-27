@@ -1136,6 +1136,8 @@
   "protection.backupsPage.msgPickRecoveryDir": "626d20f9b1e8b6f52bc973b4c7ad8bb71eb698095debe30776c4f986a6a1ad1d",
   "protection.backupsPage.msgRecoverySubmitted": "9f2d3f4e1e293684635fad187f873c1a2908c13bb8834d502ce60229ff5bd909",
   "protection.backupsPage.msgRecoveryPlanSubmitted": "24aeea54e63018e8e2d2d44a5f9e12964aa1817d19af1e68f4afb16df7a2da23",
+  "protection.backupsPage.msgRecoveryPartialSubmitted": "0de3f70171317671029a9f07369ad633f36b9dbb1d643619fe8a921d94941c68",
+  "protection.backupsPage.msgRestoreAcceptedRefreshFailed": "281517027b41a7ad7d94d1a9058feebe9f1fc7635bbe49b3d2556fc5b5970c6d",
   "protection.backupsPage.msgRecoveryPlanUnavailable": "b5bcffdfa7befde520b1de4c3d19f3d35ec801709ae71ea10b7829cef382e6eb",
   "protection.backupsPage.recoveryPlanMissingTitle": "eb5a15429d0e3af2eaa878e56f790c3588dcdfe8072d9786a7ad7a05d0d7a3e0",
   "protection.backupsPage.recoveryPlanMissingDesc": "942fd857938ec7775fcda667729bfddc8ecf891b5a15a9c616e1f3a2f7d5a73c",
