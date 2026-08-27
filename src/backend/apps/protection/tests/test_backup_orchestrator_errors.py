@@ -85,3 +85,16 @@ class BackupOrchestratorErrorCodeTests(SimpleTestCase):
 
                 self.assertEqual(projected_code, error_code)
                 self.assertIn(expected_message, message)
+
+    def test_repository_server_internal_detail_is_not_projected(self):
+        task = NodeTask(
+            status=NodeTask.Status.FAILED,
+            last_error="REPOSITORY_SERVER_READY_TIMEOUT: sensitive Proxy log",
+            result={"error_code": "REPOSITORY_SERVER_READY_TIMEOUT"},
+        )
+
+        error_code, message = _node_task_error_code(task)
+
+        self.assertEqual(error_code, "PROXY_REPOSITORY_SERVER_START_FAILED")
+        self.assertIn("did not make", message)
+        self.assertNotIn("sensitive", message)

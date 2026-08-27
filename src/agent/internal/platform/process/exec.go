@@ -48,7 +48,7 @@ func Run(
 	}
 	stopKill, err := startContextProcessGroupKill(ctx, cmd)
 	if err != nil {
-		killProcessGroup(cmd.Process)
+		_ = killProcessGroup(context.Background(), cmd.Process)
 		_ = cmd.Wait()
 		return Result{}, err
 	}

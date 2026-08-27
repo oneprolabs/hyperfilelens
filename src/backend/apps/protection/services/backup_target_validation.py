@@ -15,6 +15,10 @@ from django.db.models import Q
 
 from apps.node import agent_paths
 from apps.node.models import NodeTask
+from apps.node.services.internal.repository_server import (
+    repository_server_diagnostic_code,
+    repository_server_public_error_message,
+)
 from apps.node.services.interface import (
     cancel_agent_task,
     run_agent_task_async,
@@ -55,7 +59,9 @@ TARGET_VALIDATION_ACTIVE_SECONDS = 90
 TARGET_VALIDATION_CLEANUP_SECONDS = 25
 TARGET_VALIDATION_MAX_WORKERS = 4
 TARGET_VALIDATION_AGENT_SECONDS = 60
-TARGET_VALIDATION_SERVER_START_SECONDS = 25
+# Keep the Controller wait budget above the Agent's 30-second final readiness
+# boundary so validation cannot time out while the Proxy is still starting.
+TARGET_VALIDATION_SERVER_START_SECONDS = 35
 TARGET_VALIDATION_CORRELATION_TYPE = "protection.target_validation"
 S3_CLOCK_SKEW_CODE = "S3_CLOCK_SKEW"
 S3_CLOCK_SKEW_MESSAGE = (
@@ -931,10 +937,14 @@ def _validate_proxy_repository_group(
             max_wait_seconds=TARGET_VALIDATION_SERVER_START_SECONDS,
         )
         if not start_outcome.ok:
-            port_exhausted = (
-                "no available repository server port"
-                in str(start_outcome.message or "").lower()
+            diagnostic_code = repository_server_diagnostic_code(
+                start_outcome.result,
+                start_outcome.message,
             )
+            public_message = repository_server_public_error_message(
+                diagnostic_code
+            )
+            port_exhausted = diagnostic_code == "REPOSITORY_SERVER_PORT_UNAVAILABLE"
             server_result = TargetValidationResult(
                 status="failed",
                 code=(
@@ -943,7 +953,8 @@ def _validate_proxy_repository_group(
                     else "PROXY_REPOSITORY_SERVER_START_FAILED"
                 ),
                 message=_sanitize_message(
-                    start_outcome.message
+                    public_message
+                    or start_outcome.message
                     or "The temporary Repository Server could not start on the Proxy Host.",
                     repository=repository,
                 ),
@@ -968,8 +979,8 @@ def _validate_proxy_repository_group(
                 or start_outcome.result.get("url")
                 or ""
             ).strip(),
-            "username": username,
-            "password": password,
+            "username": str(start_outcome.result.get("username") or username).strip(),
+            "password": str(start_outcome.result.get("password") or password).strip(),
             "server_cert_fingerprint": str(
                 start_outcome.result.get("server_cert_fingerprint") or ""
             ).strip(),
@@ -1455,8 +1466,15 @@ def _merge_cleanup_failure(
     repository: Repository,
     resource_label: str,
 ) -> TargetValidationResult:
+    cleanup_code = repository_server_diagnostic_code(
+        cleanup.result,
+        cleanup.message,
+    )
+    public_cleanup_message = repository_server_public_error_message(cleanup_code)
     cleanup_message = _sanitize_message(
-        cleanup.message or f"Failed to clean up the {resource_label}.",
+        public_cleanup_message
+        or cleanup.message
+        or f"Failed to clean up the {resource_label}.",
         repository=repository,
     )
     if current.status == "success":

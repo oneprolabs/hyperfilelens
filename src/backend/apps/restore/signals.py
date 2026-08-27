@@ -9,6 +9,10 @@ from django.dispatch import receiver
 from django.utils import timezone
 
 from apps.node.models import NodeTask
+from apps.node.services.internal.repository_server import (
+    repository_server_diagnostic_code,
+    repository_server_public_error_message,
+)
 from apps.restore.models import RestoreRecord, RestoreRecordItem
 from apps.restore.services.task_events import append_restore_item_terminal_event
 from apps.restore.services.task_classification import normalize_restore_task_type
@@ -37,6 +41,17 @@ _TERMINAL_RESTORE_ITEM_STATUSES = {
     RestoreRecordItem.Status.CANCELLED,
 }
 logger = logging.getLogger(__name__)
+
+
+def _repository_server_failure_message(node_task: NodeTask) -> str:
+    result = node_task.result if isinstance(node_task.result, dict) else {}
+    message = str(node_task.last_error or "").strip()
+    code = repository_server_diagnostic_code(result, message)
+    if code:
+        return repository_server_public_error_message(code)
+    if not message:
+        message = str(result.get("error") or "").strip()
+    return message or "Restore repository server failed."
 
 
 def _continue_lens_workspace_restore(record_id: int) -> None:
@@ -210,10 +225,7 @@ def _handle_restore_repository_server_task(*, node_task: NodeTask) -> None:
             task=product_task,
         )
         return
-    message = str(node_task.last_error or "").strip()
-    if not message and isinstance(node_task.result, dict):
-        message = str(node_task.result.get("error") or "").strip()
-    message = (message or "Restore repository server failed.")[:2000]
+    message = _repository_server_failure_message(node_task)[:2000]
     repository_id = (
         RestoreRecordItem.objects.filter(
             organization_id=record.organization_id,

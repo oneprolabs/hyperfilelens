@@ -19,6 +19,10 @@ from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
 from apps.node.services.capabilities import missing_node_capabilities
 from apps.node.services.internal.node_registry import node_is_available_for_work
+from apps.node.services.internal.repository_server import (
+    repository_server_diagnostic_code,
+    repository_server_public_error_message,
+)
 from apps.node.services.interface import cancel_agent_task, run_agent_task_async
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_log import (
@@ -2223,8 +2227,11 @@ def _ensure_restore_repository_server_payload(
             NodeTask.Status.CANCELED,
         }:
             message = str(node_task.last_error or "").strip()
-            if not message and isinstance(node_task.result, dict):
-                message = str(node_task.result.get("error") or "").strip()
+            result = node_task.result if isinstance(node_task.result, dict) else {}
+            diagnostic_code = repository_server_diagnostic_code(result, message)
+            message = repository_server_public_error_message(diagnostic_code) or message
+            if not message:
+                message = str(result.get("error") or "").strip()
             raise ValidationError(
                 {
                     "target_ref_id": (

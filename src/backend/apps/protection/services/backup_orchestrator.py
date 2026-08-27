@@ -19,6 +19,10 @@ from django.utils.dateparse import parse_datetime
 
 from apps.node.models import Node, NodeTask
 from apps.node.services.internal.node_registry import effective_agent_node_status
+from apps.node.services.internal.repository_server import (
+    repository_server_diagnostic_code,
+    repository_server_public_error_message,
+)
 from apps.node.services.interface import (
     cancel_agent_task,
     redeliver_pending_agent_task,
@@ -178,6 +182,14 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
         return "KOPIA_SIGNAL_KILLED", last_error or "Kopia process was killed."
     if node_task.status == NodeTask.Status.FAILED:
         structured_error = str(result.get("error_code") or "")
+        repository_server_code = repository_server_diagnostic_code(
+            result, last_error
+        )
+        if repository_server_code:
+            return (
+                "PROXY_REPOSITORY_SERVER_START_FAILED",
+                repository_server_public_error_message(repository_server_code),
+            )
         if structured_error in _BACKUP_PROTECTION_ERROR_MESSAGES:
             return structured_error, _BACKUP_PROTECTION_ERROR_MESSAGES[
                 structured_error
@@ -484,8 +496,11 @@ def _ensure_repository_server_payload(
                 raise ValidationError({"repository_id": "Proxy repository server start returned incomplete connection info."})
             if node_task.status in _NODE_TASK_TERMINAL:
                 message = str(node_task.last_error or "").strip()
-                if not message and isinstance(node_task.result, dict):
-                    message = str(node_task.result.get("error") or "").strip()
+                result = node_task.result if isinstance(node_task.result, dict) else {}
+                diagnostic_code = repository_server_diagnostic_code(result, message)
+                message = repository_server_public_error_message(diagnostic_code) or message
+                if not message:
+                    message = str(result.get("error") or "").strip()
                 raise ValidationError(
                     {
                         "repository_id": (

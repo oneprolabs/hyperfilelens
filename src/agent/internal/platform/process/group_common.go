@@ -21,7 +21,7 @@ func startContextProcessGroupKill(ctx context.Context, cmd *exec.Cmd) (func(), e
 		select {
 		case <-ctx.Done():
 			if cmd.Process != nil {
-				killProcessGroup(cmd.Process)
+				_ = killProcessGroup(context.Background(), cmd.Process)
 			}
 		case <-done:
 		}
