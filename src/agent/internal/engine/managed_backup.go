@@ -3663,36 +3663,100 @@ func truncateSnapshotBrowseError(value string, limit int) string {
 }
 
 // formatModTimeUTC parses a time string from Kopia output and returns it as
-// RFC 3339 (ISO 8601) in UTC. Kopia snapshot timestamps are always UTC but
-// the ls -l output omits the timezone indicator, causing frontends to
-// misinterpret them as local time.
+// RFC 3339 (ISO 8601) in UTC. Kopia formats ls -l timestamps in the Agent's
+// local timezone, including ambiguous abbreviations such as CST, so named
+// zones must be resolved against that same local timezone.
 func formatModTimeUTC(raw string) string {
+	return formatModTimeUTCInLocation(raw, time.Local)
+}
+
+func formatModTimeUTCInLocation(raw string, local *time.Location) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
 	}
-	// Strip trailing " UTC" / " UTC" that some Kopia JSON outputs append.
-	utcStripped := strings.TrimSuffix(raw, " UTC")
-	utcStripped = strings.TrimSuffix(utcStripped, " UTC")
-	utcStripped = strings.TrimSpace(utcStripped)
-	formats := []string{
+	if local == nil {
+		local = time.Local
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05.999999999 -07:00",
+		"2006-01-02 15:04:05.999999999 -0700",
+	} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed.UTC().Format(time.RFC3339)
+		}
+	}
+	for _, layout := range []string{
+		"Jan 2 2006 MST",
+		"Jan 2 15:04 MST",
+		"Jan 2 15:04:05 MST",
+		"2006-01-02 15:04:05 MST",
+		"2006-01-02T15:04:05 MST",
+	} {
+		parsed, err := time.ParseInLocation(layout, raw, local)
+		if err != nil {
+			continue
+		}
+		year := parsed.Year()
+		if year == 0 {
+			year = time.Now().In(local).Year()
+		}
+		inputZone := strings.Fields(raw)
+		if len(inputZone) > 0 && (strings.EqualFold(inputZone[len(inputZone)-1], "UTC") ||
+			strings.EqualFold(inputZone[len(inputZone)-1], "GMT")) {
+			return time.Date(
+				year,
+				parsed.Month(),
+				parsed.Day(),
+				parsed.Hour(),
+				parsed.Minute(),
+				parsed.Second(),
+				parsed.Nanosecond(),
+				time.UTC,
+			).Format(time.RFC3339)
+		}
+		localTime := time.Date(
+			year,
+			parsed.Month(),
+			parsed.Day(),
+			parsed.Hour(),
+			parsed.Minute(),
+			parsed.Second(),
+			parsed.Nanosecond(),
+			local,
+		)
+		localZone, _ := localTime.Zone()
+		if len(inputZone) == 0 || !strings.EqualFold(inputZone[len(inputZone)-1], localZone) {
+			continue
+		}
+		return localTime.UTC().Format(time.RFC3339)
+	}
+	for _, layout := range []string{
 		"Jan 2 2006",
 		"Jan 2 15:04",
 		"Jan 2 15:04:05",
 		"2006-01-02 15:04:05",
 		"2006-01-02T15:04:05",
-		time.RFC3339,
-	}
-	for _, layout := range formats {
-		t, err := time.Parse(layout, utcStripped)
+	} {
+		parsed, err := time.ParseInLocation(layout, raw, local)
 		if err != nil {
 			continue
 		}
-		year := t.Year()
+		year := parsed.Year()
 		if year == 0 {
-			year = time.Now().Year()
+			year = time.Now().In(local).Year()
 		}
-		return time.Date(year, t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC).Format(time.RFC3339)
+		return time.Date(
+			year,
+			parsed.Month(),
+			parsed.Day(),
+			parsed.Hour(),
+			parsed.Minute(),
+			parsed.Second(),
+			parsed.Nanosecond(),
+			local,
+		).UTC().Format(time.RFC3339)
 	}
 	return raw
 }
