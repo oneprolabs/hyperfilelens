@@ -24,7 +24,6 @@ import {
   fileFilterFormToWritePayload,
   fileFilterRuleToForm,
   policyFormToWritePayload,
-  summarizeSchedule,
   validateRetentionForm,
   validateScheduleForm,
   type BackupPolicyForm,
@@ -169,44 +168,82 @@ const editorPreviewActive = computed(() =>
 )
 const previewNumber = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : '—'
 
+function localizedScheduleSummary(f: BackupPolicyForm): string {
+  if (!f.sectionScheduleEnabled) return t('protection.policiesPage.retentionNotConfigured')
+  let summary = ''
+  if (f.freqMode === 'advanced') {
+    summary = f.cronExpr
+  } else if (f.quickScheduleType === 'interval') {
+    const unitKey = f.simpleIntervalUnit === 'minute'
+      ? 'unitMinutes'
+      : f.simpleIntervalUnit === 'hour' ? 'unitHours' : 'unitDays'
+    summary = t('protection.policiesPage.previewScheduleInterval', {
+      n: f.simpleIntervalValue,
+      unit: t(`protection.policiesPage.${unitKey}`),
+    })
+  } else if (f.quickScheduleType === 'daily') {
+    summary = t('protection.policiesPage.previewScheduleDaily', { time: f.scheduleTime })
+  } else if (f.quickScheduleType === 'weekly') {
+    const weekdayKeys = ['weekdayMon', 'weekdayTue', 'weekdayWed', 'weekdayThu', 'weekdayFri', 'weekdaySat', 'weekdaySun'] as const
+    const weekdays = [...new Set(f.scheduleWeekdays)]
+      .sort((a, b) => a - b)
+      .map((day) => t(`protection.policiesPage.${weekdayKeys[day - 1]}`))
+      .join(', ')
+    summary = t('protection.policiesPage.previewScheduleWeekly', { weekdays, time: f.scheduleTime })
+  } else {
+    const dates = [...new Set(f.scheduleMonthDays)].sort((a, b) => a - b).map(String)
+    if (f.scheduleMonthEnd) dates.push(t('protection.policiesPage.scheduleMonthEnd'))
+    summary = t('protection.policiesPage.previewScheduleMonthly', { dates: dates.join(', '), time: f.scheduleTime })
+  }
+  summary = `${summary} (${f.scheduleTimezone || 'UTC'})`
+  if (f.scheduleStartsAt) {
+    summary = t('protection.policiesPage.previewScheduleStarts', {
+      schedule: summary,
+      starts: f.scheduleStartsAt.replace('T', ' '),
+    })
+  }
+  return summary
+}
+
 const backupRetentionPreviewRows = computed(() => {
   const f = form.value
   if (!f.sectionRetentionEnabled) {
     return [
       {
         label: t('protection.policiesPage.fieldRetention'),
-        value: 'Not configured',
+        value: t('protection.policiesPage.retentionNotConfigured'),
         muted: true,
       },
     ]
   }
-  return [
-    {
-      label: 'Latest',
-      value: `${previewNumber(f.retentionRecentPoints)} restore point(s)`,
-    },
-    {
-      label: t('protection.policiesPage.shortTitle'),
-      value: f.retentionShortHourly
-          ? `First ${previewNumber(f.retentionShortDaysMax)} days`
-        : t('protection.policiesPage.statusOff'),
-      muted: !f.retentionShortHourly,
-    },
-    {
-      label: t('protection.policiesPage.midTitle'),
-      value: f.retentionMidDaily
-          ? `Day ${previewNumber(f.retentionShortDaysMax)} to ${previewNumber(f.retentionMidDaysMax)}`
-        : t('protection.policiesPage.statusOff'),
-      muted: !f.retentionMidDaily,
-    },
-    {
-      label: t('protection.policiesPage.longTitle'),
-      value: f.retentionLongMonthly
-          ? `After day ${previewNumber(f.retentionMidDaysMax)}, ${previewNumber(f.retentionLongMonths)} months`
-        : t('protection.policiesPage.statusOff'),
-      muted: !f.retentionLongMonthly,
-    },
-  ]
+  const rows = [{
+    label: t('protection.policiesPage.previewRetentionLatestLabel'),
+    value: t(
+      f.retentionRecentPoints === 1
+        ? 'protection.policiesPage.retentionLatestSummaryOne'
+        : 'protection.policiesPage.retentionLatestSummaryMany',
+      { n: previewNumber(f.retentionRecentPoints) },
+    ),
+  }]
+  if (f.retentionShortHourly) rows.push({
+    label: t('protection.policiesPage.shortTitle'),
+    value: t('protection.policiesPage.previewRetentionFirstDays', { n: previewNumber(f.retentionShortDaysMax) }),
+  })
+  if (f.retentionMidDaily) rows.push({
+    label: t('protection.policiesPage.midTitle'),
+    value: t('protection.policiesPage.previewRetentionDayRange', {
+      start: previewNumber(f.retentionShortDaysMax),
+      end: previewNumber(f.retentionMidDaysMax),
+    }),
+  })
+  if (f.retentionLongMonthly) rows.push({
+    label: t('protection.policiesPage.longTitle'),
+    value: t('protection.policiesPage.previewRetentionAfterDay', {
+      day: previewNumber(f.retentionMidDaysMax),
+      months: previewNumber(f.retentionLongMonths),
+    }),
+  })
+  return rows
 })
 
 const backupErrorHandlingPreviewRows = computed(() => {
@@ -240,7 +277,7 @@ const editorPreviewRows = computed(() => {
   return [
     {
       label: t('protection.policiesPage.fieldSchedule'),
-      value: summarizeSchedule(form.value, messageLocale.value),
+      value: localizedScheduleSummary(form.value),
     },
   ]
 })
@@ -460,7 +497,7 @@ onMounted(() => {
 
               <div
                 v-if="!isFilterEditor"
-                class="add-form-preview-section"
+                class="add-form-preview-section add-form-preview-section--retention"
               >
                 <h5 class="add-form-preview-section__title">
                   {{ t('protection.policiesPage.fieldRetention') }}
@@ -525,20 +562,24 @@ onMounted(() => {
   border-color: rgba(226, 232, 240, 0.95);
 }
 
-.policy-editor-fullscreen :deep(.add-form-preview-row) {
+.policy-editor-fullscreen :deep(.add-form-preview-section--retention .add-form-preview-row) {
   align-items: flex-start;
 }
 
-.policy-editor-fullscreen :deep(.add-form-preview-row__label) {
-  flex: 1 1 auto;
+.policy-editor-fullscreen :deep(.add-form-preview-section--retention .add-form-preview-row__label) {
+  flex: 0 0 72px;
   min-width: 0;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
-.policy-editor-fullscreen :deep(.add-form-preview-row__value) {
-  flex: 0 1 auto;
-  max-width: 58%;
+.policy-editor-fullscreen :deep(.add-form-preview-section--retention .add-form-preview-row__value) {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 </style>

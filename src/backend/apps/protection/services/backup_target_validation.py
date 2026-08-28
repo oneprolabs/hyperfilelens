@@ -941,9 +941,7 @@ def _validate_proxy_repository_group(
                 start_outcome.result,
                 start_outcome.message,
             )
-            public_message = repository_server_public_error_message(
-                diagnostic_code
-            )
+            public_message = repository_server_public_error_message(diagnostic_code)
             port_exhausted = diagnostic_code == "REPOSITORY_SERVER_PORT_UNAVAILABLE"
             server_result = TargetValidationResult(
                 status="failed",
@@ -980,7 +978,12 @@ def _validate_proxy_repository_group(
                 or ""
             ).strip(),
             "username": str(start_outcome.result.get("username") or username).strip(),
-            "password": str(start_outcome.result.get("password") or password).strip(),
+            # The start outcome is scrubbed before it is returned so it is safe
+            # to persist in the task audit record.  Keep using the in-memory
+            # credential generated for this session when probing from another
+            # node; the scrubbed value (``******``) must never be sent to the
+            # Repository Server client.
+            "password": password,
             "server_cert_fingerprint": str(
                 start_outcome.result.get("server_cert_fingerprint") or ""
             ).strip(),

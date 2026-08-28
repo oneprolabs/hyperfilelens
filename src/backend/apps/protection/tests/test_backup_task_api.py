@@ -421,7 +421,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
         self.repository.refresh_from_db()
         self.assertEqual(self.repository.config["quota_gb"], 1)
-        self.assertEqual(self.repository.usage_probe_status, Repository.MetricProbeStatus.SUCCESS)
+        self.assertEqual(
+            self.repository.usage_probe_status, Repository.MetricProbeStatus.SUCCESS
+        )
         self.assertEqual(self.repository.estimated_usage_bytes, 1 * 1024**3)
 
         response = self.client.post(
@@ -1571,7 +1573,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
 
     @patch("apps.protection.services.backup_orchestrator.cancel_agent_task")
-    def test_substantive_stall_requests_cancel_once_at_final_deadline(self, mock_cancel):
+    def test_substantive_stall_requests_cancel_once_at_final_deadline(
+        self, mock_cancel
+    ):
         task, snapshot = self._create_backup_task_and_snapshot(
             idempotency_key="test-stall-final-deadline",
         )
@@ -1991,8 +1995,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             updated_at=timezone.now()
             - timezone.timedelta(
                 seconds=(
-                    protection_conf.PROTECTION_BACKUP_CAPABILITY_SYNC_GRACE_SECONDS
-                    + 1
+                    protection_conf.PROTECTION_BACKUP_CAPABILITY_SYNC_GRACE_SECONDS + 1
                 )
             )
         )
@@ -2016,7 +2019,10 @@ class ProtectionBackupTaskApiTests(TestCase):
             kind="backup.run",
             correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
             correlation_id=str(task.task_uuid),
-            payload={"backup_config_dir_id": directory_config.id, "operation_attempt": 1},
+            payload={
+                "backup_config_dir_id": directory_config.id,
+                "operation_attempt": 1,
+            },
             status=NodeTask.Status.SUCCESS,
             result={"kopia_snapshot_id": "late-previous-snapshot"},
             watchdog_deadline_at=timezone.now(),
@@ -2027,7 +2033,10 @@ class ProtectionBackupTaskApiTests(TestCase):
             kind="backup.run",
             correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
             correlation_id=str(task.task_uuid),
-            payload={"backup_config_dir_id": directory_config.id, "operation_attempt": 2},
+            payload={
+                "backup_config_dir_id": directory_config.id,
+                "operation_attempt": 2,
+            },
             status=NodeTask.Status.RUNNING,
             watchdog_deadline_at=timezone.now()
             + timezone.timedelta(
@@ -3098,6 +3107,23 @@ class ProtectionBackupTaskApiTests(TestCase):
                 metadata__error_code="AGENT_BACKUP_FAILED",
                 metadata__error_message__contains="kopia repository connect failed",
             ).exists()
+        )
+        terminal_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="finalize_snapshot",
+            message="Task finished with status failed",
+        )
+        self.assertIsNone(terminal_event.metadata)
+        summary_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="finalize_snapshot",
+            message="Backup finished with failed directories",
+        )
+        summary = summary_event.metadata["backup_summary"]
+        self.assertEqual(summary["snapshot_id"], snapshot.snapshot_uid)
+        self.assertEqual(len(summary["failed_directories"]), 1)
+        self.assertEqual(
+            summary["failed_directories"][0]["path"], directory.source_path
         )
 
     @patch(

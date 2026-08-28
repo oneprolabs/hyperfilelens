@@ -78,8 +78,11 @@ type FilterRow = {
 
 type PolicyRetentionDetailLine = {
   label?: string
+  summary?: boolean
   text: string
 }
+
+type PolicyScheduleDetailLine = PolicyRetentionDetailLine
 
 const { t, locale } = useI18n()
 const { tableMaxHeight: policyUsageTableMaxHeight, containerRef: policyUsageTableRef } = useDrawerTableMaxHeight()
@@ -535,6 +538,102 @@ function fmtLocalTime(v: string | null | undefined) {
   return formatLocalDateTime(v, t('protection.policiesPage.timeDash'), locale.value)
 }
 
+function policyScheduleIntervalUnit(form: BackupPolicyForm): string {
+  const key = form.simpleIntervalUnit === 'minute'
+    ? 'protection.policiesPage.unitMinutes'
+    : form.simpleIntervalUnit === 'hour'
+      ? 'protection.policiesPage.unitHours'
+      : 'protection.policiesPage.unitDays'
+  return t(key)
+}
+
+function policyScheduleWeekdays(form: BackupPolicyForm): string {
+  const keys = [
+    'weekdayMon',
+    'weekdayTue',
+    'weekdayWed',
+    'weekdayThu',
+    'weekdayFri',
+    'weekdaySat',
+    'weekdaySun',
+  ] as const
+  return [...new Set(form.scheduleWeekdays)]
+    .sort((a, b) => a - b)
+    .map((day) => keys[day - 1])
+    .filter((key): key is typeof keys[number] => Boolean(key))
+    .map((key) => t(`protection.policiesPage.${key}`))
+    .join(', ')
+}
+
+function policyScheduleMonthDates(form: BackupPolicyForm): string {
+  const dates = [...new Set(form.scheduleMonthDays)]
+    .sort((a, b) => a - b)
+    .map(String)
+  if (form.scheduleMonthEnd) dates.push(t('protection.policiesPage.scheduleMonthEnd'))
+  return dates.join(', ')
+}
+
+function policyScheduleCycle(form: BackupPolicyForm): string {
+  if (form.freqMode === 'advanced') {
+    return t('protection.policiesPage.freqAdvanced')
+  }
+  if (form.quickScheduleType === 'interval') {
+    return `${t('protection.policiesPage.intervalEvery')} ${form.simpleIntervalValue} ${policyScheduleIntervalUnit(form)}`
+  }
+  const key = form.quickScheduleType === 'daily'
+    ? 'scheduleTypeDaily'
+    : form.quickScheduleType === 'weekly'
+      ? 'scheduleTypeWeekly'
+      : 'scheduleTypeMonthly'
+  return t(`protection.policiesPage.${key}`)
+}
+
+function policyScheduleListSummary(row: PolicyRow): string {
+  const form = row.formData
+  if (!form) return row.scheduleSummary || t('protection.policiesPage.timeDash')
+  if (!form.sectionScheduleEnabled) return t('protection.policiesPage.retentionNotConfigured')
+  const parts = [policyScheduleCycle(form)]
+  if (form.freqMode === 'advanced') parts.push(form.cronExpr)
+  else if (form.quickScheduleType === 'daily') parts.push(form.scheduleTime)
+  else if (form.quickScheduleType === 'weekly') parts.push(policyScheduleWeekdays(form), form.scheduleTime)
+  else if (form.quickScheduleType === 'monthly') parts.push(policyScheduleMonthDates(form), form.scheduleTime)
+  return parts.filter(Boolean).join(' · ')
+}
+
+function policyScheduleDetailLines(row: PolicyRow): PolicyScheduleDetailLine[] {
+  const form = row.formData
+  if (!form) return [{ text: row.scheduleSummary || t('protection.policiesPage.timeDash') }]
+  if (!form.sectionScheduleEnabled) return [{ text: t('protection.policiesPage.retentionNotConfigured') }]
+
+  const lines: PolicyScheduleDetailLine[] = [
+    { text: policyScheduleListSummary(row), summary: true },
+    { label: `${t('protection.policiesPage.scheduleCycle')}:`, text: policyScheduleCycle(form) },
+  ]
+  if (form.freqMode === 'advanced') {
+    lines.push({ label: `${t('protection.policiesPage.cronLabel')}:`, text: form.cronExpr })
+  } else if (form.quickScheduleType === 'daily') {
+    lines.push({ label: `${t('protection.policiesPage.scheduleTime')}:`, text: form.scheduleTime })
+  } else if (form.quickScheduleType === 'weekly') {
+    lines.push(
+      { label: `${t('protection.policiesPage.scheduleWeekdays')}:`, text: policyScheduleWeekdays(form) },
+      { label: `${t('protection.policiesPage.scheduleTime')}:`, text: form.scheduleTime },
+    )
+  } else if (form.quickScheduleType === 'monthly') {
+    lines.push(
+      { label: `${t('protection.policiesPage.scheduleMonthDays')}:`, text: policyScheduleMonthDates(form) },
+      { label: `${t('protection.policiesPage.scheduleTime')}:`, text: form.scheduleTime },
+    )
+  }
+  lines.push(
+    { label: `${t('protection.policiesPage.scheduleTimezone')}:`, text: form.scheduleTimezone || 'UTC' },
+    {
+      label: `${t('protection.policiesPage.scheduleStartsAt')}:`,
+      text: form.scheduleStartsAt?.replace('T', ' ') || t('protection.policiesPage.timeDash'),
+    },
+  )
+  return lines
+}
+
 function policyRetentionDetailLines(row: PolicyRow): PolicyRetentionDetailLine[] {
   const f = row.formData
   if (!f) return [{ text: row.retentionSummary || t('protection.policiesPage.timeDash') }]
@@ -549,36 +648,22 @@ function policyRetentionDetailLines(row: PolicyRow): PolicyRetentionDetailLine[]
           : 'protection.policiesPage.retentionLatestMany',
         { n: recentPoints },
       ),
+      summary: true,
     },
   ]
   if (f.retentionShortHourly) {
     lines.push({
-      label: `${t('protection.policiesPage.hourlyTitle')}:`,
-      text: t('protection.policiesPage.retentionHourlyDetail', { n: Number(f.retentionShortDaysMax) * 24 }),
+      text: t('protection.policiesPage.shortDesc', { days: f.retentionShortDaysMax }),
     })
   }
   if (f.retentionMidDaily) {
     lines.push({
-      label: `${t('protection.policiesPage.dailyTitle')}:`,
-      text: t('protection.policiesPage.retentionDailyDetail', { n: f.retentionMidDaysMax }),
-    })
-  }
-  if (f.retentionWeeklyEnabled) {
-    lines.push({
-      label: `${t('protection.policiesPage.weeklyTitle')}:`,
-      text: t('protection.policiesPage.retentionWeeklyDetail', { n: f.retentionWeeklyWeeks }),
+      text: t('protection.policiesPage.midDesc', { start: f.retentionShortDaysMax, end: f.retentionMidDaysMax }),
     })
   }
   if (f.retentionLongMonthly) {
     lines.push({
-      label: `${t('protection.policiesPage.monthlyTitle')}:`,
-      text: t('protection.policiesPage.retentionMonthlyDetail', { n: f.retentionLongMonths }),
-    })
-  }
-  if (f.retentionAnnualEnabled) {
-    lines.push({
-      label: `${t('protection.policiesPage.annualTitle')}:`,
-      text: t('protection.policiesPage.retentionAnnualDetail', { n: f.retentionAnnualYears }),
+      text: t('protection.policiesPage.longDesc', { day: f.retentionMidDaysMax, months: f.retentionLongMonths }),
     })
   }
   return lines
@@ -1219,7 +1304,39 @@ function onMoreDisable() {
               min-width="180"
             >
               <template #default="{ row }">
-                <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ row.scheduleSummary }}</span>
+                <HflPopover
+                  trigger="hover"
+                  placement="top-start"
+                  :width="420"
+                  popper-class="policy-retention-popover"
+                >
+                  <template #reference>
+                    <span class="hfl-table-cell-full hfl-table-no-tooltip policy-retention-cell">
+                      <span class="policy-retention-cell__summary">{{ policyScheduleListSummary(row) }}</span>
+                    </span>
+                  </template>
+                  <div class="policy-retention-popover__content">
+                    <section class="policy-retention-popover__section">
+                      <div class="policy-retention-detail-list">
+                        <div
+                          v-for="line in policyScheduleDetailLines(row)"
+                          :key="`${line.label || ''}${line.text}`"
+                          class="policy-retention-detail-list__line"
+                          :class="{
+                            'policy-retention-detail-list__line--summary': line.summary,
+                            'policy-retention-detail-list__line--full': !line.label && !line.summary,
+                          }"
+                        >
+                          <span
+                            v-if="line.label"
+                            class="policy-retention-detail-list__label"
+                          >{{ line.label }}</span>
+                          <span class="policy-retention-detail-list__text">{{ line.text }}</span>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </HflPopover>
               </template>
             </el-table-column>
             <el-table-column
@@ -1239,8 +1356,11 @@ function onMoreDisable() {
                     </span>
                   </template>
                   <div class="policy-retention-popover__content">
-                    <section class="policy-retention-popover__section">
-                      <div class="policy-retention-detail-list">
+                    <section class="policy-retention-popover__section policy-retention-popover__section--retention">
+                      <div class="policy-retention-popover__title">
+                        {{ t('protection.policiesPage.sectionRetention') }}
+                      </div>
+                      <div class="policy-retention-detail-list policy-retention-detail-list--retention">
                         <div
                           v-for="line in policyRetentionDetailLines(row)"
                           :key="`${line.label || ''}${line.text}`"
@@ -2028,6 +2148,18 @@ function onMoreDisable() {
   min-width: 0;
 }
 
+:global(.policy-retention-popover__section--retention) {
+  display: grid;
+  gap: 8px;
+}
+
+:global(.policy-retention-popover__title) {
+  color: rgb(51 65 85);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
 :global(.policy-retention-detail-list) {
   display: flex;
   flex-direction: column;
@@ -2054,10 +2186,29 @@ function onMoreDisable() {
   font-weight: 600;
 }
 
+:global(.policy-retention-detail-list--retention .policy-retention-detail-list__line--summary) {
+  padding-bottom: 0;
+  border-bottom: 0;
+  font-weight: 400;
+}
+
+:global(.policy-retention-detail-list--retention) {
+  padding-top: 8px;
+  border-top: 1px solid rgb(226 232 240);
+}
+
+:global(.policy-retention-detail-list__line--full) {
+  display: block;
+}
+
 :global(.policy-retention-detail-list__label) {
   color: rgb(71 85 105);
   font-weight: 600;
   white-space: nowrap;
+}
+
+:global(.policy-retention-detail-list--retention .policy-retention-detail-list__label) {
+  font-weight: 400;
 }
 
 :global(.policy-retention-detail-list__text) {

@@ -4,9 +4,15 @@ from django.test import SimpleTestCase
 from django.utils import timezone
 
 from apps.protection.services.progress.aggregator import aggregate_lanes
-from apps.protection.services.progress.display import enrich_kopia_progress_payload, has_transfer_progress
+from apps.protection.services.progress.display import (
+    enrich_kopia_progress_payload,
+    has_transfer_progress,
+)
 from apps.protection.services.progress.kopia_fields import normalize_lane_progress
-from apps.protection.services.progress.orchestration_label import backup_orchestration_label_meta, restore_orchestration_label
+from apps.protection.services.progress.orchestration_label import (
+    backup_orchestration_label_meta,
+    restore_orchestration_label,
+)
 
 
 class KopiaProgressAggregatorTests(SimpleTestCase):
@@ -372,7 +378,10 @@ class KopiaProgressDisplayTests(SimpleTestCase):
                     "slowest_lane": None,
                 },
             },
-            transfer_progress={"unknown_total_started_at": timezone.now().isoformat(), "phase": "transferring"},
+            transfer_progress={
+                "unknown_total_started_at": timezone.now().isoformat(),
+                "phase": "transferring",
+            },
         )
         self.assertAlmostEqual(payload["display_percent"], 3.0, places=1)
         self.assertEqual(payload["percent_source"], "placeholder")
@@ -406,6 +415,146 @@ class KopiaProgressDisplayTests(SimpleTestCase):
 
 
 class KopiaFailureMessageTests(SimpleTestCase):
+    def test_extracts_actionable_structured_windows_file_lock_failures(self):
+        from apps.protection.services.backup_task import (
+            _directory_error,
+            extract_kopia_failure_message,
+            extract_kopia_snapshot_failure_details,
+            kopia_snapshot_failure_metadata,
+        )
+
+        result = {
+            "snapshot": {
+                "rootEntry": {
+                    "summ": {
+                        "numFailed": 2,
+                        "errors": [
+                            {
+                                "path": "Veeam/PerfCache/cpu/LOCK",
+                                "error": "read E:\\ProgramData\\Veeam\\PerfCache\\cpu\\LOCK: "
+                                "The process cannot access the file because another process "
+                                "has locked a portion of the file.",
+                            },
+                            {
+                                "path": "Veeam/PerfCache/memory/LOCK",
+                                "error": "read E:\\ProgramData\\Veeam\\PerfCache\\memory\\LOCK: "
+                                "The process cannot access the file because another process "
+                                "has locked a portion of the file.",
+                            },
+                        ],
+                    }
+                }
+            },
+            "snapshot_create": {"stderr": "Found 2 fatal errors."},
+        }
+
+        details = extract_kopia_snapshot_failure_details(result)
+        self.assertEqual(len(details), 2)
+        self.assertEqual(details[1]["path"], "Veeam/PerfCache/memory/LOCK")
+        self.assertEqual(
+            extract_kopia_failure_message(result, last_error="exit status 1"),
+            "2 files could not be read because another process locked them. "
+            "Review the failed file list and remediation guidance.",
+        )
+        metadata = kopia_snapshot_failure_metadata(result)["failure_details"]
+        self.assertEqual(metadata["category"], "source_file_locked")
+        self.assertEqual(metadata["count"], 2)
+        self.assertEqual(len(metadata["items"]), 2)
+        outcome = type(
+            "Outcome",
+            (),
+            {
+                "result": result,
+                "task": type("AgentTask", (), {"last_error": "exit status 1"})(),
+            },
+        )()
+        code, _ = _directory_error(outcome)
+        self.assertEqual(code, "SOURCE_FILE_LOCKED")
+
+    def test_failure_metadata_guides_disabled_policy_skip_settings(self):
+        from apps.protection.services.backup_task import (
+            kopia_snapshot_failure_metadata,
+        )
+
+        result = {
+            "snapshot": {
+                "rootEntry": {
+                    "summ": {
+                        "errors": [
+                            {"path": "locked.txt", "error": "sharing violation"},
+                            {
+                                "path": "private",
+                                "error": "readdir private: access denied",
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+        metadata = kopia_snapshot_failure_metadata(
+            result,
+            backup_policy={
+                "active": False,
+                "advanced_settings": {
+                    "enabled": False,
+                    "skip_unreadable_files": False,
+                    "skip_unreadable_directories": False,
+                },
+            },
+        )["failure_details"]
+
+        self.assertIn("enable_backup_policy", metadata["remediation"])
+        self.assertIn("enable_skip_unreadable_files", metadata["remediation"])
+        self.assertIn("enable_skip_unreadable_directories", metadata["remediation"])
+
+    def test_skipped_metadata_preserves_paths_reasons_and_counts(self):
+        from apps.protection.services.backup_task import (
+            kopia_snapshot_skipped_metadata,
+        )
+
+        result = {
+            "snapshot": {
+                "rootEntry": {
+                    "summ": {
+                        "errors": [
+                            {"path": "locked.txt", "error": "sharing violation"},
+                            {
+                                "path": "private",
+                                "error": "readdir private: access denied",
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+        details = kopia_snapshot_skipped_metadata(result)["skipped_details"]
+
+        self.assertEqual(details["count"], 2)
+        self.assertEqual(details["file_count"], 1)
+        self.assertEqual(details["directory_count"], 1)
+        self.assertEqual(details["items"][1]["path"], "private")
+        self.assertEqual(details["items"][1]["error"], "readdir private: access denied")
+
+    def test_skipped_metadata_limits_event_details_to_twenty_items(self):
+        from apps.protection.services.backup_task import (
+            kopia_snapshot_skipped_metadata,
+        )
+
+        errors = [
+            {"path": f"locked-{index}.txt", "error": "sharing violation"}
+            for index in range(25)
+        ]
+        result = {
+            "snapshot": {"rootEntry": {"summ": {"errors": errors}}},
+        }
+
+        details = kopia_snapshot_skipped_metadata(result)["skipped_details"]
+
+        self.assertEqual(details["count"], 25)
+        self.assertEqual(details["reported_count"], 20)
+        self.assertEqual(len(details["items"]), 20)
+        self.assertTrue(details["truncated"])
+
     def test_extract_kopia_failure_message_prefers_failed_policy_over_status(self):
         from apps.protection.services.backup_task import (
             extract_kopia_failure_message,
@@ -443,7 +592,9 @@ class KopiaFailureMessageTests(SimpleTestCase):
             "quota on the NAS or object-storage platform, then retry.",
         )
 
-    def test_public_repository_failure_message_classifies_provider_capacity_markers(self):
+    def test_public_repository_failure_message_classifies_provider_capacity_markers(
+        self,
+    ):
         from apps.protection.services.backup_task import (
             extract_kopia_failure_message,
             public_repository_failure_message,
@@ -472,12 +623,16 @@ class KopiaFailureMessageTests(SimpleTestCase):
             ),
             "exit_code": 1,
         }
-        message = extract_kopia_failure_message(result, last_error="exit 1: exit status 1")
+        message = extract_kopia_failure_message(
+            result, last_error="exit 1: exit status 1"
+        )
         self.assertIn("hp-repos/storage-3/kopia.blobcfg.f", message)
         self.assertIn("resource temporarily unavailable", message)
         self.assertNotEqual(message, "exit 1: exit status 1")
 
-    def test_extract_kopia_failure_message_prefers_access_denied_over_log_file_error(self):
+    def test_extract_kopia_failure_message_prefers_access_denied_over_log_file_error(
+        self,
+    ):
         from apps.protection.services.backup_task import extract_kopia_failure_message
 
         result = {
@@ -489,7 +644,9 @@ class KopiaFailureMessageTests(SimpleTestCase):
                 )
             }
         }
-        message = extract_kopia_failure_message(result, last_error="exit 1: exit status 1")
+        message = extract_kopia_failure_message(
+            result, last_error="exit 1: exit status 1"
+        )
         self.assertIn("access denied", message)
         self.assertIn("PermissionDenied", message)
 
@@ -504,16 +661,23 @@ class KopiaFailureMessageTests(SimpleTestCase):
                 "stderr": "open repository: repository is not connected. See https://kopia.io/docs/repositories/"
             },
         }
-        message = extract_kopia_failure_message(result, last_error="exit 1: exit status 1")
+        message = extract_kopia_failure_message(
+            result, last_error="exit 1: exit status 1"
+        )
         self.assertIn("repository not initialized", message)
 
     def test_public_repository_failure_message_hides_internal_details(self):
-        from apps.protection.services.backup_task import public_repository_failure_message
+        from apps.protection.services.backup_task import (
+            public_repository_failure_message,
+        )
 
         message = public_repository_failure_message(
             "open repository: repository is not connected. See https://kopia.io/docs/repositories/"
         )
-        self.assertEqual(message, "Backup repository is not connected. Check the repository and retry.")
+        self.assertEqual(
+            message,
+            "Backup repository is not connected. Check the repository and retry.",
+        )
         self.assertNotIn("kopia", message.lower())
         self.assertNotIn("http", message.lower())
 

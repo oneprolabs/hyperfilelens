@@ -245,11 +245,11 @@ export function createEmptyPolicyForm(): BackupPolicyForm {
     retentionHourlyHours: 48,
     retentionDailyEnabled: true,
     retentionDailyDays: 30,
-    retentionWeeklyEnabled: true,
+    retentionWeeklyEnabled: false,
     retentionWeeklyWeeks: 4,
     retentionMonthlyEnabled: true,
     retentionMonthlyMonths: 12,
-    retentionAnnualEnabled: true,
+    retentionAnnualEnabled: false,
     retentionAnnualYears: 5,
     retentionShortDaysMax: 2,
     retentionMidDaysMax: 30,
@@ -569,14 +569,8 @@ export function summarizeRetention(f: BackupPolicyForm, _locale: MessageLocale =
   if (f.retentionMidDaily) {
     parts.push(`D ${f.retentionMidDaysMax}d`)
   }
-  if (f.retentionWeeklyEnabled) {
-    parts.push(`W ${f.retentionWeeklyWeeks}w`)
-  }
   if (f.retentionLongMonthly) {
     parts.push(`M ${f.retentionLongMonths}mo`)
-  }
-  if (f.retentionAnnualEnabled) {
-    parts.push(`Y ${f.retentionAnnualYears}y`)
   }
   return parts.join(' · ')
 }
@@ -590,9 +584,7 @@ export function validateRetentionForm(f: BackupPolicyForm, locale: MessageLocale
   const checks: Array<[boolean, number | undefined, string]> = [
     [f.retentionShortHourly, f.retentionShortDaysMax, 'hourly'],
     [f.retentionMidDaily, f.retentionMidDaysMax, 'daily'],
-    [f.retentionWeeklyEnabled, f.retentionWeeklyWeeks, 'weekly'],
     [f.retentionLongMonthly, f.retentionLongMonths, 'monthly'],
-    [f.retentionAnnualEnabled, f.retentionAnnualYears, 'annual'],
   ]
   for (const [enabled, value, label] of checks) {
     if (!enabled) continue

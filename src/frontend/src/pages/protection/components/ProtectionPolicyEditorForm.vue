@@ -46,7 +46,11 @@ defineEmits<{ 'clear-name-error': [] }>()
 const { t } = useI18n()
 const router = useRouter()
 const messageLocale = computed<MessageLocale>(() => 'en')
-const simpleIntervalOptions = computed(() => getSimpleIntervalUnitOptions(messageLocale.value))
+const simpleIntervalOptions = computed(() => getSimpleIntervalUnitOptions(messageLocale.value).map((option) => {
+  const key = option.value === 'minute' ? 'unitMinutes' : option.value === 'hour' ? 'unitHours' : 'unitDays'
+  const label = t(`protection.policiesPage.${key}`)
+  return { ...option, label, valueLabel: label, unitText: label }
+}))
 const scheduleTimezoneOptions = computed(() => getScheduleTimezoneOptions(policyForm.value.scheduleTimezone))
 const quickScheduleTypeOptions = computed(() => [
   { value: 'interval' as const, label: t('protection.policiesPage.scheduleTypeInterval') },
@@ -65,7 +69,8 @@ const scheduleWeekdayOptions = computed(() => [
 ])
 const scheduleMonthDayOptions = Array.from({ length: 31 }, (_, index) => index + 1)
 const currentIntervalUnitMeta = computed(() =>
-  getSimpleIntervalUnitMeta(policyForm.value.simpleIntervalUnit, messageLocale.value),
+  simpleIntervalOptions.value.find((option) => option.value === policyForm.value.simpleIntervalUnit)
+    ?? getSimpleIntervalUnitMeta(policyForm.value.simpleIntervalUnit, messageLocale.value),
 )
 const cronValidation = computed(() => validateCronExpression(policyForm.value.cronExpr))
 const cronErrorText = computed(() => {
@@ -748,7 +753,7 @@ function toggleScheduleMonthDay(day: number) {
               v-if="policyForm.retentionMidDaily"
               class="policy-inline-desc"
             >
-              {{ t('protection.policiesPage.midDesc', { mid: policyForm.retentionMidDaysMax }) }}
+              {{ t('protection.policiesPage.midDesc', { start: policyForm.retentionShortDaysMax, end: policyForm.retentionMidDaysMax }) }}
             </span>
           </div>
           <div class="retention-tier-row">
@@ -789,7 +794,7 @@ function toggleScheduleMonthDay(day: number) {
               v-if="policyForm.retentionLongMonthly"
               class="policy-inline-desc"
             >
-              {{ t('protection.policiesPage.longDesc', { months: policyForm.retentionLongMonths }) }}
+              {{ t('protection.policiesPage.longDesc', { day: policyForm.retentionMidDaysMax, months: policyForm.retentionLongMonths }) }}
             </span>
           </div>
           <div class="retention-tier-row">
