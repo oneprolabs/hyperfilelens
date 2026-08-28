@@ -65,6 +65,13 @@ func validateAgentPackage(root string, role model.Role, expectedVersion string) 
 	return validateAgentPackageFor(root, runtime.GOOS, runtime.GOARCH, role, expectedVersion)
 }
 
+// ValidateAgentPackage verifies a release directory before an installer stops
+// the currently running Agent.  Keeping the verifier in the Agent binary means
+// enrollment and local upgrades use the same manifest contract.
+func ValidateAgentPackage(root string, role model.Role, expectedVersion string) error {
+	return validateAgentPackage(root, role, expectedVersion)
+}
+
 func validateAgentPackageFor(root, platform, arch string, role model.Role, expectedVersion string) error {
 	manifest, err := readAgentPackageManifest(root)
 	if err != nil {

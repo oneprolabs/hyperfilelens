@@ -34,6 +34,7 @@ param(
   [switch]$AgentOnly,
   [switch]$KopiaOnly,
   [switch]$NoRestart,
+  [switch]$Yes,
   [switch]$Help,
   [switch]$QuietFooter
 )
@@ -99,6 +100,16 @@ $CurrentWindowsSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Val
 $TaskName = if ($InstallationMode -eq "user") { "HyperFileLensAgent.User.$CurrentWindowsSid" } else { "HyperFileLensAgent" }
 $script:LegacyMigrationRoot = ""
 $script:LegacyServiceWasRunning = $false
+$script:UpgradeTransactionActive = $false
+$script:UpgradeStateSnapshotReady = $false
+$script:UpgradeDeploymentStarted = $false
+$script:UpgradeStopAttempted = $false
+$script:UpgradeLifecycleWasRunning = $false
+$script:UpgradeOperationStateCreated = $false
+$script:UpgradePreviousVersion = "unknown"
+$script:UpgradeTargetVersion = "unknown"
+$script:LifecycleLockPath = ""
+$script:UpgradeStatePath = ""
 if ([string]::IsNullOrWhiteSpace($RunAsUser) -and $env:HFL_RUN_AS_USER) {
   $RunAsUser = $env:HFL_RUN_AS_USER.Trim()
 }
@@ -142,6 +153,101 @@ function Ensure-HflAgentLayout {
     (Join-Path $Root "backup\legacy")
   )
   New-Item -ItemType Directory -Force -Path $directories | Out-Null
+}
+
+function Acquire-HflLifecycleLock {
+  param([Parameter(Mandatory = $true)][string]$DataRoot, [Parameter(Mandatory = $true)][string]$Operation)
+  $lock = Join-Path (Get-HflLifecycleRoot $DataRoot) "install.lock"
+  New-Item -ItemType Directory -Force -Path (Get-HflLifecycleRoot $DataRoot) | Out-Null
+  try {
+    New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null
+  }
+  catch {
+    $pidPath = Join-Path $lock "pid"
+    $owner = 0
+	for ($attempt = 0; $attempt -lt 5 -and -not (Test-Path -LiteralPath $pidPath); $attempt++) {
+	  Start-Sleep -Milliseconds 100
+	}
+    if (Test-Path -LiteralPath $pidPath) { [int]::TryParse((Get-Content -Raw -LiteralPath $pidPath), [ref]$owner) | Out-Null }
+	$ownerProcess = if ($owner -gt 0) { Get-Process -Id $owner -ErrorAction SilentlyContinue } else { $null }
+    if ($null -ne $ownerProcess) {
+	  $recordedStart = ""
+	  $startPath = Join-Path $lock "process_started_at_ticks"
+	  if (Test-Path -LiteralPath $startPath) { $recordedStart = (Get-Content -Raw -LiteralPath $startPath).Trim() }
+	  $actualStart = try { $ownerProcess.StartTime.ToUniversalTime().Ticks.ToString() } catch { "" }
+	  if (-not $recordedStart -or -not $actualStart -or $recordedStart -eq $actualStart) {
+	    throw "Another Agent lifecycle operation is already running (PID $owner)."
+	  }
+    }
+    Remove-Item -Recurse -Force -LiteralPath $lock -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null
+  }
+  $script:LifecycleLockPath = $lock
+  try {
+	$processStart = (Get-Process -Id $PID -ErrorAction Stop).StartTime.ToUniversalTime().Ticks.ToString()
+	Set-Content -LiteralPath (Join-Path $lock "process_started_at_ticks") -Value $processStart -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $lock "operation") -Value $Operation -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $lock "started_at") -Value ([DateTime]::UtcNow.ToString('o')) -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $lock "target_version") -Value "unknown" -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $lock "target_commit") -Value "unknown" -Encoding ASCII
+	# Publish the PID last: seeing pid means all owner identity metadata exists.
+	Set-Content -LiteralPath (Join-Path $lock "pid") -Value $PID -Encoding ASCII
+  }
+  catch {
+    Remove-Item -Recurse -Force -LiteralPath $lock -ErrorAction SilentlyContinue
+    $script:LifecycleLockPath = ""
+    throw
+  }
+}
+
+function Update-HflLifecycleLockTarget {
+  param([Parameter(Mandatory = $true)][string]$Version, [string]$Manifest = $ManifestFile)
+  if (-not $script:LifecycleLockPath -or -not (Test-Path -LiteralPath $script:LifecycleLockPath)) { return }
+  $commit = "unknown"
+  if (Test-Path -LiteralPath $Manifest) {
+    try {
+      $value = [string](Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json).agent_commit
+      if (-not [string]::IsNullOrWhiteSpace($value)) { $commit = $value }
+    }
+    catch { }
+  }
+  Set-Content -LiteralPath (Join-Path $script:LifecycleLockPath "target_version") -Value $Version -Encoding ASCII
+  Set-Content -LiteralPath (Join-Path $script:LifecycleLockPath "target_commit") -Value $commit -Encoding ASCII
+}
+
+function Release-HflLifecycleLock {
+  if ($script:LifecycleLockPath) {
+    Remove-Item -Recurse -Force -LiteralPath $script:LifecycleLockPath -ErrorAction SilentlyContinue
+    $script:LifecycleLockPath = ""
+  }
+}
+
+function Write-HflUpgradeState {
+  param([Parameter(Mandatory = $true)][string]$DataRoot, [Parameter(Mandatory = $true)][string]$Phase)
+  $statePath = Join-Path (Get-HflLifecycleRoot $DataRoot) "upgrade-state.json"
+  $state = [ordered]@{
+    phase = $Phase
+    operation = "upgrade"
+    pid = $PID
+    previous_version = $script:UpgradePreviousVersion
+    target_version = $script:UpgradeTargetVersion
+    installation_mode = $InstallationMode
+    lifecycle_was_running = $script:UpgradeLifecycleWasRunning
+    state_snapshot_ready = $script:UpgradeStateSnapshotReady
+    deployment_started = $script:UpgradeDeploymentStarted
+    updated_at = [DateTime]::UtcNow.ToString('o')
+  }
+  $tempPath = "$statePath.tmp"
+  $script:UpgradeStatePath = $statePath
+  $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $tempPath -Encoding UTF8
+  Move-Item -Force -LiteralPath $tempPath -Destination $statePath
+}
+
+function Clear-HflUpgradeState {
+  if ($script:UpgradeStatePath) {
+    Remove-Item -Force -LiteralPath $script:UpgradeStatePath -ErrorAction SilentlyContinue
+    $script:UpgradeStatePath = ""
+  }
 }
 
 function Assert-HflInstallationIdentity {
@@ -190,6 +296,7 @@ Options:
 
   upgrade:
     -From PATH           Path to new package directory or hfl-agent-*.zip (required)
+    -Yes                  Non-interactive: continue when target version equals installed version
                           Extracts to DATA_DIR/runtime/workspace, merges missing config/agent.env keys,
                           migrates agent.db schema, overwrites binaries; removes workspace on success
 
@@ -458,9 +565,9 @@ function Write-HflFooter {
       }
     }
     'upgrade' {
-      Write-HflDisplayLine "Upgrade completed successfully"
+      Write-HflDisplayLine ($(if ($NoRestart) { "Upgrade staged; restart and verification are pending" } else { "Upgrade completed successfully" }))
       Write-HflDisplayLine ("=" * 64)
-      Write-HflDisplayLine "  HyperFileLens Agent upgraded successfully."
+      Write-HflDisplayLine ($(if ($NoRestart) { "  Rollback data is retained until local health verification completes." } else { "  HyperFileLens Agent upgraded successfully." }))
       if ($ApiBase) {
         Write-Host ""
         Write-HflDisplayLine "  Console: $($ApiBase.TrimEnd('/'))"
@@ -561,6 +668,70 @@ function Test-AgentPackageRoot {
     (Test-Path -LiteralPath (Join-Path $Root "bin\hfl-agent-user-launcher.exe"))
 }
 
+function Compare-HflVersion {
+  param([string]$Left, [string]$Right)
+  $leftText = if ($null -eq $Left) { "" } else { $Left.Trim() }
+  $rightText = if ($null -eq $Right) { "" } else { $Right.Trim() }
+  $leftText = $leftText.TrimStart('v')
+  $rightText = $rightText.TrimStart('v')
+  if ($leftText -match '^main-[0-9a-f]{7}$' -or $rightText -match '^main-[0-9a-f]{7}$') {
+    if ($leftText -eq $rightText) { return 0 }
+    return $null
+  }
+  $leftParts = $leftText -split '\.'
+  $rightParts = $rightText -split '\.'
+  if ($leftParts.Count -ne 3 -or $rightParts.Count -ne 3 -or
+      ($leftParts | Where-Object { $_ -notmatch '^\d+$' }) -or
+      ($rightParts | Where-Object { $_ -notmatch '^\d+$' })) { return $null }
+  for ($i = 0; $i -lt 3; $i++) {
+    $leftNumber = [int]$leftParts[$i]
+    $rightNumber = [int]$rightParts[$i]
+    if ($leftNumber -lt $rightNumber) { return -1 }
+    if ($leftNumber -gt $rightNumber) { return 1 }
+  }
+  return 0
+}
+
+function Confirm-HflSameVersionUpgrade {
+  param([Parameter(Mandatory = $true)][string]$Version)
+  if ($Yes) {
+    Write-HflWarn "new package version matches current ($Version); continuing upgrade (-Yes)"
+    return
+  }
+  if ([Environment]::UserInteractive -and -not $QuietFooter) {
+    $answer = Read-Host "Package version is already $Version. Continue upgrade? [y/N]"
+    if ($answer -match '^(?i:y|yes)$') { return }
+  }
+  throw "Same-version upgrade requires interactive confirmation or -Yes."
+}
+
+function Verify-HflUpgradePackage {
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$RoleName,
+    [Parameter(Mandatory = $true)][string]$Version
+  )
+  $targetVerifier = Join-Path $Root "bin\hfl-agent.exe"
+  if (-not (Test-Path -LiteralPath $targetVerifier)) { throw "Upgrade package verifier is missing: $targetVerifier" }
+  $verifier = $targetVerifier
+  $installedVerifier = Join-Path $InstallRoot "hfl-agent.exe"
+  if (Test-Path -LiteralPath $installedVerifier) {
+    $installedHelp = (& $installedVerifier help 2>&1 | Out-String)
+    if ($LASTEXITCODE -eq 0 -and $installedHelp -match 'package verify') {
+      # Once this verifier is installed, use the trusted current Agent for all
+      # later upgrades. The target binary is only the compatibility bridge from
+      # releases that predate the package-verify command.
+      $verifier = $installedVerifier
+    }
+  }
+  $verifyOutput = (& $verifier package verify --root $Root --role $RoleName --version $Version 2>&1 | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) {
+    $detail = if ($verifyOutput) { ": $verifyOutput" } else { "" }
+    throw "Upgrade package manifest and checksum validation failed$detail"
+  }
+  Write-HflOk "upgrade package manifest and checksums verified"
+}
+
 function Get-UpgradeWorkspace {
   param([Parameter(Mandatory = $true)][string]$DataRoot)
   return Join-Path (Get-HflRuntimeRoot $DataRoot) "workspace"
@@ -604,54 +775,72 @@ function Resolve-UpgradeSource {
 function Backup-AgentConfigAndDb {
   param(
     [Parameter(Mandatory = $true)][string]$DataRoot,
-    [string]$PreviousVersion = "unknown"
+    [string]$PreviousVersion = "unknown",
+    [Parameter(Mandatory = $true)][string]$SrcRoot
   )
   $stateDir = Join-Path (Get-HflBackupRoot $DataRoot) "rollback"
 	$archive = Join-Path $stateDir "latest.zip"
 	$meta = Join-Path $stateDir "meta.json"
 	$names = @(
-	  @{ Source = (Join-Path (Get-HflConfigRoot $DataRoot) "agent.env"); Archive = "config-agent.env" },
-	  @{ Source = (Join-Path (Get-HflDataStoreRoot $DataRoot) "agent.db"); Archive = "data-agent.db" },
-	  @{ Source = (Join-Path (Get-HflDataStoreRoot $DataRoot) "agent.db-wal"); Archive = "data-agent.db-wal" },
-	  @{ Source = (Join-Path (Get-HflDataStoreRoot $DataRoot) "agent.db-shm"); Archive = "data-agent.db-shm" }
+	  @{ Source = (Join-Path (Get-HflConfigRoot $DataRoot) "agent.env"); Archive = "config\agent.env" },
+	  @{ Source = (Join-Path (Get-HflConfigRoot $DataRoot) "config.json"); Archive = "config\config.json" }
 	)
 	$items = @()
 	foreach ($entry in $names) {
 		if (Test-Path -LiteralPath $entry.Source) { $items += $entry }
   }
   New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
-  if ($items.Count -eq 0) {
-    Write-HflSkip "backup agent.env/agent.db (nothing to back up)"
-    return
-  }
-  $tempDir = Join-Path $env:TEMP "hfl-agent-backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+	$sourceDatabase = Join-Path (Get-HflDataStoreRoot $DataRoot) "agent.db"
+	  if ($items.Count -eq 0 -and -not (Test-Path -LiteralPath $sourceDatabase)) { throw "Upgrade state snapshot could not be created: no configuration or database state was found." }
+  $tempDir = Join-Path $env:TEMP ("hfl-agent-backup-{0}" -f ([Guid]::NewGuid().ToString('N')))
   New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
 	  try {
 	    foreach ($entry in $items) {
-			Copy-Item -LiteralPath $entry.Source -Destination (Join-Path $tempDir $entry.Archive) -Force
+	      $destination = Join-Path $tempDir $entry.Archive
+	      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+			Copy-Item -LiteralPath $entry.Source -Destination $destination -Force
 	    }
+	if (Test-Path -LiteralPath $sourceDatabase) {
+	  $snapshotDatabase = Join-Path $tempDir "data\agent.db"
+	  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $snapshotDatabase) | Out-Null
+	  $backupAgent = Join-Path $SrcRoot "bin\hfl-agent.exe"
+	  & $backupAgent database backup --source $sourceDatabase --destination $snapshotDatabase
+	  if ($LASTEXITCODE -ne 0) { throw "consistent SQLite backup failed (exit $LASTEXITCODE)" }
+	}
     Compress-Archive -Path (Join-Path $tempDir '*') -DestinationPath $archive -Force
-    Write-HflOk "backed up agent.env/agent.db -> $archive"
+    Write-HflOk "backed up Agent configuration and consistent SQLite state -> $archive"
     $createdAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-    @"
-{
-  "created_at": "$createdAt",
-  "previous_version": "$PreviousVersion",
-  "state_archive": "backup/rollback/latest.zip"
-}
-"@ | Set-Content -LiteralPath $meta -Encoding UTF8
+    [ordered]@{
+      created_at = $createdAt
+      previous_version = $PreviousVersion
+      installation_mode = $InstallationMode
+      service_name = $ServiceName
+      state_archive = "backup/rollback/latest.zip"
+    } | ConvertTo-Json | Set-Content -LiteralPath $meta -Encoding UTF8
     Write-HflOk "wrote $meta"
   }
-  catch {
-    Write-HflWarn "backup agent.env/agent.db failed (agent may still be running): $($_.Exception.Message)"
-    Write-HflWarn "backup skipped; continuing upgrade"
-  }
+	  catch { throw "Upgrade state snapshot failed: $($_.Exception.Message)" }
   finally {
     Remove-Item -Recurse -Force -LiteralPath $tempDir -ErrorAction SilentlyContinue
   }
 }
 
 $script:UpgradeBinBackup = ""
+
+function Backup-RollbackServiceDefinition {
+  param([Parameter(Mandatory = $true)][string]$DataRoot)
+  $serviceDir = Join-Path (Join-Path (Get-HflBackupRoot $DataRoot) "rollback") "service"
+  New-Item -ItemType Directory -Force -Path $serviceDir | Out-Null
+  if ($InstallationMode -eq "system") {
+    $service = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
+    if ($null -eq $service) { New-Item -ItemType File -Force -Path (Join-Path $serviceDir "service.absent") | Out-Null }
+    else { $service | Select-Object Name,PathName,StartMode,StartName,DisplayName,Description | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $serviceDir "service.json") -Encoding UTF8 }
+  }
+  elseif (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+    Export-ScheduledTask -TaskName $TaskName | Set-Content -LiteralPath (Join-Path $serviceDir "task.xml") -Encoding UTF8
+  }
+  else { New-Item -ItemType File -Force -Path (Join-Path $serviceDir "task.absent") | Out-Null }
+}
 
 function Backup-RollbackBinaries {
   param([Parameter(Mandatory = $true)][string]$DataRoot)
@@ -661,15 +850,16 @@ function Backup-RollbackBinaries {
     Remove-Item -Recurse -Force -LiteralPath $rollbackRoot
   }
   New-Item -ItemType Directory -Force -Path $script:UpgradeBinBackup | Out-Null
-	foreach ($name in @("hfl-agent.exe", "hfl-agent-user-launcher.exe", "kopia.exe")) {
+	foreach ($name in @("hfl-agent.exe", "hfl-agent-user-launcher.exe", "kopia.exe", "install.ps1", "install.cmd", "uninstall.cmd", "run-agent.ps1")) {
 		$src = Join-Path $InstallRoot $name
     if (Test-Path -LiteralPath $src) {
       Copy-Item -LiteralPath $src -Destination (Join-Path $script:UpgradeBinBackup $name) -Force
 	}
+	  }
 	foreach ($path in @($ManifestFile, $InstalledVersionFile)) {
 		if (Test-Path -LiteralPath $path) { Copy-Item -LiteralPath $path -Destination (Join-Path $script:UpgradeBinBackup (Split-Path -Leaf $path)) -Force }
 	}
-  }
+	Backup-RollbackServiceDefinition -DataRoot $DataRoot
   Write-HflOk "backed up binaries -> $($script:UpgradeBinBackup)"
 }
 
@@ -677,26 +867,311 @@ function Restore-RollbackBinaries {
   if ([string]::IsNullOrWhiteSpace($script:UpgradeBinBackup) -or -not (Test-Path -LiteralPath $script:UpgradeBinBackup)) {
     return
   }
-	foreach ($name in @("hfl-agent.exe", "hfl-agent-user-launcher.exe", "kopia.exe")) {
-    $src = Join-Path $script:UpgradeBinBackup $name
-    if (Test-Path -LiteralPath $src) {
-      Copy-Item -LiteralPath $src -Destination (Join-Path $InstallRoot $name) -Force
+	foreach ($name in @("hfl-agent.exe", "hfl-agent-user-launcher.exe", "kopia.exe", "install.ps1", "install.cmd", "uninstall.cmd", "run-agent.ps1")) {
+	    $src = Join-Path $script:UpgradeBinBackup $name
+	    $destination = Join-Path $InstallRoot $name
+	    if (Test-Path -LiteralPath $src) {
+	      if ($name -eq "install.ps1" -and $MyInvocation.PSCommandPath -and ((Get-FullPathOrSelf $destination) -eq (Get-FullPathOrSelf $MyInvocation.PSCommandPath))) {
+	        Copy-Item -LiteralPath $src -Destination "$destination.pending" -Force
+	        Register-DeferredFileMove -Source "$destination.pending" -Destination $destination
+	      }
+	      elseif ($name -eq "install.cmd") {
+	        Copy-Item -LiteralPath $src -Destination "$destination.pending" -Force
+	        Register-DeferredFileMove -Source "$destination.pending" -Destination $destination
+	      }
+	      else { Copy-HflFileAtomically -Source $src -Destination $destination }
+	    }
+	    elseif ($name -notin @("install.ps1", "install.cmd")) {
+	      Remove-Item -Force -LiteralPath $destination -ErrorAction SilentlyContinue
+	    }
 	}
 	foreach ($entry in @(@{ Name = "MANIFEST.json"; Target = $ManifestFile }, @{ Name = "INSTALLED_VERSION"; Target = $InstalledVersionFile })) {
 		$src = Join-Path $script:UpgradeBinBackup $entry.Name
-		if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $entry.Target -Force }
+		if (Test-Path -LiteralPath $src) { Copy-HflFileAtomically -Source $src -Destination $entry.Target }
 	}
-  }
   Write-HflWarn "restored binaries from $($script:UpgradeBinBackup)"
+}
+
+function Restore-AgentState {
+  param([Parameter(Mandatory = $true)][string]$DataRoot)
+  $archive = Join-Path (Join-Path (Get-HflBackupRoot $DataRoot) "rollback") "latest.zip"
+  if (-not (Test-Path -LiteralPath $archive)) { throw "rollback state archive is missing: $archive" }
+  $temp = Join-Path $env:TEMP ("hfl-agent-restore-{0}" -f ([Guid]::NewGuid().ToString('N')))
+  New-Item -ItemType Directory -Force -Path $temp | Out-Null
+  try {
+    Expand-Archive -LiteralPath $archive -DestinationPath $temp -Force
+    if (-not (Test-Path -LiteralPath (Join-Path $temp "config\agent.env")) -and
+        -not (Test-Path -LiteralPath (Join-Path $temp "data\agent.db"))) {
+      throw "rollback state archive contains neither Agent configuration nor database state"
+    }
+    foreach ($name in @("config\agent.env", "config\config.json", "data\agent.db")) {
+      $source = Join-Path $temp $name
+      $destination = Join-Path $DataRoot $name
+      if (Test-Path -LiteralPath $source) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+        Copy-HflFileAtomically -Source $source -Destination $destination
+      }
+      else { Remove-Item -Force -LiteralPath $destination -ErrorAction SilentlyContinue }
+    }
+    # The online SQLite backup is standalone; stale WAL/SHM files from the
+    # failed target must not be paired with it.
+    Remove-Item -Force -LiteralPath (Join-Path (Get-HflDataStoreRoot $DataRoot) "agent.db-wal") -ErrorAction SilentlyContinue
+    Remove-Item -Force -LiteralPath (Join-Path (Get-HflDataStoreRoot $DataRoot) "agent.db-shm") -ErrorAction SilentlyContinue
+  } finally { Remove-Item -Recurse -Force -LiteralPath $temp -ErrorAction SilentlyContinue }
+  Write-HflWarn "restored Agent configuration and database state from $archive"
+}
+
+function Restore-RollbackServiceDefinition {
+  param([Parameter(Mandatory = $true)][string]$DataRoot)
+  $serviceDir = Join-Path (Join-Path (Get-HflBackupRoot $DataRoot) "rollback") "service"
+  if ($InstallationMode -eq "system") {
+    Remove-HflService
+    $serviceSnapshot = Join-Path $serviceDir "service.json"
+    if (Test-Path -LiteralPath $serviceSnapshot) {
+      Install-HflService -ExePath (Join-Path $InstallRoot "hfl-agent.exe") -DataRoot $DataRoot -NoStart
+    }
+  } else {
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+      Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+      Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+    }
+    $taskXml = Join-Path $serviceDir "task.xml"
+    if (Test-Path -LiteralPath $taskXml) {
+      Register-ScheduledTask -TaskName $TaskName -Xml (Get-Content -Raw -LiteralPath $taskXml) -Force | Out-Null
+    }
+  }
+}
+
+function Enable-HflLifecycleForRollbackStart {
+  if ($InstallationMode -eq "system") {
+    # A service that was disabled after being manually started cannot be
+    # started again until its startup type is temporarily relaxed.
+    Set-Service -Name $ServiceName -StartupType Manual
+    return
+  }
+  Enable-ScheduledTask -TaskName $TaskName | Out-Null
+}
+
+function Restore-HflLifecycleStartupPolicy {
+  param([Parameter(Mandatory = $true)][string]$DataRoot)
+  $serviceDir = Join-Path (Join-Path (Get-HflBackupRoot $DataRoot) "rollback") "service"
+  if ($InstallationMode -eq "system") {
+    $serviceSnapshot = Join-Path $serviceDir "service.json"
+    if (-not (Test-Path -LiteralPath $serviceSnapshot)) { return }
+    $previousStartMode = [string]((Get-Content -Raw -LiteralPath $serviceSnapshot | ConvertFrom-Json).StartMode)
+    switch ($previousStartMode.ToLowerInvariant()) {
+      "auto" { Set-Service -Name $ServiceName -StartupType Automatic }
+      "manual" { Set-Service -Name $ServiceName -StartupType Manual }
+      "disabled" { Set-Service -Name $ServiceName -StartupType Disabled }
+    }
+    return
+  }
+
+  $taskSnapshot = Join-Path $serviceDir "task.xml"
+  if (-not (Test-Path -LiteralPath $taskSnapshot)) { return }
+  [xml]$taskXml = Get-Content -Raw -LiteralPath $taskSnapshot
+  $enabledNode = $taskXml.SelectSingleNode("//*[local-name()='Settings']/*[local-name()='Enabled']")
+  if ($null -ne $enabledNode -and $enabledNode.InnerText.Trim().ToLowerInvariant() -eq "false") {
+    Disable-ScheduledTask -TaskName $TaskName | Out-Null
+  }
+}
+
+function Test-HflLocalUpgradeHealth {
+  param(
+    [Parameter(Mandatory = $true)][string]$DataRoot,
+    [Parameter(Mandatory = $true)][string]$ExpectedVersion,
+    [switch]$SkipLifecycle
+  )
+  $manifest = Get-Content -Raw -LiteralPath $ManifestFile | ConvertFrom-Json
+  $expectedCommit = [string]$manifest.agent_commit
+  if ([string]::IsNullOrWhiteSpace($expectedCommit)) { return $false }
+  $identity = (& (Join-Path $InstallRoot "hfl-agent.exe") version 2>&1 | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $identity -notmatch '^hyperfilelens-agent\s+(\S+)\s+\(([^)]+)\)$') { return $false }
+  $actualVersion = $Matches[1].TrimStart('v')
+  $actualCommit = $Matches[2]
+  if ($actualVersion -ne $ExpectedVersion.TrimStart('v') -or $actualCommit -ne $expectedCommit) { return $false }
+  & (Join-Path $InstallRoot "hfl-agent.exe") tasks list --data-dir $DataRoot --limit 1 *> $null
+  if ($LASTEXITCODE -ne 0) { return $false }
+  if ($NoService -or $SkipLifecycle) { return $true }
+  $stable = 0; $lastPid = 0
+  while ($stable -lt 10) {
+    if ($InstallationMode -eq "system") {
+      $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+      if ($null -eq $service -or $service.Status -ne "Running") { return $false }
+      $processId = [int](Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue).ProcessId
+    } else {
+      $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+      if ($null -eq $task -or $task.State -ne "Running") { return $false }
+      $processId = [int]((Get-Process -Name hfl-agent -ErrorAction SilentlyContinue | Where-Object { $_.Path -and (Get-FullPathOrSelf $_.Path).StartsWith((Get-FullPathOrSelf $AgentRoot).TrimEnd('\') + '\', [System.StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1).Id)
+    }
+    if ($processId -le 0) { return $false }
+    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    if ($null -eq $process -or -not $process.Path -or (Get-FullPathOrSelf $process.Path) -ne (Get-FullPathOrSelf (Join-Path $InstallRoot "hfl-agent.exe"))) { return $false }
+    if ($lastPid -ne 0 -and $lastPid -ne $processId) { return $false }
+    $lastPid = $processId; $stable++; Start-Sleep -Seconds 1
+  }
+  Write-HflOk "local health check passed ($ExpectedVersion, $expectedCommit; stable ${stable}s)"
+  return $true
+}
+
+function Invoke-HflUpgradeRollback {
+  param(
+    [Parameter(Mandatory = $true)][string]$DataRoot,
+    [Parameter(Mandatory = $true)][string]$PreviousVersion,
+    [Parameter(Mandatory = $true)][string]$OriginalError,
+    [switch]$LegacyUpgrade,
+    [switch]$ReturnAfterRollback
+  )
+  $script:UpgradeTransactionActive = $false
+  try { Write-HflUpgradeState -DataRoot $DataRoot -Phase "rolling_back" }
+  catch { Write-HflWarn "could not persist rolling_back state: $($_.Exception.Message)" }
+  Write-HflWarn "upgrade failed: $OriginalError; attempting rollback"
+  $rollbackErrors = @()
+  if ($script:UpgradeDeploymentStarted) {
+    $canRestore = $true
+    try { Stop-AgentForUpgrade }
+    catch {
+      $canRestore = $false
+      $rollbackErrors += "stop: $($_.Exception.Message)"
+    }
+    if ($canRestore) {
+      try { Restore-RollbackBinaries } catch { $rollbackErrors += "binaries: $($_.Exception.Message)" }
+      if ($script:UpgradeStateSnapshotReady) {
+        try { Restore-AgentState -DataRoot $DataRoot } catch { $rollbackErrors += "state: $($_.Exception.Message)" }
+      }
+      try { Restore-RollbackServiceDefinition -DataRoot $DataRoot } catch { $rollbackErrors += "service definition: $($_.Exception.Message)" }
+    }
+  }
+	if (-not $NoService -and -not $LegacyUpgrade) {
+	  if ($script:UpgradeLifecycleWasRunning) {
+	    try {
+	      Enable-HflLifecycleForRollbackStart
+	      Start-HflServiceOnly
+	    }
+	    catch { $rollbackErrors += "service start: $($_.Exception.Message)" }
+	  }
+	  try { Restore-HflLifecycleStartupPolicy -DataRoot $DataRoot }
+	  catch { $rollbackErrors += "startup policy: $($_.Exception.Message)" }
+  }
+  if (-not $LegacyUpgrade -and -not (Test-HflLocalUpgradeHealth -DataRoot $DataRoot -ExpectedVersion $PreviousVersion -SkipLifecycle:(-not $script:UpgradeLifecycleWasRunning))) {
+    $rollbackErrors += "old Agent local health verification failed"
+  }
+  if ($rollbackErrors.Count -gt 0) {
+    try { Write-HflUpgradeState -DataRoot $DataRoot -Phase "rollback_failed" }
+    catch { $rollbackErrors += "persist rollback failure state: $($_.Exception.Message)" }
+    throw "Upgrade failed: $OriginalError. Rollback also failed: $($rollbackErrors -join '; ')"
+  }
+  # The rollback copy is only needed while restoring or validating the old
+  # Agent. Once rollback health checks pass, remove it so a later invocation
+  # cannot mistake an old snapshot for an interrupted transaction.
+  $rollbackStatePersisted = $true
+  try { Write-HflUpgradeState -DataRoot $DataRoot -Phase "rolled_back" }
+  catch {
+    $rollbackStatePersisted = $false
+    Write-HflWarn "rollback completed, but its state could not be persisted; rollback data was retained: $($_.Exception.Message)"
+  }
+  if ($rollbackStatePersisted) { Remove-UpgradeRollback -DataRoot $DataRoot }
+  Write-HflWarn "upgrade failed; rollback completed successfully"
+  if ($ReturnAfterRollback) { return }
+  throw "Upgrade failed: $OriginalError. Rollback completed successfully."
+}
+
+function Restore-HflInterruptedUpgrade {
+  param(
+    [Parameter(Mandatory = $true)][string]$DataRoot,
+    [Parameter(Mandatory = $true)]$State,
+    [switch]$ForStart
+  )
+  $phase = [string]$State.phase
+  $script:UpgradeStatePath = Join-Path (Get-HflLifecycleRoot $DataRoot) "upgrade-state.json"
+  $script:UpgradePreviousVersion = [string]$State.previous_version
+  $script:UpgradeTargetVersion = [string]$State.target_version
+  $script:UpgradeLifecycleWasRunning = [bool]$State.lifecycle_was_running
+  $script:UpgradeStateSnapshotReady = [bool]$State.state_snapshot_ready
+  $script:UpgradeDeploymentStarted = [bool]$State.deployment_started
+  $script:UpgradeBinBackup = Join-Path (Get-HflBackupRoot $DataRoot) "rollback\bin"
+  switch ($phase) {
+    { $_ -in @("committed", "rolled_back") } {
+      Remove-UpgradeRollback -DataRoot $DataRoot
+      Clear-HflUpgradeState
+      return $false
+    }
+    { $_ -in @("preparing", "package_resolved") } {
+      Write-HflWarn "discarding incomplete pre-deployment upgrade state ($phase)"
+      Remove-Item -Recurse -Force -LiteralPath (Join-Path (Get-HflBackupRoot $DataRoot) "rollback") -ErrorAction SilentlyContinue
+      Clear-HflUpgradeState
+      return $false
+    }
+    "rollback_failed" {
+      throw "The previous upgrade and rollback both failed. Preserve backup\rollback and resolve the recorded failure before retrying."
+    }
+    "awaiting_restart" {
+      if ($ForStart) { return $true }
+      throw "A staged upgrade is awaiting restart and verification. Run install.cmd start before starting another upgrade."
+    }
+    { $_ -in @("stopping", "service_stopped", "snapshotting", "state_snapshotted") } {
+      Write-HflWarn "recovering interrupted upgrade before binary deployment ($phase)"
+	  if ($script:UpgradeLifecycleWasRunning -and -not $NoService) {
+	    try {
+	      Enable-HflLifecycleForRollbackStart
+	      Start-HflServiceOnly
+	    }
+	    finally { Restore-HflLifecycleStartupPolicy -DataRoot $DataRoot }
+	  }
+      if (-not (Test-HflLocalUpgradeHealth -DataRoot $DataRoot -ExpectedVersion $script:UpgradePreviousVersion -SkipLifecycle:(-not $script:UpgradeLifecycleWasRunning))) {
+        throw "Interrupted upgrade recovery could not verify the previous Agent."
+      }
+      Remove-UpgradeRollback -DataRoot $DataRoot
+      Clear-HflUpgradeState
+      return $false
+    }
+    { $_ -in @("starting_service", "service_started", "healthy") } {
+      if (Test-HflLocalUpgradeHealth -DataRoot $DataRoot -ExpectedVersion $script:UpgradeTargetVersion -SkipLifecycle:(-not $script:UpgradeLifecycleWasRunning)) {
+        Write-HflWarn "finalizing an interrupted upgrade after target health verification ($phase)"
+        Write-HflUpgradeState -DataRoot $DataRoot -Phase "committed"
+        Remove-UpgradeRollback -DataRoot $DataRoot
+        Clear-HflUpgradeState
+        return $false
+      }
+      Invoke-HflUpgradeRollback -DataRoot $DataRoot -PreviousVersion $script:UpgradePreviousVersion -OriginalError "upgrade process was interrupted during $phase" -ReturnAfterRollback
+      Clear-HflUpgradeState
+      return $false
+    }
+    { $_ -in @("deploying", "deployed", "migrating", "migrated", "configuring_service", "rolling_back") } {
+      Write-HflWarn "rolling back interrupted upgrade transaction ($phase)"
+      $script:UpgradeDeploymentStarted = $true
+      Invoke-HflUpgradeRollback -DataRoot $DataRoot -PreviousVersion $script:UpgradePreviousVersion -OriginalError "upgrade process was interrupted during $phase" -ReturnAfterRollback
+      Clear-HflUpgradeState
+      return $false
+    }
+    default {
+      throw "Unknown interrupted upgrade phase '$phase'; preserve backup\rollback for manual recovery."
+    }
+  }
 }
 
 function Remove-UpgradeRollback {
   param([Parameter(Mandatory = $true)][string]$DataRoot)
-	$rollback = Join-Path (Get-HflBackupRoot $DataRoot) "rollback"
+  $rollback = Join-Path (Get-HflBackupRoot $DataRoot) "rollback"
   if (Test-Path -LiteralPath $rollback) {
-    Remove-Item -Recurse -Force -LiteralPath $rollback
-    Write-HflOk "removed $rollback (upgrade succeeded; state snapshot retained)"
+    try {
+      Remove-Item -Recurse -Force -LiteralPath $rollback
+      Write-HflOk "removed $rollback after local health confirmation"
+    }
+    catch {
+      Write-HflWarn "local health verification passed, but rollback cleanup was deferred: $($_.Exception.Message)"
+    }
   }
+}
+
+function Test-HflLifecycleRunning {
+  if ($NoService) { return $false }
+  if ($InstallationMode -eq "system") {
+    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    return ($null -ne $service -and $service.Status -eq "Running")
+  }
+  $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  return ($null -ne $task -and $task.State -eq "Running")
 }
 
 function Merge-AgentEnv {
@@ -833,7 +1308,7 @@ function Update-AgentDb {
     Write-HflOk "agent.db schema upgraded (if needed)"
   }
   else {
-    Write-HflWarn "agent.db migration check failed (service start may retry)"
+    throw "agent.db migration check failed; the upgraded Agent was not started."
   }
 }
 
@@ -1174,6 +1649,17 @@ function Stop-AgentForUpgrade {
     Start-Sleep -Seconds 2
     Write-HflOk "stopped hfl-agent process (pre-upgrade)"
   }
+  $remaining = @(Get-Process -Name "hfl-agent" -ErrorAction SilentlyContinue | Where-Object {
+    try {
+      $_.Path -and (Get-FullPathOrSelf $_.Path).StartsWith((Get-FullPathOrSelf $AgentRoot).TrimEnd('\') + '\', [System.StringComparison]::OrdinalIgnoreCase)
+    }
+    catch { $false }
+  })
+  if ($remaining.Count -gt 0) { throw "hfl-agent process did not stop before upgrade" }
+  if ($InstallationMode -eq "system") {
+    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($null -ne $service -and $service.Status -ne "Stopped") { throw "Windows service did not stop before upgrade" }
+  }
 }
 
 function Remove-HflService {
@@ -1398,6 +1884,51 @@ function Start-HflServiceOnly {
 
 function Invoke-Start {
   Assert-HflInstalled
+  $dataRoot = Get-ResolvedDataRoot -Override ""
+  $statePath = Join-Path (Get-HflLifecycleRoot $dataRoot) "upgrade-state.json"
+  $pendingState = $null
+  if (Test-Path -LiteralPath $statePath) {
+    $pendingState = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
+  }
+  if ($null -ne $pendingState) {
+    Acquire-HflLifecycleLock -DataRoot $dataRoot -Operation "upgrade-verification"
+    try {
+      $stagedStart = Restore-HflInterruptedUpgrade -DataRoot $dataRoot -State $pendingState -ForStart
+      if ($stagedStart) {
+        if ([string]::IsNullOrWhiteSpace($script:UpgradeTargetVersion)) {
+          throw "Pending upgrade state is missing its target version ($statePath)."
+        }
+        $script:UpgradeDeploymentStarted = $true
+        $script:UpgradeStopAttempted = $true
+        $script:UpgradeTransactionActive = $true
+        Write-HflBanner "start staged upgrade"
+        Write-HflSection "Actions"
+        try {
+          Write-HflUpgradeState -DataRoot $dataRoot -Phase "starting_service"
+          Start-HflServiceOnly
+          Write-HflUpgradeState -DataRoot $dataRoot -Phase "service_started"
+          if (-not (Test-HflLocalUpgradeHealth -DataRoot $dataRoot -ExpectedVersion $script:UpgradeTargetVersion)) {
+            throw "the staged Agent failed local health verification"
+          }
+        }
+        catch {
+          Invoke-HflUpgradeRollback -DataRoot $dataRoot -PreviousVersion $script:UpgradePreviousVersion -OriginalError $_.Exception.Message
+        }
+        $script:UpgradeTransactionActive = $false
+        Write-HflUpgradeState -DataRoot $dataRoot -Phase "committed"
+        Remove-UpgradeRollback -DataRoot $dataRoot
+        Clear-HflUpgradeState
+        Write-HflSection "Summary"
+        Write-HflSummaryLine "Status" "upgrade committed"
+        Write-HflSummaryLine "Version" $script:UpgradeTargetVersion
+        Write-Host ""
+        return
+      }
+    }
+    finally { Release-HflLifecycleLock }
+  }
+  Acquire-HflLifecycleLock -DataRoot $dataRoot -Operation "start"
+  try {
   Write-HflBanner "start"
   Write-HflSection "Actions"
   Start-HflServiceOnly
@@ -1406,10 +1937,15 @@ function Invoke-Start {
   Write-Host ""
   Write-Host "Done."
   Write-Host ""
+  }
+  finally { Release-HflLifecycleLock }
 }
 
 function Invoke-Stop {
   Assert-HflInstalled
+  $dataRoot = Get-ResolvedDataRoot -Override ""
+  Acquire-HflLifecycleLock -DataRoot $dataRoot -Operation "stop"
+  try {
   Write-HflBanner "stop"
   Write-HflSection "Actions"
   Stop-HflService
@@ -1418,10 +1954,21 @@ function Invoke-Stop {
   Write-Host ""
   Write-Host "Done."
   Write-Host ""
+  }
+  finally { Release-HflLifecycleLock }
 }
 
 function Invoke-Restart {
   Assert-HflInstalled
+  $dataRoot = Get-ResolvedDataRoot -Override ""
+  $statePath = Join-Path (Get-HflLifecycleRoot $dataRoot) "upgrade-state.json"
+  if (Test-Path -LiteralPath $statePath) {
+    $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
+    Invoke-Start
+    return
+  }
+  Acquire-HflLifecycleLock -DataRoot $dataRoot -Operation "restart"
+  try {
   Write-HflBanner "restart"
   Write-HflSection "Actions"
   Stop-HflService
@@ -1431,6 +1978,8 @@ function Invoke-Restart {
   Write-Host ""
   Write-Host "Done."
   Write-Host ""
+  }
+  finally { Release-HflLifecycleLock }
 }
 
 function Deploy-AdminScripts {
@@ -1462,14 +2011,14 @@ endlocal & exit /b %EC%
   $srcUninstall = Join-Path $SrcRoot "uninstall.cmd"
   $destUninstall = Join-Path $InstallRoot "uninstall.cmd"
   if (Test-Path -LiteralPath $srcUninstall) {
-    Copy-Item -Force -Path $srcUninstall -Destination $destUninstall
+    Copy-HflFileAtomically -Source $srcUninstall -Destination $destUninstall
   }
   else {
     throw "Missing bundle uninstaller: $srcUninstall"
   }
   Write-HflOk "deployed $destUninstall"
   if (Test-Path -LiteralPath $srcManifest) {
-    Copy-Item -Force -Path $srcManifest -Destination $ManifestFile
+    Copy-HflFileAtomically -Source $srcManifest -Destination $ManifestFile
     Write-HflOk "deployed $ManifestFile"
   }
 }
@@ -1484,13 +2033,28 @@ function Register-DeferredFileMove {
     [Parameter(Mandatory = $true)][string]$Source,
     [Parameter(Mandatory = $true)][string]$Destination
   )
+  $sourceEscaped = $Source.Replace("'", "''")
+  $destinationEscaped = $Destination.Replace("'", "''")
   $cmd = @"
 Start-Sleep -Seconds 2
-Move-Item -LiteralPath '$Source' -Destination '$Destination' -Force
+Move-Item -LiteralPath '$sourceEscaped' -Destination '$destinationEscaped' -Force
 "@
   Start-Process -FilePath 'powershell.exe' `
     -ArgumentList @('-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', $cmd) `
     | Out-Null
+}
+
+function Copy-HflFileAtomically {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+  $temporary = "$Destination.new.$([Guid]::NewGuid().ToString('N'))"
+  try {
+    Copy-Item -Force -LiteralPath $Source -Destination $temporary
+    Move-Item -Force -LiteralPath $temporary -Destination $Destination
+  }
+  finally { Remove-Item -Force -LiteralPath $temporary -ErrorAction SilentlyContinue }
 }
 
 function Deploy-InstallerFile {
@@ -1507,7 +2071,7 @@ function Deploy-InstallerFile {
     Write-HflOk "staged $Destination replacement (applied after upgrade exits)"
     return
   }
-  Copy-Item -Force -LiteralPath $Source -Destination $Destination
+  Copy-HflFileAtomically -Source $Source -Destination $Destination
   Write-HflOk "deployed $Destination"
 }
 
@@ -1538,19 +2102,27 @@ function Deploy-Binaries {
   $deployAgent = -not $KopiaOnly.IsPresent
   $deployKopia = -not $AgentOnly.IsPresent
   $ver = Get-BundleVersionFrom -Root $SrcRoot
+  # Stage the verified recovery-capable lifecycle script before replacing the
+  # executables. A process interruption during deployment then leaves an entry
+  # point that understands upgrade-state.json and can resume rollback.
+  Deploy-AdminScripts -SrcRoot $SrcRoot
   if ($deployAgent) {
-    Copy-Item -Force -Path $srcAgent -Destination (Join-Path $InstallRoot "hfl-agent.exe")
+    Copy-HflFileAtomically -Source $srcAgent -Destination (Join-Path $InstallRoot "hfl-agent.exe")
     Write-HflOk "deployed $(Join-Path $InstallRoot 'hfl-agent.exe') ($ver)"
-    Copy-Item -Force -Path $srcLauncher -Destination (Join-Path $InstallRoot "hfl-agent-user-launcher.exe")
+    Copy-HflFileAtomically -Source $srcLauncher -Destination (Join-Path $InstallRoot "hfl-agent-user-launcher.exe")
     Write-HflOk "deployed $(Join-Path $InstallRoot 'hfl-agent-user-launcher.exe')"
   }
   if ($deployKopia) {
-    Copy-Item -Force -Path $srcKopia -Destination (Join-Path $InstallRoot "kopia.exe")
+    Copy-HflFileAtomically -Source $srcKopia -Destination (Join-Path $InstallRoot "kopia.exe")
     Write-HflOk "deployed $(Join-Path $InstallRoot 'kopia.exe')"
   }
-  Set-Content -Path $InstalledVersionFile -Value $ver -Encoding UTF8
+  $versionTemp = "$InstalledVersionFile.new.$([Guid]::NewGuid().ToString('N'))"
+  try {
+    Set-Content -LiteralPath $versionTemp -Value $ver -Encoding UTF8
+    Move-Item -Force -LiteralPath $versionTemp -Destination $InstalledVersionFile
+  }
+  finally { Remove-Item -Force -LiteralPath $versionTemp -ErrorAction SilentlyContinue }
   Write-HflOk "wrote $InstalledVersionFile ($ver)"
-  Deploy-AdminScripts -SrcRoot $SrcRoot
 }
 
 function Set-HflEnvLine {
@@ -1757,6 +2329,12 @@ function Invoke-Upgrade {
   if (-not $From) {
     throw "upgrade requires -From <directory-or.zip>"
   }
+  if ($AgentOnly -or $KopiaOnly) {
+    throw "Transactional upgrade requires the complete Agent package; -AgentOnly and -KopiaOnly are not supported."
+  }
+  if ($NoService -and $NoRestart) {
+    throw "-NoRestart cannot be combined with -NoService because there is no managed lifecycle to complete deferred verification."
+  }
 
   $null = Get-HflSupportedArchitecture
   $dataRoot = if ($legacyUpgrade) { $DefaultDataRoot } else { Get-ResolvedDataRoot -Override $DataDir }
@@ -1773,14 +2351,43 @@ function Invoke-Upgrade {
   $upgradeSucceeded = $false
   Start-HflInstallLog -DataRoot $dataRoot
   try {
+    Acquire-HflLifecycleLock -DataRoot $dataRoot -Operation "upgrade"
+    $existingStatePath = Join-Path (Get-HflLifecycleRoot $dataRoot) "upgrade-state.json"
+    if (Test-Path -LiteralPath $existingStatePath) {
+      $existingState = Get-Content -Raw -LiteralPath $existingStatePath | ConvertFrom-Json
+      $null = Restore-HflInterruptedUpgrade -DataRoot $dataRoot -State $existingState
+      $prevVer = "unknown"
+      if (Test-Path -LiteralPath $InstalledVersionFile) {
+        $prevVer = (Get-Content -LiteralPath $InstalledVersionFile -Raw).Trim()
+      }
+    }
     if ($legacyUpgrade) {
       Invoke-LegacyMigration
     }
     $srcRoot = Resolve-UpgradeSource -Path $From -DataRoot $dataRoot
     $newVer = Get-BundleVersionFrom -Root $srcRoot
+	$script:UpgradeLifecycleWasRunning = $false
+	$script:UpgradeStateSnapshotReady = $false
+	$script:UpgradeDeploymentStarted = $false
+	$script:UpgradeStopAttempted = $false
+    $script:UpgradePreviousVersion = $prevVer
+    $script:UpgradeTargetVersion = $newVer
+    $script:UpgradeOperationStateCreated = $true
+    Write-HflUpgradeState -DataRoot $dataRoot -Phase "package_resolved"
+
+    $installedRole = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ROLE"
+    $versionComparison = Compare-HflVersion -Left $newVer -Right $prevVer
+    if ($newVer -eq $prevVer -and $newVer -ne "unknown") {
+      Confirm-HflSameVersionUpgrade -Version $prevVer
+    }
+    elseif ($null -ne $versionComparison -and $versionComparison -lt 0 -and $prevVer -ne "unknown" -and $newVer -ne "unknown") {
+      throw "Downgrade is not supported ($newVer < $prevVer)."
+    }
+    $effectiveRole = if ($installedRole) { $installedRole } else { "agent" }
+    Verify-HflUpgradePackage -Root $srcRoot -RoleName $effectiveRole -Version $newVer
+    Update-HflLifecycleLockTarget -Version $newVer -Manifest (Join-Path $srcRoot "MANIFEST.json")
 
     if (-not $QuietFooter) {
-      $installedRole = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ROLE"
       Write-HflBanner "upgrade $prevVer -> $newVer" -RoleName (Get-HflRoleDisplayName -Value $installedRole)
       Write-HflSection "Target"
       Write-HflSummaryLine "Current version" $prevVer
@@ -1793,40 +2400,82 @@ function Invoke-Upgrade {
       Write-HflSection "Upgrading Agent"
     }
 
-    Backup-RollbackBinaries -DataRoot $dataRoot
+    $script:UpgradeStateSnapshotReady = $false
+    $script:UpgradeDeploymentStarted = $false
+    $script:UpgradeStopAttempted = $false
+  $script:UpgradeLifecycleWasRunning = Test-HflLifecycleRunning
+  Backup-RollbackBinaries -DataRoot $dataRoot
+    $script:UpgradePreviousVersion = $prevVer
+    $script:UpgradeTargetVersion = $newVer
+    $script:UpgradeTransactionActive = $true
     try {
+      Write-HflUpgradeState -DataRoot $dataRoot -Phase "snapshotting"
+      Backup-AgentConfigAndDb -DataRoot $dataRoot -PreviousVersion $prevVer -SrcRoot $srcRoot
+      $script:UpgradeStateSnapshotReady = $true
+      Write-HflUpgradeState -DataRoot $dataRoot -Phase "state_snapshotted"
+      # Capture configuration and SQLite sidecar files before stopping the
+      # Agent. A stop failure must remain non-destructive, while a later
+      # deployment failure still has a complete rollback snapshot.
+      $script:UpgradeStopAttempted = $true
+      Write-HflUpgradeState -DataRoot $dataRoot -Phase "stopping"
       Stop-AgentForUpgrade
-      Backup-AgentConfigAndDb -DataRoot $dataRoot -PreviousVersion $prevVer
+      Write-HflUpgradeState -DataRoot $dataRoot -Phase "service_stopped"
+      $script:UpgradeDeploymentStarted = $true
+      Write-HflUpgradeState -DataRoot $dataRoot -Phase "deploying"
       Deploy-Binaries -SrcRoot $srcRoot
+      Write-HflUpgradeState -DataRoot $dataRoot -Phase "deployed"
       Merge-AgentEnv -EnvFile $envFile -DataRoot $dataRoot
+      Write-HflUpgradeState -DataRoot $dataRoot -Phase "migrating"
       Update-AgentDb -DataRoot $dataRoot
+      Write-HflUpgradeState -DataRoot $dataRoot -Phase "migrated"
 
       if (-not $NoService) {
-        Install-HflService -ExePath (Join-Path $InstallRoot "hfl-agent.exe") -DataRoot $dataRoot -NoStart:$NoRestart
+        Write-HflUpgradeState -DataRoot $dataRoot -Phase "configuring_service"
+        if (-not $NoRestart -and $script:UpgradeLifecycleWasRunning) {
+          Write-HflUpgradeState -DataRoot $dataRoot -Phase "starting_service"
+        }
+        Install-HflService `
+          -ExePath (Join-Path $InstallRoot "hfl-agent.exe") `
+          -DataRoot $dataRoot `
+          -NoStart:($NoRestart -or -not $script:UpgradeLifecycleWasRunning)
+        # Re-registering uses the product defaults. Preserve the pre-upgrade
+        # policy so a manually started disabled Agent does not become automatic.
+        Restore-HflLifecycleStartupPolicy -DataRoot $dataRoot
       }
+
+      if (-not $NoRestart -and -not (Test-HflLocalUpgradeHealth -DataRoot $dataRoot -ExpectedVersion $newVer -SkipLifecycle:(-not $script:UpgradeLifecycleWasRunning))) {
+        throw "new Agent failed local health verification after upgrade"
+      }
+      if (-not $NoRestart) { Write-HflUpgradeState -DataRoot $dataRoot -Phase "healthy" }
     }
     catch {
-      Write-HflWarn "upgrade failed: $($_.Exception.Message); attempting rollback"
-      Restore-RollbackBinaries
-      if (-not $NoService -and -not $legacyUpgrade) {
-        try {
-          Start-HflServiceOnly
-        }
-        catch { }
-      }
-      throw
+      $originalError = $_.Exception.Message
+      Invoke-HflUpgradeRollback -DataRoot $dataRoot -PreviousVersion $prevVer -OriginalError $originalError -LegacyUpgrade:$legacyUpgrade
     }
 
-    Remove-UpgradeRollback -DataRoot $dataRoot
+    $script:UpgradeTransactionActive = $false
+    if ($NoRestart) {
+      Write-HflUpgradeState -DataRoot $dataRoot -Phase "awaiting_restart"
+    } else {
+      Write-HflUpgradeState -DataRoot $dataRoot -Phase "committed"
+      Remove-UpgradeRollback -DataRoot $dataRoot
+      Clear-HflUpgradeState
+    }
     $upgradeSucceeded = $true
   }
   catch {
     Restore-LegacyServiceOnFailure
     Write-HflLog -Level 'FAIL ' -Message "Upgrade failed: $($_.Exception.Message)"
+    if ($script:UpgradeOperationStateCreated -and -not $script:UpgradeStopAttempted) {
+      Clear-HflUpgradeState
+      Remove-UpgradeRollback -DataRoot $dataRoot
+    }
     throw
   }
   finally {
-    Remove-UpgradeWorkspace -Workspace $workspace
+    try { Remove-UpgradeWorkspace -Workspace $workspace }
+    catch { Write-HflWarn "upgrade workspace cleanup was deferred: $($_.Exception.Message)" }
+    finally { Release-HflLifecycleLock }
     if (-not $upgradeSucceeded) {
       Stop-HflInstallLog -ExitCode 1
     }
@@ -1844,11 +2493,15 @@ function Invoke-Upgrade {
     Complete-LegacyMigration
   }
   Write-HflSection "Verifying"
-  if (-not $NoService) {
+  if ($NoRestart) {
+    Write-HflSkip "Agent restart and local health verification are pending by request"
+    Write-HflWarn "Rollback data is retained until the staged upgrade is started and verified."
+  }
+  elseif (-not $NoService) {
     Write-HflOk "Agent managed startup is $(Get-HflServiceStatusLine)"
   }
   Write-HflSection "Upgrade summary"
-  Write-HflSummaryLine "Status" "upgraded"
+  Write-HflSummaryLine "Status" ($(if ($NoRestart) { "staged (verification pending)" } else { "upgraded" }))
   Write-HflSummaryLine "Version" (Get-BundleVersionFrom -Root $InstallRoot)
   if (-not $NoService) {
     Write-HflSummaryLine "Lifecycle" "$ServiceName ($(Get-HflServiceStatusLine))"
@@ -1872,6 +2525,7 @@ function Invoke-Uninstall {
   }
   Start-HflUninstallLog -DataRoot $dataRoot
   try {
+  Acquire-HflLifecycleLock -DataRoot $dataRoot -Operation "uninstall"
 
   Write-HflBanner "uninstall" -RoleName $displayRole
   Write-HflSection "Target"
@@ -1962,9 +2616,11 @@ function Invoke-Uninstall {
   Write-HflSummaryLine "Status" "uninstalled"
   Write-HflSummaryLine "Console record" "not changed by local uninstall"
   Write-HflFooter -Outcome uninstall
+  Release-HflLifecycleLock
   Stop-HflUninstallLog -ExitCode 0
   }
   catch {
+    Release-HflLifecycleLock
     Write-HflLog -Level 'FAIL ' -Message "Uninstallation failed: $($_.Exception.Message)"
     Stop-HflUninstallLog -ExitCode 1
     throw

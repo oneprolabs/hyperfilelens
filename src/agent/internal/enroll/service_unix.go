@@ -13,6 +13,7 @@ import (
 
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/install"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 // StartInstalledService enables and starts the platform service after enrollment.
@@ -47,6 +48,16 @@ func startSystemd(ctx context.Context) error {
 	// or previously invalid definition cannot survive into the start attempt.
 	if err := ensureUserSystemdUnit(); err != nil {
 		return fmt.Errorf("repair current-user systemd unit: %w", err)
+	}
+	// A bundle upgrade intentionally stages with --no-restart so enrollment can
+	// refresh credentials before the new Agent reconnects. Route that one start
+	// through the lifecycle script: it performs the local health check and only
+	// then commits the retained rollback transaction.
+	statePath := install.LifecycleUpgradeStatePath(vfs.DefaultAgentDataDir())
+	if _, err := os.Stat(statePath); err == nil {
+		return startUnixScript(ctx, "start")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect pending upgrade state: %w", err)
 	}
 	for _, args := range [][]string{
 		{"daemon-reload"},
