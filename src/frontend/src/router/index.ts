@@ -112,10 +112,8 @@ export const router = createRouter({
           component: lazyRoute(() => import('../pages/insight/NewCopilotChat.vue')),
           meta: fullscreenRouteMeta,
         },
-        {
-          path: 'insight/usage',
-          component: lazyRoute(() => import('../pages/insight/InsightUsage.vue')),
-        },
+        // Insight Usage is temporarily hidden. Keep InsightUsage.vue and its API implementation.
+        // To restore it, register /insight/usage here and restore its side-navigation item.
         {
           path: 'insight/gateways',
           component: lazyRoute(() => import('../pages/insight/InsightGateways.vue')),
