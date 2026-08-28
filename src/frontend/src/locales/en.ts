@@ -1473,7 +1473,6 @@ export const en = {
       groupInfrastructure: 'Infrastructure',
       groupDataApps: 'AI Engine',
       groupGovernance: 'Organization',
-      groupSystem: 'System Settings',
       nodes: 'Nodes',
       repositories: 'DR targets',
     },
@@ -2777,64 +2776,11 @@ export const en = {
     nav: {
       organizationHub: 'Organization Profile',
       members: 'Members & Roles',
-      systemHub: 'Global Settings',
       subscription: 'Subscriptions & Billing',
       apiKeys: 'API Keys',
     },
     orgTabs: {
       subscription: 'Subscription',
-    },
-    global: {
-      restoreDefaults: 'Restore defaults',
-      groups: {
-        execution: 'Task execution',
-        data: 'Data handling',
-        security: 'Security checks',
-        retention: 'Retention policy',
-      },
-      groupHints: {
-        execution: 'Control concurrency, timeout, and retry behavior.',
-        data: 'Tune transfer buffers, compression, and large-file handling.',
-        security: 'Configure restore verification and encryption behavior.',
-        retention: 'Set how long snapshots are kept automatically.',
-      },
-      labels: {
-        concurrency: 'Max concurrent data protection tasks',
-        verify: 'Verify checksum after restore',
-        taskTimeout: 'Task timeout (seconds)',
-        retryDelay: 'Retry delay (seconds)',
-        bufferSize: 'Buffer size (MB)',
-        compression: 'Enable compression',
-        encryption: 'Enable encryption',
-        skipLargeFiles: 'Skip files larger than (MB)',
-        snapshotRetention: 'Snapshot retention (days)',
-      },
-      hints: {
-        concurrency: 'Limits the total number of backup and restore tasks running globally at once, preventing system resource overload from excessive concurrency',
-        verify: 'Safer when on; off reduces I/O and time after restore completes.',
-        taskTimeout: 'Max execution time per task. Tasks exceeding this will be terminated.',
-        retryCount: 'Number of retries on failure. Set to 0 to disable retries.',
-        retryDelay: 'Wait time between retries in seconds.',
-        bufferSize: 'Memory buffer for data transfer. Higher values use more RAM but can improve throughput.',
-        compression: 'Compress data during transfer to reduce bandwidth usage.',
-        encryption: 'Encrypt data at rest and in transit for enhanced security.',
-        skipLargeFiles: 'Files exceeding this size will be skipped during backup. Set to 0 to disable.',
-        snapshotRetention: 'Number of days to retain snapshots before automatic cleanup.',
-      },
-      errForbidden: 'You need organization Owner or Admin role to edit system settings.',
-      errLoad: 'Could not load system settings. Retry or check your connection.',
-      errSave: 'Save failed. Confirm you have permission and valid values.',
-      msgSaved: 'Global DR settings saved.',
-      msgSavedReloadFailed:
-        'Saved, but refreshing the list failed — refresh the page or try Save again later.',
-      msgRestored: 'Form reset to built-in defaults (not saved yet — click Save to persist).',
-    },
-    systemOrg: {
-      msgSaved: 'Organization system settings saved.',
-      effectiveFrom: 'Current effective value from: {source}',
-      sourceTenant: 'this organization',
-      sourceGlobal: 'platform default',
-      sourceDefault: 'built-in default',
     },
     channels: {
       refresh: 'Refresh',
@@ -4413,11 +4359,6 @@ export const en = {
     registerSuccessTip2: ' has been registered. Please sign in.',
     okGotIt: 'Got it',
     registerFailed: 'Registration failed',
-  },
-  nodeGlobalSettings: {
-    movedToAdminConsole:
-      'Platform-wide global settings have moved to the Admin Console. Tenant organization settings remain available in your organization settings.',
-    openAdminConsole: 'Open platform settings in Admin Console',
   },
   platformOps: {
     list: {

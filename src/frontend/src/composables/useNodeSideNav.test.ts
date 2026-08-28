@@ -16,7 +16,6 @@ function mountMenus() {
         assetsPage: {
           side: {
             groupGovernance: 'Organization',
-            groupSystem: 'System Settings',
           },
         },
         settings: {
@@ -24,7 +23,6 @@ function mountMenus() {
             organizationHub: 'Organization',
             members: 'Members',
             subscription: 'Subscription',
-            systemHub: 'System Settings',
           },
         },
       },
@@ -45,10 +43,9 @@ function mountMenus() {
 }
 
 describe('useNodeSideNav', () => {
-  it('uses title case for Configuration groups', () => {
+  it('exposes organization configuration pages without system settings', () => {
     expect(mountMenus().value.map((group) => group.label)).toEqual([
       'Organization',
-      'System Settings',
     ])
   })
 })

@@ -3694,7 +3694,6 @@
       "groupInfrastructure": "Infraestructura",
       "groupDataApps": "Motor de IA",
       "groupGovernance": "Organización",
-      "groupSystem": "Ajustes del sistema",
       "nodes": "Nodos",
       "repositories": "Destinos de recuperación ante desastres"
     },
@@ -4962,63 +4961,11 @@
     "nav": {
       "organizationHub": "Perfil de la Organización",
       "members": "Funciones de los miembros",
-      "systemHub": "Ajustes mundiales",
       "subscription": "Suscripción y facturación",
       "apiKeys": "Llaves API"
     },
     "orgTabs": {
       "subscription": "Suscripción"
-    },
-    "global": {
-      "restoreDefaults": "Restaurar predeterminados",
-      "groups": {
-        "execution": "Ejecución de tareas",
-        "data": "Manejo de datos",
-        "security": "Controles de seguridad",
-        "retention": "Política de retención"
-      },
-      "groupHints": {
-        "execution": "Controle la concurrencia, el tiempo libre y el comportamiento de reingreso.",
-        "data": "Tune transfer buffers, compresión y manejo de gran perfil.",
-        "security": "Configure restaurar la verificación y el comportamiento de cifrado.",
-        "retention": "Establece cuánto tiempo se guardan instantáneas automáticamente."
-      },
-      "labels": {
-        "concurrency": "Principales tareas de protección de datos simultáneas",
-        "verify": "Verificar el checksum después de la restauración",
-        "taskTimeout": "Tiempo de ejecución (segundos)",
-        "retryDelay": "Retraso de entrada (segundos)",
-        "bufferSize": "Talla de amortiguación (MB)",
-        "compression": "Activar la compresión",
-        "encryption": "Encriptación activada",
-        "skipLargeFiles": "Saltar archivos más grandes que (MB)",
-        "snapshotRetention": "Retención de instantáneas (días)"
-      },
-      "hints": {
-        "concurrency": "Limita el número total de tareas de copia de seguridad y restauración que se ejecutan a nivel mundial a la vez, evitando la sobrecarga de recursos del sistema de acuerdo excesivo",
-        "verify": "Más seguro cuando está encendido; apagado reduce I/O y el tiempo después de la restauración completa.",
-        "taskTimeout": "Tiempo máximo de ejecución por tarea. Las tareas que superen este tiempo se finalizarán.",
-        "retryCount": "Número de reintentos tras un fallo. Establézcalo en 0 para desactivar los reintentos.",
-        "retryDelay": "Espera entre reintentos, en segundos.",
-        "bufferSize": "Búfer de memoria para la transferencia de datos. Los valores más altos usan más RAM pero pueden mejorar el rendimiento.",
-        "compression": "Comprime datos durante la transferencia para reducir el uso del ancho de banda.",
-      "encryption": "Cifre los datos en reposo y en tránsito para mejorar la seguridad.",
-        "skipLargeFiles": "Los archivos que superen este tamaño se omitirán durante la copia de seguridad. Establezca 0 para desactivar el límite.",
-        "snapshotRetention": "Número de días para retener instantáneas antes de la limpieza automática."
-      },
-      "errForbidden": "Usted necesita organización Propietario o función de Admin para editar la configuración del sistema.",
-      "errLoad": "No se puede cargar la configuración del sistema. Retroceda o revise su conexión.",
-      "errSave": "Confirme que tiene permiso y valores válidos.",
-      "msgSaved": "Ajustes globales DR guardados.",
-      "msgSavedReloadFailed": "Se guardó correctamente, pero no se pudo actualizar la lista. Actualice la página o vuelva a guardar más tarde.",
-      "msgRestored": "Reiniciar formulario a predeterminados incorporados (no guardados aún), haga clic en Guardar para persistir."
-    },
-    "systemOrg": {
-      "msgSaved": "Ajustes del sistema de organización guardados.",
-      "effectiveFrom": "Valor efectivo actual de: {source}",
-      "sourceTenant": "esta organización",
-      "sourceGlobal": "plataforma predeterminada",
-      "sourceDefault": "por defecto incorporado"
     },
     "channels": {
       "refresh": "Actualizar",
@@ -6593,10 +6540,6 @@
     "registerSuccessTip2": " se ha registrado. Inicie sesión.",
     "okGotIt": "Entendido",
     "registerFailed": "El registro falló"
-  },
-  "nodeGlobalSettings": {
-    "movedToAdminConsole": "Los ajustes globales de la plataforma se han trasladado a la Consola de administración. Los ajustes de cada organización siguen disponibles en la configuración de su organización.",
-    "openAdminConsole": "Configuración de plataforma abierta en la consola de Admin"
   },
   "platformOps": {
     "list": {
