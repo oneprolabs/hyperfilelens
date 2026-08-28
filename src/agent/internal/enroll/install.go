@@ -89,7 +89,7 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 	configCommitted := false
 	var stagedConfig enrollmentEnvSnapshot
 	configStaged := false
-	restartAfterConfigRestore := false
+	restoreRunningService := false
 	defer func() {
 		if sessionCompleted {
 			return
@@ -113,9 +113,13 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			return
 		}
 		logOK("Original Agent configuration was restored.")
-		if restartAfterConfigRestore {
+		if restoreRunningService {
 			restartCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
+			if !shouldRecoverServiceAfterConfigRestore(restoreRunningService, serviceState(restartCtx)) {
+				logOK("Agent service remained active; no restart was required after configuration restore.")
+				return
+			}
 			if restartErr := RestartInstalledService(restartCtx); restartErr != nil {
 				logWarn("Agent service could not be restarted with the restored configuration: " + restartErr.Error())
 				return
@@ -212,7 +216,10 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 
 	case ActionUpgrade, ActionReinstall:
 		stageExistingConfig()
-		restartAfterConfigRestore = true
+		// Preserve the service state that existed before enrollment. The upgrade
+		// script owns transactional stop/rollback; only recover here when a
+		// previously healthy service is no longer running after a later failure.
+		restoreRunningService = state.ServiceHealthy()
 		dl := plan.DownloadURL
 		releaseVer := plan.ReleaseVersion
 		if dl == "" {
@@ -269,6 +276,10 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 
 	logFail("Unsupported reinstall action.", 3)
 	return nil
+}
+
+func shouldRecoverServiceAfterConfigRestore(wasRunning bool, currentState string) bool {
+	return wasRunning && !isServiceHealthy(currentState)
 }
 
 func runExplicitUninstall(ctx context.Context, cfg Config, opts InstallOptions) error {

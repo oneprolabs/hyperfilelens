@@ -731,7 +731,8 @@ process_start_marker() {
 }
 
 acquire_lifecycle_lock() {
-	local data_dir="$1" operation="$2" lock_dir="$(agent_lifecycle_dir "${data_dir}")/install.lock" pid_file
+	local data_dir="$1" operation="$2" pid_file
+	local lock_dir="$(agent_lifecycle_dir "${data_dir}")/install.lock"
 	local owner_pid="" recorded_start="" actual_start="" attempt
 	mkdir -p "$(agent_lifecycle_dir "${data_dir}")"
 	if ! mkdir "${lock_dir}" 2>/dev/null; then
@@ -790,7 +791,8 @@ release_lifecycle_lock() {
 }
 
 write_upgrade_state() {
-	local data_dir="$1" phase="$2" file="$(agent_lifecycle_dir "${data_dir}")/upgrade-state.json" temporary
+	local data_dir="$1" phase="$2" temporary
+	local file="$(agent_lifecycle_dir "${data_dir}")/upgrade-state.json"
 	mkdir -p "$(dirname "${file}")"
 	UPGRADE_STATE_FILE="${file}"
 	UPGRADE_CURRENT_PHASE="${phase}"
@@ -817,7 +819,8 @@ upgrade_state_flag() {
 }
 
 load_upgrade_state() {
-	local data_dir="$1" file="$(agent_lifecycle_dir "${data_dir}")/upgrade-state.json"
+	local data_dir="$1"
+	local file="$(agent_lifecycle_dir "${data_dir}")/upgrade-state.json"
 	UPGRADE_STATE_FILE="${file}"
 	UPGRADE_CURRENT_PHASE="$(upgrade_state_value "${file}" phase || true)"
 	UPGRADE_PREVIOUS_VERSION="$(upgrade_state_value "${file}" previous_version || true)"
@@ -1184,7 +1187,8 @@ assert_agent_package_root() {
 }
 
 verify_upgrade_package() {
-	local root="$1" role="$2" version="$3" target_verifier="${root}/bin/hfl-agent" verifier output
+	local root="$1" role="$2" version="$3" verifier output
+	local target_verifier="${root}/bin/hfl-agent"
 	[[ -x "${target_verifier}" ]] || log_fail "Upgrade package verifier is missing: ${target_verifier}." 2
 	verifier="${target_verifier}"
 	if [[ -x "${INSTALL_DIR}/hfl-agent" ]] \
@@ -1337,7 +1341,8 @@ backup_upgrade_binaries() {
 }
 
 backup_upgrade_service_definition() {
-	local data_dir="$1" service_dir="$(agent_backup_dir "${data_dir}")/rollback/service"
+	local data_dir="$1"
+	local service_dir="$(agent_backup_dir "${data_dir}")/rollback/service"
 	mkdir -p "${service_dir}"
 	if agent_uses_launchd; then
 		if [[ -f "${LAUNCHD_PLIST}" ]]; then
@@ -1383,7 +1388,8 @@ restore_upgrade_binaries() {
 }
 
 copy_file_atomically() {
-	local source="$1" destination="$2" temporary="${destination}.rollback.$$"
+	local source="$1" destination="$2"
+	local temporary="${destination}.rollback.$$"
 	rm -f "${temporary}"
 	if ! cp -a "${source}" "${temporary}"; then
 		rm -f "${temporary}" 2>/dev/null || true
@@ -1396,7 +1402,8 @@ copy_file_atomically() {
 }
 
 restore_upgrade_state() {
-	local data_dir="$1" rollback="$(agent_backup_dir "${data_dir}")/rollback"
+	local data_dir="$1"
+	local rollback="$(agent_backup_dir "${data_dir}")/rollback"
 	local archive="${rollback}/latest.tar.gz" staging="${rollback}/restore.$$" relative destination
 	[[ -f "${archive}" ]] || return 1
 	rm -rf "${staging}" || return 1
@@ -1429,7 +1436,8 @@ restore_upgrade_state() {
 }
 
 restore_upgrade_service_definition() {
-	local data_dir="$1" service_dir="$(agent_backup_dir "${data_dir}")/rollback/service"
+	local data_dir="$1"
+	local service_dir="$(agent_backup_dir "${data_dir}")/rollback/service"
 	if agent_uses_launchd; then
 		stop_launchd_service || true
 		rm -f "${LAUNCHD_PLIST}" || return 1
@@ -2102,7 +2110,8 @@ deploy_admin_scripts() {
 }
 
 install_file_atomically() {
-	local source="$1" destination="$2" mode="$3" temporary="${destination}.new.$$"
+	local source="$1" destination="$2" mode="$3"
+	local temporary="${destination}.new.$$"
 	mkdir -p "$(dirname "${destination}")"
 	rm -f "${temporary}"
 	if ! install -m "${mode}" "${source}" "${temporary}"; then
