@@ -21,6 +21,7 @@ from apps.iam.permissions_org import (
     IsOrgWriter,
     get_membership,
 )
+from apps.lens_bridge.api.negotiation import PDFDownloadContentNegotiation
 from apps.lens_bridge.api.serializers import (
     LensAdmissionPreviewSerializer,
     LensChatBindingEnsureSerializer,
@@ -1738,6 +1739,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         detail=True,
         methods=["get"],
         url_path=r"runs/(?P<run_uuid>[0-9a-fA-F-]+)/pdf",
+        content_negotiation_class=PDFDownloadContentNegotiation,
     )
     def run_pdf(self, request, pk=None, run_uuid=None):
         """Stream SourceLens' PDF for an answer owned by this HFL chat."""

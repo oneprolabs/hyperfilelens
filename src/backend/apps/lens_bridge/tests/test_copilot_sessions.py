@@ -912,6 +912,7 @@ class CopilotSessionApiTests(TestCase):
                 "lens-copilot-session-run-pdf",
                 kwargs={"pk": self.session.pk, "run_uuid": run_uuid},
             ),
+            HTTP_ACCEPT="application/pdf",
             HTTP_X_ORG_KEY=self.org.key,
         )
 
@@ -939,11 +940,60 @@ class CopilotSessionApiTests(TestCase):
                 "lens-copilot-session-run-pdf",
                 kwargs={"pk": self.session.pk, "run_uuid": uuid.uuid4()},
             ),
+            HTTP_ACCEPT="application/pdf",
             HTTP_X_ORG_KEY=self.org.key,
         )
 
         self.assertEqual(response.status_code, 404)
+        self.assertEqual(response["Content-Type"], "application/json")
         stream_binary.assert_not_called()
+
+    @patch("apps.lens_bridge.api.views.sl_client.stream_binary")
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_answer_pdf_upstream_error_is_json(
+        self,
+        request_json,
+        stream_binary,
+    ):
+        self._mark_session_ready()
+        run_uuid = uuid.uuid4()
+        request_json.return_value = [
+            {
+                "uuid": str(uuid.uuid4()),
+                "role": "assistant",
+                "run": str(run_uuid),
+                "content": "Answer",
+            }
+        ]
+        stream_binary.side_effect = sl_client.LensBridgeUnavailable()
+
+        response = self.client.get(
+            reverse(
+                "lens-copilot-session-run-pdf",
+                kwargs={"pk": self.session.pk, "run_uuid": run_uuid},
+            ),
+            HTTP_ACCEPT="application/pdf",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response["Content-Type"], "application/json")
+        stream_binary.assert_called_once_with(
+            f"/api/lens/runs/{run_uuid}/pdf/",
+            hfl_user=self.user,
+        )
+
+    def test_pdf_content_negotiation_is_limited_to_the_download_action(self):
+        response = self.client.get(
+            reverse(
+                "lens-copilot-session-sync",
+                kwargs={"pk": self.session.pk},
+            ),
+            HTTP_ACCEPT="application/pdf",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 406)
 
     @patch("apps.lens_bridge.api.views.sl_client.stream_sse")
     def test_run_stream_requires_the_run_bound_to_the_session(self, stream_sse):
