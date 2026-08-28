@@ -27,14 +27,36 @@ describe('backup configuration fast transition', () => {
 
   it('enters Step 3 before starting non-blocking reconciliation', () => {
     const complete = sourceBetween(page, 'function finishCreateAndGoToStep3', 'function onCreateBackupPartial')
+    const reconcile = sourceBetween(page, 'function reconcileCreatedBackupConfigs', 'function finishCreateAndGoToStep3')
     const enter = complete.indexOf('enterStartBackupStep')
-    const reconcile = complete.indexOf('reconcileCreatedBackupConfigs')
+    const reconcileCall = complete.indexOf('reconcileCreatedBackupConfigs')
 
     expect(enter).toBeGreaterThan(-1)
-    expect(reconcile).toBeGreaterThan(enter)
+    expect(reconcileCall).toBeGreaterThan(enter)
     expect(complete).not.toContain('await refreshStep3AfterMoreAction')
+    expect(reconcile).toContain('showLoading: true')
     expect(page).toContain('skipNextFlowStepRefresh = flowMainStep.value !== 2')
     expect(page).toContain('if (skipNextFlowStepRefresh)')
+  })
+
+  it('shows Step 3 loading for the full post-create refresh chain', () => {
+    const complete = sourceBetween(page, 'function finishCreateAndGoToStep3', 'function onCreateBackupPartial')
+    const reconcile = sourceBetween(page, 'function reconcileCreatedBackupConfigs', 'function finishCreateAndGoToStep3')
+    const refresh = sourceBetween(page, 'async function refreshStep3AfterMoreAction', 'type BackupCreateResultPayload')
+    const enter = complete.indexOf('enterStartBackupStep')
+    const reconcileCall = complete.indexOf('reconcileCreatedBackupConfigs')
+    const loadingOn = refresh.indexOf('if (showLoading) setFlowStepDataLoading(2, true)')
+    const firstRequest = refresh.indexOf('await refreshPipelineStep2PlusIds(signal)')
+    const listRequest = refresh.indexOf('await loadStep3SelectableWithPageClamp(signal')
+    const loadingOff = refresh.indexOf('if (showLoading) setFlowStepDataLoading(2, false)')
+
+    expect(complete.slice(enter, reconcileCall)).not.toContain('await ')
+    expect(reconcile).toContain('showLoading: true')
+    expect(loadingOn).toBeGreaterThan(-1)
+    expect(loadingOn).toBeLessThan(firstRequest)
+    expect(firstRequest).toBeLessThan(listRequest)
+    expect(listRequest).toBeLessThan(loadingOff)
+    expect(page).toContain('v-loading="flowStepDataLoading[2]"')
   })
 
   it('preserves successful state when background reconciliation fails', () => {
