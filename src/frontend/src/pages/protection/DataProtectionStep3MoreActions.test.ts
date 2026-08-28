@@ -102,6 +102,19 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(wizard.match(/:disabled="configSelectMenuOpen"/g)?.length).toBeGreaterThanOrEqual(4)
   })
 
+  it('aligns step-three policy and file-filter detail popovers with the create wizard', () => {
+    expect(page).toMatch(/flowPolicyDetailRows[\s\S]*scheduleCycle[\s\S]*scheduleTimezone[\s\S]*scheduleStartsAt/)
+    expect(page).toMatch(/:width="400"[\s\S]*flow-binding-detail-popper/)
+    expect(page).toMatch(/:width="380"[\s\S]*flow-binding-detail-popper/)
+    expect(page).toContain("t('protection.policiesPage.shortDesc'")
+    expect(page).toContain("t('protection.policiesPage.midDesc'")
+    expect(page).toContain("t('protection.policiesPage.longDesc'")
+    expect(page).toContain('function flowPolicyAdvancedDetailLines')
+    expect(page).toContain('advancedRows: flowPolicyAdvancedDetailLines(policy)')
+    expect(page).toContain('v-for="advancedRow in policy.advancedRows"')
+    expect(page).toContain('v-bind="booleanStatusTag(advancedRow.enabled)"')
+  })
+
   it('keeps directory details while excluding generic overflow tooltips', () => {
     const directoriesStart = wizard.indexOf(":label=\"t('protection.backupsPage.labelBackupDirs')\"")
     const directoriesOpeningTagEnd = wizard.indexOf('>', directoriesStart)
@@ -306,8 +319,7 @@ describe('backup wizard step 3 More Actions refresh', () => {
     const refresh = functionSource('refreshStep3AfterMoreAction', 'finishCreateAndGoToStep3')
 
     expect(refresh).toContain('pageRequests.nextSignal(scope)')
-    expect(refresh).toContain('refreshPipelineStep2PlusIds(signal)')
-    expect(refresh).not.toContain('refreshPipelineStep3Ids(signal)')
+    expect(refresh).toContain('refreshPipelineCounts(signal)')
     expect(refresh).toContain('await loadStep3SelectableWithPageClamp(signal, {')
     expect(refresh).not.toContain('refreshBackupConfigs(')
     expect(refresh).toContain('pageRequests.isCurrentSignal(scope, signal)')

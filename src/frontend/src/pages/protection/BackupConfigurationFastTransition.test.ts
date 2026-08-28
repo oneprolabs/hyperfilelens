@@ -33,8 +33,8 @@ describe('backup configuration fast transition', () => {
     expect(enter).toBeGreaterThan(-1)
     expect(reconcile).toBeGreaterThan(enter)
     expect(complete).not.toContain('await refreshStep3AfterMoreAction')
-    expect(page).toContain('skipNextFlowStepRefresh = flowMainStep.value !== 2')
-    expect(page).toContain('if (skipNextFlowStepRefresh)')
+    expect(page).not.toContain('skipNextFlowStepRefresh')
+    expect(page).toContain('void refreshFlowStepData(step)')
   })
 
   it('preserves successful state when background reconciliation fails', () => {
@@ -43,6 +43,15 @@ describe('backup configuration fast transition', () => {
 
     expect(refresh).toContain('if (!options.preserveOnError)')
     expect(reconcile).toContain('preserveExpandedState: true')
+  })
+
+  it('hydrates repository names independently from Step 3 reconciliation', () => {
+    const hydrate = sourceBetween(page, 'function hydrateCreatedConfigRepositories', 'function mergeCreatedBackupConfigs')
+    const merge = sourceBetween(page, 'function mergeCreatedBackupConfigs', 'function reconcileCreatedBackupConfigs')
+
+    expect(hydrate).toContain('ensureRepositoryDetailsForConfigs(items.map((item) => item.config))')
+    expect(hydrate).not.toContain('flowStepScope(2)')
+    expect(merge).toContain('hydrateCreatedConfigRepositories(items)')
   })
 
   it('keeps partial successes and separates create from edit outcomes', () => {
@@ -65,5 +74,13 @@ describe('backup configuration fast transition', () => {
     expect(page).toContain("String(config.status || '').toLowerCase() === 'active'")
     expect(page).toContain(':disabled="!step3StartBackupEnabled || startBackupSubmitting || step3StopActionBusy"')
     expect(page).toContain('if (runnableSources.length !== sources.length)')
+  })
+
+  it('self-heals an empty Step 3 after a cancelled or failed first load', () => {
+    expect(page).toContain('const step3InitialLoadPending = ref(initialFlowMainStep === 2)')
+    expect(page).toContain('if (step3InitialLoadPending.value) return true')
+    expect(page).toContain('if (step3SelectableRows.value.length === 0)')
+    expect(page).toContain('await loadStep3Selectable({ signal })')
+    expect(page).toContain('syncStep3AutoRefresh()')
   })
 })

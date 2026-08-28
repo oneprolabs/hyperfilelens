@@ -1251,6 +1251,7 @@ function handleOptionSelectVisibleChange(visible: boolean) {
 
 function handleConfigSelectVisibleChange(visible: boolean) {
   configSelectMenuOpen.value = visible
+  if (!visible) hideOptionPopovers()
 }
 
 function closeBatchFilterSelect() {
@@ -5060,6 +5061,7 @@ function setGroupCompression(group: WizardSourceGroup, compression: CompressionL
 
 type PolicyRetentionDetailLine = {
   label?: string
+  summary?: boolean
   text: string
 }
 
@@ -5075,7 +5077,23 @@ function policyStateTagAttrs(active: boolean) {
 
 function policyScheduleValue(policy: WizardPolicy) {
   if (policy.scheduleEnabled === false) return t('protection.backupsPage.policyConfigNotConfigured')
-  return policy.backupFrequencyDesc || policy.schedule || t('protection.backupsPage.policyConfigNotConfigured')
+  const f = policy.formData
+  if (!f) return policy.backupFrequencyDesc || policy.schedule || t('protection.backupsPage.policyConfigNotConfigured')
+  if (f.freqMode === 'advanced') return `${t('protection.policiesPage.freqAdvanced')}: ${f.cronExpr}`
+  const unitKey = f.simpleIntervalUnit === 'minute' ? 'unitMinutes' : f.simpleIntervalUnit === 'hour' ? 'unitHours' : 'unitDays'
+  if (f.quickScheduleType === 'interval') {
+    const unit = t(`protection.policiesPage.${unitKey}`)
+    return t('protection.policiesPage.previewScheduleInterval', { n: f.simpleIntervalValue, unit: Number(f.simpleIntervalValue) === 1 ? unit.replace(/s$/, '') : unit })
+  }
+  if (f.quickScheduleType === 'daily') return t('protection.policiesPage.previewScheduleDaily', { time: f.scheduleTime })
+  if (f.quickScheduleType === 'weekly') {
+    const keys = ['weekdayMon', 'weekdayTue', 'weekdayWed', 'weekdayThu', 'weekdayFri', 'weekdaySat', 'weekdaySun']
+    const weekdays = f.scheduleWeekdays.map((day) => t(`protection.policiesPage.${keys[day - 1]}`)).join(', ')
+    return t('protection.policiesPage.previewScheduleWeekly', { weekdays, time: f.scheduleTime })
+  }
+  const dates = f.scheduleMonthDays.map(String)
+  if (f.scheduleMonthEnd) dates.push(t('protection.policiesPage.scheduleMonthEnd'))
+  return t('protection.policiesPage.previewScheduleMonthly', { dates: dates.join(', '), time: f.scheduleTime })
 }
 
 function policyRetentionValue(policy: WizardPolicy | null | undefined) {
@@ -5114,6 +5132,15 @@ function policySearchText(policy: WizardPolicy) {
 
 function policyDetailRows(policy: WizardPolicy | null | undefined) {
   if (!policy) return []
+  const f = policy.formData
+  if (f && f.sectionScheduleEnabled) {
+    return [
+      { label: t('protection.policiesPage.scheduleCycle'), value: policyScheduleValue(policy) },
+      { label: t('protection.policiesPage.scheduleTimezone'), value: f.scheduleTimezone || 'UTC' },
+      { label: t('protection.policiesPage.scheduleStartsAt'), value: f.scheduleStartsAt?.replace('T', ' ') || t('protection.policiesPage.timeDash') },
+      { label: policyUsageLabel(), value: policyUsageValue(policy.relatedBackupCount) },
+    ]
+  }
   return [
     { label: t('protection.policiesPage.fieldSchedule'), value: policyScheduleValue(policy) },
     { label: policyUsageLabel(), value: policyUsageValue(policy.relatedBackupCount) },
@@ -5133,39 +5160,34 @@ function policyRetentionDetailLines(policy: WizardPolicy | null | undefined): Po
         ? 'protection.policiesPage.retentionLatestOne'
         : 'protection.policiesPage.retentionLatestMany',
       { n: recentPoints },
-    ),
+    ), summary: true,
   }]
   if (f.retentionShortHourly) {
     lines.push({
-      label: `${t('protection.policiesPage.hourlyTitle')}:`,
-      text: t('protection.policiesPage.retentionHourlyDetail', { n: Number(f.retentionShortDaysMax) * 24 }),
+      text: t('protection.policiesPage.shortDesc', { days: f.retentionShortDaysMax }),
     })
   }
   if (f.retentionMidDaily) {
     lines.push({
-      label: `${t('protection.policiesPage.dailyTitle')}:`,
-      text: t('protection.policiesPage.retentionDailyDetail', { n: f.retentionMidDaysMax }),
-    })
-  }
-  if (f.retentionWeeklyEnabled) {
-    lines.push({
-      label: `${t('protection.policiesPage.weeklyTitle')}:`,
-      text: t('protection.policiesPage.retentionWeeklyDetail', { n: f.retentionWeeklyWeeks }),
+      text: t('protection.policiesPage.midDesc', { start: f.retentionShortDaysMax, end: f.retentionMidDaysMax }),
     })
   }
   if (f.retentionLongMonthly) {
     lines.push({
-      label: `${t('protection.policiesPage.monthlyTitle')}:`,
-      text: t('protection.policiesPage.retentionMonthlyDetail', { n: f.retentionLongMonths }),
-    })
-  }
-  if (f.retentionAnnualEnabled) {
-    lines.push({
-      label: `${t('protection.policiesPage.annualTitle')}:`,
-      text: t('protection.policiesPage.retentionAnnualDetail', { n: f.retentionAnnualYears }),
+      text: t('protection.policiesPage.longDesc', { day: f.retentionMidDaysMax, months: f.retentionLongMonths }),
     })
   }
   return lines
+}
+
+function policyAdvancedDetailLines(policy: WizardPolicy | null | undefined) {
+  const f = policy?.formData
+  if (!f) return []
+  return [
+    { label: t('protection.policiesPage.errRow1Title'), enabled: f.errorIgnoreDirectory },
+    { label: t('protection.policiesPage.errRow2Title'), enabled: f.errorIgnoreFile },
+    { label: t('protection.policiesPage.errRow3Title'), enabled: f.errorIgnoreUnknownEntries },
+  ]
 }
 
 function policyRetentionListSummary(policy: WizardPolicy | null | undefined): string {
@@ -5207,7 +5229,7 @@ function filterCompiledRuleLines(filter: WizardFilter | null | undefined) {
 }
 
 function filterDisplayedRuleLines(filter: WizardFilter | null | undefined) {
-  return filterCompiledRuleLines(filter)
+  return filterCompiledRuleLines(filter).slice(0, 3)
 }
 
 function filterMaxSizeLimitValue(filter: WizardFilter) {
@@ -6655,9 +6677,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                         trigger="hover"
                         placement="bottom-start"
                         :fallback-placements="['top-start', 'right-start']"
-                        :width="420"
+                        :width="400"
                         :persistent="false"
-                        popper-class="create-policy-option-popper"
+                        transition="hfl-option-popover-immediate"
+                        popper-class="create-policy-option-popper create-policy-option-popper--policy"
                       >
                         <template #reference>
                           <div
@@ -6678,7 +6701,13 @@ function preserveShallowestPathOrder(paths: string[]) {
                             </div>
                           </div>
                         </template>
-                        <div class="create-policy-detail-popover">
+                        <div
+                          class="create-policy-detail-popover"
+                          @pointerdown.prevent.stop
+                          @mousedown.prevent.stop
+                          @mouseup.stop
+                          @click.stop
+                        >
                           <div class="create-policy-detail-popover__head">
                             <div class="create-policy-detail-popover__title">
                               {{ pol.name }}
@@ -6731,6 +6760,26 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 </div>
                               </div>
                             </section>
+                            <section class="create-policy-detail-popover__section">
+                              <div class="create-policy-detail-popover__section-title">
+                                {{ t('protection.policiesPage.sectionAdvancedSettings') }}:
+                              </div>
+                              <div class="create-policy-detail-popover__advanced-box">
+                                <div
+                                  v-for="row in policyAdvancedDetailLines(pol)"
+                                  :key="row.label"
+                                  class="create-policy-detail-popover__advanced-row"
+                                >
+                                  <span>{{ row.label }}</span>
+                                  <el-tag
+                                    size="small"
+                                    v-bind="policyStateTagAttrs(row.enabled)"
+                                  >
+                                    {{ policyStateLabel(row.enabled) }}
+                                  </el-tag>
+                                </div>
+                              </div>
+                            </section>
                           </div>
                         </div>
                       </HflPopover>
@@ -6764,8 +6813,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                         trigger="hover"
                         placement="bottom-start"
                         :fallback-placements="['top-start', 'right-start']"
-                        :width="460"
+                        :width="380"
                         :persistent="false"
+                        transition="hfl-option-popover-immediate"
                         popper-class="create-policy-option-popper"
                       >
                         <template #reference>
@@ -6805,7 +6855,13 @@ function preserveShallowestPathOrder(paths: string[]) {
                             </div>
                           </div>
                         </template>
-                        <div class="create-policy-detail-popover">
+                        <div
+                          class="create-policy-detail-popover"
+                          @pointerdown.prevent.stop
+                          @mousedown.prevent.stop
+                          @mouseup.stop
+                          @click.stop
+                        >
                           <div class="create-policy-detail-popover__head">
                             <div class="create-policy-detail-popover__title">
                               {{ gf.name }}
@@ -6827,6 +6883,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                               <el-tag
                                 v-if="row.enabled"
                                 size="small"
+                                class="create-policy-detail-popover__status-tag"
                                 v-bind="policyStateTagAttrs(true)"
                               >
                                 {{ row.value }}
@@ -7021,11 +7078,13 @@ function preserveShallowestPathOrder(paths: string[]) {
                               <HflPopover
                                 ref="optionPopoverRefs"
                                 trigger="hover"
-                                placement="bottom-start"
-                                :fallback-placements="['top-start', 'right-start']"
-                                :width="420"
+                                placement="right-start"
+                                :fallback-placements="['left-start', 'right-end', 'left-end']"
+                                :offset="10"
+                                :width="400"
                                 :persistent="false"
-                                popper-class="create-policy-option-popper"
+                                transition="hfl-option-popover-immediate"
+                                popper-class="create-policy-option-popper create-policy-option-popper--policy"
                               >
                                 <template #reference>
                                   <div
@@ -7046,7 +7105,13 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     </div>
                                   </div>
                                 </template>
-                                <div class="create-policy-detail-popover">
+                                <div
+                                  class="create-policy-detail-popover"
+                                  @pointerdown.prevent.stop
+                                  @mousedown.prevent.stop
+                                  @mouseup.stop
+                                  @click.stop
+                                >
                                   <div class="create-policy-detail-popover__head">
                                     <div class="create-policy-detail-popover__title">
                                       {{ pol.name }}
@@ -7099,6 +7164,26 @@ function preserveShallowestPathOrder(paths: string[]) {
                                         </div>
                                       </div>
                                     </section>
+                                    <section class="create-policy-detail-popover__section">
+                                      <div class="create-policy-detail-popover__section-title">
+                                        {{ t('protection.policiesPage.sectionAdvancedSettings') }}:
+                                      </div>
+                                      <div class="create-policy-detail-popover__advanced-box">
+                                        <div
+                                          v-for="row in policyAdvancedDetailLines(pol)"
+                                          :key="row.label"
+                                          class="create-policy-detail-popover__advanced-row"
+                                        >
+                                          <span>{{ row.label }}</span>
+                                          <el-tag
+                                            size="small"
+                                            v-bind="policyStateTagAttrs(row.enabled)"
+                                          >
+                                            {{ policyStateLabel(row.enabled) }}
+                                          </el-tag>
+                                        </div>
+                                      </div>
+                                    </section>
                                   </div>
                                 </div>
                               </HflPopover>
@@ -7129,9 +7214,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                         v-if="getRealPolicy(groupPolicyId(group))"
                         trigger="hover"
                         placement="bottom-start"
-                        :width="420"
+                        :width="400"
                         :disabled="configSelectMenuOpen"
-                        popper-class="create-policy-option-popper"
+                        popper-class="create-policy-option-popper create-policy-option-popper--policy"
                       >
                         <template #reference>
                           <span class="create-config-selected-summary hfl-table-no-tooltip">
@@ -7205,6 +7290,26 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 </div>
                               </div>
                             </section>
+                            <section class="create-policy-detail-popover__section">
+                              <div class="create-policy-detail-popover__section-title">
+                                {{ t('protection.policiesPage.sectionAdvancedSettings') }}:
+                              </div>
+                              <div class="create-policy-detail-popover__advanced-box">
+                                <div
+                                  v-for="row in policyAdvancedDetailLines(getRealPolicy(groupPolicyId(group)))"
+                                  :key="row.label"
+                                  class="create-policy-detail-popover__advanced-row"
+                                >
+                                  <span>{{ row.label }}</span>
+                                  <el-tag
+                                    size="small"
+                                    v-bind="policyStateTagAttrs(row.enabled)"
+                                  >
+                                    {{ policyStateLabel(row.enabled) }}
+                                  </el-tag>
+                                </div>
+                              </div>
+                            </section>
                           </div>
                         </div>
                       </HflPopover>
@@ -7230,6 +7335,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                             :model-value="groupFilterId(group)"
                             filterable
                             clearable
+                            fit-input-width
                             :placeholder="t('protection.backupsPage.phFilterForDir')"
                             class="target-picker-grid__target"
                             placement="bottom-start"
@@ -7246,10 +7352,12 @@ function preserveShallowestPathOrder(paths: string[]) {
                               <HflPopover
                                 ref="optionPopoverRefs"
                                 trigger="hover"
-                                placement="bottom-start"
-                                :fallback-placements="['top-start', 'right-start']"
-                                :width="460"
+                                placement="right-start"
+                                :fallback-placements="['left-start', 'right-end', 'left-end']"
+                                :offset="10"
+                                :width="380"
                                 :persistent="false"
+                                transition="hfl-option-popover-immediate"
                                 popper-class="create-policy-option-popper"
                               >
                                 <template #reference>
@@ -7289,7 +7397,13 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     </div>
                                   </div>
                                 </template>
-                                <div class="create-policy-detail-popover">
+                                <div
+                                  class="create-policy-detail-popover"
+                                  @pointerdown.prevent.stop
+                                  @mousedown.prevent.stop
+                                  @mouseup.stop
+                                  @click.stop
+                                >
                                   <div class="create-policy-detail-popover__head">
                                     <div class="create-policy-detail-popover__title">
                                       {{ gf.name }}
@@ -7311,6 +7425,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                       <el-tag
                                         v-if="row.enabled"
                                         size="small"
+                                        class="create-policy-detail-popover__status-tag"
                                         v-bind="policyStateTagAttrs(true)"
                                       >
                                         {{ row.value }}
@@ -7417,6 +7532,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                               <el-tag
                                 v-if="row.enabled"
                                 size="small"
+                                class="create-policy-detail-popover__status-tag"
                                 v-bind="policyStateTagAttrs(true)"
                               >
                                 {{ row.value }}
@@ -9095,8 +9211,8 @@ function preserveShallowestPathOrder(paths: string[]) {
                           v-if="row.policyObject"
                           trigger="hover"
                           placement="top-start"
-                          :width="420"
-                          popper-class="create-policy-option-popper"
+                          :width="400"
+                          popper-class="create-policy-option-popper create-policy-option-popper--policy"
                         >
                           <template #reference>
                             <button
@@ -9151,6 +9267,26 @@ function preserveShallowestPathOrder(paths: string[]) {
                                       >{{ line.label }}</span>
                                       <span class="policy-retention-detail-list__text">{{ line.text }}</span>
                                     </div>
+                                  </div>
+                                </div>
+                              </section>
+                              <section class="create-policy-detail-popover__section">
+                                <div class="create-policy-detail-popover__section-title">
+                                  {{ t('protection.policiesPage.sectionAdvancedSettings') }}:
+                                </div>
+                                <div class="create-policy-detail-popover__advanced-box">
+                                  <div
+                                    v-for="advancedRow in policyAdvancedDetailLines(row.policyObject)"
+                                    :key="advancedRow.label"
+                                    class="create-policy-detail-popover__advanced-row"
+                                  >
+                                    <span>{{ advancedRow.label }}</span>
+                                    <el-tag
+                                      size="small"
+                                      v-bind="policyStateTagAttrs(advancedRow.enabled)"
+                                    >
+                                      {{ policyStateLabel(advancedRow.enabled) }}
+                                    </el-tag>
                                   </div>
                                 </div>
                               </section>
@@ -9227,6 +9363,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                   <el-tag
                                     v-if="detailRow.enabled"
                                     size="small"
+                                    class="create-policy-detail-popover__status-tag"
                                     v-bind="policyStateTagAttrs(true)"
                                   >
                                     {{ detailRow.value }}
@@ -13647,6 +13784,10 @@ function preserveShallowestPathOrder(paths: string[]) {
   max-width: min(460px, calc(100vw - 48px));
 }
 
+:global(.create-policy-option-popper.create-policy-option-popper--policy) {
+  max-width: min(400px, calc(100vw - 48px));
+}
+
 .create-policy-option {
   display: flex;
   min-width: 0;
@@ -13833,6 +13974,11 @@ function preserveShallowestPathOrder(paths: string[]) {
   column-gap: 8px;
 }
 
+.create-policy-detail-popover__status-tag {
+  justify-self: start;
+  width: fit-content;
+}
+
 .create-policy-detail-popover__section-title {
   color: rgb(51 65 85);
   font-size: 12px;
@@ -13846,6 +13992,32 @@ function preserveShallowestPathOrder(paths: string[]) {
   border: 1px solid rgb(226 232 240);
   border-radius: 8px;
   background: rgb(248 250 252);
+}
+
+.create-policy-detail-popover__advanced-box {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  padding: 0 12px;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 8px;
+  background: rgb(248 250 252);
+}
+
+.create-policy-detail-popover__advanced-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  color: rgb(51 65 85);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.create-policy-detail-popover__advanced-row + .create-policy-detail-popover__advanced-row {
+  border-top: 1px solid rgb(226 232 240);
 }
 
 .create-filter-rules-preview {
@@ -13896,10 +14068,11 @@ function preserveShallowestPathOrder(paths: string[]) {
   grid-template-columns: 72px minmax(0, 1fr);
   align-items: start;
   column-gap: 10px;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
   color: rgb(15 23 42);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.55;
+  white-space: nowrap;
 }
 
 :global(.create-policy-option-popper .policy-retention-detail-list__line--summary) {
@@ -13918,8 +14091,9 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 :global(.create-policy-option-popper .policy-retention-detail-list__text) {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
   color: rgb(15 23 42);
+  white-space: nowrap;
 }
 
 .target-select-with-meta {

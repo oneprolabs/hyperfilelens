@@ -633,7 +633,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         self.assertNotIn("ignored", row["details"])
 
     @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
-    def test_direct_nas_keeps_old_agent_failure_generic(self, execute):
+    def test_direct_nas_keeps_old_agent_failure_message_generic(self, execute):
         repository = Repository.objects.create(
             organization_id=self.org.id,
             name="direct-nas-old-agent",
@@ -673,7 +673,13 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         row = result["results"][0]
         self.assertEqual(row["code"], "NAS_MOUNT_FAILED")
         self.assertEqual(row["message"], "legacy mount failure")
-        self.assertEqual(row["details"], {})
+        self.assertEqual(
+            row["details"],
+            {
+                "execution_node_name": "validation-agent",
+                "execution_node_address": "10.0.0.20",
+            },
+        )
 
     @mock.patch("apps.protection.services.backup_target_validation._execute_agent_task")
     def test_non_linux_agent_direct_nas_fails_before_task_dispatch(self, execute):
@@ -867,6 +873,10 @@ class BackupTargetValidationApiTests(TransactionTestCase):
                     message="",
                     result={
                         "server_url": "https://10.0.0.40:51515",
+                        # Agent task results are scrubbed before this outcome is
+                        # consumed.  Validation must still pass the original
+                        # in-memory password to the cross-node probe.
+                        "password": "******",
                         "server_cert_fingerprint": "ABC123",
                     },
                 )
@@ -915,6 +925,15 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             start_call.kwargs["payload"]["public_host_source"],
             "node.ip_address",
         )
+        probe_passwords = {
+            call.kwargs["payload"]["repository"]["password"]
+            for call in execute.call_args_list
+            if call.kwargs["kind"] == "repo.status"
+        }
+        self.assertEqual(len(probe_passwords), 1)
+        probe_password = probe_passwords.pop()
+        self.assertNotEqual(probe_password, "******")
+        self.assertEqual(probe_password, start_call.kwargs["payload"]["password"])
         probe_calls = [
             call
             for call in execute.call_args_list

@@ -82,6 +82,24 @@ describe('FlowBackupSourceDetailDrawer source status', () => {
   })
 })
 
+describe('FlowBackupSourceDetailDrawer backup policy overview', () => {
+  it('aligns schedule, retention, and advanced policy details with the backup wizard', () => {
+    expect(drawer).toContain('function policyScheduleDetailRows')
+    expect(drawer).toContain('function policyScheduleCycleValue')
+    expect(drawer).toContain("t('protection.policiesPage.scheduleCycle')")
+    expect(drawer).toContain("t('protection.policiesPage.scheduleTimezone')")
+    expect(drawer).toContain("t('protection.policiesPage.scheduleStartsAt')")
+    expect(drawer).toContain("t('protection.policiesPage.shortDesc'")
+    expect(drawer).toContain("t('protection.policiesPage.midDesc'")
+    expect(drawer).toContain("t('protection.policiesPage.longDesc'")
+    expect(drawer).toContain('function policyAdvancedDetailLines')
+    expect(drawer).toContain('policyAdvancedDetailLines(currentSourcePolicy)')
+    expect(drawer).toContain('class="policy-retention-detail-list__line dp-flow-policy-overview__retention-line"')
+    expect(drawer).not.toContain(':class="{ \'policy-retention-detail-list__line--summary\': !line.label }"')
+    expect(drawer).toContain('.dp-flow-policy-overview__advanced-box { width: 100%; box-sizing: border-box; }')
+  })
+})
+
 describe('FlowBackupSourceDetailDrawer target validation refresh', () => {
   it('polls provisioning status only while the overview is open and stops at a terminal result', () => {
     const loader = sourceBetween(

@@ -22,14 +22,18 @@ describe('backup wizard reset → Backup Configuration list (#362)', () => {
     expect(pendingList).toContain('sourceHasBackupConfig(row.id)')
   })
 
-  it('refreshes pipeline ids when loading Backup Configuration without overwriting filtered pager totals', () => {
+  it('loads Backup Configuration directly without refreshing other steps', () => {
     const refreshFlow = sourceBetween(
       'async function refreshFlowStepData(',
       'function flowRowFromSourceId(id: string)',
     )
-    expect(refreshFlow).toContain('if (step === 1) {')
-    expect(refreshFlow).toContain('await refreshPipelineStep2PlusIds(signal)')
-    expect(refreshFlow).toContain('await loadStep2Selectable({ signal })')
+    const step2Branch = refreshFlow.slice(
+      refreshFlow.indexOf('if (step === 1) {'),
+      refreshFlow.indexOf('if (step3ServerFiltersActive())'),
+    )
+    expect(step2Branch).toContain('await loadStep2Selectable({ signal })')
+    expect(step2Branch).not.toContain('refreshPipelineCounts(signal)')
+    expect(step2Branch).not.toContain('refreshPipelineStep3Count(signal)')
     expect(refreshFlow).not.toContain('syncWizardCountsFromPipeline()')
     expect(refreshFlow).not.toContain('syncStep2WizardCountFromPipeline()')
   })
@@ -49,7 +53,7 @@ describe('backup wizard reset → Backup Configuration list (#362)', () => {
     expect(refreshStep3).toContain('selectTerminalFailedResetSourceIds(')
     expect(refreshStep3).toContain('untrackResetPipelineSources(failedIds)')
     expect(refreshStep3).toContain('if (!finishedIds.length) return')
-    expect(refreshStep3).toContain('await refreshPipelineStep2PlusIds(signal)')
+    expect(refreshStep3).toContain('await refreshPipelineCounts(signal)')
     expect(refreshStep3).toContain('syncStep2WizardCountFromPipeline()')
     expect(refreshStep3).toContain('untrackResetPipelineSources(finishedIds)')
     expect(refreshStep3).not.toContain('syncWizardCountsFromPipeline()')

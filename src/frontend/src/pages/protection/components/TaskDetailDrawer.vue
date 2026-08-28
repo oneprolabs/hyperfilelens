@@ -49,6 +49,7 @@ import { nasRepositoryFailureMessage } from '../../../lib/nasMountTroubleshootin
 import TaskStatusTag from '../../../components/TaskStatusTag.vue'
 import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
+import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 import { cancelTask, getTask, listTaskEvents, type TaskEventRow, type TaskResourceRow, type TaskRow } from '../../../lib/taskApi'
 import { isRestoreTaskType } from '../../../lib/taskType'
 
@@ -339,6 +340,9 @@ function taskEventMetadataText(event: TaskEventRow, keys: string[]) {
 }
 
 function eventErrorText(event: TaskEventRow) {
+  const step = activeTask.value?.steps?.find(item => item.id === event.step_id)
+  if (event.message === 'Task finished with status failed' && step?.step_name === 'finalize_snapshot') return ''
+  if (taskEventMetadata(event).failure_details) return ''
   const message = taskEventMetadataText(event, ['error_message'])
   const code = taskEventMetadataText(event, ['error_code'])
   const display = nasRepositoryFailureMessage(code, message, t)
@@ -346,13 +350,8 @@ function eventErrorText(event: TaskEventRow) {
   return code && display === message ? `[${code}] ${display}` : display
 }
 
-const taskFailureMessage = computed(() => nasRepositoryFailureMessage(
-  activeTask.value?.error_code,
-  activeTask.value?.error_message,
-  t,
-))
-
 function eventObjectText(event: TaskEventRow) {
+  if (taskEventMetadata(event).backup_summary) return ''
   const canonicalValue = taskEventObjectText(event)
   if (canonicalValue) return canonicalValue
   return taskEventMetadataText(event, [
@@ -370,6 +369,7 @@ function eventTone(event: TaskEventRow): 'success' | 'warning' | 'danger' | 'run
   if (level === 'ERROR' || message.includes('failed') || message.includes('error')) return 'danger'
   if (message.includes('timeout')) return 'danger'
   if (message.includes('cancelled')) return 'muted'
+  if (level === 'WARN' || level === 'WARNING') return 'warning'
   if (level === 'DEBUG') return 'muted'
   return 'success'
 }
@@ -378,6 +378,7 @@ function eventMessageClass(event: TaskEventRow) {
   const tone = eventTone(event)
   return {
     'hfl-task-drawer__event-msg--danger': tone === 'danger',
+    'hfl-task-drawer__event-msg--warning': tone === 'warning',
     'hfl-task-drawer__event-msg--muted': tone === 'muted',
   }
 }
@@ -892,14 +893,6 @@ watch(
       </section>
 
       <ElAlert
-        v-if="taskFailureMessage"
-        :title="taskFailureMessage"
-        type="error"
-        :closable="false"
-        show-icon
-      />
-
-      <ElAlert
         v-if="['waiting', 'blocked'].includes(activeTask.status) && activeDependencies.length"
         :title="activeTask.status === 'blocked' ? t('ops.task.blockedTitle') : t('ops.task.waitingTitle')"
         type="warning"
@@ -1062,7 +1055,7 @@ watch(
                           :size="9"
                         />
                       </span>
-                      <span class="hfl-task-drawer__event-content">
+                      <div class="hfl-task-drawer__event-content">
                         <span
                           class="hfl-task-drawer__event-msg"
                           :class="eventMessageClass(event)"
@@ -1075,7 +1068,8 @@ watch(
                           v-if="eventErrorText(event)"
                           class="hfl-task-drawer__event-error"
                         >{{ eventErrorText(event) }}</span>
-                      </span>
+                        <TaskEventFailureDetails :metadata="event.metadata" />
+                      </div>
                       <span
                         class="hfl-task-drawer__event-time"
                         :class="{ 'hfl-empty-mark': !event.created_at }"
@@ -1110,7 +1104,7 @@ watch(
                       :size="9"
                     />
                   </span>
-                  <span class="hfl-task-drawer__event-content">
+                  <div class="hfl-task-drawer__event-content">
                     <span
                       class="hfl-task-drawer__event-msg"
                       :class="eventMessageClass(event)"
@@ -1119,7 +1113,8 @@ watch(
                       v-if="eventErrorText(event)"
                       class="hfl-task-drawer__event-error"
                     >{{ eventErrorText(event) }}</span>
-                  </span>
+                    <TaskEventFailureDetails :metadata="event.metadata" />
+                  </div>
                   <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
                 </div>
               </div>
@@ -1839,6 +1834,10 @@ watch(
 .hfl-task-drawer__event-msg {
   color: rgb(51 65 85);
   font-size: 13px;
+}
+
+.hfl-task-drawer__event-msg--warning {
+  color: rgb(180 83 9);
 }
 
 .hfl-task-drawer__event-error {

@@ -95,6 +95,7 @@ function confirm() {
   <ElDialog
     v-model="visible"
     :title="title"
+    :z-index="3700"
     class="hfl-flow-action-dialog hfl-flow-action-dialog--form"
     align-center
     @close="close"

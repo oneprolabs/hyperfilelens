@@ -743,12 +743,9 @@ def start_backup_tasks(
                     provisioning_error_message = str(
                         config.provisioning_error_message or ""
                     ).strip()
-                    status_message = (
-                        provisioning_error_message
-                        or (
-                            "Target storage validation failed. Resolve the issue "
-                            "and retry validation."
-                        )
+                    status_message = provisioning_error_message or (
+                        "Target storage validation failed. Resolve the issue "
+                        "and retry validation."
                     )
                 else:
                     provisioning_error_code = None
@@ -1376,7 +1373,11 @@ def _extract_snapshot_metrics(
         "new_packed_content_bytes",
         "newPackedContentBytes",
     )
-    if stats or new_original_content_bytes is not None or new_packed_content_bytes is not None:
+    if (
+        stats
+        or new_original_content_bytes is not None
+        or new_packed_content_bytes is not None
+    ):
         stats = {
             **stats,
             "size_bytes": size_bytes,
@@ -1387,6 +1388,14 @@ def _extract_snapshot_metrics(
             stats["new_original_content_bytes"] = new_original_content_bytes
         if new_packed_content_bytes is not None:
             stats["new_packed_content_bytes"] = new_packed_content_bytes
+    skipped = kopia_snapshot_skipped_metadata(result).get("skipped_details", {})
+    if skipped:
+        stats = {
+            **stats,
+            "skipped_item_count": int(skipped.get("count") or 0),
+            "skipped_file_count": int(skipped.get("file_count") or 0),
+            "skipped_directory_count": int(skipped.get("directory_count") or 0),
+        }
     return snapshot_id, size_bytes, file_count, dir_count, stats
 
 
@@ -1396,6 +1405,18 @@ def extract_kopia_failure_message(
     """Pull human-readable Kopia/agent failure text from a NodeTask result payload."""
     if not isinstance(result, dict):
         return str(last_error or "").strip()
+
+    failure_details = extract_kopia_snapshot_failure_details(result)
+    if failure_details and all(
+        _is_windows_file_lock_error(item["error"]) for item in failure_details
+    ):
+        count = len(failure_details)
+        noun = "file" if count == 1 else "files"
+        pronoun = "it" if count == 1 else "them"
+        return (
+            f"{count} {noun} could not be read because another process locked "
+            f"{pronoun}. Review the failed file list and remediation guidance."
+        )
 
     chunks: list[str] = []
     for key in ("stderr", "stderr_tail", "stdout", "stdout_tail"):
@@ -1501,6 +1522,158 @@ def extract_kopia_failure_message(
     return cleaned_error[:2000]
 
 
+def extract_kopia_snapshot_failure_details(
+    result: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    """Return Kopia's structured per-path snapshot errors without log truncation."""
+    if not isinstance(result, dict):
+        return []
+    snapshot = result.get("snapshot")
+    if not isinstance(snapshot, dict):
+        return []
+    root_entry = snapshot.get("rootEntry")
+    if not isinstance(root_entry, dict):
+        return []
+    summary = root_entry.get("summ")
+    if not isinstance(summary, dict):
+        return []
+    errors = summary.get("errors")
+    if not isinstance(errors, list):
+        return []
+
+    details: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in errors:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        error = str(item.get("error") or "").strip()
+        if not path and not error:
+            continue
+        key = (path, error)
+        if key in seen:
+            continue
+        seen.add(key)
+        details.append({"path": path, "error": error})
+    return details
+
+
+def _is_windows_file_lock_error(message: str) -> bool:
+    lower = str(message or "").lower()
+    return any(
+        marker in lower
+        for marker in (
+            "another process has locked a portion of the file",
+            "the process cannot access the file because it is being used by another process",
+            "sharing violation",
+        )
+    )
+
+
+def _snapshot_error_item_type(message: str) -> str:
+    lower = str(message or "").lower()
+    if any(
+        marker in lower
+        for marker in (
+            "readdir",
+            "read directory",
+            "open directory",
+            "cannot list directory",
+            "unable to list directory",
+        )
+    ):
+        return "directory"
+    return "file"
+
+
+def _effective_backup_advanced_settings(
+    backup_policy: dict[str, Any] | None,
+) -> tuple[bool, dict[str, Any]]:
+    if not isinstance(backup_policy, dict):
+        return False, {}
+    active = bool(backup_policy.get("active", False))
+    advanced = backup_policy.get("advanced_settings")
+    if not isinstance(advanced, dict):
+        advanced = {}
+    return active and bool(advanced.get("enabled", False)), advanced
+
+
+def kopia_snapshot_failure_metadata(
+    result: dict[str, Any] | None,
+    *,
+    backup_policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build actionable task-event metadata from structured Kopia failures."""
+    details = extract_kopia_snapshot_failure_details(result)
+    if not details:
+        return {}
+    locked = all(_is_windows_file_lock_error(item["error"]) for item in details)
+    effective, advanced = _effective_backup_advanced_settings(backup_policy)
+    remediation: list[str]
+    if locked:
+        remediation = ["exclude_runtime_cache", "use_vss", "stop_owning_service"]
+        if not effective:
+            remediation.insert(0, "enable_backup_policy")
+        if not effective or not bool(advanced.get("skip_unreadable_files", False)):
+            remediation.insert(
+                1 if remediation[0] == "enable_backup_policy" else 0,
+                "enable_skip_unreadable_files",
+            )
+    else:
+        item_types = {_snapshot_error_item_type(item["error"]) for item in details}
+        remediation = ["check_source_access", "retry_backup"]
+        if not effective:
+            remediation.insert(0, "enable_backup_policy")
+        if "file" in item_types and (
+            not effective or not bool(advanced.get("skip_unreadable_files", False))
+        ):
+            remediation.append("enable_skip_unreadable_files")
+        if "directory" in item_types and (
+            not effective
+            or not bool(advanced.get("skip_unreadable_directories", False))
+        ):
+            remediation.append("enable_skip_unreadable_directories")
+    return {
+        "failure_details": {
+            "category": "source_file_locked" if locked else "source_read_failed",
+            "count": len(details),
+            "items": details,
+            "remediation": remediation,
+            "backup_policy_active": effective,
+        }
+    }
+
+
+def kopia_snapshot_skipped_metadata(
+    result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Describe unreadable source items retained in an otherwise successful snapshot."""
+    details = extract_kopia_snapshot_failure_details(result)
+    if not details:
+        return {}
+    items = [
+        {
+            **item,
+            "item_type": _snapshot_error_item_type(item["error"]),
+        }
+        for item in details
+    ]
+    file_count = sum(1 for item in items if item["item_type"] == "file")
+    directory_count = sum(1 for item in items if item["item_type"] == "directory")
+    max_event_items = 20
+    return {
+        "skipped_details": {
+            "category": "source_items_skipped",
+            "count": len(items),
+            "file_count": file_count,
+            "directory_count": directory_count,
+            "items": items[:max_event_items],
+            "reported_count": min(len(items), max_event_items),
+            "truncated": len(items) > max_event_items,
+        }
+    }
+
+
 def public_repository_failure_message(message: str) -> str:
     """Return an actionable repository error without backend implementation details."""
     text = re.sub(r"https?://\S+", "", str(message or "")).strip()
@@ -1554,6 +1727,11 @@ def _directory_error(outcome, *, timed_out: bool = False) -> tuple[str, str]:
         "unable to get policy tree" in lower or "policy not found" in lower
     ):
         return "KOPIA_POLICY_NOT_FOUND", message
+    failure_details = extract_kopia_snapshot_failure_details(result)
+    if failure_details and all(
+        _is_windows_file_lock_error(item["error"]) for item in failure_details
+    ):
+        return "SOURCE_FILE_LOCKED", message
     if "fatal error" in lower or "error when processing" in lower:
         return "KOPIA_SNAPSHOT_FATAL", message
     if _is_generic_exit_message(last_error) or "exit" in last_error.lower():

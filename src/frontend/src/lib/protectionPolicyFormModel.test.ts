@@ -50,6 +50,12 @@ function policyWithSchedule(schedule: BackupPolicy['schedule']): BackupPolicy {
 describe('protection policy schedule mapping', () => {
   it('rejects an empty enabled retention period and omits disabled periods from writes', () => {
     const form = createEmptyPolicyForm()
+    expect(form.retentionWeeklyEnabled).toBe(false)
+    expect(form.retentionAnnualEnabled).toBe(false)
+    expect(policyFormToWritePayload(form).retention).toMatchObject({
+      weekly_enabled: false,
+      annual_enabled: false,
+    })
     form.retentionShortHourly = true
     form.retentionShortDaysMax = undefined
 

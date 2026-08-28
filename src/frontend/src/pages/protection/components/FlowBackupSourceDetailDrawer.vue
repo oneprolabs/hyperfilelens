@@ -81,7 +81,6 @@ import {
 import {
   cancelProtectionBackupTask,
   fetchBackupTaskRuntime,
-  retryProtectionBackupDirectory,
 } from '../../../lib/protectionBackupTaskApi'
 import {
   buildStopConfirmItemFromTask,
@@ -95,6 +94,7 @@ import TaskStatusTag from '../../../components/TaskStatusTag.vue'
 import TaskTypeLabel from '../../../components/TaskTypeLabel.vue'
 import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
+import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 import {
   restoreRecordPathMappings,
   restoreRecordRuntimeMetricParts,
@@ -759,25 +759,8 @@ const canCancelBackupTask = computed(() => {
   if (!task || task.task_type !== 'backup') return false
   return task.status === 'pending' || task.status === 'running'
 })
-const failedBackupDirectories = computed(() => {
-  const rows = activeBackupSnapshot.value?.directories || []
-  return rows.filter((row) => row.status === 'failed' || row.status === 'cancelled')
-})
-const inProgressBackupDirectories = computed(() => {
-  const task = activeTask.value
-  if (task && ['success', 'failed', 'cancelled', 'timeout'].includes(task.status)) return []
-  const rows = activeBackupSnapshot.value?.directories || []
-  return rows.filter((row) => ['pending', 'dispatching', 'running', 'creating'].includes(row.status))
-})
 const activeTransferProgress = ref<TransferProgress | null>(null)
 let activeTransferProgressTimer: ReturnType<typeof setInterval> | null = null
-
-function directoryProgressPercent(dir: BackupSourceSnapshotDirectory) {
-  const snapshot = dir.last_progress_snapshot
-  if (!snapshot || typeof snapshot !== 'object') return null
-  const percent = Number((snapshot as Record<string, unknown>).percent ?? (snapshot as Record<string, unknown>).kopia_percent)
-  return Number.isFinite(percent) ? Math.max(0, Math.min(100, Math.round(percent))) : null
-}
 
 async function refreshActiveTransferProgress() {
   const task = activeTask.value
@@ -824,11 +807,6 @@ function syncActiveTransferProgressPolling() {
   activeTransferProgressTimer = setInterval(() => { void refreshActiveTransferProgress() }, 3000)
 }
 
-function backupDirectoryStatusLabel(status: string) {
-  const key = `ops.task.status.${status}`
-  return te(key) ? t(key) : t('ops.task.unknownValue')
-}
-
 async function loadActiveBackupSnapshot(task: TaskRow) {
   if (task.task_type !== 'backup') {
     activeBackupSnapshot.value = null
@@ -869,20 +847,6 @@ async function cancelActiveBackupTask() {
   try {
     await cancelProtectionBackupTask(activeTask.value.task_uuid)
     ElMessage.success({ message: t('protection.backupsPage.backupTaskCancelSuccess'), grouping: true })
-    await refreshActiveTask()
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
-  } finally {
-    backupTaskActionBusy.value = false
-  }
-}
-
-async function retryFailedBackupDirectory(backupConfigDirId: number) {
-  if (!activeTask.value) return
-  backupTaskActionBusy.value = true
-  try {
-    await retryProtectionBackupDirectory(activeTask.value.task_uuid, backupConfigDirId)
-    ElMessage.success({ message: t('protection.backupsPage.backupTaskRetryDirectorySuccess'), grouping: true })
     await refreshActiveTask()
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err), grouping: true })
@@ -1030,6 +994,10 @@ function recoveryPlanConflictFullLabel(plan: BackupConfigRecoveryPlan) {
   return plan.conflict_mode === 'overwrite'
     ? t('protection.backupsPage.createRecoveryConflictOverwriteFull')
     : t('protection.backupsPage.createRecoveryConflictSkipFull')
+}
+
+function recoveryPlanConflictDescription(plan: BackupConfigRecoveryPlan) {
+  return recoveryPlanConflictFullLabel(plan)
 }
 
 function recoveryPlanSourcePathLabel(mapping: RecoveryPlanMappingRow) {
@@ -1405,6 +1373,9 @@ function taskEventMetadataList(event: TaskEventRow, key: string) {
 }
 
 function eventErrorText(event: TaskEventRow) {
+  const step = activeTask.value?.steps?.find(item => item.id === event.step_id)
+  if (event.message === 'Task finished with status failed' && step?.step_name === 'finalize_snapshot') return ''
+  if (taskEventMetadata(event).failure_details) return ''
   const message = taskEventMetadataText(event, ['error_message'])
   if (!message) return ''
   const code = taskEventMetadataText(event, ['error_code'])
@@ -1412,6 +1383,7 @@ function eventErrorText(event: TaskEventRow) {
 }
 
 function eventObjectText(event: TaskEventRow) {
+  if (taskEventMetadata(event).backup_summary) return ''
   const canonicalValue = taskEventObjectText(event)
   if (canonicalValue) return canonicalValue
   const directValue = taskEventMetadataText(event, [
@@ -1494,6 +1466,7 @@ function eventTone(event: TaskEventRow) {
   if (level === 'ERROR' || message.includes('failed') || message.includes('error')) return 'danger'
   if (message.includes('timeout')) return 'danger'
   if (message.includes('cancelled')) return 'muted'
+  if (level === 'WARN' || level === 'WARNING') return 'warning'
   if (level === 'DEBUG') return 'muted'
   return 'success'
 }
@@ -1502,6 +1475,7 @@ function eventMessageClass(event: TaskEventRow) {
   const tone = eventTone(event)
   return {
     'dp-task-detail__event-msg--danger': tone === 'danger',
+    'dp-task-detail__event-msg--warning': tone === 'warning',
     'dp-task-detail__event-msg--muted': tone === 'muted',
   }
 }
@@ -1807,8 +1781,38 @@ function policyUsageValue(count: number | undefined) {
   return t('protection.policiesPage.appliedToBackupSourcesCount', { n })
 }
 
-function enabledConfigLabel(enabled: boolean | undefined, value?: string) {
-  return enabled ? (value || '—') : t('protection.policiesPage.sectionOffHint')
+function policyScheduleCycleValue(policy: BackupPolicy) {
+  const f = backupPolicyToForm(policy)
+  if (!f.sectionScheduleEnabled) return t('protection.policiesPage.sectionOffHint')
+  if (f.freqMode === 'advanced') return `${t('protection.policiesPage.freqAdvanced')}: ${f.cronExpr}`
+  if (f.quickScheduleType === 'interval') {
+    const unitKey = f.simpleIntervalUnit === 'minute' ? 'unitMinutes' : f.simpleIntervalUnit === 'hour' ? 'unitHours' : 'unitDays'
+    const unit = t(`protection.policiesPage.${unitKey}`)
+    return t('protection.policiesPage.previewScheduleInterval', {
+      n: f.simpleIntervalValue,
+      unit: Number(f.simpleIntervalValue) === 1 ? unit.replace(/s$/, '') : unit,
+    })
+  }
+  if (f.quickScheduleType === 'daily') {
+    return t('protection.policiesPage.previewScheduleDaily', { time: f.scheduleTime })
+  }
+  if (f.quickScheduleType === 'weekly') {
+    const weekdayKeys = ['weekdayMon', 'weekdayTue', 'weekdayWed', 'weekdayThu', 'weekdayFri', 'weekdaySat', 'weekdaySun']
+    const weekdays = f.scheduleWeekdays.map((day) => t(`protection.policiesPage.${weekdayKeys[day - 1]}`)).join(', ')
+    return t('protection.policiesPage.previewScheduleWeekly', { weekdays, time: f.scheduleTime })
+  }
+  const dates = f.scheduleMonthDays.map(String)
+  if (f.scheduleMonthEnd) dates.push(t('protection.policiesPage.scheduleMonthEnd'))
+  return t('protection.policiesPage.previewScheduleMonthly', { dates: dates.join(', '), time: f.scheduleTime })
+}
+
+function policyScheduleDetailRows(policy: BackupPolicy | null | undefined) {
+  if (!policy) return []
+  return [
+    { label: t('protection.policiesPage.scheduleCycle'), value: policyScheduleCycleValue(policy) },
+    { label: t('protection.policiesPage.scheduleTimezone'), value: policy.schedule?.timezone || 'UTC' },
+    { label: t('protection.policiesPage.scheduleStartsAt'), value: policy.schedule?.starts_at?.replace('T', ' ') || t('protection.policiesPage.timeDash') },
+  ]
 }
 
 function policyRetentionDetailLines(policy: BackupPolicy | null | undefined): PolicyRetentionDetailLine[] {
@@ -1826,32 +1830,35 @@ function policyRetentionDetailLines(policy: BackupPolicy | null | undefined): Po
     return [{ text: policy.retention_summary }]
   }
 
-  if (messageLocale.value === 'en') {
-    const latestSuffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
-    const lines: PolicyRetentionDetailLine[] = [{ text: `Keep latest ${f.retentionRecentPoints} restore ${latestSuffix}.` }]
-    if (f.retentionShortHourly) {
-      lines.push({ label: 'Hourly:', text: `Keep one restore point per hour for ${Number(f.retentionShortDaysMax) * 24} hour(s).` })
-    }
-    if (f.retentionMidDaily) {
-      lines.push({ label: 'Daily:', text: `Keep one restore point per day for ${f.retentionMidDaysMax} day(s).` })
-    }
-    if (f.retentionLongMonthly) {
-      lines.push({ label: 'Monthly:', text: `Keep one restore point per month for ${f.retentionLongMonths} month(s).` })
-    }
-    return lines
-  }
-
-  const lines: PolicyRetentionDetailLine[] = [{ text: `Keep the latest ${f.retentionRecentPoints} restore points.` }]
+  const recentPoints = Number(f.retentionRecentPoints)
+  const lines: PolicyRetentionDetailLine[] = [{
+    text: t(
+      recentPoints === 1
+        ? 'protection.policiesPage.retentionLatestOne'
+        : 'protection.policiesPage.retentionLatestMany',
+      { n: recentPoints },
+    ),
+  }]
   if (f.retentionShortHourly) {
-    lines.push({ label: 'Hourly:', text: `Keep one restore point per hour for ${Number(f.retentionShortDaysMax) * 24} hours.` })
+    lines.push({ text: t('protection.policiesPage.shortDesc', { days: f.retentionShortDaysMax }) })
   }
   if (f.retentionMidDaily) {
-    lines.push({ label: 'Daily:', text: `Keep one restore point per day for ${f.retentionMidDaysMax} days.` })
+    lines.push({ text: t('protection.policiesPage.midDesc', { start: f.retentionShortDaysMax, end: f.retentionMidDaysMax }) })
   }
   if (f.retentionLongMonthly) {
-    lines.push({ label: 'Monthly:', text: `Keep one restore point per month for ${f.retentionLongMonths} months.` })
+    lines.push({ text: t('protection.policiesPage.longDesc', { day: f.retentionMidDaysMax, months: f.retentionLongMonths }) })
   }
   return lines
+}
+
+function policyAdvancedDetailLines(policy: BackupPolicy | null | undefined) {
+  if (!policy) return []
+  const f = backupPolicyToForm(policy)
+  return [
+    { label: t('protection.policiesPage.errRow1Title'), enabled: f.errorIgnoreDirectory },
+    { label: t('protection.policiesPage.errRow2Title'), enabled: f.errorIgnoreFile },
+    { label: t('protection.policiesPage.errRow3Title'), enabled: f.errorIgnoreUnknownEntries },
+  ]
 }
 
 function fileFilterLargeFileLabel(filter: FileFilterRule) {
@@ -3129,12 +3136,13 @@ function onClosed() {
                           <span class="hfl-detail-row__label">{{ t('protection.policiesPage.appliedToBackupSourcesLabel') }}</span>
                           <span class="hfl-detail-row__value">{{ policyUsageValue(currentSourcePolicy.related_backup_count) }}</span>
                         </div>
-                        <div class="hfl-detail-row hfl-detail-row--full">
-                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldSchedule') }}</span>
-                          <span
-                            class="hfl-detail-row__value"
-                            :class="{ 'hfl-detail-row__empty': currentSourcePolicy.schedule?.enabled && !currentSourcePolicy.schedule_summary }"
-                          >{{ enabledConfigLabel(currentSourcePolicy.schedule?.enabled, currentSourcePolicy.schedule_summary) }}</span>
+                        <div
+                          v-for="row in policyScheduleDetailRows(currentSourcePolicy)"
+                          :key="row.label"
+                          class="hfl-detail-row hfl-detail-row--full"
+                        >
+                          <span class="hfl-detail-row__label">{{ row.label }}</span>
+                          <span class="hfl-detail-row__value">{{ row.value }}</span>
                         </div>
                         <div class="hfl-detail-row hfl-detail-row--full">
                           <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldRetention') }}</span>
@@ -3144,8 +3152,7 @@ function onClosed() {
                                 <div
                                   v-for="line in policyRetentionDetailLines(currentSourcePolicy)"
                                   :key="`${line.label || ''}${line.text}`"
-                                  class="policy-retention-detail-list__line"
-                                  :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
+                                  class="policy-retention-detail-list__line dp-flow-policy-overview__retention-line"
                                 >
                                   <span
                                     v-if="line.label"
@@ -3154,6 +3161,21 @@ function onClosed() {
                                   <span class="policy-retention-detail-list__text">{{ line.text }}</span>
                                 </div>
                               </div>
+                            </span>
+                          </span>
+                        </div>
+                        <div class="hfl-detail-row hfl-detail-row--full">
+                          <span class="hfl-detail-row__label">{{ t('protection.policiesPage.sectionAdvancedSettings') }}</span>
+                          <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
+                            <span class="create-policy-detail-popover__advanced-box dp-flow-policy-overview__advanced-box">
+                              <span
+                                v-for="row in policyAdvancedDetailLines(currentSourcePolicy)"
+                                :key="row.label"
+                                class="create-policy-detail-popover__advanced-row"
+                              >
+                                <span>{{ row.label }}</span>
+                                <span :class="detailStatePillClass(row.enabled)">{{ boolStatusLabel(row.enabled) }}</span>
+                              </span>
                             </span>
                           </span>
                         </div>
@@ -3271,23 +3293,31 @@ function onClosed() {
                                     {{ recoveryPlanStatusLabel(currentSourceRecoveryPlanMappings) }}
                                   </span>
                                 </div>
-                                <div
-                                  class="create-recovery-plan-cell__policy"
-                                  :class="`create-recovery-plan-cell__policy--${recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan)}`"
-                                >
-                                  <ShieldAlert
-                                    v-if="recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan) === 'overwrite'"
-                                    :size="14"
-                                    class="create-recovery-plan-cell__policy-icon"
-                                  />
-                                  <ShieldCheck
-                                    v-else
-                                    :size="14"
-                                    class="create-recovery-plan-cell__policy-icon"
-                                  />
-                                  <span class="create-recovery-plan-cell__policy-text">
-                                    {{ recoveryPlanConflictSummary(currentSourceRecoveryPlanMappings[0].plan) }}
-                                  </span>
+                                <div class="create-recovery-plan-cell__policy-line">
+                                  <div
+                                    class="create-recovery-plan-cell__policy"
+                                    :class="`create-recovery-plan-cell__policy--${recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan)}`"
+                                  >
+                                    <ShieldAlert
+                                      v-if="recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan) === 'overwrite'"
+                                      :size="14"
+                                      class="create-recovery-plan-cell__policy-icon"
+                                    />
+                                    <ShieldCheck
+                                      v-else
+                                      :size="14"
+                                      class="create-recovery-plan-cell__policy-icon"
+                                    />
+                                    <span class="create-recovery-plan-cell__policy-text">
+                                      {{ recoveryPlanConflictSummary(currentSourceRecoveryPlanMappings[0].plan) }}
+                                    </span>
+                                  </div>
+                                  <div
+                                    class="create-recovery-plan-cell__policy-description"
+                                    :class="`create-recovery-plan-cell__policy-description--${recoveryPlanConflictTone(currentSourceRecoveryPlanMappings[0].plan)}`"
+                                  >
+                                    {{ recoveryPlanConflictDescription(currentSourceRecoveryPlanMappings[0].plan) }}
+                                  </div>
                                 </div>
                                 <div class="create-recovery-plan-cell__mappings">
                                   <div
@@ -5208,45 +5238,6 @@ function onClosed() {
         </ul>
       </ElAlert>
 
-      <section
-        v-if="activeTask.task_type === 'backup' && (failedBackupDirectories.length || inProgressBackupDirectories.length)"
-        class="dp-task-detail__directories"
-      >
-        <div class="dp-task-detail__hero-section-title">
-          {{ t('protection.backupsPage.backupTaskDirectoryStatus') }}
-        </div>
-        <div class="dp-task-detail__directory-list">
-          <div
-            v-for="dir in [...inProgressBackupDirectories, ...failedBackupDirectories]"
-            :key="dir.id"
-            class="dp-task-detail__directory-row"
-          >
-            <div class="dp-task-detail__directory-main">
-              <span class="dp-task-detail__directory-path">{{ dir.display_name || dir.source_path }}</span>
-              <span class="dp-task-detail__directory-status">
-                {{ backupDirectoryStatusLabel(dir.status) }}
-                <template v-if="directoryProgressPercent(dir) != null"> · {{ directoryProgressPercent(dir) }}%</template>
-              </span>
-            </div>
-            <div
-              v-if="dir.error_message"
-              class="dp-task-detail__directory-error"
-            >
-              {{ dir.error_message }}
-            </div>
-            <ElButton
-              v-if="dir.status === 'failed'"
-              size="small"
-              text
-              :disabled="backupTaskActionBusy"
-              @click="retryFailedBackupDirectory(dir.backup_config_dir_id)"
-            >
-              {{ t('protection.backupsPage.backupTaskRetryDirectory') }}
-            </ElButton>
-          </div>
-        </div>
-      </section>
-
       <ElTabs
         v-model="activeTaskDetailTab"
         class="hfl-detail-tabs dp-task-detail__tabs"
@@ -5395,7 +5386,7 @@ function onClosed() {
                           :size="9"
                         />
                       </span>
-                      <span class="dp-task-detail__event-content">
+                      <div class="dp-task-detail__event-content">
                         <span
                           class="dp-task-detail__event-msg"
                           :class="eventMessageClass(event)"
@@ -5411,7 +5402,8 @@ function onClosed() {
                           v-if="eventErrorText(event)"
                           class="dp-task-detail__event-error"
                         >{{ eventErrorText(event) }}</span>
-                      </span>
+                        <TaskEventFailureDetails :metadata="event.metadata" />
+                      </div>
                       <span
                         class="dp-task-detail__event-time"
                         :class="{ 'hfl-empty-mark': !event.created_at }"
@@ -5459,7 +5451,7 @@ function onClosed() {
                           :size="9"
                         />
                       </span>
-                      <span class="dp-task-detail__event-content">
+                      <div class="dp-task-detail__event-content">
                         <span
                           class="dp-task-detail__event-msg"
                           :class="eventMessageClass(event)"
@@ -5475,7 +5467,8 @@ function onClosed() {
                           v-if="eventErrorText(event)"
                           class="dp-task-detail__event-error"
                         >{{ eventErrorText(event) }}</span>
-                      </span>
+                        <TaskEventFailureDetails :metadata="event.metadata" />
+                      </div>
                       <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
                     </div>
                   </div>
@@ -5509,7 +5502,7 @@ function onClosed() {
                     :size="9"
                   />
                 </span>
-                <span class="dp-task-detail__event-content">
+                <div class="dp-task-detail__event-content">
                   <span
                     class="dp-task-detail__event-msg"
                     :class="eventMessageClass(event)"
@@ -5525,7 +5518,8 @@ function onClosed() {
                     v-if="eventErrorText(event)"
                     class="dp-task-detail__event-error"
                   >{{ eventErrorText(event) }}</span>
-                </span>
+                  <TaskEventFailureDetails :metadata="event.metadata" />
+                </div>
                 <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
               </div>
             </div>
@@ -6217,22 +6211,20 @@ function onClosed() {
 }
 
 .dp-flow-policy-overview__retention-box .policy-retention-detail-list__line {
-  display: grid;
+  display: block;
   min-width: 0;
-  grid-template-columns: 72px minmax(0, 1fr);
-  align-items: start;
-  column-gap: 10px;
   overflow-wrap: anywhere;
   color: rgb(15 23 42);
   font-size: 13px;
+  font-weight: 400;
   line-height: 1.55;
 }
 
 .dp-flow-policy-overview__retention-box .policy-retention-detail-list__line--summary {
   display: block;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgb(226 232 240);
-  font-weight: 600;
+  padding-bottom: 0;
+  border-bottom: 0;
+  font-weight: 400;
 }
 
 .dp-flow-policy-overview__retention-box .policy-retention-detail-list__label {
@@ -6244,6 +6236,11 @@ function onClosed() {
 .dp-flow-policy-overview__retention-box .policy-retention-detail-list__text {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.dp-flow-policy-overview__advanced-box {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .dp-flow-config-summary__value {
@@ -6322,6 +6319,13 @@ function onClosed() {
   font-weight: 650;
 }
 
+.create-recovery-plan-cell__policy-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
 .create-recovery-plan-cell__dot {
   width: 7px;
   height: 7px;
@@ -6337,6 +6341,24 @@ function onClosed() {
   padding: 4px 8px;
   font-size: 12px;
   font-weight: 600;
+}
+
+.create-recovery-plan-cell__policy-description {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.create-recovery-plan-cell__policy-description--skip {
+  color: var(--color-success);
+}
+
+.create-recovery-plan-cell__policy-description--overwrite {
+  color: rgb(180 83 9);
 }
 
 .create-recovery-plan-cell__policy--skip {
@@ -7588,6 +7610,10 @@ function onClosed() {
 
 .dp-task-detail__event-msg--danger {
   color: rgb(185 28 28);
+}
+
+.dp-task-detail__event-msg--warning {
+  color: rgb(180 83 9);
 }
 
 .dp-task-detail__event-msg--muted {
