@@ -12,6 +12,7 @@ export const enProtectionPages = {
     etaHours: '{n}h left',
     etaHoursMinutes: '{h}h {m}m left',
     hashSpeed: 'Scanning: {speed}',
+    processingSpeed: 'Processing speed: {speed}',
     uploadSpeed: 'Upload: {speed}',
     transfer: {
       hashedOnly: 'Backing up',

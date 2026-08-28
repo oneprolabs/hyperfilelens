@@ -310,6 +310,29 @@ class Step3ProgressTests(SimpleTestCase):
         self.assertIsNone(transfer.get("step3_display_percent"))
         self.assertIsNone(transfer.get("eta_seconds"))
 
+    def test_schema_v2_uses_partial_lane_estimate_for_progress_and_eta(self):
+        transfer = enrich_step3_backup_transfer(
+            transfer={"phase": "transferring"},
+            previous={},
+            aggregate={
+                "progress_schema_version": 2,
+                "processed_bytes": 495 * 1024 * 1024,
+                "bytes_done": 495 * 1024 * 1024,
+                "estimated_bytes": 715 * 1024 * 1024,
+                "bytes_total": None,
+                "bytes_total_known": False,
+                "processing_speed_bps": 18 * 1024 * 1024,
+            },
+            du_total=0,
+        )
+
+        self.assertEqual(transfer["bytes_total"], 715 * 1024 * 1024)
+        self.assertTrue(transfer["bytes_total_known"])
+        self.assertTrue(transfer["bytes_total_estimated"])
+        self.assertAlmostEqual(transfer["step3_display_percent"], 100 * 495 / 715, places=2)
+        self.assertEqual(transfer["eta_seconds"], 12)
+        self.assertEqual(transfer["eta_source"], "step3")
+
     def test_backup_hides_eta_without_reliable_speed(self):
         transfer = enrich_step3_backup_transfer(
             transfer={"phase": "transferring", "eta_seconds": 33},

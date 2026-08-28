@@ -494,6 +494,7 @@
       "etaHours": "Quedan {n} h",
       "etaHoursMinutes": "Quedan {h} h {m} min",
       "hashSpeed": "Analizando: {speed}",
+      "processingSpeed": "Velocidad de procesamiento: {speed}",
       "uploadSpeed": "Subir: {speed}",
       "transfer": {
         "hashedOnly": "Realizando copia de seguridad",

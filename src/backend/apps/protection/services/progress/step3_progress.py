@@ -390,10 +390,17 @@ def enrich_step3_backup_transfer(
         kopia_total_locked = estimated_bytes
 
     if schema_version >= 2:
-        effective_total = _int(aggregate.get("bytes_total")) if aggregate.get("bytes_total_known") else 0
+        # Schema-v2 reports the logical estimate independently from lane
+        # completeness. Keep a usable aggregate estimate visible while one
+        # lane is still sampling, without treating it as an exact total.
+        effective_total = (
+            _int(aggregate.get("bytes_total"))
+            if aggregate.get("bytes_total_known")
+            else estimated_bytes
+        )
         switch_latched = effective_total > 0
         kopia_total_locked = effective_total
-        merged["bytes_total_estimated"] = False
+        merged["bytes_total_estimated"] = not bool(aggregate.get("bytes_total_known"))
     elif switch_latched:
         effective_total = estimated_bytes if estimated_bytes > 0 else kopia_total_locked
         if not bool(aggregate.get("bytes_total_known")) and kopia_total_locked > 0:

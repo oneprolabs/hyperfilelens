@@ -446,6 +446,7 @@
   "protection.taskProgress.etaHours": "64676ec292a124a2667b0da4da5b76d2d4246467e54dde562d9e1dc7c2e3d031",
   "protection.taskProgress.etaHoursMinutes": "ca3d47af227dfa1c7426cfd20ec8379ac310c309ae22ecb3d617ed7c1f058212",
   "protection.taskProgress.hashSpeed": "bed8688d753e85d7903561d7a461b36de32e1065822951bd95a60cb5cce58813",
+  "protection.taskProgress.processingSpeed": "0aa5e6efaf51e9bf5ea91483e21c51d023de6552dcabd3d42f922d3e21abe2bf",
   "protection.taskProgress.uploadSpeed": "2842ec216a22cd7bb84926aaee4ae2dc9a5f1d39f0eb25ec19b568c2648168a1",
   "protection.taskProgress.transfer.hashedOnly": "6a6336ba76326bbad2a40c0e8e393b11fcf99f50b2fa9dcd335e64b0d3bbf4f8",
   "protection.taskProgress.transfer.uploadedAndHashed": "6a6336ba76326bbad2a40c0e8e393b11fcf99f50b2fa9dcd335e64b0d3bbf4f8",

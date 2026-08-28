@@ -74,7 +74,12 @@ const metricParts = computed(() => {
   return transferMetricParts(t, props.transferProgress)
 })
 const metricLine = computed(() => metricParts.value.join(' · '))
-const overflowTitle = computed(() => [orchestrationLabel.value, ...metricParts.value].filter(Boolean).join('\n'))
+const overflowTitle = computed(() => {
+  if (!metricParts.value.length) return ''
+  return transferMetricParts(t, props.transferProgress, { labelProcessingSpeed: true })
+    .filter(Boolean)
+    .join('\n')
+})
 const labelTitle = computed(() => {
   const label = orchestrationLabel.value
   return label.length > 48 ? label : undefined

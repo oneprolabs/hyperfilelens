@@ -9,6 +9,7 @@ const t = (key: string, args?: Record<string, unknown>) => {
   if (key.endsWith('bytesProcessedCapacity')) return `Processed: ${args?.done} / ${args?.total}`
   if (key.endsWith('bytesProcessed')) return `Processed: ${args?.size}`
   if (key.endsWith('hashSpeed')) return `Scanning: ${args?.speed}`
+  if (key.endsWith('processingSpeed')) return `Processing speed: ${args?.speed}`
   if (key.endsWith('uploadSpeed')) return `Upload: ${args?.speed}`
   if (key.endsWith('etaSeconds')) return `${args?.n}s left`
   return key
@@ -66,6 +67,15 @@ describe('transferSpeedParts', () => {
     })).toEqual(['Scanning: 375 MB/s'])
   })
 
+  it('uses processed-byte throughput for backup progress', () => {
+    expect(transferSpeedParts(t, {
+      phase: 'transferring',
+      progress_schema_version: 2,
+      processing_speed_bps: 19_293_000,
+      upload_speed_bps: 5_740_000,
+    })).toEqual(['18.4 MB/s'])
+  })
+
   it('does not display an unclassified legacy speed', () => {
     expect(transferSpeedParts(t, {
       phase: 'transferring',
@@ -80,22 +90,22 @@ describe('transferSpeedParts', () => {
     }, { allowUnclassifiedSpeed: true })).toEqual(['488 KB/s'])
   })
 
-  it('labels physical upload speed and preserves a fresh zero sample', () => {
+  it('does not expose physical upload speed for backup progress', () => {
     expect(transferSpeedParts(t, {
       phase: 'transferring',
       progress_schema_version: 2,
       upload_speed_bps: 0,
-    })).toEqual(['Upload: 0 B/s'])
+    })).toEqual([])
     expect(formatSpeedBps(null)).toBeNull()
   })
 
-  it('does not present processing throughput as upload speed for schema v2', () => {
+  it('presents schema-v2 processing throughput with its own label', () => {
     expect(transferSpeedParts(t, {
       phase: 'transferring',
       progress_schema_version: 2,
       processing_speed_bps: 393_000_000,
       hash_speed_bps: 393_000_000,
-    })).toEqual([])
+    }, { labelProcessingSpeed: true })).toEqual(['Processing speed: 375 MB/s'])
   })
 
   it('hides ETA while finalizing', () => {

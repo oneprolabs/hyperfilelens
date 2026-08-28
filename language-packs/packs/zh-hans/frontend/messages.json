@@ -461,6 +461,7 @@
       "etaMinutes": "{n} 分钟",
       "etaHoursMinutes": "{h} 小时 {m} 分钟",
       "hashSpeed": "扫描速度：{speed}",
+      "processingSpeed": "处理速度：{speed}",
       "uploadSpeed": "上传速度：{speed}",
       "transfer": {
         "hashedOnly": "正在备份",

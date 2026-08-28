@@ -68,7 +68,10 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         uploaded_bytes += int(normalized.get("uploaded_bytes") or 0)
         uploaded_count += int(normalized.get("uploaded_count") or 0)
         hashed_count += int(normalized.get("hashed_count") or 0)
-        estimated_bytes += int(normalized.get("estimated_bytes") or 0)
+        lane_estimated = int(normalized.get("estimated_bytes") or 0)
+        if total_known_lane and total is not None:
+            lane_estimated = max(lane_estimated, int(total))
+        estimated_bytes += lane_estimated
         lane_processed = int(normalized.get("processed_count") or 0)
         lane_total_count = int(normalized.get("total_count") or 0)
         if status in (_ACTIVE_STATUSES | _DONE_STATUSES) and normalized.get("is_transfer"):

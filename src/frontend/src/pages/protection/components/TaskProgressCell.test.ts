@@ -23,6 +23,7 @@ const i18n = createI18n({
           bytesCapacityRef: 'Transferred: {done} / source data: {total}',
           etaMinutes: '{n} min left',
           hashSpeed: 'Scanning: {speed}',
+          processingSpeed: 'Processing speed: {speed}',
           uploadSpeed: 'Upload: {speed}',
           transfer: {
             hashedOnly: 'Backing up',
@@ -65,6 +66,7 @@ function mountCell(
         bytes_total: 322_000_000_000,
         bytes_total_known: true,
         bytes_total_reference: true,
+        processing_speed_bps: 19_293_000,
         upload_speed_bps: 5_740_000,
         eta_seconds: 900,
         step3_display_percent: 0.28,
@@ -142,11 +144,12 @@ describe('TaskProgressCell', () => {
       bytes_total: null,
       bytes_total_known: false,
       upload_speed_bps: null,
+      processing_speed_bps: null,
       speed_bps: 393_000_000,
       hash_speed_bps: 393_000_000,
       eta_seconds: null,
     })
-    const expectedTitle = 'Backing up\nScanning: 375 MB/s'
+    const expectedTitle = 'Scanning: 375 MB/s'
 
     expect(wrapper.get('.task-progress-cell__metric-line').text()).toBe('Scanning: 375 MB/s')
     expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe(expectedTitle)
@@ -157,7 +160,7 @@ describe('TaskProgressCell', () => {
     const wrapper = mountCell(59.1)
     const line = wrapper.get('.task-progress-cell__metric-line')
 
-    expect(line.text()).toBe('Processed: 858 MB / 300 GB · Upload: 5.47 MB/s · 15 min left')
+    expect(line.text()).toBe('Processed: 858 MB / 300 GB · 18.4 MB/s · 15 min left')
     expect(line.element.children).toHaveLength(0)
 
     const source = readFileSync(resolve(process.cwd(), 'src/pages/protection/components/TaskProgressCell.vue'), 'utf8')
@@ -168,9 +171,8 @@ describe('TaskProgressCell', () => {
     const wrapper = mountCell(59.1)
 
     expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe([
-      'Backing up',
       'Processed: 858 MB / 300 GB',
-      'Upload: 5.47 MB/s',
+      'Processing speed: 18.4 MB/s',
       '15 min left',
     ].join('\n'))
   })
