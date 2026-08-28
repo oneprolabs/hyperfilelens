@@ -1361,6 +1361,59 @@ func TestParseSnapshotBrowseOutputHandlesKopiaModeAndNestedPath(t *testing.T) {
 	}
 }
 
+func TestParseSnapshotBrowseOutputNormalizesCSTModifiedTimes(t *testing.T) {
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousLocal := time.Local
+	time.Local = shanghai
+	t.Cleanup(func() { time.Local = previousLocal })
+
+	for name, stdout := range map[string]string{
+		"json": `[{"name":"restore-check.txt","type":"file","modified_at":"2026-08-27 15:35:25 CST"}]`,
+		"text": `-rw-r--r-- 76 2026-08-27 15:35:25 CST object-id restore-check.txt`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rows := parseSnapshotBrowseOutput(stdout, "", "snapshot-1")
+			if len(rows) != 1 {
+				t.Fatalf("rows = %d, want 1", len(rows))
+			}
+			if got := rows[0]["modified_at"]; got != "2026-08-27T07:35:25Z" {
+				t.Fatalf("modified_at = %v, want 2026-08-27T07:35:25Z", got)
+			}
+		})
+	}
+}
+
+func TestFormatModTimeUTCPreservesInstants(t *testing.T) {
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "RFC3339 UTC", raw: "2026-08-27T07:35:25Z", want: "2026-08-27T07:35:25Z"},
+		{name: "RFC3339 offset", raw: "2026-08-27T15:35:25+08:00", want: "2026-08-27T07:35:25Z"},
+		{name: "explicit UTC", raw: "2026-08-27 07:35:25 UTC", want: "2026-08-27T07:35:25Z"},
+		{name: "local abbreviation", raw: "2026-08-27 15:35:25 CST", want: "2026-08-27T07:35:25Z"},
+		{name: "timezone omitted", raw: "2026-08-27 15:35:25", want: "2026-08-27T07:35:25Z"},
+		{name: "short local time", raw: "Aug 27 15:35", want: "2026-08-27T07:35:00Z"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := formatModTimeUTCInLocation(test.raw, shanghai); got != test.want {
+				t.Fatalf("formatModTimeUTCInLocation(%q) = %q, want %q", test.raw, got, test.want)
+			}
+		})
+	}
+	if got := formatModTimeUTCInLocation("2026-08-27 15:35:25 CST", time.UTC); got != "2026-08-27 15:35:25 CST" {
+		t.Fatalf("ambiguous non-local zone must be preserved, got %q", got)
+	}
+}
+
 func TestSnapshotScopeRecursiveLinesProduceTrustedTotals(t *testing.T) {
 	stdout := `drwx------            5 2026-08-12 11:15:59 CST object-dir sub/
 -rw-------            5 2026-08-12 11:15:59 CST object-file sub/b.txt
@@ -1535,7 +1588,7 @@ func TestSnapshotScopeSelectionIgnoresOtherEntries(t *testing.T) {
 	if selection.pathType != "file" || selection.sizeBytes != 42 {
 		t.Fatalf("unexpected selected file summary: %#v", selection)
 	}
-	if selection.modifiedAt != "2026-08-12 11:15:59 CST" {
+	if selection.modifiedAt != formatModTimeUTC("2026-08-12 11:15:59 CST") {
 		t.Fatalf("unexpected selected file timestamp: %#v", selection)
 	}
 }
