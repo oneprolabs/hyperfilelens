@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -412,18 +413,29 @@ def _final_callback_acknowledged(task: dict[str, Any]) -> bool:
     )
 
 
-def conversion_stop_confirmed(ks: LensKnowledgeSource) -> bool:
-    """Return whether SourceLens proves the LensNode conversion has stopped."""
+@dataclass(frozen=True)
+class ConversionStopAssessment:
+    """SourceLens evidence used to fence destructive workspace cleanup."""
+
+    confirmed: bool
+    task_id: str = ""
+    remote_status: str = ""
+    stop_confirmation_source: str = ""
+    reason: str = ""
+
+
+def assess_conversion_stop(ks: LensKnowledgeSource) -> ConversionStopAssessment:
+    """Return SourceLens' durable proof that a conversion executor stopped."""
 
     conversion_state = (ks.sync_state_json or {}).get("conversion")
     if not isinstance(conversion_state, dict):
-        return True
+        return ConversionStopAssessment(True, reason="no_conversion")
     task_id = str(conversion_state.get("task_id") or "").strip()
     if not task_id:
         if str(conversion_state.get("status") or "").upper() != "STARTING":
-            return True
+            return ConversionStopAssessment(True, reason="no_dispatched_task")
         if not ks.sl_datasource_uuid:
-            return False
+            return ConversionStopAssessment(False, reason="unresolved_start")
         task = _recover_started_conversion(
             datasource_uuid=str(ks.sl_datasource_uuid),
             state=conversion_state,
@@ -431,10 +443,10 @@ def conversion_stop_confirmed(ks: LensKnowledgeSource) -> bool:
         if task is None:
             # An empty list/cancel probe can race an in-flight conversion POST.
             # Only an operation-key lookup or a final callback can prove safety.
-            return False
+            return ConversionStopAssessment(False, reason="unresolved_start")
         task_id = str(task.get("task_id") or "").strip()
         if not task_id:
-            return False
+            return ConversionStopAssessment(False, reason="unresolved_start")
         conversion_state["task_id"] = task_id
         conversion_state["task_execution_id"] = task.get("id")
         conversion_state["status"] = str(task.get("status") or "PENDING")
@@ -445,31 +457,106 @@ def conversion_stop_confirmed(ks: LensKnowledgeSource) -> bool:
         task = None
     task = task or sl_client.get_task_by_id(task_id)
     if task is None:
-        return False
-    status = str(task.get("status") or "")
+        return ConversionStopAssessment(
+            False,
+            task_id=task_id,
+            reason="remote_task_missing",
+        )
+    returned_task_id = str(task.get("task_id") or "").strip()
+    if returned_task_id != task_id:
+        return ConversionStopAssessment(
+            False,
+            task_id=task_id,
+            remote_status=str(task.get("status") or "").upper(),
+            reason="remote_task_identity_mismatch",
+        )
+    status = str(task.get("status") or "").upper()
     if status == "SUCCESS":
-        return True
+        return ConversionStopAssessment(
+            True,
+            task_id=task_id,
+            remote_status=status,
+            reason="conversion_completed",
+        )
     if status not in {"FAILURE", "REVOKED"}:
-        return False
+        return ConversionStopAssessment(
+            False,
+            task_id=task_id,
+            remote_status=status,
+            reason="conversion_still_running",
+        )
     manual_confirmation = conversion_state.get("manual_stop_confirmation")
     if (
         isinstance(manual_confirmation, dict)
         and manual_confirmation.get("confirmed") is True
         and str(manual_confirmation.get("task_id") or "") == task_id
     ):
-        return True
+        return ConversionStopAssessment(
+            True,
+            task_id=task_id,
+            remote_status=status,
+            stop_confirmation_source="operator",
+            reason="manual_stop_confirmation",
+        )
     metadata = (
         task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
     )
-    if not metadata.get("datasource_conversion_request_id"):
-        return True
+    completion_source = str(metadata.get("completion_source") or "").strip()
+    stop_source = str(metadata.get("stop_confirmation_source") or "").strip()
+    if stop_source == "queued_before_dispatch":
+        return ConversionStopAssessment(
+            True,
+            task_id=task_id,
+            remote_status=status,
+            stop_confirmation_source=stop_source,
+            reason="queued_before_dispatch",
+        )
+    if (
+        completion_source == "lensnode_callback"
+        and stop_source == "lensnode_callback"
+    ):
+        return ConversionStopAssessment(
+            True,
+            task_id=task_id,
+            remote_status=status,
+            stop_confirmation_source=stop_source,
+            reason="lensnode_callback",
+        )
+    if _final_callback_acknowledged(task):
+        return ConversionStopAssessment(
+            True,
+            task_id=task_id,
+            remote_status=status,
+            stop_confirmation_source="legacy_callback_timestamp",
+            reason="legacy_callback_timestamp",
+        )
     if not (
         metadata.get("timeout_cancelled_at")
         or metadata.get("manual_revoked_at")
     ):
-        # A normal LensNode failure is itself the final callback.
-        return "conversion_summary" in metadata
-    return _final_callback_acknowledged(task)
+        # Older SourceLens versions exposed the completed conversion summary
+        # before adding explicit callback provenance.
+        if status == "FAILURE" and "conversion_summary" in metadata:
+            return ConversionStopAssessment(
+                True,
+                task_id=task_id,
+                remote_status=status,
+                stop_confirmation_source="legacy_conversion_summary",
+                reason="legacy_conversion_summary",
+            )
+    return ConversionStopAssessment(
+        False,
+        task_id=task_id,
+        remote_status=status,
+        stop_confirmation_source=stop_source,
+        reason="terminal_stop_unconfirmed",
+    )
+
+
+def conversion_stop_confirmed(ks: LensKnowledgeSource) -> bool:
+    """Return whether SourceLens proves the LensNode conversion has stopped."""
+
+    return assess_conversion_stop(ks).confirmed
 
 
 def convert_documents(

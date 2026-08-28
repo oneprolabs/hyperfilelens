@@ -35,6 +35,7 @@ from apps.lens_bridge.services import (
     platform_lens,
     provisioning,
     sl_client,
+    teardown_blocking,
 )
 from apps.lens_bridge.services.chat_binding import _grant_assistant_to_chat_user
 from apps.lens_bridge.services.chat_lifecycle_errors import (
@@ -1949,12 +1950,17 @@ def _orphan_knowledge_source_needs_enqueue(knowledge_source_id: int) -> bool:
             "lifecycle_status",
             "teardown_claimed_at",
             "teardown_next_retry_at",
+            "teardown_state_json",
         )
         .first()
     )
     if knowledge_source is None:
         return False
     if knowledge_source.lifecycle_status == LensKnowledgeSource.LifecycleStatus.DELETED:
+        return False
+    if teardown_blocking.intervention_required(
+        knowledge_source.teardown_state_json
+    ):
         return False
     if (
         knowledge_source.teardown_claimed_at
@@ -2221,6 +2227,8 @@ def _claim_copilot_chat_teardown(session_link_id: int) -> tuple[str | None, str]
             return None, str(link.lifecycle_status)
         if link.cleanup_status == LensSessionLink.CleanupStatus.COMPLETE:
             return None, "complete"
+        if teardown_blocking.intervention_required(link.teardown_state_json):
+            return None, "intervention_required"
         if link.teardown_claimed_at and link.teardown_claimed_at > now - timedelta(
             seconds=TEARDOWN_CLAIM_TTL_SECONDS
         ):
@@ -2438,6 +2446,8 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     failed_assistant_uuids: list[uuid_lib.UUID] = []
     ks = link.knowledge_source
     cleanup_waiting_for_conversion_stop = False
+    workspace_intervention_required = False
+    workspace_blocking: dict[str, Any] = {}
     assistant_uuids: set[uuid_lib.UUID] = set()
     if session_cleanup_complete:
         try:
@@ -2562,6 +2572,15 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
                 .first()
                 or {}
             )
+            if isinstance(latest_ks_teardown_state, dict):
+                candidate_blocking = latest_ks_teardown_state.get("blocking")
+                if isinstance(candidate_blocking, dict):
+                    workspace_blocking = candidate_blocking
+                workspace_intervention_required = (
+                    teardown_blocking.intervention_required(
+                        latest_ks_teardown_state
+                    )
+                )
             cleanup_waiting_for_conversion_stop = bool(
                 isinstance(latest_ks_teardown_state, dict)
                 and (
@@ -2588,7 +2607,46 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         )
 
     reset_for_retry = teardown_intent == _TEARDOWN_INTENT_RESET_FOR_RETRY
-    cleanup_blocked = cleanup_waiting_for_conversion_stop
+    blocking: dict[str, Any] = {}
+    if critical_errors:
+        if workspace_blocking:
+            blocking_reason = str(
+                workspace_blocking.get("reason")
+                or "conversion_stop_unconfirmed"
+            )
+            blocking_task_id = str(workspace_blocking.get("task_id") or "")
+            blocking_remote_status = str(
+                workspace_blocking.get("remote_status") or ""
+            )
+            blocking_stop_source = str(
+                workspace_blocking.get("stop_confirmation_source") or ""
+            )
+        else:
+            # Exception messages may contain transient details. Use the stable
+            # step prefix for the retry fingerprint and retain full details in
+            # lifecycle_error.
+            blocking_reason = str(critical_errors[0].split(":", 1)[0])[:300]
+            blocking_task_id = ""
+            blocking_remote_status = ""
+            blocking_stop_source = ""
+        if workspace_intervention_required and workspace_blocking:
+            blocking = dict(workspace_blocking)
+            teardown_state["blocking"] = blocking
+        else:
+            teardown_state, blocking = teardown_blocking.record_blocking(
+                teardown_state,
+                reason=blocking_reason,
+                task_id=blocking_task_id,
+                gateway_link_id=link.gateway_link_id,
+                remote_status=blocking_remote_status,
+                stop_confirmation_source=blocking_stop_source,
+            )
+    else:
+        teardown_state = teardown_blocking.clear_blocking(teardown_state)
+    intervention_required = bool(blocking.get("intervention_required"))
+    cleanup_blocked = (
+        cleanup_waiting_for_conversion_stop or intervention_required
+    )
     if critical_errors:
         link.lifecycle_status = (
             LensSessionLink.LifecycleStatus.FAILED
@@ -2607,9 +2665,13 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
             else LensSessionLink.CleanupStatus.PENDING
         )
         link.provision_detail = (
-            "Cleanup is waiting for SourceLens to confirm conversion has stopped."
-            if cleanup_blocked
-            else "Chat cleanup is incomplete and will be retried."
+            "Chat cleanup requires operator intervention."
+            if intervention_required
+            else (
+                "Cleanup is waiting for SourceLens to confirm conversion has stopped."
+                if cleanup_waiting_for_conversion_stop
+                else "Chat cleanup is incomplete and will be retried."
+            )
         )
         link.lifecycle_error = "; ".join([*critical_errors, *warnings])[:2000]
         link.lifecycle_error_state_json = lifecycle_error_state_from_exception(
@@ -2644,9 +2706,13 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     link.teardown_state_json = teardown_state
     link.teardown_claim_token = None
     link.teardown_claimed_at = None
-    if cleanup_blocked:
-        link.teardown_next_retry_at = timezone.now() + timedelta(minutes=5)
-    elif not critical_errors:
+    if critical_errors:
+        link.teardown_next_retry_at = (
+            None
+            if intervention_required
+            else next_retry_at(int(blocking["consecutive_attempts"]))
+        )
+    else:
         link.teardown_next_retry_at = None
     slot_generation = (
         LensGatewayChatSlot.objects.filter(session_link_id=link.id)
@@ -2688,6 +2754,19 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     if updated != 1:
         raise ChatTeardownIncompleteError("Chat teardown lease was lost.")
     if critical_errors:
+        logger.warning(
+            "chat teardown blocked chat_id=%s knowledge_source_id=%s "
+            "gateway_link_id=%s task_id=%s remote_status=%s reason=%s "
+            "attempts=%s intervention_required=%s",
+            link.id,
+            ks.id if ks is not None else None,
+            link.gateway_link_id,
+            blocking.get("task_id"),
+            blocking.get("remote_status"),
+            blocking.get("reason"),
+            blocking.get("consecutive_attempts"),
+            intervention_required,
+        )
         raise ChatTeardownIncompleteError("; ".join(critical_errors))
     if slot_generation is not None:
         gateway_chat_queue.release_chat_prepare_slot(

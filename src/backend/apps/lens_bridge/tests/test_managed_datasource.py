@@ -190,10 +190,77 @@ class ManagedDatasourceTests(SimpleTestCase):
         get_task.return_value = {
             "task_id": "convert-1",
             "status": "REVOKED",
-            "metadata": {"manual_revoked_at": "2026-08-03T04:00:00Z"},
+            "metadata": {
+                "manual_revoked_at": "2026-08-03T04:00:00Z",
+                "stop_confirmation_source": "queued_before_dispatch",
+            },
         }
 
         self.assertTrue(
+            managed_datasource.conversion_stop_confirmed(knowledge_source)
+        )
+
+    @patch("apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id")
+    def test_plain_revoked_task_does_not_confirm_stop(self, get_task):
+        knowledge_source = self._knowledge_source()
+        knowledge_source.sync_state_json = {
+            "conversion": {"task_id": "convert-1"}
+        }
+        get_task.return_value = {
+            "task_id": "convert-1",
+            "status": "REVOKED",
+            "metadata": {},
+        }
+
+        self.assertFalse(
+            managed_datasource.conversion_stop_confirmed(knowledge_source)
+        )
+
+    @patch("apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id")
+    def test_lensnode_callback_contract_confirms_stop(self, get_task):
+        knowledge_source = self._knowledge_source()
+        knowledge_source.sync_state_json = {
+            "conversion": {"task_id": "convert-1"}
+        }
+        for status in ("REVOKED", "FAILURE"):
+            with self.subTest(status=status):
+                get_task.return_value = {
+                    "task_id": "convert-1",
+                    "status": status,
+                    "metadata": {
+                        "completion_source": "lensnode_callback",
+                        "stop_confirmation_source": "lensnode_callback",
+                    },
+                }
+
+                assessment = managed_datasource.assess_conversion_stop(
+                    knowledge_source
+                )
+
+                self.assertTrue(assessment.confirmed)
+                self.assertEqual(assessment.task_id, "convert-1")
+                self.assertEqual(assessment.remote_status, status)
+                self.assertEqual(
+                    assessment.stop_confirmation_source,
+                    "lensnode_callback",
+                )
+
+    @patch("apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id")
+    def test_partial_lensnode_callback_contract_does_not_confirm_stop(
+        self,
+        get_task,
+    ):
+        knowledge_source = self._knowledge_source()
+        knowledge_source.sync_state_json = {
+            "conversion": {"task_id": "convert-1"}
+        }
+        get_task.return_value = {
+            "task_id": "convert-1",
+            "status": "FAILURE",
+            "metadata": {"stop_confirmation_source": "lensnode_callback"},
+        }
+
+        self.assertFalse(
             managed_datasource.conversion_stop_confirmed(knowledge_source)
         )
 
@@ -236,6 +303,26 @@ class ManagedDatasourceTests(SimpleTestCase):
         self.assertFalse(
             managed_datasource.conversion_stop_confirmed(knowledge_source)
         )
+
+    @patch("apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id")
+    def test_mismatched_remote_task_does_not_prove_conversion_stopped(
+        self,
+        get_task,
+    ):
+        knowledge_source = self._knowledge_source()
+        knowledge_source.sync_state_json = {
+            "conversion": {"task_id": "convert-1"}
+        }
+        get_task.return_value = {
+            "task_id": "different-task",
+            "status": "SUCCESS",
+            "metadata": {},
+        }
+
+        assessment = managed_datasource.assess_conversion_stop(knowledge_source)
+
+        self.assertFalse(assessment.confirmed)
+        self.assertEqual(assessment.reason, "remote_task_identity_mismatch")
 
     @patch(
         "apps.lens_bridge.services.managed_datasource."
@@ -547,7 +634,9 @@ class ManagedDatasourceTests(SimpleTestCase):
         get_task.return_value = {
             "task_id": "convert-1",
             "status": "FAILURE",
-            "metadata": {},
+            "metadata": {
+                "stop_confirmation_source": "queued_before_dispatch",
+            },
         }
 
         self.assertTrue(

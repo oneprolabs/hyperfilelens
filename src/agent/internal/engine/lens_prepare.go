@@ -8,11 +8,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 const lensWorkspaceIdentityKind = "managed_restore"
+
+const (
+	lensWorkspaceTombstoneRetiring = "retiring"
+	lensWorkspaceTombstoneRetired  = "retired"
+	lensWorkspaceLockTimeout       = 30 * time.Second
+)
 
 var removeLensWorkspaceTrash = os.RemoveAll
 
@@ -25,14 +32,27 @@ type lensWorkspaceIdentity struct {
 	WorkspaceKind        string `json:"workspace_kind"`
 }
 
+type lensWorkspaceTombstone struct {
+	Version       int                   `json:"version"`
+	State         string                `json:"state"`
+	Identity      lensWorkspaceIdentity `json:"identity"`
+	WorkspacePath string                `json:"workspace_path"`
+	CreatedAt     string                `json:"created_at"`
+	UpdatedAt     string                `json:"updated_at"`
+}
+
 type lensWorkspacePaths struct {
-	Root         string
-	Workspace    string
-	MetadataRoot string
-	IdentityRoot string
-	Identity     string
-	TrashRoot    string
-	Trash        string
+	Root          string
+	Workspace     string
+	MetadataRoot  string
+	IdentityRoot  string
+	Identity      string
+	TombstoneRoot string
+	Tombstone     string
+	LockRoot      string
+	Lock          string
+	TrashRoot     string
+	Trash         string
 }
 
 func lensWorkspaceIdentityFromPayload(p Payload) (lensWorkspaceIdentity, error) {
@@ -86,23 +106,35 @@ func resolveLensWorkspacePaths(path, workspaceRoot, workspaceUID string) (lensWo
 	}
 	metadataRoot := filepath.Join(filepath.Dir(cleanRoot), ".hyperfilelens")
 	identityRoot := filepath.Join(metadataRoot, "identities")
+	tombstoneRoot := filepath.Join(metadataRoot, "tombstones")
+	lockRoot := filepath.Join(metadataRoot, "locks")
 	// Quarantine must stay below the workspace root so rename remains atomic
 	// when the workspace root is a dedicated filesystem mount.
 	trashRoot := filepath.Join(cleanRoot, lensWorkspaceTrashDirectory)
 	return lensWorkspacePaths{
-		Root:         cleanRoot,
-		Workspace:    cleanPath,
-		MetadataRoot: metadataRoot,
-		IdentityRoot: identityRoot,
-		Identity:     filepath.Join(identityRoot, workspaceUID+".json"),
-		TrashRoot:    trashRoot,
-		Trash:        filepath.Join(trashRoot, workspaceUID),
+		Root:          cleanRoot,
+		Workspace:     cleanPath,
+		MetadataRoot:  metadataRoot,
+		IdentityRoot:  identityRoot,
+		Identity:      filepath.Join(identityRoot, workspaceUID+".json"),
+		TombstoneRoot: tombstoneRoot,
+		Tombstone:     filepath.Join(tombstoneRoot, workspaceUID+".json"),
+		LockRoot:      lockRoot,
+		Lock:          filepath.Join(lockRoot, workspaceUID+".lock"),
+		TrashRoot:     trashRoot,
+		Trash:         filepath.Join(trashRoot, workspaceUID),
 	}, nil
 }
 
 func ensureLensMetadataLayout(paths lensWorkspacePaths) error {
 	base := filepath.Dir(paths.Root)
-	for _, path := range []string{paths.MetadataRoot, paths.IdentityRoot, paths.TrashRoot} {
+	for _, path := range []string{
+		paths.MetadataRoot,
+		paths.IdentityRoot,
+		paths.TombstoneRoot,
+		paths.LockRoot,
+		paths.TrashRoot,
+	} {
 		if _, _, err := secureEnsureDirectory(path, base, 0o700); err != nil {
 			return fmt.Errorf("create protected gateway metadata: %w", err)
 		}
@@ -111,6 +143,100 @@ func ensureLensMetadataLayout(paths lensWorkspacePaths) error {
 		}
 	}
 	return nil
+}
+
+func readLensWorkspaceTombstone(path string) (lensWorkspaceTombstone, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return lensWorkspaceTombstone{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return lensWorkspaceTombstone{}, errors.New("managed workspace tombstone is not a regular file")
+	}
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		return lensWorkspaceTombstone{}, err
+	}
+	var tombstone lensWorkspaceTombstone
+	if err := json.Unmarshal(encoded, &tombstone); err != nil {
+		return lensWorkspaceTombstone{}, errors.New("managed workspace tombstone is invalid")
+	}
+	if tombstone.Version != 1 ||
+		(tombstone.State != lensWorkspaceTombstoneRetiring && tombstone.State != lensWorkspaceTombstoneRetired) {
+		return lensWorkspaceTombstone{}, errors.New("managed workspace tombstone has an unsupported state")
+	}
+	return tombstone, nil
+}
+
+func validateLensWorkspaceTombstone(
+	tombstone lensWorkspaceTombstone,
+	identity lensWorkspaceIdentity,
+	workspacePath string,
+) error {
+	if tombstone.Identity != identity || tombstone.WorkspacePath != workspacePath {
+		return errors.New("managed workspace tombstone identity does not match")
+	}
+	return nil
+}
+
+func writeLensWorkspaceTombstone(
+	path string,
+	tombstone lensWorkspaceTombstone,
+) error {
+	encoded, err := json.Marshal(tombstone)
+	if err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".workspace-tombstone-*")
+	if err != nil {
+		return err
+	}
+	temporary := file.Name()
+	complete := false
+	defer func() {
+		_ = file.Close()
+		if !complete {
+			_ = os.Remove(temporary)
+		}
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := file.Write(encoded); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := replaceLensWorkspaceTombstone(temporary, path); err != nil {
+		return err
+	}
+	complete = true
+	return nil
+}
+
+func newLensWorkspaceTombstone(
+	identity lensWorkspaceIdentity,
+	workspacePath string,
+	state string,
+	existing *lensWorkspaceTombstone,
+) lensWorkspaceTombstone {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	createdAt := now
+	if existing != nil && existing.CreatedAt != "" {
+		createdAt = existing.CreatedAt
+	}
+	return lensWorkspaceTombstone{
+		Version:       1,
+		State:         state,
+		Identity:      identity,
+		WorkspacePath: workspacePath,
+		CreatedAt:     createdAt,
+		UpdatedAt:     now,
+	}
 }
 
 func readLensWorkspaceIdentity(identityPath string) (lensWorkspaceIdentity, error) {
@@ -242,47 +368,69 @@ func (e *Engine) runLensKsPrepare(ctx context.Context, p Payload) (string, map[s
 	if err := ensureLensMetadataLayout(paths); err != nil {
 		return "failed", nil, err.Error()
 	}
-	existing, err := readLensWorkspaceIdentity(paths.Identity)
-	if err == nil {
-		if existing != identity {
-			return "failed", nil, "managed workspace identity does not match"
-		}
-		cleanPath, created, ensureErr := secureEnsureDirectory(
-			paths.Workspace,
-			paths.Root,
-			0o755,
-		)
-		if ensureErr != nil {
-			return "failed", nil, ensureErr.Error()
-		}
-		return "success", map[string]any{"path": cleanPath, "created": created}, ""
-	}
-	if !os.IsNotExist(err) {
-		return "failed", nil, err.Error()
-	}
-	if _, statErr := os.Lstat(paths.Workspace); statErr == nil {
-		return "failed", nil, "refusing to claim an existing workspace without identity"
-	} else if !os.IsNotExist(statErr) {
-		return "failed", nil, statErr.Error()
-	}
-	// The durable identity is the creation journal. If the process exits before
-	// the directory is created, a retry can safely complete the matching claim.
-	if err := writeLensWorkspaceIdentity(paths.Identity, identity); err != nil {
-		if os.IsExist(err) {
-			existing, readErr := readLensWorkspaceIdentity(paths.Identity)
-			if readErr != nil || existing != identity {
-				return "failed", nil, "managed workspace identity does not match"
+	lockContext, cancel := context.WithTimeout(ctx, lensWorkspaceLockTimeout)
+	defer cancel()
+	var result map[string]any
+	err = withLensWorkspaceLock(lockContext, paths.Lock, func() error {
+		tombstone, tombstoneErr := readLensWorkspaceTombstone(paths.Tombstone)
+		if tombstoneErr == nil {
+			if err := validateLensWorkspaceTombstone(tombstone, identity, paths.Workspace); err != nil {
+				return err
 			}
-		} else {
-			return "failed", nil, err.Error()
+			return errors.New("managed workspace UID has been retired")
 		}
-	}
-	cleanPath, created, err := secureEnsureDirectory(paths.Workspace, paths.Root, 0o755)
+		if !os.IsNotExist(tombstoneErr) {
+			return tombstoneErr
+		}
+
+		existing, identityErr := readLensWorkspaceIdentity(paths.Identity)
+		if identityErr == nil {
+			if existing != identity {
+				return errors.New("managed workspace identity does not match")
+			}
+			cleanPath, created, ensureErr := secureEnsureDirectory(
+				paths.Workspace,
+				paths.Root,
+				0o755,
+			)
+			if ensureErr != nil {
+				return ensureErr
+			}
+			result = map[string]any{"path": cleanPath, "created": created}
+			return nil
+		}
+		if !os.IsNotExist(identityErr) {
+			return identityErr
+		}
+		if _, statErr := os.Lstat(paths.Workspace); statErr == nil {
+			return errors.New("refusing to claim an existing workspace without identity")
+		} else if !os.IsNotExist(statErr) {
+			return statErr
+		}
+		// The durable identity is the creation journal. If the process exits before
+		// the directory is created, a retry can safely complete the matching claim.
+		if err := writeLensWorkspaceIdentity(paths.Identity, identity); err != nil {
+			if os.IsExist(err) {
+				existing, readErr := readLensWorkspaceIdentity(paths.Identity)
+				if readErr != nil || existing != identity {
+					return errors.New("managed workspace identity does not match")
+				}
+			} else {
+				return err
+			}
+		}
+		cleanPath, created, ensureErr := secureEnsureDirectory(paths.Workspace, paths.Root, 0o755)
+		if ensureErr != nil {
+			// Keep the matching identity as a recovery journal for the next retry.
+			return ensureErr
+		}
+		result = map[string]any{"path": cleanPath, "created": created}
+		return nil
+	})
 	if err != nil {
-		// Keep the matching identity as a recovery journal for the next retry.
 		return "failed", nil, err.Error()
 	}
-	return "success", map[string]any{"path": cleanPath, "created": created}, ""
+	return "success", result, ""
 }
 
 func (e *Engine) runLensKsCleanup(ctx context.Context, p Payload) (string, map[string]any, string) {
@@ -297,50 +445,130 @@ func (e *Engine) runLensKsCleanup(ctx context.Context, p Payload) (string, map[s
 	if err != nil {
 		return "failed", nil, err.Error()
 	}
-	workspaceMissing := pathMissing(paths.Workspace)
-	trashMissing := pathMissing(paths.Trash)
-	identityMissing := pathMissing(paths.Identity)
-	if workspaceMissing && trashMissing && identityMissing {
-		return "success", map[string]any{"path": paths.Workspace, "removed": false}, ""
-	}
-	if err := validateLensWorkspaceIdentity(paths.Identity, identity); err != nil {
-		return "failed", nil, err.Error()
-	}
 	if err := ensureLensMetadataLayout(paths); err != nil {
 		return "failed", nil, err.Error()
 	}
+	lockContext, cancel := context.WithTimeout(ctx, lensWorkspaceLockTimeout)
+	defer cancel()
+	removed := false
+	alreadyRetired := false
+	err = withLensWorkspaceLock(lockContext, paths.Lock, func() error {
+		workspaceMissing := pathMissing(paths.Workspace)
+		trashMissing := pathMissing(paths.Trash)
+		identityMissing := pathMissing(paths.Identity)
 
-	workspaceExists := !workspaceMissing
-	trashExists := !trashMissing
-	if workspaceExists && trashExists {
-		return "failed", nil, "managed workspace and trash both exist"
+		tombstone, tombstoneErr := readLensWorkspaceTombstone(paths.Tombstone)
+		if tombstoneErr == nil {
+			if err := validateLensWorkspaceTombstone(tombstone, identity, paths.Workspace); err != nil {
+				return err
+			}
+			if tombstone.State == lensWorkspaceTombstoneRetired {
+				if !workspaceMissing || !trashMissing || !identityMissing {
+					return errors.New("retired managed workspace has unexpected artifacts")
+				}
+				alreadyRetired = true
+				return nil
+			}
+			if tombstone.State != lensWorkspaceTombstoneRetiring {
+				return errors.New("managed workspace tombstone has an unsupported state")
+			}
+		} else if !os.IsNotExist(tombstoneErr) {
+			return tombstoneErr
+		}
+
+		if !identityMissing {
+			if err := validateLensWorkspaceIdentity(paths.Identity, identity); err != nil {
+				return err
+			}
+		} else if !workspaceMissing || !trashMissing {
+			return errors.New("managed workspace identity is missing or invalid")
+		}
+
+		retiring := newLensWorkspaceTombstone(
+			identity,
+			paths.Workspace,
+			lensWorkspaceTombstoneRetiring,
+			&tombstone,
+		)
+		if err := writeLensWorkspaceTombstone(paths.Tombstone, retiring); err != nil {
+			return err
+		}
+
+		workspaceExists := !workspaceMissing
+		trashExists := !trashMissing
+		if workspaceExists && trashExists {
+			return errors.New("managed workspace and trash both exist")
+		}
+		if workspaceExists {
+			fd, _, openErr := secureOpenDirectory(paths.Workspace, paths.Root, false, uint64(os.O_RDONLY))
+			if openErr != nil {
+				return openErr
+			}
+			workspaceDirectory := secureDirectoryFile(fd, paths.Workspace)
+			if workspaceDirectory == nil {
+				return errors.New("restricted Data Gateway filesystem operations require Linux")
+			}
+			_ = workspaceDirectory.Close()
+			if err := os.Rename(paths.Workspace, paths.Trash); err != nil {
+				return err
+			}
+			trashExists = true
+		}
+		removed = workspaceExists || trashExists
+		return nil
+	})
+	if err != nil {
+		return "failed", nil, err.Error()
 	}
-	if workspaceExists {
-		fd, _, openErr := secureOpenDirectory(paths.Workspace, paths.Root, false, uint64(os.O_RDONLY))
-		if openErr != nil {
-			return "failed", nil, openErr.Error()
-		}
-		workspaceDirectory := secureDirectoryFile(fd, paths.Workspace)
-		if workspaceDirectory == nil {
-			return "failed", nil, "restricted Data Gateway filesystem operations require Linux"
-		}
-		_ = workspaceDirectory.Close()
-		if err := os.Rename(paths.Workspace, paths.Trash); err != nil {
-			return "failed", nil, err.Error()
-		}
-		trashExists = true
+	if alreadyRetired {
+		return "success", map[string]any{"path": paths.Workspace, "removed": false}, ""
 	}
-	if trashExists {
+	// Removing a potentially large workspace must not hold the lifecycle lock.
+	// The retiring tombstone already prevents every late prepare from claiming it.
+	if !pathMissing(paths.Trash) {
 		if err := removeLensWorkspaceTrash(paths.Trash); err != nil {
-			// The external identity intentionally survives partial deletion so a
+			// Identity and the retiring tombstone survive partial deletion so a
 			// retry can safely finish removing the quarantined workspace.
 			return "failed", nil, err.Error()
 		}
 	}
-	if err := os.Remove(paths.Identity); err != nil && !os.IsNotExist(err) {
+	finalLockContext, finalCancel := context.WithTimeout(ctx, lensWorkspaceLockTimeout)
+	defer finalCancel()
+	err = withLensWorkspaceLock(finalLockContext, paths.Lock, func() error {
+		finalTombstone, tombstoneErr := readLensWorkspaceTombstone(paths.Tombstone)
+		if tombstoneErr != nil {
+			return tombstoneErr
+		}
+		if err := validateLensWorkspaceTombstone(finalTombstone, identity, paths.Workspace); err != nil {
+			return err
+		}
+		if finalTombstone.State == lensWorkspaceTombstoneRetired {
+			if !pathMissing(paths.Workspace) || !pathMissing(paths.Trash) || !pathMissing(paths.Identity) {
+				return errors.New("retired managed workspace has unexpected artifacts")
+			}
+			return nil
+		}
+		if finalTombstone.State != lensWorkspaceTombstoneRetiring {
+			return errors.New("managed workspace tombstone has an unsupported state")
+		}
+		if !pathMissing(paths.Workspace) || !pathMissing(paths.Trash) {
+			return errors.New("managed workspace cleanup is incomplete")
+		}
+		if err := os.Remove(paths.Identity); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		retiredTombstone := newLensWorkspaceTombstone(
+			identity,
+			paths.Workspace,
+			lensWorkspaceTombstoneRetired,
+			&finalTombstone,
+		)
+		return writeLensWorkspaceTombstone(paths.Tombstone, retiredTombstone)
+	})
+	if err != nil {
 		return "failed", nil, err.Error()
 	}
-	return "success", map[string]any{"path": paths.Workspace, "removed": workspaceExists || trashExists}, ""
+	return "success", map[string]any{"path": paths.Workspace, "removed": removed}, ""
 }
 
 func pathMissing(path string) bool {
