@@ -332,6 +332,20 @@ func printEnrollmentContext(
 		})
 		return
 	}
+	if parentSession() {
+		var detail strings.Builder
+		fmt.Fprintln(&detail, "Target")
+		printSummaryValueTo(&detail, "Console", consoleURL)
+		printSummaryValueTo(&detail, "Organization", orgKey)
+		printSummaryValueTo(&detail, "Role", displayRole)
+		printSummaryValueTo(&detail, "Hostname", hostname)
+		printSummaryValueTo(&detail, "Platform", platform)
+		fmt.Fprintln(&detail)
+		fmt.Fprintln(&detail, "Preflight checks")
+		writeCommandLogOnly(detail.String())
+		printPhase("Platform Data Gateway preflight checks")
+		return
+	}
 	printBanner(displayRole)
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Target")
@@ -445,6 +459,32 @@ func printEnrollmentSuccess(info SummaryInfo) {
 		})
 		return
 	}
+	if parentSession() {
+		var detail strings.Builder
+		fmt.Fprintln(&detail, strings.Repeat("=", 64))
+		fmt.Fprintln(&detail, "Installation completed successfully")
+		fmt.Fprintln(&detail, strings.Repeat("=", 64))
+		fmt.Fprintln(&detail)
+		fmt.Fprintln(&detail, "Installation summary")
+		printSummaryValueTo(&detail, "Role", info.Role)
+		printSummaryValueTo(&detail, "Node ID", info.NodeID)
+		printSummaryValueTo(&detail, "Agent version", info.Version)
+		printSummaryValueTo(&detail, "Service state", info.Service)
+		printSummaryValueTo(&detail, "AI engine", info.LensNode)
+		printSummaryValueTo(&detail, "Console state", "online")
+		printSummaryValueTo(&detail, "Agent root", info.DataPath)
+		printSummaryValueTo(&detail, "Binaries", info.InstallPath)
+		printSummaryValueTo(&detail, "Config", filepath.Join(info.DataPath, "config"))
+		printSummaryValueTo(&detail, "Log file", info.LogPath)
+		fmt.Fprintln(&detail)
+		fmt.Fprintln(&detail, "Next step")
+		fmt.Fprintln(&detail, "  Open HyperFileLens and configure the data sources available")
+		fmt.Fprintln(&detail, "  through this Gateway.")
+		fmt.Fprintln(&detail)
+		writeAgentLifecycleCommands(&detail, info)
+		writeCommandLogOnly(detail.String())
+		return
+	}
 	printResultRule(os.Stdout, "Installation completed successfully", ansiGreen)
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Installation summary")
@@ -472,18 +512,22 @@ func printEnrollmentSuccess(info SummaryInfo) {
 }
 
 func printAgentLifecycleCommands(info SummaryInfo) {
-	fmt.Fprintln(os.Stdout, "Useful commands")
-	printSummaryValue("CLI path", filepath.Join(info.InstallPath, installerScriptName()))
+	writeAgentLifecycleCommands(os.Stdout, info)
+}
+
+func writeAgentLifecycleCommands(writer io.Writer, info SummaryInfo) {
+	fmt.Fprintln(writer, "Useful commands")
+	printSummaryValueTo(writer, "CLI path", filepath.Join(info.InstallPath, installerScriptName()))
 	if runtime.GOOS == "windows" {
 		command := windowsPowerShellCommand(filepath.Join(info.InstallPath, installerScriptName()))
 		if vfs.UserInstallation() {
-			printSummaryValue("Task status", `powershell -NoProfile -Command "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Get-ScheduledTask -TaskName ('HyperFileLensAgent.User.'+$sid)"`)
+			printSummaryValueTo(writer, "Task status", `powershell -NoProfile -Command "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Get-ScheduledTask -TaskName ('HyperFileLensAgent.User.'+$sid)"`)
 		} else {
-			printSummaryValue("Service status", "sc.exe query HyperFileLensAgent")
+			printSummaryValueTo(writer, "Service status", "sc.exe query HyperFileLensAgent")
 		}
-		printSummaryValue("Agent status", command+" status")
-		printSummaryValue("Uninstall", command+" uninstall")
-		printSummaryValue("Purge all", command+" uninstall -PurgeAll")
+		printSummaryValueTo(writer, "Agent status", command+" status")
+		printSummaryValueTo(writer, "Uninstall", command+" uninstall")
+		printSummaryValueTo(writer, "Purge all", command+" uninstall -PurgeAll")
 		return
 	}
 
@@ -499,14 +543,14 @@ func printAgentLifecycleCommands(info SummaryInfo) {
 	} else {
 		lifecycleStatus = "systemctl status hyperfilelens-agent"
 	}
-	printSummaryValue("Service status", lifecycleStatus)
+	printSummaryValueTo(writer, "Service status", lifecycleStatus)
 	command := strconv.Quote(filepath.Join(info.InstallPath, installerScriptName()))
 	if !vfs.UserInstallation() {
 		command = "sudo " + command
 	}
-	printSummaryValue("Agent status", command+" status")
-	printSummaryValue("Uninstall", command+" uninstall")
-	printSummaryValue("Purge all", command+" uninstall --purge-all")
+	printSummaryValueTo(writer, "Agent status", command+" status")
+	printSummaryValueTo(writer, "Uninstall", command+" uninstall")
+	printSummaryValueTo(writer, "Purge all", command+" uninstall --purge-all")
 }
 
 // windowsPowerShellCommand returns a copyable PowerShell invocation for a
@@ -543,10 +587,14 @@ func printResultRule(writer io.Writer, title, color string) {
 }
 
 func printSummaryValue(label, value string) {
+	printSummaryValueTo(os.Stdout, label, value)
+}
+
+func printSummaryValueTo(writer io.Writer, label, value string) {
 	if strings.TrimSpace(value) == "" {
 		return
 	}
-	fmt.Fprintf(os.Stdout, "  %-13s %s\n", label, value)
+	fmt.Fprintf(writer, "  %-13s %s\n", label, value)
 }
 
 func installLogPath() string {
@@ -555,6 +603,10 @@ func installLogPath() string {
 
 func jsonOutput() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("HFL_OUTPUT")), "json")
+}
+
+func parentSession() bool {
+	return os.Getenv("HFL_PARENT_SESSION") == "1"
 }
 
 func emitJSON(writer io.Writer, payload map[string]any) {

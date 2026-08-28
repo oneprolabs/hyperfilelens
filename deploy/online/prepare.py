@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import errno
 import hashlib
 import json
 import os
 import pathlib
+import pty
 import re
 import shutil
 import stat
@@ -96,6 +98,61 @@ def run(
         detail = f": {output[-1000:]}" if output else ""
         raise RuntimeError(f"command failed ({' '.join(command)}){detail}")
     return completed
+
+
+def run_with_native_progress(command: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run a command through a PTY while relaying its native progress output."""
+    if os.environ.get("HFL_ONLINE_NATIVE_PROGRESS") != "1":
+        completed = run(command, capture_output=True, check=False)
+        if completed.stdout:
+            sys.stdout.write(completed.stdout)
+            sys.stdout.flush()
+        return completed
+
+    master_fd, slave_fd = pty.openpty()
+    output_tail = bytearray()
+    try:
+        process = subprocess.Popen(  # pylint: disable=consider-using-with
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=slave_fd,
+            stderr=slave_fd,
+        )
+    except OSError:
+        os.close(master_fd)
+        raise
+    finally:
+        os.close(slave_fd)
+
+    try:
+        try:
+            while True:
+                try:
+                    chunk = os.read(master_fd, 64 * 1024)
+                except OSError as error:
+                    if error.errno == errno.EIO:
+                        break
+                    raise
+                if not chunk:
+                    break
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+                output_tail.extend(chunk)
+                if len(output_tail) > 16 * 1024:
+                    del output_tail[: len(output_tail) - 16 * 1024]
+        finally:
+            os.close(master_fd)
+    except (BrokenPipeError, OSError):
+        if process.poll() is None:
+            process.terminate()
+        process.wait()
+        raise
+
+    return subprocess.CompletedProcess(
+        command,
+        process.wait(),
+        stdout=output_tail.decode("utf-8", errors="replace"),
+    )
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -307,24 +364,42 @@ def image_digest(ref: str) -> str:
     return valid[0]
 
 
-def resolve_image(spec: ImageSpec, preferred_region: str) -> ResolvedImage:
+def resolve_image(
+    spec: ImageSpec,
+    preferred_region: str,
+    position: int,
+    total: int,
+) -> ResolvedImage:
     """Pull one public image with regional fallback and retain its local alias."""
     fallback = "global" if preferred_region == "cn" else "cn"
     failures: list[str] = []
+    image_kind = "release asset image" if spec.asset_kind else "runtime image"
     for region in (preferred_region, fallback):
         source_ref = spec.source_ref(region)
-        print(f"[....] Pulling {source_ref}", flush=True)
-        completed = run(
-            ["docker", "pull", "--platform", "linux/amd64", source_ref],
-            capture_output=True,
-            check=False,
+        print(
+            f"[....] Pulling {image_kind} ({position}/{total}): {source_ref}",
+            flush=True,
+        )
+        # A PTY preserves Docker's familiar live renderer. The online parent
+        # mirrors the relayed stream into its durable, timestamped session log.
+        completed = run_with_native_progress(
+            ["docker", "pull", "--platform", "linux/amd64", source_ref]
         )
         if completed.returncode != 0:
-            failures.append(f"{source_ref}: {(completed.stdout or '').strip()[-500:]}")
+            detail = re.sub(
+                r"\x1b\[[0-9;?]*[ -/]*[@-~]",
+                "",
+                completed.stdout or "",
+            ).replace("\r", "\n").strip()
+            if detail:
+                detail = detail[-500:]
+            else:
+                detail = f"docker pull exited with status {completed.returncode}"
+            failures.append(f"{source_ref}: {detail}")
             continue
         digest = image_digest(source_ref)
         run(["docker", "tag", source_ref, spec.local_ref])
-        print(f"[ OK ] Resolved {spec.local_ref}@{digest}", flush=True)
+        print(f"[ OK ] {image_kind.title()} ready: {spec.local_ref}@{digest}", flush=True)
         return ResolvedImage(spec=spec, digest=digest)
     raise RuntimeError(
         f"neither public registry could provide {spec.local_ref}: "
@@ -410,12 +485,29 @@ def extract_asset(image: ResolvedImage, payload_root: pathlib.Path) -> None:
                     "cp",
                     f"{container_id}:/opt/hyperfilelens-assets/.",
                     str(root),
-                ]
+                ],
+                capture_output=True,
             )
             validate_asset_tree(root, kind)
             shutil.copytree(root / "payload", payload_root, dirs_exist_ok=True)
     finally:
-        run(["docker", "rm", "-f", container_id], check=False)
+        completed = run(
+            ["docker", "rm", "-f", container_id],
+            capture_output=True,
+            check=False,
+        )
+        cleanup_output = (completed.stdout or "").strip()
+        if (
+            completed.returncode != 0
+            and cleanup_output
+            and "No such container" not in cleanup_output
+        ):
+            print(
+                f"[WARN] Could not remove temporary {kind} asset container: "
+                f"{cleanup_output[-500:]}",
+                file=sys.stderr,
+                flush=True,
+            )
 
 
 def discard_asset_image(image: ResolvedImage) -> None:
@@ -426,7 +518,22 @@ def discard_asset_image(image: ResolvedImage) -> None:
         image.spec.source_ref("global"),
     }
     for ref in sorted(refs):
-        run(["docker", "image", "rm", ref], check=False)
+        completed = run(
+            ["docker", "image", "rm", ref], capture_output=True, check=False
+        )
+        if completed.returncode == 0:
+            continue
+        output = (completed.stdout or "").strip()
+        # A tag can legitimately be absent after Docker has removed an alias
+        # while cleaning the scratch image.  Keep that expected condition
+        # quiet, but retain unusual cleanup failures in the session output.
+        if output and "No such image" not in output:
+            print(
+                f"[WARN] Could not remove temporary {image.spec.asset_kind} "
+                f"asset image {ref}: {output[-500:]}",
+                file=sys.stderr,
+                flush=True,
+            )
 
 
 def write_sourcelens_build_info(
@@ -615,17 +722,32 @@ def main() -> int:
         )
         for kind in ("agent", "gateway", "language")
     ]
-    runtime = [resolve_image(spec, args.region) for spec in runtime_specs]
-    assets = [resolve_image(spec, args.region) for spec in asset_specs]
+    runtime = [
+        resolve_image(spec, args.region, position, len(runtime_specs))
+        for position, spec in enumerate(runtime_specs, start=1)
+    ]
+    print(f"[ OK ] Runtime images are ready: {len(runtime)} images", flush=True)
+    assets = [
+        resolve_image(spec, args.region, position, len(asset_specs))
+        for position, spec in enumerate(asset_specs, start=1)
+    ]
 
     revision = image_revision(f"hyperfilelens-backend:{version}")
     if image_revision(f"hyperfilelens-frontend:{version}") != revision:
         raise ValueError("Community backend and frontend revisions do not match")
+    asset_labels = {
+        "agent": "Agent packages",
+        "gateway": "Data Gateway packages",
+        "language": "Language packs",
+    }
     for asset in assets:
+        label = asset_labels[asset.spec.asset_kind]
+        print(f"[....] Preparing {label}", flush=True)
         try:
             extract_asset(asset, target / "payload")
         finally:
             discard_asset_image(asset)
+        print(f"[ OK ] {label} are ready", flush=True)
     sourcelens = write_sourcelens_build_info(source, target, runtime)
     write_manifest(target, version, revision, runtime, assets, sourcelens)
     print(f"[ OK ] Prepared Community package: {target}")

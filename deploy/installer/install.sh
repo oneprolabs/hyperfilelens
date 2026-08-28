@@ -64,6 +64,7 @@ LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR="/opt/hyperfilelens-agent"
 LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR="/var/lib/hyperfilelens-agent"
 LOCAL_PLATFORM_LENSNODE_ENV_FILE="/etc/hyperfilelens/lensnode.env"
 LOCAL_PLATFORM_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
+LOCAL_PLATFORM_GATEWAY_VERIFIED=0
 
 usage() {
 	cat <<'USAGE'
@@ -227,7 +228,9 @@ timestamp_log_stream() {
 	local log_file=$1 line timestamp
 	local TZ=UTC
 	export TZ
-	sed $'s/\033\[[0-9;]*m//g' | while IFS= read -r line || [[ -n "${line}" ]]; do
+	# Strip all CSI terminal controls (colour, cursor movement, erase-line)
+	# from durable logs while preserving the original stream on the terminal.
+	sed $'s/\033\[[0-9;?]*[ -/]*[@-~]//g' | while IFS= read -r line || [[ -n "${line}" ]]; do
 		printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
 		printf '[%s] %s\n' "${timestamp}" "${line}" >>"${log_file}"
 	done
@@ -250,6 +253,12 @@ configure_logging() {
 		;;
 	*) safe_action=operation ;;
 	esac
+	if [[ "${HFL_PARENT_LOGGING:-0}" == "1" ]]; then
+		[[ "${HFL_ONLINE_CHILD:-0}" == "1" \
+			&& -n "${LOG_FILE}" && -f "${LOG_FILE}" && ! -L "${LOG_FILE}" ]] \
+			|| die "parent session did not provide a valid log file"
+		return 0
+	fi
 	stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 	if [[ -z "${LOG_FILE}" ]]; then
 		LOG_FILE="${INSTALL_DIR}/logs/${safe_action}-${stamp}-$$.log"
@@ -3589,6 +3598,17 @@ print_console_access_summary() {
 		print_value "Insight network" "${HFL_BRIDGE_NETWORK} (private)"
 	fi
 
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_platform_gateway_summary "${host}" "${tenant_port}"
+	fi
+
+	print_section "Published resources"
+	print_value "Agent packages" "https://${host}:${tenant_port}/media/agent-releases/"
+	print_value "AI engine" "https://${host}:${tenant_port}/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz"
+	if [[ -d "${ROOT}/data/language-packs" ]]; then
+		print_value "Language packs" "${ROOT}/data/language-packs"
+	fi
+
 	if [[ "${seed}" == "1" ]]; then
 		SESSION_WARNINGS+=("Change all default passwords after the first login.")
 	fi
@@ -3602,6 +3622,48 @@ print_console_access_summary() {
 	print_value "Backup" "sudo ${ROOT}/install.sh backup"
 	print_value "Upgrade" "sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
 	print_value "Uninstall" "sudo ${ROOT}/install.sh uninstall"
+}
+
+print_platform_gateway_summary() {
+	local host=$1 tenant_port=$2
+	local node_id organization version service container_id ai_engine console_state
+	local_platform_gateway_agent_is_managed || return 0
+	node_id="$(read_agent_env_value HFL_NODE_ID)"
+	organization="$(read_agent_env_value HFL_ORG_KEY)"
+	organization="${organization#__}"
+	organization="${organization%__}"
+	version="$(local_platform_gateway_installed_agent_version)"
+	service="$(systemctl is-active hyperfilelens-agent.service 2>/dev/null || true)"
+	[[ -n "${service}" ]] || service="unknown"
+	container_id="$(docker ps -aq --no-trunc \
+		--filter 'label=com.hyperfilelens.managed=true' \
+		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
+		--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
+		--filter 'label=com.docker.compose.service=lensnode' 2>/dev/null | head -1)" \
+		|| container_id=""
+	ai_engine="unknown"
+	if [[ -n "${container_id}" ]]; then
+		ai_engine="$(docker inspect --format '{{.State.Status}}' "${container_id}" 2>/dev/null || true)"
+		[[ -n "${ai_engine}" ]] || ai_engine="unknown"
+	fi
+	console_state="not verified by this command"
+	[[ "${LOCAL_PLATFORM_GATEWAY_VERIFIED}" -eq 0 ]] || console_state="online"
+
+	print_section "Platform Data Gateway"
+	print_value "Role" "Private Data Gateway"
+	print_value "Organization" "${organization:-platform_lens}"
+	print_value "Node ID" "${node_id:-unknown}"
+	print_value "Agent version" "${version:-unknown}"
+	print_value "Agent service" "${service}"
+	print_value "AI engine" "${ai_engine}"
+	print_value "Console state" "${console_state}"
+	print_value "Console" "https://${host}:${tenant_port}/"
+	print_value "Agent root" "${LOCAL_PLATFORM_AGENT_DATA_DIR}"
+	print_value "Binaries" "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}"
+	print_value "Config" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config"
+	print_value "Data" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data"
+	print_value "Logs" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/logs"
+	print_value "Install log" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/logs/install.log"
 }
 
 package_has_sourcelens() {
@@ -4341,6 +4403,7 @@ wait_for_local_platform_gateway_readiness() {
 	deadline=$((SECONDS + timeout_seconds))
 	while true; do
 		if local_platform_gateway_readiness_once; then
+			LOCAL_PLATFORM_GATEWAY_VERIFIED=1
 			ok "Installer-managed platform Gateway is online and usable"
 			return 0
 		fi
@@ -4553,6 +4616,7 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		HFL_WSS_URL="${wss_url}" \
 		HFL_INSECURE_TLS=1 \
 		HFL_FORCE_SIDECAR_INSTALL=1 \
+		HFL_PARENT_SESSION="${HFL_ONLINE_CHILD:-0}" \
 		HFL_NO_BANNER=1 \
 		"${helper}" gateway-install --yes --no-banner
 	desired_version="$(read_version)"
@@ -4647,19 +4711,21 @@ cmd_install() {
 	if [[ "$(read_channel_from_dir "${source_root}")" == "main" && "${allow_main_build}" -ne 1 ]]; then
 		die "main channel packages require --allow-main-build"
 	fi
-	print_section "Target"
-	print_value "Version" "${version}"
-	print_value "Edition" "$(display_edition_from_dir "${source_root}")"
-	print_value "Package" "${source_root}"
-	print_value "Install path" "${INSTALL_DIR}"
-	print_value "Platform" "$(uname -s | tr '[:upper:]' '[:lower:]')/$(uname -m)"
-	case "${sourcelens_mode}" in
-	0) print_value "Insight" "skipped by command option" ;;
-	1) print_value "Insight" "bundled installation requested" ;;
-	*) print_value "Insight" "selected by runtime configuration" ;;
-	esac
-	print_value "Data Gateway" "auto-deploy when enabled"
-	print_value "Log file" "${LOG_FILE}"
+	if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
+		print_section "Target"
+		print_value "Version" "${version}"
+		print_value "Edition" "$(display_edition_from_dir "${source_root}")"
+		print_value "Package" "${source_root}"
+		print_value "Install path" "${INSTALL_DIR}"
+		print_value "Platform" "$(uname -s | tr '[:upper:]' '[:lower:]')/$(uname -m)"
+		case "${sourcelens_mode}" in
+		0) print_value "Insight" "skipped by command option" ;;
+		1) print_value "Insight" "bundled installation requested" ;;
+		*) print_value "Insight" "selected by runtime configuration" ;;
+		esac
+		print_value "Data Gateway" "auto-deploy when enabled"
+		print_value "Log file" "${LOG_FILE}"
+	fi
 
 	print_section "[1/8] Staging and validating release package"
 	init_install_root
@@ -6187,11 +6253,13 @@ cmd_upgrade() {
 	preflight_package_layout 0
 	warn_host_resources
 	cur_version="$(read_version)"
-	print_section "Target"
-	print_value "Current" "${cur_version} ($(display_edition_from_dir "${ROOT}"))"
-	print_value "Package" "${from}"
-	print_value "Install path" "${ROOT}"
-	print_value "Log file" "${LOG_FILE}"
+	if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
+		print_section "Target"
+		print_value "Current" "${cur_version} ($(display_edition_from_dir "${ROOT}"))"
+		print_value "Package" "${from}"
+		print_value "Install path" "${ROOT}"
+		print_value "Log file" "${LOG_FILE}"
+	fi
 
 	trap cleanup_upgrade_and_finish EXIT
 	artifact_sha="${UPGRADE_ARTIFACT_SHA256:-}"
@@ -6490,7 +6558,8 @@ main() {
 	platform-gateway) banner_title="HyperFileLens Platform Data Gateway" ;;
 	lang-pack) banner_title="HyperFileLens Language Pack Manager" ;;
 	esac
-	[[ -t 2 ]] && INTERACTIVE_SESSION=1 || true
+	[[ -t 2 || "${HFL_PARENT_INTERACTIVE:-0}" == "1" ]] \
+		&& INTERACTIVE_SESSION=1 || true
 	SESSION_ACTION="${requested_cmd}"
 	configure_logging "${requested_cmd}"
 	SESSION_STARTED=1
