@@ -234,6 +234,7 @@ func TestWriteWindowsUserUninstallScriptUsesCurrentUserLifecycle(t *testing.T) {
 		`@('hfl-agent', 'hfl-agent-user-launcher', 'kopia')`,
 		`Get-ScheduledTask -TaskName $runtimeTaskName`,
 		`Unregister-ScheduledTask -TaskName $runtimeTaskName`,
+		`Unregister-ScheduledTask -TaskName $scheduledTaskName -TaskPath '\'`,
 		`Join-Path $env:LOCALAPPDATA 'HyperFileLens\Agent'`,
 		`return $full.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)`,
 	} {
@@ -268,7 +269,11 @@ func TestWriteWindowsUserUpgradeScriptStopsScheduledTask(t *testing.T) {
 		"Stop-ScheduledTask -TaskName $runtimeTaskName",
 		"$agentRoot = Split-Path -Parent $install",
 		"$scheduledTaskName = if ($userInstall) { \"$runtimeTaskName.DetachedRunner\" }",
-		"Unregister-ScheduledTask -TaskName $scheduledTaskName",
+		"$upgradeSucceeded = $false",
+		"} finally {",
+		"Unregister-ScheduledTask -TaskName $scheduledTaskName -TaskPath '\\'",
+		"if ($null -eq $rc -or $rc -eq 0) { $rc = 1 }",
+		"Set-Content -LiteralPath (Join-Path $pending 'FAILED')",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("user upgrade script missing %q", expected)

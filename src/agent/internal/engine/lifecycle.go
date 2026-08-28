@@ -87,7 +87,9 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 		cfg.InstallationMode == model.InstallationModeUser || cfg.InstallationMode == model.InstallationModeUserContinuous,
 	); err != nil {
 		slog.Warn("detached upgrade schedule failed", "err", err, "upgrade_log", upgradeLog)
-		_ = os.RemoveAll(filepath.Dir(stagedArchive))
+		if !install.ShouldRetainDetachedLifecycleFiles(err) {
+			_ = os.RemoveAll(filepath.Dir(stagedArchive))
+		}
 		return "failed", nil, err.Error()
 	}
 	slog.Info("detached upgrade scheduled", "install_dir", installDir, "archive", stagedArchive, "upgrade_log", upgradeLog)

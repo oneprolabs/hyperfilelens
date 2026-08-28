@@ -41,6 +41,7 @@ func ScheduleDetachedUpgrade(
 		userInstall,
 		scriptPath,
 	); err != nil {
+		_ = os.Remove(scriptPath)
 		if logDir != "" {
 			_ = AppendUpgradeLog(logDir, fmt.Sprintf("failed to write upgrade script: %v", err))
 		}
@@ -52,6 +53,9 @@ func ScheduleDetachedUpgrade(
 		}
 	}
 	if err := startWindowsDetachedScript(scriptPath, userInstall, logFn); err != nil {
+		if !ShouldRetainDetachedLifecycleFiles(err) {
+			_ = os.Remove(scriptPath)
+		}
 		logFn(fmt.Sprintf("failed to start detached upgrade script: %v", err))
 		return fmt.Errorf("start detached upgrade: %w", err)
 	}
@@ -88,17 +92,17 @@ function Log([string]$msg) {
 
 Log "detached upgrade script started archive=$archive"
 $ErrorActionPreference = 'Continue'
+$rc = 1
+$upgradeSucceeded = $false
 try {
   Start-Sleep -Seconds $SLEEP_SECONDS
   Log "delay elapsed; running upgrade"
 
   if (-not (Test-Path -LiteralPath $install)) {
-    Log "install.ps1 missing at $install"
-    exit 1
+    throw "install.ps1 missing at $install"
   }
   if (-not (Test-Path -LiteralPath $archive)) {
-    Log "archive missing at $archive"
-    exit 1
+    throw "archive missing at $archive"
   }
 
   Log "running install.ps1 upgrade"
@@ -109,18 +113,24 @@ try {
   }
   $rc = $LASTEXITCODE
   if ($rc -ne 0) {
-    Log "install.ps1 upgrade failed exit=$rc"
-    exit $rc
+    throw "install.ps1 upgrade failed exit=$rc"
   }
+  $upgradeSucceeded = $true
   Log "install.ps1 upgrade succeeded"
-  Remove-Item -Recurse -Force -LiteralPath $pending -ErrorAction SilentlyContinue
-	Unregister-ScheduledTask -TaskName $scheduledTaskName -Confirm:$false -ErrorAction SilentlyContinue
-  Log "detached upgrade script finished"
-  exit 0
 } catch {
   Log "install.ps1 upgrade failed: $($_.Exception.Message)"
-  exit 1
+  if ($null -eq $rc -or $rc -eq 0) { $rc = 1 }
+} finally {
+  Unregister-ScheduledTask -TaskName $scheduledTaskName -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
 }
+
+if ($upgradeSucceeded) {
+  Log "detached upgrade script finished"
+  Remove-Item -Recurse -Force -LiteralPath $pending -ErrorAction SilentlyContinue
+  exit 0
+}
+Set-Content -LiteralPath (Join-Path $pending 'FAILED') -Value 'failed' -Encoding ASCII -ErrorAction SilentlyContinue
+exit $rc
 `,
 		logFile,
 		installScript,
