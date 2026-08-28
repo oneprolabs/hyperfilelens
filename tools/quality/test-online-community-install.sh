@@ -42,6 +42,20 @@ grep -Fq 'tag_suffix: -ee' "${workflow}"
 grep -Fq 'hyperfilelens-agent-assets:${{ needs.prepare.outputs.version }}' "${workflow}"
 grep -Fq 'hyperfilelens-gateway-assets:${{ needs.prepare.outputs.version }}' "${workflow}"
 grep -Fq 'hyperfilelens-language-assets:${{ needs.prepare.outputs.version }}' "${workflow}"
+
+installer="${ROOT}/deploy/installer/install.sh"
+[[ "$(grep -Fc 'if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then' "${installer}")" -eq 2 ]]
+for summary_contract in \
+	'print_section "Platform Data Gateway"' \
+	'print_section "Published resources"' \
+	'print_value "Agent version"' \
+	'print_value "Agent service"' \
+	'print_value "Console state"' \
+	'print_value "Data" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data"' \
+	'print_value "Logs" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/logs"' \
+	'print_value "Install log"'; do
+	grep -Fq "${summary_contract}" "${installer}"
+done
 if grep -Eq 'publish-community-channel|community-channel|git push origin HEAD:main' "${workflow}"; then
 	printf 'ERROR: SaaS workflow must not manage a separate Community channel branch\n' >&2
 	exit 1
@@ -237,6 +251,11 @@ case "${1:-} ${2:-}" in
 	exit 0
 	;;
 "pull --platform")
+	printf '\rDocker native pull progress: %s\n' "${4:-unknown}"
+	if [[ "${HFL_TEST_DOCKER_PULL_FAIL:-0}" == "1" ]]; then
+		printf 'registry rejected test image: access denied\n' >&2
+		exit 23
+	fi
 	exit 0
 	;;
 "image inspect")
@@ -251,7 +270,15 @@ case "${1:-} ${2:-}" in
 "buildx imagetools")
 	printf '{"digest":"%s"}\n' "${digest}"
 	;;
-"tag "* | "rm -f" | "image rm")
+"image rm")
+	printf 'Untagged: %s\n' "${3:-unknown}"
+	exit 0
+	;;
+"rm -f")
+	printf '%s\n' "${3:-temporary-container}"
+	exit 0
+	;;
+"tag "*)
 	exit 0
 	;;
 "create "*)
@@ -309,7 +336,7 @@ chmod 755 "${fake_bin}/curl" "${fake_bin}/docker"
 
 test_install_root="${tmp}/community-install"
 test_installer="${tmp}/online-install.sh"
-python3 - "${online}/install.sh" "${test_installer}" "${test_install_root}" <<'PY'
+python3 - "${online}/install.sh" "${test_installer}" "${test_install_root}" "${tmp}" <<'PY'
 import pathlib
 import sys
 
@@ -319,6 +346,9 @@ replacements = {
     '[[ "${EUID}" -eq 0 ]] || fail "run this command through sudo"': ":",
     "\ninstall_host_tools\ninspect_existing_installation\n": (
         "\n:\ninspect_existing_installation\n"
+    ),
+    'SESSION_DIR="$(mktemp -d /var/tmp/hyperfilelens-online.XXXXXX)"': (
+        f'SESSION_DIR="$(mktemp -d "{sys.argv[4]}/online-session.XXXXXX")"'
     ),
 }
 for old, new in replacements.items():
@@ -374,10 +404,16 @@ if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
 	printf 'ERROR: fake online install unexpectedly succeeded\n' >&2
 	exit 1
 fi
-grep -Fq 'Selected tag: v1.2.12' "${latest_log}" || {
+grep -Fq 'Version        v1.2.12' "${latest_log}" || {
 	cat "${latest_log}" >&2
 	exit 1
 }
+latest_session_log="$(find "${test_install_root}/logs" -maxdepth 1 -type f \
+	-name 'install-*.log' -print -quit)"
+[[ -n "${latest_session_log}" ]]
+grep -Fq 'HyperFileLens Community Online Installer' "${latest_session_log}"
+grep -Fq 'Resolving Community tags from GitHub' "${latest_session_log}"
+grep -Fq "Log file       ${latest_session_log}" "${latest_log}"
 grep -Fq 'recent fallback tags: v1.2.11, v1.2.10, v1.2.9, v1.2.8, v1.2.7, v1.2.6, v1.2.5, v1.2.4, v1.2.3, v1.2.2' \
 	"${latest_log}"
 grep -Fq 'recommended retry: --mirror global --tag v1.2.11' "${latest_log}"
@@ -402,7 +438,7 @@ if PATH="${fake_bin}:${PATH}" \
 	printf 'ERROR: fake paginated online install unexpectedly succeeded\n' >&2
 	exit 1
 fi
-grep -Fq 'Selected tag: v2.0.0' "${pagination_log}" || {
+grep -Fq 'Version        v2.0.0' "${pagination_log}" || {
 	cat "${pagination_log}" >&2
 	exit 1
 }
@@ -417,12 +453,39 @@ if PATH="${fake_bin}:${PATH}" \
 fi
 grep -Fq 'repeated page 2' "${repeated_page_log}"
 
+prepare_log="${tmp}/prepare.log"
 PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 \
 	python3 "${online}/prepare.py" \
 		--source-root "${ROOT}" \
 		--version v1.2.3 \
 		--region global \
-		--output "${candidate}"
+		--output "${candidate}" >"${prepare_log}" 2>&1
+grep -F 'Docker native pull progress:' "${prepare_log}" >/dev/null
+if grep -F 'Untagged:' "${prepare_log}" >/dev/null; then
+	printf 'ERROR: temporary asset image cleanup leaked into online output\n' >&2
+	exit 1
+fi
+if grep -F 'cid-' "${prepare_log}" >/dev/null; then
+	printf 'ERROR: temporary asset container cleanup leaked into online output\n' >&2
+	exit 1
+fi
+failed_prepare_log="${tmp}/prepare-failed.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 HFL_TEST_DOCKER_PULL_FAIL=1 \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--output "${tmp}/failed-candidate" \
+		>"${failed_prepare_log}" 2>&1; then
+	printf 'ERROR: failed Docker pulls unexpectedly prepared an online package\n' >&2
+	exit 1
+fi
+grep -Fq 'registry rejected test image: access denied' "${failed_prepare_log}"
+grep -Fq 'docker.io/oneprolabs/hyperfilelens-backend:1.2.3' "${failed_prepare_log}"
+grep -Fq 'registry.cn-beijing.aliyuncs.com/oneprolabs/hyperfilelens-backend:1.2.3' \
+	"${failed_prepare_log}"
 [[ -r "${candidate}/payload/runtime/compose-runtime.sh" ]]
 [[ ! -x "${candidate}/payload/runtime/compose-runtime.sh" ]]
 "${candidate}/install.sh" --help >/dev/null

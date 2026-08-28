@@ -227,6 +227,18 @@ func activeInstallLogPath() string {
 	return capture.sink.path
 }
 
+func writeCommandLogOnly(content string) {
+	commandLogState.Lock()
+	capture := commandLogState.current
+	commandLogState.Unlock()
+	if capture == nil || content == "" {
+		return
+	}
+	stream := &commandLogStream{sink: capture.sink}
+	_, _ = stream.Write([]byte(content))
+	stream.close()
+}
+
 func commandStdout() *os.File {
 	commandLogState.Lock()
 	capture := commandLogState.current

@@ -4,8 +4,11 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"hyperfilelens/agent/internal/model"
 )
 
 func TestJoinDetail(t *testing.T) {
@@ -185,6 +188,108 @@ func TestPrintCommandFailureForKeepsJSONResultTypeCompatible(t *testing.T) {
 	for _, expected := range []string{`"type":"install_result"`, `"operation":"uninstall"`} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("JSON failure output does not contain %q: %s", expected, output)
+		}
+	}
+}
+
+func TestParentSessionKeepsAgentDetailInLogAndCondensesTerminal(t *testing.T) {
+	t.Setenv("HFL_OUTPUT", "plain")
+	t.Setenv("HFL_PARENT_SESSION", "1")
+	logPath := filepath.Join(t.TempDir(), "logs", "install.log")
+	useTestInstallLogPath(t, logPath)
+
+	previousStdout := os.Stdout
+	terminalRead, terminalWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = terminalWrite
+	finish := StartCommandLogging()
+	commitInstallLog()
+	printEnrollmentContext(
+		"https://127.0.0.1:11443",
+		"__platform_lens__",
+		model.RoleGateway,
+		"linux/amd64",
+		"test-host",
+	)
+	printEnrollmentSuccess(SummaryInfo{
+		Role:        "Private Data Gateway",
+		NodeID:      "17",
+		Version:     "1.2.3",
+		Service:     "active",
+		LensNode:    "active",
+		InstallPath: "/opt/hyperfilelens-agent/bin",
+		DataPath:    "/opt/hyperfilelens-agent",
+		LogPath:     logPath,
+	})
+	finish()
+	os.Stdout = previousStdout
+	if err := terminalWrite.Close(); err != nil {
+		t.Fatal(err)
+	}
+	terminalContent, err := io.ReadAll(terminalRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = terminalRead.Close()
+
+	terminal := string(terminalContent)
+	if !strings.Contains(terminal, "Platform Data Gateway preflight checks") {
+		t.Fatalf("parent terminal omitted the Gateway phase: %s", terminal)
+	}
+	for _, unexpected := range []string{"Target\n", "Installation summary"} {
+		if strings.Contains(terminal, unexpected) {
+			t.Fatalf("parent terminal contains nested %q: %s", unexpected, terminal)
+		}
+	}
+
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"Target",
+		"Preflight checks",
+		"Installation completed successfully",
+		"Installation summary",
+		"Useful commands",
+	} {
+		if !strings.Contains(string(logged), expected) {
+			t.Fatalf("Agent log omitted %q: %s", expected, logged)
+		}
+	}
+}
+
+func TestDirectSessionStillPrintsAgentContext(t *testing.T) {
+	t.Setenv("HFL_OUTPUT", "plain")
+	t.Setenv("HFL_NO_BANNER", "1")
+	previousStdout := os.Stdout
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = writePipe
+	printEnrollmentContext(
+		"https://console.example",
+		"example-org",
+		model.RoleAgent,
+		"linux/amd64",
+		"source-host",
+	)
+	os.Stdout = previousStdout
+	if err := writePipe.Close(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := io.ReadAll(readPipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readPipe.Close()
+	output := string(content)
+	for _, expected := range []string{"Target", "example-org", "Preflight checks"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("direct Agent output omitted %q: %s", expected, output)
 		}
 	}
 }

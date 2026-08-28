@@ -20,6 +20,8 @@ RECENT_TAGS=""
 INSTALL_ROOT="/opt/hyperfilelens"
 INSTALL_ACTION="Install"
 MAX_TAG_PAGES=100
+ONLINE_LOG_FILE=""
+ONLINE_INTERACTIVE=0
 
 usage() {
 	cat <<'USAGE'
@@ -38,6 +40,77 @@ USAGE
 fail() {
 	printf '[FAIL] %s\n' "$*" >&2
 	exit 1
+}
+
+print_banner() {
+	cat <<'BANNER'
+ _   _                       _____ _ _      _
+| | | |_   _ _ __   ___ _ _|  ___(_) | ___| |    ___ _ __  ___
+| |_| | | | | '_ \ / _ \ '__| |_  | | |/ _ \ |   / _ \ '_ \/ __|
+|  _  | |_| | |_) |  __/ |  |  _| | | |  __/ |__|  __/ | | \__ \
+|_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/
+       |___/|_|                     INSTALLER
+BANNER
+	printf '\n%s\n%s\n' 'HyperFileLens Community Online Installer' '----------------------------------------------------------------'
+}
+
+timestamp_log_stream() {
+	local log_file=$1 line timestamp
+	local TZ=UTC
+	export TZ
+	# Strip all CSI terminal controls (colour, cursor movement, erase-line)
+	# before persisting output; the live terminal still receives the original
+	# stream through tee.
+	sed $'s/\033\[[0-9;?]*[ -/]*[@-~]//g' | while IFS= read -r line || [[ -n "${line}" ]]; do
+		printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
+		printf '[%s] %s\n' "${timestamp}" "${line}" >>"${log_file}"
+	done
+}
+
+capture_log_stream() {
+	local log_file=$1 console_fd=$2
+	tee "/dev/fd/${console_fd}" \
+		| tr '\r' '\n' \
+		| timestamp_log_stream "${log_file}"
+}
+
+configure_logging() {
+	local stamp
+	[[ -t 1 || -t 2 ]] && ONLINE_INTERACTIVE=1 || true
+	stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+	ONLINE_LOG_FILE="${INSTALL_ROOT}/logs/install-${stamp}-$$.log"
+	mkdir -p "$(dirname "${ONLINE_LOG_FILE}")" \
+		|| fail "could not create the online installation log directory"
+	[[ ! -L "${ONLINE_LOG_FILE}" ]] \
+		|| fail "refusing to write the online installation log through a symbolic link"
+	touch "${ONLINE_LOG_FILE}" \
+		|| fail "could not create the online installation log"
+	chmod 600 "${ONLINE_LOG_FILE}" \
+		|| fail "could not secure the online installation log"
+	exec 3>&1
+	exec 4>&2
+	exec > >(capture_log_stream "${ONLINE_LOG_FILE}" 3) \
+		2> >(capture_log_stream "${ONLINE_LOG_FILE}" 4)
+}
+
+print_target() {
+	# Keep the online bootstrap target separate from the child package installer.
+	# The child runs in parent-session mode and therefore does not print another
+	# banner or duplicate Target block.
+	# shellcheck disable=SC1091
+	source /etc/os-release
+	cat <<EOF
+
+Target
+  Version        ${TAG}
+  Edition        Community
+  Action         ${INSTALL_ACTION}
+  Source         ${SOURCE_NAME}
+  Registry       ${REGISTRY_NAME}
+  Install path   ${INSTALL_ROOT}
+  Platform       ${PRETTY_NAME:-Ubuntu} · linux/amd64
+  Log file       ${ONLINE_LOG_FILE}
+EOF
 }
 
 cleanup() {
@@ -284,11 +357,6 @@ PY
 
 confirm_installation() {
 	local answer=""
-	printf '\nSelected tag: %s\n' "${TAG}"
-	printf 'Download source: %s\n' "${SOURCE_NAME}"
-	printf 'Image registry: %s\n' "${REGISTRY_NAME}"
-	printf 'Install directory: %s\n' "${INSTALL_ROOT}"
-	printf 'Action: %s\n\n' "${INSTALL_ACTION}"
 	((ASSUME_YES == 1)) && return 0
 	[[ -r /dev/tty ]] \
 		|| fail "interactive confirmation requires a terminal; use --yes only for automation"
@@ -370,6 +438,8 @@ done
 	|| fail "--tag must use vX.Y.Z; choose a published version with --mirror cn|global --tag vX.Y.Z"
 configure_mirror
 check_host
+configure_logging
+print_banner
 
 SESSION_DIR="$(mktemp -d /var/tmp/hyperfilelens-online.XXXXXX)"
 chmod 0700 "${SESSION_DIR}"
@@ -380,12 +450,16 @@ trap 'exit 143' TERM
 install_host_tools
 inspect_existing_installation
 resolve_tag
+print_target
 confirm_installation
 download_source_archive
+
+printf '\n[....] Preparing release images and installation assets\n'
 
 export HFL_GLOBAL_REGISTRY_PREFIX="${GLOBAL_REGISTRY_PREFIX}"
 export HFL_CN_REGISTRY_PREFIX="${CN_REGISTRY_PREFIX}"
 export HFL_REGISTRY_REGION="${REGION}"
+export HFL_ONLINE_NATIVE_PROGRESS="${ONLINE_INTERACTIVE}"
 candidate="${SESSION_DIR}/hyperfilelens-${RELEASE_VERSION}-online"
 if ! python3 "${SESSION_DIR}/source/deploy/online/prepare.py" \
 	--source-root "${SESSION_DIR}/source" \
@@ -397,13 +471,18 @@ fi
 if ! verify_candidate_release; then
 	fail_with_tag_guidance "Community tag ${TAG} failed release identity validation"
 fi
+printf '[ OK ] Release images and installation assets are ready\n'
 
 if [[ "${INSTALL_ACTION}" == Upgrade ]]; then
 	printf '[....] Upgrading the existing installation to %s\n' "${TAG}"
-	HFL_REGISTRY_REGION="${REGION}" bash "${candidate}/install.sh" \
+	HFL_REGISTRY_REGION="${REGION}" HFL_ONLINE_CHILD=1 HFL_PARENT_LOGGING=1 \
+		HFL_PARENT_INTERACTIVE="${ONLINE_INTERACTIVE}" HFL_LOG_FILE="${ONLINE_LOG_FILE}" \
+		HFL_NO_BANNER=1 bash "${candidate}/install.sh" \
 		upgrade --from "${candidate}" --yes --with-sourcelens
 else
 	printf '[....] Installing HyperFileLens Community %s\n' "${TAG}"
-	HFL_REGISTRY_REGION="${REGION}" bash "${candidate}/install.sh" \
+	HFL_REGISTRY_REGION="${REGION}" HFL_ONLINE_CHILD=1 HFL_PARENT_LOGGING=1 \
+		HFL_PARENT_INTERACTIVE="${ONLINE_INTERACTIVE}" HFL_LOG_FILE="${ONLINE_LOG_FILE}" \
+		HFL_NO_BANNER=1 bash "${candidate}/install.sh" \
 		install --with-sourcelens --yes
 fi
