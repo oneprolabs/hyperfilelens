@@ -2289,7 +2289,7 @@ function mergeCreatedBackupConfigs({ items }: BackupCreateResultPayload) {
 function reconcileCreatedBackupConfigs(sourceIds: string[]) {
   void refreshStep3AfterMoreAction({
     focusIds: sourceIds,
-    showLoading: false,
+    showLoading: true,
     preserveExpandedState: true,
   }).catch((err) => {
     if (!pageRequests.isAbortError(err)) showApiError(err)
