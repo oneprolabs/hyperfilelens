@@ -17,6 +17,9 @@ func TestUpgradeArtifactsStayUnderRollbackDirectory(t *testing.T) {
 	if got, want := BackupRollbackBinDir(root), root+"/backup/rollback/bin"; got != want {
 		t.Fatalf("binary rollback path = %q, want %q", got, want)
 	}
+	if got, want := LifecycleUpgradeStatePath(root), root+"/lifecycle/upgrade-state.json"; got != want {
+		t.Fatalf("upgrade state path = %q, want %q", got, want)
+	}
 	if got, want := vfs.AgentDatabasePath(root), root+"/data/agent.db"; got != want {
 		t.Fatalf("database path = %q, want %q", got, want)
 	}

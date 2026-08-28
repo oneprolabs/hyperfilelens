@@ -6,7 +6,10 @@ import (
 	"os"
 	"strings"
 
+	"hyperfilelens/agent/internal/enroll"
 	"hyperfilelens/agent/internal/infra/config"
+	"hyperfilelens/agent/internal/infra/database"
+	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/selfupdate"
 )
 
@@ -28,6 +31,10 @@ func Run(args []string) error {
 			selfupdate.Commit,
 		)
 		return nil
+	case "package":
+		return runPackage(args[1:])
+	case "database":
+		return runDatabase(args[1:])
 	case "config":
 		return config.RunCLI(context.Background(), args[1:])
 	case "tasks":
@@ -45,12 +52,71 @@ func Run(args []string) error {
 	}
 }
 
+func runDatabase(args []string) error {
+	if len(args) < 1 || args[0] != "backup" {
+		return fmt.Errorf("usage: hfl-agent database backup --source <agent.db> --destination <agent.db>")
+	}
+	var source, destination string
+	for i := 1; i < len(args); i++ {
+		if i+1 >= len(args) {
+			return fmt.Errorf("database backup option %q requires a value", args[i])
+		}
+		switch args[i] {
+		case "--source":
+			source = args[i+1]
+		case "--destination":
+			destination = args[i+1]
+		default:
+			return fmt.Errorf("unknown database backup option %q", args[i])
+		}
+		i++
+	}
+	if strings.TrimSpace(source) == "" || strings.TrimSpace(destination) == "" {
+		return fmt.Errorf("database backup requires --source and --destination")
+	}
+	return database.Backup(context.Background(), source, destination)
+}
+
+func runPackage(args []string) error {
+	if len(args) < 1 || args[0] != "verify" {
+		return fmt.Errorf("usage: hfl-agent package verify --root <directory> [--role agent|proxy|gateway] [--version <version>]")
+	}
+	var root, version, roleValue string
+	roleValue = "agent"
+	for i := 1; i < len(args); i++ {
+		if i+1 >= len(args) {
+			return fmt.Errorf("package verify option %q requires a value", args[i])
+		}
+		switch args[i] {
+		case "--root":
+			root = args[i+1]
+		case "--role":
+			roleValue = args[i+1]
+		case "--version":
+			version = args[i+1]
+		default:
+			return fmt.Errorf("unknown package verify option %q", args[i])
+		}
+		i++
+	}
+	if strings.TrimSpace(root) == "" {
+		return fmt.Errorf("package verify requires --root <directory>")
+	}
+	role := model.Role(strings.TrimSpace(roleValue))
+	if role != model.RoleAgent && role != model.RoleProxy && role != model.RoleGateway {
+		return fmt.Errorf("unsupported package role %q", roleValue)
+	}
+	return enroll.ValidateAgentPackage(root, role, version)
+}
+
 func printRootHelp() {
 	const help = `HyperFileLens Agent CLI
 
 Usage:
   hfl-agent run [flags]             Run agent daemon (WebSocket control plane)
   hfl-agent version                 Print version and exit
+  hfl-agent package verify          Verify a release package manifest and checksums
+  hfl-agent database backup         Create a consistent local database backup
   hfl-agent help                    Show this help
   hfl-agent config show|set|paths   Manage hot-reloadable configuration
   hfl-agent fs ls [path]            List local directory entries
@@ -131,7 +197,7 @@ func parseWireStatus(s string) (string, error) {
 // IsSubcommand reports whether arg is a CLI subcommand (not daemon flags).
 func IsSubcommand(arg string) bool {
 	switch arg {
-	case "help", "-h", "--help", "version", "config", "tasks", "fs", "snapshot", "restore", "repo":
+	case "help", "-h", "--help", "version", "package", "database", "config", "tasks", "fs", "snapshot", "restore", "repo":
 		return true
 	default:
 		return false

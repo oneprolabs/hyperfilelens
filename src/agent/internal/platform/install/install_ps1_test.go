@@ -201,7 +201,7 @@ func TestInstallPs1RunsCurrentUserAgentThroughWindowlessLauncher(t *testing.T) {
 		`$runner = Join-Path $InstallRoot "hfl-agent-user-launcher.exe"`,
 		`-Execute $runner`,
 		"-Argument \"-data-dir `\"$DataRoot`\"\"",
-		`Copy-Item -Force -Path $srcLauncher -Destination (Join-Path $InstallRoot "hfl-agent-user-launcher.exe")`,
+		`Copy-HflFileAtomically -Source $srcLauncher -Destination (Join-Path $InstallRoot "hfl-agent-user-launcher.exe")`,
 		`Remove-HflInstallFile (Join-Path $InstallRoot "hfl-agent-user-launcher.exe")`,
 		`Remove-HflInstallFile (Join-Path $InstallRoot "run-agent.ps1")`,
 	} {
@@ -304,6 +304,81 @@ func TestInstallPs1UpgradeRollbackUsesModeAwareLifecycle(t *testing.T) {
 	}
 	if strings.Contains(rollback, "Start-Service -Name $ServiceName") {
 		t.Fatal("upgrade rollback must not hard-code the Windows service lifecycle")
+	}
+}
+
+func TestInstallPs1UpgradeKeepsRollbackUntilLocalHealth(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	for _, want := range []string{
+		"Verify-HflUpgradePackage",
+		"agent.db-wal",
+		"agent.db-shm",
+		"Restore-AgentState",
+		"Restore-RollbackServiceDefinition",
+		"Restore-HflLifecycleStartupPolicy",
+		"Enable-HflLifecycleForRollbackStart",
+		"Test-HflLocalUpgradeHealth",
+		"upgrade-state.json",
+		"process_started_at_ticks",
+		"Upgrade state snapshot failed",
+		"Upgrade failed: $OriginalError. Rollback also failed",
+		"-Yes",
+		"awaiting_restart",
+		"upgrade-verification",
+		"database backup --source $sourceDatabase --destination $snapshotDatabase",
+		`@("deploying", "deployed", "migrating", "migrated", "configuring_service", "rolling_back")`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("install.ps1 upgrade transaction is missing %q", want)
+		}
+	}
+	upgradeStart := strings.Index(source, "function Invoke-Upgrade {")
+	if upgradeStart < 0 {
+		t.Fatal("install.ps1 is missing Invoke-Upgrade")
+	}
+	upgrade := source[upgradeStart:]
+	if strings.Index(upgrade, "Backup-AgentConfigAndDb -DataRoot $dataRoot -PreviousVersion $prevVer -SrcRoot $srcRoot") > strings.Index(upgrade, "Stop-AgentForUpgrade") {
+		t.Fatal("install.ps1 must create its consistent database snapshot before stopping the Agent")
+	}
+	deployStart := strings.Index(source, "function Deploy-Binaries {")
+	if deployStart < 0 {
+		t.Fatal("install.ps1 is missing Deploy-Binaries")
+	}
+	deploy := source[deployStart:]
+	if strings.Index(deploy, "Deploy-AdminScripts -SrcRoot $SrcRoot") > strings.Index(deploy, "Copy-HflFileAtomically -Source $srcAgent") {
+		t.Fatal("install.ps1 must stage the recovery-capable lifecycle script before replacing the Agent binary")
+	}
+	if strings.Index(upgrade, "Remove-UpgradeRollback -DataRoot $dataRoot") < strings.Index(upgrade, "Test-HflLocalUpgradeHealth -DataRoot $dataRoot -ExpectedVersion $newVer") {
+		t.Fatal("install.ps1 must not remove rollback before local health verification")
+	}
+	if !strings.Contains(source, `tasks list --data-dir $DataRoot --limit 1`) {
+		t.Fatal("install.ps1 local health check must use supported long-form Agent CLI flags")
+	}
+	if !strings.Contains(upgrade, "Restore-HflLifecycleStartupPolicy -DataRoot $dataRoot") {
+		t.Fatal("install.ps1 upgrade must preserve the previous service or task startup policy")
+	}
+	if strings.Index(source, `process_started_at_ticks`) > strings.Index(source, `Set-Content -LiteralPath (Join-Path $lock "pid") -Value $PID`) {
+		t.Fatal("install.ps1 must publish the lifecycle lock PID after owner metadata")
+	}
+	rollbackStart := strings.Index(source, "function Invoke-HflUpgradeRollback")
+	if rollbackStart < 0 {
+		t.Fatal("install.ps1 is missing Invoke-HflUpgradeRollback")
+	}
+	rollback := source[rollbackStart:]
+	enableIndex := strings.Index(rollback, "Enable-HflLifecycleForRollbackStart")
+	startIndex := strings.Index(rollback, "Start-HflServiceOnly")
+	policyIndex := strings.Index(rollback, "Restore-HflLifecycleStartupPolicy -DataRoot $DataRoot")
+	if enableIndex < 0 || startIndex < enableIndex || policyIndex < startIndex {
+		t.Fatal("install.ps1 rollback must allow the old lifecycle to start before restoring its disabled policy")
+	}
+	recoveryStart := strings.Index(source, `{ $_ -in @("stopping", "service_stopped", "snapshotting", "state_snapshotted") }`)
+	if recoveryStart < 0 {
+		t.Fatal("install.ps1 is missing pre-deployment interruption recovery")
+	}
+	recovery := source[recoveryStart:]
+	if strings.Index(recovery, "Enable-HflLifecycleForRollbackStart") > strings.Index(recovery, "Start-HflServiceOnly") ||
+		strings.Index(recovery, "Restore-HflLifecycleStartupPolicy -DataRoot $DataRoot") < strings.Index(recovery, "Start-HflServiceOnly") {
+		t.Fatal("install.ps1 interrupted recovery must start the old lifecycle before restoring its disabled policy")
 	}
 }
 

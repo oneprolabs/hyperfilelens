@@ -231,6 +231,85 @@ func TestInstallShellCleansPartiallyMigratedSystemRootAfterHealthCheck(t *testin
 	}
 }
 
+func TestInstallShellUpgradeKeepsRollbackUntilLocalHealth(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	for _, want := range []string{
+		`verify_upgrade_package`,
+		`agent.db-wal`,
+		`agent.db-shm`,
+		`restore_upgrade_state`,
+		`restore_upgrade_service_definition`,
+		`upgrade_health_check`,
+		`upgrade-state.json`,
+		`pending upgrade state is unreadable`,
+		`cleanup_upgrade_rollback "${data_dir}"`,
+		`local health check passed`,
+		`Upgrade failed; rollback also failed`,
+		`acquire_lifecycle_lock`,
+		`process_started_at`,
+		`process_start_marker()`,
+		`upgrade-verification`,
+		`awaiting_restart`,
+		`database backup --source "${db_source}" --destination "${snapshot}/data/agent.db"`,
+		`install_file_atomically "$src_script" "${INSTALL_DIR}/install.sh" 755`,
+		`deploying|deployed|migrating|migrated|configuring_service|rolling_back`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh upgrade transaction is missing %q", want)
+		}
+	}
+	// Recovery of an interrupted transaction may clean an older snapshot before
+	// the new transaction starts. Restrict the ordering assertion to cmd_upgrade
+	// itself so that path does not look like premature cleanup of the active
+	// upgrade.
+	start := strings.Index(body, "cmd_upgrade() {")
+	if start < 0 {
+		t.Fatal("install.sh missing cmd_upgrade")
+	}
+	end := strings.Index(body[start:], "\ncollect_agent_mount_points() {")
+	if end < 0 {
+		t.Fatal("install.sh cmd_upgrade boundary is missing")
+	}
+	upgradeBody := body[start : start+end]
+	if strings.Index(upgradeBody, `backup_agent_config_and_db "${data_dir}" "${prev_ver}" "${src_root}"`) > strings.Index(upgradeBody, `stop_service`) {
+		t.Fatal("install.sh must create its consistent database snapshot before stopping the Agent")
+	}
+	deployStart := strings.Index(body, "deploy_binaries() {")
+	if deployStart < 0 {
+		t.Fatal("install.sh missing deploy_binaries")
+	}
+	deployBody := body[deployStart:]
+	if strings.Index(deployBody, `deploy_admin_scripts "${src_root}"`) > strings.Index(deployBody, `install_file_atomically "$agent_bin"`) {
+		t.Fatal("install.sh must install the recovery-capable lifecycle script before replacing the Agent binary")
+	}
+	healthIndex := strings.Index(upgradeBody, `upgrade_health_check "${data_dir}" "${new_ver}"`)
+	cleanupIndex := strings.LastIndex(upgradeBody, `cleanup_upgrade_rollback "${data_dir}"`)
+	if healthIndex < 0 || cleanupIndex < healthIndex {
+		t.Fatal("install.sh must not remove rollback before local health verification")
+	}
+	if !strings.Contains(upgradeBody, "start_service_only") {
+		t.Fatal("install.sh upgrade must restart an active Agent without changing its systemd enable policy")
+	}
+	startOnly := strings.Index(body, "start_service_only() {")
+	if startOnly < 0 {
+		t.Fatal("install.sh is missing start_service_only")
+	}
+	startOnlyEnd := strings.Index(body[startOnly:], "\n}\n")
+	if startOnlyEnd < 0 {
+		t.Fatal("install.sh start_service_only has no end")
+	}
+	startOnlyBody := body[startOnly : startOnly+startOnlyEnd]
+	if !strings.Contains(startOnlyBody, "hfl_systemctl daemon-reload") {
+		t.Fatal("install.sh start_service_only must reload systemd before starting a rewritten unit")
+	}
+	if !strings.Contains(body, `if [[ -f "${state_file}" ]]; then`) {
+		t.Fatal("install.sh lifecycle commands must recover an existing state file even when its phase is unreadable")
+	}
+	if strings.Index(body, `process_started_at`) > strings.Index(body, `printf '%s\n' "$$" >"${lock_dir}/pid"`) {
+		t.Fatal("install.sh must publish the lifecycle lock PID after owner metadata")
+	}
+}
+
 func TestInstallShellKeepsSpecifiedUserOutOfUserManager(t *testing.T) {
 	body := readPackagingInstallShell(t)
 	start := strings.Index(body, "hfl_systemctl() {")

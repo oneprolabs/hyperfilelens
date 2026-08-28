@@ -15,6 +15,7 @@ const (
 	runtimeWorkspace   = "workspace"
 	lifecycleUpgrade   = "upgrade"
 	lifecycleUninstall = "uninstall"
+	upgradeStateFile   = "upgrade-state.json"
 )
 
 // BackupRollbackBinDir is the fixed rollback snapshot for install-dir binaries.
@@ -50,6 +51,11 @@ func LifecycleUpgradeDir(dataDir string) string {
 // LifecycleUninstallDir holds detached uninstall runner.
 func LifecycleUninstallDir(dataDir string) string {
 	return filepath.Join(strings.TrimSpace(dataDir), dirLifecycle, lifecycleUninstall)
+}
+
+// LifecycleUpgradeStatePath records the durable local upgrade transaction.
+func LifecycleUpgradeStatePath(dataDir string) string {
+	return filepath.Join(strings.TrimSpace(dataDir), dirLifecycle, upgradeStateFile)
 }
 
 // LifecycleUpgradeFailedPath is written when detached upgrade fails.

@@ -101,28 +101,8 @@ try {
     exit 1
   }
 
-  Log "stopping HyperFileLensAgent before install.ps1 upgrade"
-  if ($userInstall) {
-    Stop-ScheduledTask -TaskName $runtimeTaskName -ErrorAction SilentlyContinue
-  } else {
-    Stop-Service -Name HyperFileLensAgent -Force -ErrorAction SilentlyContinue
-  }
-  # $install is the full path to install.ps1. Match only processes whose
-  # executable lives below this installation's Agent Root.
-  $agentRoot = Split-Path -Parent $install
-  Get-Process -Name hfl-agent -ErrorAction SilentlyContinue | Where-Object {
-    try {
-      $_.Path -and [System.IO.Path]::GetFullPath($_.Path).StartsWith(
-        [System.IO.Path]::GetFullPath($agentRoot).TrimEnd('\') + '\',
-        [System.StringComparison]::OrdinalIgnoreCase
-      )
-    }
-    catch { $false }
-  } | Stop-Process -Force -ErrorAction SilentlyContinue
-  Start-Sleep -Seconds 2
-
   Log "running install.ps1 upgrade"
-  $upgradeArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $install, 'upgrade', '-From', $archive, '-QuietFooter')
+  $upgradeArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $install, 'upgrade', '-From', $archive, '-Yes', '-QuietFooter')
   & powershell.exe @upgradeArgs 2>&1 | ForEach-Object {
     $line = ($_.ToString()).TrimEnd()
     if ($line) { Log "install.ps1> $line" }
