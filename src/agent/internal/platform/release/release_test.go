@@ -72,3 +72,28 @@ func TestFetchArtifactRejectsOversizedResponse(t *testing.T) {
 		t.Fatalf("FetchArtifact error = %v", err)
 	}
 }
+
+func TestRetryableReleaseErrors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "internal server error", err: errors.New("release API HTTP 500 Internal Server Error"), want: true},
+		{name: "bad gateway", err: errors.New("release API HTTP 502 Bad Gateway"), want: true},
+		{name: "service unavailable", err: errors.New("release API HTTP 503 Service Unavailable"), want: true},
+		{name: "gateway timeout", err: errors.New("release API HTTP 504 Gateway Timeout"), want: true},
+		{name: "too many requests", err: errors.New("release API HTTP 429 Too Many Requests"), want: true},
+		{name: "not found", err: errors.New("release API HTTP 404 Not Found"), want: false},
+		{name: "invalid response", err: errors.New("release API response is invalid"), want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsRetryableReleaseError(test.err); got != test.want {
+				t.Fatalf("IsRetryableReleaseError(%v) = %t, want %t", test.err, got, test.want)
+			}
+		})
+	}
+}

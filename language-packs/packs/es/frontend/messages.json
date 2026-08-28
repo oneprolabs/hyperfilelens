@@ -4184,7 +4184,18 @@
     "inProgress": "En curso",
     "pending": "Pendiente",
     "failed": "Fallido",
-    "noActiveUpgrade": "No hay actualización activa"
+    "noActiveUpgrade": "No hay actualización activa",
+    "preparingDownload": "Preparando la descarga del paquete del Agent",
+    "downloadingPackage": "Descargando el paquete del Agent",
+    "waitingForData": "Esperando datos de descarga",
+    "retryingDownload": "La descarga se interrumpió. Reintentando…",
+    "downloadCompleted": "Paquete del Agent descargado",
+    "downloadedAmount": "{amount} descargados",
+    "elapsed": "Transcurrido {duration}",
+    "attempt": "Intento {attempt} de {max}",
+    "secondsShort": "{n} s",
+    "minutesShort": "{n} min",
+    "hoursMinutesShort": "{h} h {m} min"
   },
   "nodeAuditLogSummary": {
     "title": "Operación Documentos",

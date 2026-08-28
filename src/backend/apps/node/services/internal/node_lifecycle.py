@@ -92,16 +92,59 @@ def _active_lifecycle_task(*, org: Organization, node: Node) -> NodeTask | None:
 
 def _task_progress_phase(task: NodeTask) -> str | None:
     runtime = get_node_task_runtime_info(task_id=str(task.id)) or {}
-    progress = runtime.get("progress")
+    runtime_result = runtime.get("result")
+    progress = (
+        runtime_result.get("last_progress")
+        if isinstance(runtime_result, dict)
+        else None
+    )
     if isinstance(progress, dict):
         phase = progress.get("phase")
         if phase:
             return str(phase)
     result = task.result if isinstance(task.result, dict) else {}
+    progress = result.get("last_progress")
+    if isinstance(progress, dict):
+        phase = progress.get("phase")
+        if phase:
+            return str(phase)
     mode = result.get("mode")
     if mode:
         return str(mode)
     return None
+
+
+def _task_download_progress(task: NodeTask) -> dict[str, Any] | None:
+    """Return a URL-free, bounded download snapshot for lifecycle display."""
+    runtime = get_node_task_runtime_info(task_id=str(task.id)) or {}
+    runtime_result = runtime.get("result")
+    progress = (
+        runtime_result.get("last_progress")
+        if isinstance(runtime_result, dict)
+        else None
+    )
+    if not isinstance(progress, dict) or progress.get("phase") != "download":
+        result = task.result if isinstance(task.result, dict) else {}
+        progress = result.get("last_progress")
+    if not isinstance(progress, dict) or progress.get("phase") != "download":
+        return None
+    download = progress.get("download")
+    if not isinstance(download, dict):
+        return None
+    allowed = {
+        "state",
+        "downloaded_bytes",
+        "total_bytes",
+        "bytes_per_second",
+        "elapsed_seconds",
+        "idle_seconds",
+        "attempt",
+        "next_attempt",
+        "max_attempts",
+        "retry_after_seconds",
+        "reason",
+    }
+    return {key: download[key] for key in allowed if key in download}
 
 
 def _target_version_from_task(task: NodeTask) -> str:
@@ -937,6 +980,9 @@ def _upgrade_lifecycle_payload(
         "started_at": task.created_at.isoformat() if task.created_at else None,
         "timeline": _build_upgrade_timeline(node=node, task=task),
     }
+    download = _task_download_progress(task)
+    if download:
+        base["download"] = download
 
     if task.status in _ACTIVE_TASK_STATUSES:
         phase = _task_progress_phase(task) or "dispatching"

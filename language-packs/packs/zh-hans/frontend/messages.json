@@ -4156,7 +4156,18 @@
     "inProgress": "进行中",
     "pending": "等待中",
     "failed": "已失败",
-    "noActiveUpgrade": "无进行中的升级"
+    "noActiveUpgrade": "无进行中的升级",
+    "preparingDownload": "正在准备下载 Agent 包",
+    "downloadingPackage": "正在下载 Agent 包",
+    "waitingForData": "正在等待下载数据",
+    "retryingDownload": "下载中断，正在重试…",
+    "downloadCompleted": "Agent 包已下载",
+    "downloadedAmount": "已下载 {amount}",
+    "elapsed": "已用时 {duration}",
+    "attempt": "第 {attempt} 次，共 {max} 次",
+    "secondsShort": "{n}秒",
+    "minutesShort": "{n}分",
+    "hoursMinutesShort": "{h}小时 {m}分"
   },
   "nodeAuditLogSummary": {
     "title": "操作记录",

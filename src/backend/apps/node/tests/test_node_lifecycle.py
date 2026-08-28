@@ -1496,6 +1496,41 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(lifecycle["state"], "upgrading")
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
+    def test_upgrade_download_progress_is_projected_without_sensitive_fields(
+        self, _routable
+    ):
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            result={
+                "target_version": "1.2.0",
+                "last_progress": {
+                    "phase": "download",
+                    "download": {
+                        "state": "downloading",
+                        "downloaded_bytes": 1024,
+                        "total_bytes": 4096,
+                        "attempt": 1,
+                        "max_attempts": 3,
+                        "signed_url": "https://example.invalid/?token=secret",
+                    },
+                },
+            },
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
+
+        self.assertEqual(lifecycle["state"], "upgrading")
+        self.assertEqual(lifecycle["phase"], "download")
+        self.assertEqual(lifecycle["download"]["downloaded_bytes"], 1024)
+        self.assertNotIn("signed_url", lifecycle["download"])
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_remove_active_detached_shows_removing_before_finalize_window(self, _routable):
         NodeTask.objects.create(
             organization=self.org,

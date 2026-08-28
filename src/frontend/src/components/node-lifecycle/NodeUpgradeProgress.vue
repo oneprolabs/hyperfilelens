@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, ArrowRight, Check, Circle, Clock3, X } from 'lucide-vue-next'
+import { AlertTriangle, ArrowRight, Check, Circle, Clock3, Download, RefreshCw, X } from 'lucide-vue-next'
 import type { NodeLifecycleInfo } from '../../types/nodeLifecycle'
+import { formatBytes, formatSpeedBps } from '../../lib/kopiaProgress'
 
 const props = defineProps<{
   lifecycle: NodeLifecycleInfo | null
@@ -20,6 +21,56 @@ const hasLifecycle = computed(() => {
 })
 
 const timeline = computed(() => props.lifecycle?.timeline ?? [])
+const download = computed(() => props.lifecycle?.download ?? null)
+
+const downloadStateLabel = computed(() => {
+  switch (download.value?.state) {
+    case 'resolving_release':
+      return t('nodeUpgradeProgress.preparingDownload')
+    case 'waiting_for_data':
+      return t('nodeUpgradeProgress.waitingForData')
+    case 'retry_wait':
+      return t('nodeUpgradeProgress.retryingDownload')
+    case 'completed':
+      return t('nodeUpgradeProgress.downloadCompleted')
+    default:
+      return t('nodeUpgradeProgress.downloadingPackage')
+  }
+})
+
+const downloadMetrics = computed(() => {
+  const progress = download.value
+  if (!progress) return []
+  const metrics: string[] = []
+  const downloaded = Number(progress.downloaded_bytes || 0)
+  const total = Number(progress.total_bytes || 0)
+  if (downloaded > 0 || total > 0) {
+    metrics.push(total > 0
+      ? `${formatBytes(downloaded)} / ${formatBytes(total)}`
+      : t('nodeUpgradeProgress.downloadedAmount', { amount: formatBytes(downloaded) }))
+  }
+  const speed = formatSpeedBps(progress.bytes_per_second)
+  if (speed && Number(progress.bytes_per_second || 0) > 0) metrics.push(speed)
+  const elapsed = formatCompactDuration(Number(progress.elapsed_seconds || 0))
+  if (elapsed) metrics.push(t('nodeUpgradeProgress.elapsed', { duration: elapsed }))
+  const attempt = progress.state === 'retry_wait'
+    ? Number(progress.next_attempt || progress.attempt || 0)
+    : Number(progress.attempt || 0)
+  const maxAttempts = Number(progress.max_attempts || 0)
+  if (attempt > 0 && maxAttempts > 0) {
+    metrics.push(t('nodeUpgradeProgress.attempt', { attempt, max: maxAttempts }))
+  }
+  return metrics
+})
+
+function formatCompactDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 1) return ''
+  if (seconds < 60) return t('nodeUpgradeProgress.secondsShort', { n: Math.floor(seconds) })
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (hours > 0) return t('nodeUpgradeProgress.hoursMinutesShort', { h: hours, m: minutes })
+  return t('nodeUpgradeProgress.minutesShort', { n: minutes })
+}
 
 function phaseIcon(status: string) {
   switch (status) {
@@ -110,6 +161,31 @@ function formatPhaseTime(at: string | null) {
               <template v-else-if="phase.status === 'failed'">{{ t('nodeUpgradeProgress.failed') }}</template>
               <template v-else>{{ t('nodeUpgradeProgress.pending') }}</template>
             </span>
+          </div>
+          <div
+            v-if="phase.phase === 'upgrading' && download"
+            class="node-upgrade-progress__download"
+            aria-live="polite"
+          >
+            <RefreshCw
+              v-if="download.state === 'retry_wait'"
+              :size="14"
+              class="node-upgrade-progress__download-icon is-spinning"
+              aria-hidden="true"
+            />
+            <Download
+              v-else
+              :size="14"
+              class="node-upgrade-progress__download-icon"
+              aria-hidden="true"
+            />
+            <div class="node-upgrade-progress__download-copy">
+              <span class="node-upgrade-progress__download-label">{{ downloadStateLabel }}</span>
+              <span
+                v-if="downloadMetrics.length"
+                class="node-upgrade-progress__download-metrics"
+              >{{ downloadMetrics.join(' · ') }}</span>
+            </div>
           </div>
           <div
             v-if="phase.error"
@@ -349,6 +425,58 @@ function formatPhaseTime(at: string | null) {
 .node-upgrade-progress__step-error svg {
   flex-shrink: 0;
   margin-top: 2px;
+}
+
+.node-upgrade-progress__download {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgb(241 245 249);
+  color: rgb(71 85 105);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.node-upgrade-progress__download-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-info);
+}
+
+.node-upgrade-progress__download-icon.is-spinning {
+  animation: node-upgrade-progress-spin 1s linear infinite;
+}
+
+.node-upgrade-progress__download-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.node-upgrade-progress__download-label {
+  color: rgb(51 65 85);
+  font-weight: 700;
+}
+
+.node-upgrade-progress__download-metrics {
+  color: rgb(100 116 139);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+@keyframes node-upgrade-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node-upgrade-progress__download-icon.is-spinning {
+    animation: none;
+  }
 }
 
 /* --- global lifecycle error --- */
