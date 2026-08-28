@@ -78,6 +78,7 @@ func SendInventory(
 			"insight_safe_restore_v1",
 			"nas_mount_lifecycle_v1",
 			"network_inventory_v1",
+			"agent_upgrade_download_progress_v1",
 			"repository_server_port_range_v1",
 			"detached_uninstall_v2",
 			"storage_inventory_v1",

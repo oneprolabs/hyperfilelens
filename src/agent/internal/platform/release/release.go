@@ -211,9 +211,11 @@ func IsRetryableReleaseError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(msg, "504 gateway time-out"),
+	case strings.Contains(msg, "500 internal server error"),
 		strings.Contains(msg, "502 bad gateway"),
 		strings.Contains(msg, "503 service unavailable"),
+		strings.Contains(msg, "504 gateway timeout"),
+		strings.Contains(msg, "504 gateway time-out"),
 		strings.Contains(msg, "429 too many requests"),
 		strings.Contains(msg, "connection reset"),
 		strings.Contains(msg, "connection refused"),

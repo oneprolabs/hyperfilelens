@@ -34,6 +34,20 @@ export type UpgradeTimelinePhase = {
   error?: string | null
 }
 
+export type UpgradeDownloadProgress = {
+  state?: 'resolving_release' | 'downloading' | 'waiting_for_data' | 'retry_wait' | 'completed' | 'failed' | string
+  downloaded_bytes?: number
+  total_bytes?: number
+  bytes_per_second?: number
+  elapsed_seconds?: number
+  idle_seconds?: number
+  attempt?: number
+  next_attempt?: number
+  max_attempts?: number
+  retry_after_seconds?: number
+  reason?: string
+}
+
 export type NodeLifecycleInfo = {
   kind: NodeLifecycleKind
   state: NodeLifecycleState
@@ -43,6 +57,7 @@ export type NodeLifecycleInfo = {
   current_version?: string | null
   started_at?: string | null
   timeline?: UpgradeTimelinePhase[] | null
+  download?: UpgradeDownloadProgress | null
   error?: string | null
 }
 

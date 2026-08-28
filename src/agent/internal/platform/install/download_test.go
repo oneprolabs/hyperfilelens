@@ -3,7 +3,9 @@ package install
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -165,6 +167,111 @@ func TestDownloadURLReportsHeartbeatWhileWaitingForData(t *testing.T) {
 		t.Fatalf("expected a waiting heartbeat, got %#v", events)
 	}
 }
+
+func TestDownloadURLStopsAfterNoProgress(t *testing.T) {
+	t.Setenv("HFL_INSECURE_TLS", "0")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		w.Header().Set("Content-Length", "1024")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+
+	destination := filepath.Join(t.TempDir(), "artifact")
+	started := time.Now()
+	err := downloadURLWithSettings(
+		context.Background(),
+		server.URL,
+		destination,
+		nil,
+		time.Millisecond,
+		25*time.Millisecond,
+	)
+	if !errors.Is(err, ErrDownloadNoProgress) {
+		t.Fatalf("download error = %v, want ErrDownloadNoProgress", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("no-progress cancellation took %s", elapsed)
+	}
+	for _, path := range []string{destination, destination + ".part"} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("stalled download left %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestDownloadURLAllowsSlowContinuousProgress(t *testing.T) {
+	t.Setenv("HFL_INSECURE_TLS", "0")
+	payload := []byte("slow-but-moving")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(payload)))
+		w.WriteHeader(http.StatusOK)
+		flusher := w.(http.Flusher)
+		for _, value := range payload {
+			_, _ = w.Write([]byte{value})
+			flusher.Flush()
+			time.Sleep(8 * time.Millisecond)
+		}
+	}))
+	defer server.Close()
+
+	destination := filepath.Join(t.TempDir(), "artifact")
+	err := downloadURLWithSettings(
+		context.Background(),
+		server.URL,
+		destination,
+		nil,
+		time.Millisecond,
+		25*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("slow progressing download failed: %v", err)
+	}
+	got, readErr := os.ReadFile(destination)
+	if readErr != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("downloaded content = %q, err = %v", got, readErr)
+	}
+}
+
+func TestRetryableDownloadErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "no progress", err: ErrDownloadNoProgress, want: true},
+		{name: "truncated", err: ErrDownloadSizeMismatch, want: true},
+		{name: "rate limited", err: &DownloadHTTPError{StatusCode: 429, Status: "429 Too Many Requests"}, want: true},
+		{name: "server unavailable", err: &DownloadHTTPError{StatusCode: 503, Status: "503 Service Unavailable"}, want: true},
+		{name: "not implemented", err: &DownloadHTTPError{StatusCode: 501, Status: "501 Not Implemented"}, want: false},
+		{name: "permanent network error", err: permanentNetworkError{}, want: false},
+		{name: "temporary network error", err: temporaryNetworkError{}, want: true},
+		{name: "transport operation error", err: &net.OpError{Op: "read", Net: "tcp", Err: permanentNetworkError{}}, want: true},
+		{name: "forbidden", err: &DownloadHTTPError{StatusCode: 403, Status: "403 Forbidden"}, want: false},
+		{name: "not found", err: &DownloadHTTPError{StatusCode: 404, Status: "404 Not Found"}, want: false},
+		{name: "canceled", err: context.Canceled, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := IsRetryableDownloadError(test.err); got != test.want {
+				t.Fatalf("IsRetryableDownloadError(%v) = %t, want %t", test.err, got, test.want)
+			}
+		})
+	}
+}
+
+type permanentNetworkError struct{}
+
+func (permanentNetworkError) Error() string   { return "permanent network error" }
+func (permanentNetworkError) Timeout() bool   { return false }
+func (permanentNetworkError) Temporary() bool { return false }
+
+type temporaryNetworkError struct{}
+
+func (temporaryNetworkError) Error() string   { return "temporary network error" }
+func (temporaryNetworkError) Timeout() bool   { return false }
+func (temporaryNetworkError) Temporary() bool { return true }
 
 func TestDownloadURLRemovesPartialOnContextCancellation(t *testing.T) {
 	t.Setenv("HFL_INSECURE_TLS", "0")

@@ -455,6 +455,180 @@ class TaskCommandAckTests(TestCase):
         self.assertEqual(task.status, NodeTask.Status.TIMEOUT)
         send_cancel.assert_called_once()
 
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch("apps.node.services.internal.task._sync_task_info")
+    def test_upgrade_download_alive_does_not_renew_progress_deadline(
+        self, _sync, _push
+    ):
+        self.node.metadata = {
+            "inventory": {
+                "capabilities": [
+                    "task_command_ack_v1",
+                    "agent_upgrade_download_progress_v1",
+                ]
+            }
+        }
+        self.node.save(update_fields=["metadata", "updated_at"])
+        original_deadline = timezone.now() + timezone.timedelta(seconds=45)
+        task = self.task(
+            kind="agent.upgrade",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=original_deadline,
+            result={
+                "last_progress": {
+                    "phase": "download",
+                    "download": {
+                        "state": "waiting_for_data",
+                        "downloaded_bytes": 0,
+                        "attempt": 1,
+                    },
+                }
+            },
+        )
+
+        updated = record_task_progress(
+            task_id=task.id,
+            node_id=self.node.id,
+            alive=True,
+        )
+
+        self.assertEqual(updated.watchdog_deadline_at, original_deadline)
+
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch("apps.node.services.internal.task._sync_task_info")
+    def test_upgrade_download_schema_survives_capability_inventory_loss(
+        self, _sync, _push
+    ):
+        original_deadline = timezone.now() + timezone.timedelta(seconds=45)
+        task = self.task(
+            kind="agent.upgrade",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=original_deadline,
+            result={
+                "last_progress": {
+                    "phase": "download",
+                    "download": {
+                        "state": "waiting_for_data",
+                        "downloaded_bytes": 1024,
+                        "attempt": 1,
+                    },
+                }
+            },
+        )
+        self.node.metadata = {"inventory": {"capabilities": []}}
+        self.node.save(update_fields=["metadata", "updated_at"])
+
+        updated = record_task_progress(
+            task_id=task.id,
+            node_id=self.node.id,
+            alive=True,
+        )
+
+        self.assertEqual(updated.watchdog_deadline_at, original_deadline)
+
+    @patch("apps.node.services.internal.task._send_cancel_command")
+    @patch(
+        "apps.node.services.internal.task_offline_reconcile.sync_platform_tasks_for_node_task"
+    )
+    @patch("apps.node.services.internal.task._sync_task_info")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    def test_upgrade_download_alive_does_not_defer_expired_watchdog(
+        self,
+        _push,
+        _set_info,
+        _sync_platform_task,
+        send_cancel,
+    ):
+        self.node.metadata = {
+            "inventory": {
+                "capabilities": ["agent_upgrade_download_progress_v1"]
+            }
+        }
+        self.node.save(update_fields=["metadata", "updated_at"])
+        task = self.task(
+            kind="agent.upgrade",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() - timezone.timedelta(seconds=1),
+            result={
+                "last_progress": {
+                    "phase": "download",
+                    "download": {
+                        "state": "waiting_for_data",
+                        "downloaded_bytes": 1024,
+                        "attempt": 1,
+                    },
+                }
+            },
+        )
+        activity = {
+            str(task.id): {
+                "received_at": timezone.now().timestamp(),
+                "message_type": "task.alive",
+            }
+        }
+
+        with patch(
+            "apps.node.services.internal.task.redis_store.get_task_uplink_activities",
+            return_value=activity,
+        ):
+            marked = sweep_watchdog_timeouts(
+                queryset=NodeTask.objects.filter(pk=task.pk),
+            )
+
+        task.refresh_from_db()
+        self.assertEqual(marked, 1)
+        self.assertEqual(task.status, NodeTask.Status.TIMEOUT)
+        send_cancel.assert_called_once()
+
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch("apps.node.services.internal.task._sync_task_info")
+    def test_upgrade_download_bytes_renew_progress_deadline(self, _sync, _push):
+        self.node.metadata = {
+            "inventory": {
+                "capabilities": ["agent_upgrade_download_progress_v1"]
+            }
+        }
+        self.node.save(update_fields=["metadata", "updated_at"])
+        original_deadline = timezone.now() + timezone.timedelta(seconds=5)
+        task = self.task(
+            kind="agent.upgrade",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=original_deadline,
+            result={
+                "last_progress": {
+                    "phase": "download",
+                    "download": {
+                        "state": "downloading",
+                        "downloaded_bytes": 1024,
+                        "attempt": 1,
+                    },
+                }
+            },
+        )
+
+        updated = record_task_progress(
+            task_id=task.id,
+            node_id=self.node.id,
+            progress={
+                "phase": "download",
+                "download": {
+                    "state": "downloading",
+                    "downloaded_bytes": 2048,
+                    "attempt": 1,
+                },
+            },
+        )
+
+        self.assertGreater(updated.watchdog_deadline_at, original_deadline)
+
     @patch(
         "apps.node.services.internal.task.redis_store.get_task_uplink_activities",
         return_value={},
@@ -638,6 +812,65 @@ class TaskCommandAckTests(TestCase):
         self.assertEqual(marked, 1)
         self.assertEqual(task.status, NodeTask.Status.TIMEOUT)
         self.assertEqual(task.last_error, "watchdog timeout (no progress)")
+        send_cancel.assert_called_once()
+
+    @patch("apps.node.services.internal.task._send_cancel_command")
+    @patch(
+        "apps.node.services.internal.task_offline_reconcile.sync_platform_tasks_for_node_task"
+    )
+    @patch("apps.node.services.internal.task._sync_task_info")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch(
+        "apps.node.services.internal.task.redis_store.get_task_uplink_activities",
+        return_value={},
+    )
+    def test_upgrade_download_stall_has_specific_timeout_diagnostic(
+        self,
+        _uplink_activity,
+        _push,
+        _set_info,
+        _sync_platform_task,
+        send_cancel,
+    ):
+        self.node.metadata = {
+            "inventory": {
+                "capabilities": ["agent_upgrade_download_progress_v1"]
+            }
+        }
+        self.node.save(update_fields=["metadata", "updated_at"])
+        task = self.task(
+            kind="agent.upgrade",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() - timezone.timedelta(seconds=1),
+            result={
+                "last_progress": {
+                    "phase": "download",
+                    "download": {
+                        "state": "waiting_for_data",
+                        "downloaded_bytes": 1024,
+                        "attempt": 1,
+                    },
+                }
+            },
+        )
+
+        marked = sweep_watchdog_timeouts(
+            queryset=NodeTask.objects.filter(pk=task.pk),
+        )
+
+        task.refresh_from_db()
+        self.assertEqual(marked, 1)
+        self.assertEqual(task.status, NodeTask.Status.TIMEOUT)
+        self.assertEqual(
+            task.result["diagnostic_error_code"],
+            "AGENT_PACKAGE_DOWNLOAD_PROGRESS_TIMEOUT",
+        )
+        self.assertEqual(
+            task.last_error,
+            "Agent package download stopped making progress",
+        )
         send_cancel.assert_called_once()
 
     @patch(

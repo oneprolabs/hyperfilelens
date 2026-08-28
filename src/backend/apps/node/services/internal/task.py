@@ -346,6 +346,54 @@ def _task_has_detached_marker(task: NodeTask) -> bool:
     return False
 
 
+_UPGRADE_DOWNLOAD_PROGRESS_CAPABILITY = "agent_upgrade_download_progress_v1"
+
+
+def _uses_upgrade_download_progress(task: NodeTask) -> bool:
+    if (
+        task.correlation_type != node_conf.LIFECYCLE_CORRELATION_TYPE
+        or task.kind != "agent.upgrade"
+    ):
+        return False
+    result = task.result if isinstance(task.result, dict) else {}
+    progress = result.get("last_progress")
+    if _download_snapshot(progress if isinstance(progress, dict) else None) is not None:
+        # Once this task has emitted the new schema, keep its bounded watchdog
+        # semantics even if inventory is temporarily incomplete during upgrade.
+        return True
+    return _UPGRADE_DOWNLOAD_PROGRESS_CAPABILITY in _node_capabilities(task.node)
+
+
+def _download_snapshot(progress: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(progress, dict) or str(progress.get("phase") or "") != "download":
+        return None
+    download = progress.get("download")
+    return download if isinstance(download, dict) else None
+
+
+def _download_progress_advanced(
+    *, incoming: dict[str, Any] | None, existing: dict[str, Any] | None
+) -> bool:
+    current = _download_snapshot(incoming)
+    if current is None:
+        return False
+    previous = _download_snapshot(existing)
+    if previous is None:
+        return True
+    try:
+        current_bytes = int(current.get("downloaded_bytes") or 0)
+        previous_bytes = int(previous.get("downloaded_bytes") or 0)
+        current_attempt = int(current.get("attempt") or 0)
+        previous_attempt = int(previous.get("attempt") or 0)
+    except (TypeError, ValueError):
+        return False
+    return (
+        current_bytes > previous_bytes
+        or current_attempt > previous_attempt
+        or str(current.get("state") or "") != str(previous.get("state") or "")
+    )
+
+
 def _should_apply_progress_update(
     *,
     task: NodeTask,
@@ -1212,6 +1260,8 @@ def record_task_progress(
         return task
 
     now = timezone.now()
+    existing_result = task.result if isinstance(task.result, dict) else {}
+    existing_progress = existing_result.get("last_progress")
     source_nas_probe_started_at = None
     if _is_source_nas_probe(
         correlation_type=task.correlation_type,
@@ -1305,6 +1355,28 @@ def record_task_progress(
             "result",
             "updated_at",
         ]
+    elif _uses_upgrade_download_progress(task):
+        # task.alive proves the Agent process is responsive, not that a body
+        # transfer is advancing. Only bytes, attempts, or meaningful state
+        # transitions renew this bounded safety deadline.
+        if _download_progress_advanced(
+            incoming=progress,
+            existing=(
+                existing_progress if isinstance(existing_progress, dict) else None
+            ),
+        ):
+            task.watchdog_deadline_at = now + timezone.timedelta(
+                seconds=max(1, node_conf.UPGRADE_DOWNLOAD_STALL_TIMEOUT_SECONDS)
+            )
+        update_fields = [
+            "status",
+            "accepted_at",
+            "last_progress_at",
+            "result",
+            "updated_at",
+        ]
+        if task.watchdog_deadline_at is not None:
+            update_fields.append("watchdog_deadline_at")
     else:
         task.watchdog_deadline_at = _initial_watchdog_deadline(
             correlation_type=task.correlation_type,
@@ -1816,10 +1888,16 @@ def sweep_watchdog_timeouts(
                 )
             )
             result_projection_pending = "result" in message_type.lower()
+            # Download-capable Agents already use the durable progress lease
+            # above. A recent task.alive/task.progress marker must not keep
+            # extending the generic projection grace while the byte counter
+            # remains stalled; only a terminal result may still need grace.
+            download_progress_projection = _uses_upgrade_download_progress(task)
             if (
                 received_at > 0
                 and activity_age < projection_grace
                 and (not bounded_remote_execution or result_projection_pending)
+                and (not download_progress_projection or result_projection_pending)
             ):
                 remaining_grace = max(
                     1,
@@ -1847,6 +1925,18 @@ def sweep_watchdog_timeouts(
                 merged["diagnostic_error_code"] = "RESULT_ACK_TIMEOUT"
                 task.result = merged
                 task.last_error = "result acknowledgement timeout"
+                update_fields = ["status", "result", "last_error", "updated_at"]
+            elif _uses_upgrade_download_progress(task) and _download_snapshot(
+                (task.result or {}).get("last_progress")
+                if isinstance(task.result, dict)
+                else None
+            ) is not None:
+                merged = dict(task.result or {})
+                merged["diagnostic_error_code"] = (
+                    "AGENT_PACKAGE_DOWNLOAD_PROGRESS_TIMEOUT"
+                )
+                task.result = merged
+                task.last_error = "Agent package download stopped making progress"
                 update_fields = ["status", "result", "last_error", "updated_at"]
             else:
                 task.last_error = "watchdog timeout (no progress)"
