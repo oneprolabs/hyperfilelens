@@ -84,7 +84,6 @@ const fallbackIsHostMonitor = computed(() => route.path === '/ops/host-monitor')
 const fallbackIsCopilot = computed(() => route.path === '/insight/copilot')
 const fallbackIsAccountProfile = computed(() => route.path === '/account/profile')
 const fallbackIsNodeSubscription = computed(() => route.path === '/node/subscription')
-const fallbackIsNodeSystem = computed(() => route.path === '/node/system')
 const fallbackIsFullscreen = computed(() => route.meta.layout === 'fullscreen')
 const fallbackHasSidebar = computed(() => !fallbackIsFullscreen.value && fallbackMenuItems.value.length > 0)
 
@@ -834,26 +833,6 @@ function applyThemeVars(t: string) {
                   </section>
                 </div>
                 <div
-                  v-else-if="fallbackIsNodeSystem"
-                  class="app-route-skeleton app-route-system-skeleton"
-                  aria-hidden="true"
-                >
-                  <div class="app-route-system-skeleton__panel">
-                    <section
-                      v-for="idx in 2"
-                      :key="`system-row-${idx}`"
-                      class="app-route-system-skeleton__row"
-                    >
-                      <span />
-                      <b />
-                      <i />
-                    </section>
-                  </div>
-                  <div class="app-route-system-skeleton__footer">
-                    <span />
-                  </div>
-                </div>
-                <div
                   v-else
                   class="app-route-skeleton"
                   aria-hidden="true"
@@ -989,8 +968,6 @@ function applyThemeVars(t: string) {
 .app-route-profile-skeleton__section,
 .app-route-subscription-skeleton__overview-grid b,
 .app-route-subscription-skeleton__quota-grid b,
-.app-route-system-skeleton__panel,
-.app-route-system-skeleton__footer span,
 .app-route-skeleton__toolbar span,
 .app-route-skeleton__toolbar i,
 .app-route-skeleton__table i {
@@ -1018,8 +995,6 @@ function applyThemeVars(t: string) {
 .app-route-generic-skeleton__footer span::after,
 .app-route-generic-skeleton__footer i::after,
 .app-route-profile-skeleton__section::after,
-.app-route-system-skeleton__panel::after,
-.app-route-system-skeleton__footer span::after,
 .app-route-skeleton__toolbar span::after,
 .app-route-skeleton__toolbar i::after,
 .app-route-skeleton__table i::after {
@@ -1696,10 +1671,7 @@ function applyThemeVars(t: string) {
 .app-route-subscription-skeleton__activation-step span,
 .app-route-subscription-skeleton__activation-step i,
 .app-route-subscription-skeleton__activation-step b,
-.app-route-subscription-skeleton__activation-step em,
-.app-route-system-skeleton__row span,
-.app-route-system-skeleton__row b,
-.app-route-system-skeleton__row i {
+.app-route-subscription-skeleton__activation-step em {
   display: block;
   border-radius: 999px;
   background: var(--color-grey-2, #f5f5f7);
@@ -1816,64 +1788,6 @@ function applyThemeVars(t: string) {
   width: 100%;
   height: 94px;
   border: 1px solid var(--color-border-light, #e4e7ed);
-  border-radius: 8px;
-  background: var(--color-card-bg, #fff);
-}
-
-.app-route-system-skeleton {
-  gap: 0;
-}
-
-.app-route-system-skeleton__panel {
-  display: grid;
-  border: 1px solid var(--color-border-light, #f2f2f6);
-  border-radius: 8px;
-  background: var(--color-card-bg, #fff);
-  box-shadow: 0 12px 28px rgba(28, 28, 38, 0.04);
-}
-
-.app-route-system-skeleton__row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 136px;
-  gap: 10px 24px;
-  align-items: center;
-  min-height: 86px;
-  padding: 18px 24px;
-  border-bottom: 1px solid var(--color-border-light, #f2f2f6);
-}
-
-.app-route-system-skeleton__row:last-child {
-  border-bottom: 0;
-}
-
-.app-route-system-skeleton__row span {
-  width: min(280px, 56%);
-  height: 16px;
-}
-
-.app-route-system-skeleton__row b {
-  width: min(560px, 100%);
-  height: 12px;
-}
-
-.app-route-system-skeleton__row i {
-  grid-column: 2;
-  grid-row: 1 / 3;
-  width: 136px;
-  height: 32px;
-  border-radius: 8px;
-}
-
-.app-route-system-skeleton__footer {
-  display: flex;
-  justify-content: flex-end;
-  padding: 16px 24px 0;
-}
-
-.app-route-system-skeleton__footer span {
-  display: block;
-  width: 72px;
-  height: 32px;
   border-radius: 8px;
   background: var(--color-card-bg, #fff);
 }

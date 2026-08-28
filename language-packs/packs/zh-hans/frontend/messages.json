@@ -3667,8 +3667,7 @@
       "groupDataApps": "智能引擎",
       "nodes": "节点管理",
       "repositories": "容灾目标",
-      "groupGovernance": "组织",
-      "groupSystem": "系统设置"
+      "groupGovernance": "组织"
     }
   },
   "nodesPage": {
@@ -4923,63 +4922,11 @@
     "nav": {
       "organizationHub": "组织信息",
       "members": "成员角色",
-      "systemHub": "全局设置",
       "subscription": "订阅计费",
       "apiKeys": "API 密钥"
     },
     "orgTabs": {
       "subscription": "授权订阅"
-    },
-    "global": {
-      "restoreDefaults": "恢复默认",
-      "groups": {
-        "execution": "任务执行",
-        "data": "数据处理",
-        "security": "安全校验",
-        "retention": "保留策略"
-      },
-      "groupHints": {
-        "execution": "控制任务并发、超时和失败重试。",
-        "data": "配置传输缓冲、压缩和大文件处理。",
-        "security": "配置恢复校验和数据加密策略。",
-        "retention": "配置快照自动保留时间。"
-      },
-      "labels": {
-        "concurrency": "数据保护任务并发上限",
-        "verify": "恢复后校验校验和",
-        "taskTimeout": "任务超时时间（秒）",
-        "retryDelay": "重试间隔（秒）",
-        "bufferSize": "缓冲区大小（MB）",
-        "compression": "启用压缩",
-        "encryption": "启用加密",
-        "skipLargeFiles": "跳过大于（MB）的文件",
-        "snapshotRetention": "快照保留天数"
-      },
-      "hints": {
-        "concurrency": "限制全局同时运行的备份与恢复任务总数，防止并发过高导致系统资源过载",
-        "verify": "恢复完成后对关键对象做校验；开启更安全，关闭可减少 I/O 与耗时。",
-        "taskTimeout": "单个任务的最大执行时间。超过此时间的任务将被终止。",
-        "retryCount": "失败时的重试次数。设为 0 则禁用重试。",
-        "retryDelay": "两次重试之间的等待时间（秒）。",
-        "bufferSize": "数据传输的内存缓冲区。较大值会占用更多内存但可能提高吞吐量。",
-        "compression": "传输过程中压缩数据以减少带宽占用。",
-        "encryption": "对静态数据和传输中数据进行加密，增强安全性。",
-        "skipLargeFiles": "超过此大小的文件将在备份时被跳过。设为 0 则不跳过任何文件。",
-        "snapshotRetention": "快照保留天数，超过后自动清理。"
-      },
-      "errForbidden": "需要组织 Owner 或 Admin 权限才能编辑系统设置。",
-      "errLoad": "加载系统设置失败，请稍后重试或检查网络。",
-      "errSave": "保存失败，请确认具备权限且参数合法。",
-      "msgSaved": "已保存组织系统设置。",
-      "msgSavedReloadFailed": "配置已写入，但刷新列表失败，请稍后刷新页面或再试一次保存。",
-      "msgRestored": "已恢复为页面默认值（尚未写入服务器，请点击保存）。"
-    },
-    "systemOrg": {
-      "msgSaved": "组织系统设置已保存。",
-      "effectiveFrom": "当前生效值来源：{source}",
-      "sourceTenant": "本组织配置",
-      "sourceGlobal": "平台默认值",
-      "sourceDefault": "内置默认值"
     },
     "channels": {
       "refresh": "刷新",
@@ -6554,10 +6501,6 @@
     "okGotIt": "我知道了",
     "registerFailed": "注册失败",
     "sendCodeCountdown": "{n}s"
-  },
-  "nodeGlobalSettings": {
-    "movedToAdminConsole": "平台级全局配置已迁移至管理控制台。租户组织相关设置仍在组织设置中管理。",
-    "openAdminConsole": "在管理控制台打开平台配置"
   },
   "platformOps": {
     "nav": {

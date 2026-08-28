@@ -1,11 +1,9 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Building2, Users, CreditCard, Settings } from 'lucide-vue-next'
+import { Building2, Users, CreditCard } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 
-/**
- * Config management sidebar: organization management + system settings
- */
+/** Configuration management sidebar for organization-level pages. */
 export function useNodeSideNav() {
   const { t } = useI18n()
   return computed<MenuItem[]>(() => [
@@ -16,10 +14,6 @@ export function useNodeSideNav() {
         { label: t('settings.nav.members'), to: '/node/members', icon: Users },
         { label: t('settings.nav.subscription'), to: '/node/subscription', icon: CreditCard },
       ],
-    },
-    {
-      label: t('assetsPage.side.groupSystem'),
-      children: [{ label: t('settings.nav.systemHub'), to: '/node/system', icon: Settings }],
     },
   ])
 }

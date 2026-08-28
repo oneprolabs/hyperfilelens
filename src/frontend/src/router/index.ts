@@ -58,7 +58,6 @@ const OpsAuditPage = lazyRoute(() => import('../pages/ops/Audit.vue'))
 const SettingsMembersPage = lazyRoute(() => import('../pages/settings/Members.vue'))
 const OrganizationHubPage = lazyRoute(() => import('../pages/settings/OrganizationHub.vue'))
 const SubscriptionPage = lazyRoute(() => import('../pages/settings/Subscription.vue'))
-const NodeGlobalSettingsPage = lazyRoute(() => import('../pages/node/NodeGlobalSettings.vue'))
 const AccountSettingsLayout = lazyRoute(() => import('../pages/account/AccountSettingsLayout.vue'))
 const AccountProfilePage = lazyRoute(() => import('../pages/account/AccountProfile.vue'))
 const InsightPage = lazyRoute(() => import('../pages/insight/Insight.vue'))
@@ -150,7 +149,6 @@ export const router = createRouter({
         { path: 'node/organization', component: OrganizationHubPage },
         { path: 'node/members', component: SettingsMembersPage },
         { path: 'node/subscription', component: SubscriptionPage },
-        { path: 'node/system', component: NodeGlobalSettingsPage },
         { path: 'node/snapshots', component: AssetsSnapshotsPage },
         { path: 'ops', redirect: '/ops/health' },
         ...tenantOpsRoutes,
