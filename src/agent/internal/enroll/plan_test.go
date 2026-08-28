@@ -38,6 +38,27 @@ func TestIsServiceHealthy(t *testing.T) {
 	}
 }
 
+func TestShouldRecoverServiceAfterConfigRestore(t *testing.T) {
+	tests := []struct {
+		name        string
+		wasRunning  bool
+		current     string
+		wantRecover bool
+	}{
+		{name: "running service remains active", wasRunning: true, current: "active", wantRecover: false},
+		{name: "running service became inactive", wasRunning: true, current: "inactive", wantRecover: true},
+		{name: "inactive service stays inactive", wasRunning: false, current: "inactive", wantRecover: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := shouldRecoverServiceAfterConfigRestore(test.wasRunning, test.current)
+			if got != test.wantRecover {
+				t.Fatalf("shouldRecoverServiceAfterConfigRestore(%v, %q) = %v, want %v", test.wasRunning, test.current, got, test.wantRecover)
+			}
+		})
+	}
+}
+
 func TestPlanReinstallCrossOrg(t *testing.T) {
 	plan, err := PlanReinstall(t.Context(), Config{OrgKey: "org-b"}, InstallState{
 		Installed: true,

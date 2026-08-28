@@ -310,6 +310,38 @@ func TestInstallShellUpgradeKeepsRollbackUntilLocalHealth(t *testing.T) {
 	}
 }
 
+func TestInstallShellInitializesDependentUpgradeLocalsInOrder(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	for _, unsafeDeclaration := range []string{
+		`local data_dir="$1" operation="$2" lock_dir=`,
+		`local data_dir="$1" phase="$2" file=`,
+		`local data_dir="$1" file=`,
+		`local root="$1" role="$2" version="$3" target_verifier=`,
+		`local data_dir="$1" service_dir=`,
+		`local source="$1" destination="$2" temporary=`,
+		`local data_dir="$1" rollback=`,
+		`local source="$1" destination="$2" mode="$3" temporary=`,
+	} {
+		if strings.Contains(body, unsafeDeclaration) {
+			t.Fatalf("install.sh must not expand a local in the same declaration that initializes it under set -u: %s", unsafeDeclaration)
+		}
+	}
+	for _, want := range []string{
+		`local lock_dir="$(agent_lifecycle_dir "${data_dir}")/install.lock"`,
+		`local file="$(agent_lifecycle_dir "${data_dir}")/upgrade-state.json"`,
+		`local root="$1" role="$2" version="$3" verifier output`,
+		`local target_verifier="${root}/bin/hfl-agent"`,
+		`local service_dir="$(agent_backup_dir "${data_dir}")/rollback/service"`,
+		`local temporary="${destination}.rollback.$$"`,
+		`local rollback="$(agent_backup_dir "${data_dir}")/rollback"`,
+		`local temporary="${destination}.new.$$"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh ordered upgrade local initialization missing %q", want)
+		}
+	}
+}
+
 func TestInstallShellKeepsSpecifiedUserOutOfUserManager(t *testing.T) {
 	body := readPackagingInstallShell(t)
 	start := strings.Index(body, "hfl_systemctl() {")
