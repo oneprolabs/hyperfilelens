@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import timedelta
 from typing import Any
@@ -15,7 +16,12 @@ from apps.lens_bridge.models import (
     LensSessionLink,
     LensWorkspaceBinding,
 )
-from apps.lens_bridge.services import assistant_access, managed_datasource, sl_client
+from apps.lens_bridge.services import (
+    assistant_access,
+    managed_datasource,
+    sl_client,
+    teardown_blocking,
+)
 from apps.lens_bridge.services.teardown_claims import (
     TEARDOWN_CLAIM_TTL_SECONDS,
     next_retry_at,
@@ -28,6 +34,9 @@ class KnowledgeSourceTeardownIncompleteError(RuntimeError):
 
 class KnowledgeSourceTeardownBusyError(RuntimeError):
     """Raised when another worker owns the Knowledge Source lease."""
+
+
+logger = logging.getLogger(__name__)
 
 
 def _session_links_blocking_ks_teardown(
@@ -119,6 +128,10 @@ def _claim(knowledge_source_id: int) -> tuple[str | None, str]:
             return None, "missing"
         if knowledge_source.lifecycle_status == LensKnowledgeSource.LifecycleStatus.DELETED:
             return None, "deleted"
+        if teardown_blocking.intervention_required(
+            knowledge_source.teardown_state_json
+        ):
+            return None, "intervention_required"
         if (
             knowledge_source.teardown_claimed_at
             and knowledge_source.teardown_claimed_at
@@ -274,6 +287,8 @@ def run_knowledge_source_teardown(
     if knowledge_source is None:
         return {"knowledge_source_id": knowledge_source_id, "status": "missing"}
     state = dict(knowledge_source.teardown_state_json or {})
+    stop_assessment: managed_datasource.ConversionStopAssessment | None = None
+    blocking_step = "validate_gateway_workload"
     try:
         from apps.node.services.internal.node_workload import (
             get_node_workload_blockers,
@@ -283,6 +298,7 @@ def run_knowledge_source_teardown(
             raise ValidationError(
                 {"knowledge_source": "Data gateway restore work is still stopping."}
             )
+        blocking_step = "validate_chat_ownership"
         if _session_links_blocking_ks_teardown(
             knowledge_source,
             owner_session_link_id=owner_session_link_id,
@@ -292,13 +308,15 @@ def run_knowledge_source_teardown(
             )
 
         if knowledge_source.sl_datasource_uuid:
+            blocking_step = "cancel_conversion"
             _renew(knowledge_source.id, claim_token)
             sl_client.cancel_managed_datasource_conversion(
                 str(knowledge_source.sl_datasource_uuid)
             )
-            if not managed_datasource.conversion_stop_confirmed(
+            stop_assessment = managed_datasource.assess_conversion_stop(
                 knowledge_source
-            ):
+            )
+            if not stop_assessment.confirmed:
                 _save_step(
                     knowledge_source.id,
                     claim_token,
@@ -319,6 +337,7 @@ def run_knowledge_source_teardown(
 
         from apps.lens_bridge.services.assistants import _delete_sl_assistant
 
+        blocking_step = "delete_assistants"
         assistant_uuids = {
             link.sl_assistant_uuid
             for link in knowledge_source.assistant_links.filter(is_deleted=False).only(
@@ -347,6 +366,7 @@ def run_knowledge_source_teardown(
         )
 
         if knowledge_source.sl_datasource_uuid:
+            blocking_step = "delete_datasource"
             _renew(knowledge_source.id, claim_token)
             sl_client.delete_managed_datasource(
                 str(knowledge_source.sl_datasource_uuid)
@@ -364,6 +384,7 @@ def run_knowledge_source_teardown(
             status="success",
         )
 
+        blocking_step = "cleanup_workspace"
         cleanup_knowledge_source_workspace(
             knowledge_source,
             claim_token=claim_token,
@@ -375,6 +396,7 @@ def run_knowledge_source_teardown(
             "cleanup_workspace",
             status="success",
         )
+        state = teardown_blocking.clear_blocking(state)
         now = timezone.now()
         updated = LensKnowledgeSource.all_objects.filter(
             pk=knowledge_source.id,
@@ -404,13 +426,60 @@ def run_knowledge_source_teardown(
             status="retry",
             error=str(exc),
         )
+        if stop_assessment is not None and not stop_assessment.confirmed:
+            blocking_reason = "conversion_stop_unconfirmed"
+            task_id = stop_assessment.task_id
+            remote_status = stop_assessment.remote_status
+            stop_confirmation_source = (
+                stop_assessment.stop_confirmation_source
+            )
+        else:
+            # The stage is stable across retries but changes when teardown
+            # makes substantive progress. Full exception details remain in
+            # the step journal.
+            blocking_reason = blocking_step
+            task_id = ""
+            remote_status = ""
+            stop_confirmation_source = ""
+        state, blocking = teardown_blocking.record_blocking(
+            state,
+            reason=blocking_reason,
+            task_id=task_id,
+            gateway_link_id=knowledge_source.gateway_link_id,
+            remote_status=remote_status,
+            stop_confirmation_source=stop_confirmation_source,
+        )
+        requires_intervention = bool(blocking["intervention_required"])
+        retry_at = (
+            None
+            if requires_intervention
+            else next_retry_at(int(blocking["consecutive_attempts"]))
+        )
         LensKnowledgeSource.all_objects.filter(
             pk=knowledge_source.id,
             teardown_claim_token=claim_token,
         ).update(
-            status_detail="Knowledge source cleanup is incomplete and will be retried.",
+            status_detail=(
+                "Knowledge source cleanup requires operator intervention."
+                if requires_intervention
+                else "Knowledge source cleanup is incomplete and will be retried."
+            ),
             teardown_claim_token=None,
             teardown_claimed_at=None,
+            teardown_next_retry_at=retry_at,
+            teardown_state_json=state,
             updated_at=timezone.now(),
+        )
+        logger.warning(
+            "knowledge source teardown blocked ks_id=%s gateway_link_id=%s "
+            "task_id=%s remote_status=%s reason=%s attempts=%s "
+            "intervention_required=%s",
+            knowledge_source.id,
+            knowledge_source.gateway_link_id,
+            task_id,
+            remote_status,
+            blocking_reason,
+            blocking["consecutive_attempts"],
+            requires_intervention,
         )
         raise KnowledgeSourceTeardownIncompleteError(str(exc)) from exc

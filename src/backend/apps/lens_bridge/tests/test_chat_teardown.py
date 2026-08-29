@@ -12,6 +12,7 @@ from django.utils import timezone
 from apps.iam.models import Organization
 from apps.lens_bridge.models import (
     LensAssistantLink,
+    LensGatewayChatSlot,
     LensGatewayLink,
     LensKnowledgeSource,
     LensSessionLink,
@@ -21,6 +22,7 @@ from apps.lens_bridge.services import (
     assistant_access,
     chat_lifecycle,
     knowledge_source_teardown,
+    managed_datasource,
     sl_client,
 )
 from apps.lens_bridge.tasks.chat_lifecycle import (
@@ -202,6 +204,14 @@ class CopilotChatTeardownTests(TestCase):
         )
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
         self.session.save(update_fields=["lifecycle_status", "updated_at"])
+        LensGatewayChatSlot.objects.create(
+            gateway_link=self.gateway_link,
+            slot_number=1,
+            session_link=self.session,
+            session_generation=self.session.provision_generation,
+            acquired_at=timezone.now(),
+            heartbeat_at=timezone.now(),
+        )
 
         result = chat_lifecycle.run_copilot_chat_teardown(
             session_link_id=self.session.id
@@ -220,6 +230,11 @@ class CopilotChatTeardownTests(TestCase):
         self.assertEqual(
             self.workspace_binding.state,
             LensWorkspaceBinding.State.DELETED,
+        )
+        self.assertFalse(
+            LensGatewayChatSlot.objects.filter(
+                session_link=self.session
+            ).exists()
         )
         self.assertEqual(run_agent_task.call_args.kwargs["kind"], "lens.ks.cleanup")
 
@@ -294,6 +309,14 @@ class CopilotChatTeardownTests(TestCase):
                 "updated_at",
             ]
         )
+        LensGatewayChatSlot.objects.create(
+            gateway_link=self.gateway_link,
+            slot_number=1,
+            session_link=self.session,
+            session_generation=self.session.provision_generation,
+            acquired_at=timezone.now(),
+            heartbeat_at=timezone.now(),
+        )
 
         result = chat_lifecycle.run_copilot_chat_teardown(
             session_link_id=self.session.id
@@ -308,6 +331,11 @@ class CopilotChatTeardownTests(TestCase):
         self.assertEqual(self.session.status, LensSessionLink.Status.ACTIVE)
         self.assertIsNone(self.session.knowledge_source_id)
         self.assertIn("LensNode was unavailable", self.session.lifecycle_error)
+        self.assertFalse(
+            LensGatewayChatSlot.objects.filter(
+                session_link=self.session
+            ).exists()
+        )
 
     @mock.patch("apps.lens_bridge.services.assistant_access.soft_delete_assistant_link")
     @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
@@ -343,7 +371,14 @@ class CopilotChatTeardownTests(TestCase):
                 pk=self.knowledge_source.id
             ).update(
                 teardown_state_json={
-                    "cancel_conversion": {"status": "waiting"}
+                    "cancel_conversion": {"status": "waiting"},
+                    "blocking": {
+                        "reason": "conversion_stop_unconfirmed",
+                        "task_id": "convert-1",
+                        "gateway_link_id": self.gateway_link.id,
+                        "remote_status": "CANCELLING",
+                        "intervention_required": False,
+                    },
                 }
             )
             raise knowledge_source_teardown.KnowledgeSourceTeardownIncompleteError(
@@ -372,6 +407,90 @@ class CopilotChatTeardownTests(TestCase):
         self.assertEqual(
             self.workspace_binding.state,
             LensWorkspaceBinding.State.READY,
+        )
+        self.assertEqual(
+            self.session.teardown_state_json["blocking"]["reason"],
+            "conversion_stop_unconfirmed",
+        )
+        self.assertEqual(
+            self.session.teardown_state_json["blocking"]["task_id"],
+            "convert-1",
+        )
+
+    @mock.patch("apps.lens_bridge.services.assistant_access.soft_delete_assistant_link")
+    @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
+    @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")
+    def test_knowledge_source_intervention_stops_chat_cleanup_retries(
+        self,
+        request_json,
+        _delete_assistant,
+        _soft_delete_assistant,
+    ):
+        request_json.side_effect = self._not_found()
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.PENDING
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "cleanup_intent",
+                "cleanup_status",
+                "updated_at",
+            ]
+        )
+        LensGatewayChatSlot.objects.create(
+            gateway_link=self.gateway_link,
+            slot_number=1,
+            session_link=self.session,
+            session_generation=self.session.provision_generation,
+            acquired_at=timezone.now(),
+            heartbeat_at=timezone.now(),
+        )
+
+        blocking = {
+            "reason": "cleanup_workspace",
+            "fingerprint": "stable-workspace-failure",
+            "task_id": "",
+            "gateway_link_id": self.gateway_link.id,
+            "remote_status": "",
+            "stop_confirmation_source": "",
+            "first_seen_at": timezone.now().isoformat(),
+            "last_seen_at": timezone.now().isoformat(),
+            "consecutive_attempts": 12,
+            "intervention_required": True,
+        }
+
+        def require_intervention(**_kwargs):
+            LensKnowledgeSource.all_objects.filter(
+                pk=self.knowledge_source.id
+            ).update(teardown_state_json={"blocking": blocking})
+            raise knowledge_source_teardown.KnowledgeSourceTeardownIncompleteError(
+                "Workspace cleanup requires operator intervention."
+            )
+
+        with mock.patch(
+            "apps.lens_bridge.services.knowledge_source_teardown."
+            "run_knowledge_source_teardown",
+            side_effect=require_intervention,
+        ), self.assertRaises(chat_lifecycle.ChatTeardownIncompleteError):
+            chat_lifecycle.run_copilot_chat_teardown(
+                session_link_id=self.session.id
+            )
+
+        self.session.refresh_from_db()
+        self.assertEqual(
+            self.session.cleanup_status,
+            LensSessionLink.CleanupStatus.BLOCKED,
+        )
+        self.assertIsNone(self.session.teardown_next_retry_at)
+        self.assertEqual(
+            self.session.teardown_state_json["blocking"],
+            blocking,
+        )
+        self.assertTrue(
+            LensGatewayChatSlot.objects.filter(
+                session_link=self.session
+            ).exists()
         )
 
     @mock.patch(
@@ -1398,6 +1517,44 @@ class CopilotChatTeardownTests(TestCase):
         )
         self.assertEqual(delay.call_count, 2)
 
+    @mock.patch(
+        "apps.lens_bridge.tasks.knowledge_source_teardown."
+        "execute_knowledge_source_teardown_task.delay"
+    )
+    @mock.patch(
+        "apps.lens_bridge.tasks.chat_lifecycle."
+        "execute_copilot_chat_teardown_task.delay"
+    )
+    def test_teardown_reconciler_skips_operator_intervention(
+        self,
+        chat_delay,
+        ks_delay,
+    ):
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.BLOCKED
+        self.session.teardown_next_retry_at = None
+        self.session.teardown_state_json = {
+            "intent": "delete_session",
+            "blocking": {"intervention_required": True},
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "cleanup_intent",
+                "cleanup_status",
+                "teardown_next_retry_at",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+
+        result = reconcile_lens_resource_teardowns_task(limit=10)
+
+        self.assertEqual(result["queued"], 0)
+        chat_delay.assert_not_called()
+        ks_delay.assert_not_called()
+
     @mock.patch("apps.node.services.internal.agent_task.run_agent_task_sync")
     @mock.patch("apps.lens_bridge.services.assistant_access.soft_delete_assistant_link")
     @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
@@ -1701,8 +1858,13 @@ class CopilotChatTeardownTests(TestCase):
 
     @mock.patch(
         "apps.lens_bridge.services.knowledge_source_teardown."
-        "managed_datasource.conversion_stop_confirmed",
-        return_value=False,
+        "managed_datasource.assess_conversion_stop",
+        return_value=managed_datasource.ConversionStopAssessment(
+            False,
+            task_id="convert-1",
+            remote_status="CANCELLING",
+            reason="conversion_still_running",
+        ),
     )
     @mock.patch(
         "apps.lens_bridge.services.knowledge_source_teardown."

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 const testWorkspaceUID = "de240f46-eccd-4e4b-868f-b1f504fbe67b"
@@ -25,6 +26,10 @@ func testIdentityPath(root, workspaceUID string) string {
 
 func testTrashPath(root, workspaceUID string) string {
 	return filepath.Join(root, ".hyperfilelens-trash", workspaceUID)
+}
+
+func testTombstonePath(root, workspaceUID string) string {
+	return filepath.Join(filepath.Dir(root), ".hyperfilelens", "tombstones", workspaceUID+".json")
 }
 
 func TestLensWorkspaceTrashStaysInsideWorkspaceFilesystem(t *testing.T) {
@@ -464,6 +469,7 @@ func TestRunLensKsCleanupRetriesAfterPartialTrashRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	originalRemove := removeLensWorkspaceTrash
+	t.Cleanup(func() { removeLensWorkspaceTrash = originalRemove })
 	removeLensWorkspaceTrash = func(path string) error {
 		if err := os.Remove(filepath.Join(path, "data.txt")); err != nil {
 			return err
@@ -475,6 +481,13 @@ func TestRunLensKsCleanupRetriesAfterPartialTrashRemoval(t *testing.T) {
 	if status != "failed" {
 		t.Fatalf("expected injected failure, got %q", status)
 	}
+	tombstone, err := readLensWorkspaceTombstone(testTombstonePath(root, testWorkspaceUID))
+	if err != nil || tombstone.State != lensWorkspaceTombstoneRetiring {
+		t.Fatalf("expected durable retiring tombstone, tombstone=%+v err=%v", tombstone, err)
+	}
+	if prepareStatus, _, _ := New(nil).runLensKsPrepare(context.Background(), payload); prepareStatus != "failed" {
+		t.Fatalf("late prepare must be rejected while cleanup is retiring, status=%q", prepareStatus)
+	}
 	if _, err := os.Stat(testIdentityPath(root, testWorkspaceUID)); err != nil {
 		t.Fatalf("identity must survive partial removal: %v", err)
 	}
@@ -484,5 +497,95 @@ func TestRunLensKsCleanupRetriesAfterPartialTrashRemoval(t *testing.T) {
 	}
 	if _, err := os.Stat(testIdentityPath(root, testWorkspaceUID)); !os.IsNotExist(err) {
 		t.Fatalf("identity should be removed last, err=%v", err)
+	}
+	tombstone, err = readLensWorkspaceTombstone(testTombstonePath(root, testWorkspaceUID))
+	if err != nil || tombstone.State != lensWorkspaceTombstoneRetired {
+		t.Fatalf("expected durable retired tombstone, tombstone=%+v err=%v", tombstone, err)
+	}
+	if status, _, errMsg := New(nil).runLensKsCleanup(context.Background(), payload); status != "success" {
+		t.Fatalf("repeated cleanup must be idempotent, status=%q err=%q", status, errMsg)
+	}
+	if status, _, _ := New(nil).runLensKsPrepare(context.Background(), payload); status != "failed" {
+		t.Fatalf("retired UID must survive Agent restart and reject prepare, status=%q", status)
+	}
+}
+
+func TestLensWorkspaceLifecycleLockSerializesPrepareAndCleanup(t *testing.T) {
+	root := newLensTestRoot(t)
+	target := filepath.Join(root, "tenant-61-ks-locked")
+	payload := Payload{
+		Path: target,
+		Extra: map[string]any{
+			"workspace_root":         root,
+			"workspace_uid":          testWorkspaceUID,
+			"tenant_organization_id": 61,
+			"gateway_link_id":        7,
+			"knowledge_source_id":    42,
+			"workspace_kind":         "managed_restore",
+		},
+	}
+	engine := New(nil)
+	if status, _, errMsg := engine.runLensKsPrepare(context.Background(), payload); status != "success" {
+		t.Fatalf("prepare status=%q err=%q", status, errMsg)
+	}
+	enteredRemoval := make(chan struct{})
+	allowRemoval := make(chan struct{})
+	originalRemove := removeLensWorkspaceTrash
+	removeLensWorkspaceTrash = func(path string) error {
+		close(enteredRemoval)
+		<-allowRemoval
+		return originalRemove(path)
+	}
+	t.Cleanup(func() { removeLensWorkspaceTrash = originalRemove })
+
+	cleanupDone := make(chan string, 1)
+	go func() {
+		status, _, _ := engine.runLensKsCleanup(context.Background(), payload)
+		cleanupDone <- status
+	}()
+	<-enteredRemoval
+	prepareDone := make(chan string, 1)
+	go func() {
+		status, _, _ := engine.runLensKsPrepare(context.Background(), payload)
+		prepareDone <- status
+	}()
+	if status := <-prepareDone; status != "failed" {
+		t.Fatalf("late prepare must observe retiring tombstone, status=%q", status)
+	}
+	close(allowRemoval)
+	if status := <-cleanupDone; status != "success" {
+		t.Fatalf("cleanup status=%q", status)
+	}
+}
+
+func TestLensWorkspaceLifecycleLockHonorsContext(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "workspace.lock")
+	lockHeld := make(chan struct{})
+	releaseLock := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- withLensWorkspaceLock(
+			context.Background(),
+			lockPath,
+			func() error {
+				close(lockHeld)
+				<-releaseLock
+				return nil
+			},
+		)
+	}()
+	<-lockHeld
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := withLensWorkspaceLock(ctx, lockPath, func() error {
+		t.Fatal("second action must not run while the UID lock is held")
+		return nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected lock deadline, got %v", err)
+	}
+	close(releaseLock)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first lock action failed: %v", err)
 	}
 }

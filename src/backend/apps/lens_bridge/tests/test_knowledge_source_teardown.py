@@ -1,5 +1,6 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -16,10 +17,13 @@ from apps.lens_bridge.models import (
     LensSessionLink,
     LensWorkspaceBinding,
 )
-from apps.lens_bridge.services import knowledge_source_teardown
+from apps.lens_bridge.services import knowledge_source_teardown, teardown_blocking
 from apps.node.models import Node
 from apps.lens_bridge.tasks.chat_lifecycle import (
     reconcile_lens_resource_teardowns_task,
+)
+from apps.lens_bridge.tasks.knowledge_source_teardown import (
+    due_knowledge_source_teardown_ids,
 )
 
 
@@ -264,6 +268,71 @@ class KnowledgeSourceDeleteApiTests(TestCase):
         )
 
         self.assertEqual(result["status"], "deleted")
+
+    @mock.patch.object(teardown_blocking, "INTERVENTION_ATTEMPT_THRESHOLD", 2)
+    @mock.patch.object(teardown_blocking, "INTERVENTION_AGE_SECONDS", 1)
+    @mock.patch(
+        "apps.node.services.internal.node_workload.get_node_workload_blockers",
+        return_value=[mock.MagicMock(code="restore_active")],
+    )
+    def test_persistent_blocker_stops_reconciler_until_operator_recovery(
+        self,
+        _blockers,
+    ):
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.save(
+            update_fields=[
+                "lifecycle_status",
+                "updated_at",
+            ]
+        )
+
+        with self.assertRaises(
+            knowledge_source_teardown.KnowledgeSourceTeardownIncompleteError
+        ):
+            knowledge_source_teardown.run_knowledge_source_teardown(
+                knowledge_source_id=self.knowledge_source.id
+            )
+
+        self.knowledge_source.refresh_from_db()
+        state = dict(self.knowledge_source.teardown_state_json)
+        state["blocking"]["first_seen_at"] = (
+            timezone.now() - timedelta(seconds=2)
+        ).isoformat()
+        self.knowledge_source.teardown_state_json = state
+        self.knowledge_source.teardown_next_retry_at = timezone.now()
+        self.knowledge_source.save(
+            update_fields=[
+                "teardown_state_json",
+                "teardown_next_retry_at",
+                "updated_at",
+            ]
+        )
+
+        with self.assertRaises(
+            knowledge_source_teardown.KnowledgeSourceTeardownIncompleteError
+        ):
+            knowledge_source_teardown.run_knowledge_source_teardown(
+                knowledge_source_id=self.knowledge_source.id
+            )
+
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            self.knowledge_source.teardown_state_json["blocking"]["reason"],
+            "validate_gateway_workload",
+        )
+        self.assertTrue(
+            self.knowledge_source.teardown_state_json["blocking"][
+                "intervention_required"
+            ]
+        )
+        self.assertIsNone(self.knowledge_source.teardown_next_retry_at)
+        self.assertNotIn(
+            self.knowledge_source.id,
+            due_knowledge_source_teardown_ids(limit=10),
+        )
 
 
 class KnowledgeSourceTeardownConcurrencyTests(TransactionTestCase):

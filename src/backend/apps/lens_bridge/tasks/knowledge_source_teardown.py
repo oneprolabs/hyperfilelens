@@ -74,6 +74,14 @@ def due_knowledge_source_teardown_ids(
             lifecycle_status=LensKnowledgeSource.LifecycleStatus.DELETING,
         )
         .filter(
+            Q(
+                teardown_state_json__blocking__intervention_required__isnull=True
+            )
+            | Q(
+                teardown_state_json__blocking__intervention_required=False
+            )
+        )
+        .filter(
             Q(teardown_next_retry_at__isnull=True)
             | Q(teardown_next_retry_at__lte=now)
         )
