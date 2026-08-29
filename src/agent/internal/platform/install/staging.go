@@ -27,7 +27,9 @@ func StageUpgradeArchive(dataDir, archivePath string) (string, error) {
 		return "", fmt.Errorf("archive path required")
 	}
 	pendingDir := LifecycleUpgradeDir(dataDir)
-	_ = os.RemoveAll(pendingDir)
+	if err := os.RemoveAll(pendingDir); err != nil {
+		return "", fmt.Errorf("clear staged upgrade directory: %w", err)
+	}
 	if err := os.MkdirAll(pendingDir, 0o750); err != nil {
 		return "", err
 	}

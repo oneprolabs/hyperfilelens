@@ -58,6 +58,7 @@ func ScheduleDetachedUninstall(
 		completion,
 		scriptPath,
 	); err != nil {
+		_ = os.Remove(scriptPath)
 		if logDir != "" {
 			_ = AppendUninstallLog(logDir, fmt.Sprintf("failed to write uninstall script: %v", err))
 		}
@@ -69,6 +70,9 @@ func ScheduleDetachedUninstall(
 		}
 	}
 	if err := startWindowsDetachedScript(scriptPath, userInstall, logFn); err != nil {
+		if !ShouldRetainDetachedLifecycleFiles(err) {
+			_ = os.Remove(scriptPath)
+		}
 		return fmt.Errorf("start detached uninstall: %w", err)
 	}
 	return nil
@@ -485,7 +489,7 @@ try {
 }
 
 Report-UninstallCompletion
-Unregister-ScheduledTask -TaskName $scheduledTaskName -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName $scheduledTaskName -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 if ($cleanupFailures.Count -eq 0) {
   exit 0
