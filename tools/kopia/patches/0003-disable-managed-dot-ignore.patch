@@ -1,0 +1,135 @@
+diff --git a/cli/command_policy_set_files.go b/cli/command_policy_set_files.go
+index 3cdf7d23..ffe2b30f 100644
+--- a/cli/command_policy_set_files.go
++++ b/cli/command_policy_set_files.go
+@@ -16,10 +16,12 @@ type policyFilesFlags struct {
+ 	policySetClearIgnore  bool
+ 
+ 	// Dot-ignore files to look at.
+-	policySetAddDotIgnore    []string
++	policySetAddDotIgnore     []string
+ 	policySetRemoveDotIgnore []string
+-	policySetClearDotIgnore  bool
+-	policySetMaxFileSize     string
++	policySetClearDotIgnore   bool
++	policySetDisableDotIgnore bool
++	policySetEnableDotIgnore  bool
++	policySetMaxFileSize      string
+ 
+ 	// Ignore other mounted filesystems.
+ 	policyOneFileSystem string
+@@ -37,6 +39,8 @@ func (c *policyFilesFlags) setup(cmd *kingpin.CmdClause) {
+ 	cmd.Flag("add-dot-ignore", "List of paths to add to the dot-ignore list").PlaceHolder("FILENAME").StringsVar(&c.policySetAddDotIgnore)
+ 	cmd.Flag("remove-dot-ignore", "List of paths to remove from the dot-ignore list").PlaceHolder("FILENAME").StringsVar(&c.policySetRemoveDotIgnore)
+ 	cmd.Flag("clear-dot-ignore", "Clear list of paths in the dot-ignore list").BoolVar(&c.policySetClearDotIgnore)
++	cmd.Flag("disable-dot-ignore", "Disable dot-ignore files for this policy").BoolVar(&c.policySetDisableDotIgnore)
++	cmd.Flag("enable-dot-ignore", "Enable dot-ignore files for this policy").BoolVar(&c.policySetEnableDotIgnore)
+ 	cmd.Flag("max-file-size", "Exclude files above given size").PlaceHolder("N").StringVar(&c.policySetMaxFileSize)
+ 
+ 	// Ignore other mounted filesystems.
+@@ -51,6 +55,14 @@ func (c *policyFilesFlags) setFilesPolicyFromFlags(ctx context.Context, fp *poli
+ 	}
+ 
+ 	applyPolicyStringList(ctx, "dot-ignore filenames", &fp.DotIgnoreFiles, c.policySetAddDotIgnore, c.policySetRemoveDotIgnore, c.policySetClearDotIgnore, changeCount)
++	if c.policySetDisableDotIgnore {
++		*changeCount++
++		fp.NoParentDotIgnoreFiles = true
++	}
++	if c.policySetEnableDotIgnore {
++		*changeCount++
++		fp.NoParentDotIgnoreFiles = false
++	}
+ 	applyPolicyStringList(ctx, "ignore rules", &fp.IgnoreRules, c.policySetAddIgnore, c.policySetRemoveIgnore, c.policySetClearIgnore, changeCount)
+ 
+ 	if err := applyPolicyBoolPtr(ctx, "ignore cache dirs", &fp.IgnoreCacheDirectories, c.policyIgnoreCacheDirs, changeCount); err != nil {
+diff --git a/fs/ignorefs/ignorefs_test.go b/fs/ignorefs/ignorefs_test.go
+index 3b58780c..1b6289d6 100644
+--- a/fs/ignorefs/ignorefs_test.go
++++ b/fs/ignorefs/ignorefs_test.go
+@@ -3,6 +3,7 @@
+ import (
+ 	"bytes"
+ 	"context"
++	"slices"
+ 	"sort"
+ 	"testing"
+ 
+@@ -575,6 +576,31 @@ func TestIgnoreFS(t *testing.T) {
+ 	}
+ }
+ 
++func TestNoParentDotIgnoreFilesCannotReincludePolicyExcludedPath(t *testing.T) {
++	root := mockfs.NewDirectory()
++	root.AddFileLines(".kopiaignore", []string{"!/protected/"}, 0)
++	root.AddDir("protected", 0).AddFile("data", dummyFileContents, 0)
++	root.AddDir("data", 0).AddDir("protected", 0).AddFile("user", dummyFileContents, 0)
++	root.AddFile("included", dummyFileContents, 0)
++	tree := policy.BuildTree(map[string]*policy.Policy{
++		".": {
++			FilesPolicy: policy.FilesPolicy{
++				IgnoreRules:            []string{"/protected/"},
++				NoParentDotIgnoreFiles: true,
++			},
++		},
++	}, policy.DefaultPolicy)
++
++	ifs := ignorefs.New(root, tree)
++	got := walkTree(t, ifs)
++	if slices.Contains(got, "./protected/") || slices.Contains(got, "./protected/data") {
++		t.Fatalf("policy-excluded path was re-included by dot-ignore: %#v", got)
++	}
++	if !slices.Contains(got, "./.kopiaignore") || !slices.Contains(got, "./included") || !slices.Contains(got, "./data/protected/user") {
++		t.Fatalf("unexpected files after disabling dot-ignore inheritance: %#v", got)
++	}
++}
++
+ func addAndSubtractFiles(original, added, removed []string) []string {
+ 	m := map[string]bool{}
+ 	for _, ri := range removed {
+diff --git a/snapshot/policy/files_policy.go b/snapshot/policy/files_policy.go
+index bfacc8a6..5b62f041 100644
+--- a/snapshot/policy/files_policy.go
++++ b/snapshot/policy/files_policy.go
+@@ -26,10 +26,12 @@ type FilesPolicyDefinition struct {
+ 
+ // Merge applies default values from the provided policy.
+ func (p *FilesPolicy) Merge(src FilesPolicy, def *FilesPolicyDefinition, si snapshot.SourceInfo) {
++	if !p.NoParentDotIgnoreFiles {
++		mergeStringsReplace(&p.DotIgnoreFiles, src.DotIgnoreFiles, &def.DotIgnoreFiles, si)
++	}
++	mergeBool(&p.NoParentDotIgnoreFiles, src.NoParentDotIgnoreFiles, &def.NoParentDotIgnoreFiles, si)
+ 	mergeStringList(&p.IgnoreRules, src.IgnoreRules, &def.IgnoreRules, si)
+ 	mergeBool(&p.NoParentIgnoreRules, src.NoParentIgnoreRules, &def.NoParentIgnoreRules, si)
+-	mergeStringsReplace(&p.DotIgnoreFiles, src.DotIgnoreFiles, &def.DotIgnoreFiles, si)
+-	mergeBool(&p.NoParentDotIgnoreFiles, src.NoParentDotIgnoreFiles, &def.NoParentDotIgnoreFiles, si)
+ 	mergeOptionalBool(&p.IgnoreCacheDirectories, src.IgnoreCacheDirectories, &def.IgnoreCacheDirectories, si)
+ 	mergeInt64(&p.MaxFileSize, src.MaxFileSize, &def.MaxFileSize, si)
+ 	mergeOptionalBool(&p.OneFileSystem, src.OneFileSystem, &def.OneFileSystem, si)
+diff --git a/snapshot/policy/policy_merge_test.go b/snapshot/policy/policy_merge_test.go
+index 3fd150ca..39b6e193 100644
+--- a/snapshot/policy/policy_merge_test.go
++++ b/snapshot/policy/policy_merge_test.go
+@@ -342,3 +342,23 @@ func TestPolicyMergeTimesOfDayIncludingParents(t *testing.T) {
+ 
+ 	require.Equal(t, want.String(), result.String())
+ }
++func TestNoParentDotIgnoreFilesPreventsDefaultDotIgnoreInheritance(t *testing.T) {
++	merged, _ := policy.MergePolicies([]*policy.Policy{{
++		FilesPolicy: policy.FilesPolicy{NoParentDotIgnoreFiles: true},
++	}}, snapshot.SourceInfo{})
++	if len(merged.FilesPolicy.DotIgnoreFiles) != 0 {
++		t.Fatalf("dot-ignore files inherited despite NoParentDotIgnoreFiles: %#v", merged.FilesPolicy.DotIgnoreFiles)
++	}
++}
++
++func TestNoParentDotIgnoreFilesKeepsLocalDotIgnoreFiles(t *testing.T) {
++	merged, _ := policy.MergePolicies([]*policy.Policy{{
++		FilesPolicy: policy.FilesPolicy{
++			DotIgnoreFiles:         []string{".customignore"},
++			NoParentDotIgnoreFiles: true,
++		},
++	}}, snapshot.SourceInfo{})
++	if len(merged.FilesPolicy.DotIgnoreFiles) != 1 || merged.FilesPolicy.DotIgnoreFiles[0] != ".customignore" {
++		t.Fatalf("local dot-ignore files were lost: %#v", merged.FilesPolicy.DotIgnoreFiles)
++	}
++}

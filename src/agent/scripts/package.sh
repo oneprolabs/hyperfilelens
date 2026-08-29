@@ -341,6 +341,12 @@ def validate_kopia_info() -> dict:
     missing = [entry for entry in matrix if entry not in files]
     if missing:
         raise PrerequisiteError(f"KOPIA_INFO.json is missing matrix entries: {' '.join(missing)}")
+    features = info.get("features")
+    if not isinstance(features, dict) or features.get("hfl_managed_dot_ignore_v1") is not True:
+        raise PrerequisiteError(
+            "KOPIA_INFO.json is missing the HFL managed dot-ignore capability; "
+            "prepare Kopia in build mode before packaging an Agent"
+        )
     return info
 
 

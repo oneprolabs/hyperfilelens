@@ -246,8 +246,8 @@ func normalizeExtensions(values []string) ([]string, error) {
 	return result, nil
 }
 
-func managedBackupPolicyResetArgs(configFile string, sourcePath string) []string {
-	return []string{
+func managedBackupPolicyResetArgs(configFile string, sourcePath string, disableDotIgnore bool) []string {
+	args := []string{
 		"--config-file=" + configFile,
 		"policy",
 		"set",
@@ -255,8 +255,13 @@ func managedBackupPolicyResetArgs(configFile string, sourcePath string) []string
 		"--clear-dot-ignore",
 		"--clear-only-compress",
 		"--clear-never-compress",
-		sourcePath,
 	}
+	if disableDotIgnore {
+		args = append(args, "--disable-dot-ignore")
+	} else {
+		args = append(args, "--enable-dot-ignore")
+	}
+	return append(args, sourcePath)
 }
 
 func managedBackupPolicyApplyArgs(configFile string, sourcePath string, spec managedBackupPolicySpec, protectedPatterns ...[]string) []string {
@@ -311,7 +316,7 @@ func applyManagedBackupPolicy(
 ) (map[string]any, error) {
 	result := map[string]any{"compression_level": spec.CompressionLevel}
 	protected := protectedPatternValues(protectedPatterns...)
-	resetArgs := managedBackupPolicyResetArgs(configFile, sourcePath)
+	resetArgs := managedBackupPolicyResetArgs(configFile, sourcePath, len(protected) > 0)
 	resetResult, resetErr := runManagedPolicyCommand(ctx, managedRepositoryKopiaCommandTimeout, bin, resetArgs, env, "")
 	resetCommandResult := commandResult(resetResult)
 	resetCommandResult["command_summary"] = map[string]any{
@@ -370,12 +375,19 @@ func protectedPatternValues(values ...[]string) []string {
 }
 
 func managedIgnorePatterns(userPatterns []string, protectedPatterns ...[]string) []string {
-	values := append(protectedPatternValues(protectedPatterns...), userPatterns...)
-	seen := make(map[string]struct{}, len(values))
-	out := make([]string, 0, len(values))
-	for _, value := range values {
+	protected := protectedPatternValues(protectedPatterns...)
+	protectedSet := make(map[string]struct{}, len(protected))
+	for _, value := range protected {
+		protectedSet[value] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(userPatterns))
+	out := make([]string, 0, len(userPatterns)+len(protected))
+	for _, value := range userPatterns {
 		value = strings.TrimSpace(value)
 		if value == "" {
+			continue
+		}
+		if _, protectedValue := protectedSet[value]; protectedValue {
 			continue
 		}
 		if _, ok := seen[value]; ok {
@@ -384,7 +396,7 @@ func managedIgnorePatterns(userPatterns []string, protectedPatterns ...[]string)
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
-	return out
+	return append(out, protected...)
 }
 
 func verifyManagedBackupProtection(
@@ -423,22 +435,29 @@ func verifyManagedBackupProtection(
 	}
 	var policy struct {
 		Files struct {
-			Ignore []string `json:"ignore"`
+			Ignore                 []string `json:"ignore"`
+			DotIgnoreFiles         []string `json:"ignoreDotFiles"`
+			NoParentDotIgnoreFiles bool     `json:"noParentDotFiles"`
 		} `json:"files"`
 	}
 	if err := json.Unmarshal([]byte(res.Stdout), &policy); err != nil {
 		result["error_code"] = "BACKUP_PROTECTION_POLICY_VERIFY_FAILED"
 		return result, fmt.Errorf("verify Agent backup boundary policy: invalid Kopia policy response")
 	}
-	applied := make(map[string]struct{}, len(policy.Files.Ignore))
-	for _, pattern := range policy.Files.Ignore {
-		applied[strings.TrimSpace(pattern)] = struct{}{}
+	if len(policy.Files.Ignore) < len(required) {
+		result["error_code"] = "BACKUP_PROTECTION_POLICY_MISSING"
+		return result, fmt.Errorf("required Agent backup boundary policy is missing")
 	}
-	for _, pattern := range required {
-		if _, ok := applied[pattern]; !ok {
+	protectedOffset := len(policy.Files.Ignore) - len(required)
+	for index, pattern := range required {
+		if strings.TrimSpace(policy.Files.Ignore[protectedOffset+index]) != pattern {
 			result["error_code"] = "BACKUP_PROTECTION_POLICY_MISSING"
-			return result, fmt.Errorf("required Agent backup boundary policy is missing")
+			return result, fmt.Errorf("required Agent backup boundary policy is not effective")
 		}
+	}
+	if !policy.Files.NoParentDotIgnoreFiles || len(policy.Files.DotIgnoreFiles) != 0 {
+		result["error_code"] = "BACKUP_PROTECTION_DOT_IGNORE_ENABLED"
+		return result, fmt.Errorf("source dot-ignore inheritance is enabled for managed backup")
 	}
 	result["system_ignore_policy_verified"] = true
 	return result, nil

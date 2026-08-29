@@ -2,9 +2,11 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 
 	"hyperfilelens/agent/internal/model"
@@ -23,6 +25,82 @@ func TestBackupPathBoundaryRejectsAgentRootAndRepositoryMount(t *testing.T) {
 	repository := filepath.Join(root, "mounts", "repositories", "repo-1")
 	if _, err := newBackupPathBoundary(cfg, repository, true, repository); err == nil {
 		t.Fatal("expected a task payload to be unable to authorize a repository mount")
+	}
+}
+
+func TestSystemBackupBoundaryRulesAreRootAnchored(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux system boundary rules")
+	}
+	patterns, exclusions, forbidden, err := systemBackupBoundaryRules(t.TempDir(), string(filepath.Separator))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forbidden != "" {
+		t.Fatalf("unexpected forbidden path %q", forbidden)
+	}
+	for _, want := range []string{"/proc/", "/sys/", "/dev/", "/run/"} {
+		if !slices.Contains(patterns, want) {
+			t.Fatalf("missing root-anchored system rule %q in %#v", want, patterns)
+		}
+	}
+	if len(exclusions) != 4 {
+		t.Fatalf("unexpected system exclusions %#v", exclusions)
+	}
+}
+
+func TestBackupPathBoundaryRejectsSystemRuntimeSource(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux system boundary rules")
+	}
+	if _, err := newBackupPathBoundary(&model.AgentConfig{AgentRoot: t.TempDir()}, "/proc", false); !errors.Is(err, errAgentPathForbidden) {
+		t.Fatalf("expected protected system source rejection, got %v", err)
+	}
+}
+
+func TestSystemBackupBoundaryDoesNotMatchUnrelatedDirectoryNames(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "data")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	patterns, exclusions, forbidden, err := systemBackupBoundaryRules(filepath.Join(root, "agent"), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forbidden != "" || len(patterns) != 0 || len(exclusions) != 0 {
+		t.Fatalf("unrelated source received system exclusions: patterns=%#v exclusions=%#v forbidden=%q", patterns, exclusions, forbidden)
+	}
+}
+
+func TestSystemBackupBoundaryLoadsAdditionalConfiguredPaths(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux system boundary rules")
+	}
+	base := t.TempDir()
+	agentRoot := filepath.Join(base, "agent")
+	if err := os.MkdirAll(vfs.AgentConfigDir(agentRoot), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(vfs.AgentConfigDir(agentRoot), systemBackupBoundaryConfigName),
+		[]byte(`{"schema_version":1,"additional_paths":["`+filepath.Join(base, "runtime")+`"]}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	patterns, exclusions, forbidden, err := systemBackupBoundaryRules(agentRoot, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forbidden != "" || !slices.Contains(patterns, "/runtime/") {
+		t.Fatalf("configured system boundary missing: patterns=%#v exclusions=%#v forbidden=%q", patterns, exclusions, forbidden)
+	}
+}
+
+func TestCaseFoldSystemIgnorePattern(t *testing.T) {
+	if got := caseFoldSystemIgnorePattern("/System Volume Information/"); got != "/[Ss][Yy][Ss][Tt][Ee][Mm] [Vv][Oo][Ll][Uu][Mm][Ee] [Ii][Nn][Ff][Oo][Rr][Mm][Aa][Tt][Ii][Oo][Nn]/" {
+		t.Fatalf("case-folded system pattern = %q", got)
 	}
 }
 

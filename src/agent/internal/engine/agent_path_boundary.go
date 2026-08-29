@@ -77,6 +77,19 @@ func newBackupPathBoundary(cfg *model.AgentConfig, sourcePath string, nasSource 
 			root,
 		)
 	}
+	systemPatterns, systemExclusions, forbiddenSystemPath, systemErr := systemBackupBoundaryRules(b.agentRoot, path)
+	if systemErr != nil {
+		return backupPathBoundary{}, systemErr
+	}
+	if forbiddenSystemPath != "" {
+		return backupPathBoundary{}, fmt.Errorf(
+			"%w: backup source must not be inside protected system path %q",
+			errAgentPathForbidden,
+			forbiddenSystemPath,
+		)
+	}
+	b.ignorePatterns = append(b.ignorePatterns, systemPatterns...)
+	b.excludedPaths = append(b.excludedPaths, systemExclusions...)
 	// When backing up a parent (for example / or a user's home), exclude the
 	// complete Agent root. This keeps all internal subdirectories protected,
 	// including mounts/repositories and future layout additions.
@@ -93,8 +106,8 @@ func newBackupPathBoundary(cfg *model.AgentConfig, sourcePath string, nasSource 
 		// Kopia excludes the directory entry and its entire subtree when the
 		// directory path itself is ignored. A trailing /** leaves an empty Agent
 		// root entry in the snapshot and is therefore intentionally not used.
-		b.ignorePatterns = []string{normalizeIgnorePattern(rel)}
-		b.excludedPaths = []string{b.agentRoot}
+		b.ignorePatterns = append(b.ignorePatterns, normalizeIgnorePattern(rel))
+		b.excludedPaths = append(b.excludedPaths, b.agentRoot)
 	}
 	return b, nil
 }

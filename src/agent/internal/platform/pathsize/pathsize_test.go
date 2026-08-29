@@ -27,6 +27,27 @@ func TestEstimateWithExclusionsSkipsProtectedDirectory(t *testing.T) {
 	}
 }
 
+func TestEstimateWithExclusionsKeepsNestedDirectoryWithSameName(t *testing.T) {
+	root := t.TempDir()
+	protected := filepath.Join(root, "proc")
+	nested := filepath.Join(root, "data", "proc")
+	if err := os.MkdirAll(protected, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSizeFile(t, filepath.Join(protected, "system.bin"), 101)
+	writeSizeFile(t, filepath.Join(nested, "user.bin"), 7)
+	size, err := EstimateWithExclusions(root, "directory", []string{protected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != 7 {
+		t.Fatalf("expected same-named user directory to remain included, got %d", size)
+	}
+}
+
 func TestWalkBytesDoesNotHideUnrelatedTraversalErrors(t *testing.T) {
 	root := t.TempDir()
 	missing := filepath.Join(root, "missing")
