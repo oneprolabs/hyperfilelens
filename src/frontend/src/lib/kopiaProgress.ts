@@ -257,6 +257,7 @@ export function shouldShowTransferMetrics(transfer?: TransferProgress | null): b
 
 type TransferMetricOptions = {
   allowUnclassifiedSpeed?: boolean
+  labelProcessingSpeed?: boolean
 }
 
 export function transferSpeedParts(
@@ -265,12 +266,16 @@ export function transferSpeedParts(
   options: TransferMetricOptions = {},
 ): string[] {
   if (!transfer) return []
+  const isRestore = String(transfer.label_key || '').includes('taskProgress.restore.')
+  const processingSpeed = formatSpeedBps(transfer.processing_speed_bps)
+  if (processingSpeed && !isRestore) {
+    return options.labelProcessingSpeed
+      ? [t('protection.taskProgress.processingSpeed', { speed: processingSpeed })]
+      : [processingSpeed]
+  }
   const uploadSpeed = formatSpeedBps(transfer.upload_speed_bps)
   if (uploadSpeed) {
-    const isRestore = String(transfer.label_key || '').includes('taskProgress.restore.')
-    return isRestore
-      ? [uploadSpeed]
-      : [t('protection.taskProgress.uploadSpeed', { speed: uploadSpeed })]
+    return isRestore ? [uploadSpeed] : []
   }
   if (Number(transfer.progress_schema_version || 1) >= 2) return []
   const hashSpeed = formatSpeedBps(transfer.hash_speed_bps)

@@ -64,6 +64,46 @@ class KopiaProgressAggregatorTests(SimpleTestCase):
         self.assertEqual(aggregate["upload_speed_bps"], 3_000_000)
         self.assertEqual(aggregate["eta_seconds"], 1500)
 
+    def test_partial_estimate_includes_completed_lane_total(self):
+        aggregate = aggregate_lanes([
+            {
+                "id": "completed",
+                "status": "success",
+                "progress": {
+                    "progress_schema_version": 2,
+                    "bytes_done": 500,
+                    "processed_bytes": 500,
+                    "bytes_total": 500,
+                    "bytes_total_known": True,
+                    "estimated_bytes": 0,
+                    "is_transfer": True,
+                },
+            },
+            {
+                "id": "running",
+                "status": "running",
+                "progress": {
+                    "progress_schema_version": 2,
+                    "bytes_done": 200,
+                    "processed_bytes": 200,
+                    "bytes_total": 300,
+                    "bytes_total_known": True,
+                    "estimated_bytes": 300,
+                    "is_transfer": True,
+                },
+            },
+            {
+                "id": "pending",
+                "status": "pending",
+                "progress": {},
+            },
+        ])
+
+        self.assertEqual(aggregate["processed_bytes"], 700)
+        self.assertEqual(aggregate["estimated_bytes"], 800)
+        self.assertFalse(aggregate["bytes_total_known"])
+        self.assertIsNone(aggregate["bytes_total"])
+
     def test_completed_restore_lane_retains_final_item_counts(self):
         lanes = [
             {
