@@ -17,10 +17,12 @@ A snapshot is both the result of a backup and the shared data foundation for res
 
 The data protection lifecycle is straightforward:
 
-1. Add a backup source and target storage, then validate access to both.
-2. Create and run a backup, adding policies and retention as needed.
-3. Review jobs and snapshots to confirm that the expected files are present.
-4. Restore files and folders to prove that the protected data is usable.
+1. Add a [backup source](/en/docs/backup-restore/sources) and [target storage](/en/docs/backup-restore/targets), then validate access to both.
+2. [Create and run a backup](/en/docs/backup-restore/create-backup), adding [policies and retention](/en/docs/backup-restore/policies) as needed.
+3. [View tasks and snapshots](/en/docs/backup-restore/snapshots) to confirm that the expected files are present.
+4. [Restore files and directories](/en/docs/backup-restore/restore) to prove that the protected data is usable.
+
+See the [Backup and Restore workflow](/en/docs/backup-restore/) for the complete guide.
 
 ## Insights
 
