@@ -521,6 +521,25 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
             "balanced",
         )
 
+    @patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
+    def test_analysis_type_updates_source_lens_selected_task(self, request_json):
+        from apps.lens_bridge.services import provisioning
+
+        knowledge_source = MagicMock(sl_assistant_uuid="assistant-uuid")
+        assistant_uuid = uuid.uuid4()
+
+        provisioning.sync_assistant_execution_config(
+            ks=knowledge_source,
+            analysis_type="code_analysis",
+            assistant_uuid=assistant_uuid,
+        )
+
+        request_json.assert_called_once_with(
+            "PATCH",
+            f"/api/lens/assistants/{assistant_uuid}/",
+            json_body={"selected_task": "code_analysis"},
+        )
+
 
 class UpdateAssistantRetrievalPolicyTests(SimpleTestCase):
     @patch("apps.lens_bridge.services.provisioning._assistant_is_chat_managed")

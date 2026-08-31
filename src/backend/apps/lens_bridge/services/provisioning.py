@@ -677,6 +677,7 @@ def sync_assistant_execution_config(
     ks: LensKnowledgeSource,
     model_ref: uuid.UUID | str | None = None,
     analysis_mode: str | None = None,
+    analysis_type: str | None = None,
     assistant_uuid: uuid.UUID | None = None,
 ) -> None:
     """Push Chat-owned execution settings through SourceLens's Assistant API."""
@@ -692,6 +693,10 @@ def sync_assistant_execution_config(
         payload["agent_model_ref"] = str(model_ref)
     if analysis_mode is not None:
         payload["agent_rounds"] = agent_rounds_for_analysis_mode(analysis_mode)
+    if analysis_type is not None:
+        payload["selected_task"] = ANALYSIS_TYPE_TASKS[
+            normalize_analysis_type(analysis_type)
+        ]
     if not payload:
         return
     sl_client.request_json(
