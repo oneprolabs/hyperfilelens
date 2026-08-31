@@ -13,6 +13,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 LANGUAGE_PACK_DATA_ROOT = Path("language-packs/packs")
+LOCALIZED_ROOT_FILES = frozenset({Path("README.zh-CN.md")})
 LOCALIZED_WEBSITE_ROOTS = (Path("website/zh"),)
 LOCALIZED_WEBSITE_FILES = frozenset(
     {
@@ -132,8 +133,10 @@ def is_localized_website_path(relative_path: Path) -> bool:
 
 def is_localized_publication_path(relative_path: Path) -> bool:
     """Return whether a path may contain localized publication content."""
-    return is_language_pack_data_path(relative_path) or is_localized_website_path(
-        relative_path,
+    return (
+        relative_path in LOCALIZED_ROOT_FILES
+        or is_language_pack_data_path(relative_path)
+        or is_localized_website_path(relative_path)
     )
 
 
