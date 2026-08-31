@@ -1,23 +1,30 @@
 ---
 title: 登录控制台
-description: 进入 HyperFileLens SaaS 或 Community 控制台并完成首次登录。
+description: 登录 HyperFileLens 控制台并完成首次使用前的必要检查。
 ---
 
 # 登录控制台
 
-根据选择的使用方式，登录官方 SaaS 控制台或自行部署的 Community 控制台。两种方式使用相同的产品工作台，但登录入口和账户来源不同。
+官方 SaaS 用户使用注册账户登录；Community 用户使用安装程序输出的控制台地址和初始账户登录。本次首次使用流程使用英文产品界面。
 
-## 官方 SaaS
+## 登录控制台
 
-1. 打开 [HyperFileLens SaaS 控制台](https://app.hyperfilelens.com/)。
-2. 新用户选择<span class="hfl-ui">Continue with Google</span>，使用 Google 账户完成登录；已有用户选择与现有账户对应的登录方式。
-3. 登录成功后进入组织工作台。
+1. 打开官方 SaaS 或安装程序提供的控制台地址。
+2. 将界面语言切换为 **English**。
+3. 选择一种登录方式：
+   - 选择 **Password**，输入账户信息并完成人机验证；
+   - 如果当前账户支持 Google 登录，选择 **Continue with Google**。
+4. 选择 **Sign In**。
+5. Community 首次登录后立即修改初始密码。
+6. 核对当前组织、时区和系统时间。
+7. 确认 **Protection → Backup Wizard** 页面可以正常打开。
 
-## Community
+![HyperFileLens 英文密码登录页面，邮箱地址已经遮盖](/docs/getting-started/sign-in-password.png)
 
-1. 打开 Community 安装完成时列出的 `Tenant` 地址。
-2. 使用安装结果中 `Login credentials` 部分列出的电子邮箱和密码登录。
-3. 登录成功后进入安装时创建的默认组织工作台。
-4. 首次登录后，打开右上角账户菜单，依次进入<span class="hfl-path">个人设置 → 修改密码</span>，更新初始密码。密码更新后请重新登录。
+## 开始前检查
 
-进入组织工作台后，登录即完成。无法打开控制台或账户无法登录时，请查看[账户与登录](/zh/docs/troubleshooting/account-sign-in)。
+- 浏览器能够稳定访问控制台，没有证书或网络错误。
+- 准备用于首次验证的小型测试目录，其中包含一个容易核对内容的文件。
+- 已明确备份源和目标存储之间的数据访问路径。
+
+下一步：[添加备份源](/zh/docs/getting-started/add-source)。

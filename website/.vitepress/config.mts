@@ -10,6 +10,19 @@ const enQuickStart = [
       { text: 'Install Community', link: '/en/docs/getting-started/install' },
     ],
   },
+  {
+    text: 'First Use',
+    items: [
+      { text: 'Sign in to the Console', link: '/en/docs/getting-started/sign-in' },
+      { text: 'Add a Backup Source', link: '/en/docs/getting-started/add-source' },
+      { text: 'Configure the Backup Source', link: '/en/docs/getting-started/configure-source' },
+      { text: 'Add Target Storage', link: '/en/docs/getting-started/add-target' },
+      { text: 'Create and Run the First Backup', link: '/en/docs/getting-started/first-backup' },
+      { text: 'Check Tasks and Snapshots', link: '/en/docs/getting-started/verify-backup' },
+      { text: 'Restore a Test File', link: '/en/docs/getting-started/first-restore' },
+      { text: 'Create an Insights Session', link: '/en/docs/getting-started/first-insight' },
+    ],
+  },
 ]
 
 const enProduct = [
