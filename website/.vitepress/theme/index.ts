@@ -1,5 +1,6 @@
 import type { Theme } from 'vitepress'
 import DefaultTheme from 'vitepress/theme'
+import { nextTick } from 'vue'
 import Layout from './Layout.vue'
 import './custom.css'
 import './docs.css'
@@ -230,7 +231,10 @@ export default {
   enhanceApp({ router }) {
     if (typeof window === 'undefined') return
     initWebsiteAnalytics()
-    router.onAfterRouteChange = (to) => {
+    router.onAfterRouteChange = async (to) => {
+      // VitePress updates document.title from reactive page data. Wait for that
+      // update before deriving the title used in the analytics event.
+      await nextTick()
       trackWebsitePageView(to)
       enhanceDocPage(to)
     }

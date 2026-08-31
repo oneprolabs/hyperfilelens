@@ -26,6 +26,37 @@ let activeMeasurementId = ''
 let activePagePath = '/'
 let lastTrackedPagePath = ''
 
+function websitePageMetadata(path: string) {
+  const isDocs = /^\/(?:en|zh)(?:-[^/]+)?\/docs(?:\/|$)/.test(path)
+  const locale = path.startsWith('/zh') ? 'zh' : 'en'
+  const relative = path.replace(/^\/(?:en|zh)(?:-[^/]+)?\//, '').replace(/^docs\/?/, '')
+  const slug = relative.replace(/\/$/, '').replace(/[^a-zA-Z0-9/_-]+/g, '_') || 'home'
+  let pageGroup = 'home'
+  if (isDocs) {
+    if (/^(?:getting-started|$)/.test(relative)) pageGroup = 'quick_start'
+    else if (/^(?:product|backup-restore|insights)/.test(relative)) pageGroup = 'product_usage'
+    else if (/^deployment/.test(relative)) pageGroup = 'deployment_operations'
+    else pageGroup = 'help_center'
+  }
+  const pageKey = isDocs
+    ? `docs.${slug === 'home' ? 'quick_start' : slug.replace(/[/-]+/g, '.')}`
+    : 'website.home'
+  return { pageKey, pageGroup, pageSurface: isDocs ? 'docs' : 'website', locale }
+}
+
+function websitePageTitle(path: string, isDocs: boolean): string {
+  const current = document.title.trim()
+  if (isDocs && current && current !== 'HyperFileLens') {
+    const base = current.replace(/\s*\|\s*HyperFileLens(?: Docs)?\s*$/i, '').trim()
+    if (base) return `${base} | HyperFileLens Docs`
+  }
+  if (isDocs) return 'Documentation | HyperFileLens Docs'
+  // Keep the source publication English-only. The locale is reported separately
+  // in ui_language, while VitePress supplies the localized document title when
+  // one exists.
+  return 'Home | HyperFileLens'
+}
+
 function sanitizedPath(value: string): string {
   try {
     const parsed = new URL(value, window.location.origin)
@@ -82,20 +113,34 @@ export function trackWebsitePageView(value: string): void {
   if (path === lastTrackedPagePath) return
   lastTrackedPagePath = path
   activePagePath = path
+  const metadata = websitePageMetadata(path)
+  const isDocs = metadata.pageSurface === 'docs'
+  const pageTitle = websitePageTitle(path, isDocs)
+  document.title = pageTitle
   window.gtag('event', 'page_view', {
     page_location: `${window.location.origin}${path}`,
     page_path: path,
     page_referrer: sanitizedReferrer(),
-    page_title: 'HyperFileLens Website',
+    page_title: pageTitle,
+    page_key: metadata.pageKey,
+    page_group: metadata.pageGroup,
+    page_surface: metadata.pageSurface,
+    ui_language: metadata.locale,
   })
 }
 
 function websiteEventContext() {
+  const metadata = websitePageMetadata(activePagePath)
+  const isDocs = metadata.pageSurface === 'docs'
   return {
     page_location: `${window.location.origin}${activePagePath}`,
     page_path: activePagePath,
     page_referrer: sanitizedReferrer(),
-    page_title: 'HyperFileLens Website',
+    page_title: websitePageTitle(activePagePath, isDocs),
+    page_key: metadata.pageKey,
+    page_group: metadata.pageGroup,
+    page_surface: metadata.pageSurface,
+    ui_language: metadata.locale,
   }
 }
 

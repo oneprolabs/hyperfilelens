@@ -23,7 +23,7 @@ import { setupElementPlus } from './plugins/element-plus'
 import { setLocale } from './lib/api'
 import { setupAuthGuard, setupSessionWatchdog } from './composables/useAuth'
 import { initSentry } from './lib/sentry'
-import { initAppAnalytics } from './lib/analytics'
+import { activateAppAnalytics, initAppAnalytics } from './lib/analytics'
 
 async function bootstrap() {
   const app = createApp(App)
@@ -43,6 +43,7 @@ async function bootstrap() {
 
   void loadInstalledLangPacks().then(() => {
     resolveLocaleAfterPacksLoaded()
+    activateAppAnalytics()
   })
 }
 
