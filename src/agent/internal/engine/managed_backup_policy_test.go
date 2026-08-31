@@ -211,24 +211,61 @@ func TestVerifyManagedBackupProtectionRequiresEffectiveKopiaPolicy(t *testing.T)
 	original := runManagedPolicyCommand
 	t.Cleanup(func() { runManagedPolicyCommand = original })
 
-	t.Run("present", func(t *testing.T) {
-		runManagedPolicyCommand = func(
-			context.Context,
-			time.Duration,
-			string,
-			[]string,
-			map[string]string,
-			string,
-		) (process.Result, error) {
-			return process.Result{Stdout: `{"files":{"ignore":["*.tmp","opt/hyperfilelens-agent"],"noParentDotFiles":true}}`}, nil
-		}
-		result, err := verifyManagedBackupProtection(
-			context.Background(), "kopia", "/tmp/repo.config", nil, "/", []string{"opt/hyperfilelens-agent"},
-		)
-		if err != nil || result["system_ignore_policy_verified"] != true {
-			t.Fatalf("expected verified protection, result=%#v err=%v", result, err)
-		}
-	})
+	for _, tc := range []struct {
+		name     string
+		stdout   string
+		required []string
+	}{
+		{
+			name:     "rule-at-start",
+			stdout:   `{"files":{"ignore":["opt/hyperfilelens-agent","*.tmp"],"noParentDotFiles":true}}`,
+			required: []string{"opt/hyperfilelens-agent"},
+		},
+		{
+			name:     "macos-agent-root-after-kopia-sorting",
+			stdout:   `{"files":{"ignore":["*.tmp",".DS_Store","Library/Application Support/HyperFileLens/Agent","Thumbs.db"],"noParentDotFiles":true}}`,
+			required: []string{"Library/Application Support/HyperFileLens/Agent"},
+		},
+		{
+			name:     "rule-at-end",
+			stdout:   `{"files":{"ignore":["*.tmp","opt/hyperfilelens-agent"],"noParentDotFiles":true}}`,
+			required: []string{"opt/hyperfilelens-agent"},
+		},
+		{
+			name:     "linux-system-rules-after-kopia-sorting",
+			stdout:   `{"files":{"ignore":["*.tmp","/dev/","/proc/","/run/","/sys/"],"noParentDotFiles":true}}`,
+			required: []string{"/proc/", "/sys/", "/dev/", "/run/"},
+		},
+		{
+			name:     "windows-case-folded-rules-after-kopia-sorting",
+			stdout:   `{"files":{"ignore":["*.tmp","/[Pp][Aa][Gg][Ee][Ff][Ii][Ll][Ee].[Ss][Yy][Ss]","/[Ss][Ww][Aa][Pp][Ff][Ii][Ll][Ee].[Ss][Yy][Ss]"],"noParentDotFiles":true}}`,
+			required: []string{"/[Ss][Ww][Aa][Pp][Ff][Ii][Ll][Ee].[Ss][Yy][Ss]", "/[Pp][Aa][Gg][Ee][Ff][Ii][Ll][Ee].[Ss][Yy][Ss]"},
+		},
+		{
+			name:     "user-negation-precedes-protected-rule",
+			stdout:   `{"files":{"ignore":["!opt/hyperfilelens-agent","opt/hyperfilelens-agent"],"noParentDotFiles":true}}`,
+			required: []string{"opt/hyperfilelens-agent"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runManagedPolicyCommand = func(
+				context.Context,
+				time.Duration,
+				string,
+				[]string,
+				map[string]string,
+				string,
+			) (process.Result, error) {
+				return process.Result{Stdout: tc.stdout}, nil
+			}
+			result, err := verifyManagedBackupProtection(
+				context.Background(), "kopia", "/tmp/repo.config", nil, "/", tc.required,
+			)
+			if err != nil || result["system_ignore_policy_verified"] != true {
+				t.Fatalf("expected verified protection, result=%#v err=%v", result, err)
+			}
+		})
+	}
 
 	t.Run("missing", func(t *testing.T) {
 		runManagedPolicyCommand = func(
@@ -239,13 +276,32 @@ func TestVerifyManagedBackupProtectionRequiresEffectiveKopiaPolicy(t *testing.T)
 			map[string]string,
 			string,
 		) (process.Result, error) {
-			return process.Result{Stdout: `{"files":{"ignore":["*.tmp"]}}`}, nil
+			return process.Result{Stdout: `{"files":{"ignore":["/proc/","*.tmp"],"noParentDotFiles":true}}`}, nil
+		}
+		result, err := verifyManagedBackupProtection(
+			context.Background(), "kopia", "/tmp/repo.config", nil, "/", []string{"/proc/", "/run/"},
+		)
+		if err == nil || result["error_code"] != "BACKUP_PROTECTION_POLICY_MISSING" {
+			t.Fatalf("expected missing protection failure, result=%#v err=%v", result, err)
+		}
+	})
+
+	t.Run("similar-rule-is-not-exact", func(t *testing.T) {
+		runManagedPolicyCommand = func(
+			context.Context,
+			time.Duration,
+			string,
+			[]string,
+			map[string]string,
+			string,
+		) (process.Result, error) {
+			return process.Result{Stdout: `{"files":{"ignore":["opt/hyperfilelens-agent-old"],"noParentDotFiles":true}}`}, nil
 		}
 		result, err := verifyManagedBackupProtection(
 			context.Background(), "kopia", "/tmp/repo.config", nil, "/", []string{"opt/hyperfilelens-agent"},
 		)
 		if err == nil || result["error_code"] != "BACKUP_PROTECTION_POLICY_MISSING" {
-			t.Fatalf("expected missing protection failure, result=%#v err=%v", result, err)
+			t.Fatalf("expected exact protection failure, result=%#v err=%v", result, err)
 		}
 	})
 
@@ -265,6 +321,25 @@ func TestVerifyManagedBackupProtectionRequiresEffectiveKopiaPolicy(t *testing.T)
 		)
 		if err == nil || result["error_code"] != "BACKUP_PROTECTION_DOT_IGNORE_ENABLED" {
 			t.Fatalf("expected dot-ignore protection failure, result=%#v err=%v", result, err)
+		}
+	})
+
+	t.Run("dot-ignore-list-not-empty", func(t *testing.T) {
+		runManagedPolicyCommand = func(
+			context.Context,
+			time.Duration,
+			string,
+			[]string,
+			map[string]string,
+			string,
+		) (process.Result, error) {
+			return process.Result{Stdout: `{"files":{"ignore":["opt/hyperfilelens-agent"],"ignoreDotFiles":[".kopiaignore"],"noParentDotFiles":true}}`}, nil
+		}
+		result, err := verifyManagedBackupProtection(
+			context.Background(), "kopia", "/tmp/repo.config", nil, "/", []string{"opt/hyperfilelens-agent"},
+		)
+		if err == nil || result["error_code"] != "BACKUP_PROTECTION_DOT_IGNORE_ENABLED" {
+			t.Fatalf("expected dot-ignore list protection failure, result=%#v err=%v", result, err)
 		}
 	})
 }
