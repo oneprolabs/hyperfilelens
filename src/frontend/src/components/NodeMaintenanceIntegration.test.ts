@@ -23,7 +23,7 @@ describe('node maintenance UI integration', () => {
     const drawer = source('src/pages/insight/InsightGatewayDetailDrawer.vue')
 
     expect(list).toContain(":gateway-scope=\"isPlatformEngine ? 'platform' : 'user'\"")
-    expect(list).toContain("t('nodeLifecycle.maintenanceCommands')")
+    expect(list).toContain("t('nodeLifecycle.maintenance')")
     expect(drawer).toContain("getGatewayNode(id, props.gatewayScope === 'platform' ? 'platform' : 'tenant'")
   })
 

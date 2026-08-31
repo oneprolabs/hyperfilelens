@@ -2091,7 +2091,7 @@ onUnmounted(() => {
                       :size="14"
                       class="shrink-0"
                     />
-                    <span>{{ t('nodeLifecycle.maintenanceCommands') }}</span>
+                    <span>{{ t('nodeLifecycle.maintenance') }}</span>
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
