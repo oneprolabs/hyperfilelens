@@ -58,16 +58,16 @@ for stamp in 20260720-010000 20260721-010000 20260722-010000 20260723-010000; do
 	mkdir -p "${ROOT}/backup/upgrade-${stamp}"
 	printf '{"complete": true}\n' >"${ROOT}/backup/upgrade-${stamp}/backup-manifest.json"
 done
-protected="${ROOT}/backup/upgrade-20260720-010000"
 transaction="${ROOT}/deploy/upgrades/$(printf a%.0s {1..64})"
 mkdir -p "${transaction}"
+protected="${ROOT}/backup/upgrade-20260720-010000"
 cat >"${transaction}/state" <<EOF
 artifact_sha256=$(printf a%.0s {1..64})
 target_version=0.1.8
-status=failed
+status=active
 phase=backup_complete
 backup_dir=${protected}
-updated_at=2026-07-23T01:00:00Z
+updated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 mkdir -p "${ROOT}/backup/.partial-stale"
 touch -d '2 days ago' "${ROOT}/backup/.partial-stale"
@@ -79,8 +79,8 @@ prune_upgrade_backups
 [[ -e "${ROOT}/backup/upgrade-20260723-010000" ]]
 [[ ! -e "${ROOT}/backup/.partial-stale" ]]
 
-# An untrusted transaction path must not protect a same-named managed backup.
-sed -i "s#^backup_dir=.*#backup_dir=/tmp/upgrade-20260720-010000#" \
+# A stale active transaction must not pin its backup forever.
+sed -i 's#^updated_at=.*#updated_at=2020-01-01T00:00:00Z#' \
 	"${transaction}/state"
 prune_upgrade_backups
 [[ ! -e "${ROOT}/backup/upgrade-20260720-010000" ]]

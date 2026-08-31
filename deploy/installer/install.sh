@@ -2902,6 +2902,7 @@ PY
 
 prune_upgrade_backups() {
 	python3 - "${ROOT}/backup" "${ROOT}/deploy/upgrades" <<'PY' || return 1
+import datetime
 import json
 import pathlib
 import re
@@ -2915,6 +2916,7 @@ if not root.is_dir():
     raise SystemExit(0)
 
 protected = set()
+now = time.time()
 if transactions.is_dir():
     for state in transactions.glob("*/state"):
         values = {}
@@ -2922,7 +2924,18 @@ if transactions.is_dir():
             if "=" in line:
                 key, value = line.split("=", 1)
                 values[key] = value
-        if values.get("status") == "complete":
+        # Only an active transaction may still need its backup for recovery.
+        # Failed transactions are recorded for diagnostics but must not pin
+        # multi-gigabyte backup sets forever after a later upgrade succeeds.
+        if values.get("status") != "active":
+            continue
+        try:
+            updated_at = datetime.datetime.fromisoformat(
+                values.get("updated_at", "").replace("Z", "+00:00")
+            ).timestamp()
+        except (TypeError, ValueError):
+            continue
+        if now - updated_at > 24 * 60 * 60:
             continue
         backup_dir = values.get("backup_dir", "")
         backup_path = pathlib.Path(backup_dir)
@@ -2933,7 +2946,6 @@ if transactions.is_dir():
         if managed and re.fullmatch(r"upgrade-\d{8}-\d{6}", backup_path.name):
             protected.add(backup_path.name)
 
-now = time.time()
 for path in root.glob(".partial-*"):
     if now - path.stat().st_mtime <= 24 * 60 * 60:
         continue
@@ -3128,7 +3140,7 @@ managed_image_ref_is_in_use() {
 }
 
 prune_old_managed_image_refs() {
-	local backup_manifest="" gateway_version ref output
+	local backup_manifest="" gateway_version image_id output
 	local -a removable=()
 	command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || return 0
 	gateway_version="$(grep -E '^HFL_GATEWAY_VERSION=' "${ROOT}/.env" 2>/dev/null \
@@ -3143,36 +3155,95 @@ import re
 import subprocess
 import sys
 
+def inspect(ref):
+    completed = subprocess.run(
+        ["docker", "image", "inspect", ref],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        return None
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return None
+    return value[0] if isinstance(value, list) and value else value
+
+def image_id(value):
+    raw = str(value or "")
+    return raw[7:] if raw.startswith("sha256:") else raw
+
 managed_repositories = {
+    "hyperfilelens-agent-assets",
     "hyperfilelens-backend",
     "hyperfilelens-frontend",
+    "hyperfilelens-gateway-assets",
+    "hyperfilelens-language-assets",
+    "hyperfilelens-postgres",
+    "hyperfilelens-redis",
     "hyperfilelens-sourcelens-backend",
     "hyperfilelens-sourcelens-frontend",
     "hyperfilelens-sourcelens-lensnode",
-    "hyperfilelens-agent-assets",
-    "hyperfilelens-gateway-assets",
-    "hyperfilelens-language-assets",
+    "hyperfilelens-sourcelens-nginx",
 }
-protected = set()
-for raw in sys.argv[1:3]:
+managed_namespaces = {"oneprocloud", "oneprolabs"}
+
+
+def managed_ref(value):
+    raw = str(value or "")
+    repository = raw.split("@", 1)[0].rsplit(":", 1)[0]
+    parts = repository.split("/")
+    if parts[-1] not in managed_repositories:
+        return False
+    return len(parts) == 1 or (len(parts) >= 2 and parts[-2] in managed_namespaces)
+
+protected_ids = set()
+protected_refs = set()
+required_local_refs = set()
+for index, raw in enumerate(sys.argv[1:3]):
     path = pathlib.Path(raw) if raw else None
-    if not path or not path.is_file():
+    if not path:
+        if index == 0:
+            raise SystemExit("current release manifest is missing")
         continue
+    if not path.is_file():
+        raise SystemExit(f"protected release manifest is missing: {path}")
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        continue
-    for image in manifest.get("images", []):
-        protected.update(str(ref) for ref in image.get("refs", []) if ref)
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"protected release manifest is invalid: {path}: {error}")
+    images = manifest.get("images")
+    if not isinstance(images, list) or not images:
+        raise SystemExit(f"protected release manifest has no images: {path}")
+    for image in images:
+        for ref in image.get("refs", []):
+            protected_refs.add(str(ref))
+            required_local_refs.add(str(ref))
+        for digest in image.get("digests", []):
+            protected_refs.add(str(digest))
     delivery = manifest.get("delivery") or {}
-    for image in delivery.get("asset_images") or []:
-        local_ref = str(image.get("local_ref") or "")
-        if local_ref:
-            protected.add(local_ref)
+    for group in ("registry_images", "asset_images"):
+        for image in delivery.get(group) or []:
+            for key in ("local_ref", "digest"):
+                if image.get(key):
+                    protected_refs.add(str(image[key]))
+                    if key == "local_ref":
+                        required_local_refs.add(str(image[key]))
+            for source in image.get("sources") or []:
+                if source.get("ref"):
+                    protected_refs.add(str(source["ref"]))
+
+for ref in sorted(required_local_refs):
+    inspected = inspect(ref)
+    if not inspected:
+        raise SystemExit(f"protected release image is unavailable: {ref}")
+    protected_ids.add(image_id(inspected.get("Id")))
 
 gateway_version = sys.argv[3]
 if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", gateway_version):
-    protected.add(f"hyperfilelens-frontend:{gateway_version}")
+    protected_refs.add(f"hyperfilelens-frontend:{gateway_version}")
 
 containers = subprocess.run(
     ["docker", "ps", "-aq", "--no-trunc"],
@@ -3182,25 +3253,36 @@ containers = subprocess.run(
 ).stdout.split()
 if containers:
     inspected = subprocess.run(
-        ["docker", "inspect", "--format", "{{.Config.Image}}", *containers],
+        ["docker", "inspect", "--format", "{{.Image}}", *containers],
         check=False,
         text=True,
         stdout=subprocess.PIPE,
     )
-    protected.update(line.strip() for line in inspected.stdout.splitlines() if line.strip())
+    protected_ids.update(image_id(line.strip()) for line in inspected.stdout.splitlines() if line.strip())
 
 listed = subprocess.run(
-    ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"],
+    ["docker", "image", "ls", "-q", "--no-trunc"],
     check=True,
     text=True,
     stdout=subprocess.PIPE,
-).stdout.splitlines()
-for ref in sorted(set(line.strip() for line in listed if line.strip())):
-    repository, separator, tag = ref.rpartition(":")
-    if not separator or repository not in managed_repositories or tag == "<none>":
+)
+for raw_id in sorted(set(line.strip() for line in listed.stdout.splitlines() if line.strip())):
+    inspected = inspect(raw_id)
+    if not inspected:
         continue
-    if ref not in protected:
-        print(ref)
+    current_id = image_id(inspected.get("Id") or raw_id)
+    tags = inspected.get("RepoTags") or []
+    digests = inspected.get("RepoDigests") or []
+    refs = [str(value) for value in [*tags, *digests] if value]
+    if not refs or not any(managed_ref(value) for value in refs):
+        continue
+    if current_id in protected_ids:
+        continue
+    if any(value in protected_refs for value in refs):
+        continue
+    if any(not managed_ref(value) for value in refs):
+        continue
+    print(current_id)
 PY
 	)"; then
 		warn "unable to resolve old HFL image references; skipping image cleanup"
@@ -3209,14 +3291,17 @@ PY
 	if [[ -n "${output}" ]]; then
 		mapfile -t removable <<<"${output}"
 	fi
-	for ref in "${removable[@]}"; do
-		[[ -n "${ref}" ]] || continue
-		if managed_image_ref_is_in_use "${ref}"; then
-			log "Retained in-use old HFL image tag ${ref}"
-		elif docker image rm "${ref}" >/dev/null 2>&1; then
-			log "Removed unreferenced old HFL image tag ${ref}"
+	for image_id in "${removable[@]}"; do
+		[[ -n "${image_id}" ]] || continue
+		if managed_image_ref_is_in_use "${image_id}"; then
+			log "Retained in-use old HFL image ${image_id}"
+		# Every remaining reference was verified as installer-managed and the
+		# image is not used by a container. Force is required when the same image
+		# still has both a local tag and an immutable registry digest reference.
+		elif docker image rm -f "${image_id}" >/dev/null 2>&1; then
+			log "Removed unreferenced old HFL image ${image_id}"
 		else
-			warn "Unable to remove old HFL image tag ${ref}; deployment remains healthy"
+			warn "Unable to remove old HFL image ${image_id}; deployment remains healthy"
 		fi
 	done
 }
