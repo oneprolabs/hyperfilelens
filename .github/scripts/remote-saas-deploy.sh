@@ -303,3 +303,42 @@ printf '%s\n' "${candidate_id}" >"/opt/hyperfilelens/data/deployment-candidates/
 if [[ -n "${previous_id:-}" && "${previous_id}" != "${candidate_id}" ]]; then
 	printf '%s\n' "${previous_id}" >"/opt/hyperfilelens/data/deployment-candidates/previous"
 fi
+
+# Candidate manifests are small, but an upgrade can run frequently. Keep the
+# current, previous, and three most recent entries; remove only validated
+# twelve-character manifest directories so unrelated data is never touched.
+if ! python3 - <<'PY'
+import pathlib
+import re
+import shutil
+
+root = pathlib.Path("/opt/hyperfilelens/data/deployment-candidates")
+if root.is_dir():
+    pointers = {
+        (root / name).read_text(encoding="utf-8").strip()
+        for name in ("current", "previous")
+        if (root / name).is_file()
+    }
+    entries = sorted(
+        (
+            path
+            for path in root.iterdir()
+            if path.is_dir()
+            and not path.is_symlink()
+            and re.fullmatch(r"[0-9a-f]{12}", path.name)
+            and (path / "MANIFEST.json").is_file()
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    keep = pointers | {path.name for path in entries[:3]}
+    for path in entries:
+        if path.name not in keep:
+            shutil.rmtree(path)
+PY
+then
+	# The release has already been applied and health-checked. Candidate
+	# history is housekeeping; a transient permission or filesystem error must
+	# not turn a successful deployment into a failed CI run.
+	printf '[WARN] Unable to prune old deployment candidates; retaining them for the next run.\n' >&2
+fi

@@ -1367,8 +1367,9 @@ grep -F 'HFL_REDIS_MEMORY_LIMIT=1g' "${ROOT}/.env.example" >/dev/null
 grep -F 'mem_limit: ${HFL_REDIS_MEMORY_LIMIT:-1g}' "${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'recover_upgrade_services' "${installer}" >/dev/null
 grep -F 'prune_old_managed_image_refs' "${installer}" >/dev/null
-grep -F 'docker image rm "${ref}"' "${installer}" >/dev/null
-grep -F 'protected.update(line.strip() for line in inspected.stdout.splitlines()' "${installer}" >/dev/null
+grep -F 'docker image rm -f "${image_id}"' "${installer}" >/dev/null
+grep -F 'protected_ids.update(image_id(line.strip()) for line in inspected.stdout.splitlines()' "${installer}" >/dev/null
+grep -F 'protected release manifest is invalid' "${installer}" >/dev/null
 grep -F 'python3 "${sync_script}" --env-file "${env_file}" --example "${example}"' "${installer}" >/dev/null
 grep -F 'host must be Ubuntu 20.04, 22.04, or 24.04' "${installer}" >/dev/null
 grep -F 'gateway-install-docker-ubuntu-amd64.sh' "${installer}" >/dev/null
