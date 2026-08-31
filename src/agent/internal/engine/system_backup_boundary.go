@@ -26,8 +26,8 @@ type systemBackupBoundaryCandidate struct {
 }
 
 // systemBackupBoundaryCandidates returns only operating-system runtime paths
-// that cannot be restored as ordinary user data. It intentionally does not
-// include caches, logs, temporary directories, or user-owned paths.
+// that cannot be restored as ordinary user data. General caches, logs,
+// temporary directories, and user-owned paths are intentionally not included.
 func systemBackupBoundaryCandidates(sourcePath string) []systemBackupBoundaryCandidate {
 	switch runtime.GOOS {
 	case "linux":
@@ -51,14 +51,19 @@ func systemBackupBoundaryCandidates(sourcePath string) []systemBackupBoundaryCan
 			return nil
 		}
 		root := filepath.Clean(volume + string(filepath.Separator))
-		return []systemBackupBoundaryCandidate{
-			{path: filepath.Join(root, "System Volume Information"), directory: true, caseInsensitive: true},
-			{path: filepath.Join(root, "pagefile.sys"), caseInsensitive: true},
-			{path: filepath.Join(root, "hiberfil.sys"), caseInsensitive: true},
-			{path: filepath.Join(root, "swapfile.sys"), caseInsensitive: true},
-		}
+		return windowsSystemBackupBoundaryCandidates(root)
 	default:
 		return nil
+	}
+}
+
+func windowsSystemBackupBoundaryCandidates(root string) []systemBackupBoundaryCandidate {
+	return []systemBackupBoundaryCandidate{
+		{path: filepath.Join(root, "System Volume Information"), directory: true, caseInsensitive: true},
+		{path: filepath.Join(root, "DumpStack.log.tmp"), caseInsensitive: true},
+		{path: filepath.Join(root, "pagefile.sys"), caseInsensitive: true},
+		{path: filepath.Join(root, "hiberfil.sys"), caseInsensitive: true},
+		{path: filepath.Join(root, "swapfile.sys"), caseInsensitive: true},
 	}
 }
 

@@ -99,8 +99,55 @@ func TestSystemBackupBoundaryLoadsAdditionalConfiguredPaths(t *testing.T) {
 }
 
 func TestCaseFoldSystemIgnorePattern(t *testing.T) {
-	if got := caseFoldSystemIgnorePattern("/System Volume Information/"); got != "/[Ss][Yy][Ss][Tt][Ee][Mm] [Vv][Oo][Ll][Uu][Mm][Ee] [Ii][Nn][Ff][Oo][Rr][Mm][Aa][Tt][Ii][Oo][Nn]/" {
-		t.Fatalf("case-folded system pattern = %q", got)
+	for _, tc := range []struct {
+		name    string
+		pattern string
+		want    string
+	}{
+		{
+			name:    "system-volume-information",
+			pattern: "/System Volume Information/",
+			want:    "/[Ss][Yy][Ss][Tt][Ee][Mm] [Vv][Oo][Ll][Uu][Mm][Ee] [Ii][Nn][Ff][Oo][Rr][Mm][Aa][Tt][Ii][Oo][Nn]/",
+		},
+		{
+			name:    "dump-stack-log",
+			pattern: "/DumpStack.log.tmp",
+			want:    "/[Dd][Uu][Mm][Pp][Ss][Tt][Aa][Cc][Kk].[Ll][Oo][Gg].[Tt][Mm][Pp]",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := caseFoldSystemIgnorePattern(tc.pattern); got != tc.want {
+				t.Fatalf("case-folded system pattern = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWindowsSystemBackupBoundaryIncludesRootDumpStackFile(t *testing.T) {
+	root := t.TempDir()
+	want := filepath.Join(root, "DumpStack.log.tmp")
+	for _, candidate := range windowsSystemBackupBoundaryCandidates(root) {
+		if candidate.path != want {
+			continue
+		}
+		if candidate.directory || !candidate.caseInsensitive {
+			t.Fatalf("DumpStack boundary must be a case-insensitive file: %#v", candidate)
+		}
+		return
+	}
+	t.Fatalf("missing Windows DumpStack boundary %q", want)
+}
+
+func TestRootedSystemIgnorePatternAnchorsDumpStackFile(t *testing.T) {
+	source := filepath.Join(string(filepath.Separator), "volume")
+	protected := filepath.Join(source, "DumpStack.log.tmp")
+	got, err := rootedSystemIgnorePattern(source, protected, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "/[Dd][Uu][Mm][Pp][Ss][Tt][Aa][Cc][Kk].[Ll][Oo][Gg].[Tt][Mm][Pp]"
+	if got != want {
+		t.Fatalf("rooted system pattern = %q, want %q", got, want)
 	}
 }
 
