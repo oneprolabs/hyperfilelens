@@ -9,6 +9,7 @@ import { apiErrorMessage } from '../lib/api'
 import {
   clearLegacyStep2Sources,
   isBackupSelectableId,
+  normalizeSourceIdList,
   readLegacyRealStep2Sources,
 } from './useDemoFlowStep2Sources'
 

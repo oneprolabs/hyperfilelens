@@ -2,7 +2,11 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useBackupSourcePipeline } from './useBackupSourcePipeline'
-import { listBackupSelectableSources } from '../lib/sourceApi'
+import {
+  listBackupSelectableSources,
+  revertBackupSourcePipelineStep,
+  setBackupSourcePipelineStep,
+} from '../lib/sourceApi'
 
 vi.mock('../lib/sourceApi', () => ({
   listBackupSelectableSources: vi.fn(),
@@ -10,11 +14,15 @@ vi.mock('../lib/sourceApi', () => ({
   setBackupSourcePipelineStep: vi.fn(),
 }))
 
-vi.mock('./useDemoFlowStep2Sources', () => ({
-  clearLegacyStep2Sources: vi.fn(),
-  isBackupSelectableId: vi.fn(() => true),
-  readLegacyRealStep2Sources: vi.fn(() => []),
-}))
+vi.mock('./useDemoFlowStep2Sources', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./useDemoFlowStep2Sources')>()
+  return {
+    ...actual,
+    clearLegacyStep2Sources: vi.fn(),
+    isBackupSelectableId: vi.fn((id: string) => /^agent:\d+$/.test(id) || /^nas:\d+$/.test(id)),
+    readLegacyRealStep2Sources: vi.fn(() => []),
+  }
+})
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -41,5 +49,25 @@ describe('useBackupSourcePipeline', () => {
     )
     expect(pipeline.pipelineStep2Count.value).toBe(4)
     expect(pipeline.pipelineStep3Count.value).toBe(7)
+  })
+
+  it('normalizes source ids before advancing the pipeline', async () => {
+    vi.mocked(setBackupSourcePipelineStep).mockResolvedValue({ updated: ['nas:37'], step: 2 })
+    vi.mocked(listBackupSelectableSources).mockResolvedValue({ count: 0, results: [] })
+
+    const pipeline = useBackupSourcePipeline()
+    await pipeline.setPipelineStep(['nas:37', 'nas:37', '', 'invalid'], 2)
+
+    expect(setBackupSourcePipelineStep).toHaveBeenCalledWith({ ids: ['nas:37'], step: 2 })
+  })
+
+  it('normalizes source ids before reverting the pipeline', async () => {
+    vi.mocked(revertBackupSourcePipelineStep).mockResolvedValue({ updated: ['agent:27'], target_step: 1 })
+    vi.mocked(listBackupSelectableSources).mockResolvedValue({ count: 0, results: [] })
+
+    const pipeline = useBackupSourcePipeline()
+    await pipeline.revertPipelineStep(['agent:27', 'agent:27', '', 'invalid'], 1)
+
+    expect(revertBackupSourcePipelineStep).toHaveBeenCalledWith({ ids: ['agent:27'], target_step: 1 })
   })
 })
