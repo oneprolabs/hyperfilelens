@@ -19,12 +19,17 @@ function dataLayerCommands(): unknown[][] {
   ))
 }
 
-async function loadAnalytics(measurementId = '') {
+async function loadAnalytics(
+  measurementId = '',
+  surface: 'tenant' | 'admin' = 'tenant',
+  activate = true,
+) {
   vi.resetModules()
-  window.__HFL_APP_CONFIG__ = { gaMeasurementId: measurementId }
+  window.__HFL_APP_CONFIG__ = { gaMeasurementId: measurementId, sentrySurface: surface }
   const afterEach = vi.fn()
   const analytics = await import('./analytics')
   analytics.initAppAnalytics({ afterEach } as unknown as Router)
+  if (activate) analytics.activateAppAnalytics()
   return { analytics, afterEach }
 }
 
@@ -33,6 +38,7 @@ afterEach(() => {
   delete window.__HFL_APP_CONFIG__
   delete window.dataLayer
   delete window.gtag
+  document.title = 'HyperFileLens'
   vi.restoreAllMocks()
 })
 
@@ -76,7 +82,11 @@ describe('runtime Google Analytics', () => {
       ['event', 'page_view', expect.objectContaining({
         page_location: `${window.location.origin}/protection/backups/:backupId`,
         page_path: '/protection/backups/:backupId',
-        page_title: 'HyperFileLens',
+        page_title: 'Backup Details | HyperFileLens Console',
+        page_key: 'protection.backup_detail',
+        page_group: 'protection',
+        page_surface: 'console',
+        ui_language: 'en',
       })],
     ]))
     expect(JSON.stringify(window.dataLayer)).not.toContain('customer-backup')
@@ -91,8 +101,140 @@ describe('runtime Google Analytics', () => {
         method: 'email',
         page_location: `${window.location.origin}/protection/backups/:backupId`,
         page_path: '/protection/backups/:backupId',
+        page_key: 'protection.backup_detail',
       }),
     ])
     expect(JSON.stringify(dataLayerCommands())).not.toContain('person@example.com')
+  })
+
+  it('normalizes controlled sidebar query values to business pages', async () => {
+    const { analytics } = await loadAnalytics('G-0RX9GZJCWF')
+    expect(analytics.analyticsPageMetadata({
+      ...route('/protection/backup-sources?tab=host', '/protection/backup-sources'),
+      query: { tab: 'host' },
+    } as RouteLocationNormalizedLoaded))
+      .toMatchObject({
+        pageKey: 'protection.source_hosts',
+        pagePath: '/protection/source-hosts',
+      })
+    expect(analytics.analyticsPageMetadata({
+      ...route('/protection/backup-sources?tab=nas', '/protection/backup-sources'),
+      query: { tab: 'nas' },
+    } as RouteLocationNormalizedLoaded)).toMatchObject({
+      pageKey: 'protection.source_nas',
+      pagePath: '/protection/source-nas',
+    })
+    expect(analytics.analyticsPageMetadata(
+      route('/node/repositories', '/node/repositories'),
+    )).toMatchObject({
+      pageKey: 'protection.object_storage',
+      pagePath: '/protection/object-storage',
+    })
+    expect(analytics.analyticsPageMetadata({
+      ...route('/protection/policies?tab=unknown', '/protection/policies'),
+      query: { tab: 'unknown' },
+    } as RouteLocationNormalizedLoaded)).toMatchObject({
+      pageKey: 'protection.backup_policies',
+      pagePath: '/protection/backup-policies',
+    })
+    expect(analytics.analyticsPageMetadata(
+      route('/node/snapshots', '/node/snapshots'),
+    )).toMatchObject({
+      pageKey: 'protection.snapshots',
+      pageGroup: 'protection',
+      pagePath: '/node/snapshots',
+    })
+  })
+
+  it('keeps secondary pages in their top-level product groups', async () => {
+    const { analytics } = await loadAnalytics('G-0RX9GZJCWF')
+    expect(analytics.analyticsPageMetadata(route(
+      '/insight/copilot/new',
+      '/',
+      'insight/copilot/new',
+    ))).toMatchObject({
+      pageKey: 'insight.ai_copilot',
+      pageGroup: 'insights',
+    })
+    expect(analytics.analyticsPageMetadata(route(
+      '/ops/alerts/rules/customer-rule/edit',
+      '/',
+      'ops/alerts/rules/:id/edit',
+    ))).toMatchObject({
+      pageKey: 'operations.alert_rules',
+      pageGroup: 'operations',
+      pagePath: '/ops/alerts/rules/:id/edit',
+    })
+  })
+
+  it('does not report Admin Console pages unless explicitly enabled', async () => {
+    const { afterEach } = await loadAnalytics('G-0RX9GZJCWF', 'admin')
+    expect(afterEach).not.toHaveBeenCalled()
+    expect(document.querySelector('script[data-hfl-google-analytics]')).toBeNull()
+  })
+
+  it('consumes extension-declared Admin metadata without exposing resource IDs', async () => {
+    const { analytics, afterEach } = await loadAnalytics('G-0RX9GZJCWF')
+    const declaredRoute = {
+      ...route('/platform-ops/orgs/secret-org', '/platform-ops', 'orgs/:id'),
+      matched: [
+        { path: '/platform-ops' },
+        {
+          path: 'orgs/:id',
+          meta: {
+            analytics: {
+              pageKey: 'platform.organization_detail',
+              pageGroup: 'platform',
+              pageSurface: 'admin',
+              titleKey: 'platformOps.orgs.detailTitle',
+            },
+          },
+        },
+      ],
+    } as RouteLocationNormalizedLoaded
+    expect(analytics.analyticsPageMetadata(declaredRoute)).toMatchObject({
+      pageKey: 'platform.organization_detail',
+      pageSurface: 'admin',
+      pagePath: '/platform-ops/orgs/:id',
+    })
+    const hook = afterEach.mock.calls[0]?.[0] as (to: RouteLocationNormalizedLoaded) => void
+    hook(declaredRoute)
+    expect(JSON.stringify(window.dataLayer)).not.toContain('secret-org')
+  })
+
+  it('does not duplicate a page view and never exposes an unmatched path', async () => {
+    const { analytics, afterEach } = await loadAnalytics('G-0RX9GZJCWF')
+    const hook = afterEach.mock.calls[0]?.[0] as (to: RouteLocationNormalizedLoaded) => void
+    const overview = route('/', '/')
+    hook(overview)
+    hook(overview)
+    expect(dataLayerCommands().filter((command) => (
+      command[0] === 'event' && command[1] === 'page_view'
+    ))).toHaveLength(1)
+
+    const unknown = analytics.analyticsPageMetadata(route('/private/customer-resource'))
+    expect(unknown).toMatchObject({ pageKey: 'route.other', pagePath: '/other' })
+    expect(JSON.stringify(unknown)).not.toContain('customer-resource')
+
+    const unknownAdmin = analytics.analyticsPageMetadata(route(
+      '/platform-ops/orgs/secret-org',
+      '/platform-ops',
+      'orgs/:id/unknown',
+    ))
+    expect(unknownAdmin).toMatchObject({
+      pageKey: 'route.other',
+      pageSurface: 'admin',
+      pagePath: '/other',
+    })
+    expect(JSON.stringify(unknownAdmin)).not.toContain('secret-org')
+  })
+
+  it('holds the first page view until locale startup is complete', async () => {
+    const { analytics, afterEach } = await loadAnalytics('G-0RX9GZJCWF', 'tenant', false)
+    const hook = afterEach.mock.calls[0]?.[0] as (to: RouteLocationNormalizedLoaded) => void
+    hook(route('/', '/'))
+    expect(dataLayerCommands().some((command) => command[1] === 'page_view')).toBe(false)
+    analytics.activateAppAnalytics()
+    expect(dataLayerCommands().filter((command) => command[1] === 'page_view')).toHaveLength(1)
   })
 })

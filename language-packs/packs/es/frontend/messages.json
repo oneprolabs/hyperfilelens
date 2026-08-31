@@ -1,4 +1,11 @@
 {
+  "analytics": {
+    "pages": {
+      "backupDetails": "Detalles de la copia de seguridad",
+      "snapshotDetails": "Detalles de la instantánea",
+      "restore": "Restaurar"
+    }
+  },
   "common": {
     "confirm": "Aceptar",
     "confirmDelete": "Confirmar eliminación",

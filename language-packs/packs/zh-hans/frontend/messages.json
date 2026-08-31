@@ -1,4 +1,11 @@
 {
+  "analytics": {
+    "pages": {
+      "backupDetails": "备份详情",
+      "snapshotDetails": "快照详情",
+      "restore": "恢复"
+    }
+  },
   "common": {
     "confirm": "确定",
     "confirmDelete": "确认删除",

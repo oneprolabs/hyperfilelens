@@ -2,6 +2,13 @@
 import { enProtectionPages } from './enProtectionPages'
 
 export const en = {
+  analytics: {
+    pages: {
+      backupDetails: 'Backup Details',
+      snapshotDetails: 'Snapshot Details',
+      restore: 'Restore',
+    },
+  },
   common: {
     confirm: 'OK',
     confirmDelete: 'Confirm Delete',

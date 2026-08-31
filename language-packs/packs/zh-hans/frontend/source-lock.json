@@ -1,4 +1,7 @@
 {
+  "analytics.pages.backupDetails": "40d071d8d9a5a0e791fd2b1a0b26e442566f8c022041ddb2078f4a8ffd7c2a10",
+  "analytics.pages.snapshotDetails": "84d583d66a5de63a812ec8d96da3626c7866eff986d62176d955a5d27cbe833f",
+  "analytics.pages.restore": "9fb92d5ac48a197b0499952ff25f2e8a84937831504f23569b5b8ad549a4334d",
   "common.confirm": "98c4922bb641c65c7a30b7bcafdf230b9b00b6693631c56146ab25b2786ee4a3",
   "common.confirmDelete": "25141577458dc98eb388c6652e945322c5385a2f836e8af57e50090faff862f2",
   "common.delete": "b26de372b4b0eaac60202884a72db98a6be6e9036e785ea867ea01c5f7921098",
