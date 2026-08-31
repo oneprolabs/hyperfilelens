@@ -9,6 +9,10 @@ const zhHans = JSON.parse(readFileSync(
   'utf8',
 )) as {
   addNasRepo: Record<string, string>
+  repairNasRepo: Record<string, string>
+  protection: {
+    sourceResources: Record<string, string>
+  }
 }
 
 describe('Add NAS Repository localization', () => {
@@ -46,5 +50,20 @@ describe('Add NAS Repository localization', () => {
       expect(zhHans.addNasRepo[key].trim()).not.toBe('')
       expect(zhHans.addNasRepo[key]).not.toBe(en.addNasRepo[key])
     }
+  })
+
+  it('uses NAS sharing terminology for the SMB share name', () => {
+    const shareName = zhHans.protection.sourceResources.colNasShareName
+    expect(shareName).toEqual(expect.any(String))
+    expect(zhHans.addNasRepo.fieldSmbShare).toBe(shareName)
+    expect(zhHans.repairNasRepo.labelShareName).toBe(shareName)
+  })
+
+  it('keeps NAS input examples technically usable', () => {
+    expect(zhHans.addNasRepo.phSmbShare).toBe('data')
+    expect(zhHans.protection.sourceResources.nasPhSmbShare).toBe('data')
+    expect(zhHans.protection.sourceResources.nasPhSmbUsername).toBe('admin')
+    expect(zhHans.protection.sourceResources.nasPhMountOptionsSmb)
+      .toBe('vers=3.0,iocharset=utf8,uid=1000,gid=1000')
   })
 })
