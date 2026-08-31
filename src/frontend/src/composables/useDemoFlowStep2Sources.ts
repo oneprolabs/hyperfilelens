@@ -1,6 +1,6 @@
 const LEGACY_STEP2_STORAGE_KEY = 'protection-flow-step2-sources'
 
-function normalizeSourceIdList(ids: string[]) {
+export function normalizeSourceIdList(ids: string[]) {
   const seen = new Set<string>()
   return ids.filter((id) => {
     if (!id || seen.has(id)) return false
