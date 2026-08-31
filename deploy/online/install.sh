@@ -22,6 +22,7 @@ INSTALL_ACTION="Install"
 MAX_TAG_PAGES=100
 ONLINE_LOG_FILE=""
 ONLINE_INTERACTIVE=0
+CURL_RETRY_ARGS=()
 
 usage() {
 	cat <<'USAGE'
@@ -201,13 +202,43 @@ PY
 		|| fail "this public installer upgrades Community only; the existing edition is ${existing_edition}"
 }
 
+configure_curl_retry_options() {
+	local version_output curl_version="unknown"
+	version_output="$(curl --version 2>/dev/null || true)"
+	version_output="${version_output%%$'\n'*}"
+	if [[ "${version_output}" =~ ^curl[[:space:]]+([^[:space:]]+) ]]; then
+		curl_version="${BASH_REMATCH[1]}"
+	fi
+
+	CURL_RETRY_ARGS=(--retry 3 --retry-delay 2)
+	if curl --retry-all-errors --version >/dev/null 2>&1; then
+		CURL_RETRY_ARGS+=(--retry-all-errors)
+	elif curl --retry-connrefused --version >/dev/null 2>&1; then
+		CURL_RETRY_ARGS+=(--retry-connrefused)
+		printf '[INFO] curl %s detected; using Ubuntu-compatible retry options.\n' \
+			"${curl_version}"
+	else
+		printf '[WARN] curl %s lacks enhanced retry options; using standard retries.\n' \
+			"${curl_version}"
+	fi
+}
+
 download_file() {
 	local url=$1
 	local output=$2
 	local max_time=${3:-120}
-	curl --fail --show-error --silent --location \
-		--retry 3 --retry-all-errors --connect-timeout 15 --max-time "${max_time}" \
-		-H 'Cache-Control: no-cache' "${url}" -o "${output}"
+	local partial="${output}.part"
+	rm -f -- "${partial}"
+	if curl --fail --show-error --silent --location \
+		"${CURL_RETRY_ARGS[@]}" \
+		--connect-timeout 15 --max-time "${max_time}" \
+		-H 'Cache-Control: no-cache' "${url}" -o "${partial}"; then
+		if mv -f -- "${partial}" "${output}"; then
+			return 0
+		fi
+	fi
+	rm -f -- "${partial}"
+	return 1
 }
 
 fail_with_tag_guidance() {
@@ -449,6 +480,7 @@ trap 'exit 143' TERM
 
 install_host_tools
 inspect_existing_installation
+configure_curl_retry_options
 resolve_tag
 print_target
 confirm_installation
