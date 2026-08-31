@@ -1,17 +1,17 @@
 ---
 title: 支持范围
-description: 查看 HyperFileLens Community 当前支持的运行平台、备份源、目标存储和智能洞察范围。
+description: 查看 HyperFileLens 社区版当前支持的运行平台、备份源、目标存储和智能洞察范围。
 ---
 
 # 支持范围
 
-本页列出 HyperFileLens Community 当前支持的主要平台和产品能力。不同版本可能存在差异，部署前请同时查看目标版本的发布说明。
+本页列出 HyperFileLens 社区版当前支持的主要平台和产品能力。不同版本可能存在差异，部署前请同时查看目标版本的发布说明。
 
 ## 运行平台
 
 | 组件 | 操作系统 | 架构 |
 | --- | --- | --- |
-| Community 控制平面 | Ubuntu 20.04、22.04、24.04 | amd64 |
+| 社区版控制平面 | Ubuntu 20.04、22.04、24.04 | amd64 |
 | Agent | Linux | amd64、arm64 |
 | Agent | Windows | amd64 |
 | Agent | macOS | amd64、arm64 |

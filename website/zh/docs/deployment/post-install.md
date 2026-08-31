@@ -1,6 +1,6 @@
 ---
 title: 安装后检查
-description: 确认 HyperFileLens Community 安装完成并可以开始使用。
+description: 确认 HyperFileLens 社区版安装完成并可以开始使用。
 ---
 
 # 安装后检查
@@ -9,7 +9,7 @@ description: 确认 HyperFileLens Community 安装完成并可以开始使用。
 
 ## 1. 确认服务状态
 
-在安装 Community 的主机上运行：
+在安装社区版的主机上运行：
 
 ```bash
 sudo /opt/hyperfilelens/install.sh status

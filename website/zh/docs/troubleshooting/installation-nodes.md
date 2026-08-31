@@ -7,7 +7,7 @@ description: 排查控制平面安装、Agent、Proxy 和 Data Gateway 注册或
 
 先查看安装程序或控制台显示的错误信息，再检查对应的系统与网络条件。
 
-## Community 安装失败
+## 社区版安装失败
 
 依次检查：
 

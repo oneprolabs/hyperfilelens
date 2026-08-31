@@ -1,13 +1,13 @@
 ---
 title: 升级与恢复
-description: 使用安装程序检查、备份和升级 HyperFileLens Community，并处理升级异常。
+description: 使用安装程序检查、备份和升级 HyperFileLens 社区版，并处理升级异常。
 ---
 
 # 升级与恢复
 
-本页适用于自行部署的 HyperFileLens Community。官方 SaaS 的升级由 OnePro Cloud 负责，无需用户操作。
+本页适用于自行部署的 HyperFileLens 社区版。官方 SaaS 的升级由 OnePro Cloud 负责，无需用户操作。
 
-Community 的状态检查、系统备份和升级均通过安装程序完成。不要直接替换安装目录中的运行文件或容器镜像。
+社区版的状态检查、系统备份和升级均通过安装程序完成。不要直接替换安装目录中的运行文件或容器镜像。
 
 ## 升级前准备
 
@@ -27,7 +27,7 @@ sudo /opt/hyperfilelens/install.sh status
 sudo /opt/hyperfilelens/install.sh backup
 ```
 
-安装程序保留最近三个有效系统备份。该备份用于恢复 Community 控制平面的配置和运行数据，不包含备份源中的业务文件，也不能代替产品中的备份和恢复验证。
+安装程序保留最近三个有效系统备份。该备份用于恢复社区版控制平面的配置和运行数据，不包含备份源中的业务文件，也不能代替产品中的备份和恢复验证。
 
 ## 执行升级
 
@@ -40,11 +40,11 @@ curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/ins
   | sudo bash -s -- --mirror cn --tag vX.Y.Z
 ```
 
-将 `vX.Y.Z` 替换为目标版本号。安装程序会识别现有 Community 环境，并进入升级流程。
+将 `vX.Y.Z` 替换为目标版本号。安装程序会识别现有社区版环境，并进入升级流程。
 
 ### 使用 Release 包升级
 
-已经取得目标版本的 Community Release 包时，使用其完整路径运行：
+已经取得目标版本的社区版发行包时，使用其完整路径运行：
 
 ```bash
 sudo /opt/hyperfilelens/install.sh upgrade \

@@ -1,15 +1,15 @@
 ---
 title: 账户与登录
-description: 排查 HyperFileLens 控制台访问、SaaS 或 Community 登录及页面更新问题。
+description: 排查 HyperFileLens 控制台访问、SaaS 或社区版登录及页面更新问题。
 ---
 
 # 账户与登录
 
 ## 无法打开控制台
 
-使用官方 SaaS 时，直接打开 [HyperFileLens SaaS 控制台](https://app.hyperfilelens.com/)；使用 Community 时，打开安装结果中标记为 `Tenant` 的完整地址。
+使用官方 SaaS 时，直接打开 [HyperFileLens SaaS 控制台](https://app.hyperfilelens.com/)；使用社区版时，打开安装结果中标记为 `Tenant` 的完整地址。
 
-Community 控制台无法打开时：
+社区版控制台无法打开时：
 
 1. 在安装主机运行 `sudo /opt/hyperfilelens/install.sh status`，确认服务状态正常。
 2. 检查访问地址、端口和反向代理是否与当前部署一致。
@@ -22,7 +22,7 @@ Community 控制台无法打开时：
 - Google 登录返回原页面但仍未登录时，重新打开控制台，并检查浏览器是否阻止了登录跳转或必要的 Cookie。
 - 登录成功但无法进入目标组织时，请确认使用了正确账户，并联系组织管理员检查成员状态。
 
-## Community 无法登录
+## 社区版无法登录
 
 - 首次登录使用安装结果中列出的初始账户和密码。
 - 已经修改初始密码时，使用修改后的密码，并检查输入内容是否包含多余空格。
@@ -31,7 +31,7 @@ Community 控制台无法打开时：
 
 ## 无法切换中文
 
-Community 环境先检查简体中文语言包：
+社区版环境先检查简体中文语言包：
 
 ```bash
 sudo /opt/hyperfilelens/install.sh lang-pack list

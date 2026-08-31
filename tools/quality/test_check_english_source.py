@@ -112,6 +112,30 @@ class EnglishSourceCheckerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("English source boundary check passed.", result.stdout)
 
+    def test_root_readme_language_switch_is_allowed(self) -> None:
+        """Allow only the standard localized label in the root README switch."""
+        chinese_label = f"{chr(0x4E2D)}{chr(0x6587)}"
+        readme = self.repository_root / "README.md"
+        readme.write_text(
+            f"English | [{chinese_label}](README.zh-CN.md)\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("English source boundary check passed.", result.stdout)
+
+    def test_other_localized_root_readme_content_is_rejected(self) -> None:
+        """Keep rejecting localized prose elsewhere in the English README."""
+        readme = self.repository_root / "README.md"
+        readme.write_text(f"# {cjk_sample()}\n", encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("README.md:1:3", result.stdout)
+
     def test_localized_website_content_is_allowed(self) -> None:
         """Allow translated content inside an approved website locale root."""
         translated_file = self.repository_root / "website/zh/docs/index.md"

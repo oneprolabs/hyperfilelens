@@ -270,7 +270,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           <div class="open-source-copy">
             <p class="section-kicker dark-kicker">社区版</p>
             <h2 id="open-source-title">开源社区版 一条命令部署</h2>
-            <p>在安装了 Docker 的 Ubuntu 主机上安装最新 Community Tag，安装程序会先校验镜像和资产，国内通过 Gitee 和阿里云镜像交付。</p>
+            <p>在安装了 Docker 的 Ubuntu 主机上安装最新社区版，安装程序会先校验镜像和资产，国内通过 Gitee 和阿里云镜像交付。</p>
             <div class="open-source-callout">
               <svg aria-hidden="true"><use href="#icon-check" /></svg>
               <p>社区版免费开源，自带 S3 兼容存储和 AI 模型或 API Key；企业版能力将在后续版本提供。</p>
@@ -285,10 +285,10 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             </div>
             <p class="beta-note">HyperFileLens 目前处于公测阶段。</p>
           </div>
-          <div class="terminal-card" aria-label="Community 在线安装命令">
+          <div class="terminal-card" aria-label="社区版在线安装命令">
             <div class="terminal-bar">
               <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
-              <div class="terminal-title"><strong>Community</strong><span>最新 Tag</span></div>
+              <div class="terminal-title"><strong>社区版</strong><span>最新版本</span></div>
               <button
                 type="button"
                 class="copy-command"
@@ -301,7 +301,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             </div>
             <div class="terminal-body">
               <p class="terminal-context">在 Ubuntu 主机上运行</p>
-              <pre><code><span class="terminal-comment"># 安装最新 Community Tag</span>
+              <pre><code><span class="terminal-comment"># 安装最新社区版</span>
 <span class="terminal-prompt">$</span> {{ installCommand }}</code></pre>
             </div>
             <div class="terminal-summary">
@@ -346,7 +346,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <a class="footer-social" :href="githubUrl" aria-label="HyperFileLens GitHub 仓库"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
       </div>
       <div class="footer-links">
-        <div><strong>产品</strong><a href="#use-cases">使用场景</a><a href="#how-it-works">工作原理</a><a href="/zh/docs/">用户文档</a><a :href="loginUrl" @click="openApp($event, 'footer')">免费试用</a></div>
+        <div><strong>产品</strong><a href="#use-cases">使用场景</a><a href="#how-it-works">工作原理</a><a href="/zh/docs/">文档</a><a :href="loginUrl" @click="openApp($event, 'footer')">免费试用</a></div>
         <div><strong>开源</strong><a :href="githubUrl">HyperFileLens</a><a :href="sourceLensUrl">AI 引擎</a><a :href="`${githubUrl}/releases`">发布版本</a></div>
         <div><strong>联系我们</strong><a href="mailto:oneprolabs@oneprocloud.com">企业部署</a><a :href="`${githubUrl}/issues`">技术支持</a></div>
       </div>

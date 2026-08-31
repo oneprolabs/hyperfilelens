@@ -1,11 +1,11 @@
 ---
-title: 安装 Community
-description: 在自有 Ubuntu 主机上安装并运行 HyperFileLens Community。
+title: 安装社区版
+description: 在自有 Ubuntu 主机上安装并运行 HyperFileLens 社区版。
 ---
 
-# 安装 Community
+# 安装社区版
 
-HyperFileLens Community 可部署在自有 Ubuntu 主机上。在线安装程序会下载并启动最新发布版本。
+HyperFileLens 社区版可部署在自有 Ubuntu 主机上。在线安装程序会下载并启动最新发布版本。
 
 ## 安装前准备
 

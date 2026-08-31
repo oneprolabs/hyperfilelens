@@ -1,6 +1,6 @@
 ---
 title: 系统要求
-description: HyperFileLens Community 和相关节点的系统要求。
+description: HyperFileLens 社区版和相关节点的系统要求。
 search: false
 ---
 

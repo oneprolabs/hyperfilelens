@@ -1,11 +1,11 @@
 ---
 title: 选择使用方式
-description: 选择官方 SaaS 或自行部署 HyperFileLens Community。
+description: 选择官方 SaaS 或自行部署 HyperFileLens 社区版。
 ---
 
 # 选择使用方式
 
-<p class="hfl-doc-lead">HyperFileLens 提供官方 SaaS 与 Community 两种使用方式，请根据是否需要自行部署和维护运行环境进行选择。</p>
+<p class="hfl-doc-lead">HyperFileLens 提供官方 SaaS 与社区版两种使用方式，请根据是否需要自行部署和维护运行环境进行选择。</p>
 
 <div class="hfl-doc-grid">
   <a class="hfl-doc-card" href="/zh/docs/getting-started/saas">
@@ -15,8 +15,8 @@ description: 选择官方 SaaS 或自行部署 HyperFileLens Community。
   </a>
   <a class="hfl-doc-card" href="/zh/docs/getting-started/install">
     <small>自托管</small>
-    <strong>安装 Community</strong>
-    <span>在自有 Ubuntu 环境部署 Community，并自行管理运行环境。</span>
+    <strong>安装社区版</strong>
+    <span>在自有 Ubuntu 环境部署社区版，并自行管理运行环境。</span>
   </a>
 </div>
 

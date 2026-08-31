@@ -1,13 +1,13 @@
 ---
 title: 系统要求
-description: 安装 HyperFileLens Community、Agent、Proxy 和 Private Data Gateway 前需要满足的系统条件。
+description: 安装 HyperFileLens 社区版、Agent、Proxy 和 Private Data Gateway 前需要满足的系统条件。
 ---
 
 # 系统要求
 
-<p class="hfl-doc-lead">安装 Community 控制平面或相关组件前，请确认目标主机满足以下平台、资源和运行条件。官方 SaaS 无需部署控制平面，只需检查实际部署的 Agent、Proxy 或 Private Data Gateway。</p>
+<p class="hfl-doc-lead">安装社区版控制平面或相关组件前，请确认目标主机满足以下平台、资源和运行条件。官方 SaaS 无需部署控制平面，只需检查实际部署的 Agent、Proxy 或 Private Data Gateway。</p>
 
-## Community 控制平面
+## 社区版控制平面
 
 | 项目 | 最低配置 | 推荐配置 |
 | --- | --- | --- |
@@ -52,7 +52,7 @@ description: 安装 HyperFileLens Community、Agent、Proxy 和 Private Data Gat
 
 ## 安装前条件
 
-- Community 安装主机具备 `sudo` 权限，并已安装 `curl`。
+- 社区版安装主机具备 `sudo` 权限，并已安装 `curl`。
 - Docker Engine 已启动并能够正常运行容器。
 - 主机能够访问安装源、镜像仓库和 Ubuntu 软件源。
 - 在线安装或连接控制平面时，主机能够解析相关域名并建立正常 HTTPS 连接，系统时间保持准确。
