@@ -562,7 +562,24 @@ launchd_service_status_line() {
 	fi
 }
 
+wait_for_launchd_unload() {
+	local timeout="${1:-10}"
+	local attempts=0 max_attempts=$((timeout * 10))
+	while launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1; do
+		attempts=$((attempts + 1))
+		if [[ "${attempts}" -ge "${max_attempts}" ]]; then
+			return 1
+		fi
+		sleep 0.1
+	done
+	return 0
+}
+
 stop_launchd_service() {
+	local unload_timeout="${HFL_LAUNCHD_UNLOAD_TIMEOUT_SECONDS:-10}"
+	[[ "${unload_timeout}" =~ ^[0-9]+$ \
+		&& "${unload_timeout}" -gt 0 \
+		&& "${unload_timeout}" -le 60 ]] || unload_timeout=10
 	if launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
 		if ! launchctl bootout "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" 2>/dev/null \
 			&& ! launchctl bootout "${LAUNCHD_DOMAIN}" "${LAUNCHD_PLIST}" 2>/dev/null; then
@@ -571,11 +588,12 @@ stop_launchd_service() {
 			fi
 			log_warn "launchd service ${LAUNCHD_LABEL} could not be stopped"
 		fi
-		if launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
+		if ! wait_for_launchd_unload "${unload_timeout}"; then
 			if [[ "${UPGRADE_TRANSACTION_ACTIVE}" -eq 1 ]]; then
-				log_fail "launchd service ${LAUNCHD_LABEL} is still loaded; upgrade was aborted before deployment." 2
+				log_fail "launchd service ${LAUNCHD_LABEL} did not unload within ${unload_timeout} seconds; upgrade was aborted before deployment." 2
 			fi
-			log_warn "launchd service ${LAUNCHD_LABEL} is still loaded"
+			log_warn "launchd service ${LAUNCHD_LABEL} did not unload within ${unload_timeout} seconds"
+			return 1
 		fi
 		log_ok "stopped launchd service ${LAUNCHD_LABEL}"
 	else
