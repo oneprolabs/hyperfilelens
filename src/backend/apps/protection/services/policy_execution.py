@@ -379,10 +379,43 @@ def retention_delete_candidates_for_config(
     return [snapshot for snapshot in snapshots if int(snapshot.id) not in keep_ids]
 
 
+def failed_snapshot_delete_candidates_for_config(
+    *,
+    config: BackupConfig,
+    policy: BackupPolicy,
+) -> list[BackupSourceSnapshot]:
+    retention = policy.retention if isinstance(policy.retention, dict) else {}
+    if not retention.get("enabled", False):
+        return []
+    return list(
+        BackupSourceSnapshot.objects.filter(
+            organization_id=config.organization_id,
+            source_type=config.source_type,
+            source_ref_id=config.source_ref_id,
+            backup_config_id=config.id,
+            deleted_at__isnull=True,
+            status=BackupSourceSnapshot.Status.FAILED,
+        ).order_by("finished_at", "created_at", "id")
+    )
+
+
 def apply_retention_policies(*, now=None, limit: int = 100) -> dict[str, int]:
     created = 0
     skipped = 0
     for config, policy in _policy_configs():
+        for snapshot in failed_snapshot_delete_candidates_for_config(
+            config=config,
+            policy=policy,
+        )[: max(1, int(limit))]:
+            with transaction.atomic():
+                task = create_and_queue_snapshot_delete_task(
+                    source_snapshot=snapshot,
+                    trigger_type=Task.TriggerType.SYSTEM,
+                )
+            if task.status in {Task.Status.PENDING, Task.Status.RUNNING}:
+                created += 1
+            else:
+                skipped += 1
         for snapshot in retention_delete_candidates_for_config(
             config=config,
             policy=policy,

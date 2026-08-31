@@ -1575,12 +1575,12 @@ def _observe_running_directory(
             if not node_online:
                 return
     if node_task.status in _NODE_TASK_TERMINAL:
-        if node_task.status == NodeTask.Status.SUCCESS:
-            snapshot_id, size_bytes, file_count, dir_count, stats = (
-                bt._extract_snapshot_metrics(
-                    node_task.result if isinstance(node_task.result, dict) else {}
-                )
+        snapshot_id, size_bytes, file_count, dir_count, stats = (
+            bt._extract_snapshot_metrics(
+                node_task.result if isinstance(node_task.result, dict) else {}
             )
+        )
+        if node_task.status == NodeTask.Status.SUCCESS:
             if not snapshot_id:
                 record_source_snapshot_directory_result(
                     source_snapshot=source_snapshot,
@@ -1785,6 +1785,11 @@ def _observe_running_directory(
                 display_name=directory_row.display_name,
                 repository_id=directory_row.repository_id,
                 status=directory_status,
+                kopia_snapshot_id=snapshot_id,
+                size_bytes=size_bytes,
+                file_count=file_count,
+                dir_count=dir_count,
+                stats=stats,
                 error_code=error_code,
                 error_message=error_message,
             )
