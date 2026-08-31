@@ -17,6 +17,6 @@ description: 查找 HyperFileLens 的产品概念、支持范围、安全边界�
 
 - [排查方法](/zh/docs/troubleshooting/)：按错误发生的位置逐步定位问题。
 - [账户与登录](/zh/docs/troubleshooting/account-sign-in)：处理控制台无法访问、无法登录或页面未更新。
-- [安装与节点](/zh/docs/troubleshooting/installation-nodes)：处理 Community、Agent、Proxy 或 Private Data Gateway 安装和连接异常。
+- [安装与节点](/zh/docs/troubleshooting/installation-nodes)：处理社区版、Agent、Proxy 或 Private Data Gateway 安装和连接异常。
 - [备份、存储与恢复](/zh/docs/troubleshooting/protection)：处理目录浏览、存储验证、备份和恢复失败。
 - [智能洞察与 Data Gateway](/zh/docs/troubleshooting/insights)：处理会话创建、数据准备和回答内容问题。

@@ -11,63 +11,63 @@
 
 开源备份与恢复产品，提供基于备份快照的 AI 智能洞察。
 
-[产品主页](https://hyperfilelens.com/zh/) · [用户文档](https://hyperfilelens.com/zh/docs/) · [免费使用](https://app.hyperfilelens.com/) · [版本发布](https://github.com/oneprolabs/hyperfilelens/releases)
+[产品主页](https://hyperfilelens.com/zh/) · [文档](https://hyperfilelens.com/zh/docs/) · [免费试用](https://app.hyperfilelens.com/) · [版本发布](https://github.com/oneprolabs/hyperfilelens/releases)
 
 </div>
 
-HyperFileLens 可以保护 Windows、Linux 和 macOS 主机上的文件，将数据保存为隔离的时间点快照，在需要时恢复文件和目录，并直接基于快照进行智能分析，不让 AI 直接访问生产环境。
+HyperFileLens 可以保护 Windows、Linux 和 macOS 主机上的文件，将数据保存为隔离的时间点快照，在需要时恢复文件和目录，并基于快照开展智能洞察，无需让 AI 直接访问生产环境。
 
-## 什么是 HyperFileLens
+<p align="center">
+  <img src="website/public/product-overview.webp" alt="HyperFileLens 产品概览" width="960">
+</p>
 
-HyperFileLens 以备份快照为共同的数据基础。备份任务将指定文件写入目标存储并生成时间点快照；同一份快照既可以用于浏览和恢复文件，也可以作为智能洞察的数据来源。
+## 从备份到智能洞察
 
-```text
-Windows / Linux / macOS / NAS
-               │
-               ▼
-          备份时间点快照
-             │      │
-             ▼      ▼
-          文件恢复  智能洞察
-```
+HyperFileLens 以备份快照贯通备份、恢复与智能洞察。备份任务将指定文件写入目标存储并生成时间点快照；同一份快照既可以用于浏览和恢复文件，也可以作为智能洞察的数据来源。
+
+<p align="center">
+  <img src="website/public/how-it-works.webp" alt="HyperFileLens 从文件备份到智能洞察的工作原理" width="960">
+</p>
 
 智能洞察只处理用户从指定快照中选择的数据范围，不直接读取备份主机上的实时文件。
 
 ## 核心业务流程
 
-### 备份文件
+### 创建备份
 
 连接备份主机和目标存储，选择需要保护的文件或目录，并创建可浏览的时间点快照。
 
 - 保护 Windows、Linux 和 macOS 主机上的本地文件。
-- 通过 Proxy 连接 NAS 或其所在主机上的本地存储。
-- 使用对象存储、NAS 或 Proxy 本地存储保存备份。
+- 支持对象存储、NAS 或通过 Proxy 连接的本地存储。
 - 手动运行备份，或通过策略安排周期性备份与保留规则。
 
-### 恢复所需数据
+### 恢复文件和目录
 
-浏览指定快照中的文件和目录，将选中的内容恢复到原位置或其他可用位置。通过实际恢复测试，可以确认所需数据能够从备份中取回并正常使用。
+浏览指定快照中的文件和目录，将选中的内容恢复到原位置或其他可用位置，并通过恢复测试验证关键数据和恢复流程。
 
-### 对备份数据提问
+### 基于快照进行智能洞察
 
-从已有快照中选择文件或目录，通过智能洞察查找、总结和分析内容。每个会话都有明确的快照时间点和数据范围，并通过 Data Gateway 准备选中的数据。
+从已有备份快照中选择文件或目录，通过智能洞察查找、总结和分析内容。每个会话都限定在选定的快照和数据范围内，并通过 Data Gateway 访问这些数据。
 
 ## 为什么选择 HyperFileLens
 
 - **备份、恢复和洞察一体化**：使用同一份备份快照完成数据恢复与内容分析。
-- **不直接读取生产数据**：智能洞察处理用户选择的快照数据，而不是生产主机上的实时文件。
-- **从任务结果到数据可用**：可以继续浏览快照、恢复重要文件，并从备份内容中获得洞察。
-- **灵活的使用方式**：可以直接使用官方 SaaS，也可以在自有环境部署 Community。
+- **基于隔离快照进行洞察**：智能洞察处理用户选择的快照数据，而不是生产主机上的实时文件。
+- **灵活的使用方式**：可以直接使用官方 SaaS，也可以在自有环境部署社区版。
 
-## 产品实际展示
+## 产品界面
 
 备份完成后，HyperFileLens 会生成可浏览和恢复的时间点快照。
 
-![HyperFileLens 中已成功完成的备份](website/public/docs/getting-started/backup-succeeded.png)
+<p align="center">
+  <img src="website/public/docs/getting-started/backup-succeeded.png" alt="HyperFileLens 中已成功完成的备份" width="960">
+</p>
 
 智能洞察基于会话中选择的快照数据回答问题，并展示相关来源。
 
-![HyperFileLens 智能洞察基于快照数据生成回答](website/public/docs/getting-started/chat-answer.png)
+<p align="center">
+  <img src="website/public/docs/getting-started/chat-answer.png" alt="HyperFileLens 智能洞察基于快照数据生成回答" width="960">
+</p>
 
 ## 快速开始
 
@@ -75,15 +75,15 @@ Windows / Linux / macOS / NAS
 
 HyperFileLens 官方 SaaS 由 OnePro Cloud 提供和运营，无需自行部署和维护控制台。
 
-- 访问 [HyperFileLens 产品主页](https://hyperfilelens.com/zh/)了解产品。
-- 打开 [SaaS 控制台](https://app.hyperfilelens.com/)开始使用。
-- 按照[首次使用指南](https://hyperfilelens.com/zh/docs/)完成首次备份、恢复和智能洞察。
+- 访问 [HyperFileLens 产品主页](https://hyperfilelens.com/zh/)，了解产品。
+- 打开 [SaaS 控制台](https://app.hyperfilelens.com/)，开始使用。
+- 按照[首次使用指南](https://hyperfilelens.com/zh/docs/)，完成首次备份、恢复和智能洞察。
 
 使用 SaaS 时，仍需在需要保护的主机上安装 Agent，并准备一处 SaaS 和备份主机均可连接的对象存储。
 
-### 安装 Community
+### 安装社区版
 
-Community 可部署在自有 Ubuntu 主机上。安装主机需要满足以下基本条件：
+社区版可部署在自有 Ubuntu 主机上。安装主机需要满足以下基本条件：
 
 - Ubuntu 20.04、22.04 或 24.04，amd64 架构。
 - 至少 2 核 CPU、4 GiB 内存，以及 `/opt` 所在磁盘 20 GiB 可用空间。
@@ -99,11 +99,11 @@ curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/ins
 
 安装完成后，在安装结果中找到标记为 `Tenant` 的完整地址，并在浏览器中打开 HyperFileLens 控制台。
 
-详细的系统要求、网络条件和安装检查，请参阅[安装 Community](https://hyperfilelens.com/zh/docs/getting-started/install)。
+详细的系统要求、网络条件和安装检查，请参阅[安装社区版](https://hyperfilelens.com/zh/docs/getting-started/install)。
 
 ## 完成首次使用
 
-首次使用以一组测试文件完成完整业务流程，确认从数据接入到实际使用均可正常工作：
+按照首次使用指南，用一组测试文件走通从数据接入到备份、恢复和智能洞察的完整流程：
 
 1. [登录控制台](https://hyperfilelens.com/zh/docs/getting-started/sign-in)。
 2. [添加备份源](https://hyperfilelens.com/zh/docs/getting-started/add-source)，并在备份主机上安装 Agent。
@@ -121,20 +121,9 @@ curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/ins
 | HyperFileLens 控制台 | 管理备份源、目标存储、备份配置、任务、快照、恢复和智能洞察 |
 | Agent | 运行在备份主机上，访问本机文件并执行备份与恢复任务 |
 | Proxy | 连接 NAS 或所在主机的本地存储，为备份和恢复提供存储访问 |
-| Data Gateway | 为智能洞察读取和准备用户从快照中选择的数据 |
+| Data Gateway | 连接备份仓库，为智能洞察会话提供用户选择的快照数据 |
 
-```text
-备份主机 / NAS
-       │
-  Agent / Proxy
-       │
-       ▼
-    目标存储 ──► 时间点快照 ──► 文件恢复
-                         │
-                         └──► Data Gateway ──► 智能洞察
-```
-
-默认情况下，官方 SaaS 提供公共 Data Gateway，Community 在安装时也会部署公共 Data Gateway。备份仓库无法由公共网关访问，或数据处理必须保留在自有网络中时，可以部署 Private Data Gateway。
+默认情况下，官方 SaaS 提供公共 Data Gateway，社区版在安装时也会部署公共 Data Gateway。当公共网关无法连接备份仓库，或数据处理必须保留在自有网络中时，可以部署 Private Data Gateway。
 
 ## 支持范围
 
@@ -152,7 +141,7 @@ curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/ins
 - 通用 S3 兼容对象存储
 - 通过 Proxy 连接的 NAS 或本地存储
 
-### Community 控制平面
+### 社区版控制平面
 
 - Ubuntu 20.04、22.04 或 24.04，amd64
 - Docker Engine 24.0.0 及以上版本
@@ -160,7 +149,7 @@ curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/ins
 
 更完整的产品边界请查看[支持范围](https://hyperfilelens.com/zh/docs/reference/support-matrix)与[限制和安全建议](https://hyperfilelens.com/zh/docs/reference/limitations-security)。
 
-## 用户文档
+## 文档
 
 - [快速开始](https://hyperfilelens.com/zh/docs/)
 - [产品使用](https://hyperfilelens.com/zh/docs/product/)
@@ -203,7 +192,7 @@ HyperFileLens 目前处于公开测试阶段。在首个稳定版本发布前，
 ./dev/stack.sh down
 ```
 
-开发环境的完整要求、配置项、离线缓存和构建流程请查看英文版 [README](README.md)。
+更多开发和构建选项，请使用相应仓库脚本的 `--help` 参数查看。
 
 ## 技术架构
 
@@ -228,7 +217,7 @@ hyperfilelens/
 │   ├── backend/         Django 后端源码
 │   └── frontend/        Vue 前端源码
 ├── tools/               构建、依赖、质量检查和发布工具
-├── website/             产品网站与中英文用户文档
+├── website/             产品网站与中英文文档
 ├── .env.example         环境配置模板
 └── docker-compose.yml   本地开发服务编排
 ```
@@ -261,13 +250,11 @@ python3 -m unittest tools/quality/test_check_english_source.py
 
 ## 安全
 
-- Community 安装完成后立即修改初始密码。
+- 社区版安装完成后立即修改初始密码。
 - 妥善保护 `.env`、访问凭据、TLS 私钥、备份数据和运行日志。
 - 仅向必要网络开放产品与组件端口，避免将管理入口直接暴露到互联网。
 - 使用访问凭据和最小权限策略连接对象存储，无需将存储桶设为公开。
 - 不要将部署环境的密码、令牌、私钥、运行数据或发行包提交到版本库。
-
-请不要在公开 GitHub Issue 中披露安全漏洞或敏感部署信息。
 
 ## 参与贡献
 
@@ -281,4 +268,4 @@ python3 -m unittest tools/quality/test_check_english_source.py
 
 ## 许可证
 
-HyperFileLens Community 使用 [Apache License 2.0](LICENSE) 开源许可证。
+HyperFileLens 社区版使用 [Apache License 2.0](LICENSE) 开源许可证。

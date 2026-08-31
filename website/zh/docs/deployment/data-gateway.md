@@ -9,7 +9,7 @@ Data Gateway 从备份仓库读取用户选择的快照文件，并为智能洞�
 
 ## 公共与私有 Data Gateway
 
-- **公共 Data Gateway**是默认使用方式。官方 SaaS 由平台提供；Community 在安装时默认部署。
+- **公共 Data Gateway**是默认使用方式。官方 SaaS 由平台提供；社区版在安装时默认部署。
 - **私有 Data Gateway**部署在用户管理的网络中，适合备份仓库无法由公共网关访问，或数据处理需要保留在自有网络中的场景。
 
 如果公共 Data Gateway 能够访问备份仓库，通常无需额外部署私有网关。

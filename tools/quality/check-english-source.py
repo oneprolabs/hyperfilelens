@@ -14,6 +14,12 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 LANGUAGE_PACK_DATA_ROOT = Path("language-packs/packs")
 LOCALIZED_ROOT_FILES = frozenset({Path("README.zh-CN.md")})
+README_LANGUAGE_SWITCH = (
+    f"English | [{chr(0x4E2D)}{chr(0x6587)}](README.zh-CN.md)"
+)
+LOCALIZED_EXACT_LINES = {
+    Path("README.md"): frozenset({README_LANGUAGE_SWITCH}),
+}
 LOCALIZED_WEBSITE_ROOTS = (Path("website/zh"),)
 LOCALIZED_WEBSITE_FILES = frozenset(
     {
@@ -106,7 +112,10 @@ def find_violations(path: Path) -> list[str]:
 
     violations: list[str] = []
     relative_path = path.relative_to(REPOSITORY_ROOT)
+    localized_exact_lines = LOCALIZED_EXACT_LINES.get(relative_path, frozenset())
     for line_number, line in enumerate(content.splitlines(), start=1):
+        if line in localized_exact_lines:
+            continue
         for offset, code_point, kind in iter_cjk_references(line):
             violations.append(
                 f"{relative_path}:{line_number}:{offset + 1}: "

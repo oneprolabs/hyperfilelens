@@ -6,7 +6,7 @@ const quickStart: DefaultTheme.SidebarItem[] = [
     items: [
       { text: '选择使用方式', link: '/zh/docs/' },
       { text: '使用官方 SaaS', link: '/zh/docs/getting-started/saas' },
-      { text: '安装 Community', link: '/zh/docs/getting-started/install' },
+      { text: '安装社区版', link: '/zh/docs/getting-started/install' },
     ],
   },
   {
@@ -65,7 +65,7 @@ const operations: DefaultTheme.SidebarItem[] = [
     ],
   },
   {
-    text: '部署 Community',
+    text: '部署社区版',
     items: [
       { text: '系统要求', link: '/zh/docs/deployment/requirements' },
       { text: '网络与端口', link: '/zh/docs/deployment/network' },

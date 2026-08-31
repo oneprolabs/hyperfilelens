@@ -11,7 +11,7 @@ description: 访问 HyperFileLens 产品主页或直接进入官方 SaaS 控制�
   <a class="hfl-doc-card" href="https://hyperfilelens.com/zh/" target="_blank" rel="noopener noreferrer">
     <small>产品主页</small>
     <strong>了解 HyperFileLens</strong>
-    <span>查看产品能力、应用场景和 Community 安装方式。</span>
+    <span>查看产品能力、应用场景和社区版安装方式。</span>
   </a>
   <a class="hfl-doc-card" href="https://app.hyperfilelens.com/" target="_blank" rel="noopener noreferrer">
     <small>SaaS 控制台</small>

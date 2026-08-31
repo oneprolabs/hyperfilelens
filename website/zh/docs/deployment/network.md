@@ -5,14 +5,14 @@ description: 配置 HyperFileLens 控制平面、Agent、Proxy、Private Data Ga
 
 # 网络与端口
 
-<p class="hfl-doc-lead">请按实际使用方式开放控制台、组件和存储之间的必要连接。官方 SaaS 使用公开 HTTPS 地址；Community 默认使用以下本机端口，也可以通过反向代理统一映射到标准 HTTPS 端口。</p>
+<p class="hfl-doc-lead">请按实际使用方式开放控制台、组件和存储之间的必要连接。官方 SaaS 使用公开 HTTPS 地址；社区版默认使用以下本机端口，也可以通过反向代理统一映射到标准 HTTPS 端口。</p>
 
-## Community 默认端口
+## 社区版默认端口
 
 <div class="hfl-deployment-grid">
   <section class="hfl-deployment-card">
     <small>11442/TCP</small>
-    <strong>产品网站与用户文档</strong>
+    <strong>产品网站与文档</strong>
     <dl><div><dt>开放范围</dt><dd>按需向用户开放</dd></div></dl>
   </section>
   <section class="hfl-deployment-card">
@@ -32,7 +32,7 @@ description: 配置 HyperFileLens 控制平面、Agent、Proxy、Private Data Ga
   </section>
 </div>
 
-安装 Community 时，部署主机上的 `11442–11445/TCP` 必须未被其他程序占用。使用域名和反向代理后，浏览器及组件可以通过映射后的 `443/TCP` 访问，具体以实际配置的地址为准。Community 默认部署的公共 Data Gateway 与控制平面运行在同一主机，无需额外开放公网端口。
+安装社区版时，部署主机上的 `11442–11445/TCP` 必须未被其他程序占用。使用域名和反向代理后，浏览器及组件可以通过映射后的 `443/TCP` 访问，具体以实际配置的地址为准。社区版默认部署的公共 Data Gateway 与控制平面运行在同一主机，无需额外开放公网端口。
 
 ## 组件连接路径
 
@@ -41,9 +41,9 @@ description: 配置 HyperFileLens 控制平面、Agent、Proxy、Private Data Ga
     <small>控制连接</small>
     <strong>控制平面</strong>
     <dl>
-      <div><dt>浏览器</dt><dd>访问官方 SaaS <code>443/TCP</code>，或 Community <code>11443/TCP</code> 及其映射端口</dd></div>
-      <div><dt>Agent、Proxy、Private Data Gateway</dt><dd>通过官方 SaaS 的 <code>443/TCP</code> 或 Community 的 <code>11443/TCP</code> 建立 HTTPS/WSS 连接，用于注册、状态上报和任务控制</dd></div>
-      <div><dt>Community 部署主机</dt><dd>通过 <code>443/TCP</code> 访问 Gitee、镜像仓库和 Ubuntu 软件源，完成在线安装与升级</dd></div>
+      <div><dt>浏览器</dt><dd>访问官方 SaaS <code>443/TCP</code>，或社区版 <code>11443/TCP</code> 及其映射端口</dd></div>
+      <div><dt>Agent、Proxy、Private Data Gateway</dt><dd>通过官方 SaaS 的 <code>443/TCP</code> 或社区版的 <code>11443/TCP</code> 建立 HTTPS/WSS 连接，用于注册、状态上报和任务控制</dd></div>
+      <div><dt>社区版部署主机</dt><dd>通过 <code>443/TCP</code> 访问 Gitee、镜像仓库和 Ubuntu 软件源，完成在线安装与升级</dd></div>
     </dl>
   </section>
   <section class="hfl-deployment-card">
