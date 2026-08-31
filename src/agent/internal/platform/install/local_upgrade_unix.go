@@ -14,15 +14,15 @@ const upgradeDelaySecond = 5
 // ScheduleDetachedUpgrade runs install.sh upgrade after a short delay so the agent
 // can report task.result before stop_service terminates the process.
 func ScheduleDetachedUpgrade(
-	installDir, archivePath, logDir string,
+	archivePath, installerPath, logDir string,
 	userInstall bool,
 ) error {
-	installDir = strings.TrimSpace(installDir)
 	if archivePath = strings.TrimSpace(archivePath); archivePath == "" {
 		return fmt.Errorf("upgrade archive path required")
 	}
-	if installDir == "" {
-		installDir = DefaultInstallDir()
+	installerPath = strings.TrimSpace(installerPath)
+	if installerPath == "" {
+		return fmt.Errorf("upgrade installer path required")
 	}
 	logDir = resolveUpgradeLogDir("", logDir)
 	if logDir != "" {
@@ -31,8 +31,8 @@ func ScheduleDetachedUpgrade(
 	pendingDir := filepath.Dir(archivePath)
 	scriptPath := filepath.Join(pendingDir, pendingUpgradeRunnerName)
 	if err := writeUnixUpgradeScript(
-		installDir,
 		archivePath,
+		installerPath,
 		logDir,
 		userInstall,
 		scriptPath,
@@ -59,11 +59,10 @@ func ScheduleDetachedUpgrade(
 }
 
 func writeUnixUpgradeScript(
-	installDir, archivePath, logDir string,
+	archivePath, installerPath, logDir string,
 	userInstall bool,
 	scriptPath string,
 ) error {
-	installScript := filepath.Join(installDir, "install.sh")
 	logFile := UpgradeLogPath(logDir)
 	pendingDir := filepath.Dir(archivePath)
 	userInstallFlag := "0"
@@ -143,7 +142,7 @@ echo "failed" > "$PENDING_DIR/FAILED"
 exit "$rc"
 `,
 		archivePath,
-		installScript,
+		installerPath,
 		logFile,
 		pendingDir,
 		userInstallFlag,
