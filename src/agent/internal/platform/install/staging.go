@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -35,6 +36,38 @@ func StageUpgradeArchive(dataDir, archivePath string) (string, error) {
 	}
 	dest := StagedUpgradePackagePath(dataDir, archivePath)
 	if err := copyFile(archivePath, dest); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+// StageUpgradeInstaller copies the validated bundle installer alongside the
+// archive so the detached runner can bootstrap the upgrade with new logic.
+func StageUpgradeInstaller(dataDir, bundleRoot string) (string, error) {
+	dataDir = strings.TrimSpace(dataDir)
+	bundleRoot = strings.TrimSpace(bundleRoot)
+	if dataDir == "" || bundleRoot == "" {
+		return "", fmt.Errorf("data dir and bundle root required to stage upgrade installer")
+	}
+	name := "install.sh"
+	if runtime.GOOS == "windows" {
+		name = "install.ps1"
+	}
+	src := filepath.Join(bundleRoot, name)
+	if runtime.GOOS == "windows" {
+		src = filepath.Join(bundleRoot, "install.ps1")
+	}
+	if _, err := os.Stat(src); err != nil {
+		return "", fmt.Errorf("validated upgrade installer missing: %w", err)
+	}
+	dest := filepath.Join(LifecycleUpgradeDir(dataDir), "installer", name)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+		return "", err
+	}
+	if err := copyFile(src, dest); err != nil {
+		return "", fmt.Errorf("stage upgrade installer: %w", err)
+	}
+	if err := os.Chmod(dest, 0o700); err != nil {
 		return "", err
 	}
 	return dest, nil

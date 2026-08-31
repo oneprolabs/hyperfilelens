@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"hyperfilelens/agent/internal/enroll"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/install"
 	"hyperfilelens/agent/internal/platform/release"
@@ -48,7 +49,7 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 	if e.current().InstallationMode == model.InstallationModeAccount {
 		return "failed", nil, "specified-user continuous protection requires administrator authorization for upgrade; run the generated local administrator command"
 	}
-	archivePath, targetVersion, workDir, err := e.prepareUpgradeBundle(ctx, rep, taskID, p)
+	archivePath, targetVersion, workDir, bundleRoot, err := e.prepareUpgradeBundle(ctx, rep, taskID, p)
 	if err != nil {
 		var failure *upgradePreparationError
 		if errors.As(err, &failure) {
@@ -74,6 +75,10 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 	if err != nil {
 		return "failed", nil, err.Error()
 	}
+	stagedInstaller, err := install.StageUpgradeInstaller(dataDir, bundleRoot)
+	if err != nil {
+		return "failed", nil, err.Error()
+	}
 
 	_ = sendProgress(ctx, rep, taskID, map[string]any{
 		"phase":       "upgrade",
@@ -81,8 +86,8 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 		"upgrade_log": upgradeLog,
 	})
 	if err := install.ScheduleDetachedUpgrade(
-		installDir,
 		stagedArchive,
+		stagedInstaller,
 		logDir,
 		cfg.InstallationMode == model.InstallationModeUser || cfg.InstallationMode == model.InstallationModeUserContinuous,
 	); err != nil {
@@ -192,7 +197,7 @@ func runBundleUninstall(ctx context.Context, bundleRoot string, keepData bool) e
 	return nil
 }
 
-func (e *Engine) prepareUpgradeBundle(ctx context.Context, rep ReporterSink, taskID string, p Payload) (archivePath, targetVersion, workDir string, err error) {
+func (e *Engine) prepareUpgradeBundle(ctx context.Context, rep ReporterSink, taskID string, p Payload) (archivePath, targetVersion, workDir, bundleRoot string, err error) {
 	cfg := e.current()
 	initialDownloadURL := payloadStringValue(p.Extra["download_url"])
 	targetVersion = payloadStringValue(p.Extra["target_version"])
@@ -207,10 +212,10 @@ func (e *Engine) prepareUpgradeBundle(ctx context.Context, rep ReporterSink, tas
 
 	workDir = install.RuntimeDownloadDir(dataDir)
 	if err := os.RemoveAll(workDir); err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	if err := os.MkdirAll(workDir, 0o750); err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 
 	ext := ".tar.gz"
@@ -228,19 +233,24 @@ func (e *Engine) prepareUpgradeBundle(ctx context.Context, rep ReporterSink, tas
 		archivePath,
 	); err != nil {
 		os.RemoveAll(workDir)
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 
 	extractDir := filepath.Join(workDir, "extract")
 	if err := install.ExtractArchive(ctx, archivePath, extractDir); err != nil {
 		os.RemoveAll(workDir)
-		return "", "", "", err
+		return "", "", "", "", err
 	}
-	if _, err := install.FindBundleRoot(extractDir); err != nil {
+	bundleRoot, err = install.FindBundleRoot(extractDir)
+	if err != nil {
 		os.RemoveAll(workDir)
-		return "", "", "", err
+		return "", "", "", "", err
 	}
-	return archivePath, targetVersion, workDir, nil
+	if err := enroll.ValidateAgentPackage(bundleRoot, cfg.Role, targetVersion); err != nil {
+		os.RemoveAll(workDir)
+		return "", "", "", "", fmt.Errorf("upgrade package validation: %w", err)
+	}
+	return archivePath, targetVersion, workDir, bundleRoot, nil
 }
 
 func (e *Engine) downloadUpgradeBundle(

@@ -17,16 +17,16 @@ const (
 // ScheduleDetachedUpgrade runs install.ps1 upgrade after a short delay so the agent
 // can report task.result before the service stops.
 func ScheduleDetachedUpgrade(
-	installDir, archivePath, logDir string,
+	archivePath, installerPath, logDir string,
 	userInstall bool,
 ) error {
-	installDir = strings.TrimSpace(installDir)
-	if installDir == "" {
-		installDir = DefaultInstallDir()
-	}
 	archivePath = strings.TrimSpace(archivePath)
 	if archivePath == "" {
 		return fmt.Errorf("upgrade archive path required")
+	}
+	installerPath = strings.TrimSpace(installerPath)
+	if installerPath == "" {
+		return fmt.Errorf("upgrade installer path required")
 	}
 	logDir = resolveUpgradeLogDir("", logDir)
 	if logDir != "" {
@@ -35,8 +35,8 @@ func ScheduleDetachedUpgrade(
 	pendingDir := filepath.Dir(archivePath)
 	scriptPath := filepath.Join(pendingDir, windowsUpgradeRunnerName)
 	if err := writeWindowsUpgradeScript(
-		installDir,
 		archivePath,
+		installerPath,
 		logDir,
 		userInstall,
 		scriptPath,
@@ -63,11 +63,10 @@ func ScheduleDetachedUpgrade(
 }
 
 func writeWindowsUpgradeScript(
-	installDir, archivePath, logDir string,
+	archivePath, installerPath, logDir string,
 	userInstall bool,
 	scriptPath string,
 ) error {
-	installScript := filepath.Join(installDir, "install.ps1")
 	logFile := UpgradeLogPath(logDir)
 	pendingDir := filepath.Dir(archivePath)
 	userInstallFlag := "$false"
@@ -133,7 +132,7 @@ Set-Content -LiteralPath (Join-Path $pending 'FAILED') -Value 'failed' -Encoding
 exit $rc
 `,
 		logFile,
-		installScript,
+		installerPath,
 		archivePath,
 		pendingDir,
 		userInstallFlag,

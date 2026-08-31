@@ -123,8 +123,8 @@ func TestUnixUserUpgradeScriptUsesUserLifecycleForRecovery(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "run-upgrade.sh")
 	err := writeUnixUpgradeScript(
-		filepath.Join(dir, "install"),
 		filepath.Join(dir, "package.tar.gz"),
+		filepath.Join(dir, "installer", "install.sh"),
 		filepath.Join(dir, "logs"),
 		true,
 		scriptPath,
