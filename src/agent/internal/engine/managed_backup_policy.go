@@ -444,15 +444,16 @@ func verifyManagedBackupProtection(
 		result["error_code"] = "BACKUP_PROTECTION_POLICY_VERIFY_FAILED"
 		return result, fmt.Errorf("verify Agent backup boundary policy: invalid Kopia policy response")
 	}
-	if len(policy.Files.Ignore) < len(required) {
-		result["error_code"] = "BACKUP_PROTECTION_POLICY_MISSING"
-		return result, fmt.Errorf("required Agent backup boundary policy is missing")
+	// Kopia de-duplicates and sorts ignore rules when persisting a policy, so
+	// the effective JSON order cannot be compared with the insertion order.
+	applied := make(map[string]struct{}, len(policy.Files.Ignore))
+	for _, pattern := range policy.Files.Ignore {
+		applied[strings.TrimSpace(pattern)] = struct{}{}
 	}
-	protectedOffset := len(policy.Files.Ignore) - len(required)
-	for index, pattern := range required {
-		if strings.TrimSpace(policy.Files.Ignore[protectedOffset+index]) != pattern {
+	for _, pattern := range required {
+		if _, ok := applied[pattern]; !ok {
 			result["error_code"] = "BACKUP_PROTECTION_POLICY_MISSING"
-			return result, fmt.Errorf("required Agent backup boundary policy is not effective")
+			return result, fmt.Errorf("required Agent backup boundary policy is missing")
 		}
 	}
 	if !policy.Files.NoParentDotIgnoreFiles || len(policy.Files.DotIgnoreFiles) != 0 {
