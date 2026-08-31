@@ -185,6 +185,7 @@ function openBackupDetail() {
   <ElDialog
     v-model="detailsOpen"
     :title="t('insight.copilot.chatDetailsTitle')"
+    class="copilot-details-dialog"
     width="560px"
     append-to-body
   >
@@ -334,7 +335,8 @@ function openBackupDetail() {
 .copilot-context-bar__gateway,.copilot-context-bar__created { flex: 0 0 auto; }
 .copilot-context-bar__visual-warning { display: flex; align-items: center; gap: 6px; color: #b54708; font-size: 11px; line-height: 16px; }
 .copilot-context-bar__visual-warning svg { flex: 0 0 auto; }
-.copilot-details { display: grid; gap: 20px; }
+.copilot-details { display: grid; min-width: 0; gap: 20px; }
+.copilot-details section { min-width: 0; }
 .copilot-details section + section { padding-top: 18px; border-top: 1px solid var(--color-border-light); }
 .copilot-details h3 { margin: 0 0 12px; color: var(--color-text-tertiary); font-size: 11px; font-weight: 600; }
 .copilot-details dl { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 14px; margin: 0 0 10px; }
@@ -343,11 +345,16 @@ function openBackupDetail() {
 .copilot-details ol { display: grid; gap: 8px; margin: 0; padding-left: 30px; }
 .copilot-details li { padding-left: 4px; overflow-wrap: anywhere; color: var(--color-text-secondary); font-family: var(--font-mono); font-size: 12px; }
 .copilot-details__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.copilot-details__note { margin: 8px 0 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.5; }
+.copilot-details__note { overflow-wrap: anywhere; margin: 8px 0 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.5; }
 .copilot-details__problems { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .copilot-details__problems li { display: grid; gap: 2px; }
 .copilot-details__problems strong { overflow-wrap: anywhere; color: var(--color-text-title); font-size: 12px; }
-.copilot-details__problems span { color: var(--color-text-tertiary); font-size: 11px; }
+.copilot-details__problems span { overflow-wrap: anywhere; color: var(--color-text-tertiary); font-size: 11px; }
 @keyframes copilot-status-pulse { 50% { opacity: .58; } }
+@media (min-width: 1024px) {
+  .copilot-details-dialog { display: flex; max-height: calc(var(--app-viewport-height) - var(--app-safe-top) - var(--app-safe-bottom) - 32px); flex-direction: column; margin: calc(var(--app-safe-top) + 16px) auto calc(var(--app-safe-bottom) + 16px); }
+  .copilot-details-dialog :deep(.el-dialog__header) { flex: 0 0 auto; }
+  .copilot-details-dialog :deep(.el-dialog__body) { min-height: 0; flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; }
+}
 @media (max-width: 760px) { .copilot-context-bar__origin,.copilot-context-bar__source { max-width: 22%; }.copilot-context-bar__gateway { max-width: 24%; }.copilot-context-bar__created { display: none; } }
 </style>
