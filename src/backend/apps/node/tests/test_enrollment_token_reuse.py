@@ -49,6 +49,7 @@ class EnrollmentTokenReuseTests(TestCase):
         platform: str = "linux",
         node_id: int | None = None,
         node_credential: str = "",
+        inventory: dict | None = None,
     ):
         payload = {
             "role": "agent",
@@ -67,6 +68,8 @@ class EnrollmentTokenReuseTests(TestCase):
             "installation_mode": installation_mode,
             "host_fingerprint": host_fingerprint,
         }
+        if inventory is not None:
+            payload["metadata"]["inventory"] = inventory
         if node_id is not None:
             payload["node_id"] = node_id
         request = self.factory.post(
@@ -77,6 +80,40 @@ class EnrollmentTokenReuseTests(TestCase):
             HTTP_X_NODE_TOKEN=node_credential or token or self.token_row.token,
         )
         return NodeViewSet.as_view({"post": "heartbeat"})(request)
+
+    def test_existing_node_heartbeat_preserves_same_build_ws_capabilities(self):
+        registered = self._heartbeat(
+            name="host-a",
+            installation_id="hfli_host_a",
+        )
+        self.assertEqual(registered.status_code, 200)
+        node = Node.objects.get(pk=registered.data["node_id"])
+        node.metadata = {
+            "inventory": {
+                "agent_version": "0.2.12",
+                "agent_commit": "build123",
+                "capabilities": ["detached_uninstall_v2"],
+            }
+        }
+        node.save(update_fields=["metadata", "updated_at"])
+
+        refreshed = self._heartbeat(
+            name="host-a",
+            installation_id="hfli_host_a",
+            node_id=node.id,
+            node_credential=registered.data["node_credential"],
+            inventory={
+                "agent_version": "0.2.12",
+                "agent_commit": "build123",
+            },
+        )
+
+        self.assertEqual(refreshed.status_code, 200)
+        node.refresh_from_db()
+        self.assertEqual(
+            node.metadata["inventory"]["capabilities"],
+            ["detached_uninstall_v2"],
+        )
 
     def test_same_token_registers_multiple_nodes(self):
         first = self._heartbeat(name="host-a")

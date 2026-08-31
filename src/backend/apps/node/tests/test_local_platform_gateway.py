@@ -124,6 +124,89 @@ class LocalPlatformGatewayConfigTests(SimpleTestCase):
         self.assertNotIn("agent_commit", metadata)
         self.assertNotIn("agent_commit", metadata["inventory"])
 
+    def test_registration_metadata_preserves_same_build_capabilities(self):
+        existing = {
+            "inventory": {
+                "agent_version": "0.2.12",
+                "agent_commit": "build123",
+                "capabilities": ["detached_uninstall_v2"],
+            }
+        }
+
+        metadata = registration_metadata(
+            {
+                "inventory": {
+                    "agent_version": "0.2.12",
+                    "agent_commit": "BUILD123",
+                }
+            },
+            existing_metadata=existing,
+        )
+
+        self.assertEqual(
+            metadata["inventory"]["capabilities"],
+            ["detached_uninstall_v2"],
+        )
+
+    def test_registration_metadata_does_not_reuse_capabilities_across_builds(self):
+        existing = {
+            "inventory": {
+                "agent_version": "0.2.12",
+                "agent_commit": "old123",
+                "capabilities": ["detached_uninstall_v2"],
+            }
+        }
+
+        metadata = registration_metadata(
+            {
+                "inventory": {
+                    "agent_version": "0.2.12",
+                    "agent_commit": "new123",
+                }
+            },
+            existing_metadata=existing,
+        )
+
+        self.assertNotIn("capabilities", metadata["inventory"])
+
+    def test_registration_metadata_does_not_reuse_capabilities_without_commit(self):
+        existing = {
+            "inventory": {
+                "agent_version": "0.2.12",
+                "agent_commit": "build123",
+                "capabilities": ["detached_uninstall_v2"],
+            }
+        }
+
+        metadata = registration_metadata(
+            {"inventory": {"agent_version": "0.2.12"}},
+            existing_metadata=existing,
+        )
+
+        self.assertNotIn("capabilities", metadata["inventory"])
+
+    def test_registration_metadata_honors_explicit_empty_capabilities(self):
+        existing = {
+            "inventory": {
+                "agent_version": "0.2.12",
+                "agent_commit": "build123",
+                "capabilities": ["detached_uninstall_v2"],
+            }
+        }
+
+        metadata = registration_metadata(
+            {
+                "inventory": {
+                    "agent_version": "0.2.12",
+                    "agent_commit": "build123",
+                    "capabilities": [],
+                }
+            },
+            existing_metadata=existing,
+        )
+
+        self.assertEqual(metadata["inventory"]["capabilities"], [])
+
 
 @override_settings(FRONTEND_URL="https://console.example.com:11443")
 class LocalPlatformGatewayEnrollmentTests(TestCase):

@@ -121,6 +121,18 @@ def registration_metadata(
     metadata = dict(payload_metadata) if isinstance(payload_metadata, dict) else {}
     incoming_version, incoming_commit = _metadata_build_identity(metadata)
     existing_version, existing_commit = _metadata_build_identity(existing_metadata)
+    incoming_capabilities_present, incoming_capabilities = _metadata_capabilities(
+        metadata
+    )
+    existing_capabilities_present, existing_capabilities = _metadata_capabilities(
+        existing_metadata
+    )
+    same_complete_build = bool(
+        incoming_version
+        and incoming_commit
+        and incoming_version == existing_version
+        and incoming_commit == existing_commit
+    )
     if (
         incoming_version
         and not incoming_commit
@@ -138,6 +150,20 @@ def registration_metadata(
             version=incoming_version,
             commit=incoming_commit,
         )
+    if incoming_capabilities_present:
+        if incoming_capabilities is None:
+            _remove_metadata_capabilities(metadata)
+        else:
+            _set_metadata_capabilities(metadata, incoming_capabilities)
+    elif (
+        same_complete_build
+        and existing_capabilities_present
+        and existing_capabilities is not None
+    ):
+        # Older Agents refresh durable HTTP registration without repeating the
+        # WebSocket capability inventory. Preserve it only for the exact same
+        # build so capabilities can never leak across an upgrade.
+        _set_metadata_capabilities(metadata, existing_capabilities)
     for key in LOCAL_PLATFORM_GATEWAY_METADATA:
         metadata.pop(key, None)
     installer_managed = (
@@ -187,6 +213,53 @@ def _set_metadata_build_identity(
         inventory["agent_commit"] = commit
     else:
         inventory.pop("agent_commit", None)
+    metadata["inventory"] = inventory
+
+
+def _metadata_capabilities(metadata: object) -> tuple[bool, list[str] | None]:
+    """Return whether capabilities were reported and their normalized values."""
+    if not isinstance(metadata, dict):
+        return False, None
+    inventory = metadata.get("inventory")
+    if isinstance(inventory, dict) and "capabilities" in inventory:
+        raw = inventory.get("capabilities")
+    elif "capabilities" in metadata:
+        raw = metadata.get("capabilities")
+    else:
+        return False, None
+    if not isinstance(raw, list):
+        return True, None
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        value = str(item or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+    return True, values
+
+
+def _set_metadata_capabilities(metadata: dict, capabilities: list[str]) -> None:
+    """Store capabilities in canonical inventory metadata when available."""
+    inventory = metadata.get("inventory")
+    if isinstance(inventory, dict):
+        inventory = dict(inventory)
+        inventory["capabilities"] = list(capabilities)
+        metadata["inventory"] = inventory
+        metadata.pop("capabilities", None)
+        return
+    metadata["capabilities"] = list(capabilities)
+
+
+def _remove_metadata_capabilities(metadata: dict) -> None:
+    """Remove malformed capabilities from both current and legacy locations."""
+    metadata.pop("capabilities", None)
+    inventory = metadata.get("inventory")
+    if not isinstance(inventory, dict):
+        return
+    inventory = dict(inventory)
+    inventory.pop("capabilities", None)
     metadata["inventory"] = inventory
 
 
