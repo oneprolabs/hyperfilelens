@@ -154,6 +154,42 @@ func downloadWithProgress(
 	return nil
 }
 
+func downloadResumableWithProgress(
+	ctx context.Context,
+	rawURL string,
+	destPath string,
+	label string,
+) error {
+	display := newDownloadProgressDisplay(label)
+	err := platforminstall.DownloadURLResumableWithProgress(
+		ctx,
+		rawURL,
+		destPath,
+		display.report,
+		func(attempt, maxAttempts int, delay time.Duration, retryErr error, resumeBytes int64) {
+			display.abort()
+			logWarn(fmt.Sprintf("%s download interrupted: %v", label, retryErr))
+			if resumeBytes > 0 {
+				logInfo(fmt.Sprintf(
+					"Retrying in %s (attempt %d/%d); resuming from %s",
+					formatElapsed(delay), attempt+1, maxAttempts, formatByteCount(resumeBytes),
+				))
+				return
+			}
+			logInfo(fmt.Sprintf(
+				"Retrying in %s (attempt %d/%d); restarting from byte zero",
+				formatElapsed(delay), attempt+1, maxAttempts,
+			))
+		},
+	)
+	if err != nil {
+		display.abort()
+		return err
+	}
+	display.success()
+	return nil
+}
+
 func formatDownloadProgress(progress platforminstall.DownloadProgress) string {
 	downloaded := formatByteCount(progress.DownloadedBytes)
 	elapsed := formatElapsed(progress.Elapsed)
