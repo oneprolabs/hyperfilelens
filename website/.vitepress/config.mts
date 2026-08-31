@@ -44,6 +44,18 @@ const enProduct = [
       { text: 'Restore Files and Directories', link: '/en/docs/backup-restore/restore' },
     ],
   },
+  {
+    text: 'Insights',
+    items: [
+      { text: 'Usage Flow', link: '/en/docs/insights/' },
+      { text: 'Prepare a Snapshot', link: '/en/docs/insights/prepare' },
+      { text: 'Create an Insights Session', link: '/en/docs/insights/copilot' },
+      { text: 'Configure AI Models', link: '/en/docs/insights/models' },
+      { text: 'Use a Private Data Gateway', link: '/en/docs/insights/data-gateway' },
+      { text: 'View AI Usage', link: '/en/docs/insights/usage' },
+      { text: 'Session and Data Scope', link: '/en/docs/insights/privacy' },
+    ],
+  },
 ]
 
 const enOperations = [
