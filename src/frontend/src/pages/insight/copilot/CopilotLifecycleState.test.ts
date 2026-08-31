@@ -104,7 +104,7 @@ describe('CopilotLifecycleState', () => {
     expect(steps[1].classes()).toContain('is-pending')
   })
 
-  it('shows a privacy-safe Data Gateway queue position', () => {
+  it('shows a queue status without exposing internal position details', () => {
     const wrapper = mountState(session({
       provision_phase: 'queued',
       provision_detail: 'Waiting for Data Gateway.',
@@ -113,8 +113,10 @@ describe('CopilotLifecycleState', () => {
       document_conversion: null,
     }))
 
-    expect(wrapper.text()).toContain('Waiting for Data Gateway')
-    expect(wrapper.text()).toContain('3 Chat(s) are ahead')
+    expect(wrapper.text()).toContain('Your Chat is queued')
+    expect(wrapper.text()).toContain('Preparation will start automatically when it’s your turn.')
+    expect(wrapper.text()).not.toContain('3 Chat(s) are ahead')
+    expect(wrapper.text()).not.toContain('Data Gateway')
     expect(wrapper.text()).not.toContain('public-dg-01')
     expect(wrapper.get('[role="status"]').attributes('aria-live')).toBe('polite')
   })

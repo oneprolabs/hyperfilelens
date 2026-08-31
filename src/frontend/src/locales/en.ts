@@ -1038,10 +1038,8 @@ export const en = {
       provisioningStarted: 'Preparing chat — restoring data and creating knowledge source…',
       provisioningFailed: 'Chat preparation failed. Delete it and try again.',
       provisioningWait: 'Preparing this chat… You can send messages when it is ready.',
-      gatewayQueueTitle: 'Waiting for Data Gateway',
-      gatewayQueueAhead: '{count} Chat(s) are ahead in this Data Gateway queue.',
-      gatewayQueueNext: 'This Chat is next in the Data Gateway queue.',
-      gatewayQueueHint: 'You can leave this page. Preparation starts automatically when capacity is available.',
+      gatewayQueueTitle: 'Your Chat is queued',
+      gatewayQueueHint: 'Preparation will start automatically when it’s your turn. You can leave this page. Preparation will continue in the background.',
       documentFormatHint:
         'Supported for Chat: PDF and DOCX (recommended). PPTX and XLSX may also convert. Legacy .doc is not supported in this release.',
       dataOriginHint:
