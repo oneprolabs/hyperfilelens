@@ -19,6 +19,7 @@ from apps.protection.models import (
     BackupConfigDirectory,
     BackupPolicy,
     BackupSourceSnapshot,
+    BackupSourceSnapshotDirectory,
     FileFilterRule,
 )
 from apps.restore.models import RestorePlan, RestoreRecord
@@ -35,6 +36,8 @@ from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import complete_task
 from apps.source.services.internal.backup_source_delete import (
     _create_source_unregister_task,
+    _delete_repository_snapshots,
+    _resolve_context,
     _set_source_nas_removal_status,
     _set_unregister_step,
     reconcile_stuck_source_unregister_tasks,
@@ -3389,6 +3392,66 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
+
+    @patch(
+        "apps.source.services.internal.backup_source_delete._snapshot_delete_strict",
+        return_value=(True, None),
+    )
+    def test_deregister_deletes_failed_physical_snapshots(self, delete_snapshot):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="failed-snapshot-deregister-repo",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_bucket="failed-snapshot-deregister",
+        )
+        config = BackupConfig.objects.create(
+            organization_id=self.org.id,
+            name="failed-snapshot-deregister",
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            repository_id=repository.id,
+        )
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.org.id,
+            snapshot_uid="failed-snapshot-deregister",
+            idempotency_key="failed-snapshot-deregister-idempotency",
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=config.id,
+            repository_id=repository.id,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.FAILED,
+        )
+        BackupSourceSnapshotDirectory.objects.create(
+            source_snapshot=snapshot,
+            organization_id=self.org.id,
+            backup_config_id=config.id,
+            backup_config_dir_id=1,
+            source_path="/data",
+            repository_id=config.repository_id,
+            kopia_snapshot_id="failed-deregister-physical-id",
+            status=BackupSourceSnapshotDirectory.Status.FAILED,
+            error_code="KOPIA_SNAPSHOT_FATAL",
+            error_message="permission denied",
+        )
+        ctx = _resolve_context(
+            organization_id=self.org.id,
+            selectable_id=f"agent:{self.agent.id}",
+        )
+        self.assertIsNotNone(ctx)
+
+        result = _delete_repository_snapshots(
+            organization_id=self.org.id,
+            ctx=ctx,
+            force=False,
+            reasons=[],
+            warnings=[],
+        )
+
+        self.assertEqual(result["snapshots_purged"], 1)
+        delete_snapshot.assert_called_once_with(source_snapshot=snapshot)
 
     def test_snapshot_delete_fails_unregister_without_deferred_task(self):
         snapshot_task = Task.objects.create(

@@ -1957,6 +1957,55 @@ class ProtectionBackupTaskApiTests(TestCase):
             [1, 2],
         )
 
+    def test_failed_directory_persists_returned_kopia_snapshot_id(self):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-failed-kopia-id-persistence",
+        )
+        config_directory = self.config.directories.first()
+        directory = BackupSourceSnapshotDirectory.objects.create(
+            source_snapshot=snapshot,
+            organization_id=self.org.id,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=config_directory.id,
+            source_path=config_directory.path,
+            repository_id=self.repository.id,
+            status=BackupSourceSnapshotDirectory.Status.RUNNING,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.run",
+            correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+            correlation_id=str(task.task_uuid),
+            payload={"backup_config_dir_id": config_directory.id},
+            result={
+                "kopia_snapshot_id": "failed-physical-snapshot",
+                "size_bytes": 1024,
+                "file_count": 4,
+                "dir_count": 2,
+            },
+            status=NodeTask.Status.FAILED,
+            last_error="permission denied",
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        _observe_running_directory(
+            task=task,
+            source_snapshot=snapshot,
+            directory_row=directory,
+            node_task=node_task,
+            directory_index=1,
+            total_dirs=1,
+            node_online=True,
+        )
+
+        directory.refresh_from_db()
+        self.assertEqual(directory.status, BackupSourceSnapshotDirectory.Status.FAILED)
+        self.assertEqual(directory.kopia_snapshot_id, "failed-physical-snapshot")
+        self.assertEqual(directory.size_bytes, 1024)
+        self.assertEqual(directory.file_count, 4)
+        self.assertEqual(directory.dir_count, 2)
+
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
         return_value=Node.Availability.ONLINE,

@@ -2817,7 +2817,7 @@ class ProtectionBackupConfigApiTests(TestCase):
             task_id=backup_task.id,
             task_uuid=backup_task.task_uuid,
             idempotency_key="reset-service-source",
-            status=BackupSourceSnapshot.Status.AVAILABLE,
+            status=BackupSourceSnapshot.Status.FAILED,
             directory_count=1,
         )
         BackupSourceSnapshotDirectory.objects.create(
@@ -2828,7 +2828,9 @@ class ProtectionBackupConfigApiTests(TestCase):
             source_path="/data",
             repository_id=self.repository.id,
             kopia_snapshot_id="reset-kopia-1",
-            status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
+            status=BackupSourceSnapshotDirectory.Status.FAILED,
+            error_code="KOPIA_SNAPSHOT_FATAL",
+            error_message="permission denied",
         )
         reset_task = Task.objects.create(
             organization_id=self.org.id,

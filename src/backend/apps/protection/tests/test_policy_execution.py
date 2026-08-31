@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -12,7 +13,9 @@ from apps.protection.models import BackupConfig, BackupPolicy, BackupSourceSnaps
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
 from apps.protection.services.policy_execution import (
     _schedule_fire_key,
+    apply_retention_policies,
     cron_matches_now,
+    failed_snapshot_delete_candidates_for_config,
     retention_delete_candidates_for_config,
     schedule_matches_now,
 )
@@ -261,3 +264,46 @@ class PolicyExecutionTests(TestCase):
 
         self.assertEqual([snapshot.id for snapshot in candidates], [old.id])
         self.assertNotIn(latest.id, [snapshot.id for snapshot in candidates])
+
+    @patch("apps.protection.services.policy_execution._policy_configs")
+    @patch(
+        "apps.protection.services.policy_execution.create_and_queue_snapshot_delete_task"
+    )
+    def test_retention_schedules_failed_snapshots_before_normal_candidates(
+        self, create_delete, policy_configs
+    ):
+        now = timezone.now()
+        failed = self._snapshot("failed-logical", now - timedelta(days=4))
+        failed.status = BackupSourceSnapshot.Status.FAILED
+        failed.save(update_fields=["status", "updated_at"])
+        old = self._snapshot("old-logical-for-order", now - timedelta(days=3))
+        self._snapshot("latest-logical-for-order", now - timedelta(hours=1))
+        policy_configs.return_value = [(self.config, self.policy)]
+        create_delete.return_value.status = "pending"
+
+        result = apply_retention_policies(now=now)
+
+        self.assertEqual(result, {"retention_tasks": 2, "skipped": 0})
+        self.assertEqual(
+            [call.kwargs["source_snapshot"].id for call in create_delete.call_args_list],
+            [failed.id, old.id],
+        )
+
+    def test_failed_candidates_exclude_in_flight_and_normal_snapshots(self):
+        now = timezone.now()
+        failed = self._snapshot("failed-candidate", now - timedelta(days=2))
+        failed.status = BackupSourceSnapshot.Status.FAILED
+        failed.save(update_fields=["status", "updated_at"])
+        creating = self._snapshot("creating-not-candidate", now - timedelta(days=3))
+        creating.status = BackupSourceSnapshot.Status.CREATING
+        creating.save(update_fields=["status", "updated_at"])
+        available = self._snapshot("available-not-failed", now - timedelta(days=4))
+
+        candidates = failed_snapshot_delete_candidates_for_config(
+            config=self.config,
+            policy=self.policy,
+        )
+
+        self.assertEqual([snapshot.id for snapshot in candidates], [failed.id])
+        self.assertNotIn(creating.id, [snapshot.id for snapshot in candidates])
+        self.assertNotIn(available.id, [snapshot.id for snapshot in candidates])
