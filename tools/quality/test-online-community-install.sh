@@ -209,7 +209,46 @@ cat >"${fake_bin}/curl" <<'SH'
 set -euo pipefail
 output=""
 url=""
+original_args=("$@")
 [[ -z "${HFL_TEST_CURL_MARKER:-}" ]] || touch "${HFL_TEST_CURL_MARKER}"
+if [[ -n "${HFL_TEST_CURL_LOG:-}" ]]; then
+	printf '%q ' "${original_args[@]}" >>"${HFL_TEST_CURL_LOG}"
+	printf '\n' >>"${HFL_TEST_CURL_LOG}"
+fi
+case "${1:-} ${2:-}" in
+"--retry-all-errors --version")
+	if [[ "${HFL_TEST_CURL_SUPPORT_RETRY_ALL_ERRORS:-1}" == "1" ]]; then
+		printf 'curl 8.5.0 test-build\n'
+		exit 0
+	fi
+	printf 'curl: option --retry-all-errors: is unknown\n' >&2
+	exit 2
+	;;
+"--retry-connrefused --version")
+	if [[ "${HFL_TEST_CURL_SUPPORT_RETRY_CONNREFUSED:-1}" == "1" ]]; then
+		printf 'curl 7.68.0 test-build\n'
+		exit 0
+	fi
+	printf 'curl: option --retry-connrefused: is unknown\n' >&2
+	exit 2
+	;;
+"--version ")
+	if [[ "${HFL_TEST_CURL_SUPPORT_RETRY_ALL_ERRORS:-1}" == "1" ]]; then
+		printf 'curl 8.5.0 test-build\n'
+	else
+		printf 'curl 7.68.0 test-build\n'
+	fi
+	exit 0
+	;;
+esac
+if [[ "${HFL_TEST_CURL_SUPPORT_RETRY_ALL_ERRORS:-1}" != "1" ]]; then
+	for argument in "${original_args[@]}"; do
+		if [[ "${argument}" == "--retry-all-errors" ]]; then
+			printf 'curl: option --retry-all-errors: is unknown\n' >&2
+			exit 2
+		fi
+	done
+fi
 while (($#)); do
 	case "$1" in
 	-o)
@@ -223,6 +262,14 @@ while (($#)); do
 	*) shift ;;
 	esac
 done
+if [[ "${HFL_TEST_CURL_PARTIAL_FAIL:-0}" == "1" && -n "${output}" ]]; then
+	printf 'partial response\n' >"${output}"
+	exit 28
+fi
+if [[ -n "${HFL_TEST_CURL_PAYLOAD:-}" && -n "${output}" ]]; then
+	printf '%s\n' "${HFL_TEST_CURL_PAYLOAD}" >"${output}"
+	exit 0
+fi
 if [[ "${url}" == *'/tags?'* && -n "${output}" ]]; then
 	page=1
 	if [[ "${url}" =~ [\?\&]page=([0-9]+) ]]; then
@@ -334,6 +381,46 @@ esac
 SH
 chmod 755 "${fake_bin}/curl" "${fake_bin}/docker"
 
+online_functions="${tmp}/online-install-functions.sh"
+python3 - "${online}/install.sh" "${online_functions}" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "\nwhile (($#)); do\n"
+if source.count(marker) != 1:
+    raise SystemExit("online installer entrypoint marker is ambiguous")
+pathlib.Path(sys.argv[2]).write_text(source.split(marker, 1)[0], encoding="utf-8")
+PY
+atomic_target="${tmp}/atomic-download.json"
+printf 'preserved response\n' >"${atomic_target}"
+if (
+	export PATH="${fake_bin}:${PATH}"
+	export HFL_TEST_CURL_PARTIAL_FAIL=1
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	configure_curl_retry_options
+	download_file "https://example.test/partial" "${atomic_target}"
+); then
+	printf 'ERROR: interrupted online download unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fxq 'preserved response' "${atomic_target}"
+[[ ! -e "${atomic_target}.part" ]] || {
+	printf 'ERROR: interrupted online download replaced the target or retained a partial artifact\n' >&2
+	exit 1
+}
+(
+	export PATH="${fake_bin}:${PATH}"
+	export HFL_TEST_CURL_PAYLOAD='complete response'
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	configure_curl_retry_options
+	download_file "https://example.test/complete" "${atomic_target}"
+)
+grep -Fxq 'complete response' "${atomic_target}"
+[[ ! -e "${atomic_target}.part" ]]
+
 test_install_root="${tmp}/community-install"
 test_installer="${tmp}/online-install.sh"
 python3 - "${online}/install.sh" "${test_installer}" "${test_install_root}" "${tmp}" <<'PY'
@@ -399,7 +486,9 @@ grep -Fq 'this public installer upgrades Community only' "${enterprise_log}" || 
 }
 
 latest_log="${tmp}/latest-tag.log"
+modern_curl_log="${tmp}/curl-modern.log"
 if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	HFL_TEST_CURL_LOG="${modern_curl_log}" \
 	"${test_installer}" --mirror global --yes >"${latest_log}" 2>&1; then
 	printf 'ERROR: fake online install unexpectedly succeeded\n' >&2
 	exit 1
@@ -417,6 +506,37 @@ grep -Fq "Log file       ${latest_session_log}" "${latest_log}"
 grep -Fq 'recent fallback tags: v1.2.11, v1.2.10, v1.2.9, v1.2.8, v1.2.7, v1.2.6, v1.2.5, v1.2.4, v1.2.3, v1.2.2' \
 	"${latest_log}"
 grep -Fq 'recommended retry: --mirror global --tag v1.2.11' "${latest_log}"
+grep -v -- '--version' "${modern_curl_log}" \
+	| grep -F -- '--retry-all-errors' >/dev/null
+if grep -Fq 'using Ubuntu-compatible retry options' "${latest_log}"; then
+	printf 'ERROR: modern curl unexpectedly selected compatibility retry mode\n' >&2
+	exit 1
+fi
+
+compatible_log="${tmp}/curl-7.68-install.log"
+compatible_curl_log="${tmp}/curl-7.68-args.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	HFL_TEST_CURL_SUPPORT_RETRY_ALL_ERRORS=0 \
+	HFL_TEST_CURL_LOG="${compatible_curl_log}" \
+	"${test_installer}" --mirror global --yes >"${compatible_log}" 2>&1; then
+	printf 'ERROR: fake curl 7.68 online install unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq '[INFO] curl 7.68.0 detected; using Ubuntu-compatible retry options.' \
+	"${compatible_log}"
+grep -Fq '[....] Downloading v1.2.12 installation contract from GitHub' \
+	"${compatible_log}"
+grep -v -- '--version' "${compatible_curl_log}" \
+	| grep -F -- '--retry-connrefused' >/dev/null
+if grep -v -- '--version' "${compatible_curl_log}" \
+	| grep -F -- '--retry-all-errors' >/dev/null; then
+	printf 'ERROR: curl 7.68 downloads received --retry-all-errors\n' >&2
+	exit 1
+fi
+if grep -Fq 'option --retry-all-errors: is unknown' "${compatible_log}"; then
+	printf 'ERROR: curl capability probing leaked an unsupported-option error\n' >&2
+	exit 1
+fi
 
 missing_log="${tmp}/missing-tag.log"
 if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \

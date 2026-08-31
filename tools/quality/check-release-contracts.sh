@@ -4,6 +4,17 @@ set -euo pipefail
 umask 022
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+online_installer="${ROOT}/deploy/online/install.sh"
+
+grep -F 'configure_curl_retry_options()' "${online_installer}" >/dev/null
+grep -F 'curl --retry-all-errors --version' "${online_installer}" >/dev/null
+grep -F 'curl --retry-connrefused --version' "${online_installer}" >/dev/null
+grep -F 'CURL_RETRY_ARGS=(--retry 3 --retry-delay 2)' "${online_installer}" >/dev/null
+grep -F 'local partial="${output}.part"' "${online_installer}" >/dev/null
+if grep -F -- '--retry 3 --retry-all-errors' "${online_installer}" >/dev/null; then
+	printf 'ERROR: online installer unconditionally requires curl --retry-all-errors\n' >&2
+	exit 1
+fi
 
 grep -F './tools/quality/test-docker-image-digest-alias.sh' \
 	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
