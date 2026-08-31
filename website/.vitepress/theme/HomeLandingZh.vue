@@ -135,7 +135,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <nav aria-label="主导航">
           <a href="#use-cases">使用场景</a>
           <a href="#how-it-works">工作原理</a>
-          <a href="/zh/docs/">用户文档</a>
+          <a href="/zh/docs/" target="_blank" rel="noopener noreferrer">文档</a>
           <a href="#open-source">开源</a>
           <a href="#contact">联系我们</a>
         </nav>

@@ -136,7 +136,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <nav aria-label="Main navigation">
           <a href="#use-cases">Use Cases</a>
           <a href="#how-it-works">How It Works</a>
-          <a href="/en/docs/">User Docs</a>
+          <a href="/en/docs/" target="_blank" rel="noopener noreferrer">Documentation</a>
           <a href="#open-source">Open Source</a>
           <a href="#contact">Contact</a>
         </nav>
