@@ -693,6 +693,8 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     sync_agent_source_host(node=node)
                     new_agent_registered = True
         elif node is not None:
+            # Authenticate before taking the Node row lock. Credential hashing
+            # must not block WebSocket inventory persistence for invalid calls.
             legacy_token = None
             credential_valid = validate_node_credential(node, node_token)
             if not credential_valid:
@@ -706,89 +708,105 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     {"error": "invalid node credential"},
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
-            if payload["installation_mode"] != node.installation_mode:
-                return Response(
-                    {"error": "installation mode is fixed during enrollment"},
-                    status=status.HTTP_409_CONFLICT,
+            existing_node_id = node.pk
+            with transaction.atomic():
+                # WebSocket inventory writes lock the same row. Re-read the
+                # latest metadata under that lock so an HTTP registration
+                # refresh cannot overwrite a concurrently reported inventory.
+                node = (
+                    list_nodes(organization=org)
+                    .select_for_update()
+                    .filter(pk=existing_node_id)
+                    .first()
                 )
-            if legacy_token is not None:
-                token_row = legacy_token
-                node_credential = issue_node_credential(
-                    node=node,
-                    enrollment_token=legacy_token,
-                    installation_id=installation_id or node.installation_id,
-                )
-            if installation_id and not node.installation_id:
-                identity_in_use = (
-                    Node.objects.filter(
-                        organization=org,
-                        role=node.role,
-                        installation_id=installation_id,
+                if node is None:
+                    return Response(
+                        {"error": "node not found; enrollment token required"},
+                        status=status.HTTP_404_NOT_FOUND,
                     )
-                    .exclude(pk=node.pk)
-                    .exists()
-                )
-                if not identity_in_use:
-                    node.installation_id = installation_id
-            node.last_seen_at = observed_at
-            if node.installation_mode in (
-                Node.InstallationMode.USER,
-                Node.InstallationMode.USER_CONTINUOUS,
-            ):
-                # User-scoped instances are identified by the runtime
-                # principal. Do not let the ordinary hostname in a heartbeat
-                # erase the account suffix after reconnecting, but preserve a
-                # display name that a console user explicitly assigned.
-                principal = runtime_principal_name(metadata_payload)
-                if principal and (
-                    is_automatic_user_node_name(
-                        name=node.name,
-                        metadata=node.metadata,
-                        node_id=node.id,
+                if payload["installation_mode"] != node.installation_mode:
+                    return Response(
+                        {"error": "installation mode is fixed during enrollment"},
+                        status=status.HTTP_409_CONFLICT,
                     )
-                    or is_automatic_user_node_name(
-                        name=node.name,
-                        metadata=metadata_payload,
-                        node_id=node.id,
+                if legacy_token is not None:
+                    token_row = legacy_token
+                    node_credential = issue_node_credential(
+                        node=node,
+                        enrollment_token=legacy_token,
+                        installation_id=installation_id or node.installation_id,
                     )
+                if installation_id and not node.installation_id:
+                    identity_in_use = (
+                        Node.objects.filter(
+                            organization=org,
+                            role=node.role,
+                            installation_id=installation_id,
+                        )
+                        .exclude(pk=node.pk)
+                        .exists()
+                    )
+                    if not identity_in_use:
+                        node.installation_id = installation_id
+                node.last_seen_at = observed_at
+                if node.installation_mode in (
+                    Node.InstallationMode.USER,
+                    Node.InstallationMode.USER_CONTINUOUS,
                 ):
+                    # User-scoped instances are identified by the runtime
+                    # principal. Do not let the ordinary hostname in a heartbeat
+                    # erase the account suffix after reconnecting, but preserve a
+                    # display name that a console user explicitly assigned.
+                    principal = runtime_principal_name(metadata_payload)
+                    if principal and (
+                        is_automatic_user_node_name(
+                            name=node.name,
+                            metadata=node.metadata,
+                            node_id=node.id,
+                        )
+                        or is_automatic_user_node_name(
+                            name=node.name,
+                            metadata=metadata_payload,
+                            node_id=node.id,
+                        )
+                    ):
+                        next_name = uniquify_node_name(
+                            organization_id=org.id,
+                            name=resolve_registration_node_name(payload=payload),
+                            exclude_node_id=node.id,
+                        )
+                        if next_name != node.name:
+                            node.name = next_name
+                elif is_auto_assigned_node_name(node.name):
+                    next_name = resolve_registration_node_name(
+                        payload=payload,
+                        fallback=node.name,
+                    )
                     next_name = uniquify_node_name(
                         organization_id=org.id,
-                        name=resolve_registration_node_name(payload=payload),
+                        name=next_name,
                         exclude_node_id=node.id,
                     )
                     if next_name != node.name:
                         node.name = next_name
-            elif is_auto_assigned_node_name(node.name):
-                next_name = resolve_registration_node_name(
-                    payload=payload,
-                    fallback=node.name,
-                )
-                next_name = uniquify_node_name(
-                    organization_id=org.id,
-                    name=next_name,
-                    exclude_node_id=node.id,
-                )
-                if next_name != node.name:
-                    node.name = next_name
-            elif payload.get("name"):
-                node.name = payload.get("name")
-            node.version = payload.get("version", node.version)
-            node.os_name = payload.get("os_name", node.os_name)
-            if "metadata" in payload:
-                node.metadata = registration_metadata(
-                    metadata_payload,
-                    existing_metadata=node.metadata,
-                )
-                if network_state.primary_ip_address:
-                    node.ip_address = network_state.primary_ip_address
-                if network_state.inventory is not None:
-                    node.network_inventory = network_state.inventory
-            if client_ip:
-                node.connection_ip_address = client_ip
-            if host_fingerprint and not node.host_fingerprint:
-                node.host_fingerprint = host_fingerprint
-            node.save()
+                elif payload.get("name"):
+                    node.name = payload.get("name")
+                node.version = payload.get("version", node.version)
+                node.os_name = payload.get("os_name", node.os_name)
+                if "metadata" in payload:
+                    node.metadata = registration_metadata(
+                        metadata_payload,
+                        existing_metadata=node.metadata,
+                    )
+                    if network_state.primary_ip_address:
+                        node.ip_address = network_state.primary_ip_address
+                    if network_state.inventory is not None:
+                        node.network_inventory = network_state.inventory
+                if client_ip:
+                    node.connection_ip_address = client_ip
+                if host_fingerprint and not node.host_fingerprint:
+                    node.host_fingerprint = host_fingerprint
+                node.save()
         else:
             return Response(
                 {"error": "node not found; enrollment token required"},
