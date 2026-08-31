@@ -114,7 +114,6 @@ const isGatewayQueued = computed(() => (
   && props.session.provision_phase === 'queued'
   && Number(props.session.queue_position || 0) > 0
 ))
-const queueAhead = computed(() => Math.max(0, Number(props.session.queue_ahead || 0)))
 
 function stepState(index: number) {
   if (index < currentStep.value) return 'done'
@@ -240,12 +239,6 @@ function stepState(index: number) {
         class="copilot-lifecycle-spin"
       /></span>
       <h2>{{ t('insight.copilot.gatewayQueueTitle') }}</h2>
-      <p v-if="queueAhead > 0">
-        {{ t('insight.copilot.gatewayQueueAhead', { count: queueAhead }) }}
-      </p>
-      <p v-else>
-        {{ t('insight.copilot.gatewayQueueNext') }}
-      </p>
       <p>{{ t('insight.copilot.gatewayQueueHint') }}</p>
     </div>
 
