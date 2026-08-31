@@ -102,6 +102,16 @@ class EnglishSourceCheckerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("English source boundary check passed.", result.stdout)
 
+    def test_localized_root_readme_is_allowed(self) -> None:
+        """Allow the explicitly named localized root README."""
+        translated_file = self.repository_root / "README.zh-CN.md"
+        translated_file.write_text(f"# {cjk_sample()}\n", encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("English source boundary check passed.", result.stdout)
+
     def test_localized_website_content_is_allowed(self) -> None:
         """Allow translated content inside an approved website locale root."""
         translated_file = self.repository_root / "website/zh/docs/index.md"
