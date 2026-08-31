@@ -9,7 +9,16 @@ description: 添加并管理主机和 NAS 备份源。
 
 ## 主机文件
 
-在 Linux、Windows 或 macOS 主机上部署 Agent。节点在线后，在<span class="hfl-path">数据保护 → 源端资源</span>中确认目录可以浏览。
+在 Linux、Windows 或 macOS 主机上部署 Agent。在英文界面打开 **Protection → Backup Wizard → Backup Sources**，选择 **Add Source → Source Host**，再选择操作系统并在目标主机上运行页面给出的安装命令。
+
+安装命令包含一次性注册信息，不要把完整命令复制到公开文档、工单或聊天记录。节点上线后刷新列表，并确认：
+
+- **Lifecycle Status** 为 **Registered**；
+- **Connectivity** 为 **Online**；
+- 主机类型和操作系统正确；
+- 进入备份配置后可以浏览预期目录。
+
+![Windows 备份源已经注册并在线，主机名、IP 地址、账户和注册时间已经遮盖](/docs/getting-started/windows-source-online.png)
 
 选择目录时避免：
 
@@ -20,7 +29,7 @@ description: 添加并管理主机和 NAS 备份源。
 
 ## NAS 共享
 
-添加 NAS 源时，配置共享协议、地址和凭据，并选择能够访问该共享的 Proxy。保存前确认共享路径、协议、凭据和字符集正确。
+添加 NAS 源时选择 **Add Source → NAS**，配置共享协议、地址和凭据，并选择能够访问该共享的 Proxy。保存前确认共享路径、协议、凭据和字符集正确。Proxy 必须能够实际访问共享；仅控制台能够访问 NAS 并不足够。
 
 如果中文或其他非 ASCII 文件名显示异常，应检查 Proxy 的挂载字符集和系统支持，不要通过重命名生产文件绕过问题。
 
@@ -31,3 +40,6 @@ description: 添加并管理主机和 NAS 备份源。
 - 实际数据范围与备份配置一致。
 - 节点版本与当前控制平面兼容。
 
+## 变更备份源前
+
+备份配置、任务、快照和恢复记录都与源端相关联。主机暂时离线时，先恢复 Agent 或网络连接，不要通过重复注册来绕过连接问题。需要排查时记录状态、最后连接时间和 Agent 版本，但不要公开安装命令或注册凭据。

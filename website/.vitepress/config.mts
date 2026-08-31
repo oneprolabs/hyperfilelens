@@ -32,6 +32,18 @@ const enProduct = [
       { text: 'Product Workflow', link: '/en/docs/product/' },
     ],
   },
+  {
+    text: 'Backup & Restore',
+    items: [
+      { text: 'Usage Flow', link: '/en/docs/backup-restore/' },
+      { text: 'Manage Backup Sources', link: '/en/docs/backup-restore/sources' },
+      { text: 'Manage Target Storage', link: '/en/docs/backup-restore/targets' },
+      { text: 'Create and Run Backups', link: '/en/docs/backup-restore/create-backup' },
+      { text: 'Policies and Retention', link: '/en/docs/backup-restore/policies' },
+      { text: 'View Tasks and Snapshots', link: '/en/docs/backup-restore/snapshots' },
+      { text: 'Restore Files and Directories', link: '/en/docs/backup-restore/restore' },
+    ],
+  },
 ]
 
 const enOperations = [

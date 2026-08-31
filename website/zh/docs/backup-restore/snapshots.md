@@ -9,7 +9,7 @@ description: 判断备份任务是否完整，并验证 HyperFileLens 快照内�
 
 ## 查看任务
 
-在备份源详情或<span class="hfl-path">租户运维 → 任务列表</span>中检查：
+在 **Start Backup** 的 **Backup Task** 列、备份源详情或 **Operations → Tasks** 中检查：
 
 - 开始、结束时间和总耗时。
 - 已扫描与已传输数据量。
@@ -18,9 +18,11 @@ description: 判断备份任务是否完整，并验证 HyperFileLens 快照内�
 
 Agent 离线时，控制平面可能需要等待重新连接才能确认最终任务状态。不要在状态仍确认中时立即删除配置或重新注册节点。
 
+![首次备份完成，Backup Task 显示 Succeeded，账户、主机和仓库信息已经模糊处理](/docs/getting-started/backup-succeeded.png)
+
 ## 验证快照
 
-打开备份详情并选择快照时间点：
+打开备份源详情，选择 **Snapshot Points**，再选择快照时间点：
 
 1. 确认快照来自正确备份源和目标仓库。
 2. 对比完成时间和预期调度时间。
@@ -29,6 +31,12 @@ Agent 离线时，控制平面可能需要等待重新连接才能确认最终�
 5. 检查关键子目录是否存在，文件名和层级是否正确。
 
 只有成功或部分成功且包含可用物理目录的快照才能用于恢复。部分成功快照可能仍可恢复已完成目录，但必须确认缺失范围不会影响使用。
+
+![Snapshot Points 中的可用快照及大小、文件数量摘要，主机信息已经模糊处理，快照标识和时间保持可见](/docs/getting-started/snapshot-points-available.png)
+
+选择 **Browse Files** 并逐层展开目录。目录视图中的文件数和大小是核对备份范围的重要证据；下载文件只能验证快照内容，不等同于完成恢复流程。
+
+![浏览快照中的测试文件，主机信息已经模糊处理，合成测试目录和文件名保持可见](/docs/getting-started/browse-snapshot-files.png)
 
 ## 恢复验证
 

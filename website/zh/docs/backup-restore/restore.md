@@ -7,27 +7,37 @@ description: 从可用快照创建恢复任务并验证恢复结果。
 
 恢复可以使用预设恢复计划，也可以创建新的手动恢复任务。需要调整快照、目录、目标节点或重名策略时，使用手动恢复。
 
+首次验证请只恢复少量合成文件，目标使用独立测试目录，冲突策略选择 **Skip**。不要把测试恢复指向源目录，也不要覆盖现有文件。
+
 ## 开始前检查
 
 - 选择的备份源至少有一个成功或部分成功快照。
 - 快照包含可用物理目录。
 - 恢复目标 Agent 在线，目标目录存在且可写。
 - 目标磁盘有足够空间。
-- 已明确重名文件采用<span class="hfl-ui">跳过</span>还是<span class="hfl-ui">覆盖</span>。
+- 已明确重名文件采用 **Skip** 还是 **Overwrite**；不确定时选择 **Skip**。
 
 ## 手动恢复
 
-1. 在备份向导或快照详情中选择<span class="hfl-ui">创建恢复任务</span>。
-2. 选择执行恢复的目标节点。
-3. 选择备份和具体快照时间点。
-4. 为每个备份选择整个快照、目录或单个文件作为恢复范围。
-5. 选择目标目录，核对<span class="hfl-path">恢复范围 → 恢复目录</span>的映射。
-6. 设置重名策略：
-   - **跳过**：保留目标端已有同名文件。
-   - **覆盖**：使用备份内容替换目标端同名文件。
-7. 核对确认页后开始恢复。
+1. 在 **Start Backup** 选择源端并选择 **Restore**。
+2. 选择 **Create New Restore Task**。**Run Restore Plan** 会直接使用备份配置中预设的最新快照、范围、目标和冲突策略。
 
-首次恢复或不确定目标内容时优先选择<span class="hfl-ui">跳过</span>，并恢复到独立测试目录。覆盖操作可能替换当前文件，提交前必须核对目标节点和路径。
+![Create Restore Task 中的两种恢复方式，主机和 IP 已经模糊处理，快照时间、大小、恢复路径和策略保持可见](/docs/getting-started/choose-restore-mode.png)
+
+3. 在 **Backups & Snapshots** 中选择备份和具体快照时间点。
+4. 在 **Restore Targets** 中选择在线的目标节点。
+5. 为每个备份选择整个快照、目录或单个文件作为恢复范围。
+6. 选择目标目录，核对源文件到恢复目录的映射。
+7. 设置冲突策略：
+   - **Skip**：保留目标端已有同名文件；
+   - **Overwrite**：使用快照内容替换目标端同名文件。
+8. 在 **Review** 核对快照、目标节点、恢复范围、目标目录和冲突策略，再选择 **Start Restore**。
+
+![单文件映射到独立恢复目录，主机和路径中的个人标识已经模糊处理，合成测试文件和目录保持可见](/docs/getting-started/map-restore-file.png)
+
+![单文件恢复任务 Review，主机和 IP 已经模糊处理，快照时间、恢复路径和冲突策略保持可见](/docs/getting-started/review-restore-task.png)
+
+**Overwrite** 可能替换当前文件。只有在明确验证目标、路径和当前内容后才使用；常规验证优先使用 **Skip**。
 
 ## 使用恢复计划
 
@@ -38,5 +48,9 @@ description: 从可用快照创建恢复任务并验证恢复结果。
 ## 验证结果
 
 恢复任务完成后，在目标主机检查实际文件，而不只查看控制台状态。若任务被停止，目标目录可能包含不完整文件；清理或核对后再重新恢复。
+
+在 **Start Backup** 确认 **Restore Task** 为 **Succeeded**，再打开源端详情中的 **Restore Records**，核对记录、文件项、恢复数量和目标路径。
+
+![Restore Records 中的单文件恢复成功记录，主机和 IP 已经模糊处理，Record、Task、Snapshot 标识及时间保持可见](/docs/getting-started/restore-record-succeeded.png)
 
 恢复失败时记录失败路径、目标节点、错误编号和任务时间，然后查看[备份、存储与恢复](/zh/docs/troubleshooting/protection)。
