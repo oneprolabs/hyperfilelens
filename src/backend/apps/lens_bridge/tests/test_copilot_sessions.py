@@ -17,6 +17,7 @@ from apps.lens_bridge.api.serializers import (
     LensRunFeedbackSerializer,
     LensSessionCreateSerializer,
     LensSessionLinkSerializer,
+    LensSessionUpdateSerializer,
 )
 from apps.lens_bridge.api.views import (
     _attachment_proxy_url,
@@ -120,6 +121,17 @@ class LensSessionCreateSerializerTests(SimpleTestCase):
 
         self.assertFalse(serializer.is_valid())
         self.assertIn("analysis_type", serializer.errors)
+
+    def test_execution_update_accepts_analysis_type(self):
+        serializer = LensSessionUpdateSerializer(
+            data={"analysis_type": LensSessionLink.AnalysisType.CODE_ANALYSIS}
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data["analysis_type"],
+            LensSessionLink.AnalysisType.CODE_ANALYSIS,
+        )
 
     def test_gateway_options_expose_supported_analysis_types(self):
         from apps.lens_bridge.api.serializers import LensCopilotGatewayOptionSerializer

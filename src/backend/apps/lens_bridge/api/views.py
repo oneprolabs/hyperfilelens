@@ -1405,7 +1405,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
 
     @action(detail=True, methods=["patch"], url_path="execution")
     def set_execution(self, request, pk=None):
-        """Update Chat-owned analysis mode and Agent model together."""
+        """Update Chat-owned analysis type and legacy execution settings."""
 
         link = self._get_user_link(pk)
         self._require_ready_session(link)
@@ -1414,10 +1414,20 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         values = body.validated_data
         model_ref = values.get("agent_model_ref")
         analysis_mode = values.get("analysis_mode")
-        if model_ref is None and analysis_mode is None:
+        analysis_type = values.get("analysis_type")
+        if model_ref is None and analysis_mode is None and analysis_type is None:
             return Response(LensSessionLinkSerializer(link).data)
         if model_ref is not None:
             org_models.validate_agent_model_ref(self.org, model_ref)
+        if analysis_type is not None:
+            if link.gateway_link is None:
+                raise ValidationError(
+                    {"analysis_type": "Chat has no Data Gateway capability context."}
+                )
+            analysis_type = provisioning.validate_analysis_type_for_gateway(
+                link.gateway_link,
+                analysis_type,
+            )
         ks = link.knowledge_source
         if ks is None or link.sl_assistant_uuid is None:
             return Response(
@@ -1429,6 +1439,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                 ks=ks,
                 model_ref=model_ref,
                 analysis_mode=analysis_mode,
+                analysis_type=analysis_type,
                 assistant_uuid=link.sl_assistant_uuid,
             )
         except sl_client.LensBridgeError as exc:
@@ -1440,6 +1451,9 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         if analysis_mode is not None:
             link.analysis_mode = analysis_mode
             update_fields.append("analysis_mode")
+        if analysis_type is not None:
+            link.analysis_type = analysis_type
+            update_fields.append("analysis_type")
         link.save(update_fields=update_fields)
         return Response(LensSessionLinkSerializer(link).data)
 

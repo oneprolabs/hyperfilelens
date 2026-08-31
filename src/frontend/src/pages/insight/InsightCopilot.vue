@@ -38,10 +38,10 @@ import {
   type LensCopilotRunOutcome,
   type LensCopilotResponseState,
   type LensCopilotAssistant,
+  type LensAnalysisType,
   type LensGatewayInsight,
   type LensCopilotGatewayOption,
   type LensKnowledgeSource,
-  type LensLlmConfig,
   type LensSessionLink,
 } from '../../lib/lensApi'
 import CopilotComposer from './copilot/CopilotComposer.vue'
@@ -268,20 +268,19 @@ function refreshPollerSessions() {
 
 const assistantByUuid = computed(() => new Map(assistants.value.map((row) => [row.uuid, row])))
 
-const selectableAgentModels = computed<LensLlmConfig[]>(() => (
-  (modelReadiness.value?.active_models || []).filter((row) => (
-    row.is_active !== false
-    && !row.is_deployment_history
-    && row.deployment_role !== 'multimodal'
-    && row.uuid !== modelReadiness.value?.default_multimodal_model_ref
-  ))
-))
-
 const chatReadyAssistants = computed(() => assistants.value.filter(isAssistantChatReady))
 
 const activeSession = computed(() =>
   sessions.value.find((row) => row.id === activeSessionId.value) ?? null,
 )
+
+const activeSupportedAnalysisTypes = computed<LensAnalysisType[]>(() => {
+  const gatewayLinkId = activeSession.value?.gateway_link
+  const gateway = copilotGatewayOptions.value.find(
+    (row) => row.gateway_link_id === gatewayLinkId,
+  )
+  return gateway?.analysis_types ?? ['knowledge_qa']
+})
 
 const activeAssistant = computed((): LensCopilotAssistant | null => {
   const session = activeSession.value
@@ -1253,7 +1252,7 @@ onUnmounted(() => {
     <CopilotExecutionSettingsDialog
       v-model="executionSettingsOpen"
       :session="activeSession"
-      :models="selectableAgentModels"
+      :supported-analysis-types="activeSupportedAnalysisTypes"
       @saved="applyExecutionSettings"
     />
   </div>

@@ -1267,6 +1267,7 @@ export async function patchCopilotSession(
 export async function patchCopilotSessionExecution(
   sessionId: number,
   body: {
+    analysis_type?: LensAnalysisType
     analysis_mode?: LensAnalysisMode
     agent_model_ref?: string | null
   },

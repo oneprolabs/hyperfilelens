@@ -623,7 +623,17 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
     def get_selected_task(self, obj: LensSessionLink) -> str | None:
         cache = self.context.get("assistant_tasks") or {}
         uuid_str = str(obj.sl_assistant_uuid) if obj.sl_assistant_uuid else ""
-        return cache.get(uuid_str)
+        selected_task = cache.get(uuid_str)
+        if selected_task:
+            return selected_task
+        if not uuid_str:
+            return None
+        # Direct PATCH responses may not carry the list serializer's remote
+        # task cache. Fall back to the product-owned value for a stable view.
+        return {
+            LensSessionLink.AnalysisType.KNOWLEDGE_QA: "knowledge_qa",
+            LensSessionLink.AnalysisType.CODE_ANALYSIS: "code_analysis",
+        }.get(obj.analysis_type)
 
     def _backup_config(self, obj: LensSessionLink) -> BackupConfig | None:
         if not obj.backup_config_id:
@@ -800,6 +810,10 @@ class LensSessionUpdateSerializer(serializers.Serializer):
     agent_model_ref = serializers.UUIDField(required=False, allow_null=True)
     analysis_mode = serializers.ChoiceField(
         choices=LensSessionLink.AnalysisMode.values,
+        required=False,
+    )
+    analysis_type = serializers.ChoiceField(
+        choices=LensSessionLink.AnalysisType.values,
         required=False,
     )
 

@@ -1,15 +1,21 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { patchCopilotSessionExecution, type LensAnalysisMode, type LensLlmConfig, type LensSessionLink } from '../../../lib/lensApi'
+import {
+  patchCopilotSessionExecution,
+  type LensAnalysisType,
+  type LensSessionLink,
+} from '../../../lib/lensApi'
 import { apiErrorMessage } from '../../../lib/api'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: boolean
   session: LensSessionLink | null
-  models: LensLlmConfig[]
-}>()
+  supportedAnalysisTypes?: LensAnalysisType[]
+}>(), {
+  supportedAnalysisTypes: () => ['knowledge_qa', 'code_analysis'],
+})
 
 const emit = defineEmits<{
   (event: 'update:modelValue', value: boolean): void
@@ -18,52 +24,28 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const saving = ref(false)
-const analysisMode = ref<LensAnalysisMode>('standard')
-const modelRef = ref<string | null>(null)
-const analysisModes: LensAnalysisMode[] = ['fast', 'standard', 'deep']
-
-const availableModels = computed(() => props.models.filter((row) => (
-  row.is_active !== false
-  && !row.is_deployment_history
-  && row.deployment_role !== 'multimodal'
-  && row.uuid !== props.session?.multimodal_model_ref
-)))
+const analysisType = ref<LensAnalysisType>('knowledge_qa')
+const analysisTypes: LensAnalysisType[] = ['knowledge_qa', 'code_analysis']
 
 watch(() => [props.modelValue, props.session?.id], () => {
   if (!props.modelValue || !props.session) return
-  analysisMode.value = props.session.analysis_mode || 'standard'
-  modelRef.value = props.session.agent_model_ref || null
+  analysisType.value = props.session.analysis_type
+    || (props.session.selected_task === 'code_analysis' ? 'code_analysis' : 'knowledge_qa')
 }, { immediate: true })
 
-function modelLabel(row: LensLlmConfig): string {
-  const name = String(row.name || '').trim()
-  if (name) return name
-  return `${row.provider || 'Model'} · ${row.config?.model || row.uuid}`
-}
-
-function modeLabel(mode: LensAnalysisMode): string {
-  if (mode === 'fast') return 'Fast'
-  if (mode === 'deep') return 'Deep'
-  return 'Standard (recommended)'
+function analysisTypeLabel(type: LensAnalysisType): string {
+  return type === 'code_analysis'
+    ? t('insight.copilot.analysisTypeCodeAnalysis')
+    : t('insight.copilot.analysisTypeKnowledgeQa')
 }
 
 async function save() {
   if (!props.session || saving.value) return
   saving.value = true
   try {
-    const payload: {
-      analysis_mode: LensAnalysisMode
-      agent_model_ref?: string
-    } = {
-      analysis_mode: analysisMode.value,
-    }
-    if (
-      modelRef.value
-      && availableModels.value.some((model) => model.uuid === modelRef.value)
-    ) {
-      payload.agent_model_ref = modelRef.value
-    }
-    const updated = await patchCopilotSessionExecution(props.session.id, payload)
+    const updated = await patchCopilotSessionExecution(props.session.id, {
+      analysis_type: analysisType.value,
+    })
     emit('saved', updated)
     emit('update:modelValue', false)
     ElMessage.success({ message: t('insight.copilot.executionSettingsSaved'), grouping: true })
@@ -88,38 +70,23 @@ async function save() {
   >
     <div class="copilot-execution-settings">
       <div class="fullscreen-form-field">
-        <label class="fullscreen-form-field__label">{{ t('insight.copilot.analysisModeLabel') }}</label>
+        <label class="fullscreen-form-field__label">{{ t('insight.copilot.analysisTypeLabel') }}</label>
         <ElSelect
-          v-model="analysisMode"
+          v-model="analysisType"
           class="copilot-execution-settings__select"
         >
           <ElOption
-            v-for="mode in analysisModes"
-            :key="mode"
-            :label="modeLabel(mode)"
-            :value="mode"
+            v-for="type in analysisTypes"
+            :key="type"
+            :label="analysisTypeLabel(type)"
+            :value="type"
+            :disabled="!supportedAnalysisTypes.includes(type)"
           />
         </ElSelect>
         <p class="fullscreen-form-field__hint">
-          {{ t('insight.copilot.analysisModeHint') }}
-        </p>
-      </div>
-      <div class="fullscreen-form-field">
-        <label class="fullscreen-form-field__label">{{ t('insight.copilot.conversationModelLabel') }}</label>
-        <ElSelect
-          v-model="modelRef"
-          class="copilot-execution-settings__select"
-          :disabled="!availableModels.length"
-        >
-          <ElOption
-            v-for="model in availableModels"
-            :key="model.uuid"
-            :label="modelLabel(model)"
-            :value="model.uuid"
-          />
-        </ElSelect>
-        <p class="fullscreen-form-field__hint">
-          {{ t('insight.copilot.conversationModelHint') }}
+          {{ analysisType === 'code_analysis'
+            ? t('insight.copilot.analysisTypeCodeAnalysisHint')
+            : t('insight.copilot.analysisTypeKnowledgeQaHint') }}
         </p>
       </div>
       <p class="copilot-execution-settings__note">
