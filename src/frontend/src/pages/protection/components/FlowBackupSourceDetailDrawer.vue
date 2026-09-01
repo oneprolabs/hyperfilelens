@@ -4348,6 +4348,7 @@ function onClosed() {
             v-if="displayedRestoreRecords.length || restoreRecordsLoading"
             ref="restoreTableRef"
             v-table-column-resize="'protection.flowBackupSource.restoreRecords'"
+            v-table-header-scroll-sync
             v-table-overflow-title
             v-loading="restoreRecordsLoading"
             :data="displayedRestoreRecords"
