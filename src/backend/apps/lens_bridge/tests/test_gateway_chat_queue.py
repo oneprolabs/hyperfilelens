@@ -122,9 +122,7 @@ class GatewayChatQueueTests(TestCase):
 
     def test_higher_concurrency_allows_fifo_window_to_fill_slots(self):
         self.gateway_link.chat_prepare_concurrency = 2
-        self.gateway_link.save(
-            update_fields=["chat_prepare_concurrency", "updated_at"]
-        )
+        self.gateway_link.save(update_fields=["chat_prepare_concurrency", "updated_at"])
         first = self._session()
         second = self._session()
         third = self._session()
@@ -157,9 +155,7 @@ class GatewayChatQueueTests(TestCase):
         unready.capacity_reservation_status = (
             LensSessionLink.CapacityReservationStatus.PENDING
         )
-        unready.save(
-            update_fields=["capacity_reservation_status", "updated_at"]
-        )
+        unready.save(update_fields=["capacity_reservation_status", "updated_at"])
         ready = self._session()
 
         acquired = gateway_chat_queue.try_acquire_chat_prepare_slot(
@@ -181,30 +177,22 @@ class GatewayChatQueueTests(TestCase):
         unready.capacity_reservation_status = (
             LensSessionLink.CapacityReservationStatus.PENDING
         )
-        unready.save(
-            update_fields=["capacity_reservation_status", "updated_at"]
-        )
+        unready.save(update_fields=["capacity_reservation_status", "updated_at"])
         self.gateway_link.chat_queue_capacity = 0
-        self.gateway_link.save(
-            update_fields=["chat_queue_capacity", "updated_at"]
-        )
+        self.gateway_link.save(update_fields=["chat_queue_capacity", "updated_at"])
 
         with self.assertRaises(AppError):
             gateway_chat_queue.assert_chat_queue_admission(
                 gateway_link=self.gateway_link,
             )
 
-    @patch(
-        "apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed"
-    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
     def test_wake_skips_unready_chat_and_dispatches_ready_chat(self, queue_provision):
         unready = self._session()
         unready.capacity_reservation_status = (
             LensSessionLink.CapacityReservationStatus.PENDING
         )
-        unready.save(
-            update_fields=["capacity_reservation_status", "updated_at"]
-        )
+        unready.save(update_fields=["capacity_reservation_status", "updated_at"])
         ready = self._session()
 
         gateway_chat_queue.wake_gateway_queue(self.gateway_link.id)
@@ -245,6 +233,62 @@ class GatewayChatQueueTests(TestCase):
                 gateway_link=self.gateway_link,
             )
 
+        self.assertTrue(
+            LensGatewayChatSlot.objects.filter(session_link_id=blocked.id).exists()
+        )
+
+    def test_quarantined_workspace_barrier_recovers_slot_after_process_restart(self):
+        blocked = self._session()
+        gateway_chat_queue.try_acquire_chat_prepare_slot(
+            session_link_id=blocked.id,
+            expected_generation=blocked.provision_generation,
+        )
+        LensSessionLink.objects.filter(pk=blocked.id).update(
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            cleanup_status=LensSessionLink.CleanupStatus.BLOCKED,
+            teardown_state_json={
+                "prepare_slot_release_barrier": {
+                    "status": "satisfied",
+                    "session_generation": blocked.provision_generation,
+                }
+            },
+        )
+        waiting = self._session()
+
+        acquired = gateway_chat_queue.try_acquire_chat_prepare_slot(
+            session_link_id=waiting.id,
+            expected_generation=waiting.provision_generation,
+        )
+
+        self.assertTrue(acquired.acquired)
+        self.assertFalse(
+            LensGatewayChatSlot.objects.filter(session_link_id=blocked.id).exists()
+        )
+
+    def test_quarantine_barrier_cannot_release_another_generation(self):
+        blocked = self._session()
+        gateway_chat_queue.try_acquire_chat_prepare_slot(
+            session_link_id=blocked.id,
+            expected_generation=blocked.provision_generation,
+        )
+        LensSessionLink.objects.filter(pk=blocked.id).update(
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            cleanup_status=LensSessionLink.CleanupStatus.BLOCKED,
+            teardown_state_json={
+                "prepare_slot_release_barrier": {
+                    "status": "satisfied",
+                    "session_generation": blocked.provision_generation + 1,
+                }
+            },
+        )
+        waiting = self._session()
+
+        acquired = gateway_chat_queue.try_acquire_chat_prepare_slot(
+            session_link_id=waiting.id,
+            expected_generation=waiting.provision_generation,
+        )
+
+        self.assertFalse(acquired.acquired)
         self.assertTrue(
             LensGatewayChatSlot.objects.filter(session_link_id=blocked.id).exists()
         )

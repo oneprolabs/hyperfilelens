@@ -304,10 +304,14 @@ def _initial_watchdog_deadline(
         return base + timezone.timedelta(
             seconds=max(1, node_conf.AUTOMATIC_PROBE_WATCHDOG_SECONDS)
         )
-    if correlation_type in {
-        "protection.snapshot_delete",
-        "protection.backup_config_reset",
-    } and kind == "snapshot.delete":
+    if (
+        correlation_type
+        in {
+            "protection.snapshot_delete",
+            "protection.backup_config_reset",
+        }
+        and kind == "snapshot.delete"
+    ):
         base = from_time or timezone.now()
         return base + timezone.timedelta(
             seconds=max(1, node_conf.SNAPSHOT_DELETE_WATCHDOG_SECONDS)
@@ -863,7 +867,52 @@ def create_agent_task(
     return task
 
 
+def _is_managed_workspace_restore_task(task: NodeTask) -> bool:
+    """Return whether task may write one identity-bound Chat workspace."""
+
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    return bool(
+        task.kind in {"restore.run", "kopia.restore"}
+        and task.correlation_type == "restore.record"
+        and str(task.correlation_id or "").strip()
+        and payload.get("workspace_kind") == "managed_restore"
+        and str(payload.get("workspace_uid") or "").strip()
+        and str(payload.get("managed_workspace_path") or "").strip()
+    )
+
+
 def deliver_agent_task(
+    *,
+    task: NodeTask,
+    delivery_payload: dict | None = None,
+    allow_ack_redelivery: bool = False,
+) -> NodeTask:
+    """Serialize managed restore delivery against workspace cancellation."""
+
+    if _is_managed_workspace_restore_task(task):
+        # A pending managed restore is the only command that can race Chat
+        # teardown and later write the same workspace. Hold its row lock across
+        # downlink publication so cancellation either wins before publication
+        # or follows the command and waits for executor-stop evidence.
+        with transaction.atomic():
+            locked = (
+                NodeTask.objects.select_for_update(of=("self",))
+                .select_related("node")
+                .get(pk=task.pk)
+            )
+            return _deliver_agent_task(
+                task=locked,
+                delivery_payload=delivery_payload,
+                allow_ack_redelivery=allow_ack_redelivery,
+            )
+    return _deliver_agent_task(
+        task=task,
+        delivery_payload=delivery_payload,
+        allow_ack_redelivery=allow_ack_redelivery,
+    )
+
+
+def _deliver_agent_task(
     *,
     task: NodeTask,
     delivery_payload: dict | None = None,
@@ -1452,6 +1501,28 @@ def complete_task(
 
     incoming_result = dict(result or {})
     incoming_terminal_status = _incoming_terminal_status(incoming)
+    executor_stop_evidence = (
+        task.status == NodeTask.Status.CANCELED
+        and _is_managed_workspace_restore_task(task)
+        and incoming_result.get("executor_finished") is True
+        and incoming_result.get("completion_source") == "agent_executor"
+    )
+    failed_wire_cancel = incoming_terminal_status == NodeTask.Status.FAILED and str(
+        error or ""
+    ).strip().lower() in {"canceled", "cancelled"}
+    if executor_stop_evidence and (
+        incoming_terminal_status == NodeTask.Status.CANCELED or failed_wire_cancel
+    ):
+        # Cancellation grace may seal the control-plane row before the Agent's
+        # restore process group has actually exited. Older Agents report their
+        # local cancelled terminal state as wire ``failed`` with error
+        # ``canceled``. Normalize only this identity-bound executor proof and
+        # preserve the cancellation audit fields.
+        merged_cancel_result = dict(task.result or {})
+        merged_cancel_result.update(incoming_result)
+        incoming_result = merged_cancel_result
+        incoming = "canceled"
+        incoming_terminal_status = NodeTask.Status.CANCELED
     if (
         _is_lifecycle_correlated_task(task)
         and task.status == NodeTask.Status.SUCCESS
@@ -1537,7 +1608,7 @@ def complete_task(
         correlation_id=task.correlation_id,
     )
 
-    terminal = status.lower()
+    terminal = incoming
     if terminal == "running":
         now = timezone.now()
         task.status = NodeTask.Status.RUNNING
@@ -1582,14 +1653,14 @@ def complete_task(
         task.status = NodeTask.Status.FAILED
         task.last_error = (error or terminal)[:2000]
 
-    if result:
-        task.result = result
+    if incoming_result:
+        task.result = incoming_result
     else:
         task.result = _without_delivery_runtime_state(task.result)
-    if (
-        _is_lifecycle_correlated_task(task)
-        and task.kind in {"agent.upgrade", "agent.uninstall"}
-    ):
+    if _is_lifecycle_correlated_task(task) and task.kind in {
+        "agent.upgrade",
+        "agent.uninstall",
+    }:
         lifecycle_result = dict(task.result or {})
         lifecycle_result["lifecycle_terminal_sealed"] = True
         task.result = lifecycle_result
@@ -1877,15 +1948,12 @@ def sweep_watchdog_timeouts(
                 if "result" in message_type.lower()
                 else node_conf.TASK_UPLINK_PROJECTION_GRACE_SECONDS
             )
-            bounded_remote_execution = (
-                _is_source_nas_probe(
-                    correlation_type=task.correlation_type,
-                    kind=task.kind,
-                )
-                or _is_repository_initialize_task(
-                    correlation_type=task.correlation_type,
-                    kind=task.kind,
-                )
+            bounded_remote_execution = _is_source_nas_probe(
+                correlation_type=task.correlation_type,
+                kind=task.kind,
+            ) or _is_repository_initialize_task(
+                correlation_type=task.correlation_type,
+                kind=task.kind,
             )
             result_projection_pending = "result" in message_type.lower()
             # Download-capable Agents already use the durable progress lease
@@ -1926,11 +1994,15 @@ def sweep_watchdog_timeouts(
                 task.result = merged
                 task.last_error = "result acknowledgement timeout"
                 update_fields = ["status", "result", "last_error", "updated_at"]
-            elif _uses_upgrade_download_progress(task) and _download_snapshot(
-                (task.result or {}).get("last_progress")
-                if isinstance(task.result, dict)
-                else None
-            ) is not None:
+            elif (
+                _uses_upgrade_download_progress(task)
+                and _download_snapshot(
+                    (task.result or {}).get("last_progress")
+                    if isinstance(task.result, dict)
+                    else None
+                )
+                is not None
+            ):
                 merged = dict(task.result or {})
                 merged["diagnostic_error_code"] = (
                     "AGENT_PACKAGE_DOWNLOAD_PROGRESS_TIMEOUT"

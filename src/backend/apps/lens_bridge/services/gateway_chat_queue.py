@@ -68,8 +68,7 @@ def normalize_chat_workload_settings(
         )
     if not 0 <= queue_capacity <= MAX_CHAT_QUEUE_CAPACITY:
         raise ValueError(
-            "chat_queue_capacity must be between 0 and "
-            f"{MAX_CHAT_QUEUE_CAPACITY}"
+            f"chat_queue_capacity must be between 0 and {MAX_CHAT_QUEUE_CAPACITY}"
         )
     return concurrency, queue_capacity
 
@@ -140,10 +139,15 @@ def chat_queue_position(*, session: LensSessionLink) -> int:
     ):
         return 0
     entered_at = session.gateway_queue_entered_at or session.created_at
-    return _schedulable_sessions(session.gateway_link_id).filter(
-        Q(queue_order_at__lt=entered_at)
-        | Q(queue_order_at=entered_at, id__lt=session.id)
-    ).count() + 1
+    return (
+        _schedulable_sessions(session.gateway_link_id)
+        .filter(
+            Q(queue_order_at__lt=entered_at)
+            | Q(queue_order_at=entered_at, id__lt=session.id)
+        )
+        .count()
+        + 1
+    )
 
 
 def chat_queue_ahead(
@@ -257,18 +261,41 @@ def _cleanup_releasable_slots(*, gateway_link_id: int) -> None:
     """Recover slots whose owning lifecycle has durably finished.
 
     A deleting or failed Chat may still be waiting for SourceLens to confirm
-    conversion shutdown. Those slots intentionally remain occupied until the
-    teardown path marks cleanup complete and releases them explicitly.
+    conversion shutdown. Those slots remain occupied until teardown completes
+    or persists a matching workspace-quarantine release barrier.
     """
 
-    LensGatewayChatSlot.objects.filter(gateway_link_id=gateway_link_id).filter(
+    slots = LensGatewayChatSlot.objects.filter(gateway_link_id=gateway_link_id)
+    terminal_lifecycle = (
         Q(session_link__lifecycle_status=LensSessionLink.LifecycleStatus.READY)
         | Q(session_link__lifecycle_status=LensSessionLink.LifecycleStatus.DELETED)
         | Q(
             session_link__lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
             session_link__cleanup_status=LensSessionLink.CleanupStatus.COMPLETE,
         )
-    ).delete()
+    )
+    barrier_releasable_ids: list[int] = []
+    for slot in slots.select_related("session_link").filter(
+        session_link__lifecycle_status__in=(
+            LensSessionLink.LifecycleStatus.DELETING,
+            LensSessionLink.LifecycleStatus.FAILED,
+        )
+    ):
+        teardown_state = slot.session_link.teardown_state_json
+        barrier = (
+            teardown_state.get("prepare_slot_release_barrier")
+            if isinstance(teardown_state, dict)
+            else None
+        )
+        if not isinstance(barrier, dict) or barrier.get("status") != "satisfied":
+            continue
+        try:
+            barrier_generation = int(barrier.get("session_generation"))
+        except (TypeError, ValueError):
+            continue
+        if barrier_generation == slot.session_generation:
+            barrier_releasable_ids.append(slot.id)
+    slots.filter(terminal_lifecycle | Q(pk__in=barrier_releasable_ids)).delete()
 
 
 @transaction.atomic
@@ -278,9 +305,7 @@ def try_acquire_chat_prepare_slot(
     expected_generation: int,
 ) -> ChatSlotResult:
     session = (
-        LensSessionLink.objects.select_for_update()
-        .filter(pk=session_link_id)
-        .first()
+        LensSessionLink.objects.select_for_update().filter(pk=session_link_id).first()
     )
     if (
         session is None
@@ -329,8 +354,9 @@ def try_acquire_chat_prepare_slot(
     if available <= 0:
         return ChatSlotResult(acquired=False, position=position)
     eligible_ids = set(
-        _ordered_schedulable_sessions(gateway.id)
-        .values_list("id", flat=True)[:available]
+        _ordered_schedulable_sessions(gateway.id).values_list("id", flat=True)[
+            :available
+        ]
     )
     if session.id not in eligible_ids:
         return ChatSlotResult(acquired=False, position=position)
@@ -392,8 +418,9 @@ def wake_gateway_queue(gateway_link_id: int) -> None:
     if available <= 0:
         return
     candidates = list(
-        _ordered_schedulable_sessions(gateway.id)
-        .values_list("id", flat=True)[:available]
+        _ordered_schedulable_sessions(gateway.id).values_list("id", flat=True)[
+            :available
+        ]
     )
     if not candidates:
         return

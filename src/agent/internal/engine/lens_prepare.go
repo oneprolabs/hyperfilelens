@@ -452,6 +452,18 @@ func (e *Engine) runLensKsCleanup(ctx context.Context, p Payload) (string, map[s
 	defer cancel()
 	removed := false
 	alreadyRetired := false
+	workspaceQuarantined := false
+	tombstoneState := ""
+	cleanupResult := func(purgeComplete bool) map[string]any {
+		return map[string]any{
+			"path":                  paths.Workspace,
+			"removed":               removed,
+			"workspace_uid":         identity.WorkspaceUID,
+			"workspace_quarantined": workspaceQuarantined,
+			"purge_complete":        purgeComplete,
+			"tombstone_state":       tombstoneState,
+		}
+	}
 	err = withLensWorkspaceLock(lockContext, paths.Lock, func() error {
 		workspaceMissing := pathMissing(paths.Workspace)
 		trashMissing := pathMissing(paths.Trash)
@@ -467,6 +479,8 @@ func (e *Engine) runLensKsCleanup(ctx context.Context, p Payload) (string, map[s
 					return errors.New("retired managed workspace has unexpected artifacts")
 				}
 				alreadyRetired = true
+				workspaceQuarantined = true
+				tombstoneState = lensWorkspaceTombstoneRetired
 				return nil
 			}
 			if tombstone.State != lensWorkspaceTombstoneRetiring {
@@ -493,6 +507,7 @@ func (e *Engine) runLensKsCleanup(ctx context.Context, p Payload) (string, map[s
 		if err := writeLensWorkspaceTombstone(paths.Tombstone, retiring); err != nil {
 			return err
 		}
+		tombstoneState = lensWorkspaceTombstoneRetiring
 
 		workspaceExists := !workspaceMissing
 		trashExists := !trashMissing
@@ -514,14 +529,17 @@ func (e *Engine) runLensKsCleanup(ctx context.Context, p Payload) (string, map[s
 			}
 			trashExists = true
 		}
+		// Once the retiring tombstone is durable and the live workspace no
+		// longer exists, late prepare work cannot recreate or write this UID.
+		workspaceQuarantined = true
 		removed = workspaceExists || trashExists
 		return nil
 	})
 	if err != nil {
-		return "failed", nil, err.Error()
+		return "failed", cleanupResult(false), err.Error()
 	}
 	if alreadyRetired {
-		return "success", map[string]any{"path": paths.Workspace, "removed": false}, ""
+		return "success", cleanupResult(true), ""
 	}
 	// Removing a potentially large workspace must not hold the lifecycle lock.
 	// The retiring tombstone already prevents every late prepare from claiming it.
@@ -529,7 +547,7 @@ func (e *Engine) runLensKsCleanup(ctx context.Context, p Payload) (string, map[s
 		if err := removeLensWorkspaceTrash(paths.Trash); err != nil {
 			// Identity and the retiring tombstone survive partial deletion so a
 			// retry can safely finish removing the quarantined workspace.
-			return "failed", nil, err.Error()
+			return "failed", cleanupResult(false), err.Error()
 		}
 	}
 	finalLockContext, finalCancel := context.WithTimeout(ctx, lensWorkspaceLockTimeout)
@@ -566,9 +584,10 @@ func (e *Engine) runLensKsCleanup(ctx context.Context, p Payload) (string, map[s
 		return writeLensWorkspaceTombstone(paths.Tombstone, retiredTombstone)
 	})
 	if err != nil {
-		return "failed", nil, err.Error()
+		return "failed", cleanupResult(true), err.Error()
 	}
-	return "success", map[string]any{"path": paths.Workspace, "removed": removed}, ""
+	tombstoneState = lensWorkspaceTombstoneRetired
+	return "success", cleanupResult(true), ""
 }
 
 func pathMissing(path string) bool {

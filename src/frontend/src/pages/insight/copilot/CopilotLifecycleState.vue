@@ -105,9 +105,14 @@ const isRecoveryCleanup = computed(() => (
   && ['pending', 'running'].includes(props.session.cleanup_status || '')
 ))
 const isCleanupBlocked = computed(() => (
-  props.session.lifecycle_status === 'failed'
-  && props.session.cleanup_intent === 'reset_for_retry'
+  (
+    (props.session.lifecycle_status === 'failed' && props.session.cleanup_intent === 'reset_for_retry')
+    || (props.session.lifecycle_status === 'deleting' && props.session.cleanup_intent === 'delete_session')
+  )
   && props.session.cleanup_status === 'blocked'
+))
+const isDeleteCleanupBlocked = computed(() => (
+  isCleanupBlocked.value && props.session.lifecycle_status === 'deleting'
 ))
 const isGatewayQueued = computed(() => (
   props.session.lifecycle_status === 'provisioning'
@@ -132,8 +137,8 @@ function stepState(index: number) {
         :size="30"
         class="copilot-lifecycle-spin"
       /></span>
-      <h2>Recovering Chat Resources</h2>
-      <p>Preparation stopped, and temporary resources are being cleaned up safely. You can retry when recovery finishes.</p>
+      <h2>Preparing Chat for Retry</h2>
+      <p>The previous preparation attempt stopped. Temporary resources are being removed safely before you can try again.</p>
       <div class="copilot-lifecycle-actions">
         <ElButton @click="emit('delete')">
           Delete Chat
@@ -146,11 +151,11 @@ function stepState(index: number) {
       class="copilot-lifecycle-card is-failed"
     >
       <span class="copilot-lifecycle-icon is-failed"><TriangleAlert :size="30" /></span>
-      <h2>Chat Recovery Needs Attention</h2>
-      <p>Cleanup is waiting for SourceLens to confirm that document conversion has stopped. Temporary data is being retained to prevent unsafe deletion.</p>
+      <h2>Chat Cleanup Needs Attention</h2>
+      <p>Active processing could not be confirmed as stopped. Temporary data remains protected so cleanup can be retried safely.</p>
       <div class="copilot-lifecycle-actions">
         <ElButton @click="emit('delete')">
-          Delete Chat
+          {{ isDeleteCleanupBlocked ? 'Retry Delete' : 'Delete Chat' }}
         </ElButton>
       </div>
     </div>

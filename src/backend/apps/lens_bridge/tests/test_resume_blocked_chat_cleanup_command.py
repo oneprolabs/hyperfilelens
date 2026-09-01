@@ -138,9 +138,7 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
             teardown_attempts=99,
         )
 
-    @patch(
-        "apps.lens_bridge.services.chat_lifecycle._queue_teardown_or_record_error"
-    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_teardown_or_record_error")
     @patch(
         "apps.lens_bridge.management.commands.resume_blocked_chat_cleanup."
         "sl_client.get_task_by_id",
@@ -207,9 +205,7 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
                 "intervention_required": True,
             },
         }
-        self.session.save(
-            update_fields=["teardown_state_json", "updated_at"]
-        )
+        self.session.save(update_fields=["teardown_state_json", "updated_at"])
 
         with self.assertRaisesRegex(CommandError, "recorded blocking condition"):
             Command().handle(
@@ -233,15 +229,11 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
             "intent": "delete_session",
             "blocking": nonconversion_blocking,
         }
-        self.session.save(
-            update_fields=["teardown_state_json", "updated_at"]
-        )
+        self.session.save(update_fields=["teardown_state_json", "updated_at"])
         self.knowledge_source.teardown_state_json = {
             "blocking": nonconversion_blocking,
         }
-        self.knowledge_source.save(
-            update_fields=["teardown_state_json", "updated_at"]
-        )
+        self.knowledge_source.save(update_fields=["teardown_state_json", "updated_at"])
 
         with self.assertRaisesRegex(CommandError, "not blocked"):
             Command().handle(
@@ -251,9 +243,7 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
                 confirm_executor_stopped=True,
             )
 
-    @patch(
-        "apps.lens_bridge.services.chat_lifecycle._queue_teardown_or_record_error"
-    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_teardown_or_record_error")
     @patch(
         "apps.lens_bridge.management.commands.resume_blocked_chat_cleanup."
         "sl_client.get_task_by_id"
@@ -321,9 +311,7 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
                 "intervention_required": True,
             },
         }
-        self.session.save(
-            update_fields=["teardown_state_json", "updated_at"]
-        )
+        self.session.save(update_fields=["teardown_state_json", "updated_at"])
 
         with self.assertRaisesRegex(CommandError, "Conversion cleanup requires"):
             Command().handle(
@@ -337,9 +325,58 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
         self.knowledge_source.refresh_from_db()
         self.assertIn("blocking", self.knowledge_source.teardown_state_json)
 
-    @patch(
-        "apps.lens_bridge.services.knowledge_source_teardown._queue_teardown"
-    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_teardown_or_record_error")
+    def test_resume_chat_restore_stop_requires_matching_explicit_confirmation(
+        self,
+        queue_teardown,
+    ):
+        restore_task_id = "3a52d390-c8a1-47e7-bab0-fac104ad3f36"
+        blocking = {
+            "reason": "restore_executor_still_stopping",
+            "task_id": restore_task_id,
+            "intervention_required": True,
+        }
+        self.session.teardown_state_json = {
+            "intent": "delete_session",
+            "blocking": blocking,
+        }
+        self.session.save(update_fields=["teardown_state_json", "updated_at"])
+        self.knowledge_source.teardown_state_json = {"blocking": blocking}
+        self.knowledge_source.save(update_fields=["teardown_state_json", "updated_at"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            Command().handle(
+                session_id=self.session.id,
+                source_lens_task_id="",
+                restore_task_id=restore_task_id,
+                reason="The Data Gateway restore process was verified as stopped.",
+                confirm_executor_stopped=True,
+                confirm_retry=False,
+            )
+
+        self.session.refresh_from_db()
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            self.session.teardown_state_json["manual_restore_stop_confirmation"][
+                "task_id"
+            ],
+            restore_task_id,
+        )
+        self.assertEqual(
+            self.knowledge_source.teardown_state_json[
+                "manual_restore_stop_confirmation"
+            ]["task_id"],
+            restore_task_id,
+        )
+        self.assertEqual(
+            self.knowledge_source.teardown_state_json[
+                "manual_restore_stop_confirmations"
+            ][restore_task_id]["task_id"],
+            restore_task_id,
+        )
+        queue_teardown.assert_called_once_with(self.session.id)
+
+    @patch("apps.lens_bridge.services.knowledge_source_teardown._queue_teardown")
     def test_resume_orphan_knowledge_source_cleanup(self, queue_teardown):
         orphan = LensKnowledgeSource.objects.create(
             organization=self.tenant,
@@ -383,9 +420,7 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
                 "intervention_required": True,
             }
         }
-        self.knowledge_source.save(
-            update_fields=["teardown_state_json", "updated_at"]
-        )
+        self.knowledge_source.save(update_fields=["teardown_state_json", "updated_at"])
 
         with self.assertRaisesRegex(CommandError, "still belongs to a Chat"):
             Command().handle(
@@ -405,9 +440,7 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
             source_path="/data/orphaned-conversion",
             created_by=self.user,
             lifecycle_status=LensKnowledgeSource.LifecycleStatus.DELETING,
-            sync_state_json={
-                "conversion": {"task_id": "orphan-convert-1"}
-            },
+            sync_state_json={"conversion": {"task_id": "orphan-convert-1"}},
             teardown_state_json={
                 "blocking": {
                     "reason": "conversion_stop_unconfirmed",
@@ -426,9 +459,7 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
                 confirm_retry=True,
             )
 
-    @patch(
-        "apps.lens_bridge.services.knowledge_source_teardown._queue_teardown"
-    )
+    @patch("apps.lens_bridge.services.knowledge_source_teardown._queue_teardown")
     @patch(
         "apps.lens_bridge.management.commands.resume_blocked_chat_cleanup."
         "sl_client.get_task_by_id",
@@ -447,9 +478,7 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
             source_path="/data/orphaned-conversion-recovery",
             created_by=self.user,
             lifecycle_status=LensKnowledgeSource.LifecycleStatus.DELETING,
-            sync_state_json={
-                "conversion": {"task_id": "orphan-convert-1"}
-            },
+            sync_state_json={"conversion": {"task_id": "orphan-convert-1"}},
             teardown_state_json={
                 "blocking": {
                     "reason": "conversion_stop_unconfirmed",
@@ -473,8 +502,8 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
         self.assertEqual(orphan.teardown_attempts, 0)
         self.assertNotIn("blocking", orphan.teardown_state_json)
         self.assertTrue(
-            orphan.sync_state_json["conversion"][
-                "manual_stop_confirmation"
-            ]["confirmed"]
+            orphan.sync_state_json["conversion"]["manual_stop_confirmation"][
+                "confirmed"
+            ]
         )
         queue_teardown.assert_called_once_with(orphan.id)

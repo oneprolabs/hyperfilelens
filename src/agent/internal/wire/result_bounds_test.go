@@ -77,3 +77,35 @@ func TestTaskResultFrameStaysWithinWireLimit(t *testing.T) {
 		t.Fatalf("task.result frame bytes=%d, want <=%d", len(encoded), maxTaskResultFrameBytes)
 	}
 }
+
+func TestBoundTaskResultKeepsWorkspaceSafetyEvidence(t *testing.T) {
+	result := map[string]any{
+		"executor_finished":     true,
+		"executor_finished_at":  "2026-08-31T14:00:00Z",
+		"completion_source":     "agent_executor",
+		"workspace_uid":         "8f65d43a-09fd-4ae7-b5f1-159352838a23",
+		"workspace_quarantined": true,
+		"purge_complete":        false,
+		"tombstone_state":       "retiring",
+		"other":                 strings.Repeat("x", maxTaskResultBytes),
+	}
+
+	bounded, stats := boundTaskResult(result)
+
+	if !stats.Truncated {
+		t.Fatal("expected oversized diagnostic data to be truncated")
+	}
+	for key, expected := range map[string]any{
+		"executor_finished":     true,
+		"executor_finished_at":  "2026-08-31T14:00:00Z",
+		"completion_source":     "agent_executor",
+		"workspace_uid":         "8f65d43a-09fd-4ae7-b5f1-159352838a23",
+		"workspace_quarantined": true,
+		"purge_complete":        false,
+		"tombstone_state":       "retiring",
+	} {
+		if bounded[key] != expected {
+			t.Fatalf("safety evidence %q=%#v, want %#v", key, bounded[key], expected)
+		}
+	}
+}

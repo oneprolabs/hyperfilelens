@@ -418,3 +418,86 @@ func TestTaskRepoFinishIfActiveDoesNotOverwriteTerminalResult(t *testing.T) {
 		t.Fatalf("terminal result changed: %#v", task)
 	}
 }
+
+func TestTaskRepoSealCancelledExecutorResultRequeuesTerminalEvidence(t *testing.T) {
+	ctx := t.Context()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	repo := NewTaskRepo(db)
+	if err := repo.RecordCommand(ctx, RecordInput{TaskID: "restore-cancelled", Kind: "restore.run"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, err := repo.MarkCancelledIfActive(ctx, "restore-cancelled"); err != nil || !changed {
+		t.Fatalf("cancel changed=%v err=%v", changed, err)
+	}
+	if err := repo.MarkResultReported(ctx, "restore-cancelled"); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err := repo.SealCancelledExecutorResult(
+		ctx,
+		"restore-cancelled",
+		map[string]any{
+			"executor_finished": true,
+			"completion_source": "agent_executor",
+		},
+		"canceled",
+	)
+	if err != nil || !stored {
+		t.Fatalf("seal stored=%v err=%v", stored, err)
+	}
+	task, err := repo.Get(ctx, "restore-cancelled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != model.TaskStatusCancelled || task.ResultReported {
+		t.Fatalf("sealed task status=%q reported=%v", task.Status, task.ResultReported)
+	}
+	if task.Result["executor_finished"] != true || task.Result["completion_source"] != "agent_executor" {
+		t.Fatalf("sealed result=%#v", task.Result)
+	}
+}
+
+func TestTaskRepoSealCancelledExecutorResultDoesNotOverwriteSuccess(t *testing.T) {
+	ctx := t.Context()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	repo := NewTaskRepo(db)
+	if err := repo.RecordCommand(ctx, RecordInput{TaskID: "restore-success", Kind: "restore.run"}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.FinishIfActive(
+		ctx,
+		"restore-success",
+		model.TaskStatusSucceeded,
+		map[string]any{"restored": true},
+		"",
+	)
+	if err != nil || !stored {
+		t.Fatalf("finish stored=%v err=%v", stored, err)
+	}
+	stored, err = repo.SealCancelledExecutorResult(
+		ctx,
+		"restore-success",
+		map[string]any{"executor_finished": true},
+		"canceled",
+	)
+	if err != nil || stored {
+		t.Fatalf("seal stored=%v err=%v", stored, err)
+	}
+	task, err := repo.Get(ctx, "restore-success")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != model.TaskStatusSucceeded || task.Result["restored"] != true {
+		t.Fatalf("successful terminal result changed: %#v", task)
+	}
+}

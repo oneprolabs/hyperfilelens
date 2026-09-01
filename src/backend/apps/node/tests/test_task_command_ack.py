@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import threading
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.db import close_old_connections
+from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 from redis.exceptions import ConnectionError as RedisConnectionError
 
@@ -313,9 +315,7 @@ class TaskCommandAckTests(TestCase):
 
     @patch("apps.node.services.internal.task.redis_store.set_task_info")
     @patch("apps.node.services.internal.task.redis_store.push_task_stream")
-    def test_repository_initialize_uses_dispatch_start(
-        self, _push, _set_info
-    ):
+    def test_repository_initialize_uses_dispatch_start(self, _push, _set_info):
         dispatched_at = timezone.now() - timezone.timedelta(seconds=20)
         task = self.task(
             kind="repo.initialize",
@@ -344,9 +344,7 @@ class TaskCommandAckTests(TestCase):
 
     @patch("apps.node.services.internal.task.redis_store.set_task_info")
     @patch("apps.node.services.internal.task.redis_store.push_task_stream")
-    def test_legacy_repository_initialize_uses_dispatch_start(
-        self, _push, _set_info
-    ):
+    def test_legacy_repository_initialize_uses_dispatch_start(self, _push, _set_info):
         dispatched_at = timezone.now() - timezone.timedelta(seconds=20)
         task = self.task(
             kind="repo.initialize",
@@ -544,9 +542,7 @@ class TaskCommandAckTests(TestCase):
         send_cancel,
     ):
         self.node.metadata = {
-            "inventory": {
-                "capabilities": ["agent_upgrade_download_progress_v1"]
-            }
+            "inventory": {"capabilities": ["agent_upgrade_download_progress_v1"]}
         }
         self.node.save(update_fields=["metadata", "updated_at"])
         task = self.task(
@@ -590,9 +586,7 @@ class TaskCommandAckTests(TestCase):
     @patch("apps.node.services.internal.task._sync_task_info")
     def test_upgrade_download_bytes_renew_progress_deadline(self, _sync, _push):
         self.node.metadata = {
-            "inventory": {
-                "capabilities": ["agent_upgrade_download_progress_v1"]
-            }
+            "inventory": {"capabilities": ["agent_upgrade_download_progress_v1"]}
         }
         self.node.save(update_fields=["metadata", "updated_at"])
         original_deadline = timezone.now() + timezone.timedelta(seconds=5)
@@ -730,9 +724,7 @@ class TaskCommandAckTests(TestCase):
         "apps.node.services.internal.task.redis_store.ws_recovery_hold_active",
         return_value=False,
     )
-    def test_unknown_delivery_protocol_is_reclassified_instead_of_stranded(
-        self, _hold
-    ):
+    def test_unknown_delivery_protocol_is_reclassified_instead_of_stranded(self, _hold):
         task = self.task(result={"_delivery_protocol": "future-protocol"})
 
         summary = reconcile_unaccepted_agent_tasks(limit=10)
@@ -833,9 +825,7 @@ class TaskCommandAckTests(TestCase):
         send_cancel,
     ):
         self.node.metadata = {
-            "inventory": {
-                "capabilities": ["agent_upgrade_download_progress_v1"]
-            }
+            "inventory": {"capabilities": ["agent_upgrade_download_progress_v1"]}
         }
         self.node.save(update_fields=["metadata", "updated_at"])
         task = self.task(
@@ -1157,3 +1147,87 @@ class TaskCommandAckTests(TestCase):
 
         self.assertEqual(delivered.status, NodeTask.Status.SUCCESS)
         self.assertEqual(delivered.result, {"completed": True})
+
+
+@skipUnlessDBFeature("has_select_for_update")
+class ManagedWorkspaceRestoreDeliveryRaceTests(TransactionTestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(
+            key="managed-restore-delivery",
+            name="Managed Restore Delivery",
+        )
+        self.node = Node.objects.create(
+            organization=self.org,
+            name="managed-restore-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            last_seen_at=timezone.now(),
+        )
+
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch("apps.node.services.internal.task.redis_store.set_task_info")
+    @patch("apps.node.services.internal.task._send_cancel_command")
+    @patch(
+        "apps.node.services.internal.task._node_route_state",
+        return_value=_RouteState.ONLINE,
+    )
+    def test_cancel_cannot_overtake_managed_restore_command(
+        self,
+        _route,
+        send_cancel,
+        _set_info,
+        _push_stream,
+    ):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="restore.run",
+            correlation_type="restore.record",
+            correlation_id="managed-restore-record",
+            status=NodeTask.Status.PENDING,
+            payload={
+                "workspace_kind": "managed_restore",
+                "workspace_uid": "8f65d43a-09fd-4ae7-b5f1-159352838a23",
+                "managed_workspace_path": "/var/lib/hyperfilelens/insight/workspace",
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=2),
+        )
+        cancel_started = threading.Event()
+        cancel_finished = threading.Event()
+        thread_errors: list[BaseException] = []
+        cancel_thread: threading.Thread | None = None
+
+        def cancel_in_thread() -> None:
+            close_old_connections()
+            cancel_started.set()
+            try:
+                cancel_task(task_id=task.id, reason="Chat deletion requested")
+            except BaseException as exc:  # pragma: no cover - surfaced below
+                thread_errors.append(exc)
+            finally:
+                close_old_connections()
+                cancel_finished.set()
+
+        def send_command(*, task: NodeTask) -> None:
+            nonlocal cancel_thread
+            cancel_thread = threading.Thread(target=cancel_in_thread)
+            cancel_thread.start()
+            self.assertTrue(cancel_started.wait(timeout=2))
+            self.assertFalse(cancel_finished.wait(timeout=0.2))
+
+        with patch(
+            "apps.node.services.internal.task._send_task_command",
+            side_effect=send_command,
+        ):
+            delivered = deliver_agent_task(task=task)
+
+        self.assertTrue(cancel_finished.wait(timeout=2))
+        if cancel_thread is not None:
+            cancel_thread.join(timeout=2)
+        self.assertEqual(thread_errors, [])
+        delivered.refresh_from_db()
+        self.assertEqual(delivered.status, NodeTask.Status.RUNNING)
+        self.assertIsNotNone(delivered.dispatched_at)
+        self.assertTrue(delivered.result["cancel_requested"])
+        send_cancel.assert_called_once()
