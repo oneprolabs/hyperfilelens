@@ -33,6 +33,9 @@ var essentialResultKeys = map[string]struct{}{
 	"failed_count": {}, "created": {}, "deleted_count": {},
 	"selected_paths": {}, "stats": {}, "restore": {}, "restore_results": {},
 	"results": {}, "entries": {}, "snapshot_browse": {}, "snapshot_download": {},
+	"executor_finished": {}, "executor_finished_at": {}, "completion_source": {},
+	"workspace_uid": {}, "workspace_quarantined": {}, "purge_complete": {},
+	"tombstone_state": {},
 }
 
 func boundTaskResult(result map[string]any) (map[string]any, resultBoundStats) {

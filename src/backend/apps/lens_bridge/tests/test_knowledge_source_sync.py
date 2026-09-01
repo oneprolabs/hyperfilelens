@@ -1,12 +1,17 @@
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
+from django.db import transaction
 from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.iam.models import Organization
-from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
+from apps.lens_bridge.models import (
+    LensGatewayLink,
+    LensKnowledgeSource,
+    LensWorkspaceBinding,
+)
 from apps.lens_bridge.services import knowledge_source_sync
 from apps.lens_bridge.services.managed_datasource import ManagedDatasourcePending
 from apps.lens_bridge.services.knowledge_source_sync import (
@@ -27,7 +32,8 @@ class KnowledgeSourceSyncLeaseTests(TransactionTestCase):
             organization=self.organization,
             name="sync-gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
             organization=self.organization,
@@ -46,9 +52,7 @@ class KnowledgeSourceSyncLeaseTests(TransactionTestCase):
             sync_next_poll_at=timezone.now(),
         )
 
-    @patch(
-        "apps.lens_bridge.services.knowledge_source_sync._run_sync_pipeline"
-    )
+    @patch("apps.lens_bridge.services.knowledge_source_sync._run_sync_pipeline")
     def test_duplicate_delivery_does_not_enter_pipeline(self, run_pipeline):
         claim_token, status = knowledge_source_sync._claim_sync(
             organization_id=self.organization.id,
@@ -105,9 +109,7 @@ class KnowledgeSourceSyncLeaseTests(TransactionTestCase):
         self.assertIsNone(self.knowledge_source.sync_claimed_at)
         self.assertGreater(self.knowledge_source.sync_next_poll_at, before)
 
-    @patch(
-        "apps.lens_bridge.services.knowledge_source_sync._run_sync_pipeline"
-    )
+    @patch("apps.lens_bridge.services.knowledge_source_sync._run_sync_pipeline")
     def test_success_releases_claim_and_poll_marker(self, run_pipeline):
         run_pipeline.return_value = {
             "knowledge_source_id": self.knowledge_source.id,
@@ -132,9 +134,7 @@ class KnowledgeSourceSyncLeaseTests(TransactionTestCase):
 
         now = timezone.now()
         self.knowledge_source.sync_next_poll_at = now - timedelta(seconds=1)
-        self.knowledge_source.save(
-            update_fields=["sync_next_poll_at", "updated_at"]
-        )
+        self.knowledge_source.save(update_fields=["sync_next_poll_at", "updated_at"])
         future = LensKnowledgeSource.objects.create(
             organization=self.organization,
             name="Future source",
@@ -164,11 +164,7 @@ class KnowledgeSourceSyncLeaseTests(TransactionTestCase):
             sync_claim_token="606610e7-9ec5-4405-bba6-06ee74b3864b",
             sync_claimed_at=(
                 now
-                - timedelta(
-                    seconds=(
-                        knowledge_source_sync.SYNC_CLAIM_TTL_SECONDS + 1
-                    )
-                )
+                - timedelta(seconds=(knowledge_source_sync.SYNC_CLAIM_TTL_SECONDS + 1))
             ),
         )
 
@@ -189,12 +185,8 @@ class KnowledgeSourceSyncLeaseTests(TransactionTestCase):
             reconcile_knowledge_source_syncs_task,
         )
 
-        self.knowledge_source.sync_next_poll_at = timezone.now() - timedelta(
-            seconds=1
-        )
-        self.knowledge_source.save(
-            update_fields=["sync_next_poll_at", "updated_at"]
-        )
+        self.knowledge_source.sync_next_poll_at = timezone.now() - timedelta(seconds=1)
+        self.knowledge_source.save(update_fields=["sync_next_poll_at", "updated_at"])
 
         result = reconcile_knowledge_source_syncs_task(limit=10)
 
@@ -379,8 +371,7 @@ class PushAssistantPhaseTests(SimpleTestCase):
         "provisioning.wait_for_lensnode_ready"
     )
     @patch(
-        "apps.lens_bridge.services.knowledge_source_sync."
-        "context_for_knowledge_source"
+        "apps.lens_bridge.services.knowledge_source_sync.context_for_knowledge_source"
     )
     @patch("apps.lens_bridge.services.knowledge_source_sync._update_sync_phase")
     def test_waits_for_authoritative_gateway_workspace_root(
@@ -433,7 +424,8 @@ class ManagedRestorePipelineOrderTests(TestCase):
             organization=gateway_org,
             name="gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
             organization=gateway_org,
@@ -455,6 +447,82 @@ class ManagedRestorePipelineOrderTests(TestCase):
             ingest_policy_json={"document": True},
             scan_enabled=True,
         )
+        self.workspace_binding = LensWorkspaceBinding.objects.create(
+            organization=self.organization,
+            knowledge_source=self.knowledge_source,
+            gateway_link=self.gateway_link,
+            execution_organization_id=gateway_org.id,
+            execution_node_id=self.gateway.id,
+            workspace_kind=LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE,
+            workspace_root="/workspace/platform/data",
+            relative_path="tenants/1/knowledge-sources/1",
+            state=LensWorkspaceBinding.State.READY,
+            identity_status=LensWorkspaceBinding.IdentityStatus.READY,
+        )
+
+    def test_restore_identity_is_durable_before_agent_delivery_callback(self):
+        record = MagicMock(id=91)
+        observed_record_ids = []
+
+        def create_restore(**_kwargs):
+            transaction.on_commit(
+                lambda: observed_record_ids.append(
+                    LensKnowledgeSource.all_objects.values_list(
+                        "last_restore_record_id",
+                        flat=True,
+                    ).get(pk=self.knowledge_source.id)
+                )
+            )
+            return record
+
+        with (
+            patch.object(
+                knowledge_source_sync.restore_services,
+                "create_lens_workspace_restore_record",
+                side_effect=create_restore,
+            ),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            published = knowledge_source_sync._create_and_publish_workspace_restore(
+                org=self.organization,
+                ks=self.knowledge_source,
+                restore_data={"items": []},
+                sync_state={},
+                snapshot_id=17,
+                restore_scope_status={"0": "pending"},
+            )
+
+        self.assertEqual(published.id, record.id)
+        self.assertEqual(observed_record_ids, [record.id])
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(self.knowledge_source.last_restore_record_id, record.id)
+
+    def test_deleting_knowledge_source_cannot_publish_restore(self):
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.save(update_fields=["lifecycle_status", "updated_at"])
+
+        with (
+            patch.object(
+                knowledge_source_sync.restore_services,
+                "create_lens_workspace_restore_record",
+            ) as create_restore,
+            self.assertRaisesRegex(
+                knowledge_source_sync.KnowledgeSourceSyncError,
+                "deletion was requested",
+            ),
+        ):
+            knowledge_source_sync._create_and_publish_workspace_restore(
+                org=self.organization,
+                ks=self.knowledge_source,
+                restore_data={"items": []},
+                sync_state={},
+                snapshot_id=17,
+                restore_scope_status={"0": "pending"},
+            )
+
+        create_restore.assert_not_called()
 
     def test_conversion_finishes_before_assistant_push(self):
         phase_calls = []
@@ -515,9 +583,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
             "image": False,
             "embedded_image": False,
         }
-        self.knowledge_source.save(
-            update_fields=["ingest_policy_json", "updated_at"]
-        )
+        self.knowledge_source.save(update_fields=["ingest_policy_json", "updated_at"])
         phase_calls = []
 
         def record(name):
@@ -583,9 +649,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
                 "status": "SUCCESS",
             },
         }
-        self.knowledge_source.save(
-            update_fields=["sync_state_json", "updated_at"]
-        )
+        self.knowledge_source.save(update_fields=["sync_state_json", "updated_at"])
         phase_calls = []
 
         def record(name):
@@ -661,9 +725,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
                 "policy_fingerprint": "current-policy",
             },
         }
-        self.knowledge_source.save(
-            update_fields=["sync_state_json", "updated_at"]
-        )
+        self.knowledge_source.save(update_fields=["sync_state_json", "updated_at"])
 
         with (
             patch.object(
@@ -704,9 +766,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
                 "policy_fingerprint": "stale-policy",
             },
         }
-        self.knowledge_source.save(
-            update_fields=["sync_state_json", "updated_at"]
-        )
+        self.knowledge_source.save(update_fields=["sync_state_json", "updated_at"])
         phase_calls = []
 
         def record(name):
@@ -760,26 +820,22 @@ class ManagedRestorePipelineOrderTests(TestCase):
         )
 
     @patch(
-        "apps.lens_bridge.services.knowledge_source_sync."
-        "enqueue_knowledge_source_sync"
+        "apps.lens_bridge.services.knowledge_source_sync.enqueue_knowledge_source_sync"
     )
     @patch(
         "apps.lens_bridge.services.knowledge_source_sync."
         "gateway_readiness.require_hfl_usable_gateway"
     )
     @patch(
-        "apps.node.services.internal.node_lifecycle."
-        "_active_lifecycle_task",
+        "apps.node.services.internal.node_lifecycle._active_lifecycle_task",
         return_value=None,
     )
     @patch(
-        "apps.lens_bridge.services.knowledge_source_sync."
-        "get_node_workload_blockers",
+        "apps.lens_bridge.services.knowledge_source_sync.get_node_workload_blockers",
         return_value=[],
     )
     @patch(
-        "apps.lens_bridge.services.knowledge_source_sync."
-        "context_for_knowledge_source"
+        "apps.lens_bridge.services.knowledge_source_sync.context_for_knowledge_source"
     )
     def test_manual_sync_after_completion_starts_new_generation(
         self,
@@ -825,12 +881,10 @@ class ManagedRestorePipelineOrderTests(TestCase):
         )
 
     @patch(
-        "apps.lens_bridge.services.knowledge_source_sync."
-        "enqueue_knowledge_source_sync"
+        "apps.lens_bridge.services.knowledge_source_sync.enqueue_knowledge_source_sync"
     )
     @patch(
-        "apps.lens_bridge.services.knowledge_source_sync."
-        "_restore_record_failed",
+        "apps.lens_bridge.services.knowledge_source_sync._restore_record_failed",
         return_value=True,
     )
     @patch(
@@ -838,18 +892,15 @@ class ManagedRestorePipelineOrderTests(TestCase):
         "gateway_readiness.require_hfl_usable_gateway"
     )
     @patch(
-        "apps.node.services.internal.node_lifecycle."
-        "_active_lifecycle_task",
+        "apps.node.services.internal.node_lifecycle._active_lifecycle_task",
         return_value=None,
     )
     @patch(
-        "apps.lens_bridge.services.knowledge_source_sync."
-        "get_node_workload_blockers",
+        "apps.lens_bridge.services.knowledge_source_sync.get_node_workload_blockers",
         return_value=[],
     )
     @patch(
-        "apps.lens_bridge.services.knowledge_source_sync."
-        "context_for_knowledge_source"
+        "apps.lens_bridge.services.knowledge_source_sync.context_for_knowledge_source"
     )
     def test_manual_retry_starts_one_new_restore_generation(
         self,
@@ -905,18 +956,15 @@ class ManagedRestorePipelineOrderTests(TestCase):
         "gateway_readiness.require_hfl_usable_gateway"
     )
     @patch(
-        "apps.node.services.internal.node_lifecycle."
-        "_active_lifecycle_task",
+        "apps.node.services.internal.node_lifecycle._active_lifecycle_task",
         return_value=None,
     )
     @patch(
-        "apps.lens_bridge.services.knowledge_source_sync."
-        "get_node_workload_blockers",
+        "apps.lens_bridge.services.knowledge_source_sync.get_node_workload_blockers",
         return_value=[],
     )
     @patch(
-        "apps.lens_bridge.services.knowledge_source_sync."
-        "context_for_knowledge_source"
+        "apps.lens_bridge.services.knowledge_source_sync.context_for_knowledge_source"
     )
     def test_manual_retry_waits_for_final_conversion_stop_acknowledgement(
         self,

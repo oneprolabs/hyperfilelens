@@ -270,6 +270,48 @@ WHERE id=? AND status IN (?, ?)
 	return rows == 1, err
 }
 
+// SealCancelledExecutorResult attaches evidence produced after a cancelled
+// task's execution goroutine has actually returned. Cancellation is persisted
+// before the subprocess exits so reconnects never resurrect work as running;
+// this narrow terminal update lets managed workspace cleanup distinguish that
+// control-plane state from an executor that has finished shutting down.
+func (r *TaskRepo) SealCancelledExecutorResult(
+	ctx context.Context,
+	taskID string,
+	result map[string]any,
+	errMsg string,
+) (bool, error) {
+	if taskID == "" {
+		return false, fmt.Errorf("empty task id")
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return false, err
+	}
+	now := time.Now().UTC()
+	execResult, err := r.db.conn.ExecContext(ctx, `
+UPDATE tasks SET
+  result=?,
+  error=?,
+  finished_at=COALESCE(finished_at, ?),
+  updated_at=?,
+  result_reported=0
+WHERE id=? AND status=?
+`,
+		string(resultJSON),
+		errMsg,
+		formatTime(now),
+		formatTime(now),
+		taskID,
+		string(model.TaskStatusCancelled),
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := execResult.RowsAffected()
+	return rows == 1, err
+}
+
 // MarkCancelledIfActive cancels pending/running work without overwriting a
 // terminal result that may still be awaiting control-plane acknowledgement.
 func (r *TaskRepo) MarkCancelledIfActive(

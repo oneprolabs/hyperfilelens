@@ -13,10 +13,24 @@ from apps.lens_bridge.services import sl_client, teardown_blocking
 
 
 def _conversion_blocked(blocking: dict[str, object]) -> bool:
+    reason = str(blocking.get("reason") or "")
     return bool(
-        str(blocking.get("reason") or "") == "conversion_stop_unconfirmed"
-        or str(blocking.get("task_id") or "").strip()
+        reason == "conversion_stop_unconfirmed"
+        or (
+            str(blocking.get("task_id") or "").strip()
+            and not _restore_blocked(blocking)
+        )
     )
+
+
+def _restore_blocked(blocking: dict[str, object]) -> bool:
+    return str(blocking.get("reason") or "") in {
+        "restore_executor_still_stopping",
+        "restore_dispatch_still_stopping",
+        "restore_node_task_missing",
+        "restore_node_task_identity_mismatch",
+        "restore_task_missing",
+    }
 
 
 def _require_matching_blocked_task(
@@ -25,9 +39,25 @@ def _require_matching_blocked_task(
 ) -> None:
     blocked_task_id = str(blocking.get("task_id") or "").strip()
     if blocked_task_id and blocked_task_id != task_id:
-        raise CommandError(
-            "SourceLens task id does not match the recorded blocking condition."
-        )
+        raise CommandError("Task id does not match the recorded blocking condition.")
+
+
+def _record_cleanup_confirmation(
+    teardown_state: dict,
+    *,
+    confirmation_key: str,
+    confirmation: dict,
+    restore_task_id: str,
+) -> None:
+    """Record one confirmation while preserving prior restore task evidence."""
+
+    teardown_state[confirmation_key] = confirmation
+    if not restore_task_id:
+        return
+    confirmations = teardown_state.get("manual_restore_stop_confirmations")
+    confirmations = dict(confirmations) if isinstance(confirmations, dict) else {}
+    confirmations[restore_task_id] = confirmation
+    teardown_state["manual_restore_stop_confirmations"] = confirmations
 
 
 class Command(BaseCommand):
@@ -41,6 +71,7 @@ class Command(BaseCommand):
         target.add_argument("--session-id", type=int)
         target.add_argument("--knowledge-source-id", type=int)
         parser.add_argument("--source-lens-task-id")
+        parser.add_argument("--restore-task-id")
         parser.add_argument("--reason", required=True)
         parser.add_argument(
             "--confirm-executor-stopped",
@@ -57,16 +88,21 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        task_id = str(options["source_lens_task_id"] or "").strip()
+        task_id = str(options.get("source_lens_task_id") or "").strip()
+        restore_task_id = str(options.get("restore_task_id") or "").strip()
+        if task_id and restore_task_id:
+            raise CommandError(
+                "Use either --source-lens-task-id or --restore-task-id, not both."
+            )
         reason = str(options["reason"] or "").strip()
         if not reason:
             raise CommandError("Reason is required.")
-        if task_id:
+        if task_id or restore_task_id:
             if not options["confirm_executor_stopped"]:
                 raise CommandError(
-                    "Refusing to resume cleanup without "
-                    "--confirm-executor-stopped."
+                    "Refusing to resume cleanup without --confirm-executor-stopped."
                 )
+        if task_id:
             remote_task = sl_client.get_task_by_id(task_id)
             if remote_task is None:
                 raise CommandError(
@@ -82,16 +118,21 @@ class Command(BaseCommand):
                 raise CommandError(
                     f"SourceLens task is {remote_status or 'UNKNOWN'}, not terminal."
                 )
+        elif restore_task_id:
+            remote_status = "OPERATOR_CONFIRMED"
         else:
             if not options.get("confirm_retry"):
                 raise CommandError(
-                    "Refusing to resume non-conversion cleanup without "
-                    "--confirm-retry."
+                    "Refusing to resume non-conversion cleanup without --confirm-retry."
                 )
             remote_status = ""
 
         knowledge_source_id = options.get("knowledge_source_id")
         if knowledge_source_id is not None:
+            if restore_task_id:
+                raise CommandError(
+                    "Restore executor confirmation must target the owning Chat session."
+                )
             self._resume_knowledge_source_cleanup(
                 knowledge_source_id=int(knowledge_source_id),
                 task_id=task_id,
@@ -118,13 +159,14 @@ class Command(BaseCommand):
             blocking = teardown_state.get("blocking")
             blocking = blocking if isinstance(blocking, dict) else {}
             session_conversion_blocked = _conversion_blocked(blocking)
+            session_restore_blocked = _restore_blocked(blocking)
             if not task_id and session_conversion_blocked:
                 raise CommandError(
                     "Conversion cleanup requires --source-lens-task-id and "
                     "--confirm-executor-stopped."
                 )
             knowledge_source_id = session.knowledge_source_id
-            if task_id and knowledge_source_id is None:
+            if (task_id or restore_task_id) and knowledge_source_id is None:
                 raise CommandError("Blocked Chat has no Knowledge Source.")
 
             knowledge_source = None
@@ -134,7 +176,7 @@ class Command(BaseCommand):
                     .filter(pk=knowledge_source_id)
                     .first()
                 )
-            if task_id and knowledge_source is None:
+            if (task_id or restore_task_id) and knowledge_source is None:
                 raise CommandError("Blocked Chat Knowledge Source was not found.")
             if (
                 knowledge_source is not None
@@ -150,16 +192,19 @@ class Command(BaseCommand):
                 )
                 candidate_blocking = knowledge_source_state.get("blocking")
                 knowledge_source_blocking = (
-                    candidate_blocking
-                    if isinstance(candidate_blocking, dict)
-                    else {}
+                    candidate_blocking if isinstance(candidate_blocking, dict) else {}
                 )
             knowledge_source_conversion_blocked = _conversion_blocked(
                 knowledge_source_blocking
             )
+            knowledge_source_restore_blocked = _restore_blocked(
+                knowledge_source_blocking
+            )
             conversion_blocked = (
-                session_conversion_blocked
-                or knowledge_source_conversion_blocked
+                session_conversion_blocked or knowledge_source_conversion_blocked
+            )
+            restore_blocked = (
+                session_restore_blocked or knowledge_source_restore_blocked
             )
             if task_id:
                 if not conversion_blocked:
@@ -176,10 +221,25 @@ class Command(BaseCommand):
                     "Conversion cleanup requires --source-lens-task-id and "
                     "--confirm-executor-stopped."
                 )
+            if restore_task_id:
+                if not restore_blocked:
+                    raise CommandError(
+                        "Cleanup is not blocked on a Chat workspace restore."
+                    )
+                _require_matching_blocked_task(blocking, restore_task_id)
+                _require_matching_blocked_task(
+                    knowledge_source_blocking,
+                    restore_task_id,
+                )
+            elif restore_blocked:
+                raise CommandError(
+                    "Restore cleanup requires --restore-task-id and "
+                    "--confirm-executor-stopped."
+                )
 
             confirmation = {
                 "confirmed": True,
-                "task_id": task_id,
+                "task_id": task_id or restore_task_id,
                 "remote_status": remote_status,
                 "operator": getpass.getuser(),
                 "reason": reason[:1000],
@@ -188,11 +248,13 @@ class Command(BaseCommand):
             }
             if knowledge_source is not None and (
                 task_id
+                or restore_task_id
                 or "blocking" in (knowledge_source.teardown_state_json or {})
             ):
                 self._resume_locked_knowledge_source(
                     knowledge_source,
                     task_id=task_id,
+                    restore_task_id=restore_task_id,
                     confirmation=confirmation,
                 )
 
@@ -200,9 +262,18 @@ class Command(BaseCommand):
             confirmation_key = (
                 "manual_stop_confirmation"
                 if task_id
-                else "manual_cleanup_confirmation"
+                else (
+                    "manual_restore_stop_confirmation"
+                    if restore_task_id
+                    else "manual_cleanup_confirmation"
+                )
             )
-            teardown_state[confirmation_key] = confirmation
+            _record_cleanup_confirmation(
+                teardown_state,
+                confirmation_key=confirmation_key,
+                confirmation=confirmation,
+                restore_task_id=restore_task_id,
+            )
             session.teardown_state_json = teardown_state
             session.cleanup_status = LensSessionLink.CleanupStatus.PENDING
             session.teardown_attempts = 0
@@ -225,9 +296,7 @@ class Command(BaseCommand):
                 _queue_teardown_or_record_error,
             )
 
-            transaction.on_commit(
-                lambda: _queue_teardown_or_record_error(session.id)
-            )
+            transaction.on_commit(lambda: _queue_teardown_or_record_error(session.id))
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -266,9 +335,7 @@ class Command(BaseCommand):
                     "cleanup by session id."
                 )
 
-            teardown_state = dict(
-                knowledge_source.teardown_state_json or {}
-            )
+            teardown_state = dict(knowledge_source.teardown_state_json or {})
             blocking = teardown_state.get("blocking")
             blocking = blocking if isinstance(blocking, dict) else {}
             conversion_blocked = _conversion_blocked(blocking)
@@ -285,8 +352,7 @@ class Command(BaseCommand):
                 )
             elif not teardown_blocking.intervention_required(teardown_state):
                 raise CommandError(
-                    "Knowledge Source cleanup does not require operator "
-                    "intervention."
+                    "Knowledge Source cleanup does not require operator intervention."
                 )
 
             confirmation = {
@@ -301,6 +367,7 @@ class Command(BaseCommand):
             self._resume_locked_knowledge_source(
                 knowledge_source,
                 task_id=task_id,
+                restore_task_id="",
                 confirmation=confirmation,
             )
 
@@ -308,9 +375,7 @@ class Command(BaseCommand):
                 _queue_teardown,
             )
 
-            transaction.on_commit(
-                lambda: _queue_teardown(knowledge_source.id)
-            )
+            transaction.on_commit(lambda: _queue_teardown(knowledge_source.id))
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -324,6 +389,7 @@ class Command(BaseCommand):
         knowledge_source: LensKnowledgeSource,
         *,
         task_id: str,
+        restore_task_id: str,
         confirmation: dict,
     ) -> None:
         """Reset one locked KS after its blocking condition was confirmed."""
@@ -345,9 +411,18 @@ class Command(BaseCommand):
         confirmation_key = (
             "manual_stop_confirmation"
             if task_id
-            else "manual_cleanup_confirmation"
+            else (
+                "manual_restore_stop_confirmation"
+                if restore_task_id
+                else "manual_cleanup_confirmation"
+            )
         )
-        teardown_state[confirmation_key] = confirmation
+        _record_cleanup_confirmation(
+            teardown_state,
+            confirmation_key=confirmation_key,
+            confirmation=confirmation,
+            restore_task_id=restore_task_id,
+        )
         knowledge_source.teardown_state_json = teardown_state
         knowledge_source.teardown_attempts = 0
         knowledge_source.teardown_claim_token = None
@@ -356,7 +431,11 @@ class Command(BaseCommand):
         knowledge_source.status_detail = (
             "Conversion stop was confirmed; cleanup is queued."
             if task_id
-            else "Cleanup recovery was confirmed and queued."
+            else (
+                "Restore executor stop was confirmed; cleanup is queued."
+                if restore_task_id
+                else "Cleanup recovery was confirmed and queued."
+            )
         )
         knowledge_source.save(
             update_fields=[

@@ -128,7 +128,7 @@ describe('CopilotLifecycleState', () => {
       cleanup_status: 'running',
     }))
 
-    expect(wrapper.text()).toContain('Recovering Chat Resources')
+    expect(wrapper.text()).toContain('Preparing Chat for Retry')
     expect(wrapper.text()).not.toContain('Deleting Chat')
     expect(wrapper.text()).not.toContain('Try Again')
   })
@@ -140,8 +140,20 @@ describe('CopilotLifecycleState', () => {
       cleanup_status: 'blocked',
     }))
 
-    expect(wrapper.text()).toContain('Chat Recovery Needs Attention')
-    expect(wrapper.text()).toContain('Temporary data is being retained')
+    expect(wrapper.text()).toContain('Chat Cleanup Needs Attention')
+    expect(wrapper.text()).toContain('Temporary data remains protected')
+    expect(wrapper.text()).not.toContain('Deleting Chat')
+  })
+
+  it('offers a bounded delete retry when deletion cleanup is blocked', () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'deleting',
+      cleanup_intent: 'delete_session',
+      cleanup_status: 'blocked',
+    }))
+
+    expect(wrapper.text()).toContain('Chat Cleanup Needs Attention')
+    expect(wrapper.text()).toContain('Retry Delete')
     expect(wrapper.text()).not.toContain('Deleting Chat')
   })
 

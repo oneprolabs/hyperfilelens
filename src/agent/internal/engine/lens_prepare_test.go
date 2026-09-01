@@ -476,10 +476,13 @@ func TestRunLensKsCleanupRetriesAfterPartialTrashRemoval(t *testing.T) {
 		}
 		return errors.New("injected partial removal")
 	}
-	status, _, _ := engine.runLensKsCleanup(context.Background(), payload)
+	status, result, _ := engine.runLensKsCleanup(context.Background(), payload)
 	removeLensWorkspaceTrash = originalRemove
 	if status != "failed" {
 		t.Fatalf("expected injected failure, got %q", status)
+	}
+	if result["workspace_quarantined"] != true || result["purge_complete"] != false || result["tombstone_state"] != lensWorkspaceTombstoneRetiring {
+		t.Fatalf("partial cleanup evidence=%#v", result)
 	}
 	tombstone, err := readLensWorkspaceTombstone(testTombstonePath(root, testWorkspaceUID))
 	if err != nil || tombstone.State != lensWorkspaceTombstoneRetiring {
@@ -491,9 +494,12 @@ func TestRunLensKsCleanupRetriesAfterPartialTrashRemoval(t *testing.T) {
 	if _, err := os.Stat(testIdentityPath(root, testWorkspaceUID)); err != nil {
 		t.Fatalf("identity must survive partial removal: %v", err)
 	}
-	status, _, errMsg := engine.runLensKsCleanup(context.Background(), payload)
+	status, result, errMsg := engine.runLensKsCleanup(context.Background(), payload)
 	if status != "success" {
 		t.Fatalf("retry status=%q err=%q", status, errMsg)
+	}
+	if result["workspace_quarantined"] != true || result["purge_complete"] != true || result["tombstone_state"] != lensWorkspaceTombstoneRetired {
+		t.Fatalf("completed cleanup evidence=%#v", result)
 	}
 	if _, err := os.Stat(testIdentityPath(root, testWorkspaceUID)); !os.IsNotExist(err) {
 		t.Fatalf("identity should be removed last, err=%v", err)

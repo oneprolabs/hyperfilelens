@@ -3,6 +3,7 @@ package wire
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -362,6 +363,18 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 	}
 	h.tracker.Register(task, cancel)
 	defer h.tracker.Unregister(cmd.TaskID)
+	if h.tasks != nil {
+		persisted, err := h.tasks.Get(taskCtx, cmd.TaskID)
+		if err != nil {
+			slog.Warn("load accepted task before execution failed", "task_id", cmd.TaskID, "err", err)
+		} else if persisted.Status == model.TaskStatusCancelled {
+			// task.cancel can arrive after the durable command acceptance but
+			// before this goroutine registers with the in-memory tracker. Close
+			// that window before entering Engine.Run; later cancels are handled
+			// by Tracker.Cancel as usual.
+			cancel()
+		}
+	}
 
 	aliveDone := make(chan struct{})
 	go h.aliveLoop(taskCtx, sink, cmd.TaskID, aliveDone)
@@ -462,6 +475,18 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 		Payload: cmd.Payload,
 		Source:  engine.SourceWebSocket,
 	}, wsSink)
+	managedWorkspaceRestore := isManagedWorkspaceRestoreCommand(cmd)
+	if managedWorkspaceRestore {
+		if out.Result == nil {
+			out.Result = map[string]any{}
+		}
+		// Engine.Run returns only after the Kopia process group has been waited
+		// for. This is intentionally stronger evidence than the local cancelled
+		// state persisted when task.cancel first arrives.
+		out.Result["executor_finished"] = true
+		out.Result["completion_source"] = "agent_executor"
+		out.Result["executor_finished_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 
 	status := out.Status
 	result, resultStats := boundTaskResult(out.Result)
@@ -507,7 +532,20 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 			slog.Warn("persist task result failed", "task_id", cmd.TaskID, "err", err)
 			return
 		}
-		if !stored {
+		initiallyStored := stored
+		if !stored && managedWorkspaceRestore {
+			stored, err = h.tasks.SealCancelledExecutorResult(
+				persistCtx,
+				cmd.TaskID,
+				result,
+				errMsg,
+			)
+			if err != nil {
+				slog.Warn("persist cancelled executor result failed", "task_id", cmd.TaskID, "err", err)
+				return
+			}
+		}
+		if !initiallyStored || localStatus == model.TaskStatusCancelled {
 			persisted, getErr := h.tasks.Get(persistCtx, cmd.TaskID)
 			if getErr != nil {
 				slog.Warn("load competing terminal task result failed", "task_id", cmd.TaskID, "err", getErr)
@@ -527,6 +565,28 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 	if err := h.sendLiveTaskResult(persistCtx, sink, cmd.TaskID, status, result, errMsg); err != nil {
 		slog.Warn("send task.result failed", "task_id", cmd.TaskID, "err", err)
 	}
+}
+
+func isManagedWorkspaceRestoreCommand(cmd *TaskCommand) bool {
+	if cmd == nil || engine.NormalizeKind(cmd.Kind) != "restore" || cmd.Payload == nil {
+		return false
+	}
+	payload := engine.ParsePayload(cmd.Payload)
+	return payloadString(cmd.Payload["workspace_kind"]) == "managed_restore" &&
+		payloadString(cmd.Payload["workspace_uid"]) != "" &&
+		payloadString(cmd.Payload["managed_workspace_path"]) != "" &&
+		payload.Path != ""
+}
+
+func payloadString(value any) string {
+	if value == nil {
+		return ""
+	}
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(text)
 }
 
 func (h *Handler) progressLoop(ctx context.Context, sink Sender, taskID string, done <-chan struct{}) {
