@@ -87,10 +87,10 @@ Community runs on an Ubuntu host that you manage. The installation host must mee
 
 - Ubuntu 20.04, 22.04, or 24.04 on amd64.
 - At least 2 CPU cores, 4 GiB of memory, and 20 GiB of free space on the disk containing `/opt`.
-- Docker Engine 24.0.0 or later and Docker Compose V2 2.20.0 or later, with the Docker daemon running. If Docker is entirely absent, the online installer can install Docker CE and Compose V2 from the selected regional package source.
-- `curl`, Python 3, `sudo` access, and network access to GitHub, the container registry, the selected Docker CE source, and the Ubuntu package repositories.
+- Docker Engine 24.0.0 or later and Docker Compose V2 2.20.0 or later, with the Docker daemon running. If Docker is entirely absent, the online installer can install Docker CE and Compose V2 from the selected regional package source. If a supported, healthy Docker CE runtime is present but Compose V2 is missing, the installer can add only the pinned Compose plugin when the package plan leaves the existing Docker runtime unchanged.
+- `curl`, Python 3, `sudo` access, and network access to GitHub, the container registry, the selected or existing Docker CE source, and the Ubuntu package repositories.
 
-An existing Docker installation is always reused when it meets these requirements. If its version is too old, Compose V2 is missing, or the daemon is unavailable, repair or upgrade Docker manually before continuing; the installer does not replace or repair an existing Docker runtime. Removing HyperFileLens does not remove Docker, Compose, or containerd.
+The online installer supports Docker CE only; Ubuntu `docker.io`, Moby, Snap, and other unrecognized runtimes must be repaired or replaced manually. An existing Docker CE installation is always reused when it meets these requirements. If its version is too old, the daemon is unavailable, or Compose V2 cannot be added without changing existing Docker packages, repair or upgrade Docker manually before continuing; the installer does not replace or repair an existing Docker Engine. Removing HyperFileLens does not remove Docker, Compose, containerd, or a Docker CE apt source created by the installer.
 
 Run the following command on the prepared host:
 

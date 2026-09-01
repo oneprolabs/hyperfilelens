@@ -300,7 +300,9 @@ const targetedRestoreRecord = ref<RestoreRecord | null>(null)
 const appliedRestoreRecordTargetId = ref<number | null>(null)
 const restoreRecordRuntimeById = ref<Map<number, TaskRuntimePayload>>(new Map())
 const restoreRecordRuntimeLoadingIds = ref<Set<number>>(new Set())
+const restoreRecordDurationNow = ref(Date.now())
 let restoreRecordPollingTimer: ReturnType<typeof setInterval> | null = null
+let restoreRecordDurationTimer: ReturnType<typeof setInterval> | null = null
 let provisionPollingTimer: ReturnType<typeof setInterval> | null = null
 let provisionPollingInFlight = false
 let provisionPollingAttempts = 0
@@ -354,6 +356,7 @@ const {
 const DETAIL_PAGE_SIZE = 10
 const DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100]
 const RESTORE_RECORD_POLL_INTERVAL_MS = 3000
+const RESTORE_RECORD_DURATION_INTERVAL_MS = 1000
 const PROVISION_POLL_INTERVAL_MS = 3000
 const PROVISION_POLL_MAX_ATTEMPTS = 60
 const HIDDEN_SOURCE_SNAPSHOT_STATUSES = ['failed']
@@ -571,6 +574,9 @@ const hasActiveRestoreRecords = computed(() => displayedRestoreRecords.value.som
   const status = String(record.task_summary?.status || '').toLowerCase()
   return status === 'pending' || status === 'running'
 }))
+const hasRunningRestoreRecords = computed(() => displayedRestoreRecords.value.some((record) => (
+  String(record.task_summary?.status || '').toLowerCase() === 'running'
+)))
 const sourceRelatedTasks = computed(() => sourceTaskRows.value)
 watch(
   () => [sourceSnapshotTotal.value, snapshotPagination.pageSize] as const,
@@ -1058,9 +1064,14 @@ function restoreRecordProgressText(record: RestoreRecord) {
 }
 
 function restoreRecordDuration(record: RestoreRecord) {
+  const status = String(record.task_summary?.status || '').toLowerCase()
+  const finishedAt = record.task_summary?.finished_at
+  const end = finishedAt || (status === 'running'
+    ? new Date(restoreRecordDurationNow.value).toISOString()
+    : null)
   return durationText(
     record.task_summary?.started_at || record.created_at,
-    record.task_summary?.finished_at,
+    end,
   )
 }
 
@@ -2414,6 +2425,21 @@ function stopRestoreRecordPolling() {
   restoreRecordPollingTimer = null
 }
 
+function stopRestoreRecordDurationTimer() {
+  if (!restoreRecordDurationTimer) return
+  clearInterval(restoreRecordDurationTimer)
+  restoreRecordDurationTimer = null
+}
+
+function syncRestoreRecordDurationTimer() {
+  stopRestoreRecordDurationTimer()
+  if (!props.modelValue || activeTab.value !== 'restoreRecords' || !hasRunningRestoreRecords.value) return
+  restoreRecordDurationNow.value = Date.now()
+  restoreRecordDurationTimer = setInterval(() => {
+    restoreRecordDurationNow.value = Date.now()
+  }, RESTORE_RECORD_DURATION_INTERVAL_MS)
+}
+
 function syncRestoreRecordPolling() {
   stopRestoreRecordPolling()
   if (!props.modelValue || activeTab.value !== 'restoreRecords' || !hasActiveRestoreRecords.value) return
@@ -2568,8 +2594,11 @@ watch(activeTab, async () => {
 })
 
 watch(
-  () => [props.modelValue, activeTab.value, hasActiveRestoreRecords.value] as const,
-  syncRestoreRecordPolling,
+  () => [props.modelValue, activeTab.value, hasActiveRestoreRecords.value, hasRunningRestoreRecords.value] as const,
+  () => {
+    syncRestoreRecordPolling()
+    syncRestoreRecordDurationTimer()
+  },
   { immediate: true },
 )
 
@@ -2760,11 +2789,13 @@ watch(
 onUnmounted(() => {
   if (activeTransferProgressTimer) clearInterval(activeTransferProgressTimer)
   stopRestoreRecordPolling()
+  stopRestoreRecordDurationTimer()
   stopProvisionPolling()
 })
 
 function onClosed() {
   stopRestoreRecordPolling()
+  stopRestoreRecordDurationTimer()
   stopProvisionPolling()
   requests.abortScope('flow-source-overview')
   requests.abortScope('flow-source-snapshots')
