@@ -16,9 +16,9 @@ Insights uses a protected backup snapshot, not the live Windows source. This ste
 ## Open New Chat
 
 1. Open **Insights → AI Copilot**.
-2. On the empty page, select **Start New Chat**, or select **New Chat** in the left panel.
+2. Select **New Chat** above the Chat list. A first-time account may instead show **Start New Chat** in the main panel.
 
-![Empty AI Copilot page with account information blurred](/docs/getting-started/insights-empty.png)
+![Current AI Copilot page with AI Copilot under Applications, Data Gateways under AI Engine, and real account, host, and Gateway identifiers blurred](/docs/getting-started/insights-empty.png)
 
 ## Select the backup data
 
