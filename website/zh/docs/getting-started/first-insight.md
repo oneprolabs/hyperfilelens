@@ -16,9 +16,9 @@ description: 基于首次备份快照创建洞察会话并使用 Public Data Gat
 ## 打开 New Chat
 
 1. 打开 **Insights → AI Copilot**。
-2. 在空白页面选择 **Start New Chat**，或在左侧选择 **New Chat**。
+2. 在 Chat 列表上方选择 **New Chat**。首次使用且没有历史会话时，主区域可能显示 **Start New Chat**。
 
-![AI Copilot 空白页面，账户信息已经模糊处理](/docs/getting-started/insights-empty.png)
+![当前 AI Copilot 页面在 Applications 下显示 AI Copilot、在 AI Engine 下显示 Data Gateways，真实账户、主机和 Gateway 标识已经模糊处理](/docs/getting-started/insights-empty.png)
 
 ## 选择备份数据
 
