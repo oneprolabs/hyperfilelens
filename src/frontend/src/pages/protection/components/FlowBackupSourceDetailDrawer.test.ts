@@ -259,6 +259,25 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(drawer).toContain('max-width: calc(100cqw - 49px); overflow-x: hidden; margin-left: 35px;')
   })
 
+  it('updates running restore durations and stops the clock outside the active records tab', () => {
+    const duration = sourceBetween(
+      'function restoreRecordDuration(record: RestoreRecord)',
+      'function restoreRecordConflictLabel',
+    )
+    const timer = sourceBetween(
+      'function stopRestoreRecordDurationTimer()',
+      'function syncRestoreRecordPolling()',
+    )
+
+    expect(duration).toContain("status === 'running'")
+    expect(duration).toContain('restoreRecordDurationNow.value')
+    expect(duration).toContain('record.task_summary?.finished_at')
+    expect(timer).toContain("activeTab.value !== 'restoreRecords'")
+    expect(timer).toContain('!hasRunningRestoreRecords.value')
+    expect(timer).toContain('RESTORE_RECORD_DURATION_INTERVAL_MS')
+    expect(drawer).toContain('stopRestoreRecordDurationTimer()')
+  })
+
   it('adds a single restore record search field and ordered status filters without advanced filtering', () => {
     const restoreTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',
