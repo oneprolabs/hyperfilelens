@@ -108,6 +108,21 @@ describe('Spanish language pack', () => {
     )
   })
 
+  it('uses consistent SMB share terminology and usable technical examples', () => {
+    const shareName = 'Nombre del recurso compartido'
+    expect(spanish.protection.sourceResources.colNasShareName).toBe(shareName)
+    expect(spanish.repositoriesPage.colNasShareName).toBe(shareName)
+    expect(spanish.addNasRepo.fieldSmbShare).toBe(shareName)
+    expect(spanish.repairNasRepo.labelShareName).toBe(shareName)
+    expect(spanish.addNasRepo.phSmbShare).toBe('data')
+    expect(spanish.protection.sourceResources.nasPhSmbShare).toBe('data')
+    expect(spanish.protection.sourceResources.nasPhSmbUsername).toBe('admin')
+    expect(spanish.protection.sourceResources.nasPhMountOptionsSmb)
+      .toBe('vers=3.0,iocharset=utf8,uid=1000,gid=1000')
+    expect(spanish.nodesDeploy.roleProxyDesc).toContain('recursos compartidos NAS')
+    expect(spanish.nodesDeploy.proxyIntroDesc).toContain('recursos compartidos NAS')
+  })
+
   it('contains no migration markers or unrelated writing systems', () => {
     const serialized = JSON.stringify(spanish)
     const containsUnrelatedWritingSystem = Array.from(serialized).some((character) => {
@@ -127,6 +142,9 @@ describe('Spanish language pack', () => {
     )
     expect(serialized).not.toMatch(
       /\brespaldo(?:s)?\b|Cubeta|Punto final|a granel|Suprímase|discapacitad|Ataque los|Metas anormales|Permaneciendo|No corres|Medio ambiente|Limpieza frustrada|Credenciales voluminosas|configs loaded|Final Source|Removing Agent/i,
+    )
+    expect(serialized).not.toMatch(
+      /acciones NAS|Nombre compartido|acceso leído a la parte|monta la parte|ruta de compartir|ruta compartida|parte subyacente/i,
     )
     expect(allowedEnglish).not.toContain('insight.copilot.contextNoFilesSelected')
   })
