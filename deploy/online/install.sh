@@ -4,6 +4,11 @@ set -euo pipefail
 
 DEFAULT_GLOBAL_REGISTRY_PREFIX="docker.io/oneprolabs"
 DEFAULT_CN_REGISTRY_PREFIX="registry.cn-beijing.aliyuncs.com/oneprolabs"
+DEFAULT_GLOBAL_DOCKER_CE_APT_BASE="https://download.docker.com/linux/ubuntu"
+DEFAULT_CN_DOCKER_CE_APT_BASE="https://mirrors.aliyun.com/docker-ce/linux/ubuntu"
+DOCKER_GPG_PRIMARY_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+MIN_DOCKER_ENGINE_VERSION="24.0.0"
+MIN_DOCKER_COMPOSE_VERSION="2.20.0"
 GLOBAL_REGISTRY_PREFIX="${HFL_GLOBAL_REGISTRY_PREFIX:-${DEFAULT_GLOBAL_REGISTRY_PREFIX}}"
 CN_REGISTRY_PREFIX="${HFL_CN_REGISTRY_PREFIX:-${DEFAULT_CN_REGISTRY_PREFIX}}"
 MIRROR=""
@@ -22,7 +27,23 @@ INSTALL_ACTION="Install"
 MAX_TAG_PAGES=100
 ONLINE_LOG_FILE=""
 ONLINE_INTERACTIVE=0
+HOST_UBUNTU_CODENAME=""
+DOCKER_CE_APT_BASE=""
+DOCKER_CE_GPG_URL=""
+DOCKER_CE_SOURCE_NAME=""
+DOCKER_RUNTIME_ACTION=""
+DOCKER_ENGINE_VERSION=""
+DOCKER_COMPOSE_VERSION=""
+DOCKER_ENGINE_PACKAGE_VERSION=""
+DOCKER_CLI_PACKAGE_VERSION=""
+DOCKER_CONTAINERD_PACKAGE_VERSION=""
+DOCKER_COMPOSE_PACKAGE_VERSION=""
+DOCKER_TARGET_ENGINE_VERSION=""
+DOCKER_TARGET_COMPOSE_VERSION=""
+DOCKER_PACKAGE_INSTALL_ATTEMPTED=0
+DOCKER_BOOTSTRAPPED=0
 CURL_RETRY_ARGS=()
+APT_RETRY_ARGS=(-o Acquire::Retries=3 -o DPkg::Lock::Timeout=120)
 
 usage() {
 	cat <<'USAGE'
@@ -112,11 +133,31 @@ Target
   Platform       ${PRETTY_NAME:-Ubuntu} · linux/amd64
   Log file       ${ONLINE_LOG_FILE}
 EOF
+
+	printf '\nHost runtime\n'
+	if [[ "${DOCKER_RUNTIME_ACTION}" == install ]]; then
+		printf '  Docker Engine  not installed → install %s\n' "${DOCKER_TARGET_ENGINE_VERSION}"
+		printf '  Docker Compose not installed → install %s\n' "${DOCKER_TARGET_COMPOSE_VERSION}"
+		printf '  Package source %s\n' "${DOCKER_CE_SOURCE_NAME}"
+		printf '  Docker service enable and start\n'
+		printf '  Lifecycle      retained when HyperFileLens is removed\n'
+	else
+		printf '  Docker Engine  %s · reuse\n' "${DOCKER_ENGINE_VERSION}"
+		printf '  Docker Compose %s · reuse\n' "${DOCKER_COMPOSE_VERSION}"
+		printf '  Docker service active\n'
+	fi
 }
 
 cleanup() {
 	local rc=$?
 	trap - EXIT INT TERM
+	if ((rc != 0 && DOCKER_PACKAGE_INSTALL_ATTEMPTED == 1 && DOCKER_BOOTSTRAPPED == 0)); then
+		printf '\n[WARN] Docker CE package installation did not complete and may have left partially installed packages.\n' >&2
+		printf '[INFO] Review dpkg --audit and repair the Docker package state manually before retrying.\n' >&2
+	elif ((rc != 0 && DOCKER_BOOTSTRAPPED == 1)); then
+		printf '\n[WARN] Docker Engine and Docker Compose V2 packages were installed, but HyperFileLens installation did not complete.\n' >&2
+		printf '[INFO] Docker was retained as a shared host runtime. Run the same command again to retry.\n' >&2
+	fi
 	if [[ -n "${SESSION_DIR}" && -d "${SESSION_DIR}" ]]; then
 		rm -rf -- "${SESSION_DIR}"
 	fi
@@ -139,24 +180,40 @@ check_host() {
 		;; esac
 	[[ "$(uname -m)" == x86_64 ]] || fail "linux/amd64 is required"
 	command -v curl >/dev/null 2>&1 || fail "curl is required to start the online installer"
-	command -v docker >/dev/null 2>&1 || fail "Docker Engine is required"
-	docker info >/dev/null 2>&1 || fail "cannot connect to the Docker daemon"
-	docker compose version >/dev/null 2>&1 || fail "Docker Compose V2 is required"
+	command -v python3 >/dev/null 2>&1 || fail "python3 is required to start the online installer"
+	command -v tar >/dev/null 2>&1 || fail "tar is required to start the online installer"
+	case "${VERSION_ID}" in
+	20.04) HOST_UBUNTU_CODENAME="focal" ;;
+	22.04) HOST_UBUNTU_CODENAME="jammy" ;;
+	24.04) HOST_UBUNTU_CODENAME="noble" ;;
+	esac
 }
 
 install_host_tools() {
 	local -a missing=()
-	local command
-	for command in ca-certificates openssl python3 rsync tar; do
-		case "${command}" in
+	local tool plan="${SESSION_DIR}/host-tools-apt-plan.log"
+	for tool in ca-certificates openssl python3 rsync tar; do
+		case "${tool}" in
 		ca-certificates) [[ -f /etc/ssl/certs/ca-certificates.crt ]] || missing+=(ca-certificates) ;;
-		*) command -v "${command}" >/dev/null 2>&1 || missing+=("${command}") ;;
+		*) command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}") ;;
 		esac
 	done
 	if ((${#missing[@]})); then
 		printf '[....] Installing required host tools: %s\n' "${missing[*]}"
-		apt-get update
-		DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+		apt-get "${APT_RETRY_ARGS[@]}" update \
+			|| fail "could not refresh Ubuntu package metadata for required host tools"
+		if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
+			--no-install-recommends install \
+			"${missing[@]}" >"${plan}" 2>&1; then
+			tail -n 20 "${plan}" >&2 || true
+			fail "required host tools could not be resolved"
+		fi
+		validate_apt_install_plan "${plan}" "required host-tool installation"
+		if ! DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+			install -y --no-remove \
+			--no-upgrade --no-install-recommends "${missing[@]}"; then
+			fail "required host tools could not be installed"
+		fi
 	fi
 }
 
@@ -167,15 +224,384 @@ configure_mirror() {
 		REGION="cn"
 		TAGS_API_URL="https://gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1"
 		REGISTRY_NAME="Alibaba Cloud"
+		DOCKER_CE_APT_BASE="${HFL_DOCKER_CE_APT_BASE:-${DEFAULT_CN_DOCKER_CE_APT_BASE}}"
 		;;
 	global)
 		SOURCE_NAME="GitHub"
 		REGION="global"
 		TAGS_API_URL="https://api.github.com/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1"
 		REGISTRY_NAME="Docker Hub"
+		DOCKER_CE_APT_BASE="${HFL_DOCKER_CE_APT_BASE:-${DEFAULT_GLOBAL_DOCKER_CE_APT_BASE}}"
 		;;
 	*) fail "--mirror must be cn or global" ;;
 	esac
+	DOCKER_CE_APT_BASE="${DOCKER_CE_APT_BASE%/}"
+	DOCKER_CE_SOURCE_NAME="Docker CE · ${DOCKER_CE_APT_BASE}"
+	DOCKER_CE_GPG_URL="${HFL_DOCKER_CE_GPG_URL:-${DOCKER_CE_APT_BASE}/gpg}"
+	[[ "${DOCKER_CE_APT_BASE}" =~ ^https://[^[:space:]]+$ ]] \
+		|| fail "HFL_DOCKER_CE_APT_BASE must be an HTTPS URL"
+	[[ "${DOCKER_CE_GPG_URL}" =~ ^https://[^[:space:]]+$ ]] \
+		|| fail "HFL_DOCKER_CE_GPG_URL must be an HTTPS URL"
+}
+
+docker_version_ge() {
+	python3 - "$1" "$2" <<'PY'
+import re
+import sys
+
+
+def parse(value):
+    match = re.search(r"\d+(?:\.\d+)+", value)
+    if match is None:
+        raise ValueError(value)
+    return tuple(int(part) for part in match.group(0).split("."))
+
+
+try:
+    actual = parse(sys.argv[1])
+    required = parse(sys.argv[2])
+    width = max(len(actual), len(required))
+    actual += (0,) * (width - len(actual))
+    required += (0,) * (width - len(required))
+    raise SystemExit(0 if actual >= required else 1)
+except (ValueError, IndexError):
+    raise SystemExit(1)
+PY
+}
+
+docker_engine_version() {
+	docker version --format '{{.Server.Version}}' 2>/dev/null || true
+}
+
+docker_compose_version() {
+	local version
+	version="$(docker compose version --short 2>/dev/null || true)"
+	if [[ -z "${version}" ]]; then
+		version="$(docker compose version 2>/dev/null \
+			| grep -Eo '[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+	fi
+	version="${version#v}"
+	version="${version#V}"
+	printf '%s' "${version}"
+}
+
+docker_packages_present() {
+	local package status
+	for package in \
+		docker-ce docker-ce-cli docker-buildx-plugin docker-compose-plugin \
+		docker-ce-rootless-extras docker.io docker-compose-v2 docker-compose \
+		containerd.io containerd runc moby-engine moby-cli moby-containerd \
+		moby-compose podman-docker; do
+		status="$(dpkg-query -W -f='${db:Status-Abbrev}' "${package}" 2>/dev/null || true)"
+		[[ -n "${status}" && "${status}" != un* ]] && return 0
+	done
+	return 1
+}
+
+docker_residual_state_present() {
+	local command
+	for command in dockerd containerd containerd-shim runc; do
+		command -v "${command}" >/dev/null 2>&1 && return 0
+	done
+	if [[ -e /snap/bin/docker ]] \
+		|| compgen -G '/var/lib/snapd/snaps/docker_*.snap' >/dev/null; then
+		return 0
+	fi
+	[[ -e /etc/docker || -e /var/lib/docker || -e /etc/containerd \
+		|| -e /var/lib/containerd || -e /run/docker.sock || -e /var/run/docker.sock \
+		|| -e /etc/systemd/system/docker.service || -e /lib/systemd/system/docker.service \
+		|| -e /usr/lib/systemd/system/docker.service ]]
+}
+
+foreign_docker_apt_source_present() {
+	local file
+	while IFS= read -r file; do
+		[[ "${file}" == /etc/apt/sources.list.d/hyperfilelens-docker.list ]] && continue
+		if grep -Eqs 'download\.docker\.com/linux/ubuntu|/docker-ce/linux/ubuntu' "${file}"; then
+			return 0
+		fi
+	done < <(find /etc/apt -maxdepth 2 -type f \
+		\( -name 'sources.list' -o -name '*.list' -o -name '*.sources' \) \
+		-print 2>/dev/null)
+	return 1
+}
+
+inspect_docker_runtime() {
+	DOCKER_ENGINE_VERSION=""
+	DOCKER_COMPOSE_VERSION=""
+	if command -v docker >/dev/null 2>&1; then
+		docker info >/dev/null 2>&1 \
+			|| fail "Docker is installed but its daemon is unavailable; start or repair Docker manually, then rerun this installer"
+		DOCKER_ENGINE_VERSION="$(docker_engine_version)"
+		[[ -n "${DOCKER_ENGINE_VERSION}" ]] \
+			|| fail "Docker Engine version could not be determined; repair Docker manually, then rerun this installer"
+		docker_version_ge "${DOCKER_ENGINE_VERSION}" "${MIN_DOCKER_ENGINE_VERSION}" \
+			|| fail "Docker Engine ${DOCKER_ENGINE_VERSION} does not meet the minimum required version ${MIN_DOCKER_ENGINE_VERSION}; upgrade Docker manually, then rerun this installer"
+		DOCKER_COMPOSE_VERSION="$(docker_compose_version)"
+		[[ -n "${DOCKER_COMPOSE_VERSION}" ]] \
+			|| fail "Docker Compose V2 is missing; install the Compose V2 plugin manually, then rerun this installer"
+		docker_version_ge "${DOCKER_COMPOSE_VERSION}" "${MIN_DOCKER_COMPOSE_VERSION}" \
+			|| fail "Docker Compose ${DOCKER_COMPOSE_VERSION} does not meet the minimum required version ${MIN_DOCKER_COMPOSE_VERSION}; upgrade the Compose V2 plugin manually, then rerun this installer"
+		DOCKER_RUNTIME_ACTION="reuse"
+		return 0
+	fi
+
+	command -v docker-compose >/dev/null 2>&1 \
+		&& fail "legacy docker-compose is installed without Docker Engine; repair or remove the partial Docker installation manually"
+	if docker_packages_present; then
+		fail "Docker packages are partially installed but the docker command is unavailable; repair or remove the existing Docker installation manually"
+	fi
+	if docker_residual_state_present; then
+		fail "Docker state exists but the docker command is unavailable; repair or remove the existing Docker installation manually"
+	fi
+	if foreign_docker_apt_source_present; then
+		fail "a Docker apt source is already configured without a usable Docker runtime; complete or remove that setup manually"
+	fi
+	DOCKER_RUNTIME_ACTION="install"
+}
+
+assert_docker_service_manager() {
+	command -v systemctl >/dev/null 2>&1 \
+		|| fail "systemd is required to install and manage Docker CE automatically"
+	[[ -d /run/systemd/system ]] \
+		|| fail "systemd is not running; install and start Docker manually, then rerun this installer"
+}
+
+load_docker_runtime_contract() {
+	local contract="${SESSION_DIR}/source/deploy/online/docker-ce-versions.env"
+	local parsed
+	local -a values=()
+	if [[ ! -f "${contract}" ]]; then
+		# Releases published before the per-OS contract was introduced must
+		# remain installable. Keep this compatibility map in the bootstrap script;
+		# new releases use the versioned file above as the source of truth.
+		case "${VERSION_ID}" in
+		20.04)
+			DOCKER_ENGINE_PACKAGE_VERSION='5:28.1.1-1~ubuntu.20.04~focal'
+			DOCKER_CLI_PACKAGE_VERSION='5:28.1.1-1~ubuntu.20.04~focal'
+			DOCKER_CONTAINERD_PACKAGE_VERSION='1.7.27-1'
+			DOCKER_COMPOSE_PACKAGE_VERSION='2.35.1-1~ubuntu.20.04~focal'
+			;;
+		22.04)
+			DOCKER_ENGINE_PACKAGE_VERSION='5:29.2.1-1~ubuntu.22.04~jammy'
+			DOCKER_CLI_PACKAGE_VERSION='5:29.2.1-1~ubuntu.22.04~jammy'
+			DOCKER_CONTAINERD_PACKAGE_VERSION='2.2.1-1~ubuntu.22.04~jammy'
+			DOCKER_COMPOSE_PACKAGE_VERSION='5.0.2-1~ubuntu.22.04~jammy'
+			;;
+		24.04)
+			DOCKER_ENGINE_PACKAGE_VERSION='5:29.2.1-1~ubuntu.24.04~noble'
+			DOCKER_CLI_PACKAGE_VERSION='5:29.2.1-1~ubuntu.24.04~noble'
+			DOCKER_CONTAINERD_PACKAGE_VERSION='2.2.1-1~ubuntu.24.04~noble'
+			DOCKER_COMPOSE_PACKAGE_VERSION='5.0.2-1~ubuntu.24.04~noble'
+			;;
+		*) fail "Ubuntu ${VERSION_ID} is not supported by the Docker CE runtime contract" ;;
+		esac
+		DOCKER_TARGET_ENGINE_VERSION="${DOCKER_ENGINE_PACKAGE_VERSION#*:}"
+		DOCKER_TARGET_ENGINE_VERSION="${DOCKER_TARGET_ENGINE_VERSION%%-*}"
+		DOCKER_TARGET_COMPOSE_VERSION="${DOCKER_COMPOSE_PACKAGE_VERSION%%-*}"
+		return 0
+	fi
+	parsed="$(python3 - "${contract}" "${VERSION_ID}" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+ubuntu_release = sys.argv[2]
+prefix = "UBUNTU" + ubuntu_release.replace(".", "") + "_"
+allowed = {"ENGINE_VERSION", "CLI_VERSION", "CONTAINERD_VERSION", "COMPOSE_PLUGIN_VERSION"}
+values = {}
+for raw_line in path.read_text(encoding="utf-8").splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        continue
+    if "=" not in line:
+        raise SystemExit("invalid Docker CE runtime contract")
+    key, value = line.split("=", 1)
+    if not re.fullmatch(r"UBUNTU[0-9]{4}_(ENGINE|CLI|CONTAINERD|COMPOSE_PLUGIN)_VERSION", key):
+        raise SystemExit("invalid Docker CE runtime contract")
+    if not key.startswith(prefix):
+        continue
+    if not re.fullmatch(r"[A-Za-z0-9.+:~_-]+", value):
+        raise SystemExit("invalid Docker CE runtime contract")
+    component = key[len(prefix):]
+    if component in values:
+        raise SystemExit("duplicate Docker CE runtime contract entry")
+    values[component] = value
+
+missing = allowed - values.keys()
+if missing:
+    raise SystemExit("incomplete Docker CE runtime contract")
+
+def product_version(value):
+    value = value.split(":", 1)[-1]
+    return value.split("-", 1)[0]
+
+
+print(values["ENGINE_VERSION"])
+print(values["CLI_VERSION"])
+print(values["CONTAINERD_VERSION"])
+print(values["COMPOSE_PLUGIN_VERSION"])
+print(product_version(values["ENGINE_VERSION"]))
+print(product_version(values["COMPOSE_PLUGIN_VERSION"]))
+PY
+	)" || fail "Community tag ${TAG} has an invalid Docker CE runtime contract"
+	mapfile -t values <<<"${parsed}"
+	[[ "${#values[@]}" -eq 6 ]] \
+		|| fail "Community tag ${TAG} has an incomplete Docker CE runtime contract"
+	DOCKER_ENGINE_PACKAGE_VERSION="${values[0]}"
+	DOCKER_CLI_PACKAGE_VERSION="${values[1]}"
+	DOCKER_CONTAINERD_PACKAGE_VERSION="${values[2]}"
+	DOCKER_COMPOSE_PACKAGE_VERSION="${values[3]}"
+	DOCKER_TARGET_ENGINE_VERSION="${values[4]}"
+	DOCKER_TARGET_COMPOSE_VERSION="${values[5]}"
+	docker_version_ge "${DOCKER_TARGET_ENGINE_VERSION}" "${MIN_DOCKER_ENGINE_VERSION}" \
+		|| fail "Community tag ${TAG} selects Docker Engine ${DOCKER_TARGET_ENGINE_VERSION}, below the required ${MIN_DOCKER_ENGINE_VERSION}"
+	docker_version_ge "${DOCKER_TARGET_COMPOSE_VERSION}" "${MIN_DOCKER_COMPOSE_VERSION}" \
+		|| fail "Community tag ${TAG} selects Docker Compose ${DOCKER_TARGET_COMPOSE_VERSION}, below the required ${MIN_DOCKER_COMPOSE_VERSION}"
+}
+
+assert_clean_dpkg_state() {
+	local audit_output
+	command -v dpkg >/dev/null 2>&1 || fail "dpkg is required to install Docker CE"
+	command -v dpkg-query >/dev/null 2>&1 || fail "dpkg-query is required to inspect Docker CE packages"
+	if ! audit_output="$(dpkg --audit 2>&1)"; then
+		[[ -z "${audit_output}" ]] || printf '[WARN] dpkg audit failed:\n%s\n' "${audit_output}" >&2
+		fail "the host package state could not be inspected; repair dpkg manually before installing Docker CE"
+	fi
+	if [[ -n "${audit_output}" ]]; then
+		printf '[WARN] dpkg reports incomplete packages on this host:\n%s\n' "${audit_output}" >&2
+		fail "repair the host package state manually before installing Docker CE"
+	fi
+}
+
+install_docker_prerequisites() {
+	local -a missing=()
+	local plan="${SESSION_DIR}/docker-prerequisites.plan"
+	local install_log="${SESSION_DIR}/docker-prerequisites-install.log"
+	command -v apt-get >/dev/null 2>&1 || fail "apt-get is required to install Docker CE"
+	command -v gpg >/dev/null 2>&1 || missing+=(gnupg)
+	[[ -f /etc/ssl/certs/ca-certificates.crt ]] || missing+=(ca-certificates)
+	if ((${#missing[@]})); then
+		printf '[....] Installing Docker CE source prerequisites: %s\n' "${missing[*]}"
+		apt-get "${APT_RETRY_ARGS[@]}" update \
+			|| fail "could not refresh Ubuntu package metadata for Docker CE prerequisites"
+		if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
+			--no-install-recommends install \
+			"${missing[@]}" >"${plan}" 2>&1; then
+			tail -n 20 "${plan}" >&2 || true
+			fail "Docker CE source prerequisites could not be resolved"
+		fi
+		validate_apt_install_plan "${plan}" "Docker CE prerequisite installation"
+		if ! DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+			install -y --no-remove \
+			--no-upgrade --no-install-recommends "${missing[@]}" >"${install_log}" 2>&1; then
+			tail -n 20 "${install_log}" >&2 || true
+			fail "Docker CE source prerequisites could not be installed"
+		fi
+	fi
+	command -v gpg >/dev/null 2>&1 || fail "GnuPG is required to verify the Docker CE signing key"
+}
+
+configure_docker_apt_source() {
+	local key_ascii="${SESSION_DIR}/docker-ce.asc"
+	local key_binary="${SESSION_DIR}/docker-ce.gpg"
+	local gnupg_home="${SESSION_DIR}/gnupg"
+	local fingerprint source_file="${SESSION_DIR}/hyperfilelens-docker.list"
+	mkdir -m 0700 "${gnupg_home}"
+	printf '[....] Configuring %s\n' "${DOCKER_CE_SOURCE_NAME}"
+	download_file "${DOCKER_CE_GPG_URL}" "${key_ascii}" 120 \
+		|| fail "could not download the Docker CE signing key from ${DOCKER_CE_GPG_URL}"
+	fingerprint="$(GNUPGHOME="${gnupg_home}" gpg --batch --show-keys --with-colons "${key_ascii}" 2>/dev/null \
+		| awk -F: '$1 == "fpr" {print $10; exit}')"
+	[[ "${fingerprint}" == "${DOCKER_GPG_PRIMARY_FINGERPRINT}" ]] \
+		|| fail "the Docker CE signing key fingerprint is invalid"
+	GNUPGHOME="${gnupg_home}" gpg --batch --yes --dearmor --output "${key_binary}" "${key_ascii}" \
+		|| fail "could not prepare the Docker CE signing key"
+	install -d -m 0755 /etc/apt/keyrings
+	install -m 0644 "${key_binary}" /etc/apt/keyrings/hyperfilelens-docker.gpg
+	printf 'deb [arch=amd64 signed-by=/etc/apt/keyrings/hyperfilelens-docker.gpg] %s %s stable\n' \
+		"${DOCKER_CE_APT_BASE}" "${HOST_UBUNTU_CODENAME}" >"${source_file}"
+	install -m 0644 "${source_file}" /etc/apt/sources.list.d/hyperfilelens-docker.list
+	printf '[ OK ] Docker CE package source is ready\n'
+}
+
+validate_apt_install_plan() {
+	local plan=$1 operation=${2:-"automatic host-package installation"}
+	if grep -Eq '^The following packages will be (REMOVED|DOWNGRADED):|^[[:space:]]*[1-9][0-9]* upgraded,| [1-9][0-9]* to remove' "${plan}"; then
+		cat "${plan}" >&2
+		fail "${operation} would upgrade, downgrade, or remove existing host packages; install the required packages manually"
+	fi
+}
+
+install_online_docker_runtime() {
+	local plan="${SESSION_DIR}/docker-apt-plan.log"
+	local install_log="${SESSION_DIR}/docker-apt-install.log"
+	local attempt
+	local -a packages=(
+		"docker-ce=${DOCKER_ENGINE_PACKAGE_VERSION}"
+		"docker-ce-cli=${DOCKER_CLI_PACKAGE_VERSION}"
+		"containerd.io=${DOCKER_CONTAINERD_PACKAGE_VERSION}"
+		"docker-compose-plugin=${DOCKER_COMPOSE_PACKAGE_VERSION}"
+	)
+	[[ -n "${DOCKER_ENGINE_PACKAGE_VERSION}" && -n "${DOCKER_CLI_PACKAGE_VERSION}" \
+		&& -n "${DOCKER_CONTAINERD_PACKAGE_VERSION}" \
+		&& -n "${DOCKER_COMPOSE_PACKAGE_VERSION}" ]] \
+		|| fail "Docker CE runtime package versions were not resolved"
+	assert_clean_dpkg_state
+	install_docker_prerequisites
+	configure_docker_apt_source
+	printf '[....] Resolving Docker Engine and Docker Compose V2 packages\n'
+	apt-get "${APT_RETRY_ARGS[@]}" update \
+		|| fail "could not update the selected Docker CE package source"
+	if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
+		--no-install-recommends install \
+		"${packages[@]}" >"${plan}" 2>&1; then
+		tail -n 20 "${plan}" >&2 || true
+		fail "Docker CE package dependencies could not be resolved"
+	fi
+	validate_apt_install_plan "${plan}" "Docker CE installation"
+	printf '[....] Installing Docker Engine and Docker Compose V2\n'
+	DOCKER_PACKAGE_INSTALL_ATTEMPTED=1
+	if ! DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+		install -y --no-remove \
+		--no-upgrade --no-install-recommends \
+		"${packages[@]}" >"${install_log}" 2>&1; then
+		tail -n 20 "${install_log}" >&2 || true
+		fail "Docker Engine and Docker Compose V2 installation failed"
+	fi
+	DOCKER_BOOTSTRAPPED=1
+	printf '[....] Enabling and starting Docker service\n'
+	systemctl enable --now docker >/dev/null 2>&1 \
+		|| fail "Docker was installed but docker.service could not be enabled and started"
+	for attempt in {1..30}; do
+		docker info >/dev/null 2>&1 && break
+		sleep 1
+	done
+	docker info >/dev/null 2>&1 \
+		|| fail "Docker was installed but its daemon did not become ready"
+	systemctl is-active --quiet docker \
+		|| fail "Docker was installed but docker.service is not active"
+	systemctl is-enabled --quiet docker \
+		|| fail "Docker was installed but docker.service is not enabled"
+	DOCKER_ENGINE_VERSION="$(docker_engine_version)"
+	DOCKER_COMPOSE_VERSION="$(docker_compose_version)"
+	docker_version_ge "${DOCKER_ENGINE_VERSION}" "${MIN_DOCKER_ENGINE_VERSION}" \
+		|| fail "installed Docker Engine ${DOCKER_ENGINE_VERSION:-unknown} does not meet the minimum required version ${MIN_DOCKER_ENGINE_VERSION}"
+	docker_version_ge "${DOCKER_COMPOSE_VERSION}" "${MIN_DOCKER_COMPOSE_VERSION}" \
+		|| fail "installed Docker Compose ${DOCKER_COMPOSE_VERSION:-unknown} does not meet the minimum required version ${MIN_DOCKER_COMPOSE_VERSION}"
+	DOCKER_RUNTIME_ACTION="reuse"
+	printf '[ OK ] Docker Engine %s and Docker Compose %s are ready\n' \
+		"${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
+}
+
+ensure_online_docker_runtime() {
+	if [[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]; then
+		printf '[ OK ] Existing Docker Engine %s and Docker Compose %s are supported\n' \
+			"${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
+		return 0
+	fi
+	install_online_docker_runtime
 }
 
 inspect_existing_installation() {
@@ -478,13 +904,22 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-install_host_tools
 inspect_existing_installation
 configure_curl_retry_options
 resolve_tag
+inspect_docker_runtime
+if [[ "${DOCKER_RUNTIME_ACTION}" == install ]]; then
+	assert_docker_service_manager
+	download_source_archive
+	load_docker_runtime_contract
+fi
 print_target
 confirm_installation
-download_source_archive
+install_host_tools
+if [[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]; then
+	download_source_archive
+fi
+ensure_online_docker_runtime
 
 printf '\n[....] Preparing release images and installation assets\n'
 
