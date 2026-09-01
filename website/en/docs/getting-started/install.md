@@ -12,10 +12,12 @@ HyperFileLens Community runs on an Ubuntu host that you manage. The online insta
 - Ubuntu 20.04, 22.04, or 24.04 on amd64.
 - At least 2 CPU cores and 4 GiB of memory. For regular use, 4 cores and 8 GiB or more are recommended.
 - At least 20 GiB of free space on the disk that contains `/opt`.
-- Docker Engine and Docker Compose V2 installed and running.
-- `curl` and `sudo` access.
-- Network access to GitHub, the container registry, and the Ubuntu package repositories.
+- Docker Engine 24.0.0 or later and Docker Compose V2 2.20.0 or later, with the Docker daemon running. If Docker is entirely absent, the online installer can install Docker CE and Compose V2 from the selected regional package source.
+- `curl`, Python 3, and `sudo` access.
+- Network access to GitHub, the container registry, the selected Docker CE source, and the Ubuntu package repositories.
 - Ports `11442–11445` available on the installation host.
+
+An existing Docker installation is reused when it meets these requirements. If its version is too old, Compose V2 is missing, or the daemon is unavailable, repair or upgrade Docker manually before continuing. The installer does not replace or repair an existing Docker runtime, and uninstalling HyperFileLens does not remove Docker, Compose, or containerd.
 
 ## Run the installer
 

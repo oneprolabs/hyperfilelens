@@ -11,6 +11,38 @@ grep -F 'curl --retry-all-errors --version' "${online_installer}" >/dev/null
 grep -F 'curl --retry-connrefused --version' "${online_installer}" >/dev/null
 grep -F 'CURL_RETRY_ARGS=(--retry 3 --retry-delay 2)' "${online_installer}" >/dev/null
 grep -F 'local partial="${output}.part"' "${online_installer}" >/dev/null
+grep -F 'DEFAULT_CN_DOCKER_CE_APT_BASE="https://mirrors.aliyun.com/docker-ce/linux/ubuntu"' \
+	"${online_installer}" >/dev/null
+grep -F 'DEFAULT_GLOBAL_DOCKER_CE_APT_BASE="https://download.docker.com/linux/ubuntu"' \
+	"${online_installer}" >/dev/null
+grep -F 'DOCKER_GPG_PRIMARY_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"' \
+	"${online_installer}" >/dev/null
+grep -F 'install_online_docker_runtime()' "${online_installer}" >/dev/null
+grep -F 'ensure_online_docker_runtime' "${online_installer}" >/dev/null
+grep -F 'load_docker_runtime_contract()' "${online_installer}" >/dev/null
+grep -F 'assert_docker_service_manager()' "${online_installer}" >/dev/null
+grep -F 'DOCKER_PACKAGE_INSTALL_ATTEMPTED' "${online_installer}" >/dev/null
+grep -F 'Acquire::Retries=3' "${online_installer}" >/dev/null
+grep -F 'DPkg::Lock::Timeout=120' "${online_installer}" >/dev/null
+grep -F -- '--no-upgrade' "${online_installer}" >/dev/null
+for package in docker-ce docker-ce-cli containerd.io docker-compose-plugin; do
+	grep -F "${package}" "${online_installer}" >/dev/null
+done
+online_docker_versions="${ROOT}/deploy/online/docker-ce-versions.env"
+[[ -f "${online_docker_versions}" ]] || {
+	printf 'ERROR: missing online Docker CE version contract\n' >&2
+	exit 1
+}
+for release in 2004 2204 2404; do
+	for component in ENGINE CLI CONTAINERD COMPOSE_PLUGIN; do
+		grep -E "^UBUNTU${release}_${component}_VERSION=[^[:space:]]+$" \
+			"${online_docker_versions}" >/dev/null || {
+			printf 'ERROR: incomplete online Docker CE version contract: Ubuntu %s %s\n' \
+				"${release}" "${component}" >&2
+			exit 1
+		}
+	done
+done
 if grep -F -- '--retry 3 --retry-all-errors' "${online_installer}" >/dev/null; then
 	printf 'ERROR: online installer unconditionally requires curl --retry-all-errors\n' >&2
 	exit 1

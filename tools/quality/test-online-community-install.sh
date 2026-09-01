@@ -31,6 +31,25 @@ grep -Fq 'recent fallback tags:' "${online}/install.sh"
 grep -Fq 'prepared Community image revision does not match the published release' \
 	"${online}/install.sh"
 grep -Fq 'run this command through sudo' "${online}/install.sh"
+grep -Fq 'https://mirrors.aliyun.com/docker-ce/linux/ubuntu' "${online}/install.sh"
+grep -Fq 'https://download.docker.com/linux/ubuntu' "${online}/install.sh"
+grep -Fq '9DC858229FC7DD38854AE2D88D81803C0EBFCD88' "${online}/install.sh"
+grep -Fq 'ensure_online_docker_runtime' "${online}/install.sh"
+grep -Fq 'load_docker_runtime_contract' "${online}/install.sh"
+grep -Fq 'Releases published before the per-OS contract' "${online}/install.sh"
+grep -Fq 'assert_docker_service_manager' "${online}/install.sh"
+grep -Fq 'DOCKER_PACKAGE_INSTALL_ATTEMPTED' "${online}/install.sh"
+grep -Fq 'Acquire::Retries=3' "${online}/install.sh"
+grep -Fq 'DPkg::Lock::Timeout=120' "${online}/install.sh"
+grep -Fq -- '--no-upgrade' "${online}/install.sh"
+for package in docker-ce docker-ce-cli containerd.io docker-compose-plugin; do
+	grep -Fq "${package}" "${online}/install.sh"
+done
+if grep -Eq 'def parse\([^)]*\)[[:space:]]*->[[:space:]]*(tuple|list|dict)\[' \
+	"${online}/install.sh"; then
+	printf 'ERROR: online installer uses a Python annotation unsupported by Ubuntu 20.04\n' >&2
+	exit 1
+fi
 grep -Fq -- '--yes                   Non-interactive compatibility flag' \
 	"${ROOT}/deploy/installer/install.sh"
 
@@ -294,7 +313,15 @@ set -euo pipefail
 digest="sha256:$(printf 'b%.0s' {1..64})"
 revision="$(printf 'c%.0s' {1..40})"
 case "${1:-} ${2:-}" in
-"info " | "compose version")
+"info ")
+	[[ "${HFL_TEST_DOCKER_INFO_FAIL:-0}" != "1" ]]
+	;;
+"version --format")
+	printf '%s\n' "${HFL_TEST_DOCKER_ENGINE_VERSION:-29.6.1}"
+	;;
+"compose version")
+	[[ "${HFL_TEST_DOCKER_COMPOSE_MISSING:-0}" != "1" ]] || exit 1
+	printf '%s\n' "${HFL_TEST_DOCKER_COMPOSE_VERSION:-2.39.1}"
 	exit 0
 	;;
 "pull --platform")
@@ -392,6 +419,248 @@ if source.count(marker) != 1:
     raise SystemExit("online installer entrypoint marker is ambiguous")
 pathlib.Path(sys.argv[2]).write_text(source.split(marker, 1)[0], encoding="utf-8")
 PY
+
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	docker_version_ge 24.0 24.0.0
+	! docker_version_ge 23.9.9 24.0.0
+	MIRROR=cn
+	configure_mirror
+	[[ "${DOCKER_CE_APT_BASE}" == "https://mirrors.aliyun.com/docker-ce/linux/ubuntu" ]]
+	[[ "${DOCKER_CE_GPG_URL}" == "https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg" ]]
+)
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	MIRROR=global
+	configure_mirror
+	[[ "${DOCKER_CE_APT_BASE}" == "https://download.docker.com/linux/ubuntu" ]]
+	[[ "${DOCKER_CE_GPG_URL}" == "https://download.docker.com/linux/ubuntu/gpg" ]]
+)
+runtime_contract_session="${tmp}/runtime-contract"
+mkdir -p "${runtime_contract_session}/source/deploy/online"
+cp "${online}/docker-ce-versions.env" \
+	"${runtime_contract_session}/source/deploy/online/docker-ce-versions.env"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	SESSION_DIR="${runtime_contract_session}"
+	TAG=v1.2.3
+	VERSION_ID=20.04
+	load_docker_runtime_contract
+	[[ "${DOCKER_ENGINE_PACKAGE_VERSION}" == '5:28.1.1-1~ubuntu.20.04~focal' ]]
+	[[ "${DOCKER_CLI_PACKAGE_VERSION}" == '5:28.1.1-1~ubuntu.20.04~focal' ]]
+	[[ "${DOCKER_CONTAINERD_PACKAGE_VERSION}" == '1.7.27-1' ]]
+	[[ "${DOCKER_COMPOSE_PACKAGE_VERSION}" == '2.35.1-1~ubuntu.20.04~focal' ]]
+	[[ "${DOCKER_TARGET_ENGINE_VERSION}" == 28.1.1 ]]
+	[[ "${DOCKER_TARGET_COMPOSE_VERSION}" == 2.35.1 ]]
+)
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	SESSION_DIR="${runtime_contract_session}"
+	TAG=v1.2.3
+	VERSION_ID=22.04
+	load_docker_runtime_contract
+	[[ "${DOCKER_ENGINE_PACKAGE_VERSION}" == '5:29.2.1-1~ubuntu.22.04~jammy' ]]
+	[[ "${DOCKER_CONTAINERD_PACKAGE_VERSION}" == '2.2.1-1~ubuntu.22.04~jammy' ]]
+	[[ "${DOCKER_COMPOSE_PACKAGE_VERSION}" == '5.0.2-1~ubuntu.22.04~jammy' ]]
+)
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	SESSION_DIR="${runtime_contract_session}"
+	TAG=v1.2.3
+	VERSION_ID=24.04
+	load_docker_runtime_contract
+	[[ "${DOCKER_ENGINE_PACKAGE_VERSION}" == '5:29.2.1-1~ubuntu.24.04~noble' ]]
+	[[ "${DOCKER_CONTAINERD_PACKAGE_VERSION}" == '2.2.1-1~ubuntu.24.04~noble' ]]
+	[[ "${DOCKER_COMPOSE_PACKAGE_VERSION}" == '5.0.2-1~ubuntu.24.04~noble' ]]
+)
+low_runtime_contract_session="${tmp}/runtime-contract-below-minimum"
+mkdir -p "${low_runtime_contract_session}/source/deploy/online"
+sed 's/^UBUNTU2004_ENGINE_VERSION=.*/UBUNTU2004_ENGINE_VERSION=5:23.0.0-1~ubuntu.20.04~focal/' \
+	"${online}/docker-ce-versions.env" \
+	>"${low_runtime_contract_session}/source/deploy/online/docker-ce-versions.env"
+low_runtime_contract_log="${tmp}/runtime-contract-below-minimum.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	SESSION_DIR="${low_runtime_contract_session}"
+	TAG=v1.2.3
+	VERSION_ID=20.04
+	load_docker_runtime_contract
+) >"${low_runtime_contract_log}" 2>&1; then
+	printf 'ERROR: online installer accepted a Docker runtime below its minimum version\n' >&2
+	exit 1
+fi
+grep -Fq 'below the required 24.0.0' "${low_runtime_contract_log}"
+legacy_runtime_session="${tmp}/legacy-runtime-contract"
+mkdir -p "${legacy_runtime_session}/source/deploy/online"
+(
+	# Older published tags do not contain the per-OS contract. The current
+	# bootstrap must keep those tags installable on a clean host.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	SESSION_DIR="${legacy_runtime_session}"
+	TAG=v0.2.14
+	VERSION_ID=20.04
+	load_docker_runtime_contract
+	[[ "${DOCKER_ENGINE_PACKAGE_VERSION}" == '5:28.1.1-1~ubuntu.20.04~focal' ]]
+	[[ "${DOCKER_COMPOSE_PACKAGE_VERSION}" == '2.35.1-1~ubuntu.20.04~focal' ]]
+)
+(
+	# Verify that a genuinely clean host without Docker selects the managed
+	# online installation path without touching the test host package state.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	command() {
+		if [[ "${1:-}" == -v && ( "${2:-}" == docker || "${2:-}" == docker-compose ) ]]; then
+			return 1
+		fi
+		builtin command "$@"
+	}
+	docker_packages_present() { return 1; }
+	docker_residual_state_present() { return 1; }
+	foreign_docker_apt_source_present() { return 1; }
+	inspect_docker_runtime
+	[[ "${DOCKER_RUNTIME_ACTION}" == install ]]
+)
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	dpkg-query() {
+		[[ "${*: -1}" == docker-ce ]] || return 1
+		printf 'iU '
+	}
+	docker_packages_present
+)
+
+service_manager_log="${tmp}/docker-service-manager-rejection.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	command() {
+		if [[ "${1:-}" == -v && "${2:-}" == systemctl ]]; then
+			return 1
+		fi
+		builtin command "$@"
+	}
+	assert_docker_service_manager
+) >"${service_manager_log}" 2>&1; then
+	printf 'ERROR: online Docker bootstrap accepted a host without systemd\n' >&2
+	exit 1
+fi
+grep -Fq 'systemd is required to install and manage Docker CE automatically' \
+	"${service_manager_log}"
+
+residual_runtime_bin="${tmp}/residual-runtime-bin"
+mkdir -p "${residual_runtime_bin}"
+printf '#!/usr/bin/env bash\nexit 0\n' >"${residual_runtime_bin}/dockerd"
+chmod 755 "${residual_runtime_bin}/dockerd"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	PATH="${residual_runtime_bin}:${PATH}"
+	docker_residual_state_present
+)
+
+partial_install_log="${tmp}/docker-partial-install-warning.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	SESSION_DIR=""
+	DOCKER_PACKAGE_INSTALL_ATTEMPTED=1
+	DOCKER_BOOTSTRAPPED=0
+	false || cleanup
+) >"${partial_install_log}" 2>&1; then
+	printf 'ERROR: partial Docker package installation cleanup returned success\n' >&2
+	exit 1
+fi
+grep -Fq 'may have left partially installed packages' "${partial_install_log}"
+grep -Fq 'dpkg --audit' "${partial_install_log}"
+
+dpkg_audit_error_log="${tmp}/docker-dpkg-audit-error.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	dpkg() {
+		printf 'dpkg database is unavailable\n' >&2
+		return 2
+	}
+	assert_clean_dpkg_state
+) >"${dpkg_audit_error_log}" 2>&1; then
+	printf 'ERROR: online Docker bootstrap ignored a failed dpkg audit\n' >&2
+	exit 1
+fi
+grep -Fq 'host package state could not be inspected' "${dpkg_audit_error_log}"
+
+safe_apt_plan="${tmp}/docker-safe.plan"
+printf '0 upgraded, 5 newly installed, 0 to remove and 0 not upgraded.\n' >"${safe_apt_plan}"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	validate_apt_install_plan "${safe_apt_plan}"
+)
+unsafe_apt_plan="${tmp}/docker-unsafe.plan"
+printf '1 upgraded, 5 newly installed, 0 to remove and 0 not upgraded.\n' >"${unsafe_apt_plan}"
+unsafe_apt_log="${tmp}/docker-unsafe.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	validate_apt_install_plan "${unsafe_apt_plan}"
+) >"${unsafe_apt_log}" 2>&1; then
+	printf 'ERROR: online Docker bootstrap accepted a host-package upgrade plan\n' >&2
+	exit 1
+fi
+grep -Fq 'would upgrade, downgrade, or remove existing host packages' "${unsafe_apt_log}"
+
+bootstrap_apt_log="${tmp}/docker-bootstrap-apt.log"
+bootstrap_systemctl_log="${tmp}/docker-bootstrap-systemctl.log"
+(
+	# Exercise the mutating branch with command fakes: the test must prove the
+	# selected package set, no-remove guard, service lifecycle, and post-checks
+	# without changing the CI host.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	SESSION_DIR="${tmp}/docker-bootstrap"
+	mkdir -p "${SESSION_DIR}"
+	DOCKER_RUNTIME_ACTION=install
+	DOCKER_ENGINE_PACKAGE_VERSION='5:29.2.1-test'
+	DOCKER_CLI_PACKAGE_VERSION='5:29.2.1-test'
+	DOCKER_CONTAINERD_PACKAGE_VERSION='2.2.1-test'
+	DOCKER_COMPOSE_PACKAGE_VERSION='5.0.2-test'
+	assert_clean_dpkg_state() { :; }
+	install_docker_prerequisites() { :; }
+	configure_docker_apt_source() { :; }
+	apt-get() {
+		printf '%s\n' "$*" >>"${bootstrap_apt_log}"
+		if [[ " $* " == *' --simulate '* ]]; then
+			printf '0 upgraded, 5 newly installed, 0 to remove and 0 not upgraded.\n'
+		fi
+	}
+	systemctl() {
+		printf '%s\n' "$*" >>"${bootstrap_systemctl_log}"
+	}
+	docker() {
+		[[ "${1:-}" == info ]]
+	}
+	docker_engine_version() { printf '29.6.1'; }
+	docker_compose_version() { printf '2.39.1'; }
+	sleep() { :; }
+	install_online_docker_runtime
+	[[ "${DOCKER_BOOTSTRAPPED}" -eq 1 ]]
+	[[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]
+)
+grep -Fq -- '--simulate --no-remove --no-upgrade --no-install-recommends install docker-ce=5:29.2.1-test docker-ce-cli=5:29.2.1-test containerd.io=2.2.1-test docker-compose-plugin=5.0.2-test' \
+	"${bootstrap_apt_log}"
+grep -Fq -- 'install -y --no-remove --no-upgrade --no-install-recommends docker-ce=5:29.2.1-test docker-ce-cli=5:29.2.1-test containerd.io=2.2.1-test docker-compose-plugin=5.0.2-test' \
+	"${bootstrap_apt_log}"
+grep -Fxq 'enable --now docker' "${bootstrap_systemctl_log}"
+grep -Fxq 'is-active --quiet docker' "${bootstrap_systemctl_log}"
+grep -Fxq 'is-enabled --quiet docker' "${bootstrap_systemctl_log}"
+
 atomic_target="${tmp}/atomic-download.json"
 printf 'preserved response\n' >"${atomic_target}"
 if (
@@ -431,8 +700,8 @@ source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 replacements = {
     'INSTALL_ROOT="/opt/hyperfilelens"': f'INSTALL_ROOT="{sys.argv[3]}"',
     '[[ "${EUID}" -eq 0 ]] || fail "run this command through sudo"': ":",
-    "\ninstall_host_tools\ninspect_existing_installation\n": (
-        "\n:\ninspect_existing_installation\n"
+    "\nconfirm_installation\ninstall_host_tools\n": (
+        "\nconfirm_installation\n:\n"
     ),
     'SESSION_DIR="$(mktemp -d /var/tmp/hyperfilelens-online.XXXXXX)"': (
         f'SESSION_DIR="$(mktemp -d "{sys.argv[4]}/online-session.XXXXXX")"'
@@ -497,6 +766,8 @@ grep -Fq 'Version        v1.2.12' "${latest_log}" || {
 	cat "${latest_log}" >&2
 	exit 1
 }
+grep -Fq 'Docker Engine  29.6.1 · reuse' "${latest_log}"
+grep -Fq 'Docker Compose 2.39.1 · reuse' "${latest_log}"
 latest_session_log="$(find "${test_install_root}/logs" -maxdepth 1 -type f \
 	-name 'install-*.log' -print -quit)"
 [[ -n "${latest_session_log}" ]]
@@ -512,6 +783,34 @@ if grep -Fq 'using Ubuntu-compatible retry options' "${latest_log}"; then
 	printf 'ERROR: modern curl unexpectedly selected compatibility retry mode\n' >&2
 	exit 1
 fi
+
+for runtime_case in daemon engine compose; do
+	runtime_log="${tmp}/docker-${runtime_case}-rejection.log"
+	case "${runtime_case}" in
+	daemon)
+		runtime_env=(HFL_TEST_DOCKER_INFO_FAIL=1)
+		runtime_message='daemon is unavailable'
+		;;
+	engine)
+		runtime_env=(HFL_TEST_DOCKER_ENGINE_VERSION=23.0.6)
+		runtime_message='does not meet the minimum required version 24.0.0'
+		;;
+	compose)
+		runtime_env=(HFL_TEST_DOCKER_COMPOSE_MISSING=1)
+		runtime_message='Docker Compose V2 is missing'
+		;;
+	esac
+	if env PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+		"${runtime_env[@]}" "${test_installer}" --mirror global --yes \
+		>"${runtime_log}" 2>&1; then
+		printf 'ERROR: invalid existing Docker runtime was accepted: %s\n' "${runtime_case}" >&2
+		exit 1
+	fi
+	grep -Fq "${runtime_message}" "${runtime_log}" || {
+		cat "${runtime_log}" >&2
+		exit 1
+	}
+done
 
 compatible_log="${tmp}/curl-7.68-install.log"
 compatible_curl_log="${tmp}/curl-7.68-args.log"
