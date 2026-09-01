@@ -39,6 +39,12 @@ grep -Fq 'load_docker_runtime_contract' "${online}/install.sh"
 grep -Fq 'Releases published before the per-OS contract' "${online}/install.sh"
 grep -Fq 'assert_docker_service_manager' "${online}/install.sh"
 grep -Fq 'DOCKER_PACKAGE_INSTALL_ATTEMPTED' "${online}/install.sh"
+grep -Fq 'COMPOSE_PACKAGE_INSTALL_ATTEMPTED' "${online}/install.sh"
+grep -Fq 'validate_compose_only_install_plan' "${online}/install.sh"
+grep -Fq 'selected_docker_apt_source_present' "${online}/install.sh"
+grep -Fq 'foreign_docker_runtime_present' "${online}/install.sh"
+grep -Fq 'docker_ce_runtime_present' "${online}/install.sh"
+grep -Fq 'docker_apt_source_present' "${online}/install.sh"
 grep -Fq 'Acquire::Retries=3' "${online}/install.sh"
 grep -Fq 'DPkg::Lock::Timeout=120' "${online}/install.sh"
 grep -Fq -- '--no-upgrade' "${online}/install.sh"
@@ -407,6 +413,16 @@ case "${1:-} ${2:-}" in
 esac
 SH
 chmod 755 "${fake_bin}/curl" "${fake_bin}/docker"
+cat >"${fake_bin}/dpkg-query" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${*: -1}" == docker-ce || "${*: -1}" == docker-ce-cli ]]; then
+	printf 'ii '
+	exit 0
+fi
+exit 1
+SH
+chmod 755 "${fake_bin}/dpkg-query"
 
 online_functions="${tmp}/online-install-functions.sh"
 python3 - "${online}/install.sh" "${online_functions}" <<'PY'
@@ -437,6 +453,108 @@ PY
 	configure_mirror
 	[[ "${DOCKER_CE_APT_BASE}" == "https://download.docker.com/linux/ubuntu" ]]
 	[[ "${DOCKER_CE_GPG_URL}" == "https://download.docker.com/linux/ubuntu/gpg" ]]
+)
+apt_source_fixture="${tmp}/apt-source-fixture"
+mkdir -p "${apt_source_fixture}/sources.list.d"
+printf '# deb https://download.docker.com/linux/ubuntu noble stable\n' \
+	>"${apt_source_fixture}/sources.list.d/docker.list"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	DOCKER_CE_APT_BASE=https://download.docker.com/linux/ubuntu
+	! selected_docker_apt_source_present "${apt_source_fixture}"
+)
+printf 'deb https://example.test/ubuntu noble main # https://download.docker.com/linux/ubuntu\n' \
+	>"${apt_source_fixture}/sources.list.d/docker.list"
+(
+	# A Docker URL in a one-line source comment is not an active package source.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	DOCKER_CE_APT_BASE=https://download.docker.com/linux/ubuntu
+	! selected_docker_apt_source_present "${apt_source_fixture}"
+	! docker_apt_source_present "${apt_source_fixture}"
+)
+printf 'deb [arch=amd64] https://download.docker.com/linux/ubuntu noble stable\n' \
+	>"${apt_source_fixture}/sources.list.d/docker.list"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	DOCKER_CE_APT_BASE=https://download.docker.com/linux/ubuntu
+	selected_docker_apt_source_present "${apt_source_fixture}"
+	DOCKER_CE_SOURCE_NAME='Docker CE test source'
+	install_docker_prerequisites() {
+		printf 'ERROR: existing Docker source unexpectedly installed prerequisites\n' >&2
+		return 1
+	}
+	configure_docker_apt_source() {
+		printf 'ERROR: existing Docker source was configured again\n' >&2
+		return 1
+	}
+	ensure_docker_apt_source "${apt_source_fixture}"
+)
+cat >"${apt_source_fixture}/sources.list.d/docker.sources" <<'SOURCES'
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: noble
+Components: stable
+Enabled: no
+SOURCES
+rm "${apt_source_fixture}/sources.list.d/docker.list"
+(
+	# A disabled Deb822 stanza is not an enabled Docker CE source.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	DOCKER_CE_APT_BASE=https://download.docker.com/linux/ubuntu
+	! selected_docker_apt_source_present "${apt_source_fixture}"
+	! docker_apt_source_present "${apt_source_fixture}"
+)
+cat >"${apt_source_fixture}/sources.list.d/docker.sources" <<'SOURCES'
+Types: deb-src
+URIs: https://download.docker.com/linux/ubuntu
+Suites: noble
+Components: stable
+
+Types: deb
+URIs: https://example.test/ubuntu
+Suites: noble
+Components: stable
+Description: Documentation at https://download.docker.com/linux/ubuntu
+SOURCES
+(
+	# Source-only entries and URLs outside a Deb822 URIs field are not usable
+	# Docker CE binary package sources.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	DOCKER_CE_APT_BASE=https://download.docker.com/linux/ubuntu
+	! selected_docker_apt_source_present "${apt_source_fixture}"
+	! docker_apt_source_present "${apt_source_fixture}"
+)
+cat >"${apt_source_fixture}/sources.list.d/docker.sources" <<'SOURCES'
+Types: deb deb-src
+URIs:
+ https://download.docker.com/linux/ubuntu
+Suites: noble
+Components: stable
+SOURCES
+(
+	# Enabled Deb822 binary sources and continuation fields are recognized.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	DOCKER_CE_APT_BASE=https://download.docker.com/linux/ubuntu
+	selected_docker_apt_source_present "${apt_source_fixture}"
+	docker_apt_source_present "${apt_source_fixture}"
+)
+linked_source="${tmp}/linked-docker.sources"
+mv "${apt_source_fixture}/sources.list.d/docker.sources" "${linked_source}"
+ln -s "${linked_source}" "${apt_source_fixture}/sources.list.d/docker.sources"
+(
+	# Apt accepts source files through symlinks; an enabled linked source must be
+	# reused instead of adding a duplicate HFL-managed source.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	DOCKER_CE_APT_BASE=https://download.docker.com/linux/ubuntu
+	selected_docker_apt_source_present "${apt_source_fixture}"
+	docker_apt_source_present "${apt_source_fixture}"
 )
 runtime_contract_session="${tmp}/runtime-contract"
 mkdir -p "${runtime_contract_session}/source/deploy/online"
@@ -528,6 +646,154 @@ mkdir -p "${legacy_runtime_session}/source/deploy/online"
 	[[ "${DOCKER_RUNTIME_ACTION}" == install ]]
 )
 (
+	# Removed Docker packages with config-files-only (dpkg "rc") state do not
+	# represent installed package payloads on an otherwise clean host.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	dpkg-query() {
+		[[ "${*: -1}" == docker.io ]] || return 1
+		printf 'rc '
+	}
+	! docker_packages_present
+)
+(
+	# A healthy, supported Docker Engine with no Compose V2 plugin selects the
+	# narrowly scoped plugin bootstrap instead of changing the Engine runtime.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	docker() {
+		case "${1:-} ${2:-}" in
+		"info ") return 0 ;;
+		"version --format") printf '29.2.1\n' ;;
+		"compose version") return 1 ;;
+		esac
+		return 1
+	}
+	dpkg-query() {
+		[[ "${*: -1}" == docker-ce || "${*: -1}" == docker-ce-cli ]] || return 1
+		printf 'ii '
+	}
+	inspect_docker_runtime
+	[[ "${DOCKER_RUNTIME_ACTION}" == install-compose ]]
+	[[ "${DOCKER_ENGINE_VERSION}" == 29.2.1 ]]
+)
+(
+	# An Engine package without its Docker CE CLI package is not a complete
+	# Docker CE runtime that can receive a managed Compose plugin.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	dpkg-query() {
+		[[ "${*: -1}" == docker-ce ]] || return 1
+		printf 'ii '
+	}
+	! docker_ce_runtime_present
+)
+foreign_runtime_log="${tmp}/foreign-runtime-compose.log"
+if (
+	# A Docker runtime supplied by Ubuntu/Moby/Snap must not be converted to
+	# Docker CE merely to add Compose V2.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	docker() {
+		case "${1:-} ${2:-}" in
+		"info ") return 0 ;;
+		"version --format") printf '29.2.1\n' ;;
+		"compose version") return 1 ;;
+		esac
+		return 1
+	}
+	dpkg-query() {
+		[[ "${*: -1}" == docker.io ]] || return 1
+		printf 'ii '
+	}
+	inspect_docker_runtime
+) >"${foreign_runtime_log}" 2>&1; then
+	printf 'ERROR: foreign Docker runtime was accepted for Compose-only bootstrap\n' >&2
+	exit 1
+fi
+grep -Fq 'not a Docker CE installation' "${foreign_runtime_log}"
+foreign_complete_runtime_log="${tmp}/foreign-complete-runtime.log"
+if (
+	# A non-Docker-CE runtime is rejected even when it already exposes Compose;
+	# the online installer only supports Docker CE for its managed contract.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	docker() {
+		case "${1:-} ${2:-}" in
+		"info ") return 0 ;;
+		"version --format") printf '29.2.1\n' ;;
+		"compose version") printf '2.39.1\n' ;;
+		esac
+		return 1
+	}
+	dpkg-query() {
+		[[ "${*: -1}" == docker.io ]] || return 1
+		printf 'ii '
+	}
+	inspect_docker_runtime
+) >"${foreign_complete_runtime_log}" 2>&1; then
+	printf 'ERROR: complete foreign Docker runtime was accepted\n' >&2
+	exit 1
+fi
+grep -Fq 'not a Docker CE installation' "${foreign_complete_runtime_log}"
+unrecognized_runtime_log="${tmp}/unrecognized-runtime-compose.log"
+if (
+	# A healthy static or otherwise unrecognized Docker binary is not sufficient
+	# evidence that the Docker CE apt plugin can be added safely.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	docker() {
+		case "${1:-} ${2:-}" in
+		"info ") return 0 ;;
+		"version --format") printf '29.2.1\n' ;;
+		"compose version") return 1 ;;
+		esac
+		return 1
+	}
+	dpkg-query() { return 1; }
+	inspect_docker_runtime
+) >"${unrecognized_runtime_log}" 2>&1; then
+	printf 'ERROR: unrecognized Docker runtime was accepted for Compose-only bootstrap\n' >&2
+	exit 1
+fi
+grep -Fq 'not a Docker CE installation' "${unrecognized_runtime_log}"
+(
+	# A removed docker.io package with residual configuration (dpkg "rc") does
+	# not identify the active Docker Engine as Ubuntu's runtime.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	dpkg-query() {
+		[[ "${*: -1}" == docker.io ]] || return 1
+		printf 'rc '
+	}
+	command() {
+		if [[ "${1:-}" == -v && "${2:-}" == docker ]]; then
+			printf '/usr/bin/docker\n'
+			return 0
+		fi
+		builtin command "$@"
+	}
+	! foreign_docker_runtime_present
+)
+compose_target_log="${tmp}/compose-target.log"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	TAG=v1.2.3
+	SOURCE_NAME=GitHub
+	REGISTRY_NAME='Docker Hub'
+	ONLINE_LOG_FILE=/opt/hyperfilelens/logs/install-test.log
+	DOCKER_RUNTIME_ACTION=install-compose
+	DOCKER_ENGINE_VERSION=29.2.1
+	DOCKER_COMPOSE_PACKAGE_VERSION='5.0.2-1~ubuntu.24.04~noble'
+	DOCKER_CE_SOURCE_NAME='Docker CE · https://download.docker.com/linux/ubuntu'
+	print_target
+) >"${compose_target_log}"
+grep -Fq 'Docker Engine  29.2.1 · reuse' "${compose_target_log}"
+grep -Fq 'Docker Compose not installed → install docker-compose-plugin 5.0.2-1~ubuntu.24.04~noble' \
+	"${compose_target_log}"
+grep -Fq 'Install scope  Compose V2 plugin only' "${compose_target_log}"
+(
 	# shellcheck disable=SC1090
 	source "${online_functions}"
 	dpkg-query() {
@@ -581,6 +847,21 @@ fi
 grep -Fq 'may have left partially installed packages' "${partial_install_log}"
 grep -Fq 'dpkg --audit' "${partial_install_log}"
 
+partial_compose_log="${tmp}/compose-partial-install-warning.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	SESSION_DIR=""
+	COMPOSE_PACKAGE_INSTALL_ATTEMPTED=1
+	COMPOSE_BOOTSTRAPPED=0
+	false || cleanup
+) >"${partial_compose_log}" 2>&1; then
+	printf 'ERROR: partial Compose plugin installation cleanup returned success\n' >&2
+	exit 1
+fi
+grep -Fq 'Compose V2 plugin installation did not complete' "${partial_compose_log}"
+grep -Fq 'existing Docker Engine was not replaced' "${partial_compose_log}"
+
 dpkg_audit_error_log="${tmp}/docker-dpkg-audit-error.log"
 if (
 	# shellcheck disable=SC1090
@@ -615,6 +896,102 @@ if (
 	exit 1
 fi
 grep -Fq 'would upgrade, downgrade, or remove existing host packages' "${unsafe_apt_log}"
+
+safe_compose_plan="${tmp}/compose-safe.plan"
+cat >"${safe_compose_plan}" <<'PLAN'
+Inst docker-compose-plugin (5.0.2-1~ubuntu.24.04~noble Docker CE:stable [amd64])
+Conf docker-compose-plugin (5.0.2-1~ubuntu.24.04~noble Docker CE:stable [amd64])
+0 upgraded, 1 newly installed, 0 to remove and 0 not upgraded.
+PLAN
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	validate_apt_install_plan "${safe_compose_plan}" "Docker Compose V2 installation"
+	validate_compose_only_install_plan "${safe_compose_plan}"
+)
+unsafe_compose_plan="${tmp}/compose-unsafe.plan"
+cat >"${unsafe_compose_plan}" <<'PLAN'
+Inst docker-ce-cli (5:29.2.1-1~ubuntu.24.04~noble Docker CE:stable [amd64])
+Inst docker-compose-plugin (5.0.2-1~ubuntu.24.04~noble Docker CE:stable [amd64])
+0 upgraded, 2 newly installed, 0 to remove and 0 not upgraded.
+PLAN
+unsafe_compose_log="${tmp}/compose-unsafe.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	validate_compose_only_install_plan "${unsafe_compose_plan}"
+) >"${unsafe_compose_log}" 2>&1; then
+	printf 'ERROR: Compose-only bootstrap accepted a Docker CLI package change\n' >&2
+	exit 1
+fi
+grep -Fq 'cannot be installed safely without changing the existing Docker runtime' \
+	"${unsafe_compose_log}"
+empty_compose_plan="${tmp}/compose-empty.plan"
+: >"${empty_compose_plan}"
+empty_compose_log="${tmp}/compose-empty.log"
+if (
+	# An empty or unexpected apt plan must fail with the controlled diagnostic,
+	# not an unbound-array error under `set -u`.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	validate_compose_only_install_plan "${empty_compose_plan}"
+) >"${empty_compose_log}" 2>&1; then
+	printf 'ERROR: empty Compose-only apt plan was accepted\n' >&2
+	exit 1
+fi
+grep -Fq 'cannot be installed safely without changing the existing Docker runtime' \
+	"${empty_compose_log}"
+
+foreign_source_fixture="${tmp}/foreign-apt-source-fixture"
+mkdir -p "${foreign_source_fixture}/sources.list.d"
+printf 'deb https://download.docker.com/linux/ubuntu noble stable\n' \
+	>"${foreign_source_fixture}/sources.list.d/docker.list"
+(
+	# A different Docker source must not be combined with the selected mirror
+	# during Compose-only installation.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	DOCKER_CE_APT_BASE=https://mirrors.aliyun.com/docker-ce/linux/ubuntu
+	if ! foreign_docker_apt_source_present "${foreign_source_fixture}"; then
+		printf 'ERROR: foreign Docker source fixture was not detected\n' >&2
+		exit 1
+	fi
+	docker_apt_source_present "${foreign_source_fixture}"
+	DOCKER_CE_SOURCE_NAME='Selected Docker CE test source'
+	install_docker_prerequisites() {
+		printf 'ERROR: alternate Docker source unexpectedly installed prerequisites\n' >&2
+		return 1
+	}
+	configure_docker_apt_source() {
+		printf 'ERROR: alternate Docker source was replaced\n' >&2
+		return 1
+	}
+	ensure_docker_apt_source "${foreign_source_fixture}"
+)
+printf '# deb https://download.docker.com/linux/ubuntu noble stable\n' \
+	>"${foreign_source_fixture}/sources.list.d/docker.list"
+(
+	# Commented-out Docker sources are not active conflicts.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	! foreign_docker_apt_source_present "${foreign_source_fixture}"
+	! docker_apt_source_present "${foreign_source_fixture}"
+)
+cat >"${foreign_source_fixture}/sources.list.d/docker.sources" <<'SOURCES'
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: noble
+Components: stable
+Enabled: no
+SOURCES
+rm "${foreign_source_fixture}/sources.list.d/docker.list"
+(
+	# Disabled Deb822 Docker sources are not active conflicts.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	! foreign_docker_apt_source_present "${foreign_source_fixture}"
+	! docker_apt_source_present "${foreign_source_fixture}"
+)
 
 bootstrap_apt_log="${tmp}/docker-bootstrap-apt.log"
 bootstrap_systemctl_log="${tmp}/docker-bootstrap-systemctl.log"
@@ -660,6 +1037,46 @@ grep -Fq -- 'install -y --no-remove --no-upgrade --no-install-recommends docker-
 grep -Fxq 'enable --now docker' "${bootstrap_systemctl_log}"
 grep -Fxq 'is-active --quiet docker' "${bootstrap_systemctl_log}"
 grep -Fxq 'is-enabled --quiet docker' "${bootstrap_systemctl_log}"
+
+compose_apt_log="${tmp}/compose-bootstrap-apt.log"
+(
+	# Exercise the Compose-only branch with command fakes. Only the pinned
+	# plugin package may be planned or installed, and the Engine must not change.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	SESSION_DIR="${tmp}/compose-bootstrap"
+	mkdir -p "${SESSION_DIR}"
+	DOCKER_RUNTIME_ACTION=install-compose
+	DOCKER_ENGINE_VERSION=29.2.1
+	DOCKER_COMPOSE_PACKAGE_VERSION='5.0.2-test'
+	assert_clean_dpkg_state() { :; }
+	ensure_docker_apt_source() { :; }
+	selected_docker_apt_source_present() { return 0; }
+	apt-get() {
+		printf '%s\n' "$*" >>"${compose_apt_log}"
+		if [[ " $* " == *' --simulate '* ]]; then
+			printf 'Inst docker-compose-plugin (5.0.2-test Docker CE:stable [amd64])\n'
+			printf 'Conf docker-compose-plugin (5.0.2-test Docker CE:stable [amd64])\n'
+			printf '0 upgraded, 1 newly installed, 0 to remove and 0 not upgraded.\n'
+		fi
+	}
+	docker() {
+		[[ "${1:-}" == info ]]
+	}
+	docker_engine_version() { printf '29.2.1'; }
+	docker_compose_version() { printf '5.0.2'; }
+	install_online_compose_plugin
+	[[ "${COMPOSE_BOOTSTRAPPED}" -eq 1 ]]
+	[[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]
+)
+grep -Fq -- '--simulate --no-remove --no-upgrade --no-install-recommends install docker-compose-plugin=5.0.2-test' \
+	"${compose_apt_log}"
+grep -Fq -- 'install -y --no-remove --no-upgrade --no-install-recommends docker-compose-plugin=5.0.2-test' \
+	"${compose_apt_log}"
+if grep -Eq 'docker-ce=|docker-ce-cli=|containerd.io=' "${compose_apt_log}"; then
+	printf 'ERROR: Compose-only bootstrap attempted to change Docker Engine packages\n' >&2
+	exit 1
+fi
 
 atomic_target="${tmp}/atomic-download.json"
 printf 'preserved response\n' >"${atomic_target}"
@@ -796,8 +1213,8 @@ for runtime_case in daemon engine compose; do
 		runtime_message='does not meet the minimum required version 24.0.0'
 		;;
 	compose)
-		runtime_env=(HFL_TEST_DOCKER_COMPOSE_MISSING=1)
-		runtime_message='Docker Compose V2 is missing'
+		runtime_env=(HFL_TEST_DOCKER_COMPOSE_VERSION=2.19.9)
+		runtime_message='does not meet the minimum required version 2.20.0'
 		;;
 	esac
 	if env PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \

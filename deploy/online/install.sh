@@ -42,6 +42,8 @@ DOCKER_TARGET_ENGINE_VERSION=""
 DOCKER_TARGET_COMPOSE_VERSION=""
 DOCKER_PACKAGE_INSTALL_ATTEMPTED=0
 DOCKER_BOOTSTRAPPED=0
+COMPOSE_PACKAGE_INSTALL_ATTEMPTED=0
+COMPOSE_BOOTSTRAPPED=0
 CURL_RETRY_ARGS=()
 APT_RETRY_ARGS=(-o Acquire::Retries=3 -o DPkg::Lock::Timeout=120)
 
@@ -135,23 +137,42 @@ Target
 EOF
 
 	printf '\nHost runtime\n'
-	if [[ "${DOCKER_RUNTIME_ACTION}" == install ]]; then
+	case "${DOCKER_RUNTIME_ACTION}" in
+	install)
 		printf '  Docker Engine  not installed → install %s\n' "${DOCKER_TARGET_ENGINE_VERSION}"
 		printf '  Docker Compose not installed → install %s\n' "${DOCKER_TARGET_COMPOSE_VERSION}"
 		printf '  Package source %s\n' "${DOCKER_CE_SOURCE_NAME}"
 		printf '  Docker service enable and start\n'
 		printf '  Lifecycle      retained when HyperFileLens is removed\n'
-	else
+		;;
+	install-compose)
+		printf '  Docker Engine  %s · reuse\n' "${DOCKER_ENGINE_VERSION}"
+		printf '  Docker Compose not installed → install docker-compose-plugin %s\n' \
+			"${DOCKER_COMPOSE_PACKAGE_VERSION}"
+		printf '  Package source %s\n' "${DOCKER_CE_SOURCE_NAME}"
+		printf '  Install scope  Compose V2 plugin only\n'
+		printf '  Docker service active\n'
+		printf '  Lifecycle      retained when HyperFileLens is removed\n'
+		;;
+	reuse)
 		printf '  Docker Engine  %s · reuse\n' "${DOCKER_ENGINE_VERSION}"
 		printf '  Docker Compose %s · reuse\n' "${DOCKER_COMPOSE_VERSION}"
 		printf '  Docker service active\n'
-	fi
+		;;
+	*) fail "internal Docker runtime action is invalid" ;;
+	esac
 }
 
 cleanup() {
 	local rc=$?
 	trap - EXIT INT TERM
-	if ((rc != 0 && DOCKER_PACKAGE_INSTALL_ATTEMPTED == 1 && DOCKER_BOOTSTRAPPED == 0)); then
+	if ((rc != 0 && COMPOSE_PACKAGE_INSTALL_ATTEMPTED == 1 && COMPOSE_BOOTSTRAPPED == 0)); then
+		printf '\n[WARN] Docker Compose V2 plugin installation did not complete and may have left a partially installed package.\n' >&2
+		printf '[INFO] The existing Docker Engine was not replaced; review dpkg --audit and repair the package state manually before retrying.\n' >&2
+	elif ((rc != 0 && COMPOSE_BOOTSTRAPPED == 1)); then
+		printf '\n[WARN] Docker Compose V2 was installed, but HyperFileLens installation did not complete.\n' >&2
+		printf '[INFO] Docker Compose was retained as a shared host runtime. Run the same command again to retry.\n' >&2
+	elif ((rc != 0 && DOCKER_PACKAGE_INSTALL_ATTEMPTED == 1 && DOCKER_BOOTSTRAPPED == 0)); then
 		printf '\n[WARN] Docker CE package installation did not complete and may have left partially installed packages.\n' >&2
 		printf '[INFO] Review dpkg --audit and repair the Docker package state manually before retrying.\n' >&2
 	elif ((rc != 0 && DOCKER_BOOTSTRAPPED == 1)); then
@@ -286,16 +307,43 @@ docker_compose_version() {
 }
 
 docker_packages_present() {
-	local package status
+	local package
 	for package in \
 		docker-ce docker-ce-cli docker-buildx-plugin docker-compose-plugin \
 		docker-ce-rootless-extras docker.io docker-compose-v2 docker-compose \
 		containerd.io containerd runc moby-engine moby-cli moby-containerd \
 		moby-compose podman-docker; do
-		status="$(dpkg-query -W -f='${db:Status-Abbrev}' "${package}" 2>/dev/null || true)"
-		[[ -n "${status}" && "${status}" != un* ]] && return 0
+		docker_package_payload_present "${package}" && return 0
 	done
 	return 1
+}
+
+docker_package_payload_present() {
+	local status state
+	status="$(dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null || true)"
+	state="${status:1:1}"
+	[[ -n "${state}" && "${state}" != n && "${state}" != c ]]
+}
+
+foreign_docker_runtime_present() {
+	local package docker_path
+	for package in docker.io moby-engine moby-cli moby-containerd moby-compose podman-docker; do
+		docker_package_installed "${package}" && return 0
+	done
+	docker_path="$(command -v docker 2>/dev/null || true)"
+	[[ "${docker_path}" == /snap/* ]] && return 0
+	return 1
+}
+
+docker_package_installed() {
+	local status
+	status="$(dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null || true)"
+	[[ "${status:1:1}" == i ]]
+}
+
+docker_ce_runtime_present() {
+	docker_package_installed docker-ce \
+		&& docker_package_installed docker-ce-cli
 }
 
 docker_residual_state_present() {
@@ -314,13 +362,78 @@ docker_residual_state_present() {
 }
 
 foreign_docker_apt_source_present() {
+	local apt_root="${1:-/etc/apt}"
 	local file
 	while IFS= read -r file; do
-		[[ "${file}" == /etc/apt/sources.list.d/hyperfilelens-docker.list ]] && continue
-		if grep -Eqs 'download\.docker\.com/linux/ubuntu|/docker-ce/linux/ubuntu' "${file}"; then
+		[[ "${file}" == "${apt_root%/}/sources.list.d/hyperfilelens-docker.list" ]] && continue
+		[[ -f "${file}" && -r "${file}" ]] || continue
+		if apt_source_has_enabled_value "${file}" "download.docker.com/linux/ubuntu" \
+			|| apt_source_has_enabled_value "${file}" "/docker-ce/linux/ubuntu"; then
 			return 0
 		fi
-	done < <(find /etc/apt -maxdepth 2 -type f \
+	done < <(find "${apt_root}" -maxdepth 2 \( -type f -o -type l \) \
+		\( -name 'sources.list' -o -name '*.list' -o -name '*.sources' \) \
+		-print 2>/dev/null)
+	return 1
+}
+
+apt_source_has_enabled_value() {
+	local file=$1 value=$2
+	if [[ "${file}" == *.sources ]]; then
+		awk -v value="${value}" '
+			BEGIN { RS="" }
+			{
+				enabled=1
+				has_deb=0
+				has_uri=0
+				field=""
+				count=split($0, lines, "\n")
+				for (i=1; i<=count; i++) {
+					line=lines[i]
+					if (line ~ /^[[:space:]]*#/) continue
+					lower=tolower(line)
+					if (lower ~ /^[[:space:]]*enabled:[[:space:]]*no([[:space:]]|$)/) enabled=0
+					if (line ~ /^[A-Za-z][A-Za-z0-9-]*:/) {
+						field=lower
+						sub(/^[[:space:]]*/, "", field)
+						sub(/:.*/, "", field)
+						data=line
+						sub(/^[^:]*:[[:space:]]*/, "", data)
+					} else if (line ~ /^[[:space:]]+/) {
+						data=line
+						sub(/^[[:space:]]+/, "", data)
+					} else {
+						field=""
+						data=""
+					}
+					if (field == "types") {
+						type_count=split(tolower(data), types, /[[:space:]]+/)
+						for (type_index=1; type_index<=type_count; type_index++) {
+							if (types[type_index] == "deb") has_deb=1
+						}
+					}
+					if (field == "uris" && index(data, value)) has_uri=1
+				}
+				if (enabled && has_deb && has_uri) found=1
+			}
+			END { exit !found }
+		' "${file}"
+	else
+		awk -v value="${value}" \
+			'$1 == "deb" {line=$0; sub(/[[:space:]]+#.*/, "", line); if (index(line, value)) found=1} END {exit !found}' "${file}"
+	fi
+}
+
+docker_apt_source_present() {
+	local apt_root="${1:-/etc/apt}"
+	local file
+	while IFS= read -r file; do
+		[[ -f "${file}" && -r "${file}" ]] || continue
+		if apt_source_has_enabled_value "${file}" "download.docker.com/linux/ubuntu" \
+			|| apt_source_has_enabled_value "${file}" "/docker-ce/linux/ubuntu"; then
+			return 0
+		fi
+	done < <(find "${apt_root}" -maxdepth 2 \( -type f -o -type l \) \
 		\( -name 'sources.list' -o -name '*.list' -o -name '*.sources' \) \
 		-print 2>/dev/null)
 	return 1
@@ -330,6 +443,9 @@ inspect_docker_runtime() {
 	DOCKER_ENGINE_VERSION=""
 	DOCKER_COMPOSE_VERSION=""
 	if command -v docker >/dev/null 2>&1; then
+		if foreign_docker_runtime_present || ! docker_ce_runtime_present; then
+			fail "the existing Docker runtime is not a Docker CE installation; install Docker CE and Compose V2 manually, then rerun this installer"
+		fi
 		docker info >/dev/null 2>&1 \
 			|| fail "Docker is installed but its daemon is unavailable; start or repair Docker manually, then rerun this installer"
 		DOCKER_ENGINE_VERSION="$(docker_engine_version)"
@@ -338,8 +454,13 @@ inspect_docker_runtime() {
 		docker_version_ge "${DOCKER_ENGINE_VERSION}" "${MIN_DOCKER_ENGINE_VERSION}" \
 			|| fail "Docker Engine ${DOCKER_ENGINE_VERSION} does not meet the minimum required version ${MIN_DOCKER_ENGINE_VERSION}; upgrade Docker manually, then rerun this installer"
 		DOCKER_COMPOSE_VERSION="$(docker_compose_version)"
-		[[ -n "${DOCKER_COMPOSE_VERSION}" ]] \
-			|| fail "Docker Compose V2 is missing; install the Compose V2 plugin manually, then rerun this installer"
+		if [[ -z "${DOCKER_COMPOSE_VERSION}" ]]; then
+			if ! selected_docker_apt_source_present && docker_apt_source_present; then
+				DOCKER_CE_SOURCE_NAME="Existing Docker CE apt source"
+			fi
+			DOCKER_RUNTIME_ACTION="install-compose"
+			return 0
+		fi
 		docker_version_ge "${DOCKER_COMPOSE_VERSION}" "${MIN_DOCKER_COMPOSE_VERSION}" \
 			|| fail "Docker Compose ${DOCKER_COMPOSE_VERSION} does not meet the minimum required version ${MIN_DOCKER_COMPOSE_VERSION}; upgrade the Compose V2 plugin manually, then rerun this installer"
 		DOCKER_RUNTIME_ACTION="reuse"
@@ -526,11 +647,51 @@ configure_docker_apt_source() {
 	printf '[ OK ] Docker CE package source is ready\n'
 }
 
+selected_docker_apt_source_present() {
+	local apt_root="${1:-/etc/apt}"
+	local file
+	[[ -n "${DOCKER_CE_APT_BASE}" ]] || return 1
+	while IFS= read -r file; do
+		[[ -f "${file}" && -r "${file}" ]] || continue
+		apt_source_has_enabled_value "${file}" "${DOCKER_CE_APT_BASE}" && return 0
+	done < <(find "${apt_root}" -maxdepth 2 \( -type f -o -type l \) \
+		\( -name 'sources.list' -o -name '*.list' -o -name '*.sources' \) \
+		-print 2>/dev/null)
+	return 1
+}
+
+ensure_docker_apt_source() {
+	local apt_root="${1:-/etc/apt}"
+	if selected_docker_apt_source_present "${apt_root}"; then
+		printf '[ OK ] Existing %s will be reused\n' "${DOCKER_CE_SOURCE_NAME}"
+		return 0
+	fi
+	if docker_apt_source_present "${apt_root}"; then
+		printf '[ OK ] Existing Docker CE apt source will be reused\n'
+		return 0
+	fi
+	install_docker_prerequisites
+	configure_docker_apt_source
+}
+
 validate_apt_install_plan() {
 	local plan=$1 operation=${2:-"automatic host-package installation"}
 	if grep -Eq '^The following packages will be (REMOVED|DOWNGRADED):|^[[:space:]]*[1-9][0-9]* upgraded,| [1-9][0-9]* to remove' "${plan}"; then
 		cat "${plan}" >&2
 		fail "${operation} would upgrade, downgrade, or remove existing host packages; install the required packages manually"
+	fi
+}
+
+validate_compose_only_install_plan() {
+	local plan=$1
+	local package
+	local -a packages=()
+	mapfile -t packages < <(awk '$1 == "Inst" {print $2}' "${plan}")
+	package="${packages[0]:-}"
+	package="${package%%:*}"
+	if [[ "${#packages[@]}" -ne 1 || "${package}" != docker-compose-plugin ]]; then
+		cat "${plan}" >&2
+		fail "Docker Compose V2 cannot be installed safely without changing the existing Docker runtime; install a compatible Compose V2 plugin manually, then rerun this installer"
 	fi
 }
 
@@ -595,13 +756,66 @@ install_online_docker_runtime() {
 		"${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
 }
 
+install_online_compose_plugin() {
+	local plan="${SESSION_DIR}/compose-apt-plan.log"
+	local install_log="${SESSION_DIR}/compose-apt-install.log"
+	local original_engine_version="${DOCKER_ENGINE_VERSION}"
+	[[ -n "${DOCKER_COMPOSE_PACKAGE_VERSION}" ]] \
+		|| fail "Docker Compose V2 package version was not resolved"
+	assert_clean_dpkg_state
+	if ! selected_docker_apt_source_present; then
+		if ! docker_apt_source_present; then
+			command -v gpg >/dev/null 2>&1 \
+				|| fail "GnuPG is required to add the Docker CE source for Compose V2; install it manually, then rerun this installer"
+			[[ -f /etc/ssl/certs/ca-certificates.crt ]] \
+				|| fail "CA certificates are required to add the Docker CE source for Compose V2; install them manually, then rerun this installer"
+		fi
+	fi
+	ensure_docker_apt_source
+	printf '[....] Resolving Docker Compose V2 package\n'
+	apt-get "${APT_RETRY_ARGS[@]}" update \
+		|| fail "could not update the selected Docker CE package source"
+	if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
+		--no-install-recommends install \
+		"docker-compose-plugin=${DOCKER_COMPOSE_PACKAGE_VERSION}" >"${plan}" 2>&1; then
+		tail -n 20 "${plan}" >&2 || true
+		fail "Docker Compose V2 package dependencies could not be resolved without changing the existing Docker runtime"
+	fi
+	validate_apt_install_plan "${plan}" "Docker Compose V2 installation"
+	validate_compose_only_install_plan "${plan}"
+	printf '[ OK ] Docker Compose V2 package plan is safe\n'
+	printf '[....] Installing Docker Compose V2 plugin\n'
+	COMPOSE_PACKAGE_INSTALL_ATTEMPTED=1
+	if ! DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+		install -y --no-remove --no-upgrade --no-install-recommends \
+		"docker-compose-plugin=${DOCKER_COMPOSE_PACKAGE_VERSION}" >"${install_log}" 2>&1; then
+		tail -n 20 "${install_log}" >&2 || true
+		fail "Docker Compose V2 plugin installation failed"
+	fi
+	COMPOSE_BOOTSTRAPPED=1
+	docker info >/dev/null 2>&1 \
+		|| fail "Docker daemon became unavailable after the Compose V2 plugin installation"
+	DOCKER_ENGINE_VERSION="$(docker_engine_version)"
+	[[ "${DOCKER_ENGINE_VERSION}" == "${original_engine_version}" ]] \
+		|| fail "Docker Engine changed unexpectedly while installing the Compose V2 plugin"
+	DOCKER_COMPOSE_VERSION="$(docker_compose_version)"
+	docker_version_ge "${DOCKER_COMPOSE_VERSION}" "${MIN_DOCKER_COMPOSE_VERSION}" \
+		|| fail "installed Docker Compose ${DOCKER_COMPOSE_VERSION:-unknown} does not meet the minimum required version ${MIN_DOCKER_COMPOSE_VERSION}"
+	DOCKER_RUNTIME_ACTION="reuse"
+	printf '[ OK ] Docker Compose %s is ready; Docker Engine %s was reused unchanged\n' \
+		"${DOCKER_COMPOSE_VERSION}" "${DOCKER_ENGINE_VERSION}"
+}
+
 ensure_online_docker_runtime() {
-	if [[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]; then
+	case "${DOCKER_RUNTIME_ACTION}" in
+	reuse)
 		printf '[ OK ] Existing Docker Engine %s and Docker Compose %s are supported\n' \
 			"${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
-		return 0
-	fi
-	install_online_docker_runtime
+		;;
+	install-compose) install_online_compose_plugin ;;
+	install) install_online_docker_runtime ;;
+	*) fail "internal Docker runtime action is invalid" ;;
+	esac
 }
 
 inspect_existing_installation() {
@@ -910,6 +1124,8 @@ resolve_tag
 inspect_docker_runtime
 if [[ "${DOCKER_RUNTIME_ACTION}" == install ]]; then
 	assert_docker_service_manager
+fi
+if [[ "${DOCKER_RUNTIME_ACTION}" != reuse ]]; then
 	download_source_archive
 	load_docker_runtime_contract
 fi
