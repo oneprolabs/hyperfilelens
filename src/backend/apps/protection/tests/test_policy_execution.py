@@ -9,8 +9,14 @@ from django.utils import timezone
 
 from apps.iam.models import Membership, Organization
 from apps.node.models import Node
-from apps.protection.models import BackupConfig, BackupPolicy, BackupSourceSnapshot
+from apps.protection.models import (
+    BackupConfig,
+    BackupPolicy,
+    BackupSourceSnapshot,
+    SnapshotUsageLease,
+)
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
+from apps.protection.services.snapshot_usage import acquire_snapshot_usage
 from apps.protection.services.policy_execution import (
     _schedule_fire_key,
     apply_retention_policies,
@@ -265,6 +271,77 @@ class PolicyExecutionTests(TestCase):
         self.assertEqual([snapshot.id for snapshot in candidates], [old.id])
         self.assertNotIn(latest.id, [snapshot.id for snapshot in candidates])
 
+    def test_retention_candidates_exclude_protected_snapshot(self):
+        now = timezone.now()
+        old = self._snapshot("protected-old", now - timedelta(days=3))
+        self._snapshot("protected-latest", now - timedelta(hours=1))
+        acquire_snapshot_usage(
+            organization_id=self.org.id,
+            snapshot_id=old.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+            consumer_id=101,
+        )
+
+        candidates = retention_delete_candidates_for_config(
+            config=self.config,
+            policy=self.policy,
+            now=now,
+        )
+
+        self.assertEqual(candidates, [])
+
+    def test_protected_snapshot_does_not_consume_recent_point_limit(self):
+        now = timezone.now()
+        newest = self._snapshot("protected-newest", now - timedelta(hours=1))
+        retained = self._snapshot("protected-retained", now - timedelta(days=2))
+        expired = self._snapshot("protected-expired", now - timedelta(days=3))
+        acquire_snapshot_usage(
+            organization_id=self.org.id,
+            snapshot_id=newest.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id=102,
+        )
+
+        candidates = retention_delete_candidates_for_config(
+            config=self.config,
+            policy=self.policy,
+            now=now,
+        )
+
+        self.assertEqual([snapshot.id for snapshot in candidates], [expired.id])
+        self.assertNotIn(retained.id, [snapshot.id for snapshot in candidates])
+
+    def test_protected_snapshot_does_not_consume_daily_bucket(self):
+        now = timezone.now()
+        self.policy.retention = {
+            "enabled": True,
+            "recent_points": 1,
+            "daily_enabled": True,
+            "daily_days": 7,
+        }
+        self.policy.save(update_fields=["retention", "updated_at"])
+        self._snapshot("daily-newest", now - timedelta(hours=1))
+        protected = self._snapshot("daily-protected", now - timedelta(days=2))
+        retained = self._snapshot(
+            "daily-ordinary",
+            now - timedelta(days=2, hours=1),
+        )
+        acquire_snapshot_usage(
+            organization_id=self.org.id,
+            snapshot_id=protected.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id=103,
+        )
+
+        candidates = retention_delete_candidates_for_config(
+            config=self.config,
+            policy=self.policy,
+            now=now,
+        )
+
+        self.assertNotIn(protected.id, [snapshot.id for snapshot in candidates])
+        self.assertNotIn(retained.id, [snapshot.id for snapshot in candidates])
+
     @patch("apps.protection.services.policy_execution._policy_configs")
     @patch(
         "apps.protection.services.policy_execution.create_and_queue_snapshot_delete_task"
@@ -307,3 +384,25 @@ class PolicyExecutionTests(TestCase):
         self.assertEqual([snapshot.id for snapshot in candidates], [failed.id])
         self.assertNotIn(creating.id, [snapshot.id for snapshot in candidates])
         self.assertNotIn(available.id, [snapshot.id for snapshot in candidates])
+
+    def test_failed_candidates_exclude_protected_snapshot(self):
+        now = timezone.now()
+        protected = self._snapshot("failed-protected", now - timedelta(days=3))
+        protected.status = BackupSourceSnapshot.Status.FAILED
+        protected.save(update_fields=["status", "updated_at"])
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=protected.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="legacy-active-chat",
+        )
+        deletable = self._snapshot("failed-deletable", now - timedelta(days=2))
+        deletable.status = BackupSourceSnapshot.Status.FAILED
+        deletable.save(update_fields=["status", "updated_at"])
+
+        candidates = failed_snapshot_delete_candidates_for_config(
+            config=self.config,
+            policy=self.policy,
+        )
+
+        self.assertEqual([snapshot.id for snapshot in candidates], [deletable.id])

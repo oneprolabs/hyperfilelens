@@ -10,6 +10,7 @@ from apps.protection.models.backup_source_snapshot import (
 from apps.protection.models.backup_policy import BackupPolicy
 from apps.protection.models.file_filter_rule import FileFilterRule
 from apps.protection.models.snapshot_download import SnapshotDownloadArtifact
+from apps.protection.models.snapshot_usage import SnapshotUsageLease
 
 __all__ = [
     "BackupConfig",
@@ -20,4 +21,5 @@ __all__ = [
     "BackupPolicy",
     "FileFilterRule",
     "SnapshotDownloadArtifact",
+    "SnapshotUsageLease",
 ]

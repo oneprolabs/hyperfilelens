@@ -27,6 +27,10 @@ from apps.protection.services.snapshot_delete_execution import (
     run_snapshot_delete,
     snapshot_delete_agent_work_active,
 )
+from apps.protection.services.snapshot_usage import (
+    SnapshotUsageConflict,
+    protected_snapshot_ids,
+)
 from apps.storage.repositories.models import Repository
 from apps.source.constants import PipelineStep
 from apps.source.services.internal.selectable_ids import parse_selectable_id
@@ -208,7 +212,22 @@ def ensure_backup_config_reset_task(
     if not configs:
         return None, False
     config_ids = [config.id for config in configs]
-    snapshots = _snapshots_for_configs(organization_id=organization_id, config_ids=config_ids)
+    snapshots = list(
+        BackupSourceSnapshot.objects.select_for_update()
+        .filter(
+            organization_id=organization_id,
+            backup_config_id__in=config_ids,
+        )
+        .order_by("id")
+    )
+    if protected_snapshot_ids(snapshot.id for snapshot in snapshots):
+        raise SnapshotUsageConflict(
+            {
+                "source_snapshot_id": (
+                    "A snapshot is currently in use by a restore or Chat preparation."
+                )
+            }
+        )
     repository_ids = sorted({int(config.repository_id) for config in configs if int(config.repository_id or 0) > 0})
     payload = {
         "source_type": source_type,
@@ -445,6 +464,30 @@ def _run_backup_config_reset_task_locked(
     config_ids = [int(value) for value in payload.get("backup_config_ids") or [] if int(value or 0) > 0]
 
     try:
+        with transaction.atomic():
+            snapshots = list(
+                BackupSourceSnapshot.objects.select_for_update()
+                .filter(
+                    organization_id=organization_id,
+                    backup_config_id__in=config_ids,
+                )
+                .order_by("id")
+            )
+            if protected_snapshot_ids(snapshot.id for snapshot in snapshots):
+                raise SnapshotUsageConflict(
+                    {
+                        "source_snapshot_id": (
+                            "A snapshot is currently in use by a restore or Chat preparation."
+                        )
+                    }
+                )
+            BackupConfig.objects.filter(
+                organization_id=organization_id,
+                id__in=config_ids,
+            ).update(
+                status=BackupConfig.Status.RESETTING,
+                reset_task_uuid=task.task_uuid,
+            )
         _set_step_status(
             task=task,
             step_name="prepare_reset",
@@ -556,6 +599,17 @@ def _run_backup_config_reset_task_locked(
             result_payload=result,
         )
         return result
+    except SnapshotUsageConflict as exc:
+        _defer_backup_config_reset_for_remote_work(
+            task=task,
+            message=str(exc),
+        )
+        return {
+            "source_type": source_type,
+            "source_ref_id": source_ref_id,
+            "status": "waiting",
+            "reason": "snapshot_in_use",
+        }
     except (AgentSnapshotDeletePending, ControllerSnapshotDeleteBusy) as exc:
         _defer_backup_config_reset_for_remote_work(
             task=task,

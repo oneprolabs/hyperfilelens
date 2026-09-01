@@ -28,6 +28,10 @@ from apps.protection.services.snapshot_delete_execution import (
     run_snapshot_delete,
     snapshot_delete_agent_work_active,
 )
+from apps.protection.services.snapshot_usage import (
+    SnapshotUsageConflict,
+    snapshot_is_protected,
+)
 from apps.storage.services.internal.repository_workload import (
     RepositoryWorkload,
     lock_repositories_for_workload,
@@ -141,12 +145,25 @@ def _kopia_snapshot_directories_by_id(rows: list[BackupSourceSnapshotDirectory])
     return directories_by_id
 
 
+@transaction.atomic
 def create_snapshot_delete_task(
     *,
     source_snapshot: BackupSourceSnapshot,
     trigger_type: str = Task.TriggerType.SYSTEM,
     source_unregister_task: Task | None = None,
 ) -> Task:
+    source_snapshot = BackupSourceSnapshot.objects.select_for_update().get(
+        organization_id=source_snapshot.organization_id,
+        id=source_snapshot.id,
+    )
+    if snapshot_is_protected(snapshot_id=source_snapshot.id):
+        raise SnapshotUsageConflict(
+            {
+                "source_snapshot_id": (
+                    "Snapshot is currently in use by a restore or Chat preparation."
+                )
+            }
+        )
     if source_snapshot.status == BackupSourceSnapshot.Status.DELETED:
         raise ValidationError({"source_snapshot_id": "Snapshot is already deleted."})
     active = _active_delete_task(
@@ -234,6 +251,14 @@ def create_and_queue_snapshot_delete_task(
             organization_id=source_snapshot.organization_id,
             id=source_snapshot.id,
         )
+        if snapshot_is_protected(snapshot_id=locked_snapshot.id):
+            raise SnapshotUsageConflict(
+                {
+                    "source_snapshot_id": (
+                        "Snapshot is currently in use by a restore or Chat preparation."
+                    )
+                }
+            )
         active = _active_delete_task(
             organization_id=locked_snapshot.organization_id,
             source_snapshot_id=locked_snapshot.id,
@@ -486,8 +511,20 @@ def run_snapshot_delete_task(
             task_uuid=task_uuid,
             source_snapshot_id=source_snapshot_id,
         )
+    except SnapshotUsageConflict as exc:
+        _defer_snapshot_delete(
+            organization_id=organization_id,
+            task_uuid=task_uuid,
+            message=str(exc),
+        )
+        return {
+            "task_uuid": str(task_uuid),
+            "source_snapshot_id": source_snapshot_id,
+            "status": "waiting",
+            "reason": "snapshot_in_use",
+        }
     except (AgentSnapshotDeletePending, ControllerSnapshotDeleteBusy) as exc:
-        _defer_snapshot_delete_for_remote_work(
+        _defer_snapshot_delete(
             organization_id=organization_id,
             task_uuid=task_uuid,
             message=str(exc),
@@ -533,16 +570,17 @@ def run_snapshot_delete_task(
         cache.delete(lock_key)
 
 
-def _defer_snapshot_delete_for_remote_work(
+def _defer_snapshot_delete(
     *, organization_id: int, task_uuid: str, message: str
 ) -> None:
+    """Return a blocked delete task to pending without recording a failure."""
     with transaction.atomic():
         task = (
             Task.objects.select_for_update()
             .filter(
                 organization_id=organization_id,
                 task_uuid=task_uuid,
-                status=Task.Status.RUNNING,
+                status__in={Task.Status.PENDING, Task.Status.RUNNING},
             )
             .first()
         )
@@ -568,12 +606,22 @@ def _run_snapshot_delete_task_locked(
     task = Task.objects.filter(organization_id=organization_id, task_uuid=task_uuid).first()
     if task is None:
         raise Task.DoesNotExist
-    source_snapshot = BackupSourceSnapshot.objects.filter(
-        organization_id=organization_id,
-        id=source_snapshot_id,
-    ).first()
-    if source_snapshot is None:
-        raise BackupSourceSnapshot.DoesNotExist
+    with transaction.atomic():
+        source_snapshot = (
+            BackupSourceSnapshot.objects.select_for_update()
+            .filter(organization_id=organization_id, id=source_snapshot_id)
+            .first()
+        )
+        if source_snapshot is None:
+            raise BackupSourceSnapshot.DoesNotExist
+        if snapshot_is_protected(snapshot_id=source_snapshot.id):
+            raise SnapshotUsageConflict(
+                {
+                    "source_snapshot_id": (
+                        "Snapshot is currently in use by a restore or Chat preparation."
+                    )
+                }
+            )
     if task.status in _DELETE_TERMINAL:
         return task.result_payload if isinstance(task.result_payload, dict) else {}
     if task.status == Task.Status.PENDING:
@@ -798,10 +846,21 @@ def reconcile_snapshot_delete_tasks(*, now=None, limit: int = 100) -> dict[str, 
             organization_id=task.organization_id,
             source_snapshot_id=snapshot_id,
         ) if snapshot_id else None
-        if snapshot is not None and latest is not None and latest.id == task.id:
-            Task.objects.filter(id=task.id, status=Task.Status.PENDING).update(updated_at=current)
-            queue_snapshot_delete_task(task=task, source_snapshot_id=snapshot_id)
-            requeued_pending += 1
+        if snapshot is None or latest is None or latest.id != task.id:
+            continue
+        if snapshot_is_protected(snapshot_id=snapshot.id):
+            # Rotate safely blocked rows out of this bounded batch so they do
+            # not starve unrelated pending deletes. Once the lease is gone,
+            # the same five-minute recovery window will make the task due.
+            Task.objects.filter(id=task.id, status=Task.Status.PENDING).update(
+                updated_at=current
+            )
+            continue
+        Task.objects.filter(id=task.id, status=Task.Status.PENDING).update(
+            updated_at=current
+        )
+        queue_snapshot_delete_task(task=task, source_snapshot_id=snapshot_id)
+        requeued_pending += 1
 
     stale_running = list(
         Task.objects.filter(
@@ -833,13 +892,18 @@ def reconcile_snapshot_delete_tasks(*, now=None, limit: int = 100) -> dict[str, 
         recovered_running += 1
 
     failed_snapshots = list(
-        BackupSourceSnapshot.objects.filter(status=BackupSourceSnapshot.Status.DELETE_FAILED)
+        BackupSourceSnapshot.objects.filter(
+            status=BackupSourceSnapshot.Status.DELETE_FAILED,
+            usage_leases__isnull=True,
+        )
         .order_by("updated_at", "id")[:limit]
     )
     for snapshot in failed_snapshots:
         with transaction.atomic():
             locked = BackupSourceSnapshot.objects.select_for_update().get(id=snapshot.id)
             if locked.status != BackupSourceSnapshot.Status.DELETE_FAILED:
+                continue
+            if snapshot_is_protected(snapshot_id=locked.id):
                 continue
             task = _latest_delete_task(
                 organization_id=locked.organization_id,

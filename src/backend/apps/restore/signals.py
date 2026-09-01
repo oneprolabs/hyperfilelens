@@ -19,6 +19,7 @@ from apps.restore.services.task_classification import normalize_restore_task_typ
 from apps.protection.services.progress.orchestrated_progress import (
     RESTORE_FINALIZE_START,
 )
+from apps.protection.services.snapshot_usage import release_restore_usage
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskEvent, TaskStep
 from apps.task.services.interface import (
@@ -458,6 +459,10 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
             error_code="RESTORE_FAILED",
             error_message=error_message,
         )
+        release_restore_usage(
+            restore_record_id=record.id,
+            snapshot_id=record.source_snapshot_id,
+        )
         return
     _set_step_status(
         task=product_task,
@@ -486,6 +491,10 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
         status=Task.Status.SUCCESS,
         progress=100,
         result_payload=result_payload,
+    )
+    release_restore_usage(
+        restore_record_id=record.id,
+        snapshot_id=record.source_snapshot_id,
     )
 
 

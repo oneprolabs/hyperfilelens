@@ -25,15 +25,47 @@ def lock_repositories_for_workload(
     workload: str = RepositoryWorkload.RESTORE_READ,
 ) -> list[Repository]:
     """Lock and revalidate repositories before accepting data work."""
+    return _repositories_for_workload(
+        organization_id=organization_id,
+        repository_ids=repository_ids,
+        workload=workload,
+        lock=True,
+    )
+
+
+def validate_repositories_for_workload(
+    *,
+    organization_id: int,
+    repository_ids: Iterable[int],
+    workload: str = RepositoryWorkload.RESTORE_READ,
+) -> list[Repository]:
+    """Validate data-work prerequisites without establishing a lock fence."""
+    return _repositories_for_workload(
+        organization_id=organization_id,
+        repository_ids=repository_ids,
+        workload=workload,
+        lock=False,
+    )
+
+
+def _repositories_for_workload(
+    *,
+    organization_id: int,
+    repository_ids: Iterable[int],
+    workload: str,
+    lock: bool,
+) -> list[Repository]:
     if workload not in RepositoryWorkload.VALUES:
         raise ValueError(f"Unsupported repository workload: {workload}")
     ordered_ids = sorted({int(repository_id) for repository_id in repository_ids})
     if not ordered_ids:
         raise ValueError("At least one repository is required for data work.")
 
+    queryset = Repository.objects.all()
+    if lock:
+        queryset = queryset.select_for_update()
     repositories = list(
-        Repository.objects.select_for_update()
-        .filter(
+        queryset.filter(
             organization_id=organization_id,
             id__in=ordered_ids,
         )
@@ -93,4 +125,8 @@ def _require_repository_capability(repository: Repository, *, workload: str) -> 
         )
 
 
-__all__ = ["RepositoryWorkload", "lock_repositories_for_workload"]
+__all__ = [
+    "RepositoryWorkload",
+    "lock_repositories_for_workload",
+    "validate_repositories_for_workload",
+]

@@ -1446,6 +1446,20 @@ def _start_node_remove_locked(
                 code="source_operation_in_progress",
             ) from exc
 
+        from apps.protection.models import SnapshotUsageLease
+
+        snapshot_usage_active = SnapshotUsageLease.objects.filter(
+            organization_id=org.id,
+            snapshot__organization_id=org.id,
+            snapshot__source_type__in={"agent", "host"},
+            snapshot__source_ref_id=node.id,
+        ).exists()
+        if snapshot_usage_active:
+            raise NodeLifecycleError(
+                "A backup snapshot is currently in use by a Restore or Chat preparation.",
+                code="snapshot_in_use",
+            )
+
     active = _active_lifecycle_task(org=org, node=node)
     if active is not None:
         raise NodeLifecycleError(

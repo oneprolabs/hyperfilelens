@@ -19,6 +19,7 @@ from apps.protection.models import (
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
     FileFilterRule,
+    SnapshotUsageLease,
 )
 from apps.protection.services import backup_config as backup_config_service
 from apps.protection.services.backup_config_reset import (
@@ -27,6 +28,10 @@ from apps.protection.services.backup_config_reset import (
     run_backup_config_reset_task,
 )
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
+from apps.protection.services.snapshot_usage import (
+    SnapshotUsageConflict,
+    acquire_snapshot_usage,
+)
 from apps.protection.services.repository_policy import (
     sync_backup_config_repository_policy,
 )
@@ -2555,6 +2560,263 @@ class ProtectionBackupConfigApiTests(TestCase):
         self.assertEqual(config.status, BackupConfig.Status.RESETTING)
         self.assertEqual(str(config.reset_task_uuid), str(task.task_uuid))
         delay.assert_not_called()
+
+    def test_reset_backup_config_rejects_snapshot_in_active_use(self):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Reset protected config"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        config = BackupConfig.objects.get(id=create.data["id"])
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Protected snapshot backup",
+            status=Task.Status.SUCCESS,
+        )
+        snapshot = create_source_snapshot(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=config.id,
+            repository_id=self.repository.id,
+            task_id=backup_task.id,
+            task_uuid=backup_task.task_uuid,
+            idempotency_key="reset-protected-source",
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        acquire_snapshot_usage(
+            organization_id=self.org.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="active-chat",
+        )
+
+        with self.assertRaises(SnapshotUsageConflict):
+            ensure_backup_config_reset_task(
+                organization_id=self.org.id,
+                source_type="agent",
+                source_ref_id=self.agent.id,
+            )
+
+        config.refresh_from_db()
+        self.assertEqual(config.status, BackupConfig.Status.ACTIVE)
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.BACKUP_CONFIG_RESET).exists()
+        )
+
+    @mock.patch("apps.protection.services.backup_config_reset.run_agent_task_async")
+    def test_legacy_reset_task_waits_for_snapshot_usage(self, run_agent_task_async):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Legacy protected reset"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        config = BackupConfig.objects.get(id=create.data["id"])
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Legacy protected snapshot backup",
+            status=Task.Status.SUCCESS,
+        )
+        snapshot = create_source_snapshot(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=config.id,
+            repository_id=self.repository.id,
+            task_id=backup_task.id,
+            task_uuid=backup_task.task_uuid,
+            idempotency_key="legacy-reset-protected-source",
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        reset_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP_CONFIG_RESET,
+            display_name="Legacy reset task",
+            request_payload={
+                "source_type": "agent",
+                "source_ref_id": self.agent.id,
+                "backup_config_ids": [config.id],
+                "repository_ids": [self.repository.id],
+                "source_snapshot_ids": [snapshot.id],
+            },
+        )
+        for index, step_name in enumerate(
+            [
+                "prepare_reset",
+                "delete_kopia_snapshots",
+                "delete_snapshot_records",
+                "delete_restore_plans",
+                "delete_backup_configs",
+                "finalize_reset",
+            ],
+            start=1,
+        ):
+            reset_task.steps.create(step_index=index, step_name=step_name)
+        config.status = BackupConfig.Status.RESETTING
+        config.reset_task_uuid = reset_task.task_uuid
+        config.save(update_fields=["status", "reset_task_uuid", "updated_at"])
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="legacy-active-chat",
+        )
+
+        result = run_backup_config_reset_task(
+            organization_id=self.org.id,
+            task_uuid=str(reset_task.task_uuid),
+            source_type="agent",
+            source_ref_id=self.agent.id,
+        )
+
+        reset_task.refresh_from_db()
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(result["reason"], "snapshot_in_use")
+        self.assertEqual(reset_task.status, Task.Status.PENDING)
+        self.assertTrue(BackupSourceSnapshot.objects.filter(pk=snapshot.id).exists())
+        run_agent_task_async.assert_not_called()
+
+    def test_snapshot_usage_rejects_resetting_configuration(self):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Reset acquisition fence"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        config = BackupConfig.objects.get(id=create.data["id"])
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Reset acquisition snapshot backup",
+            status=Task.Status.SUCCESS,
+        )
+        snapshot = create_source_snapshot(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=config.id,
+            repository_id=self.repository.id,
+            task_id=backup_task.id,
+            task_uuid=backup_task.task_uuid,
+            idempotency_key="reset-acquisition-fence-source",
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        config.status = BackupConfig.Status.RESETTING
+        config.save(update_fields=["status", "updated_at"])
+
+        with self.assertRaises(SnapshotUsageConflict):
+            acquire_snapshot_usage(
+                organization_id=self.org.id,
+                snapshot_id=snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+                consumer_id="new-restore",
+            )
+
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(snapshot_id=snapshot.id).exists()
+        )
+
+    def test_snapshot_usage_rejects_source_unregister_in_progress(self):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Unregister acquisition fence"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        config = BackupConfig.objects.get(id=create.data["id"])
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Unregister acquisition snapshot backup",
+            status=Task.Status.SUCCESS,
+        )
+        snapshot = create_source_snapshot(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=config.id,
+            repository_id=self.repository.id,
+            task_id=backup_task.id,
+            task_uuid=backup_task.task_uuid,
+            idempotency_key="unregister-acquisition-fence-source",
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        unregister_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Source unregister in progress",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=unregister_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        with self.assertRaises(SnapshotUsageConflict):
+            acquire_snapshot_usage(
+                organization_id=self.org.id,
+                snapshot_id=snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+                consumer_id="new-chat",
+            )
+
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(snapshot_id=snapshot.id).exists()
+        )
+
+    def test_source_purge_rejects_snapshot_in_active_use(self):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Purge protected config"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        config = BackupConfig.objects.get(id=create.data["id"])
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Purge protected snapshot backup",
+            status=Task.Status.SUCCESS,
+        )
+        snapshot = create_source_snapshot(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=config.id,
+            repository_id=self.repository.id,
+            task_id=backup_task.id,
+            task_uuid=backup_task.task_uuid,
+            idempotency_key="purge-protected-source",
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="active-chat",
+        )
+
+        with self.assertRaises(SnapshotUsageConflict):
+            backup_config_service.purge_backup_config_data_for_source(
+                organization_id=self.org.id,
+                source_type="agent",
+                source_ref_id=self.agent.id,
+            )
+
+        self.assertTrue(BackupConfig.objects.filter(pk=config.id).exists())
+        self.assertTrue(BackupSourceSnapshot.objects.filter(pk=snapshot.id).exists())
 
     @mock.patch(
         "apps.protection.tasks.backup_config_reset."

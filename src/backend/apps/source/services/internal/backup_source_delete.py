@@ -29,12 +29,17 @@ from apps.protection.models import (
     BackupConfig,
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
+    SnapshotUsageLease,
     SnapshotDownloadArtifact,
 )
 from apps.protection.services.snapshot_delete import (
     create_and_queue_snapshot_delete_task,
     create_snapshot_delete_task,
     run_snapshot_delete_task,
+)
+from apps.protection.services.snapshot_usage import (
+    SnapshotUsageConflict,
+    snapshot_is_protected,
 )
 from apps.restore.models import RestorePlan, RestoreRecord
 from apps.source.constants import (
@@ -1497,6 +1502,39 @@ def _cleanup_direct_nas_for_unregister(
 
     for repository_id, config_ids in configs_by_repository.items():
         repository = repositories[repository_id]
+        # Direct NAS cleanup removes an entire physical target before the
+        # per-snapshot cleanup stage runs.  Defer that destructive operation
+        # while any snapshot owned by this source is leased by Restore/Chat;
+        # otherwise the later lease check would be too late.  The parent
+        # unregister task is already durable, so acquire_snapshot_usage also
+        # rejects new leases for this source during the gap between this
+        # check and the child cleanup dispatch.
+        with transaction.atomic():
+            from apps.source.services.internal.source_operation_fence import (
+                lock_source_identity,
+            )
+
+            lock_source_identity(
+                organization_id=org.id,
+                source_type=ctx.source_type,
+                source_ref_id=ctx.source_ref_id,
+            )
+            protected_snapshot_count = SnapshotUsageLease.objects.filter(
+                organization_id=org.id,
+                snapshot__backup_config_id__in=config_ids,
+            ).values("snapshot_id").distinct().count()
+        if protected_snapshot_count:
+            # This is a transient wait, not a cleanup failure.  Do not add it
+            # to the durable warning/failure lists: those lists intentionally
+            # survive retries and would otherwise turn a later successful
+            # cleanup into a permanent partial-success result.
+            return DirectNasCleanupOutcome(
+                cleaned_repository_ids=cleaned_repository_ids,
+                cleanup_tasks=cleanup_tasks,
+                warnings=tuple(warnings),
+                retained_resources=tuple(dict.fromkeys(retained_resources)),
+                waiting=True,
+            )
         target_ids = direct_nas_cleanup_target_ids(
             repository=repository,
             backup_config_ids=config_ids,
@@ -2386,6 +2424,7 @@ def _execute_source_unregister_work(
                     "task_id": unregister_task.id,
                     "task_uuid": str(unregister_task.task_uuid),
                     "status": Task.Status.RUNNING,
+                    "waiting_for": "snapshot_usage_lease_release",
                 }
                 return _save_source_unregister_checkpoint(
                     task=unregister_task,
@@ -3557,6 +3596,14 @@ def _snapshot_delete_for_unregister(
     unregister_task: Task,
 ) -> tuple[bool | None, str | None, dict[str, Any]]:
     """Return terminal cleanup state or asynchronously wait on one child task."""
+    if snapshot_is_protected(snapshot_id=source_snapshot.id):
+        raise SnapshotUsageConflict(
+            {
+                "source_snapshot_id": (
+                    "Snapshot is currently in use by a restore or Chat preparation."
+                )
+            }
+        )
     attempt = int(unregister_task.retry_count or 0)
     task = (
         Task.objects.filter(
@@ -3833,6 +3880,19 @@ def _delete_repository_snapshots(
                     continue
             else:
                 ok, err = _snapshot_delete_strict(source_snapshot=snapshot)
+        except SnapshotUsageConflict as exc:
+            detail = "; ".join(str(message) for message in exc.messages)
+            reasons.append(
+                DeleteReason(
+                    code="snapshot_in_use",
+                    detail=detail or "Snapshot is currently in use.",
+                    source_id=ctx.selectable_id,
+                    source_name=ctx.display_name,
+                    repository_id=int(snapshot.repository_id),
+                    repository_name=repo_name,
+                )
+            )
+            continue
         except Exception as exc:
             logger.exception(
                 "Backup source snapshot cleanup raised "
@@ -4791,7 +4851,34 @@ def reconcile_stuck_source_unregister_tasks(
         ).order_by("updated_at", "id")[: max(1, int(limit))]
     )
     redispatched = 0
+    snapshot_usage_waiting = 0
     for row in stuck:
+        checkpoint = (
+            row.result_payload if isinstance(row.result_payload, dict) else {}
+        )
+        request_payload = (
+            row.request_payload if isinstance(row.request_payload, dict) else {}
+        )
+        cleanup_plan = request_payload.get("cleanup_plan")
+        planned_snapshot_ids = (
+            _normalize_pending_snapshot_ids(cleanup_plan.get("snapshot_ids"))
+            if checkpoint.get("waiting_for") == "snapshot_usage_lease_release"
+            and isinstance(cleanup_plan, dict)
+            else []
+        )
+        if planned_snapshot_ids and SnapshotUsageLease.objects.filter(
+            organization_id=row.organization_id,
+            snapshot_id__in=planned_snapshot_ids,
+        ).exists():
+            # Rotate this durable wait out of the bounded stale batch without
+            # repeatedly executing the same physical-cleanup preflight. The
+            # next reconciliation after the final lease is released resumes
+            # the existing unregister task.
+            Task.objects.filter(pk=row.pk, status=Task.Status.RUNNING).update(
+                updated_at=timezone.now()
+            )
+            snapshot_usage_waiting += 1
+            continue
         execute_source_unregister_task.delay(task_id=int(row.id))
         redispatched += 1
         logger.warning(
@@ -4803,6 +4890,7 @@ def reconcile_stuck_source_unregister_tasks(
     return {
         "scanned": len(stuck),
         "redispatched": redispatched,
+        "snapshot_usage_waiting": snapshot_usage_waiting,
         "deferred_scanned": len(deferred_ids),
         "deferred_ended": deferred_ended,
     }

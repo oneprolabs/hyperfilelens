@@ -30,6 +30,7 @@ from apps.protection.models import (
     BackupConfig,
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
+    SnapshotUsageLease,
 )
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.repository_location import (
@@ -365,6 +366,40 @@ class CopilotRetryTests(TestCase):
             updated.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING
         )
         self.assertEqual(updated.provision_phase, LensSessionLink.ProvisionPhase.QUEUED)
+        queue_provision.assert_called_once_with(session.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    def test_failed_session_retry_reacquires_snapshot_usage(self, queue_provision):
+        source_agent = Node.objects.create(
+            organization=self.organization,
+            name="retry-chat-source",
+            role=Node.Role.AGENT,
+        )
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.organization.id,
+            snapshot_uid="retry-snapshot",
+            idempotency_key="retry-snapshot",
+            source_type="agent",
+            source_ref_id=source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        session = self.create_session(LensSessionLink.LifecycleStatus.FAILED)
+        session.backup_source_snapshot_id = snapshot.id
+        session.save(update_fields=["backup_source_snapshot_id", "updated_at"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            chat_lifecycle.retry_copilot_chat_provision(session)
+
+        self.assertTrue(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+                consumer_id=str(session.id),
+            ).exists()
+        )
         queue_provision.assert_called_once_with(session.id)
 
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
@@ -936,6 +971,11 @@ class CopilotChatModelBindingTests(TestCase):
             name="private-gateway",
             role=Node.Role.GATEWAY,
         )
+        self.source_agent = Node.objects.create(
+            organization=self.organization,
+            name="chat-model-binding-source",
+            role=Node.Role.AGENT,
+        )
         self.gateway_link = LensGatewayLink.objects.create(
             organization=self.organization,
             gateway=self.gateway,
@@ -960,7 +1000,7 @@ class CopilotChatModelBindingTests(TestCase):
             organization_id=self.organization.id,
             name="Documents",
             source_type="host",
-            source_ref_id=1,
+            source_ref_id=self.source_agent.id,
             repository_id=self.repository.id,
         )
         self.snapshot = BackupSourceSnapshot.objects.create(
@@ -968,7 +1008,7 @@ class CopilotChatModelBindingTests(TestCase):
             snapshot_uid="snapshot-model-binding",
             idempotency_key="snapshot-model-binding",
             source_type="host",
-            source_ref_id=1,
+            source_ref_id=self.source_agent.id,
             backup_config_id=self.config.id,
             repository_id=self.repository.id,
             task_id=1,
@@ -1072,6 +1112,13 @@ class CopilotChatModelBindingTests(TestCase):
         self.assertEqual(str(session.agent_model_ref), str(agent_uuid))
         self.assertIsNone(session.multimodal_model_ref)
         self.assertIsNotNone(session.gateway_queue_entered_at)
+        self.assertTrue(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=self.snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+                consumer_id=str(session.id),
+            ).exists()
+        )
         queue_provision.assert_called_once_with(session.id)
 
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")

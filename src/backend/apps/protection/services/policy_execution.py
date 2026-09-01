@@ -11,6 +11,11 @@ from django.utils import timezone
 from apps.protection.models import BackupConfig, BackupPolicy, BackupSourceSnapshot
 from apps.protection.services.backup_task import start_backup_tasks
 from apps.protection.services.snapshot_delete import create_and_queue_snapshot_delete_task
+from apps.protection.services.snapshot_usage import (
+    SnapshotUsageConflict,
+    protected_snapshot_ids,
+    reconcile_snapshot_usage_leases,
+)
 from apps.task.models import Task
 
 
@@ -284,6 +289,7 @@ def _bucket_key(snapshot: BackupSourceSnapshot, unit: str):
 def _apply_bucket_retention(
     *,
     keep_ids: set[int],
+    protected_ids: set[int],
     snapshots: list[BackupSourceSnapshot],
     now,
     enabled: bool,
@@ -296,6 +302,8 @@ def _apply_bucket_retention(
     cutoff = now - delta
     seen: set[str] = set()
     for snapshot in snapshots:
+        if int(snapshot.id) in protected_ids:
+            continue
         if _snapshot_time(snapshot) < cutoff:
             continue
         key = _bucket_key(snapshot, unit)
@@ -330,9 +338,20 @@ def retention_delete_candidates_for_config(
     if len(snapshots) <= 1:
         return []
     current = timezone.localtime(now or timezone.now())
-    keep_ids = {int(snapshot.id) for snapshot in snapshots[: max(1, int(retention.get("recent_points") or 1))]}
+    protected_ids = protected_snapshot_ids(snapshot.id for snapshot in snapshots)
+    recent_points = max(1, int(retention.get("recent_points") or 1))
+    # A temporary usage lease is a safety fence, not a retention point. Keep
+    # the configured number of ordinary recovery points in addition to every
+    # snapshot currently required by Restore or Chat preparation.
+    unprotected_recent_ids = [
+        int(snapshot.id)
+        for snapshot in snapshots
+        if int(snapshot.id) not in protected_ids
+    ][:recent_points]
+    keep_ids = protected_ids | set(unprotected_recent_ids)
     _apply_bucket_retention(
         keep_ids=keep_ids,
+        protected_ids=protected_ids,
         snapshots=snapshots,
         now=current,
         enabled=bool(retention.get("hourly_enabled", False)),
@@ -342,6 +361,7 @@ def retention_delete_candidates_for_config(
     )
     _apply_bucket_retention(
         keep_ids=keep_ids,
+        protected_ids=protected_ids,
         snapshots=snapshots,
         now=current,
         enabled=bool(retention.get("daily_enabled", False)),
@@ -351,6 +371,7 @@ def retention_delete_candidates_for_config(
     )
     _apply_bucket_retention(
         keep_ids=keep_ids,
+        protected_ids=protected_ids,
         snapshots=snapshots,
         now=current,
         enabled=bool(retention.get("weekly_enabled", False)),
@@ -360,6 +381,7 @@ def retention_delete_candidates_for_config(
     )
     _apply_bucket_retention(
         keep_ids=keep_ids,
+        protected_ids=protected_ids,
         snapshots=snapshots,
         now=current,
         enabled=bool(retention.get("monthly_enabled", False)),
@@ -369,6 +391,7 @@ def retention_delete_candidates_for_config(
     )
     _apply_bucket_retention(
         keep_ids=keep_ids,
+        protected_ids=protected_ids,
         snapshots=snapshots,
         now=current,
         enabled=bool(retention.get("annual_enabled", False)),
@@ -395,6 +418,7 @@ def failed_snapshot_delete_candidates_for_config(
             backup_config_id=config.id,
             deleted_at__isnull=True,
             status=BackupSourceSnapshot.Status.FAILED,
+            usage_leases__isnull=True,
         ).order_by("finished_at", "created_at", "id")
     )
 
@@ -407,11 +431,15 @@ def apply_retention_policies(*, now=None, limit: int = 100) -> dict[str, int]:
             config=config,
             policy=policy,
         )[: max(1, int(limit))]:
-            with transaction.atomic():
-                task = create_and_queue_snapshot_delete_task(
-                    source_snapshot=snapshot,
-                    trigger_type=Task.TriggerType.SYSTEM,
-                )
+            try:
+                with transaction.atomic():
+                    task = create_and_queue_snapshot_delete_task(
+                        source_snapshot=snapshot,
+                        trigger_type=Task.TriggerType.SYSTEM,
+                    )
+            except SnapshotUsageConflict:
+                skipped += 1
+                continue
             if task.status in {Task.Status.PENDING, Task.Status.RUNNING}:
                 created += 1
             else:
@@ -421,11 +449,15 @@ def apply_retention_policies(*, now=None, limit: int = 100) -> dict[str, int]:
             policy=policy,
             now=now,
         )[: max(1, int(limit))]:
-            with transaction.atomic():
-                task = create_and_queue_snapshot_delete_task(
-                    source_snapshot=snapshot,
-                    trigger_type=Task.TriggerType.SYSTEM,
-                )
+            try:
+                with transaction.atomic():
+                    task = create_and_queue_snapshot_delete_task(
+                        source_snapshot=snapshot,
+                        trigger_type=Task.TriggerType.SYSTEM,
+                    )
+            except SnapshotUsageConflict:
+                skipped += 1
+                continue
             if task.status in {Task.Status.PENDING, Task.Status.RUNNING}:
                 created += 1
             else:
@@ -434,6 +466,7 @@ def apply_retention_policies(*, now=None, limit: int = 100) -> dict[str, int]:
 
 
 def run_backup_policy_maintenance(*, now=None, retention_limit: int = 100) -> dict[str, int]:
+    reconcile_snapshot_usage_leases(limit=max(100, int(retention_limit) * 5))
     scheduled = schedule_due_backup_tasks(now=now)
     retention = apply_retention_policies(now=now, limit=retention_limit)
     return {

@@ -15,6 +15,7 @@ from apps.protection.services.snapshot_delete import (
     create_and_queue_snapshot_delete_task,
     fail_snapshot_delete_task,
 )
+from apps.protection.services.snapshot_usage import snapshot_is_protected
 from apps.task.models import Task
 from apps.task.services.interface import complete_task
 
@@ -51,6 +52,13 @@ class Command(BaseCommand):
         delete_failed = 0
         unchanged = 0
         for snapshot in snapshots.order_by("id").iterator():
+            if snapshot_is_protected(snapshot_id=snapshot.id):
+                unchanged += 1
+                self.stdout.write(
+                    f"snapshot={snapshot.id} task=unknown current={snapshot.status} "
+                    "action=unchanged reason=snapshot_in_use"
+                )
+                continue
             task = _latest_delete_task(
                 organization_id=snapshot.organization_id,
                 source_snapshot_id=snapshot.id,
@@ -121,8 +129,14 @@ class Command(BaseCommand):
                 continue
 
             if can_finalize:
-                self._finalize_snapshot(snapshot=snapshot, task=task, result=result)
-                reconciled += 1
+                if self._finalize_snapshot(
+                    snapshot=snapshot,
+                    task=task,
+                    result=result,
+                ):
+                    reconciled += 1
+                else:
+                    unchanged += 1
                 continue
 
             self._mark_failed(snapshot=snapshot, task=task, result=result)
@@ -142,17 +156,26 @@ class Command(BaseCommand):
         )
 
     @staticmethod
-    def _finalize_snapshot(*, snapshot: BackupSourceSnapshot, task: Task, result: dict) -> None:
+    def _finalize_snapshot(
+        *, snapshot: BackupSourceSnapshot, task: Task, result: dict
+    ) -> bool:
         now = timezone.now()
         with transaction.atomic():
-            BackupSourceSnapshotDirectory.objects.filter(source_snapshot=snapshot).exclude(
+            locked_snapshot = BackupSourceSnapshot.objects.select_for_update().get(
+                pk=snapshot.pk
+            )
+            if snapshot_is_protected(snapshot_id=locked_snapshot.id):
+                return False
+            BackupSourceSnapshotDirectory.objects.filter(
+                source_snapshot=locked_snapshot
+            ).exclude(
                 status=BackupSourceSnapshotDirectory.Status.DELETED
             ).update(status=BackupSourceSnapshotDirectory.Status.DELETED, updated_at=now)
-            snapshot.status = BackupSourceSnapshot.Status.DELETED
-            snapshot.deleted_at = now
-            snapshot.error_code = ""
-            snapshot.error_message = ""
-            snapshot.save(
+            locked_snapshot.status = BackupSourceSnapshot.Status.DELETED
+            locked_snapshot.deleted_at = now
+            locked_snapshot.error_code = ""
+            locked_snapshot.error_message = ""
+            locked_snapshot.save(
                 update_fields=["status", "deleted_at", "error_code", "error_message", "updated_at"]
             )
             if task.status not in {
@@ -168,6 +191,7 @@ class Command(BaseCommand):
                     progress=100,
                     result_payload=result,
                 )
+        return True
 
     @staticmethod
     def _mark_failed(*, snapshot: BackupSourceSnapshot, task: Task, result: dict) -> None:
