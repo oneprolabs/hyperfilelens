@@ -259,6 +259,17 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(drawer).toContain('max-width: calc(100cqw - 49px); overflow-x: hidden; margin-left: 35px;')
   })
 
+  it('keeps restore record headers aligned while horizontally scrolling resized columns', () => {
+    const restoreTab = sourceBetween(
+      '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',
+      '<el-tab-pane :label="t(\'protection.backupDetail.tabTasks\')" name="tasks">',
+    )
+
+    expect(restoreTab).toContain("v-table-column-resize=\"'protection.flowBackupSource.restoreRecords'\"")
+    expect(restoreTab).toContain('v-table-header-scroll-sync')
+    expect(restoreTab).toContain(':fit="false"')
+  })
+
   it('updates running restore durations and stops the clock outside the active records tab', () => {
     const duration = sourceBetween(
       'function restoreRecordDuration(record: RestoreRecord)',
