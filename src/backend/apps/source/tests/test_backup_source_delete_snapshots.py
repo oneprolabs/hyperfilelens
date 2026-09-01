@@ -21,6 +21,7 @@ from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
     BackupSourceSnapshotDirectory,
+    SnapshotUsageLease,
 )
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
 from apps.protection.services.snapshot_delete import (
@@ -663,6 +664,34 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
             resource_type="backup_source",
         ).latest("id")
         self.assertEqual(audit.result, AuditResult.PARTIAL)
+
+    def test_force_delete_cannot_bypass_active_snapshot_usage(self):
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="active-chat",
+        )
+
+        with self.assertRaises(BackupSourceDeleteFailed) as raised:
+            delete_backup_sources(
+                org=self.org,
+                ids=[f"nas:{self.resource.id}"],
+                force=True,
+                user=self.user,
+            )
+
+        self.resource.refresh_from_db()
+        self.assertEqual(raised.exception.reasons[0].code, "snapshot_in_use")
+        self.assertFalse(self.resource.is_deleted)
+        self.assertTrue(BackupConfig.objects.filter(pk=self.config.id).exists())
+        self.assertFalse(
+            BackupSourceRepositoryPurgePending.objects.filter(
+                organization_id=self.org.id,
+                source_kind="nas",
+                source_ref_id=self.resource.id,
+            ).exists()
+        )
 
     @patch(
         "apps.source.services.internal.backup_source_delete._soft_delete_identity",

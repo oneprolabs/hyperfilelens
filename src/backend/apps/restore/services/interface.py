@@ -38,6 +38,7 @@ from apps.protection.services.progress.orchestrated_progress import (
 from apps.protection.services.snapshot_repository_locator import (
     resolve_snapshot_repository_reader,
 )
+from apps.protection.services.snapshot_usage import acquire_snapshot_usage
 from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
@@ -783,6 +784,7 @@ def _idempotent_restore_record(
     return existing
 
 
+@transaction.atomic
 def _create_restore_record(
     *,
     organization_id: int,
@@ -829,6 +831,7 @@ def _create_restore_record(
         raise ValidationError({"target_ref_id": "Restore execution node not found."})
     from apps.source.services.internal.source_operation_fence import (
         assert_source_product_operation_allowed,
+        lock_source_identity,
     )
 
     assert_source_product_operation_allowed(
@@ -836,6 +839,25 @@ def _create_restore_record(
         source_type=source_type,
         source_ref_id=source_ref_id,
     )
+    lock_source_identity(
+        organization_id=organization_id,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+    )
+    source_snapshot = (
+        BackupSourceSnapshot.objects.select_for_update()
+        .filter(
+            organization_id=organization_id,
+            pk=source_snapshot.id,
+        )
+        .first()
+    )
+    if source_snapshot is None:
+        raise ValidationError({"source_snapshot_id": "Snapshot not found."})
+    if source_snapshot.status not in RESTORABLE_SNAPSHOT_STATUSES:
+        raise ValidationError(
+            {"source_snapshot_id": "Selected source snapshot is not restorable."}
+        )
     directories = _expanded_directories(
         organization_id=organization_id,
         source_snapshot=source_snapshot,
@@ -862,6 +884,16 @@ def _create_restore_record(
     }
     existing = _idempotent_restore_record(**idempotency_lookup)
     if existing is not None:
+        task_status = Task.objects.filter(pk=existing.task_id).values_list(
+            "status", flat=True
+        ).first()
+        if task_status in ACTIVE_RESTORE_TASK_STATUSES:
+            acquire_snapshot_usage(
+                organization_id=organization_id,
+                snapshot_id=source_snapshot.id,
+                consumer_type="restore",
+                consumer_id=existing.id,
+            )
         return existing
     _ensure_no_active_restore_for_source(
         organization_id=organization_id,
@@ -945,6 +977,12 @@ def _create_restore_record(
                 conflict_mode=conflict_mode,
                 request_payload=request_payload,
                 created_by_id=created_by_id,
+            )
+            acquire_snapshot_usage(
+                organization_id=organization_id,
+                snapshot_id=source_snapshot.id,
+                consumer_type="restore",
+                consumer_id=record.id,
             )
     except IntegrityError:
         if not normalized_idempotency_key:

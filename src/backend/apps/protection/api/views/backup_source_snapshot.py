@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.dateparse import parse_datetime
 from rest_framework import mixins, status, viewsets
 from rest_framework.exceptions import NotFound, ValidationError
@@ -217,7 +218,11 @@ class BackupSourceSnapshotViewSet(
 
     def destroy(self, request, *args, **kwargs):
         snapshot = self.get_object()
-        task = create_and_queue_snapshot_delete_task(source_snapshot=snapshot)
+        try:
+            task = create_and_queue_snapshot_delete_task(source_snapshot=snapshot)
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+            raise ValidationError(detail=detail) from exc
         return Response(
             {
                 "deleted": False,

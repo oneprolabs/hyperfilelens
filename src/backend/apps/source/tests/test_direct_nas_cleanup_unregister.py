@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest import mock
 from uuid import uuid4
 
@@ -9,11 +10,17 @@ from rest_framework.test import APIClient
 from apps.iam.models import Membership, Organization
 from apps.node.models import Node, NodeTask
 from apps.node.services.internal.node_lifecycle import NodeLifecycleError
-from apps.protection.models import BackupConfig
+from apps.protection.models import (
+    BackupConfig,
+    BackupSourceSnapshot,
+    SnapshotUsageLease,
+)
+from apps.protection.services.backup_source_snapshot import create_source_snapshot
 from apps.source.services.internal.backup_source_delete import (
     BackupSourceDeleteFailed,
     delete_backup_sources,
     preflight_delete_backup_sources,
+    reconcile_stuck_source_unregister_tasks,
     run_source_unregister_task,
 )
 from apps.storage.repositories.models import (
@@ -229,6 +236,109 @@ class DirectNasCleanupUnregisterTests(TestCase):
         self.assertEqual(source_unregister.status, Task.Status.SUCCESS)
         self.assertTrue(self.agent.is_deleted)
         self.assertFalse(BackupConfig.objects.filter(pk=self.config.id).exists())
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup"
+    )
+    def test_active_snapshot_lease_defers_direct_nas_physical_cleanup(
+        self,
+        execute_cleanup,
+    ):
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Direct NAS leased snapshot backup",
+            status=Task.Status.SUCCESS,
+        )
+        snapshot = create_source_snapshot(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=self.config.id,
+            repository_id=self.repository.id,
+            task_id=backup_task.id,
+            task_uuid=backup_task.task_uuid,
+            idempotency_key="direct-nas-leased-snapshot",
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="active-chat",
+        )
+
+        result = delete_backup_sources(
+            org=self.org,
+            ids=[f"agent:{self.agent.id}"],
+            force=True,
+        )
+
+        self.assertEqual(result["result"], "waiting")
+        self.assertEqual(result["waiting_for"], "snapshot_usage_lease_release")
+        self.assertEqual(result["warnings"], [])
+        execute_cleanup.assert_not_called()
+        self.assertTrue(
+            Task.objects.filter(
+                organization_id=self.org.id,
+                task_type=Task.Type.SOURCE_UNREGISTER,
+                status=Task.Status.RUNNING,
+            ).exists()
+        )
+
+    @mock.patch(
+        "apps.source.tasks.source_unregister.execute_source_unregister_task.delay"
+    )
+    def test_reconciler_does_not_repeat_cleanup_while_snapshot_is_leased(
+        self,
+        execute_unregister,
+    ):
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Direct NAS reconciler lease backup",
+            status=Task.Status.SUCCESS,
+        )
+        snapshot = create_source_snapshot(
+            organization_id=self.org.id,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=self.config.id,
+            repository_id=self.repository.id,
+            task_id=backup_task.id,
+            task_uuid=backup_task.task_uuid,
+            idempotency_key="direct-nas-reconciler-lease",
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        lease = SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="active-chat",
+        )
+        waiting = delete_backup_sources(
+            org=self.org,
+            ids=[f"agent:{self.agent.id}"],
+            force=True,
+        )
+        unregister_task = Task.objects.get(pk=waiting["task_id"])
+        stale_at = timezone.now() - timedelta(minutes=5)
+        Task.objects.filter(pk=unregister_task.pk).update(updated_at=stale_at)
+
+        retained = reconcile_stuck_source_unregister_tasks(stale_seconds=30)
+
+        self.assertEqual(retained["snapshot_usage_waiting"], 1)
+        self.assertEqual(retained["redispatched"], 0)
+        execute_unregister.assert_not_called()
+
+        lease.delete()
+        Task.objects.filter(pk=unregister_task.pk).update(updated_at=stale_at)
+
+        resumed = reconcile_stuck_source_unregister_tasks(stale_seconds=30)
+
+        self.assertEqual(resumed["snapshot_usage_waiting"], 0)
+        self.assertEqual(resumed["redispatched"], 1)
+        execute_unregister.assert_called_once_with(task_id=unregister_task.id)
 
     @mock.patch(
         "apps.source.services.internal.backup_source_delete.agent_connection_status",

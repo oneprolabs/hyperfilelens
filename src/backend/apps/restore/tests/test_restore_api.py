@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -21,7 +22,9 @@ from apps.protection.models import (
     BackupConfigDirectory,
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
+    SnapshotUsageLease,
 )
+from apps.protection.services.snapshot_usage import reconcile_snapshot_usage_leases
 from apps.restore.models import (
     DirectNASMountLease,
     RestorePlan,
@@ -1342,6 +1345,13 @@ class RestoreApiTests(TestCase):
         node_task = NodeTask.objects.get(
             correlation_type="restore.record", correlation_id=str(record.task_uuid)
         )
+        self.assertTrue(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=self.snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+                consumer_id=str(record.id),
+            ).exists()
+        )
         self.assertEqual(node_task.payload["repository"]["type"], Repository.Type.S3)
         self.assertEqual(node_task.payload["target_path"], "/restore/data/data")
         self.assertEqual(node_task.payload["target_path_semantics"], "final")
@@ -2516,6 +2526,13 @@ class RestoreApiTests(TestCase):
         task.refresh_from_db()
         self.assertEqual(item.status, item.Status.SUCCESS)
         self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=self.snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+                consumer_id=str(record.id),
+            ).exists()
+        )
         self.assertEqual(task.steps.get(step_name="restore").status, "success")
         completed_event = TaskEvent.objects.get(
             task=task,
@@ -2622,6 +2639,15 @@ class RestoreApiTests(TestCase):
         )
         self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
         record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        # This serializer compatibility fixture represents a historical restore
+        # whose active snapshot usage has already ended before retention removes
+        # the snapshot. Active restores are intentionally protected from this
+        # direct deletion by SnapshotUsageLease.
+        SnapshotUsageLease.objects.filter(
+            snapshot_id=record.source_snapshot_id,
+            consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+            consumer_id=str(record.id),
+        ).delete()
         BackupSourceSnapshot.objects.filter(id=record.source_snapshot_id).delete()
 
         detail = self.client.get(
@@ -3155,6 +3181,13 @@ class RestoreApiTests(TestCase):
         self.assertEqual(task.status, Task.Status.FAILED)
         self.assertEqual(task.task_type, Task.Type.RESTORE)
         self.assertEqual(float(task.progress), 37)
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=self.snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+                consumer_id=str(record.id),
+            ).exists()
+        )
         self.assertIn("repository is not connected", task.error_message)
         self.assertEqual(task.steps.get(step_name="restore").status, "failed")
         self.assertEqual(task.steps.get(step_name="finalize").status, "failed")
@@ -3562,6 +3595,172 @@ class RestoreApiTests(TestCase):
             TaskEvent.objects.filter(
                 task=task,
                 message="Restore finished successfully",
+            ).exists()
+        )
+
+    @patch("apps.restore.services.interface.cancel_agent_task")
+    def test_cancelled_restore_keeps_snapshot_until_agent_work_stops(
+        self, cancel_agent_task
+    ):
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record",
+            correlation_id=str(record.task_uuid),
+        )
+
+        response = self.client.post(
+            f"/api/v1/restore/tasks/{record.task_uuid}/cancel/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        cancel_agent_task.assert_called()
+        reconcile_snapshot_usage_leases()
+        self.assertTrue(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=self.snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+                consumer_id=str(record.id),
+            ).exists()
+        )
+
+        node_task.status = NodeTask.Status.CANCELED
+        node_task.save(update_fields=["status", "updated_at"])
+        reconcile_snapshot_usage_leases()
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=self.snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+                consumer_id=str(record.id),
+            ).exists()
+        )
+
+    def test_missing_product_task_lease_waits_for_agent_work_before_reclaim(self):
+        record = RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=self.target.id,
+            restore_uid="rst-orphaned-task",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=999999,
+            task_uuid=uuid.uuid4(),
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=self.config.id,
+            source_snapshot_id=self.snapshot.id,
+            target_type="agent",
+            target_ref_id=self.target.id,
+            target_path="/restore/orphaned",
+            scope=RestoreRecord.Scope.SNAPSHOT,
+            conflict_mode=RestoreRecord.ConflictMode.SKIP,
+        )
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+            consumer_id=str(record.id),
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.target,
+            kind="restore.run",
+            correlation_type="restore.record",
+            correlation_id=str(record.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            payload={"restore_record_id": record.id},
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+        )
+
+        reconcile_snapshot_usage_leases()
+
+        self.assertTrue(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=self.snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+                consumer_id=str(record.id),
+            ).exists()
+        )
+
+        node_task.status = NodeTask.Status.CANCELED
+        node_task.save(update_fields=["status", "updated_at"])
+        reconcile_snapshot_usage_leases()
+
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=self.snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+                consumer_id=str(record.id),
+            ).exists()
+        )
+
+    def test_missing_restore_record_lease_waits_for_agent_work_before_reclaim(self):
+        record = RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=self.target.id,
+            restore_uid="rst-orphaned-record",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=999998,
+            task_uuid=uuid.uuid4(),
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=self.config.id,
+            source_snapshot_id=self.snapshot.id,
+            target_type="agent",
+            target_ref_id=self.target.id,
+            target_path="/restore/orphaned-record",
+            scope=RestoreRecord.Scope.SNAPSHOT,
+            conflict_mode=RestoreRecord.ConflictMode.SKIP,
+        )
+        record_id = record.id
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+            consumer_id=str(record_id),
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.target,
+            kind="restore.run",
+            correlation_type="restore.record",
+            correlation_id=str(record.task_uuid),
+            status=NodeTask.Status.RUNNING,
+            payload={"restore_record_id": record_id},
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+        )
+        record.delete()
+
+        reconcile_snapshot_usage_leases()
+
+        self.assertTrue(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=self.snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+                consumer_id=str(record_id),
+            ).exists()
+        )
+
+        node_task.status = NodeTask.Status.CANCELED
+        node_task.save(update_fields=["status", "updated_at"])
+        reconcile_snapshot_usage_leases()
+
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=self.snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+                consumer_id=str(record_id),
             ).exists()
         )
 

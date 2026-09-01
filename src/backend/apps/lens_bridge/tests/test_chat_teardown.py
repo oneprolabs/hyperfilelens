@@ -30,6 +30,11 @@ from apps.lens_bridge.tasks.chat_lifecycle import (
     reconcile_lens_resource_teardowns_task,
 )
 from apps.node.models import Node
+from apps.protection.models import BackupSourceSnapshot, SnapshotUsageLease
+from apps.protection.services.snapshot_usage import (
+    acquire_snapshot_usage,
+    reconcile_snapshot_usage_leases,
+)
 
 
 class CopilotChatTeardownTests(TestCase):
@@ -47,6 +52,13 @@ class CopilotChatTeardownTests(TestCase):
             organization=self.platform_org,
             name="platform-gateway",
             role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        self.source_agent = Node.objects.create(
+            organization=self.tenant,
+            name="chat-teardown-source",
+            role=Node.Role.AGENT,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
         )
@@ -91,6 +103,183 @@ class CopilotChatTeardownTests(TestCase):
             sl_assistant_uuid=self.knowledge_source.sl_assistant_uuid,
             lifecycle_status=LensSessionLink.LifecycleStatus.READY,
         )
+
+    def test_ready_chat_releases_snapshot_usage_lease(self):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-ready-snapshot",
+            idempotency_key="chat-ready-snapshot",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        claim_token = uuid.uuid4()
+        assistant_uuid = self.knowledge_source.sl_assistant_uuid
+        session_uuid = uuid.uuid4()
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
+        self.session.backup_source_snapshot_id = snapshot.id
+        self.session.provision_claim_token = claim_token
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "backup_source_snapshot_id",
+                "provision_claim_token",
+                "updated_at",
+            ]
+        )
+        acquire_snapshot_usage(
+            organization_id=self.tenant.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id=self.session.id,
+        )
+
+        chat_lifecycle._complete_copilot_chat_provision(
+            link_id=self.session.id,
+            claim_token=str(claim_token),
+            knowledge_source_id=self.knowledge_source.id,
+            assistant_uuid=assistant_uuid,
+            session_uuid=session_uuid,
+        )
+
+        self.session.refresh_from_db()
+        self.assertEqual(
+            self.session.lifecycle_status,
+            LensSessionLink.LifecycleStatus.READY,
+        )
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(snapshot_id=snapshot.id).exists()
+        )
+
+    def test_failed_chat_keeps_snapshot_while_cleanup_is_incomplete(self):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-cleanup-snapshot",
+            idempotency_key="chat-cleanup-snapshot",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.BLOCKED
+        self.session.backup_source_snapshot_id = snapshot.id
+        self.session.provision_next_retry_at = None
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "cleanup_status",
+                "backup_source_snapshot_id",
+                "provision_next_retry_at",
+                "updated_at",
+            ]
+        )
+        acquire_snapshot_usage(
+            organization_id=self.tenant.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id=self.session.id,
+        )
+
+        reconcile_snapshot_usage_leases()
+
+        self.assertTrue(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+                consumer_id=str(self.session.id),
+            ).exists()
+        )
+
+    def test_legacy_deleting_chat_with_complete_cleanup_releases_lease(self):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="legacy-deleting-chat-snapshot",
+            idempotency_key="legacy-deleting-chat-snapshot",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.COMPLETE
+        self.session.backup_source_snapshot_id = snapshot.id
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "cleanup_status",
+                "backup_source_snapshot_id",
+                "updated_at",
+            ]
+        )
+        acquire_snapshot_usage(
+            organization_id=self.tenant.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id=self.session.id,
+        )
+
+        reconcile_snapshot_usage_leases()
+
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+                consumer_id=str(self.session.id),
+            ).exists()
+        )
+
+    def test_snapshot_usage_reconciler_rotates_past_retained_lease(self):
+        retained_snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="retained-reconcile-snapshot",
+            idempotency_key="retained-reconcile-snapshot",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        releasable_snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="releasable-reconcile-snapshot",
+            idempotency_key="releasable-reconcile-snapshot",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        retained = SnapshotUsageLease.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_id=retained_snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="unclassified-safe-retention",
+        )
+        releasable = SnapshotUsageLease.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_id=releasable_snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id=str(self.session.id),
+        )
+
+        first = reconcile_snapshot_usage_leases(limit=1)
+        retained.refresh_from_db()
+        second = reconcile_snapshot_usage_leases(limit=1)
+
+        self.assertEqual(first, {"checked": 1, "released": 0, "retained": 1})
+        self.assertIsNotNone(retained.last_reconciled_at)
+        self.assertEqual(second, {"checked": 1, "released": 1, "retained": 0})
+        self.assertFalse(SnapshotUsageLease.objects.filter(pk=releasable.id).exists())
 
     @staticmethod
     def _not_found() -> sl_client.LensBridgeError:
@@ -575,15 +764,34 @@ class CopilotChatTeardownTests(TestCase):
         wake_gateway_queue,
         queue_teardown,
     ):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="failed-provision-snapshot",
+            idempotency_key="failed-provision-snapshot",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
         claim_token = uuid.uuid4()
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
         self.session.provision_claim_token = claim_token
+        self.session.backup_source_snapshot_id = snapshot.id
         self.session.save(
             update_fields=[
                 "lifecycle_status",
                 "provision_claim_token",
+                "backup_source_snapshot_id",
                 "updated_at",
             ]
+        )
+        acquire_snapshot_usage(
+            organization_id=self.tenant.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id=self.session.id,
         )
 
         with self.captureOnCommitCallbacks(execute=True):
@@ -610,6 +818,13 @@ class CopilotChatTeardownTests(TestCase):
         self.assertEqual(
             self.session.cleanup_status,
             LensSessionLink.CleanupStatus.PENDING,
+        )
+        self.assertTrue(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+                consumer_id=str(self.session.id),
+            ).exists()
         )
         self.assertEqual(self.session.status, LensSessionLink.Status.ACTIVE)
         queue_teardown.assert_called_once_with(self.session.id)

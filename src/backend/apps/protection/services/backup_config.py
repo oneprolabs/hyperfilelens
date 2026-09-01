@@ -26,10 +26,12 @@ from apps.protection.models import (
     BackupPolicy,
     BackupSourceSnapshot,
     FileFilterRule,
+    SnapshotUsageLease,
 )
 from apps.protection.services.repository_compatibility import (
     validate_backup_repository_compatible,
 )
+from apps.protection.services.snapshot_usage import SnapshotUsageConflict
 from apps.restore.services.interface import create_restore_plan
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
@@ -1655,6 +1657,9 @@ def purge_backup_config_data_for_source(
 ) -> dict[str, int]:
     """Internal source cleanup path for removing backup artifacts tied to a source."""
     from apps.restore.models import RestorePlan
+    from apps.source.services.internal.source_operation_fence import (
+        lock_source_identity,
+    )
 
     configs = list(
         BackupConfig.objects.filter(
@@ -1672,10 +1677,44 @@ def purge_backup_config_data_for_source(
         }
     repository_ids = sorted({int(row[1]) for row in configs})
 
-    snapshots_removed = BackupSourceSnapshot.objects.filter(
-        organization_id=organization_id,
-        backup_config_id__in=config_ids,
-    ).delete()[0]
+    # This helper is also used by Agent uninstall and pipeline rollback, which
+    # historically deleted snapshot rows without going through the normal
+    # snapshot-delete service. Lock the source and snapshots together so an
+    # active Restore/Chat lease is observed before deletion and a concurrent
+    # lease acquisition cannot slip between the check and the delete.
+    with transaction.atomic():
+        lock_source_identity(
+            organization_id=organization_id,
+            source_type=source_type,
+            source_ref_id=source_ref_id,
+        )
+        snapshots = list(
+            BackupSourceSnapshot.objects.select_for_update().filter(
+                organization_id=organization_id,
+                backup_config_id__in=config_ids,
+            )
+        )
+        protected_snapshot_ids = set(
+            SnapshotUsageLease.objects.filter(
+                organization_id=organization_id,
+                snapshot_id__in=[snapshot.id for snapshot in snapshots],
+            ).values_list("snapshot_id", flat=True)
+        )
+        if protected_snapshot_ids:
+            raise SnapshotUsageConflict(
+                {
+                    "source_ref_id": (
+                        "Backup source snapshots are currently in use by a "
+                        "Restore or Chat preparation."
+                    ),
+                    "snapshot_ids": sorted(protected_snapshot_ids),
+                }
+            )
+        snapshots_removed = 0
+        if snapshots:
+            snapshots_removed = BackupSourceSnapshot.objects.filter(
+                id__in=[snapshot.id for snapshot in snapshots],
+            ).delete()[0]
     restore_plans_removed = RestorePlan.objects.filter(
         organization_id=organization_id,
         backup_config_id__in=config_ids,

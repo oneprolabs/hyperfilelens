@@ -54,8 +54,13 @@ from apps.protection.models import (
 from apps.storage.services.internal.repository_workload import (
     RepositoryWorkload,
     lock_repositories_for_workload,
+    validate_repositories_for_workload,
 )
 from apps.protection.services.source_identity import resolve_source_display_name
+from apps.protection.services.snapshot_usage import (
+    acquire_snapshot_usage,
+    release_chat_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +89,21 @@ class ChatCreateIdempotencyConflict(APIException):
     status_code = http_status.HTTP_409_CONFLICT
     default_detail = "The chat request key was already used with different data."
     default_code = "chat_create_idempotency_conflict"
+
+
+def _acquire_chat_snapshot_usage(
+    *, organization_id: int, snapshot_id: int, session_link_id: int
+) -> None:
+    try:
+        acquire_snapshot_usage(
+            organization_id=organization_id,
+            snapshot_id=snapshot_id,
+            consumer_type="chat",
+            consumer_id=session_link_id,
+        )
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail=detail) from exc
 
 
 def _chat_create_request_identity(
@@ -366,6 +386,16 @@ def create_copilot_chat(
     if existing is not None:
         if existing.create_request_hash != request_hash:
             raise ChatCreateIdempotencyConflict()
+        if (
+            existing.lifecycle_status
+            == LensSessionLink.LifecycleStatus.PROVISIONING
+            and existing.backup_source_snapshot_id is not None
+        ):
+            _acquire_chat_snapshot_usage(
+                organization_id=org.id,
+                snapshot_id=existing.backup_source_snapshot_id,
+                session_link_id=existing.id,
+            )
         return existing
 
     config = BackupConfig.objects.filter(
@@ -374,7 +404,7 @@ def create_copilot_chat(
     if config is None:
         raise ValidationError({"backup_config_id": "Backup source not found."})
     try:
-        lock_repositories_for_workload(
+        validate_repositories_for_workload(
             organization_id=org.id,
             repository_ids=[config.repository_id],
             workload=RepositoryWorkload.RESTORE_READ,
@@ -546,6 +576,49 @@ def create_copilot_chat(
 
     try:
         with transaction.atomic():
+            from apps.source.services.internal.source_operation_fence import (
+                assert_source_product_operation_allowed,
+                lock_source_identity,
+            )
+
+            assert_source_product_operation_allowed(
+                organization_id=org.id,
+                source_type=(
+                    "agent" if config.source_type == "host" else config.source_type
+                ),
+                source_ref_id=config.source_ref_id,
+            )
+            lock_source_identity(
+                organization_id=org.id,
+                source_type=(
+                    "agent" if config.source_type == "host" else config.source_type
+                ),
+                source_ref_id=config.source_ref_id,
+            )
+            snapshot = (
+                BackupSourceSnapshot.objects.select_for_update()
+                .filter(
+                    id=snapshot.id,
+                    organization_id=org.id,
+                    backup_config_id=config.id,
+                )
+                .first()
+            )
+            if snapshot is None or snapshot.status not in {
+                BackupSourceSnapshot.Status.AVAILABLE,
+                BackupSourceSnapshot.Status.PARTIAL,
+            }:
+                raise ValidationError(
+                    {"backup_source_snapshot_id": "Snapshot is no longer available."}
+                )
+            try:
+                lock_repositories_for_workload(
+                    organization_id=org.id,
+                    repository_ids=[config.repository_id],
+                    workload=RepositoryWorkload.RESTORE_READ,
+                )
+            except DjangoValidationError as exc:
+                raise ValidationError(exc.message_dict) from exc
             gateway_link = (
                 LensGatewayLink.objects.select_for_update()
                 .select_related("gateway", "organization")
@@ -565,6 +638,11 @@ def create_copilot_chat(
                 gateway_link=gateway_link,
             )
             link = _create_session_link()
+            _acquire_chat_snapshot_usage(
+                organization_id=org.id,
+                snapshot_id=snapshot.id,
+                session_link_id=link.id,
+            )
             link.gateway_queue_entered_at = timezone.now()
             link.save(update_fields=["gateway_queue_entered_at", "updated_at"])
     except IntegrityError:
@@ -578,6 +656,12 @@ def create_copilot_chat(
             raise
         if link.create_request_hash != request_hash:
             raise ChatCreateIdempotencyConflict()
+        if link.lifecycle_status == LensSessionLink.LifecycleStatus.PROVISIONING:
+            _acquire_chat_snapshot_usage(
+                organization_id=org.id,
+                snapshot_id=link.backup_source_snapshot_id,
+                session_link_id=link.id,
+            )
         return link
 
     transaction.on_commit(lambda: _queue_provision_or_mark_failed(link.id))
@@ -1978,6 +2062,11 @@ def _complete_copilot_chat_provision(
             "updated_at",
         ]
     )
+    if link.backup_source_snapshot_id is not None:
+        release_chat_usage(
+            session_link_id=link.id,
+            snapshot_id=link.backup_source_snapshot_id,
+        )
     transaction.on_commit(
         lambda: gateway_chat_queue.release_chat_prepare_slot(
             session_link_id=link.id,
@@ -2815,6 +2904,11 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     )
     if updated != 1:
         raise ChatTeardownIncompleteError("Chat teardown lease was lost.")
+    if not critical_errors and link.backup_source_snapshot_id is not None:
+        release_chat_usage(
+            session_link_id=link.id,
+            snapshot_id=link.backup_source_snapshot_id,
+        )
     if slot_generation is not None and prepare_slot_release_safe:
         gateway_chat_queue.release_chat_prepare_slot(
             session_link_id=link.id,
@@ -2848,6 +2942,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     }
 
 
+@transaction.atomic
 def _mark_provision_failed_by_id(
     session_link_id: int,
     claim_token: str,
@@ -2875,6 +2970,16 @@ def _mark_provision_failed_by_id(
         updated_at=timezone.now(),
     )
     if updated:
+        snapshot_id = (
+            LensSessionLink.objects.filter(pk=session_link_id)
+            .values_list("backup_source_snapshot_id", flat=True)
+            .first()
+        )
+        if snapshot_id is not None:
+            release_chat_usage(
+                session_link_id=session_link_id,
+                snapshot_id=snapshot_id,
+            )
         released_gateway_id = gateway_chat_queue.release_chat_prepare_slot(
             session_link_id=session_link_id,
             expected_generation=expected_generation,
@@ -3073,6 +3178,13 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     gateway_link = locked.gateway_link or (
         locked.chat_binding.gateway_link if locked.chat_binding_id else None
     )
+    if locked.backup_source_snapshot_id is not None:
+        _acquire_chat_snapshot_usage(
+            organization_id=locked.organization_id,
+            snapshot_id=locked.backup_source_snapshot_id,
+            session_link_id=locked.id,
+        )
+
     if gateway_link is not None:
         # Backfill the canonical binding for sessions created by an older
         # release. Invalid historical rows without any Gateway keep the prior

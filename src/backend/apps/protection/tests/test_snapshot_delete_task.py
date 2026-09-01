@@ -19,6 +19,7 @@ from apps.protection.models import (
     BackupConfigDirectory,
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
+    SnapshotUsageLease,
 )
 from apps.protection.services.backup_source_snapshot import (
     create_source_snapshot,
@@ -34,6 +35,7 @@ from apps.protection.services.snapshot_delete import (
 from apps.protection.services.snapshot_delete_execution import (
     queue_snapshot_delete_result_followup,
 )
+from apps.protection.services.snapshot_usage import acquire_snapshot_usage
 from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.repository_location import (
@@ -142,6 +144,69 @@ class SnapshotDeleteTaskTests(TestCase):
             kopia_snapshot_id="kopia-b",
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
+
+    def test_create_snapshot_delete_task_rejects_protected_snapshot(self):
+        acquire_snapshot_usage(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+            consumer_id=42,
+        )
+
+        with self.assertRaisesMessage(ValidationError, "currently in use"):
+            create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        self.snapshot.refresh_from_db()
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.AVAILABLE)
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.SNAPSHOT_DELETE).exists()
+        )
+
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
+    def test_pending_delete_waits_when_upgrade_backfills_usage_lease(
+        self, run_agent_task_async
+    ):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="legacy-active-chat",
+        )
+
+        result = run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        task.refresh_from_db()
+        self.snapshot.refresh_from_db()
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(result["reason"], "snapshot_in_use")
+        self.assertEqual(task.status, Task.Status.PENDING)
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETING)
+        run_agent_task_async.assert_not_called()
+
+    @patch("apps.protection.services.snapshot_delete.queue_snapshot_delete_task")
+    def test_reconcile_does_not_requeue_pending_snapshot_in_use(self, queue_task):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        old = timezone.now() - timedelta(minutes=10)
+        Task.objects.filter(id=task.id).update(updated_at=old)
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="legacy-active-chat",
+        )
+
+        result = reconcile_snapshot_delete_tasks(now=timezone.now())
+
+        task.refresh_from_db()
+        self.assertEqual(result["requeued_pending"], 0)
+        self.assertEqual(task.status, Task.Status.PENDING)
+        self.assertGreater(task.updated_at, old)
+        queue_task.assert_not_called()
 
     @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_run_snapshot_delete_task_marks_logical_snapshot_deleted(
@@ -1128,6 +1193,39 @@ class SnapshotDeleteTaskTests(TestCase):
         )
 
     @patch("apps.protection.services.snapshot_delete.queue_snapshot_delete_task")
+    def test_reconcile_does_not_retry_delete_failed_snapshot_in_use(
+        self, queue_task
+    ):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        old = timezone.now() - timedelta(days=1)
+        Task.objects.filter(id=task.id).update(
+            status=Task.Status.FAILED,
+            finished_at=old,
+            updated_at=old,
+        )
+        BackupSourceSnapshot.objects.filter(id=self.snapshot.id).update(
+            status=BackupSourceSnapshot.Status.DELETE_FAILED,
+            updated_at=old,
+        )
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+            consumer_id="active-restore",
+        )
+
+        result = reconcile_snapshot_delete_tasks(now=timezone.now())
+
+        task.refresh_from_db()
+        self.snapshot.refresh_from_db()
+        self.assertEqual(result["retried_failed"], 0)
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(
+            self.snapshot.status, BackupSourceSnapshot.Status.DELETE_FAILED
+        )
+        queue_task.assert_not_called()
+
+    @patch("apps.protection.services.snapshot_delete.queue_snapshot_delete_task")
     def test_reconcile_skips_parent_with_active_agent_delete(self, queue_task):
         task = create_snapshot_delete_task(source_snapshot=self.snapshot)
         old = timezone.now() - timedelta(minutes=10)
@@ -1221,6 +1319,52 @@ class SnapshotDeleteTaskTests(TestCase):
             .exclude(status=BackupSourceSnapshotDirectory.Status.DELETED)
             .exists()
         )
+
+    def test_repair_command_cannot_finalize_snapshot_in_use(self):
+        BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot=self.snapshot
+        ).update(
+            status=BackupSourceSnapshotDirectory.Status.CANCELLED,
+            kopia_snapshot_id="None",
+        )
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="legacy-active-chat",
+        )
+        stdout = StringIO()
+
+        call_command("repair_snapshot_delete_state", apply=True, stdout=stdout)
+
+        self.snapshot.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETING)
+        self.assertEqual(task.status, Task.Status.PENDING)
+        self.assertIn("reason=snapshot_in_use", stdout.getvalue())
+
+    @patch(
+        "apps.protection.management.commands.repair_snapshot_delete_state."
+        "snapshot_is_protected",
+        side_effect=[False, True],
+    )
+    def test_repair_command_rechecks_usage_under_snapshot_lock(self, protected):
+        BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot=self.snapshot
+        ).update(
+            status=BackupSourceSnapshotDirectory.Status.CANCELLED,
+            kopia_snapshot_id="None",
+        )
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        call_command("repair_snapshot_delete_state", apply=True, stdout=StringIO())
+
+        self.snapshot.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(protected.call_count, 2)
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETING)
+        self.assertEqual(task.status, Task.Status.PENDING)
 
     @patch("apps.protection.services.snapshot_delete.run_agent_task_async")
     def test_delete_failed_manual_retry_reuses_original_task(
