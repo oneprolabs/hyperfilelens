@@ -2536,6 +2536,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
           </ElButton>
           <ElDropdown
             trigger="click"
+            popper-class="hfl-actions-dropdown"
             @command="onMoreCommand"
             @visible-change="moreActionsOpen = $event"
           >

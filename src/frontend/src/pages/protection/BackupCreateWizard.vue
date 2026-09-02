@@ -1034,6 +1034,8 @@ const messageLocale = computed<MessageLocale>(() => 'en')
 
 const createOpen = ref(false)
 const createStep = ref(0)
+const filterPolicyBatchActionsOpen = ref(false)
+const recoveryPlanBatchActionsOpen = ref(false)
 const createCompletedSteps = ref<Set<number>>(new Set())
 type BackupConfigEditSection = 'paths' | 'policy' | 'recovery-plan'
 const editConfigs = ref<BackupConfigDetail[]>([])
@@ -6595,32 +6597,38 @@ function preserveShallowestPathOrder(paths: string[]) {
                 </ElButton>
                 <ElDropdown
                   trigger="click"
+                  popper-class="hfl-actions-dropdown"
                   @command="openFilterPolicyBatchDialog"
+                  @visible-change="filterPolicyBatchActionsOpen = $event"
                 >
                   <ElButton class="hfl-btn-with-icon">
                     <span>{{ t('protection.backupsPage.btnBatchActions') }}</span>
                     <ChevronDown
                       :size="15"
                       stroke-width="2"
-                      class="shrink-0"
+                      class="shrink-0 hfl-list-more__chev"
+                      :class="{ 'hfl-list-more__chev--open': filterPolicyBatchActionsOpen }"
                     />
                   </ElButton>
                   <template #dropdown>
                     <ElDropdownMenu>
                       <ElDropdownItem
                         command="policy"
+                        :icon="ClipboardCheck"
                         :disabled="checkedFilterPolicyGroups.length === 0"
                       >
                         {{ t('protection.backupsPage.batchPolicyAction') }}
                       </ElDropdownItem>
                       <ElDropdownItem
                         command="filter"
+                        :icon="Filter"
                         :disabled="checkedFilterPolicyGroups.length === 0"
                       >
                         {{ t('protection.backupsPage.batchFileFilterAction') }}
                       </ElDropdownItem>
                       <ElDropdownItem
                         command="compression"
+                        :icon="Archive"
                         :disabled="checkedFilterPolicyGroups.length === 0"
                       >
                         {{ t('protection.backupsPage.batchCompressionAction') }}
@@ -8086,26 +8094,31 @@ function preserveShallowestPathOrder(paths: string[]) {
               <div class="create-source-config-toolbar__divider" />
               <ElDropdown
                 trigger="click"
+                popper-class="hfl-actions-dropdown"
                 @command="(command) => applyBatchRecoveryPlanEnabled(command === 'enable')"
+                @visible-change="recoveryPlanBatchActionsOpen = $event"
               >
                 <ElButton class="hfl-btn-with-icon">
                   <span>{{ t('protection.backupsPage.btnBatchActions') }}</span>
                   <ChevronDown
                     :size="15"
                     stroke-width="2"
-                    class="shrink-0"
+                    class="shrink-0 hfl-list-more__chev"
+                    :class="{ 'hfl-list-more__chev--open': recoveryPlanBatchActionsOpen }"
                   />
                 </ElButton>
                 <template #dropdown>
                   <ElDropdownMenu>
                     <ElDropdownItem
                       command="enable"
+                      :icon="ShieldCheck"
                       :disabled="checkedRecoveryPlanDisabledGroups.length === 0"
                     >
                       {{ t('protection.backupsPage.batchEnableRecoveryPlanAction') }}
                     </ElDropdownItem>
                     <ElDropdownItem
                       command="disable"
+                      :icon="CircleOff"
                       :disabled="checkedRecoveryPlanEnabledGroups.length === 0"
                     >
                       {{ t('protection.backupsPage.batchDisableRecoveryPlanAction') }}

@@ -41,7 +41,7 @@ import {
   BrushCleaning,
 } from 'lucide-vue-next'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { ElTable, ElTree } from 'element-plus'
+import type { DropdownInstance, ElTable, ElTree } from 'element-plus'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import ModulePage from '../../components/ModulePage.vue'
 import HflHelpTip from '../../components/HflHelpTip.vue'
@@ -1111,6 +1111,12 @@ function clampFlowPagerPage(pager: { page: number; pageSize: number }, total: nu
   if (pager.page < 1) pager.page = 1
 }
 const moreActionsOpen = ref(false)
+const flowMoreActionsDropdownRef = ref<DropdownInstance | null>(null)
+
+function closeFlowMoreActions() {
+  flowMoreActionsDropdownRef.value?.handleClose()
+  moreActionsOpen.value = false
+}
 
 const selectedSourceIds = ref<string[]>([])
 const sourceTableRef = ref<InstanceType<typeof ElTable> | null>(null)
@@ -2103,6 +2109,8 @@ async function enterBackupConfigStep(requireSelection = false) {
     return
   }
 
+  closeFlowMoreActions()
+
   flowAdvancingToBackupConfig.value = true
   try {
     if (requireSelection && flowMainStep.value === 0) {
@@ -2141,11 +2149,13 @@ async function onGoToCreateBackup() {
 }
 
 function enterSourceStep() {
+  closeFlowMoreActions()
   flowMainStep.value = 0
   syncFlowStepRoute(0)
 }
 
 function enterStartBackupStep(opts?: { requireReady?: boolean; focusIds?: string[] | null; syncRoute?: boolean; refresh?: boolean }) {
+  closeFlowMoreActions()
   if (opts?.focusIds !== undefined && opts.focusIds !== null) {
     const focusIds = opts.focusIds.filter((id) => sourceHasBackupConfig(id))
     step3FocusSourceIds.value = focusIds.length > 0 ? focusIds : null
@@ -2775,6 +2785,7 @@ watch(step3SourceList, (list) => {
 }, { flush: 'post' })
 
 watch(flowMainStep, (step) => {
+  closeFlowMoreActions()
   cancelOtherFlowStepRequests(step)
   if (step === 0 || step === 1) flowStepLoadRetryAttempted[step] = false
   if (step !== 0) clearFlowStepLoadRetry(0)
@@ -10110,6 +10121,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     {{ t('protection.backupsPage.btnNext') }}
                   </ElButton>
                   <ElDropdown
+                    ref="flowMoreActionsDropdownRef"
                     trigger="click"
                     popper-class="hfl-actions-dropdown"
                     @visible-change="moreActionsOpen = $event"
@@ -10169,6 +10181,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     {{ t('protection.backupsPage.btnCreateBackup') }}
                   </ElButton>
                   <ElDropdown
+                    ref="flowMoreActionsDropdownRef"
                     trigger="click"
                     popper-class="hfl-actions-dropdown"
                     @visible-change="moreActionsOpen = $event"
@@ -10260,6 +10273,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     </span>
                   </ElTooltip>
                   <ElDropdown
+                    ref="flowMoreActionsDropdownRef"
                     trigger="click"
                     popper-class="hfl-actions-dropdown"
                     @visible-change="moreActionsOpen = $event"
@@ -10350,6 +10364,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </ElDropdownItem>
                         <ElDropdownItem
                           divided
+                          class="el-dropdown-menu__item--danger"
                           :disabled="!step3ResetEnabled"
                           @click="revertSelectedSourcesFromStep3"
                         >

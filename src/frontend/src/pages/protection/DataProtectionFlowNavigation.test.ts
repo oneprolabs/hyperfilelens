@@ -22,4 +22,11 @@ describe('backup wizard flow navigation', () => {
     expect(page).toContain('if (flowAdvancingToBackupConfig.value) return')
     expect(page).toContain(':loading="flowAdvancingToBackupConfig"')
   })
+
+  it('closes the active More Actions dropdown before changing steps', () => {
+    expect(page).toContain('const flowMoreActionsDropdownRef = ref<DropdownInstance | null>(null)')
+    expect(page).toMatch(/function closeFlowMoreActions\(\) \{\s*flowMoreActionsDropdownRef\.value\?\.handleClose\(\)\s*moreActionsOpen\.value = false/)
+    expect(page.match(/ref="flowMoreActionsDropdownRef"/g)).toHaveLength(3)
+    expect(page).toMatch(/watch\(flowMainStep, \(step\) => \{\s*closeFlowMoreActions\(\)/)
+  })
 })
