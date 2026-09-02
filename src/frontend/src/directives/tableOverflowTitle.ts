@@ -135,11 +135,28 @@ function overflowCandidates(cell: HTMLElement) {
 
 function titleTextForCell(cell: HTMLElement) {
   const explicitTargets = Array.from(cell.querySelectorAll<HTMLElement>('[data-table-overflow-title]'))
+  const alwaysExplicitTitle = explicitTargets.find((target) => {
+    return target.hasAttribute('data-table-overflow-title-always')
+      && Boolean(target.dataset.tableOverflowTitle?.trim())
+  })?.dataset.tableOverflowTitle?.trim()
+  if (alwaysExplicitTitle) return alwaysExplicitTitle
+
   const overflowingExplicitTarget = explicitTargets.find((target) => {
     return Boolean(target.dataset.tableOverflowTitle?.trim()) && isOverflowing(target)
   })
   const explicitTitle = overflowingExplicitTarget?.dataset.tableOverflowTitle?.trim()
   if (explicitTitle) return explicitTitle
+
+  // If the table cell itself is clipped but its explicitly titled child does
+  // not report overflow independently (common with flex layouts), preserve
+  // the structured title instead of falling back to all visible cell text.
+  const structuredTitle = explicitTargets.find((target) => target.dataset.tableOverflowTitle?.trim())
+    ?.dataset.tableOverflowTitle?.trim()
+  if (structuredTitle && isOverflowing(cell)) return structuredTitle
+
+  // Some compound cells intentionally expose only their structured detail
+  // text. Do not fall back to duplicating visible status labels in a tooltip.
+  if (cell.querySelector('[data-table-overflow-explicit-only]')) return ''
 
   const candidates = overflowCandidates(cell)
   const overflowingCandidates = candidates.filter(isOverflowing)
@@ -206,7 +223,11 @@ function observeTooltipContent(state: OverflowTitleState, cell: HTMLElement) {
     childList: true,
     characterData: true,
     attributes: true,
-    attributeFilter: ['data-table-overflow-title'],
+    attributeFilter: [
+      'data-table-overflow-title',
+      'data-table-overflow-title-always',
+      'data-table-overflow-explicit-only',
+    ],
   })
   state.contentObserver = observer
 }

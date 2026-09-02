@@ -80,16 +80,13 @@ const overflowTitle = computed(() => {
     .filter(Boolean)
     .join('\n')
 })
-const labelTitle = computed(() => {
-  const label = orchestrationLabel.value
-  return label.length > 48 ? label : undefined
-})
 </script>
 
 <template>
   <div
     class="task-progress-cell"
     :class="{ 'is-compact': compact, 'is-failed': failed, 'is-stopping': stopping }"
+    data-table-overflow-explicit-only
   >
     <div
       v-if="orchestrationLabel || showRightPercent"
@@ -98,7 +95,6 @@ const labelTitle = computed(() => {
       <p
         v-if="orchestrationLabel"
         class="task-progress-cell__label"
-        :title="labelTitle"
       >
         <span
           v-if="showSpinner"
@@ -107,7 +103,6 @@ const labelTitle = computed(() => {
         />
         <span
           class="task-progress-cell__label-text"
-          :data-table-overflow-title="overflowTitle || undefined"
         >{{ orchestrationLabel }}</span>
       </p>
       <span
@@ -130,6 +125,7 @@ const labelTitle = computed(() => {
         v-if="metricLine"
         class="task-progress-cell__metric-line"
         :data-table-overflow-title="overflowTitle || undefined"
+        data-table-overflow-title-always
       >{{ metricLine }}</span>
     </p>
   </div>

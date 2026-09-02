@@ -224,6 +224,17 @@ def compute_step3_display_percent(
     return round(raw, 2)
 
 
+def _safe_progress_total(*, bytes_done: int, candidate_total: int) -> int:
+    """Keep a running progress denominator strictly ahead of its numerator."""
+    if candidate_total <= 0 or bytes_done <= candidate_total:
+        return candidate_total
+    # A reference/estimate can be smaller than the logical bytes processed
+    # (for example du -sk counts allocated blocks). Keep the row meaningful
+    # without ever presenting 100% before the task reaches a terminal state.
+    adjusted = (bytes_done * 100 + 98) // 99
+    return max(candidate_total, adjusted, bytes_done + 1)
+
+
 _MIN_STEP3_SPEED_BPS = 100
 
 
@@ -389,18 +400,42 @@ def enrich_step3_backup_transfer(
         switch_latched = True
         kopia_total_locked = estimated_bytes
 
+    total_source = ""
+    total_adjusted = False
     if schema_version >= 2:
         # Schema-v2 reports the logical estimate independently from lane
-        # completeness. Keep a usable aggregate estimate visible while one
-        # lane is still sampling, without treating it as an exact total.
-        effective_total = (
-            _int(aggregate.get("bytes_total"))
-            if aggregate.get("bytes_total_known")
-            else estimated_bytes
+        # completeness. Prefer Kopia's estimate, then use the preflight du
+        # total as a clearly-marked reference when Kopia has no estimate yet.
+        kopia_total_known = bool(aggregate.get("bytes_total_known"))
+        kopia_total = _int(aggregate.get("bytes_total")) if kopia_total_known else estimated_bytes
+        previous_total = max(
+            _int(prev.get("bytes_total")),
+            _int(prev.get("kopia_total_locked")),
         )
+        if kopia_total > 0:
+            # A du fallback is only a temporary reference. As soon as Kopia
+            # reports a positive logical estimate, do not let a larger du
+            # value keep overriding it while claiming the source is Kopia.
+            previous_kopia_total = (
+                previous_total
+                if str(prev.get("bytes_total_source") or "").lower() == "kopia"
+                and not bool(prev.get("bytes_total_adjusted"))
+                else 0
+            )
+            effective_total = max(kopia_total, previous_kopia_total)
+            total_source = "kopia"
+        else:
+            effective_total = max(_int(du_total), previous_total)
+            total_source = "du_reference" if effective_total > 0 else ""
+        safe_total = _safe_progress_total(
+            bytes_done=processed_bytes,
+            candidate_total=effective_total,
+        )
+        total_adjusted = safe_total > effective_total
+        effective_total = safe_total
         switch_latched = effective_total > 0
         kopia_total_locked = effective_total
-        merged["bytes_total_estimated"] = not bool(aggregate.get("bytes_total_known"))
+        merged["bytes_total_estimated"] = total_source != "kopia" or not kopia_total_known
     elif switch_latched:
         effective_total = estimated_bytes if estimated_bytes > 0 else kopia_total_locked
         if not bool(aggregate.get("bytes_total_known")) and kopia_total_locked > 0:
@@ -418,11 +453,15 @@ def enrich_step3_backup_transfer(
     if effective_total > 0:
         merged["bytes_total"] = effective_total
         merged["bytes_total_known"] = True
-        merged["bytes_total_reference"] = not switch_latched
+        merged["bytes_total_reference"] = total_source == "du_reference" or total_adjusted
+        merged["bytes_total_source"] = total_source or "unknown"
+        merged["bytes_total_adjusted"] = total_adjusted
     else:
         merged.pop("bytes_total", None)
         merged["bytes_total_known"] = False
         merged["bytes_total_reference"] = False
+        merged.pop("bytes_total_source", None)
+        merged.pop("bytes_total_adjusted", None)
 
     phase = str(merged.get("phase") or "").lower()
     if schema_version >= 2 and effective_total <= 0:

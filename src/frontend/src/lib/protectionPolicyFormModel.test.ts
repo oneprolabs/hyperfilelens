@@ -8,6 +8,7 @@ import {
   policyFormToWritePayload,
   quickScheduleToCron,
   summarizeSchedule,
+  summarizeScheduleCycle,
   validateRetentionForm,
   validateScheduleForm,
 } from './protectionPolicyFormModel'
@@ -110,6 +111,17 @@ describe('protection policy schedule mapping', () => {
     expect(formatScheduleStartForDisplay(form.scheduleStartsAt)).toBe('2026-08-13 14:30:45')
     expect(summarizeSchedule(form)).toContain('starts 2026-08-13 14:30:45')
     expect(summarizeSchedule(form)).not.toContain('2026-08-13T14:30:45')
+  })
+
+  it('summarizes the schedule cycle without repeating timezone or start time', () => {
+    const form = createEmptyPolicyForm()
+    form.simpleIntervalUnit = 'hour'
+    form.simpleIntervalValue = 3
+    form.scheduleTimezone = 'Asia/Shanghai'
+    form.scheduleStartsAt = '2026-08-31T17:16:23'
+
+    expect(summarizeScheduleCycle(form)).toBe('Every 3 hours')
+    expect(summarizeSchedule(form)).toBe('Every 3 hours (Asia/Shanghai), starts 2026-08-31 17:16:23')
   })
 
   it('serializes hour and day intervals through the shared mapper', () => {

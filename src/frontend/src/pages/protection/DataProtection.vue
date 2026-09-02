@@ -140,6 +140,7 @@ import {
   backupPolicyToForm,
   compileFilterIgnorePatterns,
   fileFilterRuleToForm,
+  summarizeScheduleCycle,
 } from '../../lib/protectionPolicyFormModel'
 import {
   getStorageRepository,
@@ -3621,7 +3622,7 @@ type FlowPolicyRetentionDetailLine = {
 function flowPolicyScheduleValue(policy: BackupPolicy | null | undefined) {
   if (!policy) return t('protection.backupDetail.durationDash')
   if (policy.schedule?.enabled === false) return t('protection.backupsPage.policyConfigNotConfigured')
-  return policy.schedule_summary || policy.schedule?.cron_expr || t('protection.backupsPage.policyConfigNotConfigured')
+  return summarizeScheduleCycle(backupPolicyToForm(policy))
 }
 
 function flowPolicyDetailRows(policy: BackupPolicy | null | undefined) {

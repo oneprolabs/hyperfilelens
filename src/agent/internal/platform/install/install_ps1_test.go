@@ -250,6 +250,18 @@ func TestInstallPs1UpgradePersistsMissingInstallationMode(t *testing.T) {
 	}
 }
 
+func TestInstallPs1RecoversModeForStagedUpgradeInstaller(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	for _, want := range []string{
+		`$stagedInstallerSuffix = "\lifecycle\upgrade\installer"`,
+		`$existingEnvs += (Join-Path $stagedAgentRoot "config\agent.env")`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("staged install.ps1 must recover the persisted mode using %q", want)
+		}
+	}
+}
+
 func TestInstallPs1ValidatesPurgePathBeforeUninstallLogging(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	uninstallStart := strings.Index(source, "function Invoke-Uninstall")

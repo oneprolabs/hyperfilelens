@@ -14,7 +14,7 @@ const upgradeDelaySecond = 5
 // ScheduleDetachedUpgrade runs install.sh upgrade after a short delay so the agent
 // can report task.result before stop_service terminates the process.
 func ScheduleDetachedUpgrade(
-	archivePath, installerPath, logDir string,
+	archivePath, installerPath, logDir, installationMode, runAsUser, runAsHome string,
 	userInstall bool,
 ) error {
 	if archivePath = strings.TrimSpace(archivePath); archivePath == "" {
@@ -34,6 +34,9 @@ func ScheduleDetachedUpgrade(
 		archivePath,
 		installerPath,
 		logDir,
+		installationMode,
+		runAsUser,
+		runAsHome,
 		userInstall,
 		scriptPath,
 	); err != nil {
@@ -59,7 +62,7 @@ func ScheduleDetachedUpgrade(
 }
 
 func writeUnixUpgradeScript(
-	archivePath, installerPath, logDir string,
+	archivePath, installerPath, logDir, installationMode, runAsUser, runAsHome string,
 	userInstall bool,
 	scriptPath string,
 ) error {
@@ -75,6 +78,9 @@ ARCHIVE=%q
 INSTALL_SH=%q
 LOG_FILE=%q
 PENDING_DIR=%q
+INSTALLATION_MODE=%q
+RUN_AS_USER=%q
+RUN_AS_HOME=%q
 USER_INSTALL=%s
 SLEEP_SECONDS=%d
 
@@ -116,7 +122,8 @@ if [[ ! -f "$ARCHIVE" ]]; then
 fi
 
 set +e
-bash "$INSTALL_SH" upgrade --from "$ARCHIVE" --yes --quiet-footer
+HFL_INSTALLATION_MODE="$INSTALLATION_MODE" HFL_RUN_AS_USER="$RUN_AS_USER" \
+HFL_RUN_AS_HOME="$RUN_AS_HOME" bash "$INSTALL_SH" upgrade --from "$ARCHIVE" --yes --quiet-footer
 rc=$?
 set -e
 if [[ "$rc" -eq 0 ]]; then
@@ -145,6 +152,9 @@ exit "$rc"
 		installerPath,
 		logFile,
 		pendingDir,
+		installationMode,
+		runAsUser,
+		runAsHome,
 		userInstallFlag,
 		upgradeDelaySecond,
 		unixGatewaySidecarUpgradeHook,

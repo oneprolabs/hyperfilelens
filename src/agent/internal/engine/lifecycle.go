@@ -89,6 +89,9 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 		stagedArchive,
 		stagedInstaller,
 		logDir,
+		string(cfg.InstallationMode),
+		cfg.RunAsUser,
+		cfg.RunAsHome,
 		cfg.InstallationMode == model.InstallationModeUser || cfg.InstallationMode == model.InstallationModeUserContinuous,
 	); err != nil {
 		slog.Warn("detached upgrade schedule failed", "err", err, "upgrade_log", upgradeLog)

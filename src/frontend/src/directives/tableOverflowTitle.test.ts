@@ -113,6 +113,59 @@ describe('tableOverflowTitle', () => {
     delete secondaryContent.dataset.tableOverflowTitle
   })
 
+  it('preserves a structured metric title when only the table cell is clipped', () => {
+    content.dataset.tableOverflowTitle = 'Processed: 12.0 GB\nProcessing speed: 8.74 MB/s'
+    const cellBody = cell.querySelector<HTMLElement>('.cell')!
+    Object.defineProperty(cellBody, 'clientWidth', { configurable: true, value: 80 })
+    Object.defineProperty(cellBody, 'scrollWidth', { configurable: true, value: 81 })
+    Object.defineProperty(content, 'clientWidth', { configurable: true, value: 80 })
+    Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 80 })
+    Object.defineProperty(secondaryContent, 'clientWidth', { configurable: true, value: 80 })
+    Object.defineProperty(secondaryContent, 'scrollWidth', { configurable: true, value: 80 })
+
+    content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    vi.advanceTimersByTime(300)
+
+    expect(document.querySelector<HTMLElement>('#hfl-table-overflow-tooltip')?.textContent).toBe(
+      'Processed: 12.0 GB\nProcessing speed: 8.74 MB/s',
+    )
+    delete content.dataset.tableOverflowTitle
+    delete cellBody.clientWidth
+    delete cellBody.scrollWidth
+  })
+
+  it('always shows explicitly marked progress detail even when it is not clipped', () => {
+    content.dataset.tableOverflowTitle = 'Processed: 53.6 GB / 55.7 GB\nProcessing speed: 2.47 MB/s\n15 min left'
+    content.setAttribute('data-table-overflow-title-always', '')
+    Object.defineProperty(content, 'clientWidth', { configurable: true, value: 200 })
+    Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 80 })
+    Object.defineProperty(secondaryContent, 'clientWidth', { configurable: true, value: 200 })
+    Object.defineProperty(secondaryContent, 'scrollWidth', { configurable: true, value: 80 })
+
+    content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    vi.advanceTimersByTime(300)
+
+    expect(document.querySelector<HTMLElement>('#hfl-table-overflow-tooltip')?.textContent).toBe(
+      'Processed: 53.6 GB / 55.7 GB\nProcessing speed: 2.47 MB/s\n15 min left',
+    )
+    delete content.dataset.tableOverflowTitle
+    content.removeAttribute('data-table-overflow-title-always')
+  })
+
+  it('does not fall back to a visible status label for explicit-only cells', () => {
+    content.innerText = 'Preparing backup…'
+    content.setAttribute('data-table-overflow-explicit-only', '')
+    Object.defineProperty(content, 'clientWidth', { configurable: true, value: 80 })
+    Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 200 })
+
+    content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    vi.advanceTimersByTime(300)
+
+    expect(document.querySelector<HTMLElement>('#hfl-table-overflow-tooltip')?.style.display).toBe('none')
+    content.removeAttribute('data-table-overflow-explicit-only')
+    content.innerText = 'notification.channel.create'
+  })
+
   it('shows the tooltip when content overflows by exactly one pixel', () => {
     Object.defineProperty(content, 'clientWidth', { configurable: true, value: 80 })
     Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 81 })

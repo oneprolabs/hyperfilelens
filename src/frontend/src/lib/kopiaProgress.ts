@@ -53,6 +53,8 @@ export type TransferProgress = {
   bytes_total_known?: boolean
   bytes_total_reference?: boolean
   bytes_total_estimated?: boolean
+  bytes_total_source?: 'kopia' | 'du_reference' | 'unknown'
+  bytes_total_adjusted?: boolean
   uploaded_bytes?: number
   uploaded_count?: number
   hashed_count?: number

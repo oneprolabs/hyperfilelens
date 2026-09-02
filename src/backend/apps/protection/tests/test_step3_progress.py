@@ -304,11 +304,66 @@ class Step3ProgressTests(SimpleTestCase):
                 "bytes_total_known": False,
                 "processing_speed_bps": 100_000_000,
             },
-            du_total=9_000_000_000,
+            du_total=0,
         )
         self.assertFalse(transfer["bytes_total_known"])
         self.assertIsNone(transfer.get("step3_display_percent"))
         self.assertIsNone(transfer.get("eta_seconds"))
+
+    def test_schema_v2_falls_back_to_du_and_adjusts_when_processed_exceeds_it(self):
+        processed = 104 * 1024 * 1024 * 1024
+        du_total = int(99.9 * 1024 * 1024 * 1024)
+        transfer = enrich_step3_backup_transfer(
+            transfer={"phase": "transferring"},
+            previous={},
+            aggregate={
+                "progress_schema_version": 2,
+                "processed_bytes": processed,
+                "bytes_done": processed,
+                "bytes_total_known": False,
+                "estimated_bytes": 0,
+                "processing_speed_bps": 10 * 1024 * 1024,
+            },
+            du_total=du_total,
+        )
+
+        self.assertEqual(transfer["bytes_total_source"], "du_reference")
+        self.assertTrue(transfer["bytes_total_adjusted"])
+        self.assertGreater(transfer["bytes_total"], processed)
+        self.assertEqual(transfer["step3_display_percent"], 99.0)
+
+    def test_schema_v2_replaces_larger_du_reference_with_kopia_estimate(self):
+        gib = 1024 * 1024 * 1024
+        transfer = enrich_step3_backup_transfer(
+            transfer={"phase": "transferring"},
+            previous={
+                "phase": "transferring",
+                "progress_schema_version": 2,
+                "processed_bytes": 40 * gib,
+                "bytes_done": 40 * gib,
+                "bytes_total": 89 * gib,
+                "bytes_total_known": True,
+                "bytes_total_source": "du_reference",
+                "bytes_total_reference": True,
+                "kopia_total_locked": 89 * gib,
+                "du_total": 89 * gib,
+            },
+            aggregate={
+                "progress_schema_version": 2,
+                "processed_bytes": 41 * gib,
+                "bytes_done": 41 * gib,
+                "estimated_bytes": 56 * gib,
+                "bytes_total_known": False,
+                "processing_speed_bps": 10 * 1024 * 1024,
+            },
+            du_total=89 * gib,
+        )
+
+        self.assertEqual(transfer["bytes_total"], 56 * gib)
+        self.assertEqual(transfer["bytes_total_source"], "kopia")
+        self.assertFalse(transfer["bytes_total_reference"])
+        self.assertFalse(transfer["bytes_total_adjusted"])
+        self.assertEqual(transfer["kopia_total_locked"], 56 * gib)
 
     def test_schema_v2_uses_partial_lane_estimate_for_progress_and_eta(self):
         transfer = enrich_step3_backup_transfer(
