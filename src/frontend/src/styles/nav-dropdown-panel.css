@@ -9,6 +9,7 @@
 }
 
 .nav-dropdown-panel {
+  border-radius: inherit;
   overflow: hidden;
   background: #fff;
 }
