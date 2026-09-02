@@ -84,3 +84,83 @@ def resource_options(*, organization_id: int, resource_type: str | None) -> list
 
 def organization_resource_options(org: Organization, resource_type: str | None) -> list[dict]:
     return resource_options(organization_id=org.id, resource_type=resource_type)
+
+
+def selected_resource_options(
+    *, organization_id: int, resource_type: str | None, resource_ids: list
+) -> list[dict]:
+    """Resolve persisted policy resource IDs without changing their order."""
+    ids = [str(value) for value in (resource_ids or [])]
+    if resource_type == ResourceType.SYSTEM:
+        return resource_options(
+            organization_id=organization_id,
+            resource_type=resource_type,
+        )
+    if not ids:
+        return []
+
+    rows: list[dict] = []
+    if resource_type in {
+        ResourceType.SYNC_PROXY,
+        ResourceType.AGENT_PROXY,
+        ResourceType.GATEWAY,
+    }:
+        role_by_type = {
+            ResourceType.SYNC_PROXY: NodeRole.PROXY,
+            ResourceType.AGENT_PROXY: NodeRole.AGENT,
+            ResourceType.GATEWAY: NodeRole.GATEWAY,
+        }
+        rows = [
+            _option(node.id, node.name, node.status)
+            for node in Node.objects.filter(
+                organization_id=organization_id,
+                role=role_by_type[resource_type],
+                id__in=ids,
+            )
+        ]
+    elif resource_type in {
+        ResourceType.BACKUP_REPOSITORY,
+        ResourceType.TARGET_STORAGE,
+    }:
+        rows = [
+            _option(repo.id, repo.name, repo.status)
+            for repo in Repository.objects.filter(
+                organization_id=organization_id,
+                id__in=ids,
+            )
+        ]
+    elif resource_type == ResourceType.TASK:
+        rows = [
+            _option(task.task_uuid, f"{task.task_type} / {task.display_name}", task.status)
+            for task in Task.objects.filter(
+                organization_id=organization_id,
+                task_uuid__in=ids,
+            )
+        ]
+    elif resource_type == ResourceType.SOURCE_RESOURCE:
+        try:
+            from apps.source.models import SourceResource
+
+            rows = [
+                _option(resource.id, resource.name, resource.status)
+                for resource in SourceResource.objects.filter(
+                    organization_id=organization_id,
+                    id__in=ids,
+                )
+            ]
+        except Exception:
+            rows = []
+
+    by_id = {str(row["id"]): row for row in rows}
+    return [
+        by_id.get(
+            resource_id,
+            {
+                "id": resource_id,
+                "name": "",
+                "status": "unavailable",
+                "available": False,
+            },
+        )
+        for resource_id in ids
+    ]

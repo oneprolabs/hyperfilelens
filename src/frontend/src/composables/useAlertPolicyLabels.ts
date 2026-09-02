@@ -34,6 +34,13 @@ export function useAlertPolicyLabels() {
     return translated !== key ? translated : type
   }
 
+  function resourceTypeDescription(type?: string | null): string {
+    if (!type) return ''
+    const key = `ops.alertsCenter.resourceTypeDescriptions.${type}`
+    const translated = t(key)
+    return translated !== key ? translated : ''
+  }
+
   const policyTypeOptions = computed(() =>
     ALERT_POLICY_TYPES.map((value) => ({
       value,
@@ -51,6 +58,7 @@ export function useAlertPolicyLabels() {
   return {
     policyTypeLabel,
     resourceTypeLabel,
+    resourceTypeDescription,
     policyTypeOptions,
     resourceTypeOptions,
   }

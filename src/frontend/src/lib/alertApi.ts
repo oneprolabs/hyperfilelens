@@ -14,6 +14,8 @@ export type AlertPolicy = {
   scope: string
   resourceIds?: string[]
   resource_ids?: string[]
+  monitoringResources?: AlertPolicyResource[]
+  monitoring_resources?: AlertPolicyResource[]
   triggerRule?: Record<string, unknown>
   trigger_rule?: Record<string, unknown>
   recoveryRule?: Record<string, unknown>
@@ -26,6 +28,13 @@ export type AlertPolicy = {
   created_at?: string
   updatedAt?: string
   updated_at?: string
+}
+
+export type AlertPolicyResource = {
+  id: string
+  name?: string
+  status?: string
+  available?: boolean
 }
 
 export type AlertRecord = {

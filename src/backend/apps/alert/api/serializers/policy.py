@@ -1,12 +1,18 @@
 from rest_framework import serializers
 
-from apps.alert.constants import AlertType, PolicyScope
+from apps.alert.constants import (
+    METRICS_BY_RESOURCE_TYPE,
+    AlertType,
+    PolicyScope,
+    ResourceType,
+)
 from apps.alert.models import AlertPolicy
 from apps.alert.selectors.interface import notification_channels_for_policy
-
+from apps.alert.services.internal.metadata_resources import selected_resource_options
 
 class AlertPolicySerializer(serializers.ModelSerializer):
     notification_channels = serializers.SerializerMethodField(read_only=True)
+    monitoring_resources = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = AlertPolicy
@@ -25,6 +31,8 @@ class AlertPolicySerializer(serializers.ModelSerializer):
             "recovery_rule",
             "notification_channel_ids",
             "notification_channels",
+            "monitoring_resources",
+            "last_evaluated_at",
             "created_by",
             "created_at",
             "updated_at",
@@ -36,6 +44,8 @@ class AlertPolicySerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "notification_channels",
+            "monitoring_resources",
+            "last_evaluated_at",
         ]
 
     def validate(self, attrs):
@@ -55,8 +65,98 @@ class AlertPolicySerializer(serializers.ModelSerializer):
         resource_type = data.get("resource_type")
         trigger_rule = data.get("trigger_rule") or {}
 
+        try:
+            duration_seconds = int(trigger_rule.get("duration_seconds") or 0)
+        except (TypeError, ValueError):
+            duration_seconds = -1
+        if duration_seconds < 0:
+            raise serializers.ValidationError(
+                {"trigger_rule": "Duration must be zero or greater."}
+            )
+
+        recovery_rule = data.get("recovery_rule") or {}
+        if recovery_rule and recovery_rule.get("enabled") is not False:
+            recovery_operator = recovery_rule.get("operator")
+            if recovery_operator and recovery_operator not in {
+                ">",
+                ">=",
+                "<",
+                "<=",
+                "==",
+                "!=",
+            }:
+                raise serializers.ValidationError(
+                    {"recovery_rule": "Recovery operator is not supported."}
+                )
+            try:
+                recovery_duration = int(recovery_rule.get("duration_seconds") or 0)
+                float(recovery_rule.get("threshold", trigger_rule.get("threshold", 0)))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {"recovery_rule": "Recovery threshold and duration must be numeric."}
+                )
+            if recovery_duration < 0:
+                raise serializers.ValidationError(
+                    {"recovery_rule": "Recovery duration must be zero or greater."}
+                )
+
         if not resource_type:
             raise serializers.ValidationError({"resource_type": "This field is required."})
+
+        if alert_type in (AlertType.METRIC, AlertType.SYSTEM):
+            allowed_metrics = METRICS_BY_RESOURCE_TYPE.get(resource_type, [])
+            metric_key = trigger_rule.get("metric_key")
+            if metric_key and metric_key not in allowed_metrics:
+                raise serializers.ValidationError(
+                    {
+                        "trigger_rule": (
+                            f"Metric '{metric_key}' is not available for "
+                            f"resource type '{resource_type}'."
+                        )
+                    }
+                )
+
+        if scope == PolicyScope.SELECTED and resource_ids and resource_type in {
+            ResourceType.AGENT_PROXY,
+            ResourceType.SYNC_PROXY,
+            ResourceType.GATEWAY,
+        }:
+            from apps.node.models import Node
+            from apps.node.models.base import NodeRole
+
+            role_by_resource_type = {
+                ResourceType.AGENT_PROXY: NodeRole.AGENT,
+                ResourceType.SYNC_PROXY: NodeRole.PROXY,
+                ResourceType.GATEWAY: NodeRole.GATEWAY,
+            }
+            node_ids = []
+            for raw_id in resource_ids:
+                try:
+                    node_ids.append(int(raw_id))
+                except (TypeError, ValueError):
+                    raise serializers.ValidationError(
+                        {"resource_ids": "Selected resources must be valid node IDs."}
+                    )
+            org = self.context.get("organization") or getattr(
+                instance, "organization", None
+            )
+            if org is not None:
+                found = set(
+                    Node.objects.filter(
+                        organization=org,
+                        id__in=node_ids,
+                        role=role_by_resource_type[resource_type],
+                    ).values_list("id", flat=True)
+                )
+                if set(node_ids) != found:
+                    raise serializers.ValidationError(
+                        {
+                            "resource_ids": (
+                                "Selected resources do not match the resource type "
+                                "or organization."
+                            )
+                        }
+                    )
 
         if (
             scope == PolicyScope.SELECTED
@@ -74,7 +174,6 @@ class AlertPolicySerializer(serializers.ModelSerializer):
                 "operator",
                 "threshold",
                 "duration_seconds",
-                "evaluation_interval_seconds",
             ],
             AlertType.AVAILABILITY: ["check_type", "timeout_seconds", "duration_seconds"],
             AlertType.TASK: ["task_type", "event_type"],
@@ -134,6 +233,15 @@ class AlertPolicySerializer(serializers.ModelSerializer):
     def get_notification_channels(self, obj):
         org = obj.organization
         return notification_channels_for_policy(obj, org)
+
+    def get_monitoring_resources(self, obj):
+        if obj.scope != PolicyScope.SELECTED and obj.resource_type != ResourceType.SYSTEM:
+            return []
+        return selected_resource_options(
+            organization_id=obj.organization_id,
+            resource_type=obj.resource_type,
+            resource_ids=obj.resource_ids or [],
+        )
 
 
 class BulkPolicyStateSerializer(serializers.Serializer):

@@ -76,7 +76,7 @@ function defaultForm(): AlertPolicyFormState {
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const { policyTypeLabel, policyTypeOptions, resourceTypeOptions, resourceTypeLabel } = useAlertPolicyLabels()
+const { policyTypeLabel, policyTypeOptions, resourceTypeOptions, resourceTypeLabel, resourceTypeDescription } = useAlertPolicyLabels()
 const PREVIEW_EMPTY_VALUE = '—'
 
 const saving = ref(false)
@@ -91,6 +91,7 @@ const editingId = computed(() => {
 })
 
 const resourcesLoading = ref(false)
+const hydratingPolicy = ref(false)
 const resourceOptions = ref<Array<{ id: string; name: string; status?: string }>>([])
 const metricKeys = ref<string[]>([])
 const taskTypes = ref<string[]>([])
@@ -244,6 +245,13 @@ const hasPreviewChannels = computed(() => previewChannels.value !== PREVIEW_EMPT
 const monitoringResourcesRequired = computed(() =>
   form.scope === 'selected' && form.type !== 'event' && form.resourceType !== 'system',
 )
+const previewMonitoringResources = computed(() => {
+  if (!monitoringResourcesRequired.value) return PREVIEW_EMPTY_VALUE
+  const names = resourceOptions.value
+    .filter((resource) => form.resourceIds.includes(resource.id))
+    .map((resource) => resource.name)
+  return names.length ? names.join(', ') : PREVIEW_EMPTY_VALUE
+})
 
 function currentTriggerSpecs() {
   return triggerSpecsForType(form.type)
@@ -332,6 +340,10 @@ const previewBasicRows = computed(() => {
   ]
   if (monitoringResourcesRequired.value) {
     rows.push({
+      label: t('ops.alertsCenter.editor.previewMonitoringResources'),
+      value: previewMonitoringResources.value,
+    })
+    rows.push({
       label: t('ops.alertsCenter.editor.previewResourceCount'),
       value: String(form.resourceIds.length),
     })
@@ -365,6 +377,7 @@ async function loadChannels() {
 async function loadPolicy(id: string) {
   const row = await getPolicy(id)
   const loadedTriggerRule = row.triggerRule || row.trigger_rule || {}
+  hydratingPolicy.value = true
   Object.assign(form, {
     name: row.name,
     description: row.description || '',
@@ -378,6 +391,8 @@ async function loadPolicy(id: string) {
     recoveryRule: { ...(row.recoveryRule || row.recovery_rule || { enabled: true }) },
     notificationChannelIds: [...(row.notificationChannelIds || row.notification_channel_ids || [])],
   })
+  await nextTick()
+  hydratingPolicy.value = false
 }
 
 function policyPayload() {
@@ -499,7 +514,7 @@ async function loadMetadata() {
   eventTypesByCategory.value = eventPayload.types || {}
 }
 
-async function loadMetricKeys() {
+async function loadMetricKeys(resetInvalid = false) {
   if (form.type !== 'metric' && form.type !== 'system') {
     metricKeys.value = []
     return
@@ -507,6 +522,9 @@ async function loadMetricKeys() {
   try {
     const raw = await fetchMetadata('metrics', { resource_type: form.resourceType })
     metricKeys.value = Array.isArray(raw) ? (raw as string[]) : []
+    if (resetInvalid && form.type === 'metric' && !metricKeys.value.includes(String(metricKey.value))) {
+      metricKey.value = metricKeys.value[0] || ''
+    }
   } catch {
     metricKeys.value = []
   }
@@ -585,8 +603,12 @@ watch(
 
 watch(
   () => [form.resourceType, form.scope] as const,
-  () => {
-    void loadMetricKeys()
+  ([resourceType], previous) => {
+    const resourceTypeChanged = resourceType !== previous?.[0]
+    if (!hydratingPolicy.value) {
+      form.resourceIds = []
+    }
+    void loadMetricKeys(resourceTypeChanged && !hydratingPolicy.value)
     void loadResources()
     if (!monitoringResourcesRequired.value) {
       formRef.value?.clearValidate('resourceIds')
@@ -784,6 +806,12 @@ onMounted(async () => {
                     </el-select>
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.alertsCenter.editor.fieldResourceTypeHint') }}
+                    </p>
+                    <p
+                      v-if="resourceTypeDescription(form.resourceType)"
+                      class="fullscreen-form-field__hint"
+                    >
+                      {{ resourceTypeDescription(form.resourceType) }}
                     </p>
                   </el-form-item>
                   <el-form-item
