@@ -256,8 +256,8 @@ function handleNavClick(event: MouseEvent, to: string) {
 .nav-item.active::after {
   content: '';
   position: absolute;
-  left: 32px;
-  right: 32px;
+  left: 16px;
+  right: 16px;
   bottom: 6px;
   width: auto;
   height: 2px;
