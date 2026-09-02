@@ -88,7 +88,6 @@ from apps.configuration.services.runtime_settings import (
     langfuse_public_key,
     langfuse_secret_key,
 )
-from apps.configuration.tenant_conf import CONFIG_KEY_DR_TASK_CONCURRENCY, DEFAULT_DR_TASK_CONCURRENCY
 from apps.storage import conf as storage_conf
 from common.deploy.site import tenant_public_url
 
@@ -559,13 +558,8 @@ class PlatformOpsSettingsDefaultsView(APIView):
     def get(self, request):
         retention_default = get_config(storage_conf.CONFIG_KEY_RETENTION, default={})
         filters_default = get_config(storage_conf.CONFIG_KEY_FILTERS, default={})
-        dr_default = get_config(
-            CONFIG_KEY_DR_TASK_CONCURRENCY,
-            default=DEFAULT_DR_TASK_CONCURRENCY,
-        )
         return Response(
             {
-                "dr_task_concurrency": dr_default,
                 "retention_default": retention_default,
                 "filters_default": filters_default,
             }
@@ -573,21 +567,6 @@ class PlatformOpsSettingsDefaultsView(APIView):
 
     def patch(self, request):
         data = request.data or {}
-        if "dr_task_concurrency" in data:
-            GlobalConfig.objects.update_or_create(
-                key=CONFIG_KEY_DR_TASK_CONCURRENCY,
-                scope=GlobalConfig.Scope.GLOBAL,
-                tenant_key="",
-                defaults={
-                    "value": int(data["dr_task_concurrency"]),
-                    "value_type": GlobalConfig.ValueType.NUMBER,
-                    "category": "file_dr",
-                    "is_active": True,
-                    "updated_by": request.user,
-                    "created_by": request.user,
-                },
-            )
-            invalidate_config_cache(key=CONFIG_KEY_DR_TASK_CONCURRENCY, tenant_key="", scope="global")
         if "retention_default" in data:
             self._upsert_object(storage_conf.CONFIG_KEY_RETENTION, data["retention_default"], user=request.user)
         if "filters_default" in data:

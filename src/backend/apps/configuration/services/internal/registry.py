@@ -37,16 +37,8 @@ def all_key_specs() -> tuple[ConfigKeySpec, ...]:
     from apps.iam import conf as iam_conf
     from apps.insight import conf as insight_conf
     from apps.storage import conf as storage_conf
-    from apps.configuration import tenant_conf as tenant_settings_conf
 
     return (
-        _spec(
-            key=tenant_settings_conf.CONFIG_KEY_DR_TASK_CONCURRENCY,
-            category="file_dr",
-            value_type=GlobalConfig.ValueType.NUMBER,
-            description="Max concurrent data protection tasks (tenant override)",
-            owning_app="configuration",
-        ),
         _spec(
             key=storage_conf.CONFIG_KEY_RETENTION,
             category="backup",
