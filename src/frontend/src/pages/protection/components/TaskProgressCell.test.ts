@@ -141,7 +141,9 @@ describe('TaskProgressCell', () => {
     expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Restoring')
     expect(wrapper.get('.task-progress-cell__percent').text()).toBe('10.20%')
     expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('10.2')
-    expect(wrapper.find('.task-progress-cell__metrics').exists()).toBe(false)
+    expect(wrapper.get('.task-progress-cell__metric-line').text()).toBe(
+      'Data restored: 858 MB / 300 GB · 5.47 MB/s',
+    )
     expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe([
       'Restoring · 72592/333000 items restored',
       'Data restored: 858 MB / 300 GB',
