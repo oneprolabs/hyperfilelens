@@ -18,11 +18,13 @@ from apps.monitor.services.internal.metric_values import (
     value_from_resource_metrics,
     value_from_system_metric,
 )
-from apps.monitor.services.internal.resource_metrics import latest_resource_metric
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_EVALUATION_INTERVAL_SECONDS = 60
+_DEFAULT_SAMPLE_FRESHNESS_SECONDS = 600
 
 _NODE_RESOURCE_BY_ROLE = {
     NodeRole.PROXY: ResourceType.SYNC_PROXY,
@@ -70,33 +72,167 @@ def _compare(operator: str, value: float, threshold: float) -> bool:
     return fn(value, threshold)
 
 
-def _duration_satisfied(
+def _rule_seconds(rule: dict, key: str, default: int) -> int:
+    try:
+        return max(0, int(rule.get(key, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _sample_freshness_seconds(rule: dict) -> int:
+    """Return the maximum accepted sample age.
+
+    Resource and Control Plane metrics are currently collected at up to five-minute
+    intervals. A ten-minute compatibility window tolerates collector/scheduler skew
+    without treating an offline resource's final sample as current indefinitely.
+    """
+    return max(
+        _DEFAULT_EVALUATION_INTERVAL_SECONDS,
+        _rule_seconds(
+            rule,
+            "sample_freshness_seconds",
+            _DEFAULT_SAMPLE_FRESHNESS_SECONDS,
+        ),
+    )
+
+
+def _condition_state(
     *,
-    organization_id: int,
-    resource_type: str,
-    resource_id: str,
+    samples: list,
+    value_getter,
     metric_key: str,
     operator: str,
     threshold: float,
     duration_seconds: int,
-) -> bool:
+    now,
+    freshness_seconds: int,
+) -> tuple[bool | None, bool]:
+    """Return ``(current_match, sustained_match)`` for ordered samples.
+
+    ``current_match`` is ``None`` when the latest sample is absent, stale, or has
+    no usable value. A positive duration requires at least two matching samples
+    whose timestamps cover the configured duration; one observation is never
+    treated as proof of a sustained condition.
+    """
+    if not samples:
+        return None, False
+    latest = samples[-1]
+    if (now - latest.timestamp).total_seconds() > freshness_seconds:
+        return None, False
+    latest_value = value_getter(latest, metric_key)
+    if latest_value is None:
+        return None, False
+    current_match = _compare(operator, latest_value, threshold)
+    if not current_match:
+        return False, False
+
     duration = max(0, int(duration_seconds or 0))
     if duration <= 0:
-        return True
-    since = timezone.now() - timedelta(seconds=duration)
-    samples = ResourceMetric.objects.filter(
-        organization_id=organization_id,
-        resource_type=resource_type,
-        resource_id=str(resource_id),
-        timestamp__gte=since,
-    ).order_by("timestamp")
-    if not samples.exists():
-        return False
-    for sample in samples:
-        value = value_from_resource_metrics(sample.metrics or {}, metric_key)
+        return True, True
+
+    matching_tail = []
+    for sample in reversed(samples):
+        value = value_getter(sample, metric_key)
         if value is None or not _compare(operator, value, threshold):
-            return False
-    return True
+            break
+        matching_tail.append(sample)
+    if len(matching_tail) < 2:
+        return True, False
+    covered_seconds = (
+        matching_tail[0].timestamp - matching_tail[-1].timestamp
+    ).total_seconds()
+    return True, covered_seconds >= duration
+
+
+def _resource_samples(policy: AlertPolicy, resource_id: str, rule: dict, now) -> list:
+    duration = max(
+        _rule_seconds(rule, "duration_seconds", 0),
+        _rule_seconds(policy.recovery_rule or {}, "duration_seconds", 0),
+    )
+    since = now - timedelta(
+        seconds=duration + _sample_freshness_seconds(rule)
+    )
+    return list(
+        ResourceMetric.objects.filter(
+            organization_id=policy.organization_id,
+            resource_type=policy.resource_type,
+            resource_id=str(resource_id),
+            timestamp__gte=since,
+        ).order_by("timestamp")
+    )
+
+
+def _system_samples(rule: dict, recovery_rule: dict, now) -> tuple[list, object | None]:
+    latest = SystemMetric.objects.select_related("host").order_by("-timestamp").first()
+    if latest is None:
+        return [], None
+    duration = max(
+        _rule_seconds(rule, "duration_seconds", 0),
+        _rule_seconds(recovery_rule, "duration_seconds", 0),
+    )
+    since = now - timedelta(
+        seconds=duration + _sample_freshness_seconds(rule)
+    )
+    qs = SystemMetric.objects.filter(timestamp__gte=since)
+    if latest.host_id is not None:
+        qs = qs.filter(host_id=latest.host_id)
+    else:
+        qs = qs.filter(host__isnull=True)
+    return list(qs.order_by("timestamp")), latest.host
+
+
+def _resource_value(sample: ResourceMetric, metric_key: str) -> float | None:
+    return value_from_resource_metrics(sample.metrics or {}, metric_key)
+
+
+def _system_value(sample: SystemMetric, metric_key: str) -> float | None:
+    return value_from_system_metric(sample, metric_key)
+
+
+def _recovery_satisfied(
+    *,
+    policy: AlertPolicy,
+    samples: list,
+    value_getter,
+    metric_key: str,
+    now,
+    freshness_seconds: int,
+) -> bool:
+    recovery = policy.recovery_rule
+    if not recovery:
+        # Compatibility for policies created before recovery controls existed:
+        # resolve immediately when the firing condition no longer matches.
+        return True
+    if recovery.get("enabled") is False:
+        return False
+    trigger = policy.trigger_rule or {}
+    operator = str(recovery.get("operator") or _inverse_operator(trigger.get("operator")))
+    try:
+        threshold = float(recovery.get("threshold", trigger.get("threshold", 0)))
+    except (TypeError, ValueError):
+        return False
+    current, sustained = _condition_state(
+        samples=samples,
+        value_getter=value_getter,
+        metric_key=metric_key,
+        operator=operator,
+        threshold=threshold,
+        duration_seconds=_rule_seconds(recovery, "duration_seconds", 0),
+        now=now,
+        freshness_seconds=freshness_seconds,
+    )
+    return current is True and sustained
+
+
+def _inverse_operator(operator: object) -> str:
+    return {
+        ">": "<=",
+        ">=": "<",
+        "<": ">=",
+        "<=": ">",
+        "==": "!=",
+        "!=": "==",
+    }.get(str(operator or ">"), "<=")
 
 
 def _evaluate_metric_policy(policy: AlertPolicy) -> None:
@@ -108,40 +244,60 @@ def _evaluate_metric_policy(policy: AlertPolicy) -> None:
     if not metric_key:
         return
 
+    now = timezone.now()
+    freshness_seconds = _sample_freshness_seconds(rule)
     for resource_id in _policy_resource_ids(policy):
         if policy.resource_type == ResourceType.SYSTEM:
-            system = SystemMetric.objects.order_by("-timestamp").first()
-            if system is None:
+            samples, _host = _system_samples(rule, policy.recovery_rule or {}, now)
+            if not samples:
+                logger.info(
+                    "alert metric sample unavailable or stale policy=%s resource_type=%s resource_id=%s",
+                    policy.id,
+                    policy.resource_type,
+                    resource_id,
+                )
                 continue
-            value = value_from_system_metric(system, metric_key)
+            latest = samples[-1]
+            value = _system_value(latest, metric_key)
             resource_name = "Control Plane"
+            value_getter = _system_value
         else:
-            sample = latest_resource_metric(
-                organization_id=policy.organization_id,
-                resource_type=policy.resource_type,
-                resource_id=resource_id,
-            )
-            if sample is None:
-                _maybe_resolve_metric(policy, resource_id)
+            samples = _resource_samples(policy, resource_id, rule, now)
+            if not samples:
+                logger.info(
+                    "alert metric sample unavailable or stale policy=%s resource_type=%s resource_id=%s",
+                    policy.id,
+                    policy.resource_type,
+                    resource_id,
+                )
                 continue
-            value = value_from_resource_metrics(sample.metrics or {}, metric_key)
-            resource_name = sample.resource_name or resource_id
-            if duration_seconds > 0 and not _duration_satisfied(
-                organization_id=policy.organization_id,
-                resource_type=policy.resource_type,
-                resource_id=resource_id,
-                metric_key=metric_key,
-                operator=operator,
-                threshold=threshold,
-                duration_seconds=duration_seconds,
-            ):
-                _maybe_resolve_metric(policy, resource_id)
-                continue
+            latest = samples[-1]
+            value = _resource_value(latest, metric_key)
+            resource_name = latest.resource_name or resource_id
+            value_getter = _resource_value
 
         if value is None:
             continue
 
-        if _compare(operator, value, threshold):
+        current_match, sustained_match = _condition_state(
+            samples=samples,
+            value_getter=value_getter,
+            metric_key=metric_key,
+            operator=operator,
+            threshold=threshold,
+            duration_seconds=duration_seconds,
+            now=now,
+            freshness_seconds=freshness_seconds,
+        )
+        if current_match is None:
+            logger.info(
+                "alert metric sample unavailable or stale policy=%s resource_type=%s resource_id=%s",
+                policy.id,
+                policy.resource_type,
+                resource_id,
+            )
+            continue
+        if sustained_match:
             fire_alert(
                 policy,
                 resource=_ResourceStub(resource_id, resource_name),
@@ -151,7 +307,14 @@ def _evaluate_metric_policy(policy: AlertPolicy) -> None:
                 alert_key=metric_key,
                 metadata={"metric_key": metric_key, "value": value},
             )
-        else:
+        elif current_match is False and _recovery_satisfied(
+            policy=policy,
+            samples=samples,
+            value_getter=value_getter,
+            metric_key=metric_key,
+            now=now,
+            freshness_seconds=freshness_seconds,
+        ):
             _maybe_resolve_metric(policy, resource_id)
 
 
@@ -233,6 +396,24 @@ def _evaluate_system_policy(policy: AlertPolicy) -> None:
         _evaluate_metric_policy(policy)
 
 
+def _evaluation_interval_seconds(policy: AlertPolicy) -> int:
+    return max(
+        _DEFAULT_EVALUATION_INTERVAL_SECONDS,
+        _rule_seconds(
+            policy.trigger_rule or {},
+            "evaluation_interval_seconds",
+            _DEFAULT_EVALUATION_INTERVAL_SECONDS,
+        ),
+    )
+
+
+def _evaluation_due(policy: AlertPolicy, now) -> bool:
+    if policy.last_evaluated_at is None:
+        return True
+    elapsed = (now - policy.last_evaluated_at).total_seconds()
+    return elapsed >= _evaluation_interval_seconds(policy)
+
+
 def evaluate_organization_policies(*, organization_id: int | None = None) -> dict:
     qs = AlertPolicy.objects.filter(enabled=True).exclude(type=AlertType.TASK).exclude(
         type=AlertType.EVENT
@@ -245,6 +426,22 @@ def evaluate_organization_policies(*, organization_id: int | None = None) -> dic
         if _policy_silenced(policy):
             counts["skipped"] += 1
             continue
+        evaluated_at = timezone.now()
+        if not _evaluation_due(policy, evaluated_at):
+            counts["skipped"] += 1
+            continue
+        # Persist the attempt before evaluation so a failing policy cannot be
+        # retried in a tight loop by overlapping scheduler runs.
+        claimed = AlertPolicy.objects.filter(
+            pk=policy.pk,
+            last_evaluated_at=policy.last_evaluated_at,
+        ).update(
+            last_evaluated_at=evaluated_at
+        )
+        if not claimed:
+            counts["skipped"] += 1
+            continue
+        policy.last_evaluated_at = evaluated_at
         try:
             if policy.type == AlertType.METRIC:
                 _evaluate_metric_policy(policy)
