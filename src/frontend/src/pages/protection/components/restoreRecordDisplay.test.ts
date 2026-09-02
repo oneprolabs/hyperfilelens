@@ -93,6 +93,7 @@ describe('restore record display', () => {
       if (key.endsWith('flowRestoreRecordRestoredCapacity')) return `Restore capacity: ${args?.size}`
       if (key.endsWith('bytesCapacity')) return `${args?.done} / ${args?.total}`
       if (key.endsWith('etaSeconds')) return `${args?.n}s remaining`
+      if (key.endsWith('restoreEtaSeconds')) return `${args?.n}s remaining`
       return key
     }
 

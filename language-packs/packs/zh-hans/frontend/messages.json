@@ -495,6 +495,7 @@
         "finalizing": "正在完成恢复…",
         "preparing": "正在恢复…",
         "estimating": "准备恢复…",
+        "running": "正在恢复",
         "transferring": "正在恢复 · {done}/{total} 项已完成",
         "itemsPath": "正在恢复 · {done}/{total} 项 · 路径 {i}/{m}"
       },
@@ -511,6 +512,12 @@
       "bytesProcessedCapacity": "已处理：{done} / {total}",
       "bytesCapacityEst": "增量转账：{done} / est. {total}",
       "bytesCapacityRef": "传输：{done} / 源数据：{total}",
+      "restoreBytesCapacity": "已恢复数据：{done} / {total}",
+      "restoreSpeed": "恢复速度：{speed}",
+      "restoreEtaSeconds": "预计剩余 {n} 秒",
+      "restoreEtaMinutes": "预计剩余 {n} 分钟",
+      "restoreEtaHours": "预计剩余 {n} 小时",
+      "restoreEtaHoursMinutes": "预计剩余 {h} 小时 {m} 分钟",
       "etaHours": "{n} 剩余时间"
     },
     "backupsPage": {
