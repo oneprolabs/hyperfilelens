@@ -24,7 +24,7 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--color-text-secondary, #64748b);
+  color: var(--color-text-secondary);
 }
 
 .hfl-ops-stats-grid {
@@ -89,67 +89,74 @@
 }
 
 .hfl-ops-stat-card {
+  --hfl-ops-stat-accent: var(--color-primary);
+  --hfl-ops-stat-accent-soft: var(--color-primary-light);
+  --hfl-ops-stat-value: var(--color-primary);
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 16px;
-  border: 1px solid var(--color-border, #e2e8f0);
-  border-radius: var(--radius-card, 12px);
-  background: var(--color-card-bg, #fff);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-card-bg);
+  box-shadow: var(--shadow-sm);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .hfl-ops-stat-card:hover {
-  background: rgba(248, 250, 252, 0.9);
+  background: var(--color-grey-1);
 }
 
 .hfl-ops-stat-card--side-left {
   border-left-width: 4px;
+  border-left-color: var(--hfl-ops-stat-accent);
 }
 
 .hfl-ops-stat-card--side-top {
   border-top-width: 4px;
+  border-top-color: var(--hfl-ops-stat-accent);
 }
 
-.hfl-ops-stat-card--red {
-  border-left-color: #ef4444;
-  border-top-color: #ef4444;
+.hfl-ops-stat-card--tone-primary {
+  --hfl-ops-stat-accent: var(--color-primary);
+  --hfl-ops-stat-accent-soft: var(--color-primary-light);
+  --hfl-ops-stat-value: var(--color-primary);
 }
 
-.hfl-ops-stat-card--yellow {
-  border-left-color: #eab308;
-  border-top-color: #eab308;
+.hfl-ops-stat-card--tone-success {
+  --hfl-ops-stat-accent: var(--color-success);
+  --hfl-ops-stat-accent-soft: var(--color-success-light);
+  --hfl-ops-stat-value: var(--color-success-text);
 }
 
-.hfl-ops-stat-card--green {
-  border-left-color: #22c55e;
-  border-top-color: #22c55e;
+.hfl-ops-stat-card--tone-warning {
+  --hfl-ops-stat-accent: var(--color-warning);
+  --hfl-ops-stat-accent-soft: var(--color-warning-light);
+  --hfl-ops-stat-value: var(--color-warning-text);
 }
 
-.hfl-ops-stat-card--blue {
-  border-left-color: #3b82f6;
-  border-top-color: #3b82f6;
+.hfl-ops-stat-card--tone-danger {
+  --hfl-ops-stat-accent: var(--color-error);
+  --hfl-ops-stat-accent-soft: var(--color-error-light);
+  --hfl-ops-stat-value: var(--color-error-text);
 }
 
-.hfl-ops-stat-card--indigo {
-  border-left-color: #6366f1;
-  border-top-color: #6366f1;
+.hfl-ops-stat-card--tone-info {
+  --hfl-ops-stat-accent: var(--color-info);
+  --hfl-ops-stat-accent-soft: var(--color-info-light);
+  --hfl-ops-stat-value: var(--color-info-text);
 }
 
-.hfl-ops-stat-card--orange {
-  border-left-color: #d97706;
-  border-top-color: #d97706;
+.hfl-ops-stat-card--tone-firing {
+  --hfl-ops-stat-accent: var(--color-firing);
+  --hfl-ops-stat-accent-soft: var(--color-firing-light);
+  --hfl-ops-stat-value: var(--color-firing-text);
 }
 
-.hfl-ops-stat-card--pink {
-  border-left-color: #ec4899;
-  border-top-color: #ec4899;
-}
-
-.hfl-ops-stat-card--gray {
-  border-left-color: #94a3b8;
-  border-top-color: #94a3b8;
+.hfl-ops-stat-card--tone-neutral {
+  --hfl-ops-stat-accent: var(--color-grey-6);
+  --hfl-ops-stat-accent-soft: var(--color-grey-2);
+  --hfl-ops-stat-value: var(--color-text-secondary);
 }
 
 .hfl-ops-stat-card__head {
@@ -166,7 +173,7 @@
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--color-text-tertiary, #94a3b8);
+  color: var(--color-text-tertiary);
 }
 
 .hfl-ops-stat-card__icon {
@@ -177,48 +184,8 @@
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  background: #f8fafc;
-  color: var(--color-text-tertiary, #94a3b8);
-}
-
-.hfl-ops-stat-card--orange .hfl-ops-stat-card__icon {
-  background: var(--color-warning-light);
-  color: var(--color-warning);
-}
-
-.hfl-ops-stat-card--indigo .hfl-ops-stat-card__icon {
-  background: #eef2ff;
-  color: #4f46e5;
-}
-
-.hfl-ops-stat-card--blue .hfl-ops-stat-card__icon {
-  background: var(--color-info-light);
-  color: var(--color-info);
-}
-
-.hfl-ops-stat-card--green .hfl-ops-stat-card__icon {
-  background: var(--color-success-light);
-  color: var(--color-success);
-}
-
-.hfl-ops-stat-card--yellow .hfl-ops-stat-card__icon {
-  background: #fefce8;
-  color: #ca8a04;
-}
-
-.hfl-ops-stat-card--red .hfl-ops-stat-card__icon {
-  background: var(--color-error-light);
-  color: var(--color-error);
-}
-
-.hfl-ops-stat-card--pink .hfl-ops-stat-card__icon {
-  background: #fdf2f8;
-  color: #db2777;
-}
-
-.hfl-ops-stat-card--gray .hfl-ops-stat-card__icon {
-  background: #f8fafc;
-  color: #64748b;
+  background: var(--hfl-ops-stat-accent-soft);
+  color: var(--hfl-ops-stat-accent);
 }
 
 .hfl-ops-stat-card__value-row {
@@ -232,13 +199,13 @@
   font-size: 1.5rem;
   font-weight: 700;
   line-height: 1.2;
-  color: rgb(15 23 42);
+  color: var(--hfl-ops-stat-value);
 }
 
 .hfl-ops-stat-card__sub {
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text-tertiary, #94a3b8);
+  color: var(--color-text-tertiary);
   font-size: 11px;
   line-height: 1.4;
   text-overflow: ellipsis;
@@ -279,7 +246,7 @@
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: #d97706;
+  background: var(--hfl-ops-stat-accent);
 }
 
 .hfl-ops-stat-card__pulse::before {
@@ -356,13 +323,13 @@
 }
 
 .hfl-ops-cell-stack__title {
-  color: rgb(15 23 42);
+  color: var(--color-text-title);
 }
 
 .hfl-ops-cell-stack__meta {
   margin-top: 2px;
   font-size: 11px;
-  color: var(--color-text-tertiary, #94a3b8);
+  color: var(--color-text-tertiary);
 }
 
 .hfl-ops-response-chip {
@@ -381,7 +348,7 @@
   font-size: 11px;
   line-height: 1.45;
   text-align: left;
-  color: rgb(71 85 105);
+  color: var(--color-text-primary);
   cursor: pointer;
 }
 
@@ -396,7 +363,7 @@
 
 .hfl-ops-response-chip:hover,
 .hfl-ops-response-chip:focus-visible {
-  color: var(--color-primary, #6d5dfc);
+  color: var(--color-primary);
   outline: none;
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -425,11 +392,11 @@
 }
 
 .hfl-ops-result-chip--success {
-  color: #16a34a;
+  color: var(--color-success-text);
 }
 
 .hfl-ops-result-chip--danger {
-  color: #dc2626;
+  color: var(--color-error-text);
 }
 
 .hfl-ops-result-tag {
@@ -465,9 +432,9 @@
   display: inline-flex;
   padding: 2px 8px;
   border-radius: 6px;
-  background: #f1f5f9;
+  background: var(--color-grey-2);
   font-size: 10px;
-  color: rgb(71 85 105);
+  color: var(--color-text-primary);
 }
 
 /* ============================================
@@ -487,7 +454,7 @@
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background-color: rgb(226 232 240);
+  background-color: var(--color-border);
 }
 
 .hfl-task-list-progress__fill {
@@ -509,7 +476,7 @@
 
 .hfl-task-list-progress__fill--pending,
 .hfl-task-list-progress__fill--cancelled {
-  background-color: rgb(100 116 139);
+  background-color: var(--color-text-secondary);
 }
 
 .hfl-task-list-progress__text {

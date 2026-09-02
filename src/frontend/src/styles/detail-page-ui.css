@@ -694,7 +694,7 @@
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: #e8edf3;
+  background: var(--color-border);
 }
 
 .hfl-detail-capacity-bar__fill {
@@ -749,7 +749,7 @@
 .hfl-detail-row__empty,
 .detail-page-row__empty,
 .repo-detail-row__empty {
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
   font-family: inherit;
   font-size: 13px;
   font-weight: 400;
@@ -757,7 +757,7 @@
 
 .hfl-empty-mark {
   align-self: flex-start;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
   font-family: inherit;
   font-size: 13px;
   font-weight: 400;
@@ -804,7 +804,7 @@
 .repo-detail-row__edit {
   flex: 0 0 auto;
   margin-left: auto;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
   opacity: 0;
   transition: opacity 0.16s ease, color 0.16s ease;
 }
@@ -841,7 +841,7 @@
 .detail-inline-edit__unit,
 .repo-inline-edit__unit {
   flex: 0 0 auto;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
   font-size: 12px;
 }
 
@@ -1096,7 +1096,7 @@
 
 .hfl-task-step-chevron {
   flex-shrink: 0;
-  color: rgb(148 163 184);
+  color: var(--color-text-tertiary);
 }
 
 .hfl-task-drawer__step-card-head--disabled,

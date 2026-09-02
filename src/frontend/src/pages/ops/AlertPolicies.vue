@@ -590,22 +590,20 @@ watch(
         <OpsStatCard
           :label="t('ops.alertsCenter.common.policies')"
           :value="stats.total"
-          accent="indigo"
+          tone="primary"
           accent-side="left"
         />
         <OpsStatCard
           :label="t('ops.alertsCenter.common.enabled')"
           :value="stats.enabled"
-          accent="green"
+          tone="success"
           accent-side="left"
-          value-class="text-emerald-600"
         />
         <OpsStatCard
           :label="t('ops.alertsCenter.common.critical')"
           :value="stats.critical"
-          accent="red"
+          tone="danger"
           accent-side="left"
-          value-class="text-red-600"
         />
       </div>
 
@@ -1319,7 +1317,7 @@ watch(
 
 .hfl-alert-policy-detail-drawer__state {
   padding: 24px;
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 13px;
 }
 
@@ -1337,10 +1335,10 @@ watch(
   overflow: auto;
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: #f8fafc;
-  color: #334155;
+  background: var(--color-grey-1);
+  color: var(--color-text-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
   line-height: 1.5;

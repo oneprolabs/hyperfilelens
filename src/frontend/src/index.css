@@ -28,6 +28,7 @@ html {
   --color-primary-hover: #5546D8;
   --color-primary-active: #4536BD;
   --color-primary-light: #F2F0FE;
+  --color-primary-border: #DCD5FB;
   --color-primary-disabled-gradient-start: #E3DFFF;
   --color-primary-disabled-bg: #D2CBFA;
   --color-primary-disabled-border: #D2CBFA;
@@ -46,13 +47,19 @@ html {
   --color-warning-text: #925400;
   --color-warning-light: #FCF3E1;
   --color-warning-border: #F2DBA8;
+  --color-firing: #C2410C;
+  --color-firing-text: #9A3412;
+  --color-firing-light: #FFF7ED;
+  --color-firing-border: #FDBA74;
   --color-error: #E0413E;
   --color-error-text: #B42318;
   --color-error-light: #FDEDEC;
   --color-error-border: #F6C9C7;
-  --color-info: #6D5EF6;
-  --color-info-light: #F2F0FE;
-  --color-info-border: #DCD5FB;
+  --color-info: #2563EB;
+  --color-info-text: #1D4ED8;
+  --color-info-light: #EFF6FF;
+  --color-info-border: #BFDBFE;
+  --color-text-inverse: #FFFFFF;
 
   /* ----------------------------------------
      Text Colors
@@ -140,9 +147,22 @@ html {
 }
 
 html[data-theme='dark'] {
+  --color-primary-border: color-mix(in srgb, var(--color-primary) 40%, transparent);
   --color-success-text: #4ADE80;
+  --color-success-light: color-mix(in srgb, var(--color-success) 14%, transparent);
+  --color-success-border: color-mix(in srgb, var(--color-success) 38%, transparent);
   --color-warning-text: #F6B84A;
+  --color-warning-light: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  --color-warning-border: color-mix(in srgb, var(--color-warning) 38%, transparent);
+  --color-firing-text: #FDBA74;
+  --color-firing-light: color-mix(in srgb, var(--color-firing) 14%, transparent);
+  --color-firing-border: color-mix(in srgb, var(--color-firing) 38%, transparent);
   --color-error-text: #FF8581;
+  --color-error-light: color-mix(in srgb, var(--color-error) 14%, transparent);
+  --color-error-border: color-mix(in srgb, var(--color-error) 38%, transparent);
+  --color-info-text: #60A5FA;
+  --color-info-light: color-mix(in srgb, var(--color-info) 16%, transparent);
+  --color-info-border: color-mix(in srgb, var(--color-info) 40%, transparent);
 }
 
 html[data-theme='hybrid'] {
@@ -206,13 +226,13 @@ html[data-theme='hybrid'] {
   --el-color-error-light-9: var(--color-error-light) !important;
   --el-color-error-dark-2: #C73532 !important;
   --el-color-info: var(--color-info) !important;
-  --el-color-info-rgb: 109, 94, 246 !important;
+  --el-color-info-rgb: 37, 99, 235 !important;
   --el-color-info-light-3: var(--color-info-border) !important;
   --el-color-info-light-5: var(--color-info-border) !important;
   --el-color-info-light-7: var(--color-info-border) !important;
   --el-color-info-light-8: var(--color-info-light) !important;
   --el-color-info-light-9: var(--color-info-light) !important;
-  --el-color-info-dark-2: #5546D8 !important;
+  --el-color-info-dark-2: #1D4ED8 !important;
   --el-font-weight-primary: 400 !important;
   --el-button-font-weight: 400 !important;
   --el-input-focus-border: var(--color-primary) !important;

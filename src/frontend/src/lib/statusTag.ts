@@ -1,7 +1,7 @@
-export type StatusTagTone = 'success' | 'warning' | 'danger' | 'info' | 'primary' | 'neutral'
+export type StatusTagTone = 'success' | 'warning' | 'danger' | 'info' | 'primary' | 'firing' | 'neutral'
 
 export type StatusTagAttrs = {
-  type?: Exclude<StatusTagTone, 'neutral'>
+  type?: Exclude<StatusTagTone, 'neutral' | 'firing'>
   class?: string
 }
 
@@ -17,6 +17,7 @@ const STATUS_TAG_ATTRS: Record<StatusTagTone, StatusTagAttrs> = {
   danger: { type: 'danger' },
   info: { type: 'info' },
   primary: { type: 'primary' },
+  firing: { class: 'hfl-tag--firing' },
   neutral: { class: 'hfl-tag--neutral' },
 }
 
@@ -60,5 +61,13 @@ export function severityStatusTagAttrs(severity?: string | null): StatusTagAttrs
   if (normalized === 'info' || normalized === 'informational' || normalized === 'low') {
     return statusTagAttrs('info')
   }
+  return statusTagAttrs('neutral')
+}
+
+export function alertStatusTagAttrs(status?: string | null): StatusTagAttrs {
+  const normalized = String(status || '').trim().toLowerCase()
+  if (normalized === 'firing') return statusTagAttrs('firing')
+  if (normalized === 'acknowledged') return statusTagAttrs('info')
+  if (normalized === 'resolved') return statusTagAttrs('success')
   return statusTagAttrs('neutral')
 }
