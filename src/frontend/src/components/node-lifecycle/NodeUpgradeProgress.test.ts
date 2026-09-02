@@ -34,10 +34,14 @@ const i18n = createI18n({
   },
 })
 
-function lifecycle(download: NodeLifecycleInfo['download']): NodeLifecycleInfo {
+function lifecycle(
+  download: NodeLifecycleInfo['download'],
+  sourceVersion?: string,
+): NodeLifecycleInfo {
   return {
     kind: 'upgrade',
     state: 'upgrading',
+    source_version: sourceVersion,
     current_version: '0.2.11',
     target_version: '0.2.12',
     timeline: [
@@ -52,14 +56,22 @@ function lifecycle(download: NodeLifecycleInfo['download']): NodeLifecycleInfo {
   }
 }
 
-function mountProgress(download: NodeLifecycleInfo['download']) {
+function mountProgress(download: NodeLifecycleInfo['download'], sourceVersion?: string) {
   return mount(NodeUpgradeProgress, {
-    props: { lifecycle: lifecycle(download) },
+    props: { lifecycle: lifecycle(download, sourceVersion) },
     global: { plugins: [i18n] },
   })
 }
 
 describe('NodeUpgradeProgress download details', () => {
+  it('uses the immutable source version for the upgrade path', () => {
+    const wrapper = mountProgress(null, '0.2.10')
+
+    const versions = wrapper.findAll('.node-upgrade-progress__version')
+    expect(versions[0].text()).toBe('0.2.10')
+    expect(versions[1].text()).toBe('0.2.12')
+  })
+
   it('shows compact transfer metrics in the existing upgrade step', () => {
     const wrapper = mountProgress({
       state: 'downloading',

@@ -158,6 +158,12 @@ def _target_version_from_task(task: NodeTask) -> str:
     return str(result.get("target_version") or "").strip()
 
 
+def _source_version_from_task(task: NodeTask) -> str:
+    """Return the immutable Agent version recorded when an upgrade started."""
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    return str(payload.get("source_version") or "").strip()
+
+
 def _target_commit_from_task(task: NodeTask) -> str:
     payload = task.payload if isinstance(task.payload, dict) else {}
     target = str(payload.get("target_commit") or "").strip().lower()
@@ -974,6 +980,7 @@ def _upgrade_lifecycle_payload(
     base: dict[str, Any] = {
         "kind": LIFECYCLE_KIND_UPGRADE,
         "task_id": str(task.id),
+        "source_version": _source_version_from_task(task) or current_version,
         "target_version": target_version,
         "target_commit": _target_commit_from_task(task) or None,
         "current_version": current_version,
@@ -1349,9 +1356,12 @@ def start_node_upgrade(
     # must never be inferred from a later reconnect event.
     persisted_payload = {
         **payload,
+        "source_version": current_version,
         "pre_upgrade_session_id": redis_store.get_agent_session(agent_id=node.id)
         or "",
     }
+    if current_commit:
+        persisted_payload["source_commit"] = current_commit
     handle = run_agent_task_async(
         org=org,
         node_id=node.id,
