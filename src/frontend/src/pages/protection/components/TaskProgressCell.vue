@@ -4,10 +4,12 @@ import { useI18n } from 'vue-i18n'
 import {
   formatTaskProgressBarPercent,
   formatTaskProgressPercent,
+  formatSpeedBps,
   parseTaskProgressValue,
   resolveStep3DisplayPercent,
   shouldShowStep3Percent,
   shouldShowTransferMetrics,
+  transferCapacityText,
   transferProgressLabel,
   transferMetricParts,
   type TransferProgress,
@@ -78,6 +80,12 @@ const metricParts = computed(() => {
   return transferMetricParts(t, props.transferProgress)
 })
 const metricLine = computed(() => metricParts.value.join(' · '))
+const restoreMetricLine = computed(() => {
+  if (!isRestore.value || props.compact) return ''
+  const capacity = transferCapacityText(t, props.transferProgress)
+  const speed = formatSpeedBps(props.transferProgress?.upload_speed_bps)
+  return [capacity, speed].filter(Boolean).join(' · ')
+})
 const overflowTitle = computed(() => {
   if (!metricParts.value.length) return ''
   const metrics = transferMetricParts(t, props.transferProgress, { labelProcessingSpeed: true, labelRestoreMetrics: isRestore.value })
@@ -125,16 +133,15 @@ const overflowTitle = computed(() => {
       :show-text="false"
     />
     <p
-      v-if="!isRestore"
       class="task-progress-cell__metrics"
-      :class="{ 'is-empty': !metricParts.length }"
+      :class="{ 'is-empty': !(isRestore ? restoreMetricLine : metricLine) }"
     >
       <span
-        v-if="metricLine"
+        v-if="isRestore ? restoreMetricLine : metricLine"
         class="task-progress-cell__metric-line"
-        :data-table-overflow-title="overflowTitle || undefined"
+        :data-table-overflow-title="isRestore ? undefined : overflowTitle || undefined"
         data-table-overflow-title-always
-      >{{ metricLine }}</span>
+      >{{ isRestore ? restoreMetricLine : metricLine }}</span>
     </p>
   </div>
 </template>
