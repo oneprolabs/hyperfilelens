@@ -62,7 +62,10 @@ LOCAL_PLATFORM_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent/bin"
 LOCAL_PLATFORM_AGENT_DATA_DIR="/opt/hyperfilelens-agent"
 LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR="/opt/hyperfilelens-agent"
 LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR="/var/lib/hyperfilelens-agent"
-LOCAL_PLATFORM_LENSNODE_ENV_FILE="/etc/hyperfilelens/lensnode.env"
+LOCAL_PLATFORM_LENSNODE_ENV_FILE="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/lensnode.env"
+LOCAL_PLATFORM_LEGACY_LENSNODE_ENV_FILE="/etc/hyperfilelens/lensnode.env"
+LOCAL_PLATFORM_LENSNODE_COMPOSE_DIR="${LOCAL_PLATFORM_AGENT_DATA_DIR}/runtime/lensnode"
+LOCAL_PLATFORM_LEGACY_LENSNODE_COMPOSE_DIR="/etc/hyperfilelens/lensnode"
 LOCAL_PLATFORM_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
 LOCAL_PLATFORM_GATEWAY_VERIFIED=0
 
@@ -4566,7 +4569,7 @@ verify_local_platform_gateway_agent() {
 }
 
 converge_local_platform_gateway_lensnode() {
-	local desired_id current_id container_id running script
+	local desired_id current_id container_id running script layout_migration=0 legacy_layout_adopted=0
 	desired_id="$(docker image inspect --format '{{.Id}}' \
 		"${LOCAL_PLATFORM_LENSNODE_IMAGE}" 2>/dev/null || true)"
 	[[ -n "${desired_id}" ]] \
@@ -4576,18 +4579,54 @@ converge_local_platform_gateway_lensnode() {
 		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
 		--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
 		--filter 'label=com.docker.compose.service=lensnode' | head -1)"
+	# Pre-unification Gateway containers used the SourceLens Compose project
+	# name. Find only containers tied to the known legacy LensNode directory;
+	# unrelated SourceLens LensNode projects must remain untouched.
+	if [[ -z "${container_id}" ]]; then
+		local candidate working_dir config_files
+		while IFS= read -r candidate; do
+			[[ -n "${candidate}" ]] || continue
+			working_dir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "${candidate}" 2>/dev/null || true)"
+			config_files="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "${candidate}" 2>/dev/null || true)"
+			if [[ "${working_dir}" == "${LOCAL_PLATFORM_LEGACY_LENSNODE_COMPOSE_DIR}" \
+				|| ",${config_files}," == *",${LOCAL_PLATFORM_LEGACY_LENSNODE_COMPOSE_DIR}/docker-compose.yml,"* ]]; then
+				container_id="${candidate}"
+				break
+			fi
+		done < <(docker ps -aq --no-trunc \
+			--filter 'label=com.docker.compose.project=sourcelens' \
+			--filter 'label=com.docker.compose.service=lensnode')
+	fi
 	[[ -n "${container_id}" ]] \
 		|| die "installer-managed Platform Data Gateway AI engine container is missing"
 	current_id="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
-	if [[ "${current_id}" == "${desired_id}" ]]; then
+	if [[ -e "${LOCAL_PLATFORM_LEGACY_LENSNODE_ENV_FILE}" ]] \
+		|| [[ -d "${LOCAL_PLATFORM_LEGACY_LENSNODE_COMPOSE_DIR}" ]]; then
+		layout_migration=1
+		# Only authorize the sidecar's legacy adoption shortcut when the
+		# canonical env file is absent. If both layouts already exist, the
+		# sidecar must compare them and reject conflicting credentials.
+		if [[ ! -e "${LOCAL_PLATFORM_LENSNODE_ENV_FILE}" \
+			&& ! -e "${LOCAL_PLATFORM_LENSNODE_COMPOSE_DIR}/docker-compose.yml" ]]; then
+			legacy_layout_adopted=1
+		fi
+	fi
+	if [[ "${current_id}" == "${desired_id}" && "${layout_migration}" -eq 0 ]]; then
 		skip "Platform Data Gateway AI engine already uses the desired image"
 	else
 		script="${ROOT}/data/media/gateway-bootstrap/gateway-install-lensnode-sidecar.sh"
 		[[ -f "${script}" && ! -L "${script}" ]] \
 			|| die "Platform Data Gateway AI engine installer is missing: ${script}"
-		step "Recreating the Platform Data Gateway AI engine for a changed image"
+		if [[ "${layout_migration}" -eq 1 && "${current_id}" == "${desired_id}" ]]; then
+			step "Migrating the Platform Data Gateway AI engine into the unified Agent Root"
+		else
+			step "Recreating the Platform Data Gateway AI engine for a changed image"
+		fi
 		run_as_root env \
 			HFL_LENS_ENV_FILE="${LOCAL_PLATFORM_LENSNODE_ENV_FILE}" \
+			HFL_GATEWAY_COMPOSE_DIR="${LOCAL_PLATFORM_LENSNODE_COMPOSE_DIR}" \
+			HFL_AGENT_ROOT="${LOCAL_PLATFORM_AGENT_DATA_DIR}" \
+			HFL_LEGACY_LAYOUT_ADOPTED="${legacy_layout_adopted}" \
 			HFL_INSECURE_TLS=1 \
 			LENSNODE_IMAGE="${LOCAL_PLATFORM_LENSNODE_IMAGE}" \
 			/bin/bash "${script}"

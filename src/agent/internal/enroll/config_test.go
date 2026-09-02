@@ -28,6 +28,40 @@ func TestLoadConfigDefaultsToSystemInstallation(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAcceptsAbsoluteAgentRoot(t *testing.T) {
+	setRequiredEnrollmentEnv(t)
+	t.Setenv("HFL_NODE_ROLE", "gateway")
+	t.Setenv("HFL_AGENT_ROOT", "/opt/hyperfilelens-agent")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AgentRoot != "/opt/hyperfilelens-agent" {
+		t.Fatalf("AgentRoot = %q", cfg.AgentRoot)
+	}
+}
+
+func TestLoadConfigRejectsRelativeAgentRoot(t *testing.T) {
+	setRequiredEnrollmentEnv(t)
+	t.Setenv("HFL_NODE_ROLE", "gateway")
+	t.Setenv("HFL_AGENT_ROOT", "relative/agent-root")
+
+	if _, err := LoadConfigFromEnv(); err == nil {
+		t.Fatal("expected relative HFL_AGENT_ROOT to be rejected")
+	}
+}
+
+func TestLoadConfigRejectsFilesystemRootAsAgentRoot(t *testing.T) {
+	setRequiredEnrollmentEnv(t)
+	t.Setenv("HFL_NODE_ROLE", "gateway")
+	t.Setenv("HFL_AGENT_ROOT", "/")
+
+	if _, err := LoadConfigFromEnv(); err == nil {
+		t.Fatal("expected filesystem root HFL_AGENT_ROOT to be rejected")
+	}
+}
+
 func TestLoadConfigAcceptsUserLevelSourceAgent(t *testing.T) {
 	setRequiredEnrollmentEnv(t)
 	t.Setenv("HFL_NODE_ROLE", "agent")

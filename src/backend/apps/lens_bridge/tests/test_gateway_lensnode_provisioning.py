@@ -223,3 +223,7 @@ class DurableGatewayLensNodeProvisioningTests(TestCase):
         self.assertEqual(result.capacity_bytes, -1)
         self.assertEqual(result.scope, LensGatewayLink.GatewayScope.PLATFORM)
         self.assertEqual(result.sl_lensnode_uuid, remote_uuid)
+        self.assertEqual(
+            result.workspace_root,
+            f"/opt/hyperfilelens-agent/workspace/org-{platform_org.id}/data",
+        )

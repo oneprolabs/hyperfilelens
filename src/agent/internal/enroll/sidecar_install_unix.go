@@ -20,11 +20,11 @@ import (
 
 	"hyperfilelens/agent/internal/platform/install"
 	"hyperfilelens/agent/internal/platform/tlsclient"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 const (
-	lensEnvFilePath            = "/etc/hyperfilelens/lensnode.env"
-	lensAppliedFingerprintPath = "/etc/hyperfilelens/lensnode/.hfl-applied-config.sha256"
+	legacyLensEnvFilePath      = "/etc/hyperfilelens/lensnode.env"
 	lensSidecarLockPath        = "/run/lock/hyperfilelens-gateway-sidecar.lock"
 	lensSidecarLockHeldEnv     = "HFL_GATEWAY_SIDECAR_LOCK_HELD"
 	lensSidecarScript          = "gateway-install-lensnode-sidecar.sh"
@@ -34,6 +34,29 @@ const (
 	gatewayMinDockerEngine     = "24.0.0"
 	gatewayMinDockerCompose    = "2.20.0"
 )
+
+func gatewayAgentRoot(agentRoot string) string {
+	root := strings.TrimSpace(agentRoot)
+	if root == "" {
+		root = "/opt/hyperfilelens-agent"
+	}
+	return filepath.Clean(root)
+}
+
+func gatewayLensPaths(agentRoot string) (string, string, string) {
+	root := gatewayAgentRoot(agentRoot)
+	runtimeDir := vfs.AgentLensnodeRuntimeDir(root)
+	return filepath.Join(vfs.AgentConfigDir(root), "lensnode.env"),
+		filepath.Join(runtimeDir, ".hfl-applied-config.sha256"),
+		runtimeDir
+}
+
+func gatewayLegacyLensEnvPath(agentRoot string) string {
+	if gatewayAgentRoot(agentRoot) == "/opt/hyperfilelens-agent" {
+		return legacyLensEnvFilePath
+	}
+	return ""
+}
 
 var (
 	sourceLensHealthOK     = regexp.MustCompile(`"health"\s*:\s*"OK"`)
@@ -72,10 +95,11 @@ func checkSourceLensHealthViaConsole(ctx context.Context, cfg Config) error {
 type lensSidecarRuntime struct {
 	envPath        string
 	appliedPath    string
+	legacyEnvPath  string
 	lockPath       string
 	healthy        func() bool
 	ensureImage    func(context.Context, Config) error
-	installSidecar func(context.Context, Config) error
+	installSidecar func(context.Context, Config, bool) error
 }
 
 func checkGatewayRuntimePreflight(ctx context.Context, cfg Config) gatewayRuntimePreflightResult {
@@ -199,9 +223,12 @@ func gatewayDockerArchiveName() string {
 }
 
 func defaultLensSidecarRuntime() lensSidecarRuntime {
+	agentRoot := os.Getenv("HFL_AGENT_ROOT")
+	envPath, appliedPath, _ := gatewayLensPaths(agentRoot)
 	return lensSidecarRuntime{
-		envPath:        lensEnvFilePath,
-		appliedPath:    lensAppliedFingerprintPath,
+		envPath:        envPath,
+		appliedPath:    appliedPath,
+		legacyEnvPath:  gatewayLegacyLensEnvPath(agentRoot),
 		lockPath:       lensSidecarLockPath,
 		healthy:        lensSidecarHealthy,
 		ensureImage:    ensureLensnodeImage,
@@ -211,7 +238,10 @@ func defaultLensSidecarRuntime() lensSidecarRuntime {
 
 // InstallLensSidecar writes LensNode credentials and runs the bundled sidecar install script.
 func InstallLensSidecar(ctx context.Context, cfg Config, lens LensSidecarConfig) error {
-	return defaultLensSidecarRuntime().install(ctx, cfg, lens)
+	runtime := defaultLensSidecarRuntime()
+	runtime.envPath, runtime.appliedPath, _ = gatewayLensPaths(cfg.AgentRoot)
+	runtime.legacyEnvPath = gatewayLegacyLensEnvPath(cfg.AgentRoot)
+	return runtime.install(ctx, cfg, lens)
 }
 
 func (runtime lensSidecarRuntime) install(
@@ -220,12 +250,20 @@ func (runtime lensSidecarRuntime) install(
 	lens LensSidecarConfig,
 ) error {
 	return withFileLock(ctx, runtime.lockPath, func() error {
+		legacyLayoutPresent := legacyLensLayoutPresentAt(runtime.legacyEnvPath)
+		legacyLayoutAdopted := legacyLensLayoutPendingAt(runtime.envPath, runtime.legacyEnvPath)
+		if legacyLayoutAdopted {
+			if err := markLegacyLensLayoutAdopted(runtime.appliedPath); err != nil {
+				return err
+			}
+		}
 		_, fingerprint, err := writeLensEnvFileAt(runtime.envPath, lens)
 		if err != nil {
 			return err
 		}
 
 		if runtime.healthy() &&
+			!legacyLayoutPresent &&
 			os.Getenv("HFL_FORCE_SIDECAR_INSTALL") != "1" &&
 			lensConfigurationApplied(runtime.appliedPath, fingerprint) {
 			logStep("AI engine is already running.")
@@ -235,11 +273,56 @@ func (runtime lensSidecarRuntime) install(
 		if err := runtime.ensureImage(ctx, cfg); err != nil {
 			return err
 		}
-		if err := runtime.installSidecar(ctx, cfg); err != nil {
+		if err := runtime.installSidecar(ctx, cfg, legacyLayoutAdopted); err != nil {
 			return err
 		}
 		return markLensConfigurationApplied(runtime.appliedPath, fingerprint)
 	})
+}
+
+// legacyLensLayoutPending is intentionally narrow: only an Agent-managed
+// install may use it to tell the downloaded installer that the newly written
+// control-plane configuration supersedes the pre-unified file. Direct script
+// invocations retain strict conflict checks.
+func legacyLensLayoutPendingAt(envPath, legacyPath string) bool {
+	if legacyPath == "" || envPath == legacyPath {
+		return false
+	}
+	if !legacyLensLayoutPresentAt(legacyPath) {
+		return false
+	}
+	// Only authorize the migration marker before the canonical env file has
+	// been created. If both files already exist, the downloaded sidecar script
+	// must compare them and reject conflicting credentials instead of having a
+	// pre-existing file silently marked as adopted.
+	_, err := os.Stat(envPath)
+	return os.IsNotExist(err)
+}
+
+func legacyLensLayoutPresentAt(legacyPath string) bool {
+	if legacyPath == "" {
+		return false
+	}
+	if _, err := os.Stat(legacyPath); err == nil {
+		return true
+	}
+	// The old layout kept the Compose project beside lensnode.env. Either
+	// artifact can survive a partially completed cleanup and must trigger one
+	// more convergence attempt so the sidecar script can remove the remainder.
+	legacyComposeDir := filepath.Join(filepath.Dir(legacyPath), "lensnode")
+	_, err := os.Stat(legacyComposeDir)
+	return err == nil
+}
+
+func markLegacyLensLayoutAdopted(appliedPath string) error {
+	marker := filepath.Join(filepath.Dir(appliedPath), ".hfl-legacy-layout-adopted")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o700); err != nil {
+		return fmt.Errorf("create legacy LensNode migration state directory: %w", err)
+	}
+	if err := writePrivateEnvAtomically(marker, []byte("managed-by=hfl-enroll\n")); err != nil {
+		return fmt.Errorf("record legacy LensNode migration state: %w", err)
+	}
+	return nil
 }
 
 func ensureGatewayDocker(ctx context.Context, cfg Config) error {
@@ -362,7 +445,7 @@ func lensSidecarHealthy() bool {
 
 func writeLensEnvFileAt(path string, lens LensSidecarConfig) (bool, string, error) {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return false, "", fmt.Errorf("create %s: %w", dir, err)
 	}
 
@@ -410,7 +493,10 @@ func ConvergeGatewayLensObservability(
 	cfg Config,
 	lens LensSidecarConfig,
 ) (bool, error) {
-	return defaultLensSidecarRuntime().convergeObservability(ctx, cfg, lens)
+	runtime := defaultLensSidecarRuntime()
+	runtime.envPath, runtime.appliedPath, _ = gatewayLensPaths(cfg.AgentRoot)
+	runtime.legacyEnvPath = gatewayLegacyLensEnvPath(cfg.AgentRoot)
+	return runtime.convergeObservability(ctx, cfg, lens)
 }
 
 func (runtime lensSidecarRuntime) convergeObservability(
@@ -420,17 +506,24 @@ func (runtime lensSidecarRuntime) convergeObservability(
 ) (bool, error) {
 	changed := false
 	err := withFileLock(ctx, runtime.lockPath, func() error {
+		legacyLayoutPresent := legacyLensLayoutPresentAt(runtime.legacyEnvPath)
+		legacyLayoutAdopted := legacyLensLayoutPendingAt(runtime.envPath, runtime.legacyEnvPath)
+		if legacyLayoutAdopted {
+			if err := markLegacyLensLayoutAdopted(runtime.appliedPath); err != nil {
+				return err
+			}
+		}
 		var fingerprint string
 		var err error
 		changed, fingerprint, err = writeLensEnvFileAt(runtime.envPath, lens)
 		if err != nil {
 			return err
 		}
-		if lensConfigurationApplied(runtime.appliedPath, fingerprint) ||
+		if (lensConfigurationApplied(runtime.appliedPath, fingerprint) && !legacyLayoutPresent) ||
 			!runtime.healthy() {
 			return nil
 		}
-		if err := runtime.installSidecar(ctx, cfg); err != nil {
+		if err := runtime.installSidecar(ctx, cfg, legacyLayoutAdopted); err != nil {
 			return fmt.Errorf("refresh AI engine observability: %w", err)
 		}
 		if err := markLensConfigurationApplied(runtime.appliedPath, fingerprint); err != nil {
@@ -487,19 +580,25 @@ func withFileLock(ctx context.Context, path string, action func() error) error {
 	return action()
 }
 
-func runLensSidecarInstaller(ctx context.Context, cfg Config) error {
+func runLensSidecarInstaller(ctx context.Context, cfg Config, legacyLayoutAdopted bool) error {
 	scriptPath, cleanup, err := downloadSidecarInstallScript(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 	cmd := exec.CommandContext(ctx, "/bin/bash", scriptPath)
+	envPath, _, composeDir := gatewayLensPaths(cfg.AgentRoot)
 	cmd.Env = append(os.Environ(),
-		"HFL_LENS_ENV_FILE="+lensEnvFilePath,
+		"HFL_AGENT_ROOT="+gatewayAgentRoot(cfg.AgentRoot),
+		"HFL_LENS_ENV_FILE="+envPath,
+		"HFL_GATEWAY_COMPOSE_DIR="+composeDir,
 		"HFL_INSECURE_TLS="+insecureTLSEnv(),
 		"LENSNODE_IMAGE="+defaultLensnodeImage,
 		lensSidecarLockHeldEnv+"=1",
 	)
+	if legacyLayoutAdopted {
+		cmd.Env = append(cmd.Env, "HFL_LEGACY_LAYOUT_ADOPTED=1")
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

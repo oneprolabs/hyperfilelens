@@ -3024,6 +3024,35 @@ uninstall_gateway_sidecar_if_needed() {
 	log_ok "Data Gateway AI engine removal completed."
 }
 
+gateway_workspace_mounts_in_agent_root() {
+	local agent_root="${1%/}" workspace_root target canonical_target targets=""
+	workspace_root="$(readlink -m -- "${agent_root}/workspace")" || return 1
+	if command -v findmnt >/dev/null 2>&1; then
+		targets="$(LC_ALL=C findmnt -rn -o TARGET 2>/dev/null)" || targets=""
+	fi
+	if [[ -z "${targets}" && -r /proc/mounts ]]; then
+		targets="$(awk '{ print $2 }' /proc/mounts)" || return 1
+	elif [[ -z "${targets}" ]]; then
+		return 1
+	fi
+	while IFS= read -r target; do
+		[[ -n "${target}" ]] || continue
+		canonical_target="$(readlink -m -- "${target}")" || continue
+		if [[ "${canonical_target}" == "${workspace_root}" || "${canonical_target}" == "${workspace_root}"/* ]]; then
+			printf '%s\n' "${canonical_target}"
+		fi
+	done <<<"${targets}"
+}
+
+assert_gateway_workspace_purge_safe() {
+	local agent_root="$1" mounts
+	mounts="$(gateway_workspace_mounts_in_agent_root "${agent_root}")" \
+		|| log_fail "Could not verify Gateway workspace mounts; refusing purge-all." 2
+	mounts="$(printf '%s\n' "${mounts}" | sort -u)"
+	[[ -z "${mounts}" ]] || log_fail \
+		"Refusing purge-all while Gateway workspace storage is mounted (${mounts//$'\n'/, }); unmount it manually and retry." 2
+}
+
 cmd_uninstall() {
 	parse_uninstall_flags "$@"
 	require_root
@@ -3048,6 +3077,9 @@ cmd_uninstall() {
 	[[ -f "${INSTALLED_VERSION_FILE}" ]] && installed_version="$(tr -d ' \t\r\n' <"${INSTALLED_VERSION_FILE}")"
 	data_policy="preserve"
 	[[ "${PURGE_ALL}" -eq 0 ]] || data_policy="remove"
+	if [[ "${PURGE_ALL}" -eq 1 && "$(uname -s)" == "Linux" ]]; then
+		assert_gateway_workspace_purge_safe "${resolved_data}"
+	fi
 	hfl_print_banner "$(hfl_role_display_name "${installed_role}" "${gateway_scope}")" "Uninstaller"
 	hfl_print_section "Target"
 	hfl_print_value "Role" "$(hfl_role_display_name "${installed_role}" "${gateway_scope}")"

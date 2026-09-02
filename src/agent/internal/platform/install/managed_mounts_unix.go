@@ -3,9 +3,30 @@
 package install
 
 // unixManagedMountCleanupScript is embedded in the detached Unix uninstaller.
-// It only touches mounts below DATA_DIR/mounts and verifies that every mount has
-// disappeared before the uninstaller removes Agent files or persistent data.
+// It only unmounts Agent-managed mounts below DATA_DIR/mounts. Gateway workspace
+// mounts are detected separately and block purge rather than being unmounted.
 const unixManagedMountCleanupScript = `
+collect_gateway_workspace_mount_points() {
+  local data_dir="$1" workspace_root="${1%/}/workspace" targets=""
+
+  [[ -n "$data_dir" ]] || return 0
+  if command -v findmnt >/dev/null 2>&1; then
+    targets="$(LC_ALL=C findmnt -rn -o TARGET 2>/dev/null)" || targets=""
+  fi
+  if [[ -z "$targets" && -r /proc/mounts ]]; then
+    targets="$(awk '{ print $2 }' /proc/mounts)"
+  elif [[ -z "$targets" ]]; then
+    return 1
+  fi
+  printf '%s\n' "$targets" | awk -v root="$workspace_root" '
+    BEGIN { len = length(root) }
+    length($0) >= len && substr($0, 1, len) == root &&
+      (length($0) == len || substr($0, len + 1, 1) == "/") {
+      print $0
+    }
+  '
+}
+
 collect_agent_mount_points() {
   local mounts_root="$1" targets=""
 

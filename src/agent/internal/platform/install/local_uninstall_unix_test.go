@@ -54,6 +54,10 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 	if !strings.Contains(body, `script="$INSTALL_DIR/libexec/gateway-lifecycle.sh"`) {
 		t.Fatalf("script should prefer the Agent-owned Gateway lifecycle helper:\n%s", body)
 	}
+	if strings.Contains(body, `Gateway sidecar uninstall skipped (incomplete agent.env credentials)`) ||
+		!strings.Contains(body, `local lifecycle script and download credentials are unavailable`) {
+		t.Fatalf("script should use the local lifecycle helper when reporting credentials are incomplete:\n%s", body)
+	}
 	if !strings.Contains(body, `local env_file="$DATA_DIR/config/agent.env"`) {
 		t.Fatalf("script should read Gateway credentials from the resolved data directory:\n%s", body)
 	}
@@ -99,6 +103,10 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 	if !strings.Contains(body, `Agent-managed NAS mount cleanup failed; preserving Agent files and data for manual retry`) {
 		t.Fatalf("script must stop removal when managed mounts remain:\n%s", body)
 	}
+	if !strings.Contains(body, `collect_gateway_workspace_mount_points "$DATA_DIR"`) ||
+		!strings.Contains(body, `refusing purge while Gateway workspace storage is mounted`) {
+		t.Fatalf("script must preserve mounted Gateway workspace storage during purge:\n%s", body)
+	}
 	if !strings.Contains(body, `config retire-installation --data-dir "$DATA_DIR"`) {
 		t.Fatalf("script must retire installation identity when data is preserved:\n%s", body)
 	}
@@ -109,12 +117,15 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 		t.Fatalf("script must not require local uninstall to change the console record:\n%s", body)
 	}
 	unmountAt := strings.Index(body, `unmount_agent_mounts "$DATA_DIR"`)
+	workspaceMountAt := strings.Index(body, `gateway_workspace_mounts="$(collect_gateway_workspace_mount_points "$DATA_DIR"`)
+	gatewayAt := strings.Index(body, `run_gateway_sidecar_uninstall_if_needed`)
 	stopAt := strings.Index(body, `hfl_systemctl stop "$SERVICE_NAME"`)
 	retireAt := strings.Index(body, `config retire-installation --data-dir "$DATA_DIR"`)
 	removeAt := strings.Index(body, `for target in "$INSTALL_DIR/hfl-agent"`)
-	if unmountAt < 0 || stopAt < 0 || retireAt < 0 || removeAt < 0 ||
+	if workspaceMountAt < 0 || gatewayAt < 0 || workspaceMountAt > gatewayAt ||
+		unmountAt < 0 || stopAt < 0 || retireAt < 0 || removeAt < 0 ||
 		unmountAt > stopAt || stopAt > retireAt || retireAt > removeAt {
-		t.Fatalf("script must unmount managed shares before stopping and removing the Agent:\n%s", body)
+		t.Fatalf("script must protect Gateway workspace mounts, then unmount managed shares before removal:\n%s", body)
 	}
 	if !strings.Contains(body, `report_uninstall_completion "$rc"`) {
 		t.Fatalf("script must report the signed completion result:\n%s", body)

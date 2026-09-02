@@ -3,9 +3,26 @@
 # Published under /media/gateway-bootstrap/; invoked by hfl-enroll or detached agent scripts.
 set -euo pipefail
 
-ENV_FILE="${HFL_AGENT_ENV_FILE:-/opt/hyperfilelens-agent/config/agent.env}"
-LENS_ENV_FILE="${HFL_LENS_ENV_FILE:-/etc/hyperfilelens/lensnode.env}"
-COMPOSE_DIR="${HFL_GATEWAY_COMPOSE_DIR:-/etc/hyperfilelens/lensnode}"
+AGENT_ROOT="${HFL_AGENT_ROOT:-/opt/hyperfilelens-agent}"
+ENV_FILE="${HFL_AGENT_ENV_FILE:-${AGENT_ROOT}/config/agent.env}"
+LENS_ENV_FILE="${HFL_LENS_ENV_FILE:-${AGENT_ROOT}/config/lensnode.env}"
+COMPOSE_DIR="${HFL_GATEWAY_COMPOSE_DIR:-${AGENT_ROOT}/runtime/lensnode}"
+LEGACY_LENS_ENV_FILE="/etc/hyperfilelens/lensnode.env"
+LEGACY_COMPOSE_DIR="/etc/hyperfilelens/lensnode"
+LEGACY_ADOPTION_MARKER="${COMPOSE_DIR}/.hfl-legacy-layout-adopted"
+LEGACY_MIGRATION_ENABLED=0
+legacy_migration_allowed_for_agent() {
+	[[ "${AGENT_ROOT}" == "/opt/hyperfilelens-agent" \
+		&& ("${ENV_FILE}" == "/opt/hyperfilelens-agent/config/agent.env" \
+			|| "${ENV_FILE}" == "/var/lib/hyperfilelens-agent/agent.env") ]]
+}
+if legacy_migration_allowed_for_agent; then
+	LEGACY_MIGRATION_ENABLED=1
+fi
+if [[ "${LENS_ENV_FILE}" != "${AGENT_ROOT}/config/lensnode.env" \
+	|| "${COMPOSE_DIR}" != "${AGENT_ROOT}/runtime/lensnode" ]]; then
+	LEGACY_MIGRATION_ENABLED=0
+fi
 GATEWAY_BOOTSTRAP_BASE=""
 HFL_API_BASE=""
 HFL_ORG_KEY=""
@@ -88,6 +105,17 @@ hfl_fail() {
 	HFL_LAST_ERROR=$1
 	printf '  [FAIL] %s\n' "$1" >&2
 	exit "${2:-1}"
+}
+
+validate_lifecycle_paths() {
+	[[ "${AGENT_ROOT}" == /* && "${AGENT_ROOT}" != "/" ]] \
+		|| hfl_fail "HFL_AGENT_ROOT must be an absolute non-root path" 2
+	[[ "${ENV_FILE}" == /* && "${ENV_FILE}" != "/" ]] \
+		|| hfl_fail "HFL_AGENT_ENV_FILE must be an absolute file path" 2
+	[[ "${LENS_ENV_FILE}" == /* && "${LENS_ENV_FILE}" != "/" ]] \
+		|| hfl_fail "HFL_LENS_ENV_FILE must be an absolute file path" 2
+	[[ "${COMPOSE_DIR}" == /* && "${COMPOSE_DIR}" != "/" ]] \
+		|| hfl_fail "HFL_GATEWAY_COMPOSE_DIR must be an absolute non-root path" 2
 }
 
 compose_version_ge() {
@@ -174,15 +202,91 @@ load_agent_credentials() {
 }
 
 load_agent_credentials_optional() {
+	local persisted_agent_root=""
 	[[ -f "${ENV_FILE}" ]] || return 1
+	# Recompute legacy authority from the persisted installation identity. A
+	# custom Agent Root must never inherit permission to mutate the global old
+	# layout merely because this process initially used the default path.
+	LEGACY_MIGRATION_ENABLED=0
 	HFL_API_BASE="$(read_env_value "${ENV_FILE}" HFL_API_BASE)"
 	HFL_ORG_KEY="$(read_env_value "${ENV_FILE}" HFL_ORG_KEY)"
-	HFL_NODE_TOKEN="$(read_env_value "${ENV_FILE}" HFL_NODE_TOKEN)"
+	HFL_NODE_TOKEN="$(read_env_value "${ENV_FILE}" HFL_NODE_CREDENTIAL)"
+	[[ -n "${HFL_NODE_TOKEN}" ]] \
+		|| HFL_NODE_TOKEN="$(read_env_value "${ENV_FILE}" HFL_NODE_TOKEN)"
 	HFL_NODE_ID="$(read_env_value "${ENV_FILE}" HFL_NODE_ID)"
+	persisted_agent_root="$(read_env_value "${ENV_FILE}" HFL_AGENT_ROOT)"
+	if [[ -n "${persisted_agent_root}" ]]; then
+		[[ "${persisted_agent_root}" == /* ]] \
+			|| hfl_fail "invalid relative HFL_AGENT_ROOT in ${ENV_FILE}" 2
+		AGENT_ROOT="$(readlink -m -- "${persisted_agent_root}")" || return 1
+		[[ "${AGENT_ROOT}" != "/" ]] \
+			|| hfl_fail "invalid root HFL_AGENT_ROOT in ${ENV_FILE}" 2
+	elif [[ "${ENV_FILE}" == */config/agent.env ]]; then
+		AGENT_ROOT="$(cd -P -- "$(dirname -- "${ENV_FILE}")/.." 2>/dev/null && pwd -P || true)"
+	fi
+	[[ -n "${AGENT_ROOT}" ]] || AGENT_ROOT="/opt/hyperfilelens-agent"
+	[[ "${AGENT_ROOT}" == /* && "${AGENT_ROOT}" != "/" ]] || return 1
+	if legacy_migration_allowed_for_agent; then
+		LEGACY_MIGRATION_ENABLED=1
+	fi
+	LENS_ENV_FILE="${HFL_LENS_ENV_FILE:-${AGENT_ROOT}/config/lensnode.env}"
+	COMPOSE_DIR="${HFL_GATEWAY_COMPOSE_DIR:-${AGENT_ROOT}/runtime/lensnode}"
+	LEGACY_ADOPTION_MARKER="${COMPOSE_DIR}/.hfl-legacy-layout-adopted"
+	if [[ "${LENS_ENV_FILE}" != "${AGENT_ROOT}/config/lensnode.env" \
+		|| "${COMPOSE_DIR}" != "${AGENT_ROOT}/runtime/lensnode" ]]; then
+		LEGACY_MIGRATION_ENABLED=0
+	fi
 	[[ -n "${HFL_API_BASE}" && -n "${HFL_ORG_KEY}" && -n "${HFL_NODE_TOKEN}" && -n "${HFL_NODE_ID}" ]] \
 		|| return 1
 	GATEWAY_BOOTSTRAP_BASE="${HFL_API_BASE%/}/media/gateway-bootstrap"
 	return 0
+}
+
+migrate_legacy_layout() {
+	local adopted=0
+	[[ "${LEGACY_MIGRATION_ENABLED}" == "1" ]] || return 0
+	[[ "${LENS_ENV_FILE}" == "${LEGACY_LENS_ENV_FILE}" ]] && return 0
+	if [[ -f "${LEGACY_LENS_ENV_FILE}" ]]; then
+		if [[ -e "${LENS_ENV_FILE}" ]]; then
+			if [[ -f "${LEGACY_ADOPTION_MARKER}" ]] || cmp -s "${LEGACY_LENS_ENV_FILE}" "${LENS_ENV_FILE}"; then
+				adopted=1
+			else
+				hfl_fail "Legacy LensNode configuration conflicts with ${LENS_ENV_FILE}; resolve it before continuing" 2
+			fi
+		else
+			mkdir -p "$(dirname "${LENS_ENV_FILE}")"
+			install -m 0600 "${LEGACY_LENS_ENV_FILE}" "${LENS_ENV_FILE}"
+			hfl_log "adopted legacy LensNode configuration into ${LENS_ENV_FILE}"
+			adopted=1
+		fi
+	fi
+	if [[ "${COMPOSE_DIR}" != "${LEGACY_COMPOSE_DIR}" && -d "${LEGACY_COMPOSE_DIR}" ]]; then
+		if [[ -e "${COMPOSE_DIR}" ]]; then
+			if [[ -f "${LEGACY_ADOPTION_MARKER}" ]]; then
+				adopted=1
+			elif [[ ! -e "${COMPOSE_DIR}/docker-compose.yml" ]]; then
+				cp -a "${LEGACY_COMPOSE_DIR}/." "${COMPOSE_DIR}/"
+				hfl_log "adopted legacy LensNode Compose files into ${COMPOSE_DIR}"
+				adopted=1
+			elif [[ -f "${LEGACY_COMPOSE_DIR}/docker-compose.yml" && -f "${COMPOSE_DIR}/docker-compose.yml" ]]; then
+				cmp -s "${LEGACY_COMPOSE_DIR}/docker-compose.yml" "${COMPOSE_DIR}/docker-compose.yml" \
+					|| hfl_fail "Legacy LensNode Compose configuration conflicts with ${COMPOSE_DIR}; resolve it before continuing" 2
+				adopted=1
+			fi
+		else
+			mkdir -p "${COMPOSE_DIR}"
+			cp -a "${LEGACY_COMPOSE_DIR}/." "${COMPOSE_DIR}/"
+			chmod 0700 "${COMPOSE_DIR}"
+			hfl_log "adopted legacy LensNode Compose files into ${COMPOSE_DIR}"
+			adopted=1
+		fi
+	fi
+	if [[ "${adopted}" == "1" ]]; then
+		mkdir -p "${COMPOSE_DIR}"
+		chmod 0700 "${COMPOSE_DIR}"
+		: >"${LEGACY_ADOPTION_MARKER}"
+		chmod 0600 "${LEGACY_ADOPTION_MARKER}"
+	fi
 }
 
 report_lifecycle_status() {
@@ -219,7 +323,7 @@ remember_owned_lensnode_image() {
 }
 
 remove_owned_legacy_gateway_containers() {
-	local id project service working_dir config_files
+	local id project service working_dir config_files current_owned legacy_owned
 	while IFS= read -r id; do
 		[[ -n "${id}" ]] || continue
 		project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${id}" 2>/dev/null || true)"
@@ -227,10 +331,18 @@ remove_owned_legacy_gateway_containers() {
 		working_dir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "${id}" 2>/dev/null || true)"
 		config_files="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "${id}" 2>/dev/null || true)"
 		[[ "${project}" == "sourcelens" && "${service}" == "lensnode" ]] || continue
-		if [[ "${working_dir}" != "${COMPOSE_DIR}" \
-			&& ",${config_files}," != *",${COMPOSE_DIR}/docker-compose.yml,"* ]]; then
-			continue
+		current_owned=0
+		if [[ "${working_dir}" == "${COMPOSE_DIR}" \
+			|| ",${config_files}," == *",${COMPOSE_DIR}/docker-compose.yml,"* ]]; then
+			current_owned=1
 		fi
+		legacy_owned=0
+		if [[ "${LEGACY_MIGRATION_ENABLED}" == "1" \
+			&& ("${working_dir}" == "${LEGACY_COMPOSE_DIR}" \
+				|| ",${config_files}," == *",${LEGACY_COMPOSE_DIR}/docker-compose.yml,"*) ]]; then
+			legacy_owned=1
+		fi
+		[[ "${current_owned}" == "1" || "${legacy_owned}" == "1" ]] || continue
 		remember_owned_lensnode_image "$(docker inspect --format '{{.Config.Image}}' "${id}" 2>/dev/null || true)"
 		hfl_log "Removing owned legacy Gateway container ${id:0:12} from project sourcelens."
 		docker rm -f "${id}" >/dev/null
@@ -388,6 +500,8 @@ run_sidecar_install_script() {
 	[[ -n "${script}" && -f "${script}" ]] || hfl_fail "sidecar install script missing" 3
 	[[ -f "${LENS_ENV_FILE}" ]] || hfl_fail "missing ${LENS_ENV_FILE}" 2
 	HFL_LENS_ENV_FILE="${LENS_ENV_FILE}" \
+	HFL_GATEWAY_COMPOSE_DIR="${COMPOSE_DIR}" \
+	HFL_AGENT_ROOT="${AGENT_ROOT}" \
 		HFL_INSECURE_TLS="${HFL_INSECURE_TLS}" \
 		LENSNODE_IMAGE="${DEFAULT_LENSNODE_IMAGE}" \
 		bash "${script}"
@@ -395,16 +509,22 @@ run_sidecar_install_script() {
 
 cmd_upgrade_sidecar() {
 	local tmp="" script
+	validate_lifecycle_paths
 	acquire_sidecar_lock
 	load_agent_credentials
+	validate_lifecycle_paths
 	report_lifecycle_status "sidecar_upgrade" "running"
 	trap 'gateway_upgrade_exit "$?" "${tmp}"' EXIT
 	tmp="$(mktemp -d)"
 	ensure_docker_ready
+	migrate_legacy_layout
 	script="${tmp}/${SIDECAR_INSTALL_SCRIPT}"
 	download_bootstrap_file "${SIDECAR_INSTALL_SCRIPT}" "${script}"
 	load_lensnode_image "${tmp}"
-	compose_down_sidecar
+	# Keep the existing container available while the downloaded installer
+	# validates and starts its replacement. The installer removes an owned
+	# legacy container only after the replacement is confirmed running and
+	# restores the previous Compose configuration when startup fails.
 	run_sidecar_install_script "${script}"
 	rm -rf "${tmp}"
 	report_lifecycle_status "sidecar_upgrade" "success"
@@ -441,13 +561,71 @@ remove_lensnode_images() {
 }
 
 validate_gateway_workspace_path() {
-	local candidate=${1:-} canonical normalized
+	local candidate=${1:-} canonical normalized root_prefix
 	[[ -n "${candidate}" ]] || return 1
 	canonical="$(readlink -m -- "${candidate}")" || return 1
 	normalized="${candidate%/}"
 	[[ "${normalized}" == "${canonical}" ]] || return 1
-	[[ "${canonical}" =~ ^/workspace/org-[1-9][0-9]*/data$ ]] || return 1
+	if [[ "${canonical}" =~ ^/workspace/org-[1-9][0-9]*/data$ ]]; then
+		printf '%s\n' "${canonical}"
+		return 0
+	fi
+	root_prefix="$(readlink -m -- "${AGENT_ROOT}/workspace")" || return 1
+	if [[ "${canonical}" == "${root_prefix}"/* ]]; then
+		local relative="${canonical#"${root_prefix}"/}"
+		[[ "${relative}" =~ ^org-[1-9][0-9]*/data$ ]] || return 1
+	else
+		return 1
+	fi
 	printf '%s\n' "${canonical}"
+}
+
+collect_mount_targets() {
+	local targets
+	if command -v findmnt >/dev/null 2>&1; then
+		if targets="$(LC_ALL=C findmnt -rn -o TARGET 2>/dev/null)" && [[ -n "${targets}" ]]; then
+			printf '%s\n' "${targets}"
+			return 0
+		fi
+	fi
+	if [[ -r /proc/mounts ]]; then
+		awk '{ print $2 }' /proc/mounts
+		return 0
+	fi
+	return 1
+}
+
+gateway_workspace_mounts() {
+	local workspace=${1:-} managed_root target canonical_target canonical_root protected_root targets
+	managed_root="$(readlink -m -- "${AGENT_ROOT}/workspace")" || return 1
+	targets="$(collect_mount_targets)" || return 1
+	while IFS= read -r target; do
+		[[ -n "${target}" ]] || continue
+		canonical_target="$(readlink -m -- "${target}")" || continue
+		if [[ "${canonical_target}" == "${managed_root}" || "${canonical_target}" == "${managed_root}"/* ]]; then
+			printf '%s\n' "${canonical_target}"
+			continue
+		fi
+		[[ -n "${workspace}" ]] || continue
+		canonical_root="$(readlink -m -- "${workspace}")" || continue
+		# The Agent keeps LensNode state beside data/ under the same org
+		# directory. Protect both data and .hyperfilelens for legacy
+		# /workspace layouts; the unified managed_root check already covers
+		# the equivalent Agent Root tree.
+		protected_root="$(dirname -- "${canonical_root}")"
+		if [[ "${canonical_target}" == "${protected_root}" || "${canonical_target}" == "${protected_root}"/* ]]; then
+			printf '%s\n' "${canonical_target}"
+		fi
+	done <<<"${targets}"
+}
+
+assert_gateway_workspace_not_mounted() {
+	local workspace=${1:-} mounts
+	mounts="$(gateway_workspace_mounts "${workspace}")" \
+		|| hfl_fail "could not verify Gateway workspace mounts; refusing purge-all" 6
+	mounts="$(printf '%s\n' "${mounts}" | sort -u)"
+	[[ -z "${mounts}" ]] || hfl_fail \
+		"refusing to purge mounted Gateway workspace data (${mounts//$'\n'/, }); unmount it manually and retry" 6
 }
 
 purge_sidecar_artifacts() {
@@ -459,10 +637,17 @@ purge_sidecar_artifacts() {
 		workspace="$(validate_gateway_workspace_path "${workspace}")" \
 			|| hfl_fail "refusing to purge unsafe Gateway workspace path from ${LENS_ENV_FILE}" 6
 	fi
+	# This check must precede container, image, configuration, and Compose
+	# removal. A mounted workspace is user-owned storage, even for --purge-all.
+	assert_gateway_workspace_not_mounted "${workspace}"
 	compose_down_sidecar
 	remove_lensnode_images
 	rm -f "${LENS_ENV_FILE}"
 	rm -rf "${COMPOSE_DIR}"
+	if [[ "${LEGACY_MIGRATION_ENABLED}" == "1" ]]; then
+		[[ "${LENS_ENV_FILE}" == "${LEGACY_LENS_ENV_FILE}" ]] || rm -f "${LEGACY_LENS_ENV_FILE}"
+		[[ "${COMPOSE_DIR}" == "${LEGACY_COMPOSE_DIR}" ]] || rm -rf "${LEGACY_COMPOSE_DIR}"
+	fi
 	if [[ -n "${workspace}" ]]; then
 		hfl_log "Removing gateway workspace ${workspace}."
 		rm -rf "${workspace}"
@@ -473,11 +658,24 @@ purge_sidecar_artifacts() {
 }
 
 cmd_uninstall_sidecar() {
+	validate_lifecycle_paths
 	acquire_sidecar_lock
 	if ! load_agent_credentials_optional; then
 		hfl_log "Agent credentials are unavailable; continuing local AI engine cleanup without status reporting."
+		# Local uninstall must still remove the known legacy LensNode layout
+		# when a standard Agent credential file is unavailable. Explicit custom
+		# lifecycle paths remain isolated from the system legacy directories.
+		if legacy_migration_allowed_for_agent; then
+			LEGACY_MIGRATION_ENABLED=1
+		fi
 	fi
+	if [[ "${LENS_ENV_FILE}" != "${AGENT_ROOT}/config/lensnode.env" \
+		|| "${COMPOSE_DIR}" != "${AGENT_ROOT}/runtime/lensnode" ]]; then
+		LEGACY_MIGRATION_ENABLED=0
+	fi
+	validate_lifecycle_paths
 	ensure_docker_ready
+	migrate_legacy_layout
 	report_lifecycle_status "sidecar_uninstall" "running"
 	if [[ "${PURGE_ALL}" -eq 1 ]]; then
 		purge_sidecar_artifacts

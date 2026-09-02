@@ -101,6 +101,9 @@ describe('manual node maintenance commands', () => {
     const command = buildLocalServiceCommand('linux', 'restart', 'gateway')
 
     expect(command).toContain('/opt/hyperfilelens-agent/bin/install.sh restart')
+    expect(command).toContain('/opt/hyperfilelens-agent/runtime/lensnode/docker-compose.yml')
+    expect(command).toContain('/etc/hyperfilelens/lensnode/docker-compose.yml')
+    expect(command).toContain('sudo test -f')
     expect(command).toContain('docker compose -p hyperfilelens-gateway')
     expect(command).toContain('up -d')
   })

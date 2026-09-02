@@ -1663,5 +1663,11 @@ grep -F 'chmod 0700 "${COMPOSE_DIR}"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 grep -F 'chmod 0600 "${compose_file}"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
+grep -F 'config/lensnode.env' \
+	"${ROOT}/deploy/bootstrap/gateway-lifecycle.sh" \
+	"${ROOT}/deploy/installer/install.sh" >/dev/null
+grep -F 'runtime/lensnode' \
+	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" \
+	"${ROOT}/deploy/bootstrap/gateway-lifecycle.sh" >/dev/null
 
 printf 'Release contract checks passed.\n'

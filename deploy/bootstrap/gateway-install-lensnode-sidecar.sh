@@ -3,8 +3,19 @@
 # Invoked by hfl-enroll gateway-install after agent registration.
 set -euo pipefail
 
-ENV_FILE="${HFL_LENS_ENV_FILE:-/etc/hyperfilelens/lensnode.env}"
-COMPOSE_DIR="/etc/hyperfilelens/lensnode"
+ENV_FILE="${HFL_LENS_ENV_FILE:-/opt/hyperfilelens-agent/config/lensnode.env}"
+COMPOSE_DIR="${HFL_GATEWAY_COMPOSE_DIR:-/opt/hyperfilelens-agent/runtime/lensnode}"
+LEGACY_ENV_FILE="/etc/hyperfilelens/lensnode.env"
+LEGACY_COMPOSE_DIR="/etc/hyperfilelens/lensnode"
+LEGACY_ADOPTION_MARKER="${COMPOSE_DIR}/.hfl-legacy-layout-adopted"
+LEGACY_MIGRATION_ENABLED=0
+legacy_migration_allowed_for_paths() {
+	[[ "${ENV_FILE}" == "/opt/hyperfilelens-agent/config/lensnode.env" \
+		&& "${COMPOSE_DIR}" == "/opt/hyperfilelens-agent/runtime/lensnode" ]]
+}
+if legacy_migration_allowed_for_paths; then
+	LEGACY_MIGRATION_ENABLED=1
+fi
 COMPOSE_PROJECT="hyperfilelens-gateway"
 DEFAULT_LENSNODE_IMAGE="${LENSNODE_IMAGE:-hyperfilelens-sourcelens-lensnode:latest}"
 SENTRY_PRIVACY_FILE="${COMPOSE_DIR}/hfl-sentry-sitecustomize.py"
@@ -27,6 +38,70 @@ hfl_warn() {
 hfl_fail() {
 	printf '  [FAIL] %s\n' "$1" >&2
 	exit "${2:-1}"
+}
+
+migrate_legacy_layout() {
+	local adopted=0
+	[[ "${LEGACY_MIGRATION_ENABLED}" == "1" ]] || return 0
+	[[ "${ENV_FILE}" == "${LEGACY_ENV_FILE}" ]] && return 0
+	if [[ -f "${LEGACY_ENV_FILE}" ]]; then
+		if [[ -e "${ENV_FILE}" ]]; then
+			if [[ "${HFL_LEGACY_LAYOUT_ADOPTED:-0}" == "1" ]]; then
+				adopted=1
+			elif [[ -f "${LEGACY_ADOPTION_MARKER}" ]]; then
+				adopted=1
+			elif cmp -s "${LEGACY_ENV_FILE}" "${ENV_FILE}"; then
+				adopted=1
+			else
+				hfl_fail "Legacy LensNode configuration conflicts with ${ENV_FILE}; resolve it before upgrading." 2
+			fi
+		else
+			mkdir -p "$(dirname "${ENV_FILE}")"
+			install -m 0600 "${LEGACY_ENV_FILE}" "${ENV_FILE}"
+			hfl_step "Adopted legacy LensNode configuration into the Agent Root."
+			adopted=1
+		fi
+	fi
+	if [[ "${COMPOSE_DIR}" != "${LEGACY_COMPOSE_DIR}" && -d "${LEGACY_COMPOSE_DIR}" ]]; then
+		if [[ -e "${COMPOSE_DIR}" ]]; then
+			if [[ "${HFL_LEGACY_LAYOUT_ADOPTED:-0}" == "1" || -f "${LEGACY_ADOPTION_MARKER}" ]]; then
+				adopted=1
+			elif [[ ! -e "${COMPOSE_DIR}/docker-compose.yml" ]]; then
+				cp -a "${LEGACY_COMPOSE_DIR}/." "${COMPOSE_DIR}/"
+				hfl_step "Adopted legacy LensNode Compose files into the Agent Root."
+				adopted=1
+			elif [[ -f "${LEGACY_COMPOSE_DIR}/docker-compose.yml" && -f "${COMPOSE_DIR}/docker-compose.yml" ]]; then
+				cmp -s "${LEGACY_COMPOSE_DIR}/docker-compose.yml" "${COMPOSE_DIR}/docker-compose.yml" \
+					|| hfl_fail "Legacy LensNode Compose configuration conflicts with ${COMPOSE_DIR}; resolve it before upgrading." 2
+				adopted=1
+			fi
+		else
+			mkdir -p "${COMPOSE_DIR}"
+			cp -a "${LEGACY_COMPOSE_DIR}/." "${COMPOSE_DIR}/"
+			chmod 0700 "${COMPOSE_DIR}"
+			hfl_step "Adopted legacy LensNode Compose files into the Agent Root."
+			adopted=1
+		fi
+	fi
+	if [[ "${adopted}" == "1" ]]; then
+		mkdir -p "${COMPOSE_DIR}"
+		chmod 0700 "${COMPOSE_DIR}"
+		: >"${LEGACY_ADOPTION_MARKER}"
+		chmod 0600 "${LEGACY_ADOPTION_MARKER}"
+	fi
+}
+
+cleanup_legacy_layout() {
+	[[ "${LEGACY_MIGRATION_ENABLED}" == "1" ]] || return 0
+	[[ "${ENV_FILE}" == "${LEGACY_ENV_FILE}" ]] || rm -f "${LEGACY_ENV_FILE}" \
+		|| hfl_warn "Could not remove legacy LensNode configuration; it will be retried later."
+	if [[ "${COMPOSE_DIR}" != "${LEGACY_COMPOSE_DIR}" && -d "${LEGACY_COMPOSE_DIR}" ]]; then
+		rm -rf "${LEGACY_COMPOSE_DIR}" \
+			|| hfl_warn "Could not remove legacy LensNode Compose directory; it will be retried later."
+	fi
+	if [[ ! -e "${LEGACY_ENV_FILE}" && ! -e "${LEGACY_COMPOSE_DIR}" ]]; then
+		rm -f "${LEGACY_ADOPTION_MARKER}"
+	fi
 }
 
 # The sidecar script is downloaded and executed on its own, so keep this
@@ -90,6 +165,8 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 acquire_sidecar_lock
+
+migrate_legacy_layout
 
 if [[ ! -f "${ENV_FILE}" ]]; then
 	hfl_fail "Missing ${ENV_FILE} (run hfl-enroll gateway-install first)." 2
@@ -213,7 +290,7 @@ resolve_lensnode_image() {
 }
 
 remove_owned_legacy_gateway_containers() {
-	local id project service working_dir config_files
+	local id project service working_dir config_files current_owned legacy_owned
 	local removed=0
 	while IFS= read -r id; do
 		[[ -n "${id}" ]] || continue
@@ -222,10 +299,18 @@ remove_owned_legacy_gateway_containers() {
 		working_dir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "${id}" 2>/dev/null || true)"
 		config_files="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "${id}" 2>/dev/null || true)"
 		[[ "${project}" == "sourcelens" && "${service}" == "lensnode" ]] || continue
-		if [[ "${working_dir}" != "${COMPOSE_DIR}" \
-			&& ",${config_files}," != *",${COMPOSE_DIR}/docker-compose.yml,"* ]]; then
-			continue
+		current_owned=0
+		if [[ "${working_dir}" == "${COMPOSE_DIR}" \
+			|| ",${config_files}," == *",${COMPOSE_DIR}/docker-compose.yml,"* ]]; then
+			current_owned=1
 		fi
+		legacy_owned=0
+		if [[ "${LEGACY_MIGRATION_ENABLED}" == "1" \
+			&& ("${working_dir}" == "${LEGACY_COMPOSE_DIR}" \
+				|| ",${config_files}," == *",${LEGACY_COMPOSE_DIR}/docker-compose.yml,"*) ]]; then
+			legacy_owned=1
+		fi
+		[[ "${current_owned}" == "1" || "${legacy_owned}" == "1" ]] || continue
 		hfl_step "Migrating owned legacy Gateway container ${id:0:12} from project sourcelens."
 		docker rm -f "${id}" >/dev/null
 		removed=1
@@ -241,6 +326,9 @@ install_docker_sidecar() {
 	local sentry_volume_block=""
 	local compose_file="${COMPOSE_DIR}/docker-compose.yml"
 	local compose_temporary="${COMPOSE_DIR}/.docker-compose.yml.tmp.$$"
+	local previous_compose="${COMPOSE_DIR}/.docker-compose.yml.previous.$$"
+	local recovery_detail="the new Compose configuration was removed"
+	local current_container="" previous_image_id="" desired_image_id=""
 	if [[ -z "${ssl_verify}" ]]; then
 		if [[ "${HFL_INSECURE_TLS}" == "1" ]]; then
 			ssl_verify="false"
@@ -312,28 +400,79 @@ ${sentry_volume_block}
 EOF
 	)
 	chmod 0600 "${compose_temporary}"
-	mv -f "${compose_temporary}" "${compose_file}"
-	chmod 0600 "${compose_file}"
-	if resolve_compose; then
-		remove_owned_legacy_gateway_containers
-		(
-			cd "${COMPOSE_DIR}"
-			current_container="$("${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" ps -q lensnode 2>/dev/null || true)"
-			current_image_id=""
-			desired_image_id="$(docker image inspect --format '{{.Id}}' "${image}")"
-			if [[ -n "${current_container}" ]]; then
-				current_image_id="$(docker inspect --format '{{.Image}}' "${current_container}" 2>/dev/null || true)"
-			fi
-			compose_args=(up -d --pull never)
-			if [[ -n "${current_container}" && "${current_image_id}" != "${desired_image_id}" ]]; then
-				hfl_step "Recreating the AI engine because its loaded image ID changed."
-				compose_args+=(--force-recreate)
-			fi
-			"${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" "${compose_args[@]}"
-		)
-	else
+	if ! resolve_compose; then
+		rm -f "${compose_temporary}"
 		hfl_fail "Docker Compose v2 >= ${MIN_COMPOSE_VERSION} is required when using the AI engine container image." 3
 	fi
+	if ! (
+		cd "${COMPOSE_DIR}"
+		"${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" -f "${compose_temporary}" config --quiet
+	); then
+		rm -f "${compose_temporary}"
+		hfl_fail "Generated AI engine Compose configuration is invalid." 3
+	fi
+	if [[ -f "${compose_file}" ]]; then
+		cp -p "${compose_file}" "${previous_compose}"
+	fi
+	desired_image_id="$(docker image inspect --format '{{.Id}}' "${image}")"
+	current_container="$(
+		cd "${COMPOSE_DIR}"
+		"${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" ps -q lensnode 2>/dev/null || true
+	)"
+	if [[ -n "${current_container}" ]]; then
+		previous_image_id="$(docker inspect --format '{{.Image}}' "${current_container}" 2>/dev/null || true)"
+	fi
+	mv -f "${compose_temporary}" "${compose_file}"
+	chmod 0600 "${compose_file}"
+	if ! (
+		cd "${COMPOSE_DIR}"
+		compose_args=(up -d --pull never)
+		if [[ -n "${current_container}" && "${previous_image_id}" != "${desired_image_id}" ]]; then
+			hfl_step "Recreating the AI engine because its loaded image ID changed."
+			compose_args+=(--force-recreate)
+		fi
+		"${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" "${compose_args[@]}"
+		started_container="$("${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" ps -q lensnode 2>/dev/null || true)"
+		[[ -n "${started_container}" ]] || exit 1
+		[[ "$(docker inspect --format '{{.State.Running}}' "${started_container}" 2>/dev/null || true)" == "true" ]] \
+			|| exit 1
+		[[ "$(docker inspect --format '{{.Image}}' "${started_container}" 2>/dev/null || true)" == "${desired_image_id}" ]] \
+			|| exit 1
+	); then
+		if [[ -f "${previous_compose}" ]]; then
+			mv -f "${previous_compose}" "${compose_file}"
+			chmod 0600 "${compose_file}"
+			recovery_detail="the previous Compose configuration was restored"
+			if [[ -n "${previous_image_id}" && "${previous_image_id}" != "${desired_image_id}" ]]; then
+				if docker image tag "${previous_image_id}" "${image}"; then
+					recovery_detail="the previous Compose configuration and image reference were restored"
+				else
+					hfl_warn "The previous AI engine image reference could not be restored automatically."
+				fi
+			fi
+			if ! (
+				cd "${COMPOSE_DIR}"
+				"${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" up -d --pull never
+			); then
+				hfl_warn "The previous AI engine Compose configuration was restored, but its container could not be restarted automatically."
+			fi
+		else
+			# There is no previous installation to restore. Remove any partially
+			# created first-install project before returning the failure.
+			if ! (
+				cd "${COMPOSE_DIR}"
+				"${COMPOSE[@]}" -p "${COMPOSE_PROJECT}" down --remove-orphans
+			); then
+				hfl_warn "The failed first-install AI engine project could not be cleaned up automatically."
+			fi
+			rm -f "${compose_file}"
+		fi
+		hfl_fail "AI engine container startup failed; ${recovery_detail}." 3
+	fi
+	rm -f "${previous_compose}"
+	# A legacy sourcelens-project container can coexist with the new project.
+	# Remove it only after the replacement is confirmed started.
+	remove_owned_legacy_gateway_containers
 	hfl_ok "AI engine container started."
 }
 
@@ -346,3 +485,4 @@ install_docker_sidecar "${RESOLVED_IMAGE}"
 SIDECAR_MODE="docker"
 
 hfl_ok "AI engine installation completed (${SIDECAR_MODE})."
+cleanup_legacy_layout
