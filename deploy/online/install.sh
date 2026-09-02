@@ -44,8 +44,14 @@ DOCKER_PACKAGE_INSTALL_ATTEMPTED=0
 DOCKER_BOOTSTRAPPED=0
 COMPOSE_PACKAGE_INSTALL_ATTEMPTED=0
 COMPOSE_BOOTSTRAPPED=0
+APT_FAILURE_DPKG_CLEAN=0
 CURL_RETRY_ARGS=()
-APT_RETRY_ARGS=(-o Acquire::Retries=3 -o DPkg::Lock::Timeout=120)
+APT_RETRY_ARGS=(
+	-o Acquire::Retries=3
+	-o Acquire::http::Timeout=60
+	-o Acquire::https::Timeout=60
+	-o DPkg::Lock::Timeout=120
+)
 
 usage() {
 	cat <<'USAGE'
@@ -98,6 +104,57 @@ capture_log_stream() {
 		| timestamp_log_stream "${log_file}"
 }
 
+apt_failure_is_transient() {
+	local log_file=${1:-}
+	[[ -s "${log_file}" ]] || return 1
+	grep -Eiq \
+		'failed to fetch.*(timed out|could not connect|connection (reset|failed)|temporary failure resolving|could not resolve|network is unreachable)|connection timed out|could not connect|connection reset|connection failed|temporary failure resolving|could not resolve|network is unreachable|tls.*(error|connection)' \
+		"${log_file}"
+}
+
+dpkg_state_clean_for_retry() {
+	local audit_output
+	if ! audit_output="$(dpkg --audit 2>&1)"; then
+		printf '[WARN] Ubuntu package state could not be inspected; automatic retry is disabled.\n' >&2
+		[[ -z "${audit_output}" ]] || printf '%s\n' "${audit_output}" >&2
+		return 1
+	fi
+	if [[ -n "${audit_output}" ]]; then
+		printf '[WARN] Ubuntu package state is incomplete; automatic retry is disabled.\n' >&2
+		printf '%s\n' "${audit_output}" >&2
+		return 1
+	fi
+	return 0
+}
+
+apt_install_with_network_retry() {
+	local install_log=$1
+	shift
+	local attempt=1
+	while :; do
+		if DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+			"$@" >"${install_log}" 2>&1; then
+			return 0
+		fi
+		if ((attempt >= 2)) || ! apt_failure_is_transient "${install_log}"; then
+			if ((attempt >= 2)) && apt_failure_is_transient "${install_log}" \
+				&& dpkg_state_clean_for_retry; then
+				APT_FAILURE_DPKG_CLEAN=1
+			fi
+			preserve_apt_failure_log "${install_log}"
+			return 1
+		fi
+		if ! dpkg_state_clean_for_retry; then
+			preserve_apt_failure_log "${install_log}"
+			return 1
+		fi
+		printf '[ OK ] Ubuntu package state is clean\n' >&2
+		printf '[....] APT package download failed; retrying in 60 seconds (2/2)\n' >&2
+		sleep 60
+		attempt=2
+	done
+}
+
 configure_logging() {
 	local stamp
 	[[ -t 1 || -t 2 ]] && ONLINE_INTERACTIVE=1 || true
@@ -115,6 +172,24 @@ configure_logging() {
 	exec 4>&2
 	exec > >(capture_log_stream "${ONLINE_LOG_FILE}" 3) \
 		2> >(capture_log_stream "${ONLINE_LOG_FILE}" 4)
+}
+
+preserve_apt_failure_log() {
+	local source_log=${1:-}
+	local preserved_log
+	[[ -n "${ONLINE_LOG_FILE}" && -s "${source_log}" ]] || return 0
+	preserved_log="${ONLINE_LOG_FILE%.log}-apt.log"
+	if [[ -L "${preserved_log}" ]]; then
+		printf '[WARN] Refusing to write the APT diagnostic log through a symbolic link: %s\n' \
+			"${preserved_log}" >&2
+		return 0
+	fi
+	if ! install -m 0600 "${source_log}" "${preserved_log}"; then
+		printf '[WARN] Could not preserve the full APT diagnostic log: %s\n' \
+			"${preserved_log}" >&2
+		return 0
+	fi
+	printf '[INFO] Full APT output saved to %s\n' "${preserved_log}" >&2
 }
 
 print_target() {
@@ -166,7 +241,10 @@ EOF
 cleanup() {
 	local rc=$?
 	trap - EXIT INT TERM
-	if ((rc != 0 && COMPOSE_PACKAGE_INSTALL_ATTEMPTED == 1 && COMPOSE_BOOTSTRAPPED == 0)); then
+	if ((rc != 0 && APT_FAILURE_DPKG_CLEAN == 1)); then
+		printf '\n[WARN] APT package installation failed after the retry.\n' >&2
+		printf '[INFO] Ubuntu package state is clean. Run the same HyperFileLens installation command again later.\n' >&2
+	elif ((rc != 0 && COMPOSE_PACKAGE_INSTALL_ATTEMPTED == 1 && COMPOSE_BOOTSTRAPPED == 0)); then
 		printf '\n[WARN] Docker Compose V2 plugin installation did not complete and may have left a partially installed package.\n' >&2
 		printf '[INFO] The existing Docker Engine was not replaced; review dpkg --audit and repair the package state manually before retrying.\n' >&2
 	elif ((rc != 0 && COMPOSE_BOOTSTRAPPED == 1)); then
@@ -610,13 +688,14 @@ install_docker_prerequisites() {
 		if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
 			--no-install-recommends install \
 			"${missing[@]}" >"${plan}" 2>&1; then
+			preserve_apt_failure_log "${plan}"
 			tail -n 20 "${plan}" >&2 || true
 			fail "Docker CE source prerequisites could not be resolved"
 		fi
 		validate_apt_install_plan "${plan}" "Docker CE prerequisite installation"
-		if ! DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+		if ! apt_install_with_network_retry "${install_log}" \
 			install -y --no-remove \
-			--no-upgrade --no-install-recommends "${missing[@]}" >"${install_log}" 2>&1; then
+			--no-upgrade --no-install-recommends "${missing[@]}"; then
 			tail -n 20 "${install_log}" >&2 || true
 			fail "Docker CE source prerequisites could not be installed"
 		fi
@@ -718,16 +797,17 @@ install_online_docker_runtime() {
 	if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
 		--no-install-recommends install \
 		"${packages[@]}" >"${plan}" 2>&1; then
+		preserve_apt_failure_log "${plan}"
 		tail -n 20 "${plan}" >&2 || true
 		fail "Docker CE package dependencies could not be resolved"
 	fi
 	validate_apt_install_plan "${plan}" "Docker CE installation"
 	printf '[....] Installing Docker Engine and Docker Compose V2\n'
 	DOCKER_PACKAGE_INSTALL_ATTEMPTED=1
-	if ! DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+	if ! apt_install_with_network_retry "${install_log}" \
 		install -y --no-remove \
 		--no-upgrade --no-install-recommends \
-		"${packages[@]}" >"${install_log}" 2>&1; then
+		"${packages[@]}"; then
 		tail -n 20 "${install_log}" >&2 || true
 		fail "Docker Engine and Docker Compose V2 installation failed"
 	fi
@@ -778,6 +858,7 @@ install_online_compose_plugin() {
 	if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
 		--no-install-recommends install \
 		"docker-compose-plugin=${DOCKER_COMPOSE_PACKAGE_VERSION}" >"${plan}" 2>&1; then
+		preserve_apt_failure_log "${plan}"
 		tail -n 20 "${plan}" >&2 || true
 		fail "Docker Compose V2 package dependencies could not be resolved without changing the existing Docker runtime"
 	fi
@@ -786,9 +867,9 @@ install_online_compose_plugin() {
 	printf '[ OK ] Docker Compose V2 package plan is safe\n'
 	printf '[....] Installing Docker Compose V2 plugin\n'
 	COMPOSE_PACKAGE_INSTALL_ATTEMPTED=1
-	if ! DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+	if ! apt_install_with_network_retry "${install_log}" \
 		install -y --no-remove --no-upgrade --no-install-recommends \
-		"docker-compose-plugin=${DOCKER_COMPOSE_PACKAGE_VERSION}" >"${install_log}" 2>&1; then
+		"docker-compose-plugin=${DOCKER_COMPOSE_PACKAGE_VERSION}"; then
 		tail -n 20 "${install_log}" >&2 || true
 		fail "Docker Compose V2 plugin installation failed"
 	fi

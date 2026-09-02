@@ -46,7 +46,13 @@ grep -Fq 'foreign_docker_runtime_present' "${online}/install.sh"
 grep -Fq 'docker_ce_runtime_present' "${online}/install.sh"
 grep -Fq 'docker_apt_source_present' "${online}/install.sh"
 grep -Fq 'Acquire::Retries=3' "${online}/install.sh"
+grep -Fq 'Acquire::http::Timeout=60' "${online}/install.sh"
+grep -Fq 'Acquire::https::Timeout=60' "${online}/install.sh"
 grep -Fq 'DPkg::Lock::Timeout=120' "${online}/install.sh"
+grep -Fq 'apt_install_with_network_retry' "${online}/install.sh"
+grep -Fq 'apt_failure_is_transient' "${online}/install.sh"
+grep -Fq 'dpkg_state_clean_for_retry' "${online}/install.sh"
+grep -Fq 'preserve_apt_failure_log' "${online}/install.sh"
 grep -Fq -- '--no-upgrade' "${online}/install.sh"
 for package in docker-ce docker-ce-cli containerd.io docker-compose-plugin; do
 	grep -Fq "${package}" "${online}/install.sh"
@@ -435,6 +441,57 @@ if source.count(marker) != 1:
     raise SystemExit("online installer entrypoint marker is ambiguous")
 pathlib.Path(sys.argv[2]).write_text(source.split(marker, 1)[0], encoding="utf-8")
 PY
+
+apt_retry_log="${tmp}/apt-retry.log"
+apt_retry_saved="${tmp}/logs/install-test-apt.log"
+mkdir -p "$(dirname "${apt_retry_saved}")"
+(
+	# A transient package download failure retries once after a clean dpkg audit.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_LOG_FILE="${tmp}/logs/install-test.log"
+	attempts=0
+	apt-get() {
+		attempts=$((attempts + 1))
+		if ((attempts == 1)); then
+			printf 'E: Failed to fetch https://mirror.example/docker-ce-cli.deb (Connection timed out)\n'
+			return 100
+		fi
+		return 0
+	}
+	dpkg_state_clean_for_retry() { return 0; }
+	sleep() { :; }
+	apt_install_with_network_retry "${apt_retry_log}" install docker-ce
+	[[ "${attempts}" -eq 2 ]]
+	[[ ! -e "${apt_retry_saved}" ]]
+)
+(
+	# A non-transient package failure does not retry and keeps its full output.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_LOG_FILE="${tmp}/logs/install-test.log"
+	apt-get() { printf 'E: Unable to locate package docker-ce\n'; return 100; }
+	if apt_install_with_network_retry "${apt_retry_log}" install docker-ce; then
+		exit 1
+	fi
+	cmp -s "${apt_retry_log}" "${apt_retry_saved}"
+)
+(
+	# A second transient failure is reported as retryable only when dpkg remains clean.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_LOG_FILE="${tmp}/logs/final.log"
+	final_log="${tmp}/apt-final.log"
+	final_saved="${tmp}/logs/final-apt.log"
+	apt-get() { printf 'E: Failed to fetch https://mirror.example/docker-ce-cli.deb (Connection timed out)\n'; return 100; }
+	dpkg_state_clean_for_retry() { return 0; }
+	sleep() { :; }
+	if apt_install_with_network_retry "${final_log}" install docker-ce; then
+		exit 1
+	fi
+	[[ "${APT_FAILURE_DPKG_CLEAN}" -eq 1 ]]
+	cmp -s "${final_log}" "${final_saved}"
+)
 
 (
 	# shellcheck disable=SC1090
