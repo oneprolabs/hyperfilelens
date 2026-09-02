@@ -11,11 +11,13 @@ const baseProps = {
   pending: false,
   ready: false,
   blocked: false,
+  configError: false,
   verified: false,
   siteKey: 'test-site-key',
   action: 'login',
   loadingMessage: 'Loading Cloudflare human verification...',
   blockedMessage: 'Cloudflare verification unavailable.',
+  configErrorMessage: 'Something went wrong. Please try again.',
   retryLabel: 'Retry',
   manualRetryLabel: 'Verification taking longer than expected? Reload',
   errorCodeLabel: '',
@@ -103,6 +105,17 @@ describe('AuthTurnstileField display states', () => {
 
     await wrapper.get('.auth-turnstile-field__retry').trigger('click')
     expect(wrapper.emitted('retry')).toHaveLength(1)
+  })
+
+  it('shows a configuration error only once and exposes retry', () => {
+    const wrapper = mountField({
+      configError: true,
+      errorMessage: baseProps.configErrorMessage,
+    })
+
+    expect(wrapper.find('.auth-turnstile-field__blocked').exists()).toBe(true)
+    expect(wrapper.find('.auth-turnstile-field__error').exists()).toBe(false)
+    expect(wrapper.text().match(/Something went wrong\. Please try again\./g)).toHaveLength(1)
   })
 
   it('assigns exactly one frame owner to every visual state', () => {

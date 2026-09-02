@@ -53,6 +53,7 @@ vi.mock('../../composables/useTurnstileConfig', () => ({
     isTurnstilePending: ref(false),
     isTurnstileReady: ref(true),
     isTurnstileBlocked: ref(mocks.turnstileBlocked),
+    isTurnstileConfigError: ref(false),
     authTurnstileMountGeneration: ref(0),
     loadTurnstileConfig: mocks.loadTurnstileConfig,
     retryTurnstileConfig: mocks.retryTurnstileConfig,

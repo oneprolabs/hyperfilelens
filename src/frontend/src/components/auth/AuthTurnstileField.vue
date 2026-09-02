@@ -8,11 +8,13 @@ defineProps<{
   pending: boolean
   ready: boolean
   blocked: boolean
+  configError?: boolean
   verified: boolean
   siteKey: string
   action: string
   loadingMessage: string
   blockedMessage: string
+  configErrorMessage?: string
   retryLabel: string
   manualRetryLabel: string
   errorCodeLabel?: string
@@ -74,7 +76,7 @@ defineExpose({ reset })
 
 <template>
   <div
-    v-if="pending || ready || blocked"
+    v-if="pending || ready || blocked || configError"
     class="auth-turnstile-field"
   >
     <div
@@ -126,7 +128,7 @@ defineExpose({ reset })
     </button>
 
     <div
-      v-if="blocked"
+      v-if="blocked || configError"
       class="auth-turnstile-field__control auth-turnstile-field__blocked"
       role="alert"
     >
@@ -135,7 +137,7 @@ defineExpose({ reset })
         aria-hidden="true"
       />
       <span class="auth-turnstile-field__blocked-text">
-        <span>{{ blockedMessage }}</span>
+        <span>{{ configError ? (configErrorMessage || blockedMessage) : blockedMessage }}</span>
         <span
           v-if="errorCodeLabel"
           class="auth-turnstile-field__reference-code"
@@ -153,7 +155,7 @@ defineExpose({ reset })
     </div>
 
     <p
-      v-if="errorMessage && !blocked"
+      v-if="errorMessage && !blocked && !configError"
       class="auth-turnstile-field__error"
       role="alert"
     >
