@@ -562,6 +562,11 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	if envErr != nil {
 		return "", nil, nil, repositorySpec{}, envErr.Error()
 	}
+	cachePolicy, cachePolicyErr := kopiaCachePolicyFromPayload(p)
+	if cachePolicyErr != nil {
+		return "", nil, nil, spec, cachePolicyErr.Error()
+	}
+	cacheArgs := cachePolicy.flags()
 	if spec.Type == "s3" {
 		env["AWS_ACCESS_KEY_ID"] = spec.AccessKeyID
 		env["AWS_SECRET_ACCESS_KEY"] = spec.SecretAccessKey
@@ -674,6 +679,13 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		"repository_create":  nil,
 		"repository_connect": nil,
 	}
+	if cacheErr := applyManagedKopiaCachePolicy(ctx, bin, configFile, env, cachePolicy); cacheErr != nil {
+		// A running repository operation must not be made unavailable solely
+		// because its cache policy could not be refreshed. Keep the last valid
+		// config and report the deferred application in the task result.
+		result["kopia_cache_policy_error"] = cacheErr.Error()
+		slog.Warn("managed_repository", "event", "cache_policy_apply_deferred", "task_id", taskID, "err", cacheErr.Error())
+	}
 	if spec.Type == "s3" && mode != repositoryPrepareInitialize && !skipOwnershipCheck {
 		client, ownershipErr := newS3CleanupClient(spec)
 		if ownershipErr == nil {
@@ -713,7 +725,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	}
 	runConnect := func(event string) (process.Result, error) {
 		started := time.Now()
-		connectArgs := repositoryArgs(configFile, spec, false)
+		connectArgs := append(repositoryArgs(configFile, spec, false), cacheArgs...)
 		slog.Info("managed_repository", "event", event+"_begin", "task_id", taskID, "repo_type", spec.Type)
 		connectRes, connectErr := runProcessWithTimeout(
 			ctx, managedRepositoryKopiaCommandTimeout, bin, connectArgs, env, "",
@@ -725,7 +737,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 
 	statusVerified := false
 	if mode == repositoryPrepareInitialize {
-		createArgs := repositoryArgs(configFile, spec, true)
+		createArgs := append(repositoryArgs(configFile, spec, true), cacheArgs...)
 		started := time.Now()
 		slog.Info("managed_repository", "event", "create_begin", "task_id", taskID, "repo_type", spec.Type)
 		createRes, createErr := runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, createArgs, env, "")
@@ -991,7 +1003,21 @@ func (e *Engine) runManagedRepositoryMaintenance(
 		return "failed", result, err.Error()
 	}
 	maintenanceConfigFile := strings.TrimSuffix(configFile, filepath.Ext(configFile)) + ".maintenance.config"
-	connectArgs := repositoryArgs(maintenanceConfigFile, spec, false)
+	cachePolicy, cacheErr := kopiaCachePolicyFromPayload(p)
+	if cacheErr != nil {
+		return "failed", result, cacheErr.Error()
+	}
+	cacheArgs := cachePolicy.flags()
+	if cacheErr := applyManagedKopiaCachePolicy(ctx, bin, maintenanceConfigFile, env, cachePolicy); cacheErr != nil {
+		result["maintenance_kopia_cache_policy_error"] = cacheErr.Error()
+		slog.Warn(
+			"managed_repository",
+			"event", "maintenance_cache_policy_apply_deferred",
+			"task_id", taskID,
+			"err", cacheErr.Error(),
+		)
+	}
+	connectArgs := append(repositoryArgs(maintenanceConfigFile, spec, false), cacheArgs...)
 	connectResult, connectErr := process.Run(ctx, bin, connectArgs, env, "")
 	if connectErr != nil {
 		statusArgs := []string{"--config-file=" + maintenanceConfigFile, "repository", "status"}
