@@ -2,10 +2,12 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
-from apps.alert.constants import AlertSeverity, AlertStatus, AlertType
+from apps.alert.constants import AlertSeverity, AlertStatus, AlertType, ResourceType
 from apps.alert.models import AlertPolicy, AlertRecord
 from apps.alert.selectors.stats import policy_statistics
 from apps.iam.models import Membership, Organization
+from apps.node.models import Node
+from apps.node.models.base import NodeRole
 
 
 @pytest.fixture
@@ -112,6 +114,153 @@ def test_policy_crud_and_record_actions(org_user_client):
     dup_res = client.post(f"/api/v1/alerts/policies/{policy_id}/duplicate/", **headers)
     assert dup_res.status_code == 201
     assert AlertPolicy.objects.filter(organization=org).count() == 2
+
+
+@pytest.mark.django_db
+def test_metric_policy_rejects_mismatched_node_role(org_user_client):
+    client, org = org_user_client
+    proxy = Node.objects.create(organization=org, name="proxy", role=NodeRole.PROXY)
+
+    response = client.post(
+        "/api/v1/alerts/policies/",
+        {
+            "name": "Invalid source host memory",
+            "type": AlertType.METRIC,
+            "severity": "warning",
+            "enabled": True,
+            "resource_type": ResourceType.AGENT_PROXY,
+            "scope": "selected",
+            "resource_ids": [str(proxy.id)],
+            "trigger_rule": {
+                "metric_key": "memory_usage",
+                "operator": ">=",
+                "threshold": 39,
+                "duration_seconds": 60,
+                "evaluation_interval_seconds": 60,
+            },
+            "recovery_rule": {"enabled": True},
+            "notification_channel_ids": [],
+        },
+        format="json",
+        HTTP_X_ORG_KEY=org.key,
+    )
+
+    assert response.status_code == 400
+    assert "resource_ids" in {
+        error["field"] for error in response.data["data"]["errors"]
+    }
+
+
+@pytest.mark.django_db
+def test_metric_policy_rejects_metric_for_another_resource_type(org_user_client):
+    client, org = org_user_client
+
+    response = client.post(
+        "/api/v1/alerts/policies/",
+        {
+            "name": "Invalid source host metric",
+            "type": AlertType.METRIC,
+            "severity": "warning",
+            "enabled": True,
+            "resource_type": ResourceType.AGENT_PROXY,
+            "scope": "all",
+            "resource_ids": [],
+            "trigger_rule": {
+                "metric_key": "capacity_usage",
+                "operator": ">=",
+                "threshold": 80,
+                "duration_seconds": 60,
+                "evaluation_interval_seconds": 60,
+            },
+            "recovery_rule": {"enabled": True},
+            "notification_channel_ids": [],
+        },
+        format="json",
+        HTTP_X_ORG_KEY=org.key,
+    )
+
+    assert response.status_code == 400
+    assert "trigger_rule" in {
+        error["field"] for error in response.data["data"]["errors"]
+    }
+
+
+@pytest.mark.django_db
+def test_selected_policy_returns_monitoring_resource_names(org_user_client):
+    client, org = org_user_client
+    source_host = Node.objects.create(
+        organization=org,
+        name="hfl-source-test-whx-1",
+        role=NodeRole.AGENT,
+    )
+    policy = AlertPolicy.objects.create(
+        organization=org,
+        name="Source host memory",
+        type=AlertType.METRIC,
+        severity=AlertSeverity.WARNING,
+        enabled=True,
+        resource_type=ResourceType.AGENT_PROXY,
+        scope="selected",
+        resource_ids=[str(source_host.id)],
+        trigger_rule={
+            "metric_key": "memory_usage",
+            "operator": ">=",
+            "threshold": 39,
+            "duration_seconds": 60,
+            "evaluation_interval_seconds": 60,
+        },
+    )
+
+    response = client.get(
+        f"/api/v1/alerts/policies/{policy.id}/",
+        HTTP_X_ORG_KEY=org.key,
+    )
+
+    assert response.status_code == 200
+    assert response.data["monitoring_resources"] == [
+        {
+            "id": str(source_host.id),
+            "name": source_host.name,
+            "status": source_host.status,
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_selected_policy_preserves_unavailable_resource_ids(org_user_client):
+    client, org = org_user_client
+    policy = AlertPolicy.objects.create(
+        organization=org,
+        name="Missing source host",
+        type=AlertType.METRIC,
+        severity=AlertSeverity.WARNING,
+        enabled=True,
+        resource_type=ResourceType.AGENT_PROXY,
+        scope="selected",
+        resource_ids=["999999"],
+        trigger_rule={
+            "metric_key": "memory_usage",
+            "operator": ">=",
+            "threshold": 39,
+            "duration_seconds": 60,
+            "evaluation_interval_seconds": 60,
+        },
+    )
+
+    response = client.get(
+        f"/api/v1/alerts/policies/{policy.id}/",
+        HTTP_X_ORG_KEY=org.key,
+    )
+
+    assert response.status_code == 200
+    assert response.data["monitoring_resources"] == [
+        {
+            "id": "999999",
+            "name": "",
+            "status": "unavailable",
+            "available": False,
+        }
+    ]
 
 
 @pytest.mark.django_db

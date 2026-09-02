@@ -250,7 +250,6 @@
   "ops.alertsCenter.common.enableKeyword",
   "ops.alertsCenter.common.disableKeyword",
   "ops.alertsCenter.common.id",
-  "ops.alertsCenter.resourceTypes.agent_proxy",
   "ops.alertsCenter.resourceTypes.gateway",
   "ops.alertsCenter.editor.no",
   "ops.notification.emailEncryptionStarttls",

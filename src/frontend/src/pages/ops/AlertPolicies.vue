@@ -38,6 +38,7 @@ import {
   policyStatistics,
   updatePolicy,
   type AlertPolicy,
+  type AlertPolicyResource,
 } from '../../lib/alertApi'
 import DangerConfirmDialog, {
   type DangerConfirmItem,
@@ -119,6 +120,29 @@ function detailChannels(policy: AlertPolicy | null) {
 
 function detailResourceIds(policy: AlertPolicy | null) {
   return policy?.resourceIds || policy?.resource_ids || []
+}
+
+function policyMonitoringResources(policy: AlertPolicy | null): AlertPolicyResource[] {
+  return policy?.monitoringResources || policy?.monitoring_resources || []
+}
+
+function monitoringResourceLabel(resource: AlertPolicyResource) {
+  return resource.name || t('ops.alertsCenter.common.resourceUnavailable', { id: resource.id })
+}
+
+function monitoringResourcesLabel(policy: AlertPolicy | null) {
+  if (!policy) return t('common.empty')
+  const resources = policyMonitoringResources(policy)
+  if (detailResourceType(policy) === 'system' && resources.length) {
+    return resources.map(monitoringResourceLabel).join(', ')
+  }
+  if (policy.scope !== 'selected') return t('ops.alertsCenter.editor.scopeAll')
+  if (resources.length) return resources.map(monitoringResourceLabel).join(', ')
+  const ids = detailResourceIds(policy)
+  if (ids.length) {
+    return ids.map((id) => t('ops.alertsCenter.common.resourceUnavailable', { id })).join(', ')
+  }
+  return t('common.empty')
 }
 
 function detailResourceType(policy: AlertPolicy | null) {
@@ -838,6 +862,17 @@ watch(
               </template>
             </el-table-column>
             <el-table-column
+              :label="t('ops.alertsCenter.editor.fieldMonitoringResources')"
+              min-width="210"
+            >
+              <template #default="{ row }">
+                <span
+                  v-table-overflow-title
+                  class="block min-w-0 truncate"
+                >{{ monitoringResourcesLabel(row) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
               :label="t('ops.alertsCenter.common.status')"
               width="90"
             >
@@ -1195,12 +1230,7 @@ watch(
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.editor.fieldMonitoringResources') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--break">
                   <span class="hfl-detail-row__text">
-                    <template v-if="detailPolicy.scope === 'selected'">
-                      {{ detailResourceIds(detailPolicy).length ? detailResourceIds(detailPolicy).join(', ') : t('common.empty') }}
-                    </template>
-                    <template v-else>
-                      {{ t('ops.alertsCenter.editor.scopeAll') }}
-                    </template>
+                    {{ monitoringResourcesLabel(detailPolicy) }}
                   </span>
                 </span>
               </div>

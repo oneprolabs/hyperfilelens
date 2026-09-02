@@ -5634,6 +5634,7 @@
         "allSeverity": "全部级别",
         "allStatus": "全部状态",
         "noChannelSelected": "未选择通知渠道",
+        "resourceUnavailable": "资源不可用（ID：{id}）",
         "updatedAt": "最后更新",
         "basicInfo": "基础信息",
         "resourcesAndChannels": "资源和通知渠道",
@@ -5688,14 +5689,20 @@
       },
       "resourceTypes": {
         "task": "任务",
-        "system": "系统",
-        "agent_proxy": "代理节点",
+        "system": "控制平面",
+        "agent_proxy": "源主机",
         "backup_repository": "备份仓库",
-        "gateway": "网关",
+        "gateway": "数据网关",
         "source_resource": "备份源",
         "target_storage": "目标存储",
         "system_service": "系统服务",
-        "sync_proxy": "Proxy 同步"
+        "sync_proxy": "代理主机"
+      },
+      "resourceTypeDescriptions": {
+        "agent_proxy": "由 Agent 心跳上报的源主机指标。",
+        "sync_proxy": "由 Proxy 心跳上报的代理主机指标。",
+        "gateway": "由 Gateway 心跳上报的数据网关主机指标。",
+        "system": "从 HyperFileLens 服务端采集的控制平面指标。"
       },
       "policies": {
         "deleteConfirm": "确认删除 {name}？",
@@ -5731,6 +5738,7 @@
         "previewNotification": "通知",
         "previewTarget": "目标",
         "previewResourceCount": "资源数量",
+        "previewMonitoringResources": "监控资源",
         "previewStatusEnabled": "保存为启用",
         "previewStatusDisabled": "保存为停用",
         "valueEnabled": "启用",
@@ -5745,9 +5753,9 @@
         "fieldThresholdHint": "达到该阈值并持续满足条件后触发告警。",
         "fieldUnit": "单位",
         "fieldUnitHint": "用于预览和通知展示，可填写 %、ms、GB 等。",
-        "fieldDuration": "持续秒数",
+        "fieldDuration": "持续时间",
         "fieldDurationHint": "条件需要持续满足的时间，避免短暂波动触发告警。",
-        "fieldEvaluationInterval": "检测间隔秒数",
+        "fieldEvaluationInterval": "检测间隔",
         "fieldEvaluationIntervalHint": "系统按此间隔重新评估触发条件。",
         "fieldRecoveryEnabled": "启用自动恢复",
         "fieldRecoveryEnabledHint": "满足恢复条件后自动恢复告警。",
