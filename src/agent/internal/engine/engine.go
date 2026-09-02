@@ -89,6 +89,10 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 			Error:  scopeErr.Error(),
 		}
 	}
+	if spec, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr == nil && ok {
+		releaseClientState := e.acquireEphemeralKopiaServerClientState(ctx, spec)
+		defer releaseClientState()
+	}
 	leasePaths := nasLeasePaths(p)
 	if len(leasePaths) > 0 {
 		release, leaseErr := e.nasLeases().acquire(

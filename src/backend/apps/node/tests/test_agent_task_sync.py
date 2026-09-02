@@ -18,6 +18,7 @@ from apps.node.models.base import NodeRole
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.agent_task import (
     AgentTaskSyncResult,
+    _attach_node_kopia_cache_policy,
     run_agent_task_sync,
     wait_for_agent_task,
 )
@@ -47,6 +48,52 @@ class AgentTaskSyncWaitTests(TestCase):
             kind="explorer.list",
             status=NodeTask.Status.RUNNING,
             watchdog_deadline_at=timezone.now(),
+        )
+
+    def test_repository_task_receives_default_kopia_cache_policy(self):
+        payload = _attach_node_kopia_cache_policy(
+            node=self.node,
+            payload={"repository": {"id": 9, "type": "s3"}},
+        )
+
+        self.assertEqual(payload["kopia_cache_size_mb"], 1024)
+
+    def test_repository_task_preserves_explicit_zero_cache_policy(self):
+        self.node.metadata = {"perf_settings": {"kopiaCacheMb": 0}}
+        payload = _attach_node_kopia_cache_policy(
+            node=self.node,
+            payload={"repository": {"id": 9, "type": "s3"}},
+        )
+
+        self.assertEqual(payload["kopia_cache_size_mb"], 0)
+
+    def test_invalid_repository_cache_policy_uses_safe_default(self):
+        for value in (True, "2048", -1, 65537):
+            self.node.metadata = {"perf_settings": {"kopiaCacheMb": value}}
+            payload = _attach_node_kopia_cache_policy(
+                node=self.node,
+                payload={"repository": {"id": 9, "type": "s3"}},
+            )
+
+            self.assertEqual(payload["kopia_cache_size_mb"], 1024)
+
+    def test_payload_without_repository_is_not_modified(self):
+        payload = {"path": "/tmp"}
+        self.assertIs(
+            _attach_node_kopia_cache_policy(
+                node=self.node,
+                payload=payload,
+            ),
+            payload,
+        )
+
+    def test_gateway_repository_payload_is_not_modified(self):
+        self.node.role = NodeRole.GATEWAY
+        payload = {"repository": {"id": 9, "type": "s3"}}
+
+        self.assertIs(
+            _attach_node_kopia_cache_policy(node=self.node, payload=payload),
+            payload,
         )
 
     @patch(
