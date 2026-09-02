@@ -59,6 +59,15 @@ describe('FlowBackupSourceDetailDrawer task columns', () => {
   })
 })
 
+describe('FlowBackupSourceDetailDrawer structured failure layout', () => {
+  it('lets structured failure details use the unused event-time column', () => {
+    expect(drawer).toContain("'dp-task-detail__event-row--failure-details': hasEventFailureDetails(event)")
+    expect(drawer).toContain('.dp-task-detail__event-row--failure-details .dp-task-detail__event-content')
+    expect(drawer).toContain('grid-template-columns: 16px minmax(0, 1fr);')
+    expect(drawer).toContain('.dp-task-detail__event-row--failure-details .dp-task-detail__event-time')
+  })
+})
+
 describe('FlowBackupSourceDetailDrawer source status', () => {
   it('uses explicit connectivity and lifecycle status terminology', () => {
     const sourceInfo = sourceBetween(

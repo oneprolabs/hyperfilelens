@@ -5598,24 +5598,46 @@
         "summary": {
           "source_file_locked": "No se pudieron leer {count} archivos porque otro proceso los bloqueó.",
           "source_read_failed": "No se pudieron leer {count} archivos del origen de copia de seguridad.",
-          "source_items_skipped": "Se omitieron {count} elementos ilegibles (archivos: {fileCount}; directorios: {directoryCount})."
+          "mixed_source_errors": "No se pudieron procesar {count} elementos de origen.",
+          "unreadable_file": "No se pudieron leer {count} archivos.",
+          "unreadable_directory": "No se pudieron leer {count} directorios.",
+          "unsupported_entry_type": "Se encontraron {count} entradas del sistema de archivos no compatibles.",
+          "macos_privacy_denied": "{count} elementos fueron bloqueados por los permisos de privacidad de macOS.",
+          "permission_denied": "No se pudo acceder a {count} elementos porque se denegó el permiso.",
+          "source_items_skipped": "Se omitieron {count} elementos de origen (archivos: {fileCount}; directorios: {directoryCount}; entradas especiales: {specialCount})."
+        },
+        "causes": {
+          "unreadable_file": "{count} archivos ilegibles",
+          "unreadable_directory": "{count} directorios ilegibles",
+          "unsupported_entry_type": "{count} entradas del sistema de archivos no compatibles",
+          "macos_privacy_denied": "{count} elementos bloqueados por la privacidad de macOS",
+          "permission_denied": "{count} elementos bloqueados por permisos",
+          "snapshot_errors": "{count} errores de instantánea"
         },
         "howToResolve": "Cómo resolverlo",
         "viewAffectedFiles": "Ver los {count} archivos afectados",
+        "viewAffectedItems": "Ver {count} elementos afectados",
+        "failureItemsTruncated": "Se muestran los primeros {reportedCount} de {count} elementos afectados.",
         "viewSkippedItems": "Ver {count} elementos omitidos",
         "skippedItemsTruncated": "Se muestran los primeros {reportedCount} de {count} elementos omitidos.",
         "fileLockedReason": "Bloqueado por otro proceso",
         "readFailedReason": "No se pudo leer el archivo",
         "remediation": {
-          "enable_backup_policy": "Habilite la política de copia de seguridad. La configuración avanzada de omisión no se aplica mientras la política esté deshabilitada.",
-          "enable_skip_unreadable_files": "Habilite Omitir archivos ilegibles en la política de copia de seguridad si se pueden omitir archivos ilegibles.",
-          "enable_skip_unreadable_directories": "Habilite Omitir directorios ilegibles en la política de copia de seguridad si se pueden omitir directorios ilegibles.",
+          "enable_backup_policy": "Primero, habilite la política de copia de seguridad y su configuración avanzada. Las opciones de omisión solo se aplican cuando ambas están habilitadas.",
+          "enable_skip_unreadable_files": "Si se pueden omitir estos archivos ilegibles, habilite Omitir archivos ilegibles. La copia de seguridad podrá continuar, pero los archivos omitidos no se incluirán en la instantánea.",
+          "enable_skip_unreadable_directories": "Si se pueden omitir estos directorios ilegibles, habilite Omitir directorios ilegibles. La copia de seguridad podrá continuar, pero los directorios omitidos no se incluirán en la instantánea.",
+          "enable_skip_unsupported_entries": "Habilite Omitir entradas del sistema de archivos no compatibles si se pueden omitir sockets y otras entradas especiales.",
           "exclude_runtime_cache": "Excluya los directorios de tiempo de ejecución o caché cuando no necesiten protección.",
           "use_vss": "Use una instantánea VSS de Windows o compatible con aplicaciones cuando deba proteger estos archivos.",
           "stop_owning_service": "Como alternativa, detenga el servicio propietario durante una ventana de mantenimiento y vuelva a intentarlo. No elimine archivos de bloqueo activos.",
           "check_source_access": "Compruebe que la ruta de origen existe y que Agent tiene permiso para leerla.",
+          "grant_macos_full_disk_access": "En macOS, conceda Acceso total al disco a HyperFileLens Agent cuando sea necesario incluir carpetas protegidas.",
           "retry_backup": "Corrija los errores de origen indicados y vuelva a intentar la copia de seguridad."
-        }
+        },
+        "unsupportedEntryReason": "Socket u otra entrada especial del sistema de archivos; no es un archivo de copia de seguridad normal",
+        "macosPrivacyReason": "Bloqueado por los permisos de privacidad de macOS",
+        "permissionDeniedReason": "Permiso denegado",
+        "unreadableDirectoryReason": "No se pudo leer el directorio"
       },
       "resourceValue": {
         "s3": "Almacenamiento de objetos",

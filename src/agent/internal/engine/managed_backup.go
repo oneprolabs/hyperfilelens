@@ -45,6 +45,9 @@ const (
 	repositoryAlreadyExistsMessage       = "A Kopia repository already exists at the selected location. Import is not supported in this version. Choose a different storage location."
 	nasRepositoryWriteDeniedCode         = "NAS_REPOSITORY_WRITE_DENIED"
 	nasRepositoryWriteDeniedMessage      = "The NAS share was mounted, but the Agent does not have permission to write repository data."
+	snapshotFailureSampleLimit           = 20
+	snapshotFailurePathLimit             = 1024
+	snapshotFailureErrorLimit            = 2048
 )
 
 type repositoryPrepareMode uint8
@@ -94,6 +97,7 @@ type repositoryOwnership struct {
 var (
 	kopiaS3URLStyleCapabilities sync.Map
 	backupOperationIDPattern    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	snapshotFatalCountPattern   = regexp.MustCompile(`(?i)found\s+(\d+)\s+fatal\s+error`)
 )
 
 func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
@@ -1569,11 +1573,13 @@ func runPreparedManagedSnapshot(
 
 	snapshotArgs := managedBackupSnapshotArgs(configFile, sourcePath, operationID)
 	progressState := newKopiaProgressReporter()
+	failureCollector := newSnapshotFailureCollector()
 	runCtx, cancelRun := context.WithCancel(ctx)
 	stallSeconds := kopiaProgressStallSeconds()
 	stallDone := make(chan struct{})
 	go monitorKopiaProgressStall(runCtx, cancelRun, progressState, stallSeconds, stallDone)
-	onProgressLine := func(line string, _ bool) {
+	onProgressLine := func(line string, stderr bool) {
+		failureCollector.observe(line)
 		snapshot, ok := kopia.ParseProgressLine(line)
 		if !ok {
 			return
@@ -1594,9 +1600,31 @@ func runPreparedManagedSnapshot(
 	stalled := runCtx.Err() != nil && ctx.Err() == nil && progressState.stallExceeded(stallSeconds)
 	close(stallDone)
 	cancelRun()
-	result["snapshot_create"] = commandResult(res)
-	if parsed := parseSnapshotOutput(res.Stdout); len(parsed) > 0 {
-		for key, value := range parsed {
+	parsedResult := parseSnapshotOutput(res.Stdout)
+	failureSummary, _ := parsedResult["snapshot_failure_summary"].(map[string]any)
+	if failureSummary == nil {
+		failureSummary = failureCollector.summary()
+	}
+	command := commandResult(res)
+	if failureSummary != nil {
+		// Full Kopia JSON and stderr repeat the same per-path failures and can be
+		// hundreds of kilobytes. Preserve bounded tails for legacy diagnostics;
+		// the stable summary below is the authoritative transport contract.
+		delete(command, "stdout")
+		delete(command, "stdout_tail")
+		delete(command, "stderr")
+		result["snapshot_failure_summary"] = failureSummary
+		result["snapshot"] = compactSnapshotFailureProjection(failureSummary)
+	}
+	result["snapshot_create"] = command
+	if len(parsedResult) > 0 {
+		if failureSummary != nil {
+			delete(parsedResult, "snapshot")
+		}
+		for key, value := range parsedResult {
+			if key == "snapshot_failure_summary" && failureSummary != nil {
+				continue
+			}
 			result[key] = value
 		}
 	}
@@ -4259,6 +4287,12 @@ func snapshotResultFromParsed(parsed any) map[string]any {
 	result := map[string]any{
 		"snapshot": parsed,
 	}
+	if failureSummary := snapshotFailureSummary(parsed); failureSummary != nil {
+		// Keep a compact diagnostic alongside the full snapshot. The wire
+		// result is intentionally bounded and may discard the large snapshot
+		// tree before the backend can build user-facing failure details.
+		result["snapshot_failure_summary"] = failureSummary
+	}
 	if id := findStringKey(parsed, "id", "snapshot_id", "snapshotID", "kopia_snapshot_id"); id != "" {
 		result["kopia_snapshot_id"] = id
 	}
@@ -4316,6 +4350,187 @@ func snapshotResultFromParsed(parsed any) map[string]any {
 		result["stats"] = stats
 	}
 	return result
+}
+
+func snapshotFailureSummary(parsed any) map[string]any {
+	parsedMap, ok := parsed.(map[string]any)
+	if !ok {
+		return nil
+	}
+	rootEntry, ok := parsedMap["rootEntry"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	summary, ok := rootEntry["summ"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	errors, ok := summary["errors"].([]any)
+	if !ok || len(errors) == 0 {
+		return nil
+	}
+	collector := newSnapshotFailureCollector()
+	for _, raw := range errors {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		collector.add(stringValue(item["path"]), stringValue(item["error"]))
+	}
+	collector.reportedTotal = len(errors)
+	return collector.summary()
+}
+
+type snapshotFailureCollector struct {
+	reportedTotal  int
+	observedCount  int
+	causeCounts    map[string]int
+	itemTypes      map[string]string
+	itemTypeCounts map[string]int
+	items          []any
+}
+
+func newSnapshotFailureCollector() *snapshotFailureCollector {
+	return &snapshotFailureCollector{
+		causeCounts:    map[string]int{},
+		itemTypes:      map[string]string{},
+		itemTypeCounts: map[string]int{},
+		items:          make([]any, 0, snapshotFailureSampleLimit),
+	}
+}
+
+func (c *snapshotFailureCollector) observe(line string) {
+	if match := snapshotFatalCountPattern.FindStringSubmatch(line); len(match) == 2 {
+		if count, err := strconv.Atoi(match[1]); err == nil && count > c.reportedTotal {
+			c.reportedTotal = count
+		}
+	}
+	path, failure, ok := parseSnapshotFailureLine(line)
+	if ok {
+		c.add(path, failure)
+	}
+}
+
+func (c *snapshotFailureCollector) add(path string, failure string) {
+	path = strings.TrimSpace(path)
+	failure = strings.TrimSpace(failure)
+	if path == "" && failure == "" {
+		return
+	}
+	cause, itemType := snapshotFailureCause(failure)
+	c.observedCount++
+	c.causeCounts[cause]++
+	c.itemTypes[cause] = itemType
+	c.itemTypeCounts[itemType]++
+	if len(c.items) >= snapshotFailureSampleLimit {
+		return
+	}
+	c.items = append(c.items, map[string]any{
+		"path":      truncateSnapshotFailureHead(path, snapshotFailurePathLimit),
+		"error":     truncateFailureTail("", failure, snapshotFailureErrorLimit),
+		"cause":     cause,
+		"item_type": itemType,
+	})
+}
+
+func (c *snapshotFailureCollector) summary() map[string]any {
+	total := max(c.reportedTotal, c.observedCount)
+	if total == 0 {
+		return nil
+	}
+	causeCounts := make(map[string]int, len(c.causeCounts)+1)
+	itemTypes := make(map[string]string, len(c.itemTypes)+1)
+	itemTypeCounts := make(map[string]int, len(c.itemTypeCounts)+1)
+	for cause, count := range c.causeCounts {
+		causeCounts[cause] = count
+		itemTypes[cause] = c.itemTypes[cause]
+	}
+	for itemType, count := range c.itemTypeCounts {
+		itemTypeCounts[itemType] = count
+	}
+	if unclassified := total - c.observedCount; unclassified > 0 {
+		causeCounts["snapshot_errors"] += unclassified
+		itemTypes["snapshot_errors"] = "unknown"
+		itemTypeCounts["unknown"] += unclassified
+	}
+	return map[string]any{
+		"total_count":      total,
+		"reported_count":   len(c.items),
+		"truncated":        total > len(c.items),
+		"cause_counts":     causeCounts,
+		"item_types":       itemTypes,
+		"item_type_counts": itemTypeCounts,
+		"items":            c.items,
+	}
+}
+
+func parseSnapshotFailureLine(line string) (string, string, bool) {
+	const marker = `error when processing "`
+	lower := strings.ToLower(line)
+	start := strings.Index(lower, marker)
+	if start < 0 {
+		return "", "", false
+	}
+	rest := line[start+len(marker):]
+	separator := strings.Index(rest, `":`)
+	if separator < 0 {
+		return "", "", false
+	}
+	return strings.TrimSpace(rest[:separator]), strings.TrimSpace(rest[separator+2:]), true
+}
+
+func snapshotFailureCause(failure string) (string, string) {
+	lower := strings.ToLower(failure)
+	if strings.Contains(lower, "unknown or unsupported entry type") ||
+		strings.Contains(lower, "unsupported entry type") ||
+		strings.Contains(lower, "unsupported filesystem entry") ||
+		strings.Contains(lower, "unix socket") ||
+		strings.Contains(lower, "socket") ||
+		strings.Contains(lower, "named pipe") {
+		return "unsupported_entry_type", "special"
+	}
+	itemType := "file"
+	for _, marker := range []string{
+		"readdir", "read directory", "open directory", "cannot list directory",
+		"unable to list directory", "cannot create iterator", "unable to read directory",
+	} {
+		if strings.Contains(lower, marker) {
+			itemType = "directory"
+			break
+		}
+	}
+	if strings.Contains(lower, "operation not permitted") {
+		return "macos_privacy_denied", itemType
+	}
+	if strings.Contains(lower, "permission denied") || strings.Contains(lower, "access denied") {
+		return "permission_denied", itemType
+	}
+	if itemType == "directory" {
+		return "unreadable_directory", itemType
+	}
+	return "unreadable_file", itemType
+}
+
+func truncateSnapshotFailureHead(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	end := limit - len("...")
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return value[:end] + "..."
+}
+
+func compactSnapshotFailureProjection(summary map[string]any) map[string]any {
+	return map[string]any{
+		"rootEntry": map[string]any{
+			"summ": map[string]any{
+				"errors": summary["items"],
+			},
+		},
+	}
 }
 
 func decodeJSONLoose(raw string) (any, bool) {

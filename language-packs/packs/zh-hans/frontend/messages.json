@@ -5515,24 +5515,46 @@
         "summary": {
           "source_file_locked": "有 {count} 个文件因被其他进程锁定而无法读取。",
           "source_read_failed": "备份源中有 {count} 个文件无法读取。",
-          "source_items_skipped": "有 {count} 个不可读取的项目被跳过（文件：{fileCount}；目录：{directoryCount}）。"
+          "mixed_source_errors": "有 {count} 个源项目无法处理。",
+          "unreadable_file": "有 {count} 个文件无法读取。",
+          "unreadable_directory": "有 {count} 个目录无法读取。",
+          "unsupported_entry_type": "发现 {count} 个不支持的文件系统条目。",
+          "macos_privacy_denied": "有 {count} 个项目受到 macOS 隐私权限限制。",
+          "permission_denied": "有 {count} 个项目因权限不足而无法访问。",
+          "source_items_skipped": "有 {count} 个源项目被跳过（文件：{fileCount}；目录：{directoryCount}；特殊条目：{specialCount}）。"
+        },
+        "causes": {
+          "unreadable_file": "{count} 个不可读取的文件",
+          "unreadable_directory": "{count} 个不可读取的目录",
+          "unsupported_entry_type": "{count} 个不支持的文件系统条目",
+          "macos_privacy_denied": "{count} 个受 macOS 隐私权限限制的项目",
+          "permission_denied": "{count} 个权限不足的项目",
+          "snapshot_errors": "{count} 个快照错误"
         },
         "howToResolve": "解决方法",
         "viewAffectedFiles": "查看全部 {count} 个受影响文件",
+        "viewAffectedItems": "查看 {count} 个受影响项目",
+        "failureItemsTruncated": "显示前 {reportedCount} 个，共 {count} 个受影响项目。",
         "viewSkippedItems": "查看 {count} 个已跳过的项目",
         "skippedItemsTruncated": "显示前 {reportedCount} 个，共 {count} 个已跳过项目。",
         "fileLockedReason": "被其他进程锁定",
         "readFailedReason": "文件无法读取",
         "remediation": {
-          "enable_backup_policy": "启用备份策略。策略禁用时，高级跳过设置不会生效。",
-          "enable_skip_unreadable_files": "如果允许省略不可读取的文件，请在备份策略中启用“跳过不可读取文件”。",
-          "enable_skip_unreadable_directories": "如果允许省略不可读取的目录，请在备份策略中启用“跳过不可读取目录”。",
+          "enable_backup_policy": "请先启用备份策略并开启高级设置。只有两者均启用后，“跳过不可读取文件/目录”等跳过选项才会生效。",
+          "enable_skip_unreadable_files": "如果确认允许省略这些不可读取的文件，请启用“跳过不可读取文件”。备份可继续执行，但被跳过的文件不会包含在快照中。",
+          "enable_skip_unreadable_directories": "如果确认允许省略这些不可读取的目录，请启用“跳过不可读取目录”。备份可继续执行，但被跳过的目录不会包含在快照中。",
+          "enable_skip_unsupported_entries": "如果允许省略 socket 等特殊条目，请在备份策略中启用“跳过不支持的文件系统条目”。",
           "exclude_runtime_cache": "不需要保护时，请排除运行时或缓存目录。",
           "use_vss": "如果必须保护这些文件，请使用 Windows VSS 或应用感知快照。",
           "stop_owning_service": "或者在维护窗口期间停止所属服务，然后重试。不要删除活动锁定文件。",
           "check_source_access": "检查源路径是否存在，以及 Agent 是否有读取权限。",
+          "grant_macos_full_disk_access": "在 macOS 上，如果必须包含受保护文件夹，请为 HyperFileLens Agent 授予“完全磁盘访问权限”。",
           "retry_backup": "修正列出的源端错误，然后重试备份。"
-        }
+        },
+        "unsupportedEntryReason": "Socket 或其他特殊文件系统条目，不是普通备份文件",
+        "macosPrivacyReason": "受到 macOS 隐私权限限制",
+        "permissionDeniedReason": "权限不足",
+        "unreadableDirectoryReason": "目录无法读取"
       },
       "resourceValue": {
         "s3": "对象存储",

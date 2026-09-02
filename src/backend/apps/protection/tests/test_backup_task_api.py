@@ -3236,7 +3236,26 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
         mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
             [
-                self._async_outcome(kopia_snapshot_id="kopia-snap-success"),
+                self._async_outcome(
+                    kopia_snapshot_id="kopia-snap-success",
+                    result={
+                        "snapshot": {
+                            "rootEntry": {
+                                "summ": {
+                                    "size": 2048,
+                                    "files": 32,
+                                    "dirs": 4,
+                                    "errors": [
+                                        {
+                                            "path": "cache/locked.txt",
+                                            "error": "sharing violation",
+                                        }
+                                    ],
+                                }
+                            }
+                        }
+                    },
+                ),
                 {
                     "status": NodeTask.Status.FAILED,
                     "result": {},
@@ -3269,6 +3288,20 @@ class ProtectionBackupTaskApiTests(TestCase):
         finalize_step = TaskStep.objects.get(task=task, step_name="finalize_snapshot")
         self.assertEqual(finalize_step.status, TaskStep.Status.FAILED)
         self.assertEqual(float(finalize_step.progress), 0)
+        self.assertTrue(
+            TaskEvent.objects.filter(
+                task=task,
+                step__step_name="kopia_snapshot",
+                message="Directory snapshot created with skipped items",
+            ).exists()
+        )
+        self.assertFalse(
+            TaskEvent.objects.filter(
+                task=task,
+                step__step_name="finalize_snapshot",
+                message="Backup completed with skipped items",
+            ).exists()
+        )
 
 
 class ProtectionBackupProgressTests(TestCase):

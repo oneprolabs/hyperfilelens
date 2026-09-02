@@ -22,6 +22,11 @@ const i18n = createI18n({
             partial: 'Partial',
             cancelled: 'Cancelled',
           },
+          failureDetails: {
+            summary: {
+              mixed_source_errors: '{count} source items could not be processed.',
+            },
+          },
         },
       },
     },
@@ -67,7 +72,7 @@ describe('TaskTerminalOutcomeCell', () => {
     const diagnostic = wrapper.get('.task-terminal-outcome__diagnostic')
 
     expect(diagnostic.text()).toBe('[CONNECTION_REFUSED]Connection refused')
-    expect(diagnostic.attributes('title')).toBe('[CONNECTION_REFUSED] Connection refused')
+    expect(diagnostic.attributes('aria-label')).toBe('[CONNECTION_REFUSED] Connection refused')
     expect(wrapper.get('.task-terminal-outcome__code').text()).toBe('[CONNECTION_REFUSED]')
     expect(wrapper.get('.task-terminal-outcome__reason').text()).toBe('Connection refused')
   })
@@ -106,8 +111,28 @@ describe('TaskTerminalOutcomeCell', () => {
     )
 
     expect(wrapper.get('.task-terminal-outcome__time').text()).toBe('2026-07-31 10:24')
-    expect(wrapper.get('.task-terminal-outcome__diagnostic').attributes('title'))
+    expect(wrapper.get('.task-terminal-outcome__diagnostic').attributes('aria-label'))
       .toBe('[CONNECTION_REFUSED] Connection refused')
+  })
+
+  it('prefers a structured failure summary from recent task events', () => {
+    const wrapper = mountCell({
+      status: 'failed',
+      error_code: 'KOPIA_SNAPSHOT_FATAL',
+      error_message: 'raw truncated output',
+      recent_events: [{
+        metadata: {
+          failure_details: {
+            category: 'mixed_source_errors',
+            total_count: 795,
+          },
+        },
+      }],
+    })
+
+    expect(wrapper.get('.task-terminal-outcome__reason').text()).toBe('795 source items could not be processed.')
+    expect(wrapper.get('.task-terminal-outcome__diagnostic').attributes('aria-label'))
+      .toBe('[KOPIA_SNAPSHOT_FATAL] 795 source items could not be processed.')
   })
 
   it('uses the approved semantic tokens and font weights', () => {
