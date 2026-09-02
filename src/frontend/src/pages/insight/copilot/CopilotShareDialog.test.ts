@@ -49,6 +49,21 @@ const InputStub = defineComponent({
   template: '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)">',
 })
 
+const DangerConfirmDialogStub = defineComponent({
+  props: {
+    modelValue: Boolean,
+    confirmText: { type: String, default: '' },
+  },
+  emits: ['update:modelValue', 'confirm'],
+  template: `
+    <aside v-if="modelValue">
+      <button class="confirm-stop-sharing" type="button" @click="$emit('confirm')">
+        {{ confirmText }}
+      </button>
+    </aside>
+  `,
+})
+
 function session(): SessionRow {
   return {
     id: 7,
@@ -86,6 +101,7 @@ function mountDialog() {
         ElDialog: DialogStub,
         ElButton: ButtonStub,
         ElInput: InputStub,
+        DangerConfirmDialog: DangerConfirmDialogStub,
         ElEmpty: defineComponent({
           props: { description: String },
           template: '<p>{{ description }}</p>',
@@ -256,6 +272,10 @@ describe('CopilotShareDialog', () => {
     ))
     expect(stopButton).toBeTruthy()
     await stopButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.revokeShare).not.toHaveBeenCalled()
+    await wrapper.get('.confirm-stop-sharing').trigger('click')
     await flushPromises()
 
     expect(mocks.revokeShare).toHaveBeenCalledWith(
