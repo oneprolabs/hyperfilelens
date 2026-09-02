@@ -36,6 +36,7 @@ class AlertPolicy(models.Model):
     trigger_rule = models.JSONField(default=dict)
     recovery_rule = models.JSONField(null=True, blank=True)
     notification_channel_ids = models.JSONField(default=list, blank=True)
+    last_evaluated_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_by = models.BigIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

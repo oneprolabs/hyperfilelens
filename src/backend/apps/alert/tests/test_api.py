@@ -27,6 +27,39 @@ def org_user_client(db):
 
 
 @pytest.mark.django_db
+def test_legacy_metric_policy_can_be_read_and_saved_without_interval(org_user_client):
+    client, org = org_user_client
+    policy = AlertPolicy.objects.create(
+        organization=org,
+        name="Legacy CPU",
+        type=AlertType.METRIC,
+        severity=AlertSeverity.WARNING,
+        enabled=True,
+        resource_type="system",
+        scope="all",
+        trigger_rule={
+            "metric_key": "cpu_usage",
+            "operator": ">=",
+            "threshold": 80,
+            "duration_seconds": 0,
+        },
+    )
+
+    response = client.patch(
+        f"/api/v1/alerts/policies/{policy.id}/",
+        {"description": "Updated legacy policy"},
+        format="json",
+        HTTP_X_ORG_KEY=org.key,
+    )
+
+    assert response.status_code == 200, response.content
+    policy.refresh_from_db()
+    assert policy.description == "Updated legacy policy"
+    assert policy.trigger_rule["evaluation_interval_seconds"] == 60
+    assert response.data["trigger_rule"]["evaluation_interval_seconds"] == 60
+
+
+@pytest.mark.django_db
 def test_policy_crud_and_record_actions(org_user_client):
     client, org = org_user_client
     headers = {"HTTP_X_ORG_KEY": org.key}
