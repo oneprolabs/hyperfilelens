@@ -12,7 +12,7 @@ import { useDebouncedAction } from '../../composables/useDebouncedAction'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { apiErrorMessage } from '../../lib/api'
-import { severityStatusTagAttrs } from '../../lib/statusTag'
+import { alertStatusTagAttrs, severityStatusTagAttrs } from '../../lib/statusTag'
 import {
   acknowledgeRecord,
   listRecords,
@@ -113,12 +113,6 @@ function statusLabel(status: string) {
   if (status === 'acknowledged') return t('ops.alertsCenter.active.acknowledged')
   if (status === 'resolved') return t('ops.alerts.status.resolved')
   return status
-}
-
-function statusTagType(status: string): 'success' | 'warning' | 'info' {
-  if (status === 'resolved') return 'success'
-  if (status === 'firing') return 'warning'
-  return 'info'
 }
 
 async function fetchAlerts() {
@@ -312,31 +306,27 @@ watch(
         <OpsStatCard
           :label="t('ops.alertsCenter.common.critical')"
           :value="stats.critical"
-          accent="red"
+          tone="danger"
           accent-side="left"
-          value-class="text-red-600"
         />
         <OpsStatCard
           :label="t('ops.alertsCenter.common.warning')"
           :value="stats.warning"
-          accent="yellow"
+          tone="warning"
           accent-side="left"
-          value-class="text-amber-600"
         />
         <OpsStatCard
           :label="t('ops.alertsCenter.active.firing')"
           :value="stats.firing"
-          accent="orange"
+          tone="firing"
           accent-side="left"
-          value-class="text-orange-600"
           :pulse="stats.firing > 0"
         />
         <OpsStatCard
           :label="t('ops.alertsCenter.active.acknowledged')"
           :value="stats.acknowledged"
-          accent="blue"
+          tone="info"
           accent-side="left"
-          value-class="text-blue-600"
         />
       </div>
 
@@ -553,7 +543,7 @@ watch(
             >
               <template #default="{ row }">
                 <el-tag
-                  :type="statusTagType(row.status)"
+                  v-bind="alertStatusTagAttrs(row.status)"
                   size="small"
                 >
                   {{ statusLabel(row.status) }}
@@ -633,7 +623,7 @@ watch(
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.status') }}</span>
                 <span class="hfl-detail-row__value">
                   <el-tag
-                    :type="statusTagType(selected.status)"
+                    v-bind="alertStatusTagAttrs(selected.status)"
                     size="small"
                   >
                     {{ statusLabel(selected.status) }}

@@ -421,26 +421,25 @@ watch(
         <OpsStatCard
           :label="t('ops.audit.statTotal')"
           :value="stats.total_count"
-          accent="indigo"
+          tone="primary"
           accent-side="left"
         />
         <OpsStatCard
           :label="t('ops.audit.statToday')"
           :value="stats.today_count"
-          accent="green"
+          tone="info"
           accent-side="left"
         />
         <OpsStatCard
           :label="t('ops.audit.statFailures')"
           :value="stats.failure_count"
-          accent="red"
+          tone="danger"
           accent-side="left"
-          value-class="text-red-600"
         />
         <OpsStatCard
           :label="t('ops.audit.statSuccessRate')"
           :value="`${stats.success_rate}%`"
-          accent="blue"
+          tone="success"
           accent-side="left"
         />
       </div>
@@ -615,7 +614,7 @@ watch(
             >
               <template #default="{ row }">
                 <span class="hfl-ops-user-chip hfl-audit-user-cell">
-                  <span class="hfl-audit-user-cell__name font-medium text-slate-800">
+                  <span class="hfl-audit-user-cell__name font-medium">
                     {{ row.user_display || t('ops.audit.systemUser') }}
                   </span>
                 </span>
@@ -995,7 +994,7 @@ watch(
                 <span class="hfl-detail-row__label">{{ t('ops.audit.errorMessage') }}</span>
                 <span
                   class="hfl-detail-row__value"
-                  :class="{ 'text-red-600': detailLog.error_message, 'hfl-detail-row__empty': !hasDisplayValue(detailLog.error_message) }"
+                  :class="{ 'hfl-audit-detail-error': detailLog.error_message, 'hfl-detail-row__empty': !hasDisplayValue(detailLog.error_message) }"
                 >
                   {{ displayValue(detailLog.error_message) }}
                 </span>
@@ -1091,6 +1090,11 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--color-text-title);
+}
+
+.hfl-audit-detail-error {
+  color: var(--color-error-text);
 }
 
 .hfl-audit-filter-drawer :deep(.el-drawer__body) {
@@ -1107,10 +1111,10 @@ watch(
   padding: 10px 12px;
   margin: 0;
   overflow: auto;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: rgb(248 250 252);
-  color: rgb(51 65 85);
+  background: var(--color-grey-1);
+  color: var(--color-text-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
   line-height: 1.55;
