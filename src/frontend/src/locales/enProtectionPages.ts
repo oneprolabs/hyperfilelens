@@ -45,6 +45,7 @@ export const enProtectionPages = {
       finalizing: 'Finalizing restore…',
       preparing: 'Preparing restore…',
       estimating: 'Preparing restore…',
+      running: 'Restoring',
       transferring: 'Restoring · {done}/{total} items completed',
       itemsPath: 'Restoring · {done}/{total} Items · Path {i}/{m}',
     },

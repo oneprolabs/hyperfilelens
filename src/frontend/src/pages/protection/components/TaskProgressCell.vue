@@ -54,15 +54,18 @@ const showRightPercent = computed(() => {
   if (props.stopping && taskProgressValue.value != null) return true
   return shouldShowStep3Percent(props.transferProgress)
 })
+const isRestore = computed(() => String(props.transferProgress?.label_key || '').includes('taskProgress.restore.'))
 const orchestrationLabel = computed(() => {
   if (props.stopping) {
     const key = String(props.transferProgress?.label_key || '').trim()
     if (key.includes('restore')) return t('protection.taskProgress.stopping.restore')
     return t('protection.taskProgress.stopping.backup')
   }
+  if (isRestore.value && String(props.transferProgress?.phase || '').toLowerCase() === 'transferring') {
+    return t('protection.taskProgress.restore.running')
+  }
   return transferProgressLabel(t, props.transferProgress)
 })
-const isRestore = computed(() => String(props.transferProgress?.label_key || '').includes('taskProgress.restore.'))
 const showSpinner = computed(() => {
   if (props.stopping) return false
   if (props.failed) return false
@@ -77,9 +80,10 @@ const metricParts = computed(() => {
 const metricLine = computed(() => metricParts.value.join(' · '))
 const overflowTitle = computed(() => {
   if (!metricParts.value.length) return ''
-  return transferMetricParts(t, props.transferProgress, { labelProcessingSpeed: true, labelRestoreMetrics: isRestore.value })
+  const metrics = transferMetricParts(t, props.transferProgress, { labelProcessingSpeed: true, labelRestoreMetrics: isRestore.value })
     .filter(Boolean)
-    .join('\n')
+  if (!isRestore.value) return metrics.join('\n')
+  return [transferProgressLabel(t, props.transferProgress), ...metrics].filter(Boolean).join('\n')
 })
 </script>
 
@@ -104,6 +108,8 @@ const overflowTitle = computed(() => {
         />
         <span
           class="task-progress-cell__label-text"
+          :data-table-overflow-title="isRestore ? overflowTitle || undefined : undefined"
+          :data-table-overflow-title-always="isRestore || undefined"
         >{{ orchestrationLabel }}</span>
       </p>
       <span

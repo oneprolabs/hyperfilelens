@@ -34,7 +34,8 @@ const i18n = createI18n({
             uploadedAndHashed: 'Backing up',
           },
           restore: {
-            transferring: 'Restoring',
+            running: 'Restoring',
+            transferring: 'Restoring · {done}/{total} items restored',
           },
           stopping: {
             backup: 'Stopping backup…',
@@ -133,7 +134,7 @@ describe('TaskProgressCell', () => {
   it('uses Step 3 progress for restore transfers too', () => {
     const wrapper = mountCell(65.4, {
       label_key: 'protection.taskProgress.restore.transferring',
-      label_args: {},
+      label_args: { done: 72_592, total: 333_000 },
       step3_display_percent: 10.2,
     })
 
@@ -141,8 +142,12 @@ describe('TaskProgressCell', () => {
     expect(wrapper.get('.task-progress-cell__percent').text()).toBe('10.20%')
     expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('10.2')
     expect(wrapper.find('.task-progress-cell__metrics').exists()).toBe(false)
-    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toContain('Data restored:')
-    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toContain('Restore speed:')
+    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe([
+      'Restoring · 72592/333000 items restored',
+      'Data restored: 858 MB / 300 GB',
+      'Restore speed: 5.47 MB/s',
+      '15 min remaining',
+    ].join('\n'))
   })
 
   it('labels hash throughput and exposes only the metric tooltip', () => {
