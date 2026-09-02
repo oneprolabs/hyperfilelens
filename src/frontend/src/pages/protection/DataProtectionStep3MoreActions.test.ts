@@ -219,7 +219,7 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(toolbarRefresh).not.toContain('loadStep3Selectable({ signal: signal ?? undefined })')
   })
 
-  it('separates create and edit completion while reconciling Step 3 in the background', () => {
+  it('refreshes expanded Step 3 details after edits without slowing the create transition', () => {
     const editStart = wizard.indexOf('async function runEditBackupConfig')
     const editEnd = wizard.indexOf('function submitCreateWizard', editStart)
     const editHandler = wizard.slice(editStart, editEnd)
@@ -227,6 +227,7 @@ describe('backup wizard step 3 More Actions refresh', () => {
       'function finishCreateAndGoToStep3',
       'function onCreateBackupPartial',
     )
+    const createReconciliation = functionSource('reconcileCreatedBackupConfigs', 'finishCreateAndGoToStep3')
 
     expect(editStart).toBeGreaterThan(-1)
     expect(editEnd).toBeGreaterThan(editStart)
@@ -235,6 +236,13 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(page).toContain('@create-completed="finishCreateAndGoToStep3"')
     expect(page).toContain('@edit-completed="onEditBackupCompleted"')
     expect(handler.indexOf('enterStartBackupStep')).toBeLessThan(handler.indexOf('reconcileCreatedBackupConfigs'))
+    expect(createReconciliation).toContain('preserveExpandedState: true')
+
+    const editCompletion = sourceBetween('function onEditBackupCompleted', 'const addSourceOpen')
+    expect(editCompletion).toContain('refreshStep3AfterMoreAction({')
+    expect(editCompletion).toContain('focusIds: payload.sourceIds')
+    expect(editCompletion).not.toContain('reconcileCreatedBackupConfigs')
+    expect(editCompletion).not.toContain('preserveExpandedState: true')
   })
 
   it('keeps backup refresh synchronous and restore refresh in the background after stopping', () => {

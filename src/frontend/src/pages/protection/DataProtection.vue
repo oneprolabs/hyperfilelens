@@ -2313,7 +2313,12 @@ function onCreateBackupPartial(payload: BackupCreateResultPayload) {
 
 function onEditBackupCompleted(payload: { sourceIds: string[] }) {
   closeCreate()
-  reconcileCreatedBackupConfigs(payload.sourceIds)
+  void refreshStep3AfterMoreAction({
+    focusIds: payload.sourceIds,
+    showLoading: true,
+  }).catch((err) => {
+    if (!pageRequests.isAbortError(err)) showApiError(err)
+  })
 }
 
 
