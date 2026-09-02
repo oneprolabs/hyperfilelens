@@ -1,0 +1,248 @@
+diff --git a/snapshot/upload/estimate.go b/snapshot/upload/estimate.go
+index 38c83bb8..379c2e9a 100644
+--- a/snapshot/upload/estimate.go
++++ b/snapshot/upload/estimate.go
+@@ -2,6 +2,7 @@
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"fmt"
+ 	"path/filepath"
+ 	"sync/atomic"
+@@ -72,9 +73,17 @@ type EstimateProgress interface {
+ 	Stats(ctx context.Context, s *snapshot.Stats, includedFiles, excludedFiles SampleBuckets, excludedDirs []string, final bool)
+ }
+ 
++type estimateOptions struct {
++	bestEffortErrors bool
++}
++
+ // Estimate walks the provided directory tree and invokes provided progress callback as it discovers
+ // items to be snapshotted.
+ func Estimate(ctx context.Context, entry fs.Directory, policyTree *policy.Tree, progress EstimateProgress, maxExamplesPerBucket int) error {
++	return estimateWithOptions(ctx, entry, policyTree, progress, maxExamplesPerBucket, estimateOptions{})
++}
++
++func estimateWithOptions(ctx context.Context, entry fs.Directory, policyTree *policy.Tree, progress EstimateProgress, maxExamplesPerBucket int, options estimateOptions) error {
+ 	stats := &snapshot.Stats{}
+ 	ed := []string{}
+ 	ib := makeBuckets()
+@@ -106,10 +115,10 @@ func Estimate(ctx context.Context, entry fs.Directory, policyTree *policy.Tree,
+ 
+ 	entry = ignorefs.New(entry, policyTree, ignorefs.ReportIgnoredFiles(onIgnoredFile))
+ 
+-	return estimate(ctx, ".", entry, policyTree, stats, ib, eb, &ed, progress, maxExamplesPerBucket)
++	return estimate(ctx, ".", entry, policyTree, stats, ib, eb, &ed, progress, maxExamplesPerBucket, options)
+ }
+ 
+-func estimate(ctx context.Context, relativePath string, entry fs.Entry, policyTree *policy.Tree, stats *snapshot.Stats, ib, eb SampleBuckets, ed *[]string, progress EstimateProgress, maxExamplesPerBucket int) error {
++func estimate(ctx context.Context, relativePath string, entry fs.Entry, policyTree *policy.Tree, stats *snapshot.Stats, ib, eb SampleBuckets, ed *[]string, progress EstimateProgress, maxExamplesPerBucket int, options estimateOptions) error {
+ 	// see if the context got canceled
+ 	select {
+ 	case <-ctx.Done():
+@@ -137,11 +146,14 @@ func estimate(ctx context.Context, relativePath string, entry fs.Entry, policyTr
+ 
+ 			child, err = iter.Next(ctx)
+ 			for child != nil {
+-				if err = estimate(ctx, filepath.Join(relativePath, child.Name()), child, policyTree.Child(child.Name()), stats, ib, eb, ed, progress, maxExamplesPerBucket); err != nil {
++				childErr := estimate(ctx, filepath.Join(relativePath, child.Name()), child, policyTree.Child(child.Name()), stats, ib, eb, ed, progress, maxExamplesPerBucket, options)
++				child.Close()
++
++				if childErr != nil {
++					err = childErr
+ 					break
+ 				}
+ 
+-				child.Close()
+ 				child, err = iter.Next(ctx)
+ 			}
+ 		}
+@@ -149,6 +161,15 @@ func estimate(ctx context.Context, relativePath string, entry fs.Entry, policyTr
+ 		progress.Stats(ctx, stats, ib, eb, *ed, false)
+ 
+ 		if err != nil {
++			if options.bestEffortErrors &&
++				relativePath != "." &&
++				!errors.Is(err, context.Canceled) &&
++				!errors.Is(err, context.DeadlineExceeded) {
++				estimateLog(ctx).Debugf("Skipping unreadable subtree %v during best-effort estimation: %v", relativePath, err)
++
++				return nil
++			}
++
+ 			isIgnored := policyTree.EffectivePolicy().ErrorHandlingPolicy.IgnoreDirectoryErrors.OrDefault(false)
+ 
+ 			if isIgnored {
+diff --git a/snapshot/upload/upload.go b/snapshot/upload/upload.go
+index c6975b53..89d3bbc3 100644
+--- a/snapshot/upload/upload.go
++++ b/snapshot/upload/upload.go
+@@ -1376,7 +1376,13 @@ func (u *Uploader) startDataSizeEstimation(
+ 		return noOpEstimationCtrl
+ 	}
+ 
+-	estimator := NewEstimator(wrapped, policyTree, u.Progress.EstimationParameters(), logger)
++	estimator := NewEstimator(
++		wrapped,
++		policyTree,
++		u.Progress.EstimationParameters(),
++		logger,
++		withBestEffortErrorHandling(),
++	)
+ 
+ 	estimator.StartEstimation(ctx, func(filesCount, totalFileSize int64) {
+ 		u.Progress.EstimatedDataSize(filesCount, totalFileSize)
+diff --git a/snapshot/upload/upload_estimator.go b/snapshot/upload/upload_estimator.go
+index e8985be1..50026957 100644
+--- a/snapshot/upload/upload_estimator.go
++++ b/snapshot/upload/upload_estimator.go
+@@ -52,6 +52,7 @@ type estimator struct {
+ 	logger               logging.Logger
+ 	entry                fs.Directory
+ 	policyTree           *policy.Tree
++	bestEffortErrors     bool
+ 
+ 	scanWG              sync.WaitGroup
+ 	cancelCtx           context.CancelFunc
+@@ -72,6 +73,13 @@ func WithVolumeSizeInfoFn(fn VolumeSizeInfoFn) EstimatorOption {
+ 	}
+ }
+ 
++func withBestEffortErrorHandling() EstimatorOption {
++	return func(e Estimator) {
++		est, _ := e.(*estimator)
++		est.bestEffortErrors = true
++	}
++}
++
+ // NewEstimator returns instance of estimator.
+ func NewEstimator(
+ 	entry fs.Directory,
+@@ -171,7 +179,9 @@ func (e *estimator) doRoughEstimation() (filesCount, totalFileSize int64, err er
+ func (e *estimator) doClassicEstimation(ctx context.Context) (filesCount, totalFileSize int64, err error) {
+ 	var res scanResults
+ 
+-	err = Estimate(ctx, e.entry, e.policyTree, &res, 1)
++	err = estimateWithOptions(ctx, e.entry, e.policyTree, &res, 1, estimateOptions{
++		bestEffortErrors: e.bestEffortErrors,
++	})
+ 	if err != nil {
+ 		return 0, 0, errors.Wrap(err, "Unable to scan directory")
+ 	}
+diff --git a/snapshot/upload/upload_estimator_best_effort_test.go b/snapshot/upload/upload_estimator_best_effort_test.go
+new file mode 100644
+index 00000000..24b4fb2c
+--- /dev/null
++++ b/snapshot/upload/upload_estimator_best_effort_test.go
+@@ -0,0 +1,110 @@
++package upload
++
++import (
++	"context"
++	"errors"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++
++	"github.com/kopia/kopia/internal/mockfs"
++	"github.com/kopia/kopia/internal/testlogging"
++	"github.com/kopia/kopia/snapshot/policy"
++)
++
++var errEstimationAccessDenied = errors.New("access denied during estimation")
++
++type estimationCaptureProgress struct {
++	NullUploadProgress
++
++	called bool
++	files  int64
++	bytes  int64
++}
++
++func (p *estimationCaptureProgress) Enabled() bool {
++	return true
++}
++
++func (p *estimationCaptureProgress) EstimatedDataSize(files, bytes int64) {
++	p.called = true
++	p.files = files
++	p.bytes = bytes
++}
++
++func newPartiallyUnreadableEstimationTree() *mockfs.Directory {
++	root := mockfs.NewDirectory()
++	root.AddFile("a-readable", []byte{1, 2, 3}, 0o644)
++	root.AddDir("m-unreadable", 0o755).FailReaddir(errEstimationAccessDenied)
++	root.AddErrorEntryFile("n-unreadable-file", 0o000, errEstimationAccessDenied)
++	root.AddFile("z-readable", []byte{4, 5, 6, 7}, 0o644)
++
++	return root
++}
++
++func TestSnapshotCreateEstimatorSkipsUnreadableSubdirectory(t *testing.T) {
++	ctx := testlogging.Context(t)
++	progress := &estimationCaptureProgress{}
++	uploader := &Uploader{Progress: progress}
++	policyTree := policy.BuildTree(nil, policy.DefaultPolicy)
++
++	controller := uploader.startDataSizeEstimation(
++		ctx,
++		newPartiallyUnreadableEstimationTree(),
++		policyTree,
++	)
++	controller.Wait()
++
++	require.True(t, progress.called)
++	require.Equal(t, int64(2), progress.files)
++	require.Equal(t, int64(7), progress.bytes)
++}
++
++func TestPublicEstimateKeepsStrictUnreadableSubdirectoryBehavior(t *testing.T) {
++	ctx := testlogging.Context(t)
++	policyTree := policy.BuildTree(nil, policy.DefaultPolicy)
++	var result scanResults
++
++	err := Estimate(ctx, newPartiallyUnreadableEstimationTree(), policyTree, &result, 1)
++
++	require.ErrorIs(t, err, errEstimationAccessDenied)
++}
++
++func TestSnapshotCreateEstimatorStillFailsWhenRootIsUnreadable(t *testing.T) {
++	ctx := testlogging.Context(t)
++	root := mockfs.NewDirectory()
++	root.FailReaddir(errEstimationAccessDenied)
++	progress := &estimationCaptureProgress{}
++	uploader := &Uploader{Progress: progress}
++
++	controller := uploader.startDataSizeEstimation(
++		ctx,
++		root,
++		policy.BuildTree(nil, policy.DefaultPolicy),
++	)
++	controller.Wait()
++
++	require.True(t, progress.called)
++	require.Zero(t, progress.files)
++	require.Zero(t, progress.bytes)
++}
++
++func TestSnapshotCreateEstimatorDoesNotSwallowCancellation(t *testing.T) {
++	ctx, cancel := context.WithCancel(testlogging.Context(t))
++	root := mockfs.NewDirectory()
++	root.AddDir("a-cancel", 0o755).OnReaddir(cancel)
++	root.AddFile("z-readable", []byte{1, 2, 3}, 0o644)
++	progress := &estimationCaptureProgress{}
++	uploader := &Uploader{Progress: progress}
++
++	controller := uploader.startDataSizeEstimation(
++		ctx,
++		root,
++		policy.BuildTree(nil, policy.DefaultPolicy),
++	)
++	controller.Wait()
++
++	require.True(t, progress.called)
++	require.Zero(t, progress.files)
++	require.Zero(t, progress.bytes)
++}

@@ -87,6 +87,7 @@ describe('TaskProgressCell', () => {
     expect(wrapper.get('.task-progress-cell__percent').text()).toBe('0.28%')
     expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('0.28')
     expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Backing up')
+    expect(wrapper.get('.task-progress-cell__label').attributes('title')).toBeUndefined()
     expect(wrapper.text()).not.toContain('947')
   })
 
@@ -137,7 +138,7 @@ describe('TaskProgressCell', () => {
     expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('10.2')
   })
 
-  it('labels hash throughput and includes it in either overflow target tooltip', () => {
+  it('labels hash throughput and exposes only the metric tooltip', () => {
     const wrapper = mountCell(14.55, {
       progress_schema_version: 1,
       bytes_done: 0,
@@ -152,7 +153,7 @@ describe('TaskProgressCell', () => {
     const expectedTitle = 'Scanning: 375 MB/s'
 
     expect(wrapper.get('.task-progress-cell__metric-line').text()).toBe('Scanning: 375 MB/s')
-    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe(expectedTitle)
+    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBeUndefined()
     expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe(expectedTitle)
   })
 
@@ -169,11 +170,31 @@ describe('TaskProgressCell', () => {
 
   it('provides structured overflow tooltip text without standalone separators', () => {
     const wrapper = mountCell(59.1)
+    const metric = wrapper.get('.task-progress-cell__metric-line')
 
-    expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe([
+    expect(wrapper.get('.task-progress-cell').attributes()).toHaveProperty('data-table-overflow-explicit-only')
+    expect(metric.attributes()).toHaveProperty('data-table-overflow-title-always')
+    expect(metric.attributes('data-table-overflow-title')).toBe([
       'Processed: 858 MB / 300 GB',
       'Processing speed: 18.4 MB/s',
       '15 min left',
+    ].join('\n'))
+  })
+
+  it('keeps processed bytes and speed in the hover text when the total is unknown', () => {
+    const wrapper = mountCell(24.75, {
+      bytes_total: null,
+      bytes_total_known: false,
+      processing_speed_bps: 8.74 * 1024 * 1024,
+      upload_speed_bps: null,
+      eta_seconds: null,
+      step3_display_percent: null,
+    })
+
+    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBeUndefined()
+    expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe([
+      'Processed: 858 MB',
+      'Processing speed: 8.74 MB/s',
     ].join('\n'))
   })
 })

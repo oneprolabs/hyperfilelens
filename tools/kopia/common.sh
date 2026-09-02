@@ -18,6 +18,7 @@ KOPIA_PATCH_FILES=(
 	"${KOPIA_TOOLS_DIR}/patches/0001-add-s3-url-style.patch"
 	"${KOPIA_TOOLS_DIR}/patches/0002-add-structured-progress.patch"
 	"${KOPIA_TOOLS_DIR}/patches/0003-disable-managed-dot-ignore.patch"
+	"${KOPIA_TOOLS_DIR}/patches/0004-snapshot-estimator-best-effort-errors.patch"
 )
 KOPIA_DEFAULT_MATRIX="linux:amd64 linux:arm64 darwin:amd64 darwin:arm64 windows:amd64"
 

@@ -101,7 +101,11 @@ def maintenance_settings() -> MaintenanceSettings:
         )
     return MaintenanceSettings(
         enabled=enabled,
-        quick_interval=timedelta(seconds=positive_int("STORAGE_MAINTENANCE_QUICK_INTERVAL_SECONDS", 3600)),
+        # Run Quick Maintenance every 6 hours by default.  The interval is
+        # still overrideable through STORAGE_MAINTENANCE_QUICK_INTERVAL_SECONDS.
+        quick_interval=timedelta(
+            seconds=positive_int("STORAGE_MAINTENANCE_QUICK_INTERVAL_SECONDS", 21600)
+        ),
         full_interval=timedelta(seconds=positive_int("STORAGE_MAINTENANCE_FULL_INTERVAL_SECONDS", 86400)),
         scan_interval=timedelta(seconds=positive_int("STORAGE_MAINTENANCE_SCAN_INTERVAL_SECONDS", 60)),
         window_start=window_start,

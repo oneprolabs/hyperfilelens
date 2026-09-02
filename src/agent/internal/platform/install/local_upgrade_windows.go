@@ -17,7 +17,7 @@ const (
 // ScheduleDetachedUpgrade runs install.ps1 upgrade after a short delay so the agent
 // can report task.result before the service stops.
 func ScheduleDetachedUpgrade(
-	archivePath, installerPath, logDir string,
+	archivePath, installerPath, logDir, installationMode, runAsUser, runAsHome string,
 	userInstall bool,
 ) error {
 	archivePath = strings.TrimSpace(archivePath)
@@ -38,6 +38,9 @@ func ScheduleDetachedUpgrade(
 		archivePath,
 		installerPath,
 		logDir,
+		installationMode,
+		runAsUser,
+		runAsHome,
 		userInstall,
 		scriptPath,
 	); err != nil {
@@ -63,7 +66,7 @@ func ScheduleDetachedUpgrade(
 }
 
 func writeWindowsUpgradeScript(
-	archivePath, installerPath, logDir string,
+	archivePath, installerPath, logDir, installationMode, runAsUser, runAsHome string,
 	userInstall bool,
 	scriptPath string,
 ) error {
@@ -77,6 +80,9 @@ func writeWindowsUpgradeScript(
 $install = %q
 $archive = %q
 $pending = %q
+$installationMode = %q
+$runAsUser = %q
+$runAsHome = %q
 $userInstall = %s
 $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $runtimeTaskName = if ($userInstall) { "HyperFileLensAgent.User.$currentSid" } else { 'HyperFileLensAgent' }
@@ -105,6 +111,9 @@ try {
   }
 
   Log "running install.ps1 upgrade"
+  $env:HFL_INSTALLATION_MODE = $installationMode
+  $env:HFL_RUN_AS_USER = $runAsUser
+  $env:HFL_RUN_AS_HOME = $runAsHome
   $upgradeArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $install, 'upgrade', '-From', $archive, '-Yes', '-QuietFooter')
   & powershell.exe @upgradeArgs 2>&1 | ForEach-Object {
     $line = ($_.ToString()).TrimEnd()
@@ -135,6 +144,9 @@ exit $rc
 		installerPath,
 		archivePath,
 		pendingDir,
+		installationMode,
+		runAsUser,
+		runAsHome,
 		userInstallFlag,
 		upgradeDelaySecond,
 	)

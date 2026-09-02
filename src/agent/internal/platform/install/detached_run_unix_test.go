@@ -126,6 +126,9 @@ func TestUnixUserUpgradeScriptUsesUserLifecycleForRecovery(t *testing.T) {
 		filepath.Join(dir, "package.tar.gz"),
 		filepath.Join(dir, "installer", "install.sh"),
 		filepath.Join(dir, "logs"),
+		"user",
+		"",
+		"",
 		true,
 		scriptPath,
 	)
@@ -139,6 +142,7 @@ func TestUnixUserUpgradeScriptUsesUserLifecycleForRecovery(t *testing.T) {
 	text := string(body)
 	for _, expected := range []string{
 		"USER_INSTALL=1",
+		`HFL_INSTALLATION_MODE="$INSTALLATION_MODE"`,
 		`systemctl --user "$@"`,
 		"hfl_systemctl start hyperfilelens-agent.service",
 	} {

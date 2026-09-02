@@ -357,33 +357,37 @@ export function humanizeCronExpression(raw: string, locale: MessageLocale = 'en'
   return 'Custom schedule'
 }
 
-export function summarizeSchedule(f: BackupPolicyForm, locale: MessageLocale = 'en'): string {
+export function summarizeScheduleCycle(f: BackupPolicyForm, locale: MessageLocale = 'en'): string {
   if (!f.sectionScheduleEnabled) {
     return 'Not configured'
   }
-  let summary: string
   if (f.freqMode === 'simple') {
     if (f.quickScheduleType === 'interval') {
       const unitText = formatSimpleIntervalUnitText(f.simpleIntervalUnit, f.simpleIntervalValue, locale)
-      summary = `Every ${f.simpleIntervalValue} ${unitText}`
-    } else if (f.quickScheduleType === 'daily') {
-      summary = `Daily at ${f.scheduleTime}`
-    } else if (f.quickScheduleType === 'weekly') {
+      return `Every ${f.simpleIntervalValue} ${unitText}`
+    }
+    if (f.quickScheduleType === 'daily') {
+      return `Daily at ${f.scheduleTime}`
+    }
+    if (f.quickScheduleType === 'weekly') {
       const weekdayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
       const weekdays = [...new Set(f.scheduleWeekdays)]
         .sort((a, b) => a - b)
         .map((day) => weekdayNames[day - 1])
-      summary = `Weekly on ${weekdays.join(', ')} at ${f.scheduleTime}`
-    } else {
-      const dates = [...new Set(f.scheduleMonthDays)]
-        .sort((a, b) => a - b)
-        .map(String)
-      if (f.scheduleMonthEnd) dates.push('end of month')
-      summary = `Monthly on ${dates.join(', ')} at ${f.scheduleTime}`
+      return `Weekly on ${weekdays.join(', ')} at ${f.scheduleTime}`
     }
-  } else {
-    summary = humanizeCronExpression(f.cronExpr, locale)
+    const dates = [...new Set(f.scheduleMonthDays)]
+      .sort((a, b) => a - b)
+      .map(String)
+    if (f.scheduleMonthEnd) dates.push('end of month')
+    return `Monthly on ${dates.join(', ')} at ${f.scheduleTime}`
   }
+  return humanizeCronExpression(f.cronExpr, locale)
+}
+
+export function summarizeSchedule(f: BackupPolicyForm, locale: MessageLocale = 'en'): string {
+  let summary = summarizeScheduleCycle(f, locale)
+  if (!f.sectionScheduleEnabled) return summary
   summary = `${summary} (${f.scheduleTimezone || 'UTC'})`
   if (f.scheduleStartsAt) summary = `${summary}, starts ${formatScheduleStartForDisplay(f.scheduleStartsAt)}`
   return summary

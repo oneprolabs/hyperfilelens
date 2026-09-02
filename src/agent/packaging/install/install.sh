@@ -38,12 +38,25 @@ unquote_env_value() {
 	fi
 	printf '%s' "${value}"
 }
-if [[ -z "${HFL_INSTALLATION_MODE:-}" && ( "${BUNDLE_ROOT}" == "/opt/hyperfilelens-agent" || "${BUNDLE_ROOT}" == "/opt/hyperfilelens-agent/bin" || "${BUNDLE_ROOT}" == "/Library/Application Support/HyperFileLens/Agent/bin" ) ]]; then
-	PERSISTED_ENV="/opt/hyperfilelens-agent/config/agent.env"
-	if [[ "$(uname -s)" == "Darwin" ]]; then
+if [[ -z "${HFL_INSTALLATION_MODE:-}" ]]; then
+	PERSISTED_ENV=""
+	case "${BUNDLE_ROOT}" in
+	*/lifecycle/upgrade/installer)
+		# Older Agents cannot pass their installation mode to the detached
+		# runner. The staged installer still has a trustworthy location below
+		# the persisted Agent Root, so bootstrap the mode from that root.
+		PERSISTED_ENV="${BUNDLE_ROOT%/lifecycle/upgrade/installer}/config/agent.env"
+		;;
+	/opt/hyperfilelens-agent | /opt/hyperfilelens-agent/bin)
+		PERSISTED_ENV="/opt/hyperfilelens-agent/config/agent.env"
+		;;
+	"/Library/Application Support/HyperFileLens/Agent/bin")
 		PERSISTED_ENV="/Library/Application Support/HyperFileLens/Agent/config/agent.env"
+		;;
+	esac
+	if [[ -n "${PERSISTED_ENV}" && ! -f "${PERSISTED_ENV}" && "${BUNDLE_ROOT}" != */lifecycle/upgrade/installer ]]; then
+		PERSISTED_ENV="/var/lib/hyperfilelens-agent/agent.env"
 	fi
-	[[ -f "${PERSISTED_ENV}" ]] || PERSISTED_ENV="/var/lib/hyperfilelens-agent/agent.env"
 	if [[ -f "${PERSISTED_ENV}" ]]; then
 		while IFS='=' read -r key value; do
 			value="$(unquote_env_value "${value}")"

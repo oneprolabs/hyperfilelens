@@ -163,6 +163,19 @@ func TestInstallShellDetectsUserModeFromCustomXDGDataHome(t *testing.T) {
 	}
 }
 
+func TestInstallShellRecoversModeForStagedUpgradeInstaller(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	for _, want := range []string{
+		`*/lifecycle/upgrade/installer)`,
+		`PERSISTED_ENV="${BUNDLE_ROOT%/lifecycle/upgrade/installer}/config/agent.env"`,
+		`"${BUNDLE_ROOT}" != */lifecycle/upgrade/installer`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("staged install.sh must recover the persisted mode using %q", want)
+		}
+	}
+}
+
 func TestInstallShellSupportsSpecifiedUserContinuousMode(t *testing.T) {
 	body := readPackagingInstallShell(t)
 	for _, want := range []string{

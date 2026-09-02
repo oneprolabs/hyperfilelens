@@ -99,6 +99,71 @@ func TestDuErrorDoesNotTriggerSecondWalk(t *testing.T) {
 	}
 }
 
+func TestEstimateFallsBackWhenBSDDuRejectsGNUByteOption(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("du is not used on Windows")
+	}
+	root := t.TempDir()
+	writeSizeFile(t, filepath.Join(root, "file"), 7)
+	bin := t.TempDir()
+	du := filepath.Join(bin, "du")
+	if err := os.WriteFile(
+		du,
+		[]byte("#!/bin/sh\necho 'du: invalid option -- b' >&2\nexit 64\n"),
+		0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	size, err := EstimateWithExclusionsContext(context.Background(), root, "directory", nil)
+	if err != nil {
+		t.Fatalf("expected WalkDir fallback, got %v", err)
+	}
+	if size != 7 {
+		t.Fatalf("expected fallback size 7, got %d", size)
+	}
+}
+
+func TestEstimateUsesPartialDuSummaryWhenPrivacyBlocksPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("du is not used on Windows")
+	}
+	root := t.TempDir()
+	bin := t.TempDir()
+	du := filepath.Join(bin, "du")
+	if err := os.WriteFile(
+		du,
+		[]byte("#!/bin/sh\necho '7 '$2\necho 'du: Operation not permitted' >&2\nexit 1\n"),
+		0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	size, err := EstimateWithExclusionsContext(context.Background(), root, "directory", nil)
+	if err != nil {
+		t.Fatalf("expected partial du summary, got %v", err)
+	}
+	expected := uint64(7)
+	if runtime.GOOS == "darwin" {
+		expected *= 1024
+	}
+	if size != expected {
+		t.Fatalf("expected partial size %d, got %d", expected, size)
+	}
+}
+
+func TestParseDuBytesConvertsKiBToBytes(t *testing.T) {
+	size, err := parseDuBytes([]byte("111531404\t/Users/ghw\n"), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != 114208157696 {
+		t.Fatalf("unexpected byte size %d", size)
+	}
+}
+
 func writeSizeFile(t *testing.T, path string, size int) {
 	t.Helper()
 	if err := os.WriteFile(path, make([]byte, size), 0o600); err != nil {

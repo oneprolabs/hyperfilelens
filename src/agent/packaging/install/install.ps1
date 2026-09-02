@@ -54,11 +54,23 @@ elseif ($BundleRoot.TrimEnd('\') -eq (Join-Path $userAgentRoot "bin").TrimEnd('\
 else {
   "system"
 }
-if (-not $env:HFL_INSTALLATION_MODE -and $BundleRoot.TrimEnd('\') -ne (Join-Path $userAgentRoot "bin").TrimEnd('\')) {
-  foreach ($existingEnv in @(
+if (-not $env:HFL_INSTALLATION_MODE) {
+  $existingEnvs = @()
+  $stagedInstallerSuffix = "\lifecycle\upgrade\installer"
+  $normalizedBundleRoot = $BundleRoot.TrimEnd('\')
+  if ($normalizedBundleRoot.EndsWith($stagedInstallerSuffix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    # Older Agents cannot pass their installation mode to the detached
+    # runner. Recover it from the Agent Root that owns the staged installer.
+    $stagedAgentRoot = $normalizedBundleRoot.Substring(0, $normalizedBundleRoot.Length - $stagedInstallerSuffix.Length)
+    $existingEnvs += (Join-Path $stagedAgentRoot "config\agent.env")
+  }
+  if ($normalizedBundleRoot -ne (Join-Path $userAgentRoot "bin").TrimEnd('\')) {
+    $existingEnvs += @(
       (Join-Path $machineAgentRoot "config\agent.env"),
       (Join-Path $legacyDataRoot "agent.env")
-    )) {
+    )
+  }
+  foreach ($existingEnv in $existingEnvs) {
     if (Test-Path -LiteralPath $existingEnv) {
       foreach ($line in Get-Content -LiteralPath $existingEnv) {
         if ($line -match '^HFL_INSTALLATION_MODE=(.+)$') { $InstallationMode = $Matches[1].Trim().ToLowerInvariant() }

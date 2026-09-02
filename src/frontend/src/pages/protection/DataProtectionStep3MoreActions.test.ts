@@ -104,6 +104,7 @@ describe('backup wizard step 3 More Actions refresh', () => {
 
   it('aligns step-three policy and file-filter detail popovers with the create wizard', () => {
     expect(page).toMatch(/flowPolicyDetailRows[\s\S]*scheduleCycle[\s\S]*scheduleTimezone[\s\S]*scheduleStartsAt/)
+    expect(page).toMatch(/flowPolicyScheduleValue[\s\S]*summarizeScheduleCycle\(backupPolicyToForm\(policy\)\)/)
     expect(page).toMatch(/:width="400"[\s\S]*flow-binding-detail-popper/)
     expect(page).toMatch(/:width="380"[\s\S]*flow-binding-detail-popper/)
     expect(page).toContain("t('protection.policiesPage.shortDesc'")

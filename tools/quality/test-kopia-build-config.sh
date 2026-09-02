@@ -130,10 +130,12 @@ if grep -E -n 'build/dependencies/kopia|kopia_linux_amd64[.]deb' "${ROOT}/.docke
 	printf 'ERROR: obsolete Kopia Docker context paths are still configured\n' >&2
 	exit 1
 fi
-if grep -R -n -E --exclude-dir=build --exclude-dir=data --exclude-dir=.git \
-	--exclude='test-kopia-build-config.sh' -- \
-	'--kopia-version|KOPIA_DEB|kopia_linux_amd64[.]deb|tools/dependencies/versions/kopia[.]env' \
-	"${ROOT}" >/dev/null; then
+# Search tracked product files only. Local .env files and ignored developer
+# notes may legitimately describe older configurations and must not make this
+# repository contract nondeterministic.
+if git -C "${ROOT}" grep -n -E \
+	-e '--kopia-version|KOPIA_DEB|kopia_linux_amd64[.]deb|tools/dependencies/versions/kopia[.]env' \
+	-- ':!tools/quality/test-kopia-build-config.sh' >/dev/null; then
 	printf 'ERROR: obsolete Kopia version or deb configuration is still referenced\n' >&2
 	exit 1
 fi
@@ -152,10 +154,14 @@ grep -F 'policySetDisableDotIgnore' \
 	"${ROOT}/tools/kopia/patches/0003-disable-managed-dot-ignore.patch" >/dev/null
 grep -F 'NoParentDotIgnoreFiles' \
 	"${ROOT}/tools/kopia/patches/0003-disable-managed-dot-ignore.patch" >/dev/null
+grep -F 'withBestEffortErrorHandling()' \
+	"${ROOT}/tools/kopia/patches/0004-snapshot-estimator-best-effort-errors.patch" >/dev/null
+grep -F 'TestSnapshotCreateEstimatorSkipsUnreadableSubdirectory' \
+	"${ROOT}/tools/kopia/patches/0004-snapshot-estimator-best-effort-errors.patch" >/dev/null
 
-[[ "${#KOPIA_PATCH_FILES[@]}" -eq 3 ]]
+[[ "${#KOPIA_PATCH_FILES[@]}" -eq 4 ]]
 patch_set_digest="$(patch_set_sha256)"
 [[ "${patch_set_digest}" =~ ^[0-9a-f]{64}$ ]]
-[[ "$(patch_names)" == '0001-add-s3-url-style.patch 0002-add-structured-progress.patch 0003-disable-managed-dot-ignore.patch ' ]]
+[[ "$(patch_names)" == '0001-add-s3-url-style.patch 0002-add-structured-progress.patch 0003-disable-managed-dot-ignore.patch 0004-snapshot-estimator-best-effort-errors.patch ' ]]
 
 printf 'Kopia build configuration checks passed.\n'
