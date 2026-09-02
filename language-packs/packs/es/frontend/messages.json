@@ -5555,6 +5555,7 @@
         "sourceRepositoryConnectivityProbeStarted": "Se inició la comprobación de conectividad del repositorio de origen",
         "repositoryUsageRefreshQueued": "Actualización del uso del repositorio puesta en cola",
         "repositoryUsageRefreshQueueFailed": "No se pudo poner en cola la actualización del uso del repositorio",
+        "repositoryMaintenanceSummary": "Resumen del mantenimiento del repositorio",
         "backupFinishedWithFailedDirectories": "Copia de seguridad completada con directorios con errores",
         "backupCompletedWithSkippedItems": "Copia de seguridad completada con elementos omitidos",
         "backupConfigurationResetFailed": "Falló el restablecimiento de la configuración de copia de seguridad",
@@ -5590,6 +5591,18 @@
         "taskFinishedTimeout": "Tiempo de ejecución agotado",
         "taskFinished": "Tarea terminada",
         "stepStatusUpdated": "{step}: {status}"
+      },
+      "maintenanceSummary": {
+        "contentGc": "GC de contenido lógico",
+        "contentRemoved": "Eliminado del índice",
+        "contentDeferred": "Pospuesto por la política de seguridad",
+        "contentInUse": "Aún referenciado",
+        "packGc": "GC de paquetes físicos",
+        "packsDeleted": "Eliminado del almacenamiento",
+        "packsRetained": "Conservado por la política de seguridad",
+        "packGcNotReported": "La eliminación de paquetes físicos no se ejecutó o no se informó en este ciclo.",
+        "approximate": "Valores aproximados analizados de la salida de texto de Kopia.",
+        "metric": "{count} · {size}"
       },
       "failureDetails": {
         "snapshotId": "ID de instantánea",

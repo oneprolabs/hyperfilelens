@@ -5468,6 +5468,7 @@
         "sourceRepositoryConnectivityProbeStarted": "已开始检测源端仓库连接",
         "repositoryUsageRefreshQueued": "已加入仓库用量刷新队列",
         "repositoryUsageRefreshQueueFailed": "加入仓库用量刷新队列失败",
+        "repositoryMaintenanceSummary": "仓库维护摘要",
         "backupFinishedWithFailedDirectories": "备份已完成，但部分目录失败",
         "backupCompletedWithSkippedItems": "备份已完成，但有项目被跳过",
         "backupConfigurationResetFailed": "备份配置重置失败",
@@ -5507,6 +5508,18 @@
         "restoreItemCancelled": "恢复项目已取消",
         "sourceUnregisterPrepared": "源注销准备就绪",
         "sourceUnregisterFinalized": "来源注销完成"
+      },
+      "maintenanceSummary": {
+        "contentGc": "逻辑 Content GC",
+        "contentRemoved": "已从索引移除",
+        "contentDeferred": "按安全策略暂缓",
+        "contentInUse": "仍被引用",
+        "packGc": "物理 Pack GC",
+        "packsDeleted": "已从存储删除",
+        "packsRetained": "按安全策略保留",
+        "packGcNotReported": "本周期未执行物理 Pack 删除或未报告结果。",
+        "approximate": "根据 Kopia 文本输出解析的近似值。",
+        "metric": "{count} · {size}"
       },
       "failureDetails": {
         "snapshotId": "快照 ID",

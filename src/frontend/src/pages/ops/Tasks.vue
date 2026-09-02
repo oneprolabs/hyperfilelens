@@ -37,6 +37,7 @@ import {
 } from '../../lib/protectionStopConfirm'
 import { useProtectionStopConfirmDialog } from '../../composables/useProtectionStopConfirmDialog'
 import ProtectionStopConfirmDialog from '../../components/ProtectionStopConfirmDialog.vue'
+import RepositoryMaintenanceSummary from '../../components/RepositoryMaintenanceSummary.vue'
 import { getSourceResource } from '../../lib/sourceApi'
 import {
   cancelStorageRepositoryTask,
@@ -1862,6 +1863,7 @@ watch(
                             class="hfl-task-drawer__event-msg"
                             :class="eventMessageClass(event)"
                           >{{ eventDisplayMessage(event) }}</span>
+                          <RepositoryMaintenanceSummary :metadata="event.metadata" />
                           <span
                             v-if="eventObjectText(event)"
                             class="hfl-task-drawer__event-object"
@@ -1923,6 +1925,7 @@ watch(
                             class="hfl-task-drawer__event-msg"
                             :class="eventMessageClass(event)"
                           >{{ eventDisplayMessage(event) }}</span>
+                          <RepositoryMaintenanceSummary :metadata="event.metadata" />
                           <span
                             v-if="eventObjectText(event)"
                             class="hfl-task-drawer__event-object"
@@ -1976,6 +1979,7 @@ watch(
                       class="hfl-task-drawer__event-msg"
                       :class="eventMessageClass(event)"
                     >{{ eventDisplayMessage(event) }}</span>
+                    <RepositoryMaintenanceSummary :metadata="event.metadata" />
                     <span
                       v-if="eventObjectText(event)"
                       class="hfl-task-drawer__event-object"

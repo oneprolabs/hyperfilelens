@@ -27,6 +27,9 @@ from apps.storage.services.internal.background_capacity import (
 from apps.storage.services.internal.repository_location import (
     invalidate_repository_location_ownership,
 )
+from apps.storage.services.internal.repository_maintenance_summary import (
+    maintenance_summary_from_result,
+)
 from apps.storage.services.internal.repository_health import (
     dispatch_automatic_repository_observation,
     is_repository_ownership_failure,
@@ -67,7 +70,7 @@ from apps.storage.services.internal.repository_operations import (
 )
 from apps.storage.services.internal.repository_secrets import scrub_secrets
 from apps.task.models import Task, TaskStep
-from apps.task.services.interface import start_task
+from apps.task.services.interface import append_task_step_event, start_task
 from apps.task.services.recovery import (
     CONTROL_PLANE_RESTART_INTERRUPTED,
     RecoveryDecision,
@@ -734,6 +737,21 @@ def _execute_repository_operation(
                 "remote_task_id": str(operation.node_task_id),
             }
         result = operation.result
+        summary = maintenance_summary_from_result(
+            result,
+            mode=("full" if repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_FULL else "quick"),
+        )
+        if summary is not None:
+            result = {**result, "maintenance_summary": summary}
+            append_task_step_event(
+                task=repository_task.task,
+                step_name="run_repository_operation",
+                message="Repository maintenance summary",
+                metadata={
+                    "event_type": "repository_maintenance_summary",
+                    "maintenance_summary": summary,
+                },
+            )
         _raise_for_control_decision(
             _set_repository_operation_step(
                 repository_task,
@@ -1083,6 +1101,7 @@ def _execute_maintenance(
                 "operation_type": repository_task.operation_type,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
+                "maintenance_summary": result.maintenance_summary,
             },
         )
 

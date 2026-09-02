@@ -23,6 +23,7 @@ const taskEventMessageKeys: Record<string, string> = {
   'source repository connectivity probe started': 'ops.task.eventMessage.sourceRepositoryConnectivityProbeStarted',
   'repository usage refresh queued': 'ops.task.eventMessage.repositoryUsageRefreshQueued',
   'repository usage refresh queue failed': 'ops.task.eventMessage.repositoryUsageRefreshQueueFailed',
+  'repository maintenance summary': 'ops.task.eventMessage.repositoryMaintenanceSummary',
   'backup finished with failed directories': 'ops.task.eventMessage.backupFinishedWithFailedDirectories',
   'backup completed with skipped items': 'ops.task.eventMessage.backupCompletedWithSkippedItems',
   'backup configuration reset failed': 'ops.task.eventMessage.backupConfigurationResetFailed',
