@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Bot, Copy, Share2 } from 'lucide-vue-next'
+import { Bot, Check, Copy, Share2 } from 'lucide-vue-next'
+import DangerConfirmDialog from '../../../components/DangerConfirmDialog.vue'
 import { apiErrorMessage } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
 import {
@@ -31,8 +32,11 @@ const saving = ref(false)
 const candidate = ref<LensCopilotShareCandidate | null>(null)
 const share = ref<LensSharedQA | null>(null)
 const title = ref('')
+const copied = ref(false)
+const stopConfirmOpen = ref(false)
 let candidateLoadGeneration = 0
 let dialogGeneration = 0
+let copyFeedbackTimer: ReturnType<typeof setTimeout> | undefined
 
 const open = computed({
   get: () => props.modelValue,
@@ -51,6 +55,9 @@ const shareUrl = computed(() => {
 const titleDirty = computed(
   () => Boolean(share.value) && title.value.trim() !== (share.value?.title || ''),
 )
+const nativeShareAvailable = computed(() => (
+  typeof navigator !== 'undefined' && typeof navigator.share === 'function'
+))
 
 const primaryLabel = computed(() => {
   if (!share.value) return t('insight.copilot.shareCreateLink')
@@ -94,6 +101,8 @@ watch(
   ([isOpen]) => {
     dialogGeneration += 1
     saving.value = false
+    stopConfirmOpen.value = false
+    copied.value = false
     if (isOpen) {
       void loadCandidate()
       return
@@ -104,7 +113,7 @@ watch(
 )
 
 async function primaryAction() {
-  if (!props.session || saving.value) return
+  if (!props.session || saving.value || !title.value.trim()) return
   if (share.value && !titleDirty.value) {
     open.value = false
     return
@@ -151,6 +160,12 @@ async function copyLink() {
   if (!shareUrl.value) return
   try {
     await copyTextToClipboard(shareUrl.value)
+    copied.value = true
+    if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
+    copyFeedbackTimer = setTimeout(() => {
+      copied.value = false
+      copyFeedbackTimer = undefined
+    }, 2000)
     ElMessage.success({ message: t('insight.copilot.shareCopied'), grouping: true })
   } catch {
     ElMessage.error({ message: t('insight.copilot.shareCopyFailed'), grouping: true })
@@ -158,11 +173,7 @@ async function copyLink() {
 }
 
 async function nativeShare() {
-  if (!shareUrl.value) return
-  if (typeof navigator.share !== 'function') {
-    await copyLink()
-    return
-  }
+  if (!shareUrl.value || !nativeShareAvailable.value) return
   try {
     await navigator.share({
       title: title.value.trim() || defaultTitle(candidate.value?.question),
@@ -191,6 +202,7 @@ async function stopSharing() {
       || !props.modelValue
     ) return
     ElMessage.success({ message: t('insight.copilot.shareRevoked'), grouping: true })
+    stopConfirmOpen.value = false
     open.value = false
   } catch (error) {
     if (
@@ -206,13 +218,17 @@ async function stopSharing() {
     if (generation === dialogGeneration) saving.value = false
   }
 }
+
+onBeforeUnmount(() => {
+  if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
+})
 </script>
 
 <template>
   <ElDialog
     v-model="open"
     class="copilot-share-dialog"
-    width="min(92vw, 520px)"
+    width="min(640px, calc(100vw - 32px))"
     :title="t('insight.copilot.shareTitle')"
     append-to-body
     destroy-on-close
@@ -269,14 +285,18 @@ async function stopSharing() {
           <span class="copilot-share-dialog__label">
             {{ t('insight.copilot.shareLinkLabel') }}
           </span>
-          <div class="copilot-share-dialog__link-row">
+          <div
+            class="copilot-share-dialog__link-row"
+            role="group"
+            :aria-label="t('insight.copilot.shareLinkLabel')"
+          >
             <a
               :href="shareUrl"
               target="_blank"
               rel="noopener"
               :title="shareUrl"
             >
-              {{ shareUrl }}
+              <span>{{ shareUrl }}</span>
             </a>
             <button
               type="button"
@@ -284,14 +304,19 @@ async function stopSharing() {
               :title="t('insight.copilot.shareCopyLink')"
               @click="copyLink"
             >
-              <Copy
+              <component
+                :is="copied ? Check : Copy"
                 :size="16"
                 aria-hidden="true"
               />
+              <span aria-live="polite">
+                {{ t(copied ? 'insight.copilot.shareCopied' : 'insight.copilot.shareCopyLink') }}
+              </span>
             </button>
           </div>
           <p>{{ t('insight.copilot.shareOrgOnly') }}</p>
           <ElButton
+            v-if="nativeShareAvailable"
             class="w-full"
             type="primary"
             plain
@@ -319,20 +344,23 @@ async function stopSharing() {
           v-if="share"
           type="danger"
           plain
-          :loading="saving"
-          @click="stopSharing"
+          :disabled="saving"
+          @click="stopConfirmOpen = true"
         >
           {{ t('insight.copilot.shareStop') }}
         </ElButton>
-        <span />
-        <ElButton @click="open = false">
+        <span class="copilot-share-dialog__footer-spacer" />
+        <ElButton
+          v-if="!share"
+          @click="open = false"
+        >
           {{ t('insight.copilot.btnCancel') }}
         </ElButton>
         <ElButton
           v-if="candidate?.shareable"
           type="primary"
           :loading="saving"
-          :disabled="!share && !title.trim()"
+          :disabled="!title.trim()"
           @click="primaryAction"
         >
           {{ primaryLabel }}
@@ -340,28 +368,45 @@ async function stopSharing() {
       </div>
     </template>
   </ElDialog>
+
+  <DangerConfirmDialog
+    v-model="stopConfirmOpen"
+    :title="t('insight.copilot.shareStopConfirmTitle')"
+    :message="t('insight.copilot.shareStopConfirmMessage')"
+    :cancel-text="t('insight.copilot.btnCancel')"
+    :confirm-text="t('insight.copilot.shareStop')"
+    :loading="saving"
+    @confirm="stopSharing"
+  />
 </template>
 
 <style scoped>
-.copilot-share-dialog__body { min-height: 180px; }
-.copilot-share-dialog__intro { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border: 1px solid color-mix(in srgb, var(--color-primary) 22%, var(--color-border)); border-radius: 10px; background: color-mix(in srgb, var(--color-primary) 6%, var(--color-card-bg)); color: var(--color-primary); }
+.copilot-share-dialog__body { min-height: 180px; max-height: min(68vh, 660px); overflow-y: auto; padding-right: 2px; }
+.copilot-share-dialog__intro { display: flex; align-items: flex-start; gap: 12px; padding: 14px; border: 1px solid color-mix(in srgb, var(--color-primary) 22%, var(--color-border)); border-radius: 10px; background: color-mix(in srgb, var(--color-primary) 6%, var(--color-card-bg)); color: var(--color-primary); }
 .copilot-share-dialog__intro strong { display: block; color: var(--color-text-title); font-size: 14px; }
 .copilot-share-dialog__intro p { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.55; }
-.copilot-share-dialog__warning { margin: 12px 0 16px; padding: 9px 11px; border-radius: 8px; background: var(--el-color-warning-light-9); color: var(--el-color-warning-dark-2); font-size: 12px; line-height: 1.5; }
+.copilot-share-dialog__warning { margin: 12px 0 18px; padding: 10px 12px; border-radius: 8px; background: var(--el-color-warning-light-9); color: var(--el-color-warning-dark-2); font-size: 12px; line-height: 1.5; }
 .copilot-share-dialog__label { display: block; margin-bottom: 6px; color: var(--color-text-secondary); font-size: 12px; font-weight: 600; }
 .copilot-share-dialog__preview { margin-top: 16px; }
 .copilot-share-dialog__preview > span { color: var(--color-text-secondary); font-size: 12px; font-weight: 600; }
-.copilot-share-dialog__preview p { display: -webkit-box; margin: 6px 0 0; padding: 10px 12px; overflow: hidden; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-grey-2); color: var(--color-text-secondary); font-size: 12px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
-.copilot-share-dialog__link-block { margin-top: 16px; }
-.copilot-share-dialog__link-row { display: flex; align-items: center; gap: 8px; }
-.copilot-share-dialog__link-row a { min-width: 0; flex: 1; overflow: hidden; color: var(--color-primary); font-family: ui-monospace, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.copilot-share-dialog__link-row button { display: inline-flex; width: 36px; height: 36px; flex: 0 0 auto; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: var(--color-grey-2); color: var(--color-text-secondary); cursor: pointer; }
+.copilot-share-dialog__preview p { display: -webkit-box; margin: 6px 0 0; padding: 11px 12px; overflow: hidden; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-grey-2); color: var(--color-text-secondary); font-size: 12px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.copilot-share-dialog__link-block { margin-top: 18px; }
+.copilot-share-dialog__link-row { display: flex; min-height: 44px; align-items: stretch; overflow: hidden; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-card-bg); }
+.copilot-share-dialog__link-row:focus-within { border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 14%, transparent); }
+.copilot-share-dialog__link-row a { display: flex; min-width: 0; flex: 1; align-items: center; overflow: hidden; padding: 0 12px; color: var(--color-primary); font-family: ui-monospace, monospace; font-size: 12px; text-decoration: none; }
+.copilot-share-dialog__link-row a span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copilot-share-dialog__link-row button { display: inline-flex; min-width: 112px; min-height: 44px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 7px; padding: 0 12px; border: 0; border-left: 1px solid var(--color-border); background: var(--color-grey-2); color: var(--color-text-secondary); cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; }
+.copilot-share-dialog__link-row button:hover { background: color-mix(in srgb, var(--color-primary) 7%, var(--color-grey-2)); color: var(--color-primary); }
 .copilot-share-dialog__link-row button:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent); outline-offset: 2px; }
-.copilot-share-dialog__link-block > p { margin: 8px 0 12px; color: var(--color-text-tertiary); font-size: 12px; }
-.copilot-share-dialog__footer { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; width: 100%; }
+.copilot-share-dialog__link-block > p { margin: 9px 0 12px; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.5; }
+.copilot-share-dialog__footer { display: flex; align-items: center; gap: 8px; width: 100%; }
+.copilot-share-dialog__footer-spacer { flex: 1; }
 @media (max-width: 767.98px) {
-  .copilot-share-dialog__link-row button { width: 44px; height: 44px; }
-  .copilot-share-dialog__footer { grid-template-columns: 1fr 1fr; }
-  .copilot-share-dialog__footer > span { display: none; }
+  .copilot-share-dialog__body { max-height: calc(100vh - 210px); }
+  .copilot-share-dialog__link-row button { min-width: 44px; width: 44px; padding: 0; }
+  .copilot-share-dialog__link-row button span { display: none; }
+  .copilot-share-dialog__footer { display: grid; grid-template-columns: 1fr 1fr; }
+  .copilot-share-dialog__footer-spacer { display: none; }
+  .copilot-share-dialog__footer :deep(.el-button) { width: 100%; min-height: 44px; margin: 0; }
 }
 </style>
