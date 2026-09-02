@@ -10,7 +10,7 @@ import HflTypeLabel from '../components/HflTypeLabel.vue'
 import SnapshotStatusTag from '../components/SnapshotStatusTag.vue'
 import TaskStatusTag from '../components/TaskStatusTag.vue'
 import TaskTypeLabel from '../components/TaskTypeLabel.vue'
-import { lifecycleStatusTagAttrs, severityStatusTagAttrs, statusTagAttrs } from '../lib/statusTag'
+import { alertStatusTagAttrs as sharedAlertStatusTagAttrs, lifecycleStatusTagAttrs, severityStatusTagAttrs } from '../lib/statusTag'
 
 type Task = { id: number; task_uuid: string; task_type: string; status: string; display_name?: string; created_at?: string }
 type Node = { id: number; name: string; status?: string; updated_at?: string }
@@ -92,7 +92,7 @@ function alertStatusLabel(status?: string) {
 }
 
 function alertStatusTagAttrs(status?: string) {
-  return statusTagAttrs(status === 'resolved' ? 'success' : status === 'firing' ? 'warning' : 'info')
+  return sharedAlertStatusTagAttrs(status)
 }
 
 const side = computed(() => [
