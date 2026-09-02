@@ -1077,7 +1077,11 @@ def _resolve_gateway_link_identity(
                 organization=org,
                 gateway=gateway,
                 defaults={
-                    "workspace_root": f"/workspace/org-{org.id}/data",
+                    # Gateway Agent and LensNode share the same host/container
+                    # path under the unified Agent Root. Existing links retain
+                    # their persisted legacy /workspace path through
+                    # resolved_workspace_root().
+                    "workspace_root": f"/opt/hyperfilelens-agent/workspace/org-{org.id}/data",
                     "owner_user": None if is_platform else owner_user,
                     "scope": desired_scope,
                     "origin": desired_origin,

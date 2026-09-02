@@ -24,6 +24,16 @@ func TestDefaultAgentDataDir(t *testing.T) {
 	}
 }
 
+func TestGatewayLensnodeLayout(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "hyperfilelens-agent")
+	if got, want := AgentLensnodeRuntimeDir(root), filepath.Join(root, "runtime", "lensnode"); got != want {
+		t.Fatalf("AgentLensnodeRuntimeDir() = %q, want %q", got, want)
+	}
+	if got, want := AgentWorkspaceDir(root), filepath.Join(root, "workspace"); got != want {
+		t.Fatalf("AgentWorkspaceDir() = %q, want %q", got, want)
+	}
+}
+
 func TestUserLevelLinuxLayout(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux layout assertion")

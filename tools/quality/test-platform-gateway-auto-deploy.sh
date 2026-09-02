@@ -19,6 +19,9 @@ LOCAL_PLATFORM_AGENT_DATA_DIR="${tmp}/agent-data"
 LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR="${tmp}/legacy-agent-install"
 LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR="${tmp}/legacy-agent-data"
 LOCAL_PLATFORM_LENSNODE_ENV_FILE="${tmp}/lensnode.env"
+LOCAL_PLATFORM_LEGACY_LENSNODE_ENV_FILE="${tmp}/legacy-lensnode.env"
+LOCAL_PLATFORM_LENSNODE_COMPOSE_DIR="${tmp}/lensnode-compose"
+LOCAL_PLATFORM_LEGACY_LENSNODE_COMPOSE_DIR="${tmp}/legacy-lensnode-compose"
 LOCAL_PLATFORM_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
 mkdir -p \
 	"${ROOT}/data/media/enroll-bootstrap" \

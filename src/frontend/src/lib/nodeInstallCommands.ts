@@ -156,7 +156,13 @@ export function buildLocalServiceCommand(
 ) {
   if (role === 'gateway' && os === 'linux') {
     const agent = `sudo ${linuxInstallScriptPath()} ${action}`
-    const sidecar = 'sudo docker compose -p hyperfilelens-gateway -f /etc/hyperfilelens/lensnode/docker-compose.yml'
+    const sidecar = [
+      'if sudo test -f /opt/hyperfilelens-agent/runtime/lensnode/docker-compose.yml',
+      'then compose_file=/opt/hyperfilelens-agent/runtime/lensnode/docker-compose.yml',
+      'else compose_file=/etc/hyperfilelens/lensnode/docker-compose.yml',
+      'fi',
+      'sudo docker compose -p hyperfilelens-gateway -f "$compose_file"',
+    ].join('; ')
     if (action === 'status') return `${agent}\n${sidecar} ps`
     if (action === 'start') return `${agent}\n${sidecar} up -d`
     if (action === 'stop') return `${sidecar} stop\n${agent}`
@@ -261,7 +267,7 @@ export function installPathsSummary(
   }
   if (role === 'gateway') {
     return {
-      installDir: `${LINUX_INSTALL_DIR} · /etc/hyperfilelens/lensnode`,
+      installDir: `${LINUX_INSTALL_DIR} · /opt/hyperfilelens-agent/runtime/lensnode`,
       dataDir: `${LINUX_DATA_DIR} · Data Gateway workspace`,
       service: 'hyperfilelens-agent.service · LensNode container',
     }

@@ -194,7 +194,10 @@ func WriteEnrollmentEnv(cfg Config) error {
 	envPath := EnvFilePath()
 	dataDir := dataDirForAgent()
 	kopiaPath := bundledKopiaPath()
-	agentRoot := strings.TrimSpace(os.Getenv("HFL_AGENT_ROOT"))
+	agentRoot := strings.TrimSpace(cfg.AgentRoot)
+	if agentRoot == "" {
+		agentRoot = strings.TrimSpace(os.Getenv("HFL_AGENT_ROOT"))
+	}
 	if agentRoot == "" {
 		agentRoot = vfs.AgentRootForMode(cfg.InstallationMode)
 	}
@@ -240,7 +243,10 @@ func syncEnrollmentConsoleSettings(cfg Config) error {
 func syncEnrollmentConsoleSettingsAt(envPath string, cfg Config) error {
 	dataDir := dataDirForAgent()
 	kopiaPath := bundledKopiaPath()
-	agentRoot := strings.TrimSpace(os.Getenv("HFL_AGENT_ROOT"))
+	agentRoot := strings.TrimSpace(cfg.AgentRoot)
+	if agentRoot == "" {
+		agentRoot = strings.TrimSpace(os.Getenv("HFL_AGENT_ROOT"))
+	}
 	if agentRoot == "" {
 		agentRoot = vfs.AgentRootForMode(cfg.InstallationMode)
 	}

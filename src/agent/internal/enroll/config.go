@@ -24,6 +24,10 @@ type Config struct {
 	APIBase          string
 	WSSURL           string
 	InsecureTLS      bool
+	// AgentRoot is the installer-owned root used for Gateway sidecar state.
+	// It is persisted in agent.env so lifecycle commands can use the same
+	// paths as the running Agent instead of relying on a global /etc location.
+	AgentRoot string
 }
 
 // LoadConfigFromEnv reads enrollment settings injected by bootstrap stubs.
@@ -76,6 +80,10 @@ func LoadConfigFromEnv() (Config, error) {
 		APIBase:          strings.TrimRight(strings.TrimSpace(os.Getenv("HFL_API_BASE")), "/"),
 		WSSURL:           strings.TrimSpace(os.Getenv("HFL_WSS_URL")),
 		InsecureTLS:      os.Getenv("HFL_INSECURE_TLS") != "0",
+		AgentRoot:        strings.TrimSpace(os.Getenv("HFL_AGENT_ROOT")),
+	}
+	if cfg.AgentRoot != "" && (!filepath.IsAbs(cfg.AgentRoot) || filepath.Clean(cfg.AgentRoot) == string(filepath.Separator)) {
+		return Config{}, fmt.Errorf("HFL_AGENT_ROOT must be an absolute non-root path")
 	}
 	if cfg.OrgKey == "" || cfg.NodeToken == "" || cfg.APIBase == "" {
 		return Config{}, fmt.Errorf("HFL_ORG_KEY, HFL_NODE_TOKEN, and HFL_API_BASE are required")
@@ -134,7 +142,7 @@ func (c Config) AgentConfig() *model.AgentConfig {
 		NodeToken:        c.NodeToken,
 		InstallationID:   c.InstallationID,
 		InstallationMode: c.InstallationMode,
-		AgentRoot:        strings.TrimSpace(os.Getenv("HFL_AGENT_ROOT")),
+		AgentRoot:        c.AgentRoot,
 		RunAsUser:        c.RunAsUser,
 		RunAsHome:        c.RunAsHome,
 		NodeID:           ReadNodeID(envPath),
