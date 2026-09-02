@@ -53,6 +53,7 @@ export type NodeLifecycleInfo = {
   state: NodeLifecycleState
   phase?: NodeLifecyclePhase | null
   task_id?: string | null
+  source_version?: string | null
   target_version?: string | null
   current_version?: string | null
   started_at?: string | null

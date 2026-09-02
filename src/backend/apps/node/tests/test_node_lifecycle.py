@@ -14,8 +14,10 @@ from apps.node.exceptions import NodeLifecycleError
 from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.node_lifecycle import (
+    _source_version_from_task,
     _target_commit_from_task,
     _target_version_from_task,
+    _upgrade_lifecycle_payload,
     _upgrade_timeout_failure,
     _version_matches_target,
     advance_node_lifecycle,
@@ -493,6 +495,8 @@ class NodeLifecycleTests(TestCase):
     @patch("apps.node.services.internal.node_lifecycle.run_agent_task_async")
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
     def test_start_upgrade_dispatches_task(self, _routable, mock_dispatch, _validate):
+        self.node.metadata = {"inventory": {"agent_commit": "A" * 40}}
+        self.node.save(update_fields=["metadata", "updated_at"])
         task = NodeTask.objects.create(
             organization=self.org,
             node=self.node,
@@ -510,6 +514,61 @@ class NodeLifecycleTests(TestCase):
         result = start_node_upgrade(org=self.org, node=self.node, user=self.user)
         self.assertEqual(result["state"], "upgrading")
         self.assertEqual(result["target_version"], "1.2.0")
+        persisted_payload = mock_dispatch.call_args.kwargs["persisted_payload"]
+        self.assertEqual(persisted_payload["source_version"], "1.0.0")
+        self.assertEqual(persisted_payload["source_commit"], "a" * 40)
+        self.assertNotIn("source_version", mock_dispatch.call_args.kwargs["payload"])
+
+    def test_upgrade_lifecycle_keeps_source_version_after_node_updates(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.FAILED,
+            payload={
+                "source_version": "0.2.10",
+                "source_commit": "a" * 40,
+                "target_version": "0.2.11",
+                "target_commit": "b" * 40,
+            },
+            last_error="Post-upgrade build identity was missing.",
+            result={"failure_code": "POST_UPGRADE_BUILD_IDENTITY_MISSING"},
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+        self.node.version = "0.2.11"
+        self.node.save(update_fields=["version", "updated_at"])
+
+        lifecycle = _upgrade_lifecycle_payload(
+            org=self.org,
+            node=self.node,
+            task=task,
+        )
+
+        self.assertEqual(lifecycle["source_version"], "0.2.10")
+        self.assertEqual(lifecycle["current_version"], "0.2.11")
+        self.assertEqual(lifecycle["target_version"], "0.2.11")
+
+    def test_source_version_falls_back_for_legacy_task(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.FAILED,
+            payload={"target_version": "1.2.0"},
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        self.assertEqual(_source_version_from_task(task), "")
+        lifecycle = _upgrade_lifecycle_payload(
+            org=self.org,
+            node=self.node,
+            task=task,
+        )
+        self.assertEqual(lifecycle["source_version"], "1.0.0")
 
     @patch(
         "apps.node.services.internal.node_lifecycle.agent_release_commit",
