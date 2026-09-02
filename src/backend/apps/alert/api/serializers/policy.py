@@ -10,6 +10,9 @@ from apps.alert.models import AlertPolicy
 from apps.alert.selectors.interface import notification_channels_for_policy
 from apps.alert.services.internal.metadata_resources import selected_resource_options
 
+_DEFAULT_EVALUATION_INTERVAL_SECONDS = 60
+
+
 class AlertPolicySerializer(serializers.ModelSerializer):
     notification_channels = serializers.SerializerMethodField(read_only=True)
     monitoring_resources = serializers.SerializerMethodField(read_only=True)
@@ -98,6 +101,28 @@ class AlertPolicySerializer(serializers.ModelSerializer):
             if recovery_duration < 0:
                 raise serializers.ValidationError(
                     {"recovery_rule": "Recovery duration must be zero or greater."}
+                )
+
+        if alert_type == AlertType.METRIC:
+            # Legacy policies predate this field. Normalize the default on write
+            # so old and new evaluators share the same cadence.
+            if trigger_rule.get("evaluation_interval_seconds") in (None, ""):
+                trigger_rule = {
+                    **trigger_rule,
+                    "evaluation_interval_seconds": _DEFAULT_EVALUATION_INTERVAL_SECONDS,
+                }
+                data["trigger_rule"] = trigger_rule
+                attrs["trigger_rule"] = trigger_rule
+            try:
+                evaluation_interval = int(
+                    trigger_rule.get("evaluation_interval_seconds")
+                    or _DEFAULT_EVALUATION_INTERVAL_SECONDS
+                )
+            except (TypeError, ValueError):
+                evaluation_interval = 0
+            if evaluation_interval < _DEFAULT_EVALUATION_INTERVAL_SECONDS:
+                raise serializers.ValidationError(
+                    {"trigger_rule": "Evaluation interval must be at least 60 seconds."}
                 )
 
         if not resource_type:
