@@ -8,6 +8,9 @@ const t = (key: string, args?: Record<string, unknown>) => {
   if (key.endsWith('bytesCapacity')) return `${args?.done} / ${args?.total}`
   if (key.endsWith('bytesProcessedCapacity')) return `Processed: ${args?.done} / ${args?.total}`
   if (key.endsWith('bytesProcessed')) return `Processed: ${args?.size}`
+  if (key.endsWith('restoreBytesCapacity')) return `Data restored: ${args?.done} / ${args?.total}`
+  if (key.endsWith('restoreSpeed')) return `Restore speed: ${args?.speed}`
+  if (key.endsWith('restoreEtaHoursMinutes')) return `${args?.h}h ${args?.m}m remaining`
   if (key.endsWith('hashSpeed')) return `Scanning: ${args?.speed}`
   if (key.endsWith('processingSpeed')) return `Processing speed: ${args?.speed}`
   if (key.endsWith('uploadSpeed')) return `Upload: ${args?.speed}`
@@ -44,6 +47,16 @@ describe('transferCapacityText', () => {
       bytes_total_known: true,
       estimated_bytes: 4_130_621_356,
     })).toBe('Processed: 3.24 GB / 3.85 GB')
+  })
+
+  it('uses restore-specific wording for restore capacity', () => {
+    expect(transferCapacityText(t, {
+      label_key: 'protection.taskProgress.restore.transferring',
+      progress_schema_version: 2,
+      bytes_done: 1_210_000_000,
+      bytes_total: 24_500_000_000,
+      bytes_total_known: true,
+    })).toBe('Data restored: 1.13 GB / 22.8 GB')
   })
 
   it('shows processed bytes without inventing a total', () => {
@@ -88,6 +101,14 @@ describe('transferSpeedParts', () => {
       phase: 'transferring',
       speed_bps: 500_000,
     }, { allowUnclassifiedSpeed: true })).toEqual(['488 KB/s'])
+  })
+
+  it('labels restore speed explicitly', () => {
+    expect(transferSpeedParts(t, {
+      phase: 'transferring',
+      label_key: 'protection.taskProgress.restore.transferring',
+      upload_speed_bps: 5_340_000,
+    })).toEqual(['Restore speed: 5.09 MB/s'])
   })
 
   it('does not expose physical upload speed for backup progress', () => {

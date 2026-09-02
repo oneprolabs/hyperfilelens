@@ -62,6 +62,7 @@ const orchestrationLabel = computed(() => {
   }
   return transferProgressLabel(t, props.transferProgress)
 })
+const isRestore = computed(() => String(props.transferProgress?.label_key || '').includes('taskProgress.restore.'))
 const showSpinner = computed(() => {
   if (props.stopping) return false
   if (props.failed) return false
@@ -76,7 +77,7 @@ const metricParts = computed(() => {
 const metricLine = computed(() => metricParts.value.join(' · '))
 const overflowTitle = computed(() => {
   if (!metricParts.value.length) return ''
-  return transferMetricParts(t, props.transferProgress, { labelProcessingSpeed: true })
+  return transferMetricParts(t, props.transferProgress, { labelProcessingSpeed: true, labelRestoreMetrics: isRestore.value })
     .filter(Boolean)
     .join('\n')
 })
@@ -118,6 +119,7 @@ const overflowTitle = computed(() => {
       :show-text="false"
     />
     <p
+      v-if="!isRestore"
       class="task-progress-cell__metrics"
       :class="{ 'is-empty': !metricParts.length }"
     >

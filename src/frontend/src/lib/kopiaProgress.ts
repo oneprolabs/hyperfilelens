@@ -178,6 +178,7 @@ export function transferEtaText(t: TranslateFn, value: number | null | undefined
 
 export function transferCapacityText(t: TranslateFn, transfer?: TransferProgress | null): string | null {
   if (!transfer) return null
+  const isRestore = String(transfer.label_key || '').includes('taskProgress.restore.')
   const schemaV2 = Number(transfer.progress_schema_version || 1) >= 2
   const processedBytes = schemaV2
     ? Number(transfer.processed_bytes ?? transfer.bytes_done ?? 0)
@@ -185,6 +186,9 @@ export function transferCapacityText(t: TranslateFn, transfer?: TransferProgress
   const done = formatBytes(processedBytes)
   if (transfer.bytes_total_known && transfer.bytes_total != null) {
     const total = formatBytes(transfer.bytes_total)
+    if (isRestore) {
+      return t('protection.taskProgress.restoreBytesCapacity', { done, total })
+    }
     if (schemaV2) {
       return t('protection.taskProgress.bytesProcessedCapacity', { done, total })
     }
@@ -260,6 +264,7 @@ export function shouldShowTransferMetrics(transfer?: TransferProgress | null): b
 type TransferMetricOptions = {
   allowUnclassifiedSpeed?: boolean
   labelProcessingSpeed?: boolean
+  labelRestoreMetrics?: boolean
 }
 
 export function transferSpeedParts(
@@ -277,7 +282,9 @@ export function transferSpeedParts(
   }
   const uploadSpeed = formatSpeedBps(transfer.upload_speed_bps)
   if (uploadSpeed) {
-    return isRestore ? [uploadSpeed] : []
+    return isRestore
+      ? [t('protection.taskProgress.restoreSpeed', { speed: uploadSpeed })]
+      : []
   }
   if (Number(transfer.progress_schema_version || 1) >= 2) return []
   const hashSpeed = formatSpeedBps(transfer.hash_speed_bps)
@@ -302,9 +309,23 @@ export function transferMetricParts(
   const phase = String(transfer.phase || '').toLowerCase()
   const eta = phase === 'finalizing' || !transfer.bytes_total_known
     ? null
-    : transferEtaText(t, transfer.eta_seconds)
+    : options.labelRestoreMetrics
+      ? restoreTransferEtaText(t, transfer.eta_seconds)
+      : transferEtaText(t, transfer.eta_seconds)
   if (eta) parts.push(eta)
   return parts
+}
+
+function restoreTransferEtaText(t: TranslateFn, value: number | null | undefined): string | null {
+  const seconds = Number(value || 0)
+  if (!Number.isFinite(seconds) || seconds <= 0) return null
+  if (seconds < 60) return t('protection.taskProgress.restoreEtaSeconds', { n: seconds })
+  if (seconds < 3600) return t('protection.taskProgress.restoreEtaMinutes', { n: Math.ceil(seconds / 60) })
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.ceil((seconds % 3600) / 60)
+  return minutes > 0
+    ? t('protection.taskProgress.restoreEtaHoursMinutes', { h: hours, m: minutes })
+    : t('protection.taskProgress.restoreEtaHours', { n: hours })
 }
 
 export function isTransferProgress(value: unknown): value is TransferProgress {

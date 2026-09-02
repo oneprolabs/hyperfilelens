@@ -21,6 +21,10 @@ const i18n = createI18n({
           bytesProcessedCapacity: 'Processed: {done} / {total}',
           bytesCapacityEst: 'Incremental transfer: {done} / est. {total}',
           bytesCapacityRef: 'Transferred: {done} / source data: {total}',
+          restoreBytesCapacity: 'Data restored: {done} / {total}',
+          restoreSpeed: 'Restore speed: {speed}',
+          restoreEtaHoursMinutes: '{h}h {m}m remaining',
+          restoreEtaMinutes: '{n} min remaining',
           etaMinutes: '{n} min left',
           hashSpeed: 'Scanning: {speed}',
           processingSpeed: 'Processing speed: {speed}',
@@ -136,6 +140,9 @@ describe('TaskProgressCell', () => {
     expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Restoring')
     expect(wrapper.get('.task-progress-cell__percent').text()).toBe('10.20%')
     expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('10.2')
+    expect(wrapper.find('.task-progress-cell__metrics').exists()).toBe(false)
+    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toContain('Data restored:')
+    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toContain('Restore speed:')
   })
 
   it('labels hash throughput and exposes only the metric tooltip', () => {

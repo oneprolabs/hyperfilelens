@@ -136,6 +136,7 @@ export function restoreRecordRuntimeMetricParts(
   }
   parts.push(...transferMetricParts(t, transfer as TransferProgress, {
     allowUnclassifiedSpeed: true,
+    labelRestoreMetrics: true,
   }))
   return parts
 }
