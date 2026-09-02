@@ -18,6 +18,7 @@ LOCAL_PLATFORM_AGENT_INSTALL_DIR="${tmp}/agent-install"
 LOCAL_PLATFORM_AGENT_DATA_DIR="${tmp}/agent-data"
 LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR="${tmp}/legacy-agent-install"
 LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR="${tmp}/legacy-agent-data"
+LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE="${tmp}/hyperfilelens-agent.service"
 LOCAL_PLATFORM_LENSNODE_ENV_FILE="${tmp}/lensnode.env"
 LOCAL_PLATFORM_LEGACY_LENSNODE_ENV_FILE="${tmp}/legacy-lensnode.env"
 LOCAL_PLATFORM_LENSNODE_COMPOSE_DIR="${tmp}/lensnode-compose"
@@ -133,6 +134,93 @@ compose_in_root() {
 ENROLLMENT_ORG=__platform_lens__
 export TEST_DESIRED_VERSION=main-1111111
 printf '%s\n' "${TEST_DESIRED_VERSION}" >"${ROOT}/VERSION"
+
+# Fresh installs must reject conflicting Agents before any Docker preparation,
+# while preserving installer-managed platform Gateways for the final ownership
+# check performed by ensure_local_platform_gateway.
+AUTO_DEPLOY=true
+agent_installer_fixture="${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh"
+mv "${agent_installer_fixture}" "${tmp}/agent-install.sh"
+preflight_local_platform_gateway_agent_conflict
+
+printf '0.1.0\n' >"${LOCAL_PLATFORM_AGENT_DATA_DIR}/INSTALLED_VERSION"
+if (preflight_local_platform_gateway_agent_conflict) 2>/dev/null; then
+	printf 'ERROR: preflight accepted Agent artifacts without trusted ownership metadata\n' >&2
+	exit 1
+fi
+rm -f "${LOCAL_PLATFORM_AGENT_DATA_DIR}/INSTALLED_VERSION"
+
+touch "${LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE}"
+if (preflight_local_platform_gateway_agent_conflict) 2>/dev/null; then
+	printf 'ERROR: preflight accepted an existing Agent systemd unit\n' >&2
+	exit 1
+fi
+rm -f "${LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE}"
+
+canonical_env="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
+mkdir -p "$(dirname "${canonical_env}")"
+cat >"${canonical_env}" <<'EOF'
+HFL_ORG_KEY=tenant-org
+HFL_NODE_ROLE=agent
+HFL_NODE_ID=17
+EOF
+conflict_before="$(sha256sum "${canonical_env}")"
+conflict_output_file="${tmp}/preflight-conflict-output"
+if (preflight_local_platform_gateway_agent_conflict) >"${conflict_output_file}" 2>&1; then
+	printf 'ERROR: preflight accepted a conflicting Agent installation\n' >&2
+	exit 1
+fi
+conflict_output="$(<"${conflict_output_file}")"
+[[ "${conflict_output}" == "FAIL: Cannot install the Platform Data Gateway because a HyperFileLens Agent is already installed on this host. Uninstall the existing Agent and run the installer again, or use another host without a HyperFileLens Agent. No changes were made to the existing Agent, Docker services, or configuration" ]]
+[[ "$(sha256sum "${canonical_env}")" == "${conflict_before}" ]]
+
+AUTO_DEPLOY=false
+preflight_local_platform_gateway_agent_conflict
+AUTO_DEPLOY=true
+
+cat >"${canonical_env}" <<'EOF'
+HFL_ORG_KEY=__platform_lens__
+HFL_NODE_ROLE=gateway
+HFL_NODE_ID=99
+HFL_NODE_TOKEN=fixture-token
+EOF
+preflight_local_platform_gateway_agent_conflict
+rm -f "${canonical_env}"
+
+mkdir -p "${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}"
+cat >"${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}/agent.env" <<'EOF'
+HFL_ORG_KEY=legacy-tenant
+HFL_NODE_ROLE=gateway
+EOF
+if (preflight_local_platform_gateway_agent_conflict) 2>/dev/null; then
+	printf 'ERROR: preflight accepted a conflicting legacy Agent installation\n' >&2
+	exit 1
+fi
+rm -f "${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}/agent.env"
+mv "${tmp}/agent-install.sh" "${agent_installer_fixture}"
+
+python3 - "${installer}" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+install = text.split("cmd_install() {", 1)[1].split("cmd_platform_gateway() {", 1)[0]
+preflight = install.index("preflight_local_platform_gateway_agent_conflict")
+for operation in (
+    "init_install_root",
+    "preflight_package_layout",
+    "stack_containers_present",
+    "ensure_host_docker",
+    "ensure_bridge_network",
+    "load_images_from_manifest",
+    "install_bundled_sourcelens",
+    "start_hfl_stack",
+):
+    if preflight >= install.index(operation):
+        raise SystemExit(f"Agent conflict preflight runs after {operation}")
+if preflight >= install.index("ensure_local_platform_gateway"):
+    raise SystemExit("Agent conflict preflight replaced the final Gateway ownership check")
+PY
 
 # Enabling auto-deploy on an existing control plane must not spend the upgrade
 # recovery window waiting for a Gateway that has never been installed.

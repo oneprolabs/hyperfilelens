@@ -62,6 +62,7 @@ LOCAL_PLATFORM_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent/bin"
 LOCAL_PLATFORM_AGENT_DATA_DIR="/opt/hyperfilelens-agent"
 LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR="/opt/hyperfilelens-agent"
 LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR="/var/lib/hyperfilelens-agent"
+LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE="/etc/systemd/system/hyperfilelens-agent.service"
 LOCAL_PLATFORM_LENSNODE_ENV_FILE="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/lensnode.env"
 LOCAL_PLATFORM_LEGACY_LENSNODE_ENV_FILE="/etc/hyperfilelens/lensnode.env"
 LOCAL_PLATFORM_LENSNODE_COMPOSE_DIR="${LOCAL_PLATFORM_AGENT_DATA_DIR}/runtime/lensnode"
@@ -4408,6 +4409,30 @@ local_platform_gateway_agent_is_managed() {
 		&& "$(read_agent_env_value HFL_NODE_ROLE)" == "gateway" ]]
 }
 
+local_agent_installation_detected() {
+	local canonical_env="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
+	local legacy_env="${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}/agent.env"
+	[[ -e "${canonical_env}" || -L "${canonical_env}" \
+		|| -e "${legacy_env}" || -L "${legacy_env}" \
+		|| -e "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data/agent.db" \
+		|| -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data/agent.db" \
+		|| -e "${LOCAL_PLATFORM_AGENT_DATA_DIR}/INSTALLED_VERSION" \
+		|| -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}/INSTALLED_VERSION" \
+		|| -e "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh" \
+		|| -L "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh" \
+		|| -e "${LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR}/install.sh" \
+		|| -L "${LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR}/install.sh" \
+		|| -e "${LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE}" \
+		|| -L "${LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE}" ]]
+}
+
+preflight_local_platform_gateway_agent_conflict() {
+	platform_gateway_auto_deploy_enabled || return 0
+	local_agent_installation_detected || return 0
+	local_platform_gateway_agent_is_managed && return 0
+	die "Cannot install the Platform Data Gateway because a HyperFileLens Agent is already installed on this host. Uninstall the existing Agent and run the installer again, or use another host without a HyperFileLens Agent. No changes were made to the existing Agent, Docker services, or configuration"
+}
+
 uninstall_managed_local_platform_gateway() {
 	local installer
 	installer="$(local_platform_gateway_agent_installer)"
@@ -4835,6 +4860,11 @@ cmd_install() {
 	if [[ "$(read_channel_from_dir "${source_root}")" == "main" && "${allow_main_build}" -ne 1 ]]; then
 		die "main channel packages require --allow-main-build"
 	fi
+	# Reject a conflicting host Agent before copying or validating the release
+	# package and before any Docker runtime or container operation. An existing
+	# destination .env remains authoritative when auto-deploy was disabled.
+	ROOT="${INSTALL_DIR}"
+	preflight_local_platform_gateway_agent_conflict
 	if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
 		print_section "Target"
 		print_value "Version" "${version}"
