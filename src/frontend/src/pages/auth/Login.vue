@@ -50,7 +50,6 @@ const {
   isTurnstilePending,
   isTurnstileReady,
   isTurnstileBlocked,
-  isTurnstileConfigError,
   authTurnstileMountGeneration,
   loadTurnstileConfig,
   retryTurnstileConfig,
@@ -305,10 +304,8 @@ function validateForm() {
   if (isTurnstilePending.value) {
     turnstileError.value = t('login.captchaLoading')
     hasError = true
-  } else if (isTurnstileBlocked.value || isTurnstileConfigError.value) {
-    turnstileError.value = isTurnstileConfigError.value
-      ? t('errors.generic.requestFailed')
-      : t('login.captchaUnavailable')
+  } else if (isTurnstileBlocked.value) {
+    turnstileError.value = t('login.captchaUnavailable')
     hasError = true
   } else if (isTurnstileReady.value) {
     if (!turnstileToken.value) {
@@ -672,7 +669,7 @@ const canSubmitLogin = computed(() => {
   if (submitLoading.value) return false
   if (!credentialsPresent.value) return false
   if (isTurnstilePending.value) return false
-  if (isTurnstileBlocked.value || isTurnstileConfigError.value) return false
+  if (isTurnstileBlocked.value) return false
   if (isTurnstileReady.value) return Boolean(turnstileToken.value)
   return true
 })
@@ -942,16 +939,12 @@ onMounted(async () => {
               v-if="authMode === 'password'"
               :key="authTurnstileMountGeneration"
               ref="turnstileFieldRef"
-              :pending="isTurnstilePending"
               :ready="isTurnstileReady"
               :blocked="isTurnstileBlocked"
-              :config-error="isTurnstileConfigError"
               :verified="Boolean(turnstileToken)"
               :site-key="turnstileSiteKey"
               action="login"
-              :loading-message="t('login.captchaLoading')"
               :blocked-message="t('login.captchaUnavailable')"
-              :config-error-message="t('errors.generic.requestFailed')"
               :retry-label="t('login.captchaRetry')"
               :manual-retry-label="t('login.captchaManualRetry')"
               :error-code-label="turnstileErrorCode ? t('login.captchaReferenceCode', { code: turnstileErrorCode }) : ''"

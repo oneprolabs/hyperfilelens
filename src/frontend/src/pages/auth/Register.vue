@@ -25,7 +25,6 @@ const {
   isTurnstilePending,
   isTurnstileReady,
   isTurnstileBlocked,
-  isTurnstileConfigError,
   authTurnstileMountGeneration,
   loadTurnstileConfig,
   retryTurnstileConfig,
@@ -279,10 +278,8 @@ function validateSendCodeForm() {
   if (isTurnstilePending.value) {
     turnstileError.value = t('login.captchaLoading')
     hasError = true
-  } else if (isTurnstileBlocked.value || isTurnstileConfigError.value) {
-    turnstileError.value = isTurnstileConfigError.value
-      ? t('errors.generic.requestFailed')
-      : t('login.captchaUnavailable')
+  } else if (isTurnstileBlocked.value) {
+    turnstileError.value = t('login.captchaUnavailable')
     hasError = true
   } else if (isTurnstileReady.value) {
     if (!turnstileToken.value) {
@@ -479,16 +476,12 @@ onUnmounted(() => {
         <AuthTurnstileField
           :key="authTurnstileMountGeneration"
           ref="turnstileFieldRef"
-          :pending="isTurnstilePending"
           :ready="isTurnstileReady"
           :blocked="isTurnstileBlocked"
-          :config-error="isTurnstileConfigError"
           :verified="Boolean(turnstileToken)"
           :site-key="turnstileSiteKey"
           action="register_send_code"
-          :loading-message="t('login.captchaLoading')"
           :blocked-message="t('login.captchaUnavailable')"
-          :config-error-message="t('errors.generic.requestFailed')"
           :retry-label="t('login.captchaRetry')"
           :manual-retry-label="t('login.captchaManualRetry')"
           :error-code-label="turnstileErrorCode ? t('login.captchaReferenceCode', { code: turnstileErrorCode }) : ''"

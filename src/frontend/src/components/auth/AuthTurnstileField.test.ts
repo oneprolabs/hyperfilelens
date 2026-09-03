@@ -8,16 +8,12 @@ import { describe, expect, it } from 'vitest'
 import AuthTurnstileField from './AuthTurnstileField.vue'
 
 const baseProps = {
-  pending: false,
   ready: false,
   blocked: false,
-  configError: false,
   verified: false,
   siteKey: 'test-site-key',
   action: 'login',
-  loadingMessage: 'Loading Cloudflare human verification...',
   blockedMessage: 'Cloudflare verification unavailable.',
-  configErrorMessage: 'Something went wrong. Please try again.',
   retryLabel: 'Retry',
   manualRetryLabel: 'Verification taking longer than expected? Reload',
   errorCodeLabel: '',
@@ -36,12 +32,11 @@ function mountField(overrides: Partial<typeof baseProps> & { errorMessage?: stri
 }
 
 describe('AuthTurnstileField display states', () => {
-  it('renders the configuration loading state without mounting the widget', () => {
-    const wrapper = mountField({ pending: true })
+  it('renders nothing until Turnstile is known to be enabled', () => {
+    const wrapper = mountField()
 
-    expect(wrapper.find('.auth-turnstile-field__loading').exists()).toBe(true)
+    expect(wrapper.find('.auth-turnstile-field').exists()).toBe(false)
     expect(wrapper.find('.auth-turnstile-field__widget').exists()).toBe(false)
-    expect(wrapper.text()).toContain(baseProps.loadingMessage)
   })
 
   it('keeps verification errors visible below a ready Cloudflare widget', () => {
@@ -107,17 +102,6 @@ describe('AuthTurnstileField display states', () => {
     expect(wrapper.emitted('retry')).toHaveLength(1)
   })
 
-  it('shows a configuration error only once and exposes retry', () => {
-    const wrapper = mountField({
-      configError: true,
-      errorMessage: baseProps.configErrorMessage,
-    })
-
-    expect(wrapper.find('.auth-turnstile-field__blocked').exists()).toBe(true)
-    expect(wrapper.find('.auth-turnstile-field__error').exists()).toBe(false)
-    expect(wrapper.text().match(/Something went wrong\. Please try again\./g)).toHaveLength(1)
-  })
-
   it('assigns exactly one frame owner to every visual state', () => {
     const fieldSource = readFileSync(
       resolve(process.cwd(), 'src/components/auth/AuthTurnstileField.vue'),
@@ -129,7 +113,7 @@ describe('AuthTurnstileField display states', () => {
     )
 
     expect(fieldSource).toMatch(
-      /\.auth-turnstile-field__loading,\s*\.auth-turnstile-field__blocked\s*{[^}]*background:\s*#313131;[^}]*border:\s*1px solid #3a3b40;[^}]*border-radius:[^}]*overflow:\s*hidden;/s,
+      /\.auth-turnstile-field__blocked\s*{[^}]*background:\s*#313131;[^}]*border:\s*1px solid #3a3b40;[^}]*border-radius:[^}]*overflow:\s*hidden;/s,
     )
     expect(fieldSource).toMatch(
       /\.auth-turnstile-field__widget\s*{[^}]*background:\s*transparent;[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*overflow:\s*visible;/s,
@@ -145,9 +129,6 @@ describe('AuthTurnstileField display states', () => {
     )
     expect(fieldSource).toMatch(
       /\.auth-turnstile-field__control\s*{[^}]*min-height:\s*65px;/s,
-    )
-    expect(fieldSource).toMatch(
-      /\.auth-turnstile-field__spinner\s*{[^}]*width:\s*16px;[^}]*height:\s*16px;/s,
     )
     expect(fieldSource).toMatch(
       /\.auth-turnstile-field__manual-retry\s*{[^}]*width:\s*100%;[^}]*background:\s*color-mix\(in srgb, var\(--color-primary\) 6%, transparent\);[^}]*border:\s*1px solid color-mix\(in srgb, var\(--color-primary\) 22%, transparent\);/s,

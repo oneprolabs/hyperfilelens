@@ -5,16 +5,12 @@ import { KeyRound, RotateCcw } from 'lucide-vue-next'
 import TurnstileWidget from '../TurnstileWidget.vue'
 
 defineProps<{
-  pending: boolean
   ready: boolean
   blocked: boolean
-  configError?: boolean
   verified: boolean
   siteKey: string
   action: string
-  loadingMessage: string
   blockedMessage: string
-  configErrorMessage?: string
   retryLabel: string
   manualRetryLabel: string
   errorCodeLabel?: string
@@ -76,23 +72,11 @@ defineExpose({ reset })
 
 <template>
   <div
-    v-if="pending || ready || blocked || configError"
+    v-if="ready || blocked"
     class="auth-turnstile-field"
   >
     <div
-      v-if="pending"
-      class="auth-turnstile-field__control auth-turnstile-field__loading"
-      role="status"
-    >
-      <span
-        class="auth-turnstile-field__spinner"
-        aria-hidden="true"
-      />
-      <span>{{ loadingMessage }}</span>
-    </div>
-
-    <div
-      v-else-if="ready && siteKey"
+      v-if="ready && siteKey"
       class="auth-turnstile-field__control auth-turnstile-field__widget"
     >
       <div class="auth-turnstile-field__viewport">
@@ -128,7 +112,7 @@ defineExpose({ reset })
     </button>
 
     <div
-      v-if="blocked || configError"
+      v-if="blocked"
       class="auth-turnstile-field__control auth-turnstile-field__blocked"
       role="alert"
     >
@@ -137,7 +121,7 @@ defineExpose({ reset })
         aria-hidden="true"
       />
       <span class="auth-turnstile-field__blocked-text">
-        <span>{{ configError ? (configErrorMessage || blockedMessage) : blockedMessage }}</span>
+        <span>{{ blockedMessage }}</span>
         <span
           v-if="errorCodeLabel"
           class="auth-turnstile-field__reference-code"
@@ -155,7 +139,7 @@ defineExpose({ reset })
     </div>
 
     <p
-      v-if="errorMessage && !blocked && !configError"
+      v-if="errorMessage && !blocked"
       class="auth-turnstile-field__error"
       role="alert"
     >
@@ -179,7 +163,6 @@ defineExpose({ reset })
   align-items: center;
 }
 
-.auth-turnstile-field__loading,
 .auth-turnstile-field__blocked {
   gap: 10px;
   padding: 0 14px;
@@ -220,16 +203,6 @@ defineExpose({ reset })
 .auth-turnstile-field__viewport :deep(.turnstile-widget__loading) {
   border: 0;
   border-radius: 0;
-}
-
-.auth-turnstile-field__spinner {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  border: 2px solid rgba(255, 255, 255, 0.18);
-  border-top-color: var(--color-primary);
-  border-radius: 999px;
-  animation: auth-turnstile-spin 0.8s linear infinite;
 }
 
 .auth-turnstile-field__blocked-text {
@@ -317,19 +290,6 @@ defineExpose({ reset })
   color: var(--color-error);
   font-size: 12px;
   line-height: 1.4;
-}
-
-@keyframes auth-turnstile-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .auth-turnstile-field__spinner {
-    animation: none;
-  }
-
 }
 
 @media (max-width: 479.98px) {
