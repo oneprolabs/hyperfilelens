@@ -206,6 +206,7 @@ NODE_ID=""
 DATA_DIR=""
 NODE_ROLE="agent"
 NO_START=0
+KEEP_DATA=0
 PURGE_ALL=0
 KEEP_INSTALLATION_IDENTITY=0
 AGENT_ONLY=0
@@ -257,7 +258,7 @@ Commands:
   status        Show installed version, paths, and service state
   upgrade       In-place upgrade from another release package directory or .tar.gz
   reconcile-legacy  Complete a pending legacy-layout cleanup after an upgrade
-  uninstall     Stop service and remove install dir (keeps data dir by default)
+  uninstall     Stop service and remove the complete Agent installation
 
 Options:
   install:
@@ -277,8 +278,7 @@ Options:
     --yes               Non-interactive: continue when target version equals installed version
 
   uninstall:
-	--purge-all                   Remove Agent Root and config/agent.env (unmounts NAS shares first)
-    --keep-installation-identity  Keep agent.env installation identity (incomplete-install rollback)
+    --keep-data                  Preserve local configuration, data, and logs
 
 Install paths:
   ${INSTALL_DIR}  Binaries and installer scripts
@@ -291,7 +291,8 @@ Examples:
   ${command_prefix}./install.sh start
   ${command_prefix}./install.sh status
   ${command_prefix}./install.sh upgrade --from /path/to/hfl-agent-0.1.0.tar.gz
-  ${command_prefix}./install.sh uninstall --purge-all
+  ${command_prefix}./install.sh uninstall
+  ${command_prefix}./install.sh uninstall --keep-data
 USAGE
 }
 
@@ -367,8 +368,9 @@ parse_reconcile_flags() {
 parse_uninstall_flags() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
+			--keep-data) KEEP_DATA=1; shift ;;
 			--purge-all) PURGE_ALL=1; shift ;;
-			--keep-installation-identity) KEEP_INSTALLATION_IDENTITY=1; shift ;;
+			--keep-installation-identity) KEEP_INSTALLATION_IDENTITY=1; KEEP_DATA=1; shift ;;
 			--quiet-footer) QUIET_FOOTER=1; shift ;;
 			-h|--help) usage; exit 0 ;;
 			*)
@@ -378,8 +380,8 @@ parse_uninstall_flags() {
 				;;
 		esac
 	done
-	if [[ "${PURGE_ALL}" -eq 1 && "${KEEP_INSTALLATION_IDENTITY}" -eq 1 ]]; then
-		echo "ERROR: --purge-all and --keep-installation-identity are mutually exclusive" >&2
+	if [[ "${PURGE_ALL}" -eq 1 && "${KEEP_DATA}" -eq 1 ]]; then
+		echo "ERROR: --purge-all cannot be combined with --keep-data or --keep-installation-identity" >&2
 		exit 2
 	fi
 }
@@ -2996,8 +2998,8 @@ retire_installation_identity() {
 	local data_dir="$1" agent_bin="${INSTALL_DIR}/hfl-agent"
 	# Incomplete-install rollback keeps the identity so retries reuse the console record.
 	[[ "${KEEP_INSTALLATION_IDENTITY}" -eq 0 ]] || return 0
-	# --purge-all deletes agent.env entirely, so retirement is unnecessary.
-	[[ "${PURGE_ALL}" -eq 0 ]] || return 0
+	# Complete removal deletes agent.env entirely, so retirement is unnecessary.
+	[[ "${KEEP_DATA}" -eq 1 ]] || return 0
 	[[ -x "${agent_bin}" ]] \
 		|| log_fail "Cannot retire the installation identity because ${agent_bin} is unavailable." 1
 	log_step "Retiring the local installation identity."
@@ -3017,7 +3019,7 @@ uninstall_gateway_sidecar_if_needed() {
 		|| log_fail "Data Gateway AI engine uninstall is supported on Linux only." 2
 	[[ -x "${GATEWAY_LIFECYCLE_SCRIPT}" ]] \
 		|| log_fail "Missing ${GATEWAY_LIFECYCLE_SCRIPT}; upgrade the Agent before uninstalling this Data Gateway." 2
-	[[ "${PURGE_ALL}" -eq 0 ]] || purge_args+=(--purge-all)
+	[[ "${KEEP_DATA}" -eq 1 ]] || purge_args+=(--purge-all)
 	log_step "Removing the Data Gateway AI engine before the Agent."
 	HFL_AGENT_ENV_FILE="${env_file}" \
 		bash "${GATEWAY_LIFECYCLE_SCRIPT}" uninstall-sidecar "${purge_args[@]}"
@@ -3047,10 +3049,10 @@ gateway_workspace_mounts_in_agent_root() {
 assert_gateway_workspace_purge_safe() {
 	local agent_root="$1" mounts
 	mounts="$(gateway_workspace_mounts_in_agent_root "${agent_root}")" \
-		|| log_fail "Could not verify Gateway workspace mounts; refusing purge-all." 2
+		|| log_fail "Could not verify Gateway workspace mounts; refusing complete removal." 2
 	mounts="$(printf '%s\n' "${mounts}" | sort -u)"
 	[[ -z "${mounts}" ]] || log_fail \
-		"Refusing purge-all while Gateway workspace storage is mounted (${mounts//$'\n'/, }); unmount it manually and retry." 2
+		"Refusing complete removal while Gateway workspace storage is mounted (${mounts//$'\n'/, }); unmount it manually and retry." 2
 }
 
 cmd_uninstall() {
@@ -3060,9 +3062,9 @@ cmd_uninstall() {
 	local resolved_data env_file
 	resolved_data="$(resolve_data_dir)"
 	env_file="$(agent_env_file "${resolved_data}")"
-	if [[ "${PURGE_ALL}" -eq 1 ]] \
+	if [[ "${KEEP_DATA}" -eq 0 ]] \
 		&& ! data_dir_allowed_for_removal "${resolved_data}"; then
-		log_fail "Refusing purge-all for unexpected data directory ${resolved_data}." 2
+		log_fail "Refusing complete removal for unexpected data directory ${resolved_data}." 2
 	fi
 	acquire_lifecycle_lock "${resolved_data}" "uninstall"
 	trap 'release_lifecycle_lock' EXIT
@@ -3075,9 +3077,9 @@ cmd_uninstall() {
 	node_id="$(read_env_value "${env_file}" "HFL_NODE_ID" || true)"
 	installed_version="unknown"
 	[[ -f "${INSTALLED_VERSION_FILE}" ]] && installed_version="$(tr -d ' \t\r\n' <"${INSTALLED_VERSION_FILE}")"
-	data_policy="preserve"
-	[[ "${PURGE_ALL}" -eq 0 ]] || data_policy="remove"
-	if [[ "${PURGE_ALL}" -eq 1 && "$(uname -s)" == "Linux" ]]; then
+	data_policy="remove"
+	[[ "${KEEP_DATA}" -eq 0 ]] || data_policy="preserve"
+	if [[ "${KEEP_DATA}" -eq 0 && "$(uname -s)" == "Linux" ]]; then
 		assert_gateway_workspace_purge_safe "${resolved_data}"
 	fi
 	hfl_print_banner "$(hfl_role_display_name "${installed_role}" "${gateway_scope}")" "Uninstaller"
@@ -3090,7 +3092,7 @@ cmd_uninstall() {
 	hfl_print_value "Data path" "${resolved_data}"
 	hfl_print_value "Data removal" "${data_policy}"
 	hfl_print_section "Preflight checks"
-	if [[ "${PURGE_ALL}" -eq 0 && "${KEEP_INSTALLATION_IDENTITY}" -eq 0 \
+	if [[ "${KEEP_DATA}" -eq 1 && "${KEEP_INSTALLATION_IDENTITY}" -eq 0 \
 		&& ! -x "${INSTALL_DIR}/hfl-agent" ]]; then
 		log_fail "Cannot retire the installation identity because ${INSTALL_DIR}/hfl-agent is unavailable." 1
 	fi
@@ -3125,21 +3127,21 @@ cmd_uninstall() {
 			log_skip "Install directory ${INSTALL_DIR} was not removed (not empty or not present)."
 		fi
 	fi
-	if [[ $PURGE_ALL -eq 1 && -f "$env_file" ]]; then
+	if [[ $KEEP_DATA -eq 0 && -f "$env_file" ]]; then
 		rm -f "$env_file"
 		log_ok "Removed ${env_file}."
 	elif [[ -f "$env_file" ]]; then
 		if [[ "${KEEP_INSTALLATION_IDENTITY}" -eq 1 ]]; then
 			log_skip "${env_file} and installation identity were preserved for install retry."
 		else
-			log_skip "${env_file} was preserved without installation identity (use --purge-all to remove it)."
+			log_skip "${env_file} was preserved without installation identity."
 		fi
 	else
 		log_skip "${env_file} was not present."
 	fi
 
-	if [[ $PURGE_ALL -eq 0 ]]; then
-		log_skip "Data directory ${resolved_data} was preserved (use --purge-all to remove it)."
+	if [[ $KEEP_DATA -eq 1 ]]; then
+		log_skip "Data directory ${resolved_data} was preserved by --keep-data."
 	elif data_dir_allowed_for_removal "$resolved_data" && [[ -e "$resolved_data" ]]; then
 		if rm -rf "$resolved_data"; then
 			[[ ! -e "$resolved_data" ]] \
@@ -3161,9 +3163,9 @@ cmd_uninstall() {
 	hfl_print_value "Node ID" "${node_id}"
 	hfl_print_value "Service" "removed"
 	hfl_print_value "Install path" "removed"
-	hfl_print_value "Data path" "$([[ "${PURGE_ALL}" -eq 1 ]] && echo removed || echo preserved)"
+	hfl_print_value "Data path" "$([[ "${KEEP_DATA}" -eq 0 ]] && echo removed || echo preserved)"
 	hfl_print_value "Console record" "not changed by local uninstall"
-	if [[ "${PURGE_ALL}" -eq 0 ]]; then
+	if [[ "${KEEP_DATA}" -eq 1 ]]; then
 		hfl_print_value "Log file" "$(agent_logs_dir "${resolved_data}")/uninstall.log"
 	fi
 	finish_uninstall_log 0

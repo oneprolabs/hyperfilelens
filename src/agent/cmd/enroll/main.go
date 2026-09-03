@@ -59,9 +59,13 @@ func run() int {
 		}
 	case "gateway-uninstall":
 		stabilizeInstallWorkingDirectory()
-		purgeAll := !hasFlag(os.Args[2:], "--keep-data")
+		keepData := hasFlag(os.Args[2:], "--keep-data")
+		if keepData && hasFlag(os.Args[2:], "--purge-all") {
+			fmt.Fprintln(os.Stderr, "--keep-data and --purge-all are mutually exclusive")
+			return 2
+		}
 		if err := enroll.WithInstallLock(ctx, func() error {
-			return enroll.RunGatewayUninstall(ctx, purgeAll)
+			return enroll.RunGatewayUninstall(ctx, keepData)
 		}); err != nil {
 			enroll.PrintCommandFailureFor("uninstall", err)
 			return 1
@@ -99,10 +103,11 @@ Usage:
   hfl-enroll install --upgrade            Upgrade an existing Agent to the console release
   hfl-enroll install --repair             Repair configuration and restart an existing Agent
   hfl-enroll install --reinstall          Reinstall the console release over an existing Agent
-  hfl-enroll install --uninstall          Uninstall the Agent and preserve its data
+  hfl-enroll install --uninstall [--keep-data]
+                                           Uninstall the Agent (default: remove managed data)
   hfl-enroll gateway-install [--yes|-y]   Public or Private Data Gateway (Linux)
   hfl-enroll gateway-upgrade [--from PATH] Upgrade Agent and AI engine (Linux)
-  hfl-enroll gateway-uninstall [--keep-data] Remove AI engine and Agent (default: purge-all)
+  hfl-enroll gateway-uninstall [--keep-data] Remove AI engine and Agent
   hfl-enroll register [--yes|-y]          HTTP heartbeat registration only (agent installed)
   hfl-enroll status                       Show node_id and service state
   hfl-enroll help                         Show this help
@@ -113,7 +118,7 @@ Flags:
   --no-color     Disable ANSI colors
   --no-banner    Hide the HyperFileLens banner
   --verbose      Include detailed diagnostic output
-  --purge-all    With --uninstall, also remove managed Agent data
+  --keep-data    Preserve managed data during uninstall
 
 Environment (set by bootstrap stub from console):
   HFL_ORG_KEY, HFL_NODE_ROLE, HFL_NODE_TOKEN, HFL_API_BASE, HFL_WSS_URL

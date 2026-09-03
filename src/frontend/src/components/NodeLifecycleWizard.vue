@@ -92,7 +92,7 @@ const releaseVersion = ref('')
 const upgradeError = ref('')
 const copied = ref(false)
 const installGenerated = ref(false)
-const purgeAll = ref(false)
+const keepData = ref(false)
 const serviceAction = ref<'status' | 'start' | 'stop' | 'restart'>(props.initialServiceAction)
 const defaultInstallationModeForOs = (os: EnrollmentOs): NodeInstallationMode => (
   os === 'linux' ? 'user_continuous' : 'user'
@@ -445,7 +445,7 @@ async function refreshUpgradeCommand(gen: number) {
 function refreshStaticCommands() {
   uninstallCommand.value = buildLocalUninstallCommand(
     props.os,
-    purgeAll.value,
+    keepData.value,
     props.role,
     effectiveInstallationMode.value,
   )
@@ -512,7 +512,7 @@ watch(activeTab, (tab) => {
   else if (tab === 'upgrade') void refreshUpgradeCommand(gen)
 })
 
-watch([purgeAll, serviceAction, () => props.os], () => refreshStaticCommands())
+watch([keepData, serviceAction, () => props.os], () => refreshStaticCommands())
 
 watch(
   () => props.os,
@@ -1103,8 +1103,8 @@ defineExpose({ clearInstallCommand })
                   v-if="activeTab === 'uninstall'"
                   class="node-lifecycle-wizard__options"
                 >
-                  <ElCheckbox v-model="purgeAll">
-                    {{ t('nodeLifecycle.purgeAll') }}
+                  <ElCheckbox v-model="keepData">
+                    {{ t('nodeLifecycle.keepData') }}
                   </ElCheckbox>
                 </div>
                 <div

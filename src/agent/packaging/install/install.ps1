@@ -10,7 +10,7 @@
 .EXAMPLE
   install.cmd -WssUrl 'wss://...' -NodeToken '...'
   install.cmd upgrade -From C:\path\to\package.zip
-  install.cmd uninstall -PurgeAll
+  install.cmd uninstall
   install.cmd status
 #>
 param(
@@ -29,6 +29,7 @@ param(
   [string]$From = "",
   [switch]$NoService,
   [switch]$NoStart,
+  [switch]$KeepData,
   [switch]$PurgeAll,
   [switch]$KeepInstallationIdentity,
   [switch]$AgentOnly,
@@ -293,7 +294,7 @@ Commands:
   restart       Stop then start HyperFileLensAgent managed startup
   status        Show installed version, paths, and lifecycle state
   upgrade       In-place upgrade from another release package directory or .zip
-  uninstall     Stop managed startup and remove install dir (keeps data dir by default)
+  uninstall     Stop managed startup and remove the complete Agent installation
 
 Options:
   install:
@@ -313,8 +314,7 @@ Options:
                           migrates agent.db schema, overwrites binaries; removes workspace on success
 
   uninstall:
-    -PurgeAll                   Remove Agent Root and config/agent.env
-    -KeepInstallationIdentity   Keep agent.env installation identity (incomplete-install rollback)
+    -KeepData                   Preserve local configuration, data, and logs
 
 Install paths:
   $InstallRoot         Binaries and installer scripts
@@ -330,11 +330,12 @@ Examples (cmd.exe):
   install.cmd status
   install.cmd upgrade -From C:\path\to\hfl-agent-0.1.0-windows-amd64.zip
   install.cmd uninstall
-  install.cmd uninstall -PurgeAll
+  install.cmd uninstall -KeepData
 
 Examples (PowerShell, same entry point):
   .\install.cmd status
-  .\install.cmd uninstall -PurgeAll
+  .\install.cmd uninstall
+  .\install.cmd uninstall -KeepData
 
 Note: install.ps1 is invoked internally by install.cmd. Do not run install.ps1 directly
 (PowerShell execution policy and file association may block or open it in an editor).
@@ -2524,8 +2525,12 @@ function Invoke-Upgrade {
 
 function Invoke-Uninstall {
   $dataRoot = Get-ResolvedDataRoot -Override $DataDir
-  if ($PurgeAll -and -not (Test-SafeDataPath $dataRoot)) {
-    throw "Refusing PurgeAll for unexpected data directory $dataRoot."
+  $preserveData = $KeepData -or $KeepInstallationIdentity
+  if ($PurgeAll -and $preserveData) {
+    throw "-PurgeAll cannot be combined with -KeepData or -KeepInstallationIdentity."
+  }
+  if ((-not $preserveData) -and -not (Test-SafeDataPath $dataRoot)) {
+    throw "Refusing complete removal for unexpected data directory $dataRoot."
   }
   $envFile = Get-HflEnvFile $DefaultDataRoot
   $nodeId = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ID"
@@ -2547,15 +2552,11 @@ function Invoke-Uninstall {
   Write-HflSummaryLine "Service state" (Get-HflServiceStatusLine)
   Write-HflSummaryLine "Install path" $InstallRoot
   Write-HflSummaryLine "Data path" $dataRoot
-  Write-HflSummaryLine "Data removal" ($(if ($PurgeAll) { "Remove Agent data" } else { "Preserve Agent data" }))
+  Write-HflSummaryLine "Data removal" ($(if ($preserveData) { "Preserve Agent data" } else { "Remove Agent data" }))
 
   Write-HflSection "Preflight checks"
-  if ($PurgeAll -and $KeepInstallationIdentity) {
-    throw "-PurgeAll and -KeepInstallationIdentity are mutually exclusive."
-  }
-
   $agentBinary = Join-Path $InstallRoot "hfl-agent.exe"
-  if ((-not $PurgeAll) -and (-not $KeepInstallationIdentity) -and
+  if ($preserveData -and (-not $KeepInstallationIdentity) -and
       (-not (Test-Path -LiteralPath $agentBinary))) {
     throw "Cannot retire the installation identity because $agentBinary is unavailable."
   }
@@ -2565,7 +2566,7 @@ function Invoke-Uninstall {
   Remove-HflService
   Stop-HflAgentProcesses -Reason "uninstall"
 
-  if ((-not $PurgeAll) -and (-not $KeepInstallationIdentity)) {
+  if ($preserveData -and (-not $KeepInstallationIdentity)) {
     Write-HflLog -Level 'STEP ' -Message "Retiring the local installation identity."
     $retireOutput = @(& $agentBinary config retire-installation --data-dir $dataRoot 2>&1)
     foreach ($line in $retireOutput) {
@@ -2592,19 +2593,24 @@ function Invoke-Uninstall {
   Remove-HflInstallFile $InstalledVersionFile
   Write-HflSkip "remove $(Join-Path $InstallRoot 'install.cmd') (deferred; install.cmd is running this script)"
 
-  if ($PurgeAll) {
+  if (-not $preserveData) {
     Remove-HflInstallFile $envFile
   }
   elseif ($KeepInstallationIdentity) {
     Write-HflSkip "remove $envFile (preserved with installation identity for install retry)"
   }
   else {
-    Write-HflSkip "remove $envFile (preserved without installation identity; use -PurgeAll)"
+    Write-HflSkip "remove $envFile (preserved without installation identity)"
   }
 
   $uninstallLogPath = $script:HflUninstallLogPath
-  if (-not $PurgeAll) {
-    Write-HflSkip "remove data directory $dataRoot (preserved; use -PurgeAll)"
+  if ($preserveData) {
+    if ($KeepInstallationIdentity) {
+      Write-HflSkip "remove data directory $dataRoot (preserved for install retry)"
+    }
+    else {
+      Write-HflSkip "remove data directory $dataRoot (preserved by -KeepData)"
+    }
   }
   elseif ((Test-SafeDataPath $dataRoot) -and (Test-Path -LiteralPath $dataRoot)) {
     Remove-Item -Recurse -Force -LiteralPath $dataRoot
@@ -2617,9 +2623,9 @@ function Invoke-Uninstall {
     Write-HflSkip "remove data directory (none resolved)"
   }
 
-  # PurgeAll removes the data directory that owns uninstall.log. The detached
+  # Complete removal deletes the data directory that owns uninstall.log. The detached
   # install-root remover must never recreate that directory after cleanup.
-  $uninstallLog = if (-not $PurgeAll -and $uninstallLogPath) { $uninstallLogPath } else { "" }
+  $uninstallLog = if ($preserveData -and $uninstallLogPath) { $uninstallLogPath } else { "" }
   Schedule-InstallRootRemoval -InstallRoot $InstallRoot -LogFile $uninstallLog
 
   Write-HflSection "Verifying"

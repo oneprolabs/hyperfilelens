@@ -363,12 +363,12 @@ func printUninstallContext(
 	orgKey string,
 	role model.Role,
 	state InstallState,
-	purgeAll bool,
+	keepData bool,
 ) {
 	displayRole := roleDisplayName(role, os.Getenv("HFL_GATEWAY_SCOPE"))
-	dataPolicy := "Preserve Agent data"
-	if purgeAll {
-		dataPolicy = "Remove Agent data"
+	dataPolicy := "Remove Agent data"
+	if keepData {
+		dataPolicy = "Preserve Agent data"
 	}
 	if jsonOutput() {
 		emitJSON(os.Stdout, map[string]any{
@@ -397,12 +397,12 @@ func printUninstallContext(
 	printSummaryValue("Data removal", dataPolicy)
 }
 
-func printUninstallSuccess(state InstallState, purgeAll bool) {
-	dataState := "preserved"
-	logState := filepath.Join(vfs.AgentLogDir(dataDirForAgent()), "uninstall.log")
-	if purgeAll {
-		dataState = "removed"
-		logState = "removed with Agent data"
+func printUninstallSuccess(state InstallState, keepData bool) {
+	dataState := "removed"
+	logState := "removed with Agent data"
+	if keepData {
+		dataState = "preserved"
+		logState = filepath.Join(vfs.AgentLogDir(dataDirForAgent()), "uninstall.log")
 	}
 	if jsonOutput() {
 		emitJSON(os.Stdout, map[string]any{
@@ -527,7 +527,7 @@ func writeAgentLifecycleCommands(writer io.Writer, info SummaryInfo) {
 		}
 		printSummaryValueTo(writer, "Agent status", command+" status")
 		printSummaryValueTo(writer, "Uninstall", command+" uninstall")
-		printSummaryValueTo(writer, "Purge all", command+" uninstall -PurgeAll")
+		printSummaryValueTo(writer, "Keep data", command+" uninstall -KeepData")
 		return
 	}
 
@@ -550,7 +550,7 @@ func writeAgentLifecycleCommands(writer io.Writer, info SummaryInfo) {
 	}
 	printSummaryValueTo(writer, "Agent status", command+" status")
 	printSummaryValueTo(writer, "Uninstall", command+" uninstall")
-	printSummaryValueTo(writer, "Purge all", command+" uninstall --purge-all")
+	printSummaryValueTo(writer, "Keep data", command+" uninstall --keep-data")
 }
 
 // windowsPowerShellCommand returns a copyable PowerShell invocation for a

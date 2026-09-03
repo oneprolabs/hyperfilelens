@@ -3757,7 +3757,7 @@
     "upgradeFailed": "Agent 升级失败",
     "upgradeTimeout": "升级任务超时，请在节点详情查看任务状态。",
     "uninstallTitle": "卸载 Agent",
-    "uninstallConfirm": "确定卸载节点「{name}」？将远程停止服务并删除程序与数据目录（--purge-all）；控制台节点记录也会移除。",
+    "uninstallConfirm": "确定卸载节点「{name}」？将远程停止服务、删除程序与数据，并移除控制台节点记录。",
     "actionUninstall": "卸载 Agent",
     "uninstallSuccess": "卸载完成，节点已移除",
     "uninstallFailed": "卸载失败",
@@ -4169,7 +4169,7 @@
         "description": "登录安装 Agent 时使用的同一用户并运行命令，请勿使用 sudo。"
       }
     },
-    "purgeAll": "同时删除本地配置和数据",
+    "keepData": "保留本地配置和数据",
     "upgradeCommandUnavailable": "无法生成升级命令。刷新并重试。",
     "gatewayTabHint": {
       "upgrade": "下载并升级数据网关主机上的网关 Agent和LensNode。",

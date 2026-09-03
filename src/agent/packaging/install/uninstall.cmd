@@ -40,9 +40,9 @@ if not %CONFIRM_EC% equ 0 (
   exit /b 1
 )
 
-call :AppendUninstallLog "confirmation accepted; invoking install.cmd uninstall -PurgeAll"
+call :AppendUninstallLog "confirmation accepted; invoking install.cmd uninstall"
 cd /d "%INSTALL_DIR%"
-call "%INSTALL_DIR%install.cmd" uninstall -PurgeAll
+call "%INSTALL_DIR%install.cmd" uninstall
 set "EC=%ERRORLEVEL%"
 call :AppendUninstallLog "install.cmd uninstall finished exit=%EC%"
 cd /d "%TEMP%"

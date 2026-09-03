@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-func TestInstallPs1PurgeDoesNotRecreateDataLogDirectory(t *testing.T) {
+func TestInstallPs1CompleteRemovalDoesNotRecreateDataLogDirectory(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	for _, want := range []string{
 		"if (-not `$dir -or -not (Test-Path -LiteralPath `$dir)) { return }",
-		`$uninstallLog = if (-not $PurgeAll -and $uninstallLogPath) { $uninstallLogPath } else { "" }`,
+		`$uninstallLog = if ($preserveData -and $uninstallLogPath) { $uninstallLogPath } else { "" }`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("install.ps1 missing %q", want)
@@ -262,17 +262,17 @@ func TestInstallPs1RecoversModeForStagedUpgradeInstaller(t *testing.T) {
 	}
 }
 
-func TestInstallPs1ValidatesPurgePathBeforeUninstallLogging(t *testing.T) {
+func TestInstallPs1ValidatesCompleteRemovalPathBeforeUninstallLogging(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	uninstallStart := strings.Index(source, "function Invoke-Uninstall")
 	if uninstallStart < 0 {
 		t.Fatal("install.ps1 missing Invoke-Uninstall")
 	}
 	uninstall := source[uninstallStart:]
-	validateAt := strings.Index(uninstall, "$PurgeAll -and -not (Test-SafeDataPath $dataRoot)")
+	validateAt := strings.Index(uninstall, "(-not $preserveData) -and -not (Test-SafeDataPath $dataRoot)")
 	logAt := strings.Index(uninstall, "Start-HflUninstallLog -DataRoot $dataRoot")
 	if validateAt < 0 || logAt < 0 || validateAt > logAt {
-		t.Fatal("PurgeAll path must be validated before uninstall logging or removal")
+		t.Fatal("complete-removal path must be validated before uninstall logging or removal")
 	}
 }
 
@@ -295,8 +295,21 @@ func TestInstallPs1RetiresIdentityBeforeRemovingAgent(t *testing.T) {
 	if !strings.Contains(source, "-KeepInstallationIdentity") {
 		t.Fatal("install.ps1 missing incomplete-install rollback flag")
 	}
-	if !strings.Contains(source, `(-not $PurgeAll) -and (-not $KeepInstallationIdentity)`) {
+	if !strings.Contains(source, `$preserveData -and (-not $KeepInstallationIdentity)`) {
 		t.Fatal("install.ps1 must skip identity retirement during incomplete-install rollback")
+	}
+}
+
+func TestWindowsDetachedUninstallLeavesFinalDataRemovalToOuterRunner(t *testing.T) {
+	source := readInstallPackageSource(t, "local_uninstall_windows.go")
+	for _, want := range []string{
+		`$cmdLine = '"' + $installCmd + '" uninstall -KeepInstallationIdentity'`,
+		`'uninstall', '-KeepInstallationIdentity'`,
+		`Remove-AgentDataDirectory -DataDir $data`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("Windows detached uninstall is missing %q", want)
+		}
 	}
 }
 

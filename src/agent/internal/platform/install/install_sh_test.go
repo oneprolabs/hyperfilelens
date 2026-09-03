@@ -11,6 +11,27 @@ import (
 	"testing"
 )
 
+func TestUnixUninstallCommandUsesExplicitDataPolicy(t *testing.T) {
+	tests := []struct {
+		name                     string
+		keepData                 bool
+		keepInstallationIdentity bool
+		want                     string
+	}{
+		{name: "complete removal", want: "uninstall --quiet-footer --purge-all"},
+		{name: "preserve data", keepData: true, want: "uninstall --quiet-footer --keep-data"},
+		{name: "rollback", keepData: true, keepInstallationIdentity: true, want: "uninstall --quiet-footer --keep-installation-identity"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, args := uninstallCommand("/tmp/hfl-agent", test.keepData, test.keepInstallationIdentity)
+			if got := strings.Join(args, " "); got != test.want {
+				t.Fatalf("uninstall args=%q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestInstallShellRetiresIdentityBeforeRemovingAgent(t *testing.T) {
 	t.Parallel()
 	_, currentFile, _, ok := runtime.Caller(0)

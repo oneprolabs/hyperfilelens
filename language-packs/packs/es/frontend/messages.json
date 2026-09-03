@@ -3791,7 +3791,7 @@
     "upgradeFailed": "La actualización del Agent falló",
     "upgradeTimeout": "Se agotó el tiempo de actualización; compruebe el estado de la tarea en el nodo.",
     "uninstallTitle": "Desinstalar Agent",
-    "uninstallConfirm": "Desinstalar \"{name}\"? El servicio se detendrá remotamente y el directorio de datos del programa más será purgado (--purge-all); el registro de la consola también será eliminado.",
+    "uninstallConfirm": "¿Desinstalar \"{name}\"? El servicio se detendrá de forma remota, se eliminarán el programa y sus datos, y se borrará el registro de la consola.",
     "actionUninstall": "Desinstalar Agent",
     "uninstallSuccess": "Desinstalación terminada; nodo eliminado",
     "uninstallFailed": "Desinstalación fallada",
@@ -4169,7 +4169,7 @@
         "description": "Inicie sesión como el mismo usuario que instaló el Agent. No use sudo."
       }
     },
-    "purgeAll": "También eliminar la configuración local y los datos",
+    "keepData": "Conservar la configuración local y los datos",
     "serviceStatus": "Estado",
     "serviceStart": "Comienzo",
     "serviceStop": "Detener",

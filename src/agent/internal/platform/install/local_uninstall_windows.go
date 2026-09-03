@@ -398,9 +398,9 @@ try {
   try {
     if (Test-Path -LiteralPath $installCmd) {
       Log "running install.cmd uninstall"
-      $cmdLine = '"' + $installCmd + '" uninstall'
+      $cmdLine = '"' + $installCmd + '" uninstall -KeepInstallationIdentity'
       # The detached runner owns final data-root removal.  Do not pass
-      # -PurgeAll to the nested installer: deleting the data root while the
+      # the default complete-removal policy to the nested installer: deleting the data root while the
       # nested PowerShell process still owns uninstall.log can return exit=1
       # on Windows even after the Agent binaries were removed.  The outer
       # runner removes the validated data root after this process exits.
@@ -421,7 +421,7 @@ try {
       Remove-InstallDirectoryResidue -InstallDir $install
     } elseif (Test-Path -LiteralPath $installPs1) {
       Log "install.cmd missing; running install.ps1 uninstall fallback"
-      $uninstallArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installPs1, 'uninstall')
+      $uninstallArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installPs1, 'uninstall', '-KeepInstallationIdentity')
       # Keep data-root removal in the detached runner for the same reason as
       # the install.cmd path above.
       Push-Location $env:TEMP

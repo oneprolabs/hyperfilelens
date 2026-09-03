@@ -20,6 +20,7 @@ const (
 type InstallOptions struct {
 	AutoYes  bool
 	Mode     InstallMode
+	KeepData bool
 	PurgeAll bool
 	Invalid  string
 }
@@ -47,6 +48,8 @@ func ParseInstallOptions(args []string) InstallOptions {
 			setMode(InstallModeReinstall)
 		case "--uninstall":
 			setMode(InstallModeUninstall)
+		case "--keep-data":
+			opts.KeepData = true
 		case "--purge-all":
 			opts.PurgeAll = true
 		case "--no-color":
@@ -76,6 +79,12 @@ func ParseInstallOptions(args []string) InstallOptions {
 	}
 	if opts.PurgeAll && opts.Mode != InstallModeUninstall {
 		opts.Invalid = "--purge-all requires --uninstall"
+	}
+	if opts.KeepData && opts.Mode != InstallModeUninstall {
+		opts.Invalid = "--keep-data requires --uninstall"
+	}
+	if opts.KeepData && opts.PurgeAll {
+		opts.Invalid = "--keep-data and --purge-all are mutually exclusive"
 	}
 	return opts
 }

@@ -1152,7 +1152,7 @@ grep -F 'printLifecycleBanner(gatewayName, "Upgrade")' \
 	"${agent_gateway_lifecycle}" >/dev/null
 grep -F 'printGatewayUpgradeSuccess(gatewayName, version, service)' \
 	"${agent_gateway_lifecycle}" >/dev/null
-grep -F 'printUninstallSuccess(state, purgeAll)' \
+grep -F 'printUninstallSuccess(state, keepData)' \
 	"${agent_gateway_lifecycle}" >/dev/null
 if grep -E 'Write-HflInstallLogLine "(Success|  )' "${agent_windows_installer}" >/dev/null; then
 	printf 'ERROR: Windows Agent lifecycle output must use the timestamping display logger\n' >&2
