@@ -1577,7 +1577,8 @@ def _observe_running_directory(
     if node_task.status in _NODE_TASK_TERMINAL:
         snapshot_id, size_bytes, file_count, dir_count, stats = (
             bt._extract_snapshot_metrics(
-                node_task.result if isinstance(node_task.result, dict) else {}
+                node_task.result if isinstance(node_task.result, dict) else {},
+                include_skipped_items=node_task.status == NodeTask.Status.SUCCESS,
             )
         )
         if node_task.status == NodeTask.Status.SUCCESS:
@@ -1869,7 +1870,23 @@ def _finalize_backup_task(
         for row in rows
         if isinstance(row.stats, dict)
     )
-    skipped_item_count = skipped_file_count + skipped_directory_count
+    skipped_special_count = sum(
+        int(row.stats.get("skipped_special_count") or 0)
+        for row in rows
+        if isinstance(row.stats, dict)
+    )
+    skipped_item_count = sum(
+        int(
+            row.stats.get("skipped_item_count")
+            or (
+                int(row.stats.get("skipped_file_count") or 0)
+                + int(row.stats.get("skipped_directory_count") or 0)
+                + int(row.stats.get("skipped_special_count") or 0)
+            )
+        )
+        for row in rows
+        if isinstance(row.stats, dict)
+    )
     any_failure = successful < total_dirs
     step_progress, task_progress = bt._backup_success_progress(successful, total_dirs)
     bt._set_step_status(
@@ -1892,6 +1909,7 @@ def _finalize_backup_task(
         "skipped_item_count": skipped_item_count,
         "skipped_file_count": skipped_file_count,
         "skipped_directory_count": skipped_directory_count,
+        "skipped_special_count": skipped_special_count,
     }
     repository = Repository.objects.filter(
         organization_id=organization_id,
@@ -1937,7 +1955,7 @@ def _finalize_backup_task(
 
     _stop_repository_server_for_task(task=task)
 
-    if skipped_item_count:
+    if skipped_item_count and not any_failure:
         append_task_step_event(
             task=task,
             step_name="finalize_snapshot",
@@ -1949,6 +1967,7 @@ def _finalize_backup_task(
                 "skipped_item_count": skipped_item_count,
                 "skipped_file_count": skipped_file_count,
                 "skipped_directory_count": skipped_directory_count,
+                "skipped_special_count": skipped_special_count,
             },
         )
 

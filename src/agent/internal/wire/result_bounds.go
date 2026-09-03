@@ -33,7 +33,8 @@ var essentialResultKeys = map[string]struct{}{
 	"failed_count": {}, "created": {}, "deleted_count": {},
 	"selected_paths": {}, "stats": {}, "restore": {}, "restore_results": {},
 	"results": {}, "entries": {}, "snapshot_browse": {}, "snapshot_download": {},
-	"executor_finished": {}, "executor_finished_at": {}, "completion_source": {},
+	"snapshot_failure_summary": {},
+	"executor_finished":        {}, "executor_finished_at": {}, "completion_source": {},
 	"workspace_uid": {}, "workspace_quarantined": {}, "purge_complete": {},
 	"tombstone_state": {},
 }
@@ -67,7 +68,11 @@ func boundTaskResult(result map[string]any) (map[string]any, resultBoundStats) {
 	}
 	for key := range essentialResultKeys {
 		if value, ok := result[key]; ok {
-			compact[key] = compactResultValue(value, 0)
+			if key == "snapshot_failure_summary" {
+				compact[key] = compactSnapshotFailureSummary(value)
+			} else {
+				compact[key] = compactResultValue(value, 0)
+			}
 		}
 	}
 	finalBytes := jsonSize(compact)
@@ -75,6 +80,9 @@ func boundTaskResult(result map[string]any) (map[string]any, resultBoundStats) {
 		compact = map[string]any{
 			"result_truncated":      true,
 			"result_original_bytes": originalBytes,
+		}
+		if value, ok := result["snapshot_failure_summary"]; ok {
+			compact["snapshot_failure_summary"] = compactSnapshotFailureSummary(value)
 		}
 		for key := range essentialResultKeys {
 			value, ok := result[key]
@@ -88,12 +96,65 @@ func boundTaskResult(result map[string]any) (map[string]any, resultBoundStats) {
 			}
 		}
 		finalBytes = jsonSize(compact)
+		if finalBytes > maxTaskResultBytes {
+			ultraCompact := map[string]any{
+				"result_truncated":      true,
+				"result_original_bytes": originalBytes,
+			}
+			if value, ok := result["snapshot_failure_summary"]; ok {
+				ultraCompact["snapshot_failure_summary"] = compactSnapshotFailureSummary(value)
+			}
+			compact = ultraCompact
+			finalBytes = jsonSize(compact)
+		}
 	}
 	return compact, resultBoundStats{
 		OriginalBytes: originalBytes,
 		FinalBytes:    finalBytes,
 		Truncated:     true,
 	}
+}
+
+func compactSnapshotFailureSummary(value any) any {
+	summary, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := map[string]any{}
+	for _, key := range []string{
+		"total_count", "reported_count", "truncated", "cause_counts",
+		"item_types", "item_type_counts",
+	} {
+		if child, exists := summary[key]; exists {
+			out[key] = compactResultValue(child, 0)
+		}
+	}
+	items, _ := summary["items"].([]any)
+	boundedItems := make([]any, 0, min(len(items), 20))
+	for _, raw := range items[:min(len(items), 20)] {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		boundedItems = append(boundedItems, map[string]any{
+			"path":      truncateUTF8(stringJSONScalar(item["path"]), 1024),
+			"error":     truncateUTF8(stringJSONScalar(item["error"]), 2048),
+			"cause":     truncateUTF8(stringJSONScalar(item["cause"]), 64),
+			"item_type": truncateUTF8(stringJSONScalar(item["item_type"]), 32),
+		})
+	}
+	out["items"] = boundedItems
+	return out
+}
+
+func stringJSONScalar(value any) string {
+	if value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return stringJSON(value)
 }
 
 func resultBoundLog(taskID string, stats resultBoundStats) {
@@ -129,7 +190,7 @@ func stripCommandOutput(value any) any {
 }
 
 func compactResultValue(value any, depth int) any {
-	if depth >= 3 {
+	if depth >= 5 {
 		return nil
 	}
 	switch typed := value.(type) {

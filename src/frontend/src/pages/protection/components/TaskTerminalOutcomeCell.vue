@@ -12,6 +12,7 @@ type TaskOutcomeSource = {
   finished_at?: string | null
   started_at?: string | null
   created_at?: string | null
+  recent_events?: Array<{ metadata?: unknown }>
 }
 
 type TerminalTaskStatus = 'success' | 'failed' | 'timeout' | 'partial' | 'cancelled'
@@ -24,7 +25,7 @@ const props = withDefaults(defineProps<{
   fallback: null,
 })
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const terminalStatuses = new Set<TerminalTaskStatus>([
   'success',
   'failed',
@@ -42,6 +43,18 @@ function terminalStatus(source?: TaskOutcomeSource | null): TerminalTaskStatus |
     : ''
 }
 
+function structuredFailureDetails(source?: TaskOutcomeSource | null) {
+  for (const event of source?.recent_events || []) {
+    const metadata = event?.metadata
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) continue
+    const details = (metadata as Record<string, unknown>).failure_details
+    if (details && typeof details === 'object' && !Array.isArray(details)) {
+      return details as Record<string, unknown>
+    }
+  }
+  return null
+}
+
 const outcome = computed(() => {
   const source = terminalStatus(props.task) ? props.task : props.fallback
   const status = terminalStatus(source)
@@ -50,9 +63,17 @@ const outcome = computed(() => {
   const diagnosticFallback = source === props.task ? props.fallback : null
   const code = String(source.error_code || diagnosticFallback?.error_code || '').trim()
   const reason = String(source.error_message || diagnosticFallback?.error_message || '').trim()
-  const showDiagnostic = diagnosticStatuses.has(status) && Boolean(code || reason)
+  const details = structuredFailureDetails(source) || structuredFailureDetails(diagnosticFallback)
+  const detailCount = Number(details?.total_count ?? details?.count)
+  const detailCategory = String(details?.category || '').trim()
+  const detailKey = detailCategory ? `ops.task.failureDetails.summary.${detailCategory}` : ''
+  const structuredReason = details && Number.isFinite(detailCount) && detailCount > 0 && te(detailKey)
+    ? t(detailKey, { count: detailCount })
+    : ''
+  const displayReason = structuredReason || reason
+  const showDiagnostic = diagnosticStatuses.has(status) && Boolean(code || displayReason)
   const diagnostic = showDiagnostic
-    ? [code ? `[${code}]` : '', reason].filter(Boolean).join(' ')
+    ? [code ? `[${code}]` : '', displayReason].filter(Boolean).join(' ')
     : ''
   const rawTimestamp = source.finished_at
     || source.started_at
@@ -69,7 +90,7 @@ const outcome = computed(() => {
     label: t(`ops.task.status.${status}`),
     timestamp,
     code,
-    reason,
+    reason: displayReason,
     diagnostic,
     showDiagnostic,
   }
@@ -98,7 +119,7 @@ const outcome = computed(() => {
     <span
       v-if="outcome.showDiagnostic"
       class="task-terminal-outcome__diagnostic"
-      :title="outcome.diagnostic"
+      :aria-label="outcome.diagnostic"
     >
       <span
         v-if="outcome.code"

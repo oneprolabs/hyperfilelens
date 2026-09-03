@@ -1372,6 +1372,11 @@ function taskEventMetadataText(event: TaskEventRow, keys: string[]) {
   return ''
 }
 
+function hasEventFailureDetails(event: TaskEventRow) {
+  const details = taskEventMetadata(event).failure_details
+  return Boolean(details && typeof details === 'object' && !Array.isArray(details))
+}
+
 function taskEventMetadataList(event: TaskEventRow, key: string) {
   const value = taskEventMetadata(event)[key]
   if (!Array.isArray(value)) return ''
@@ -5400,6 +5405,7 @@ function onClosed() {
                       v-for="event in step.events"
                       :key="event.id"
                       class="dp-task-detail__event-row"
+                      :class="{ 'dp-task-detail__event-row--failure-details': hasEventFailureDetails(event) }"
                     >
                       <span
                         class="dp-task-detail__event-dot"
@@ -5465,6 +5471,7 @@ function onClosed() {
                       v-for="event in unlinkedTaskEvents"
                       :key="event.id"
                       class="dp-task-detail__event-row"
+                      :class="{ 'dp-task-detail__event-row--failure-details': hasEventFailureDetails(event) }"
                     >
                       <span
                         class="dp-task-detail__event-dot"
@@ -5516,6 +5523,7 @@ function onClosed() {
                 v-for="event in taskDetailEvents"
                 :key="event.id"
                 class="dp-task-detail__event-row"
+                :class="{ 'dp-task-detail__event-row--failure-details': hasEventFailureDetails(event) }"
               >
                 <span
                   class="dp-task-detail__event-dot"
@@ -7661,6 +7669,48 @@ function onClosed() {
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.dp-task-detail__event-row--failure-details {
+  position: relative;
+  grid-template-columns: 16px minmax(0, 1fr);
+}
+
+.dp-task-detail__event-row--failure-details .dp-task-detail__event-content {
+  grid-column: 2;
+  align-items: stretch;
+}
+
+.dp-task-detail__event-row--failure-details .dp-task-detail__event-msg {
+  align-self: flex-start;
+  max-width: calc(100% - 132px);
+}
+
+.dp-task-detail__event-row--failure-details .dp-task-detail__event-object,
+.dp-task-detail__event-row--failure-details .dp-task-detail__event-error {
+  align-self: flex-start;
+}
+
+.dp-task-detail__event-row--failure-details .dp-task-detail__event-time {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+@media (max-width: 760px) {
+  .dp-task-detail__event-row--failure-details {
+    grid-template-columns: 16px minmax(0, 1fr);
+  }
+
+  .dp-task-detail__event-row--failure-details .dp-task-detail__event-time {
+    position: static;
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .dp-task-detail__event-row--failure-details .dp-task-detail__event-msg {
+    max-width: 100%;
+  }
 }
 
 .dp-task-detail__empty-line {
