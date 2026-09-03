@@ -156,6 +156,7 @@ refresh_website_web_mount
 cmd_up_body="$(sed -n '/^cmd_up()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
 cmd_restart_body="$(sed -n '/^cmd_restart()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
 run_dev_migration_gate_body="$(sed -n '/^run_dev_migration_gate()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
+gateway_refresh_body="$(sed -n '/^ensure_local_platform_gateway_dev()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
 grep -F 'refresh_website_web_mount' <<<"${cmd_up_body}" >/dev/null
 grep -F 'refresh_website_web_mount' <<<"${cmd_restart_body}" >/dev/null
 for command_body in "${cmd_up_body}" "${cmd_restart_body}"; do
@@ -167,7 +168,25 @@ for command_body in "${cmd_up_body}" "${cmd_restart_body}"; do
 	model_repair_line="$(grep -nF 'repair_existing_multimodal_model' <<<"${command_body}" | cut -d: -f1)"
 	[[ -n "${model_repair_line}" ]]
 	((application_line < model_repair_line))
+	grep -F 'ensure_local_platform_gateway_dev' <<<"${command_body}" >/dev/null
 done
+
+# An enabled development Gateway always consumes the current Agent and LensNode
+# artifacts. The auto-deploy setting remains the only public control: when it is
+# disabled, the function returns before inspecting or changing the host runtime.
+if grep -En 'UPGRADE_GATEWAY|HFL_UPGRADE_GATEWAY|upgrade-gateway' \
+	"${ROOT_REPO}/dev/stack.sh" >/dev/null; then
+	printf 'ERROR: obsolete manual Platform Gateway refresh control remains\n' >&2
+	exit 1
+fi
+grep -F 'if [[ -e "${agent_bin}" ]]; then' <<<"${gateway_refresh_body}" >/dev/null
+grep -F 'gateway_args+=(--reinstall)' <<<"${gateway_refresh_body}" >/dev/null
+grep -F 'HFL_FORCE_SIDECAR_RECREATE=1 \' <<<"${gateway_refresh_body}" >/dev/null
+disabled_line="$(grep -nF 'if ! platform_gateway_auto_deploy_enabled; then' <<<"${gateway_refresh_body}" | cut -d: -f1)"
+disabled_return_line="$(grep -nF 'return 0' <<<"${gateway_refresh_body}" | cut -d: -f1 | head -n 1)"
+helper_line="$(grep -nF 'local helper=' <<<"${gateway_refresh_body}" | cut -d: -f1)"
+[[ -n "${disabled_line}" && -n "${disabled_return_line}" && -n "${helper_line}" ]]
+((disabled_line < disabled_return_line && disabled_return_line < helper_line))
 repair_model_body="$(sed -n '/^repair_existing_multimodal_model()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
 grep -F '{"role":"multimodal","repair_existing":true}' <<<"${repair_model_body}" >/dev/null
 grep -F 'ensure_platform_ai_model' <<<"${repair_model_body}" >/dev/null

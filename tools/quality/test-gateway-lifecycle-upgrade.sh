@@ -260,6 +260,78 @@ EOF
 	grep -Fx -- '-p hyperfilelens-gateway down --remove-orphans' "${calls}" >/dev/null
 }
 
+test_forced_sidecar_recreate_is_opt_in() {
+	local fake_compose="${tmp}/fake-refresh-compose" fake_docker="${tmp}/fake-refresh-docker"
+	local calls="${tmp}/refresh-compose-calls"
+	cat >"${fake_compose}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${TEST_COMPOSE_CALLS}"
+case "$*" in
+  *" config --quiet") exit 0 ;;
+  "-p hyperfilelens-gateway ps -q lensnode") printf '%s\n' current-lensnode ;;
+  "-p hyperfilelens-gateway up -d --pull never"|\
+  "-p hyperfilelens-gateway up -d --pull never --force-recreate") exit 0 ;;
+  *) printf 'unexpected compose invocation: %s\n' "$*" >&2; exit 90 ;;
+esac
+EOF
+	cat >"${fake_docker}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "image inspect desired:test") exit 0 ;;
+  "image inspect --format {{.Id}} desired:test") printf '%s\n' sha256:same ;;
+  "inspect --format {{.Image}} current-lensnode") printf '%s\n' sha256:same ;;
+  "inspect --format {{.State.Running}} current-lensnode") printf '%s\n' true ;;
+  *) printf 'unexpected docker invocation: %s\n' "$*" >&2; exit 91 ;;
+esac
+EOF
+	chmod 755 "${fake_compose}" "${fake_docker}"
+
+	run_refresh_case() (
+		local force_refresh="$1" compose_dir="${tmp}/sidecar-refresh-$1/runtime/lensnode"
+		mkdir -p "${compose_dir}" "${tmp}/sidecar-refresh-$1/workspace/org-42/data"
+		# shellcheck disable=SC1090
+		source <(sed -n '/^install_docker_sidecar() {/,/^}/p' "${SIDECAR_INSTALLER}")
+		COMPOSE_DIR="${compose_dir}"
+		COMPOSE_PROJECT=hyperfilelens-gateway
+		SENTRY_PRIVACY_FILE="${compose_dir}/hfl-sentry-sitecustomize.py"
+		HFL_WORKSPACE_ROOT="${tmp}/sidecar-refresh-$1/workspace/org-42/data"
+		HFL_SOURCELENS_MOUNTPOINT="${HFL_WORKSPACE_ROOT}/.sourcelens"
+		HFL_SOURCELENS_STATE_ROOT="${tmp}/sidecar-refresh-$1/workspace/org-42/.hyperfilelens/sourcelens"
+		HFL_GATEWAY_TRASH_ROOT="${HFL_WORKSPACE_ROOT}/.hyperfilelens-trash"
+		LENSNODE_TOKEN=test-token LENSNODE_NAME=test-gateway
+		LENS_CONTAINER_URL=https://host.docker.internal/sourcelens SENTRY_ENABLED=false HFL_INSECURE_TLS=1
+		if [[ "${force_refresh}" == "forced" ]]; then
+			HFL_FORCE_SIDECAR_RECREATE=1
+		else
+			unset HFL_FORCE_SIDECAR_RECREATE
+		fi
+		hfl_step() { :; }
+		hfl_ok() { :; }
+		hfl_warn() { :; }
+		hfl_fail() { exit "${2:-1}"; }
+		lens_url_needs_extra_hosts() { return 0; }
+		resolve_compose() { COMPOSE=("${fake_compose}"); }
+		docker() { "${fake_docker}" "$@"; }
+		remove_owned_legacy_gateway_containers() { :; }
+		export TEST_COMPOSE_CALLS="${calls}"
+		install_docker_sidecar desired:test
+	)
+
+	: >"${calls}"
+	run_refresh_case default
+	grep -Fx -- '-p hyperfilelens-gateway up -d --pull never' "${calls}" >/dev/null
+	if grep -F -- '--force-recreate' "${calls}" >/dev/null; then
+		printf 'normal sidecar convergence forced recreation for an unchanged image\n' >&2
+		return 1
+	fi
+
+	: >"${calls}"
+	run_refresh_case forced
+	grep -Fx -- '-p hyperfilelens-gateway up -d --pull never --force-recreate' "${calls}" >/dev/null
+}
+
 test_upgrade_keeps_existing_sidecar_until_replacement_starts() {
 	local body
 	body="$(sed -n '/^cmd_upgrade_sidecar() {/,/^}/p' "${LIFECYCLE}")"
@@ -466,6 +538,7 @@ test_failed_staging_reports_and_preserves_sidecar
 test_legacy_layout_adoption_is_retryable
 test_sidecar_start_failure_restores_previous_compose
 test_first_sidecar_start_failure_cleans_partial_project
+test_forced_sidecar_recreate_is_opt_in
 test_upgrade_keeps_existing_sidecar_until_replacement_starts
 test_lifecycle_accepts_persisted_node_credential
 test_lifecycle_rejects_relative_persisted_agent_root
