@@ -120,6 +120,8 @@ const outcome = computed(() => {
       v-if="outcome.showDiagnostic"
       class="task-terminal-outcome__diagnostic"
       :aria-label="outcome.diagnostic"
+      :data-table-overflow-title="outcome.diagnostic"
+      :data-table-overflow-tone="['danger', 'warning'].includes(outcome.tone) ? outcome.tone : undefined"
     >
       <span
         v-if="outcome.code"
@@ -209,6 +211,14 @@ const outcome = computed(() => {
   flex: 1 1 auto;
   color: var(--color-text-primary);
   font-weight: 400;
+}
+
+.task-terminal-outcome--danger .task-terminal-outcome__reason {
+  color: var(--color-error-text);
+}
+
+.task-terminal-outcome--warning .task-terminal-outcome__reason {
+  color: var(--color-warning-text);
 }
 
 .task-terminal-outcome--success { --task-outcome-tone: var(--color-success-text); }

@@ -73,6 +73,8 @@ describe('TaskTerminalOutcomeCell', () => {
 
     expect(diagnostic.text()).toBe('[CONNECTION_REFUSED]Connection refused')
     expect(diagnostic.attributes('aria-label')).toBe('[CONNECTION_REFUSED] Connection refused')
+    expect(diagnostic.attributes('data-table-overflow-title')).toBe('[CONNECTION_REFUSED] Connection refused')
+    expect(diagnostic.attributes('data-table-overflow-tone')).toBe('danger')
     expect(wrapper.get('.task-terminal-outcome__code').text()).toBe('[CONNECTION_REFUSED]')
     expect(wrapper.get('.task-terminal-outcome__reason').text()).toBe('Connection refused')
   })
@@ -145,5 +147,16 @@ describe('TaskTerminalOutcomeCell', () => {
     expect(source).toContain('var(--color-warning-text)')
     expect(source).toContain('var(--color-text-secondary)')
     expect(source).toContain('var(--color-text-primary)')
+  })
+
+  it('exposes warning semantics to the shared overflow tooltip', () => {
+    const wrapper = mountCell({
+      status: 'partial',
+      error_code: 'MIXED_SOURCE_ERRORS',
+      error_message: 'Some source items could not be processed',
+    })
+
+    expect(wrapper.get('.task-terminal-outcome__diagnostic').attributes('data-table-overflow-tone'))
+      .toBe('warning')
   })
 })

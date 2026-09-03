@@ -17,6 +17,12 @@ function sourceBetween(startMarker: string, endMarker: string) {
 }
 
 describe('Backup Wizard Step 3 server filters', () => {
+  it('keeps hover tooltips enterable while crossing the trigger gap', () => {
+    expect(page).not.toContain(':hide-after="0"')
+    expect(page).toContain('const FLOW_DETAIL_POPOVER_HIDE_AFTER_MS = 350')
+    expect(page.match(/:hide-after="FLOW_DETAIL_POPOVER_HIDE_AFTER_MS"/g)?.length).toBeGreaterThanOrEqual(6)
+  })
+
   it('uses a consistent compact font size for configuration summaries', () => {
     expect(page).toMatch(/\.flow-compression-cell__label\s*{[^}]*font-size:\s*13px;/s)
     expect(page).toContain('.protection-flow-table-block .flow-binding-empty {\n  font-size: 13px;')

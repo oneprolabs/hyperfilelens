@@ -773,6 +773,18 @@ html[data-theme='dark'] {
   white-space: pre-line;
 }
 
+.hfl-table-overflow-tooltip--danger {
+  border-color: var(--color-error-border);
+  background: var(--color-error-light);
+  color: var(--color-error-text);
+}
+
+.hfl-table-overflow-tooltip--warning {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
+}
+
 .hfl-btn-with-icon.el-button > span {
   display: inline-flex;
   align-items: center;

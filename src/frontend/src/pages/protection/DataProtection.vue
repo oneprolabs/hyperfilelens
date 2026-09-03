@@ -10236,7 +10236,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     :content="t('protection.backupsPage.btnStartBackupCloudHint')"
                     placement="bottom"
                     :show-after="300"
-                    :hide-after="0"
+                    :hide-after="FLOW_DETAIL_POPOVER_HIDE_AFTER_MS"
                   >
                     <span class="dp-flow-step3-action-tooltip">
                       <ElButton
@@ -10259,7 +10259,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     :content="t('protection.backupsPage.btnRecover')"
                     placement="bottom"
                     :show-after="300"
-                    :hide-after="0"
+                    :hide-after="FLOW_DETAIL_POPOVER_HIDE_AFTER_MS"
                   >
                     <span class="dp-flow-step3-action-tooltip">
                       <ElButton
@@ -11103,7 +11103,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           <HflPopover
                             placement="right-start"
                             trigger="hover"
-                            :hide-after="0"
+                            :hide-after="FLOW_DETAIL_POPOVER_HIDE_AFTER_MS"
                             :width="400"
                             append-to-body
                           >
