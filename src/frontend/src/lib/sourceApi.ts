@@ -132,10 +132,14 @@ export type BackupSelectableSource = {
   mount_status?: string
   mount_point?: string
   registered_at?: string | null
+  os_name?: string
+  arch?: string
   /** Agent inventory summary; omitted for NAS sources. */
   cpu_cores?: number | null
   memory_total_bytes?: number | null
   disk_count?: number | null
+  capacity_used_bytes?: number | null
+  capacity_total_bytes?: number | null
   /** Protection wizard step for real sources: 1 pool / 2 config / 3 ready */
   pipeline_step?: 1 | 2 | 3
   backup_configs?: {

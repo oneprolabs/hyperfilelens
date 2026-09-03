@@ -27,14 +27,15 @@ function expectOrdered(text: string, markers: string[]) {
 }
 
 describe('Backup Wizard connectivity columns', () => {
-  it.each([0, 1])('places Lifecycle Status after Endpoint and Connectivity before Registered At in step %i', (step) => {
+  it.each([0, 1])('places Connectivity after Endpoint and before Lifecycle Status in step %i', (step) => {
     expectOrdered(tableForStep(step), [
       'colConnectionAddress',
+      'colConnectivity',
       'colLifecycleStatus',
       'colCpu',
       'colMemory',
       'colDiskCount',
-      'colConnectivity',
+      'colCapacity',
       'colRegisteredAt',
     ])
   })
@@ -55,13 +56,17 @@ describe('Backup Wizard connectivity columns', () => {
     expect(cpuWidth + memoryWidth + diskWidth + statusWidths[0]).toBe(424)
   })
 
-  it('places Connectivity immediately after Restore Task in step 3', () => {
+  it('groups source status immediately after task status in step 3', () => {
     const step3Table = tableForStep(2)
 
     expectOrdered(step3Table, [
+      'colConnectionAddress',
+      'flowBackupColBackupDirs',
+      'flowBackupColTargetRepo',
+      'flowBackupColCurrentTaskStatus',
       'flowBackupColRestoreTaskStatus',
       'colConnectivity',
-      'flowBackupColTargetRepo',
+      'colLifecycleStatus',
     ])
     expect(Number(step3Table.match(/colLifecycleStatus'[\s\S]*?width="(\d+)"/)?.[1])).toBe(168)
     expect(page).toContain('const FLOW_START_BACKUP_TABLE_COL_MIN = {\n  connection: 220,\n  backupDirs: 260,\n  compression: 190,\n  targetRepo: 280,\n  binding: 210,\n}')

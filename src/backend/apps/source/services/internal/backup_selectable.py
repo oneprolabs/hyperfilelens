@@ -164,18 +164,29 @@ def _agent_item(node: Node) -> dict[str, Any]:
         ),
         "registered_at": node.created_at.isoformat() if node.created_at else None,
     }
+    os_name = str(node.os_name or inv.get("os") or "").strip()
+    arch = str(inv.get("arch") or "").strip()
+    if os_name:
+        item["os_name"] = os_name
+    if arch:
+        item["arch"] = "x86_64" if arch == "amd64" else arch
     platform = _agent_platform(node)
     if platform:
         item["platform"] = platform
     cpu_cores = _inventory_int(inv, "cpu_cores", "cpu_logical_cores", "logical_cores")
     memory_total_bytes = _inventory_int(inv, "memory_total_bytes")
     disk_count = _inventory_int(inv, "disk_count")
+    disk_total = _inventory_int(inv, "disk_total_bytes")
+    disk_used = _inventory_int(inv, "disk_used_bytes")
     if cpu_cores is not None:
         item["cpu_cores"] = cpu_cores
     if memory_total_bytes is not None:
         item["memory_total_bytes"] = memory_total_bytes
     if disk_count is not None:
         item["disk_count"] = disk_count
+    if disk_total is not None:
+        item["capacity_total_bytes"] = disk_total
+        item["capacity_used_bytes"] = disk_used or 0
     return item
 
 

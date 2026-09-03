@@ -783,6 +783,8 @@ class SourceResourceApiTests(TestCase):
                     "cpu_cores": 8,
                     "memory_total_bytes": 16_000_000_000,
                     "disk_count": 2,
+                    "disk_used_bytes": 400_000_000_000,
+                    "disk_total_bytes": 1_000_000_000_000,
                 }
             },
         )
@@ -837,12 +839,17 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(agent_row["cpu_cores"], 8)
         self.assertEqual(agent_row["memory_total_bytes"], 16_000_000_000)
         self.assertEqual(agent_row["disk_count"], 2)
+        self.assertEqual(agent_row["os_name"], "darwin arm64")
+        self.assertEqual(agent_row["arch"], "arm64")
+        self.assertEqual(agent_row["capacity_used_bytes"], 400_000_000_000)
+        self.assertEqual(agent_row["capacity_total_bytes"], 1_000_000_000_000)
         self.assertEqual(nas_row["connection_uri"], "192.168.1.50:/export/data")
         self.assertEqual(nas_row["mount_options"], "rw,hard")
         self.assertNotIn("credentials", nas_row)
         self.assertNotIn("cpu_cores", nas_row)
         self.assertNotIn("memory_total_bytes", nas_row)
         self.assertNotIn("disk_count", nas_row)
+        self.assertNotIn("capacity_total_bytes", nas_row)
         for row in by_ids.data["results"]:
             self.assertEqual(row["pipeline_step"], 1)
 

@@ -17,6 +17,67 @@ function sourceBetween(startMarker: string, endMarker: string) {
 }
 
 describe('Backup Wizard Step 3 server filters', () => {
+  it('uses a consistent compact font size for configuration summaries', () => {
+    expect(page).toMatch(/\.flow-compression-cell__label\s*{[^}]*font-size:\s*13px;/s)
+    expect(page).toContain('.protection-flow-table-block .flow-binding-empty {\n  font-size: 13px;')
+  })
+
+  it('aligns and truncates the compression summary without enabling the table tooltip', () => {
+    const table = sourceBetween('<el-table\n                    ref="step3TableRef"', '<template #empty>')
+
+    expect(table).toContain('<div class="flow-compression-cell-align">')
+    expect(table).toContain('class="flow-compression-cell hfl-table-no-tooltip"')
+    expect(page).toContain('.flow-compression-cell__label {\n  min-width: 0;\n  overflow: hidden;')
+    expect(page).toContain('text-overflow: ellipsis;\n  white-space: nowrap;')
+  })
+
+  it('keeps target repository details in the popover without a duplicate native title', () => {
+    const table = sourceBetween('<el-table\n                    ref="step3TableRef"', '<template #empty>')
+
+    expect(table).toContain('class="wizard-target-repository-cell hfl-table-no-tooltip"')
+    expect(table).not.toContain(':title="target.location ? `${target.name}\\n${target.location}` : target.name"')
+  })
+
+  it('vertically aligns backup policy and file filter values', () => {
+    const table = sourceBetween('<el-table\n                    ref="step3TableRef"', '<template #empty>')
+
+    expect(table.match(/<div class="flow-binding-cell">/g)).toHaveLength(2)
+    expect(page).toContain('.protection-flow-table-block .flow-binding-cell {\n  display: flex;\n  min-height: 20px;\n  align-items: center;\n  line-height: 20px;')
+    expect(page).toContain('.protection-flow-table-block .flow-binding-list-item {\n  line-height: 20px;')
+  })
+
+  it('shows source host specifications in the Start Backup table', () => {
+    const table = sourceBetween('<el-table\n                    ref="step3TableRef"', '<template #empty>')
+
+    expect(table).toContain("t('protection.sourceResources.colCpu')")
+    expect(table).toContain("t('protection.sourceResources.colMemory')")
+    expect(table).toContain("t('protection.sourceResources.colDiskCount')")
+    expect(table).toContain('flowSourceCpuCores(row)')
+    expect(table).toContain('flowSourceMemoryText(row)')
+    expect(table).toContain('flowSourceDiskCountText(row)')
+    const orderedColumns = [
+      "t('protection.backupsPage.colBackupSource')",
+      "t('protection.backupsPage.colConnectionAddress')",
+      "t('protection.backupsPage.flowBackupColBackupDirs')",
+      "t('protection.backupsPage.flowBackupColTargetRepo')",
+      "t('protection.backupsPage.flowBackupColCurrentTaskStatus')",
+      "t('protection.backupsPage.flowBackupColRestoreTaskStatus')",
+      "t('protection.sourceResources.colConnectivity')",
+      "t('protection.sourceResources.colLifecycleStatus')",
+      "t('protection.backupsPage.labelCompressionStrategy')",
+      "t('protection.backupsPage.flowBackupColBoundBackupPolicy')",
+      "t('protection.backupsPage.flowBackupColBoundFileFilter')",
+      "t('protection.sourceResources.colCpu')",
+      "t('protection.sourceResources.colMemory')",
+      "t('protection.sourceResources.colDiskCount')",
+      "t('protection.sourceResources.colCapacity')",
+      "t('protection.sourceResources.colRegisteredAt')",
+    ]
+    const positions = orderedColumns.map((column) => table.indexOf(column))
+    expect(positions.every((position) => position >= 0)).toBe(true)
+    expect(positions).toEqual([...positions].sort((a, b) => a - b))
+  })
+
   it('sends selected-field search and every quick/advanced filter to the server', () => {
     const load = sourceBetween('async function loadStep3Selectable', 'async function refreshStep3State')
 

@@ -40,7 +40,8 @@ import HflPagination from '../../../components/HflPagination.vue'
 import { useDrawerTableMaxHeight } from '../../../composables/useDrawerTableMaxHeight'
 import { apiErrorMessage } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
-import { getNode } from '../../../lib/nodeApi'
+import { getNode, type EnrollmentOs } from '../../../lib/nodeApi'
+import AgentPlatformBrandIcon from '../../../components/agent-deploy/AgentPlatformBrandIcon.vue'
 import type {
   BackupSnapshotBrowserEntry,
   BackupConfig,
@@ -103,6 +104,8 @@ import {
   restoreRecordTaskStatus,
   shouldShowRestoreRecordProgress,
 } from './restoreRecordDisplay'
+import { flowSourceDiskCountText, flowSourceMemoryText } from '../../../lib/flowSourceDisplay'
+import { formatNodeBytes } from '../../../lib/nodeInventoryDisplay'
 import { isSnapshotDirectoryBrowsable } from './snapshotBrowseEligibility'
 import {
   formatTaskProgressBarPercent,
@@ -415,6 +418,10 @@ function mapBackupSelectableSource(item: BackupSelectableSource): FlowSourceRow 
     cpuCores: item.cpu_cores ?? null,
     memoryTotalBytes: item.memory_total_bytes ?? null,
     diskCount: item.disk_count ?? null,
+    osName: item.os_name || '',
+    arch: item.arch || '',
+    capacityUsedBytes: item.capacity_used_bytes ?? null,
+    capacityTotalBytes: item.capacity_total_bytes ?? null,
   }
 }
 
@@ -905,6 +912,25 @@ function flowSourceTypeParts(row: { type: 'host' | 'nas'; protocol?: 'nfs' | 'sm
     main: 'NAS',
     suffix: row.protocol === 'smb' ? '(SMB/CIFS)' : '(NFS)',
   }
+}
+
+function flowSourceOsPlatform(row: FlowSourceRow): EnrollmentOs | null {
+  const platform = String(row.platform || '').trim().toLowerCase()
+  if (platform === 'macos' || platform === 'windows' || platform === 'linux') return platform
+  const raw = String(row.osName || '').trim().toLowerCase()
+  if (raw.includes('darwin') || raw.includes('mac')) return 'macos'
+  if (raw.includes('windows')) return 'windows'
+  if (raw.includes('linux')) return 'linux'
+  return null
+}
+
+function flowSourceOsType(row: FlowSourceRow) {
+  const platform = flowSourceOsPlatform(row)
+  if (platform === 'macos') return 'macOS'
+  if (platform === 'windows') return 'Windows'
+  if (platform === 'linux') return 'Linux'
+  const raw = String(row.osName || '').trim()
+  return raw || '—'
 }
 
 function flowSourceStatusLabel(status?: 'online' | 'offline') {
@@ -3590,6 +3616,51 @@ function onClosed() {
                   :image-size="72"
                 />
               </section>
+              <section
+                v-if="overviewSource.type === 'host'"
+                class="hfl-detail-section"
+              >
+                <h4 class="hfl-detail-section__title">
+                  {{ t('protection.backupsPage.flowSourceDetailSectionSpecs') }}
+                </h4>
+                <div class="hfl-detail-grid">
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailOsType') }}</span>
+                    <span class="hfl-detail-row__value dp-flow-os-type">
+                      <AgentPlatformBrandIcon
+                        v-if="flowSourceOsPlatform(overviewSource)"
+                        :os="flowSourceOsPlatform(overviewSource)!"
+                        class="dp-flow-os-type__icon"
+                      />
+                      <span>{{ flowSourceOsType(overviewSource) }}</span>
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldArch') }}</span>
+                    <span class="hfl-detail-row__value">{{ overviewSource.arch || '—' }}</span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colCpu') }}</span>
+                    <span class="hfl-detail-row__value">
+                      {{ overviewSource.cpuCores != null ? t('protection.sourceResources.cpuCoresValue', { n: overviewSource.cpuCores }) : '—' }}
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colMemory') }}</span>
+                    <span class="hfl-detail-row__value">{{ flowSourceMemoryText(overviewSource) }}</span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colDiskCount') }}</span>
+                    <span class="hfl-detail-row__value">{{ flowSourceDiskCountText(overviewSource) }}</span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colCapacity') }}</span>
+                    <span class="hfl-detail-row__value">
+                      {{ overviewSource.capacityTotalBytes ? `${formatNodeBytes(overviewSource.capacityUsedBytes || 0)} / ${formatNodeBytes(overviewSource.capacityTotalBytes)}` : '—' }}
+                    </span>
+                  </div>
+                </div>
+              </section>
             </template>
             <div
               v-else-if="sourceDetailLoading"
@@ -6118,6 +6189,18 @@ function onClosed() {
 
 .dp-flow-source-overview {
   gap: 14px;
+}
+
+.dp-flow-os-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.dp-flow-os-type__icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 
 .dp-flow-source-detail-drawer .hfl-detail-section__title {

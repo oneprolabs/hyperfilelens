@@ -336,7 +336,12 @@ function installWithResolvers(
     titleForTarget,
     onMouseOver: (event) => {
       const cell = state.resolveTarget(event.target)
-      if (cell) scheduleTooltip(state, cell)
+      if (cell) {
+        scheduleTooltip(state, cell)
+        return
+      }
+      clearPendingTooltip(state)
+      if (state.active) clearTooltip(state)
     },
     onMouseOut: (event) => {
       const relatedTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null
@@ -351,7 +356,12 @@ function installWithResolvers(
     },
     onFocusIn: (event) => {
       const cell = state.resolveTarget(event.target)
-      if (cell) scheduleTooltip(state, cell)
+      if (cell) {
+        scheduleTooltip(state, cell)
+        return
+      }
+      clearPendingTooltip(state)
+      if (state.active) clearTooltip(state)
     },
     onFocusOut: () => {
       clearPendingTooltip(state)

@@ -70,6 +70,27 @@ describe('FlowBackupSourceDetailDrawer structured detail layout', () => {
 })
 
 describe('FlowBackupSourceDetailDrawer source status', () => {
+  it('shows host system specifications in the overview', () => {
+    const sourceInfo = sourceBetween(
+      "<h4 class=\"hfl-detail-section__title\">{{ t('protection.backupsPage.flowSourceDetailSectionSpecs') }}</h4>",
+      '</section></template>',
+    )
+
+    expect(drawer).toContain("v-if=\"overviewSource.type === 'host'\"")
+    expect(sourceInfo).toContain("t('protection.sourceResources.colCpu')")
+    expect(sourceInfo).toContain("t('protection.sourceResources.colMemory')")
+    expect(sourceInfo).toContain("t('protection.sourceResources.colDiskCount')")
+    expect(sourceInfo).toContain("t('protection.backupsPage.flowSourceDetailOsType')")
+    expect(sourceInfo).toContain('<AgentPlatformBrandIcon')
+    expect(sourceInfo).toContain('flowSourceOsPlatform(overviewSource)')
+    expect(sourceInfo).toContain("t('protection.sourceResources.fieldArch')")
+    expect(sourceInfo).toContain("t('protection.sourceResources.colCapacity')")
+    expect(sourceInfo).toContain('flowSourceMemoryText(overviewSource)')
+    expect(sourceInfo).toContain('flowSourceDiskCountText(overviewSource)')
+    expect(drawer.indexOf('<section class="hfl-detail-section dp-flow-config-section">'))
+      .toBeLessThan(drawer.indexOf("t('protection.backupsPage.flowSourceDetailSectionSpecs')"))
+  })
+
   it('uses explicit connectivity and lifecycle status terminology', () => {
     const sourceInfo = sourceBetween(
       "<h4 class=\"hfl-detail-section__title\">{{ t('protection.backupsPage.flowSourceDetailSectionMeta') }}</h4>",

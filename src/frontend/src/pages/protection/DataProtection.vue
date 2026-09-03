@@ -57,6 +57,7 @@ import {
 import FlowSourceSummaryCell from './components/FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './components/FlowSourceConnectionCell.vue'
 import FlowSourceReadyStatusCell from './components/FlowSourceReadyStatusCell.vue'
+import HflCapacityCell from '../../components/HflCapacityCell.vue'
 import TaskProgressCell from './components/TaskProgressCell.vue'
 import TaskTerminalOutcomeCell from './components/TaskTerminalOutcomeCell.vue'
 import TaskStatusTag from '../../components/TaskStatusTag.vue'
@@ -113,7 +114,7 @@ import { useBackupSourcePipeline } from '../../composables/useBackupSourcePipeli
 import { isBackupSelectableId } from '../../composables/useDemoFlowStep2Sources'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { booleanStatusTag, lifecycleStatusTagAttrs } from '../../lib/statusTag'
-import { nodeEnrollmentOs } from '../../lib/nodeInventoryDisplay'
+import { formatNodeBytes, nodeEnrollmentOs } from '../../lib/nodeInventoryDisplay'
 import {
   getBackupConfig,
   getBackupSourceSnapshot,
@@ -1162,6 +1163,10 @@ function mapBackupSelectableToFlowRow(item: BackupSelectableSource): FlowSourceR
     cpuCores: item.cpu_cores ?? null,
     memoryTotalBytes: item.memory_total_bytes ?? null,
     diskCount: item.disk_count ?? null,
+    osName: item.os_name || '',
+    arch: item.arch || '',
+    capacityUsedBytes: item.capacity_used_bytes ?? null,
+    capacityTotalBytes: item.capacity_total_bytes ?? null,
     backup_configs: item.backup_configs,
     policies: item.policies,
     filters: item.filters,
@@ -10569,6 +10574,23 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       </template>
                     </el-table-column>
                     <el-table-column
+                      :label="t('protection.sourceResources.colConnectivity')"
+                      width="110"
+                      align="center"
+                      header-align="center"
+                    >
+                      <template #default="{ row }">
+                        <div class="hfl-table-no-tooltip">
+                          <ElTag
+                            :type="flowSourceAvailabilityTagType(row.availability)"
+                            size="small"
+                          >
+                            {{ flowSourceAvailabilityLabel(row.availability) }}
+                          </ElTag>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
                       :label="t('protection.sourceResources.colLifecycleStatus')"
                       width="168"
                       align="center"
@@ -10674,20 +10696,18 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       </template>
                     </el-table-column>
                     <el-table-column
-                      :label="t('protection.sourceResources.colConnectivity')"
-                      width="110"
-                      align="center"
-                      header-align="center"
+                      :label="t('protection.sourceResources.colCapacity')"
+                      min-width="170"
                     >
                       <template #default="{ row }">
-                        <div class="hfl-table-no-tooltip">
-                          <ElTag
-                            :type="flowSourceAvailabilityTagType(row.availability)"
-                            size="small"
-                          >
-                            {{ flowSourceAvailabilityLabel(row.availability) }}
-                          </ElTag>
-                        </div>
+                        <HflCapacityCell
+                          v-if="row.capacityTotalBytes"
+                          :used-bytes="row.capacityUsedBytes || 0"
+                          :total-bytes="row.capacityTotalBytes"
+                          variant="compact"
+                          :format-bytes="formatNodeBytes"
+                        />
+                        <span v-else class="hfl-empty-mark">—</span>
                       </template>
                     </el-table-column>
                     <el-table-column
@@ -10780,6 +10800,23 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       </template>
                     </el-table-column>
                     <el-table-column
+                      :label="t('protection.sourceResources.colConnectivity')"
+                      width="110"
+                      align="center"
+                      header-align="center"
+                    >
+                      <template #default="{ row }">
+                        <div class="hfl-table-no-tooltip">
+                          <ElTag
+                            :type="flowSourceAvailabilityTagType(row.availability)"
+                            size="small"
+                          >
+                            {{ flowSourceAvailabilityLabel(row.availability) }}
+                          </ElTag>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
                       :label="t('protection.sourceResources.colLifecycleStatus')"
                       width="168"
                       align="center"
@@ -10885,20 +10922,18 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       </template>
                     </el-table-column>
                     <el-table-column
-                      :label="t('protection.sourceResources.colConnectivity')"
-                      width="110"
-                      align="center"
-                      header-align="center"
+                      :label="t('protection.sourceResources.colCapacity')"
+                      min-width="170"
                     >
                       <template #default="{ row }">
-                        <div class="hfl-table-no-tooltip">
-                          <ElTag
-                            :type="flowSourceAvailabilityTagType(row.availability)"
-                            size="small"
-                          >
-                            {{ flowSourceAvailabilityLabel(row.availability) }}
-                          </ElTag>
-                        </div>
+                        <HflCapacityCell
+                          v-if="row.capacityTotalBytes"
+                          :used-bytes="row.capacityUsedBytes || 0"
+                          :total-bytes="row.capacityTotalBytes"
+                          variant="compact"
+                          :format-bytes="formatNodeBytes"
+                        />
+                        <span v-else class="hfl-empty-mark">—</span>
                       </template>
                     </el-table-column>
                     <el-table-column
@@ -11057,116 +11092,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       </template>
                     </el-table-column>
                     <el-table-column
-                      :label="t('protection.sourceResources.colLifecycleStatus')"
-                      width="168"
-                      align="center"
-                      header-align="center"
-                    >
-                      <template #header>
-                        <span class="flow-filterable-header">
-                          <span>{{ t('protection.sourceResources.colLifecycleStatus') }}</span>
-                          <HflPopover
-                            v-if="flowMainStep !== 2"
-                            v-model:visible="flowHeaderFilterOpen.sourceStatus"
-                            trigger="click"
-                            placement="bottom"
-                            :width="210"
-                            popper-class="flow-header-filter-popper"
-                          >
-                            <template #reference>
-                              <button
-                                type="button"
-                                class="flow-header-filter-trigger"
-                                :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('sourceStatus') }"
-                                @click.stop
-                              >
-                                <Filter :size="14" />
-                              </button>
-                            </template>
-                            <div class="flow-header-filter-panel">
-                              <ElInput
-                                v-model="flowHeaderFilterSearch.sourceStatus"
-                                size="small"
-                                clearable
-                                :placeholder="t('protection.backupsPage.flowFilterSearchPlaceholder')"
-                              />
-                              <ElCheckboxGroup
-                                v-model="flowFilterSourceStatuses"
-                                class="flow-header-filter-options"
-                              >
-                                <ElCheckbox
-                                  v-for="item in visibleFlowHeaderFilterOptions(flowSourceStatusFilterOptions, 'sourceStatus')"
-                                  :key="item.value"
-                                  :value="item.value"
-                                >
-                                  {{ item.text }}
-                                </ElCheckbox>
-                              </ElCheckboxGroup>
-                              <div
-                                v-if="visibleFlowHeaderFilterOptions(flowSourceStatusFilterOptions, 'sourceStatus').length === 0"
-                                class="flow-header-filter-empty"
-                              >
-                                {{ t('protection.backupsPage.flowFilterNoOptions') }}
-                              </div>
-                              <div class="flow-header-filter-actions">
-                                <ElButton
-                                  text
-                                  size="small"
-                                  @click="clearFlowHeaderFilter('sourceStatus')"
-                                >{{ t('protection.backupsPage.flowFilterReset') }}</ElButton>
-                                <ElButton
-                                  text
-                                  size="small"
-                                  type="primary"
-                                  @click="closeFlowHeaderFilter('sourceStatus')"
-                                >{{ t('protection.backupsPage.flowFilterApply') }}</ElButton>
-                              </div>
-                            </div>
-                          </HflPopover>
-                        </span>
-                      </template>
-                      <template #default="{ row }">
-                        <button
-                          v-if="sourceProvisionState(row.id)"
-                          type="button"
-                          class="reset-status-cell"
-                          :class="sourceProvisionState(row.id) === 'provision_failed' ? 'reset-status-cell--reset_failed' : 'reset-status-cell--resetting'"
-                          :title="sourceProvisionStatusDetail(row.id)"
-                          @click.stop="openProvisionTaskDetail(row)"
-                        >
-                          <span class="reset-status-cell__label">{{ sourceProvisionStatusLabel(row.id) }}</span>
-                        </button>
-                        <button
-                          v-else-if="sourceResetState(row.id)"
-                          type="button"
-                          class="reset-status-cell"
-                          :class="`reset-status-cell--${sourceResetState(row.id)}`"
-                          :title="t('protection.backupsPage.resetStatusClickHint')"
-                          @click.stop="openResetTaskDetail(row)"
-                        >
-                          <span class="reset-status-cell__label">{{ sourceResetStatusLabel(row.id) }}</span>
-                          <span
-                            v-if="sourceResetState(row.id) === 'resetting'"
-                            class="reset-status-cell__progress"
-                          >
-                            <span class="reset-status-cell__track">
-                              <span
-                                class="reset-status-cell__fill"
-                                :style="{ width: `${sourceResetProgress(row.id)}%` }"
-                              />
-                            </span>
-                            <span class="reset-status-cell__percent">{{ sourceResetProgress(row.id) }}%</span>
-                          </span>
-                        </button>
-                        <FlowSourceReadyStatusCell
-                          v-else
-                          v-bind="resolveFlowSourceDisplayStatus(row)"
-                          neutral-as-danger
-                          @click="openSourcePendingFailureDetails(row.id)"
-                        />
-                      </template>
-                    </el-table-column>
-                    <el-table-column
                       :label="t('protection.backupsPage.flowBackupColBackupDirs')"
                       :min-width="FLOW_START_BACKUP_TABLE_COL_MIN.backupDirs"
                     >
@@ -11215,87 +11140,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           v-else
                           class="hfl-empty-mark"
                         >{{ t('protection.backupDetail.durationDash') }}</span>
-                      </template>
-                    </el-table-column>
-                    <el-table-column
-                      :label="t('protection.backupsPage.flowBackupColCurrentTaskStatus')"
-                      min-width="228"
-                    >
-                      <template #default="{ row }">
-                        <button
-                          type="button"
-                          class="backup-task-trigger"
-                          :disabled="!latestBackupTaskUuidForSource(row.id)"
-                          :aria-label="t('protection.backupsPage.backupTaskStatusClickHint')"
-                          @click.stop="openLatestBackupTask(row)"
-                        >
-                          <TaskProgressCell
-                            v-if="sourceBackupCellPhase(row.id) === 'running'"
-                            :failed="sourceBackupRuntime(row.id).failed"
-                            :progress="sourceBackupRuntime(row.id).progress"
-                            :transfer-progress="sourceBackupRuntime(row.id).transferProgress"
-                          />
-                          <TaskProgressCell
-                            v-else-if="sourceBackupCellPhase(row.id) === 'stopping'"
-                            :progress="sourceBackupRuntime(row.id).progress"
-                            :transfer-progress="sourceBackupRuntime(row.id).transferProgress"
-                            stopping
-                          />
-                          <TaskTerminalOutcomeCell
-                            v-else
-                            :task="latestBackupTaskForSource(row.id)"
-                            :fallback="latestSnapshotForSource(row.id)"
-                          />
-                        </button>
-                      </template>
-                    </el-table-column>
-                    <el-table-column
-                      :label="t('protection.backupsPage.flowBackupColRestoreTaskStatus')"
-                      min-width="228"
-                    >
-                      <template #default="{ row }">
-                        <button
-                          type="button"
-                          class="backup-task-trigger"
-                          :disabled="!latestRestoreTaskForSource(row.id)?.task_uuid && !latestRestoreRecordForSource(row.id)?.task_uuid"
-                          :aria-label="t('protection.backupsPage.restoreTaskStatusClickHint')"
-                          @click.stop="openLatestRestoreTask(row)"
-                        >
-                          <TaskProgressCell
-                            v-if="sourceRestoreCellPhase(row.id) === 'running'"
-                            :failed="sourceRestoreRuntime(row.id).failed"
-                            :progress="sourceRestoreRuntime(row.id).progress"
-                            :transfer-progress="sourceRestoreRuntime(row.id).transferProgress"
-                          />
-                          <TaskProgressCell
-                            v-else-if="sourceRestoreCellPhase(row.id) === 'stopping'"
-                            :progress="sourceRestoreRuntime(row.id).progress"
-                            :transfer-progress="sourceRestoreRuntime(row.id).transferProgress"
-                            stopping
-                          />
-                          <TaskTerminalOutcomeCell
-                            v-else
-                            :task="latestRestoreTaskForSource(row.id)"
-                            :fallback="latestRestoreRecordForSource(row.id)?.task_summary"
-                          />
-                        </button>
-                      </template>
-                    </el-table-column>
-                    <el-table-column
-                      :label="t('protection.sourceResources.colConnectivity')"
-                      width="110"
-                      align="center"
-                      header-align="center"
-                    >
-                      <template #default="{ row }">
-                        <div class="hfl-table-no-tooltip">
-                          <ElTag
-                            :type="flowSourceAvailabilityTagType(row.availability)"
-                            size="small"
-                          >
-                            {{ flowSourceAvailabilityLabel(row.availability) }}
-                          </ElTag>
-                        </div>
                       </template>
                     </el-table-column>
                     <el-table-column
@@ -11385,7 +11229,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                               <div
                                 class="wizard-target-repository-cell hfl-table-no-tooltip"
                                 :class="`wizard-target-repository-cell--${flowTargetTone(target)}`"
-                                :title="target.location ? `${target.name}\n${target.location}` : target.name"
                               >
                                 <span
                                   class="wizard-target-repository-cell__dot"
@@ -11426,50 +11269,180 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       </template>
                     </el-table-column>
                     <el-table-column
+                      :label="t('protection.backupsPage.flowBackupColCurrentTaskStatus')"
+                      min-width="228"
+                    >
+                      <template #default="{ row }">
+                        <button
+                          type="button"
+                          class="backup-task-trigger"
+                          :disabled="!latestBackupTaskUuidForSource(row.id)"
+                          :aria-label="t('protection.backupsPage.backupTaskStatusClickHint')"
+                          @click.stop="openLatestBackupTask(row)"
+                        >
+                          <TaskProgressCell
+                            v-if="sourceBackupCellPhase(row.id) === 'running'"
+                            :failed="sourceBackupRuntime(row.id).failed"
+                            :progress="sourceBackupRuntime(row.id).progress"
+                            :transfer-progress="sourceBackupRuntime(row.id).transferProgress"
+                          />
+                          <TaskProgressCell
+                            v-else-if="sourceBackupCellPhase(row.id) === 'stopping'"
+                            :progress="sourceBackupRuntime(row.id).progress"
+                            :transfer-progress="sourceBackupRuntime(row.id).transferProgress"
+                            stopping
+                          />
+                          <TaskTerminalOutcomeCell
+                            v-else
+                            :task="latestBackupTaskForSource(row.id)"
+                            :fallback="latestSnapshotForSource(row.id)"
+                          />
+                        </button>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.backupsPage.flowBackupColRestoreTaskStatus')"
+                      min-width="228"
+                    >
+                      <template #default="{ row }">
+                        <button
+                          type="button"
+                          class="backup-task-trigger"
+                          :disabled="!latestRestoreTaskForSource(row.id)?.task_uuid && !latestRestoreRecordForSource(row.id)?.task_uuid"
+                          :aria-label="t('protection.backupsPage.restoreTaskStatusClickHint')"
+                          @click.stop="openLatestRestoreTask(row)"
+                        >
+                          <TaskProgressCell
+                            v-if="sourceRestoreCellPhase(row.id) === 'running'"
+                            :failed="sourceRestoreRuntime(row.id).failed"
+                            :progress="sourceRestoreRuntime(row.id).progress"
+                            :transfer-progress="sourceRestoreRuntime(row.id).transferProgress"
+                          />
+                          <TaskProgressCell
+                            v-else-if="sourceRestoreCellPhase(row.id) === 'stopping'"
+                            :progress="sourceRestoreRuntime(row.id).progress"
+                            :transfer-progress="sourceRestoreRuntime(row.id).transferProgress"
+                            stopping
+                          />
+                          <TaskTerminalOutcomeCell
+                            v-else
+                            :task="latestRestoreTaskForSource(row.id)"
+                            :fallback="latestRestoreRecordForSource(row.id)?.task_summary"
+                          />
+                        </button>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.sourceResources.colConnectivity')"
+                      width="110"
+                      align="center"
+                      header-align="center"
+                    >
+                      <template #default="{ row }">
+                        <div class="hfl-table-no-tooltip">
+                          <ElTag
+                            :type="flowSourceAvailabilityTagType(row.availability)"
+                            size="small"
+                          >
+                            {{ flowSourceAvailabilityLabel(row.availability) }}
+                          </ElTag>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.sourceResources.colLifecycleStatus')"
+                      width="168"
+                      align="center"
+                      header-align="center"
+                    >
+                      <template #default="{ row }">
+                        <button
+                          v-if="sourceProvisionState(row.id)"
+                          type="button"
+                          class="reset-status-cell"
+                          :class="sourceProvisionState(row.id) === 'provision_failed' ? 'reset-status-cell--reset_failed' : 'reset-status-cell--resetting'"
+                          :title="sourceProvisionStatusDetail(row.id)"
+                          @click.stop="openProvisionTaskDetail(row)"
+                        >
+                          <span class="reset-status-cell__label">{{ sourceProvisionStatusLabel(row.id) }}</span>
+                        </button>
+                        <button
+                          v-else-if="sourceResetState(row.id)"
+                          type="button"
+                          class="reset-status-cell"
+                          :class="`reset-status-cell--${sourceResetState(row.id)}`"
+                          :title="t('protection.backupsPage.resetStatusClickHint')"
+                          @click.stop="openResetTaskDetail(row)"
+                        >
+                          <span class="reset-status-cell__label">{{ sourceResetStatusLabel(row.id) }}</span>
+                          <span
+                            v-if="sourceResetState(row.id) === 'resetting'"
+                            class="reset-status-cell__progress"
+                          >
+                            <span class="reset-status-cell__track">
+                              <span
+                                class="reset-status-cell__fill"
+                                :style="{ width: `${sourceResetProgress(row.id)}%` }"
+                              />
+                            </span>
+                            <span class="reset-status-cell__percent">{{ sourceResetProgress(row.id) }}%</span>
+                          </span>
+                        </button>
+                        <FlowSourceReadyStatusCell
+                          v-else
+                          v-bind="resolveFlowSourceDisplayStatus(row)"
+                          neutral-as-danger
+                          @click="openSourcePendingFailureDetails(row.id)"
+                        />
+                      </template>
+                    </el-table-column>
+                    <el-table-column
                       :label="t('protection.backupsPage.labelCompressionStrategy')"
                       :min-width="FLOW_START_BACKUP_TABLE_COL_MIN.compression"
                     >
                       <template #default="{ row }">
-                        <HflPopover
-                          v-if="sourceCompressionLabel(row.id)"
-                          trigger="hover"
-                          placement="bottom-start"
-                          :width="288"
-                          :fallback-placements="['bottom-start', 'bottom-end']"
-                          popper-class="flow-compression-popper"
-                        >
-                          <template #reference>
-                            <span class="flow-compression-cell hfl-table-no-tooltip">
-                              <component
-                                :is="compressionLevelIcon(sourceCompressionLevel(row.id) ?? 'balanced')"
-                                :size="15"
-                                aria-hidden="true"
-                                class="flow-compression-cell__icon"
-                                :class="`flow-compression-cell__icon--${sourceCompressionLevel(row.id) ?? 'balanced'}`"
-                              />
-                              <span class="flow-compression-cell__label">{{ sourceCompressionLabel(row.id) }}</span>
-                            </span>
-                          </template>
-                          <div class="flow-compression-popover">
-                            <div class="flow-compression-popover__title">
-                              <component
-                                :is="compressionLevelIcon(sourceCompressionLevel(row.id) ?? 'balanced')"
-                                :size="17"
-                                aria-hidden="true"
-                                class="flow-compression-popover__icon"
-                                :class="`flow-compression-popover__icon--${sourceCompressionLevel(row.id) ?? 'balanced'}`"
-                              />
-                              <span>{{ sourceCompressionLabel(row.id) }}</span>
+                        <div class="flow-compression-cell-align">
+                          <HflPopover
+                            v-if="sourceCompressionLabel(row.id)"
+                            trigger="hover"
+                            placement="bottom-start"
+                            :width="288"
+                            :fallback-placements="['bottom-start', 'bottom-end']"
+                            popper-class="flow-compression-popper"
+                          >
+                            <template #reference>
+                              <span class="flow-compression-cell hfl-table-no-tooltip">
+                                <component
+                                  :is="compressionLevelIcon(sourceCompressionLevel(row.id) ?? 'balanced')"
+                                  :size="15"
+                                  aria-hidden="true"
+                                  class="flow-compression-cell__icon"
+                                  :class="`flow-compression-cell__icon--${sourceCompressionLevel(row.id) ?? 'balanced'}`"
+                                />
+                                <span class="flow-compression-cell__label">{{ sourceCompressionLabel(row.id) }}</span>
+                              </span>
+                            </template>
+                            <div class="flow-compression-popover">
+                              <div class="flow-compression-popover__title">
+                                <component
+                                  :is="compressionLevelIcon(sourceCompressionLevel(row.id) ?? 'balanced')"
+                                  :size="17"
+                                  aria-hidden="true"
+                                  class="flow-compression-popover__icon"
+                                  :class="`flow-compression-popover__icon--${sourceCompressionLevel(row.id) ?? 'balanced'}`"
+                                />
+                                <span>{{ sourceCompressionLabel(row.id) }}</span>
+                              </div>
+                              <div class="flow-compression-popover__body">
+                                {{ compressionLevelTooltip(sourceCompressionLevel(row.id) ?? 'balanced') }}
+                              </div>
                             </div>
-                            <div class="flow-compression-popover__body">
-                              {{ compressionLevelTooltip(sourceCompressionLevel(row.id) ?? 'balanced') }}
-                            </div>
-                          </div>
-                        </HflPopover>
-                        <span
-                          v-else
-                          class="hfl-empty-mark"
-                        >{{ t('protection.backupDetail.durationDash') }}</span>
+                          </HflPopover>
+                          <span
+                            v-else
+                            class="hfl-empty-mark"
+                          >{{ t('protection.backupDetail.durationDash') }}</span>
+                        </div>
                       </template>
                     </el-table-column>
                     <el-table-column
@@ -11540,30 +11513,31 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </span>
                       </template>
                       <template #default="{ row }">
-                        <template v-if="sourcePoliciesLabel(row.id)">
-                          <HflPopover
-                            placement="right-start"
-                            trigger="hover"
-                            :hide-after="FLOW_DETAIL_POPOVER_HIDE_AFTER_MS"
-                            :width="420"
-                            append-to-body
-                            popper-class="create-policy-option-popper flow-binding-detail-popper"
-                          >
-                            <template #reference>
-                              <span class="flow-binding-list hfl-table-no-tooltip">
-                                <span
-                                  v-for="policy in sourceBoundPolicyRows(row.id)"
-                                  :key="policy.id"
-                                  class="flow-binding-list-item"
-                                >
+                        <div class="flow-binding-cell">
+                          <template v-if="sourcePoliciesLabel(row.id)">
+                            <HflPopover
+                              placement="right-start"
+                              trigger="hover"
+                              :hide-after="FLOW_DETAIL_POPOVER_HIDE_AFTER_MS"
+                              :width="420"
+                              append-to-body
+                              popper-class="create-policy-option-popper flow-binding-detail-popper"
+                            >
+                              <template #reference>
+                                <span class="flow-binding-list hfl-table-no-tooltip">
                                   <span
-                                    :class="flowBindingStatusDotClass(policy.isActive)"
-                                    aria-hidden="true"
-                                  />
-                                  <span class="flow-binding-list-item__name">{{ policy.name }}</span>
+                                    v-for="policy in sourceBoundPolicyRows(row.id)"
+                                    :key="policy.id"
+                                    class="flow-binding-list-item"
+                                  >
+                                    <span
+                                      :class="flowBindingStatusDotClass(policy.isActive)"
+                                      aria-hidden="true"
+                                    />
+                                    <span class="flow-binding-list-item__name">{{ policy.name }}</span>
+                                  </span>
                                 </span>
-                              </span>
-                            </template>
+                              </template>
                             <div class="create-confirm-binding-popover-stack">
                               <div
                                 v-for="policy in sourceBoundPolicyRows(row.id)"
@@ -11631,20 +11605,21 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                 </div>
                               </div>
                             </div>
-                          </HflPopover>
-                        </template>
-                        <span
-                          v-else
-                          class="flow-binding-empty"
-                        >
-                          <Unlink
-                            :size="14"
-                            class="shrink-0"
-                            stroke-width="2.2"
-                            aria-hidden="true"
-                          />
-                          {{ t('protection.backupsPage.flowBackupColPolicyNone') }}
-                        </span>
+                            </HflPopover>
+                          </template>
+                          <span
+                            v-else
+                            class="flow-binding-empty"
+                          >
+                            <Unlink
+                              :size="14"
+                              class="shrink-0"
+                              stroke-width="2.2"
+                              aria-hidden="true"
+                            />
+                            {{ t('protection.backupsPage.flowBackupColPolicyNone') }}
+                          </span>
+                        </div>
                       </template>
                     </el-table-column>
                     <el-table-column
@@ -11715,30 +11690,31 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </span>
                       </template>
                       <template #default="{ row }">
-                        <template v-if="sourceFiltersLabel(row.id)">
-                          <HflPopover
-                            placement="right-start"
-                            trigger="hover"
-                            :hide-after="FLOW_DETAIL_POPOVER_HIDE_AFTER_MS"
-                            :width="380"
-                            append-to-body
-                            popper-class="create-policy-option-popper flow-binding-detail-popper"
-                          >
-                            <template #reference>
-                              <span class="flow-binding-list hfl-table-no-tooltip">
-                                <span
-                                  v-for="filter in sourceBoundFilterRows(row.id)"
-                                  :key="filter.id"
-                                  class="flow-binding-list-item"
-                                >
+                        <div class="flow-binding-cell">
+                          <template v-if="sourceFiltersLabel(row.id)">
+                            <HflPopover
+                              placement="right-start"
+                              trigger="hover"
+                              :hide-after="FLOW_DETAIL_POPOVER_HIDE_AFTER_MS"
+                              :width="380"
+                              append-to-body
+                              popper-class="create-policy-option-popper flow-binding-detail-popper"
+                            >
+                              <template #reference>
+                                <span class="flow-binding-list hfl-table-no-tooltip">
                                   <span
-                                    :class="flowBindingStatusDotClass(filter.isActive)"
-                                    aria-hidden="true"
-                                  />
-                                  <span class="flow-binding-list-item__name">{{ filter.name }}</span>
+                                    v-for="filter in sourceBoundFilterRows(row.id)"
+                                    :key="filter.id"
+                                    class="flow-binding-list-item"
+                                  >
+                                    <span
+                                      :class="flowBindingStatusDotClass(filter.isActive)"
+                                      aria-hidden="true"
+                                    />
+                                    <span class="flow-binding-list-item__name">{{ filter.name }}</span>
+                                  </span>
                                 </span>
-                              </span>
-                            </template>
+                              </template>
                             <div class="create-confirm-binding-popover-stack">
                               <div
                                 v-for="filter in sourceBoundFilterRows(row.id)"
@@ -11796,20 +11772,64 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                 </div>
                               </div>
                             </div>
-                          </HflPopover>
-                        </template>
-                        <span
-                          v-else
-                          class="flow-binding-empty"
-                        >
-                          <Unlink
-                            :size="14"
-                            class="shrink-0"
-                            stroke-width="2.2"
-                            aria-hidden="true"
-                          />
-                          {{ t('protection.backupsPage.flowBackupColPolicyNone') }}
-                        </span>
+                            </HflPopover>
+                          </template>
+                          <span
+                            v-else
+                            class="flow-binding-empty"
+                          >
+                            <Unlink
+                              :size="14"
+                              class="shrink-0"
+                              stroke-width="2.2"
+                              aria-hidden="true"
+                            />
+                            {{ t('protection.backupsPage.flowBackupColPolicyNone') }}
+                          </span>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.sourceResources.colCpu')"
+                      :min-width="FLOW_PICK_TABLE_COL_MIN.cpu"
+                    >
+                      <template #default="{ row }">
+                        <span>{{
+                          flowSourceCpuCores(row) != null
+                            ? t('protection.sourceResources.cpuCoresValue', { n: flowSourceCpuCores(row) })
+                            : '—'
+                        }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.sourceResources.colMemory')"
+                      :min-width="FLOW_PICK_TABLE_COL_MIN.memory"
+                    >
+                      <template #default="{ row }">
+                        <span>{{ flowSourceMemoryText(row) }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.sourceResources.colDiskCount')"
+                      :min-width="FLOW_PICK_TABLE_COL_MIN.diskCount"
+                    >
+                      <template #default="{ row }">
+                        <span>{{ flowSourceDiskCountText(row) }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="t('protection.sourceResources.colCapacity')"
+                      min-width="170"
+                    >
+                      <template #default="{ row }">
+                        <HflCapacityCell
+                          v-if="row.capacityTotalBytes"
+                          :used-bytes="row.capacityUsedBytes || 0"
+                          :total-bytes="row.capacityTotalBytes"
+                          variant="compact"
+                          :format-bytes="formatNodeBytes"
+                        />
+                        <span v-else class="hfl-empty-mark">—</span>
                       </template>
                     </el-table-column>
                     <el-table-column
@@ -20818,15 +20838,45 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 
 .flow-compression-cell {
   display: inline-flex !important;
+  width: 100%;
+  max-width: 100%;
   align-items: center;
   gap: 6px;
   min-width: 0;
+  overflow: hidden;
   white-space: nowrap;
 }
 
 .flow-compression-cell__label {
+  min-width: 0;
+  overflow: hidden;
   color: var(--el-text-color-primary);
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-compression-cell-align {
+  display: flex;
+  min-width: 0;
+  min-height: 20px;
+  align-items: center;
+  line-height: 20px;
+}
+
+.protection-flow-table-block .flow-binding-empty {
+  font-size: 13px;
+}
+
+.protection-flow-table-block .flow-binding-cell {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  line-height: 20px;
+}
+
+.protection-flow-table-block .flow-binding-list-item {
   line-height: 20px;
 }
 
