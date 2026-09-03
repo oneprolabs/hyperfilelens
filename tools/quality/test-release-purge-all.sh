@@ -9,19 +9,22 @@ trap 'rm -rf "${fixture}"' EXIT
 # shellcheck source=../../deploy/installer/install.sh
 source "${REPO_ROOT}/deploy/installer/install.sh"
 
-LOCAL_PLATFORM_AGENT_INSTALL_DIR="${fixture}/opt/hyperfilelens-agent"
-LOCAL_PLATFORM_AGENT_DATA_DIR="${fixture}/var/lib/hyperfilelens-agent"
-mkdir -p "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" "${LOCAL_PLATFORM_AGENT_DATA_DIR}"
+LOCAL_PLATFORM_AGENT_INSTALL_DIR="${fixture}/opt/hyperfilelens-agent/bin"
+LOCAL_PLATFORM_AGENT_DATA_DIR="${fixture}/opt/hyperfilelens-agent"
+LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR="${fixture}/legacy/opt/hyperfilelens-agent"
+LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR="${fixture}/legacy/var/lib/hyperfilelens-agent"
+LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE="${fixture}/etc/systemd/system/hyperfilelens-agent.service"
+mkdir -p "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config"
 printf '%s\n' \
 	'HFL_ORG_KEY=__platform_lens__' \
 	'HFL_NODE_ROLE=gateway' \
-	>"${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env"
+	>"${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
 local_platform_gateway_agent_is_managed
 
 printf '%s\n' \
 	'HFL_ORG_KEY=customer-org' \
 	'HFL_NODE_ROLE=gateway' \
-	>"${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env"
+	>"${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
 if local_platform_gateway_agent_is_managed; then
 	printf 'ordinary customer Gateway was classified as installer-managed\n' >&2
 	exit 1
@@ -30,7 +33,7 @@ fi
 printf '%s\n' \
 	'HFL_ORG_KEY=__platform_lens__' \
 	'HFL_NODE_ROLE=gateway' \
-	>"${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env"
+	>"${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
 invocation="${fixture}/agent-uninstall-invocation"
 printf '%s\n' \
 	'#!/usr/bin/env bash' \
@@ -60,11 +63,11 @@ grep -Fx 'uninstall --purge-all' "${invocation}" >/dev/null
 
 # A failed managed-Gateway uninstall is a hard stop: the HFL control plane and
 # its data must remain available so the operator can retry safely.
-mkdir -p "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" "${LOCAL_PLATFORM_AGENT_DATA_DIR}"
+mkdir -p "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config"
 printf '%s\n' \
 	'HFL_ORG_KEY=__platform_lens__' \
 	'HFL_NODE_ROLE=gateway' \
-	>"${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env"
+	>"${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
 printf '%s\n' \
 	'#!/usr/bin/env bash' \
 	'exit 23' \
@@ -208,9 +211,56 @@ if run_bridge_network_contract removal_failure >/dev/null 2>&1; then
 	exit 1
 fi
 
-# --purge-all must remove the installer-owned Gateway first, then bundled
-# SourceLens, and only then stop the HFL control plane. Plain uninstall keeps
-# both optional runtimes. Run the command contract with filesystem-safe stubs.
+# --keep-data removes replaceable application files but preserves exactly the
+# control-plane state needed for a later reinstall. Complete removal keeps the
+# active log descriptor valid while deleting that log and the installation root.
+preserve_root="${fixture}/preserve/hyperfilelens"
+mkdir -p "${preserve_root}"/{data,backup,logs,images,sourcelens}
+: >"${preserve_root}/.env"
+: >"${preserve_root}/.installer.lock"
+: >"${preserve_root}/docker-compose.yml"
+: >"${preserve_root}/MANIFEST.json"
+: >"${preserve_root}/install.sh"
+(
+	set -euo pipefail
+	source "${REPO_ROOT}/deploy/installer/install.sh"
+	INSTALL_DIR="${preserve_root}"
+	ROOT="${preserve_root}"
+	remove_installation_files_preserving_data >/dev/null 2>&1
+)
+for retained in .env .installer.lock data backup logs; do
+	[[ -e "${preserve_root}/${retained}" ]]
+done
+for removed in docker-compose.yml MANIFEST.json install.sh images sourcelens; do
+	[[ ! -e "${preserve_root}/${removed}" ]]
+done
+
+complete_root="${fixture}/complete/hyperfilelens"
+complete_output="${fixture}/complete-output"
+mkdir -p "${complete_root}"
+: >"${complete_root}/docker-compose.yml"
+: >"${complete_root}/MANIFEST.json"
+HFL_TEST_COMPLETE_ROOT="${complete_root}" bash -c '
+set -euo pipefail
+source "$1/deploy/installer/install.sh"
+INSTALL_DIR="$HFL_TEST_COMPLETE_ROOT"
+ROOT="$HFL_TEST_COMPLETE_ROOT"
+configure_logging uninstall
+printf "%s\n" "captured before root removal"
+remove_complete_installation_root
+printf "%s\n" "terminal remains usable after root removal"
+' _ "${REPO_ROOT}" >"${complete_output}" 2>&1
+[[ ! -e "${complete_root}" ]]
+grep -F 'terminal remains usable after root removal' "${complete_output}" >/dev/null
+if grep -F 'No such file or directory' "${complete_output}" >/dev/null; then
+	printf 'internal uninstall log emitted an error while removing its root\n' >&2
+	exit 1
+fi
+
+# Plain uninstall and --purge-all must remove the installer-owned Gateway first,
+# then bundled SourceLens, and only then stop the HFL control plane. --keep-data
+# removes the same runtimes while retaining persistent state. Explicit legacy
+# selection flags keep their narrower behavior.
 run_uninstall_contract() (
 	set -euo pipefail
 	source "${REPO_ROOT}/deploy/installer/install.sh"
@@ -245,6 +295,8 @@ run_uninstall_contract() (
 		[[ "${scenario}" != bridge_failure ]] || die "simulated shared network cleanup failure"
 		MANAGED_BRIDGE_NETWORK_REMOVED=1
 	}
+	remove_complete_installation_root() { printf '%s\n' root >>"${events}"; }
+	remove_installation_files_preserving_data() { printf '%s\n' application-files >>"${events}"; }
 	safe_assert_removable_data_dir() { :; }
 	safe_assert_env_file() { :; }
 	safe_rm_dir() { printf '%s\n' data >>"${events}"; }
@@ -260,21 +312,33 @@ run_uninstall_contract() (
 	cmd_uninstall "$@" >/dev/null
 )
 
-run_uninstall_contract managed --purge-all
-mapfile -t purge_events <"${fixture}/events-managed"
-[[ "${purge_events[*]}" == 'gateway sourcelens:1 hfl images bridge data config' ]]
+run_uninstall_contract managed
+mapfile -t default_events <"${fixture}/events-managed"
+[[ "${default_events[*]}" == 'gateway sourcelens:1 hfl images bridge data config root' ]]
 
-run_uninstall_contract plain
-mapfile -t plain_events <"${fixture}/events-plain"
-[[ "${plain_events[*]}" == 'hfl images' ]]
+run_uninstall_contract purge --purge-all
+mapfile -t purge_events <"${fixture}/events-purge"
+[[ "${purge_events[*]}" == 'gateway sourcelens:1 hfl images bridge data config root' ]]
 
-run_uninstall_contract unmanaged --purge-all
+run_uninstall_contract keep --keep-data
+mapfile -t keep_events <"${fixture}/events-keep"
+[[ "${keep_events[*]}" == 'gateway sourcelens:0 hfl images bridge application-files' ]]
+
+run_uninstall_contract selective --with-sourcelens
+mapfile -t selective_events <"${fixture}/events-selective"
+[[ "${selective_events[*]}" == 'sourcelens:0 hfl images' ]]
+
+run_uninstall_contract selective_config --purge-config
+mapfile -t selective_config_events <"${fixture}/events-selective_config"
+[[ "${selective_config_events[*]}" == 'hfl images config' ]]
+
+run_uninstall_contract unmanaged
 mapfile -t unmanaged_events <"${fixture}/events-unmanaged"
-[[ "${unmanaged_events[*]}" == 'sourcelens:1 hfl images bridge data config' ]]
+[[ "${unmanaged_events[*]}" == 'sourcelens:1 hfl images bridge data config root' ]]
 
-run_uninstall_contract orphan --purge-all
+run_uninstall_contract orphan
 mapfile -t orphan_events <"${fixture}/events-orphan"
-[[ "${orphan_events[*]}" == 'gateway sourcelens:1 hfl images bridge data config' ]]
+[[ "${orphan_events[*]}" == 'gateway sourcelens:1 hfl images bridge data config root' ]]
 
 if run_uninstall_contract docker_down >/dev/null 2>&1; then
 	printf 'plain uninstall continued without Docker\n' >&2
@@ -294,6 +358,14 @@ if run_uninstall_contract docker_down --purge-config >/dev/null 2>&1; then
 fi
 [[ ! -s "${fixture}/events-docker_down" ]]
 
+for conflict in --purge-all --purge-config --purge-data --purge-media --purge-sourcelens-data; do
+	if run_uninstall_contract "conflict-${conflict#--}" --keep-data "${conflict}" >/dev/null 2>&1; then
+		printf '%s was accepted with --keep-data\n' "${conflict}" >&2
+		exit 1
+	fi
+	[[ ! -s "${fixture}/events-conflict-${conflict#--}" ]]
+done
+
 if run_uninstall_contract preserve_sourcelens --purge-data >/dev/null 2>&1; then
 	printf 'HFL data purge removed retained SourceLens data\n' >&2
 	exit 1
@@ -306,22 +378,22 @@ if run_uninstall_contract invalid_sourcelens_purge --purge-sourcelens-data >/dev
 fi
 [[ ! -s "${fixture}/events-invalid_sourcelens_purge" ]]
 
-if run_uninstall_contract sourcelens_failure --purge-all >/dev/null 2>&1; then
-	printf 'purge-all continued after SourceLens cleanup failure\n' >&2
+if run_uninstall_contract sourcelens_failure >/dev/null 2>&1; then
+	printf 'complete uninstall continued after SourceLens cleanup failure\n' >&2
 	exit 1
 fi
 mapfile -t sourcelens_failure_events <"${fixture}/events-sourcelens_failure"
 [[ "${sourcelens_failure_events[*]}" == 'gateway sourcelens:1' ]]
 
-if run_uninstall_contract hfl_failure --purge-all >/dev/null 2>&1; then
-	printf 'purge-all continued after HyperFileLens cleanup failure\n' >&2
+if run_uninstall_contract hfl_failure >/dev/null 2>&1; then
+	printf 'complete uninstall continued after HyperFileLens cleanup failure\n' >&2
 	exit 1
 fi
 mapfile -t hfl_failure_events <"${fixture}/events-hfl_failure"
 [[ "${hfl_failure_events[*]}" == 'gateway sourcelens:1 hfl' ]]
 
-if run_uninstall_contract bridge_failure --purge-all >/dev/null 2>&1; then
-	printf 'purge-all continued after shared network cleanup failure\n' >&2
+if run_uninstall_contract bridge_failure >/dev/null 2>&1; then
+	printf 'complete uninstall continued after shared network cleanup failure\n' >&2
 	exit 1
 fi
 mapfile -t bridge_failure_events <"${fixture}/events-bridge_failure"

@@ -72,100 +72,130 @@ LOCAL_PLATFORM_GATEWAY_VERIFIED=0
 
 usage() {
 	cat <<'USAGE'
-Usage: install.sh [command] [options]
+Usage: ./install.sh [command] [options]
 
-When no command is given, equivalent to: install.sh install
+When no command is specified, the install command is used.
 
 Commands:
-  install       Fresh install from this package and start services (install dir /opt/hyperfilelens)
-  backup        Create and verify one managed backup set; retain the latest three valid sets
-  start         docker compose up -d --no-build
-  stop          docker compose down
-  restart       stop then start
-  status        Show version and compose service status
-  manage        Run a Django management command in the active API color
-  platform-gateway Ensure or verify the installer-managed platform Gateway
-  upgrade       In-place upgrade from another release package directory or .tar.gz
-  uninstall     Stop and remove Docker containers and app images (does not remove the install dir; see uninstall options)
-  lang-pack     Install, list, or uninstall optional runtime language packs
+  install             Install HyperFileLens and start all configured services
+  start               Start all configured services
+  stop                Stop all configured services
+  restart             Restart all configured services
+  status              Show the installed version, paths, and service status
+  backup              Create and verify a managed backup; retain the latest three
+  upgrade             Upgrade from another release directory or .tar.gz archive
+  uninstall           Completely remove the installer-managed deployment
+  manage              Run a Django management command
+  platform-gateway    Manage the installer-owned Platform Data Gateway
+  lang-pack           Manage optional runtime language packs
 
-Options:
-  global:
-    --log-file FILE        Write the complete timestamped session log to FILE
-                           (default: /opt/hyperfilelens/logs/<command>-<time>-<pid>.log)
-    --verbose              Enable detailed logs
-    --print-config         Print effective non-secret configuration and exit
+Global options:
+  --log-file FILE             Write the complete timestamped session log to FILE
+                              Default: /opt/hyperfilelens/logs/<command>-<time>-<pid>.log
+  --verbose                   Enable detailed logging
+  --print-config              Print effective non-secret configuration and exit
+  -h, --help                  Show this help and exit
 
-  install:
-    --with-sourcelens       Install bundled SourceLens (default when sourcelens/ is present)
-    --hfl-only              Skip bundled SourceLens even when sourcelens/ is present
-    --yes                   Non-interactive compatibility flag (install has no confirmation prompt)
-    --direct-host HOST      Direct listener host or IP used for local access URLs
-    --public-url URL        Optional canonical browser origin; invalid values only warn
-    --admin-public-url URL  Optional Admin Console browser origin; invalid values only warn
-    --runtime-env-file FILE Apply staged Turnstile settings from a root-only regular file
+Install options:
+  --with-sourcelens           Install bundled SourceLens when available (default)
+  --hfl-only                  Install HyperFileLens without bundled SourceLens
+  --yes                       Non-interactive compatibility option
+  --direct-host HOST          Hostname or IP address used in local access URLs
+  --public-url URL            Canonical browser URL for the tenant console
+  --admin-public-url URL      Canonical browser URL for the Admin Console
+  --runtime-env-file FILE     Apply staged Turnstile settings from a root-only file
 
-  upgrade:
-    --from PATH             Path to a new package directory or .tar.gz release (required)
-                            Creates a verified managed backup set under backup/ before upgrade
-                            and retains the latest three valid sets
-                            Extracts the new package to upgrade_tmp, merges keys from its .env.example into .env,
-                            runs a singleton migration, starts the inactive API/Web color, validates and
-                            atomically switches stable Nginx, drains Agent WebSockets, then hands off workers;
-                            removes upgrade_tmp on success
-    --with-sourcelens       Upgrade bundled SourceLens when sourcelens/ is present (default when present)
-    --hfl-only              Skip SourceLens upgrade even when sourcelens/ is present
-    --remove-sourcelens     Stop and remove installed SourceLens under the HFL install root
-    --purge-sourcelens-data Remove SourceLens data/ (with --remove-sourcelens or uninstall --with-sourcelens)
-    --yes                   Non-interactive: continue when target version equals installed version
-    --direct-host HOST      Direct listener host or IP used for local access URLs
-    --public-url URL        Optional canonical browser origin; invalid values only warn
-    --admin-public-url URL  Optional Admin Console browser origin; invalid values only warn
-    --runtime-env-file FILE Apply staged Turnstile settings from a root-only regular file
+Upgrade options:
+  --from PATH                 Release directory or .tar.gz archive (required)
+  --with-sourcelens           Upgrade bundled SourceLens when available (default)
+  --hfl-only                  Upgrade HyperFileLens without upgrading SourceLens
+  --remove-sourcelens         Remove the installed bundled SourceLens runtime
+  --purge-sourcelens-data     Also remove SourceLens data with --remove-sourcelens
+  --yes                       Continue when the target and installed versions match
+  --direct-host HOST          Hostname or IP address used in local access URLs
+  --public-url URL            Canonical browser URL for the tenant console
+  --admin-public-url URL      Canonical browser URL for the Admin Console
+  --runtime-env-file FILE     Apply staged Turnstile settings from a root-only file
 
-  uninstall:
-    --with-sourcelens       Stop SourceLens stack and remove its application images
-    --purge-sourcelens-data Remove SourceLens data under data/sourcelens/
-    --purge-media           Remove published bootstrap and agent artifacts under data/media/
-    --purge-config          Remove .env
-    --purge-data            Remove data/; requires --with-sourcelens when bundled
-                            SourceLens is installed because its data is under data/
-    --purge-all             Completely remove the installer-managed runtime:
-                            HFL, bundled SourceLens, local Platform Data Gateway,
-                            configuration, and data (keeps install path and backups)
+  Upgrade creates and verifies a managed backup before modifying the deployment.
+  It retains the latest three valid backup sets and removes temporary upgrade
+  files after a successful Blue/Green cutover.
 
-  lang-pack:
-    install --id PACK_ID   Install a language pack bundled with this release
-    install --file PATH     Validate and atomically install a language-pack .tar.gz
-    list                    List installed language packs
-    uninstall PACK_ID       Uninstall a pack and keep it disabled across upgrades
-    remove PACK_ID          Compatibility alias for uninstall
+Uninstall options:
+  --keep-data                 Remove all managed runtime components while retaining
+                              configuration, business data, backups, and logs
+  --purge-all                 Compatibility alias for the default complete removal
 
-  platform-gateway:
-    ensure                  Deploy or repair the local platform Gateway when enabled
-    verify [options]        Read-only verification of the local platform Gateway
-      --timeout SECONDS     Wait up to 180 seconds by default (maximum 900)
-      --required            Fail when local platform Gateway auto-deploy is disabled
+  Selective compatibility options:
+    --with-sourcelens         Remove HFL and bundled SourceLens runtime components
+    --purge-sourcelens-data   Remove bundled SourceLens data
+    --purge-media             Remove published Agent and Gateway artifacts
+    --purge-config            Remove .env
+    --purge-data              Remove business data
 
-  manage:
-    COMMAND [ARGS...]       Forward a Django management command to the active API color
+  Complete removal deletes HFL, bundled SourceLens, the installer-managed local
+  Platform Data Gateway, configuration, data, backups, logs, and the installation
+  directory.
 
-    Uninstall never removes the installation directory, managed backups, or host Docker CE.
-    Use the purge options explicitly when configuration or business data must be removed.
+  Host Docker CE, Docker Compose, and independently managed workloads are never
+  removed. To retain an uninstall log, set --log-file to a path outside
+  /opt/hyperfilelens.
+
+  Selective compatibility options retain their previous limited cleanup behavior
+  when used without --keep-data or --purge-all.
+
+Platform Data Gateway actions:
+  ensure                      Deploy or repair the local Platform Data Gateway
+  verify [options]            Verify the local Platform Data Gateway without changes
+    --timeout SECONDS         Wait up to 180 seconds by default (maximum 900)
+    --required                Fail when automatic Gateway deployment is disabled
+
+Management action:
+  COMMAND [ARGS...]           Run a Django management command in the active API service
+
+Language pack actions:
+  install --id PACK_ID        Install a language pack bundled with this release
+  install --file PATH         Validate and install a language-pack .tar.gz archive
+  list                        List installed language packs
+  uninstall PACK_ID           Uninstall a language pack and keep it disabled
+  remove PACK_ID              Compatibility alias for uninstall
 
 Examples:
-  sudo ./install.sh
-  sudo ./install.sh install
-  sudo ./install.sh status
-  sudo ./install.sh restart
-  sudo ./install.sh backup
-  sudo ./install.sh upgrade --from /path/to/hyperfilelens-0.2.1-ee.tar.gz
-  sudo ./install.sh uninstall
-  sudo ./install.sh uninstall --purge-all
-  sudo ./install.sh lang-pack install --file /path/to/hyperfilelens-lang-fr-0.1.0.tar.gz
-  sudo ./install.sh lang-pack install --id zh-hans
-  sudo ./install.sh lang-pack list
-  sudo ./install.sh lang-pack uninstall zh-hans
+  Install HyperFileLens:
+    sudo ./install.sh
+
+  Show deployment status:
+    sudo ./install.sh status
+
+  Restart all configured services:
+    sudo ./install.sh restart
+
+  Create a managed backup:
+    sudo ./install.sh backup
+
+  Upgrade from a release package:
+    sudo ./install.sh upgrade --from /path/to/hyperfilelens-0.2.1-ee.tar.gz
+
+  Completely remove the managed deployment:
+    sudo ./install.sh uninstall
+
+  Remove runtime components and retain persistent state:
+    sudo ./install.sh uninstall --keep-data
+
+  Compatibility form of complete removal:
+    sudo ./install.sh uninstall --purge-all
+
+  Install a bundled language pack:
+    sudo ./install.sh lang-pack install --id zh-hans
+
+  Install a language-pack archive:
+    sudo ./install.sh lang-pack install --file /path/to/hyperfilelens-lang-fr-0.1.0.tar.gz
+
+  List installed language packs:
+    sudo ./install.sh lang-pack list
+
+  Uninstall a language pack:
+    sudo ./install.sh lang-pack uninstall zh-hans
 USAGE
 }
 
@@ -236,8 +266,8 @@ timestamp_log_stream() {
 	# from durable logs while preserving the original stream on the terminal.
 	sed $'s/\033\[[0-9;?]*[ -/]*[@-~]//g' | while IFS= read -r line || [[ -n "${line}" ]]; do
 		printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
-		printf '[%s] %s\n' "${timestamp}" "${line}" >>"${log_file}"
-	done
+		printf '[%s] %s\n' "${timestamp}" "${line}"
+	done >>"${log_file}"
 }
 
 capture_log_stream() {
@@ -504,6 +534,17 @@ safe_assert_env_file() {
 	[[ "${path}" == "${root}/.env" ]] || die "refusing to remove unexpected env file: ${path}"
 }
 
+safe_assert_removable_install_root() {
+	local root=$1
+	root="$(safe_normalize_dir "${root}")"
+	safe_assert_absolute "${root}" "installation root"
+	[[ "${root}" == "$(safe_normalize_dir "${INSTALL_DIR}")" \
+		&& "${root}" != "/" && "$(basename "${root}")" == "hyperfilelens" ]] \
+		|| die "refusing to remove unexpected installation root: ${root}"
+	[[ ! -L "${root}" ]] || die "refusing to remove a symbolic-link installation root: ${root}"
+	safe_assert_package_root "${root}"
+}
+
 safe_assert_package_basename() {
 	local name=$1
 	[[ "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz$ ]] \
@@ -582,6 +623,27 @@ safe_rm_dir() {
 	[[ -n "${dir}" && "${dir}" != "/" ]] || die "refusing to remove unsafe directory path"
 	rm -rf "${dir}" || die "failed to remove directory: ${dir}"
 	[[ ! -e "${dir}" && ! -L "${dir}" ]] || die "directory remains after removal: ${dir}"
+}
+
+remove_installation_files_preserving_data() {
+	local entry name
+	safe_assert_removable_install_root "${ROOT}"
+	step "Removing application files while preserving control-plane data ..."
+	while IFS= read -r -d '' entry; do
+		name="$(basename "${entry}")"
+		case "${name}" in
+		.env | .installer.lock | data | backup | logs) continue ;;
+		esac
+		safe_rm_dir "${entry}"
+	done < <(find "${ROOT}" -mindepth 1 -maxdepth 1 -print0)
+	ok "Application files removed; configuration, data, backups, and logs were preserved"
+}
+
+remove_complete_installation_root() {
+	safe_assert_removable_install_root "${ROOT}"
+	step "Removing the HyperFileLens installation root ..."
+	safe_rm_dir "${ROOT}"
+	ok "HyperFileLens installation root removed (${ROOT})"
 }
 
 # --- Host / Docker ---
@@ -6173,14 +6235,18 @@ cmd_language_pack() {
 }
 
 cmd_uninstall() {
-	local purge_config=0 purge_data=0 purge_all=0
+	local purge_config=0 purge_data=0 purge_all=0 keep_data=0
 	local with_sourcelens=0 purge_sourcelens_data=0 purge_media=0
+	local option_count=0 full_runtime=0 application_files_removed=0 install_root_removed=0
+	local session_log_removed=0
 	local runtime_removed=0 sourcelens_present=0 bridge_network_removed=0
 	local sourcelens_removed=0 sourcelens_data_present=0 sourcelens_data_removed=0
 	local agent_media_present=0 agent_media_removed=0
 	local local_agent_present=0 platform_gateway_managed=0 platform_gateway_removed=0
 	while [[ $# -gt 0 ]]; do
+		option_count=$((option_count + 1))
 		case "$1" in
+		--keep-data) keep_data=1 ;;
 		--purge-config) purge_config=1 ;;
 		--purge-data) purge_data=1 ;;
 		--purge-all) purge_all=1 ;;
@@ -6191,11 +6257,27 @@ cmd_uninstall() {
 		esac
 		shift
 	done
+	# A command without uninstall options now means complete removal. Existing
+	# selective option combinations retain their historical scope so older
+	# automation cannot unexpectedly delete more state after an upgrade.
+	if [[ "${option_count}" -eq 0 ]]; then
+		purge_all=1
+	fi
+	if [[ "${keep_data}" -eq 1 \
+		&& ( "${purge_all}" -eq 1 || "${purge_config}" -eq 1 \
+			|| "${purge_data}" -eq 1 || "${purge_sourcelens_data}" -eq 1 \
+			|| "${purge_media}" -eq 1 ) ]]; then
+		die "--keep-data cannot be combined with data purge options" 2
+	fi
 	if [[ "${purge_all}" -eq 1 ]]; then
 		purge_config=1
 		purge_data=1
 		with_sourcelens=1
 		purge_sourcelens_data=1
+		full_runtime=1
+	elif [[ "${keep_data}" -eq 1 ]]; then
+		with_sourcelens=1
+		full_runtime=1
 	fi
 	if [[ "${purge_sourcelens_data}" -eq 1 && "${with_sourcelens}" -eq 0 ]]; then
 		die "--purge-sourcelens-data requires --with-sourcelens or --purge-all"
@@ -6227,13 +6309,13 @@ cmd_uninstall() {
 	print_section "Removal plan"
 	print_value "Containers" "remove"
 	print_value "App images" "remove"
-	if [[ "${purge_all}" -eq 1 ]]; then
+	if [[ "${full_runtime}" -eq 1 ]]; then
 		print_value "Shared network" "remove when installer-managed and unused"
 	else
 		print_value "Shared network" "retain"
 	fi
 	if [[ "${platform_gateway_managed}" -eq 1 ]]; then
-		print_value "Platform Data Gateway" "$([[ "${purge_all}" -eq 1 ]] && printf 'remove' || printf 'retain')"
+		print_value "Platform Data Gateway" "$([[ "${full_runtime}" -eq 1 ]] && printf 'remove' || printf 'retain')"
 	elif [[ "${local_agent_present}" -eq 1 ]]; then
 		print_value "Local Agent" "retain (not installer-managed)"
 	else
@@ -6256,11 +6338,21 @@ cmd_uninstall() {
 	else
 		print_value "Agent media" "$([[ "${purge_media}" -eq 1 || "${purge_data}" -eq 1 ]] && printf 'remove' || printf 'retain')"
 	fi
-	print_value "Backup sets" "retain"
-	print_value "Install path" "retain"
-	print_value "Log file" "${LOG_FILE}"
+	print_value "Backup sets" "$([[ "${purge_all}" -eq 1 ]] && printf 'remove' || printf 'retain')"
+	if [[ "${purge_all}" -eq 1 ]]; then
+		print_value "Install path" "remove"
+	elif [[ "${keep_data}" -eq 1 ]]; then
+		print_value "Install path" "retain preserved state only"
+	else
+		print_value "Install path" "retain"
+	fi
+	if [[ "${purge_all}" -eq 1 && "${LOG_FILE}" == "${ROOT}/"* ]]; then
+		print_value "Log file" "remove with installation path"
+	else
+		print_value "Log file" "${LOG_FILE}"
+	fi
 
-	if [[ "${purge_all}" -eq 1 && "${platform_gateway_managed}" -eq 1 ]]; then
+	if [[ "${full_runtime}" -eq 1 && "${platform_gateway_managed}" -eq 1 ]]; then
 		uninstall_managed_local_platform_gateway
 		platform_gateway_removed=1
 	fi
@@ -6279,7 +6371,7 @@ cmd_uninstall() {
 		die "HyperFileLens runtime uninstall did not complete; application data was preserved"
 	fi
 	runtime_removed=1
-	if [[ "${purge_all}" -eq 1 ]]; then
+	if [[ "${full_runtime}" -eq 1 ]]; then
 		remove_managed_bridge_network
 		bridge_network_removed="${MANAGED_BRIDGE_NETWORK_REMOVED}"
 	fi
@@ -6309,6 +6401,15 @@ cmd_uninstall() {
 		log "Removed .env"
 	fi
 
+	if [[ "${purge_all}" -eq 1 ]]; then
+		[[ "${LOG_FILE}" != "${ROOT}/"* ]] || session_log_removed=1
+		remove_complete_installation_root
+		install_root_removed=1
+	elif [[ "${keep_data}" -eq 1 ]]; then
+		remove_installation_files_preserving_data
+		application_files_removed=1
+	fi
+
 	if ((${#SESSION_WARNINGS[@]})); then
 		print_result "Uninstall completed with warnings"
 	else
@@ -6317,20 +6418,29 @@ cmd_uninstall() {
 	if [[ "${runtime_removed}" -eq 1 || "${sourcelens_removed}" -eq 1 \
 		|| "${sourcelens_data_removed}" -eq 1 || "${purge_data}" -eq 1 \
 		|| "${purge_config}" -eq 1 || "${agent_media_removed}" -eq 1 \
-		|| "${platform_gateway_removed}" -eq 1 || "${bridge_network_removed}" -eq 1 ]]; then
+		|| "${platform_gateway_removed}" -eq 1 || "${bridge_network_removed}" -eq 1 \
+		|| "${application_files_removed}" -eq 1 || "${install_root_removed}" -eq 1 ]]; then
 		print_section "Removed"
 		[[ "${platform_gateway_removed}" -eq 0 ]] || print_value "Platform Data Gateway" "local Agent, AI engine, and data"
 		[[ "${runtime_removed}" -eq 0 ]] || print_value "Runtime" "HyperFileLens containers, application images, and Compose networks"
 		[[ "${bridge_network_removed}" -eq 0 ]] || print_value "Shared network" "${HFL_BRIDGE_NETWORK}"
 		[[ "${sourcelens_removed}" -eq 0 ]] || print_value "Insight" "application containers and images"
-		[[ "${sourcelens_data_removed}" -eq 0 || "${purge_data}" -eq 1 ]] || print_value "Insight data" "${ROOT}/data/sourcelens"
-		[[ "${purge_data}" -eq 0 ]] || print_value "Business data" "${ROOT}/data (including Insight data and Agent media)"
-		[[ "${purge_config}" -eq 0 ]] || print_value "Configuration" "${ROOT}/.env"
-		[[ "${agent_media_removed}" -eq 0 || "${purge_data}" -eq 1 ]] || print_value "Agent media" "published Agent and Gateway artifacts"
+		if [[ "${install_root_removed}" -eq 1 ]]; then
+			print_value "Installation root" "${ROOT} (including configuration, data, backups, and logs)"
+		else
+			[[ "${sourcelens_data_removed}" -eq 0 || "${purge_data}" -eq 1 ]] || print_value "Insight data" "${ROOT}/data/sourcelens"
+			[[ "${purge_data}" -eq 0 ]] || print_value "Business data" "${ROOT}/data (including Insight data and Agent media)"
+			[[ "${purge_config}" -eq 0 ]] || print_value "Configuration" "${ROOT}/.env"
+			[[ "${agent_media_removed}" -eq 0 || "${purge_data}" -eq 1 ]] || print_value "Agent media" "published Agent and Gateway artifacts"
+			[[ "${application_files_removed}" -eq 0 ]] || print_value "Application files" "removed from ${ROOT}"
+		fi
 	fi
 	print_section "Retained"
-	print_value "Install path" "${ROOT}"
-	print_value "Backup sets" "${ROOT}/backup"
+	print_value "Host Docker CE" "not managed by HyperFileLens uninstall"
+	if [[ "${install_root_removed}" -eq 0 ]]; then
+		print_value "Install path" "${ROOT}"
+		print_value "Backup sets" "${ROOT}/backup"
+	fi
 	if [[ "${sourcelens_present}" -eq 1 && "${sourcelens_removed}" -eq 0 ]]; then
 		print_value "Insight" "${SOURCELENS_INSTALL_DIR}"
 	fi
@@ -6339,7 +6449,7 @@ cmd_uninstall() {
 	elif [[ "${platform_gateway_managed}" -eq 0 && "${local_agent_present}" -eq 1 ]]; then
 		print_value "Local Agent" "${LOCAL_PLATFORM_AGENT_INSTALL_DIR} (not installer-managed)"
 	fi
-	if [[ "${purge_all}" -eq 1 ]] \
+	if [[ "${full_runtime}" -eq 1 ]] \
 		&& docker network inspect "${HFL_BRIDGE_NETWORK}" >/dev/null 2>&1; then
 		print_value "Shared network" "${HFL_BRIDGE_NETWORK}"
 	fi
@@ -6355,12 +6465,23 @@ cmd_uninstall() {
 	if [[ "${agent_media_present}" -eq 1 && "${agent_media_removed}" -eq 0 ]]; then
 		print_value "Agent media" "${ROOT}/data/media"
 	fi
-	print_value "Installer" "${ROOT}/install.sh"
+	if [[ "${install_root_removed}" -eq 0 && "${application_files_removed}" -eq 0 ]]; then
+		print_value "Installer" "${ROOT}/install.sh"
+	fi
+	if [[ "${session_log_removed}" -eq 0 ]]; then
+		print_value "Log file" "${LOG_FILE}"
+	fi
 
 	print_section "Notes"
 	printf '  - Host Docker CE is not removed by HyperFileLens uninstall.\n'
-	printf '  - The installation directory is retained for recovery and inspection.\n'
-	print_value "Log file" "${LOG_FILE}"
+	if [[ "${keep_data}" -eq 1 ]]; then
+		printf '  - Re-run the release or online installer to restore the application from the retained state.\n'
+	elif [[ "${install_root_removed}" -eq 0 ]]; then
+		printf '  - The installation directory is retained for recovery and inspection.\n'
+	fi
+	if [[ "${session_log_removed}" -eq 1 ]]; then
+		printf '  - The session log was removed with the installation root; use --log-file outside %s to retain it.\n' "${ROOT}"
+	fi
 	print_warning_summary
 }
 

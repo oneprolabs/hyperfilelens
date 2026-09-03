@@ -5,6 +5,16 @@ ROOT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../../deploy/installer/install.sh
 source "${ROOT_REPO}/deploy/installer/install.sh"
 
+uninstall_help="$(usage)"
+grep -F 'Usage: ./install.sh [command] [options]' <<<"${uninstall_help}" >/dev/null
+grep -F 'platform-gateway    Manage the installer-owned Platform Data Gateway' <<<"${uninstall_help}" >/dev/null
+grep -F 'uninstall           Completely remove the installer-managed deployment' <<<"${uninstall_help}" >/dev/null
+grep -F -- '--keep-data                 Remove all managed runtime components while retaining' <<<"${uninstall_help}" >/dev/null
+grep -F -- '--purge-all                 Compatibility alias for the default complete removal' <<<"${uninstall_help}" >/dev/null
+grep -F 'Selective compatibility options:' <<<"${uninstall_help}" >/dev/null
+grep -F 'To retain an uninstall log, set --log-file to a path outside' <<<"${uninstall_help}" >/dev/null
+grep -F 'sudo ./install.sh uninstall --keep-data' <<<"${uninstall_help}" >/dev/null
+
 fixture="$(mktemp -d)"
 trap 'rm -rf "${fixture}"' EXIT
 ROOT="${fixture}"
