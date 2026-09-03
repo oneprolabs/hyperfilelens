@@ -148,7 +148,14 @@ type SnapshotBrowserTreeNode = BackupSnapshotBrowserEntry & {
   loaded?: boolean
   isLeaf?: boolean
   children?: SnapshotBrowserTreeNode[]
+  loadMore?: boolean
+  nextCursor?: string
+  parentPath?: string
+  loadedCount?: number
+  loadingMore?: boolean
 }
+
+const SNAPSHOT_BROWSER_PAGE_LIMIT = 200
 
 type ResourceDetailRow = {
   key: string
@@ -2098,11 +2105,14 @@ async function openSnapshotDirectory(dir: BackupSourceSnapshotDirectory, path = 
   selectedBrowserPaths.value = new Set()
   browserTreeRef.value?.setCheckedKeys([])
   try {
-    const result = await browseBackupSnapshotDirectory(dir.id, { path })
+    const result = await browseBackupSnapshotDirectory(dir.id, {
+      path,
+      limit: SNAPSHOT_BROWSER_PAGE_LIMIT,
+    })
     browserPath.value = result.path || ''
     browserParentPath.value = result.parent_path || ''
     browserEntries.value = result.entries
-    browserTreeEntries.value = result.entries.map((entry) => browserEntryToTreeNode(entry))
+    browserTreeEntries.value = browserPageTreeNodes(result, browserPath.value, 0)
     browserTreeVersion.value += 1
     refreshBrowserTreeDisabled()
   } catch (err) {
@@ -2137,6 +2147,34 @@ function browserEntryToTreeNode(entry: BackupSnapshotBrowserEntry): SnapshotBrow
   }
 }
 
+function browserPageTreeNodes(
+  result: Awaited<ReturnType<typeof browseBackupSnapshotDirectory>>,
+  parentPath: string,
+  previouslyLoaded: number,
+) {
+  const entries = result.entries.map((entry) => browserEntryToTreeNode(entry))
+  const loadedCount = previouslyLoaded + entries.length
+  if (result.has_more && result.next_cursor) {
+    entries.push({
+      id: `snapshot-browser-load-more:${parentPath}:${result.next_cursor}`,
+      label: t('protection.backupsPage.snapshotBrowserLoadMore'),
+      name: t('protection.backupsPage.snapshotBrowserLoadMore'),
+      path: parentPath,
+      type: 'load-more',
+      size_bytes: 0,
+      downloadable: false,
+      disabled: true,
+      loaded: true,
+      isLeaf: true,
+      loadMore: true,
+      nextCursor: result.next_cursor,
+      parentPath,
+      loadedCount,
+    })
+  }
+  return entries
+}
+
 function isRelatedBrowserPath(a: string, b: string) {
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
 }
@@ -2150,7 +2188,7 @@ function isBrowserPathDisabled(path: string) {
 
 function refreshBrowserTreeDisabled(nodes: SnapshotBrowserTreeNode[] = browserTreeEntries.value) {
   for (const node of nodes) {
-    node.disabled = isBrowserPathDisabled(node.path)
+    node.disabled = node.loadMore || isBrowserPathDisabled(node.path)
     if (node.children?.length) refreshBrowserTreeDisabled(node.children)
   }
   browserTreeEntries.value = [...browserTreeEntries.value]
@@ -2167,8 +2205,11 @@ async function loadBrowserTreeNode(node: { data?: SnapshotBrowserTreeNode; level
     return
   }
   try {
-    const result = await browseBackupSnapshotDirectory(selectedSnapshotDirectory.value.id, { path: data.path })
-    const children = result.entries.map((entry) => browserEntryToTreeNode(entry))
+    const result = await browseBackupSnapshotDirectory(selectedSnapshotDirectory.value.id, {
+      path: data.path,
+      limit: SNAPSHOT_BROWSER_PAGE_LIMIT,
+    })
+    const children = browserPageTreeNodes(result, data.path, 0)
     data.children = children
     data.loaded = true
     resolve(children)
@@ -2177,6 +2218,55 @@ async function loadBrowserTreeNode(node: { data?: SnapshotBrowserTreeNode; level
     data.loaded = false
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.loadFailed')), grouping: true })
     resolve([])
+  }
+}
+
+function replaceBrowserLoadMoreNode(
+  nodes: SnapshotBrowserTreeNode[],
+  id: string,
+  replacements: SnapshotBrowserTreeNode[],
+): boolean {
+  const index = nodes.findIndex((node) => node.id === id)
+  if (index >= 0) {
+    nodes.splice(index, 1, ...replacements)
+    return true
+  }
+  return nodes.some((node) => node.children && replaceBrowserLoadMoreNode(node.children, id, replacements))
+}
+
+async function loadMoreBrowserTreeEntries(data: SnapshotBrowserTreeNode) {
+  const directory = selectedSnapshotDirectory.value
+  if (!directory || !data.loadMore || !data.nextCursor || data.loadingMore) return
+  const directoryId = directory.id
+  const parentPath = data.parentPath || ''
+  const treeVersion = browserTreeVersion.value
+  data.loadingMore = true
+  browserTreeEntries.value = [...browserTreeEntries.value]
+  try {
+    const result = await browseBackupSnapshotDirectory(directoryId, {
+      path: parentPath,
+      limit: SNAPSHOT_BROWSER_PAGE_LIMIT,
+      cursor: data.nextCursor,
+    })
+    if (selectedSnapshotDirectory.value?.id !== directoryId || browserTreeVersion.value !== treeVersion) return
+    const replacements = browserPageTreeNodes(result, parentPath, data.loadedCount || 0)
+    if (!replaceBrowserLoadMoreNode(browserTreeEntries.value, data.id, replacements)) return
+    for (const replacement of replacements) {
+      browserTreeRef.value?.insertBefore(replacement, data)
+    }
+    browserTreeRef.value?.remove(data)
+    if (parentPath === browserPath.value) {
+      browserEntries.value = [...browserEntries.value, ...result.entries]
+    }
+    browserTreeEntries.value = [...browserTreeEntries.value]
+    refreshBrowserTreeDisabled()
+    await nextTick()
+    syncBrowserTreeCheckedKeys()
+  } catch (err) {
+    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.loadFailed')), grouping: true })
+  } finally {
+    data.loadingMore = false
+    browserTreeEntries.value = [...browserTreeEntries.value]
   }
 }
 
@@ -4234,7 +4324,24 @@ function onClosed() {
                       @check-change="onBrowserTreeCheckChange"
                     >
                       <template #default="{ data }">
-                        <div class="dp-snapshot-file-browser__tree-row">
+                        <div
+                          v-if="data.loadMore"
+                          class="dp-snapshot-file-browser__load-more"
+                        >
+                          <span>{{ t('protection.backupsPage.snapshotBrowserPartialCount', { n: data.loadedCount }) }}</span>
+                          <ElButton
+                            type="primary"
+                            link
+                            :loading="data.loadingMore"
+                            @click.stop="loadMoreBrowserTreeEntries(data)"
+                          >
+                            {{ t('protection.backupsPage.snapshotBrowserLoadMore') }}
+                          </ElButton>
+                        </div>
+                        <div
+                          v-else
+                          class="dp-snapshot-file-browser__tree-row"
+                        >
                           <span class="dp-snapshot-file-browser__entry">
                             <Folder
                               v-if="data.type === 'dir'"
@@ -7938,6 +8045,21 @@ function onClosed() {
   min-width: 0;
   padding-right: 10px;
   font-size: 13px;
+}
+
+.dp-snapshot-file-browser__load-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding-right: 10px;
+  color: rgb(100 116 139);
+  font-size: 12px;
+}
+
+.dp-snapshot-file-browser__tree :deep(.el-tree-node__content:has(.dp-snapshot-file-browser__load-more) > .el-checkbox) {
+  visibility: hidden;
 }
 
 .dp-snapshot-file-browser__tree-path,

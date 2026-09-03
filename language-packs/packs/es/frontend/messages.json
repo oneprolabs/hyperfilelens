@@ -1669,6 +1669,8 @@
       "snapshotBrowserDownloadNotReady": "El archivo de descarga todavía no está listo",
       "snapshotBrowserDownloadFailed": "La descarga ha fallado",
       "snapshotBrowserDownloadTimeout": "La descarga ha agotado el tiempo de espera",
+      "snapshotBrowserPartialCount": "Se han cargado {n} elementos. Hay más elementos disponibles.",
+      "snapshotBrowserLoadMore": "Cargar más",
       "snapshotRecoverAction": "Restaurar",
       "snapshotRecoverTodo": "Aún no se ha aplicado la restauración",
       "snapshotBrowserEmpty": "Este directorio está vacío",

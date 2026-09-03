@@ -1223,6 +1223,8 @@ export const enProtectionPages = {
     snapshotBrowserDownloadNotReady: 'Download File Is Not Ready Yet',
     snapshotBrowserDownloadFailed: 'Download Task Failed',
     snapshotBrowserDownloadTimeout: 'Download Task Timed Out',
+    snapshotBrowserPartialCount: '{n} items loaded. More items are available.',
+    snapshotBrowserLoadMore: 'Load more',
     snapshotRecoverAction: 'Restore',
     snapshotRecoverTodo: 'Restore is not implemented yet',
     snapshotBrowserEmpty: 'This directory is empty',

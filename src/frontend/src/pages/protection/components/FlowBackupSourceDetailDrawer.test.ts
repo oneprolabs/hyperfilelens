@@ -358,6 +358,25 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(downloader).not.toContain('.blob()')
   })
 
+  it('loads snapshot directory pages on demand and explains partial results', () => {
+    const pagination = sourceBetween(
+      'function browserPageTreeNodes(',
+      'function syncBrowserTreeCheckedKeys',
+    )
+
+    expect(pagination).toContain('result.has_more && result.next_cursor')
+    expect(pagination).toContain('async function loadMoreBrowserTreeEntries')
+    expect(pagination).toContain('cursor: data.nextCursor')
+    expect(pagination).toContain('replaceBrowserLoadMoreNode')
+    expect(pagination).toContain('browserTreeRef.value?.insertBefore(replacement, data)')
+    expect(pagination).toContain('browserTreeRef.value?.remove(data)')
+    expect(pagination).toContain('browserEntries.value = [...browserEntries.value, ...result.entries]')
+    expect(drawer).toContain("t('protection.backupsPage.snapshotBrowserPartialCount', { n: data.loadedCount })")
+    expect(drawer).toContain('@click.stop="loadMoreBrowserTreeEntries(data)"')
+    expect(enProtectionPages.backupsPage.snapshotBrowserPartialCount).toBe('{n} items loaded. More items are available.')
+    expect(enProtectionPages.backupsPage.snapshotBrowserLoadMore).toBe('Load more')
+  })
+
   it('clears cached expansion state when pagination changes', () => {
     const paginationWatcher = sourceBetween(
       '() => [snapshotPagination.page, snapshotPagination.pageSize] as const,',

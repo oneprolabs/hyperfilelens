@@ -154,6 +154,75 @@ class SnapshotBrowserApiTests(TestCase):
         self.assertEqual(payload["snapshot_id"], "kopia-snapshot-1")
 
     @patch("apps.protection.services.snapshot_browser.run_agent_task_sync")
+    def test_browse_snapshot_directory_forwards_pagination(self, mock_run_agent_task_sync):
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            ok=True,
+            timed_out=False,
+            result={
+                "entries": [{"name": "part-0200.dat", "type": "file", "size": 12}],
+                "has_more": True,
+                "next_cursor": "250",
+            },
+            task=SimpleNamespace(last_error=""),
+        )
+
+        response = self.client.get(
+            f"/api/v1/protection/backup-source-snapshot-directories/{self.directory.id}/browse/"
+            "?path=archive&limit=50&cursor=200",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(response.data["next_cursor"], "250")
+        self.assertIs(response.data["has_more"], True)
+        payload = mock_run_agent_task_sync.call_args.kwargs["payload"]
+        self.assertEqual(payload["path"], "archive")
+        self.assertEqual(payload["limit"], 50)
+        self.assertEqual(payload["cursor"], "200")
+
+    def test_browse_snapshot_directory_rejects_invalid_cursor(self):
+        response = self.client.get(
+            f"/api/v1/protection/backup-source-snapshot-directories/{self.directory.id}/browse/"
+            "?cursor=next",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
+        self.assertIn(b"non-negative integer", response.content)
+
+    @patch("apps.protection.services.snapshot_browser.run_agent_task_sync")
+    def test_browse_snapshot_directory_pages_legacy_agent_results(self, mock_run_agent_task_sync):
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            ok=True,
+            timed_out=False,
+            result={
+                "entries": [
+                    {"name": f"part-{index:04d}.dat", "type": "file", "size": index}
+                    for index in range(5)
+                ],
+            },
+            task=SimpleNamespace(last_error=""),
+        )
+
+        first = self.client.get(
+            f"/api/v1/protection/backup-source-snapshot-directories/{self.directory.id}/browse/"
+            "?limit=2",
+            **self._headers(),
+        )
+        second = self.client.get(
+            f"/api/v1/protection/backup-source-snapshot-directories/{self.directory.id}/browse/"
+            f"?limit=2&cursor={first.data['next_cursor']}",
+            **self._headers(),
+        )
+
+        self.assertEqual([row["name"] for row in first.data["entries"]], ["part-0000.dat", "part-0001.dat"])
+        self.assertEqual(first.data["next_cursor"], "2")
+        self.assertIs(first.data["has_more"], True)
+        self.assertEqual([row["name"] for row in second.data["entries"]], ["part-0002.dat", "part-0003.dat"])
+        self.assertEqual(second.data["next_cursor"], "4")
+        self.assertIs(second.data["has_more"], True)
+
+    @patch("apps.protection.services.snapshot_browser.run_agent_task_sync")
     def test_browse_proxy_bound_nas_snapshot_directory_uses_bound_proxy(self, mock_run_agent_task_sync):
         proxy = Node.objects.create(
             organization=self.org,
