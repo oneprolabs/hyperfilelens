@@ -2022,6 +2022,80 @@ type insightSnapshotBrowseCollector struct {
 	skippedSpecialCount int64
 }
 
+type snapshotBrowsePageCollector struct {
+	basePath string
+	offset   int
+	limit    int
+	seen     int
+	entries  []map[string]any
+	hasMore  bool
+	invalid  bool
+}
+
+func newSnapshotBrowsePageCollector(basePath string, limit int, cursor string) (*snapshotBrowsePageCollector, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	offset := 0
+	if strings.TrimSpace(cursor) != "" {
+		parsed, err := strconv.Atoi(strings.TrimSpace(cursor))
+		if err != nil || parsed < 0 {
+			return nil, fmt.Errorf("cursor must be a non-negative integer")
+		}
+		offset = parsed
+	}
+	return &snapshotBrowsePageCollector{
+		basePath: strings.Trim(strings.TrimSpace(basePath), "/\\"),
+		offset:   offset,
+		limit:    limit,
+		entries:  make([]map[string]any, 0, limit),
+	}, nil
+}
+
+func (collector *snapshotBrowsePageCollector) consume(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return true
+	}
+	mode, size, modTime, name, ok := parseSnapshotBrowseLongLine(line)
+	if !ok {
+		collector.invalid = true
+		return false
+	}
+	if collector.seen < collector.offset {
+		collector.seen++
+		return true
+	}
+	if len(collector.entries) >= collector.limit {
+		collector.hasMore = true
+		return false
+	}
+	collector.seen++
+	isDir := strings.HasPrefix(strings.ToLower(mode), "d")
+	path := normalizeSnapshotBrowsePath(name, name, collector.basePath, "")
+	collector.entries = append(collector.entries, map[string]any{
+		"name":         snapshotBrowseName(name, path),
+		"path":         path,
+		"type":         mapSnapshotBrowseType(isDir),
+		"is_dir":       isDir,
+		"size_bytes":   size,
+		"modified_at":  modTime,
+		"downloadable": true,
+		"has_children": nil,
+	})
+	return true
+}
+
+func (collector *snapshotBrowsePageCollector) nextCursor() string {
+	if !collector.hasMore {
+		return ""
+	}
+	return strconv.Itoa(collector.offset + len(collector.entries))
+}
+
 func newInsightSnapshotBrowseCollector(basePath string, limit int) *insightSnapshotBrowseCollector {
 	if limit <= 0 || limit > 500 {
 		limit = 500
@@ -2171,21 +2245,37 @@ func (e *Engine) runManagedSnapshotBrowse(
 	if prepErr != "" {
 		return "failed", result, prepErr
 	}
-	target := snapshotObjectPath(p.SnapshotID, p.Path)
-	args := []string{"--config-file=" + configFile, "ls", "--json", target}
-	res, runErr := process.Run(ctx, bin, args, env, "")
-	if runErr != nil && snapshotBrowseJsonUnsupported(res) {
-		args = []string{"--config-file=" + configFile, "ls", "-l", target}
-		res, runErr = process.Run(ctx, bin, args, env, "")
+	collector, collectorErr := newSnapshotBrowsePageCollector(p.Path, p.Limit, p.Cursor)
+	if collectorErr != nil {
+		return "failed", result, collectorErr.Error()
 	}
+	target := snapshotObjectPath(p.SnapshotID, p.Path)
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	res, runErr := process.RunStreamingDiscardStdout(
+		runCtx,
+		bin,
+		[]string{"--config-file=" + configFile, "ls", "-l", target},
+		env,
+		"",
+		func(line string, stderr bool) {
+			if !stderr && !collector.consume(line) {
+				cancelRun()
+			}
+		},
+	)
 	result["snapshot_browse"] = commandResult(res)
 	result["path"] = strings.Trim(strings.TrimSpace(p.Path), "/\\")
 	result["snapshot_id"] = p.SnapshotID
-	entries := parseSnapshotBrowseOutput(res.Stdout, p.Path, p.SnapshotID)
-	result["entries"] = entries
-	result["count"] = len(entries)
-	result["has_more"] = false
-	if runErr != nil {
+	result["entries"] = collector.entries
+	result["count"] = len(collector.entries)
+	result["has_more"] = collector.hasMore
+	result["next_cursor"] = collector.nextCursor()
+	if collector.invalid {
+		return "failed", result, "snapshot browse returned invalid directory entries"
+	}
+	limitReached := collector.hasMore && ctx.Err() == nil
+	if runErr != nil && !limitReached {
 		return "failed", result, snapshotBrowseFailureMessage(res, runErr)
 	}
 	return "success", result, ""

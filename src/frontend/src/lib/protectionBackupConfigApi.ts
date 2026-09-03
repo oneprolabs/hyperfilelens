@@ -431,7 +431,7 @@ export async function deleteBackupSourceSnapshot(id: number) {
 
 export async function browseBackupSnapshotDirectory(
   directoryId: number,
-  params?: { path?: string; limit?: number },
+  params?: { path?: string; limit?: number; cursor?: string },
 ) {
   const qs = query(params as Record<string, string | number | undefined>)
   const path = qs

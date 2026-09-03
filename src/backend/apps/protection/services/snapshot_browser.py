@@ -70,6 +70,19 @@ def _filename(path: str) -> str:
     return posixpath.basename(path.rstrip("/")) or "download"
 
 
+def _cursor_offset(cursor: str) -> int:
+    value = str(cursor or "").strip()
+    if not value:
+        return 0
+    try:
+        offset = int(value)
+    except (TypeError, ValueError) as exc:
+        raise SnapshotBrowserError("Cursor must be a non-negative integer.") from exc
+    if offset < 0:
+        raise SnapshotBrowserError("Cursor must be a non-negative integer.")
+    return offset
+
+
 def _get_directory(*, organization_id: int, directory_id: int) -> BackupSourceSnapshotDirectory:
     row = (
         BackupSourceSnapshotDirectory.objects.select_related("source_snapshot")
@@ -194,6 +207,10 @@ def _run_snapshot_agent_task(
         "snapshot_id": row.kopia_snapshot_id,
         "path": path,
     }
+    if "limit" in payload:
+        persisted_payload["limit"] = payload["limit"]
+    if payload.get("cursor"):
+        persisted_payload["cursor"] = payload["cursor"]
     if isinstance(payload.get("paths"), list):
         persisted_payload["paths"] = payload["paths"]
     if isinstance(payload.get("artifact_upload"), dict):
@@ -245,34 +262,46 @@ def browse_snapshot_directory(
     directory_id: int,
     path: str = "",
     limit: int = DEFAULT_SNAPSHOT_BROWSE_LIMIT,
+    cursor: str = "",
     wait_timeout_seconds: int | None = None,
 ) -> dict[str, Any]:
     clean_path = _clean_relative_path(path)
+    cursor_offset = _cursor_offset(cursor)
     row = _get_directory(organization_id=organization_id, directory_id=directory_id)
     outcome = _run_snapshot_agent_task(
         row=row,
         kind="snapshot.browse",
         path=clean_path,
         wait_timeout_seconds=_snapshot_browser_timeout_seconds() if wait_timeout_seconds is None else wait_timeout_seconds,
+        extra_payload={"limit": limit, "cursor": cursor},
     )
     if getattr(outcome, "timed_out", False):
         raise SnapshotBrowserError("Snapshot browse timed out.")
     if not getattr(outcome, "ok", False):
         raise SnapshotBrowserError(_agent_result_error(outcome, "Snapshot browse failed."))
     result = outcome.result if isinstance(outcome.result, dict) else {}
+    raw_entries = result.get("entries") if isinstance(result.get("entries"), list) else []
+    agent_paged = "next_cursor" in result
+    page_entries = raw_entries if agent_paged else raw_entries[cursor_offset:]
     entries = _normalize_entries(
-        result.get("entries"),
+        page_entries,
         base_path=clean_path,
         limit=limit,
     )
+    if agent_paged:
+        has_more = bool(result.get("has_more"))
+        next_cursor = str(result.get("next_cursor") or "")
+    else:
+        has_more = len(raw_entries) > cursor_offset + limit
+        next_cursor = str(cursor_offset + limit) if has_more else ""
     return {
         "directory_id": row.id,
         "snapshot_id": row.source_snapshot_id,
         "path": clean_path,
         "parent_path": _parent_path(clean_path),
         "entries": entries,
-        "has_more": bool(result.get("has_more")) or len(entries) >= limit,
-        "next_cursor": str(result.get("next_cursor") or ""),
+        "has_more": has_more,
+        "next_cursor": next_cursor,
     }
 
 

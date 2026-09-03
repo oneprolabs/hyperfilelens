@@ -1385,6 +1385,8 @@
       "snapshotBrowserDownloadNotReady": "下载文件尚未准备完成",
       "snapshotBrowserDownloadFailed": "下载任务失败",
       "snapshotBrowserDownloadTimeout": "下载任务超时",
+      "snapshotBrowserPartialCount": "已加载 {n} 项，还有更多内容。",
+      "snapshotBrowserLoadMore": "加载更多",
       "snapshotRecoverAction": "恢复",
       "snapshotRecoverTodo": "恢复功能待实现",
       "snapshotBrowserEmpty": "当前目录为空",

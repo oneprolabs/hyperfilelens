@@ -44,6 +44,19 @@ def _int_query(value: str | None, default: int, *, min_value: int, max_value: in
     return max(min_value, min(max_value, parsed))
 
 
+def _cursor_query(value: str | None) -> str:
+    cursor = str(value or "").strip()
+    if not cursor:
+        return ""
+    try:
+        offset = int(cursor)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({"cursor": "Must be a non-negative integer."}) from exc
+    if offset < 0:
+        raise ValidationError({"cursor": "Must be a non-negative integer."})
+    return str(offset)
+
+
 class SnapshotDirectoryBrowseView(APIView):
     permission_classes = [IsAuthenticated, IsOrgReader]
 
@@ -60,6 +73,7 @@ class SnapshotDirectoryBrowseView(APIView):
                     min_value=1,
                     max_value=1000,
                 ),
+                cursor=_cursor_query(request.query_params.get("cursor")),
             )
         except SnapshotBrowserForbidden as exc:
             raise PermissionDenied(str(exc)) from exc

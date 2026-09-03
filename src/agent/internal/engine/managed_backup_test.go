@@ -1642,6 +1642,52 @@ func TestInsightSnapshotBrowseCollectorBoundsAndNormalizesEntries(t *testing.T) 
 	}
 }
 
+func TestSnapshotBrowsePageCollectorAdvancesWithoutDuplicates(t *testing.T) {
+	lines := []string{
+		"drwx------ 0 2026-08-12 11:15:59 UTC object-dir reports/",
+		"-rw------- 12 2026-08-12 11:15:59 UTC object-one one.pdf",
+		"-rw------- 18 2026-08-12 11:15:59 UTC object-two two.pdf",
+		"-rw------- 24 2026-08-12 11:15:59 UTC object-three three.pdf",
+	}
+
+	first, err := newSnapshotBrowsePageCollector("docs", 2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range lines {
+		if !first.consume(line) {
+			break
+		}
+	}
+	if len(first.entries) != 2 || !first.hasMore || first.nextCursor() != "2" {
+		t.Fatalf("unexpected first page: %#v", first)
+	}
+
+	second, err := newSnapshotBrowsePageCollector("docs", 2, first.nextCursor())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range lines {
+		if !second.consume(line) {
+			break
+		}
+	}
+	if len(second.entries) != 2 || second.hasMore || second.nextCursor() != "" {
+		t.Fatalf("unexpected second page: %#v", second)
+	}
+	if first.entries[1]["path"] != "docs/one.pdf" || second.entries[0]["path"] != "docs/two.pdf" {
+		t.Fatalf("pages overlap or skip entries: first=%#v second=%#v", first.entries, second.entries)
+	}
+}
+
+func TestSnapshotBrowsePageCollectorRejectsInvalidCursor(t *testing.T) {
+	for _, cursor := range []string{"-1", "next"} {
+		if _, err := newSnapshotBrowsePageCollector("", 200, cursor); err == nil {
+			t.Fatalf("expected cursor %q to be rejected", cursor)
+		}
+	}
+}
+
 func TestInsightSnapshotBrowseCollectorRejectsMalformedOutput(t *testing.T) {
 	collector := newInsightSnapshotBrowseCollector("reports", 2)
 	collector.consume("unexpected kopia output")

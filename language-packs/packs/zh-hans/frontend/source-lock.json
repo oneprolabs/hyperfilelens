@@ -1605,6 +1605,8 @@
   "protection.backupsPage.snapshotBrowserDownloadNotReady": "4f77f4cb6d9d3be1d6234838a95ca32a441c9b21626f1b33fcde0552fce8081b",
   "protection.backupsPage.snapshotBrowserDownloadFailed": "1fd304f48b074c502565c8d1b50372edefd0196aa880f3b7c0745e3591450426",
   "protection.backupsPage.snapshotBrowserDownloadTimeout": "a38396cc11ace0d557dae9065c0ecf7c5156952dad4367d4307134e7e8c60389",
+  "protection.backupsPage.snapshotBrowserPartialCount": "0625fbe6be1203180b11c5cbfecdc83fbb9302ced465e2014f9c6602a516be33",
+  "protection.backupsPage.snapshotBrowserLoadMore": "7a9c3041ba5bccca921ad676189b671e8200c15dc8af562676a93b98e5462344",
   "protection.backupsPage.snapshotRecoverAction": "9fb92d5ac48a197b0499952ff25f2e8a84937831504f23569b5b8ad549a4334d",
   "protection.backupsPage.snapshotRecoverTodo": "0b141badafcf15d5d1367dae0bf502247c9c38896388469002bea673d096c9e2",
   "protection.backupsPage.snapshotBrowserEmpty": "a72fd4e7bd6e675f69bdebc5e85a5d1862b717db22ade61b315615e1a5f295d9",
