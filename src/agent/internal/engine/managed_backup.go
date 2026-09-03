@@ -1072,6 +1072,7 @@ func (e *Engine) runManagedRepositoryMaintenance(
 		"phase":          "repository_maintenance",
 		"operation_type": operationType,
 	})
+	maintenanceStartedAt := time.Now().UTC()
 	maintenanceResult, maintenanceErr := process.Run(ctx, bin, args, env, "")
 	result["operation_type"] = operationType
 	result["repository_type"] = spec.Type
@@ -1081,6 +1082,21 @@ func (e *Engine) runManagedRepositoryMaintenance(
 			return "failed", result, "canceled"
 		}
 		return "failed", result, maintenanceErr.Error()
+	}
+	infoResult, _ := process.Run(
+		ctx,
+		bin,
+		[]string{"--config-file=" + maintenanceConfigFile, "maintenance", "info", "--json"},
+		env,
+		"",
+	)
+	if summary := buildMaintenanceSummary(
+		infoResult.Stdout,
+		maintenanceResult.Stderr,
+		strings.TrimPrefix(operationType, "maintenance."),
+		maintenanceStartedAt,
+	); summary != nil {
+		result["maintenance_summary"] = summary
 	}
 	appendRepositoryUsageMetrics(ctx, bin, configFile, env, spec, result)
 	return "success", result, ""

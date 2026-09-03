@@ -21,7 +21,7 @@ from apps.storage.services.internal.repository_operations import (
     schedule_due_maintenance,
     start_controller_repository_operation,
 )
-from apps.storage.services.internal.kopia_cli import KopiaExecutionLeaseLost
+from apps.storage.services.internal.kopia_cli import KopiaExecutionLeaseLost, KopiaResult
 from apps.storage.services.internal.nas_repository import nas_agent_repository_subdir
 from apps.storage.services.internal.repository_location import (
     mark_repository_location_owned,
@@ -510,6 +510,56 @@ class RepositoryTaskTests(TestCase):
         )
         lease.__enter__.assert_called_once()
         lease.__exit__.assert_called_once()
+
+    @patch("apps.storage.tasks.sync_organization_repositories")
+    @patch("apps.storage.tasks.run_maintenance")
+    @patch("apps.storage.tasks.try_acquire_background_storage_capacity")
+    def test_successful_maintenance_persists_one_structured_summary_event(
+        self,
+        acquire_capacity,
+        run_maintenance,
+        _sync_repositories,
+    ):
+        discover_repository_execution_targets()
+        repository_task = create_repository_operation_task(
+            target_id=self.repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_FULL,
+        )
+        lease = MagicMock(valid=True)
+        lease.__enter__.return_value = lease
+        acquire_capacity.return_value = lease
+        summary = {
+            "schema_version": 1,
+            "mode": "full",
+            "source": "maintenance_info",
+            "approximate": False,
+            "content_gc": {"deleted_count": 55, "deleted_bytes": 3_145_728},
+            "pack_gc": None,
+        }
+        run_maintenance.return_value = KopiaResult(
+            stdout="",
+            stderr="Finished full maintenance.",
+            maintenance_summary=summary,
+        )
+
+        result = execute_repository_operation.run(
+            repository_task_id=repository_task.id,
+        )
+
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], Task.Status.SUCCESS)
+        self.assertEqual(
+            repository_task.task.result_payload["maintenance_summary"],
+            summary,
+        )
+        events = repository_task.task.events.filter(
+            message="Repository maintenance summary"
+        )
+        self.assertEqual(events.count(), 1)
+        event = events.get()
+        self.assertEqual(event.step.step_name, "run_repository_operation")
+        self.assertEqual(event.metadata["event_type"], "repository_maintenance_summary")
+        self.assertEqual(event.metadata["maintenance_summary"], summary)
 
     @patch("apps.storage.tasks._execute_repository_operation")
     @patch(

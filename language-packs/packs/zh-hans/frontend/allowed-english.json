@@ -156,5 +156,6 @@
   "platformOps.engineGateway.revokeKeyword",
   "platformOps.storageProviders.accessKeyId",
   "platformOps.storageProviders.secretAccessKey",
-  "platformOps.settings.identity.googleClientSecret"
+  "platformOps.settings.identity.googleClientSecret",
+  "ops.task.maintenanceSummary.metric"
 ]

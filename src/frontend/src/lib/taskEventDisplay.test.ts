@@ -26,6 +26,11 @@ describe('task event internationalization', () => {
       .toBe('ops.task.eventMessage.directNasRepositoryCleanupCompleted')
   })
 
+  it('maps the repository maintenance summary event to a translation key', () => {
+    expect(taskEventMessageKey('Repository maintenance summary'))
+      .toBe('ops.task.eventMessage.repositoryMaintenanceSummary')
+  })
+
   it('maps current and historical source deregistration events to the same copy', () => {
     const preparedKey = 'ops.task.eventMessage.sourceUnregisterPrepared'
     const finalizedKey = 'ops.task.eventMessage.sourceUnregisterFinalized'
