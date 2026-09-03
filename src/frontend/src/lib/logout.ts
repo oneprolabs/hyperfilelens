@@ -19,6 +19,10 @@ export async function confirmSignOut(t: (key: string) => string): Promise<boolea
       customClass: 'hfl-message-box--sign-out',
       appendTo: document.body,
       closeOnClickModal: false,
+      // Keep the confirm action in its neutral state when the dialog opens.
+      // Auto-focusing it also makes an immediate Enter keypress sign the user
+      // out without an explicit confirmation.
+      autofocus: false,
     })
     return true
   } catch {
