@@ -331,9 +331,13 @@ function taskEventMetadata(event: TaskEventRow): Record<string, unknown> {
   return event.metadata && typeof event.metadata === 'object' ? event.metadata as Record<string, unknown> : {}
 }
 
-function hasEventFailureDetails(event: TaskEventRow) {
-  const details = taskEventMetadata(event).failure_details
-  return Boolean(details && typeof details === 'object' && !Array.isArray(details))
+function hasEventDetailPanel(event: TaskEventRow) {
+  const metadata = taskEventMetadata(event)
+  return ['failure_details', 'skipped_details'].some((key) => {
+    const details = metadata[key]
+    return Boolean(details && typeof details === 'object' && !Array.isArray(details))
+  }) || ['skipped_item_count', 'skipped_file_count', 'skipped_directory_count', 'skipped_special_count']
+    .some(key => Number(metadata[key]) > 0)
 }
 
 function taskEventMetadataText(event: TaskEventRow, keys: string[]) {
@@ -1043,7 +1047,7 @@ watch(
                       v-for="event in step.events"
                       :key="event.id"
                       class="hfl-task-drawer__event-row"
-                      :class="{ 'hfl-task-drawer__event-row--failure-details': hasEventFailureDetails(event) }"
+                      :class="{ 'hfl-task-drawer__event-row--detail-panel': hasEventDetailPanel(event) }"
                     >
                       <span
                         class="hfl-task-drawer__event-dot"
@@ -1094,7 +1098,7 @@ watch(
                   v-for="event in unlinkedEvents"
                   :key="event.id"
                   class="hfl-task-drawer__event-row"
-                  :class="{ 'hfl-task-drawer__event-row--failure-details': hasEventFailureDetails(event) }"
+                  :class="{ 'hfl-task-drawer__event-row--detail-panel': hasEventDetailPanel(event) }"
                 >
                   <span
                     class="hfl-task-drawer__event-dot"
@@ -2133,27 +2137,27 @@ watch(
   white-space: nowrap;
 }
 
-.hfl-task-drawer__event-row--failure-details {
+.hfl-task-drawer__event-row--detail-panel {
   position: relative;
   grid-template-columns: 16px minmax(0, 1fr);
 }
 
-.hfl-task-drawer__event-row--failure-details .hfl-task-drawer__event-content {
+.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-content {
   grid-column: 2;
   align-items: stretch;
 }
 
-.hfl-task-drawer__event-row--failure-details .hfl-task-drawer__event-msg {
+.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-msg {
   align-self: flex-start;
   max-width: calc(100% - 132px);
 }
 
-.hfl-task-drawer__event-row--failure-details .hfl-task-drawer__event-object,
-.hfl-task-drawer__event-row--failure-details .hfl-task-drawer__event-error {
+.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-object,
+.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-error {
   align-self: flex-start;
 }
 
-.hfl-task-drawer__event-row--failure-details .hfl-task-drawer__event-time {
+.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-time {
   position: absolute;
   top: 0;
   right: 0;
@@ -2179,17 +2183,17 @@ watch(
     max-width: 100%;
   }
 
-  .hfl-task-drawer__event-row--failure-details {
+  .hfl-task-drawer__event-row--detail-panel {
     grid-template-columns: 16px minmax(0, 1fr);
   }
 
-  .hfl-task-drawer__event-row--failure-details .hfl-task-drawer__event-time {
+  .hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-time {
     position: static;
     grid-column: 2;
     justify-self: start;
   }
 
-  .hfl-task-drawer__event-row--failure-details .hfl-task-drawer__event-msg {
+  .hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-msg {
     max-width: 100%;
   }
 }

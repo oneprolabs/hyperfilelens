@@ -59,12 +59,13 @@ describe('FlowBackupSourceDetailDrawer task columns', () => {
   })
 })
 
-describe('FlowBackupSourceDetailDrawer structured failure layout', () => {
-  it('lets structured failure details use the unused event-time column', () => {
-    expect(drawer).toContain("'dp-task-detail__event-row--failure-details': hasEventFailureDetails(event)")
-    expect(drawer).toContain('.dp-task-detail__event-row--failure-details .dp-task-detail__event-content')
+describe('FlowBackupSourceDetailDrawer structured detail layout', () => {
+  it('lets failure and skipped-item details use the unused event-time column', () => {
+    expect(drawer).toContain("['failure_details', 'skipped_details']")
+    expect(drawer).toContain("'dp-task-detail__event-row--detail-panel': hasEventDetailPanel(event)")
+    expect(drawer).toContain('.dp-task-detail__event-row--detail-panel .dp-task-detail__event-content')
     expect(drawer).toContain('grid-template-columns: 16px minmax(0, 1fr);')
-    expect(drawer).toContain('.dp-task-detail__event-row--failure-details .dp-task-detail__event-time')
+    expect(drawer).toContain('.dp-task-detail__event-row--detail-panel .dp-task-detail__event-time')
   })
 })
 

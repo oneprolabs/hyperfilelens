@@ -103,6 +103,7 @@ _DIRECTORY_TERMINAL_STATUSES = {
     BackupSourceSnapshotDirectory.Status.FAILED,
     BackupSourceSnapshotDirectory.Status.DELETED,
 }
+_MAX_SKIPPED_EVENT_ITEMS = 10
 
 
 def _is_global_backup_admission_error(exc: Exception) -> bool:
@@ -1907,7 +1908,6 @@ def kopia_snapshot_skipped_metadata(
             reported_total,
             file_count + directory_count + special_count,
         )
-    max_event_items = 20
     return {
         "skipped_details": {
             "category": "source_items_skipped",
@@ -1915,9 +1915,9 @@ def kopia_snapshot_skipped_metadata(
             "file_count": file_count,
             "directory_count": directory_count,
             "special_count": special_count,
-            "items": items[:max_event_items],
-            "reported_count": min(len(items), max_event_items),
-            "truncated": total_count > min(len(items), max_event_items),
+            "items": items[:_MAX_SKIPPED_EVENT_ITEMS],
+            "reported_count": min(len(items), _MAX_SKIPPED_EVENT_ITEMS),
+            "truncated": total_count > min(len(items), _MAX_SKIPPED_EVENT_ITEMS),
         }
     }
 

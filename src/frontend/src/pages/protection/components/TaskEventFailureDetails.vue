@@ -16,6 +16,8 @@ const props = defineProps<{
   metadata?: unknown
 }>()
 
+const MAX_SKIPPED_ITEMS = 10
+
 const { t } = useI18n()
 
 const metadataRecord = computed<Record<string, unknown>>(() => {
@@ -120,7 +122,11 @@ const skippedItems = computed<SkippedItem[]>(() => {
     const path = String(record.path || '').trim()
     const error = String(record.error || '').trim()
     return path || error ? [{ path, error }] : []
-  })
+  }).slice(0, MAX_SKIPPED_ITEMS)
+})
+const skippedItemPayloadCount = computed(() => {
+  const value = skippedDetails.value.items
+  return Array.isArray(value) ? value.length : 0
 })
 
 function positiveCount(value: unknown) {
@@ -143,9 +149,16 @@ const skippedCount = computed(() => (
   || skippedItems.value.length
 ))
 const skippedReportedCount = computed(() => (
-  positiveCount(skippedDetails.value.reported_count) || skippedItems.value.length
+  Math.min(
+    MAX_SKIPPED_ITEMS,
+    positiveCount(skippedDetails.value.reported_count) || skippedItems.value.length,
+  )
 ))
-const skippedTruncated = computed(() => Boolean(skippedDetails.value.truncated))
+const skippedTruncated = computed(() => (
+  Boolean(skippedDetails.value.truncated)
+  || skippedCount.value > skippedItems.value.length
+  || skippedItemPayloadCount.value > MAX_SKIPPED_ITEMS
+))
 const hasSkippedDetails = computed(() => skippedCount.value > 0)
 const hasDetails = computed(() => (
   items.value.length > 0

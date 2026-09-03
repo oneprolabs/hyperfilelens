@@ -59,6 +59,32 @@ func TestBoundTaskResultKeepsCompactSnapshotFailureSummary(t *testing.T) {
 	}
 }
 
+func TestBoundTaskResultCapsSnapshotFailureSamplesAtTen(t *testing.T) {
+	items := make([]any, 0, 20)
+	for i := 0; i < 20; i++ {
+		items = append(items, map[string]any{
+			"path":  "Library/Caches/item-" + string(rune('a'+i)),
+			"error": "operation not permitted",
+		})
+	}
+	bounded, _ := boundTaskResult(map[string]any{
+		"snapshot_failure_summary": map[string]any{
+			"total_count":    int64(20),
+			"reported_count": int64(20),
+			"truncated":      false,
+			"items":          items,
+		},
+		"other": strings.Repeat("x", maxTaskResultBytes),
+	})
+	summary := bounded["snapshot_failure_summary"].(map[string]any)
+	if got := len(summary["items"].([]any)); got != maxSnapshotFailureSamples {
+		t.Fatalf("sample count=%d, want %d", got, maxSnapshotFailureSamples)
+	}
+	if summary["reported_count"] != maxSnapshotFailureSamples || summary["truncated"] != true {
+		t.Fatalf("summary bounds are inconsistent: %#v", summary)
+	}
+}
+
 func TestBoundTaskResultReservesFailureSummaryUnderExtremeEssentialData(t *testing.T) {
 	result := map[string]any{
 		"snapshot_failure_summary": map[string]any{

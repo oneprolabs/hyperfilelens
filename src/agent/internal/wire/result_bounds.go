@@ -10,8 +10,9 @@ import (
 const (
 	maxTaskResultFrameBytes = 256 * 1024
 	// Reserve space for the task.result envelope, task ID, status, and bounded error.
-	maxTaskResultBytes   = maxTaskResultFrameBytes - 16*1024
-	maxResultStringBytes = 8 * 1024
+	maxTaskResultBytes        = maxTaskResultFrameBytes - 16*1024
+	maxResultStringBytes      = 8 * 1024
+	maxSnapshotFailureSamples = 10
 )
 
 type resultBoundStats struct {
@@ -130,8 +131,8 @@ func compactSnapshotFailureSummary(value any) any {
 		}
 	}
 	items, _ := summary["items"].([]any)
-	boundedItems := make([]any, 0, min(len(items), 20))
-	for _, raw := range items[:min(len(items), 20)] {
+	boundedItems := make([]any, 0, min(len(items), maxSnapshotFailureSamples))
+	for _, raw := range items[:min(len(items), maxSnapshotFailureSamples)] {
 		item, ok := raw.(map[string]any)
 		if !ok {
 			continue
@@ -143,8 +144,46 @@ func compactSnapshotFailureSummary(value any) any {
 			"item_type": truncateUTF8(stringJSONScalar(item["item_type"]), 32),
 		})
 	}
+	out["reported_count"] = len(boundedItems)
+	if total, ok := compactInteger(summary["total_count"]); ok {
+		out["truncated"] = summary["truncated"] == true || total > int64(len(boundedItems))
+	}
 	out["items"] = boundedItems
 	return out
+}
+
+func compactInteger(value any) (int64, bool) {
+	switch number := value.(type) {
+	case int:
+		return int64(number), true
+	case int8:
+		return int64(number), true
+	case int16:
+		return int64(number), true
+	case int32:
+		return int64(number), true
+	case int64:
+		return number, true
+	case uint:
+		return int64(number), true
+	case uint8:
+		return int64(number), true
+	case uint16:
+		return int64(number), true
+	case uint32:
+		return int64(number), true
+	case uint64:
+		if number > uint64(^uint64(0)>>1) {
+			return 0, false
+		}
+		return int64(number), true
+	case float64:
+		return int64(number), number == float64(int64(number))
+	case float32:
+		return int64(number), number == float32(int64(number))
+	default:
+		return 0, false
+	}
 }
 
 func stringJSONScalar(value any) string {

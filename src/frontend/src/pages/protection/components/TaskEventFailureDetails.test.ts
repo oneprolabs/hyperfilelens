@@ -145,4 +145,31 @@ describe('TaskEventFailureDetails', () => {
     expect(wrapper.text()).toContain('6 source items were skipped (files: 4; directories: 1; special entries: 1).')
     expect(wrapper.find('details').exists()).toBe(false)
   })
+
+  it('caps legacy skipped-item payloads at ten visible items', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        metadata: {
+          skipped_details: {
+            count: 20,
+            reported_count: 20,
+            truncated: false,
+            items: Array.from({ length: 20 }, (_, index) => ({
+              path: `cache/item-${index}.tmp`,
+              error: 'sharing violation',
+            })),
+          },
+        },
+      },
+      global: {
+        plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
+      },
+    })
+
+    expect(wrapper.text()).toContain('View 10 skipped items')
+    expect(wrapper.text()).toContain('Showing the first 10 of 20 skipped items.')
+    expect(wrapper.findAll('.task-event-failure__files li')).toHaveLength(10)
+    expect(wrapper.text()).toContain('cache/item-9.tmp')
+    expect(wrapper.text()).not.toContain('cache/item-10.tmp')
+  })
 })
