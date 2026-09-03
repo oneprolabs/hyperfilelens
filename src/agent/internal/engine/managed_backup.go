@@ -45,7 +45,7 @@ const (
 	repositoryAlreadyExistsMessage       = "A Kopia repository already exists at the selected location. Import is not supported in this version. Choose a different storage location."
 	nasRepositoryWriteDeniedCode         = "NAS_REPOSITORY_WRITE_DENIED"
 	nasRepositoryWriteDeniedMessage      = "The NAS share was mounted, but the Agent does not have permission to write repository data."
-	snapshotFailureSampleLimit           = 20
+	snapshotFailureSampleLimit           = 10
 	snapshotFailurePathLimit             = 1024
 	snapshotFailureErrorLimit            = 2048
 )

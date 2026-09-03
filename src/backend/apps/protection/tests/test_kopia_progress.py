@@ -758,7 +758,7 @@ class KopiaFailureMessageTests(SimpleTestCase):
         self.assertEqual(details["items"][1]["path"], "private")
         self.assertEqual(details["items"][1]["error"], "readdir private: access denied")
 
-    def test_skipped_metadata_limits_event_details_to_twenty_items(self):
+    def test_skipped_metadata_limits_event_details_to_ten_items(self):
         from apps.protection.services.backup_task import (
             kopia_snapshot_skipped_metadata,
         )
@@ -774,8 +774,8 @@ class KopiaFailureMessageTests(SimpleTestCase):
         details = kopia_snapshot_skipped_metadata(result)["skipped_details"]
 
         self.assertEqual(details["count"], 25)
-        self.assertEqual(details["reported_count"], 20)
-        self.assertEqual(len(details["items"]), 20)
+        self.assertEqual(details["reported_count"], 10)
+        self.assertEqual(len(details["items"]), 10)
         self.assertTrue(details["truncated"])
 
     def test_skipped_metadata_uses_exact_summary_type_counts(self):

@@ -1372,9 +1372,13 @@ function taskEventMetadataText(event: TaskEventRow, keys: string[]) {
   return ''
 }
 
-function hasEventFailureDetails(event: TaskEventRow) {
-  const details = taskEventMetadata(event).failure_details
-  return Boolean(details && typeof details === 'object' && !Array.isArray(details))
+function hasEventDetailPanel(event: TaskEventRow) {
+  const metadata = taskEventMetadata(event)
+  return ['failure_details', 'skipped_details'].some((key) => {
+    const details = metadata[key]
+    return Boolean(details && typeof details === 'object' && !Array.isArray(details))
+  }) || ['skipped_item_count', 'skipped_file_count', 'skipped_directory_count', 'skipped_special_count']
+    .some(key => Number(metadata[key]) > 0)
 }
 
 function taskEventMetadataList(event: TaskEventRow, key: string) {
@@ -5405,7 +5409,7 @@ function onClosed() {
                       v-for="event in step.events"
                       :key="event.id"
                       class="dp-task-detail__event-row"
-                      :class="{ 'dp-task-detail__event-row--failure-details': hasEventFailureDetails(event) }"
+                      :class="{ 'dp-task-detail__event-row--detail-panel': hasEventDetailPanel(event) }"
                     >
                       <span
                         class="dp-task-detail__event-dot"
@@ -5471,7 +5475,7 @@ function onClosed() {
                       v-for="event in unlinkedTaskEvents"
                       :key="event.id"
                       class="dp-task-detail__event-row"
-                      :class="{ 'dp-task-detail__event-row--failure-details': hasEventFailureDetails(event) }"
+                      :class="{ 'dp-task-detail__event-row--detail-panel': hasEventDetailPanel(event) }"
                     >
                       <span
                         class="dp-task-detail__event-dot"
@@ -5523,7 +5527,7 @@ function onClosed() {
                 v-for="event in taskDetailEvents"
                 :key="event.id"
                 class="dp-task-detail__event-row"
-                :class="{ 'dp-task-detail__event-row--failure-details': hasEventFailureDetails(event) }"
+                :class="{ 'dp-task-detail__event-row--detail-panel': hasEventDetailPanel(event) }"
               >
                 <span
                   class="dp-task-detail__event-dot"
@@ -7671,44 +7675,44 @@ function onClosed() {
   white-space: nowrap;
 }
 
-.dp-task-detail__event-row--failure-details {
+.dp-task-detail__event-row--detail-panel {
   position: relative;
   grid-template-columns: 16px minmax(0, 1fr);
 }
 
-.dp-task-detail__event-row--failure-details .dp-task-detail__event-content {
+.dp-task-detail__event-row--detail-panel .dp-task-detail__event-content {
   grid-column: 2;
   align-items: stretch;
 }
 
-.dp-task-detail__event-row--failure-details .dp-task-detail__event-msg {
+.dp-task-detail__event-row--detail-panel .dp-task-detail__event-msg {
   align-self: flex-start;
   max-width: calc(100% - 132px);
 }
 
-.dp-task-detail__event-row--failure-details .dp-task-detail__event-object,
-.dp-task-detail__event-row--failure-details .dp-task-detail__event-error {
+.dp-task-detail__event-row--detail-panel .dp-task-detail__event-object,
+.dp-task-detail__event-row--detail-panel .dp-task-detail__event-error {
   align-self: flex-start;
 }
 
-.dp-task-detail__event-row--failure-details .dp-task-detail__event-time {
+.dp-task-detail__event-row--detail-panel .dp-task-detail__event-time {
   position: absolute;
   top: 0;
   right: 0;
 }
 
 @media (max-width: 760px) {
-  .dp-task-detail__event-row--failure-details {
+  .dp-task-detail__event-row--detail-panel {
     grid-template-columns: 16px minmax(0, 1fr);
   }
 
-  .dp-task-detail__event-row--failure-details .dp-task-detail__event-time {
+  .dp-task-detail__event-row--detail-panel .dp-task-detail__event-time {
     position: static;
     grid-column: 2;
     justify-self: start;
   }
 
-  .dp-task-detail__event-row--failure-details .dp-task-detail__event-msg {
+  .dp-task-detail__event-row--detail-panel .dp-task-detail__event-msg {
     max-width: 100%;
   }
 }
