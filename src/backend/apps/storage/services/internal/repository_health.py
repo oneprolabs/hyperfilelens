@@ -182,6 +182,7 @@ def dispatch_automatic_repository_observation(
     repository: Repository,
     retry_attempt: int = 0,
     include_usage: bool = False,
+    recorded_at=None,
 ) -> list[NodeTask] | None:
     """Serialize and dispatch one repository observation generation."""
 
@@ -222,11 +223,16 @@ def dispatch_automatic_repository_observation(
                 repository=current,
                 retry_attempt=retry_attempt,
                 include_usage=include_usage,
+                recorded_at=recorded_at,
             )
 
 
 def _dispatch_automatic_repository_observation_locked(
-    *, repository: Repository, retry_attempt: int = 0, include_usage: bool
+    *,
+    repository: Repository,
+    retry_attempt: int = 0,
+    include_usage: bool,
+    recorded_at=None,
 ) -> list[NodeTask]:
     """Dispatch durable repository health/usage observations without waiting.
 
@@ -313,6 +319,7 @@ def _dispatch_automatic_repository_observation_locked(
                 direct_nas=False,
                 transport_unknown=False,
                 include_usage=include_usage,
+                recorded_at=recorded_at,
             )
         ]
 
@@ -437,6 +444,7 @@ def _dispatch_automatic_repository_observation_locked(
                 direct_nas=True,
                 transport_unknown=len(online_nodes) < len(nodes),
                 include_usage=include_usage,
+                recorded_at=recorded_at,
                 usage_active=(
                     include_usage
                     and claim.state == RepositoryLocationClaim.State.OWNED
@@ -474,6 +482,7 @@ def _dispatch_repository_observation_task(
     direct_nas: bool,
     transport_unknown: bool,
     include_usage: bool,
+    recorded_at,
     usage_active: bool = True,
 ) -> NodeTask:
     handle = run_agent_task_async(
@@ -495,6 +504,9 @@ def _dispatch_repository_observation_task(
             "direct_nas": direct_nas,
             "transport_unknown": transport_unknown,
             "include_usage": include_usage,
+            "usage_recorded_at": (
+                recorded_at.isoformat() if include_usage and recorded_at else ""
+            ),
             "failure_affects_health": not include_usage,
             "usage_active": usage_active,
             "observation_group_id": group_id,
@@ -640,6 +652,10 @@ def _project_repository_observation_success(
         repository_subdir=str(persisted.get("repository_subdir") or ""),
     )
     checked_at = node_task.updated_at or timezone.now()
+    recorded_at = _repository_observation_recorded_at(
+        persisted=persisted,
+        fallback=checked_at,
+    )
     if persisted.get("direct_nas") is True:
         from apps.storage.services.internal.repository_usage import (
             _direct_nas_agent_config_groups,
@@ -672,6 +688,7 @@ def _project_repository_observation_success(
             _aggregate_direct_nas_observation(
                 repository=repository,
                 checked_at=checked_at,
+                recorded_at=recorded_at,
             )
         else:
             Repository.objects.filter(pk=repository.id).update(
@@ -695,7 +712,7 @@ def _project_repository_observation_success(
                     locked,
                     probe,
                     checked_at=checked_at,
-                    recorded_at=checked_at,
+                    recorded_at=recorded_at,
                 )
             Repository.objects.filter(pk=locked.id).update(
                 health=Repository.Health.ONLINE,
@@ -764,6 +781,11 @@ def _project_repository_observation_failure(
 ) -> bool:
     include_usage = persisted.get("include_usage") is True
     failure_affects_health = persisted.get("failure_affects_health", True) is True
+    checked_at = node_task.updated_at or timezone.now()
+    recorded_at = _repository_observation_recorded_at(
+        persisted=persisted,
+        fallback=checked_at,
+    )
     if persisted.get("direct_nas") is not True:
         if include_usage:
             apply_repository_usage_probe(
@@ -773,8 +795,8 @@ def _project_repository_observation_failure(
                     None,
                     error=str(node_task.last_error or "Repository observation failed.")[:1000],
                 ),
-                checked_at=node_task.updated_at or timezone.now(),
-                recorded_at=node_task.updated_at or timezone.now(),
+                checked_at=checked_at,
+                recorded_at=recorded_at,
             )
         if not failure_affects_health and not fail_immediately:
             return True
@@ -826,7 +848,14 @@ def _project_repository_observation_failure(
     )
 
 
-def _aggregate_direct_nas_observation(*, repository: Repository, checked_at) -> None:
+def _repository_observation_recorded_at(*, persisted: dict[str, Any], fallback):
+    value = parse_datetime(str(persisted.get("usage_recorded_at") or ""))
+    return value or fallback
+
+
+def _aggregate_direct_nas_observation(
+    *, repository: Repository, checked_at, recorded_at
+) -> None:
     shards = list(
         RepositoryUsageShard.objects.filter(
             organization_id=repository.organization_id,
@@ -855,7 +884,7 @@ def _aggregate_direct_nas_observation(*, repository: Repository, checked_at) -> 
                 ),
             ),
             checked_at=checked_at,
-            recorded_at=checked_at,
+            recorded_at=recorded_at,
         )
     Repository.objects.filter(pk=repository.id).update(
         health=Repository.Health.ONLINE,
