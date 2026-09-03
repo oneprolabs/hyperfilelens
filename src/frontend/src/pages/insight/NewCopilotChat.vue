@@ -43,7 +43,6 @@ type SubmitBlockCode =
   | 'selection_preview'
   | 'public_gateway'
   | 'private_gateway'
-  | 'analysis_type'
 
 type SubmitBlocker = {
   code: SubmitBlockCode
@@ -157,20 +156,6 @@ const publicGatewayUnavailable = computed(() => (
   && gatewayMode.value === 'auto'
   && !autoGateway.value
 ))
-const supportedAnalysisTypes = computed<LensAnalysisType[]>(() => {
-  if (!selectedGateway.value) return ['knowledge_qa']
-  const types = selectedGateway.value.analysis_types
-  return types === undefined ? ['knowledge_qa'] : types
-})
-const analysisTypeSupported = computed(() => supportedAnalysisTypes.value.includes(selectedAnalysisType.value))
-watch(
-  () => [selectedGateway.value?.gateway_link_id, selectedAnalysisType.value],
-  () => {
-    if (!analysisTypeSupported.value) {
-      selectedAnalysisType.value = supportedAnalysisTypes.value[0] || 'knowledge_qa'
-    }
-  },
-)
 const selectedBackupSource = computed(() => backupSourceOptions.value.find(
   (row) => row.backupConfigId === selectedBackupConfigId.value,
 ) ?? null)
@@ -187,7 +172,6 @@ const canCreate = computed(() => Boolean(
   && sourceScopes.value.length > 0
   && selectedGateway.value
   && agentModelReady.value
-  && analysisTypeSupported.value
   && selectionPreviewReady.value
   && !submitting.value,
 ))
@@ -228,12 +212,6 @@ const submitBlocker = computed<SubmitBlocker | null>(() => {
         code: 'public_gateway',
         message: t('insight.copilot.gatewayPublicUnavailable'),
       }
-    }
-  }
-  if (!analysisTypeSupported.value) {
-    return {
-      code: 'analysis_type',
-      message: t('insight.copilot.analysisTypeUnavailable'),
     }
   }
   if (selectionCalculationStatus.value === 'calculating') {
@@ -794,16 +772,12 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                   </legend>
                   <label
                     class="new-chat-analysis-option"
-                    :class="{
-                      'new-chat-analysis-option--selected': selectedAnalysisType === 'knowledge_qa',
-                      'new-chat-analysis-option--disabled': !supportedAnalysisTypes.includes('knowledge_qa'),
-                    }"
+                    :class="{ 'new-chat-analysis-option--selected': selectedAnalysisType === 'knowledge_qa' }"
                   >
                     <input
                       v-model="selectedAnalysisType"
                       type="radio"
                       value="knowledge_qa"
-                      :disabled="!supportedAnalysisTypes.includes('knowledge_qa')"
                     >
                     <span>
                       <strong>{{ t('insight.copilot.analysisTypeKnowledgeQa') }}</strong>
@@ -812,16 +786,12 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                   </label>
                   <label
                     class="new-chat-analysis-option"
-                    :class="{
-                      'new-chat-analysis-option--selected': selectedAnalysisType === 'code_analysis',
-                      'new-chat-analysis-option--disabled': !supportedAnalysisTypes.includes('code_analysis'),
-                    }"
+                    :class="{ 'new-chat-analysis-option--selected': selectedAnalysisType === 'code_analysis' }"
                   >
                     <input
                       v-model="selectedAnalysisType"
                       type="radio"
                       value="code_analysis"
-                      :disabled="!supportedAnalysisTypes.includes('code_analysis')"
                     >
                     <span>
                       <strong>{{ t('insight.copilot.analysisTypeCodeAnalysis') }}</strong>
@@ -1042,9 +1012,8 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-section-head .fullscreen-form-section__title { display: flex; align-items: center; gap: 8px; margin: 0; }
 .new-chat-analysis-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 0; padding: 0; border: 0; }
 .new-chat-analysis-option { display: flex; min-height: 88px; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid #e5e6eb; border-radius: 10px; background: #fff; cursor: pointer; transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }
-.new-chat-analysis-option:hover:not(.new-chat-analysis-option--disabled) { border-color: #8aaeff; background: #f7faff; }
+.new-chat-analysis-option:hover { border-color: #8aaeff; background: #f7faff; }
 .new-chat-analysis-option--selected { border-color: #165dff; background: #f5f8ff; box-shadow: 0 0 0 1px rgba(22, 93, 255, .12); }
-.new-chat-analysis-option--disabled { cursor: not-allowed; opacity: .55; }
 .new-chat-analysis-option input { width: 16px; height: 16px; margin-top: 2px; accent-color: #165dff; }
 .new-chat-analysis-option span { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
 .new-chat-analysis-option strong { color: #1d2129; font-size: 14px; }

@@ -130,6 +130,8 @@ describe('CopilotShareDialog', () => {
     await flushPromises()
 
     expect(mocks.fetchCandidate).toHaveBeenCalledWith(7)
+    expect(wrapper.get('section').classes()).toContain('hfl-flow-action-dialog')
+    expect(wrapper.get('section').classes()).toContain('hfl-flow-action-dialog--form')
     expect(wrapper.text()).toContain('The backup completed successfully.')
     expect(wrapper.get('input').element.value).toBe('Summarize the latest backup.')
   })
@@ -191,7 +193,7 @@ describe('CopilotShareDialog', () => {
     await flushPromises()
 
     const createButton = wrapper.findAll('button').find((button) => (
-      button.text().includes('Create link')
+      button.text().includes('Create Link')
     ))
     expect(createButton).toBeTruthy()
     await createButton!.trigger('click')
@@ -229,7 +231,7 @@ describe('CopilotShareDialog', () => {
     await flushPromises()
 
     const createButton = wrapper.findAll('button').find((button) => (
-      button.text().includes('Create link')
+      button.text().includes('Create Link')
     ))
     await createButton!.trigger('click')
     await wrapper.setProps({ session: { ...session(), id: 8 } })
@@ -268,7 +270,7 @@ describe('CopilotShareDialog', () => {
     await flushPromises()
 
     const stopButton = wrapper.findAll('button').find((button) => (
-      button.text().includes('Stop sharing')
+      button.text().includes('Stop Sharing')
     ))
     expect(stopButton).toBeTruthy()
     await stopButton!.trigger('click')
@@ -283,5 +285,42 @@ describe('CopilotShareDialog', () => {
       'a05bce34-1199-4a5e-8917-d61e541ca71b',
     )
     expect(wrapper.emitted('update:modelValue')).toContainEqual([false])
+  })
+
+  it('keeps sharing prominent and destructive actions in the standard footer order', async () => {
+    const originalShare = navigator.share
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      value: vi.fn(),
+    })
+    mocks.fetchCandidate.mockResolvedValue({
+      shareable: true,
+      question: 'Question',
+      answer: 'Answer',
+      run_uuid: '56ed8b87-b754-45d1-aaaf-e9134d52b756',
+      share: {
+        uuid: 'a05bce34-1199-4a5e-8917-d61e541ca71b',
+        run_uuid: '56ed8b87-b754-45d1-aaaf-e9134d52b756',
+        title: 'Shared answer',
+        share_path: '/insight/copilot/shared?access=signed',
+      },
+    })
+
+    try {
+      const wrapper = mountDialog()
+      await wrapper.setProps({ modelValue: true })
+      await flushPromises()
+
+      expect(wrapper.get('.copilot-share-dialog__native-share-action').text()).toBe('Share via Another App')
+      expect(wrapper.get('footer').findAll('button').map((button) => button.text().trim())).toEqual([
+        'Stop Sharing',
+        'Done',
+      ])
+    } finally {
+      Object.defineProperty(navigator, 'share', {
+        configurable: true,
+        value: originalShare,
+      })
+    }
   })
 })

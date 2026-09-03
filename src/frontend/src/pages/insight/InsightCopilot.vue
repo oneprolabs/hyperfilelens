@@ -38,7 +38,6 @@ import {
   type LensCopilotRunOutcome,
   type LensCopilotResponseState,
   type LensCopilotAssistant,
-  type LensAnalysisType,
   type LensGatewayInsight,
   type LensCopilotGatewayOption,
   type LensKnowledgeSource,
@@ -88,7 +87,6 @@ const shareOpen = ref(false)
 const shareTarget = ref<SessionRow | null>(null)
 const executionSettingsOpen = ref(false)
 const messagesBySession = ref<Record<number, CopilotDisplayMessage[]>>({})
-const selectedStarterBySession = ref<Record<number, string>>({})
 const input = ref('')
 const composerAttachments = ref<CopilotComposerAttachment[]>([])
 const retryDraft = ref<CopilotRetryDraft | null>(null)
@@ -118,7 +116,7 @@ function welcomeMessage(sessionId: number, createdAt?: string | null): CopilotDi
     id: `welcome-${sessionId}`,
     role: 'assistant',
     text: t('insight.copilot.welcome'),
-    starterChips: true,
+    isWelcome: true,
     createdAt: createdAt || new Date().toISOString(),
   }
 }
@@ -129,10 +127,10 @@ function withWelcomeMessage(
   createdAt?: string | null,
 ): CopilotDisplayMessage[] {
   const withoutWelcome = mapped.filter(
-    (row) => !row.starterChips && row.id !== `welcome-${sessionId}`,
+    (row) => !row.isWelcome && row.id !== `welcome-${sessionId}`,
   )
   const existingWelcome = mapped.find(
-    (row) => row.starterChips || row.id === `welcome-${sessionId}`,
+    (row) => row.isWelcome || row.id === `welcome-${sessionId}`,
   )
   const welcome = existingWelcome ?? welcomeMessage(sessionId, createdAt)
   return [welcome, ...withoutWelcome]
@@ -274,14 +272,6 @@ const activeSession = computed(() =>
   sessions.value.find((row) => row.id === activeSessionId.value) ?? null,
 )
 
-const activeSupportedAnalysisTypes = computed<LensAnalysisType[]>(() => {
-  const gatewayLinkId = activeSession.value?.gateway_link
-  const gateway = copilotGatewayOptions.value.find(
-    (row) => row.gateway_link_id === gatewayLinkId,
-  )
-  return gateway?.analysis_types ?? ['knowledge_qa']
-})
-
 const activeAssistant = computed((): LensCopilotAssistant | null => {
   const session = activeSession.value
   if (!session?.sl_assistant_uuid) return null
@@ -352,11 +342,6 @@ const supportsDocumentAttachments = computed(() =>
   activeAssistant.value?.supports_document_attachments === true
   && activeAssistant.value?.selected_task !== 'general_chat',
 )
-
-const selectedStarterKey = computed(() => {
-  const sessionId = activeSessionId.value
-  return sessionId == null ? '' : selectedStarterBySession.value[sessionId] || ''
-})
 
 const emptyPhase = computed((): CopilotEmptyPhase => {
   if (loading.value) return 'loading'
@@ -667,9 +652,6 @@ async function confirmDeleteSession() {
     const copy = { ...messagesBySession.value }
     delete copy[row.id]
     messagesBySession.value = copy
-    const starterCopy = { ...selectedStarterBySession.value }
-    delete starterCopy[row.id]
-    selectedStarterBySession.value = starterCopy
     if (activeSessionId.value === row.id) {
       clearComposerAttachments({ deleteDocuments: false })
       activeSessionId.value = sessions.value[0]?.id ?? null
@@ -700,16 +682,6 @@ function updateComposerHeight(height: number) {
   if (Number.isFinite(height) && height > 0) {
     composerHeight.value = Math.ceil(height)
   }
-}
-
-async function applyStarterChip(key: string, text: string) {
-  const sessionId = activeSessionId.value
-  if (sessionId == null || submissionBlocked.value) return
-  selectedStarterBySession.value = {
-    ...selectedStarterBySession.value,
-    [sessionId]: key,
-  }
-  await submitQuestion(text)
 }
 
 function retryQuestion(draft: CopilotRetryDraft) {
@@ -1201,9 +1173,7 @@ onUnmounted(() => {
             :streaming-elapsed-seconds="activeStream?.thinkingElapsedSeconds ?? 0"
             :stream-error="activeStream?.streamError ?? ''"
             :bubble-tag="bubbleTag"
-            :selected-starter-key="selectedStarterKey"
             :starter-disabled="submissionBlocked"
-            @starter-chip="applyStarterChip"
             @retry-question="retryQuestion"
             @feedback-updated="applyFeedbackUpdate"
           />
@@ -1235,11 +1205,12 @@ onUnmounted(() => {
     </div>
     <DangerConfirmDialog
       v-model="deleteOpen"
-      :title="t('insight.copilot.deleteConfirm')"
-      :message="t('insight.copilot.deleteConfirm')"
-      :items="deleteTarget ? [{ key: deleteTarget.id, name: deleteTarget.title }] : []"
+      :title="t('insight.copilot.deleteConfirm', {
+        name: deleteTarget?.title || t('insight.copilot.newChatTitle'),
+      })"
+      :message="t('insight.copilot.deleteConfirmMessage')"
       :cancel-text="t('insight.copilot.btnCancel')"
-      :confirm-text="t('insight.copilot.btnConfirm')"
+      :confirm-text="t('insight.copilot.deleteSession')"
       :loading="deleteLoading"
       @confirm="confirmDeleteSession"
       @cancel="deleteTarget = null"
@@ -1252,7 +1223,6 @@ onUnmounted(() => {
     <CopilotExecutionSettingsDialog
       v-model="executionSettingsOpen"
       :session="activeSession"
-      :supported-analysis-types="activeSupportedAnalysisTypes"
       @saved="applyExecutionSettings"
     />
   </div>

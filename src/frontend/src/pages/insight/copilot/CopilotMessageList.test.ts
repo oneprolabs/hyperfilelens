@@ -54,7 +54,7 @@ function mountList(props: Record<string, unknown>) {
   })
 }
 
-describe('CopilotMessageList starter questions and live feedback', () => {
+describe('CopilotMessageList welcome message and live feedback', () => {
   beforeEach(() => {
     resizeCallback = null
     mocks.fetchCopilotRunPdf.mockReset()
@@ -67,45 +67,19 @@ describe('CopilotMessageList starter questions and live feedback', () => {
     vi.unstubAllGlobals()
   })
 
-  it('emits a starter question directly and exposes its selected state', async () => {
+  it('shows the welcome message without starter question cards', () => {
     const wrapper = mountList({
       messages: [{
         id: 'welcome-1',
         role: 'assistant',
         text: en.insight.copilot.welcome,
-        starterChips: true,
+        isWelcome: true,
       }],
-      selectedStarterKey: '',
-      starterDisabled: false,
-    })
-    const firstChip = wrapper.get('.copilot-chip-box')
-
-    expect(firstChip.attributes('aria-pressed')).toBe('false')
-    await firstChip.trigger('click')
-
-    expect(wrapper.emitted('starterChip')?.[0]).toEqual([
-      'chipQuerySops',
-      en.insight.copilot.chipQuerySopsPrompt,
-    ])
-
-    await wrapper.setProps({ selectedStarterKey: 'chipQuerySops' })
-    expect(firstChip.classes()).toContain('is-selected')
-    expect(firstChip.attributes('aria-pressed')).toBe('true')
-    wrapper.unmount()
-  })
-
-  it('disables starter questions while another submission is active', () => {
-    const wrapper = mountList({
-      messages: [{
-        id: 'welcome-1',
-        role: 'assistant',
-        text: en.insight.copilot.welcome,
-        starterChips: true,
-      }],
-      starterDisabled: true,
     })
 
-    expect(wrapper.get('.copilot-chip-box').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.message-card--welcome').text()).toBe(en.insight.copilot.welcome)
+    expect(wrapper.find('.copilot-chip-grid').exists()).toBe(false)
+    expect(wrapper.find('.copilot-chip-box').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -349,7 +323,7 @@ describe('CopilotMessageList starter questions and live feedback', () => {
     })
 
     await wrapper.get('.chat-scroll').trigger('scroll')
-    expect(wrapper.get('.scroll-to-latest').text()).toContain('Back to latest')
+    expect(wrapper.get('.scroll-to-latest').text()).toContain('Back to Latest')
 
     scrollHeight = 1200
     await wrapper.setProps({ streamingContent: 'Do not interrupt history reading' })

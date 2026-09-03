@@ -197,13 +197,21 @@ const rendered = computed(() => renderMarkdown(props.content))
   text-underline-offset: 2px;
 }
 
+.copilot-markdown :deep(strong),
+.copilot-markdown :deep(b) {
+  color: var(--color-text-title);
+  font-weight: 600;
+}
+
 .copilot-markdown :deep(.copilot-md-code) {
-  padding: 0.1em 0.35em;
+  padding: 0.08em 0.32em;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 12%, var(--color-border));
   border-radius: 4px;
-  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-grey-1));
+  color: var(--color-text-primary);
   font-family: var(--font-mono);
-  font-size: 0.92em;
+  font-size: 0.9em;
+  font-weight: 500;
 }
 
 .copilot-markdown :deep(.copilot-md-code-block) {
@@ -255,7 +263,7 @@ const rendered = computed(() => renderMarkdown(props.content))
 .copilot-markdown :deep(h5),
 .copilot-markdown :deep(h6) {
   margin: 1em 0 0.5em;
-  font-weight: 600;
+  font-weight: 650;
   line-height: 1.35;
   color: var(--color-text-title);
 }
@@ -312,7 +320,9 @@ const rendered = computed(() => renderMarkdown(props.content))
   min-width: 520px;
   border-collapse: collapse;
   margin: 0;
-  font-size: 14px;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .copilot-markdown :deep(.copilot-md-table thead) {
@@ -321,7 +331,7 @@ const rendered = computed(() => renderMarkdown(props.content))
 
 .copilot-markdown :deep(.copilot-md-table th),
 .copilot-markdown :deep(.copilot-md-table td) {
-  padding: 10px 12px;
+  padding: 9px 12px;
   text-align: left;
   border-bottom: 1px solid var(--color-border);
   border-right: 1px solid var(--color-border);
@@ -334,7 +344,7 @@ const rendered = computed(() => renderMarkdown(props.content))
 }
 
 .copilot-markdown :deep(.copilot-md-table th) {
-  font-weight: 600;
+  font-weight: 650;
   color: var(--color-text-title);
 }
 

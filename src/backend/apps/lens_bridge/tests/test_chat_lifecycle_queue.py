@@ -1024,7 +1024,12 @@ class CopilotChatModelBindingTests(TestCase):
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
 
-    def _create_chat(self, *, idempotency_key: str = "copilot-model-binding-create"):
+    def _create_chat(
+        self,
+        *,
+        idempotency_key: str = "copilot-model-binding-create",
+        analysis_type: str | None = None,
+    ):
         return chat_lifecycle.create_copilot_chat(
             self.organization,
             user=self.user,
@@ -1040,6 +1045,7 @@ class CopilotChatModelBindingTests(TestCase):
             gateway_mode=LensSessionLink.GatewaySelectionMode.MANUAL,
             gateway_link_id=self.gateway_link.id,
             idempotency_key=idempotency_key,
+            analysis_type=analysis_type,
         )
 
     @patch(
@@ -1118,6 +1124,41 @@ class CopilotChatModelBindingTests(TestCase):
                 consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
                 consumer_id=str(session.id),
             ).exists()
+        )
+        queue_provision.assert_called_once_with(session.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "provisioning.configured_default_model_refs_for_org"
+    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._configured_gateway_link_for_chat")
+    @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
+    def test_code_analysis_does_not_depend_on_gateway_task_snapshot(
+        self,
+        _context,
+        resolve_gateway,
+        default_models,
+        queue_provision,
+    ):
+        self.gateway_link.config_json = {
+            "sl_lensnode_snapshot": {
+                "sl_tasks": [{"name": "knowledge_qa", "title": "Knowledge Q&A"}]
+            }
+        }
+        self.gateway_link.save(update_fields=["config_json", "updated_at"])
+        resolve_gateway.return_value = self.gateway_link
+        default_models.return_value = (str(uuid.uuid4()), None)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            session = self._create_chat(
+                idempotency_key="copilot-code-analysis-create",
+                analysis_type=LensSessionLink.AnalysisType.CODE_ANALYSIS,
+            )
+
+        self.assertEqual(
+            session.analysis_type,
+            LensSessionLink.AnalysisType.CODE_ANALYSIS,
         )
         queue_provision.assert_called_once_with(session.id)
 

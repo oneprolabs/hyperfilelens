@@ -15,7 +15,7 @@ export type CopilotDisplayMessage = {
   id: string
   role: 'user' | 'assistant'
   text?: string
-  starterChips?: boolean
+  isWelcome?: boolean
   isError?: boolean
   createdAt?: string
   completedAt?: string | null
