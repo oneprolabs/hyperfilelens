@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from types import SimpleNamespace
 from unittest import mock
 from uuid import uuid4
@@ -12,6 +12,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from apps.iam.models import Organization
+from apps.monitor.models import RepositoryUsageMetric
 from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.protection.models import BackupConfig
@@ -963,6 +964,14 @@ class RepositoryHealthResultProjectionTests(TestCase):
 
     def test_automatic_probe_success_projects_health_and_usage_together(self):
         task = self._repo_status_task()
+        sample_recorded_at = datetime(
+            2026,
+            9,
+            3,
+            5,
+            45,
+            tzinfo=dt_timezone.utc,
+        )
         task.payload = {
             "automatic_health_probe": True,
             "repository_id": self.repository.id,
@@ -972,6 +981,7 @@ class RepositoryHealthResultProjectionTests(TestCase):
             "legacy_compatibility_allowed": False,
             "direct_nas": False,
             "include_usage": True,
+            "usage_recorded_at": sample_recorded_at.isoformat(),
             "failure_affects_health": False,
         }
         task.result = {
@@ -1004,6 +1014,66 @@ class RepositoryHealthResultProjectionTests(TestCase):
         self.assertEqual(
             self.repository.usage_probe_status,
             Repository.MetricProbeStatus.SUCCESS,
+        )
+        self.assertEqual(
+            RepositoryUsageMetric.objects.get(
+                repository=self.repository,
+            ).recorded_at,
+            sample_recorded_at,
+        )
+
+    def test_automatic_probe_failure_projects_usage_at_original_sample_time(self):
+        task = self._repo_status_task()
+        sample_recorded_at = datetime(
+            2026,
+            9,
+            3,
+            5,
+            45,
+            tzinfo=dt_timezone.utc,
+        )
+        task.status = NodeTask.Status.FAILED
+        task.accepted_at = timezone.now()
+        task.last_error = "repository usage probe failed"
+        task.result = {"error_code": "REPOSITORY_STATUS_FAILED"}
+        task.payload = {
+            "automatic_health_probe": True,
+            "repository_id": self.repository.id,
+            "repository_revision": repository_observation_revision(self.repository),
+            "retry_attempt": 0,
+            "repository_subdir": "",
+            "legacy_compatibility_allowed": False,
+            "direct_nas": False,
+            "include_usage": True,
+            "usage_recorded_at": sample_recorded_at.isoformat(),
+            "failure_affects_health": False,
+        }
+        task.correlation_type = REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE
+        task.save(
+            update_fields=[
+                "status",
+                "accepted_at",
+                "last_error",
+                "result",
+                "payload",
+                "correlation_type",
+                "updated_at",
+            ]
+        )
+
+        projected = project_repository_health_from_agent_result(node_task=task)
+
+        self.assertTrue(projected)
+        self.assertEqual(
+            RepositoryUsageMetric.objects.get(
+                repository=self.repository,
+            ).recorded_at,
+            sample_recorded_at,
+        )
+        self.repository.refresh_from_db()
+        self.assertEqual(
+            self.repository.usage_probe_status,
+            Repository.MetricProbeStatus.FAILED,
         )
 
     def test_automatic_probe_result_is_fenced_by_physical_target_revision(self):
@@ -1189,10 +1259,19 @@ class AutomaticDirectNASObservationTests(TestCase):
             return SimpleNamespace(task=task, task_id=task.id)
 
         run_async.side_effect = create_handle
+        sample_recorded_at = datetime(
+            2026,
+            9,
+            3,
+            5,
+            45,
+            tzinfo=dt_timezone.utc,
+        )
 
         tasks = dispatch_automatic_repository_observation(
             repository=self.repository,
             include_usage=True,
+            recorded_at=sample_recorded_at,
         )
 
         self.assertEqual({task.node_id for task in tasks or []}, {node_a.id, node_b.id})
@@ -1200,6 +1279,10 @@ class AutomaticDirectNASObservationTests(TestCase):
         for task in tasks or []:
             self.assertNotIn("kopia_password", str(task.payload))
             self.assertTrue(task.payload["direct_nas"])
+            self.assertEqual(
+                task.payload["usage_recorded_at"],
+                sample_recorded_at.isoformat(),
+            )
             self.assertEqual(
                 set(task.payload["expected_node_ids"]),
                 {node_a.id, node_b.id},
@@ -1265,6 +1348,14 @@ class AutomaticDirectNASObservationTests(TestCase):
         node_a = self._node("agent-a")
         node_b = self._node("agent-b")
         group_id = "observation-group"
+        sample_recorded_at = datetime(
+            2026,
+            9,
+            3,
+            5,
+            45,
+            tzinfo=dt_timezone.utc,
+        )
         revision = repository_observation_revision(self.repository)
         tasks = []
         for node, usage in ((node_a, 100), (node_b, 250)):
@@ -1282,6 +1373,7 @@ class AutomaticDirectNASObservationTests(TestCase):
                     "legacy_compatibility_allowed": False,
                     "direct_nas": True,
                     "include_usage": True,
+                    "usage_recorded_at": sample_recorded_at.isoformat(),
                     "failure_affects_health": False,
                     "usage_active": True,
                     "observation_group_id": group_id,
@@ -1323,6 +1415,12 @@ class AutomaticDirectNASObservationTests(TestCase):
                 status=RepositoryUsageShard.Status.SUCCESS,
             ).count(),
             2,
+        )
+        self.assertEqual(
+            RepositoryUsageMetric.objects.get(
+                repository=self.repository,
+            ).recorded_at,
+            sample_recorded_at,
         )
 
     @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")

@@ -33,21 +33,99 @@ class RepositoryUsageScheduleTests(SimpleTestCase):
 
 
 class RepositoryUsageCapacityTests(SimpleTestCase):
+    @mock.patch(
+        "apps.storage.tasks.reconcile_storage_repositories.apply_async"
+    )
     @mock.patch("apps.storage.tasks.sync_all_repositories")
     @mock.patch(
         "apps.storage.tasks.try_acquire_background_storage_capacity",
         return_value=None,
     )
-    def test_periodic_sync_defers_without_background_capacity(
+    def test_periodic_sync_retries_without_changing_sample_time(
         self,
         _acquire_capacity,
         sync_all,
+        apply_async,
     ):
-        result = reconcile_storage_repositories.run(background=True)
+        sample_recorded_at = "2026-09-03T13:45:01+08:00"
+
+        result = reconcile_storage_repositories.run(
+            background=True,
+            sample_recorded_at=sample_recorded_at,
+        )
 
         self.assertEqual(result["status"], "deferred_background_capacity")
         self.assertEqual(result["repositories_scanned"], 0)
+        self.assertTrue(result["retry_scheduled"])
+        self.assertEqual(result["capacity_retry_attempt"], 0)
+        apply_async.assert_called_once()
+        retry = apply_async.call_args
+        self.assertEqual(retry.kwargs["countdown"], 15)
+        self.assertEqual(retry.kwargs["kwargs"]["capacity_retry_attempt"], 1)
+        self.assertEqual(
+            retry.kwargs["kwargs"]["sample_recorded_at"],
+            sample_recorded_at,
+        )
         sync_all.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.tasks.reconcile_storage_repositories.apply_async"
+    )
+    @mock.patch("apps.storage.tasks.sync_all_repositories")
+    @mock.patch(
+        "apps.storage.tasks.try_acquire_background_storage_capacity",
+        return_value=None,
+    )
+    def test_periodic_sync_stops_after_three_retries(
+        self,
+        _acquire_capacity,
+        sync_all,
+        apply_async,
+    ):
+        result = reconcile_storage_repositories.run(
+            background=True,
+            capacity_retry_attempt=3,
+            sample_recorded_at="2026-09-03T13:45:01+08:00",
+        )
+
+        self.assertEqual(result["status"], "deferred_background_capacity")
+        self.assertFalse(result["retry_scheduled"])
+        self.assertEqual(result["capacity_retry_attempt"], 3)
+        apply_async.assert_not_called()
+        sync_all.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.tasks.reconcile_storage_repositories.apply_async"
+    )
+    @mock.patch("apps.storage.tasks.sync_all_repositories")
+    @mock.patch(
+        "apps.storage.tasks.try_acquire_background_storage_capacity"
+    )
+    def test_successful_retry_collects_for_original_sample_time(
+        self,
+        _acquire_capacity,
+        sync_all,
+        apply_async,
+    ):
+        sync_all.return_value = {
+            "repositories_attempted": 1,
+            "repositories_synced": 1,
+            "repositories_failed": 0,
+        }
+        sample_recorded_at = "2026-09-03T13:45:01+08:00"
+
+        result = reconcile_storage_repositories.run(
+            background=True,
+            capacity_retry_attempt=2,
+            sample_recorded_at=sample_recorded_at,
+        )
+
+        self.assertEqual(result["repositories_synced"], 1)
+        self.assertEqual(
+            sync_all.call_args.kwargs["recorded_at"].isoformat(),
+            sample_recorded_at,
+        )
+        apply_async.assert_not_called()
 
     @mock.patch(
         "apps.storage.tasks.try_acquire_background_storage_capacity"

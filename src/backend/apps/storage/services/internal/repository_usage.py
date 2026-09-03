@@ -1148,6 +1148,7 @@ def _sync_repository_usage_candidates(
                 node_tasks = dispatch_automatic_repository_observation(
                     repository=repository,
                     include_usage=True,
+                    recorded_at=recorded_at,
                 )
                 observations_dispatched += len(node_tasks or [])
             else:

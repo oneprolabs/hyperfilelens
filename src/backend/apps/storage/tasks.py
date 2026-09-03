@@ -11,6 +11,7 @@ from django.core.exceptions import ValidationError
 from django.db.models import CharField, Exists, OuterRef, Q
 from django.db.models.functions import Cast
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from common.observability.celery_context import logged_celery_task
 
@@ -79,6 +80,10 @@ from apps.task.services.recovery import (
 )
 
 
+_REPOSITORY_USAGE_CAPACITY_RETRY_DELAY_SECONDS = 15
+_REPOSITORY_USAGE_CAPACITY_MAX_RETRIES = 3
+
+
 logger = logging.getLogger(__name__)
 
 _REPOSITORY_HEALTH_LOCK_TIMEOUT_SECONDS = 300
@@ -140,7 +145,14 @@ def enqueue_startup_repository_health_checks(sender=None, **_kwargs) -> None:
 @shared_task(name="apps.storage.tasks.reconcile_storage_repositories")
 @logged_celery_task(
     name="apps.storage.tasks.reconcile_storage_repositories",
-    trace_keys=("organization_id", "repo_type", "limit", "force", "background"),
+    trace_keys=(
+        "organization_id",
+        "repo_type",
+        "limit",
+        "force",
+        "background",
+        "capacity_retry_attempt",
+    ),
 )
 def reconcile_storage_repositories(
     *,
@@ -151,8 +163,16 @@ def reconcile_storage_repositories(
     force: bool = False,
     stale_after_seconds: int | None = 900,
     background: bool = False,
+    capacity_retry_attempt: int = 0,
+    sample_recorded_at: str | None = None,
 ):
     """Refresh repository capacity and usage metrics for dashboards and alerts."""
+    recorded_at = (
+        parse_datetime(sample_recorded_at) if sample_recorded_at else timezone.now()
+    )
+    if recorded_at is None:
+        raise ValueError("sample_recorded_at must be an ISO 8601 datetime.")
+    serialized_recorded_at = recorded_at.isoformat()
     background_lease = None
     if background:
         background_lease = try_acquire_background_storage_capacity(
@@ -160,6 +180,23 @@ def reconcile_storage_repositories(
             identity=str(uuid4()),
         )
         if background_lease is None:
+            retry_attempt = max(0, int(capacity_retry_attempt or 0))
+            retry_scheduled = retry_attempt < _REPOSITORY_USAGE_CAPACITY_MAX_RETRIES
+            if retry_scheduled:
+                reconcile_storage_repositories.apply_async(
+                    kwargs={
+                        "organization_id": organization_id,
+                        "repository_ids": repository_ids,
+                        "repo_type": repo_type,
+                        "limit": limit,
+                        "force": force,
+                        "stale_after_seconds": stale_after_seconds,
+                        "background": True,
+                        "capacity_retry_attempt": retry_attempt + 1,
+                        "sample_recorded_at": serialized_recorded_at,
+                    },
+                    countdown=_REPOSITORY_USAGE_CAPACITY_RETRY_DELAY_SECONDS,
+                )
             return {
                 "repositories_scanned": 0,
                 "repositories_synced": 0,
@@ -172,10 +209,11 @@ def reconcile_storage_repositories(
                 "snapshots_marked_deleted": 0,
                 "observations_dispatched": 0,
                 "status": "deferred_background_capacity",
+                "capacity_retry_attempt": retry_attempt,
+                "retry_scheduled": retry_scheduled,
             }
 
     def synchronize() -> dict:
-        recorded_at = timezone.now()
         if organization_id is not None:
             return sync_organization_repositories(
                 organization_id=int(organization_id),
