@@ -21,18 +21,18 @@ html {
   --color-primary: #6D5EF6;
   --color-primary-gradient-start: #6D5EF6;
   --color-primary-gradient-end: #5F50E0;
-  --color-primary-hover-gradient-start: #5F50E0;
-  --color-primary-hover-gradient-end: #5546D8;
+  --color-primary-hover-gradient-start: #4E3FD4;
+  --color-primary-hover-gradient-end: #4E3FD4;
   --color-primary-active-gradient-start: #5546D8;
   --color-primary-active-gradient-end: #4536BD;
-  --color-primary-hover: #5546D8;
+  --color-primary-hover: #4E3FD4;
   --color-primary-active: #4536BD;
   --color-primary-light: #F2F0FE;
   --color-primary-border: #DCD5FB;
-  --color-primary-disabled-gradient-start: #E3DFFF;
-  --color-primary-disabled-bg: #D2CBFA;
-  --color-primary-disabled-border: #D2CBFA;
-  --color-primary-disabled-text: #6F63B7;
+  --color-primary-disabled-gradient-start: color-mix(in srgb, var(--color-primary) 80%, var(--color-card-bg));
+  --color-primary-disabled-bg: color-mix(in srgb, var(--color-primary) 80%, var(--color-card-bg));
+  --color-primary-disabled-border: color-mix(in srgb, var(--color-primary) 74%, var(--color-card-bg));
+  --color-primary-disabled-text: color-mix(in srgb, #FFFFFF 70%, var(--color-primary));
   --color-brand-violet-soft: #A99BFF;
   --color-brand-gold: #F5A623;
 
@@ -465,9 +465,10 @@ html.dark {
 
   /* Primary light — darker variant for dark mode card gradients */
   --color-primary-light: #2F2A63;
-  --color-primary-disabled-bg: #2F2A63;
-  --color-primary-disabled-border: #2F2A63;
-  --color-primary-disabled-text: rgba(255, 255, 255, 0.5);
+  --color-primary-disabled-gradient-start: color-mix(in srgb, var(--color-primary) 55%, var(--color-card-bg));
+  --color-primary-disabled-bg: color-mix(in srgb, var(--color-primary) 55%, var(--color-card-bg));
+  --color-primary-disabled-border: color-mix(in srgb, var(--color-primary) 48%, var(--color-card-bg));
+  --color-primary-disabled-text: color-mix(in srgb, #FFFFFF 65%, var(--color-primary));
 }
 
 /* Form label alignment - fixed width for right-aligned labels */
@@ -790,12 +791,9 @@ a:hover {
 .btn-primary[disabled]:focus,
 .btn-primary.is-disabled:focus {
   background-color: var(--color-primary-disabled-bg, var(--color-primary-light)) !important;
-  background-image: linear-gradient(
-    var(--color-primary-disabled-gradient-start, #E3DFFF),
-    var(--color-primary-disabled-bg, #D2CBFA)
-  ) !important;
+  background-image: none !important;
   border-color: var(--color-primary-disabled-border, var(--color-primary-light)) !important;
-  color: var(--color-primary-disabled-text, #6F63B7) !important;
+  color: var(--color-primary-disabled-text, color-mix(in srgb, #FFFFFF 70%, var(--color-primary))) !important;
   cursor: not-allowed;
   opacity: 1;
   box-shadow: none;
@@ -844,12 +842,9 @@ a:hover {
 .el-button--primary:not(.is-link):not(.is-text):disabled:hover,
 .el-button--primary:not(.is-link):not(.is-text):disabled:focus {
   background-color: var(--color-primary-disabled-bg, var(--color-primary-light)) !important;
-  background-image: linear-gradient(
-    var(--color-primary-disabled-gradient-start, #E3DFFF),
-    var(--color-primary-disabled-bg, #D2CBFA)
-  ) !important;
+  background-image: none !important;
   border-color: var(--color-primary-disabled-border, var(--color-primary-light)) !important;
-  color: var(--color-primary-disabled-text, #6F63B7) !important;
+  color: var(--color-primary-disabled-text, color-mix(in srgb, #FFFFFF 70%, var(--color-primary))) !important;
   cursor: not-allowed;
   opacity: 1;
   box-shadow: none;
@@ -1173,12 +1168,9 @@ a:hover {
 .el-message-box__btns .el-button--primary:not(.is-link):not(.is-text):disabled:hover,
 .el-message-box__btns .el-button--primary:not(.is-link):not(.is-text):disabled:focus {
   background-color: var(--color-primary-disabled-bg, var(--color-primary-light)) !important;
-  background-image: linear-gradient(
-    var(--color-primary-disabled-gradient-start, #E3DFFF),
-    var(--color-primary-disabled-bg, #D2CBFA)
-  ) !important;
+  background-image: none !important;
   border-color: var(--color-primary-disabled-border, var(--color-primary-light)) !important;
-  color: var(--color-primary-disabled-text, #6F63B7) !important;
+  color: var(--color-primary-disabled-text, color-mix(in srgb, #FFFFFF 70%, var(--color-primary))) !important;
   cursor: not-allowed;
   opacity: 1;
   box-shadow: none;

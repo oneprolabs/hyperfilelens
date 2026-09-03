@@ -334,6 +334,7 @@ watch(
         <template #toolbar>
           <el-dropdown
             trigger="click"
+            popper-class="hfl-actions-dropdown"
             @visible-change="moreActionsOpen = $event"
           >
             <el-button :loading="batchActionLoading">

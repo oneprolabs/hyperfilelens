@@ -57,9 +57,17 @@
   overflow: hidden;
 }
 
-.el-dropdown__popper.el-popper .el-dropdown-menu,
-.hfl-actions-dropdown.el-popper .el-dropdown-menu {
+.el-dropdown__popper.el-popper .el-dropdown-menu {
   padding: 0 !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+}
+
+.hfl-actions-dropdown.el-popper .el-dropdown-menu {
+  width: max-content;
+  min-width: 160px;
+  max-width: calc(100vw - 24px);
+  padding: 5px !important;
   border-radius: 10px !important;
   overflow: hidden;
 }
@@ -80,6 +88,25 @@
 
 .el-dropdown-menu__item--divided::before {
   margin: 0 !important;
+}
+
+/* Action groups use an inset divider with the reference's 5px space above
+   and below. Element Plus normally draws the divider on the item itself. */
+.hfl-actions-dropdown .el-dropdown-menu__item--divided {
+  position: relative;
+  margin-top: 11px !important;
+  border-top: 0;
+}
+
+.hfl-actions-dropdown .el-dropdown-menu__item--divided::before {
+  position: absolute;
+  top: -6px;
+  right: 4px;
+  left: 4px;
+  height: 1px;
+  margin: 0 !important;
+  background: var(--color-border-light);
+  content: '';
 }
 
 .hfl-pagination-size-popper.el-popper {

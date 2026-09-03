@@ -240,6 +240,7 @@ function handleAction(command: string, row: SessionRow) {
             <div class="copilot-session-item__actions">
               <ElDropdown
                 trigger="click"
+                popper-class="hfl-actions-dropdown copilot-session-menu"
                 @command="(command) => handleAction(String(command), row)"
               >
                 <button
@@ -286,7 +287,7 @@ function handleAction(command: string, row: SessionRow) {
                       {{ t('insight.copilot.tryAgain') }}
                     </ElDropdownItem>
                     <ElDropdownItem
-                      class="copilot-session-menu__delete"
+                      class="copilot-session-menu__delete el-dropdown-menu__item--danger"
                       command="delete"
                       :icon="Trash2"
                       divided
@@ -349,8 +350,8 @@ function handleAction(command: string, row: SessionRow) {
 :global(.copilot-session-menu__share:not(.is-disabled):hover),
 :global(.copilot-session-menu__pin:not(.is-disabled):hover),
 :global(.copilot-session-menu__rename:not(.is-disabled):hover) { color: var(--color-primary) !important; }
-:global(.copilot-session-menu__delete) { color: #d92d20 !important; }
-:global(.copilot-session-menu__delete:hover) { background: #fef3f2 !important; color: #b42318 !important; }
+:global(.copilot-session-menu__delete) { color: var(--color-error-text) !important; }
+:global(.copilot-session-menu__delete:hover) { background: var(--color-error-light) !important; color: var(--color-error-text) !important; }
 .copilot-session-empty { padding: 24px 8px; color: var(--color-text-tertiary); font-size: 12px; text-align: center; }
 @keyframes copilot-sidebar-spin { to { transform: rotate(360deg); } }
 @keyframes copilot-dot { 0%,60%,100% { opacity: .28; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }

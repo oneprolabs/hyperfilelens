@@ -3,6 +3,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { afterEach, describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
   DEFAULT_LOCALE,
   i18n,
@@ -21,6 +23,14 @@ afterEach(() => {
 })
 
 describe('LanguageSwitcher', () => {
+  it('keeps hover preview visually distinct from the selected language', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/components/LanguageSwitcher.vue'), 'utf8')
+    expect(source).toMatch(/\.hfl-language-switcher-popper \.el-dropdown-menu\s*{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*gap:\s*2px;/s)
+    expect(source).toMatch(/item:not\(\.is-selected\):hover[\s\S]*?rgba\(255, 255, 255, 0\.08\)/)
+    expect(source).toMatch(/item\.is-selected\s*\{[\s\S]*?rgba\(109, 94, 246, 0\.22\)/)
+    expect(source).toMatch(/item\.is-selected:hover[\s\S]*?rgba\(109, 94, 246, 0\.3\)/)
+  })
+
   it('shows user-facing language names and selects a language directly', async () => {
     registerLocale('zh-hans', { nav: { languageLabel: 'Language' } }, ['zh', 'zh-cn'])
     installedLangPacks.value = [{

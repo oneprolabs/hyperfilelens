@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, toRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Download, Filter, RefreshCw, ShieldCheck, AlertCircle, X } from 'lucide-vue-next'
+import { Download, FileJson, FileSpreadsheet, Filter, RefreshCw, ShieldCheck, AlertCircle, X } from 'lucide-vue-next'
 import ModulePage from '../../components/ModulePage.vue'
 import OpsStatCard from '../../components/ops/OpsStatCard.vue'
 import HflTablePanel from '../../components/HflTablePanel.vue'
@@ -36,6 +36,7 @@ const stats = ref({
   failure_count: 0,
 })
 const loading = ref(false)
+const exportMenuOpen = ref(false)
 const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
 
 const filters = reactive({
@@ -446,8 +447,13 @@ watch(
 
       <HflTablePanel fill>
         <template #toolbar>
-          <el-dropdown>
+          <el-dropdown
+            trigger="click"
+            popper-class="hfl-actions-dropdown"
+            @visible-change="exportMenuOpen = $event"
+          >
             <el-button
+              :class="{ 'hfl-action-trigger--open': exportMenuOpen }"
               :title="t('ops.audit.export')"
               :aria-label="t('ops.audit.export')"
             >
@@ -456,10 +462,22 @@ watch(
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item @click="exportLogs('json')">
-                  JSON
+                  <span class="el-dropdown-menu__item-content">
+                    <FileJson
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>JSON</span>
+                  </span>
                 </el-dropdown-item>
                 <el-dropdown-item @click="exportLogs('csv')">
-                  CSV
+                  <span class="el-dropdown-menu__item-content">
+                    <FileSpreadsheet
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>CSV</span>
+                  </span>
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
