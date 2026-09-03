@@ -427,7 +427,10 @@ EOF
 	if ! (
 		cd "${COMPOSE_DIR}"
 		compose_args=(up -d --pull never)
-		if [[ -n "${current_container}" && "${previous_image_id}" != "${desired_image_id}" ]]; then
+		if [[ "${HFL_FORCE_SIDECAR_RECREATE:-0}" == "1" ]]; then
+			hfl_step "Recreating the AI engine because a forced refresh was requested."
+			compose_args+=(--force-recreate)
+		elif [[ -n "${current_container}" && "${previous_image_id}" != "${desired_image_id}" ]]; then
 			hfl_step "Recreating the AI engine because its loaded image ID changed."
 			compose_args+=(--force-recreate)
 		fi

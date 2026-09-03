@@ -91,97 +91,154 @@ EXTENSION_SOURCES=()
 EXTENSION_SOURCES_CSV=""
 DEV_PUBLIC_URL=""
 DEV_ADMIN_PUBLIC_URL=""
-UPGRADE_GATEWAY=0
 
 usage() {
 	cat <<'USAGE'
-Usage: ./dev/stack.sh <command> [options]
+Usage:
+  ./dev/stack.sh <command> [options]
+  ./dev/stack.sh --print-config
+  ./dev/stack.sh --help
 
 Commands:
-  up                 Prepare dependencies and start the development stack
-  up|restart --upgrade-gateway
-                     Force reinstall the local Data Gateway host Agent from the
-                     newest published release (env: HFL_UPGRADE_GATEWAY=1)
-  down               Stop HyperFileLens + bundled SourceLens
-  down --hfl-only    Stop HyperFileLens only; leave SourceLens running
-  restart            Refresh dependencies/configuration and recreate changed services
-  restart --force    Clean caches and rebuild development dependency images without cache
-  status             Show HFL and SourceLens service state and published ports
-  doctor             Check host tools, configuration, images, permissions, and ports
-  smoke              Run pinned Playwright login/HMR smoke tests against the running stack
-  clean --runtime    Remove containers, Compose networks, and the frontend modules volume
-  clean --cache      Remove generated build cache and local development images
-  clean --data --yes Remove runtime databases, logs, and generated media
-  clean --all --yes  Remove runtime, cache, and data
+  up         Prepare dependencies and start the development stack
+  restart    Refresh dependencies and recreate changed services
+  down       Stop HyperFileLens and bundled SourceLens
+  status     Show HFL and SourceLens service state and published ports
+  doctor     Check host tools, configuration, images, permissions, and ports
+  smoke      Run pinned Playwright login and HMR smoke tests
+  clean      Remove selected development resources
 
-Prepare (up / restart) always includes:
-  .env (create from .env.example if missing)
-  Repository-pinned default TLS certificates
-  Unified Kopia binary matrix for Backend and Agent packages
-  backend source bind mount with automatic API/worker/scheduler restart
-  frontend source bind mount with Vite HMR and persistent node_modules
-  Website static artifact served by the shared Nginx gateway (no Website container)
-  agent publish (full bundle) → data/media/agent-releases/
-  local public Data Gateway auto-deploy when HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true (default; Linux amd64)
-  SourceLens bundled mode (default): clone/update only as a build input, then run images
-  SourceLens external mode: prepare the Gateway LensNode bundle without touching the external stack
+Command-specific options:
+  restart:
+    --force       Rebuild development dependency images without cache
 
-SourceLens options (default: enabled for up/restart):
-  --no-sourcelens                  Skip SourceLens clone/build/start
-  --sourcelens-ref REF             SourceLens release tag in vX.Y.Z form
-  --sourcelens-git-url URL         Override SourceLens repository URL (env: SOURCELENS_GIT_URL)
+  down:
+    --hfl-only    Stop HyperFileLens and leave SourceLens running
 
-Extensions (optional overlay; community default = empty socket):
-  --extension-source SRC           Local path or git/HTTPS URL[+@ref]. Repeatable.
-                                     Not read from .env (prepare/packaging input only).
-                                     Private HTTPS uses --github-token or
-                                     HFL_EXTENSION_GIT_TOKEN (SSH uses your agent).
-  stack.sh materializes sources → build/docker-compose.extensions.yml.
-  Runtime containers see HFL_EXTENSIONS paths only (never git clone in api/web).
+  clean:
+    --runtime     Remove containers, Compose networks, and the frontend
+                  modules volume
+    --cache       Remove generated build caches and local development images
+    --data        Remove runtime databases, logs, and generated media
+                  (requires --yes)
+    --all         Remove runtime, cache, and data (requires --yes)
+    --yes         Confirm removal of runtime data
+
+Default up/restart workflow:
+  .env                Create from .env.example if missing
+  TLS certificates    Validate repository-pinned default certificates
+  Kopia               Prepare the unified Backend and Agent binary matrix
+  Backend             Bind-mount source with automatic API, worker, and
+                      scheduler restart
+  Frontend            Bind-mount source with Vite HMR and persistent
+                      node_modules
+  Website             Serve the static artifact through the shared Nginx
+                      gateway; no Website container
+  Agent               Publish the full bundle to data/media/agent-releases/
+  Platform Gateway    Install or refresh the local Agent and LensNode on
+                      Linux amd64 when HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true
+  SourceLens          Use bundled mode by default; clone or update the source
+                      as a build input, then run the images. External mode
+                      prepares the Gateway LensNode bundle without touching
+                      the external stack
+
+SourceLens options (enabled by default for up/restart):
+  --no-sourcelens             Skip SourceLens clone, build, and start
+  --sourcelens-ref REF        SourceLens release tag in vX.Y.Z form
+  --sourcelens-git-url URL    Override the SourceLens repository URL
+                              (env: SOURCELENS_GIT_URL)
+
+Extensions (optional overlay; Open Source default: no extensions):
+  --extension-source SRC      Local path or Git/HTTPS URL[@REF]. Repeatable.
+                              Not read from .env (prepare/packaging input only).
+                              Private HTTPS uses --github-token or
+                              HFL_EXTENSION_GIT_TOKEN; SSH uses your agent.
+                              Materializes sources to
+                              build/docker-compose.extensions.yml.
+                              Runtime containers receive only materialized
+                              HFL_EXTENSIONS paths; API and Web never clone
+                              extension repositories at runtime.
 
 Deployment identity (optional for source deployments reached from another host):
-  --public-url URL                 Canonical tenant origin used by remote Agents and links.
-  --admin-public-url URL           Canonical Admin Console origin.
+  --public-url URL            Canonical tenant origin used by remote Agents
+                              and generated links
+  --admin-public-url URL      Canonical Admin Console origin
 
-Mirror options (Kopia fetch + Agent publishing + SourceLens git clone; env fallback):
-  --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
-  --github-token TOKEN             GitHub token for API/release fetch, private SourceLens
-                                     clone, and private extension git sources (env:
-                                     GITHUB_TOKEN / HFL_EXTENSION_GIT_TOKEN)
-  --docker-download-mirror URL     Docker Hub mirror for builds and runtime images (env: DOCKER_DOWNLOAD_MIRROR)
-  --apt-mirror URL                 Ubuntu apt mirror for NAS container (env: APT_MIRROR)
-  --ubuntu2404-arch ARCH           NAS deb arch for agent bundle: amd64 | arm64 | all (default: amd64)
-  --kopia-mode MODE                build or download
-  --kopia-git-url URL              Kopia source repository URL
-  --kopia-ref REF                  Kopia release ref in vX.Y.Z form
-  --go-proxy URL                   Go module proxy (env: GOPROXY)
-  --go-sumdb VALUE                 Go checksum database (env: GOSUMDB)
-  --pip-index-url URL              Python package index (env: PIP_INDEX_URL)
-  --pip-trusted-host HOST          Trusted pip host (env: PIP_TRUSTED_HOST)
-  --npm-registry URL               npm registry (env: NPM_REGISTRY)
-  --pull                           Refresh runtime images with valid local fallback
-  --offline                        Forbid registry, Git, and dependency network access
-  --pull-timeout SECONDS           Per-attempt Docker pull timeout (default: 180)
-  --pull-retries COUNT             Docker pull attempts (default: 2)
+Mirror and dependency options (environment variables are used as fallbacks):
+  --github-download-mirror URL    GitHub Git and release mirror
+                                  (env: GITHUB_DOWNLOAD_MIRROR)
+  --github-token TOKEN            GitHub API or release token, private
+                                  SourceLens clone token, and private extension
+                                  source token
+                                  (env: GITHUB_TOKEN or HFL_EXTENSION_GIT_TOKEN)
+  --docker-download-mirror URL    Docker Hub mirror for builds and runtime
+                                  images
+                                  (env: DOCKER_DOWNLOAD_MIRROR)
+  --apt-mirror URL                Ubuntu apt mirror for NAS dependencies
+                                  (env: APT_MIRROR)
+  --ubuntu2404-arch ARCH          Ubuntu 24.04 NAS package architecture:
+                                  amd64, arm64, or all (default: amd64)
+  --kopia-mode MODE               Kopia artifact mode: build or download
+  --kopia-git-url URL             Kopia source repository URL
+  --kopia-ref REF                 Kopia release ref in vX.Y.Z form
+  --go-proxy URL                  Go module proxy (env: GOPROXY)
+  --go-sumdb VALUE                Go checksum database (env: GOSUMDB)
+  --pip-index-url URL             Python package index (env: PIP_INDEX_URL)
+  --pip-trusted-host HOST         Trusted pip host (env: PIP_TRUSTED_HOST)
+  --npm-registry URL              npm registry (env: NPM_REGISTRY)
+  --pull                          Refresh runtime images with a valid local
+                                  fallback
+  --offline                       Forbid registry, Git, and dependency network
+                                  access
+  --pull-timeout SECONDS          Docker pull timeout per attempt (default: 180)
+  --pull-retries COUNT            Docker pull attempts (default: 2)
 
 Output options:
-  --log-file FILE                  Write complete stdout/stderr to FILE with timestamps
-                                     (default: build/logs/dev-<command>-<time>-<pid>.log)
-  --verbose                        Enable debug logs
-  --print-config                   Print effective non-secret configuration and exit
-  -h, --help                       Show this help
+  --log-file FILE             Write complete stdout and stderr to FILE with
+                              timestamps
+                              (default path:
+                              build/logs/dev-<command>-<time>-<pid>.log)
+  --verbose                   Enable debug logs
+  --print-config              Print effective non-secret configuration and exit
+  -h, --help                  Show this help
 
 Examples:
   ./dev/stack.sh up
-  ./dev/stack.sh up --extension-source ../hyperfilelens-ee
-  ./dev/stack.sh up --upgrade-gateway
-  ./dev/stack.sh up --public-url https://192.168.8.69:11443 \
-    --admin-public-url https://192.168.8.69:11444
+
+  ./dev/stack.sh up --public-url https://192.168.8.66:11443 \
+    --admin-public-url https://192.168.8.66:11444
+
   ./dev/stack.sh up --ubuntu2404-arch amd64
+
   ./dev/stack.sh down
+
+  ./dev/stack.sh down --hfl-only
+
   ./dev/stack.sh restart
+
   ./dev/stack.sh restart --force
+
+  ./dev/stack.sh clean --runtime
+
+  ./dev/stack.sh clean --cache
+
+  ./dev/stack.sh clean --data --yes
+
+  ./dev/stack.sh clean --all --yes
+
+  # Open Source Edition
   ./dev/stack.sh up \
+    --github-download-mirror https://ghfast.top \
+    --docker-download-mirror docker.m.daocloud.io \
+    --apt-mirror https://mirrors.tuna.tsinghua.edu.cn \
+    --go-proxy https://goproxy.cn,direct \
+    --go-sumdb sum.golang.google.cn \
+    --pip-index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    --npm-registry https://registry.npmmirror.com
+
+  # Enterprise Edition
+  ./dev/stack.sh up \
+    --extension-source ../hyperfilelens-ee \
     --github-download-mirror https://ghfast.top \
     --docker-download-mirror docker.m.daocloud.io \
     --apt-mirror https://mirrors.tuna.tsinghua.edu.cn \
@@ -294,7 +351,6 @@ docker_pull_timeout=${DOCKER_PULL_TIMEOUT}
 docker_pull_retries=${DOCKER_PULL_RETRIES}
 offline=${DEV_OFFLINE}
 force_pull=${FORCE_PULL}
-upgrade_gateway=${UPGRADE_GATEWAY}
 state_file=${STATE_FILE#${ROOT}/}
 log_file=${LOG_FILE:-<none>}
 verbose=${VERBOSE}
@@ -1372,11 +1428,7 @@ platform_gateway_auto_deploy_enabled() {
 # Failures warn instead of aborting stack up so Darwin/non-root hosts stay usable.
 ensure_local_platform_gateway_dev() {
 	if ! platform_gateway_auto_deploy_enabled; then
-		if [[ "${UPGRADE_GATEWAY}" -eq 1 ]]; then
-			warn "--upgrade-gateway ignored: local platform Gateway auto-deploy is disabled (HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false)"
-		else
-			log "Local platform Gateway auto-deploy is disabled (HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false)"
-		fi
+		log "Local platform Gateway auto-deploy is disabled (HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false)"
 		return 0
 	fi
 	if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
@@ -1501,9 +1553,9 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 	# --reinstall mirrors helper InstallState.Installed, which stat()s the agent
 	# binary (not agent.env), so gate on the same path (-e) to avoid a misleading error.
 	local agent_bin="/opt/hyperfilelens-agent/bin/hfl-agent"
-	if [[ "${UPGRADE_GATEWAY}" -eq 1 && -e "${agent_bin}" ]]; then
+	if [[ -e "${agent_bin}" ]]; then
 		gateway_args+=(--reinstall)
-		hfl_log_info "Refreshing local Platform Data Gateway host Agent (upgrade requested)"
+		hfl_log_info "Refreshing local Platform Data Gateway host Agent from the current development bundle"
 	fi
 
 	hfl_log_info "Running local Platform Data Gateway installer"
@@ -1524,6 +1576,7 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		HFL_WSS_URL="${wss_url}" \
 		HFL_INSECURE_TLS=1 \
 		HFL_FORCE_SIDECAR_INSTALL=1 \
+		HFL_FORCE_SIDECAR_RECREATE=1 \
 		HFL_OUTPUT=json \
 		HFL_ENROLL_NO_COLOR=1 \
 		HFL_NO_BANNER=1 \
@@ -2065,9 +2118,6 @@ main() {
 
 	local cmd=""
 	local restart_force=0
-	if [[ "${HFL_UPGRADE_GATEWAY:-0}" == "1" ]]; then
-		UPGRADE_GATEWAY=1
-	fi
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -2078,10 +2128,6 @@ main() {
 			;;
 		--force)
 			restart_force=1
-			shift
-			;;
-		--upgrade-gateway)
-			UPGRADE_GATEWAY=1
 			shift
 			;;
 		--runtime | --cache | --data | --all)
@@ -2169,9 +2215,6 @@ main() {
 
 	if [[ "${restart_force}" -eq 1 && "${cmd}" != "restart" ]]; then
 		die "--force is only valid with restart" 2
-	fi
-	if [[ "${UPGRADE_GATEWAY}" -eq 1 && "${cmd}" != "up" && "${cmd}" != "restart" ]]; then
-		die "--upgrade-gateway is only valid with up or restart" 2
 	fi
 	if [[ "${HFL_ONLY_DOWN}" -eq 1 && "${cmd}" != "down" ]]; then
 		die "--hfl-only is only valid with down" 2
