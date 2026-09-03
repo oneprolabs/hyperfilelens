@@ -64,7 +64,7 @@ export TEST_SIDECAR_MARKER="${marker}"
 set +e
 (
 	exec 3>&1 4>&2
-	cmd_uninstall
+	cmd_uninstall --keep-data
 ) >"${tmp}/uninstall-preflight.log" 2>&1
 preflight_status=$?
 set -e
@@ -80,12 +80,12 @@ gateway_workspace_mounts_in_agent_root() {
 set +e
 (
 	exec 3>&1 4>&2
-	cmd_uninstall --purge-all
+	cmd_uninstall
 ) >"${tmp}/mounted-workspace-preflight.log" 2>&1
 mounted_preflight_status=$?
 set -e
 [[ "${mounted_preflight_status}" -eq 2 ]]
-grep -F 'Refusing purge-all while Gateway workspace storage is mounted' \
+grep -F 'Refusing complete removal while Gateway workspace storage is mounted' \
 	"${tmp}/mounted-workspace-preflight.log" >/dev/null
 [[ -f "${DEFAULT_DATA}/config/agent.env" ]]
 [[ ! -e "${marker}" ]]
@@ -100,14 +100,14 @@ set +e
 mount_scan_status=$?
 set -e
 [[ "${mount_scan_status}" -eq 2 ]]
-grep -F 'Could not verify Gateway workspace mounts; refusing purge-all' \
+grep -F 'Could not verify Gateway workspace mounts; refusing complete removal' \
 	"${tmp}/mount-scan-failure.log" >/dev/null
 [[ -f "${DEFAULT_DATA}/config/agent.env" ]]
 [[ ! -e "${marker}" ]]
 [[ ! -e "${stop_marker}" ]]
 eval "${original_gateway_mount_detector}"
 
-cmd_uninstall --purge-all
+cmd_uninstall
 
 [[ -f "${marker}" ]]
 [[ -f "${stop_marker}" ]]

@@ -132,8 +132,13 @@ describe('manual node maintenance commands', () => {
     expect(command.indexOf('docker compose')).toBeLessThan(command.indexOf('install.sh stop'))
   })
 
-  it('preserves local data unless purge is explicitly selected', () => {
-    expect(buildLocalUninstallCommand('linux', false, 'agent')).not.toContain('--purge-all')
+  it('removes local data unless preservation is explicitly selected', () => {
+    expect(buildLocalUninstallCommand('linux', false, 'agent')).toBe(
+      'sudo /opt/hyperfilelens-agent/bin/install.sh uninstall',
+    )
+    expect(buildLocalUninstallCommand('linux', true, 'gateway')).toBe(
+      'sudo /opt/hyperfilelens-agent/bin/install.sh uninstall --keep-data',
+    )
     expect(buildLocalUninstallCommand('linux', false, 'gateway')).toBe(
       'sudo /opt/hyperfilelens-agent/bin/install.sh uninstall',
     )
@@ -164,7 +169,7 @@ describe('manual node maintenance commands', () => {
     const service = buildLocalServiceCommand(os, 'restart', 'agent', 'user')
 
     expect(upgrade).toContain(`${installScript} upgrade`)
-    expect(uninstall).toContain(`${installScript} uninstall --purge-all`)
+    expect(uninstall).toContain(`${installScript} uninstall --keep-data`)
     expect(service).toBe(`${installScript} restart`)
     expect(`${upgrade}\n${uninstall}\n${service}`).not.toContain('sudo')
   })
@@ -196,7 +201,7 @@ describe('manual node maintenance commands', () => {
     )
 
     expect(upgrade).toContain(`${installScript} upgrade`)
-    expect(uninstall).toContain(`${installScript} uninstall --purge-all`)
+    expect(uninstall).toContain(`${installScript} uninstall --keep-data`)
     expect(service).toBe(`${installScript} restart`)
     expect(`${upgrade}\n${uninstall}\n${service}`).not.toContain('sudo')
     expect(installPathsSummary('linux', 'agent', 'user_continuous').service).toContain('linger')

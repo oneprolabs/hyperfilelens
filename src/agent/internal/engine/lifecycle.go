@@ -180,6 +180,8 @@ func runBundleUninstall(ctx context.Context, bundleRoot string, keepData bool) e
 		args := []string{"-NoProfile", "-File", filepath.Join(bundleRoot, "install.ps1"), "uninstall"}
 		if !keepData {
 			args = append(args, "-PurgeAll")
+		} else {
+			args = append(args, "-KeepData")
 		}
 		out, err := exec.CommandContext(ctx, "powershell", args...).CombinedOutput()
 		if err != nil {
@@ -190,6 +192,8 @@ func runBundleUninstall(ctx context.Context, bundleRoot string, keepData bool) e
 	args := []string{"uninstall"}
 	if !keepData {
 		args = append(args, "--purge-all")
+	} else {
+		args = append(args, "--keep-data")
 	}
 	cmd := exec.CommandContext(ctx, filepath.Join(bundleRoot, "install.sh"), args...)
 	cmd.Dir = bundleRoot

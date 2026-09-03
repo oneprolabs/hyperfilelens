@@ -126,25 +126,25 @@ export function buildLocalUpgradeCommand(
 
 export function buildLocalUninstallCommand(
   os: EnrollmentOs,
-  purgeAll = true,
+  keepData = false,
   role?: NodeRole,
   installationMode: NodeInstallationMode = 'system',
 ) {
   if (role === 'gateway' && os === 'linux') {
-    return purgeAll
-      ? `sudo ${linuxInstallScriptPath()} uninstall --purge-all`
+    return keepData
+      ? `sudo ${linuxInstallScriptPath()} uninstall --keep-data`
       : `sudo ${linuxInstallScriptPath()} uninstall`
   }
   if (os === 'windows') {
     const installCommand = installationMode === 'user' ? WIN_USER_INSTALL_CMD : WIN_INSTALL_CMD
-    return purgeAll
-      ? `${installCommand} uninstall -PurgeAll`
+    return keepData
+      ? `${installCommand} uninstall -KeepData`
       : `${installCommand} uninstall`
   }
   const installScript = installScriptPath(os, installationMode)
   const privilegePrefix = installationMode === 'user' || installationMode === 'user_continuous' ? '' : 'sudo '
-  return purgeAll
-    ? `${privilegePrefix}${installScript} uninstall --purge-all`
+  return keepData
+    ? `${privilegePrefix}${installScript} uninstall --keep-data`
     : `${privilegePrefix}${installScript} uninstall`
 }
 

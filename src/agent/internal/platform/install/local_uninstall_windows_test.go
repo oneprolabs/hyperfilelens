@@ -40,6 +40,8 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 	for _, want := range []string{
 		`$logFile = ` + fmt.Sprintf("%q", UninstallLogPath(logDir)),
 		`install.cmd uninstall`,
+		`$cmdLine = '"' + $installCmd + '" uninstall -KeepInstallationIdentity'`,
+		`'uninstall', '-KeepInstallationIdentity'`,
 		`Stop-HflProcessesForUninstall`,
 		`Start-Sleep -Seconds 3`,
 		`Remove-InstallDirectoryResidue`,

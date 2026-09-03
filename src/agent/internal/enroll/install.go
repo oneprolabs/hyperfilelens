@@ -296,12 +296,12 @@ func runExplicitUninstall(ctx context.Context, cfg Config, opts InstallOptions) 
 			"HFL-UNINSTALL-ORG",
 		)
 	}
-	printUninstallContext(cfg.APIBase, cfg.OrgKey, cfg.NodeRole, state, opts.PurgeAll)
+	printUninstallContext(cfg.APIBase, cfg.OrgKey, cfg.NodeRole, state, opts.KeepData)
 	printPhase("Preflight checks")
 	logOK("Installed Agent ownership was verified.")
-	message := "Uninstall the HyperFileLens Agent and preserve its data directory?"
-	if opts.PurgeAll {
-		message = "Uninstall the HyperFileLens Agent and permanently remove its managed data?"
+	message := "Uninstall the HyperFileLens Agent and permanently remove its managed data?"
+	if opts.KeepData {
+		message = "Uninstall the HyperFileLens Agent and preserve its managed data?"
 	}
 	if err := confirmAction(message, opts.AutoYes); err != nil {
 		abortInstall("Preflight checks", err.Error(), 1, "HFL-UNINSTALL-CONFIRM")
@@ -310,13 +310,13 @@ func runExplicitUninstall(ctx context.Context, cfg Config, opts InstallOptions) 
 	printPhase("Uninstalling")
 	var uninstallErr error
 	if cfg.NodeRole == model.RoleGateway {
-		uninstallErr = runGatewayUninstall(ctx, opts.PurgeAll, false)
+		uninstallErr = runGatewayUninstall(ctx, opts.KeepData, false)
 	} else {
 		logStep("Removing the HyperFileLens Agent.")
 		uninstallErr = install.RunUninstallWithDataPolicy(
 			ctx,
 			install.DefaultInstallDir(),
-			!opts.PurgeAll,
+			opts.KeepData,
 		)
 	}
 	if uninstallErr != nil {
@@ -325,7 +325,7 @@ func runExplicitUninstall(ctx context.Context, cfg Config, opts InstallOptions) 
 	logOK("HyperFileLens Agent uninstall completed.")
 	printPhase("Verifying")
 	logOK("Agent service and installed files were removed.")
-	printUninstallSuccess(state, opts.PurgeAll)
+	printUninstallSuccess(state, opts.KeepData)
 	return nil
 }
 
