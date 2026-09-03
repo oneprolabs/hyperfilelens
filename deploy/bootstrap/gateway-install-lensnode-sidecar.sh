@@ -396,7 +396,7 @@ ${sentry_volume_block}
       # Hide the host Agent's same-filesystem deletion quarantine from LensNode.
       - ${HFL_GATEWAY_TRASH_ROOT}:mode=0700
     mem_limit: 2g
-    cpus: 0.50
+    cpus: 1.00
 EOF
 	)
 	chmod 0600 "${compose_temporary}"

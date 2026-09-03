@@ -12,6 +12,8 @@ services:
       - ./.env
     environment:
       API_WORKERS: "1"
+      UVICORN_WS_PING_INTERVAL: "45"
+      UVICORN_WS_PING_TIMEOUT: "180"
       SENTRY_COMPONENT: sourcelens-backend
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
       SENTRY_SERVICE: api
@@ -40,7 +42,7 @@ services:
         condition: service_healthy
     command: gunicorn
     mem_limit: 2g
-    cpus: 0.50
+    cpus: 1.00
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s
@@ -141,7 +143,7 @@ services:
       api:
         condition: service_healthy
     mem_limit: 2g
-    cpus: 0.50
+    cpus: 1.00
 # HFL_EMBED_LENSNODE_SERVICE_END
 
   nginx:

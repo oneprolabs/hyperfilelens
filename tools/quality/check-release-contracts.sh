@@ -1640,7 +1640,15 @@ done
 sourcelens_compose_template="${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml"
 [[ "$(grep -Fc '    mem_limit: 2g' "${sourcelens_compose_template}" || true)" -eq 2 ]] \
 	|| { printf 'ERROR: bundled SourceLens API and LensNode must both use a 2 GiB limit\n' >&2; exit 1; }
+[[ "$(grep -Fc '    cpus: 1.00' "${sourcelens_compose_template}" || true)" -eq 2 ]] \
+	|| { printf 'ERROR: bundled SourceLens API and LensNode must both use a 1 CPU limit\n' >&2; exit 1; }
+grep -F '      UVICORN_WS_PING_INTERVAL: "45"' \
+	"${sourcelens_compose_template}" >/dev/null
+grep -F '      UVICORN_WS_PING_TIMEOUT: "180"' \
+	"${sourcelens_compose_template}" >/dev/null
 grep -F '    mem_limit: 2g' \
+	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
+grep -F '    cpus: 1.00' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 if grep -E 'mem_limit: (64|320|384|448)m|cpus: (0\.05|0\.10|0\.15|0\.20|0\.30)' \
 	"${ROOT}/deploy/docker-compose.yml" \
