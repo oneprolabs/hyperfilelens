@@ -5451,7 +5451,12 @@
         "prepare_node_remove": "准备节点删除",
         "dispatch_agent_uninstall": "调度Agent卸载",
         "cleanup_node_endpoint": "清理节点端点",
-        "finalize_node_remove": "完成节点移除"
+        "finalize_node_remove": "完成节点移除",
+        "dispatch_agent_upgrade": "下发 Agent 升级",
+        "install_agent_upgrade": "安装 Agent 升级",
+        "restart_agent": "重启 Agent",
+        "verify_agent_upgrade": "验证 Agent 升级",
+        "finalize_agent_upgrade": "完成 Agent 升级"
       },
       "eventMessage": {
         "taskCreated": "任务已创建",

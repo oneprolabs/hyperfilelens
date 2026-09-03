@@ -78,6 +78,7 @@ def _latest_lifecycle_task(*, org: Organization, node: Node, kind: str) -> NodeT
             correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
             correlation_id=_correlation_id(node_id=node.id, kind=kind),
         )
+        .select_related("parent_task")
         .first()
     )
 
@@ -687,6 +688,10 @@ def _advance_upgrade_verify(*, node: Node, task: NodeTask) -> bool:
             "kind": LIFECYCLE_KIND_UPGRADE,
             "role": node.role,
             "task_id": str(task.id),
+            "node_task_id": str(task.id),
+            "task_uuid": (
+                str(task.parent_task.task_uuid) if task.parent_task_id else None
+            ),
             "target_version": _target_version_from_task(task),
             "current_version": _node_installed_version(node),
             "stable_seconds": int(stable_for.total_seconds()),
@@ -814,6 +819,10 @@ def _fail_stale_upgrade_task(*, node: Node, task: NodeTask) -> bool:
             "kind": LIFECYCLE_KIND_UPGRADE,
             "role": node.role,
             "task_id": str(task.id),
+            "node_task_id": str(task.id),
+            "task_uuid": (
+                str(task.parent_task.task_uuid) if task.parent_task_id else None
+            ),
             "target_version": target_version,
             "current_version": _node_installed_version(node),
             "failure_code": failure_code,
@@ -980,6 +989,10 @@ def _upgrade_lifecycle_payload(
     base: dict[str, Any] = {
         "kind": LIFECYCLE_KIND_UPGRADE,
         "task_id": str(task.id),
+        "node_task_id": str(task.id),
+        "task_uuid": (
+            str(task.parent_task.task_uuid) if task.parent_task_id else None
+        ),
         "source_version": _source_version_from_task(task) or current_version,
         "target_version": target_version,
         "target_commit": _target_commit_from_task(task) or None,
@@ -1338,6 +1351,8 @@ def start_node_upgrade(
         return {
             "operation_id": None,
             "task_id": None,
+            "node_task_id": None,
+            "task_uuid": None,
             "node_id": node.id,
             "kind": LIFECYCLE_KIND_UPGRADE,
             "state": "completed",
@@ -1372,6 +1387,15 @@ def start_node_upgrade(
         correlation_id=_correlation_id(node_id=node.id, kind=LIFECYCLE_KIND_UPGRADE),
     )
     task = handle.task
+    from apps.node.services.internal.node_lifecycle_task import (
+        create_node_upgrade_operation_task,
+    )
+
+    operation_task = create_node_upgrade_operation_task(
+        node_task=task,
+        target_version=target_version,
+        target_commit=target_commit,
+    )
     logger.info(
         "node lifecycle dispatch kind=%s node_id=%s task_id=%s target_version=%s",
         LIFECYCLE_KIND_UPGRADE,
@@ -1382,6 +1406,8 @@ def start_node_upgrade(
     return {
         "operation_id": str(task.id),
         "task_id": str(task.id),
+        "node_task_id": str(task.id),
+        "task_uuid": str(operation_task.task_uuid),
         "node_id": node.id,
         "kind": LIFECYCLE_KIND_UPGRADE,
         "state": "upgrading",
