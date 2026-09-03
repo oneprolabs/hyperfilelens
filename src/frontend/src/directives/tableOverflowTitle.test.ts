@@ -81,6 +81,21 @@ describe('tableOverflowTitle', () => {
     gap.remove()
   })
 
+  it('cancels a pending table tooltip when entering an excluded custom popover target', () => {
+    const cellBody = cell.querySelector<HTMLElement>('.cell')!
+    const customPopoverTarget = document.createElement('span')
+    customPopoverTarget.className = 'hfl-table-no-tooltip'
+    customPopoverTarget.innerText = 'Balanced (Recommended)'
+    cellBody.appendChild(customPopoverTarget)
+
+    cellBody.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    customPopoverTarget.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    vi.advanceTimersByTime(300)
+
+    expect(document.querySelector<HTMLElement>('#hfl-table-overflow-tooltip')?.style.display).toBe('none')
+    customPopoverTarget.remove()
+  })
+
   it('shows only the line that is overflowing', () => {
     Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 80 })
     content.dataset.tableOverflowTitle = 'explicit primary content'

@@ -36,6 +36,10 @@ export type FlowSourceRow = {
   cpuCores?: number | null
   memoryTotalBytes?: number | null
   diskCount?: number | null
+  osName?: string
+  arch?: string
+  capacityUsedBytes?: number | null
+  capacityTotalBytes?: number | null
   backup_configs?: {
     count: number
     ids: number[]

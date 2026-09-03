@@ -281,7 +281,6 @@ function handleNavClick(event: MouseEvent, to: string) {
 .timezone-display {
   height: 32px;
   padding: 0 10px;
-  margin-right: 12px;
   font-size: 13px;
   font-weight: 500;
   line-height: 1.5;

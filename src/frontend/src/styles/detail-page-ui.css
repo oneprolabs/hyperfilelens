@@ -112,7 +112,7 @@
 
 .hfl-detail-kv-list__value {
   color: rgb(30 41 59);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
   word-break: break-all;
 }
@@ -243,7 +243,7 @@
   align-items: center;
   gap: 4px;
   color: rgb(217 119 6);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 20px;
   white-space: nowrap;
 }
