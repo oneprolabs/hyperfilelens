@@ -8,6 +8,11 @@ import type { LensSessionLink } from '../../../lib/lensApi'
 import { en } from '../../../locales/en'
 import CopilotLifecycleState from './CopilotLifecycleState.vue'
 
+const ButtonStub = {
+  props: ['type'],
+  template: '<button :data-type="type"><slot /></button>',
+}
+
 function session(overrides: Partial<LensSessionLink> = {}): LensSessionLink {
   return {
     id: 1,
@@ -75,7 +80,7 @@ function mountState(value: LensSessionLink) {
     global: {
       plugins: [i18n],
       stubs: {
-        ElButton: { template: '<button><slot /></button>' },
+        ElButton: ButtonStub,
       },
     },
   })
@@ -180,6 +185,20 @@ describe('CopilotLifecycleState', () => {
     expect(wrapper.text()).toContain('Bring its Agent and LensNode online')
     expect(wrapper.text()).not.toContain('internal gateway diagnostic')
     expect(wrapper.text()).toContain('Try Again')
+  })
+
+  it('uses the Protection button hierarchy for retryable preparation failures', () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'failed',
+      lifecycle_error_code: 'INSIGHT.DATA_GATEWAY_UNAVAILABLE',
+      lifecycle_error_retryable: true,
+    }))
+    const buttons = wrapper.findAll('.copilot-lifecycle-actions button')
+
+    expect(buttons.map((button) => [button.text(), button.attributes('data-type')])).toEqual([
+      ['Delete Chat', 'danger'],
+      ['Try Again', 'primary'],
+    ])
   })
 
   it('uses quota context for Public Data Gateway capacity failures', () => {

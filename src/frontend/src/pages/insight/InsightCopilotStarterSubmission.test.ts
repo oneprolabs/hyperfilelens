@@ -75,6 +75,25 @@ function deferred<T>() {
 }
 
 const SimpleStub = defineComponent({ template: '<div />' })
+const DeleteTriggerSidebar = defineComponent({
+  props: {
+    sessions: { type: Array, default: () => [] },
+  },
+  emits: ['delete'],
+  template: '<button class="delete-chat-trigger" @click="$emit(\'delete\', sessions[0])">Delete</button>',
+})
+const DangerConfirmDialogStub = defineComponent({
+  props: {
+    modelValue: Boolean,
+    title: String,
+    message: String,
+    items: Array,
+    cancelText: String,
+    confirmText: String,
+  },
+  emits: ['update:modelValue', 'confirm', 'cancel'],
+  template: '<section v-if="modelValue" class="delete-chat-dialog">{{ title }} {{ message }} {{ cancelText }} {{ confirmText }}</section>',
+})
 
 function sessionRow(
   activeRun: { uuid: string; status: string } | null = null,
@@ -103,6 +122,7 @@ function sessionRow(
 function mountCopilot(
   i18n: ReturnType<typeof createI18n>,
   sessionSidebar = SimpleStub,
+  dangerConfirmDialog = SimpleStub,
 ) {
   return mount(InsightCopilot, {
     global: {
@@ -113,7 +133,8 @@ function mountCopilot(
         CopilotLifecycleState: SimpleStub,
         CopilotEmptyState: SimpleStub,
         CopilotShareDialog: SimpleStub,
-        DangerConfirmDialog: SimpleStub,
+        CopilotExecutionSettingsDialog: SimpleStub,
+        DangerConfirmDialog: dangerConfirmDialog,
         ElDrawer: SimpleStub,
         ElImage: SimpleStub,
       },
@@ -121,7 +142,7 @@ function mountCopilot(
   })
 }
 
-describe('InsightCopilot starter question submission', () => {
+describe('InsightCopilot question submission', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.listCopilotSessions.mockResolvedValue([sessionRow()])
@@ -209,9 +230,7 @@ describe('InsightCopilot starter question submission', () => {
     expect(mocks.listCopilotSessions).toHaveBeenCalledTimes(callsAfterUnmount)
   })
 
-  it('submits the starter question without copying it into the composer', async () => {
-    const createRequest = deferred<{ uuid: string; status: string }>()
-    mocks.createCopilotRun.mockReturnValue(createRequest.promise)
+  it('shows a single welcome message without starter question cards', async () => {
     const i18n = createI18n({
       legacy: false,
       locale: 'en',
@@ -222,26 +241,33 @@ describe('InsightCopilot starter question submission', () => {
     const wrapper = mountCopilot(i18n)
     await flushPromises()
 
-    const firstChip = wrapper.get('.copilot-chip-box')
-    await firstChip.trigger('click')
-    await nextTick()
+    expect(wrapper.get('.message-card--welcome').text()).toBe(en.insight.copilot.welcome)
+    expect(wrapper.find('.copilot-chip-grid').exists()).toBe(false)
+    expect(wrapper.find('.copilot-chip-box').exists()).toBe(false)
+    expect(mocks.createCopilotRun).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 
-    expect(mocks.createCopilotRun).toHaveBeenCalledTimes(1)
-    expect(mocks.createCopilotRun).toHaveBeenCalledWith(
-      444,
-      en.insight.copilot.chipQuerySopsPrompt,
-      expect.stringMatching(/^copilot-444-/),
-      [],
-      undefined,
-    )
-    expect(wrapper.get('.copilot-input-field').element).toHaveProperty('value', '')
-    expect(firstChip.attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('.thinking-panel-live').exists()).toBe(true)
-    expect(wrapper.get('.copilot-input-field').attributes('disabled')).toBeUndefined()
-    expect(wrapper.get('.copilot-send-btn--stop').attributes('disabled')).toBeDefined()
-
-    createRequest.resolve({ uuid: 'run-444', status: 'queued' })
+  it('uses a compact Chat-specific delete confirmation', async () => {
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+    const wrapper = mountCopilot(i18n, DeleteTriggerSidebar, DangerConfirmDialogStub)
     await flushPromises()
+
+    await wrapper.get('.delete-chat-trigger').trigger('click')
+    await nextTick()
+    const dialog = wrapper.findComponent(DangerConfirmDialogStub)
+
+    expect(dialog.props('title')).toBe('Delete “Chat”?')
+    expect(dialog.props('message')).toBe(en.insight.copilot.deleteConfirmMessage)
+    expect(dialog.props('items')).toBeUndefined()
+    expect(dialog.props('cancelText')).toBe('Cancel')
+    expect(dialog.props('confirmText')).toBe('Delete Chat')
     wrapper.unmount()
   })
 
@@ -323,7 +349,10 @@ describe('InsightCopilot starter question submission', () => {
     const wrapper = mountCopilot(i18n)
     await flushPromises()
 
-    await wrapper.get('.copilot-chip-box').trigger('click')
+    const composer = wrapper.findComponent(CopilotComposer)
+    composer.vm.$emit('update:modelValue', 'Summarize this backup')
+    await nextTick()
+    composer.vm.$emit('send')
     await flushPromises()
 
     expect(mocks.createCopilotRun).toHaveBeenCalledTimes(1)

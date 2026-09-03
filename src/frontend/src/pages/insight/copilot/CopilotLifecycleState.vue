@@ -208,7 +208,10 @@ function stepState(index: number) {
         </ul>
       </div>
       <div class="copilot-lifecycle-actions">
-        <ElButton @click="emit('delete')">
+        <ElButton
+          type="danger"
+          @click="emit('delete')"
+        >
           Delete Chat
         </ElButton>
         <ElButton

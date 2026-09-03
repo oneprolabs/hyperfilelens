@@ -69,7 +69,12 @@ def analysis_types_for_tasks(tasks: list[dict[str, Any]] | None) -> list[str]:
 
 
 def analysis_types_for_gateway(link: LensGatewayLink) -> list[str]:
-    """Return HFL analysis choices advertised by one Data Gateway."""
+    """Return the cached SourceLens task summary for diagnostics/API compatibility.
+
+    Chat choices are product-owned and must not be filtered by this snapshot.
+    The live SourceLens task list remains the authoritative validation when an
+    Assistant is created or its selected task is updated.
+    """
 
     # Gateway links created before task snapshots were introduced do not have
     # enough local information to advertise every task. Keep the historical
@@ -87,25 +92,6 @@ def has_gateway_task_snapshot(link: LensGatewayLink) -> bool:
     config = link.config_json or {}
     snapshot = config.get("sl_lensnode_snapshot")
     return isinstance(snapshot, dict) and "sl_tasks" in snapshot
-
-
-def validate_analysis_type_for_gateway(
-    link: LensGatewayLink,
-    analysis_type: str | None,
-) -> str:
-    """Validate a Chat choice against the selected Gateway capability snapshot."""
-
-    normalized = normalize_analysis_type(analysis_type)
-    supported = analysis_types_for_gateway(link)
-    if normalized in supported:
-        return normalized
-    # Older Gateway records may not have a task snapshot yet. Preserve the
-    # long-standing Knowledge Q&A default; live Assistant creation validates it.
-    if not has_gateway_task_snapshot(link) and normalized == "knowledge_qa":
-        return normalized
-    raise ValidationError(
-        {"analysis_type": "The selected Data Gateway does not support this analysis type."}
-    )
 
 
 def agent_rounds_for_analysis_mode(mode: str | None) -> str:

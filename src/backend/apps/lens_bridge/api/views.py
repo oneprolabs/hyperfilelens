@@ -1420,14 +1420,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         if model_ref is not None:
             org_models.validate_agent_model_ref(self.org, model_ref)
         if analysis_type is not None:
-            if link.gateway_link is None:
-                raise ValidationError(
-                    {"analysis_type": "Chat has no Data Gateway capability context."}
-                )
-            analysis_type = provisioning.validate_analysis_type_for_gateway(
-                link.gateway_link,
-                analysis_type,
-            )
+            analysis_type = provisioning.normalize_analysis_type(analysis_type)
         ks = link.knowledge_source
         if ks is None or link.sl_assistant_uuid is None:
             return Response(

@@ -518,10 +518,7 @@ def create_copilot_chat(
             org,
             uuid_lib.UUID(str(agent_model_ref)),
         )
-    normalized_analysis_type = provisioning.validate_analysis_type_for_gateway(
-        gateway_link,
-        analysis_type,
-    )
+    normalized_analysis_type = provisioning.normalize_analysis_type(analysis_type)
     normalized_analysis_mode = str(
         analysis_mode or LensSessionLink.AnalysisMode.STANDARD
     )
