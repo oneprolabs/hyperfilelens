@@ -2048,6 +2048,67 @@ prepare_cifs_utf8_module() {
 	return 0
 }
 
+select_missing_nas_debs() {
+	local deps_dir="$1"
+	local deb package package_arch status
+	local -a bundled_debs=()
+	NAS_DEB_FILES=()
+
+	mapfile -t bundled_debs < <(find "${deps_dir}" -maxdepth 1 -type f -name '*.deb' -print | sort)
+	for deb in "${bundled_debs[@]}"; do
+		package="$(dpkg-deb --field "${deb}" Package 2>/dev/null || true)"
+		[[ "${package}" =~ ^[a-z0-9][a-z0-9+.-]+$ ]] \
+			|| log_fail "The NAS dependency bundle contains an invalid package: ${deb##*/}." 2
+		package_arch="$(dpkg-deb --field "${deb}" Architecture 2>/dev/null || true)"
+		[[ "${package_arch}" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+			|| log_fail "The NAS dependency bundle contains an invalid package architecture: ${deb##*/}." 2
+		status="$(dpkg-query -W -f='${db:Status-Abbrev}' -- "${package}:${package_arch}" 2>/dev/null || true)"
+		case "${status}" in
+		?i\ ) ;;
+		"" | ?n\  | ?c\ ) NAS_DEB_FILES+=("${deb}") ;;
+		*) log_fail "The installed package ${package} is not in a healthy state (${status}). Repair the host package state before retrying." 2 ;;
+		esac
+	done
+}
+
+validate_offline_nas_plan() {
+	(($# > 0)) || return 0
+	local plan_dir plan_log plan_sources plan_source_parts deb filename normalized
+	local -a plan_debs=()
+	plan_dir="$(mktemp -d /tmp/hfl-nas-plan-XXXXXX)"
+	plan_log="${plan_dir}/apt-plan.log"
+	plan_sources="${plan_dir}/sources.list"
+	plan_source_parts="${plan_dir}/sources.list.d"
+	: >"${plan_sources}"
+	mkdir "${plan_source_parts}"
+	for deb in "$@"; do
+		filename="${deb##*/}"
+		normalized="${plan_dir}/${filename//:/_}"
+		[[ ! -e "${normalized}" ]] \
+			|| { rm -rf "${plan_dir}"; log_fail "The NAS dependency bundle contains conflicting package filenames." 2; }
+		ln -s -- "${deb}" "${normalized}"
+		plan_debs+=("${normalized}")
+	done
+
+	if ! LC_ALL=C apt-get --simulate --no-download --no-install-recommends \
+		-o Dir::Etc::sourcelist="${plan_sources}" \
+		-o Dir::Etc::sourceparts="${plan_source_parts}" \
+		install "${plan_debs[@]}" \
+		>"${plan_log}" 2>&1; then
+		cat "${plan_log}" >&2
+		rm -rf "${plan_dir}"
+		log_fail "NAS dependencies cannot be installed safely from the offline package set." 2
+	fi
+	if grep -Eq \
+		'^The following packages will be (upgraded|REMOVED|DOWNGRADED):|^[1-9][0-9]* upgraded,| [1-9][0-9]* downgraded,| [1-9][0-9]* to remove' \
+		"${plan_log}"; then
+		cat "${plan_log}" >&2
+		rm -rf "${plan_dir}"
+		log_fail "NAS dependencies cannot be installed without changing existing system packages." 2
+	fi
+	rm -rf "${plan_dir}"
+}
+
 install_nas_deps() {
 	local role="${1:-}"
 	local package_root="${2:-${BUNDLE_ROOT}}"
@@ -2099,18 +2160,28 @@ install_nas_deps() {
 		echo "ERROR: dpkg is required to install bundled NAS dependencies" >&2
 		exit 2
 	fi
+	if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v apt-get >/dev/null 2>&1; then
+		echo "ERROR: dpkg-deb and apt-get are required to validate bundled NAS dependencies" >&2
+		exit 2
+	fi
 
 	log_ok "install NAS packages for role=${role} (offline ${ubuntu_flavor}/${arch})"
-	local -a deb_files=()
-	mapfile -t deb_files < <(find "${deps_dir}" -maxdepth 1 -type f -name '*.deb' -print | sort)
+	local -a NAS_DEB_FILES=()
+	select_missing_nas_debs "${deps_dir}"
+	validate_offline_nas_plan "${NAS_DEB_FILES[@]}"
 	local install_ok=0 attempt audit
-	for attempt in 1 2 3; do
-		if DEBIAN_FRONTEND=noninteractive dpkg -i "${deb_files[@]}"; then
-			install_ok=1
-			break
-		fi
-		log_warn "Offline NAS dependency install pass ${attempt}/3 reported unresolved package ordering; retrying..."
-	done
+	if ((${#NAS_DEB_FILES[@]} == 0)); then
+		install_ok=1
+		log_skip "all bundled NAS dependencies are already installed"
+	else
+		for attempt in 1 2 3; do
+			if DEBIAN_FRONTEND=noninteractive dpkg -i "${NAS_DEB_FILES[@]}"; then
+				install_ok=1
+				break
+			fi
+			log_warn "Offline NAS dependency install pass ${attempt}/3 reported unresolved package ordering; retrying..."
+		done
+	fi
 	audit="$(dpkg --audit 2>&1 || true)"
 	if [[ "${install_ok}" -ne 1 || -n "${audit}" ]]; then
 		[[ -z "${audit}" ]] || printf '%s\n' "${audit}" >&2

@@ -444,6 +444,7 @@ jobs:
           ./tools/quality/test-docker-pull-retry.sh
           ./tools/quality/test-gh-release-upload-retry.sh
           ./tools/quality/test-offline-docker-package-plan.sh
+          ./tools/quality/test-offline-nas-package-plan.sh
           ./tools/quality/test-upgrade-backup-retention.sh
           ./tools/quality/test-upgrade-transaction.sh
           ./tools/quality/test-blue-green-recovery.sh
