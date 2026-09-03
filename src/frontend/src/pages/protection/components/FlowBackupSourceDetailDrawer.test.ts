@@ -290,6 +290,13 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(drawer).toContain('max-width: calc(100cqw - 49px); overflow-x: hidden; margin-left: 35px;')
   })
 
+  it('separates complete restore error codes from wrapped messages', () => {
+    expect(drawer.match(/class="restore-record-structure-entry__error-code"/g)).toHaveLength(2)
+    expect(drawer.match(/class="restore-record-structure-entry__error-message"/g)).toHaveLength(2)
+    expect(drawer).toMatch(/\.restore-record-structure-entry__error\s*{[^}]*display:\s*grid;[^}]*color:\s*var\(--color-error-text\);/s)
+    expect(drawer).toMatch(/\.restore-record-structure-entry__error-message\s*{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/s)
+  })
+
   it('keeps restore record headers aligned while horizontally scrolling resized columns', () => {
     const restoreTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',

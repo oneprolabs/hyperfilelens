@@ -4782,7 +4782,14 @@ function onClosed() {
                               v-if="item.error_code || item.error_message"
                               class="restore-record-structure-entry__error"
                             >
-                              {{ item.error_code ? `[${item.error_code}] ` : '' }}{{ item.error_message }}
+                              <span
+                                v-if="item.error_code"
+                                class="restore-record-structure-entry__error-code"
+                              >[{{ item.error_code }}]</span>
+                              <span
+                                v-if="item.error_message"
+                                class="restore-record-structure-entry__error-message"
+                              >{{ item.error_message }}</span>
                             </div>
                           </div>
                         </div>
@@ -4841,7 +4848,14 @@ function onClosed() {
                             v-if="mapping.item.error_code || mapping.item.error_message"
                             class="restore-record-structure-entry__error"
                           >
-                            {{ mapping.item.error_code ? `[${mapping.item.error_code}] ` : '' }}{{ mapping.item.error_message }}
+                            <span
+                              v-if="mapping.item.error_code"
+                              class="restore-record-structure-entry__error-code"
+                            >[{{ mapping.item.error_code }}]</span>
+                            <span
+                              v-if="mapping.item.error_message"
+                              class="restore-record-structure-entry__error-message"
+                            >{{ mapping.item.error_message }}</span>
                           </div>
                         </div>
                       </div>
@@ -7049,15 +7063,29 @@ function onClosed() {
 }
 
 .restore-record-structure-entry__error {
+  display: grid;
+  gap: 3px;
   margin: 0 8px;
   padding: 7px 8px;
-  border: 1px solid rgb(254 202 202);
+  border: 1px solid color-mix(in srgb, var(--color-error-text) 24%, transparent);
   border-radius: 6px;
-  color: rgb(185 28 28);
-  background: rgb(254 242 242);
+  color: var(--color-error-text);
+  background: color-mix(in srgb, var(--color-error-text) 8%, transparent);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.restore-record-structure-entry__error-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+.restore-record-structure-entry__error-message {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .restore-record-status-progress {

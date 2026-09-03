@@ -69,14 +69,19 @@ describe('tableOverflowTitle', () => {
     const gap = document.createElement('div')
     document.body.appendChild(gap)
     content.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: gap }))
+    vi.advanceTimersByTime(600)
+    expect(tooltip?.style.display).toBe('block')
+
     tooltip?.dispatchEvent(new MouseEvent('mouseenter'))
     cell.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
-    vi.advanceTimersByTime(200)
+    vi.advanceTimersByTime(700)
 
     expect(tooltip?.style.display).toBe('block')
 
     tooltip?.dispatchEvent(new MouseEvent('mouseleave', { relatedTarget: gap }))
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(699)
+    expect(tooltip?.style.display).toBe('block')
+    vi.advanceTimersByTime(1)
     expect(tooltip?.style.display).toBe('none')
     gap.remove()
   })
@@ -241,6 +246,30 @@ describe('tableOverflowTitle', () => {
     expect(styles).toMatch(/\.hfl-table-overflow-tooltip\s*{[^}]*pointer-events:\s*auto;/s)
     expect(styles).toMatch(/\.hfl-table-overflow-tooltip\s*{[^}]*user-select:\s*text;/s)
     expect(styles).toMatch(/\.hfl-table-overflow-tooltip\s*{[^}]*white-space:\s*pre-line;/s)
+    expect(styles).toMatch(/\.hfl-table-overflow-tooltip--danger\s*{[^}]*color:\s*var\(--color-error-text\);/s)
+    expect(styles).toMatch(/\.hfl-table-overflow-tooltip--warning\s*{[^}]*color:\s*var\(--color-warning-text\);/s)
+  })
+
+  it('applies and clears the semantic tone supplied by the overflow target', async () => {
+    Object.defineProperty(content, 'clientWidth', { configurable: true, value: 80 })
+    Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 200 })
+    content.dataset.tableOverflowTitle = 'Connection refused'
+    content.dataset.tableOverflowTone = 'danger'
+
+    content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    vi.advanceTimersByTime(300)
+    const tooltip = document.querySelector<HTMLElement>('#hfl-table-overflow-tooltip')!
+    expect(tooltip.classList).toContain('hfl-table-overflow-tooltip--danger')
+
+    content.dataset.tableOverflowTone = 'warning'
+    await Promise.resolve()
+    expect(tooltip.classList).toContain('hfl-table-overflow-tooltip--warning')
+    expect(tooltip.classList).not.toContain('hfl-table-overflow-tooltip--danger')
+
+    delete content.dataset.tableOverflowTone
+    await Promise.resolve()
+    expect(tooltip.className).toBe('hfl-table-overflow-tooltip')
+    delete content.dataset.tableOverflowTitle
   })
 
   it('refreshes an open tooltip when its explicit content changes', async () => {
