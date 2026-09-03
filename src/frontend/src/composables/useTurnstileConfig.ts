@@ -1,11 +1,11 @@
 import { computed, nextTick, ref } from 'vue'
-import { api, isAbortError } from '../lib/api'
+import { api } from '../lib/api'
 import {
   preloadTurnstileScript,
   resetTurnstileScriptLoad,
 } from '../lib/turnstileLoader'
 
-export type TurnstileState = 'pending' | 'disabled' | 'ready' | 'blocked' | 'config-error'
+export type TurnstileState = 'pending' | 'disabled' | 'ready' | 'blocked'
 
 interface TurnstileConfigResponse {
   code: string
@@ -22,35 +22,17 @@ const configLoaded = ref(false)
 let configLoadPromise: Promise<void> | null = null
 let configRetryPromise: Promise<void> | null = null
 const authTurnstileMountGeneration = ref(0)
-const MAX_CONFIG_ATTEMPTS = 2
+async function loadTurnstileConfig(force = false): Promise<void> {
+  if (configLoadPromise) return configLoadPromise
+  if (configLoaded.value && !force) return
 
-async function fetchTurnstileConfig(): Promise<TurnstileConfigResponse> {
-  let lastError: unknown
-  for (let attempt = 0; attempt < MAX_CONFIG_ATTEMPTS; attempt += 1) {
+  state.value = 'pending'
+  configLoadPromise = (async () => {
     try {
       const res = await api<TurnstileConfigResponse>('/api/v1/auth/turnstile/config')
       if (res.code !== '0000' || !res.data) {
         throw new Error('Invalid Turnstile configuration response')
       }
-      return res
-    } catch (error) {
-      if (isAbortError(error)) throw error
-      lastError = error
-    }
-  }
-  throw lastError ?? new Error('Unable to load Turnstile configuration')
-}
-
-async function loadTurnstileConfig(force = false): Promise<void> {
-  if (configLoadPromise) return configLoadPromise
-  if (configLoaded.value && !force) return
-
-  const previousState = state.value
-  const previousConfigLoaded = configLoaded.value
-  state.value = 'pending'
-  configLoadPromise = (async () => {
-    try {
-      const res = await fetchTurnstileConfig()
       if (!res.data.enabled) {
         state.value = 'disabled'
         siteKey.value = ''
@@ -71,13 +53,10 @@ async function loadTurnstileConfig(force = false): Promise<void> {
       // rejection before the lazy authentication page finishes mounting.
       void preloadTurnstileScript().catch(() => undefined)
       configLoaded.value = true
-    } catch (error) {
-      if (isAbortError(error)) {
-        state.value = previousState
-        configLoaded.value = previousConfigLoaded
-        return
-      }
-      state.value = 'config-error'
+    } catch {
+      // A failed request does not establish that Turnstile is enabled. Keep
+      // the optional field hidden; auth endpoints remain the security boundary.
+      state.value = 'disabled'
       siteKey.value = ''
       configLoaded.value = false
     } finally {
@@ -124,7 +103,6 @@ export function useTurnstileConfig() {
   const isTurnstileDisabled = computed(() => state.value === 'disabled')
   const isTurnstileReady = computed(() => state.value === 'ready')
   const isTurnstileBlocked = computed(() => state.value === 'blocked')
-  const isTurnstileConfigError = computed(() => state.value === 'config-error')
 
   function blockTurnstile(): void {
     if (state.value !== 'disabled') state.value = 'blocked'
@@ -142,7 +120,6 @@ export function useTurnstileConfig() {
     isTurnstileDisabled,
     isTurnstileReady,
     isTurnstileBlocked,
-    isTurnstileConfigError,
     loadTurnstileConfig,
     retryTurnstileConfig,
     buildTurnstilePayload,
