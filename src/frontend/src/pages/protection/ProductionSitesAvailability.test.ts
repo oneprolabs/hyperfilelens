@@ -100,7 +100,8 @@ describe('Production Sites availability presentation', () => {
 
   it('keeps node lifecycle status and connectivity polling separate', () => {
     const basicPanel = source('components/NodeBasicInfoPanel.vue')
-    expect(basicPanel).toContain('`nodeLifecycle.state.${status}`')
+    expect(basicPanel).toContain('`nodeLifecycle.state.${visibleStatus}`')
+    expect(basicPanel).toContain("status === 'verification_pending' ? 'upgrading' : status")
     expect(basicPanel).toContain('props.node.availability')
 
     for (const relativePath of [
