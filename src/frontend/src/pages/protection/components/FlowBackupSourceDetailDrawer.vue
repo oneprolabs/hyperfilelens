@@ -4,7 +4,9 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
   Archive,
+  Ban,
   ArrowLeft,
+  ArrowRight,
   Camera,
   Check,
   ChevronDown,
@@ -12,6 +14,8 @@ import {
   Circle,
   CircleStop,
   CircleOff,
+  CircleAlert,
+  CircleHelp,
   Clock3,
   Copy,
   Download,
@@ -29,6 +33,7 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  TimerOff,
   Unlink,
   X,
 } from 'lucide-vue-next'
@@ -97,11 +102,15 @@ import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 import {
+  isRestoreRecordActive,
+  normalizedRestoreRecordTaskStatus,
+  restoreRecordItemSourceKind,
   restoreRecordPathMappings,
   restoreRecordRuntimeMetricParts,
   restoreRecordSnapshotLabel,
   restoreRecordTargetDisplayPath,
   restoreRecordTaskStatus,
+  restoreRecordTimeState,
   shouldShowRestoreRecordProgress,
 } from './restoreRecordDisplay'
 import { flowSourceDiskCountText, flowSourceMemoryText } from '../../../lib/flowSourceDisplay'
@@ -388,7 +397,7 @@ const resourceDetails = reactive<Record<string, ResourceDetailRow[]>>({})
 const resourceErrors = reactive<Record<string, string>>({})
 
 const DEFAULT_TASK_STATUS_OPTIONS = ['pending', 'waiting', 'running', 'success', 'failed', 'cancelled', 'timeout']
-const RESTORE_RECORD_STATUS_OPTIONS = ['success', 'running', 'failed', 'cancelled', 'pending', 'timeout']
+const RESTORE_RECORD_STATUS_OPTIONS = ['success', 'running', 'failed', 'cancelled', 'pending', 'waiting', 'blocked', 'timeout']
 const SNAPSHOT_STATUS_OPTIONS = ['creating', 'available', 'partial', 'failed', 'deleting', 'delete_failed', 'deleted']
 const DEFAULT_TASK_TYPE_OPTIONS = ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'backup_config_reset', 'backup_config_provision']
 const sourceId = computed(() => props.source?.id ?? '')
@@ -585,11 +594,10 @@ const hasRestoreRecordFilters = computed(() => Boolean(
   || restoreRecordFilterTimeMode.value !== 'all',
 ))
 const hasActiveRestoreRecords = computed(() => displayedRestoreRecords.value.some((record) => {
-  const status = String(record.task_summary?.status || '').toLowerCase()
-  return status === 'pending' || status === 'running'
+  return isRestoreRecordActive(record)
 }))
 const hasRunningRestoreRecords = computed(() => displayedRestoreRecords.value.some((record) => (
-  String(record.task_summary?.status || '').toLowerCase() === 'running'
+  normalizedRestoreRecordStatus(record) === 'running'
 )))
 const sourceRelatedTasks = computed(() => sourceTaskRows.value)
 watch(
@@ -1096,16 +1104,139 @@ function restoreRecordProgressText(record: RestoreRecord) {
   return formatTaskProgressPercent(restoreRecordProgressValue(record))
 }
 
+type RestoreRecordTimeField = 'started' | 'duration' | 'finished'
+type RestoreRecordEndTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
+
+const RESTORE_RECORD_TERMINAL_STATUSES = ['success', 'failed', 'cancelled', 'timeout']
+
+function normalizedRestoreRecordStatus(record: RestoreRecord) {
+  return normalizedRestoreRecordTaskStatus(record)
+}
+
+function restoreRecordTimestamp(raw?: string | null) {
+  if (!raw) return null
+  const value = new Date(raw).getTime()
+  return Number.isFinite(value) ? value : null
+}
+
+function restoreRecordHasStatusTimeConflict(record: RestoreRecord) {
+  return restoreRecordTimeState(record).hasStatusTimeConflict
+}
+
+function restoreRecordHasInvalidTimeData(record: RestoreRecord) {
+  return restoreRecordTimeState(record).hasInvalidTimeData
+}
+
+function restoreRecordTimeIssue(record: RestoreRecord, field: RestoreRecordTimeField) {
+  if (!record.task_summary) return t('protection.backupsPage.flowRestoreRecordTaskDetailsMissing')
+  const status = normalizedRestoreRecordStatus(record)
+  const startedAt = record.task_summary.started_at
+  const finishedAt = record.task_summary.finished_at
+  const startedMs = restoreRecordTimestamp(startedAt)
+  const finishedMs = restoreRecordTimestamp(finishedAt)
+  if (restoreRecordHasStatusTimeConflict(record)) {
+    const statusTimeConflictAffectsField = status === 'running' ? field !== 'started' : field !== 'finished'
+    if (statusTimeConflictAffectsField) return t('protection.backupsPage.flowRestoreRecordStatusTimeConflict')
+  }
+  if (startedAt && startedMs === null && field !== 'finished') return t('protection.backupsPage.flowRestoreRecordInvalidTimeData')
+  if (finishedAt && finishedMs === null && field !== 'started') return t('protection.backupsPage.flowRestoreRecordInvalidTimeData')
+  if (startedMs !== null && finishedMs !== null && finishedMs < startedMs && field !== 'started') {
+    return t('protection.backupsPage.flowRestoreRecordInvalidTimeOrder')
+  }
+  if (status === 'running' && startedMs === null && field !== 'finished') {
+    return t('protection.backupsPage.flowRestoreRecordStartNotRecorded')
+  }
+  if (status === 'success' && startedMs === null && field !== 'finished') {
+    return t('protection.backupsPage.flowRestoreRecordStartNotRecorded')
+  }
+  if (RESTORE_RECORD_TERMINAL_STATUSES.includes(status) && finishedMs === null
+    && (field === 'finished' || (field === 'duration' && startedMs !== null))) {
+    return t('protection.backupsPage.flowRestoreRecordFinishNotRecorded')
+  }
+  return ''
+}
+
+function restoreRecordTimeValue(record: RestoreRecord, field: 'submitted' | 'started' | 'finished') {
+  if (field === 'submitted') return formatNullableTime(record.created_at)
+  const state = restoreRecordTimeState(record)
+  const kind = field === 'started' ? state.startedKind : state.finishedKind
+  const raw = field === 'started' ? state.startedAt : state.finishedAt
+  if (kind === 'value') return formatNullableTime(raw)
+  if (kind === 'not_started') return t('protection.backupsPage.flowRestoreRecordNotStarted')
+  if (kind === 'not_finished') return t('protection.backupsPage.flowRestoreRecordNotFinished')
+  return t('protection.backupsPage.flowRestoreRecordTimeUnavailable')
+}
+
 function restoreRecordDuration(record: RestoreRecord) {
-  const status = String(record.task_summary?.status || '').toLowerCase()
-  const finishedAt = record.task_summary?.finished_at
-  const end = finishedAt || (status === 'running'
+  const state = restoreRecordTimeState(record)
+  if (state.durationKind === 'not_applicable') return t('protection.backupDetail.durationDash')
+  if (state.durationKind === 'unavailable') return t('protection.backupsPage.flowRestoreRecordTimeUnavailable')
+  const end = state.durationKind === 'running'
     ? new Date(restoreRecordDurationNow.value).toISOString()
-    : null)
-  return durationText(
-    record.task_summary?.started_at || record.created_at,
-    end,
-  )
+    : state.finishedAt
+  return durationText(state.startedAt, end)
+}
+
+function restoreRecordStatusExplanation(record: RestoreRecord) {
+  if (!record.task_summary) return t('protection.backupsPage.flowRestoreRecordTaskDetailsMissing')
+  const status = normalizedRestoreRecordStatus(record)
+  const startedMs = restoreRecordTimestamp(record.task_summary.started_at)
+  const finishedMs = restoreRecordTimestamp(record.task_summary.finished_at)
+  if (restoreRecordHasStatusTimeConflict(record)) return t('protection.backupsPage.flowRestoreRecordStatusTimeConflict')
+  if (record.task_summary.started_at && startedMs === null) return t('protection.backupsPage.flowRestoreRecordInvalidTimeData')
+  if (record.task_summary.finished_at && finishedMs === null) return t('protection.backupsPage.flowRestoreRecordInvalidTimeData')
+  if (startedMs !== null && finishedMs !== null && finishedMs < startedMs) return t('protection.backupsPage.flowRestoreRecordInvalidTimeOrder')
+  if (status === 'running' && startedMs === null) return t('protection.backupsPage.flowRestoreRecordStartNotRecorded')
+  if (RESTORE_RECORD_TERMINAL_STATUSES.includes(status) && finishedMs === null) return t('protection.backupsPage.flowRestoreRecordFinishNotRecorded')
+  if (status === 'pending') return t('protection.backupsPage.flowRestoreRecordWaitingForSchedule')
+  if (status === 'waiting') return t('protection.backupsPage.flowRestoreRecordWaitingToStart')
+  if (status === 'blocked') return t('protection.backupsPage.flowRestoreRecordBlocked')
+  if (status === 'running') return t('protection.backupsPage.flowRestoreRecordInProgress')
+  if (status === 'success') return startedMs === null
+    ? t('protection.backupsPage.flowRestoreRecordStartNotRecorded')
+    : t('protection.backupsPage.flowRestoreRecordCompleted')
+  if (status === 'failed') return t(startedMs === null
+    ? 'protection.backupsPage.flowRestoreRecordFailedBeforeStart'
+    : 'protection.backupsPage.flowRestoreRecordFailedDuringExecution')
+  if (status === 'cancelled') return t(startedMs === null
+    ? 'protection.backupsPage.flowRestoreRecordCancelledBeforeStart'
+    : 'protection.backupsPage.flowRestoreRecordCancelledDuringExecution')
+  if (status === 'timeout') return t(startedMs === null
+    ? 'protection.backupsPage.flowRestoreRecordTimedOutBeforeStart'
+    : 'protection.backupsPage.flowRestoreRecordTimedOutDuringExecution')
+  return t('protection.backupsPage.flowRestoreRecordStatusUnavailable')
+}
+
+function restoreRecordEndTone(record: RestoreRecord): RestoreRecordEndTone {
+  const status = normalizedRestoreRecordStatus(record)
+  if (!record.task_summary || !status) return 'neutral'
+  if (status === 'failed' || status === 'timeout') return 'danger'
+  if (status === 'cancelled') return 'warning'
+  if (restoreRecordHasStatusTimeConflict(record) || restoreRecordHasInvalidTimeData(record)) return 'warning'
+  if (status === 'success') {
+    const startedMs = restoreRecordTimestamp(record.task_summary.started_at)
+    const finishedMs = restoreRecordTimestamp(record.task_summary.finished_at)
+    return startedMs === null || finishedMs === null || finishedMs < startedMs ? 'warning' : 'success'
+  }
+  if (status === 'blocked') return 'warning'
+  if (status === 'running') return 'info'
+  return 'neutral'
+}
+
+function restoreRecordEndIcon(record: RestoreRecord) {
+  const status = normalizedRestoreRecordStatus(record)
+  if (!record.task_summary || !status) return CircleHelp
+  if (status === 'failed') return CircleAlert
+  if (status === 'cancelled') return Ban
+  if (status === 'timeout') return TimerOff
+  if (restoreRecordHasStatusTimeConflict(record) || restoreRecordHasInvalidTimeData(record)) return CircleAlert
+  if (status === 'success') {
+    const startedMs = restoreRecordTimestamp(record.task_summary.started_at)
+    const finishedMs = restoreRecordTimestamp(record.task_summary.finished_at)
+    return startedMs === null || finishedMs === null || finishedMs < startedMs ? CircleAlert : Check
+  }
+  if (status === 'blocked') return CircleAlert
+  return Clock3
 }
 
 function restoreRecordConflictLabel(mode?: string | null) {
@@ -1125,28 +1256,64 @@ function restoreRecordModeTitle(record: RestoreRecord) {
   return `${restoreRecordModeLabel(record)} #${record.plan_id}`
 }
 
-function restoreRecordTargetName(record: RestoreRecord) {
-  const id = endpointUiId(record.target_type, Number(record.target_ref_id))
+function restoreRecordEndpointDetails(type: string, refId: number) {
+  const id = endpointUiId(type, Number(refId))
   const row = props.sourceRows.find((item) => item.id === id)
   if (row) {
-    const name = row.name || row.nodeName || row.hostname || ''
-    return row.nodeIp ? `${name} ${row.nodeIp}` : name || '—'
+    return {
+      name: row.name || row.nodeName || row.hostname || '',
+      ip: row.nodeIp || '',
+    }
   }
-  if (record.target_type === 'nas') return record.target_ref_id ? `NAS #${record.target_ref_id}` : 'NAS'
-  return record.target_ref_id ? `Host #${record.target_ref_id}` : 'Host'
+  if (type === 'nas') return { name: refId ? `NAS #${refId}` : 'NAS', ip: '' }
+  return { name: refId ? `Host #${refId}` : 'Host', ip: '' }
 }
 
-function restoreItemTargetSummary(record: RestoreRecord, item: RestoreRecordItem) {
-  const targetPath = restoreRecordTargetDisplayPath(record, item)
-  return `${targetPath} (${restoreRecordTargetName(record)})`
+function restoreRecordSourceEndpoint(record: RestoreRecord) {
+  return restoreRecordEndpointDetails(record.source_type, Number(record.source_ref_id))
+}
+
+function restoreRecordTargetEndpoint(record: RestoreRecord) {
+  return restoreRecordEndpointDetails(record.target_type, Number(record.target_ref_id))
+}
+
+function restoreRecordEndpointSummary(endpoint: { name: string, ip: string }) {
+  return [endpoint.name, endpoint.ip].filter(Boolean).join(' · ') || '—'
+}
+
+function restoreRecordMappingTitle(path: string, endpoint: { name: string, ip: string }) {
+  return [path, endpoint.name, endpoint.ip].filter(Boolean).join('\n')
 }
 
 function restoreRecordTargetSummary(record: RestoreRecord) {
-  return `${restoreRecordTargetDisplayPath(record)} (${restoreRecordTargetName(record)})`
+  return restoreRecordMappingTitle(
+    restoreRecordTargetDisplayPath(record),
+    restoreRecordTargetEndpoint(record),
+  )
 }
 
-function restoreItemSourceKind(item: RestoreRecordItem) {
-  return inferRecoveryPlanSourcePathType(item.source_path || '') === 'file' ? 'file' : 'dir'
+function restoreItemTargetSummary(record: RestoreRecord, item: RestoreRecordItem) {
+  return restoreRecordMappingTitle(
+    restoreRecordTargetDisplayPath(record, item),
+    restoreRecordTargetEndpoint(record),
+  )
+}
+
+function restoreItemSourceKind(record: RestoreRecord, item: RestoreRecordItem) {
+  return restoreRecordItemSourceKind(record, item)
+}
+
+function restoreItemTargetKind(record: RestoreRecord, item: RestoreRecordItem, sourceKind = restoreItemSourceKind(record, item)) {
+  const expandedItems = Array.isArray(record.expanded_payload?.items)
+    ? record.expanded_payload.items
+    : []
+  const expandedItem = expandedItems.find((value) => {
+    if (!value || typeof value !== 'object') return false
+    const candidate = value as Record<string, unknown>
+    return Number(candidate.source_snapshot_directory_id) === item.source_snapshot_directory_id
+      || Number(candidate.backup_config_dir_id) === item.backup_config_dir_id
+  }) as Record<string, unknown> | undefined
+  return expandedItem?.target_path_semantics === 'final' && sourceKind === 'file' ? 'file' : 'dir'
 }
 
 function resetExpandedRestoreItems() {
@@ -3509,7 +3676,7 @@ function onClosed() {
                                     <span
                                       class="create-recovery-plan-mapping__arrow"
                                       aria-hidden="true"
-                                    >-&gt;</span>
+                                    ><ArrowRight :size="14" /></span>
                                     <span
                                       class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                                       :title="recoveryPlanTargetSummary(mapping.plan)"
@@ -3580,7 +3747,7 @@ function onClosed() {
                                   <span
                                     class="create-recovery-plan-mapping__arrow"
                                     aria-hidden="true"
-                                  >-&gt;</span>
+                                  ><ArrowRight :size="14" /></span>
                                   <span
                                     class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                                     :title="recoveryPlanTargetSummary(mapping.plan)"
@@ -4586,7 +4753,10 @@ function onClosed() {
             >
               <template #default="{ row }">
                 <div class="restore-record-expand-panel">
-                  <div class="restore-record-time-summary">
+                  <div
+                    class="restore-record-time-summary"
+                    :class="`restore-record-time-summary--${restoreRecordEndTone(row)}`"
+                  >
                     <div class="restore-record-time-summary__point restore-record-time-summary__point--start">
                       <span
                         class="restore-record-time-summary__marker"
@@ -4596,13 +4766,33 @@ function onClosed() {
                       </span>
                       <div class="restore-record-time-summary__copy">
                         <span class="restore-record-time-summary__label">
-                          {{ t('protection.backupDetail.colStart') }}
+                          {{ t('protection.backupsPage.flowRestoreRecordStartedAt') }}
                         </span>
-                        <span
-                          class="restore-record-time-summary__value"
-                          :class="{ 'hfl-empty-mark': !(row.task_summary?.started_at || row.created_at) }"
-                        >
-                          {{ formatNullableTime(row.task_summary?.started_at || row.created_at) }}
+                        <span class="restore-record-time-summary__value-line">
+                          <span
+                            class="restore-record-time-summary__value"
+                            :class="{ 'hfl-empty-mark': restoreRecordTimeState(row).startedKind !== 'value' }"
+                          >
+                            {{ restoreRecordTimeValue(row, 'started') }}
+                          </span>
+                          <HflPopover
+                            v-if="restoreRecordTimeIssue(row, 'started')"
+                            trigger="click"
+                            placement="top"
+                            :width="280"
+                          >
+                            <span>{{ restoreRecordTimeIssue(row, 'started') }}</span>
+                            <template #reference>
+                              <button
+                                type="button"
+                                class="restore-record-time-summary__issue"
+                                :title="restoreRecordTimeIssue(row, 'started')"
+                                :aria-label="t('protection.backupsPage.flowRestoreRecordTimeIssueAria', { field: t('protection.backupsPage.flowRestoreRecordStartedAt') })"
+                              >
+                                <Info :size="13" />
+                              </button>
+                            </template>
+                          </HflPopover>
                         </span>
                       </div>
                     </div>
@@ -4610,46 +4800,106 @@ function onClosed() {
                     <div class="restore-record-time-summary__duration">
                       <span class="restore-record-time-summary__duration-pill">
                         <span class="restore-record-time-summary__duration-label">
-                          {{ t('protection.backupsPage.flowSourceDetailDuration') }}
+                          {{ t('protection.backupsPage.flowRestoreRecordRunDuration') }}
                         </span>
-                        <span
-                          class="restore-record-time-summary__duration-value"
-                          :class="{ 'hfl-empty-mark': restoreRecordDuration(row) === t('protection.backupDetail.durationDash') }"
-                        >
-                          {{ restoreRecordDuration(row) }}
+                        <span class="restore-record-time-summary__value-line">
+                          <span
+                            class="restore-record-time-summary__duration-value"
+                            :class="{ 'hfl-empty-mark': !['running', 'fixed'].includes(restoreRecordTimeState(row).durationKind) }"
+                          >
+                            {{ restoreRecordDuration(row) }}
+                          </span>
+                          <HflPopover
+                            v-if="restoreRecordTimeIssue(row, 'duration')"
+                            trigger="click"
+                            placement="top"
+                            :width="280"
+                          >
+                            <span>{{ restoreRecordTimeIssue(row, 'duration') }}</span>
+                            <template #reference>
+                              <button
+                                type="button"
+                                class="restore-record-time-summary__issue"
+                                :title="restoreRecordTimeIssue(row, 'duration')"
+                                :aria-label="t('protection.backupsPage.flowRestoreRecordTimeIssueAria', { field: t('protection.backupsPage.flowRestoreRecordRunDuration') })"
+                              >
+                                <Info :size="13" />
+                              </button>
+                            </template>
+                          </HflPopover>
                         </span>
                       </span>
                     </div>
 
                     <div
                       class="restore-record-time-summary__point restore-record-time-summary__point--end"
-                      :class="{ 'restore-record-time-summary__point--pending': !row.task_summary?.finished_at }"
+                      :class="`restore-record-time-summary__point--${restoreRecordEndTone(row)}`"
                     >
                       <span
                         class="restore-record-time-summary__marker"
                         aria-hidden="true"
                       >
-                        <Check
-                          v-if="row.task_summary?.finished_at"
-                          :size="14"
-                        />
-                        <Clock3
-                          v-else
+                        <component
+                          :is="restoreRecordEndIcon(row)"
                           :size="14"
                         />
                       </span>
                       <div class="restore-record-time-summary__copy">
                         <span class="restore-record-time-summary__label">
-                          {{ t('protection.backupDetail.colEnd') }}
+                          {{ t('protection.backupsPage.flowRestoreRecordFinishedAt') }}
                         </span>
-                        <span
-                          class="restore-record-time-summary__value"
-                          :class="{ 'hfl-empty-mark': !row.task_summary?.finished_at }"
-                        >
-                          {{ formatNullableTime(row.task_summary?.finished_at) }}
+                        <span class="restore-record-time-summary__value-line">
+                          <span
+                            class="restore-record-time-summary__value"
+                            :class="{ 'hfl-empty-mark': restoreRecordTimeState(row).finishedKind !== 'value' }"
+                          >
+                            {{ restoreRecordTimeValue(row, 'finished') }}
+                          </span>
+                          <HflPopover
+                            v-if="restoreRecordTimeIssue(row, 'finished')"
+                            trigger="click"
+                            placement="top"
+                            :width="280"
+                          >
+                            <span>{{ restoreRecordTimeIssue(row, 'finished') }}</span>
+                            <template #reference>
+                              <button
+                                type="button"
+                                class="restore-record-time-summary__issue"
+                                :title="restoreRecordTimeIssue(row, 'finished')"
+                                :aria-label="t('protection.backupsPage.flowRestoreRecordTimeIssueAria', { field: t('protection.backupsPage.flowRestoreRecordFinishedAt') })"
+                              >
+                                <Info :size="13" />
+                              </button>
+                            </template>
+                          </HflPopover>
                         </span>
                       </div>
                     </div>
+                  </div>
+                  <div class="restore-record-time-context">
+                    <TaskStatusTag
+                      v-if="restoreRecordStatus(row)"
+                      :status="restoreRecordStatus(row)"
+                    />
+                    <ElTag
+                      v-else
+                      type="info"
+                      size="small"
+                    >
+                      {{ t('protection.backupsPage.flowRestoreRecordStatusUnknown') }}
+                    </ElTag>
+                    <span class="restore-record-time-context__explanation">
+                      {{ restoreRecordStatusExplanation(row) }}
+                    </span>
+                    <span class="restore-record-submitted-at">
+                      <span class="restore-record-submitted-at__label">
+                        {{ t('protection.backupsPage.flowRestoreRecordSubmittedAt') }}
+                      </span>
+                      <span class="restore-record-submitted-at__value">
+                        {{ restoreRecordTimeValue(row, 'submitted') }}
+                      </span>
+                    </span>
                   </div>
                   <div class="restore-record-runtime-summary">
                     <span class="restore-record-runtime-summary__label">
@@ -4688,30 +4938,46 @@ function onClosed() {
                         <div class="create-recovery-plan-mapping restore-record-mapping--with-result restore-record-snapshot-tree__parent">
                           <span
                             class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--snapshot"
-                            :title="t('protection.backupsPage.recoveryWholeSnapshot')"
+                            :title="restoreRecordMappingTitle(t('protection.backupsPage.recoveryWholeSnapshot'), restoreRecordSourceEndpoint(row))"
                           >
+                            <span class="restore-record-mapping__label">
+                              {{ t('protection.backupsPage.flowRestoreRecordSource') }}
+                            </span>
                             <Camera
                               :size="14"
                               class="create-recovery-plan-mapping__icon"
                             />
-                            <span class="create-recovery-plan-mapping__text">
-                              {{ t('protection.backupsPage.recoveryWholeSnapshot') }}
+                            <span class="restore-record-mapping__content">
+                              <span class="create-recovery-plan-mapping__text">
+                                {{ t('protection.backupsPage.recoveryWholeSnapshot') }}
+                              </span>
+                              <span class="restore-record-mapping__endpoint-meta">
+                                {{ restoreRecordEndpointSummary(restoreRecordSourceEndpoint(row)) }}
+                              </span>
                             </span>
                           </span>
                           <span
                             class="create-recovery-plan-mapping__arrow"
                             aria-hidden="true"
-                          >-&gt;</span>
+                          ><ArrowRight :size="14" /></span>
                           <span
                             class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                             :title="restoreRecordTargetSummary(row)"
                           >
+                            <span class="restore-record-mapping__label">
+                              {{ t('protection.backupsPage.flowRestoreRecordDestination') }}
+                            </span>
                             <FolderOpen
                               :size="14"
                               class="create-recovery-plan-mapping__icon"
                             />
-                            <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                              {{ restoreRecordTargetSummary(row) }}
+                            <span class="restore-record-mapping__content">
+                              <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                                {{ restoreRecordTargetDisplayPath(row) }}
+                              </span>
+                              <span class="restore-record-mapping__endpoint-meta">
+                                {{ restoreRecordEndpointSummary(restoreRecordTargetEndpoint(row)) }}
+                              </span>
                             </span>
                           </span>
                           <span class="restore-record-mapping__result">
@@ -4738,11 +5004,14 @@ function onClosed() {
                             <div class="create-recovery-plan-mapping restore-record-mapping--with-result">
                               <span
                                 class="create-recovery-plan-mapping__endpoint"
-                                :class="`create-recovery-plan-mapping__endpoint--${restoreItemSourceKind(item)}`"
-                                :title="item.source_path || '—'"
+                                :class="`create-recovery-plan-mapping__endpoint--${restoreItemSourceKind(row, item)}`"
+                                :title="restoreRecordMappingTitle(item.source_path || '—', restoreRecordSourceEndpoint(row))"
                               >
+                                <span class="restore-record-mapping__label">
+                                  {{ t('protection.backupsPage.flowRestoreRecordSource') }}
+                                </span>
                                 <File
-                                  v-if="restoreItemSourceKind(item) === 'file'"
+                                  v-if="restoreItemSourceKind(row, item) === 'file'"
                                   :size="14"
                                   class="create-recovery-plan-mapping__icon"
                                 />
@@ -4751,27 +5020,42 @@ function onClosed() {
                                   :size="14"
                                   class="create-recovery-plan-mapping__icon"
                                 />
-                                <span
-                                  class="create-recovery-plan-mapping__text hfl-table-cell-mono"
-                                  :class="{ 'hfl-empty-mark': !item.source_path }"
-                                >
-                                  {{ item.source_path || '—' }}
+                                <span class="restore-record-mapping__content">
+                                  <span
+                                    class="create-recovery-plan-mapping__text hfl-table-cell-mono"
+                                    :class="{ 'hfl-empty-mark': !item.source_path }"
+                                  >
+                                    {{ item.source_path || '—' }}
+                                  </span>
+                                  <span class="restore-record-mapping__endpoint-meta">
+                                    {{ restoreRecordEndpointSummary(restoreRecordSourceEndpoint(row)) }}
+                                  </span>
                                 </span>
                               </span>
                               <span
                                 class="create-recovery-plan-mapping__arrow"
                                 aria-hidden="true"
-                              >-&gt;</span>
+                              ><ArrowRight :size="14" /></span>
                               <span
                                 class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
+                                :class="`create-recovery-plan-mapping__endpoint--${restoreItemTargetKind(row, item)}`"
                                 :title="restoreItemTargetSummary(row, item)"
                               >
-                                <FolderOpen
+                                <span class="restore-record-mapping__label">
+                                  {{ t('protection.backupsPage.flowRestoreRecordDestination') }}
+                                </span>
+                                <component
+                                  :is="restoreItemTargetKind(row, item) === 'file' ? File : FolderOpen"
                                   :size="14"
                                   class="create-recovery-plan-mapping__icon"
                                 />
-                                <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                                  {{ restoreItemTargetSummary(row, item) }}
+                                <span class="restore-record-mapping__content">
+                                  <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                                    {{ restoreRecordTargetDisplayPath(row, item) }}
+                                  </span>
+                                  <span class="restore-record-mapping__endpoint-meta">
+                                    {{ restoreRecordEndpointSummary(restoreRecordTargetEndpoint(row)) }}
+                                  </span>
                                 </span>
                               </span>
                               <span class="restore-record-mapping__result">
@@ -4808,8 +5092,11 @@ function onClosed() {
                             <span
                               class="create-recovery-plan-mapping__endpoint"
                               :class="`create-recovery-plan-mapping__endpoint--${mapping.sourceKind}`"
-                              :title="mapping.sourcePath"
+                              :title="restoreRecordMappingTitle(mapping.sourcePath, restoreRecordSourceEndpoint(row))"
                             >
+                              <span class="restore-record-mapping__label">
+                                {{ t('protection.backupsPage.flowRestoreRecordSource') }}
+                              </span>
                               <File
                                 v-if="mapping.sourceKind === 'file'"
                                 :size="14"
@@ -4820,24 +5107,39 @@ function onClosed() {
                                 :size="14"
                                 class="create-recovery-plan-mapping__icon"
                               />
-                              <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                                {{ mapping.sourcePath }}
+                              <span class="restore-record-mapping__content">
+                                <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                                  {{ mapping.sourcePath }}
+                                </span>
+                                <span class="restore-record-mapping__endpoint-meta">
+                                  {{ restoreRecordEndpointSummary(restoreRecordSourceEndpoint(row)) }}
+                                </span>
                               </span>
                             </span>
                             <span
                               class="create-recovery-plan-mapping__arrow"
                               aria-hidden="true"
-                            >-&gt;</span>
+                            ><ArrowRight :size="14" /></span>
                             <span
                               class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
+                              :class="`create-recovery-plan-mapping__endpoint--${restoreItemTargetKind(row, mapping.item, mapping.sourceKind)}`"
                               :title="restoreItemTargetSummary(row, mapping.item)"
                             >
-                              <FolderOpen
+                              <span class="restore-record-mapping__label">
+                                {{ t('protection.backupsPage.flowRestoreRecordDestination') }}
+                              </span>
+                              <component
+                                :is="restoreItemTargetKind(row, mapping.item, mapping.sourceKind) === 'file' ? File : FolderOpen"
                                 :size="14"
                                 class="create-recovery-plan-mapping__icon"
                               />
-                              <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                                {{ restoreItemTargetSummary(row, mapping.item) }}
+                              <span class="restore-record-mapping__content">
+                                <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                                  {{ restoreRecordTargetDisplayPath(row, mapping.item) }}
+                                </span>
+                                <span class="restore-record-mapping__endpoint-meta">
+                                  {{ restoreRecordEndpointSummary(restoreRecordTargetEndpoint(row)) }}
+                                </span>
                               </span>
                             </span>
                             <span class="restore-record-mapping__result">
@@ -6542,7 +6844,7 @@ function onClosed() {
 .dp-flow-restore-plan-card {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
-  background: rgb(248 250 252);
+  background: var(--el-fill-color-lighter);
   padding: 10px;
 }
 
@@ -6679,9 +6981,9 @@ function onClosed() {
   gap: 8px;
   min-width: 0;
   border-radius: 6px;
-  background: #fff;
+  background: var(--el-bg-color);
   padding: 7px 8px;
-  color: rgb(51 65 85);
+  color: var(--el-text-color-regular);
   font-size: 12px;
   transition:
     background-color 0.16s ease,
@@ -6689,7 +6991,7 @@ function onClosed() {
 }
 
 .create-recovery-plan-mapping:hover {
-  background: color-mix(in srgb, var(--color-primary) 7%, #ffffff);
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--el-bg-color));
 }
 
 .create-recovery-plan-mapping--more {
@@ -6747,11 +7049,12 @@ function onClosed() {
   overflow-x: hidden;
   margin-left: 35px;
   padding: 12px 16px 14px;
-  background: rgb(248 250 252);
+  background: var(--el-fill-color-lighter);
   contain: inline-size;
 }
 
 .restore-record-time-summary {
+  --restore-record-end-color: var(--el-text-color-secondary);
   display: grid;
   grid-template-columns: minmax(176px, auto) minmax(140px, 1fr) minmax(176px, auto);
   align-items: center;
@@ -6759,6 +7062,55 @@ function onClosed() {
   min-width: 0;
   margin: 0 2px 12px;
   padding: 2px 2px 5px;
+}
+
+.restore-record-time-summary--info {
+  --restore-record-end-color: var(--color-info);
+}
+
+.restore-record-time-summary--success {
+  --restore-record-end-color: var(--color-success);
+}
+
+.restore-record-time-summary--warning {
+  --restore-record-end-color: var(--color-warning-text);
+}
+
+.restore-record-time-summary--danger {
+  --restore-record-end-color: var(--color-error);
+}
+
+.restore-record-time-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 9px;
+  min-width: 0;
+  margin: -4px 2px 12px;
+}
+
+.restore-record-time-context__explanation {
+  min-width: 0;
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.restore-record-submitted-at {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+}
+
+.restore-record-submitted-at__label {
+  font-weight: 650;
+}
+
+.restore-record-submitted-at__value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 .restore-record-time-summary__point {
@@ -6781,20 +7133,14 @@ function onClosed() {
   height: 28px;
   border: 1px solid color-mix(in srgb, var(--color-info) 22%, transparent);
   border-radius: 50%;
-  background: color-mix(in srgb, var(--color-info) 9%, #fff);
+  background: color-mix(in srgb, var(--color-info) 9%, var(--el-bg-color));
   color: var(--color-info);
 }
 
 .restore-record-time-summary__point--end .restore-record-time-summary__marker {
-  border-color: color-mix(in srgb, var(--color-success) 24%, transparent);
-  background: color-mix(in srgb, var(--color-success) 10%, #fff);
-  color: var(--color-success);
-}
-
-.restore-record-time-summary__point--pending .restore-record-time-summary__marker {
-  border-color: var(--el-border-color);
-  background: #fff;
-  color: var(--el-text-color-secondary);
+  border-color: color-mix(in srgb, var(--restore-record-end-color) 26%, var(--el-border-color));
+  background: color-mix(in srgb, var(--restore-record-end-color) 10%, var(--el-bg-color));
+  color: var(--restore-record-end-color);
 }
 
 .restore-record-time-summary__copy {
@@ -6816,7 +7162,7 @@ function onClosed() {
 .restore-record-time-summary__value {
   margin-top: 3px;
   overflow: hidden;
-  color: rgb(51 65 85);
+  color: var(--el-text-color-regular);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -6824,6 +7170,37 @@ function onClosed() {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.restore-record-time-summary__value-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.restore-record-time-summary__issue {
+  display: inline-flex;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-warning-text);
+  cursor: help;
+}
+
+.restore-record-time-summary__issue:hover {
+  background: color-mix(in srgb, var(--color-warning-text) 10%, transparent);
+}
+
+.restore-record-time-summary__issue:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
 }
 
 .restore-record-time-summary__duration {
@@ -6843,7 +7220,7 @@ function onClosed() {
     90deg,
     color-mix(in srgb, var(--color-info) 30%, var(--el-border-color)) 0%,
     color-mix(in srgb, var(--color-primary) 28%, var(--el-border-color)) 48%,
-    color-mix(in srgb, var(--color-success) 30%, var(--el-border-color)) 100%
+    color-mix(in srgb, var(--restore-record-end-color) 30%, var(--el-border-color)) 100%
   );
   content: '';
 }
@@ -6858,14 +7235,14 @@ function onClosed() {
   padding: 4px 10px;
   border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--el-border-color-lighter));
   border-radius: 999px;
-  background: rgb(248 250 252);
-  box-shadow: 0 0 0 4px rgb(248 250 252);
+  background: var(--el-fill-color-lighter);
+  box-shadow: 0 0 0 4px var(--el-fill-color-lighter);
   white-space: nowrap;
 }
 
 .restore-record-time-summary__duration-label {
   color: var(--el-text-color-secondary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 650;
 }
 
@@ -6888,7 +7265,7 @@ function onClosed() {
   padding: 9px 11px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
-  background: #fff;
+  background: var(--el-bg-color);
 }
 
 .restore-record-runtime-summary__label {
@@ -6908,7 +7285,7 @@ function onClosed() {
 .restore-record-runtime-summary__metric {
   padding: 3px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-primary) 8%, #fff);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--el-bg-color));
   color: var(--el-text-color-regular);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -6958,7 +7335,7 @@ function onClosed() {
     background: linear-gradient(
       180deg,
       color-mix(in srgb, var(--color-info) 30%, var(--el-border-color)) 0%,
-      color-mix(in srgb, var(--color-success) 30%, var(--el-border-color)) 100%
+      color-mix(in srgb, var(--restore-record-end-color) 30%, var(--el-border-color)) 100%
     );
   }
 
@@ -6970,6 +7347,36 @@ function onClosed() {
     align-items: flex-start;
     flex-direction: column;
   }
+
+  .restore-record-time-context {
+    align-items: flex-start;
+  }
+
+  .restore-record-submitted-at {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+
+  .restore-record-mapping--with-result {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .restore-record-mapping--with-result .create-recovery-plan-mapping__arrow {
+    justify-self: start;
+    transform: rotate(90deg);
+  }
+
+  .restore-record-mapping--with-result .restore-record-mapping__result {
+    justify-content: flex-start;
+  }
+
+  .restore-record-mapping--with-result .create-recovery-plan-mapping__endpoint--target {
+    border-top: 1px solid var(--el-border-color-lighter);
+    border-left: 0;
+    padding-top: 6px;
+    padding-left: 0;
+  }
 }
 
 .restore-record-structure-card {
@@ -6978,6 +7385,40 @@ function onClosed() {
 
 .restore-record-mapping--with-result {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(112px, auto);
+}
+
+.restore-record-mapping--with-result .create-recovery-plan-mapping__endpoint--target {
+  border-left: 1px solid var(--el-border-color-lighter);
+  padding-left: 8px;
+}
+
+.restore-record-mapping__label {
+  grid-column: 1 / -1;
+  color: var(--el-text-color-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.restore-record-mapping__content {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.restore-record-mapping__endpoint-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.create-recovery-plan-mapping__endpoint--target.create-recovery-plan-mapping__endpoint--file .create-recovery-plan-mapping__icon {
+  color: #2563eb;
 }
 
 .restore-record-expand-panel .create-recovery-plan-mapping {
@@ -7026,7 +7467,7 @@ function onClosed() {
 
 .restore-record-snapshot-tree__parent {
   border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--el-border-color-lighter));
-  background: color-mix(in srgb, var(--color-primary) 5%, #fff);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--el-bg-color));
 }
 
 .restore-record-snapshot-tree__children {
