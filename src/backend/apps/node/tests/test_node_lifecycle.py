@@ -570,6 +570,45 @@ class NodeLifecycleTests(TestCase):
         )
         self.assertEqual(lifecycle["source_version"], "1.0.0")
 
+    def test_stale_failed_upgrade_is_hidden_when_exact_build_is_active(self):
+        self.node.status = Node.Status.ACTIVE
+        self.node.version = "1.2.0"
+        self.node.metadata = {"inventory": {"agent_commit": "a" * 40}}
+        self.node.save(update_fields=["status", "version", "metadata", "updated_at"])
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.FAILED,
+            payload={"target_version": "1.2.0", "target_commit": "A" * 40},
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        self.assertIsNone(
+            _upgrade_lifecycle_payload(org=self.org, node=self.node, task=task)
+        )
+
+    def test_failed_upgrade_remains_visible_when_build_does_not_match(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.FAILED,
+            payload={"target_version": "1.2.0", "target_commit": "b" * 40},
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        lifecycle = _upgrade_lifecycle_payload(
+            org=self.org,
+            node=self.node,
+            task=task,
+        )
+        self.assertEqual(lifecycle["state"], "failed")
+
     @patch(
         "apps.node.services.internal.node_lifecycle.agent_release_commit",
         return_value="a" * 40,

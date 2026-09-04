@@ -966,6 +966,7 @@ function flowSourceLifecycleStatusLabel(status: FlowSourceRow['status']) {
     probing: 'protection.sourceResources.capacitySyncing',
     removing: 'protection.backupsPage.sourcePendingDeleting',
     remove_failed: 'protection.backupsPage.sourcePendingDeleteFailed',
+    verification_pending: 'nodeLifecycle.state.upgrading',
   }[status] || `nodeLifecycle.state.${status}`
   return t(labelKey)
 }

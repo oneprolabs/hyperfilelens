@@ -103,10 +103,11 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 	slog.Info("detached upgrade scheduled", "install_dir", installDir, "archive", stagedArchive, "upgrade_log", upgradeLog)
 	// Keep task running: service stop + WS drop are expected while detached install.sh runs.
 	return "running", map[string]any{
-		"previous_version": selfupdate.Version,
-		"target_version":   targetVersion,
-		"mode":             "local_detached",
-		"upgrade_log":      upgradeLog,
+		"previous_version":    selfupdate.Version,
+		"target_version":      targetVersion,
+		"mode":                "local_detached",
+		"detached_started_at": time.Now().UTC().Format(time.RFC3339Nano),
+		"upgrade_log":         upgradeLog,
 	}, ""
 }
 
@@ -169,9 +170,10 @@ func (e *Engine) runAgentUninstall(ctx context.Context, rep ReporterSink, taskID
 	}
 	slog.Info("detached uninstall scheduled", "install_dir", installDir, "data_dir", dataDir, "uninstall_log", uninstallLog)
 	return "running", map[string]any{
-		"keep_data":     keepData,
-		"mode":          "local_detached",
-		"uninstall_log": uninstallLog,
+		"keep_data":           keepData,
+		"mode":                "local_detached",
+		"detached_started_at": time.Now().UTC().Format(time.RFC3339Nano),
+		"uninstall_log":       uninstallLog,
 	}, ""
 }
 
