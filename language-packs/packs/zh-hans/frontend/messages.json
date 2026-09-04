@@ -272,16 +272,16 @@
     "chipAudit": "今日审计 {n} 条",
     "chipAlertRules": "告警规则 {n}/{total} 已启用",
     "chipSourceMounted": "已挂载源端 {n}",
-    "attentionTitle": "需要关注",
-    "attentionKind": {
-      "task": "任务",
-      "alert": "告警",
-      "node": "节点",
-      "source": "源端"
-    },
-    "attentionTaskFail": "任务失败：{name}",
-    "attentionNodeOffline": "节点离线：{name}",
-    "attentionSourceError": "源端异常：{name}",
+    "eventsTitle": "事件",
+    "viewAllEvents": "事件",
+    "eventsEmptyDesc": "暂无近期事件。",
+    "openEvent": "查看",
+    "alertsTitle": "告警",
+    "alertsEmptyDesc": "暂无活动告警。",
+    "openAlert": "查看",
+    "alertStatusFiring": "触发中",
+    "alertStatusAcknowledged": "已确认",
+    "feedPreview": "显示 {shown} / {total}",
     "nodeRoleHint": "角色：{role}",
     "onboardingTitle": "开始配置数据保护",
     "onboardingDesc": "当前组织尚无节点与源端，按以下步骤完成基础配置后即可开始备份。",
@@ -309,6 +309,7 @@
     "quotaTitle": "授权配额与用量",
     "unlimited": "无限制",
     "chartTasks7d": "近 7 天任务结果",
+    "chartEmptyDesc": "近 7 天暂无任务结果。",
     "chartSuccess": "成功",
     "chartFailed": "失败",
     "chartCancelled": "已取消",
@@ -375,10 +376,6 @@
       "sourceAvailableLabel": "可用",
       "sourceUnavailableLabel": "不可用"
     },
-    "viewAllAttention": "查看运营状况",
-    "attentionPreview": "显示 {shown} 或 {total}",
-    "openAttentionItem": "查看",
-    "attentionEmptyDesc": "没有活跃的运营问题。",
     "quotaAlertPolicies": "告警规则",
     "capacityPlanner": {
       "title": "容量规划器",
@@ -387,7 +384,6 @@
       "selectRepositoryTitle": "选择一个存储仓库以开始规划",
       "selectRepositoryHint": "预测结果按存储仓库独立计算。",
       "plan": "计划",
-      "planning": "规划",
       "createRepository": "创建存储仓库",
       "capacity": "容量",
       "knownHint": "已知容量估计",
@@ -5237,8 +5233,8 @@
   "ops": {
     "nav": {
       "notificationChannels": "通知渠道",
-      "groupHealthMonitoring": "健康与监测",
-      "operationalHealth": "运营健康",
+      "groupHealthMonitoring": "监控",
+      "events": "事件",
       "monitor": "系统监控",
       "groupAlerting": "告警",
       "groupActivity": "活动",
@@ -6505,22 +6501,46 @@
       "emptyMark": "—",
       "userAgent": "用户Agent"
     },
-    "attention": {
-      "title": "运营健康",
-      "subtitle": "查看过去 24 小时内的活动告警、离线基础架构、源错误和任务失败。",
-      "allTypes": "所有类型",
-      "task": "任务",
-      "alert": "告警",
-      "node": "节点",
-      "source": "来源",
-      "audit": "审计",
-      "type": "类型",
-      "details": "细节",
-      "occurredAt": "发生过",
-      "action": "操作",
-      "open": "查看",
-      "empty": "没有活跃的运营问题。",
-      "loadFailed": "无法加载运行状况"
+    "events": {
+      "title": "事件",
+      "searchPlaceholder": "搜索事件或资源",
+      "allCategories": "全部类别",
+      "allSeverities": "全部严重级别",
+      "loadFailed": "加载事件失败",
+      "empty": "暂无事件",
+      "detailTitle": "事件详情",
+      "correlationId": "关联 ID",
+      "openResource": "打开资源",
+      "stats": {
+        "total": "事件总数",
+        "critical": "严重",
+        "warning": "警告",
+        "information": "信息"
+      },
+      "columns": {
+        "event": "事件",
+        "time": "时间",
+        "category": "类别",
+        "severity": "严重级别",
+        "resource": "资源",
+        "details": "详情"
+      },
+      "categories": {
+        "protection": "数据保护",
+        "infrastructure": "基础设施",
+        "system": "系统"
+      },
+      "severities": {
+        "critical": "严重",
+        "warning": "警告",
+        "information": "信息"
+      },
+      "periods": {
+        "last24Hours": "最近 24 小时",
+        "last7Days": "最近 7 天",
+        "last30Days": "最近 30 天",
+        "allTime": "全部时间"
+      }
     }
   },
   "login": {

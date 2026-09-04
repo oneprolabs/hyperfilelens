@@ -300,20 +300,16 @@
     "chipAudit": "{n} eventos de auditoría hoy",
     "chipAlertRules": "Reglas de alerta {n}/{total} activadas",
     "chipSourceMounted": "Fuentes {n} montadas",
-    "attentionTitle": "Necesita atención",
-    "viewAllAttention": "Ver estado operativo",
-    "attentionPreview": "Mostrando {shown} de {total}",
-    "openAttentionItem": "Ver",
-    "attentionEmptyDesc": "No hay problemas operativos activos.",
-    "attentionKind": {
-      "task": "Tarea",
-      "alert": "Alerta",
-      "node": "Nodo",
-      "source": "Fuente"
-    },
-    "attentionTaskFail": "Tarea fallida: {name}",
-    "attentionNodeOffline": "Nodo sin conexión: {name}",
-    "attentionSourceError": "Error de origen: {name}",
+    "eventsTitle": "Eventos",
+    "viewAllEvents": "Eventos",
+    "eventsEmptyDesc": "No hay eventos recientes.",
+    "openEvent": "Ver",
+    "alertsTitle": "Alertas",
+    "alertsEmptyDesc": "No hay alertas activas.",
+    "openAlert": "Ver",
+    "alertStatusFiring": "Activa",
+    "alertStatusAcknowledged": "Confirmada",
+    "feedPreview": "Mostrando {shown} de {total}",
     "nodeRoleHint": "Rol: {role}",
     "onboardingTitle": "Primeros pasos",
     "onboardingDesc": "Aún no hay nodos ni orígenes. Complete estos pasos para empezar a proteger sus datos.",
@@ -337,7 +333,7 @@
     "runningTasksTitle": "Tareas en ejecución",
     "noRunningTasks": "No hay tareas en ejecución",
     "storageTitle": "Uso del repositorio",
-    "noRepos": "No hay repositorios",
+    "noRepos": "No hay repositorios configurados.",
     "quotaTitle": "Cuota y uso de la licencia",
     "quotaAlertPolicies": "Reglas de alerta",
     "unlimited": "Ilimitado",
@@ -348,7 +344,6 @@
       "selectRepositoryTitle": "Elija un repositorio para empezar a planificar",
       "selectRepositoryHint": "Las previsiones se calculan para cada repositorio.",
       "plan": "Planificación",
-      "planning": "Planificación",
       "createRepository": "Crear repositorio",
       "capacity": "Capacidad",
       "knownHint": "Estimación de la capacidad conocida",
@@ -379,14 +374,15 @@
       "statusSelectRepository": "Seleccione el repositorio"
     },
     "chartTasks7d": "Resultado de la tarea (7 días)",
+    "chartEmptyDesc": "No hay resultados de tareas en los últimos 7 días.",
     "chartSuccess": "Éxito",
     "chartFailed": "Fallido",
     "chartCancelled": "Cancelado",
     "quickLinksTitle": "Enlaces rápidos",
     "linkSources": "Recursos fuente",
-    "linkTasks": "Lista de tareas",
+    "linkTasks": "Tareas",
     "linkAlerts": "Alertas",
-    "viewAllAlerts": "Todas las alertas",
+    "viewAllAlerts": "Alertas",
     "goTo": "Abrir {target}",
     "resolveAction": "Resolver",
     "storageTotal": "Total",
@@ -412,8 +408,8 @@
       "connectorVerify": "Verificación de recuperación",
       "step3Title": "Simulacro de recuperación",
       "step3Desc": "Listo para restaurar",
-      "step3ChipNoPolicy": "Políticas de copia de seguridad pendientes",
-      "step3ChipNoRecoveryPlan": "Pendiente de verificación",
+      "step3ChipNoPolicy": "No hay políticas de copia de seguridad activas",
+      "step3ChipNoRecoveryPlan": "No hay plan de recuperación configurado",
       "step3ChipNotDrilled": "Aún no se ha ejecutado",
       "step3ChipLastSuccess": "Último simulacro · éxito · {time}",
         "step3ChipLastFailed": "Último simulacro · fallido · {time}",
@@ -5265,7 +5261,7 @@
   "ops": {
     "nav": {
       "groupHealthMonitoring": "Vigilancia de la salud",
-      "operationalHealth": "Salud operacional",
+      "events": "Eventos",
       "monitor": "Supervisión del sistema",
       "groupAlerting": "Alerta",
       "groupActivity": "Actividad",
@@ -5274,22 +5270,46 @@
       "notificationChannels": "Canales de notificación",
       "deliveryHistory": "Historial de entrega"
     },
-    "attention": {
-      "title": "Salud operacional",
-      "subtitle": "Revise alertas activas, infraestructura sin conexión, errores fuente y fallos de tarea de las últimas 24 horas.",
-      "allTypes": "Todos los tipos",
-      "task": "Tarea",
-      "alert": "Alerta",
-      "node": "Nodo",
-      "source": "Fuente",
-      "audit": "Auditoría",
-      "type": "Tipo",
-      "details": "Detalles",
-      "occurredAt": "Fecha",
-      "action": "Medida",
-      "open": "Vista",
-      "empty": "No hay cuestiones operacionales activas.",
-      "loadFailed": "Falta para cargar la salud operacional"
+    "events": {
+      "title": "Eventos",
+      "searchPlaceholder": "Buscar eventos o recursos",
+      "allCategories": "Todas las categorías",
+      "allSeverities": "Todos los niveles de gravedad",
+      "loadFailed": "No se pudieron cargar los eventos",
+      "empty": "No hay eventos",
+      "detailTitle": "Detalles del evento",
+      "correlationId": "ID de correlación",
+      "openResource": "Abrir recurso",
+      "stats": {
+        "total": "Total de eventos",
+        "critical": "Críticos",
+        "warning": "Advertencias",
+        "information": "Información"
+      },
+      "columns": {
+        "event": "Evento",
+        "time": "Hora",
+        "category": "Categoría",
+        "severity": "Gravedad",
+        "resource": "Recurso",
+        "details": "Detalles"
+      },
+      "categories": {
+        "protection": "Protección",
+        "infrastructure": "Infraestructura",
+        "system": "Sistema"
+      },
+      "severities": {
+        "critical": "Crítico",
+        "warning": "Advertencia",
+        "information": "Información"
+      },
+      "periods": {
+        "last24Hours": "Últimas 24 horas",
+        "last7Days": "Últimos 7 días",
+        "last30Days": "Últimos 30 días",
+        "allTime": "Todo el tiempo"
+      }
     },
     "monitorPage": {
       "subtitle": "Monitoreo global del servidor: CPU, memoria, disco, red, disco IO y IOPS.",
@@ -5350,7 +5370,7 @@
       "uptimeMinutes": "{minutes}m {secs}s"
     },
     "task": {
-      "title": "Lista de tareas",
+      "title": "Tareas",
       "sideTasks": "Tareas",
       "sideAudit": "Registros de auditoría",
       "btnRefresh": "Actualizar",

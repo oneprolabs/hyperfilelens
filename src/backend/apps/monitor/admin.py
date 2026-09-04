@@ -2,10 +2,36 @@ from django.contrib import admin
 
 from apps.monitor.models import (
     DeploymentHost,
+    OperationalEvent,
     RepositoryUsageMetric,
     ResourceMetric,
     SystemMetric,
 )
+
+
+@admin.register(OperationalEvent)
+class OperationalEventAdmin(admin.ModelAdmin):
+    list_display = (
+        "occurred_at",
+        "organization",
+        "severity",
+        "category",
+        "title",
+        "resource_name",
+    )
+    list_filter = ("category", "severity")
+    search_fields = ("title", "details", "resource_name", "correlation_id")
+    ordering = ("-occurred_at",)
+    readonly_fields = [field.name for field in OperationalEvent._meta.fields]
+
+    def has_add_permission(self, request) -> bool:
+        return False
+
+    def has_change_permission(self, request, obj=None) -> bool:
+        return False
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
 
 
 @admin.register(DeploymentHost)
