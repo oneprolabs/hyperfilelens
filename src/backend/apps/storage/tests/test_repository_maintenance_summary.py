@@ -123,6 +123,161 @@ class RepositoryMaintenanceSummaryTests(SimpleTestCase):
 
         self.assertIsNone(summary["pack_gc"])
 
+    def test_quick_standard_stages_distinguish_not_run_missing_statistics_and_zero(self):
+        payload = {
+            "schedule": {
+                "runs": {
+                    "quick-rewrite-contents": [
+                        {
+                            "start": "2026-09-03T01:00:01Z",
+                            "success": True,
+                            "extra": [
+                                {
+                                    "kind": "rewriteContentsStats",
+                                    "data": {
+                                        "toRewriteContentCount": 0,
+                                        "toRewriteContentSize": 0,
+                                        "rewrittenContentCount": 0,
+                                        "rewrittenContentSize": 0,
+                                        "retainedContentCount": 0,
+                                        "retainedContentSize": 0,
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                    "index-compaction": [
+                        {
+                            "start": "2026-09-03T01:00:02Z",
+                            "success": True,
+                            "extra": [],
+                        }
+                    ],
+                    "cleanup-logs": [
+                        {
+                            "start": "2026-09-03T01:00:03Z",
+                            "success": True,
+                            "extra": [
+                                {
+                                    "kind": "cleanupLogsStats",
+                                    "data": {
+                                        "deletedBlobCount": 0,
+                                        "deletedBlobSize": 0,
+                                        "retainedBlobCount": 12,
+                                        "retainedBlobSize": 4096,
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        }
+
+        summary = parse_maintenance_info_summary(
+            json.dumps(payload),
+            mode="quick",
+            started_at=datetime(2026, 9, 3, 1, 0, tzinfo=UTC),
+        )
+
+        stages = summary["stages"]
+        self.assertEqual([stage["type"] for stage in stages], [
+            "content_rewrite",
+            "pack_gc",
+            "index_compaction",
+            "log_cleanup",
+        ])
+        self.assertEqual(stages[0]["metrics"]["rewritten_count"], 0)
+        self.assertTrue(stages[0]["statistics_available"])
+        self.assertEqual(stages[1]["status"], "not_run")
+        self.assertEqual(stages[2]["status"], "completed")
+        self.assertFalse(stages[2]["statistics_available"])
+        self.assertEqual(stages[3]["metrics"]["deleted_count"], 0)
+        self.assertEqual(stages[3]["metrics"]["retained_bytes"], 4096)
+
+    def test_quick_epoch_stages_preserve_false_advance_result(self):
+        payload = {
+            "schedule": {
+                "runs": {
+                    "compact-single-epoch": [
+                        {
+                            "start": "2026-09-03T02:00:01Z",
+                            "success": True,
+                            "extra": [
+                                {
+                                    "kind": "compactSingleEpochStats",
+                                    "data": {
+                                        "supersededIndexBlobCount": 9,
+                                        "supersededIndexTotalSize": 170_917_888,
+                                        "epoch": 42,
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                    "advance-epoch": [
+                        {
+                            "start": "2026-09-03T02:00:02Z",
+                            "success": True,
+                            "extra": [
+                                {
+                                    "kind": "advanceEpochStats",
+                                    "data": {
+                                        "currentEpoch": 43,
+                                        "wasAdvanced": False,
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        }
+
+        summary = parse_maintenance_info_summary(
+            json.dumps(payload),
+            mode="quick",
+            started_at=datetime(2026, 9, 3, 2, 0, tzinfo=UTC),
+        )
+
+        stages = summary["stages"]
+        self.assertEqual([stage["type"] for stage in stages], [
+            "epoch_compaction",
+            "epoch_advance",
+        ])
+        self.assertEqual(stages[1]["metrics"], {
+            "current_epoch": 43,
+            "advanced": False,
+        })
+
+    def test_quick_summary_ignores_old_stage_runs(self):
+        payload = {
+            "schedule": {
+                "runs": {
+                    "cleanup-logs": [
+                        {
+                            "start": "2026-09-02T02:00:02Z",
+                            "success": True,
+                            "extra": [
+                                {
+                                    "kind": "cleanupLogsStats",
+                                    "data": {"deletedBlobCount": 99},
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+
+        summary = parse_maintenance_info_summary(
+            json.dumps(payload),
+            mode="quick",
+            started_at=datetime(2026, 9, 3, 2, 0, tzinfo=UTC),
+        )
+
+        self.assertIsNone(summary)
+
     def test_stderr_fallback_is_approximate_and_has_no_pack_claim(self):
         summary = parse_maintenance_stderr_summary(
             "\n".join(
@@ -156,3 +311,54 @@ class RepositoryMaintenanceSummaryTests(SimpleTestCase):
 
         self.assertEqual(summary["content_gc"]["in_use_count"], 4)
         self.assertEqual(summary["source"], "stderr")
+
+    def test_agent_summary_is_allowlisted_before_event_persistence(self):
+        summary = maintenance_summary_from_result(
+            {
+                "maintenance_summary": {
+                    "schema_version": 1,
+                    "mode": "full",
+                    "source": "maintenance_info",
+                    "approximate": False,
+                    "content_gc": {"deleted_count": 0, "deleted_bytes": None},
+                    "pack_gc": None,
+                    "unexpected": "must not be persisted",
+                    "stages": [
+                        {
+                            "type": "content_rewrite",
+                            "status": "completed",
+                            "statistics_available": True,
+                            "metrics": {
+                                "rewritten_count": 0,
+                                "rewritten_bytes": 0,
+                                "object_name": "must not be persisted",
+                            },
+                        },
+                        {
+                            "type": "future_stage",
+                            "status": "completed",
+                            "statistics_available": True,
+                            "metrics": {"secret": 42},
+                        },
+                    ],
+                }
+            },
+            mode="quick",
+        )
+
+        self.assertEqual(summary, {
+            "schema_version": 1,
+            "mode": "quick",
+            "source": "maintenance_info",
+            "approximate": False,
+            "content_gc": {"deleted_count": 0},
+            "pack_gc": None,
+            "stages": [
+                {
+                    "type": "content_rewrite",
+                    "status": "completed",
+                    "statistics_available": True,
+                    "metrics": {"rewritten_count": 0, "rewritten_bytes": 0},
+                }
+            ],
+        })

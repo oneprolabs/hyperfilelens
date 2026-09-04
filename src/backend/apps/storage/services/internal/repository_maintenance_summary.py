@@ -117,6 +117,317 @@ def _pack_gc(data: dict[str, Any] | None) -> dict[str, int] | None:
     }
 
 
+def _optional_nonnegative_int(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _selected_metrics(
+    data: dict[str, Any] | None,
+    fields: dict[str, str],
+    boolean_fields: dict[str, str] | None = None,
+) -> dict[str, int | bool] | None:
+    if data is None:
+        return None
+    metrics: dict[str, int | bool] = {}
+    for output_key, input_key in fields.items():
+        value = _optional_nonnegative_int(data.get(input_key))
+        if value is not None:
+            metrics[output_key] = value
+    for output_key, input_key in (boolean_fields or {}).items():
+        value = data.get(input_key)
+        if isinstance(value, bool):
+            metrics[output_key] = value
+    return metrics or None
+
+
+def _maintenance_stage(
+    stage_type: str,
+    run: dict[str, Any] | None,
+    *,
+    statistics_kind: str,
+    metric_fields: dict[str, str] | None,
+    boolean_fields: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    if run is None:
+        return {
+            "type": stage_type,
+            "status": "not_run",
+            "statistics_available": False,
+            "metrics": None,
+        }
+    metrics = (
+        _selected_metrics(
+            _run_data(run, statistics_kind),
+            metric_fields,
+            boolean_fields,
+        )
+        if metric_fields is not None
+        else None
+    )
+    return {
+        "type": stage_type,
+        "status": "completed",
+        "statistics_available": metrics is not None,
+        "metrics": metrics,
+    }
+
+
+def _quick_maintenance_stages(
+    runs: dict[str, Any],
+    *,
+    started_at: datetime,
+) -> list[dict[str, Any]] | None:
+    epoch_compaction = _current_successful_run(
+        runs.get("compact-single-epoch"),
+        started_at=started_at,
+    )
+    epoch_advance = _current_successful_run(
+        runs.get("advance-epoch"),
+        started_at=started_at,
+    )
+    if epoch_compaction is not None or epoch_advance is not None:
+        return [
+            _maintenance_stage(
+                "epoch_compaction",
+                epoch_compaction,
+                statistics_kind="compactSingleEpochStats",
+                metric_fields={
+                    "superseded_index_count": "supersededIndexBlobCount",
+                    "superseded_index_bytes": "supersededIndexTotalSize",
+                    "epoch": "epoch",
+                },
+            ),
+            _maintenance_stage(
+                "epoch_advance",
+                epoch_advance,
+                statistics_kind="advanceEpochStats",
+                metric_fields={"current_epoch": "currentEpoch"},
+                boolean_fields={"advanced": "wasAdvanced"},
+            ),
+        ]
+
+    rewrite = _current_successful_run(
+        runs.get("quick-rewrite-contents"),
+        started_at=started_at,
+    )
+    pack = _current_successful_run(
+        runs.get("quick-delete-blobs"),
+        started_at=started_at,
+    ) or _current_successful_run(
+        runs.get("full-delete-blobs"),
+        started_at=started_at,
+    )
+    index_compaction = _current_successful_run(
+        runs.get("index-compaction"),
+        started_at=started_at,
+    )
+    log_cleanup = _current_successful_run(
+        runs.get("cleanup-logs"),
+        started_at=started_at,
+    )
+    if all(run is None for run in (rewrite, pack, index_compaction, log_cleanup)):
+        return None
+
+    return [
+        _maintenance_stage(
+            "content_rewrite",
+            rewrite,
+            statistics_kind="rewriteContentsStats",
+            metric_fields={
+                "found_count": "toRewriteContentCount",
+                "found_bytes": "toRewriteContentSize",
+                "rewritten_count": "rewrittenContentCount",
+                "rewritten_bytes": "rewrittenContentSize",
+                "retained_count": "retainedContentCount",
+                "retained_bytes": "retainedContentSize",
+            },
+        ),
+        _maintenance_stage(
+            "pack_gc",
+            pack,
+            statistics_kind="deleteUnreferencedPacksStats",
+            metric_fields={
+                "unreferenced_count": "unreferencedPackCount",
+                "unreferenced_bytes": "unreferencedTotalSize",
+                "deleted_count": "deletedPackCount",
+                "deleted_bytes": "deletedTotalSize",
+                "retained_count": "retainedPackCount",
+                "retained_bytes": "retainedTotalSize",
+            },
+        ),
+        _maintenance_stage(
+            "index_compaction",
+            index_compaction,
+            statistics_kind="compactIndexesStats",
+            metric_fields=None,
+        ),
+        _maintenance_stage(
+            "log_cleanup",
+            log_cleanup,
+            statistics_kind="cleanupLogsStats",
+            metric_fields={
+                "candidate_count": "toDeleteBlobCount",
+                "candidate_bytes": "toDeleteBlobSize",
+                "deleted_count": "deletedBlobCount",
+                "deleted_bytes": "deletedBlobSize",
+                "retained_count": "retainedBlobCount",
+                "retained_bytes": "retainedBlobSize",
+            },
+        ),
+    ]
+
+
+_CONTENT_GC_KEYS = frozenset(
+    {
+        "unused_count",
+        "unused_bytes",
+        "deleted_count",
+        "deleted_bytes",
+        "deferred_count",
+        "deferred_bytes",
+        "in_use_count",
+        "in_use_bytes",
+        "in_use_system_count",
+        "in_use_system_bytes",
+        "recovered_count",
+        "recovered_bytes",
+    }
+)
+_PACK_GC_KEYS = frozenset(
+    {
+        "unreferenced_count",
+        "unreferenced_bytes",
+        "deleted_count",
+        "deleted_bytes",
+        "retained_count",
+        "retained_bytes",
+    }
+)
+_STAGE_METRIC_KEYS = {
+    "content_rewrite": frozenset(
+        {
+            "found_count",
+            "found_bytes",
+            "rewritten_count",
+            "rewritten_bytes",
+            "retained_count",
+            "retained_bytes",
+        }
+    ),
+    "pack_gc": _PACK_GC_KEYS,
+    "index_compaction": frozenset(),
+    "log_cleanup": frozenset(
+        {
+            "candidate_count",
+            "candidate_bytes",
+            "deleted_count",
+            "deleted_bytes",
+            "retained_count",
+            "retained_bytes",
+        }
+    ),
+    "epoch_compaction": frozenset(
+        {"superseded_index_count", "superseded_index_bytes", "epoch"}
+    ),
+    "epoch_advance": frozenset({"current_epoch"}),
+}
+
+
+def _normalize_metric_group(
+    value: object,
+    allowed_keys: frozenset[str],
+) -> dict[str, int] | None:
+    if not isinstance(value, dict):
+        return None
+    result: dict[str, int] = {}
+    for key in allowed_keys:
+        parsed = _optional_nonnegative_int(value.get(key))
+        if parsed is not None:
+            result[key] = parsed
+    return result or None
+
+
+def _normalize_stages(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        stage_type = item.get("type")
+        status = item.get("status")
+        if (
+            not isinstance(stage_type, str)
+            or stage_type not in _STAGE_METRIC_KEYS
+            or stage_type in seen
+            or status not in {"completed", "not_run"}
+        ):
+            continue
+        seen.add(stage_type)
+        metrics = (
+            _normalize_metric_group(item.get("metrics"), _STAGE_METRIC_KEYS[stage_type])
+            if status == "completed"
+            else None
+        )
+        if (
+            status == "completed"
+            and stage_type == "epoch_advance"
+            and isinstance(item.get("metrics"), dict)
+            and isinstance(item["metrics"].get("advanced"), bool)
+        ):
+            metrics = dict(metrics or {})
+            metrics["advanced"] = item["metrics"]["advanced"]
+        result.append(
+            {
+                "type": stage_type,
+                "status": status,
+                "statistics_available": (
+                    item.get("statistics_available") is True and metrics is not None
+                ),
+                "metrics": metrics,
+            }
+        )
+    return result
+
+
+def _normalize_existing_summary(
+    value: object,
+    *,
+    mode: str,
+) -> dict[str, Any] | None:
+    if (
+        not isinstance(value, dict)
+        or value.get("schema_version") != MAINTENANCE_SUMMARY_SCHEMA_VERSION
+        or value.get("source") not in {"maintenance_info", "stderr"}
+    ):
+        return None
+    content = _normalize_metric_group(value.get("content_gc"), _CONTENT_GC_KEYS)
+    packs = _normalize_metric_group(value.get("pack_gc"), _PACK_GC_KEYS)
+    stages = _normalize_stages(value.get("stages")) if mode == "quick" else []
+    if content is None and packs is None and not stages:
+        return None
+    summary: dict[str, Any] = {
+        "schema_version": MAINTENANCE_SUMMARY_SCHEMA_VERSION,
+        "mode": mode,
+        "source": value["source"],
+        "approximate": value.get("approximate") is True,
+        "content_gc": content,
+        "pack_gc": packs,
+    }
+    if stages:
+        summary["stages"] = stages
+    return summary
+
+
 def parse_maintenance_info_summary(
     stdout: str,
     *,
@@ -145,9 +456,14 @@ def parse_maintenance_info_summary(
 
     content = _content_gc(_run_data(snapshot_run, "snapshotGCStats"))
     packs = _pack_gc(_run_data(pack_run, "deleteUnreferencedPacksStats"))
-    if content is None and packs is None:
+    stages = (
+        _quick_maintenance_stages(runs, started_at=started_at)
+        if mode == "quick"
+        else None
+    )
+    if content is None and packs is None and not stages:
         return None
-    return {
+    summary = {
         "schema_version": MAINTENANCE_SUMMARY_SCHEMA_VERSION,
         "mode": mode,
         "source": "maintenance_info",
@@ -155,6 +471,9 @@ def parse_maintenance_info_summary(
         "content_gc": content,
         "pack_gc": packs,
     }
+    if stages:
+        summary["stages"] = stages
+    return summary
 
 
 def _parse_size(value: str) -> int | None:
@@ -219,13 +538,16 @@ def maintenance_summary_from_result(
 ) -> dict[str, Any] | None:
     if not isinstance(result, dict):
         return None
-    existing = result.get("maintenance_summary")
-    if isinstance(existing, dict) and existing.get("schema_version") == MAINTENANCE_SUMMARY_SCHEMA_VERSION:
+    existing = _normalize_existing_summary(result.get("maintenance_summary"), mode=mode)
+    if existing is not None:
         return existing
     maintenance = result.get("maintenance")
     if isinstance(maintenance, dict):
-        nested = maintenance.get("maintenance_summary")
-        if isinstance(nested, dict) and nested.get("schema_version") == MAINTENANCE_SUMMARY_SCHEMA_VERSION:
+        nested = _normalize_existing_summary(
+            maintenance.get("maintenance_summary"),
+            mode=mode,
+        )
+        if nested is not None:
             return nested
         stderr = maintenance.get("stderr") or maintenance.get("stderr_tail")
     else:
