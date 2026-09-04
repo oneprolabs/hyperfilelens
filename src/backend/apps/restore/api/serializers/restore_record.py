@@ -66,6 +66,26 @@ class RestoreRecordSerializer(serializers.ModelSerializer):
     source_snapshot_uid = serializers.SerializerMethodField()
     task_summary = serializers.SerializerMethodField()
     target_display_path = serializers.SerializerMethodField()
+    restored_item_count = serializers.SerializerMethodField()
+    skipped_item_count = serializers.SerializerMethodField()
+    failed_item_count = serializers.SerializerMethodField()
+    cancelled_item_count = serializers.SerializerMethodField()
+
+    @staticmethod
+    def _item_count(obj: RestoreRecord, status: str) -> int:
+        return sum(1 for item in obj.items.all() if item.status == status)
+
+    def get_restored_item_count(self, obj: RestoreRecord) -> int:
+        return self._item_count(obj, RestoreRecordItem.Status.SUCCESS)
+
+    def get_skipped_item_count(self, obj: RestoreRecord) -> int:
+        return self._item_count(obj, RestoreRecordItem.Status.SKIPPED)
+
+    def get_failed_item_count(self, obj: RestoreRecord) -> int:
+        return self._item_count(obj, RestoreRecordItem.Status.FAILED)
+
+    def get_cancelled_item_count(self, obj: RestoreRecord) -> int:
+        return self._item_count(obj, RestoreRecordItem.Status.CANCELLED)
 
     def get_target_display_path(self, obj: RestoreRecord) -> str:
         roots = self.context.get("nas_share_root_by_record_id")
@@ -112,6 +132,10 @@ class RestoreRecordSerializer(serializers.ModelSerializer):
             "created_by_id",
             "created_at",
             "updated_at",
+            "restored_item_count",
+            "skipped_item_count",
+            "failed_item_count",
+            "cancelled_item_count",
             "items",
             "task_summary",
         ]

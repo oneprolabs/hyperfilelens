@@ -1759,6 +1759,269 @@ func TestRestoreTargetPathWithFinalSemanticsUsesTargetPathAsIs(t *testing.T) {
 	}
 }
 
+func TestManagedRestoreConflictModeDefaultsToOverwriteAndRejectsUnknown(t *testing.T) {
+	mode, err := managedRestoreConflictMode(Payload{Extra: map[string]any{}})
+	if err != nil || mode != "overwrite" {
+		t.Fatalf("legacy missing mode = %q, %v; want overwrite", mode, err)
+	}
+	mode, err = managedRestoreConflictMode(Payload{Extra: map[string]any{"conflict_mode": " SKIP "}})
+	if err != nil || mode != "skip" {
+		t.Fatalf("normalized mode = %q, %v; want skip", mode, err)
+	}
+	if _, err = managedRestoreConflictMode(Payload{Extra: map[string]any{"conflict_mode": "rename"}}); err == nil {
+		t.Fatal("expected unknown conflict mode to fail")
+	}
+}
+
+func TestManagedRestoreConflictArgsAreExplicit(t *testing.T) {
+	skip := managedRestoreConflictArgs("skip")
+	for _, flag := range []string{"--skip-existing", "--no-overwrite-files", "--no-overwrite-symlinks", "--skip-owners", "--skip-permissions", "--skip-times"} {
+		if !slices.Contains(skip, flag) {
+			t.Fatalf("skip args %v do not contain %q", skip, flag)
+		}
+	}
+	if slices.Contains(skip, "--no-overwrite-directories") {
+		t.Fatalf("skip args must traverse existing container directories without changing their metadata: %v", skip)
+	}
+	overwrite := managedRestoreConflictArgs("overwrite")
+	for _, flag := range []string{"--overwrite-files", "--overwrite-directories", "--overwrite-symlinks"} {
+		if !slices.Contains(overwrite, flag) {
+			t.Fatalf("overwrite args %v do not contain %q", overwrite, flag)
+		}
+	}
+}
+
+func TestRestoreTargetExistsPreservesExistingFileAndDirectory(t *testing.T) {
+	root := t.TempDir()
+	fileTarget := filepath.Join(root, "existing.txt")
+	want := []byte("keep this content")
+	if err := os.WriteFile(fileTarget, want, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(fileTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exists, err := restoreTargetExists(fileTarget)
+	if err != nil || !exists {
+		t.Fatalf("existing file = %v, %v; want true", exists, err)
+	}
+	afterContent, err := os.ReadFile(fileTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(fileTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterContent, want) || after.Mode() != before.Mode() || !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("skip preflight mutated target: content=%q before=%v after=%v", afterContent, before, after)
+	}
+
+	directoryTarget := filepath.Join(root, "existing-directory")
+	if err := os.Mkdir(directoryTarget, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := restoreTargetExists(directoryTarget); err != nil || !exists {
+		t.Fatalf("existing directory = %v, %v; want true", exists, err)
+	}
+	if exists, err := restoreTargetExists(filepath.Join(root, "missing")); err != nil || exists {
+		t.Fatalf("missing target = %v, %v; want false", exists, err)
+	}
+}
+
+func TestClassifyManagedRestoreFailureExplainsTargetPermission(t *testing.T) {
+	code, message, remediation := classifyManagedRestoreFailure(
+		"Restore failed: open /tmp/existing: permission denied",
+		"/tmp/existing",
+		"overwrite",
+	)
+	if code != "RESTORE_TARGET_PERMISSION_DENIED" || !strings.Contains(message, "/tmp/existing") || remediation == "" {
+		t.Fatalf("unexpected permission classification: %q %q %q", code, message, remediation)
+	}
+	code, message, remediation = classifyManagedRestoreFailure("Restore failed: repository disconnected", "/restore", "overwrite")
+	if code != "RESTORE_AGENT_FAILED" || message != "Restore failed: repository disconnected" || remediation != "" {
+		t.Fatalf("unexpected generic classification: %q %q %q", code, message, remediation)
+	}
+}
+
+func TestRunManagedRestoreSkipPreservesExistingFinalTargets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	for _, pathType := range []string{"file", "directory"} {
+		t.Run(pathType, func(t *testing.T) {
+			tempDir := t.TempDir()
+			commandLog := filepath.Join(tempDir, "commands.log")
+			kopiaPath := writeManagedRestoreTestKopia(t, tempDir, commandLog, pathType, "")
+			targetPath := filepath.Join(tempDir, "existing-target")
+			if pathType == "directory" {
+				if err := os.Mkdir(targetPath, 0o750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(targetPath, "keep.txt"), []byte("keep"), 0o640); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(targetPath, []byte("keep"), 0o640); err != nil {
+				t.Fatal(err)
+			}
+
+			engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+				DataDir: filepath.Join(tempDir, "data"), KopiaPath: kopiaPath,
+			}})
+			progress := &recordingProgressSink{}
+			status, result, message := engine.runManagedRestore(
+				context.Background(), ReporterSink{Sink: progress}, "restore-skip-"+pathType,
+				managedRestoreTestPayload(tempDir, targetPath, pathType, "skip"),
+			)
+			if status != "success" || message != "" || result["restore_outcome"] != "skipped" {
+				t.Fatalf("unexpected skip result: status=%q message=%q result=%#v", status, message, result)
+			}
+			if result["skipped_item_count"] != 1 || result["restored_item_count"] != 0 {
+				t.Fatalf("unexpected skip counts: %#v", result)
+			}
+			if len(progress.events) == 0 {
+				t.Fatal("skip did not report terminal progress")
+			}
+			completion := progress.events[len(progress.events)-1]
+			if completion["bytes_done"] != int64(0) || completion["processed_count"] != int64(0) {
+				t.Fatalf("skip reported restored bytes or objects: %#v", completion)
+			}
+			commands, err := os.ReadFile(commandLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(commands), "--progress restore") {
+				t.Fatalf("skip invoked Kopia restore for existing final target: %q", commands)
+			}
+			keptPath := targetPath
+			if pathType == "directory" {
+				keptPath = filepath.Join(targetPath, "keep.txt")
+			}
+			content, err := os.ReadFile(keptPath)
+			if err != nil || string(content) != "keep" {
+				t.Fatalf("existing target was not preserved: content=%q err=%v", content, err)
+			}
+		})
+	}
+}
+
+func TestRunManagedRestoreOverwritePassesExplicitKopiaFlags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tempDir := t.TempDir()
+	commandLog := filepath.Join(tempDir, "commands.log")
+	kopiaPath := writeManagedRestoreTestKopia(t, tempDir, commandLog, "file", "")
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir: filepath.Join(tempDir, "data"), KopiaPath: kopiaPath,
+	}})
+	targetPath := filepath.Join(tempDir, "new-target")
+
+	status, result, message := engine.runManagedRestore(
+		context.Background(), ReporterSink{}, "restore-overwrite",
+		managedRestoreTestPayload(tempDir, targetPath, "file", "overwrite"),
+	)
+	if status != "success" || message != "" || result["restore_outcome"] != "restored" {
+		t.Fatalf("unexpected overwrite result: status=%q message=%q result=%#v", status, message, result)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreCommand := string(commands)
+	for _, flag := range []string{"--overwrite-files", "--overwrite-directories", "--overwrite-symlinks"} {
+		if !strings.Contains(restoreCommand, flag) {
+			t.Fatalf("restore command does not contain %q: %q", flag, restoreCommand)
+		}
+	}
+}
+
+func TestRunManagedRestoreClassifiesKopiaPermissionFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tempDir := t.TempDir()
+	commandLog := filepath.Join(tempDir, "commands.log")
+	kopiaPath := writeManagedRestoreTestKopia(t, tempDir, commandLog, "file", "permission")
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir: filepath.Join(tempDir, "data"), KopiaPath: kopiaPath,
+	}})
+	targetPath := filepath.Join(tempDir, "protected-target")
+
+	status, result, message := engine.runManagedRestore(
+		context.Background(), ReporterSink{}, "restore-permission",
+		managedRestoreTestPayload(tempDir, targetPath, "file", "overwrite"),
+	)
+	if status != "failed" || result["error_code"] != "RESTORE_TARGET_PERMISSION_DENIED" {
+		t.Fatalf("unexpected permission result: status=%q message=%q result=%#v", status, message, result)
+	}
+	if !strings.Contains(message, targetPath) || strings.Contains(message, "error copying") {
+		t.Fatalf("public message is not concise and target-specific: %q", message)
+	}
+	if !strings.Contains(stringValue(result["error_remediation"]), "Use Skip") {
+		t.Fatalf("permission remediation is missing: %#v", result)
+	}
+	if !strings.Contains(stringValue(result["error_diagnostic"]), "error copying") {
+		t.Fatalf("raw bounded diagnostic is missing: %#v", result)
+	}
+}
+
+func managedRestoreTestPayload(tempDir string, targetPath string, pathType string, conflictMode string) Payload {
+	return ParsePayload(map[string]any{
+		"snapshot_id":           "snapshot-1",
+		"target_path":           targetPath,
+		"target_path_semantics": "final",
+		"source_path":           "/source/item",
+		"source_path_type":      pathType,
+		"conflict_mode":         conflictMode,
+		"skip_ownership_check":  true,
+		"repository": map[string]any{
+			"id":             1010,
+			"type":           "proxy_fs",
+			"path":           filepath.Join(tempDir, "repository"),
+			"kopia_password": "repo-pass",
+		},
+	})
+}
+
+func writeManagedRestoreTestKopia(
+	t *testing.T,
+	tempDir string,
+	commandLog string,
+	pathType string,
+	restoreFailure string,
+) string {
+	t.Helper()
+	fileCount := 1
+	directoryCount := 0
+	if pathType == "directory" {
+		fileCount = 0
+		directoryCount = 1
+	}
+	restoreCase := "echo 'Restored 1 files, 0 directories and 0 symbolic links (4 B).' >&2; exit 0"
+	if restoreFailure == "permission" {
+		restoreCase = "echo 'error restoring: restore error: error copying: copy file: error creating file: open protected-target: permission denied' >&2; exit 1"
+	}
+	summary := fmt.Sprintf(
+		`{"version":1,"path_type":%q,"size_bytes":4,"file_count":%d,"directory_count":%d,"symlink_count":0,"summary_available":true,"complete":true}`,
+		pathType,
+		fileCount,
+		directoryCount,
+	)
+	script := fmt.Sprintf(
+		"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\ncase \"$*\" in\n  *\"ls --hfl-summary\"*) printf '%%s\\n' %q; exit 0 ;;\n  *\"--progress restore\"*) %s ;;\nesac\nexit 0\n",
+		commandLog,
+		summary,
+		restoreCase,
+	)
+	kopiaPath := filepath.Join(tempDir, "kopia")
+	if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return kopiaPath
+}
+
 func TestRestorePrepareTargetPathForFinalFileUsesParentDirectory(t *testing.T) {
 	p := Payload{Extra: map[string]any{
 		"source_path":           "/data/docs/readme.txt",

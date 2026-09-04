@@ -357,30 +357,43 @@ def _sync_restore_item(
     if item is None:
         return
     previous_status = item.status
+    result_payload = node_task.result if isinstance(node_task.result, dict) else {}
     if node_task.status == NodeTask.Status.SUCCESS:
-        item.status = RestoreRecordItem.Status.SUCCESS
-        item.result_payload = node_task.result or {}
+        item.status = (
+            RestoreRecordItem.Status.SKIPPED
+            if str(result_payload.get("restore_outcome") or "").strip().lower()
+            == "skipped"
+            else RestoreRecordItem.Status.SUCCESS
+        )
+        item.result_payload = result_payload
         item.error_code = ""
         item.error_message = ""
     elif node_task.status == NodeTask.Status.CANCELED:
         item.status = RestoreRecordItem.Status.CANCELLED
-        item.result_payload = node_task.result or {}
+        item.result_payload = result_payload
         item.error_code = "TASK_CANCELLED"
         item.error_message = (node_task.last_error or "Restore stopped.").strip()[:2000]
     else:
         item.status = RestoreRecordItem.Status.FAILED
-        item.result_payload = node_task.result or {}
-        error_message = str(
-            node_task.last_error
-            or node_task.status
-            or "Restore agent task failed."
-        )[:2000]
-        item.error_code = (
-            "AGENT_RESTARTED"
-            if "agent restarted before task completed" in error_message.lower()
-            else "RESTORE_AGENT_FAILED"
+        item.result_payload = result_payload
+        (
+            item.error_code,
+            item.error_message,
+            remediation,
+            diagnostic,
+        ) = _restore_failure_details(
+            node_task=node_task,
+            item=item,
         )
-        item.error_message = error_message
+        item.result_payload = {
+            **result_payload,
+            "error_code": item.error_code,
+            "error_message": item.error_message,
+        }
+        if remediation:
+            item.result_payload["error_remediation"] = remediation
+        if diagnostic:
+            item.result_payload["error_diagnostic"] = diagnostic
     item.save(
         update_fields=[
             "status",
@@ -399,6 +412,85 @@ def _sync_restore_item(
     if item.terminal_projection_at is None:
         item.terminal_projection_at = timezone.now()
         item.save(update_fields=["terminal_projection_at", "updated_at"])
+
+
+def _restore_failure_details(
+    *,
+    node_task: NodeTask,
+    item: RestoreRecordItem,
+) -> tuple[str, str, str, str]:
+    result = node_task.result if isinstance(node_task.result, dict) else {}
+    raw_message = str(
+        node_task.last_error
+        or result.get("error_message")
+        or node_task.status
+        or "Restore agent task failed."
+    ).strip()
+    lower = raw_message.lower()
+    structured_code = str(result.get("error_code") or "").strip()[:80]
+    structured_message = str(result.get("error_message") or "").strip()[:2000]
+    remediation = str(result.get("error_remediation") or "").strip()[:2000]
+    diagnostic = str(result.get("error_diagnostic") or "").strip()[:2000]
+    if structured_code == "RESTORE_TARGET_PERMISSION_DENIED":
+        return (
+            structured_code,
+            structured_message or _restore_permission_message(item),
+            remediation or _restore_permission_remediation(),
+            diagnostic,
+        )
+    if _is_legacy_restore_target_permission_failure(
+        raw_message=raw_message,
+        item=item,
+    ):
+        return (
+            "RESTORE_TARGET_PERMISSION_DENIED",
+            _restore_permission_message(item),
+            _restore_permission_remediation(),
+            raw_message[:2000],
+        )
+    if "agent restarted before task completed" in lower:
+        return "AGENT_RESTARTED", raw_message[:2000], remediation, diagnostic
+    return (
+        structured_code or "RESTORE_AGENT_FAILED",
+        structured_message or raw_message[:2000],
+        remediation,
+        diagnostic,
+    )
+
+
+def _restore_permission_message(item: RestoreRecordItem) -> str:
+    return f'Permission denied while writing restore target "{item.target_path}".'[:2000]
+
+
+def _restore_permission_remediation() -> str:
+    return (
+        "Verify that the Agent service account can modify the existing target and "
+        "write to its parent directory. Use Skip to preserve an existing target."
+    )
+
+
+def _is_legacy_restore_target_permission_failure(
+    *,
+    raw_message: str,
+    item: RestoreRecordItem,
+) -> bool:
+    lower = raw_message.lower()
+    if "permission denied" not in lower and "access denied" not in lower:
+        return False
+    target_path = str(item.target_path or "").strip().lower()
+    if target_path and target_path in lower:
+        return True
+    return any(
+        marker in lower
+        for marker in (
+            "error copying",
+            "copy file",
+            "error creating file",
+            "creating file",
+            "creating directory",
+            "restore target",
+        )
+    )
 
 
 @transaction.atomic
@@ -422,16 +514,19 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
 
     release_for_record(record=record)
     stop_restore_repository_servers(task=product_task)
-    failed = [
-        status for status in statuses if status != RestoreRecordItem.Status.SUCCESS
-    ]
+    counts = _restore_item_counts(statuses)
     result_payload = {
         "restore_record_id": record.id,
         "item_count": len(statuses),
-        "failed_item_count": len(failed),
+        **counts,
     }
-    if failed:
+    if counts["failed_item_count"] or counts["cancelled_item_count"]:
         error_message = _record_error_message(record)
+        failed_directories = [
+            {"path": item.target_path}
+            for item in record.items.filter(status=RestoreRecordItem.Status.FAILED).only("target_path")
+            if str(item.target_path or "").strip()
+        ][:20]
         _set_step_status(
             task=product_task,
             step_name="restore",
@@ -448,7 +543,12 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
             record=record,
             level=TaskEvent.Level.ERROR,
             message="Restore finished with failed items",
-            metadata={"error_message": error_message},
+            metadata={
+                "backup_summary": {
+                    "restore_record_id": record.restore_uid,
+                    "failed_directories": failed_directories,
+                },
+            },
         )
         complete_task(
             task_uuid=product_task.task_uuid,
@@ -458,6 +558,7 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
             result_payload=result_payload,
             error_code="RESTORE_FAILED",
             error_message=error_message,
+            include_error_details_in_event=False,
         )
         release_restore_usage(
             restore_record_id=record.id,
@@ -480,11 +581,19 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
         task_progress=100,
         current_step="finalize",
     )
-    _append_finalize_event_once(
-        task=product_task,
-        record=record,
-        message="Restore finished successfully",
-    )
+    if counts["skipped_item_count"]:
+        _append_finalize_event_once(
+            task=product_task,
+            record=record,
+            level=TaskEvent.Level.WARN,
+            message="Restore finished with skipped items",
+        )
+    else:
+        _append_finalize_event_once(
+            task=product_task,
+            record=record,
+            message="Restore finished successfully",
+        )
     complete_task(
         task_uuid=product_task.task_uuid,
         organization_id=product_task.organization_id,
@@ -517,13 +626,7 @@ def _append_finalize_event_once(
     event_metadata: dict[str, object] = {
         "restore_record_id": record.id,
         "item_count": len(statuses),
-        "failed_item_count": len(
-            [
-                status
-                for status in statuses
-                if status != RestoreRecordItem.Status.SUCCESS
-            ]
-        ),
+        **_restore_item_counts(statuses),
         "object_name": record.restore_uid,
     }
     event_metadata.update(metadata or {})
@@ -534,6 +637,15 @@ def _append_finalize_event_once(
         message=message,
         metadata=event_metadata,
     )
+
+
+def _restore_item_counts(statuses: list[str]) -> dict[str, int]:
+    return {
+        "restored_item_count": statuses.count(RestoreRecordItem.Status.SUCCESS),
+        "skipped_item_count": statuses.count(RestoreRecordItem.Status.SKIPPED),
+        "failed_item_count": statuses.count(RestoreRecordItem.Status.FAILED),
+        "cancelled_item_count": statuses.count(RestoreRecordItem.Status.CANCELLED),
+    }
 
 
 def _payload_int(payload: Any, key: str) -> int:

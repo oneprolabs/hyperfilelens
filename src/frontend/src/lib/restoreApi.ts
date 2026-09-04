@@ -136,6 +136,7 @@ export type RestoreRecordItem = {
   target_display_path?: string
   conflict_mode: RestoreConflictMode
   status: string
+  result_payload?: Record<string, unknown>
   error_code?: string
   error_message?: string
   created_at: string
@@ -171,6 +172,10 @@ export type RestoreRecord = {
   expanded_payload?: Record<string, unknown>
   created_at: string
   updated_at: string
+  restored_item_count?: number
+  skipped_item_count?: number
+  failed_item_count?: number
+  cancelled_item_count?: number
   items: RestoreRecordItem[]
   task_summary: RestoreRecordTaskSummary | null
 }

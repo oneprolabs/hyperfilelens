@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 _ACTIVE_STATUSES = frozenset({"pending", "dispatching", "running", "creating"})
-_DONE_STATUSES = frozenset({"success", "available", "completed"})
+_DONE_STATUSES = frozenset({"success", "available", "completed", "skipped"})
 
 
 def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
