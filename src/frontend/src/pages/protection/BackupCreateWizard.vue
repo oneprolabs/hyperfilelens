@@ -14082,11 +14082,11 @@ function preserveShallowestPathOrder(paths: string[]) {
   grid-template-columns: 72px minmax(0, 1fr);
   align-items: start;
   column-gap: 10px;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
   color: rgb(15 23 42);
   font-size: 12px;
   line-height: 1.55;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 :global(.create-policy-option-popper .policy-retention-detail-list__line--summary) {
@@ -14105,9 +14105,9 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 :global(.create-policy-option-popper .policy-retention-detail-list__text) {
   min-width: 0;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
   color: rgb(15 23 42);
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .target-select-with-meta {

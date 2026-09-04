@@ -31,11 +31,11 @@ describe('Create Backup Configuration option detail popovers', () => {
     expect(nonClosingDetails).toHaveLength(4)
   })
 
-  it('shows policy retention details on single lines in a wider popover', () => {
+  it('wraps policy retention details inside the wider popover', () => {
     expect(wizard.match(/:width="400"/g)).toHaveLength(4)
     expect(wizard.match(/popper-class="create-policy-option-popper create-policy-option-popper--policy"/g)).toHaveLength(4)
     expect(wizard).toMatch(/\.create-policy-option-popper\.create-policy-option-popper--policy\)\s*\{[^}]*max-width:\s*min\(400px,/s)
-    expect(wizard).toMatch(/\.policy-retention-detail-list__line\)\s*\{[^}]*font-size:\s*12px;[^}]*white-space:\s*nowrap;/s)
+    expect(wizard).toMatch(/\.policy-retention-detail-list__line\)\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*font-size:\s*12px;[^}]*white-space:\s*normal;/s)
   })
 
   it('removes option hover popovers without a stale-position exit frame when config selects close', () => {
