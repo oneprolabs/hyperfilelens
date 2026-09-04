@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, reactive, ref, toRef, watch } from 'vu
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
+  AlertTriangle,
   Archive,
   ArrowLeft,
   Camera,
@@ -73,6 +74,7 @@ import {
 import type { BackupPolicy, FileFilterRule } from '../../../lib/protectionPolicyApi'
 import { getStorageRepository, type StorageRepository } from '../../../lib/storageRepositoryApi'
 import { lifecycleStatusTagAttrs } from '../../../lib/statusTag'
+import { taskStepTimelineTone, taskStepTranslationKey } from '../../../lib/taskStepDisplay'
 import {
   getSourceResource,
   listBackupSelectableSources,
@@ -1378,14 +1380,8 @@ function progressText(task: TaskRow) {
 }
 
 function stepDisplayName(stepName?: string | null, taskType?: string | null) {
-  const step = String(stepName || '')
-  if (!step) return t('protection.backupDetail.durationDash')
-  if (taskType === 'snapshot_download') {
-    if (step === 'restore') return t('ops.task.step.snapshot_download_restore')
-    if (step === 'transfer') return t('ops.task.step.snapshot_download_transfer')
-    if (step === 'finalize') return t('ops.task.step.snapshot_download_finalize')
-  }
-  const key = `ops.task.step.${step}`
+  const key = taskStepTranslationKey(stepName, taskType)
+  if (!key) return t('protection.backupDetail.durationDash')
   return te(key) ? t(key) : t('ops.task.unknownValue')
 }
 
@@ -1506,11 +1502,7 @@ function taskDetailTitle(task?: TaskRow | null) {
 }
 
 function timelineIconClass(status?: string) {
-  if (status === 'success') return 'dp-task-detail__timeline-icon--success'
-  if (status === 'failed' || status === 'timeout') return 'dp-task-detail__timeline-icon--danger'
-  if (status === 'running') return 'dp-task-detail__timeline-icon--running'
-  if (status === 'cancelled') return 'dp-task-detail__timeline-icon--muted'
-  return 'dp-task-detail__timeline-icon--pending'
+  return `dp-task-detail__timeline-icon--${taskStepTimelineTone(status)}`
 }
 
 function eventTone(event: TaskEventRow) {
@@ -5526,6 +5518,10 @@ function onClosed() {
                     v-if="step.status === 'success'"
                     :size="15"
                   />
+                  <AlertTriangle
+                    v-else-if="step.status === 'warning'"
+                    :size="13"
+                  />
                   <X
                     v-else-if="step.status === 'failed' || step.status === 'timeout'"
                     :size="15"
@@ -7673,6 +7669,12 @@ function onClosed() {
   color: #fff;
 }
 
+.dp-task-detail__timeline-icon--warning {
+  border-color: var(--color-warning);
+  background-color: var(--color-warning);
+  color: #fff;
+}
+
 .dp-task-detail__timeline-icon--running {
   border-color: var(--color-info);
   background-color: var(--color-info);
@@ -7698,8 +7700,9 @@ function onClosed() {
 }
 
 .dp-task-detail__timeline-icon--pending {
-  background-color: rgb(100 116 139);
-  color: #fff;
+  border-color: var(--color-text-secondary);
+  background-color: transparent;
+  color: var(--color-text-secondary);
 }
 
 .dp-task-detail__step-card {

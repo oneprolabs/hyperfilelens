@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
   ChevronRight,
@@ -46,6 +47,7 @@ import { taskResourceSnapshot } from '../../../lib/taskOutcomeDisplay'
 import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../../lib/taskBackupSourceResource'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../../lib/taskStepExpansion'
+import { taskStepTimelineTone, taskStepTranslationKey } from '../../../lib/taskStepDisplay'
 import { nasRepositoryFailureMessage } from '../../../lib/nasMountTroubleshooting'
 import TaskStatusTag from '../../../components/TaskStatusTag.vue'
 import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
@@ -408,15 +410,12 @@ function eventDisplayMessage(event: TaskEventRow) {
 }
 
 function timelineIconClass(status: string) {
-  if (status === 'success') return 'hfl-task-drawer__timeline-icon--success'
-  if (status === 'failed' || status === 'timeout') return 'hfl-task-drawer__timeline-icon--danger'
-  if (status === 'running') return 'hfl-task-drawer__timeline-icon--running'
-  if (status === 'cancelled') return 'hfl-task-drawer__timeline-icon--muted'
-  return 'hfl-task-drawer__timeline-icon--pending'
+  return `hfl-task-drawer__timeline-icon--${taskStepTimelineTone(status)}`
 }
 
-function stepDisplayName(stepName: string) {
-  const key = `ops.task.step.${stepName}`
+function stepDisplayName(stepName?: string | null, taskType?: string | null) {
+  const key = taskStepTranslationKey(stepName, taskType ?? activeTask.value?.task_type)
+  if (!key) return t('ops.task.emptyMark')
   return te(key) ? t(key) : t('ops.task.unknownValue')
 }
 
@@ -979,6 +978,10 @@ watch(
                   <Check
                     v-if="step.status === 'success'"
                     :size="15"
+                  />
+                  <AlertTriangle
+                    v-else-if="step.status === 'warning'"
+                    :size="13"
                   />
                   <X
                     v-else-if="step.status === 'failed' || step.status === 'timeout'"
@@ -1750,6 +1753,12 @@ watch(
   color: rgb(185 28 28);
 }
 
+.hfl-task-drawer__timeline-icon--warning {
+  border-color: var(--color-warning);
+  background-color: var(--color-warning);
+  color: #fff;
+}
+
 .hfl-task-drawer__timeline-icon--running,
 .hfl-task-drawer__timeline-icon--pending {
   background: rgb(219 234 254);
@@ -2011,8 +2020,9 @@ watch(
 }
 
 .hfl-task-drawer__timeline-icon--pending {
-  background-color: rgb(100 116 139);
-  color: #fff;
+  border-color: var(--color-text-secondary);
+  background-color: transparent;
+  color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__step-card {
