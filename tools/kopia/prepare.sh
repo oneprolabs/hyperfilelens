@@ -260,6 +260,11 @@ build_matrix() {
 		cd "${KOPIA_SOURCE_DIR}"
 		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" go test ./cli -run '^TestHFLStructuredProgress$'
 	)
+	log "Testing the Kopia HFL entry-summary patch"
+	(
+		cd "${KOPIA_SOURCE_DIR}"
+		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" go test ./cli -run '^TestHFLListSummary$'
+	)
 	log "Testing the Kopia managed dot-ignore patch"
 	(
 		cd "${KOPIA_SOURCE_DIR}"
@@ -435,6 +440,7 @@ payload = {
         "s3_url_style": os.environ["MODE"] == "build",
         "hfl_structured_progress_v2": os.environ["MODE"] == "build",
         "hfl_managed_dot_ignore_v1": os.environ["MODE"] == "build",
+        "hfl_entry_summary_v1": os.environ["MODE"] == "build",
     },
     "files": files,
     "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -471,7 +477,7 @@ EOF
 		KOPIA_PATCH_SHA256="$(patch_set_sha256)"
 		KOPIA_PATCH_NAMES="$(patch_names)"
 		KOPIA_PATCH_DIGESTS="$(patch_digests)"
-		KOPIA_BUILD_PROFILE="cgo-disabled,trimpath,strip,embedded-html-ui,hfl-buildinfo-v2,s3-patch-tests-v1,structured-progress-v2-tests-v1,managed-dot-ignore-v1"
+		KOPIA_BUILD_PROFILE="cgo-disabled,trimpath,strip,embedded-html-ui,hfl-buildinfo-v2,s3-patch-tests-v1,structured-progress-v2-tests-v1,managed-dot-ignore-v1,entry-summary-v1"
 	else
 		KOPIA_PATCH_SHA256=""
 		KOPIA_PATCH_NAMES=""

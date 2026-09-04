@@ -347,6 +347,11 @@ def validate_kopia_info() -> dict:
             "KOPIA_INFO.json is missing the HFL managed dot-ignore capability; "
             "prepare Kopia in build mode before packaging an Agent"
         )
+    if features.get("hfl_entry_summary_v1") is not True:
+        raise PrerequisiteError(
+            "KOPIA_INFO.json is missing the HFL entry-summary capability; "
+            "prepare Kopia in build mode before packaging an Agent"
+        )
     return info
 
 

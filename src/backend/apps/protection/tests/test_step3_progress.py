@@ -11,12 +11,25 @@ from apps.protection.services.progress.step3_progress import (
     compute_step3_eta_seconds,
     enrich_step3_backup_transfer,
     enrich_step3_restore_transfer,
+    restore_file_count_seed,
+    restore_snapshot_bytes_total,
     restore_terminal_counts,
     should_latch_kopia_switch,
 )
 
 
 class Step3ProgressTests(SimpleTestCase):
+    @staticmethod
+    def _restore_record_with_items(items):
+        return SimpleNamespace(items=SimpleNamespace(all=lambda: items))
+
+    def test_selected_paths_disable_snapshot_root_seeds(self):
+        record = self._restore_record_with_items(
+            [SimpleNamespace(source_snapshot_directory_id=11, selected_paths=["onepro"])]
+        )
+        self.assertEqual(restore_snapshot_bytes_total(record), 0)
+        self.assertEqual(restore_file_count_seed(record), 0)
+
     def test_restore_terminal_counts_sum_all_restore_results(self):
         record = SimpleNamespace(
             items=SimpleNamespace(

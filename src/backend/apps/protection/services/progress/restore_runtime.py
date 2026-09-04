@@ -151,7 +151,9 @@ def _lane_from_item(
     sample = item.last_progress_sample if isinstance(item.last_progress_sample, dict) else {}
     normalized = normalize_lane_progress(progress=raw, status=status)
     snapshot_total = int(snapshot_directory.size_bytes or 0) if snapshot_directory is not None else 0
-    if snapshot_total > 0 and status in {s.value for s in _ITEM_ACTIVE}:
+    selected_paths = getattr(item, "selected_paths", None)
+    restores_whole_directory = not any(str(path or "").strip() for path in (selected_paths or []))
+    if snapshot_total > 0 and restores_whole_directory and status in {s.value for s in _ITEM_ACTIVE}:
         lane_total = int(normalized.get("bytes_total") or 0) if normalized.get("bytes_total_known") else 0
         if not normalized.get("bytes_total_known") or lane_total < snapshot_total:
             normalized["bytes_total"] = snapshot_total

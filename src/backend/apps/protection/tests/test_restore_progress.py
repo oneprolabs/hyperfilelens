@@ -46,6 +46,48 @@ class RestoreProgressLaneTests(SimpleTestCase):
         self.assertEqual(progress["bytes_total"], 563_000_000)
         self.assertFalse(progress["bytes_total_reference"])
 
+    def test_selected_path_keeps_scoped_kopia_total(self):
+        item = SimpleNamespace(
+            id=1,
+            status=RestoreRecordItem.Status.RUNNING,
+            selected_paths=["onepro"],
+            last_progress_snapshot={
+                "phase": "kopia_transfer",
+                "kopia_phase": "restoring",
+                "bytes_done": 1_000_000_000,
+                "bytes_total": 7_800_000_000,
+                "bytes_total_known": True,
+                "processed_count": 5_000,
+                "total_count": 59_886,
+            },
+            last_progress_sample={},
+            source_path="/Users/ghw",
+            target_path="/restore/onepro",
+        )
+        snapshot_directory = SimpleNamespace(size_bytes=41_900_000_000)
+        lane = _lane_from_item(item, snapshot_directory=snapshot_directory)
+        progress = lane["progress"]
+        self.assertEqual(progress["bytes_total"], 7_800_000_000)
+        self.assertEqual(progress["total_count"], 59_886)
+        self.assertFalse(progress["bytes_total_reference"])
+
+    def test_selected_path_without_summary_does_not_use_snapshot_root_total(self):
+        item = SimpleNamespace(
+            id=1,
+            status=RestoreRecordItem.Status.RUNNING,
+            selected_paths=["onepro"],
+            last_progress_snapshot={},
+            last_progress_sample={},
+            source_path="/Users/ghw",
+            target_path="/restore/onepro",
+        )
+        snapshot_directory = SimpleNamespace(size_bytes=41_900_000_000)
+        progress = _lane_from_item(item, snapshot_directory=snapshot_directory)[
+            "progress"
+        ]
+        self.assertFalse(progress["bytes_total_known"])
+        self.assertIsNone(progress["bytes_total"])
+
     def test_restore_lane_uses_processed_bytes_not_uploaded(self):
         item = SimpleNamespace(
             id=1,

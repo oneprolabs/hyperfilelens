@@ -520,6 +520,8 @@ def restore_snapshot_bytes_total(record) -> int:
     from apps.protection.models import BackupSourceSnapshotDirectory
 
     items = list(record.items.all())
+    if any(_restore_item_has_selected_paths(item) for item in items):
+        return 0
     directory_ids = [item.source_snapshot_directory_id for item in items if item.source_snapshot_directory_id]
     if not directory_ids:
         return 0
@@ -534,6 +536,8 @@ def restore_file_count_seed(record) -> int:
     from apps.protection.models import BackupSourceSnapshotDirectory
 
     items = list(record.items.all())
+    if any(_restore_item_has_selected_paths(item) for item in items):
+        return 0
     directory_ids = [item.source_snapshot_directory_id for item in items if item.source_snapshot_directory_id]
     if not directory_ids:
         return 0
@@ -542,6 +546,13 @@ def restore_file_count_seed(record) -> int:
         id__in=directory_ids,
     )
     return sum(max(0, int(directory.file_count or 0)) for directory in directories)
+
+
+def _restore_item_has_selected_paths(item) -> bool:
+    return any(
+        str(path or "").strip()
+        for path in (getattr(item, "selected_paths", None) or [])
+    )
 
 
 def restore_terminal_counts(record) -> dict[str, int] | None:
