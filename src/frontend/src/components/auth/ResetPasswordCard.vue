@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -22,7 +22,7 @@ const emit = defineEmits<{
   'update:step': [step: 'request' | 'reset']
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 
 const {
@@ -424,6 +424,14 @@ async function handleUpdatePassword() {
   }
 }
 
+watch(locale, () => {
+  formItems.email.errorMsg = ''
+  formItems.email.showError = false
+  confirmPasswordTouched.value = false
+  resetError.value = ''
+  turnstileError.value = ''
+})
+
 onMounted(async () => {
   emit('update:step', view.value)
   await loadTurnstileConfig()
@@ -442,10 +450,12 @@ onUnmounted(() => {
       mode="out-in"
     >
       <!-- Request View -->
-      <div
+      <form
         v-if="view === 'request'"
         key="request"
         class="reset-view"
+        novalidate
+        @submit.prevent="sendResetCode"
       >
         <p class="reset-subtitle">
           {{ t('findPwd.requestSubtitle') }}
@@ -455,25 +465,33 @@ onUnmounted(() => {
           class="input-wrapper"
           :class="{ 'has-error': formItems.email.showError }"
         >
+          <label
+            class="sr-only"
+            for="reset-request-email"
+          >{{ t('findPwd.emailPlaceholder') }}</label>
           <div class="input-row">
             <Mail
               class="input-icon"
               :size="18"
+              aria-hidden="true"
             />
             <input
+              id="reset-request-email"
               v-model="formItems.email.value"
-              type="text"
+              type="email"
               :placeholder="t('findPwd.emailPlaceholder')"
-              tabindex="1"
               autocomplete="email"
+              :aria-invalid="formItems.email.showError"
+              :aria-describedby="formItems.email.showError ? 'reset-request-email-error' : undefined"
               @blur="validateEmailOnInput"
               @input="validateEmailOnInput(); emailNotRegistered = false"
-              @keyup.enter="sendResetCode"
             >
           </div>
           <p
             v-if="formItems.email.showError"
+            id="reset-request-email-error"
             class="error-msg"
+            role="alert"
           >
             {{ formItems.email.errorMsg }}
           </p>
@@ -513,40 +531,50 @@ onUnmounted(() => {
         <ElButton
           type="primary"
           class="submit-btn"
+          native-type="submit"
           :disabled="submitLoading || !canSendResetCode"
           :loading="submitLoading"
           @click="sendResetCode"
         >
           {{ submitLoading ? t('findPwd.btnSubmitLoading') : t('findPwd.sendResetCode') }}
         </ElButton>
-      </div>
+      </form>
 
       <!-- Reset View -->
-      <div
+      <form
         v-else
         key="reset"
         class="reset-view"
+        novalidate
+        @submit.prevent="handleUpdatePassword"
       >
         <p class="reset-email-hint">
           {{ t('findPwd.codeSentTo', { email: maskedEmail }) }}
         </p>
 
         <div class="input-wrapper">
+          <label
+            class="sr-only"
+            for="reset-verification-code"
+          >{{ t('findPwd.digitCodePh') }}</label>
           <div class="captcha-row">
             <div class="input-row captcha-input">
               <Key
                 class="input-icon"
                 :size="18"
+                aria-hidden="true"
               />
               <input
+                id="reset-verification-code"
                 v-model="resetCode"
                 type="text"
                 inputmode="numeric"
                 pattern="[0-9]*"
                 maxlength="6"
                 :placeholder="t('findPwd.digitCodePh')"
-                tabindex="1"
                 autocomplete="one-time-code"
+                :aria-invalid="Boolean(resetError)"
+                :aria-describedby="resetError ? 'reset-form-error' : undefined"
                 @input="clearResetError"
               >
             </div>
@@ -566,17 +594,24 @@ onUnmounted(() => {
         </div>
 
         <div class="input-wrapper">
+          <label
+            class="sr-only"
+            for="reset-new-password"
+          >{{ t('findPwd.newPasswordPlaceholder') }}</label>
           <div class="input-row">
             <Lock
               class="input-icon"
               :size="18"
+              aria-hidden="true"
             />
             <input
+              id="reset-new-password"
               v-model="newPassword"
               :type="showNewPassword ? 'text' : 'password'"
               :placeholder="t('findPwd.newPasswordPlaceholder')"
-              tabindex="2"
               autocomplete="new-password"
+              :aria-invalid="Boolean(resetError)"
+              :aria-describedby="resetError ? 'reset-form-error' : undefined"
               @input="clearResetError"
             >
             <button
@@ -599,20 +634,26 @@ onUnmounted(() => {
         </div>
 
         <div class="input-wrapper">
+          <label
+            class="sr-only"
+            for="reset-confirm-password"
+          >{{ t('findPwd.confirmPasswordPlaceholder') }}</label>
           <div class="input-row">
             <Lock
               class="input-icon"
               :size="18"
+              aria-hidden="true"
             />
             <input
+              id="reset-confirm-password"
               v-model="confirmPassword"
               :type="showConfirmPassword ? 'text' : 'password'"
               :placeholder="t('findPwd.confirmPasswordPlaceholder')"
-              tabindex="3"
               autocomplete="new-password"
+              :aria-invalid="Boolean(confirmPasswordError)"
+              :aria-describedby="confirmPasswordError ? 'reset-confirm-password-error' : undefined"
               @input="onConfirmPasswordInput"
               @blur="confirmPasswordTouched = true"
-              @keyup.enter="handleUpdatePassword"
             >
             <button
               type="button"
@@ -633,7 +674,9 @@ onUnmounted(() => {
           </div>
           <p
             v-if="confirmPasswordError"
+            id="reset-confirm-password-error"
             class="error-msg"
+            role="alert"
           >
             {{ confirmPasswordError }}
           </p>
@@ -657,7 +700,9 @@ onUnmounted(() => {
 
         <p
           v-if="resetError"
+          id="reset-form-error"
           class="error-msg reset-error"
+          role="alert"
         >
           {{ resetError }}
         </p>
@@ -665,6 +710,7 @@ onUnmounted(() => {
         <ElButton
           type="primary"
           class="submit-btn"
+          native-type="submit"
           :class="{ 'submit-btn--success': resetSuccess }"
           :disabled="!canUpdatePassword"
           :loading="resetLoading"
@@ -678,7 +724,7 @@ onUnmounted(() => {
           </span>
           <span v-else>{{ t('findPwd.updatePassword') }}</span>
         </ElButton>
-      </div>
+      </form>
     </Transition>
 
     <div class="reset-footer">
@@ -704,7 +750,7 @@ onUnmounted(() => {
 .reset-view {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 12px;
 }
 
 .reset-subtitle,
@@ -712,7 +758,7 @@ onUnmounted(() => {
   margin: 0;
   font-size: 14px;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(228, 223, 242, 0.68);
 }
 
 .reset-email-hint {
@@ -722,43 +768,49 @@ onUnmounted(() => {
 .input-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 7px;
 }
 
 .input-row {
   display: flex;
   align-items: center;
-  background-color: #313131;
-  border: 1px solid #3A3B40;
-  border-radius: var(--radius-card);
-  height: 42px;
-  padding: 0 14px;
-  transition: border-color 0.2s;
+  height: 46px;
+  padding: 0 13px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    box-shadow 150ms ease-out;
 }
 
 .input-row:focus-within {
-  border-color: var(--color-primary);
+  background: rgba(109, 94, 246, 0.08);
+  border-color: rgba(139, 120, 255, 0.72);
+  box-shadow: 0 0 0 3px rgba(109, 94, 246, 0.22);
 }
 
 .input-icon {
-  color: #888A8F;
+  color: #a19aad;
   flex-shrink: 0;
-  margin-right: 12px;
+  margin-right: 10px;
 }
 
 .input-row input {
-  height: 38px;
+  height: 42px;
   flex: 1;
   background: transparent;
   border: none;
   outline: none;
   font-size: 14px;
-  color: #fff;
+  font-weight: 500;
+  color: #f0eefa;
   min-width: 0;
 }
 
 .input-row input::placeholder {
-  color: #6A6C71;
+  color: #938c9e;
 }
 
 .eye-btn {
@@ -769,10 +821,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   margin-left: 8px;
-  color: #888A8F;
-  border-radius: 4px;
-  height: 24px;
-  width: 24px;
+  color: #a19aad;
+  border-radius: 7px;
+  height: 36px;
+  width: 36px;
   justify-content: center;
   transition: color 0.2s, background-color 0.2s;
 }
@@ -780,6 +832,14 @@ onUnmounted(() => {
 .eye-btn:hover {
   color: #fff;
   background-color: rgba(255, 255, 255, 0.1);
+}
+
+.eye-btn:focus-visible,
+.resend-btn:focus-visible,
+.footer-link:focus-visible,
+.register-hint-link:focus-visible {
+  outline: 2px solid var(--color-brand-violet-soft);
+  outline-offset: 2px;
 }
 
 .captcha-row {
@@ -795,11 +855,11 @@ onUnmounted(() => {
 .resend-btn {
   flex-shrink: 0;
   min-width: 72px;
-  height: 34px;
+  min-height: 42px;
   padding: 0 12px;
   background: transparent;
   border: 1px solid rgba(139, 92, 246, 0.4);
-  border-radius: 21px;
+  border-radius: 10px;
   color: rgba(196, 181, 253, 0.85);
   font-size: 13px;
   font-weight: 400;
@@ -820,12 +880,16 @@ onUnmounted(() => {
 }
 
 .input-wrapper.has-error .input-row {
-  border-color: #f85149;
+  background: rgba(255, 90, 90, 0.07);
+  border-color: rgba(255, 110, 110, 0.62);
 }
 
 .error-msg {
+  margin: 0;
   font-size: 12px;
-  color: #f85149;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #ff8f8f;
   padding-left: 2px;
 }
 
@@ -878,10 +942,11 @@ onUnmounted(() => {
 
 .submit-btn {
   width: 100%;
-  height: 42px !important;
-  border-radius: 21px;
-  font-size: 15px;
-  font-weight: 500;
+  min-height: 46px;
+  height: 46px !important;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .submit-btn--success {
@@ -904,7 +969,7 @@ onUnmounted(() => {
 
 .footer-text {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.62);
 }
 
 .footer-link {
@@ -936,5 +1001,21 @@ onUnmounted(() => {
 .reset-view-fade-leave-to {
   opacity: 0;
   transform: translateX(-12px);
+}
+
+@media (max-width: 479.98px) {
+  .eye-btn,
+  .resend-btn {
+    min-height: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reset-view-fade-enter-active,
+  .reset-view-fade-leave-active,
+  .input-row,
+  .strength-fill {
+    transition: none;
+  }
 }
 </style>
