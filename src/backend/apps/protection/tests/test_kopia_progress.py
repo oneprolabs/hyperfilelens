@@ -16,6 +16,14 @@ from apps.protection.services.progress.orchestration_label import (
 
 
 class KopiaProgressAggregatorTests(SimpleTestCase):
+    def test_skipped_restore_lane_counts_as_terminal(self):
+        aggregate = aggregate_lanes(
+            [{"id": "skipped", "status": "skipped", "progress": {}}]
+        )
+
+        self.assertEqual(aggregate["lanes_done"], 1)
+        self.assertEqual(aggregate["lanes_total"], 1)
+
     def test_aggregate_parallel_lanes(self):
         lanes = [
             {

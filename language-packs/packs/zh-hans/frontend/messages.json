@@ -1794,6 +1794,11 @@
       "flowRestoreRecordItemsProcessed": "已处理 {n} 件",
       "flowRestoreRecordRestoredObjects": "已恢复：{files} 个文件、{directories} 个目录、{symlinks} 个符号链接",
       "flowRestoreRecordRestoredCapacity": "恢复容量：{size}",
+      "flowRestoreRecordOutcomeCounts": "项目：已恢复 {restored} 个 · 已跳过 {skipped} 个 · 失败 {failed} 个 · 已取消 {cancelled} 个",
+      "flowRestoreRecordTargetExistsSkipped": "现有目标已由 Skip 策略保留。",
+      "flowRestoreRecordItemSkipped": "此恢复项目已跳过。",
+      "flowRestoreRecordPermissionDenied": "写入恢复目标时权限被拒绝。",
+      "flowRestoreRecordPermissionRemediation": "请确认 Agent 服务账号能够修改现有目标并写入其父目录。如需保留现有目标，请使用 Skip。",
       "flowRestoreRecordMetricsUnavailable": "此记录的传输指标不可用。",
       "snapshotViewAction": "查看",
       "flowActionDelete": "取消注册源",
@@ -5542,8 +5547,10 @@
         "dispatchingPreparedDirectorySnapshot": "目录快照创建发送至Agent",
         "restoreExecutionStarted": "恢复执行开始",
         "restoreItemCompleted": "恢复项目已完成",
+        "restoreItemSkipped": "恢复项目已跳过",
         "restoreItemFailed": "恢复项目失败",
         "restoreItemCancelled": "恢复项目已取消",
+        "restoreFinishedWithSkippedItems": "恢复完成，但有跳过的项目",
         "sourceUnregisterPrepared": "源注销准备就绪",
         "sourceUnregisterFinalized": "来源注销完成"
       },
@@ -5601,6 +5608,10 @@
       "failureDetails": {
         "snapshotId": "快照 ID",
         "failedDirectories": "失败目录",
+        "restoreTarget": "恢复目标",
+        "restorePermissionDenied": "写入恢复目标时权限被拒绝。",
+        "restorePermissionRemediation": "1. 将恢复目录修改为恢复服务可以写入的位置。\n2. 在 File conflict policy 中选择 Skip duplicate files (keep source)，以保留现有目标。\n3. 授予恢复服务账号修改目标并写入其父目录的权限。",
+        "technicalDetails": "技术详情",
         "skippedItems": "已跳过的源项目",
         "summary": {
           "source_file_locked": "有 {count} 个文件因被其他进程锁定而无法读取。",

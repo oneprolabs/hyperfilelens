@@ -2936,6 +2936,19 @@ func (e *Engine) runManagedRestore(
 	if targetPath == "" {
 		return "failed", nil, "target_path is required"
 	}
+	conflictMode, err := managedRestoreConflictMode(p)
+	if err != nil {
+		return "failed", map[string]any{
+			"error_code":          "RESTORE_CONFLICT_MODE_INVALID",
+			"error_message":       err.Error(),
+			"restore_outcome":     "failed",
+			"target_path":         targetPath,
+			"conflict_mode":       strings.TrimSpace(stringValue(p.Extra["conflict_mode"])),
+			"restored_item_count": 0,
+			"skipped_item_count":  0,
+			"failed_item_count":   1,
+		}, err.Error()
+	}
 	if err := e.ensureNASMounted(ctx, p); err != nil {
 		return "failed", nil, err.Error()
 	}
@@ -2958,6 +2971,8 @@ func (e *Engine) runManagedRestore(
 		return "failed", managedRestoreResult(result, spec, p), managedRestorePreparationFailureMessage(result, prepErr, spec, p)
 	}
 	result = managedRestoreResult(result, spec, p)
+	result["target_path"] = targetPath
+	result["conflict_mode"] = conflictMode
 	selectedPaths := restoreSelectedPaths(p)
 	if len(selectedPaths) == 0 {
 		selectedPaths = []string{""}
@@ -2986,6 +3001,8 @@ func (e *Engine) runManagedRestore(
 		}
 	}
 	restored := make([]map[string]any, 0, len(selectedPaths))
+	restoredPathCount := 0
+	skippedPathCount := 0
 	var completedBytes int64
 	var completedCount int64
 	var skippedSpecialCount int64
@@ -3040,6 +3057,33 @@ func (e *Engine) runManagedRestore(
 			result["restore_inspect"] = managedRestoreCommandResult(inspectRes, spec, p)
 			return "failed", result, snapshotRestoreInspectFailureMessage(inspectRes, inspectErr, spec, p)
 		}
+		directFinalTarget := restoreTargetPathSemantics(p) == "final" && len(selectedPaths) == 1
+		if conflictMode == "skip" && directFinalTarget {
+			targetExists, existsErr := restoreTargetExists(restoreTarget)
+			if existsErr != nil {
+				restoreEntry["restore_outcome"] = "failed"
+				restoreEntry["inspect_target_error"] = existsErr.Error()
+				restored = append(restored, restoreEntry)
+				result["restore_results"] = restored
+				rawMessage := fmt.Sprintf("Unable to inspect restore target %q: %v", restoreTarget, existsErr)
+				code, publicMessage, remediation := classifyManagedRestoreFailure(rawMessage, restoreTarget, conflictMode)
+				if code == "RESTORE_AGENT_FAILED" {
+					code = "RESTORE_TARGET_INSPECTION_FAILED"
+				}
+				setManagedRestoreFailureResult(result, code, publicMessage, rawMessage, restoreTarget, conflictMode)
+				if remediation != "" {
+					result["error_remediation"] = remediation
+				}
+				return "failed", result, publicMessage
+			}
+			if targetExists {
+				restoreEntry["restore_outcome"] = "skipped"
+				restoreEntry["skip_reason"] = "target_exists"
+				restored = append(restored, restoreEntry)
+				skippedPathCount++
+				continue
+			}
+		}
 		preparePath := restorePrepareTargetPathForSelection(p, targetPath, len(selectedPaths), sourceIsDir)
 		restoreEntry["prepare_path"] = preparePath
 		cleanupFileTargetDir := restoreTargetPathSemantics(p) == "final" && len(selectedPaths) == 1 && !sourceIsDir
@@ -3052,7 +3096,16 @@ func (e *Engine) runManagedRestore(
 			restoreEntry["prepare_error"] = mkErr.Error()
 			restored = append(restored, restoreEntry)
 			result["restore_results"] = restored
-			return "failed", result, mkErr.Error()
+			rawMessage := mkErr.Error()
+			code, publicMessage, remediation := classifyManagedRestoreFailure(rawMessage, restoreTarget, conflictMode)
+			if code == "RESTORE_AGENT_FAILED" {
+				code = "RESTORE_TARGET_PREPARATION_FAILED"
+			}
+			setManagedRestoreFailureResult(result, code, publicMessage, rawMessage, restoreTarget, conflictMode)
+			if remediation != "" {
+				result["error_remediation"] = remediation
+			}
+			return "failed", result, publicMessage
 		}
 		pathOffset := completedBytes
 		pathCountOffset := completedCount
@@ -3081,9 +3134,9 @@ func (e *Engine) runManagedRestore(
 			"--config-file=" + configFile,
 			"--progress",
 			"restore",
-			source,
-			restoreTarget,
 		}
+		restoreArgs = append(restoreArgs, managedRestoreConflictArgs(conflictMode)...)
+		restoreArgs = append(restoreArgs, source, restoreTarget)
 		res, runErr := process.RunStreaming(runCtx, bin, restoreArgs, env, "", onProgressLine)
 		restoreEntry["result"] = managedRestoreCommandResult(res, spec, p)
 		restored = append(restored, restoreEntry)
@@ -3094,8 +3147,16 @@ func (e *Engine) runManagedRestore(
 			}
 			result["restore_results"] = restored
 			result["restore"] = managedRestoreCommandResult(res, spec, p)
-			return "failed", result, managedRestoreFailureMessage(res, runErr, spec, p)
+			rawMessage := managedRestoreFailureMessage(res, runErr, spec, p)
+			code, publicMessage, remediation := classifyManagedRestoreFailure(rawMessage, restoreTarget, conflictMode)
+			setManagedRestoreFailureResult(result, code, publicMessage, rawMessage, restoreTarget, conflictMode)
+			if remediation != "" {
+				result["error_remediation"] = remediation
+			}
+			return "failed", result, publicMessage
 		}
+		restoreEntry["restore_outcome"] = "restored"
+		restoredPathCount++
 		if insightContentPolicy == insightRegularFilesOnlyPolicy {
 			skipped, contentErr := enforceInsightRestoreContent(restoreTarget)
 			if contentErr != nil {
@@ -3121,6 +3182,20 @@ func (e *Engine) runManagedRestore(
 	result["selected_paths"] = selectedPaths
 	result["restore_results"] = restored
 	result["count"] = len(restored)
+	result["conflict_mode"] = conflictMode
+	result["restored_path_count"] = restoredPathCount
+	result["skipped_path_count"] = skippedPathCount
+	result["failed_item_count"] = 0
+	if restoredPathCount == 0 && skippedPathCount > 0 {
+		result["restore_outcome"] = "skipped"
+		result["skip_reason"] = "target_exists"
+		result["restored_item_count"] = 0
+		result["skipped_item_count"] = 1
+	} else {
+		result["restore_outcome"] = "restored"
+		result["restored_item_count"] = 1
+		result["skipped_item_count"] = 0
+	}
 	if scopeTotalsKnown {
 		result["restore_scope_summary"] = restoreScopeSummaryResult(scopeTotals)
 	}
@@ -3129,24 +3204,103 @@ func (e *Engine) runManagedRestore(
 		result["skipped_special_count"] = skippedSpecialCount
 	}
 	completionProgress := map[string]any{
-		"phase":             "kopia_transfer",
-		"kopia_phase":       "restore_completed",
-		"kopia_percent":     100,
-		"percent":           100,
-		"bytes_done":        maxInt64(completedBytes, 1),
-		"bytes_total":       maxInt64(completedBytes, 1),
-		"bytes_total_known": true,
-		"processed_count":   completedCount,
-		"total_count":       completedCount,
+		"progress_schema_version": 1,
+		"phase":                   "kopia_transfer",
+		"kopia_phase":             "restore_completed",
+		"kopia_percent":           100,
+		"percent":                 100,
+		"bytes_done":              completedBytes,
+		"processed_bytes":         completedBytes,
+		"bytes_total":             completedBytes,
+		"total_bytes":             completedBytes,
+		"bytes_total_known":       completedBytes > 0,
+		"processed_count":         completedCount,
+		"total_count":             completedCount,
 	}
 	if scopeTotalsKnown {
-		completionProgress = scopeTotals.progressPayload(scopeTotals.SizeBytes, scopeTotals.totalCount())
-		completionProgress["kopia_phase"] = "restore_completed"
-		completionProgress["kopia_percent"] = 100
-		completionProgress["percent"] = 100
+		completionProgress["bytes_total"] = scopeTotals.SizeBytes
+		completionProgress["total_bytes"] = scopeTotals.SizeBytes
+		completionProgress["bytes_total_known"] = true
+		completionProgress["total_count"] = scopeTotals.totalCount()
+		completionProgress["file_total"] = scopeTotals.totalCount()
+		completionProgress["total_file_count"] = scopeTotals.FileCount
+		completionProgress["total_directory_count"] = scopeTotals.DirectoryCount
+		completionProgress["total_symlink_count"] = scopeTotals.SymlinkCount
+		completionProgress["totals_source"] = "snapshot_summary"
 	}
 	_ = sendProgress(ctx, rep, taskID, completionProgress)
 	return "success", result, ""
+}
+
+func managedRestoreConflictMode(p Payload) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(stringValue(p.Extra["conflict_mode"])))
+	if mode == "" {
+		// Older control planes did not send this field. Preserve their historical
+		// overwrite behavior while making new requests explicit.
+		return "overwrite", nil
+	}
+	if mode != "skip" && mode != "overwrite" {
+		return "", fmt.Errorf("unsupported restore conflict mode %q", mode)
+	}
+	return mode, nil
+}
+
+func managedRestoreConflictArgs(conflictMode string) []string {
+	if conflictMode == "skip" {
+		return []string{
+			"--skip-existing",
+			"--no-overwrite-files",
+			"--no-overwrite-symlinks",
+			"--skip-owners",
+			"--skip-permissions",
+			"--skip-times",
+		}
+	}
+	return []string{
+		"--overwrite-files",
+		"--overwrite-directories",
+		"--overwrite-symlinks",
+	}
+}
+
+func restoreTargetExists(targetPath string) (bool, error) {
+	_, err := os.Lstat(targetPath)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func classifyManagedRestoreFailure(rawMessage string, targetPath string, conflictMode string) (string, string, string) {
+	lower := strings.ToLower(rawMessage)
+	if strings.Contains(lower, "permission denied") || strings.Contains(lower, "access denied") {
+		message := fmt.Sprintf("Permission denied while writing restore target %q.", targetPath)
+		remediation := "Verify that the Agent service account can modify the existing target and write to its parent directory. Use Skip to preserve an existing target."
+		return "RESTORE_TARGET_PERMISSION_DENIED", message, remediation
+	}
+	return "RESTORE_AGENT_FAILED", rawMessage, ""
+}
+
+func setManagedRestoreFailureResult(
+	result map[string]any,
+	code string,
+	publicMessage string,
+	rawMessage string,
+	targetPath string,
+	conflictMode string,
+) {
+	result["restore_outcome"] = "failed"
+	result["error_code"] = code
+	result["error_message"] = truncateFailureTail("", publicMessage, 2000)
+	result["error_diagnostic"] = truncateFailureTail("", rawMessage, 2000)
+	result["target_path"] = targetPath
+	result["conflict_mode"] = conflictMode
+	result["restored_item_count"] = 0
+	result["skipped_item_count"] = 0
+	result["failed_item_count"] = 1
 }
 
 func orchestrationProgressPayload(phase string, label string, extra map[string]any) map[string]any {

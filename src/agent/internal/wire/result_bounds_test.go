@@ -190,3 +190,38 @@ func TestBoundTaskResultKeepsWorkspaceSafetyEvidence(t *testing.T) {
 		}
 	}
 }
+
+func TestBoundTaskResultKeepsRestoreOutcomeAndPermissionDiagnostics(t *testing.T) {
+	result := map[string]any{
+		"restore_outcome":     "failed",
+		"conflict_mode":       "overwrite",
+		"target_path":         "/tmp/existing",
+		"error_code":          "RESTORE_TARGET_PERMISSION_DENIED",
+		"error_message":       "Permission denied while writing restore target.",
+		"error_remediation":   "Verify target and parent permissions.",
+		"error_diagnostic":    "open /tmp/existing: permission denied",
+		"restored_item_count": 0,
+		"skipped_item_count":  0,
+		"failed_item_count":   1,
+		"other":               strings.Repeat("x", maxTaskResultBytes),
+	}
+
+	bounded, stats := boundTaskResult(result)
+	if !stats.Truncated {
+		t.Fatal("expected oversized restore result to be truncated")
+	}
+	for key, expected := range map[string]any{
+		"restore_outcome":   "failed",
+		"conflict_mode":     "overwrite",
+		"target_path":       "/tmp/existing",
+		"error_code":        "RESTORE_TARGET_PERMISSION_DENIED",
+		"error_message":     "Permission denied while writing restore target.",
+		"error_remediation": "Verify target and parent permissions.",
+		"error_diagnostic":  "open /tmp/existing: permission denied",
+		"failed_item_count": 1,
+	} {
+		if bounded[key] != expected {
+			t.Fatalf("restore field %q=%#v, want %#v", key, bounded[key], expected)
+		}
+	}
+}

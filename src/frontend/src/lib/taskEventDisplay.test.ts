@@ -45,6 +45,7 @@ describe('task event internationalization', () => {
     const messages = [
       ['Restore execution started', 'restoreExecutionStarted'],
       ['Restore item completed', 'restoreItemCompleted'],
+      ['Restore item skipped', 'restoreItemSkipped'],
       ['Restore item failed', 'restoreItemFailed'],
       ['Restore item cancelled', 'restoreItemCancelled'],
     ] as const
@@ -54,6 +55,8 @@ describe('task event internationalization', () => {
       expect(taskEventMessageKey(message)).toBe(`ops.task.eventMessage.${key}`)
       expect(translations[key]).toBe(message)
     }
+    expect(taskEventMessageKey('Restore finished with skipped items'))
+      .toBe('ops.task.eventMessage.restoreFinishedWithSkippedItems')
   })
 
   it('clarifies the prepared snapshot event sequence', () => {
