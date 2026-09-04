@@ -514,7 +514,7 @@ class RepositoryTaskTests(TestCase):
     @patch("apps.storage.tasks.sync_organization_repositories")
     @patch("apps.storage.tasks.run_maintenance")
     @patch("apps.storage.tasks.try_acquire_background_storage_capacity")
-    def test_successful_maintenance_persists_one_structured_summary_event(
+    def test_successful_quick_maintenance_persists_one_structured_summary_event(
         self,
         acquire_capacity,
         run_maintenance,
@@ -523,22 +523,30 @@ class RepositoryTaskTests(TestCase):
         discover_repository_execution_targets()
         repository_task = create_repository_operation_task(
             target_id=self.repository.execution_targets.get().id,
-            operation_type=RepositoryTask.OperationType.MAINTENANCE_FULL,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
         )
         lease = MagicMock(valid=True)
         lease.__enter__.return_value = lease
         acquire_capacity.return_value = lease
         summary = {
             "schema_version": 1,
-            "mode": "full",
+            "mode": "quick",
             "source": "maintenance_info",
             "approximate": False,
-            "content_gc": {"deleted_count": 55, "deleted_bytes": 3_145_728},
+            "content_gc": None,
             "pack_gc": None,
+            "stages": [
+                {
+                    "type": "index_compaction",
+                    "status": "completed",
+                    "statistics_available": False,
+                    "metrics": None,
+                }
+            ],
         }
         run_maintenance.return_value = KopiaResult(
             stdout="",
-            stderr="Finished full maintenance.",
+            stderr="Finished quick maintenance.",
             maintenance_summary=summary,
         )
 

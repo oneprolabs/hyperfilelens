@@ -97,3 +97,67 @@ GC undeleted 0 contents (0 B)`
 		t.Fatalf("stderr fallback must not claim physical pack deletion: %#v", summary)
 	}
 }
+
+func TestQuickMaintenanceSummaryReportsStandardStagesWithoutInventingStatistics(t *testing.T) {
+	startedAt := time.Date(2026, 9, 3, 1, 0, 0, 0, time.UTC)
+	info := `{"schedule":{"runs":{
+    "quick-rewrite-contents":[{"start":"2026-09-03T01:00:01Z","success":true,"extra":[{"kind":"rewriteContentsStats","data":{"toRewriteContentCount":0,"toRewriteContentSize":0,"rewrittenContentCount":0,"rewrittenContentSize":0,"retainedContentCount":0,"retainedContentSize":0}}]}],
+    "index-compaction":[{"start":"2026-09-03T01:00:02Z","success":true,"extra":[]}],
+    "cleanup-logs":[{"start":"2026-09-03T01:00:03Z","success":true,"extra":[{"kind":"cleanupLogsStats","data":{"deletedBlobCount":0,"deletedBlobSize":0,"retainedBlobCount":12,"retainedBlobSize":4096}}]}]
+  }}}`
+
+	summary := maintenanceSummaryFromInfo(info, "quick", startedAt)
+	if summary == nil {
+		t.Fatal("expected a Quick Maintenance summary")
+	}
+	stages := summary["stages"].([]map[string]any)
+	if len(stages) != 4 {
+		t.Fatalf("expected four standard Quick stages, got %#v", stages)
+	}
+	if stages[0]["type"] != "content_rewrite" || stages[0]["statistics_available"] != true {
+		t.Fatalf("unexpected rewrite stage: %#v", stages[0])
+	}
+	rewriteMetrics := stages[0]["metrics"].(map[string]any)
+	if value, ok := rewriteMetrics["rewritten_count"]; !ok || value != uint64(0) {
+		t.Fatalf("expected a reported zero rewrite count, got %#v", rewriteMetrics)
+	}
+	if stages[1]["type"] != "pack_gc" || stages[1]["status"] != "not_run" {
+		t.Fatalf("expected Pack GC to be explicitly not run, got %#v", stages[1])
+	}
+	if stages[2]["status"] != "completed" || stages[2]["statistics_available"] != false {
+		t.Fatalf("expected completed index compaction without quantitative statistics, got %#v", stages[2])
+	}
+	cleanupMetrics := stages[3]["metrics"].(map[string]any)
+	if cleanupMetrics["deleted_count"] != uint64(0) || cleanupMetrics["retained_bytes"] != uint64(4096) {
+		t.Fatalf("unexpected log cleanup metrics: %#v", cleanupMetrics)
+	}
+}
+
+func TestQuickMaintenanceSummaryReportsEpochStages(t *testing.T) {
+	startedAt := time.Date(2026, 9, 3, 2, 0, 0, 0, time.UTC)
+	info := `{"schedule":{"runs":{
+    "compact-single-epoch":[{"start":"2026-09-03T02:00:01Z","success":true,"extra":[{"kind":"compactSingleEpochStats","data":{"supersededIndexBlobCount":9,"supersededIndexTotalSize":170917888,"epoch":42}}]}],
+    "advance-epoch":[{"start":"2026-09-03T02:00:02Z","success":true,"extra":[{"kind":"advanceEpochStats","data":{"currentEpoch":43,"wasAdvanced":false}}]}]
+  }}}`
+
+	summary := maintenanceSummaryFromInfo(info, "quick", startedAt)
+	stages := summary["stages"].([]map[string]any)
+	if len(stages) != 2 || stages[0]["type"] != "epoch_compaction" || stages[1]["type"] != "epoch_advance" {
+		t.Fatalf("unexpected Epoch Quick stages: %#v", stages)
+	}
+	advanceMetrics := stages[1]["metrics"].(map[string]any)
+	if advanceMetrics["current_epoch"] != uint64(43) || advanceMetrics["advanced"] != false {
+		t.Fatalf("unexpected Epoch advance metrics: %#v", advanceMetrics)
+	}
+}
+
+func TestQuickMaintenanceSummaryIgnoresOldStageRuns(t *testing.T) {
+	startedAt := time.Date(2026, 9, 3, 2, 0, 0, 0, time.UTC)
+	info := `{"schedule":{"runs":{
+    "cleanup-logs":[{"start":"2026-09-02T02:00:02Z","success":true,"extra":[{"kind":"cleanupLogsStats","data":{"deletedBlobCount":99}}]}]
+  }}}`
+
+	if summary := maintenanceSummaryFromInfo(info, "quick", startedAt); summary != nil {
+		t.Fatalf("expected no summary from previous-cycle stages, got %#v", summary)
+	}
+}

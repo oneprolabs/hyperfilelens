@@ -57,6 +57,44 @@ type deleteUnreferencedPacksStats struct {
 	RetainedTotalSize     uint64 `json:"retainedTotalSize"`
 }
 
+type rewriteContentsStats struct {
+	ToRewriteContentCount *uint64 `json:"toRewriteContentCount"`
+	ToRewriteContentSize  *uint64 `json:"toRewriteContentSize"`
+	RewrittenContentCount *uint64 `json:"rewrittenContentCount"`
+	RewrittenContentSize  *uint64 `json:"rewrittenContentSize"`
+	RetainedContentCount  *uint64 `json:"retainedContentCount"`
+	RetainedContentSize   *uint64 `json:"retainedContentSize"`
+}
+
+type deleteUnreferencedPacksStageStats struct {
+	UnreferencedPackCount *uint64 `json:"unreferencedPackCount"`
+	UnreferencedTotalSize *uint64 `json:"unreferencedTotalSize"`
+	DeletedPackCount      *uint64 `json:"deletedPackCount"`
+	DeletedTotalSize      *uint64 `json:"deletedTotalSize"`
+	RetainedPackCount     *uint64 `json:"retainedPackCount"`
+	RetainedTotalSize     *uint64 `json:"retainedTotalSize"`
+}
+
+type cleanupLogsStats struct {
+	ToDeleteBlobCount *uint64 `json:"toDeleteBlobCount"`
+	ToDeleteBlobSize  *uint64 `json:"toDeleteBlobSize"`
+	DeletedBlobCount  *uint64 `json:"deletedBlobCount"`
+	DeletedBlobSize   *uint64 `json:"deletedBlobSize"`
+	RetainedBlobCount *uint64 `json:"retainedBlobCount"`
+	RetainedBlobSize  *uint64 `json:"retainedBlobSize"`
+}
+
+type compactSingleEpochStats struct {
+	SupersededIndexBlobCount *uint64 `json:"supersededIndexBlobCount"`
+	SupersededIndexTotalSize *uint64 `json:"supersededIndexTotalSize"`
+	Epoch                    *uint64 `json:"epoch"`
+}
+
+type advanceEpochStats struct {
+	CurrentEpoch *uint64 `json:"currentEpoch"`
+	WasAdvanced  *bool   `json:"wasAdvanced"`
+}
+
 func currentMaintenanceRun(runs []maintenanceRun, startedAt time.Time) *maintenanceRun {
 	lowerBound := startedAt.Add(-2 * time.Second)
 	var selected *maintenanceRun
@@ -83,6 +121,144 @@ func maintenanceRunData(run *maintenanceRun, kind string, out any) bool {
 		return json.Unmarshal(extra.Data, out) == nil
 	}
 	return false
+}
+
+func maintenanceStage(
+	stageType string,
+	run *maintenanceRun,
+	statisticsKind string,
+	metrics func(json.RawMessage) map[string]any,
+) map[string]any {
+	stage := map[string]any{
+		"type":                 stageType,
+		"status":               "not_run",
+		"statistics_available": false,
+		"metrics":              nil,
+	}
+	if run == nil {
+		return stage
+	}
+
+	stage["status"] = "completed"
+	if metrics == nil {
+		return stage
+	}
+	for _, extra := range run.Extra {
+		if extra.Kind != statisticsKind || len(extra.Data) == 0 || string(extra.Data) == "null" {
+			continue
+		}
+		if normalized := metrics(extra.Data); len(normalized) > 0 {
+			stage["statistics_available"] = true
+			stage["metrics"] = normalized
+		}
+		return stage
+	}
+	return stage
+}
+
+func putUint64(metrics map[string]any, key string, value *uint64) {
+	if value != nil {
+		metrics[key] = *value
+	}
+}
+
+func rewriteMetrics(data json.RawMessage) map[string]any {
+	var stats rewriteContentsStats
+	if json.Unmarshal(data, &stats) != nil {
+		return nil
+	}
+	result := map[string]any{}
+	putUint64(result, "found_count", stats.ToRewriteContentCount)
+	putUint64(result, "found_bytes", stats.ToRewriteContentSize)
+	putUint64(result, "rewritten_count", stats.RewrittenContentCount)
+	putUint64(result, "rewritten_bytes", stats.RewrittenContentSize)
+	putUint64(result, "retained_count", stats.RetainedContentCount)
+	putUint64(result, "retained_bytes", stats.RetainedContentSize)
+	return result
+}
+
+func packMetrics(data json.RawMessage) map[string]any {
+	var stats deleteUnreferencedPacksStageStats
+	if json.Unmarshal(data, &stats) != nil {
+		return nil
+	}
+	result := map[string]any{}
+	putUint64(result, "unreferenced_count", stats.UnreferencedPackCount)
+	putUint64(result, "unreferenced_bytes", stats.UnreferencedTotalSize)
+	putUint64(result, "deleted_count", stats.DeletedPackCount)
+	putUint64(result, "deleted_bytes", stats.DeletedTotalSize)
+	putUint64(result, "retained_count", stats.RetainedPackCount)
+	putUint64(result, "retained_bytes", stats.RetainedTotalSize)
+	return result
+}
+
+func cleanupLogMetrics(data json.RawMessage) map[string]any {
+	var stats cleanupLogsStats
+	if json.Unmarshal(data, &stats) != nil {
+		return nil
+	}
+	result := map[string]any{}
+	putUint64(result, "candidate_count", stats.ToDeleteBlobCount)
+	putUint64(result, "candidate_bytes", stats.ToDeleteBlobSize)
+	putUint64(result, "deleted_count", stats.DeletedBlobCount)
+	putUint64(result, "deleted_bytes", stats.DeletedBlobSize)
+	putUint64(result, "retained_count", stats.RetainedBlobCount)
+	putUint64(result, "retained_bytes", stats.RetainedBlobSize)
+	return result
+}
+
+func compactEpochMetrics(data json.RawMessage) map[string]any {
+	var stats compactSingleEpochStats
+	if json.Unmarshal(data, &stats) != nil {
+		return nil
+	}
+	result := map[string]any{}
+	putUint64(result, "superseded_index_count", stats.SupersededIndexBlobCount)
+	putUint64(result, "superseded_index_bytes", stats.SupersededIndexTotalSize)
+	putUint64(result, "epoch", stats.Epoch)
+	return result
+}
+
+func advanceEpochMetrics(data json.RawMessage) map[string]any {
+	var stats advanceEpochStats
+	if json.Unmarshal(data, &stats) != nil {
+		return nil
+	}
+	result := map[string]any{}
+	putUint64(result, "current_epoch", stats.CurrentEpoch)
+	if stats.WasAdvanced != nil {
+		result["advanced"] = *stats.WasAdvanced
+	}
+	return result
+}
+
+func quickMaintenanceStages(runs map[string][]maintenanceRun, startedAt time.Time) []map[string]any {
+	epochCompact := currentMaintenanceRun(runs["compact-single-epoch"], startedAt)
+	epochAdvance := currentMaintenanceRun(runs["advance-epoch"], startedAt)
+	if epochCompact != nil || epochAdvance != nil {
+		return []map[string]any{
+			maintenanceStage("epoch_compaction", epochCompact, "compactSingleEpochStats", compactEpochMetrics),
+			maintenanceStage("epoch_advance", epochAdvance, "advanceEpochStats", advanceEpochMetrics),
+		}
+	}
+
+	rewrite := currentMaintenanceRun(runs["quick-rewrite-contents"], startedAt)
+	pack := currentMaintenanceRun(runs["quick-delete-blobs"], startedAt)
+	if pack == nil {
+		pack = currentMaintenanceRun(runs["full-delete-blobs"], startedAt)
+	}
+	indexCompaction := currentMaintenanceRun(runs["index-compaction"], startedAt)
+	logCleanup := currentMaintenanceRun(runs["cleanup-logs"], startedAt)
+	if rewrite == nil && pack == nil && indexCompaction == nil && logCleanup == nil {
+		return nil
+	}
+
+	return []map[string]any{
+		maintenanceStage("content_rewrite", rewrite, "rewriteContentsStats", rewriteMetrics),
+		maintenanceStage("pack_gc", pack, "deleteUnreferencedPacksStats", packMetrics),
+		maintenanceStage("index_compaction", indexCompaction, "compactIndexesStats", nil),
+		maintenanceStage("log_cleanup", logCleanup, "cleanupLogsStats", cleanupLogMetrics),
+	}
 }
 
 func maintenanceSummaryFromInfo(stdout, mode string, startedAt time.Time) map[string]any {
@@ -139,10 +315,14 @@ func maintenanceSummaryFromInfo(stdout, mode string, startedAt time.Time) map[st
 		break
 	}
 
-	if content == nil && packs == nil {
+	var stages []map[string]any
+	if mode == "quick" {
+		stages = quickMaintenanceStages(info.Schedule.Runs, startedAt)
+	}
+	if content == nil && packs == nil && len(stages) == 0 {
 		return nil
 	}
-	return map[string]any{
+	summary := map[string]any{
 		"schema_version": maintenanceSummarySchemaVersion,
 		"mode":           mode,
 		"source":         "maintenance_info",
@@ -150,6 +330,10 @@ func maintenanceSummaryFromInfo(stdout, mode string, startedAt time.Time) map[st
 		"content_gc":     content,
 		"pack_gc":        packs,
 	}
+	if len(stages) > 0 {
+		summary["stages"] = stages
+	}
+	return summary
 }
 
 func parseMaintenanceSize(raw string) (uint64, bool) {

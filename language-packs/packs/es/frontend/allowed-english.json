@@ -311,6 +311,5 @@
   "platformOps.settings.email.host",
   "platformOps.settings.environment.djangoDebug",
   "platformOps.orgs.plan",
-  "platformOps.orgs.quotaFromPlan",
-  "ops.task.maintenanceSummary.metric"
+  "platformOps.orgs.quotaFromPlan"
 ]
