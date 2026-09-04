@@ -1637,6 +1637,16 @@ for resource in \
 	grep -F "${resource}" "${ROOT}/deploy/docker-compose.yml" \
 		"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
 done
+grep -F '    mem_limit: ${HFL_WORKER_MEMORY_LIMIT:-2g}' \
+	"${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F '    cpus: ${HFL_WORKER_CPU_LIMIT:-1.0}' \
+	"${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F 'CELERY_WORKER_CONCURRENCY=2' "${ROOT}/.env.example" >/dev/null
+grep -F 'HFL_WORKER_MEMORY_LIMIT=2g' "${ROOT}/.env.example" >/dev/null
+grep -F 'HFL_WORKER_CPU_LIMIT=1.0' "${ROOT}/.env.example" >/dev/null
+[[ "$(grep -Fc -- '--concurrency="${CELERY_WORKER_CONCURRENCY:-2}"' \
+	"${ROOT}/deploy/docker/backend-entrypoint.sh" || true)" -eq 2 ]] \
+	|| { printf 'ERROR: production and development Workers must default to two processes\n' >&2; exit 1; }
 sourcelens_compose_template="${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml"
 [[ "$(grep -Fc '    mem_limit: 2g' "${sourcelens_compose_template}" || true)" -eq 2 ]] \
 	|| { printf 'ERROR: bundled SourceLens API and LensNode must both use a 2 GiB limit\n' >&2; exit 1; }

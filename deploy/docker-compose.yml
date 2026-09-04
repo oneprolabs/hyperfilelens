@@ -114,8 +114,8 @@ services:
         condition: service_healthy
     command: worker
     stop_grace_period: 600s
-    mem_limit: 1g
-    cpus: 0.50
+    mem_limit: ${HFL_WORKER_MEMORY_LIMIT:-2g}
+    cpus: ${HFL_WORKER_CPU_LIMIT:-1.0}
     healthcheck:
       test:
         [
