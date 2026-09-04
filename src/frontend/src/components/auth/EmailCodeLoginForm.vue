@@ -23,7 +23,7 @@ const emit = defineEmits<{
   'update:email': [value: string]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const COOLDOWN_STORAGE_KEY = 'hfl.email_code_login.cooldowns'
 const DEFAULT_COOLDOWN_SECONDS = 60
 const DEFAULT_CODE_TTL_MS = 10 * 60 * 1000
@@ -308,6 +308,10 @@ watch(() => props.initialEmail, value => {
     email.value = value
   }
 })
+watch(locale, () => {
+  emailError.value = ''
+  codeError.value = ''
+})
 
 onMounted(() => {
   void restoreCooldown()
@@ -324,7 +328,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="email-code-login-form">
+  <form
+    class="email-code-login-form"
+    novalidate
+    @submit.prevent="verifyCode"
+  >
     <div
       class="input-wrapper"
       :class="{ 'has-error': emailError }"
@@ -347,6 +355,7 @@ onBeforeUnmount(() => {
           autocomplete="email"
           :disabled="disabled || sending || verifying"
           :aria-invalid="Boolean(emailError)"
+          :aria-describedby="emailError ? 'email-code-login-email-error' : undefined"
           @input="validateEmail"
           @blur="validateEmail"
           @keyup.enter="sendCode"
@@ -354,6 +363,7 @@ onBeforeUnmount(() => {
       </div>
       <p
         v-if="emailError"
+        id="email-code-login-email-error"
         class="error-msg"
         role="alert"
       >
@@ -386,6 +396,7 @@ onBeforeUnmount(() => {
           :placeholder="t('login.emailCodePlaceholder')"
           :disabled="disabled || !hasUsableCode || sending || verifying"
           :aria-invalid="Boolean(codeError)"
+          :aria-describedby="codeError ? 'email-code-login-code-error' : undefined"
           @input="sanitizeCode"
           @keyup.enter="verifyCode"
         >
@@ -400,6 +411,7 @@ onBeforeUnmount(() => {
       </div>
       <p
         v-if="codeError"
+        id="email-code-login-code-error"
         class="error-msg"
         role="alert"
       >
@@ -410,62 +422,69 @@ onBeforeUnmount(() => {
     <ElButton
       type="primary"
       class="submit-btn"
+      native-type="submit"
       :disabled="!canVerify"
       :loading="verifying"
       @click="verifyCode"
     >
       {{ verifying ? t('login.btnSubmitLoading') : t('login.btnSubmit') }}
     </ElButton>
-  </div>
+  </form>
 </template>
 
 <style scoped>
 .email-code-login-form {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 12px;
 }
 
 .input-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 7px;
 }
 
 .input-row {
-  height: 42px;
+  height: 46px;
   display: flex;
   align-items: center;
-  padding: 0 14px;
-  background-color: #313131;
-  border: 1px solid #3a3b40;
-  border-radius: var(--radius-card);
-  transition: border-color 0.2s;
+  padding: 0 13px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    box-shadow 150ms ease-out;
 }
 
 .input-row:focus-within {
-  border-color: var(--color-primary);
+  background: rgba(109, 94, 246, 0.08);
+  border-color: rgba(139, 120, 255, 0.72);
+  box-shadow: 0 0 0 3px rgba(109, 94, 246, 0.22);
 }
 
 .input-icon {
-  margin-right: 12px;
+  margin-right: 10px;
   flex-shrink: 0;
-  color: #888a8f;
+  color: #a19aad;
 }
 
 .input-row input {
-  height: 38px;
+  height: 42px;
   min-width: 0;
   flex: 1;
-  color: #fff;
+  color: #f0eefa;
   background: transparent;
   border: 0;
   outline: 0;
   font-size: 14px;
+  font-weight: 500;
 }
 
 .input-row input::placeholder {
-  color: #6a6c71;
+  color: #938c9e;
 }
 
 .input-row input:disabled {
@@ -473,18 +492,21 @@ onBeforeUnmount(() => {
 }
 
 .input-wrapper.has-error .input-row {
-  border-color: #f85149;
+  background: rgba(255, 90, 90, 0.07);
+  border-color: rgba(255, 110, 110, 0.62);
 }
 
 .error-msg {
   margin: 0;
   padding-left: 2px;
-  color: #f85149;
+  color: #ff8f8f;
   font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .email-code-login-form__send {
-  min-height: 40px;
+  min-height: 42px;
   flex: 0 0 auto;
   color: var(--color-brand-violet-soft);
   background: transparent;
@@ -492,7 +514,7 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   font-size: 12px;
   cursor: pointer;
-  min-width: 88px;
+  min-width: 96px;
   padding: 0 8px 0 12px;
   border-left: 1px solid #4a4b51;
   border-radius: 0;
@@ -507,7 +529,7 @@ onBeforeUnmount(() => {
 }
 
 .email-code-login-form__send:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--color-brand-violet-soft);
   outline-offset: 2px;
 }
 
@@ -518,10 +540,18 @@ onBeforeUnmount(() => {
 
 .submit-btn {
   width: 100%;
-  height: 42px !important;
-  border-radius: 21px;
-  font-size: 15px;
-  font-weight: 500;
+  min-height: 46px;
+  height: 46px !important;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@media (max-width: 479.98px) {
+  .email-code-login-form__send {
+    min-height: 44px;
+    min-width: 104px;
+  }
 }
 
 .sr-only {
