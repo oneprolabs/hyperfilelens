@@ -49,6 +49,7 @@ import {
 import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../lib/taskBackupSourceResource'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../lib/taskStepExpansion'
+import { taskStepTimelineTone, taskStepTranslationKey } from '../../lib/taskStepDisplay'
 import {
   taskCleanupFailures,
   taskCleanupWarnings,
@@ -426,12 +427,7 @@ function stepDuration(index: number) {
 }
 
 function timelineIconClass(status?: string) {
-  if (status === 'success') return 'hfl-task-drawer__timeline-icon--success'
-  if (status === 'warning') return 'hfl-task-drawer__timeline-icon--warning'
-  if (status === 'failed' || status === 'timeout') return 'hfl-task-drawer__timeline-icon--danger'
-  if (status === 'running') return 'hfl-task-drawer__timeline-icon--running'
-  if (status === 'cancelled') return 'hfl-task-drawer__timeline-icon--muted'
-  return 'hfl-task-drawer__timeline-icon--pending'
+  return `hfl-task-drawer__timeline-icon--${taskStepTimelineTone(status)}`
 }
 
 function displayTaskStatus(task?: TaskRow | null) {
@@ -457,14 +453,8 @@ function eventMessageClass(event: TaskEventRow) {
 }
 
 function stepDisplayName(stepName?: string | null, taskType?: string | null) {
-  const step = String(stepName || '')
-  if (!step) return t('ops.task.emptyMark')
-  if (taskType === 'snapshot_download') {
-    if (step === 'restore') return t('ops.task.step.snapshot_download_restore')
-    if (step === 'transfer') return t('ops.task.step.snapshot_download_transfer')
-    if (step === 'finalize') return t('ops.task.step.snapshot_download_finalize')
-  }
-  const key = `ops.task.step.${step}`
+  const key = taskStepTranslationKey(stepName, taskType)
+  if (!key) return t('ops.task.emptyMark')
   return te(key) ? t(key) : t('ops.task.unknownValue')
 }
 
@@ -2578,8 +2568,9 @@ watch(
 }
 
 .hfl-task-drawer__timeline-icon--pending {
-  background-color: var(--color-text-secondary);
-  color: var(--color-text-inverse);
+  border-color: var(--color-text-secondary);
+  background-color: transparent;
+  color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__tabs {
