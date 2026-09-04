@@ -159,7 +159,11 @@ class LensGatewayLink(OrganizationScopedModel):
 
     class GatewayScope(models.TextChoices):
         PLATFORM = "platform", "Platform"
-        USER = "user", "User"
+        ORGANIZATION = "organization", "Organization"
+        # Transitional persistence value kept for blue/green compatibility.
+        # New authorization must treat this exactly like ORGANIZATION and must
+        # never infer ownership from the user who installed the gateway.
+        USER = "user", "Legacy organization"
 
     class Origin(models.TextChoices):
         USER = "user", "User"
@@ -187,6 +191,13 @@ class LensGatewayLink(OrganizationScopedModel):
         null=True,
         blank=True,
         related_name="lens_gateway_links_owned",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="lens_gateway_links_created",
     )
     origin = models.CharField(
         max_length=16,
@@ -238,6 +249,7 @@ class LensGatewayLink(OrganizationScopedModel):
                 condition=(
                     models.Q(scope="platform", owner_user_id__isnull=True)
                     | models.Q(scope="user", owner_user_id__isnull=False)
+                    | models.Q(scope="organization")
                 ),
                 name="lens_brgw_scope_owner_ck",
             ),

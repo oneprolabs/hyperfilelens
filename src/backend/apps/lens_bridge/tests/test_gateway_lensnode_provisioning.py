@@ -53,8 +53,8 @@ class DurableGatewayLensNodeProvisioningTests(TestCase):
         result = provisioning.ensure_lensnode_for_gateway(
             org=self.org,
             gateway=self.gateway,
-            owner_user=self.user,
-            scope=LensGatewayLink.GatewayScope.USER,
+            created_by=self.user,
+            scope=LensGatewayLink.GatewayScope.ORGANIZATION,
         )
 
         self.assertEqual(result.sl_lensnode_uuid, remote_uuid)
@@ -96,8 +96,8 @@ class DurableGatewayLensNodeProvisioningTests(TestCase):
         result = provisioning.ensure_lensnode_for_gateway(
             org=self.org,
             gateway=self.gateway,
-            owner_user=self.user,
-            scope=LensGatewayLink.GatewayScope.USER,
+            created_by=self.user,
+            scope=LensGatewayLink.GatewayScope.ORGANIZATION,
         )
 
         self.assertEqual(result.sl_lensnode_uuid, remote_uuid)
@@ -124,8 +124,8 @@ class DurableGatewayLensNodeProvisioningTests(TestCase):
             provisioning.ensure_lensnode_for_gateway(
                 org=self.org,
                 gateway=self.gateway,
-                owner_user=self.user,
-                scope=LensGatewayLink.GatewayScope.USER,
+                created_by=self.user,
+                scope=LensGatewayLink.GatewayScope.ORGANIZATION,
             )
 
         request_json.assert_not_called()
@@ -162,31 +162,51 @@ class DurableGatewayLensNodeProvisioningTests(TestCase):
             provisioning.ensure_lensnode_for_gateway(
                 org=self.org,
                 gateway=self.gateway,
-                owner_user=self.user,
-                scope=LensGatewayLink.GatewayScope.USER,
+                created_by=self.user,
+                scope=LensGatewayLink.GatewayScope.ORGANIZATION,
             )
 
         request_json.assert_called_once()
 
     @mock.patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
-    def test_private_gateway_owner_cannot_be_replaced(self, request_json):
+    def test_private_gateway_installer_is_not_authorization_boundary(
+        self, request_json
+    ):
         another_user = get_user_model().objects.create_user(
             username="other-lensnode-owner@example.test",
             email="other-lensnode-owner@example.test",
         )
 
-        with self.assertRaisesMessage(
-            Exception,
-            "Private Data Gateway belongs to another user.",
-        ):
-            provisioning.ensure_lensnode_for_gateway(
-                org=self.org,
-                gateway=self.gateway,
-                owner_user=another_user,
-                scope=LensGatewayLink.GatewayScope.USER,
-            )
+        self.link.sl_lensnode_uuid = uuid.uuid4()
+        self.link.save(update_fields=["sl_lensnode_uuid", "updated_at"])
+
+        result = provisioning.ensure_lensnode_for_gateway(
+            org=self.org,
+            gateway=self.gateway,
+            created_by=another_user,
+            scope=LensGatewayLink.GatewayScope.ORGANIZATION,
+        )
 
         request_json.assert_not_called()
+        self.assertEqual(result.created_by, self.user)
+
+    def test_new_organization_gateway_uses_rolling_deploy_storage_contract(self):
+        gateway = Node.objects.create(
+            organization=self.org,
+            name="New organization gateway",
+            role=NodeRole.GATEWAY,
+        )
+
+        result = provisioning._resolve_gateway_link_identity(
+            org=self.org,
+            gateway=gateway,
+            created_by=self.user,
+            normalized_scope=LensGatewayLink.GatewayScope.ORGANIZATION,
+        )
+
+        self.assertEqual(result.scope, LensGatewayLink.GatewayScope.USER)
+        self.assertEqual(result.owner_user, self.user)
+        self.assertEqual(result.created_by, self.user)
 
     @mock.patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
     def test_platform_gateway_create_defaults_capacity_bytes(self, request_json):

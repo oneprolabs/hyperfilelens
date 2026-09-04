@@ -10,6 +10,7 @@ from apps.lens_bridge.services.gateway_readiness import (
     gateway_runtime_state,
     require_hfl_usable_gateway,
 )
+from apps.lens_bridge.services.gateway_ownership import organization_gateway_links
 
 PLATFORM_ORG_KEY = "__platform_lens__"
 PLATFORM_ORG_NAME = "Platform Lens"
@@ -32,16 +33,6 @@ def get_or_create_platform_org() -> Organization:
 
         initialize_organization_quota(org)
     return org
-
-
-def user_gateway_links(*, user, organization: Organization | None = None):
-    links = LensGatewayLink.objects.filter(
-        owner_user=user,
-        scope=LensGatewayLink.GatewayScope.USER,
-    ).select_related("gateway")
-    if organization is not None:
-        links = links.filter(organization=organization)
-    return links
 
 
 def platform_gateway_links():
@@ -74,10 +65,12 @@ def resolve_platform_default_gateway_link() -> LensGatewayLink | None:
     )
 
 
-def resolve_user_default_gateway_link(*, user) -> LensGatewayLink | None:
-    """Resolve the first HFL-ready gateway owned by the current HFL user."""
+def resolve_organization_default_gateway_link(
+    *, organization: Organization
+) -> LensGatewayLink | None:
+    """Resolve the first HFL-ready Private Gateway in an organization."""
     return _first_eligible(
-        user_gateway_links(user=user)
+        organization_gateway_links(organization=organization)
         .filter(sl_lensnode_uuid__isnull=False)
         .order_by("created_at", "id")
     )
@@ -108,7 +101,7 @@ def resolve_gateway_link_for_copilot(
         )
         if link is None:
             link = (
-                user_gateway_links(user=user, organization=org)
+                organization_gateway_links(organization=org)
                 .filter(pk=gateway_link_id, sl_lensnode_uuid__isnull=False)
                 .first()
             )

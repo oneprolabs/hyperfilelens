@@ -255,6 +255,8 @@ export type LensGatewayInsight = {
   sl_runtime_status?: string
   owner_user_id?: number | null
   owner_username?: string
+  created_by_id?: number | null
+  created_by_username?: string
   owner_organization_id?: number | null
   is_platform_default?: boolean
   organization?: number
@@ -727,7 +729,7 @@ export type GatewayChatWorkload = {
   gateway_link_id: number
   gateway_id: number
   gateway_name: string
-  gateway_scope: 'platform' | 'user' | string
+  gateway_scope: 'platform' | 'organization' | 'user' | string
   chat_prepare_concurrency: number
   chat_queue_capacity: number
   active_chat_preparations: number
@@ -1205,7 +1207,7 @@ export async function cancelCopilotScopePreview(
 }
 
 export type LensAdmissionPreview = {
-  gateway_scope: 'platform' | 'user' | string
+  gateway_scope: 'platform' | 'organization' | 'user' | string
   selection: {
     file_count: number
     size_bytes: number

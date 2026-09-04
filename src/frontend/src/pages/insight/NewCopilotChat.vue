@@ -74,7 +74,9 @@ function newCreateIdempotencyKey(): string {
 const readyGateways = computed(() => gatewayOptions.value.filter(
   (row) => row.online && row.hfl_usable && row.copilot_eligible,
 ))
-const privateGateways = computed(() => readyGateways.value.filter((row) => row.scope === 'user'))
+const privateGateways = computed(() => readyGateways.value.filter(
+  (row) => row.scope === 'organization' || row.scope === 'user',
+))
 const platformGateway = computed(() => {
   const rows = readyGateways.value.filter((row) => row.scope === 'platform')
   return rows.find((row) => row.is_platform_default) ?? rows[0] ?? null

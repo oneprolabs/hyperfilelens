@@ -353,8 +353,10 @@ def admission_preview(
             ):
                 reasons.append("organization_capacity")
 
+    from apps.lens_bridge.services.gateway_ownership import external_gateway_scope
+
     return {
-        "gateway_scope": str(gateway_link.scope),
+        "gateway_scope": external_gateway_scope(gateway_link),
         "selection": {
             "file_count": int(file_count),
             "size_bytes": int(size_bytes),

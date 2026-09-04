@@ -30,20 +30,24 @@ class GatewayInsightDirectoryTests(SimpleTestCase):
     @patch("apps.lens_bridge.services.gateway_insights._serialize_row")
     @patch("apps.lens_bridge.services.gateway_insights._link_index")
     @patch("apps.lens_bridge.services.gateway_insights._lensnode_rows")
-    def test_user_directory_only_returns_owned_mappings(
+    def test_organization_directory_only_returns_organization_mappings(
         self,
         mock_lensnodes,
         mock_link_index,
         mock_serialize,
     ):
         user = MagicMock()
+        organization = MagicMock()
         link = MagicMock()
         mock_lensnodes.return_value = [{"uuid": "owned"}, {"uuid": "other"}]
         mock_link_index.return_value = {"owned": link}
         mock_serialize.return_value = {"name": "owned"}
 
-        rows = gateway_insights.list_user_gateway_insight_rows(user=user)
+        rows = gateway_insights.list_organization_gateway_insight_rows(
+            organization=organization,
+            user=user,
+        )
 
         self.assertEqual(rows, [{"name": "owned"}])
-        mock_link_index.assert_called_once_with(owner_user=user)
+        mock_link_index.assert_called_once_with(organization=organization)
         mock_serialize.assert_called_once()

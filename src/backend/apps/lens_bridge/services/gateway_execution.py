@@ -14,6 +14,10 @@ from apps.lens_bridge.models import (
     LensWorkspaceBinding,
 )
 from apps.lens_bridge.services import gateway_readiness
+from apps.lens_bridge.services.gateway_ownership import (
+    PRIVATE_GATEWAY_SCOPES,
+    is_private_gateway,
+)
 
 
 @dataclass(frozen=True)
@@ -49,7 +53,6 @@ def context_for_gateway_link(
     *,
     tenant_organization: Organization,
     gateway_link: LensGatewayLink,
-    expected_owner_user_id: int | None = None,
     require_ready: bool = True,
 ) -> GatewayExecutionContext:
     """Build a trusted execution context from an already-authorized link.
@@ -73,13 +76,9 @@ def context_for_gateway_link(
 
         if link.organization.key != PLATFORM_ORG_KEY or link.owner_user_id is not None:
             raise ValidationError({"gateway_link_id": "Public Data Gateway identity is invalid."})
-    elif link.scope == LensGatewayLink.GatewayScope.USER:
+    elif is_private_gateway(link):
         if link.organization_id != tenant_organization.id:
             raise ValidationError({"gateway_link_id": "Private Data Gateway belongs to another organization."})
-        if link.owner_user_id is None:
-            raise ValidationError({"gateway_link_id": "Private Data Gateway has no owner."})
-        if expected_owner_user_id is not None and link.owner_user_id != expected_owner_user_id:
-            raise ValidationError({"gateway_link_id": "Private Data Gateway belongs to another user."})
     else:
         raise ValidationError({"gateway_link_id": "Unsupported data gateway scope."})
 
@@ -93,15 +92,14 @@ def context_for_gateway_link(
     )
 
 
-def require_user_gateway_link(
+def require_organization_gateway_link(
     *,
     tenant_organization: Organization,
     gateway_id: int,
-    owner_user_id: int,
     require_ready: bool = True,
     lock: bool = False,
 ) -> LensGatewayLink:
-    """Resolve one private Gateway through its organization and user owner."""
+    """Resolve one Private Data Gateway through its organization boundary."""
 
     queryset = LensGatewayLink.objects.select_related("organization", "gateway")
     if lock:
@@ -109,18 +107,16 @@ def require_user_gateway_link(
     link = queryset.filter(
         organization=tenant_organization,
         gateway_id=gateway_id,
-        scope=LensGatewayLink.GatewayScope.USER,
-        owner_user_id=owner_user_id,
+        scope__in=PRIVATE_GATEWAY_SCOPES,
         is_deleted=False,
     ).first()
     if link is None:
         raise ValidationError(
-            {"gateway_id": "Private Data Gateway is not owned by this user."}
+            {"gateway_id": "Private Data Gateway is not available in this organization."}
         )
     context_for_gateway_link(
         tenant_organization=tenant_organization,
         gateway_link=link,
-        expected_owner_user_id=owner_user_id,
         require_ready=require_ready,
     )
     return link
@@ -138,13 +134,9 @@ def context_for_knowledge_source(
         )
     if knowledge_source.gateway_link_id is None:
         raise ValidationError({"gateway_link_id": "Knowledge source has no authoritative data gateway link."})
-    expected_owner_user_id = None
-    if knowledge_source.gateway_link.scope == LensGatewayLink.GatewayScope.USER:
-        expected_owner_user_id = knowledge_source.created_by_id
     context = context_for_gateway_link(
         tenant_organization=tenant_organization,
         gateway_link=knowledge_source.gateway_link,
-        expected_owner_user_id=expected_owner_user_id,
         require_ready=require_ready,
     )
     if context.gateway.id != knowledge_source.gateway_id:
