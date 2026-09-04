@@ -117,11 +117,14 @@ async function confirmLogout() {
     </template>
 
     <div class="nav-dropdown-panel">
-      <header class="nav-dropdown-panel__head nav-dropdown-panel__head--stacked">
-        <h3 class="nav-dropdown-panel__title">
+      <header class="nav-dropdown-panel__head">
+        <h3
+          class="nav-dropdown-panel__title nav-user-menu__email"
+          :title="email"
+        >
           {{ email }}
         </h3>
-        <span class="nav-dropdown-panel__role-badge">{{ role }}</span>
+        <span class="nav-dropdown-panel__role-badge nav-user-menu__role">{{ role }}</span>
       </header>
 
       <div class="nav-dropdown-panel__body">
@@ -190,6 +193,18 @@ async function confirmLogout() {
 </template>
 
 <style scoped>
+.nav-user-menu__email {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-user-menu__role {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
 .nav-user-trigger {
   display: inline-flex;
   min-width: 0;
@@ -199,7 +214,7 @@ async function confirmLogout() {
   box-sizing: border-box;
   gap: 6px;
   min-height: 32px;
-  padding: 0 10px;
+  padding: 0 10px 0 6px;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -262,7 +277,7 @@ async function confirmLogout() {
 @media (min-width: 1024px) and (max-width: 1151.98px) {
   .nav-user-trigger {
     padding-right: 8px;
-    padding-left: 8px;
+    padding-left: 6px;
   }
 
   .nav-user-trigger__label {

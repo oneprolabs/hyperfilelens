@@ -242,6 +242,24 @@ def record_node_availability(
                 )
 
         transaction.on_commit(_project)
+        if transitioned:
+            from apps.monitor.services.events import schedule_availability_event
+
+            schedule_availability_event(
+                organization_id=int(node.organization_id),
+                source="node",
+                availability=availability,
+                occurred_at=node.availability_updated_at,
+                resource_type=node.role,
+                resource_id=str(node.id),
+                resource_name=node.name,
+                target_path=(
+                    "/insight/gateways"
+                    if node.role == NodeRole.GATEWAY
+                    else "/node/agents"
+                ),
+                metadata={"role": node.role},
+            )
         return True
 
 

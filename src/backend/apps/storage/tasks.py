@@ -15,6 +15,7 @@ from django.utils.dateparse import parse_datetime
 
 from common.observability.celery_context import logged_celery_task
 
+from apps.monitor.services.events import schedule_repository_health_event
 from apps.node.models import Node, NodeTask
 from apps.storage.repositories.models import (
     Repository,
@@ -117,6 +118,7 @@ def _project_bound_node_unavailability(repository: Repository) -> bool:
         return False
     if repository.health == Repository.Health.OFFLINE:
         return True
+    previous_health = repository.health
     current_scope = Repository.objects.filter(
         pk=repository.id,
         status=Repository.Status.CREATED,
@@ -133,6 +135,13 @@ def _project_bound_node_unavailability(repository: Repository) -> bool:
     if projected:
         repository.health = Repository.Health.OFFLINE
         repository.health_failures = 0
+        schedule_repository_health_event(
+            organization_id=repository.organization_id,
+            repository_id=repository.id,
+            repository_name=repository.name,
+            previous_health=previous_health,
+            health=Repository.Health.OFFLINE,
+        )
     return projected
 
 
@@ -425,6 +434,13 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                     "status": "skipped",
                     "stale": True,
                 }
+            schedule_repository_health_event(
+                organization_id=repository.organization_id,
+                repository_id=repository.id,
+                repository_name=repository.name,
+                previous_health=repository.health,
+                health=health,
+            )
         elif not current_scope.exists():
             return {
                 "repository_id": repository_id,
@@ -493,6 +509,13 @@ def _record_repository_health_failure(
     )
     if not current_scope.update(health=health, health_failures=failure_count):
         return {"repository_id": repository.id, "status": "skipped", "stale": True}
+    schedule_repository_health_event(
+        organization_id=repository.organization_id,
+        repository_id=repository.id,
+        repository_name=repository.name,
+        previous_health=repository.health,
+        health=health,
+    )
 
     if failure_count == 1 and retry_attempt == 0:
         check_storage_repository_health.apply_async(

@@ -236,6 +236,7 @@ def connection_test_result_from_agent_outcome(
 
 
 def apply_connection_test_result(resource: SourceResource, result: dict) -> None:
+    previous_availability = resource.availability
     resource.last_connection_test = timezone.now()
     resource.connection_test_result = result.get("message") or result.get("error") or ""
     resource.status = (
@@ -270,6 +271,21 @@ def apply_connection_test_result(resource: SourceResource, result: dict) -> None
             resource.mount_error = ""
     apply_result_availability(resource=resource, result=result)
     resource.save()
+    if resource.availability != previous_availability:
+        from apps.monitor.services.events import schedule_availability_event
+
+        schedule_availability_event(
+            organization_id=resource.organization_id,
+            source="source",
+            availability=resource.availability,
+            occurred_at=resource.availability_updated_at,
+            resource_type="source",
+            resource_id=str(resource.id),
+            resource_name=resource.name,
+            target_path="/protection/backup-sources?tab=host",
+            details=resource.status_message or "",
+            metadata={"source_type": resource.resource_type},
+        )
 
 
 def apply_connection_test_result_if_current(

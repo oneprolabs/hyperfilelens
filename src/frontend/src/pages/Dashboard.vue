@@ -3,18 +3,19 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
+  Activity,
   AlertCircle,
   AlertTriangle,
   ArrowUpRight,
   Calculator,
+  ChartSpline,
   CreditCard,
   Database,
-  History,
+  ListTodo,
+  Logs,
   Server,
   ShieldCheck,
 } from 'lucide-vue-next'
-import DashboardIdleGearIllustration from '../components/dashboard/DashboardIdleGearIllustration.vue'
-import DashboardIdleShieldIllustration from '../components/dashboard/DashboardIdleShieldIllustration.vue'
 import { ElInputNumber, ElOption, ElSelect, ElTooltip } from 'element-plus'
 import ErrorState from '../components/errors/ErrorState.vue'
 import { planRepositoryCapacity } from '../lib/capacityPlanner'
@@ -46,7 +47,8 @@ const routes = {
   repositories: '/node/repositories',
   taskList: '/ops/tasks',
   recoveryDrillTasks: '/ops/tasks?task_type=restore&time_mode=24h',
-  attention: '/ops/health',
+  events: '/ops/events',
+  alerts: '/ops/alerts',
   audit: '/ops/audit-logs',
   subscription: '/node/subscription',
 } as const
@@ -153,7 +155,9 @@ const selectedCapacityPlanRepo = computed(() => {
 })
 
 function selectCapacityPlanRepository(repositoryId: number) {
-  capacityPlanRepositoryId.value = repositoryId
+  capacityPlanRepositoryId.value = capacityPlanRepositoryId.value === repositoryId
+    ? undefined
+    : repositoryId
 }
 
 const capacityPlan = computed(() => {
@@ -256,8 +260,8 @@ const capacityPlanSecondaryMetric = computed(() => {
 })
 
 const visibleStorageRepos = computed(() => {
-  const limit = selectedCapacityPlanRepo.value ? 1 : 3
-  return overview.value?.topRepos.slice(0, limit) ?? []
+  if (selectedCapacityPlanRepo.value) return [selectedCapacityPlanRepo.value]
+  return overview.value?.topRepos.slice(0, 3) ?? []
 })
 
 function formatRelativeTime(iso?: string) {
@@ -360,6 +364,8 @@ const quotaItems = computed(() =>
 
 const chartBuckets = computed(() => overview.value?.tasks7dBuckets ?? [])
 
+const hasTaskOutcomes = computed(() => chartBuckets.value.some((day) => dayTotal(day) > 0))
+
 const chartScaleMax = computed(() => {
   const dailyTotals = chartBuckets.value.map((d) => d.success + d.fail + d.cancel)
   const rawMax = Math.max(...dailyTotals, 0)
@@ -386,17 +392,17 @@ const chartYTicks = computed(() => {
   ]
 })
 
-function attentionLevel(kind: string): 'critical' | 'warning' | 'info' {
-  if (kind === 'task' || kind === 'alert') return 'critical'
-  if (kind === 'node' || kind === 'source') return 'warning'
-  return 'info'
-}
-
-function attentionClass(kind: string) {
-  const level = attentionLevel(kind)
+function feedSeverityClass(severity: string) {
+  const level = severity.toLowerCase()
   if (level === 'critical') return 'attention-item--critical'
   if (level === 'warning') return 'attention-item--warning'
   return 'attention-item--info'
+}
+
+function alertStatusLabel(status: string) {
+  return status === 'acknowledged'
+    ? t('dashboard.alertStatusAcknowledged')
+    : t('dashboard.alertStatusFiring')
 }
 
 function taskProgressValue(progress: TaskRow['progress']): number {
@@ -746,56 +752,52 @@ onMounted(refresh)
 
       <!-- 3-Column Cockpit -->
       <div class="cockpit-grid">
-        <!-- Column 1: Attention -->
+        <!-- Column 1: Events + Alerts -->
         <div class="cockpit-stack">
-          <section class="panel panel--fixed panel--attention cockpit-attention">
+          <section class="panel panel--fixed panel--attention cockpit-events">
             <div class="panel-head panel-head--border">
               <div class="panel-head__left">
                 <span
                   class="panel-head-icon"
                   aria-hidden="true"
                 >
-                  <AlertTriangle :size="14" />
+                  <Logs :size="14" />
                 </span>
                 <h3 class="panel-title">
-                  {{ t('dashboard.attentionTitle') }}
+                  {{ t('dashboard.eventsTitle') }}
                 </h3>
                 <span
-                  v-if="overview?.attentionCount"
+                  v-if="overview?.eventsCount"
                   class="attention-count"
-                >{{ overview.attentionCount }}</span>
+                >{{ overview.eventsCount }}</span>
               </div>
               <RouterLink
-                :to="routes.attention"
+                :to="routes.events"
                 class="panel-link"
               >
-                {{ t('dashboard.viewAllAttention') }}
+                {{ t('dashboard.viewAllEvents') }}
                 <ArrowUpRight class="panel-link__arrow" />
               </RouterLink>
             </div>
             <div class="panel-body panel-body--attention">
               <el-empty
-                v-if="!overview?.attention.length"
-                :description="t('dashboard.attentionEmptyDesc')"
-                :image-size="72"
+                v-if="!overview?.events.length"
+                :description="t('dashboard.eventsEmptyDesc')"
+                :image-size="48"
                 class="dashboard-panel-empty dashboard-panel-empty--attention"
-              >
-                <template #image>
-                  <DashboardIdleShieldIllustration />
-                </template>
-              </el-empty>
+              />
               <div
                 v-else
                 class="attention-list scrollbar"
               >
                 <div
-                  v-for="item in overview.attention"
+                  v-for="item in overview.events"
                   :key="item.id"
                   class="attention-item"
-                  :class="attentionClass(item.kind)"
+                  :class="feedSeverityClass(item.severity)"
                 >
                   <div class="attention-item__content">
-                    <AlertCircle class="attention-item__icon" />
+                    <Activity class="attention-item__icon" />
                     <div>
                       <p class="attention-item__title">
                         {{ item.title }}
@@ -815,16 +817,91 @@ onMounted(refresh)
                       :to="item.to"
                       class="attention-item__solve"
                     >
-                      {{ t('dashboard.openAttentionItem') }}
+                      {{ t('dashboard.openEvent') }}
                     </RouterLink>
                   </div>
                 </div>
               </div>
               <div
-                v-if="overview && overview.attention.length < overview.attentionCount"
+                v-if="overview && overview.events.length < overview.eventsCount"
                 class="attention-list__summary"
               >
-                <span>{{ t('dashboard.attentionPreview', { shown: overview.attention.length, total: overview.attentionCount }) }}</span>
+                <span>{{ t('dashboard.feedPreview', { shown: overview.events.length, total: overview.eventsCount }) }}</span>
+              </div>
+            </div>
+          </section>
+          <section class="panel panel--fixed panel--attention cockpit-alerts">
+            <div class="panel-head panel-head--border">
+              <div class="panel-head__left">
+                <span
+                  class="panel-head-icon"
+                  aria-hidden="true"
+                >
+                  <AlertTriangle :size="14" />
+                </span>
+                <h3 class="panel-title">
+                  {{ t('dashboard.alertsTitle') }}
+                </h3>
+                <span
+                  v-if="overview?.activeAlertsCount"
+                  class="attention-count"
+                >{{ overview.activeAlertsCount }}</span>
+              </div>
+              <RouterLink
+                :to="routes.alerts"
+                class="panel-link"
+              >
+                {{ t('dashboard.viewAllAlerts') }}
+                <ArrowUpRight class="panel-link__arrow" />
+              </RouterLink>
+            </div>
+            <div class="panel-body panel-body--attention">
+              <el-empty
+                v-if="!overview?.activeAlerts.length"
+                :description="t('dashboard.alertsEmptyDesc')"
+                :image-size="48"
+                class="dashboard-panel-empty dashboard-panel-empty--attention"
+              />
+              <div
+                v-else
+                class="attention-list scrollbar"
+              >
+                <div
+                  v-for="item in overview.activeAlerts"
+                  :key="item.id"
+                  class="attention-item"
+                  :class="feedSeverityClass(item.severity)"
+                >
+                  <div class="attention-item__content">
+                    <AlertCircle class="attention-item__icon" />
+                    <div>
+                      <p class="attention-item__title">
+                        {{ item.title }}
+                      </p>
+                      <span
+                        v-if="item.detail"
+                        class="attention-item__detail"
+                      >{{ item.detail }}</span>
+                      <span class="attention-item__time">
+                        {{ alertStatusLabel(item.status) }}<template v-if="item.at"> · {{ formatTime(item.at) }}</template>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="attention-item__actions">
+                    <RouterLink
+                      :to="item.to"
+                      class="attention-item__solve"
+                    >
+                      {{ t('dashboard.openAlert') }}
+                    </RouterLink>
+                  </div>
+                </div>
+              </div>
+              <div
+                v-if="overview && overview.activeAlerts.length < overview.activeAlertsCount"
+                class="attention-list__summary"
+              >
+                <span>{{ t('dashboard.feedPreview', { shown: overview.activeAlerts.length, total: overview.activeAlertsCount }) }}</span>
               </div>
             </div>
           </section>
@@ -841,7 +918,7 @@ onMounted(refresh)
                 >
                   <Database :size="14" />
                 </span>
-                <h4 class="panel-title panel-title--sm">
+                <h4 class="panel-title">
                   {{ t('dashboard.storageTitle') }}
                 </h4>
               </div>
@@ -850,7 +927,7 @@ onMounted(refresh)
                   :to="routes.repositories"
                   class="panel-link"
                 >
-                  {{ t('dashboard.viewRepos') }} ({{ overview?.storage.repoCount ?? 0 }})
+                  {{ t('dashboard.viewRepos') }}
                   <ArrowUpRight class="panel-link__arrow" />
                 </RouterLink>
               </div>
@@ -859,14 +936,14 @@ onMounted(refresh)
             <div class="storage-capacity-body">
               <section
                 class="storage-capacity-repos"
-                :class="{ 'storage-capacity-repos--selecting': capacityPlanRepositories.length > 0 && !selectedCapacityPlanRepo }"
+                :class="{ 'storage-capacity-repos--selecting': selectedCapacityPlanRepo }"
               >
-                <div
+                <el-empty
                   v-if="!overview?.topRepos.length"
-                  class="storage-empty"
-                >
-                  <p>{{ t('dashboard.noRepos') }}</p>
-                </div>
+                  :description="t('dashboard.noRepos')"
+                  :image-size="48"
+                  class="dashboard-panel-empty dashboard-panel-empty--attention"
+                />
                 <div
                   v-else
                   class="storage-list"
@@ -917,7 +994,7 @@ onMounted(refresh)
                         @click="selectCapacityPlanRepository(repo.id)"
                       >
                         {{ selectedCapacityPlanRepo?.id === repo.id
-                          ? t('dashboard.capacityPlanner.planning')
+                          ? t('common.cancel')
                           : t('dashboard.capacityPlanner.plan') }}
                       </button>
                     </div>
@@ -935,6 +1012,7 @@ onMounted(refresh)
               </section>
 
               <section
+                v-if="selectedCapacityPlanRepo"
                 class="storage-capacity-planner"
                 :class="{ 'storage-capacity-planner--selecting': capacityPlanRepositories.length > 0 && !selectedCapacityPlanRepo }"
               >
@@ -1146,9 +1224,9 @@ onMounted(refresh)
                   class="panel-head-icon"
                   aria-hidden="true"
                 >
-                  <History :size="14" />
+                  <ListTodo :size="14" />
                 </span>
-                <h4 class="panel-title panel-title--sm">
+                <h4 class="panel-title">
                   {{ t('dashboard.runningTasksTitle') }}
                 </h4>
               </div>
@@ -1163,13 +1241,9 @@ onMounted(refresh)
             <el-empty
               v-if="!overview?.runningTasks.length"
               :description="t('dashboard.noRunningBackupTasks')"
-              :image-size="72"
+              :image-size="48"
               class="dashboard-panel-empty dashboard-panel-empty--running"
-            >
-              <template #image>
-                <DashboardIdleGearIllustration />
-              </template>
-            </el-empty>
+            />
             <div
               v-else
               class="running-list scrollbar"
@@ -1204,7 +1278,7 @@ onMounted(refresh)
                   class="panel-head-icon"
                   aria-hidden="true"
                 >
-                  <History :size="14" />
+                  <ChartSpline :size="14" />
                 </span>
                 <h3 class="panel-title">
                   {{ t('dashboard.chartTasks7d') }}
@@ -1219,7 +1293,10 @@ onMounted(refresh)
               </RouterLink>
             </div>
 
-            <div class="chart-area">
+            <div
+              v-if="hasTaskOutcomes"
+              class="chart-area"
+            >
               <div class="chart-plot">
                 <div
                   v-for="(tick, idx) in chartYTicks"
@@ -1319,7 +1396,17 @@ onMounted(refresh)
               </div>
             </div>
 
-            <div class="chart-legend">
+            <el-empty
+              v-else
+              :description="t('dashboard.chartEmptyDesc')"
+              :image-size="48"
+              class="dashboard-panel-empty dashboard-panel-empty--attention"
+            />
+
+            <div
+              v-if="hasTaskOutcomes"
+              class="chart-legend"
+            >
               <div class="chart-legend__item">
                 <span class="chart-legend__swatch chart-legend__swatch--success" />
                 <span>{{ t('dashboard.chartSuccess') }}</span>
@@ -2259,16 +2346,21 @@ onMounted(refresh)
 @media (min-width: 1024px) {
   .cockpit-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-rows: 352px 250px;
+    grid-template-rows: minmax(300px, auto) 300px;
   }
 
   .cockpit-stack {
     display: contents;
   }
 
-  .cockpit-attention {
+  .cockpit-events {
     grid-column: 1;
-    grid-row: 1 / span 2;
+    grid-row: 1;
+  }
+
+  .cockpit-alerts {
+    grid-column: 1;
+    grid-row: 2;
   }
 
   .cockpit-storage {
@@ -2321,24 +2413,26 @@ onMounted(refresh)
 
 @media (min-width: 1024px) {
   .panel--fixed {
-    min-height: 250px;
-    height: 250px;
+    min-height: 300px;
+    height: 300px;
     overflow: hidden;
   }
 
   .panel--storage-capacity {
-    min-height: 352px;
-    height: 352px;
+    min-height: 300px;
+    height: auto;
+    overflow: visible;
   }
 
-  .cockpit-attention {
+  .cockpit-events,
+  .cockpit-alerts {
     height: 100%;
     min-height: 100%;
   }
 
   .cockpit-running {
-    min-height: 352px;
-    height: 352px;
+    min-height: 300px;
+    height: auto;
   }
 }
 
@@ -2387,11 +2481,6 @@ onMounted(refresh)
   font-size: 14px;
   font-weight: 500;
   color: #1d2129;
-}
-
-.panel-title--sm {
-  font-size: 13px;
-  letter-spacing: 0;
 }
 
 .panel-link {
@@ -2678,7 +2767,7 @@ onMounted(refresh)
 }
 
 .storage-item--selected {
-  padding: 0.25rem 0.375rem;
+  padding: 0.25rem 0.625rem;
   border-radius: 6px;
   background: color-mix(in srgb, var(--dashboard-primary-soft) 38%, transparent);
 }
@@ -3344,7 +3433,7 @@ onMounted(refresh)
 
 .chart-plot {
   position: relative;
-  height: 115px;
+  height: 135px;
   width: 100%;
 }
 

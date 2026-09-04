@@ -51,3 +51,12 @@ def register_periodic_tasks():
         queue=None,
         enabled=True,
     )
+    TASK_REGISTRY.add(
+        name="monitor_cleanup_operational_events",
+        task="apps.monitor.tasks.metrics.cleanup_operational_events",
+        schedule=crontab(hour=4, minute=15),
+        args=(),
+        kwargs={"days_to_keep": 90, "batch_size": 2000},
+        queue=None,
+        enabled=True,
+    )

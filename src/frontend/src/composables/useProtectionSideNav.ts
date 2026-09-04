@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ShieldCheck, CalendarDays, HardDrive, Cloud, Filter } from 'lucide-vue-next'
+import { Route, CalendarDays, HardDrive, Cloud, Filter } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 import { sourceAgentSidebarIcon, targetNasSidebarIcon } from '../lib/resourceIcons'
 import { sourceHostIcon, sourceNasIcon } from '../lib/sourceTypeIcons'
@@ -11,7 +11,7 @@ export function useProtectionSideNav() {
     {
       label: t('protection.side.groupDataSecurity'),
       children: [
-        { label: t('protection.side.dataProtection'), to: '/protection/backups', icon: ShieldCheck },
+        { label: t('protection.side.dataProtection'), to: '/protection/backups', icon: Route },
       ],
     },
     {

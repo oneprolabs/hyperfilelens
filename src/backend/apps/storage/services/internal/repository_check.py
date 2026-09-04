@@ -8,6 +8,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from apps.monitor.services.events import schedule_repository_health_event
 from apps.storage.repositories.models import (
     Repository,
     RepositoryExecutionTarget,
@@ -170,6 +171,7 @@ def _run_repository_check_task_locked(*, repository_task_id: int) -> dict[str, A
         _set_step(task, "check_storage_access", TaskStep.Status.SUCCESS, 35)
         _set_step(task, "verify_repository", TaskStep.Status.SUCCESS, 60)
 
+        previous_health = repository.health
         repository.health = health
         repository.health_failures = 0
         repository.last_checked_at = timezone.now()
@@ -180,6 +182,14 @@ def _run_repository_check_task_locked(*, repository_task_id: int) -> dict[str, A
                 "last_checked_at",
                 "updated_at",
             ]
+        )
+        schedule_repository_health_event(
+            organization_id=repository.organization_id,
+            repository_id=repository.id,
+            repository_name=repository.name,
+            previous_health=previous_health,
+            health=health,
+            occurred_at=repository.last_checked_at,
         )
         health_persisted = True
         _set_step(
@@ -221,10 +231,28 @@ def _run_repository_check_task_locked(*, repository_task_id: int) -> dict[str, A
         if not health_persisted and not repository_busy:
             if is_repository_ownership_failure(exc):
                 invalidate_repository_location_ownership(repository)
-            Repository.objects.filter(pk=repository.id).update(
-                health=Repository.Health.OFFLINE,
-                last_checked_at=timezone.now(),
+            checked_at = timezone.now()
+            health_changed = bool(
+                Repository.objects.filter(pk=repository.id)
+                .exclude(health=Repository.Health.OFFLINE)
+                .update(
+                    health=Repository.Health.OFFLINE,
+                    last_checked_at=checked_at,
+                )
             )
+            if health_changed:
+                schedule_repository_health_event(
+                    organization_id=repository.organization_id,
+                    repository_id=repository.id,
+                    repository_name=repository.name,
+                    previous_health=repository.health,
+                    health=Repository.Health.OFFLINE,
+                    occurred_at=checked_at,
+                )
+            else:
+                Repository.objects.filter(pk=repository.id).update(
+                    last_checked_at=checked_at,
+                )
         current_step = task.current_step or CHECK_STEPS[0]
         _set_step(task, current_step, TaskStep.Status.FAILED, int(task.progress or 0))
         error_code = "REPOSITORY_CHECK_FAILED"

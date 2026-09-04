@@ -171,7 +171,7 @@ export function analyticsPageMetadata(
     '/node/organization': ['configuration.organization', 'configuration', 'settings.nav.organizationHub'],
     '/node/members': ['configuration.members', 'configuration', 'settings.nav.members'],
     '/node/subscription': ['configuration.subscription', 'configuration', 'settings.nav.subscription'],
-    '/ops/health': ['operations.operational_health', 'operations', 'ops.nav.operationalHealth'],
+    '/ops/events': ['operations.events', 'operations', 'ops.nav.events'],
     '/ops/alerts': ['operations.alerts', 'operations', 'ops.nav.alerts'],
     '/ops/alerts/rules': ['operations.alert_rules', 'operations', 'ops.nav.alertRules'],
     '/ops/channels': ['operations.notification_channels', 'operations', 'ops.nav.notificationChannels'],
