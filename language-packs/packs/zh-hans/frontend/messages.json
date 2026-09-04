@@ -5607,6 +5607,7 @@
       },
       "failureDetails": {
         "snapshotId": "快照 ID",
+        "restoreRecordId": "恢复记录 ID",
         "failedDirectories": "失败目录",
         "restoreTarget": "恢复目标",
         "restorePermissionDenied": "写入恢复目标时权限被拒绝。",

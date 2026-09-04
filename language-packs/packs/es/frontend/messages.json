@@ -5690,6 +5690,7 @@
       },
       "failureDetails": {
         "snapshotId": "ID de instantánea",
+        "restoreRecordId": "ID del registro de restauración",
         "failedDirectories": "Directorios con errores",
         "restoreTarget": "Destino de restauración",
         "restorePermissionDenied": "Permiso denegado al escribir en el destino de restauración.",
