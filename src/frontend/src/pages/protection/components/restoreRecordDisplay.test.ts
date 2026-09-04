@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { RestoreRecord, RestoreRecordItem } from '../../../lib/restoreApi'
 import {
+  isRestoreRecordActive,
+  normalizedRestoreRecordTaskStatus,
+  restoreRecordItemSourceKind,
   restoreRecordPathMappings,
   restoreRecordRuntimeMetricParts,
   restoreRecordSnapshotLabel,
   restoreRecordTargetDisplayPath,
+  restoreRecordTimeState,
   shouldShowRestoreRecordProgress,
 } from './restoreRecordDisplay'
 
@@ -48,6 +52,122 @@ describe('restore record display', () => {
     }))).toBe(true)
   })
 
+  it.each([
+    ['queued', 'pending', true],
+    ['pending', 'pending', true],
+    ['waiting', 'waiting', true],
+    ['blocked', 'blocked', true],
+    ['in_progress', 'running', true],
+    ['running', 'running', true],
+    ['completed', 'success', false],
+    ['failed', 'failed', false],
+  ])('normalizes %s and preserves its active state', (status, normalized, active) => {
+    const value = record({
+      task_summary: { status, progress: 0, started_at: null, finished_at: null },
+    })
+    expect(normalizedRestoreRecordTaskStatus(value)).toBe(normalized)
+    expect(isRestoreRecordActive(value)).toBe(active)
+  })
+
+  it('distinguishes lifecycle time states without falling back to submission time', () => {
+    expect(restoreRecordTimeState(record({
+      task_summary: { status: 'waiting', progress: 0, started_at: null, finished_at: null },
+    }))).toMatchObject({
+      startedKind: 'not_started',
+      finishedKind: 'not_finished',
+      durationKind: 'not_applicable',
+    })
+    expect(restoreRecordTimeState(record({
+      task_summary: {
+        status: 'running',
+        progress: 42,
+        started_at: '2026-09-03T09:00:00Z',
+        finished_at: null,
+      },
+    }))).toMatchObject({
+      startedKind: 'value',
+      finishedKind: 'not_finished',
+      durationKind: 'running',
+    })
+    expect(restoreRecordTimeState(record({
+      task_summary: {
+        status: 'success',
+        progress: 100,
+        started_at: '2026-09-03T09:00:00Z',
+        finished_at: '2026-09-03T09:02:00Z',
+      },
+    }))).toMatchObject({
+      startedKind: 'value',
+      finishedKind: 'value',
+      durationKind: 'fixed',
+    })
+  })
+
+  it('separates a pre-start terminal outcome from missing successful timing data', () => {
+    expect(restoreRecordTimeState(record({
+      task_summary: {
+        status: 'failed',
+        progress: 0,
+        started_at: null,
+        finished_at: '2026-09-03T09:02:00Z',
+      },
+    }))).toMatchObject({
+      startedKind: 'not_started',
+      finishedKind: 'value',
+      durationKind: 'not_applicable',
+    })
+    expect(restoreRecordTimeState(record({
+      task_summary: {
+        status: 'success',
+        progress: 100,
+        started_at: null,
+        finished_at: '2026-09-03T09:02:00Z',
+      },
+    }))).toMatchObject({
+      startedKind: 'unavailable',
+      finishedKind: 'value',
+      durationKind: 'unavailable',
+    })
+  })
+
+  it('marks conflicting and invalid time combinations unavailable', () => {
+    expect(restoreRecordTimeState(record({
+      task_summary: {
+        status: 'running',
+        progress: 42,
+        started_at: '2026-09-03T09:00:00Z',
+        finished_at: '2026-09-03T09:02:00Z',
+      },
+    }))).toMatchObject({
+      durationKind: 'unavailable',
+      hasStatusTimeConflict: true,
+    })
+    expect(restoreRecordTimeState(record({
+      task_summary: {
+        status: 'success',
+        progress: 100,
+        started_at: '2026-09-03T09:03:00Z',
+        finished_at: '2026-09-03T09:02:00Z',
+      },
+    }))).toMatchObject({
+      durationKind: 'unavailable',
+      hasInvalidTimeData: true,
+    })
+    expect(restoreRecordTimeState(record({
+      task_summary: {
+        status: 'running',
+        progress: 42,
+        started_at: 'not-a-time',
+        finished_at: null,
+      },
+    }))).toMatchObject({
+      startedKind: 'unavailable',
+      finishedKind: 'not_finished',
+      durationKind: 'unavailable',
+      hasInvalidTimeData: true,
+    })
+  })
+
   it('uses the snapshot UID and falls back to the internal ID', () => {
     expect(restoreRecordSnapshotLabel(record())).toBe('snapshot-uid-81')
     expect(restoreRecordSnapshotLabel(record({ source_snapshot_uid: '' }))).toBe('#81')
@@ -84,6 +204,24 @@ describe('restore record display', () => {
     expect(restoreRecordPathMappings(record())).toMatchObject([
       { sourcePath: '/data', sourceKind: 'dir', item: { id: 11 } },
     ])
+  })
+
+  it('uses the recorded source type instead of guessing from the filename', () => {
+    const extensionlessFile = { ...item, source_snapshot_directory_id: 11, source_path: '/tmp/hfl-agent-new' }
+    const dottedDirectory = { ...item, id: 12, source_snapshot_directory_id: 22, source_path: '/data/releases.v2' }
+    const value = record({
+      items: [extensionlessFile, dottedDirectory],
+      expanded_payload: {
+        items: [
+          { source_snapshot_directory_id: 11, source_path_type: 'file' },
+          { source_snapshot_directory_id: 22, source_path_type: 'directory' },
+        ],
+      },
+    })
+
+    expect(restoreRecordItemSourceKind(value, extensionlessFile)).toBe('file')
+    expect(restoreRecordItemSourceKind(value, dottedDirectory)).toBe('dir')
+    expect(restoreRecordPathMappings(value).map((row) => row.sourceKind)).toEqual(['file', 'dir'])
   })
 
   it('formats available restore counts, capacity, speed, and ETA', () => {

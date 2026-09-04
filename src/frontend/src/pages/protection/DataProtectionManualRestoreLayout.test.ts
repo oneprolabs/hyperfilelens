@@ -84,6 +84,16 @@ describe('manual restore wizard layout', () => {
     expect(page).not.toContain('72px !important;')
   })
 
+  it('uses only the dedicated popover for the restore mapping summary', () => {
+    const mappingColumn = sourceBetween(
+      `:label="t('protection.backupsPage.colRecoveryDirectoryMapping')"`,
+      '</el-table-column>',
+    )
+
+    expect(mappingColumn).toContain('class-name="hfl-table-no-tooltip"')
+    expect(mappingColumn).toContain('popper-class="recovery-entry-preview-tooltip"')
+  })
+
   it('keeps mapping errors in flow so they do not cover the next row', () => {
     const errorRule = page.match(/\.create-recovery-path-input__error \{([\s\S]*?)\n\}/)?.[1] || ''
 

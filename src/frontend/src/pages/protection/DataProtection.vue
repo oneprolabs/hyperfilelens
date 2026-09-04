@@ -12886,7 +12886,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                         <span
                                           class="create-recovery-plan-mapping__arrow"
                                           aria-hidden="true"
-                                        >-&gt;</span>
+                                        ><ArrowRight :size="14" /></span>
                                         <span
                                           class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                                           :title="recoveryPlanMappingTargetSummary(mapping)"
@@ -12947,7 +12947,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                       <span
                                         class="create-recovery-plan-mapping__arrow"
                                         aria-hidden="true"
-                                      >-&gt;</span>
+                                      ><ArrowRight :size="14" /></span>
                                       <span
                                         class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                                         :title="recoveryPlanMappingTargetSummary(mapping)"
@@ -13976,6 +13976,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           <el-table-column
                             :label="t('protection.backupsPage.colRecoveryDirectoryMapping')"
                             min-width="300"
+                            class-name="hfl-table-no-tooltip"
                           >
                             <template #default="{ row }">
                               <ElTooltip
@@ -14015,7 +14016,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                       <span
                                         class="recovery-mapping-line__arrow"
                                         aria-hidden="true"
-                                      >-&gt;</span>
+                                      ><ArrowRight :size="14" /></span>
                                       <span class="recovery-mapping-line__endpoint recovery-mapping-line__endpoint--target">
                                         <FolderOpen
                                           :size="14"
@@ -14059,7 +14060,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                     <span
                                       class="recovery-mapping-line__arrow"
                                       aria-hidden="true"
-                                    >-&gt;</span>
+                                    ><ArrowRight :size="14" /></span>
                                     <span class="recovery-mapping-line__endpoint recovery-mapping-line__endpoint--target">
                                       <FolderOpen
                                         :size="14"
@@ -14233,7 +14234,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                         <span
                                           class="recovery-mapping-line__arrow"
                                           aria-hidden="true"
-                                        >-&gt;</span>
+                                        ><ArrowRight :size="14" /></span>
                                         <span class="recovery-mapping-line__endpoint recovery-mapping-line__endpoint--target">
                                           <FolderOpen
                                             :size="14"

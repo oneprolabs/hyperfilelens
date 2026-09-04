@@ -7,6 +7,7 @@ import {
   Plus,
   Pencil,
   ArrowLeft,
+  ArrowRight,
   X,
   Database,
   RefreshCw,
@@ -8929,7 +8930,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                               <span
                                 class="create-recovery-plan-mapping__arrow"
                                 aria-hidden="true"
-                              >-&gt;</span>
+                              ><ArrowRight :size="14" /></span>
                               <span
                                 class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                               >
@@ -9020,7 +9021,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                             <span
                               class="create-recovery-plan-mapping__arrow"
                               aria-hidden="true"
-                            >-&gt;</span>
+                            ><ArrowRight :size="14" /></span>
                             <span
                               class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                             >
@@ -9531,7 +9532,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 <span
                                   class="create-recovery-plan-mapping__arrow"
                                   aria-hidden="true"
-                                >-&gt;</span>
+                                ><ArrowRight :size="14" /></span>
                                 <span
                                   class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                                   :title="recoveryDirPlanTargetSummary(dirPlan)"
