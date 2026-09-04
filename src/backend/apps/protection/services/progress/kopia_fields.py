@@ -91,7 +91,13 @@ def normalize_lane_progress(
 
     schema_version = progress_int(progress.get("progress_schema_version")) or 1
     bytes_done = progress_int(progress.get("bytes_done"))
+    raw_bytes_total = progress_number(progress.get("bytes_total"))
     bytes_total = progress_int(progress.get("bytes_total"))
+    explicit_zero_total = (
+        bool(progress.get("bytes_total_known"))
+        and raw_bytes_total is not None
+        and raw_bytes_total == 0
+    )
     bytes_total_known = bool(progress.get("bytes_total_known")) or bytes_total > 0
     uploaded = progress_int(progress.get("uploaded_bytes"))
     hashed = progress_int(progress.get("hashed_bytes"))
@@ -122,7 +128,7 @@ def normalize_lane_progress(
         bytes_done = processed or hashed + cached or uploaded
     if bytes_total <= 0:
         bytes_total = progress_int(progress.get("estimated_bytes")) or progress_int(progress.get("total_bytes"))
-        bytes_total_known = bytes_total > 0
+        bytes_total_known = bytes_total > 0 or explicit_zero_total
     reference = max(
         0,
         int(reference_bytes_total or 0),
@@ -163,7 +169,7 @@ def normalize_lane_progress(
     ):
         bytes_total = None
         bytes_total_known = False
-    elif bytes_total_known and bytes_total is not None and not credible_bytes_total(
+    elif bytes_total_known and bytes_total is not None and bytes_total > 0 and not credible_bytes_total(
         bytes_done=bytes_done,
         bytes_total=bytes_total,
     ):
@@ -239,6 +245,7 @@ def normalize_lane_progress(
         kopia_eta_seconds=kopia_eta,
         percent_source=percent_source,
         bytes_total_reference=bytes_total_reference,
+        bytes_total_known=bytes_total_known,
         schema_version=schema_version,
     )
 
@@ -256,9 +263,13 @@ def _lane_from_bytes(
     kopia_eta_seconds: int | None = None,
     percent_source: str | None = None,
     bytes_total_reference: bool = False,
+    bytes_total_known: bool | None = None,
     schema_version: int = 1,
 ) -> dict[str, Any]:
-    bytes_total_known = bytes_total is not None and bytes_total > 0
+    if bytes_total_known is None:
+        bytes_total_known = bytes_total is not None and bytes_total > 0
+    elif bytes_total is None:
+        bytes_total_known = False
     return {
         "kopia_phase": kopia_phase,
         "progress_schema_version": schema_version,

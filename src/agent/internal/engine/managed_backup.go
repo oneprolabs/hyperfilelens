@@ -2962,8 +2962,32 @@ func (e *Engine) runManagedRestore(
 	if len(selectedPaths) == 0 {
 		selectedPaths = []string{""}
 	}
+	entrySummaries := make(map[string]kopia.EntrySummary, len(selectedPaths))
+	scopeTotals := restoreScopeTotals{}
+	scopeTotalsKnown := true
+	for _, selectedPath := range selectedPaths {
+		summary, _, summaryErr := inspectManagedRestoreEntrySummary(
+			ctx,
+			bin,
+			configFile,
+			env,
+			p.SnapshotID,
+			selectedPath,
+		)
+		if summaryErr != nil {
+			scopeTotalsKnown = false
+			continue
+		}
+		entrySummaries[selectedPath] = summary
+		var totalsOK bool
+		scopeTotals, totalsOK = addRestoreEntrySummary(scopeTotals, summary)
+		if !totalsOK {
+			scopeTotalsKnown = false
+		}
+	}
 	restored := make([]map[string]any, 0, len(selectedPaths))
 	var completedBytes int64
+	var completedCount int64
 	var skippedSpecialCount int64
 	progressState := newKopiaProgressReporter()
 	runCtx, cancelRun := context.WithCancel(ctx)
@@ -2972,6 +2996,9 @@ func (e *Engine) runManagedRestore(
 	stallDone := make(chan struct{})
 	go monitorKopiaProgressStall(runCtx, cancelRun, progressState, stallSeconds, stallDone)
 	defer close(stallDone)
+	if scopeTotalsKnown {
+		_ = sendProgress(ctx, rep, taskID, scopeTotals.progressPayload(0, 0))
+	}
 
 	for pathIndex, selectedPath := range selectedPaths {
 		source := snapshotObjectPath(p.SnapshotID, selectedPath)
@@ -2982,19 +3009,30 @@ func (e *Engine) runManagedRestore(
 		if err := validateLensManagedRestoreTarget(p, restoreTarget); err != nil {
 			return "failed", result, err.Error()
 		}
-		sourceIsDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, source)
-		sourceObjectType := "directory"
-		if inspectErr != nil {
-			sourceObjectType = "unknown"
-		} else if !sourceIsDir {
-			sourceObjectType = "file"
+		summary, hasSummary := entrySummaries[selectedPath]
+		sourceIsDir := hasSummary && summary.PathType == "directory"
+		sourceObjectType := summary.PathType
+		var inspectRes process.Result
+		var inspectErr error
+		if !hasSummary || sourceObjectType == "unsupported" {
+			sourceIsDir, inspectRes, inspectErr = snapshotDownloadTargetIsDir(ctx, bin, configFile, env, source)
+			sourceObjectType = "directory"
+			if inspectErr != nil {
+				sourceObjectType = "unknown"
+			} else if !sourceIsDir {
+				sourceObjectType = "file"
+			}
 		}
 		restoreEntry := map[string]any{
 			"snapshot_path":      source,
 			"target_path":        restoreTarget,
 			"source_is_dir":      sourceIsDir,
 			"source_object_type": sourceObjectType,
-			"snapshot_inspect":   managedRestoreCommandResult(inspectRes, spec, p),
+		}
+		if hasSummary {
+			restoreEntry["snapshot_summary"] = summary
+		} else {
+			restoreEntry["snapshot_inspect"] = managedRestoreCommandResult(inspectRes, spec, p)
 		}
 		if inspectErr != nil {
 			restored = append(restored, restoreEntry)
@@ -3017,9 +3055,11 @@ func (e *Engine) runManagedRestore(
 			return "failed", result, mkErr.Error()
 		}
 		pathOffset := completedBytes
+		pathCountOffset := completedCount
 		pathIndexValue := pathIndex + 1
 		pathTotal := len(selectedPaths)
 		var lastPathTotal int64
+		var lastPathCount int64
 		onProgressLine := func(line string, _ bool) {
 			snapshot, ok := kopia.ParseRestoreProgressLine(line)
 			if !ok {
@@ -3028,17 +3068,13 @@ func (e *Engine) runManagedRestore(
 			if snapshot.TotalBytes > 0 {
 				lastPathTotal = snapshot.TotalBytes
 			}
+			if snapshot.TotalCount > 0 {
+				lastPathCount = snapshot.TotalCount
+			}
 			payload := kopia.RestoreProgressPayload(snapshot)
 			payload["path_index"] = pathIndexValue
 			payload["path_total"] = pathTotal
-			if pathOffset > 0 {
-				if done, ok := payload["bytes_done"].(int64); ok {
-					payload["bytes_done"] = done + pathOffset
-				}
-				if total, ok := payload["bytes_total"].(int64); ok && total > 0 {
-					payload["bytes_total"] = total + pathOffset
-				}
-			}
+			applyRestoreScopeProgress(payload, scopeTotals, scopeTotalsKnown, pathOffset, pathCountOffset)
 			progressState.maybeSendRestore(runCtx, rep, taskID, payload)
 		}
 		restoreArgs := []string{
@@ -3069,8 +3105,12 @@ func (e *Engine) runManagedRestore(
 			skippedSpecialCount += skipped
 			restoreEntry["skipped_special_count"] = skipped
 		}
-		if lastPathTotal > 0 {
+		if hasSummary && summary.Complete {
+			completedBytes += summary.SizeBytes
+			completedCount += summary.TotalCount()
+		} else if lastPathTotal > 0 || lastPathCount > 0 {
 			completedBytes += lastPathTotal
+			completedCount += lastPathCount
 		}
 	}
 	if err := validateLensManagedRestoreTarget(p, targetPath); err != nil {
@@ -3081,11 +3121,14 @@ func (e *Engine) runManagedRestore(
 	result["selected_paths"] = selectedPaths
 	result["restore_results"] = restored
 	result["count"] = len(restored)
+	if scopeTotalsKnown {
+		result["restore_scope_summary"] = restoreScopeSummaryResult(scopeTotals)
+	}
 	if insightContentPolicy == insightRegularFilesOnlyPolicy {
 		result["insight_content_policy"] = insightRegularFilesOnlyPolicy
 		result["skipped_special_count"] = skippedSpecialCount
 	}
-	_ = sendProgress(ctx, rep, taskID, map[string]any{
+	completionProgress := map[string]any{
 		"phase":             "kopia_transfer",
 		"kopia_phase":       "restore_completed",
 		"kopia_percent":     100,
@@ -3093,7 +3136,16 @@ func (e *Engine) runManagedRestore(
 		"bytes_done":        maxInt64(completedBytes, 1),
 		"bytes_total":       maxInt64(completedBytes, 1),
 		"bytes_total_known": true,
-	})
+		"processed_count":   completedCount,
+		"total_count":       completedCount,
+	}
+	if scopeTotalsKnown {
+		completionProgress = scopeTotals.progressPayload(scopeTotals.SizeBytes, scopeTotals.totalCount())
+		completionProgress["kopia_phase"] = "restore_completed"
+		completionProgress["kopia_percent"] = 100
+		completionProgress["percent"] = 100
+	}
+	_ = sendProgress(ctx, rep, taskID, completionProgress)
 	return "success", result, ""
 }
 
@@ -3401,16 +3453,40 @@ func restoreSelectedPaths(p Payload) []string {
 	}
 	paths := make([]string, 0, len(raw))
 	for _, item := range raw {
-		value := strings.Trim(strings.TrimSpace(fmt.Sprint(item)), "/\\")
+		value := strings.TrimSpace(fmt.Sprint(item))
 		if value == "" || value == "." {
+			return []string{""}
+		}
+		value = strings.Trim(path.Clean(filepath.ToSlash(value)), "/")
+		if value == "" || value == "." {
+			return []string{""}
+		}
+		covered := false
+		for _, existing := range paths {
+			if restorePathCoversSelection(existing, value) {
+				covered = true
+				break
+			}
+		}
+		if covered {
 			continue
 		}
-		paths = append(paths, filepath.ToSlash(value))
+		filtered := paths[:0]
+		for _, existing := range paths {
+			if !restorePathCoversSelection(value, existing) {
+				filtered = append(filtered, existing)
+			}
+		}
+		paths = append(filtered, value)
 	}
 	if len(paths) == 0 {
 		return []string{""}
 	}
 	return paths
+}
+
+func restorePathCoversSelection(ancestor string, candidate string) bool {
+	return candidate == ancestor || strings.HasPrefix(candidate, ancestor+"/")
 }
 
 func restoreTargetPathForSelection(p Payload, targetPath string, selectedPath string) string {
