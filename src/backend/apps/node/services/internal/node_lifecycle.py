@@ -193,6 +193,23 @@ def _node_installed_commit(node: Node) -> str:
     return str(meta.get("agent_commit") or "").strip().lower()
 
 
+def _stale_failed_upgrade_is_current(*, node: Node, task: NodeTask) -> bool:
+    """Return whether a failed projection is superseded by the installed build."""
+    if task.status not in {
+        NodeTask.Status.FAILED,
+        NodeTask.Status.TIMEOUT,
+    } or node.status != Node.Status.ACTIVE:
+        return False
+    target_version = _target_version_from_task(task)
+    target_commit = _target_commit_from_task(task)
+    if not target_version or not target_commit:
+        return False
+    return (
+        _node_installed_version(node) == target_version
+        and _node_installed_commit(node) == target_commit
+    )
+
+
 def _node_capabilities(node: Node) -> set[str]:
     meta = node.metadata if isinstance(node.metadata, dict) else {}
     inv = meta.get("inventory") if isinstance(meta.get("inventory"), dict) else meta
@@ -977,6 +994,18 @@ def _upgrade_lifecycle_payload(
     if task is None:
         return None
 
+    # A detached upgrade can finish on the Agent after its final result frame
+    # is lost.  If the node is now Active and reports the exact requested
+    # build, do not keep projecting the obsolete timeout/failure banner.  The
+    # original task and audit record remain unchanged for troubleshooting.
+    if _stale_failed_upgrade_is_current(node=node, task=task):
+        logger.info(
+            "suppressing stale upgrade failure projection node_id=%s task_id=%s",
+            node.id,
+            task.id,
+        )
+        return None
+
     target_version = _target_version_from_task(task)
     if not target_version and task.status in _ACTIVE_TASK_STATUSES:
         try:
@@ -1348,6 +1377,25 @@ def start_node_upgrade(
         from apps.node.services.internal.task import _update_node_lifecycle_status
 
         _update_node_lifecycle_status(node_id=node.id, status=Node.Status.ACTIVE)
+        write_audit_log(
+            organization=node.organization,
+            user=user,
+            action="node.lifecycle.upgrade.already_current",
+            target_type="node",
+            target_id=str(node.id),
+            resource_type="node",
+            resource_id=str(node.id),
+            resource_name=node.name,
+            result=AuditResult.SUCCESS,
+            metadata={
+                "kind": LIFECYCLE_KIND_UPGRADE,
+                "role": node.role,
+                "outcome": "no_op",
+                "target_version": target_version,
+                "target_commit": target_commit,
+                "current_version": current_version,
+            },
+        )
         return {
             "operation_id": None,
             "task_id": None,

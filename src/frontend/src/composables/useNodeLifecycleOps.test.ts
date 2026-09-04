@@ -264,4 +264,31 @@ describe('useNodeLifecycleOps persisted queue', () => {
       wrapper.unmount()
     }
   })
+
+  it('presents verification pending as an in-progress upgrade', () => {
+    const { lifecycle, wrapper } = mountLifecycle()
+
+    try {
+      const display = lifecycle.resolveDisplayStatus({
+        id: 1,
+        organization: 1,
+        name: 'gateway-1',
+        role: 'agent',
+        status: 'active',
+        availability: 'online',
+        version: '1.0.0',
+        lifecycle: {
+          kind: 'upgrade',
+          state: 'verification_pending',
+          target_version: '1.0.1',
+        },
+      })
+
+      expect(display.labelKey).toBe('nodeLifecycle.state.upgrading')
+      expect(display.tagType).toBe('info')
+      expect(display.spinning).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
 })

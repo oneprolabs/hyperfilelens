@@ -77,10 +77,17 @@ function savePersisted(snapshot: PersistedQueue | null) {
 }
 
 const LIFECYCLE_FAILED_CONFIRM_POLLS = 2
-const UPGRADE_ACTIVE_STATES = ['upgrading', 'restarting', 'verifying', 'queued'] as const
+const UPGRADE_ACTIVE_STATES = [
+  'upgrading',
+  'restarting',
+  'verification_pending',
+  'verifying',
+  'queued',
+] as const
 const LIFECYCLE_SPINNING_STATES = [
   'upgrading',
   'restarting',
+  'verification_pending',
   'verifying',
   'removing',
   'cleaning_up',
@@ -89,6 +96,10 @@ const LIFECYCLE_SPINNING_STATES = [
 
 function isUpgradeLifecycleState(state: string | undefined | null): boolean {
   return !!state && UPGRADE_ACTIVE_STATES.includes(state as (typeof UPGRADE_ACTIVE_STATES)[number])
+}
+
+function userVisibleLifecycleState(state: string): string {
+  return state === 'verification_pending' ? 'upgrading' : state
 }
 
 function versionReachedTarget(node: ApiNode, targetVersion: string | undefined): boolean {
@@ -779,18 +790,16 @@ export function useNodeLifecycleOps(options: {
           spinning: true,
         }
       }
+      const visibleState = userVisibleLifecycleState(lc.state)
       const key = lc.state === 'failed'
         ? lc.kind === 'upgrade'
           ? 'nodeLifecycle.state.upgrade_failed'
           : 'nodeLifecycle.state.deregistration_failed'
-        : `nodeLifecycle.state.${lc.state}`
+        : `nodeLifecycle.state.${visibleState}`
       const spinning = LIFECYCLE_SPINNING_STATES.includes(
         lc.state as (typeof LIFECYCLE_SPINNING_STATES)[number],
       )
-      const tagType =
-        lc.state === 'failed' || lc.state === 'verification_pending'
-          ? 'danger'
-          : 'info'
+      const tagType = lc.state === 'failed' ? 'danger' : 'info'
       return {
         labelKey: key,
         tagType,
