@@ -1227,6 +1227,7 @@ reload_stable_nginx() {
 }
 
 start_hfl_stack() {
+	local show_sections=${1:-0}
 	local color nginx_generation_before nginx_generation_after
 	ensure_blue_green_state || return 1
 	color="$(read_active_color)" || return 1
@@ -1234,13 +1235,27 @@ start_hfl_stack() {
 		warn "could not inspect the stable Nginx instance before service convergence"
 		return 1
 	fi
+	if [[ "${show_sections}" -eq 1 ]]; then
+		print_section "Core data services"
+	fi
 	compose_in_root up -d --no-build --pull never --no-recreate postgres redis || return 1
 	# Compose v2.27 supports `up --pull` but not `run --pull`. The migration
 	# service inherits `pull_policy: never` from the release Compose model, so
 	# this remains offline without relying on a version-sensitive CLI flag.
+	if [[ "${show_sections}" -eq 1 ]]; then
+		print_section "Database initialization"
+		step "Applying backend database migrations and initial data"
+	fi
 	compose_in_root --profile tools run --rm --no-deps migration || return 1
+	if [[ "${show_sections}" -eq 1 ]]; then
+		ok "Database migrations and initial data are ready"
+		print_section "Application services"
+	fi
 	compose_in_root up -d --no-build --pull never worker scheduler || return 1
 	compose_color "${color}" up -d --no-build --pull never "api-${color}" "web-${color}" || return 1
+	if [[ "${show_sections}" -eq 1 ]]; then
+		print_section "Health checks"
+	fi
 	wait_for_color_health "${color}" || return 1
 	compose_in_root up -d --no-build --pull never nginx || return 1
 	if ! nginx_generation_after="$(stable_nginx_running_generation)"; then
@@ -2500,6 +2515,7 @@ with (root / "MANIFEST.json").open(encoding="utf-8") as fh:
     manifest = json.load(fh)
 delivery = manifest.get("delivery") or {"mode": "offline"}
 delivery_mode = str(delivery.get("mode") or "offline")
+online_child = os.environ.get("HFL_ONLINE_CHILD") == "1"
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -2584,13 +2600,25 @@ if delivery_mode == "registry":
         ]
         pulled = ""
         errors = []
-        print(
-            f"[....] Resolving registry image ({index}/{len(registry_images)}): "
-            f"{local_ref}@{digest}"
-        )
+        if online_child:
+            print(
+                f"[....] Verifying prepared runtime image "
+                f"({index}/{len(registry_images)}): {local_ref}@{digest}"
+            )
+        else:
+            print(
+                f"[....] Resolving registry image ({index}/{len(registry_images)}): "
+                f"{local_ref}@{digest}"
+            )
         if has_expected_digest(local_ref, digest):
             verify_revision(local_ref, str(image.get("role") or ""))
-            print(f"[ OK ] Reusing registry image: {local_ref}@{digest}")
+            if online_child:
+                print(
+                    f"[ OK ] Runtime image {index}/{len(registry_images)} "
+                    f"verified · {local_ref}@{digest}"
+                )
+            else:
+                print(f"[ OK ] Reusing registry image: {local_ref}@{digest}")
             continue
         for source in sources:
             source_ref = str(source.get("ref") or "")
@@ -2619,8 +2647,17 @@ if delivery_mode == "registry":
         if not has_expected_digest(local_ref, digest):
             raise SystemExit(f"registry image digest was not retained locally: {local_ref}")
         verify_revision(local_ref, str(image.get("role") or ""))
-        print(f"[ OK ] Verified registry image: {local_ref}@{digest}")
-    print(f"[ OK ] Processed {len(registry_images)} registry image(s)")
+        if online_child:
+            print(
+                f"[ OK ] Runtime image {index}/{len(registry_images)} "
+                f"verified · {local_ref}@{digest}"
+            )
+        else:
+            print(f"[ OK ] Verified registry image: {local_ref}@{digest}")
+    if online_child:
+        print(f"[ OK ] All {len(registry_images)} prepared runtime images are verified")
+    else:
+        print(f"[ OK ] Processed {len(registry_images)} registry image(s)")
     raise SystemExit(0)
 if delivery_mode != "offline":
     raise SystemExit(f"unsupported release delivery mode: {delivery_mode}")
@@ -3645,15 +3682,37 @@ PY
 	printf '%s' "<host>"
 }
 
+print_nested_value() {
+	local label=$1 value=${2:-}
+	[[ -n "${value}" ]] || return 0
+	printf '    %-14s %s\n' "${label}" "${value}"
+}
+
+installation_platform_display() {
+	local platform_name="Linux" machine
+	if [[ -r /etc/os-release ]]; then
+		platform_name="$(
+			awk -F= '$1 == "PRETTY_NAME" {value=substr($0, index($0, "=") + 1); gsub(/^"|"$/, "", value); print value; exit}' \
+				/etc/os-release
+		)"
+		[[ -n "${platform_name}" ]] || platform_name="Linux"
+	fi
+	machine="$(uname -m)"
+	case "${machine}" in
+	x86_64) machine=amd64 ;;
+	aarch64) machine=arm64 ;;
+	esac
+	printf '%s · linux/%s' "${platform_name}" "${machine}"
+}
+
 print_console_access_summary() {
 	local summary_title=${1:-"Installation summary"}
 	local show_deployment=${2:-1}
 	local env_file="${ROOT}/.env"
 	[[ -f "${env_file}" ]] || return 0
-
 	local host seed seed_email seed_pass seed_org sourcelens_mode sourcelens_console_port
 	local website_bind website_port tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
-	local sl_env sl_user sl_email sl_pass show_credentials=0
+	local sl_env sl_user sl_email sl_pass show_credentials=0 credentials_note
 	host="$(resolve_console_host)"
 	seed="$(read_env_value SEED_INITIAL_DATA)"
 	seed_email="$(read_env_value SEED_ADMIN_EMAIL)"
@@ -3678,28 +3737,6 @@ print_console_access_summary() {
 	sourcelens_console_port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
 	[[ -n "${sourcelens_console_port}" ]] || sourcelens_console_port="11445"
 
-	if [[ "${show_deployment}" -eq 1 ]]; then
-		print_section "${summary_title}"
-		print_value "Version" "$(read_version)"
-		print_value "Edition" "$(display_edition_from_dir "${ROOT}")"
-		print_value "Install path" "${ROOT}"
-		print_value "Config file" "${env_file}"
-		print_value "Log file" "${LOG_FILE}"
-		print_section "Access"
-	else
-		print_section "${summary_title}"
-	fi
-	print_value "Website" "https://${host}:${website_port}/en/  (${website_bind})"
-	print_value "Tenant" "https://${host}:${tenant_port}/  (${tenant_bind})"
-	print_value "Platform Ops" "https://${host}:${admin_port}/  (${admin_bind})"
-	print_value "Django Admin" "https://${host}:${admin_port}/admin/"
-	print_value "API / Swagger" "https://${host}:${tenant_port}/swagger"
-	if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
-		print_value "Insight Console" "https://${host}:${sourcelens_console_port}/  (${sourcelens_console_bind})"
-	elif [[ "${sourcelens_mode}" == "external" ]]; then
-		print_value "Insight Console" "$(read_env_value LENS_BASE_URL) (external)"
-	fi
-
 	if [[ "${seed}" == "1" ]]; then
 		[[ -n "${seed_email}" ]] || seed_email="admin@hyperfilelens.com"
 		[[ -n "${seed_pass}" ]] || seed_pass="Admin@123"
@@ -3710,39 +3747,139 @@ print_console_access_summary() {
 		auto) [[ "${INTERACTIVE_SESSION}" -eq 1 ]] && show_credentials=1 || true ;;
 		*) die "invalid HFL_SHOW_GENERATED_CREDENTIALS=${SHOW_GENERATED_CREDENTIALS}" ;;
 		esac
-		print_section "Login credentials"
-		printf '  HyperFileLens\n'
-		if [[ "${show_credentials}" -eq 1 ]]; then
-			print_value "  Email" "${seed_email}"
-			print_value "  Password" "${seed_pass}"
-			print_value "  Applies to" "Tenant, Platform Ops and Django Admin"
-		else
-			print_value "  Credentials" "stored in ${env_file}; values are hidden in non-interactive logs"
+		credentials_note="stored in ${env_file}; values are hidden in non-interactive logs"
+	fi
+	if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
+		sl_env="${ROOT}/data/sourcelens/config/.env"
+		sl_user="$(grep -E '^DJANGO_SUPERUSER_USERNAME=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
+		sl_email="$(grep -E '^DJANGO_SUPERUSER_EMAIL=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
+		sl_pass="$(grep -E '^DJANGO_SUPERUSER_PASSWORD=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
+		[[ -n "${sl_user}" ]] || sl_user="admin"
+		[[ -n "${sl_email}" ]] || sl_email="admin@example.com"
+		[[ -n "${sl_pass}" ]] || sl_pass="adminpassword"
+	fi
+
+	if [[ "${show_deployment}" -eq 1 ]]; then
+		print_section "${summary_title}"
+		print_value "Version" "$(read_version)"
+		print_value "Edition" "$(display_edition_from_dir "${ROOT}")"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			print_value "Platform" "$(installation_platform_display)"
 		fi
-		print_value "  Organization" "${seed_org}"
+		print_value "Install path" "${ROOT}"
+		print_value "Config file" "${env_file}"
+		print_value "Log file" "${LOG_FILE}"
+		print_section "Access"
+	else
+		print_section "${summary_title}"
+	fi
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		printf '  Website · %s\n' "${website_port}"
+		print_nested_value "URL" "https://${host}:${website_port}/en/"
+		print_nested_value "Bind" "${website_bind}"
+
+		printf '\n  Tenant · %s\n' "${tenant_port}"
+		print_nested_value "URL" "https://${host}:${tenant_port}/"
+		if [[ "${seed}" == "1" ]]; then
+			if [[ "${show_credentials}" -eq 1 ]]; then
+				print_nested_value "Email" "${seed_email}"
+				print_nested_value "Password" "${seed_pass}"
+			else
+				print_nested_value "Credentials" "${credentials_note}"
+			fi
+			print_nested_value "Organization" "${seed_org}"
+		fi
+
+		printf '\n  Platform Ops · %s\n' "${admin_port}"
+		print_nested_value "URL" "https://${host}:${admin_port}/"
+		if [[ "${seed}" == "1" ]]; then
+			if [[ "${show_credentials}" -eq 1 ]]; then
+				print_nested_value "Email" "${seed_email}"
+				print_nested_value "Password" "${seed_pass}"
+			else
+				print_nested_value "Credentials" "${credentials_note}"
+			fi
+		fi
+
+		printf '\n  Django Admin · %s\n' "${admin_port}"
+		print_nested_value "URL" "https://${host}:${admin_port}/admin/"
+		if [[ "${seed}" == "1" ]]; then
+			if [[ "${show_credentials}" -eq 1 ]]; then
+				print_nested_value "Email" "${seed_email}"
+				print_nested_value "Password" "${seed_pass}"
+			else
+				print_nested_value "Credentials" "${credentials_note}"
+			fi
+		fi
 
 		if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
-			sl_env="${ROOT}/data/sourcelens/config/.env"
-			sl_user="$(grep -E '^DJANGO_SUPERUSER_USERNAME=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
-			sl_email="$(grep -E '^DJANGO_SUPERUSER_EMAIL=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
-			sl_pass="$(grep -E '^DJANGO_SUPERUSER_PASSWORD=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
-			[[ -n "${sl_user}" ]] || sl_user="admin"
-			[[ -n "${sl_email}" ]] || sl_email="admin@example.com"
-			[[ -n "${sl_pass}" ]] || sl_pass="adminpassword"
+			printf '\n  Insight Console · %s\n' "${sourcelens_console_port}"
+			print_nested_value "URL" "https://${host}:${sourcelens_console_port}/"
+			print_nested_value "Bind" "${sourcelens_console_bind}"
+			if [[ "${seed}" == "1" ]]; then
+				if [[ "${show_credentials}" -eq 1 ]]; then
+					print_nested_value "Username" "${sl_user}"
+					print_nested_value "Email" "${sl_email}"
+					print_nested_value "Password" "${sl_pass}"
+				else
+					print_nested_value "Credentials" "stored in ${sl_env}; values are hidden in non-interactive logs"
+				fi
+			fi
+			print_nested_value "API" "https://${host}:${tenant_port}/sourcelens/api/"
+			print_nested_value "WebSocket" "wss://${host}:${tenant_port}/sourcelens/ws/lens/lensnodes/"
+			print_nested_value "Network" "${HFL_BRIDGE_NETWORK} (private)"
+		elif [[ "${sourcelens_mode}" == "external" ]]; then
 			printf '\n  Insight Console\n'
+			print_nested_value "URL" "$(read_env_value LENS_BASE_URL)"
+			print_nested_value "Mode" "external"
+		fi
+
+		printf '\n  API / Swagger · %s\n' "${tenant_port}"
+		print_nested_value "URL" "https://${host}:${tenant_port}/swagger"
+		print_nested_value "Authentication" "HyperFileLens account"
+	else
+		print_value "Website" "https://${host}:${website_port}/en/  (${website_bind})"
+		print_value "Tenant" "https://${host}:${tenant_port}/  (${tenant_bind})"
+		print_value "Platform Ops" "https://${host}:${admin_port}/  (${admin_bind})"
+		print_value "Django Admin" "https://${host}:${admin_port}/admin/"
+		print_value "API / Swagger" "https://${host}:${tenant_port}/swagger"
+		if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
+			print_value "Insight Console" "https://${host}:${sourcelens_console_port}/  (${sourcelens_console_bind})"
+		elif [[ "${sourcelens_mode}" == "external" ]]; then
+			print_value "Insight Console" "$(read_env_value LENS_BASE_URL) (external)"
+		fi
+	fi
+
+	if [[ "${seed}" == "1" ]]; then
+		if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
+			print_section "Login credentials"
+			printf '  HyperFileLens\n'
 			if [[ "${show_credentials}" -eq 1 ]]; then
-				print_value "  Username" "${sl_user}"
-				print_value "  Email" "${sl_email}"
-				print_value "  Password" "${sl_pass}"
+				print_value "  Email" "${seed_email}"
+				print_value "  Password" "${seed_pass}"
+				print_value "  Applies to" "Tenant, Platform Ops and Django Admin"
 			else
-				print_value "  Credentials" "stored in ${sl_env}; values are hidden in non-interactive logs"
+				print_value "  Credentials" "${credentials_note}"
+			fi
+			print_value "  Organization" "${seed_org}"
+
+			if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
+				printf '\n  Insight Console\n'
+				if [[ "${show_credentials}" -eq 1 ]]; then
+					print_value "  Username" "${sl_user}"
+					print_value "  Email" "${sl_email}"
+					print_value "  Password" "${sl_pass}"
+				else
+					print_value "  Credentials" "stored in ${sl_env}; values are hidden in non-interactive logs"
+				fi
 			fi
 		fi
 	else
 		warn "Initial seeding is disabled (SEED_INITIAL_DATA=${seed:-0}); no default admin account will be created automatically."
 	fi
 
-	if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
+	if [[ "${HFL_ONLINE_CHILD:-0}" != "1" \
+		&& "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
 		print_section "Service endpoints"
 		print_value "Insight API" "https://${host}:${tenant_port}/sourcelens/api/"
 		print_value "Insight WSS" "wss://${host}:${tenant_port}/sourcelens/ws/lens/lensnodes/"
@@ -3767,12 +3904,19 @@ print_console_access_summary() {
 
 	print_section "Management commands"
 	print_value "Status" "sudo ${ROOT}/install.sh status"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_value "Logs" "sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"
+	fi
 	print_value "Start" "sudo ${ROOT}/install.sh start"
 	print_value "Stop" "sudo ${ROOT}/install.sh stop"
 	print_value "Restart" "sudo ${ROOT}/install.sh restart"
 	print_value "Backup" "sudo ${ROOT}/install.sh backup"
 	print_value "Upgrade" "sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
 	print_value "Uninstall" "sudo ${ROOT}/install.sh uninstall"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]] \
+		&& local_platform_gateway_agent_is_managed; then
+		print_value "Gateway status" "sudo ${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh status"
+	fi
 }
 
 print_platform_gateway_summary() {
@@ -3801,7 +3945,7 @@ print_platform_gateway_summary() {
 	[[ "${LOCAL_PLATFORM_GATEWAY_VERIFIED}" -eq 0 ]] || console_state="online"
 
 	print_section "Platform Data Gateway"
-	print_value "Role" "Private Data Gateway"
+	print_value "Role" "Platform Data Gateway"
 	print_value "Organization" "${organization:-platform_lens}"
 	print_value "Node ID" "${node_id:-unknown}"
 	print_value "Agent version" "${version:-unknown}"
@@ -3815,6 +3959,48 @@ print_platform_gateway_summary() {
 	print_value "Data" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data"
 	print_value "Logs" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/logs"
 	print_value "Install log" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/logs/install.log"
+}
+
+print_online_installation_verification() {
+	local sourcelens_mode=$1
+	local service container_id ai_engine
+	print_section "HyperFileLens services"
+	compose_all_profiles ps
+	ok "HyperFileLens services are healthy"
+
+	if [[ "${sourcelens_mode}" -ne 0 \
+		&& "$(configured_sourcelens_mode)" == "bundled" ]] \
+		&& sourcelens_installed; then
+		print_section "Insight services"
+		sourcelens_compose ps \
+			|| warn "Could not display the current Insight service status table"
+		ok "Insight services are healthy"
+	fi
+
+	local_platform_gateway_agent_is_managed || return 0
+	service="$(systemctl is-active hyperfilelens-agent.service 2>/dev/null || true)"
+	[[ -n "${service}" ]] || service="unknown"
+	container_id="$(docker ps -aq --no-trunc \
+		--filter 'label=com.hyperfilelens.managed=true' \
+		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
+		--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
+		--filter 'label=com.docker.compose.service=lensnode' 2>/dev/null | head -1)" \
+		|| container_id=""
+	ai_engine="unknown"
+	if [[ -n "${container_id}" ]]; then
+		ai_engine="$(docker inspect --format '{{.State.Status}}' "${container_id}" 2>/dev/null || true)"
+		[[ -n "${ai_engine}" ]] || ai_engine="unknown"
+	fi
+	print_section "Platform Data Gateway"
+	print_value "Agent service" "${service}"
+	print_value "AI engine" "${ai_engine}"
+	if [[ "${LOCAL_PLATFORM_GATEWAY_VERIFIED}" -eq 1 ]]; then
+		print_value "Console" "online"
+		ok "Platform Data Gateway is ready"
+	else
+		print_value "Console" "not verified by this installation"
+		skip "Platform Data Gateway readiness was not verified"
+	fi
 }
 
 package_has_sourcelens() {
@@ -4360,7 +4546,11 @@ install_bundled_sourcelens() {
 	console_port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
 	[[ -n "${console_port}" ]] || console_port="11445"
 	stop_bundled_sourcelens
-	step "Installing bundled SourceLens ..."
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		step "Preparing bundled Insight services"
+	else
+		step "Installing bundled SourceLens ..."
+	fi
 	SOURCELENS_INSTALL_DIR="${ROOT}/sourcelens" \
 		SOURCELENS_DATA_DIR="${ROOT}/data/sourcelens" \
 		SOURCELENS_CONFIG_DIR="${ROOT}/data/sourcelens/config" \
@@ -4579,7 +4769,7 @@ wait_for_local_platform_gateway_readiness() {
 	while true; do
 		if local_platform_gateway_readiness_once; then
 			LOCAL_PLATFORM_GATEWAY_VERIFIED=1
-			ok "Installer-managed platform Gateway is online and usable"
+			ok "Platform Data Gateway is online and usable"
 			return 0
 		fi
 		if ((SECONDS >= deadline)); then
@@ -4699,7 +4889,9 @@ converge_local_platform_gateway_lensnode() {
 		fi
 	fi
 	if [[ "${current_id}" == "${desired_id}" && "${layout_migration}" -eq 0 ]]; then
-		skip "Platform Data Gateway AI engine already uses the desired image"
+		if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
+			skip "Platform Data Gateway AI engine already uses the desired image"
+		fi
 	else
 		script="${ROOT}/data/media/gateway-bootstrap/gateway-install-lensnode-sidecar.sh"
 		[[ -f "${script}" && ! -L "${script}" ]] \
@@ -4729,6 +4921,9 @@ converge_local_platform_gateway_lensnode() {
 	running="$(docker inspect --format '{{.State.Running}}' "${container_id}" 2>/dev/null || true)"
 	[[ "${running}" == "true" ]] \
 		|| die "installer-managed Platform Data Gateway AI engine is not running"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		ok "Platform Data Gateway AI engine is running with the desired image"
+	fi
 }
 
 ensure_local_platform_gateway() {
@@ -4838,6 +5033,55 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 	fi
 }
 
+persist_captured_command_output() {
+	local output=$1
+	[[ -n "${output}" && -n "${LOG_FILE:-}" && -f "${LOG_FILE}" \
+		&& ! -L "${LOG_FILE}" ]] || return 0
+	printf '%s\n' "${output}" | timestamp_log_stream "${LOG_FILE}"
+}
+
+render_deployment_command_output() {
+	local output=$1 line value
+	RENDERED_DEPLOYMENT_WARNINGS=0
+	persist_captured_command_output "${output}"
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		line="${line#"${line%%[![:space:]]*}"}"
+		[[ -n "${line}" ]] || continue
+		if [[ "${line}" =~ ^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[^]]+Z\][[:space:]]+\[[A-Z]+\].*\][[:space:]]+-[[:space:]]+(.*)$ ]]; then
+			line="${BASH_REMATCH[1]}"
+		fi
+		case "${line}" in
+		*Django\ Admin:\ auto-registered\ *|*QuotaProvider\ registered\ *|*AuthzProvider\ registered\ *)
+			# Framework/plugin startup records remain in the durable log. They are
+			# not results of the deployment operation itself.
+			continue
+			;;
+		Email\ sign-up:*)
+			value="${line#Email sign-up: }"
+			log "Email sign-up ${value}"
+			;;
+		Google\ OAuth:*)
+			value="${line#Google OAuth: }"
+			log "Google OAuth ${value}"
+			;;
+		Deployment-managed\ SMTP\ is\ unavailable\;*)
+			skip "SMTP synchronization skipped because SMTP is not configured"
+			;;
+		HFL_IDENTITY_STATUS=*|HFL_GOOGLE_OAUTH_STATUS=*|HFL_AI_MODEL_REPAIRED=*)
+			# Internal machine-readable result markers are represented by the
+			# surrounding structured status lines.
+			;;
+		*WARNING*|*Warning*|*warning*|*preserved*|*failed*|*Failed*)
+			RENDERED_DEPLOYMENT_WARNINGS=$((RENDERED_DEPLOYMENT_WARNINGS + 1))
+			warn "${line}"
+			;;
+		*)
+			printf '%s\n' "${line}"
+			;;
+		esac
+	done <<<"${output}"
+}
+
 sync_optional_identity_settings() {
 	step "Synchronizing optional identity and email settings"
 	local output command_status
@@ -4849,14 +5093,26 @@ sync_optional_identity_settings() {
 	command_status=$?
 	set -e
 	if [[ -n "${output}" ]]; then
-		printf '%s\n' "${output}"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			render_deployment_command_output "${output}"
+		else
+			printf '%s\n' "${output}"
+		fi
 	fi
 	if [[ "${command_status}" -ne 0 ]]; then
 		warn "Optional identity or email settings could not be synchronized; core services remain available"
 		return 0
 	fi
 	if grep -F 'HFL_IDENTITY_STATUS=warning' <<<"${output}" >/dev/null; then
-		warn "Invalid optional identity or email settings were preserved"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			if [[ "${RENDERED_DEPLOYMENT_WARNINGS:-0}" -eq 0 ]]; then
+				ok "Optional identity and email settings synchronized"
+			else
+				log "Optional identity and email synchronization completed with warnings"
+			fi
+		else
+			warn "Invalid optional identity or email settings were preserved"
+		fi
 	else
 		ok "Optional identity and email settings synchronized"
 	fi
@@ -4869,7 +5125,11 @@ sync_optional_identity_settings() {
 	command_status=$?
 	set -e
 	if [[ -n "${output}" ]]; then
-		printf '%s\n' "${output}"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			render_deployment_command_output "${output}"
+		else
+			printf '%s\n' "${output}"
+		fi
 	fi
 	if [[ "${command_status}" -ne 0 ]]; then
 		warn "Google OAuth local route or generated callback is not ready; core services remain available"
@@ -4888,7 +5148,11 @@ repair_existing_multimodal_model() {
 	command_status=$?
 	set -e
 	if [[ -n "${output}" ]]; then
-		printf '%s\n' "${output}"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			render_deployment_command_output "${output}"
+		else
+			printf '%s\n' "${output}"
+		fi
 	fi
 	if [[ "${command_status}" -ne 0 ]]; then
 		warn "Existing multimodal model capability could not be reconciled; core services remain available"
@@ -4976,14 +5240,24 @@ cmd_install() {
 	sync_runtime_media
 	ok "Configuration, TLS, runtime directories, and published media are ready"
 
-	print_section "[4/8] Loading container images"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_section "[4/8] Verifying prepared container images"
+	else
+		print_section "[4/8] Loading container images"
+	fi
 	load_images_from_manifest "$([[ "${sourcelens_mode}" -eq 0 ]] && echo 1 || echo 0)"
-	ok "Required container images are available"
+	if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
+		ok "Required container images are available"
+	fi
 
 	print_section "[5/8] Installing insight services"
 	if should_install_sourcelens "${sourcelens_mode}"; then
 		install_bundled_sourcelens
-		ok "Insight services are installed"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			ok "Insight services are ready"
+		else
+			ok "Insight services are installed"
+		fi
 	else
 		skip "Bundled insight service installation was not requested"
 	fi
@@ -4993,8 +5267,12 @@ cmd_install() {
 	fi
 
 	print_section "[6/8] Installing and starting HyperFileLens"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_section "Runtime policy"
+	fi
 	log "Log rotation: built into nginx container (hourly; daily or 500M; keep 30)"
-	start_hfl_stack || die "HyperFileLens active color failed to start"
+	start_hfl_stack "$([[ "${HFL_ONLINE_CHILD:-0}" == "1" ]] && echo 1 || echo 0)" \
+		|| die "HyperFileLens active color failed to start"
 	wait_for_hfl_health || die "HyperFileLens failed its post-install health gate"
 	ok "HyperFileLens data, application, worker, scheduler, and web services are healthy"
 	if [[ "${sourcelens_mode}" -eq 0 ]]; then
@@ -5007,14 +5285,27 @@ cmd_install() {
 		fi
 	fi
 	print_section "[7/8] Preparing platform services"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_section "Identity and email"
+	fi
 	sync_optional_identity_settings
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_section "Multimodal model"
+	fi
 	repair_existing_multimodal_model
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_section "Platform Data Gateway"
+	fi
 	ensure_local_platform_gateway
 	prune_agent_release_media
 	ok "Platform configuration and managed services are ready"
 
 	print_section "[8/8] Verifying installation"
-	compose_all_profiles ps
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_online_installation_verification "${sourcelens_mode}"
+	else
+		compose_all_profiles ps
+	fi
 	print_result "Installation completed successfully"
 	print_console_access_summary
 }

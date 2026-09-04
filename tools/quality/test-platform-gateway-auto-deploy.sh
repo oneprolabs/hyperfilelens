@@ -13,6 +13,8 @@ source <(sed -n '/^read_env_value()/,/^resolve_console_host()/p' "${installer}" 
 # shellcheck disable=SC1090
 source <(sed -n '/^platform_gateway_auto_deploy_enabled()/,/^# --- Commands ---/p' "${installer}" | sed '$d')
 
+[[ "$(grep -Fc 'ok "Platform Data Gateway is online and usable"' "${installer}")" -eq 1 ]]
+
 ROOT="${tmp}/install"
 LOCAL_PLATFORM_AGENT_INSTALL_DIR="${tmp}/agent-install"
 LOCAL_PLATFORM_AGENT_DATA_DIR="${tmp}/agent-data"

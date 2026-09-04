@@ -277,7 +277,10 @@ func roleDisplayName(role model.Role, gatewayScope ...string) string {
 	case model.RoleGateway:
 		scope := ""
 		if len(gatewayScope) > 0 {
-			scope = gatewayScope[0]
+			scope = strings.ToLower(strings.TrimSpace(gatewayScope[0]))
+		}
+		if scope == "platform" {
+			return "Platform Data Gateway"
 		}
 		if isPublicGatewayScope(scope) {
 			return "Public Data Gateway"

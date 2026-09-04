@@ -50,6 +50,10 @@ def warn(message: str) -> None:
     print(f"[runtime-config] WARNING: {message}")
 
 
+def info(message: str) -> None:
+    print(f"[runtime-config] INFO: {message}")
+
+
 def require_regular_file(path: pathlib.Path, label: str) -> None:
     try:
         mode = path.lstat().st_mode
@@ -467,7 +471,12 @@ def apply_configuration(
                 f"invalid public URL {public_url!r}; preserving installed URL configuration"
             )
     else:
-        warn("public URL is empty; preserving installed URL configuration")
+        if os.environ.get("HFL_ONLINE_CHILD") == "1":
+            info(
+                "public URL was not specified; existing URL configuration remains unchanged"
+            )
+        else:
+            warn("public URL is empty; preserving installed URL configuration")
 
     admin_public_url = admin_public_url.strip()
     if admin_public_url:

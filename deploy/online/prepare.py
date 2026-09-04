@@ -399,7 +399,11 @@ def resolve_image(
             continue
         digest = image_digest(source_ref)
         run(["docker", "tag", source_ref, spec.local_ref])
-        print(f"[ OK ] {image_kind.title()} ready: {spec.local_ref}@{digest}", flush=True)
+        print(
+            f"[ OK ] {image_kind.capitalize()} {position}/{total} ready · "
+            f"{spec.local_ref}@{digest}",
+            flush=True,
+        )
         return ResolvedImage(spec=spec, digest=digest)
     raise RuntimeError(
         f"neither public registry could provide {spec.local_ref}: "
@@ -722,11 +726,13 @@ def main() -> int:
         )
         for kind in ("agent", "gateway", "language")
     ]
+    print("\nRuntime images", flush=True)
     runtime = [
         resolve_image(spec, args.region, position, len(runtime_specs))
         for position, spec in enumerate(runtime_specs, start=1)
     ]
-    print(f"[ OK ] Runtime images are ready: {len(runtime)} images", flush=True)
+    print(f"[ OK ] All {len(runtime)} runtime images are ready", flush=True)
+    print("\nRelease assets", flush=True)
     assets = [
         resolve_image(spec, args.region, position, len(asset_specs))
         for position, spec in enumerate(asset_specs, start=1)
@@ -740,6 +746,7 @@ def main() -> int:
         "gateway": "Data Gateway packages",
         "language": "Language packs",
     }
+    print("\nRelease package", flush=True)
     for asset in assets:
         label = asset_labels[asset.spec.asset_kind]
         print(f"[....] Preparing {label}", flush=True)
@@ -750,7 +757,7 @@ def main() -> int:
         print(f"[ OK ] {label} are ready", flush=True)
     sourcelens = write_sourcelens_build_info(source, target, runtime)
     write_manifest(target, version, revision, runtime, assets, sourcelens)
-    print(f"[ OK ] Prepared Community package: {target}")
+    print(f"[ OK ] Community release package prepared · {target}")
     return 0
 
 

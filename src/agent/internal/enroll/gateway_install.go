@@ -351,6 +351,9 @@ func printGatewayInstallSuccess(info SummaryInfo, lens LensSidecarConfig) {
 }
 
 func gatewayDisplayName(scope string) string {
+	if strings.EqualFold(strings.TrimSpace(scope), "platform") {
+		return "Platform Data Gateway"
+	}
 	if isPublicGatewayScope(scope) {
 		return "Public Data Gateway"
 	}

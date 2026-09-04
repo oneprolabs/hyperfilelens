@@ -27,6 +27,18 @@ grep -F 'HyperFileLens Source Host Installer' "${tmp}/success.out" >/dev/null
 grep -F 'Installation completed successfully' "${tmp}/success.out" >/dev/null
 grep -F 'HyperFileLens Source Host Installer' "${success_log}" >/dev/null
 grep -F 'Installation completed successfully' "${success_log}" >/dev/null
+
+role_labels="$({
+	# shellcheck disable=SC1090
+	source <(sed '/^bundle_agent()/,$d' "${installer}")
+	printf '%s\n' \
+		"$(hfl_role_display_name gateway platform)" \
+		"$(hfl_role_display_name gateway public)" \
+		"$(hfl_role_display_name gateway private)"
+})"
+grep -Fx 'Platform Data Gateway' <<<"${role_labels}" >/dev/null
+grep -Fx 'Public Data Gateway' <<<"${role_labels}" >/dev/null
+grep -Fx 'Private Data Gateway' <<<"${role_labels}" >/dev/null
 if awk 'NF && $0 !~ /^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z\] / { exit 1 }' \
 	"${success_log}"; then
 	:

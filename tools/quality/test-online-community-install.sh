@@ -62,7 +62,7 @@ if grep -Eq 'def parse\([^)]*\)[[:space:]]*->[[:space:]]*(tuple|list|dict)\[' \
 	printf 'ERROR: online installer uses a Python annotation unsupported by Ubuntu 20.04\n' >&2
 	exit 1
 fi
-grep -Fq -- '--yes                   Non-interactive compatibility flag' \
+grep -Fq -- '--yes                       Non-interactive compatibility option' \
 	"${ROOT}/deploy/installer/install.sh"
 
 grep -Fq 'name: HFL - Publish Images & Upgrade SaaS' "${workflow}"
@@ -75,7 +75,7 @@ grep -Fq 'hyperfilelens-gateway-assets:${{ needs.prepare.outputs.version }}' "${
 grep -Fq 'hyperfilelens-language-assets:${{ needs.prepare.outputs.version }}' "${workflow}"
 
 installer="${ROOT}/deploy/installer/install.sh"
-[[ "$(grep -Fc 'if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then' "${installer}")" -eq 2 ]]
+[[ "$(grep -Fc 'if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then' "${installer}")" -ge 2 ]]
 for summary_contract in \
 	'print_section "Platform Data Gateway"' \
 	'print_section "Published resources"' \
@@ -87,6 +87,21 @@ for summary_contract in \
 	'print_value "Install log"'; do
 	grep -Fq "${summary_contract}" "${installer}"
 done
+for online_output_contract in \
+	'[4/8] Verifying prepared container images' \
+	'Verifying prepared runtime image' \
+	'Core data services' \
+	'Database initialization' \
+	'Application services' \
+	'Health checks' \
+	'Identity and email' \
+	'Multimodal model' \
+	'print_online_installation_verification'; do
+	grep -Fq "${online_output_contract}" "${installer}"
+done
+grep -Fq 'Preparing bundled Insight services' "${installer}"
+grep -Fq 'Using bundled SourceLens files from' \
+	"${ROOT}/deploy/installer/sourcelens/install.sh"
 if grep -Eq 'publish-community-channel|community-channel|git push origin HEAD:main' "${workflow}"; then
 	printf 'ERROR: SaaS workflow must not manage a separate Community channel branch\n' >&2
 	exit 1
@@ -1247,6 +1262,8 @@ latest_session_log="$(find "${test_install_root}/logs" -maxdepth 1 -type f \
 [[ -n "${latest_session_log}" ]]
 grep -Fq 'HyperFileLens Community Online Installer' "${latest_session_log}"
 grep -Fq 'Resolving Community tags from GitHub' "${latest_session_log}"
+grep -Fq 'Community release resolved · v1.2.12 · commit cccccccccccc' "${latest_session_log}"
+grep -Fq 'Release contract' "${latest_session_log}"
 grep -Fq "Log file       ${latest_session_log}" "${latest_log}"
 grep -Fq 'recent fallback tags: v1.2.11, v1.2.10, v1.2.9, v1.2.8, v1.2.7, v1.2.6, v1.2.5, v1.2.4, v1.2.3, v1.2.2' \
 	"${latest_log}"
@@ -1355,6 +1372,13 @@ PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--region global \
 		--output "${candidate}" >"${prepare_log}" 2>&1
 grep -F 'Docker native pull progress:' "${prepare_log}" >/dev/null
+for heading in 'Runtime images' 'Release assets' 'Release package'; do
+	grep -Fx "${heading}" "${prepare_log}" >/dev/null
+done
+grep -F '[ OK ] Runtime image 1/8 ready ·' "${prepare_log}" >/dev/null
+grep -F '[ OK ] Release asset image 3/3 ready ·' "${prepare_log}" >/dev/null
+grep -F '[ OK ] All 8 runtime images are ready' "${prepare_log}" >/dev/null
+grep -F '[ OK ] Community release package prepared ·' "${prepare_log}" >/dev/null
 if grep -F 'Untagged:' "${prepare_log}" >/dev/null; then
 	printf 'ERROR: temporary asset image cleanup leaked into online output\n' >&2
 	exit 1
