@@ -232,7 +232,7 @@ def data_context_for_session(
 
     scope = str(gateway_scope or "").strip().lower()
     mode = str(gateway_selection_mode or "").strip().lower()
-    if scope == "private" or mode == "manual":
+    if scope in {"organization", "user", "private"} or mode == "manual":
         processing_location = "private_gateway"
     else:
         processing_location = "public_gateway"

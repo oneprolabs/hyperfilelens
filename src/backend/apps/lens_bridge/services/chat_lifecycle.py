@@ -299,12 +299,13 @@ def _configured_gateway_link_for_chat(
 
     if gateway_mode == LensSessionLink.GatewaySelectionMode.AUTO:
         return platform_lens.resolve_auto_gateway_link_for_copilot(user=user)
+    from apps.lens_bridge.services.gateway_ownership import PRIVATE_GATEWAY_SCOPES
+
     return (
         LensGatewayLink.objects.filter(
             pk=gateway_link_id,
             organization=org,
-            owner_user=user,
-            scope=LensGatewayLink.GatewayScope.USER,
+            scope__in=PRIVATE_GATEWAY_SCOPES,
             sl_lensnode_uuid__isnull=False,
             is_deleted=False,
         )
@@ -498,9 +499,6 @@ def create_copilot_chat(
     context_for_gateway_link(
         tenant_organization=org,
         gateway_link=gateway_link,
-        expected_owner_user_id=(
-            user.id if gateway_link.scope == gateway_link.GatewayScope.USER else None
-        ),
         require_ready=False,
     )
     default_model_ref, multimodal_model_ref = (
@@ -1006,9 +1004,6 @@ def _run_copilot_chat_provision(
     context_for_gateway_link(
         tenant_organization=org,
         gateway_link=gateway_link,
-        expected_owner_user_id=(
-            user.id if gateway_link.scope == gateway_link.GatewayScope.USER else None
-        ),
         require_ready=True,
     )
 

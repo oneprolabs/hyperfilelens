@@ -146,7 +146,7 @@ class AssistantLifecycleBoundaryTests(TestCase):
         return_value=[],
     )
     @mock.patch("apps.lens_bridge.services.assistants.sl_client.request_json")
-    def test_tenant_form_options_only_return_owned_private_resources(
+    def test_tenant_form_options_share_gateways_but_not_knowledge_sources(
         self,
         request_json,
         _list_skills,
@@ -167,11 +167,14 @@ class AssistantLifecycleBoundaryTests(TestCase):
 
         self.assertEqual(
             [row["gateway_id"] for row in options["gateways"]],
-            [self.gateway.id],
+            [self.gateway.id, other_link.gateway_id],
         )
         self.assertEqual(
             [row["uuid"] for row in options["lensnodes"]],
-            [str(self.gateway_link.sl_lensnode_uuid)],
+            [
+                str(self.gateway_link.sl_lensnode_uuid),
+                str(other_link.sl_lensnode_uuid),
+            ],
         )
         self.assertEqual(
             [row["id"] for row in options["knowledge_sources"]],

@@ -661,8 +661,7 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         ctx["org"] = self.org
-        ctx["gateway_scope"] = LensGatewayLink.GatewayScope.USER
-        ctx["gateway_owner_user_id"] = self.request.user.id
+        ctx["gateway_scope"] = LensGatewayLink.GatewayScope.ORGANIZATION
         return ctx
 
     def list(self, request, *args, **kwargs):
@@ -680,14 +679,13 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         from apps.lens_bridge.services.gateway_execution import (
-            require_user_gateway_link,
+            require_organization_gateway_link,
         )
 
         with transaction.atomic():
-            gateway_link = require_user_gateway_link(
+            gateway_link = require_organization_gateway_link(
                 tenant_organization=self.org,
                 gateway_id=serializer.validated_data["gateway"].id,
-                owner_user_id=self.request.user.id,
                 lock=True,
             )
             ks = serializer.save(
@@ -771,10 +769,15 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
 
     def list(self, request):
         from apps.lens_bridge.services.gateway_insights import (
-            list_user_gateway_insight_rows,
+            list_organization_gateway_insight_rows,
         )
 
-        return Response(list_user_gateway_insight_rows(user=request.user))
+        return Response(
+            list_organization_gateway_insight_rows(
+                organization=self.org,
+                user=request.user,
+            )
+        )
 
     @action(detail=True, methods=["post"], url_path="enable-ai")
     def enable_ai(self, request, pk=None):
@@ -784,8 +787,10 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
         link = LensGatewayLink.objects.filter(
             organization=self.org,
             gateway=gateway,
-            scope=LensGatewayLink.GatewayScope.USER,
-            owner_user=request.user,
+            scope__in=(
+                LensGatewayLink.GatewayScope.ORGANIZATION,
+                LensGatewayLink.GatewayScope.USER,
+            ),
         ).first()
         if link and link.sl_lensnode_uuid:
             provisioning.sync_gateway_lensnode_status(link)
@@ -793,8 +798,8 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
             org=self.org,
             gateway=gateway,
             name=body.validated_data.get("name") or None,
-            owner_user=request.user,
-            scope=LensGatewayLink.GatewayScope.USER,
+            created_by=request.user,
+            scope=LensGatewayLink.GatewayScope.ORGANIZATION,
         )
         payload = provisioning.build_gateway_ai_payload(
             gateway=gateway,
@@ -807,13 +812,12 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
     def ai_status(self, request, pk=None):
         gateway = provisioning.require_gateway_node(self.org, int(pk))
         from apps.lens_bridge.services.gateway_execution import (
-            require_user_gateway_link,
+            require_organization_gateway_link,
         )
 
-        link = require_user_gateway_link(
+        link = require_organization_gateway_link(
             tenant_organization=self.org,
             gateway_id=gateway.id,
-            owner_user_id=request.user.id,
             require_ready=False,
         )
         if link and link.sl_lensnode_uuid:
@@ -830,13 +834,12 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
     def chat_workload(self, request, pk=None):
         gateway = provisioning.require_gateway_node(self.org, int(pk))
         from apps.lens_bridge.services.gateway_execution import (
-            require_user_gateway_link,
+            require_organization_gateway_link,
         )
 
-        link = require_user_gateway_link(
+        link = require_organization_gateway_link(
             tenant_organization=self.org,
             gateway_id=gateway.id,
-            owner_user_id=request.user.id,
             require_ready=False,
         )
         if request.method == "PATCH":
@@ -873,8 +876,7 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
                 org=self.org,
                 gateway_id=int(pk),
                 path=path,
-                expected_scope=LensGatewayLink.GatewayScope.USER,
-                expected_owner_user_id=request.user.id,
+                expected_scope=LensGatewayLink.GatewayScope.ORGANIZATION,
             )
         except ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)

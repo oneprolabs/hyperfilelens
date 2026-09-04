@@ -6,7 +6,12 @@ from collections.abc import Iterable
 from typing import Any
 
 from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
-from apps.lens_bridge.services import gateway_readiness, provisioning, sl_client
+from apps.lens_bridge.services import (
+    gateway_ownership,
+    gateway_readiness,
+    provisioning,
+    sl_client,
+)
 from apps.node.api.serializers.node import NodeSerializer
 from apps.node.services.internal.agent_upgrade import node_agent_release_status
 from apps.node.services.internal.node_lifecycle import enrich_node_row
@@ -24,15 +29,14 @@ def _lensnode_rows() -> list[dict[str, Any]]:
     return [dict(item) for item in payload if isinstance(item, dict) and item.get("uuid")]
 
 
-def _link_index(*, owner_user=None) -> dict[str, LensGatewayLink]:
+def _link_index(*, organization=None) -> dict[str, LensGatewayLink]:
     links = LensGatewayLink.objects.filter(sl_lensnode_uuid__isnull=False).select_related(
-        "gateway", "organization", "owner_user"
+        "gateway", "organization", "created_by", "owner_user"
     )
-    if owner_user is not None:
+    if organization is not None:
         links = links.filter(
-            owner_user=owner_user,
-            scope=LensGatewayLink.GatewayScope.USER,
-            origin=LensGatewayLink.Origin.USER,
+            organization=organization,
+            scope__in=gateway_ownership.PRIVATE_GATEWAY_SCOPES,
         )
     return {str(link.sl_lensnode_uuid): link for link in links}
 
@@ -71,7 +75,7 @@ def _serialize_row(
         ).data
         knowledge_source_count = LensKnowledgeSource.objects.filter(gateway=node).count()
         origin = link.origin
-        owner_user = link.owner_user
+        created_by = link.created_by or link.owner_user
         workspace_root = str(sl_node.get("workspace_path") or link.resolved_workspace_root())
         sidecar_status = link.sidecar_status
         is_platform_default = bool(link.is_platform_default)
@@ -102,7 +106,7 @@ def _serialize_row(
         }
         knowledge_source_count = 0
         origin = _origin_for_unlinked(sl_node)
-        owner_user = None
+        created_by = None
         workspace_root = str(sl_node.get("workspace_path") or "")
         sidecar_status = LensGatewayLink.SidecarStatus.NOT_DEPLOYED
         is_platform_default = False
@@ -123,13 +127,17 @@ def _serialize_row(
         "knowledge_source_count": knowledge_source_count,
         "workspace_root": workspace_root,
         "sidecar_status": sidecar_status,
-        "scope": link.scope if link else "",
+        "scope": gateway_ownership.external_gateway_scope(link) if link else "",
         "origin": origin,
         "gateway_link_id": gateway_link_id,
         "managed_by_hfl": runtime_state["hfl_managed"],
         **runtime_state,
-        "owner_user_id": owner_user.id if owner_user else None,
-        "owner_username": getattr(owner_user, "username", "") if owner_user else "",
+        # Keep the old response keys during the compatibility window. They now
+        # describe installation audit only and must not be used for access.
+        "owner_user_id": created_by.id if created_by else None,
+        "owner_username": getattr(created_by, "username", "") if created_by else "",
+        "created_by_id": created_by.id if created_by else None,
+        "created_by_username": getattr(created_by, "username", "") if created_by else "",
         "owner_organization_id": link.organization_id if link else None,
         "is_platform_default": is_platform_default,
         "sl_name": str(sl_node.get("name") or ""),
@@ -158,9 +166,12 @@ def list_admin_gateway_insight_rows(*, user=None) -> list[dict[str, Any]]:
     ]
 
 
-def list_user_gateway_insight_rows(*, user) -> list[dict[str, Any]]:
-    """Only DGs owned by the current HFL user, with live SL status."""
-    links = _link_index(owner_user=user)
+def list_organization_gateway_insight_rows(
+    *, organization, user=None
+) -> list[dict[str, Any]]:
+    """Private Data Gateways in one organization, with live SL status."""
+
+    links = _link_index(organization=organization)
     if not links:
         return []
     release_targets: dict[tuple[str, str, str, str], str] = {}

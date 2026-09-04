@@ -352,18 +352,6 @@ def _apply_knowledge_source_payload(
                     )
                 }
             )
-        gateway_link = ks.gateway_link
-        if (
-            gateway_link.scope == LensGatewayLink.GatewayScope.USER
-            and gateway_link.owner_user_id != user.id
-        ):
-            raise ValidationError(
-                {
-                    "knowledge_source_id": (
-                        "Knowledge source data gateway is not owned by the current user."
-                    )
-                }
-            )
     if ks.session_links.exclude(
         lifecycle_status=LensSessionLink.LifecycleStatus.DELETED
     ).exists():
@@ -648,17 +636,18 @@ def _reassign_ks_primary_assistant(org: Organization, ks_id: int) -> None:
 def list_org_lensnodes(
     org: Organization,
     *,
-    owner_user: AbstractBaseUser | None = None,
+    platform_passthrough: bool = False,
 ) -> list[dict[str, Any]]:
+    from apps.lens_bridge.services.gateway_ownership import PRIVATE_GATEWAY_SCOPES
+
     links = LensGatewayLink.objects.filter(
         organization=org,
         sl_lensnode_uuid__isnull=False,
     )
-    if owner_user is not None:
-        links = links.filter(
-            scope=LensGatewayLink.GatewayScope.USER,
-            owner_user=owner_user,
-        )
+    if platform_passthrough:
+        links = links.filter(scope=LensGatewayLink.GatewayScope.PLATFORM)
+    else:
+        links = links.filter(scope__in=PRIVATE_GATEWAY_SCOPES)
     linked = {
         str(link.sl_lensnode_uuid)
         for link in links
@@ -688,12 +677,13 @@ def assistant_form_options(
             raise ValidationError(
                 {"assistant": "Assistant form option owner is required."}
             )
-        links = LensGatewayLink.objects.filter(
-            organization=org,
+        from apps.lens_bridge.services.gateway_ownership import (
+            organization_gateway_links,
+        )
+
+        links = organization_gateway_links(organization=org).filter(
             sl_lensnode_uuid__isnull=False,
-            scope=LensGatewayLink.GatewayScope.USER,
-            owner_user=user,
-        ).select_related("gateway")
+        )
 
     for link in links:
         node = link.gateway
@@ -748,7 +738,7 @@ def assistant_form_options(
     return {
         "lensnodes": list_org_lensnodes(
             ks_org,
-            owner_user=None if platform_passthrough else user,
+            platform_passthrough=platform_passthrough,
         ),
         "gateways": gateway_rows,
         "knowledge_sources": [

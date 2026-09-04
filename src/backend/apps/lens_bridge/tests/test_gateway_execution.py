@@ -1,3 +1,4 @@
+import uuid
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -14,6 +15,7 @@ from apps.lens_bridge.services import platform_lens
 from apps.lens_bridge.services.gateway_execution import (
     context_for_gateway_link,
     context_for_workspace_binding,
+    require_organization_gateway_link,
 )
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
@@ -66,8 +68,8 @@ class GatewayExecutionContextTests(TestCase):
         link = LensGatewayLink.objects.create(
             organization=other_org,
             gateway=node,
-            owner_user=self.user,
-            scope=LensGatewayLink.GatewayScope.USER,
+            created_by=self.user,
+            scope=LensGatewayLink.GatewayScope.ORGANIZATION,
         )
 
         with self.assertRaises(ValidationError):
@@ -77,7 +79,7 @@ class GatewayExecutionContextTests(TestCase):
             )
 
     @mock.patch("apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway")
-    def test_private_gateway_cannot_cross_user_boundary(self, _ready):
+    def test_private_gateway_is_shared_inside_organization(self, _ready):
         node = Node.objects.create(
             organization=self.tenant,
             name="private-user-gateway",
@@ -90,17 +92,49 @@ class GatewayExecutionContextTests(TestCase):
             owner_user=self.user,
             scope=LensGatewayLink.GatewayScope.USER,
         )
-        another_user = get_user_model().objects.create_user(
-            username="another-gateway-user@example.test",
-            email="another-gateway-user@example.test",
+        context = context_for_gateway_link(
+            tenant_organization=self.tenant,
+            gateway_link=link,
+        )
+        resolved = require_organization_gateway_link(
+            tenant_organization=self.tenant,
+            gateway_id=node.id,
         )
 
-        with self.assertRaises(ValidationError):
-            context_for_gateway_link(
-                tenant_organization=self.tenant,
-                gateway_link=link,
-                expected_owner_user_id=another_user.id,
-            )
+        self.assertEqual(context.gateway_link, link)
+        self.assertEqual(resolved, link)
+
+    @mock.patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
+    def test_peer_can_select_organization_gateway_for_chat(self, _ready):
+        node = Node.objects.create(
+            organization=self.tenant,
+            name="organization-chat-gateway",
+            role=NodeRole.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        link = LensGatewayLink.objects.create(
+            organization=self.tenant,
+            gateway=node,
+            owner_user=self.user,
+            created_by=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+            sl_lensnode_uuid=uuid.uuid4(),
+        )
+        peer = get_user_model().objects.create_user(
+            username="organization-gateway-peer@example.test",
+            email="organization-gateway-peer@example.test",
+        )
+
+        selected = platform_lens.resolve_gateway_link_for_copilot(
+            self.tenant,
+            user=peer,
+            gateway_link_id=link.id,
+        )
+
+        self.assertEqual(selected, link)
 
     def test_platform_gateway_removal_sees_tenant_knowledge_sources(self):
         platform_org = platform_lens.get_or_create_platform_org()

@@ -172,6 +172,8 @@ def chat_queue_ahead(
 
 
 def chat_workload_payload(*, gateway_link: LensGatewayLink) -> dict[str, Any]:
+    from apps.lens_bridge.services.gateway_ownership import external_gateway_scope
+
     active_count = active_chat_prepare_count(gateway_link_id=gateway_link.id)
     admitted = _admitted_sessions_without_slot(gateway_link.id)
     oldest_at = (
@@ -183,7 +185,7 @@ def chat_workload_payload(*, gateway_link: LensGatewayLink) -> dict[str, Any]:
         "gateway_link_id": gateway_link.id,
         "gateway_id": gateway_link.gateway_id,
         "gateway_name": gateway_link.gateway.name,
-        "gateway_scope": gateway_link.scope,
+        "gateway_scope": external_gateway_scope(gateway_link),
         "chat_prepare_concurrency": int(gateway_link.chat_prepare_concurrency),
         "chat_queue_capacity": int(gateway_link.chat_queue_capacity),
         "active_chat_preparations": active_count,

@@ -211,22 +211,19 @@ class LensKnowledgeSourceCreateSerializer(serializers.ModelSerializer):
         provisioning.require_gateway_node(org, gateway.id)
         expected_scope = self.context.get(
             "gateway_scope",
-            LensGatewayLink.GatewayScope.USER,
+            LensGatewayLink.GatewayScope.ORGANIZATION,
         )
-        if expected_scope == LensGatewayLink.GatewayScope.USER:
+        if expected_scope in {
+            LensGatewayLink.GatewayScope.ORGANIZATION,
+            LensGatewayLink.GatewayScope.USER,
+        }:
             from apps.lens_bridge.services.gateway_execution import (
-                require_user_gateway_link,
+                require_organization_gateway_link,
             )
 
-            owner_user_id = self.context.get("gateway_owner_user_id")
-            if owner_user_id is None:
-                raise serializers.ValidationError(
-                    {"gateway": "Private Data Gateway owner is required."}
-                )
-            link = require_user_gateway_link(
+            link = require_organization_gateway_link(
                 tenant_organization=org,
                 gateway_id=gateway.id,
-                owner_user_id=owner_user_id,
                 require_ready=False,
             )
         else:
@@ -465,6 +462,8 @@ class LensGatewayInsightSerializer(serializers.Serializer):
     sl_runtime_status = serializers.CharField(required=False, allow_blank=True)
     owner_user_id = serializers.IntegerField(required=False, allow_null=True)
     owner_username = serializers.CharField(required=False, allow_blank=True)
+    created_by_id = serializers.IntegerField(required=False, allow_null=True)
+    created_by_username = serializers.CharField(required=False, allow_blank=True)
     owner_organization_id = serializers.IntegerField(required=False, allow_null=True)
     is_platform_default = serializers.BooleanField(required=False)
     agent_release = serializers.DictField(required=False, allow_null=True)
@@ -688,7 +687,13 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
 
     def get_gateway_scope(self, obj: LensSessionLink) -> str | None:
         link = obj.gateway_link
-        return link.scope if link else None
+        if link is None:
+            return None
+        from apps.lens_bridge.services.gateway_ownership import (
+            external_gateway_scope,
+        )
+
+        return external_gateway_scope(link)
 
     def get_has_unread(self, obj: LensSessionLink) -> bool:
         if obj.last_assistant_message_at is None:

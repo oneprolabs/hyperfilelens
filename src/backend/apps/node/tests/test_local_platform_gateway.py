@@ -357,7 +357,7 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
             provisioning.ensure_lensnode_for_gateway(
                 org=org,
                 gateway=gateway,
-                owner_user=self.user,
+                created_by=self.user,
                 scope=LensGatewayLink.GatewayScope.USER,
             )
 

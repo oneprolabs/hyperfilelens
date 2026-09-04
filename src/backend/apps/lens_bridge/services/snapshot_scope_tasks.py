@@ -165,15 +165,9 @@ def _gateway_reader_context(
     )
     if gateway_link is None:
         raise ValidationError({"gateway_link_id": "Data gateway is not available."})
-    expected_owner_user_id = (
-        requesting_user_id
-        if gateway_link.scope == LensGatewayLink.GatewayScope.USER
-        else None
-    )
     context = context_for_gateway_link(
         tenant_organization=tenant_organization,
         gateway_link=gateway_link,
-        expected_owner_user_id=expected_owner_user_id,
         require_ready=False,
     )
     runtime = gateway_readiness.gateway_runtime_state(context.gateway_link)

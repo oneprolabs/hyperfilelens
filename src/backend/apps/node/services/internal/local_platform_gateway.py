@@ -309,6 +309,9 @@ def reconcile_local_platform_gateway_links() -> int:
         if link.owner_user_id is not None:
             link.owner_user = None
             update_fields.append("owner_user")
+        if link.created_by_id is not None:
+            link.created_by = None
+            update_fields.append("created_by")
         if update_fields:
             link.save(update_fields=[*update_fields, "updated_at"])
             changed += 1
