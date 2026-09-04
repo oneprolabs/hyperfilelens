@@ -52,7 +52,7 @@ func TestRoleDownloadLabels(t *testing.T) {
 			t.Fatalf("role %q label=%q, want %q", role, got, expected)
 		}
 	}
-	if got := agentPackageLabel(model.RoleGateway, "platform"); got != "Public Data Gateway Agent package" {
+	if got := agentPackageLabel(model.RoleGateway, "platform"); got != "Platform Data Gateway Agent package" {
 		t.Fatalf("platform gateway label=%q", got)
 	}
 	if got := agentPackageLabel(model.RoleGateway, "public"); got != "Public Data Gateway Agent package" {
@@ -71,10 +71,10 @@ func TestIsPublicGatewayScope(t *testing.T) {
 			t.Fatalf("expected private scope %q", scope)
 		}
 	}
-	if got := roleDisplayName(model.RoleGateway, "platform"); got != "Public Data Gateway" {
+	if got := roleDisplayName(model.RoleGateway, "platform"); got != "Platform Data Gateway" {
 		t.Fatalf("platform display=%q", got)
 	}
-	if got := gatewayDisplayName("platform"); got != "Public Data Gateway" {
+	if got := gatewayDisplayName("platform"); got != "Platform Data Gateway" {
 		t.Fatalf("gatewayDisplayName(platform)=%q", got)
 	}
 	if got := gatewayDisplayName("user"); got != "Private Data Gateway" {

@@ -187,7 +187,11 @@ materialize_install_dir() {
 	source_abs="$(cd "${source}" && pwd)"
 	target_abs="$(readlink -m "${target}")"
 	if [[ "${source_abs}" == "${target_abs}" ]]; then
-		log "already installed at ${target}"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			log "Using bundled SourceLens files from ${target}"
+		else
+			log "already installed at ${target}"
+		fi
 		return 0
 	fi
 	log "Copying SourceLens bundle ${source} -> ${target}"

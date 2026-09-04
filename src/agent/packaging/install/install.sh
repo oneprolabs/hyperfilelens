@@ -948,7 +948,8 @@ hfl_role_display_name() {
 	proxy) printf '%s' "Proxy Host" ;;
 	gateway)
 		case "${scope}" in
-		public | platform) printf '%s' "Public Data Gateway" ;;
+		platform) printf '%s' "Platform Data Gateway" ;;
+		public) printf '%s' "Public Data Gateway" ;;
 		*) printf '%s' "Private Data Gateway" ;;
 		esac
 		;;

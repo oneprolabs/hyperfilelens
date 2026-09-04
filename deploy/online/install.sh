@@ -1105,6 +1105,8 @@ PY
 	TAG="${values[0]}"
 	RELEASE_VERSION="${values[1]}"
 	RELEASE_COMMIT="${values[2]}"
+	printf '[ OK ] Community release resolved · %s · commit %s\n' \
+		"${TAG}" "${RELEASE_COMMIT:0:12}"
 }
 
 confirm_installation() {
@@ -1122,6 +1124,7 @@ download_source_archive() {
 	global) url="https://codeload.github.com/oneprolabs/hyperfilelens/tar.gz/${RELEASE_COMMIT}" ;;
 	cn) url="https://gitee.com/oneprolabs/hyperfilelens/repository/archive/${RELEASE_COMMIT}.tar.gz" ;;
 	esac
+	printf '\nRelease contract\n'
 	printf '[....] Downloading %s installation contract from %s (commit %s)\n' \
 		"${TAG}" "${SOURCE_NAME}" "${RELEASE_COMMIT:0:12}"
 	if ! download_file "${url}" "${SESSION_DIR}/source.tar.gz" 300; then
@@ -1218,8 +1221,6 @@ if [[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]; then
 fi
 ensure_online_docker_runtime
 
-printf '\n[....] Preparing release images and installation assets\n'
-
 export HFL_GLOBAL_REGISTRY_PREFIX="${GLOBAL_REGISTRY_PREFIX}"
 export HFL_CN_REGISTRY_PREFIX="${CN_REGISTRY_PREFIX}"
 export HFL_REGISTRY_REGION="${REGION}"
@@ -1235,7 +1236,7 @@ fi
 if ! verify_candidate_release; then
 	fail_with_tag_guidance "Community tag ${TAG} failed release identity validation"
 fi
-printf '[ OK ] Release images and installation assets are ready\n'
+printf '[ OK ] Release package and installation assets are ready\n'
 
 if [[ "${INSTALL_ACTION}" == Upgrade ]]; then
 	printf '[....] Upgrading the existing installation to %s\n' "${TAG}"

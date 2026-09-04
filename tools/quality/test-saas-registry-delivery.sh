@@ -304,6 +304,16 @@ HFL_TEST_FAIL_REGION=cn HFL_REGISTRY_REGION=cn \
 [[ "$(sed -n '2p' "${pull_marker}")" == docker.io/* ]]
 HFL_REGISTRY_REGION=cn load_images_from_manifest 0 "${package_root}"
 [[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
+online_registry_output="$(
+	HFL_ONLINE_CHILD=1 HFL_REGISTRY_REGION=cn \
+		load_images_from_manifest 0 "${package_root}"
+)"
+grep -F '[....] Verifying prepared runtime image (1/1):' \
+	<<<"${online_registry_output}" >/dev/null
+grep -F '[ OK ] Runtime image 1/1 verified ·' \
+	<<<"${online_registry_output}" >/dev/null
+grep -F '[ OK ] All 1 prepared runtime images are verified' \
+	<<<"${online_registry_output}" >/dev/null
 
 rm -f "${tag_marker}"
 : >"${pull_marker}"

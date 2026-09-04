@@ -41,6 +41,7 @@ read_edition_from_dir() { printf 'Enterprise'; }
 resolve_console_host() { printf '192.0.2.10'; }
 package_has_sourcelens() { return 0; }
 sourcelens_installed() { return 0; }
+local_platform_gateway_agent_is_managed() { return 1; }
 
 output="$({
 	print_banner 'HyperFileLens Installer'
@@ -59,6 +60,65 @@ grep -F 'adminpassword' <<<"${output}" >/dev/null
 grep -F 'install.sh upgrade --from /path/to/new-release.tar.gz' <<<"${output}" >/dev/null
 grep -F 'install.sh uninstall' <<<"${output}" >/dev/null
 
+# The online installer groups each login with its endpoint while preserving
+# the same credential visibility policy as the standalone installer.
+SESSION_WARNINGS=()
+HFL_ONLINE_CHILD=1
+online_output="$(print_console_access_summary 2>&1)"
+unset HFL_ONLINE_CHILD
+for heading in \
+	'Website · 11442' \
+	'Tenant · 11443' \
+	'Platform Ops · 11444' \
+	'Django Admin · 11444' \
+	'Insight Console · 11445' \
+	'API / Swagger · 11443'; do
+	grep -F "${heading}" <<<"${online_output}" >/dev/null
+done
+grep -F 'linux/amd64' <<<"${online_output}" >/dev/null
+grep -F 'Email          admin@hyperfilelens.com' <<<"${online_output}" >/dev/null
+grep -F 'Password       Admin@123' <<<"${online_output}" >/dev/null
+grep -F 'Username       admin' <<<"${online_output}" >/dev/null
+grep -F 'sudo docker compose -f' <<<"${online_output}" >/dev/null
+if grep -F 'Login credentials' <<<"${online_output}" >/dev/null; then
+	echo 'Online summary split credentials away from their access endpoints' >&2
+	exit 1
+fi
+
+INTERACTIVE_SESSION=0
+SESSION_WARNINGS=()
+HFL_ONLINE_CHILD=1
+noninteractive_online_output="$(print_console_access_summary 2>&1)"
+unset HFL_ONLINE_CHILD
+INTERACTIVE_SESSION=1
+grep -F 'values are hidden in non-interactive logs' \
+	<<<"${noninteractive_online_output}" >/dev/null
+if grep -F 'Admin@123' <<<"${noninteractive_online_output}" >/dev/null \
+	|| grep -F 'adminpassword' <<<"${noninteractive_online_output}" >/dev/null; then
+	echo 'Online non-interactive summary exposed generated credentials' >&2
+	exit 1
+fi
+
+# Online child output keeps framework startup noise in the durable log while
+# presenting only the meaningful deployment result in the terminal.
+identity_raw=$'[2026-08-23T04:53:45.921Z] [INFO] [test:1] [-] [-/-] [server-python(apps.py:23)] - Django Admin: auto-registered 51 project model(s)\nEmail sign-up: disabled\nGoogle OAuth: disabled\nDeployment-managed SMTP is unavailable; preserved the installed email settings.\nHFL_IDENTITY_STATUS=warning'
+touch "${LOG_FILE}"
+identity_output="$({
+	HFL_ONLINE_CHILD=1
+	render_deployment_command_output "${identity_raw}"
+} 2>&1)"
+grep -F '[INFO ] Email sign-up disabled.' <<<"${identity_output}" >/dev/null
+grep -F '[INFO ] Google OAuth disabled.' <<<"${identity_output}" >/dev/null
+grep -F '[SKIP] SMTP synchronization skipped because SMTP is not configured.' \
+	<<<"${identity_output}" >/dev/null
+if grep -F 'auto-registered' <<<"${identity_output}" >/dev/null \
+	|| grep -F 'HFL_IDENTITY_STATUS=' <<<"${identity_output}" >/dev/null; then
+	echo 'Online identity output leaked framework or machine-readable noise' >&2
+	exit 1
+fi
+grep -F 'Django Admin: auto-registered 51 project model(s)' "${LOG_FILE}" >/dev/null
+grep -F 'HFL_IDENTITY_STATUS=warning' "${LOG_FILE}" >/dev/null
+
 # A bundled package is not the same as a running Insight installation. The
 # --hfl-only summary must not advertise an unavailable console or credentials.
 sourcelens_installed() { return 1; }
@@ -68,6 +128,20 @@ if grep -F 'Insight Console' <<<"${hfl_only_output}" >/dev/null; then
 	exit 1
 fi
 sourcelens_installed() { return 0; }
+
+# The online status table is diagnostic output, not a new installation gate.
+# A transient Compose inspection failure must remain visible without turning a
+# successfully health-checked installation into a failure.
+compose_all_profiles() { printf 'HyperFileLens fixture status\n'; }
+sourcelens_compose() {
+	printf 'Insight fixture status unavailable\n' >&2
+	return 1
+}
+SESSION_WARNINGS=()
+verification_output="$(print_online_installation_verification 1 2>&1)"
+grep -F 'Could not display the current Insight service status table' \
+	<<<"${verification_output}" >/dev/null
+grep -F 'Insight services are healthy' <<<"${verification_output}" >/dev/null
 
 grep -F 'hfl_print_banner "${title}"' "${ROOT_REPO}/dev/stack.sh" >/dev/null
 grep -F 'HFL_PARENT_SESSION=1 "${ROOT}/dev/sourcelens.sh"' \
