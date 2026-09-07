@@ -1655,7 +1655,7 @@
       "step3SearchSourceName": "备份源",
       "step3SearchHostname": "主机名",
       "step3SearchIp": "IP",
-      "step3SearchPlaceholder": "搜索所选字段",
+      "step3SearchPlaceholder": "请输入搜索内容",
       "step3SourceStatus": "生命周期状态",
       "step3Availability": "连接性",
       "step3BackupTask": "备份",
