@@ -11,7 +11,7 @@ services:
     env_file:
       - ./.env
     environment:
-      API_WORKERS: "1"
+      API_WORKERS: "2"
       UVICORN_WS_PING_INTERVAL: "45"
       UVICORN_WS_PING_TIMEOUT: "180"
       SENTRY_COMPONENT: sourcelens-backend
@@ -58,7 +58,7 @@ services:
     env_file:
       - ./.env
     environment:
-      CELERY_CONCURRENCY: "1"
+      CELERY_CONCURRENCY: "2"
       SENTRY_COMPONENT: sourcelens-backend
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
       SENTRY_SERVICE: worker
@@ -75,8 +75,8 @@ services:
       api:
         condition: service_healthy
     command: celery
-    mem_limit: 512m
-    cpus: 0.50
+    mem_limit: 2g
+    cpus: 1.00
 
   scheduler:
     image: __SOURCELENS_BACKEND_IMAGE__
@@ -98,8 +98,8 @@ services:
       api:
         condition: service_healthy
     command: celery-beat
-    mem_limit: 256m
-    cpus: 0.25
+    mem_limit: 512m
+    cpus: 0.50
 
   web:
     image: __SOURCELENS_FRONTEND_IMAGE__
@@ -111,8 +111,8 @@ services:
       sourcelens_network:
         aliases:
           - frontend
-    mem_limit: 128m
-    cpus: 0.125
+    mem_limit: 512m
+    cpus: 0.50
 
 # HFL_EMBED_LENSNODE_SERVICE_BEGIN
   local-lensnode:
@@ -177,8 +177,8 @@ services:
         condition: service_healthy
       web:
         condition: service_started
-    mem_limit: 128m
-    cpus: 0.125
+    mem_limit: 512m
+    cpus: 0.50
 
   postgres:
     image: hyperfilelens-postgres:17
@@ -231,8 +231,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    mem_limit: 256m
-    cpus: 0.25
+    mem_limit: 512m
+    cpus: 0.50
 
 networks:
   sourcelens_network:
