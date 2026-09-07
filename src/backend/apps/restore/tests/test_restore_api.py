@@ -3211,6 +3211,248 @@ class RestoreApiTests(TestCase):
             ).exists()
         )
 
+    def test_restore_agent_skip_is_a_successful_skipped_outcome(self):
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record", correlation_id=str(record.task_uuid)
+        )
+
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.result = {
+            "restore_outcome": "skipped",
+            "skip_reason": "target_exists",
+            "conflict_mode": "skip",
+            "restored_item_count": 0,
+            "skipped_item_count": 1,
+            "failed_item_count": 0,
+        }
+        node_task.save(update_fields=["status", "result", "updated_at"])
+
+        task = Task.objects.get(id=record.task_id)
+        item = record.items.get()
+        self.assertEqual(item.status, RestoreRecordItem.Status.SKIPPED)
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertEqual(task.result_payload["restored_item_count"], 0)
+        self.assertEqual(task.result_payload["skipped_item_count"], 1)
+        self.assertEqual(task.result_payload["failed_item_count"], 0)
+        self.assertEqual(task.result_payload["cancelled_item_count"], 0)
+        skipped_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="restore",
+            message="Restore item skipped",
+        )
+        self.assertEqual(skipped_event.level, TaskEvent.Level.WARN)
+        self.assertEqual(skipped_event.metadata["skip_reason"], "target_exists")
+        self.assertTrue(
+            TaskEvent.objects.filter(
+                task=task,
+                step__step_name="finalize",
+                level=TaskEvent.Level.WARN,
+                message="Restore finished with skipped items",
+            ).exists()
+        )
+
+        detail = self.client.get(
+            f"/api/v1/restore/records/{record.id}/", **self._headers()
+        )
+        self.assertEqual(detail.status_code, status.HTTP_200_OK, detail.content)
+        self.assertEqual(detail.data["restored_item_count"], 0)
+        self.assertEqual(detail.data["skipped_item_count"], 1)
+        runtime = self.client.get(
+            f"/api/v1/restore/records/{record.id}/runtime/", **self._headers()
+        )
+        self.assertEqual(runtime.status_code, status.HTTP_200_OK, runtime.content)
+        self.assertEqual(runtime.data["kopia_progress"]["aggregate"]["lanes_done"], 1)
+        self.assertEqual(
+            runtime.data["kopia_progress"]["lanes"][0]["status"], "skipped"
+        )
+        transfer = runtime.data["transfer_progress"]
+        self.assertEqual(transfer["restored_item_count"], 0)
+        self.assertEqual(transfer["skipped_item_count"], 1)
+        self.assertEqual(transfer["failed_item_count"], 0)
+        self.assertEqual(transfer["cancelled_item_count"], 0)
+        self.assertEqual(transfer["bytes_done"], 0)
+        self.assertEqual(transfer["processed_count"], 0)
+
+    def test_restore_mixed_restored_and_skipped_items_succeeds_with_exact_counts(self):
+        second_config_dir = BackupConfigDirectory.objects.create(
+            organization_id=self.org.id,
+            backup_config=self.config,
+            path="/data-two",
+            path_type=BackupConfigDirectory.PathType.DIRECTORY,
+            sort_order=1,
+        )
+        second_snapshot_dir = BackupSourceSnapshotDirectory.objects.create(
+            organization_id=self.org.id,
+            source_snapshot=self.snapshot,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=second_config_dir.id,
+            source_path="/data-two",
+            path_type=BackupSourceSnapshotDirectory.PathType.DIRECTORY,
+            repository_id=self.repository.id,
+            kopia_snapshot_id="kopia-snapshot-2",
+            status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
+        )
+        payload = self._manual_restore_payload()
+        payload["items"] = [
+            {
+                "source_snapshot_directory_id": self.snapshot_dir.id,
+                "selected_paths": ["existing.txt"],
+            },
+            {
+                "source_snapshot_directory_id": second_snapshot_dir.id,
+                "selected_paths": ["new.txt"],
+            },
+        ]
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        node_tasks = list(
+            NodeTask.objects.filter(
+                correlation_type="restore.record",
+                correlation_id=str(record.task_uuid),
+            ).order_by("payload__restore_record_item_id")
+        )
+        self.assertEqual(len(node_tasks), 2)
+
+        node_tasks[0].status = NodeTask.Status.SUCCESS
+        node_tasks[0].result = {
+            "restore_outcome": "skipped",
+            "skip_reason": "target_exists",
+        }
+        node_tasks[0].save(update_fields=["status", "result", "updated_at"])
+        node_tasks[1].status = NodeTask.Status.SUCCESS
+        node_tasks[1].result = {"restore_outcome": "restored"}
+        node_tasks[1].save(update_fields=["status", "result", "updated_at"])
+
+        task = Task.objects.get(id=record.task_id)
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertEqual(task.result_payload["restored_item_count"], 1)
+        self.assertEqual(task.result_payload["skipped_item_count"], 1)
+        self.assertEqual(task.result_payload["failed_item_count"], 0)
+        self.assertEqual(task.result_payload["cancelled_item_count"], 0)
+        self.assertCountEqual(
+            record.items.values_list("status", flat=True),
+            [RestoreRecordItem.Status.SUCCESS, RestoreRecordItem.Status.SKIPPED],
+        )
+
+    def test_restore_agent_structured_permission_failure_is_actionable(self):
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record", correlation_id=str(record.task_uuid)
+        )
+        public_message = (
+            'Permission denied while writing restore target "/restore/manual/data". '
+            "Verify target permissions."
+        )
+        node_task.status = NodeTask.Status.FAILED
+        node_task.last_error = public_message
+        node_task.result = {
+            "restore_outcome": "failed",
+            "error_code": "RESTORE_TARGET_PERMISSION_DENIED",
+            "error_message": public_message,
+            "error_remediation": "Verify target and parent permissions.",
+            "error_diagnostic": "open /restore/manual/data: permission denied",
+        }
+        node_task.save(
+            update_fields=["status", "last_error", "result", "updated_at"]
+        )
+
+        task = Task.objects.get(id=record.task_id)
+        item = record.items.get()
+        self.assertEqual(item.error_code, "RESTORE_TARGET_PERMISSION_DENIED")
+        self.assertEqual(item.error_message, public_message)
+        self.assertEqual(task.error_message, public_message)
+        failed_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="restore",
+            message="Restore item failed",
+        )
+        self.assertEqual(
+            failed_event.metadata["error_remediation"],
+            "Verify target and parent permissions.",
+        )
+        self.assertEqual(
+            failed_event.metadata["error_diagnostic"],
+            "open /restore/manual/data: permission denied",
+        )
+        terminal_event = TaskEvent.objects.get(
+            task=task,
+            message="Task finished with status failed",
+        )
+        self.assertIsNone(terminal_event.metadata)
+
+    def test_restore_agent_legacy_permission_failure_gets_stable_classification(self):
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record", correlation_id=str(record.task_uuid)
+        )
+        node_task.status = NodeTask.Status.FAILED
+        node_task.last_error = (
+            "Restore failed: error copying: copy file: error creating file: "
+            "open /restore/manual/data: permission denied"
+        )
+        node_task.save(update_fields=["status", "last_error", "updated_at"])
+
+        task = Task.objects.get(id=record.task_id)
+        item = record.items.get()
+        self.assertEqual(item.error_code, "RESTORE_TARGET_PERMISSION_DENIED")
+        self.assertIn(item.target_path, item.error_message)
+        self.assertIn("Use Skip", item.result_payload["error_remediation"])
+        self.assertNotIn("error copying", task.error_message)
+
+    def test_restore_agent_repository_permission_failure_keeps_generic_classification(
+        self,
+    ):
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record", correlation_id=str(record.task_uuid)
+        )
+        raw_message = "Restore failed: opening repository: access denied"
+        node_task.status = NodeTask.Status.FAILED
+        node_task.last_error = raw_message
+        node_task.save(update_fields=["status", "last_error", "updated_at"])
+
+        task = Task.objects.get(id=record.task_id)
+        item = record.items.get()
+        self.assertEqual(item.error_code, "RESTORE_AGENT_FAILED")
+        self.assertEqual(item.error_message, raw_message)
+        self.assertEqual(task.error_message, raw_message)
+        self.assertNotIn("error_remediation", item.result_payload)
+
     def test_agent_cancellation_without_product_cancellation_fails_restore(self):
         create = self.client.post(
             "/api/v1/restore/records/",
@@ -3234,7 +3476,8 @@ class RestoreApiTests(TestCase):
         self.assertEqual(item.status, RestoreRecordItem.Status.CANCELLED)
         self.assertEqual(task.status, Task.Status.FAILED)
         self.assertEqual(task.error_code, "RESTORE_FAILED")
-        self.assertEqual(task.result_payload["failed_item_count"], 1)
+        self.assertEqual(task.result_payload["failed_item_count"], 0)
+        self.assertEqual(task.result_payload["cancelled_item_count"], 1)
 
     def test_restore_agent_restart_reaches_clear_terminal_state(self):
         create = self.client.post(

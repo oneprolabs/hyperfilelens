@@ -43,6 +43,7 @@ const backupSummary = computed<Record<string, unknown>>(() => {
   return value as Record<string, unknown>
 })
 const summarySnapshotId = computed(() => String(backupSummary.value.snapshot_id || '').trim())
+const summaryRestoreRecordId = computed(() => String(backupSummary.value.restore_record_id || '').trim())
 const failedDirectories = computed(() => {
   const value = backupSummary.value.failed_directories
   if (!Array.isArray(value)) return []
@@ -56,6 +57,13 @@ const failedDirectories = computed(() => {
 
 const category = computed(() => String(failureDetails.value.category || 'source_read_failed'))
 const sourcePath = computed(() => String(metadataRecord.value.source_path || '').trim())
+const errorCode = computed(() => String(metadataRecord.value.error_code || '').trim())
+const restorePermissionDenied = computed(() => errorCode.value === 'RESTORE_TARGET_PERMISSION_DENIED')
+const restorePermissionMessage = computed(() => t('ops.task.failureDetails.restorePermissionDenied'))
+const restorePermissionRemediation = computed(() => t('ops.task.failureDetails.restorePermissionRemediation'))
+const restorePermissionRemediationItems = computed(() => restorePermissionRemediation.value.split('\n').map(item => item.replace(/^\d+\.\s*/, '').trim()).filter(Boolean))
+const restoreTargetPath = computed(() => String(metadataRecord.value.target_path || '').trim())
+const errorDiagnostic = computed(() => String(metadataRecord.value.error_diagnostic || '').trim())
 const items = computed<FailureItem[]>(() => {
   const value = failureDetails.value.items
   if (!Array.isArray(value)) return []
@@ -165,7 +173,9 @@ const hasDetails = computed(() => (
   || causes.value.length > 0
   || failureCount.value > 0
   || hasSkippedDetails.value
+  || restorePermissionDenied.value
   || Boolean(summarySnapshotId.value && failedDirectories.value.length)
+  || Boolean(summaryRestoreRecordId.value && failedDirectories.value.length)
 ))
 
 function fullPath(path: string) {
@@ -202,10 +212,10 @@ function remediationText(code: string) {
     class="task-event-failure"
     :class="{ 'task-event-failure--warning': hasSkippedDetails && !items.length }"
   >
-    <template v-if="summarySnapshotId && failedDirectories.length">
+    <template v-if="(summarySnapshotId || summaryRestoreRecordId) && failedDirectories.length">
       <div class="task-event-failure__summary task-event-failure__summary--neutral">
-        <span>{{ t('ops.task.failureDetails.snapshotId') }}:</span>
-        <code>{{ summarySnapshotId }}</code>
+        <span>{{ t(summaryRestoreRecordId ? 'ops.task.failureDetails.restoreRecordId' : 'ops.task.failureDetails.snapshotId') }}:</span>
+        <code>{{ summaryRestoreRecordId || summarySnapshotId }}</code>
       </div>
       <div class="task-event-failure__label">
         {{ t('ops.task.failureDetails.failedDirectories') }}
@@ -256,6 +266,38 @@ function remediationText(code: string) {
             <span>{{ item.error || t('ops.task.failureDetails.readFailedReason') }}</span>
           </li>
         </ul>
+      </details>
+    </template>
+    <template v-if="restorePermissionDenied">
+      <div class="task-event-failure__summary">
+        <LockKeyhole :size="15" />
+        <span>{{ restorePermissionMessage }}</span>
+      </div>
+      <div
+        v-if="restoreTargetPath"
+        class="task-event-failure__summary task-event-failure__summary--neutral"
+      >
+        <span>{{ t('ops.task.failureDetails.restoreTarget') }}:</span>
+        <code>{{ restoreTargetPath }}</code>
+      </div>
+      <div class="task-event-failure__remediation">
+        <div class="task-event-failure__label">
+          <Lightbulb :size="14" />
+          {{ t('ops.task.failureDetails.howToResolve') }}
+        </div>
+        <ol class="task-event-failure__remediation-list">
+          <li v-for="item in restorePermissionRemediationItems" :key="item">{{ item }}</li>
+        </ol>
+      </div>
+      <details
+        v-if="errorDiagnostic"
+        class="task-event-failure__files"
+      >
+        <summary>
+          <ChevronRight :size="14" />
+          {{ t('ops.task.failureDetails.technicalDetails') }}
+        </summary>
+        <code>{{ errorDiagnostic }}</code>
       </details>
     </template>
     <template v-if="failureCount > 0 || causes.length">
@@ -425,6 +467,14 @@ function remediationText(code: string) {
   color: rgb(120 53 15);
 }
 
+.task-event-failure__remediation p {
+  margin: 5px 0 0;
+}
+
+.task-event-failure__numbered-remediation {
+  white-space: pre-line;
+}
+
 .task-event-failure__remediation ol {
   margin: 5px 0 0 18px;
   padding: 0;
@@ -474,6 +524,13 @@ function remediationText(code: string) {
   color: rgb(127 29 29);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.task-event-failure__files > code {
+  display: block;
+  margin-top: 8px;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

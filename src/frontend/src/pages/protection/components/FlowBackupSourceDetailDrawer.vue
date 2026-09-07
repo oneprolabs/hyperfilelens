@@ -107,6 +107,9 @@ import {
   isRestoreRecordActive,
   normalizedRestoreRecordTaskStatus,
   restoreRecordItemSourceKind,
+  restoreRecordItemDetail,
+  restoreRecordRemediationItems,
+  restoreRecordOutcomeMetricParts,
   restoreRecordPathMappings,
   restoreRecordRuntimeMetricParts,
   restoreRecordSnapshotLabel,
@@ -1344,11 +1347,14 @@ function restoreRecordRuntimeLoading(record: RestoreRecord) {
 }
 
 function restoreRecordMetrics(record: RestoreRecord) {
-  return restoreRecordRuntimeMetricParts(
-    t,
-    restoreRecordRuntime(record),
-    restoreRecordTaskStatus(record),
-  )
+  return [
+    ...restoreRecordOutcomeMetricParts(t, record),
+    ...restoreRecordRuntimeMetricParts(
+      t,
+      restoreRecordRuntime(record),
+      restoreRecordTaskStatus(record),
+    ),
+  ]
 }
 
 async function loadRestoreRecordRuntime(record: RestoreRecord) {
@@ -1574,7 +1580,8 @@ function hasEventDetailPanel(event: TaskEventRow) {
   return ['failure_details', 'skipped_details'].some((key) => {
     const details = metadata[key]
     return Boolean(details && typeof details === 'object' && !Array.isArray(details))
-  }) || ['skipped_item_count', 'skipped_file_count', 'skipped_directory_count', 'skipped_special_count']
+  }) || taskEventMetadataText(event, ['error_code']) === 'RESTORE_TARGET_PERMISSION_DENIED'
+    || ['skipped_item_count', 'skipped_file_count', 'skipped_directory_count', 'skipped_special_count']
     .some(key => Number(metadata[key]) > 0)
 }
 
@@ -1592,7 +1599,7 @@ function taskEventMetadataList(event: TaskEventRow, key: string) {
 function eventErrorText(event: TaskEventRow) {
   const step = activeTask.value?.steps?.find(item => item.id === event.step_id)
   if (event.message === 'Task finished with status failed' && step?.step_name === 'finalize_snapshot') return ''
-  if (taskEventMetadata(event).failure_details) return ''
+  if (hasEventDetailPanel(event)) return ''
   const message = taskEventMetadataText(event, ['error_message'])
   if (!message) return ''
   const code = taskEventMetadataText(event, ['error_code'])
@@ -5056,17 +5063,24 @@ function onClosed() {
                               </span>
                             </div>
                             <div
-                              v-if="item.error_code || item.error_message"
+                              v-if="restoreRecordItemDetail(t, item)"
                               class="restore-record-structure-entry__error"
+                              :class="{ 'restore-record-structure-entry__error--warning': item.status === 'skipped' }"
                             >
                               <span
-                                v-if="item.error_code"
+                                v-if="restoreRecordItemDetail(t, item)?.code"
                                 class="restore-record-structure-entry__error-code"
-                              >[{{ item.error_code }}]</span>
+                              >[{{ restoreRecordItemDetail(t, item)?.code }}]</span>
                               <span
-                                v-if="item.error_message"
+                                v-if="restoreRecordItemDetail(t, item)?.message"
                                 class="restore-record-structure-entry__error-message"
-                              >{{ item.error_message }}</span>
+                              >{{ restoreRecordItemDetail(t, item)?.message }}</span>
+                                <ol
+                                  v-if="restoreRecordItemDetail(t, item)?.remediation"
+                                  class="restore-record-structure-entry__remediation"
+                                >
+                                  <li v-for="step in restoreRecordRemediationItems(restoreRecordItemDetail(t, item)?.remediation || '')" :key="step">{{ step }}</li>
+                                </ol>
                             </div>
                           </div>
                         </div>
@@ -5140,17 +5154,24 @@ function onClosed() {
                             </span>
                           </div>
                           <div
-                            v-if="mapping.item.error_code || mapping.item.error_message"
+                            v-if="restoreRecordItemDetail(t, mapping.item)"
                             class="restore-record-structure-entry__error"
+                            :class="{ 'restore-record-structure-entry__error--warning': mapping.item.status === 'skipped' }"
                           >
                             <span
-                              v-if="mapping.item.error_code"
+                              v-if="restoreRecordItemDetail(t, mapping.item)?.code"
                               class="restore-record-structure-entry__error-code"
-                            >[{{ mapping.item.error_code }}]</span>
+                            >[{{ restoreRecordItemDetail(t, mapping.item)?.code }}]</span>
                             <span
-                              v-if="mapping.item.error_message"
+                              v-if="restoreRecordItemDetail(t, mapping.item)?.message"
                               class="restore-record-structure-entry__error-message"
-                            >{{ mapping.item.error_message }}</span>
+                            >{{ restoreRecordItemDetail(t, mapping.item)?.message }}</span>
+                            <ol
+                              v-if="restoreRecordItemDetail(t, mapping.item)?.remediation"
+                              class="restore-record-structure-entry__remediation"
+                            >
+                              <li v-for="step in restoreRecordRemediationItems(restoreRecordItemDetail(t, mapping.item)?.remediation || '')" :key="step">{{ step }}</li>
+                            </ol>
                           </div>
                         </div>
                       </div>
@@ -7524,6 +7545,25 @@ function onClosed() {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: normal;
+}
+
+.restore-record-structure-entry__remediation {
+  min-width: 0;
+  margin: 5px 0 0 18px;
+  padding: 0;
+  color: var(--el-text-color-regular);
+  overflow-wrap: anywhere;
+  list-style-type: decimal;
+}
+
+.restore-record-structure-entry__remediation li + li {
+  margin-top: 3px;
+}
+
+.restore-record-structure-entry__error--warning {
+  border-color: color-mix(in srgb, var(--el-color-warning) 32%, transparent);
+  color: var(--el-color-warning-dark-2);
+  background: color-mix(in srgb, var(--el-color-warning) 10%, transparent);
 }
 
 .restore-record-status-progress {

@@ -35,7 +35,12 @@ var essentialResultKeys = map[string]struct{}{
 	"selected_paths": {}, "stats": {}, "restore": {}, "restore_results": {},
 	"results": {}, "entries": {}, "snapshot_browse": {}, "snapshot_download": {},
 	"snapshot_failure_summary": {},
-	"executor_finished":        {}, "executor_finished_at": {}, "completion_source": {},
+	"restore_outcome":          {}, "skip_reason": {}, "conflict_mode": {},
+	"restored_item_count": {}, "skipped_item_count": {}, "failed_item_count": {},
+	"restored_path_count": {}, "skipped_path_count": {},
+	"restore_scope_summary": {},
+	"error_message":         {}, "error_remediation": {}, "error_diagnostic": {},
+	"executor_finished": {}, "executor_finished_at": {}, "completion_source": {},
 	"workspace_uid": {}, "workspace_quarantined": {}, "purge_complete": {},
 	"tombstone_state": {},
 }

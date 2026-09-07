@@ -19,7 +19,6 @@ from apps.protection.services.progress.step3_progress import (
 from apps.restore.models import RestoreRecord, RestoreRecordItem
 from apps.task.models import Task
 
-_ITEM_DONE = {RestoreRecordItem.Status.SUCCESS}
 _ITEM_ACTIVE = {
     RestoreRecordItem.Status.PENDING,
     RestoreRecordItem.Status.RUNNING,
@@ -87,6 +86,14 @@ def build_restore_kopia_progress(*, record: RestoreRecord, task: Task | None = N
             restored_directory_count=terminal_counts["directories"],
             restored_symlink_count=terminal_counts["symlinks"],
         )
+    if transfer.get("phase") in {"done", "success", "completed"}:
+        outcome_counts = _restore_outcome_counts(items)
+        transfer.update(outcome_counts)
+        restored_scope = _restored_scope_totals(items)
+        if restored_scope is not None:
+            transfer["bytes_done"] = restored_scope["bytes"]
+            transfer["processed_bytes"] = restored_scope["bytes"]
+            transfer["processed_count"] = restored_scope["items"]
     enriched["transfer_progress"] = transfer
     return enriched
 
@@ -146,7 +153,7 @@ def _lane_from_item(
 ) -> dict[str, Any]:
     raw = item.last_progress_snapshot if isinstance(item.last_progress_snapshot, dict) else {}
     status = str(item.status or "").lower()
-    if item.status in _ITEM_DONE:
+    if item.status == RestoreRecordItem.Status.SUCCESS:
         status = "success"
     sample = item.last_progress_sample if isinstance(item.last_progress_sample, dict) else {}
     normalized = normalize_lane_progress(progress=raw, status=status)
@@ -196,3 +203,33 @@ def _public_lane(row: dict[str, Any]) -> dict[str, Any]:
         "percent_source": progress.get("percent_source"),
         "orchestration_label": progress.get("orchestration_label"),
     }
+
+
+def _restore_outcome_counts(items: list[RestoreRecordItem]) -> dict[str, int]:
+    statuses = [item.status for item in items]
+    return {
+        "restored_item_count": statuses.count(RestoreRecordItem.Status.SUCCESS),
+        "skipped_item_count": statuses.count(RestoreRecordItem.Status.SKIPPED),
+        "failed_item_count": statuses.count(RestoreRecordItem.Status.FAILED),
+        "cancelled_item_count": statuses.count(RestoreRecordItem.Status.CANCELLED),
+    }
+
+
+def _restored_scope_totals(
+    items: list[RestoreRecordItem],
+) -> dict[str, int] | None:
+    bytes_done = 0
+    item_count = 0
+    for item in items:
+        if item.status != RestoreRecordItem.Status.SUCCESS:
+            continue
+        result = item.result_payload if isinstance(item.result_payload, dict) else {}
+        summary = result.get("restore_scope_summary")
+        if not isinstance(summary, dict) or not summary.get("complete"):
+            return None
+        try:
+            bytes_done += max(0, int(summary.get("size_bytes") or 0))
+            item_count += max(0, int(summary.get("total_count") or 0))
+        except (TypeError, ValueError):
+            return None
+    return {"bytes": bytes_done, "items": item_count}

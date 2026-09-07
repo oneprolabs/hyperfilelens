@@ -30,6 +30,12 @@ export type RestoreRecordTimeState = {
   hasInvalidTimeData: boolean
 }
 
+export type RestoreRecordItemDetail = {
+  code: string
+  message: string
+  remediation: string
+}
+
 const RESTORE_RECORD_ACTIVE_STATUSES = ['pending', 'waiting', 'blocked', 'running']
 const RESTORE_RECORD_PRESTART_STATUSES = ['pending', 'waiting', 'blocked']
 const RESTORE_RECORD_PRESTART_TERMINAL_STATUSES = ['failed', 'cancelled', 'timeout']
@@ -202,6 +208,60 @@ export function restoreRecordPathMappings(record: RestoreRecord): RestoreRecordP
         : restoreRecordItemSourceKind(record, item),
     }))
   })
+}
+
+function countRecordItems(record: RestoreRecord, status: string) {
+  return (record.items || []).filter(item => String(item.status || '').toLowerCase() === status).length
+}
+
+export function restoreRecordOutcomeMetricParts(t: TranslateFn, record: RestoreRecord): string[] {
+  const counts = {
+    restored: Number(record.restored_item_count ?? countRecordItems(record, 'success')),
+    skipped: Number(record.skipped_item_count ?? countRecordItems(record, 'skipped')),
+    failed: Number(record.failed_item_count ?? countRecordItems(record, 'failed')),
+    cancelled: Number(record.cancelled_item_count ?? countRecordItems(record, 'cancelled')),
+  }
+  if (!Object.values(counts).some(value => Number.isFinite(value) && value > 0)) return []
+  return [t('protection.backupsPage.flowRestoreRecordOutcomeCounts', {
+    restored: formatCount(counts.restored),
+    skipped: formatCount(counts.skipped),
+    failed: formatCount(counts.failed),
+    cancelled: formatCount(counts.cancelled),
+  })]
+}
+
+export function restoreRecordItemDetail(t: TranslateFn, item: RestoreRecordItem): RestoreRecordItemDetail | null {
+  const status = String(item.status || '').trim().toLowerCase()
+  const result = item.result_payload && typeof item.result_payload === 'object'
+    ? item.result_payload
+    : {}
+  if (status === 'skipped') {
+    const reason = String(result.skip_reason || '').trim().toLowerCase()
+    return {
+      code: '',
+      message: reason === 'target_exists'
+        ? t('protection.backupsPage.flowRestoreRecordTargetExistsSkipped')
+        : t('protection.backupsPage.flowRestoreRecordItemSkipped'),
+      remediation: '',
+    }
+  }
+  const code = String(item.error_code || result.error_code || '').trim()
+  const permissionDenied = code === 'RESTORE_TARGET_PERMISSION_DENIED'
+  const message = permissionDenied
+    ? t('protection.backupsPage.flowRestoreRecordPermissionDenied')
+    : String(item.error_message || result.error_message || '').trim()
+  const remediation = permissionDenied
+    ? t('protection.backupsPage.flowRestoreRecordPermissionRemediation')
+    : String(result.error_remediation || '').trim()
+  if (!code && !message && !remediation) return null
+  return { code, message, remediation }
+}
+
+export function restoreRecordRemediationItems(remediation: string): string[] {
+  return String(remediation || '')
+    .split('\n')
+    .map(item => item.replace(/^\d+\.\s*/, '').trim())
+    .filter(Boolean)
 }
 
 function positiveCount(value: number | null | undefined) {

@@ -52,6 +52,34 @@ describe('TaskEventFailureDetails', () => {
     expect(wrapper.find('.task-event-failure').exists()).toBe(false)
   })
 
+  it('shows a concise restore permission cause, remediation, and optional diagnostics', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        metadata: {
+          error_code: 'RESTORE_TARGET_PERMISSION_DENIED',
+          error_message: 'Permission denied while writing restore target "/tmp/existing".',
+          target_path: '/tmp/existing',
+          error_remediation: 'Verify target and parent permissions.',
+          error_diagnostic: 'open /tmp/existing: permission denied',
+        },
+      },
+      global: {
+        plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
+      },
+    })
+
+    expect(wrapper.text()).toContain('Permission denied while writing the restore target.')
+    expect(wrapper.text()).toContain('Restore target:')
+    expect(wrapper.text()).toContain('/tmp/existing')
+    expect(wrapper.text()).toContain('How to resolve')
+    expect(wrapper.text()).toContain('Change the restore directory to a location the restore service can write to.')
+    expect(wrapper.text()).toContain('Under File conflict policy, select Skip duplicate files (keep source)')
+    expect(wrapper.text()).toContain('Grant the service account used for restore permission to modify the target')
+    expect(wrapper.findAll('.task-event-failure__remediation-list > li')).toHaveLength(3)
+    expect(wrapper.text()).toContain('Technical details')
+    expect(wrapper.text()).toContain('open /tmp/existing: permission denied')
+  })
+
   it('does not render an empty affected-items disclosure when only the total is known', () => {
     const wrapper = mount(TaskEventFailureDetails, {
       props: {

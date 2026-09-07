@@ -4,6 +4,8 @@ import {
   isRestoreRecordActive,
   normalizedRestoreRecordTaskStatus,
   restoreRecordItemSourceKind,
+  restoreRecordItemDetail,
+  restoreRecordOutcomeMetricParts,
   restoreRecordPathMappings,
   restoreRecordRuntimeMetricParts,
   restoreRecordSnapshotLabel,
@@ -204,6 +206,46 @@ describe('restore record display', () => {
     expect(restoreRecordPathMappings(record())).toMatchObject([
       { sourcePath: '/data', sourceKind: 'dir', item: { id: 11 } },
     ])
+  })
+
+  it('reports restored, skipped, failed, and cancelled item counts independently', () => {
+    const t = (_key: string, args?: Record<string, unknown>) => (
+      `${args?.restored} restored, ${args?.skipped} skipped, ${args?.failed} failed, ${args?.cancelled} cancelled`
+    )
+    expect(restoreRecordOutcomeMetricParts(t, record({
+      restored_item_count: 2,
+      skipped_item_count: 1,
+      failed_item_count: 0,
+      cancelled_item_count: 0,
+    }))).toEqual(['2 restored, 1 skipped, 0 failed, 0 cancelled'])
+  })
+
+  it('explains a skipped conflict without treating it as a failure', () => {
+    const detail = restoreRecordItemDetail(key => key, {
+      ...item,
+      status: 'skipped',
+      result_payload: { restore_outcome: 'skipped', skip_reason: 'target_exists' },
+    })
+    expect(detail).toEqual({
+      code: '',
+      message: 'protection.backupsPage.flowRestoreRecordTargetExistsSkipped',
+      remediation: '',
+    })
+  })
+
+  it('keeps permission cause and remediation separate', () => {
+    const detail = restoreRecordItemDetail(key => key, {
+      ...item,
+      status: 'failed',
+      error_code: 'RESTORE_TARGET_PERMISSION_DENIED',
+      error_message: 'Permission denied while writing restore target "/tmp/existing".',
+      result_payload: { error_remediation: 'Verify target and parent permissions.' },
+    })
+    expect(detail).toEqual({
+      code: 'RESTORE_TARGET_PERMISSION_DENIED',
+      message: 'protection.backupsPage.flowRestoreRecordPermissionDenied',
+      remediation: 'protection.backupsPage.flowRestoreRecordPermissionRemediation',
+    })
   })
 
   it('uses the recorded source type instead of guessing from the filename', () => {
