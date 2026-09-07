@@ -1633,7 +1633,8 @@ if grep -F -- '--network host' "${smoke_runner}" >/dev/null; then
 	printf 'ERROR: browser smoke must reach published ports through host-gateway\n' >&2
 	exit 1
 fi
-grep -F 'image: hyperfilelens-postgres:17' "${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F 'image: ${HFL_POSTGRES_IMAGE:-hyperfilelens-postgres:17}' \
+	"${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'absolute_redirect off;' "${ROOT}/deploy/nginx/default.conf" >/dev/null
 # Website pool (:8082) serves the default English homepage directly at /.
 grep -F 'absolute_redirect off;' "${ROOT}/deploy/nginx/web.conf" >/dev/null

@@ -1597,14 +1597,18 @@ PY
 sourcelens_write_runtime_compose() {
 	local compose_path=$1
 	local template="${SOURCELENS_INSTALLER_DIR}/sourcelens/docker-compose.template.yml"
-	local backend_image frontend_image lensnode_image
+	local backend_image frontend_image lensnode_image nginx_image postgres_image redis_image
 	backend_image="$(sourcelens_backend_image_ref)"
 	frontend_image="$(sourcelens_frontend_image_ref)"
 	lensnode_image="$(sourcelens_lensnode_image_ref)"
+	nginx_image="hyperfilelens-sourcelens-nginx:stable-alpine"
+	postgres_image="hyperfilelens-postgres:17"
+	redis_image="hyperfilelens-redis:alpine"
 	[[ -f "${template}" ]] || sourcelens_die "missing SourceLens Compose template: ${template}"
 
 	python3 - "${template}" "${compose_path}" \
 		"${backend_image}" "${frontend_image}" "${lensnode_image}" \
+		"${nginx_image}" "${postgres_image}" "${redis_image}" \
 		"${SOURCELENS_CONSOLE_BIND_ADDRESS}" \
 		"${SOURCELENS_CONSOLE_PORT}" \
 		"${SOURCELENS_EMBED_LENSNODE}" <<'PY'
@@ -1612,7 +1616,19 @@ import pathlib
 import re
 import sys
 
-template_path, compose_path, backend_image, frontend_image, lensnode_image, bind_address, https_port, embed_raw = sys.argv[1:9]
+(
+    template_path,
+    compose_path,
+    backend_image,
+    frontend_image,
+    lensnode_image,
+    nginx_image,
+    postgres_image,
+    redis_image,
+    bind_address,
+    https_port,
+    embed_raw,
+) = sys.argv[1:12]
 embed_lensnode = str(embed_raw).strip().lower() in {"1", "true", "yes", "on"}
 text = pathlib.Path(template_path).read_text(encoding="utf-8")
 
@@ -1633,6 +1649,9 @@ replacements = {
     "__SOURCELENS_BACKEND_IMAGE__": backend_image,
     "__SOURCELENS_FRONTEND_IMAGE__": frontend_image,
     "__SOURCELENS_LENSNODE_IMAGE__": lensnode_image,
+    "__SOURCELENS_NGINX_IMAGE__": nginx_image,
+    "__SOURCELENS_POSTGRES_IMAGE__": postgres_image,
+    "__SOURCELENS_REDIS_IMAGE__": redis_image,
     "__SOURCELENS_CONSOLE_BIND_ADDRESS__": bind_address,
     "__SOURCELENS_CONSOLE_PORT__": https_port,
 }

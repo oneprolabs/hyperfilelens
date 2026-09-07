@@ -199,7 +199,7 @@ services:
     profiles: ["green"]
 
   postgres:
-    image: hyperfilelens-postgres:17
+    image: ${HFL_POSTGRES_IMAGE:-hyperfilelens-postgres:17}
     pull_policy: never
     restart: unless-stopped
     env_file:
@@ -228,7 +228,7 @@ services:
     cpus: 0.50
 
   redis:
-    image: hyperfilelens-redis:alpine
+    image: ${HFL_REDIS_IMAGE:-hyperfilelens-redis:alpine}
     pull_policy: never
     restart: unless-stopped
     volumes:

@@ -269,13 +269,37 @@ prepare_sentry_privacy_adapter() {
 prepare_sentry_privacy_adapter
 
 resolve_lensnode_image() {
-	local candidate
-	if [[ -n "${LENSNODE_IMAGE:-}" ]] && docker image inspect "${LENSNODE_IMAGE}" >/dev/null 2>&1; then
-		printf '%s' "${LENSNODE_IMAGE}"
-		return 0
-	fi
+	local candidate compatibility_id candidate_id
 	if command -v docker >/dev/null 2>&1; then
+		if [[ -n "${LENSNODE_IMAGE:-}" \
+			&& "${LENSNODE_IMAGE}" != "hyperfilelens-sourcelens-lensnode:latest" \
+			&& "${LENSNODE_IMAGE}" != "sourcelens-lensnode:latest" \
+			&& "${LENSNODE_IMAGE}" != "oneprocloud/sourcelens-lensnode:latest" ]]; then
+			if docker image inspect "${LENSNODE_IMAGE}" >/dev/null 2>&1; then
+				printf '%s' "${LENSNODE_IMAGE}"
+				return 0
+			fi
+		fi
+		compatibility_id="$(docker image inspect "${LENSNODE_IMAGE:-${DEFAULT_LENSNODE_IMAGE}}" \
+			--format '{{.Id}}' 2>/dev/null || true)"
+		if [[ -n "${compatibility_id}" ]]; then
+			while IFS= read -r candidate; do
+				[[ -n "${candidate}" ]] || continue
+				candidate_id="$(docker image inspect "${candidate}" \
+					--format '{{.Id}}' 2>/dev/null || true)"
+				if [[ "${candidate_id}" == "${compatibility_id}" ]]; then
+					printf '%s' "${candidate}"
+					return 0
+				fi
+			done < <(
+				docker image ls oneprolabs/sourcelens-lensnode \
+					--format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+					| grep -E '^oneprolabs/sourcelens-lensnode:[0-9]+\.[0-9]+\.[0-9]+$' \
+					| sort -Vr || true
+			)
+		fi
 		for candidate in \
+			"${LENSNODE_IMAGE:-}" \
 			hyperfilelens-sourcelens-lensnode:latest \
 			sourcelens-lensnode:latest \
 			oneprocloud/sourcelens-lensnode:latest \

@@ -150,7 +150,7 @@ services:
 # HFL_EMBED_LENSNODE_SERVICE_END
 
   nginx:
-    image: hyperfilelens-sourcelens-nginx:stable-alpine
+    image: __SOURCELENS_NGINX_IMAGE__
     pull_policy: never
     restart: unless-stopped
     volumes:
@@ -181,7 +181,7 @@ services:
     cpus: 0.50
 
   postgres:
-    image: hyperfilelens-postgres:17
+    image: __SOURCELENS_POSTGRES_IMAGE__
     pull_policy: never
     restart: unless-stopped
     env_file:
@@ -216,7 +216,7 @@ services:
     cpus: 0.50
 
   redis:
-    image: hyperfilelens-redis:alpine
+    image: __SOURCELENS_REDIS_IMAGE__
     pull_policy: never
     restart: unless-stopped
     command: redis-server

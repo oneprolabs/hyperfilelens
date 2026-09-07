@@ -106,10 +106,51 @@ if grep -Eq 'publish-community-channel|community-channel|git push origin HEAD:ma
 	printf 'ERROR: SaaS workflow must not manage a separate Community channel branch\n' >&2
 	exit 1
 fi
-grep -Fq 'SOURCELENS_DISTRIBUTION_TAG_OVERRIDE="${version}"' \
-	"${ROOT}/release/ci/assemble-saas-candidate.sh"
-grep -Fq 'SOURCELENS_DISTRIBUTION_TAG_OVERRIDE: ${{ needs.prepare.outputs.version }}' \
-	"${workflow}"
+grep -Fq 'write-upstream-image-metadata.sh' "${workflow}"
+grep -Fq 'resolve-upstream-images:' "${workflow}"
+if grep -Eq '^  (build-sourcelens-images|publish-runtime-images):' "${workflow}"; then
+	printf 'ERROR: SaaS workflow still publishes rebuilt upstream images\n' >&2
+	exit 1
+fi
+python3 - "${workflow}" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+for forbidden in (
+    "hyperfilelens-sourcelens-backend",
+    "hyperfilelens-sourcelens-frontend",
+    "hyperfilelens-sourcelens-lensnode",
+    "hyperfilelens-sourcelens-nginx",
+    "hyperfilelens-postgres",
+    "hyperfilelens-redis",
+    "slcache-",
+):
+    if forbidden in text:
+        raise SystemExit(f"SaaS workflow still publishes legacy image {forbidden}")
+build = text.split("  build-hfl-images:\n", 1)[1].split(
+    "\n  resolve-upstream-images:\n", 1
+)[0]
+expected = {
+    "Community · Backend",
+    "Community · Frontend",
+    "Enterprise · Backend",
+    "Enterprise · Frontend",
+}
+actual = {
+    line.strip()[len("- name: ") :]
+    for line in build.splitlines()
+    if line.startswith("          - name: ")
+}
+if actual != expected:
+    raise SystemExit(f"unexpected HFL publish matrix: {sorted(actual)}")
+# One matrix build publishes four HFL tags; the three asset jobs publish one
+# tag each. No third-party image may introduce another push operation.
+if text.count("          push: true\n") != 4:
+    raise SystemExit("SaaS workflow must contain exactly seven effective image publishes")
+if 'has("linux/amd64")' not in text:
+    raise SystemExit("upstream image verification does not require linux/amd64")
+PY
 if grep -E 'hyperfilelens-(agent|gateway|language)-assets:.*image_version' "${workflow}"; then
 	printf 'ERROR: OSS asset images must not use the Enterprise image suffix\n' >&2
 	exit 1
@@ -198,11 +239,21 @@ with tempfile.TemporaryDirectory() as temporary:
     module.render_sourcelens_compose(
         root / "deploy/installer/sourcelens/docker-compose.template.yml",
         output,
-        "1.2.3",
+        {
+            "backend": runtime["images"]["backend"]["local_ref"],
+            "frontend": runtime["images"]["frontend"]["local_ref"],
+            "lensnode": runtime["images"]["lensnode"]["local_ref"],
+            "nginx": "nginx:stable-alpine",
+            "postgres": "postgres:17",
+            "redis": "redis:alpine",
+        },
     )
     compose = output.read_text(encoding="utf-8")
     for component in ("backend", "frontend"):
-        expected = f"hyperfilelens-sourcelens-{component}:1.2.3"
+        expected = runtime["images"][component]["local_ref"]
+        if expected not in compose:
+            raise SystemExit(f"rendered SourceLens Compose is missing {expected}")
+    for expected in ("nginx:stable-alpine", "postgres:17", "redis:alpine"):
         if expected not in compose:
             raise SystemExit(f"rendered SourceLens Compose is missing {expected}")
     if "__SOURCELENS_" in compose or "HFL_EMBED_" in compose:
@@ -339,6 +390,17 @@ cat >"${fake_bin}/docker" <<'SH'
 set -euo pipefail
 digest="sha256:$(printf 'b%.0s' {1..64})"
 revision="$(printf 'c%.0s' {1..40})"
+digest_for_ref() {
+	case "$1" in
+	*sourcelens-backend*) printf '%s' sha256:b4fd19ea5bd3fed17e4c22eb44d4f4178181c33c29cc6ed956484642735408b8 ;;
+	*sourcelens-frontend*) printf '%s' sha256:2c183e50bc9e6281ea58ede269b3e7227f6e1bdf649a2c6b066cb5c651ecb802 ;;
+	*sourcelens-lensnode*) printf '%s' sha256:b865673d640ff575883e8321d5bae18ebd7d975d2f9bae3660167fee28e74b69 ;;
+	*postgres*) printf '%s' sha256:0027bef26712baaee437a4ea48fdf3d2d2e2bc5f0d81615374408ca320f3c7e3 ;;
+	*redis*) printf '%s' sha256:09160599abd229764c0fb44cb6be640294e1d360a54b19985ab4843dcf2d90f1 ;;
+	*nginx*) printf '%s' sha256:0d3b80406a13a767339fbe2f41406d6c7da727ab89cf8fae399e81f780f814d1 ;;
+	*) printf '%s' "${digest}" ;;
+	esac
+}
 case "${1:-} ${2:-}" in
 "info ")
 	[[ "${HFL_TEST_DOCKER_INFO_FAIL:-0}" != "1" ]]
@@ -384,6 +446,7 @@ case "${1:-} ${2:-}" in
 "image inspect")
 	ref=${3:-}
 	format=${5:-}
+	resolved_digest="$(digest_for_ref "${ref}")"
 	if [[ "${HFL_TEST_DOCKER_PULL_FAIL:-0}" == "1" && "${ref}" == */* ]]; then
 		exit 1
 	fi
@@ -392,7 +455,9 @@ case "${1:-} ${2:-}" in
 		exit 1
 	fi
 	if [[ "${format}" == *RepoDigests* ]]; then
-		printf '["%s@%s"]\n' "${ref%:*}" "${digest}"
+		repository=${ref%%@*}
+		repository=${repository%:*}
+		printf '["%s@%s"]\n' "${repository}" "${resolved_digest}"
 	elif [[ "${format}" == *Architecture* ]]; then
 		printf 'linux/amd64\n'
 	else
@@ -400,7 +465,7 @@ case "${1:-} ${2:-}" in
 	fi
 	;;
 "buildx imagetools")
-	printf '{"digest":"%s"}\n' "${digest}"
+	printf '{"digest":"%s"}\n' "$(digest_for_ref "${4:-}")"
 	;;
 "image rm")
 	printf 'Untagged: %s\n' "${3:-unknown}"
@@ -1402,16 +1467,16 @@ PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--version v1.2.3 \
 		--region global \
 		--output "${candidate}" >"${prepare_log}" 2>&1
-grep -F 'Docker Compose native pull progress: parallel=5 images=11' \
+grep -F 'Docker Compose native pull progress: parallel=5 images=10' \
 	"${prepare_log}" >/dev/null
 for heading in 'Installation images' 'Release package'; do
 	grep -Fx "${heading}" "${prepare_log}" >/dev/null
 done
-grep -F '[....] Pulling 11 installation images concurrently · maximum 5 active downloads' \
+grep -F '[....] Pulling 10 installation images concurrently · maximum 5 active downloads' \
 	"${prepare_log}" >/dev/null
-grep -F '[ OK ] Installation image 1/11 ready ·' "${prepare_log}" >/dev/null
-grep -F '[ OK ] Installation image 11/11 ready ·' "${prepare_log}" >/dev/null
-grep -F '[ OK ] All 11 installation images are ready' "${prepare_log}" >/dev/null
+grep -F '[ OK ] Installation image 1/10 ready ·' "${prepare_log}" >/dev/null
+grep -F '[ OK ] Installation image 10/10 ready ·' "${prepare_log}" >/dev/null
+grep -F '[ OK ] All 10 installation images are ready' "${prepare_log}" >/dev/null
 grep -F '[ OK ] Community release package prepared ·' "${prepare_log}" >/dev/null
 if grep -F 'Untagged:' "${prepare_log}" >/dev/null; then
 	printf 'ERROR: temporary asset image cleanup leaked into online output\n' >&2
@@ -1515,7 +1580,12 @@ for entry in entries:
     (target / f"{component}.json").write_text(
         json.dumps(metadata) + "\n", encoding="utf-8"
     )
+
 PY
+# LensNode is distributed inside gateway-assets rather than pulled by the
+# Console host, but its sources remain part of publication checks.
+"${ROOT}/release/ci/write-upstream-image-metadata.sh" \
+	sourcelens-lensnode "${metadata}/sourcelens-lensnode.json"
 PATH="${fake_bin}:${PATH}" "${online}/verify-public-images.sh" "${metadata}"
 
 # Source only defines functions because install.sh guards main with BASH_SOURCE.
