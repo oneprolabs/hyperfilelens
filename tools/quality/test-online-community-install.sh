@@ -28,7 +28,9 @@ grep -Fq 'api.github.com/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1
 grep -Fq 'gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1' \
 	"${online}/install.sh"
 grep -Fq 'recent fallback tags:' "${online}/install.sh"
-grep -Fq 'prepared Community image revision does not match the published release' \
+grep -Fq 'prepared Community image revision is invalid' \
+	"${online}/install.sh"
+grep -Fq 'prepared Community image revision differs from the published' \
 	"${online}/install.sh"
 grep -Fq 'run this command through sudo' "${online}/install.sh"
 grep -Fq 'https://mirrors.aliyun.com/docker-ce/linux/ubuntu' "${online}/install.sh"
@@ -552,6 +554,57 @@ if source.count(marker) != 1:
     raise SystemExit("online installer entrypoint marker is ambiguous")
 pathlib.Path(sys.argv[2]).write_text(source.split(marker, 1)[0], encoding="utf-8")
 PY
+
+identity_candidate="${tmp}/identity-candidate"
+mkdir -p "${identity_candidate}"
+cat >"${identity_candidate}/MANIFEST.json" <<'JSON'
+{"version":"1.2.3","git_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","edition":"community","channel":"release"}
+JSON
+revision_warning_log="${tmp}/revision-warning.log"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	candidate="${identity_candidate}"
+	TAG=v1.2.3
+	RELEASE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+	verify_candidate_release
+) >"${revision_warning_log}" 2>&1
+grep -Fq 'prepared Community image revision differs from the published release' \
+	"${revision_warning_log}"
+grep -Fq '(aaaaaaaaaaaa != bbbbbbbbbbbb); continuing' "${revision_warning_log}"
+matching_revision_log="${tmp}/matching-revision.log"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	candidate="${identity_candidate}"
+	TAG=v1.2.3
+	RELEASE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+	verify_candidate_release
+) >"${matching_revision_log}" 2>&1
+[[ ! -s "${matching_revision_log}" ]]
+python3 - "${identity_candidate}/MANIFEST.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+manifest = json.loads(path.read_text(encoding="utf-8"))
+manifest["git_commit"] = "invalid"
+path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+PY
+invalid_revision_log="${tmp}/invalid-revision.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	candidate="${identity_candidate}"
+	TAG=v1.2.3
+	RELEASE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+	verify_candidate_release
+) >"${invalid_revision_log}" 2>&1; then
+	printf 'ERROR: invalid Community image revision was accepted\n' >&2
+	exit 1
+fi
+grep -Fq 'prepared Community image revision is invalid' "${invalid_revision_log}"
 
 apt_retry_log="${tmp}/apt-retry.log"
 apt_retry_saved="${tmp}/logs/install-test-apt.log"
