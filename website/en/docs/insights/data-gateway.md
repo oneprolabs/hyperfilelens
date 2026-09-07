@@ -28,7 +28,7 @@ Run the generated command on the intended host as instructed. The enrollment com
 
 ![Add Private Data Gateway showing system requirements and installation stages with the enrollment command fully covered and the personal account blurred](/docs/insights/add-private-gateway.png)
 
-See [Deploy a Private Data Gateway](/en/docs/deployment/data-gateway) and [Network and ports](/en/docs/deployment/network) for deployment details.
+See [Deploy a Private Data Gateway](/docs/deployment/data-gateway) and [Network and ports](/docs/deployment/network) for deployment details.
 
 ## Validate before use
 

@@ -40,4 +40,4 @@ For recurring backups, use **Backup Policy** to select or create a policy. To ex
 - `C:\HFL-Quickstart` appears under **Selected Paths**.
 - No filter rule excludes either test file.
 
-If no repository is available on the **Target** step, continue without leaving the configuration flow: [Add target storage](/en/docs/getting-started/add-target).
+If no repository is available on the **Target** step, continue without leaving the configuration flow: [Add target storage](/docs/getting-started/add-target).

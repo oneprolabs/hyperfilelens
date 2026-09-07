@@ -13,7 +13,7 @@ Check each of the following:
 
 - The host runs Ubuntu 20.04, 22.04, or 24.04 on amd64.
 - The installer was run through `sudo`.
-- Docker Engine and Compose V2 meet the [system requirements](/en/docs/deployment/requirements) and are running.
+- Docker Engine and Compose V2 meet the [system requirements](/docs/deployment/requirements) and are running.
 - CPU, memory, and free space on `/opt` meet the requirements.
 - No other process is using `11442–11445/TCP`.
 - The host can reach GitHub, the container registry, and Ubuntu package repositories.
@@ -46,4 +46,4 @@ Do not delete the node data directory simply to register it again. If its local 
 - Confirm that the host can reach the control plane and the backup repositories it needs.
 - Use the failed installer stage to check download access, free space, or AI engine installation.
 
-See [Deploy a Private Data Gateway](/en/docs/deployment/data-gateway) for deployment requirements and steps.
+See [Deploy a Private Data Gateway](/docs/deployment/data-gateway) for deployment requirements and steps.

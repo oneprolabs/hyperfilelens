@@ -40,6 +40,24 @@ for nginx_config in \
 	"${ROOT}/deploy/nginx/web.conf" \
 	"${ROOT}/deploy/nginx/development-web.conf"; do
 	grep -F 'try_files $uri $uri/ $uri.html =404;' "${nginx_config}" >/dev/null
+	if grep -F 'return 302 /en/' "${nginx_config}" >/dev/null; then
+		printf 'ERROR: Website root must serve the default English homepage directly\n' >&2
+		exit 1
+	fi
 done
+
+grep -F "rewrites: (id) => id.startsWith('en/') ? id.slice(3) : id" \
+	"${ROOT}/website/.vitepress/config.mts" >/dev/null
+grep -F '<a class="brand" href="/" aria-label="HyperFileLens home">' \
+	"${ROOT}/website/.vitepress/theme/HomeLanding.vue" >/dev/null
+grep -F '<a href="/docs/" target="_blank" rel="noopener noreferrer">Documentation</a>' \
+	"${ROOT}/website/.vitepress/theme/HomeLanding.vue" >/dev/null
+if grep -R -F '/en/docs' --exclude-dir=dist --exclude-dir=cache \
+	"${ROOT}/website/en" >/dev/null \
+	|| grep -F '/en/docs' "${ROOT}/website/.vitepress/config.mts" \
+		"${ROOT}/website/.vitepress/theme/HomeLanding.vue" >/dev/null; then
+	printf 'ERROR: English Website links must use the default /docs route\n' >&2
+	exit 1
+fi
 
 printf 'Website runtime URL configuration checks passed.\n'

@@ -67,4 +67,4 @@ After a failure:
 1. Do not repeat the upgrade, delete system backups, or replace runtime files manually.
 2. Run `status` and record the current version and unhealthy services.
 3. Keep the installer log and system backups.
-4. Follow the recovery instructions in the target release notes. If none are provided, see [Installation and nodes](/en/docs/troubleshooting/installation-nodes).
+4. Follow the recovery instructions in the target release notes. If none are provided, see [Installation and nodes](/docs/troubleshooting/installation-nodes).

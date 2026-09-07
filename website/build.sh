@@ -83,8 +83,8 @@ docker rm -f "${container_id}" >/dev/null
 container_id=""
 install -m 0755 "${SCRIPT_DIR}/runtime-config.sh" "${temporary}/runtime-config.sh"
 
-[[ -f "${temporary}/public/en/index.html" ]] \
-	|| { printf 'ERROR: Website artifact is missing en/index.html\n' >&2; exit 1; }
+[[ -f "${temporary}/public/index.html" ]] \
+	|| { printf 'ERROR: Website artifact is missing index.html\n' >&2; exit 1; }
 [[ -f "${temporary}/public/website-runtime-config.js" ]] \
 	|| { printf 'ERROR: Website artifact is missing website-runtime-config.js\n' >&2; exit 1; }
 printf 'schema=1\n' >"${temporary}/.hfl-website-artifact"

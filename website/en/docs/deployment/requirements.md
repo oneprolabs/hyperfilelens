@@ -56,4 +56,4 @@ The control plane is installed in `/opt/hyperfilelens`. The installer checks fre
 - Docker Engine is running and can start containers.
 - The host can reach GitHub, the container registry, and Ubuntu package repositories.
 - Hosts used for online installation or component registration can resolve the required domains, establish HTTPS connections, and keep accurate system time.
-- The required paths between the control plane, components, and storage are allowed. See [Network and Ports](/en/docs/deployment/network).
+- The required paths between the control plane, components, and storage are allowed. See [Network and Ports](/docs/deployment/network).

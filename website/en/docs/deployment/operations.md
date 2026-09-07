@@ -34,4 +34,4 @@ Open <span class="hfl-path">Operations → Audit Logs</span> and filter importan
 
 ## Continue troubleshooting
 
-If the console does not provide enough information, record the affected resource, task ID, error, and time, then use the [Troubleshooting Guide](/en/docs/troubleshooting/). Collect control-plane or component logs only when a troubleshooting step specifically requires them.
+If the console does not provide enough information, record the affected resource, task ID, error, and time, then use the [Troubleshooting Guide](/docs/troubleshooting/). Collect control-plane or component logs only when a troubleshooting step specifically requires them.

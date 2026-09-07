@@ -9,12 +9,12 @@ The HyperFileLens data-protection workflow starts with an accessible backup sour
 
 ## Workflow
 
-1. [Manage backup sources](/en/docs/backup-restore/sources) and confirm that the Agent or Proxy is online and the intended folders can be browsed.
-2. [Manage target storage](/en/docs/backup-restore/targets), create a dedicated repository, and validate its connection.
-3. [Create and run a backup](/en/docs/backup-restore/create-backup), selecting its scope, repository, and run options.
-4. [View tasks and snapshots](/en/docs/backup-restore/snapshots) to check both the task result and the files in the snapshot.
-5. [Restore files and directories](/en/docs/backup-restore/restore) to an independent location and inspect the restored content.
-6. After validating the basic path, configure [policies and retention](/en/docs/backup-restore/policies) to meet the recovery point objective.
+1. [Manage backup sources](/docs/backup-restore/sources) and confirm that the Agent or Proxy is online and the intended folders can be browsed.
+2. [Manage target storage](/docs/backup-restore/targets), create a dedicated repository, and validate its connection.
+3. [Create and run a backup](/docs/backup-restore/create-backup), selecting its scope, repository, and run options.
+4. [View tasks and snapshots](/docs/backup-restore/snapshots) to check both the task result and the files in the snapshot.
+5. [Restore files and directories](/docs/backup-restore/restore) to an independent location and inspect the restored content.
+6. After validating the basic path, configure [policies and retention](/docs/backup-restore/policies) to meet the recovery point objective.
 
 ## Three checks that matter
 

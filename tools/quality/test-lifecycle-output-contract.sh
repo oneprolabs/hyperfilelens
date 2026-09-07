@@ -50,7 +50,7 @@ output="$({
 } 2>&1)"
 
 [[ "$(grep -c 'INSTALLER' <<<"${output}")" -eq 1 ]]
-grep -F 'https://192.0.2.10:11442/en/' <<<"${output}" >/dev/null
+grep -F 'https://192.0.2.10:11442/' <<<"${output}" >/dev/null
 grep -F 'https://192.0.2.10:11443/' <<<"${output}" >/dev/null
 grep -F 'https://192.0.2.10:11444/admin/' <<<"${output}" >/dev/null
 grep -F 'https://192.0.2.10:11445/' <<<"${output}" >/dev/null

@@ -18,7 +18,7 @@ This page summarizes the primary platforms and capabilities supported by HyperFi
 | Proxy | Ubuntu 20.04, 22.04, or 24.04 | amd64 |
 | Private Data Gateway | Ubuntu 20.04, 22.04, or 24.04 | amd64 |
 
-See [System Requirements](/en/docs/deployment/requirements) for CPU, memory, and disk requirements.
+See [System Requirements](/docs/deployment/requirements) for CPU, memory, and disk requirements.
 
 ## Backup sources
 

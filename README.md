@@ -11,7 +11,7 @@ English | [中文](README.zh-CN.md)
 
 Open-source backup and recovery with AI-powered Insights from protected snapshots.
 
-[Website](https://hyperfilelens.com/en/) · [Documentation](https://hyperfilelens.com/en/docs/) · [Try Free](https://app.hyperfilelens.com/) · [Releases](https://github.com/oneprolabs/hyperfilelens/releases)
+[Website](https://hyperfilelens.com/) · [Documentation](https://hyperfilelens.com/docs/) · [Try Free](https://app.hyperfilelens.com/) · [Releases](https://github.com/oneprolabs/hyperfilelens/releases)
 
 </div>
 
@@ -75,9 +75,9 @@ Insights answers questions using the snapshot data selected for the session and 
 
 The official HyperFileLens SaaS is provided and operated by OnePro Cloud. There is no control plane to install or maintain.
 
-- Visit the [HyperFileLens product website](https://hyperfilelens.com/en/) to learn more.
+- Visit the [HyperFileLens product website](https://hyperfilelens.com/) to learn more.
 - Open the [SaaS console](https://app.hyperfilelens.com/) to start using the product.
-- Follow the [first-use guide](https://hyperfilelens.com/en/docs/) to complete your first backup, restore, and Insights workflow.
+- Follow the [first-use guide](https://hyperfilelens.com/docs/) to complete your first backup, restore, and Insights workflow.
 
 When using SaaS, install an Agent on the host whose files you want to protect and prepare object storage that both the SaaS and the backup host can reach.
 
@@ -101,20 +101,20 @@ curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deplo
 
 When installation finishes, find the complete address marked `Tenant` in the installation result and open it in a browser to enter the HyperFileLens console.
 
-See [Install Community](https://hyperfilelens.com/en/docs/getting-started/install) for detailed system requirements, network conditions, and installation checks.
+See [Install Community](https://hyperfilelens.com/docs/getting-started/install) for detailed system requirements, network conditions, and installation checks.
 
 ## Complete Your First Workflow
 
 Follow the first-use guide with a set of test files to walk through the complete path from data access to backup, restore, and Insights:
 
-1. [Sign in to the console](https://hyperfilelens.com/en/docs/getting-started/sign-in).
-2. [Add a backup source](https://hyperfilelens.com/en/docs/getting-started/add-source) and install the Agent on the backup host.
-3. [Configure the backup source](https://hyperfilelens.com/en/docs/getting-started/configure-source) and select the files or folders to protect.
-4. [Add target storage](https://hyperfilelens.com/en/docs/getting-started/add-target).
-5. [Create and run the first backup](https://hyperfilelens.com/en/docs/getting-started/first-backup).
-6. [Check the job and snapshot](https://hyperfilelens.com/en/docs/getting-started/verify-backup).
-7. [Restore a test file](https://hyperfilelens.com/en/docs/getting-started/first-restore).
-8. [Create an Insights session](https://hyperfilelens.com/en/docs/getting-started/first-insight).
+1. [Sign in to the console](https://hyperfilelens.com/docs/getting-started/sign-in).
+2. [Add a backup source](https://hyperfilelens.com/docs/getting-started/add-source) and install the Agent on the backup host.
+3. [Configure the backup source](https://hyperfilelens.com/docs/getting-started/configure-source) and select the files or folders to protect.
+4. [Add target storage](https://hyperfilelens.com/docs/getting-started/add-target).
+5. [Create and run the first backup](https://hyperfilelens.com/docs/getting-started/first-backup).
+6. [Check the job and snapshot](https://hyperfilelens.com/docs/getting-started/verify-backup).
+7. [Restore a test file](https://hyperfilelens.com/docs/getting-started/first-restore).
+8. [Create an Insights session](https://hyperfilelens.com/docs/getting-started/first-insight).
 
 ## How the Product Works
 
@@ -149,16 +149,16 @@ By default, the official SaaS provides a Public Data Gateway, and Community depl
 - Docker Engine 24.0.0 or later
 - Docker Compose V2 2.20.0 or later
 
-See [Supported Configurations](https://hyperfilelens.com/en/docs/reference/support-matrix) and [Limitations and Security Recommendations](https://hyperfilelens.com/en/docs/reference/limitations-security) for product boundaries.
+See [Supported Configurations](https://hyperfilelens.com/docs/reference/support-matrix) and [Limitations and Security Recommendations](https://hyperfilelens.com/docs/reference/limitations-security) for product boundaries.
 
 ## Documentation
 
-- [Quick Start](https://hyperfilelens.com/en/docs/)
-- [Product Usage](https://hyperfilelens.com/en/docs/product/)
-- [Backup and Restore](https://hyperfilelens.com/en/docs/backup-restore/)
-- [Insights](https://hyperfilelens.com/en/docs/insights/)
-- [Deployment and Operations](https://hyperfilelens.com/en/docs/deployment/)
-- [Help Center](https://hyperfilelens.com/en/docs/help/)
+- [Quick Start](https://hyperfilelens.com/docs/)
+- [Product Usage](https://hyperfilelens.com/docs/product/)
+- [Backup and Restore](https://hyperfilelens.com/docs/backup-restore/)
+- [Insights](https://hyperfilelens.com/docs/insights/)
+- [Deployment and Operations](https://hyperfilelens.com/docs/deployment/)
+- [Help Center](https://hyperfilelens.com/docs/help/)
 
 ## Project Status
 

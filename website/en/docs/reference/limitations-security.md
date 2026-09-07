@@ -5,7 +5,7 @@ description: Understand product boundaries and security responsibilities when de
 
 # Limitations and security guidance
 
-This page describes important product boundaries. See [Supported Configurations](/en/docs/reference/support-matrix) for platforms and storage types.
+This page describes important product boundaries. See [Supported Configurations](/docs/reference/support-matrix) for platforms and storage types.
 
 ## Product boundaries
 
@@ -26,7 +26,7 @@ This page describes important product boundaries. See [Supported Configurations]
 
 The certificate included with HyperFileLens Community is intended for initial installation and access. For regular operation, configure a TLS certificate that matches the configured domain and is trusted by browsers and components.
 
-Allow only the connections listed in [Network and Ports](/en/docs/deployment/network), and restrict their source networks. Keep TLS verification enabled where possible instead of disabling it permanently to work around certificate problems.
+Allow only the connections listed in [Network and Ports](/docs/deployment/network), and restrict their source networks. Keep TLS verification enabled where possible instead of disabling it permanently to work around certificate problems.
 
 ## Data and deletion
 
