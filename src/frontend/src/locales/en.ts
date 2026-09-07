@@ -1763,6 +1763,8 @@ export const en = {
     upgradeFailedNoIp: '{entity} {name} upgrade failed: {error}',
     batchSkipped: '{n} skipped (not started).',
     nothingEligible: 'No selected nodes are eligible for this operation.',
+    nothingEligibleOffline:
+      'Remote upgrade requires selected nodes to be online. Restore their connection, or select one node and use Maintenance for a local upgrade command.',
     nothingEligibleProxyBound: '{n} proxy node(s) still have bound resources and cannot be removed.',
     nothingEligibleWorkload: '{n} node(s) are blocked by running backup or restore tasks.',
     nothingEligibleInProgress: '{n} node(s) already have a lifecycle operation in progress.',

@@ -27,6 +27,17 @@
   overflow: visible;
 }
 
+/* Standard width for explanatory tooltips. Match the established 360px
+   information-popper measure while preserving a 16px viewport gutter. */
+.el-popper.hfl-tooltip--medium {
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 32px));
+  max-width: min(360px, calc(100vw - 32px));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 /* Keep Element Plus' bordered arrow geometry, but clip the rotated square to
    the half that belongs outside the popper. Negative insets preserve its tip. */
 .el-popper[data-popper-placement^='bottom'] > .el-popper__arrow {

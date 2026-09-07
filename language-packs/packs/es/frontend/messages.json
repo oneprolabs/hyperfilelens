@@ -4026,6 +4026,7 @@
     "upgradeFailedNoIp": "Falló la actualización de {entity} {name}: {error}",
     "batchSkipped": "Se omitieron {n}; no se iniciaron.",
     "nothingEligible": "No hay nodos seleccionados son elegibles para esta operación.",
+    "nothingEligibleOffline": "La actualización remota requiere que los nodos seleccionados estén en línea. Restablece la conexión o selecciona un nodo y usa Mantenimiento para obtener un comando de actualización local.",
     "nothingEligibleProxyBound": "{n} proxy node(s) todavía tiene recursos consolidados y no se puede eliminar.",
     "nothingEligibleWorkload": "{n} node(s) están bloqueados por ejecutar tareas de copia de seguridad o restauración.",
     "nothingEligibleInProgress": "{n} node(s) ya tiene una operación de ciclo de vida en curso.",
