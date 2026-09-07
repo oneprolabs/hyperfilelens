@@ -233,6 +233,17 @@ python3 "${helper}" --env-file "${insecure_env}" \
 	--runtime-env-file "${insecure_runtime}" >/dev/null
 grep -Fx 'HFL_INSECURE_TLS=1' "${insecure_env}" >/dev/null
 
+missing_tls_env="${tmp}/missing-tls.env"
+missing_tls_runtime="${tmp}/missing-tls-runtime.env"
+cp "${insecure_env}" "${missing_tls_env}"
+cat >"${missing_tls_runtime}" <<'ENV'
+HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true
+ENV
+python3 "${helper}" --env-file "${missing_tls_env}" \
+	--runtime-env-file "${missing_tls_runtime}" >/dev/null
+grep -Fx 'HFL_INSECURE_TLS=1' "${missing_tls_env}" >/dev/null
+grep -Fx 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true' "${missing_tls_env}" >/dev/null
+
 invalid_tls_env="${tmp}/invalid-tls.env"
 invalid_tls_runtime="${tmp}/invalid-tls-runtime.env"
 cp "${env_file}" "${invalid_tls_env}"
@@ -248,6 +259,21 @@ if python3 "${helper}" --env-file "${invalid_tls_env}" \
 fi
 after_invalid_tls="$(sha256sum "${invalid_tls_env}" | awk '{print $1}')"
 [[ "${before_invalid_tls}" == "${after_invalid_tls}" ]]
+
+empty_tls_env="${tmp}/empty-tls.env"
+empty_tls_runtime="${tmp}/empty-tls-runtime.env"
+cp "${env_file}" "${empty_tls_env}"
+cat >"${empty_tls_runtime}" <<'ENV'
+HFL_INSECURE_TLS=
+ENV
+before_empty_tls="$(sha256sum "${empty_tls_env}" | awk '{print $1}')"
+if python3 "${helper}" --env-file "${empty_tls_env}" \
+	--runtime-env-file "${empty_tls_runtime}" >/dev/null 2>&1; then
+	printf 'ERROR: runtime configuration accepted empty HFL_INSECURE_TLS\n' >&2
+	exit 1
+fi
+after_empty_tls="$(sha256sum "${empty_tls_env}" | awk '{print $1}')"
+[[ "${before_empty_tls}" == "${after_empty_tls}" ]]
 
 ln -s "${runtime_file}" "${tmp}/runtime-link.env"
 if python3 "${helper}" --env-file "${invalid_env}" \

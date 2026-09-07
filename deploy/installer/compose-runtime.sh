@@ -37,7 +37,10 @@ PY
 hfl_compose_candidate_version() {
 	local -a candidate=("$@")
 	local version output
-	version="$("${candidate[@]}" version --short 2>/dev/null || true)"
+	output="$("${candidate[@]}" version --short 2>/dev/null || true)"
+	# Some Compose 5 builds return the descriptive form even with --short.
+	# Normalize both short and descriptive output before comparing versions.
+	version="$(grep -Eo '[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?' <<<"${output}" | head -1 || true)"
 	if [[ -z "${version}" ]]; then
 		output="$("${candidate[@]}" version 2>/dev/null || true)"
 		# Ubuntu commonly ships mawk, whose match() has no capture-array
