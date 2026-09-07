@@ -52,6 +52,8 @@ for path in sorted(root.glob("*.json")):
             "sourcelens-frontend",
             "sourcelens-lensnode",
         }:
+            name = component[len("sourcelens-") :]
+            image_contract = (runtime.get("images") or {}).get(name) or {}
             for field, expected in {
                 "sourcelens_version": runtime["version"],
                 "sourcelens_git_ref": runtime["git_ref"],
@@ -61,6 +63,17 @@ for path in sorted(root.glob("*.json")):
                     raise SystemExit(
                         f"{component} {field} does not match the online contract"
                     )
+            expected_sources = image_contract.get("sources") or {}
+            actual_sources = {
+                str(source.get("region") or ""): str(source.get("ref") or "")
+                for source in metadata.get("sources") or []
+            }
+            if metadata.get("local_ref") != image_contract.get("local_ref"):
+                raise SystemExit(f"{component} local_ref does not match the online contract")
+            if metadata.get("digest") != image_contract.get("digest"):
+                raise SystemExit(f"{component} digest does not match the online contract")
+            if actual_sources != expected_sources:
+                raise SystemExit(f"{component} sources do not match the online contract")
             sourcelens_components.add(component)
         digest = str(metadata.get("digest") or "")
         sources = metadata.get("sources") or []
@@ -79,23 +92,26 @@ if sourcelens_components != {
     "sourcelens-lensnode",
 }:
     raise SystemExit("online SourceLens component metadata is incomplete")
-if len(selected) != 22:
-    raise SystemExit(f"expected 22 regional Community image refs, found {len(selected)}")
+# Docker Library has no first-party China registry, so its three immutable
+# refs are intentionally shared by both region entries.
+if len(selected) != 19:
+    raise SystemExit(f"expected 19 unique Community image refs, found {len(selected)}")
 for ref, digest in sorted(selected.items()):
     print(f"{ref}\t{digest}")
 PY
 
 while IFS=$'\t' read -r ref expected; do
 	[[ -n "${ref}" ]] || continue
-	printf '[....] Anonymous manifest check: %s\n' "${ref}"
+	immutable_ref="${ref%:*}@${expected}"
+	printf '[....] Anonymous manifest check: %s\n' "${immutable_ref}"
 	manifest="$(DOCKER_CONFIG="${docker_config}" timeout 60s \
-		docker buildx imagetools inspect "${ref}" --format '{{json .Manifest}}')"
+		docker buildx imagetools inspect "${immutable_ref}" --format '{{json .Manifest}}')"
 	actual="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("digest", ""))' \
 		<<<"${manifest}")"
 	[[ "${actual}" == "${expected}" ]] || {
 		printf 'ERROR: public image digest mismatch for %s (%s != %s)\n' \
-			"${ref}" "${actual:-missing}" "${expected}" >&2
+			"${immutable_ref}" "${actual:-missing}" "${expected}" >&2
 		exit 1
 	}
-	printf '[ OK ] Public image available: %s@%s\n' "${ref}" "${actual}"
+	printf '[ OK ] Public image available: %s\n' "${immutable_ref}"
 done <"${tasks}"

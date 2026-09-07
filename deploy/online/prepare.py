@@ -32,27 +32,36 @@ CN_PREFIX = os.environ.get(
     "HFL_CN_REGISTRY_PREFIX",
     "registry.cn-beijing.aliyuncs.com/oneprolabs",
 ).rstrip("/")
+PUBLIC_GLOBAL_PREFIX = os.environ.get(
+    "HFL_PUBLIC_GLOBAL_REGISTRY_PREFIX", "docker.io/library"
+).rstrip("/")
+PUBLIC_CN_PREFIX = os.environ.get(
+    "HFL_PUBLIC_CN_REGISTRY_PREFIX", "docker.io/library"
+).rstrip("/")
 
 
 @dataclass(frozen=True)
 class ImageSpec:
-    """Describe one published image and its local runtime identity."""
+    """Describe one image source pair and its local runtime identity."""
 
     component: str
     role: str
-    repository: str
-    tag: str
+    local_ref: str
+    global_ref: str
+    cn_ref: str
+    expected_digest: str = ""
     asset_kind: str = ""
 
-    @property
-    def local_ref(self) -> str:
-        """Return the registry-independent image reference used by Compose."""
-        return f"{self.repository}:{self.tag}"
-
     def source_ref(self, region: str) -> str:
-        """Return the published source reference for a registry region."""
-        prefix = CN_PREFIX if region == "cn" else GLOBAL_PREFIX
-        return f"{prefix}/{self.repository}:{self.tag}"
+        """Return the declared source reference for a registry region."""
+        return self.cn_ref if region == "cn" else self.global_ref
+
+    def pull_ref(self, region: str) -> str:
+        """Return an immutable ref when the source has a pinned digest."""
+        source = self.source_ref(region)
+        if not self.expected_digest:
+            return source
+        return f"{source.rsplit(':', 1)[0]}@{self.expected_digest}"
 
 
 @dataclass(frozen=True)
@@ -192,6 +201,111 @@ def replace_env_values(path: pathlib.Path, values: dict[str, str]) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def load_sourcelens_runtime(source: pathlib.Path) -> dict[str, Any]:
+    """Load and validate the pinned upstream SourceLens image contract."""
+    path = source / "deploy/online/sourcelens/runtime.json"
+    runtime = json.loads(path.read_text(encoding="utf-8"))
+    version = str(runtime.get("version") or "")
+    images = runtime.get("images") or {}
+    git_ref = str(runtime.get("git_ref") or "")
+    git_commit = str(runtime.get("git_commit") or "")
+    if (
+        not VERSION_PATTERN.fullmatch(version)
+        or git_ref != f"v{version}"
+        or not REVISION_PATTERN.fullmatch(git_commit)
+        or set(images)
+        != {
+            "backend",
+            "frontend",
+            "lensnode",
+        }
+    ):
+        raise ValueError("SourceLens runtime image contract is incomplete")
+    for name, image in images.items():
+        digest = str(image.get("digest") or "")
+        local_ref = str(image.get("local_ref") or "")
+        sources = image.get("sources") or {}
+        if not DIGEST_PATTERN.fullmatch(digest):
+            raise ValueError(f"SourceLens {name} image digest is invalid")
+        if local_ref != f"oneprolabs/sourcelens-{name}:{version}":
+            raise ValueError(f"SourceLens {name} local image ref is invalid")
+        if sources != {
+            "cn": (
+                "registry.cn-beijing.aliyuncs.com/oneprolabs/"
+                f"sourcelens-{name}:{version}"
+            ),
+            "global": f"docker.io/oneprolabs/sourcelens-{name}:{version}",
+        }:
+            raise ValueError(f"SourceLens {name} image sources are incomplete")
+    return runtime
+
+
+def load_public_runtime_specs(source: pathlib.Path) -> list[ImageSpec]:
+    """Load pinned Docker Library images without evaluating shell code."""
+    path = source / "tools/dependencies/versions/runtime-images.env"
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, separator, value = line.partition("=")
+        if separator:
+            values[name] = value
+    definitions = (
+        ("postgres", "shared", "POSTGRES_IMAGE"),
+        ("redis", "shared", "REDIS_IMAGE"),
+        ("sourcelens-nginx", "sourcelens-nginx", "NGINX_IMAGE"),
+    )
+    specs: list[ImageSpec] = []
+    for component, role, variable in definitions:
+        pinned = values.get(variable, "")
+        local_ref, separator, digest = pinned.partition("@")
+        if not separator or not DIGEST_PATTERN.fullmatch(digest):
+            raise ValueError(f"{variable} must contain a pinned sha256 digest")
+        specs.append(
+            ImageSpec(
+                component,
+                role,
+                local_ref,
+                f"{PUBLIC_GLOBAL_PREFIX}/{local_ref}",
+                f"{PUBLIC_CN_PREFIX}/{local_ref}",
+                digest,
+            )
+        )
+    return specs
+
+
+def sourcelens_image_spec(runtime: dict[str, Any], name: str) -> ImageSpec:
+    """Build one ImageSpec from the SourceLens runtime contract."""
+    image = runtime["images"][name]
+    return ImageSpec(
+        f"sourcelens-{name}",
+        f"sourcelens-{name}",
+        image["local_ref"],
+        image["sources"]["global"],
+        image["sources"]["cn"],
+        image["digest"],
+    )
+
+
+def hfl_image_spec(
+    component: str,
+    role: str,
+    repository: str,
+    tag: str,
+    asset_kind: str = "",
+) -> ImageSpec:
+    """Build one HFL-owned regional image specification."""
+    return ImageSpec(
+        component,
+        role,
+        f"{repository}:{tag}",
+        f"{GLOBAL_PREFIX}/{repository}:{tag}",
+        f"{CN_PREFIX}/{repository}:{tag}",
+        asset_kind=asset_kind,
+    )
+
+
 def copy_runtime_files(
     source: pathlib.Path, target: pathlib.Path, version: str
 ) -> None:
@@ -208,6 +322,8 @@ def copy_runtime_files(
             "HFL_EDITION": "community",
             "HFL_BACKEND_IMAGE": f"hyperfilelens-backend:{version}",
             "HFL_FRONTEND_IMAGE": f"hyperfilelens-frontend:{version}",
+            "HFL_POSTGRES_IMAGE": "postgres:17",
+            "HFL_REDIS_IMAGE": "redis:alpine",
             "HFL_GATEWAY_VERSION": version,
             "HFL_RELEASE_CHANNEL": "release",
             "AGENT_VERSION": version,
@@ -252,9 +368,9 @@ def copy_runtime_files(
 def render_sourcelens_compose(
     template: pathlib.Path,
     destination: pathlib.Path,
-    version: str,
+    image_refs: dict[str, str],
 ) -> None:
-    """Render the shared SourceLens Compose template with HFL-versioned refs."""
+    """Render the shared SourceLens Compose template with upstream refs."""
     text = template.read_text(encoding="utf-8")
     for block in ("EMBED_BACKEND_ENV", "EMBED_LENSNODE_SERVICE"):
         pattern = re.compile(rf"(?ms)^# HFL_{block}_BEGIN\n(.*?)^# HFL_{block}_END\n")
@@ -262,13 +378,12 @@ def render_sourcelens_compose(
             raise ValueError(f"SourceLens template has an invalid {block} block")
         text = pattern.sub("", text)
     replacements = {
-        "__SOURCELENS_BACKEND_IMAGE__": (f"hyperfilelens-sourcelens-backend:{version}"),
-        "__SOURCELENS_FRONTEND_IMAGE__": (
-            f"hyperfilelens-sourcelens-frontend:{version}"
-        ),
-        "__SOURCELENS_LENSNODE_IMAGE__": (
-            f"hyperfilelens-sourcelens-lensnode:{version}"
-        ),
+        "__SOURCELENS_BACKEND_IMAGE__": image_refs["backend"],
+        "__SOURCELENS_FRONTEND_IMAGE__": image_refs["frontend"],
+        "__SOURCELENS_LENSNODE_IMAGE__": image_refs["lensnode"],
+        "__SOURCELENS_NGINX_IMAGE__": image_refs["nginx"],
+        "__SOURCELENS_POSTGRES_IMAGE__": image_refs["postgres"],
+        "__SOURCELENS_REDIS_IMAGE__": image_refs["redis"],
         "__SOURCELENS_CONSOLE_BIND_ADDRESS__": "0.0.0.0",
         "__SOURCELENS_CONSOLE_PORT__": "11445",
     }
@@ -279,7 +394,9 @@ def render_sourcelens_compose(
     destination.write_text(text, encoding="utf-8")
 
 
-def stage_sourcelens(source: pathlib.Path, target: pathlib.Path, version: str) -> None:
+def stage_sourcelens(
+    source: pathlib.Path, target: pathlib.Path, image_refs: dict[str, str]
+) -> None:
     """Stage the repository-owned SourceLens runtime tree."""
     online = source / "deploy/online/sourcelens"
     root = target / "sourcelens"
@@ -306,7 +423,7 @@ def stage_sourcelens(source: pathlib.Path, target: pathlib.Path, version: str) -
     render_sourcelens_compose(
         source / "deploy/installer/sourcelens/docker-compose.template.yml",
         root / "docker-compose.yml",
-        version,
+        image_refs,
     )
     shutil.copy2(online / "nginx/default.conf", root / "deploy/nginx/default.conf")
     shutil.copytree(
@@ -352,7 +469,7 @@ def image_digest(ref: str) -> str:
         capture_output=True,
     )
     values = json.loads((completed.stdout or "[]").strip())
-    repository_path = ref.rsplit(":", 1)[0].split("/", 1)[-1]
+    repository_path = ref.split("@", 1)[0].rsplit(":", 1)[0].split("/", 1)[-1]
     digests = {
         value.rsplit("@", 1)[-1]
         for value in values
@@ -386,7 +503,7 @@ def write_pull_plan(path: pathlib.Path, specs: list[ImageSpec], region: str) -> 
         lines.extend(
             (
                 f"  {spec.component}:",
-                f"    image: {json.dumps(spec.source_ref(region))}",
+                f"    image: {json.dumps(spec.pull_ref(region))}",
                 '    platform: "linux/amd64"',
             )
         )
@@ -428,10 +545,13 @@ def inspect_pulled_images(
     resolved: dict[str, ResolvedImage] = {}
     unresolved: list[ImageSpec] = []
     for spec in specs:
-        source_ref = spec.source_ref(region)
+        source_ref = spec.pull_ref(region)
         try:
             verify_image_platform(source_ref)
-            digest = image_digest(source_ref)
+            # Inspecting an immutable ref proves that Docker retained the
+            # requested manifest identity. Multi-arch pulls may expose both
+            # index and child RepoDigests, so do not require a singular value.
+            digest = spec.expected_digest or image_digest(source_ref)
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
             unresolved.append(spec)
             continue
@@ -637,6 +757,7 @@ def write_sourcelens_build_info(
     source: pathlib.Path,
     target: pathlib.Path,
     runtime: list[ResolvedImage],
+    lensnode: ImageSpec,
 ) -> dict[str, Any]:
     """Write the semantic SourceLens bundle identity used by upgrades."""
     base = json.loads(
@@ -657,7 +778,7 @@ def write_sourcelens_build_info(
         "build_compose_file": "docker-compose.standalone.yml",
         "network": "hyperfilelens-bridge",
         "install_dir": "/opt/hyperfilelens/sourcelens",
-        "lensnode_image": by_component["sourcelens-lensnode"].spec.local_ref,
+        "lensnode_image": lensnode.local_ref,
         "embed_local_lensnode": False,
         "images": {
             name: {
@@ -667,14 +788,25 @@ def write_sourcelens_build_info(
                 ),
                 "digest": by_component[f"sourcelens-{name}"].digest,
             }
-            for name in ("backend", "frontend", "lensnode")
+            for name in ("backend", "frontend")
         },
     }
-    nginx = by_component["sourcelens-nginx"]
-    info["images"]["nginx"] = {
-        "ref": nginx.spec.local_ref,
-        "digest": nginx.digest,
+    info["images"]["lensnode"] = {
+        "ref": lensnode.local_ref,
+        "upstream_ref": lensnode.source_ref("global"),
+        "digest": lensnode.expected_digest,
     }
+    for name, component in (
+        ("nginx", "sourcelens-nginx"),
+        ("postgres", "postgres"),
+        ("redis", "redis"),
+    ):
+        image = by_component[component]
+        info["images"][name] = {
+            "ref": image.spec.local_ref,
+            "upstream_ref": image.spec.source_ref("global"),
+            "digest": image.digest,
+        }
     (target / "sourcelens/BUILD_INFO.json").write_text(
         json.dumps(info, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -777,40 +909,39 @@ def main() -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
 
     copy_runtime_files(source, target, version)
-    stage_sourcelens(source, target, version)
+    sourcelens_runtime = load_sourcelens_runtime(source)
+    sourcelens_specs = [
+        sourcelens_image_spec(sourcelens_runtime, name)
+        for name in ("backend", "frontend")
+    ]
+    lensnode_spec = sourcelens_image_spec(sourcelens_runtime, "lensnode")
+    public_specs = load_public_runtime_specs(source)
+    public_by_component = {spec.component: spec for spec in public_specs}
+    stage_sourcelens(
+        source,
+        target,
+        {
+            "backend": sourcelens_specs[0].local_ref,
+            "frontend": sourcelens_specs[1].local_ref,
+            "lensnode": lensnode_spec.local_ref,
+            "nginx": public_by_component["sourcelens-nginx"].local_ref,
+            "postgres": public_by_component["postgres"].local_ref,
+            "redis": public_by_component["redis"].local_ref,
+        },
+    )
 
     runtime_specs = [
-        ImageSpec("hfl-backend", "hyperfilelens", "hyperfilelens-backend", version),
-        ImageSpec("hfl-frontend", "hyperfilelens", "hyperfilelens-frontend", version),
-        ImageSpec(
-            "sourcelens-backend",
-            "sourcelens-backend",
-            "hyperfilelens-sourcelens-backend",
-            version,
+        hfl_image_spec(
+            "hfl-backend", "hyperfilelens", "hyperfilelens-backend", version
         ),
-        ImageSpec(
-            "sourcelens-frontend",
-            "sourcelens-frontend",
-            "hyperfilelens-sourcelens-frontend",
-            version,
+        hfl_image_spec(
+            "hfl-frontend", "hyperfilelens", "hyperfilelens-frontend", version
         ),
-        ImageSpec(
-            "sourcelens-lensnode",
-            "sourcelens-lensnode",
-            "hyperfilelens-sourcelens-lensnode",
-            version,
-        ),
-        ImageSpec(
-            "sourcelens-nginx",
-            "sourcelens-nginx",
-            "hyperfilelens-sourcelens-nginx",
-            "stable-alpine",
-        ),
-        ImageSpec("postgres", "shared", "hyperfilelens-postgres", "17"),
-        ImageSpec("redis", "shared", "hyperfilelens-redis", "alpine"),
+        *sourcelens_specs,
+        *public_specs,
     ]
     asset_specs = [
-        ImageSpec(
+        hfl_image_spec(
             f"{kind}-assets",
             f"{kind}-assets",
             f"hyperfilelens-{kind}-assets",
@@ -842,7 +973,7 @@ def main() -> int:
         finally:
             discard_asset_image(asset)
         print(f"[ OK ] {label} are ready", flush=True)
-    sourcelens = write_sourcelens_build_info(source, target, runtime)
+    sourcelens = write_sourcelens_build_info(source, target, runtime, lensnode_spec)
     write_manifest(target, version, revision, runtime, assets, sourcelens)
     print(f"[ OK ] Community release package prepared · {target}")
     return 0

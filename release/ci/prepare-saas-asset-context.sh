@@ -87,14 +87,16 @@ gateway)
 	[[ -s "${metadata}" ]]
 	ref="$(jq -r '.sources[] | select(.region == "global") | .ref' "${metadata}")"
 	digest="$(jq -r '.digest' "${metadata}")"
+	local_ref="$(jq -r '.local_ref' "${metadata}")"
 	immutable_ref="${ref%:*}@${digest}"
 	docker pull --platform linux/amd64 "${immutable_ref}"
+	[[ "$(docker image inspect "${immutable_ref}" --format '{{.Os}}/{{.Architecture}}')" == "linux/amd64" ]]
+	docker tag "${immutable_ref}" "${local_ref}"
+	# Preserve the historical local tag for already-installed Agent binaries.
+	# It remains inside the archive and is never pushed as a registry image.
 	docker tag "${immutable_ref}" hyperfilelens-sourcelens-lensnode:latest
-	docker tag "${immutable_ref}" sourcelens-lensnode:latest
 	partial="${gateway_dir}/lensnode-image-linux-amd64.tar.gz.part"
-	# The Gateway bundle uses stable local aliases. Omitting the HFL-versioned
-	# runtime tag keeps this large layer reusable while the SourceLens image is unchanged.
-	docker save hyperfilelens-sourcelens-lensnode:latest sourcelens-lensnode:latest \
+	docker save "${local_ref}" hyperfilelens-sourcelens-lensnode:latest \
 		| gzip -1 -n >"${partial}"
 	mv "${partial}" "${gateway_dir}/lensnode-image-linux-amd64.tar.gz"
 	;;

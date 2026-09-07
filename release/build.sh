@@ -554,7 +554,10 @@ stage_release_env_example() {
 	HFL_EXTENSIONS_RUNTIME="${HFL_EXTENSIONS_RUNTIME:-}" \
 		HFL_IMAGE_VERSION="${HFL_IMAGE_VERSION:-}" \
 		HFL_RELEASE_EDITION="${HFL_RELEASE_EDITION:-community}" \
-		HFL_VERSION="${HFL_VERSION:-}" python3 - "${example}" <<'PY'
+		HFL_VERSION="${HFL_VERSION:-}" \
+		HFL_RELEASE_POSTGRES_IMAGE="${HFL_RELEASE_POSTGRES_IMAGE:-}" \
+		HFL_RELEASE_REDIS_IMAGE="${HFL_RELEASE_REDIS_IMAGE:-}" \
+		python3 - "${example}" <<'PY'
 import os
 import pathlib
 import re
@@ -567,6 +570,8 @@ runtime = os.environ.get("HFL_EXTENSIONS_RUNTIME", "").strip()
 image_version = os.environ.get("HFL_IMAGE_VERSION", "").strip()
 product_version = os.environ.get("HFL_VERSION", "").strip()
 edition = os.environ.get("HFL_RELEASE_EDITION", "community").strip()
+postgres_image = os.environ.get("HFL_RELEASE_POSTGRES_IMAGE", "").strip()
+redis_image = os.environ.get("HFL_RELEASE_REDIS_IMAGE", "").strip()
 if image_version:
     replacements = {
         "APP_VERSION": image_version,
@@ -579,6 +584,17 @@ if image_version:
         text = re.sub(
             rf"(?m)^{re.escape(key)}=.*$", f"{key}={value}", text, count=1
         )
+for key, value in {
+    "HFL_POSTGRES_IMAGE": postgres_image,
+    "HFL_REDIS_IMAGE": redis_image,
+}.items():
+    if not value:
+        continue
+    pattern = rf"(?m)^{re.escape(key)}=.*$"
+    if re.search(pattern, text):
+        text = re.sub(pattern, f"{key}={value}", text, count=1)
+    else:
+        text = text.rstrip() + f"\n{key}={value}\n"
 if runtime:
     block = (
         "\n# Baked into this release's control-plane images (Open Core).\n"

@@ -16,7 +16,7 @@ printf 'DJANGO_DEBUG=true\n' >"${ROOT}/data/sourcelens/config/.env"
 ln -s "${ROOT}/data/sourcelens/config/.env" "${SOURCELENS_INSTALL_DIR}/.env"
 
 write_bundle() {
-	local root=$1 patchset=$2
+	local root=$1 patchset=$2 nginx_digest=${3:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 	cat >"${root}/BUILD_INFO.json" <<JSON
 {
   "git_url": "https://github.com/oneprolabs/sourcelens.git",
@@ -31,6 +31,10 @@ write_bundle() {
     },
     "frontend": {
       "ref": "hyperfilelens-sourcelens-frontend:main-fixture-sl0.20.0"
+    },
+    "nginx": {
+      "ref": "nginx:stable-alpine",
+      "digest": "${nginx_digest}"
     }
   }
 }
@@ -89,6 +93,17 @@ sourcelens_bundle_changed "${tmp}/target"
 record_sourcelens_installed_bundle "${target}"
 if sourcelens_bundle_changed "${tmp}/target"; then
 	printf 'ERROR: recorded SourceLens runtime was reported as changed\n' >&2
+	exit 1
+fi
+
+# Stable upstream tags must still converge when their immutable image lock
+# changes between releases.
+write_bundle "${target}" new-patchset \
+	sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+sourcelens_bundle_changed "${tmp}/target"
+record_sourcelens_installed_bundle "${target}"
+if sourcelens_bundle_changed "${tmp}/target"; then
+	printf 'ERROR: recorded SourceLens image lock was reported as changed\n' >&2
 	exit 1
 fi
 

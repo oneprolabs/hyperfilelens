@@ -41,6 +41,7 @@ SIDECAR_INSTALL_SCRIPT="gateway-install-lensnode-sidecar.sh"
 COMPOSE_PROJECT="hyperfilelens-gateway"
 DEFAULT_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
 OWNED_LENSNODE_IMAGES=("${DEFAULT_LENSNODE_IMAGE}")
+RESOLVED_LENSNODE_IMAGE="${DEFAULT_LENSNODE_IMAGE}"
 MIN_COMPOSE_VERSION="${HFL_COMPOSE_MIN_VERSION:-2.20.0}"
 COMPOSE=()
 
@@ -476,12 +477,32 @@ lensnode_image_supports_insecure_tls() {
 }
 
 load_lensnode_image() {
-	local work_dir=$1 ref
+	local work_dir=$1 ref upstream_ref compatibility_id candidate candidate_id
 	local archive="${work_dir}/${LENSNODE_IMAGE_ARCHIVE}"
 	download_bootstrap_file "${LENSNODE_IMAGE_ARCHIVE}" "${archive}"
 	hfl_log "Loading AI engine container image."
 	docker load -i "${archive}"
+	compatibility_id="$(docker image inspect "${DEFAULT_LENSNODE_IMAGE}" \
+		--format '{{.Id}}' 2>/dev/null || true)"
+	upstream_ref=""
+	if [[ -n "${compatibility_id}" ]]; then
+		while IFS= read -r candidate; do
+			[[ -n "${candidate}" ]] || continue
+			candidate_id="$(docker image inspect "${candidate}" \
+				--format '{{.Id}}' 2>/dev/null || true)"
+			if [[ "${candidate_id}" == "${compatibility_id}" ]]; then
+				upstream_ref="${candidate}"
+				break
+			fi
+		done < <(
+			docker image ls oneprolabs/sourcelens-lensnode \
+				--format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+				| grep -E '^oneprolabs/sourcelens-lensnode:[0-9]+\.[0-9]+\.[0-9]+$' \
+				| sort -Vr || true
+		)
+	fi
 	for ref in \
+		"${upstream_ref}" \
 		"${DEFAULT_LENSNODE_IMAGE}" \
 		sourcelens-lensnode:latest \
 		oneprocloud/sourcelens-lensnode:latest; do
@@ -489,6 +510,7 @@ load_lensnode_image() {
 			if ! lensnode_image_supports_insecure_tls "${ref}"; then
 				hfl_fail "AI engine image ${ref} is missing configurable TLS verification support" 5
 			fi
+			RESOLVED_LENSNODE_IMAGE="${ref}"
 			return 0
 		fi
 	done
@@ -503,7 +525,7 @@ run_sidecar_install_script() {
 	HFL_GATEWAY_COMPOSE_DIR="${COMPOSE_DIR}" \
 	HFL_AGENT_ROOT="${AGENT_ROOT}" \
 		HFL_INSECURE_TLS="${HFL_INSECURE_TLS}" \
-		LENSNODE_IMAGE="${DEFAULT_LENSNODE_IMAGE}" \
+		LENSNODE_IMAGE="${RESOLVED_LENSNODE_IMAGE}" \
 		bash "${script}"
 }
 

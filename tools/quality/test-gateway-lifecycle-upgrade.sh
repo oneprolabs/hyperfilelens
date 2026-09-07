@@ -342,6 +342,68 @@ test_upgrade_keeps_existing_sidecar_until_replacement_starts() {
 	grep -Eq '^[[:space:]]*run_sidecar_install_script([[:space:]]|$)' <<<"${body}"
 }
 
+test_lensnode_resolution_ignores_unrelated_newer_image() (
+	# New Gateway archives carry the official version tag and the historical
+	# compatibility alias for the same image ID. A newer leftover image must
+	# never override the image selected by the Console bundle.
+	# shellcheck disable=SC1090
+	source <(sed -n '/^resolve_lensnode_image() {/,/^}/p' "${SIDECAR_INSTALLER}")
+	DEFAULT_LENSNODE_IMAGE=hyperfilelens-sourcelens-lensnode:latest
+	LENSNODE_IMAGE=hyperfilelens-sourcelens-lensnode:latest
+	docker() {
+		case "$*" in
+		"image inspect hyperfilelens-sourcelens-lensnode:latest --format {{.Id}}")
+			printf '%s\n' sha256:selected
+			;;
+		"image ls oneprolabs/sourcelens-lensnode --format {{.Repository}}:{{.Tag}}")
+			printf '%s\n' \
+				oneprolabs/sourcelens-lensnode:0.50.0 \
+				oneprolabs/sourcelens-lensnode:0.49.5
+			;;
+		"image inspect oneprolabs/sourcelens-lensnode:0.50.0 --format {{.Id}}")
+			printf '%s\n' sha256:unrelated
+			;;
+		"image inspect oneprolabs/sourcelens-lensnode:0.49.5 --format {{.Id}}")
+			printf '%s\n' sha256:selected
+			;;
+		*) printf 'unexpected fake Docker invocation: %s\n' "$*" >&2; return 90 ;;
+		esac
+	}
+	[[ "$(resolve_lensnode_image)" == "oneprolabs/sourcelens-lensnode:0.49.5" ]]
+)
+
+test_lifecycle_passes_exact_loaded_lensnode_image() (
+	# shellcheck disable=SC1090
+	source "${LIFECYCLE}"
+	local work_dir="${tmp}/lensnode-resolution"
+	mkdir -p "${work_dir}"
+	download_bootstrap_file() { : >"$2"; }
+	lensnode_image_supports_insecure_tls() { return 0; }
+	docker() {
+		case "$*" in
+		"load -i ${work_dir}/lensnode-image-linux-amd64.tar.gz") ;;
+		"image inspect hyperfilelens-sourcelens-lensnode:latest --format {{.Id}}")
+			printf '%s\n' sha256:selected
+			;;
+		"image ls oneprolabs/sourcelens-lensnode --format {{.Repository}}:{{.Tag}}")
+			printf '%s\n' \
+				oneprolabs/sourcelens-lensnode:0.50.0 \
+				oneprolabs/sourcelens-lensnode:0.49.5
+			;;
+		"image inspect oneprolabs/sourcelens-lensnode:0.50.0 --format {{.Id}}")
+			printf '%s\n' sha256:unrelated
+			;;
+		"image inspect oneprolabs/sourcelens-lensnode:0.49.5 --format {{.Id}}")
+			printf '%s\n' sha256:selected
+			;;
+		"image inspect oneprolabs/sourcelens-lensnode:0.49.5") ;;
+		*) printf 'unexpected fake Docker invocation: %s\n' "$*" >&2; return 90 ;;
+		esac
+	}
+	load_lensnode_image "${work_dir}"
+	[[ "${RESOLVED_LENSNODE_IMAGE}" == "oneprolabs/sourcelens-lensnode:0.49.5" ]]
+)
+
 test_lifecycle_accepts_persisted_node_credential() (
 	# shellcheck disable=SC1090
 	source "${LIFECYCLE}"
@@ -540,6 +602,8 @@ test_sidecar_start_failure_restores_previous_compose
 test_first_sidecar_start_failure_cleans_partial_project
 test_forced_sidecar_recreate_is_opt_in
 test_upgrade_keeps_existing_sidecar_until_replacement_starts
+test_lensnode_resolution_ignores_unrelated_newer_image
+test_lifecycle_passes_exact_loaded_lensnode_image
 test_lifecycle_accepts_persisted_node_credential
 test_lifecycle_rejects_relative_persisted_agent_root
 test_lifecycle_rejects_relative_agent_env_path

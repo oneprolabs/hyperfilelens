@@ -123,6 +123,49 @@ fi
 	sourcelens_runtime_present
 )
 
+# Uninstall removes historical HFL aliases but preserves upstream and Docker
+# Library image tags, which may be shared by unrelated workloads on the host.
+(
+	set -euo pipefail
+	source "${REPO_ROOT}/deploy/installer/install.sh"
+	ROOT="${fixture}/image-ownership-root"
+	mkdir -p "${ROOT}"
+	cat >"${ROOT}/MANIFEST.json" <<'JSON'
+{
+  "images": [
+    {"role": "hyperfilelens", "refs": ["hyperfilelens-backend:1.0.0"]},
+    {"role": "shared", "refs": ["postgres:17", "redis:alpine"]},
+    {"role": "sourcelens-backend", "refs": ["oneprolabs/sourcelens-backend:0.49.5"]},
+    {"role": "sourcelens-nginx", "refs": ["nginx:stable-alpine"]},
+    {"role": "sourcelens-frontend", "refs": ["hyperfilelens-sourcelens-frontend:legacy"]}
+  ]
+}
+JSON
+	removed="${fixture}/removed-image-tags"
+	: >"${removed}"
+	mkdir -p "${fixture}/image-ownership-bin"
+	cat >"${fixture}/image-ownership-bin/docker" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+"image ls --quiet --no-trunc hyperfilelens-backend:1.0.0") printf '%s\n' backend-id ;;
+"image ls --quiet --no-trunc hyperfilelens-sourcelens-frontend:legacy") printf '%s\n' sourcelens-id ;;
+"image rm -f hyperfilelens-backend:1.0.0") printf '%s\n' hyperfilelens-backend:1.0.0 >>"${HFL_TEST_REMOVED_TAGS}" ;;
+"image rm -f hyperfilelens-sourcelens-frontend:legacy") printf '%s\n' hyperfilelens-sourcelens-frontend:legacy >>"${HFL_TEST_REMOVED_TAGS}" ;;
+*) printf 'unexpected Docker image cleanup: %s\n' "$*" >&2; exit 90 ;;
+esac
+SH
+	chmod 755 "${fixture}/image-ownership-bin/docker"
+	export HFL_TEST_REMOVED_TAGS="${removed}"
+	export PATH="${fixture}/image-ownership-bin:${PATH}"
+	step() { :; }
+	remove_manifest_images
+	remove_sourcelens_images
+	mapfile -t removed_tags <"${removed}"
+	[[ "${removed_tags[*]}" == \
+		'hyperfilelens-backend:1.0.0 hyperfilelens-sourcelens-frontend:legacy' ]]
+)
+
 # The real SourceLens fallback must remove verified orphan containers before
 # images and data. Image cleanup failure must preserve data for retry.
 run_sourcelens_component_contract() (

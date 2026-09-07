@@ -527,6 +527,136 @@ if (validate_package_identity "${identity_root}") >/dev/null 2>&1; then
 	exit 1
 fi
 
+# Assemble the same thin Candidate consumed by the SaaS deployment. This
+# catches drift between upstream metadata, Compose refs, and the installer
+# manifest without pulling or rebuilding any third-party image.
+candidate_metadata="${tmp}/candidate-metadata"
+candidate_archive="${tmp}/candidate.tar.gz"
+candidate_extract="${tmp}/candidate-extract"
+mkdir -p "${candidate_metadata}" "${candidate_extract}"
+python3 - "${candidate_metadata}" "${ROOT}/deploy/online/sourcelens/runtime.json" \
+	"${ROOT}/tools/dependencies/versions/runtime-images.env" "${digest}" "${revision}" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+target = pathlib.Path(sys.argv[1])
+sourcelens = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+runtime_values = {}
+for line in pathlib.Path(sys.argv[3]).read_text(encoding="utf-8").splitlines():
+    match = re.fullmatch(r"([A-Z_]+)=(.+)", line.strip())
+    if match:
+        runtime_values[match.group(1)] = match.group(2)
+hfl_digest = sys.argv[4]
+
+
+def write(name, local_ref, role, digest, global_ref, cn_ref, **extra):
+    payload = {
+        "component": name,
+        "role": role,
+        "local_ref": local_ref,
+        "digest": digest,
+        "platform": "linux/amd64",
+        "sources": [
+            {"region": "cn", "ref": cn_ref},
+            {"region": "global", "ref": global_ref},
+        ],
+        **extra,
+    }
+    (target / f"{name}.json").write_text(
+        json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+for component in ("backend", "frontend"):
+    local_ref = f"hyperfilelens-{component}:1.0.0-ee"
+    write(
+        f"hfl-{component}",
+        local_ref,
+        "hyperfilelens",
+        hfl_digest,
+        f"docker.io/example/{local_ref}",
+        f"registry.example.cn/example/{local_ref}",
+    )
+for component, image in sourcelens["images"].items():
+    write(
+        f"sourcelens-{component}",
+        image["local_ref"],
+        f"sourcelens-{component}",
+        image["digest"],
+        image["sources"]["global"],
+        image["sources"]["cn"],
+        sourcelens_version=sourcelens["version"],
+        sourcelens_git_ref=sourcelens["git_ref"],
+        sourcelens_git_commit=sourcelens["git_commit"],
+    )
+for component, variable, role in (
+    ("postgres", "POSTGRES_IMAGE", "shared"),
+    ("redis", "REDIS_IMAGE", "shared"),
+    ("sourcelens-nginx", "NGINX_IMAGE", "sourcelens-nginx"),
+):
+    local_ref, pinned_digest = runtime_values[variable].split("@", 1)
+    source = f"docker.io/library/{local_ref}"
+    write(component, local_ref, role, pinned_digest, source, source)
+for kind in ("agent", "gateway", "language"):
+    local_ref = f"hyperfilelens-{kind}-assets:1.0.0"
+    write(
+        f"{kind}-assets",
+        local_ref,
+        f"{kind}-assets",
+        hfl_digest,
+        f"docker.io/example/{local_ref}",
+        f"registry.example.cn/example/{local_ref}",
+        asset_kind=kind,
+    )
+PY
+"${ROOT}/release/ci/assemble-saas-candidate.sh" \
+	"${candidate_metadata}" 1.0.0 "${revision}" "$(printf 'c%.0s' {1..40})" \
+	/opt/hfl/extensions/hyperfilelens-ee "${candidate_archive}"
+tar -xzf "${candidate_archive}" -C "${candidate_extract}"
+assembled_root="${candidate_extract}/hyperfilelens-1.0.0-ee-saas"
+grep -Fx 'HFL_POSTGRES_IMAGE=postgres:17' "${assembled_root}/.env.example" >/dev/null
+grep -Fx 'HFL_REDIS_IMAGE=redis:alpine' "${assembled_root}/.env.example" >/dev/null
+grep -F 'image: oneprolabs/sourcelens-backend:0.49.5' \
+	"${assembled_root}/sourcelens/docker-compose.yml" >/dev/null
+grep -F 'image: nginx:stable-alpine' \
+	"${assembled_root}/sourcelens/docker-compose.yml" >/dev/null
+python3 - "${assembled_root}" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads((root / "MANIFEST.json").read_text(encoding="utf-8"))
+registry = manifest["delivery"]["registry_images"]
+refs = {entry["local_ref"] for entry in registry}
+assert refs == {
+    "hyperfilelens-backend:1.0.0-ee",
+    "hyperfilelens-frontend:1.0.0-ee",
+    "oneprolabs/sourcelens-backend:0.49.5",
+    "oneprolabs/sourcelens-frontend:0.49.5",
+    "nginx:stable-alpine",
+    "postgres:17",
+    "redis:alpine",
+}
+assert not any("lensnode" in ref for ref in refs)
+build_info = json.loads(
+    (root / "sourcelens/BUILD_INFO.json").read_text(encoding="utf-8")
+)
+assert build_info["lensnode_image"] == "oneprolabs/sourcelens-lensnode:0.49.5"
+assert {
+    name: build_info["images"][name]["ref"]
+    for name in ("nginx", "postgres", "redis")
+} == {
+    "nginx": "nginx:stable-alpine",
+    "postgres": "postgres:17",
+    "redis": "redis:alpine",
+}
+assert not any((root / "images").iterdir())
+PY
+validate_package_identity "${assembled_root}"
+
 sourcelens_root="${tmp}/sourcelens-candidate"
 mkdir -p \
 	"${sourcelens_root}/sourcelens/deploy/nginx/hfl-maintenance" \

@@ -127,29 +127,75 @@ python3 - "${mode}" "${output}" "${git_ref}" "${version}" "${git_commit}" <<'PY'
 import json
 import os
 import pathlib
+import re
 import sys
 import tempfile
 
 mode = sys.argv[1]
 output = pathlib.Path(sys.argv[2])
-payload = {
+identity = {
     "git_commit": sys.argv[5],
     "git_ref": sys.argv[3],
     "version": sys.argv[4],
 }
+
+
+def validate_image_lock(contract, version):
+    images = contract.get("images")
+    if images is None:
+        return
+    if not isinstance(images, dict) or set(images) != {
+        "backend",
+        "frontend",
+        "lensnode",
+    }:
+        raise SystemExit("SourceLens runtime image lock is incomplete")
+    for name, image in images.items():
+        if not isinstance(image, dict):
+            raise SystemExit(f"SourceLens {name} image lock is invalid")
+        digest = str(image.get("digest") or "")
+        local_ref = str(image.get("local_ref") or "")
+        sources = image.get("sources") or {}
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise SystemExit(f"SourceLens {name} image digest is invalid")
+        if local_ref != f"oneprolabs/sourcelens-{name}:{version}":
+            raise SystemExit(
+                f"SourceLens {name} image lock does not match v{version}"
+            )
+        if sources != {
+            "cn": (
+                "registry.cn-beijing.aliyuncs.com/oneprolabs/"
+                f"sourcelens-{name}:{version}"
+            ),
+            "global": f"docker.io/oneprolabs/sourcelens-{name}:{version}",
+        }:
+            raise SystemExit(f"SourceLens {name} image sources are invalid")
+
+
 if mode == "check":
     try:
         actual = json.loads(output.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise SystemExit(f"invalid SourceLens runtime contract: {exc}") from exc
-    if actual != payload:
-        differences = sorted(set(actual) | set(payload), key=str)
-        differences = [name for name in differences if actual.get(name) != payload.get(name)]
+    validate_image_lock(actual, identity["version"])
+    differences = [
+        name for name, value in identity.items() if actual.get(name) != value
+    ]
+    if differences:
         raise SystemExit(
             "SourceLens runtime contract differs from the peeled tag identity: "
             + ", ".join(differences)
         )
     raise SystemExit(0)
+
+payload = {}
+if output.is_file():
+    try:
+        payload = json.loads(output.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"invalid SourceLens runtime contract: {exc}") from exc
+validate_image_lock(payload, identity["version"])
+payload.update(identity)
 
 descriptor, temporary = tempfile.mkstemp(prefix=f".{output.name}.", dir=output.parent)
 try:

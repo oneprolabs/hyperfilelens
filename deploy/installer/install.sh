@@ -1933,10 +1933,29 @@ if delivery_mode == "registry":
         sources = image.get("sources") or []
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", role):
             raise SystemExit("registry delivery has an invalid image role")
-        if not re.fullmatch(
-            r"hyperfilelens-[a-z0-9-]+:[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
-            local_ref,
-        ):
+        valid_local_ref = False
+        if role == "hyperfilelens":
+            valid_local_ref = bool(
+                re.fullmatch(
+                    r"hyperfilelens-(?:backend|frontend):"
+                    r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
+                    local_ref,
+                )
+            )
+        elif role in {"sourcelens-backend", "sourcelens-frontend"}:
+            component = role[len("sourcelens-") :]
+            valid_local_ref = bool(
+                re.fullmatch(
+                    rf"oneprolabs/sourcelens-{component}:"
+                    r"[0-9]+\.[0-9]+\.[0-9]+",
+                    local_ref,
+                )
+            )
+        elif role == "sourcelens-nginx":
+            valid_local_ref = local_ref == "nginx:stable-alpine"
+        elif role == "shared":
+            valid_local_ref = local_ref in {"postgres:17", "redis:alpine"}
+        if not valid_local_ref:
             raise SystemExit(f"registry delivery has an invalid local image ref: {local_ref}")
         if local_ref not in declared_refs or local_ref in seen_refs:
             raise SystemExit(f"registry delivery has an undeclared or duplicate image ref: {local_ref}")
@@ -3553,6 +3572,14 @@ import sys
 with open(f"{sys.argv[1]}/MANIFEST.json", encoding="utf-8") as fh:
     manifest = json.load(fh)
 seen = set()
+
+
+def installer_owned_ref(ref):
+    repository = ref.split("@", 1)[0].rsplit(":", 1)[0]
+    name = repository.rsplit("/", 1)[-1]
+    return name.startswith("hyperfilelens-")
+
+
 entries = list(manifest.get("images", []))
 entries.extend(
     {"refs": [entry.get("local_ref", "")]}
@@ -3563,7 +3590,10 @@ for entry in entries:
         continue
     for ref in entry.get("refs", []):
         tag = ref.split("@", 1)[0]
-        if not tag:
+        # Upstream and Docker Library tags are shared host caches rather than
+        # installer-owned artifacts. Removing them could disrupt unrelated
+        # containers on the same host, so only clean HFL-owned image names.
+        if not tag or not installer_owned_ref(tag):
             continue
         if tag in seen:
             continue
@@ -4072,12 +4102,24 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as fh:
     manifest = json.load(fh)
 seen = set()
+
+
+def installer_owned_ref(ref):
+    repository = ref.split("@", 1)[0].rsplit(":", 1)[0]
+    name = repository.rsplit("/", 1)[-1]
+    return name.startswith("hyperfilelens-")
+
+
 for entry in manifest.get("images", []):
     role = entry.get("role", "")
     if not role.startswith("sourcelens"):
         continue
     for ref in entry.get("refs", []):
         tag = ref.split("@", 1)[0]
+        # New registry-backed releases use the upstream SourceLens and Docker
+        # Library names directly. Those shared tags are not owned by HFL.
+        if not installer_owned_ref(tag):
+            continue
         if tag in seen:
             continue
         seen.add(tag)
@@ -4283,13 +4325,29 @@ if deploy.is_dir():
     )
 digest = hashlib.sha256()
 
-# Registry transit references and rebuilt image IDs can change for every HFL
-# tag even while the bundled SourceLens release remains pinned. Only semantic
-# SourceLens identity belongs in the bundle fingerprint; runtime files below
-# capture HFL-owned integration changes.
+# Registry transit references and legacy rebuilt image IDs can change for every
+# HFL tag even while the bundled SourceLens release remains pinned. Preserve
+# their upstream identity, while digest-pinned upstream/public runtime images
+# participate directly in the fingerprint.
 build_info_path = root / "BUILD_INFO.json"
 if build_info_path.is_file():
     info = json.loads(build_info_path.read_text(encoding="utf-8"))
+    semantic_images = {}
+    embedded_lensnode = bool(info.get("embed_local_lensnode", False))
+    for name, image in sorted((info.get("images") or {}).items()):
+        if name == "lensnode" and not embedded_lensnode:
+            continue
+        if name not in {"backend", "frontend", "lensnode", "nginx", "postgres", "redis"}:
+            continue
+        ref = str((image or {}).get("ref") or "")
+        repository = ref.split("@", 1)[0].rsplit(":", 1)[0].rsplit("/", 1)[-1]
+        if repository.startswith("hyperfilelens-sourcelens-"):
+            semantic_images[name] = {}
+        else:
+            semantic_images[name] = {
+                "ref": ref,
+                "digest": str((image or {}).get("digest") or ""),
+            }
     identity = {
         "git_url": info.get("git_url", ""),
         "git_ref": info.get("git_ref", ""),
@@ -4302,6 +4360,7 @@ if build_info_path.is_file():
         "build_adapter_sha256": info.get("build_adapter_sha256", ""),
         "build_compose_file": info.get("build_compose_file", ""),
         "embed_local_lensnode": info.get("embed_local_lensnode", False),
+        "images": semantic_images,
     }
     digest.update(b"BUILD_INFO.identity\0")
     digest.update(

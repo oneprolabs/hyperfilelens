@@ -6,8 +6,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=../build.sh
 source "${ROOT}/release/build.sh"
-# shellcheck source=../../tools/dependencies/versions/runtime-images.env
-source "${ROOT}/tools/dependencies/versions/runtime-images.env"
 
 [[ $# -eq 6 ]] || {
 	printf 'Usage: %s METADATA_DIR VERSION OSS_COMMIT EE_COMMIT EXTENSIONS OUTPUT\n' "$0" >&2
@@ -54,29 +52,61 @@ mkdir -p \
 	"${pkg_root}/deploy/blue-green" \
 	"${pkg_root}/deploy/logrotate"
 
-pull_and_tag() {
-	local metadata=$1 source_ref digest local_ref immutable_ref
-	source_ref="$(jq -r '.sources[] | select(.region == "global") | .ref' "${metadata}")"
-	digest="$(jq -r '.digest' "${metadata}")"
-	local_ref="$(jq -r '.local_ref' "${metadata}")"
-	immutable_ref="${source_ref%:*}@${digest}"
-	docker pull --platform linux/amd64 "${immutable_ref}"
-	docker tag "${immutable_ref}" "${local_ref}"
-}
+python3 - "${ROOT}" "${pkg_root}" "${metadata_dir}" <<'PY'
+import json
+import pathlib
+import runpy
+import sys
 
-for component in sourcelens-backend sourcelens-frontend sourcelens-lensnode; do
-	pull_and_tag "${metadata_dir}/${component}.json"
-done
-docker pull --platform linux/amd64 "${NGINX_IMAGE}"
-docker tag "${NGINX_IMAGE}" nginx:stable-alpine
+root = pathlib.Path(sys.argv[1])
+package = pathlib.Path(sys.argv[2])
+metadata_root = pathlib.Path(sys.argv[3])
+online = runpy.run_path(str(root / "deploy/online/prepare.py"))
 
-export SOURCELENS_HFL_VERSION="${version}"
-SOURCELENS_DISTRIBUTION_TAG_OVERRIDE="${version}" \
-	BUILD_SOURCELENS=1 "${ROOT}/release/build-sourcelens.sh" \
-	--pkg-root "${pkg_root}" \
-	--images-dir "${images_dir}" \
-	--prebuilt \
-	--runtime-only
+
+def read(name):
+    return json.loads((metadata_root / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def resolved(name):
+    entry = read(name)
+    sources = {source["region"]: source["ref"] for source in entry["sources"]}
+    spec = online["ImageSpec"](
+        entry["component"],
+        entry["role"],
+        entry["local_ref"],
+        sources["global"],
+        sources["cn"],
+        entry["digest"],
+    )
+    return online["ResolvedImage"](spec, entry["digest"], sources["global"])
+
+
+backend = resolved("sourcelens-backend")
+frontend = resolved("sourcelens-frontend")
+lensnode = resolved("sourcelens-lensnode")
+nginx = resolved("sourcelens-nginx")
+postgres = resolved("postgres")
+redis = resolved("redis")
+online["stage_sourcelens"](
+    root,
+    package,
+    {
+        "backend": backend.spec.local_ref,
+        "frontend": frontend.spec.local_ref,
+        "lensnode": lensnode.spec.local_ref,
+        "nginx": nginx.spec.local_ref,
+        "postgres": postgres.spec.local_ref,
+        "redis": redis.spec.local_ref,
+    },
+)
+online["write_sourcelens_build_info"](
+    root,
+    package,
+    [backend, frontend, nginx, postgres, redis],
+    lensnode.spec,
+)
+PY
 
 printf '%s\n' "${version}" >"${pkg_root}/VERSION"
 cp "${ROOT}/deploy/docker-compose.yml" "${pkg_root}/docker-compose.yml"
@@ -84,6 +114,8 @@ HFL_RELEASE_EDITION=enterprise \
 	HFL_IMAGE_VERSION="${version}-ee" \
 	HFL_VERSION="${version}" \
 	HFL_EXTENSIONS_RUNTIME="${extensions}" \
+	HFL_RELEASE_POSTGRES_IMAGE="postgres:17" \
+	HFL_RELEASE_REDIS_IMAGE="redis:alpine" \
 	stage_release_env_example "${pkg_root}"
 stage_default_tls_bundle "${pkg_root}"
 cp "${ROOT}/deploy/nginx/default.conf" "${pkg_root}/deploy/nginx/default.conf"
@@ -119,7 +151,6 @@ runtime = [
     read("hfl-frontend"),
     read("sourcelens-backend"),
     read("sourcelens-frontend"),
-    read("sourcelens-lensnode"),
     read("sourcelens-nginx"),
     read("postgres"),
     read("redis"),

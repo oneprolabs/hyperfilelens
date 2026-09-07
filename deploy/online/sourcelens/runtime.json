@@ -1,5 +1,31 @@
 {
   "git_commit": "d94685d979bd0b105b9f23e5df86fbdcd94869a6",
   "git_ref": "v0.49.5",
+  "images": {
+    "backend": {
+      "digest": "sha256:b4fd19ea5bd3fed17e4c22eb44d4f4178181c33c29cc6ed956484642735408b8",
+      "local_ref": "oneprolabs/sourcelens-backend:0.49.5",
+      "sources": {
+        "cn": "registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-backend:0.49.5",
+        "global": "docker.io/oneprolabs/sourcelens-backend:0.49.5"
+      }
+    },
+    "frontend": {
+      "digest": "sha256:2c183e50bc9e6281ea58ede269b3e7227f6e1bdf649a2c6b066cb5c651ecb802",
+      "local_ref": "oneprolabs/sourcelens-frontend:0.49.5",
+      "sources": {
+        "cn": "registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-frontend:0.49.5",
+        "global": "docker.io/oneprolabs/sourcelens-frontend:0.49.5"
+      }
+    },
+    "lensnode": {
+      "digest": "sha256:b865673d640ff575883e8321d5bae18ebd7d975d2f9bae3660167fee28e74b69",
+      "local_ref": "oneprolabs/sourcelens-lensnode:0.49.5",
+      "sources": {
+        "cn": "registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-lensnode:0.49.5",
+        "global": "docker.io/oneprolabs/sourcelens-lensnode:0.49.5"
+      }
+    }
+  },
   "version": "0.49.5"
 }
