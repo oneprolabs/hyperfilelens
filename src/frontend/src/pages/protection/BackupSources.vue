@@ -4,7 +4,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, toRef, watch
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Plus, RefreshCw, Search, ChevronDown, Pencil, Trash2, TriangleAlert, ArrowUpCircle, Link2, Wrench } from 'lucide-vue-next'
-import { ElMessage, type ElTable } from 'element-plus'
+import { ElMessage, ElTooltip, type ElTable } from 'element-plus'
 import ModulePage from '../../components/ModulePage.vue'
 import BackupSourceDeleteDialog from '../../components/BackupSourceDeleteDialog.vue'
 import NodeLifecycleStatusCell from '../../components/node-lifecycle/NodeLifecycleStatusCell.vue'
@@ -880,14 +880,23 @@ function openRowDetail(row: SourceResource) {
 
 
 async function onUpgradeSelectedHosts() {
-  const targets = selectedHostAgents.value.filter((node) =>
+  const selected = [...selectedHostAgents.value]
+  const targets = selected.filter((node) =>
     lifecycleOps.canUpgradeNode(node, agentCanUpgrade),
   )
   if (targets.length === 0) {
-    ElMessage.warning({ message: t('nodeLifecycle.nothingEligible'), grouping: true })
+    const allDisconnected = selected.length > 0 && selected.every(
+      (node) => node.availability !== 'online' || node.routable === false,
+    )
+    ElMessage.warning({
+      message: t(allDisconnected
+        ? 'nodeLifecycle.nothingEligibleOffline'
+        : 'nodeLifecycle.nothingEligible'),
+      grouping: true,
+    })
     return
   }
-  const started = await lifecycleOps.runBatch('upgrade', targets)
+  const started = await lifecycleOps.runBatch('upgrade', selected)
   if (started) {
     clearHostTableSelection()
   }
@@ -1473,6 +1482,13 @@ const hostUpgradeDisabled = computed(() => {
     lifecycleOps.canUpgradeNode(node, agentCanUpgrade),
   )
   return upgradable.length === 0
+})
+const hostUpgradeDisabledReason = computed(() => {
+  if (!hostUpgradeDisabled.value || selectedHostAgents.value.length === 0) return ''
+  const allDisconnected = selectedHostAgents.value.every(
+    (node) => node.availability !== 'online' || node.routable === false,
+  )
+  return allDisconnected ? t('nodeLifecycle.nothingEligibleOffline') : ''
 })
 const nasBatchDisabled = computed(() => selectedNas.value.length === 0)
 const nasDeleteDisabled = computed(
@@ -2074,13 +2090,28 @@ onUnmounted(() => {
                   :disabled="hostUpgradeDisabled"
                   @click="onUpgradeSelectedHosts"
                 >
-                  <span class="el-dropdown-menu__item-content">
-                    <ArrowUpCircle
-                      :size="14"
-                      class="shrink-0"
-                    />
-                    <span>{{ t('nodesPage.actionUpgrade') }}</span>
-                  </span>
+                  <ElTooltip
+                    :disabled="!hostUpgradeDisabledReason"
+                    :content="hostUpgradeDisabledReason"
+                    placement="right"
+                    :fallback-placements="['left', 'top', 'bottom']"
+                    popper-class="hfl-tooltip--medium"
+                    :show-after="300"
+                  >
+                    <span
+                      class="el-dropdown-menu__item-content source-host-upgrade-action__trigger"
+                      :tabindex="hostUpgradeDisabledReason ? 0 : undefined"
+                      :aria-label="hostUpgradeDisabledReason
+                        ? `${t('nodesPage.actionUpgrade')}. ${hostUpgradeDisabledReason}`
+                        : t('nodesPage.actionUpgrade')"
+                    >
+                      <ArrowUpCircle
+                        :size="14"
+                        class="shrink-0"
+                      />
+                      <span>{{ t('nodesPage.actionUpgrade') }}</span>
+                    </span>
+                  </ElTooltip>
                 </ElDropdownItem>
                 <ElDropdownItem
                   :disabled="hostRenameDisabled"

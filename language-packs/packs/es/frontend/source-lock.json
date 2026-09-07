@@ -3841,6 +3841,7 @@
   "nodeLifecycle.upgradeFailedNoIp": "12d822eae53582eb75fe4675046734364556a6055348e9c657dc43a8f7195980",
   "nodeLifecycle.batchSkipped": "62bf6ffe80487e712e11cd5f41f04654c5b6687e4bf1f99ff80a8cdf7c6b0826",
   "nodeLifecycle.nothingEligible": "e19f58921c06e4f349e3fb46e89f7d16751396273229ce48e015545e6497e5d6",
+  "nodeLifecycle.nothingEligibleOffline": "fb9a952fd97b49ccbe94fe5d340611bce911a86734d98207f04e10d9d1d54bcc",
   "nodeLifecycle.nothingEligibleProxyBound": "3870f57189cf75afeddcdaae57f7eb61c5d94caddc6a0828e4348b4f710b3084",
   "nodeLifecycle.nothingEligibleWorkload": "201f69bf71a51286de830f655b354384fa95041e53162f5414baef0ad55988d9",
   "nodeLifecycle.nothingEligibleInProgress": "299632f87a747fa885c6fc607869b12ee4f87aca23161aebf2c6ced73ff1c788",

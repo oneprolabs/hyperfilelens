@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
+import { ElMessage } from 'element-plus'
 import { fetchLifecycleWatch, previewNodeOperationsBatch, startNodeOperationsBatch } from '../lib/nodeApi'
 import type { ApiNode } from '../types/node'
 import { useNodeLifecycleOps } from './useNodeLifecycleOps'
@@ -163,6 +164,110 @@ describe('useNodeLifecycleOps batch start', () => {
       expect(lifecycle.completed.value).toEqual([
         expect.objectContaining({ nodeId: startedNode.id }),
       ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('explains an offline-only upgrade preview after connectivity becomes stale', async () => {
+    const node = {
+      id: 33,
+      organization: 1,
+      name: 'stale-source',
+      role: 'agent',
+      status: 'active',
+      availability: 'online',
+      routable: true,
+    } as ApiNode
+    vi.mocked(previewNodeOperationsBatch).mockResolvedValue({
+      kind: 'upgrade',
+      requested: 1,
+      eligible: [],
+      skipped_offline: [{ node_id: node.id, name: node.name, reason: 'offline' }],
+      skipped_workload: [],
+      skipped_in_progress: [],
+      skipped_not_upgradeable: [],
+      skipped_proxy_bound: [],
+      missing_node_ids: [],
+      max_concurrent: 5,
+    })
+    const warning = vi.spyOn(ElMessage, 'warning').mockImplementation(() => undefined as never)
+    let lifecycle!: ReturnType<typeof useNodeLifecycleOps>
+    const wrapper = mount(defineComponent({
+      setup() {
+        lifecycle = useNodeLifecycleOps({
+          role: 'agent',
+          t: ((key: string) => key) as never,
+        })
+        return () => h('div')
+      },
+    }))
+
+    try {
+      await expect(lifecycle.runBatch('upgrade', [node])).resolves.toBe(false)
+      expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+        message: 'nodeLifecycle.nothingEligibleOffline',
+      }))
+    } finally {
+      warning.mockRestore()
+      wrapper.unmount()
+    }
+  })
+})
+
+describe('useNodeLifecycleOps remote upgrade eligibility', () => {
+  function mountLifecycle() {
+    let lifecycle!: ReturnType<typeof useNodeLifecycleOps>
+    const wrapper = mount(defineComponent({
+      setup() {
+        lifecycle = useNodeLifecycleOps({
+          role: 'agent',
+          t: ((key: string) => key) as never,
+        })
+        return () => h('div')
+      },
+    }))
+    return { lifecycle, wrapper }
+  }
+
+  function node(overrides: Partial<ApiNode> = {}): ApiNode {
+    return {
+      id: 41,
+      organization: 1,
+      name: 'source-host',
+      role: 'agent',
+      status: 'active',
+      availability: 'online',
+      routable: true,
+      version: '1.0.0',
+      ...overrides,
+    }
+  }
+
+  it('requires the node to be online and routable', () => {
+    const { lifecycle, wrapper } = mountLifecycle()
+    const versionEligible = vi.fn(() => true)
+
+    try {
+      expect(lifecycle.canUpgradeNode(node(), versionEligible)).toBe(true)
+      expect(lifecycle.canUpgradeNode(node({ availability: 'offline' }), versionEligible)).toBe(false)
+      expect(lifecycle.canUpgradeNode(node({ routable: false }), versionEligible)).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('still rejects busy, workload-blocked, and version-ineligible nodes', () => {
+    const { lifecycle, wrapper } = mountLifecycle()
+
+    try {
+      expect(lifecycle.canUpgradeNode(node({
+        lifecycle: { kind: 'upgrade', state: 'upgrading' },
+      }), () => true)).toBe(false)
+      expect(lifecycle.canUpgradeNode(node({
+        workload: { blocked: true, reasons: [] },
+      }), () => true)).toBe(false)
+      expect(lifecycle.canUpgradeNode(node(), () => false)).toBe(false)
     } finally {
       wrapper.unmount()
     }

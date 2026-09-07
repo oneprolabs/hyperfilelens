@@ -498,6 +498,9 @@ export function useNodeLifecycleOps(options: {
     if (preview.skipped_in_progress.length) {
       return t('nodeLifecycle.nothingEligibleInProgress', { n: preview.skipped_in_progress.length })
     }
+    if (preview.skipped_offline.length) {
+      return t('nodeLifecycle.nothingEligibleOffline')
+    }
     return t('nodeLifecycle.nothingEligible')
   }
 
@@ -881,6 +884,7 @@ export function useNodeLifecycleOps(options: {
   }
 
   function canUpgradeNode(node: ApiNode, canUpgradeFn: (node: ApiNode) => boolean): boolean {
+    if (node.availability !== 'online' || node.routable === false) return false
     if (isNodeBusy(node)) return false
     if (node.workload?.blocked) return false
     return canUpgradeFn(node)

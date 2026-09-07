@@ -3995,6 +3995,7 @@
     "upgradeFailedNoIp": "{entity} {name} 升级失败: {error}",
     "batchSkipped": "已跳过 {n} 台（未开始）。",
     "nothingEligible": "所选节点均不符合操作条件。",
+    "nothingEligibleOffline": "远程升级要求所选节点在线。请恢复连接，或选择一个节点并通过“维护”获取本地升级命令。",
     "nothingEligibleProxyBound": "有 {n} 个 Proxy 仍绑定资源，无法删除。",
     "nothingEligibleWorkload": "有 {n} 个节点正在执行备份/恢复任务，无法操作。",
     "nothingEligibleInProgress": "有 {n} 个节点已有进行中的生命周期操作。",
