@@ -86,7 +86,7 @@ When using SaaS, install an Agent on the host whose files you want to protect an
 Community runs on an Ubuntu host that you manage. The installation host must meet these basic requirements:
 
 - Ubuntu 20.04, 22.04, or 24.04 on amd64.
-- At least 2 CPU cores, 4 GiB of memory, and 20 GiB of free space on the disk containing `/opt`.
+- At least 4 CPU cores, 8 GiB of memory, and 20 GiB of free space on the disk containing `/opt`. For regular use, 8 CPU cores and 16 GiB of memory are recommended.
 - Docker Engine 24.0.0 or later and Docker Compose V2 2.20.0 or later, with the Docker daemon running. If Docker is entirely absent, the online installer can install Docker CE and Compose V2 from the selected regional package source. If a supported, healthy Docker CE runtime is present but Compose V2 is missing, the installer can add only the pinned Compose plugin when the package plan leaves the existing Docker runtime unchanged.
 - `curl`, Python 3, `sudo` access, and network access to GitHub, the container registry, the selected or existing Docker CE source, and the Ubuntu package repositories.
 

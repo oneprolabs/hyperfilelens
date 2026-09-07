@@ -1,28 +1,19 @@
 ---
-title: Accounts and Sign-in
-description: Troubleshoot console access, SaaS or Community sign-in, language packs, and stale pages.
+title: Accounts and sign-in
+description: Troubleshoot HyperFileLens Community console access, sign-in, language packs, and stale pages.
 ---
 
-# Accounts and Sign-in
+# Accounts and sign-in
 
 ## The console does not open
 
-For the official SaaS, open the [HyperFileLens SaaS console](https://app.hyperfilelens.com/). For Community, open the complete address marked `Tenant` in the installation result.
-
-If a Community console does not open:
+Open the full URL labeled `Tenant` in the installation output. If the console does not open:
 
 1. Run `sudo /opt/hyperfilelens/install.sh status` on the installation host and confirm that the services are healthy.
 2. Confirm that the address, port, and reverse-proxy configuration match the current deployment.
 3. Confirm that the browser can reach the address and trusts its TLS certificate.
 
-## Official SaaS sign-in fails
-
-- New users should use Google sign-in and select the Google account they want to use with HyperFileLens.
-- Existing users who already have email-and-password access can continue to use it.
-- If Google redirects back without signing you in, reopen the console and check whether the browser blocked the redirect or required cookies.
-- If sign-in succeeds but the organization is unavailable, confirm that you used the correct account and ask an organization administrator to check your membership.
-
-## Community sign-in fails
+## Sign-in fails
 
 - For the first sign-in, use the initial account and password shown by the installer.
 - After changing the initial password, use the new value and check for leading or trailing spaces.
@@ -31,7 +22,7 @@ If a Community console does not open:
 
 ## Simplified Chinese is unavailable
 
-Check the Simplified Chinese language pack in Community:
+To check the Simplified Chinese language pack in the Community deployment, run:
 
 ```bash
 sudo /opt/hyperfilelens/install.sh lang-pack list

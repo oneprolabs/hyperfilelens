@@ -26,9 +26,9 @@ If <span class="hfl-ui">Automatic</span> reports that no Public Data Gateway is 
 - Confirm that its version is compatible with the control plane.
 - Check free disk space on the gateway host.
 
-If installation did not finish, see [Installation and Nodes](/en/docs/troubleshooting/installation-nodes).
+If installation did not finish, see [Installation and nodes](/en/docs/troubleshooting/installation-nodes).
 
-## Data preparation does not finish
+## Data preparation does not complete
 
 - Retry with a small set of files or a smaller folder.
 - Check whether the selected files are oversized, corrupted, encrypted, or unsupported by the current parser.
@@ -45,4 +45,4 @@ If installation did not finish, see [Installation and Nodes](/en/docs/troublesho
 
 ## Questions about data location
 
-Confirm whether the session uses a Public or Private Data Gateway and who provides the AI model. Data-processing location depends on the gateway location, model endpoint, and organization network configuration together. A Private Data Gateway does not mean that an external model service also runs in the private network.
+Confirm whether the session uses a Public or Private Data Gateway and who provides the AI model. Where data is processed depends on the Data Gateway location, the model endpoint, and the organization's network configuration. A Private Data Gateway does not mean that an external model service also runs on the private network.

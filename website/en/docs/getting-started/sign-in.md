@@ -5,17 +5,15 @@ description: Sign in to HyperFileLens and check that the Backup Wizard is availa
 
 # Sign in to the console
 
-SaaS users sign in with their registered account. Community users open the console URL and use the initial account provided by the installer. This First Use walkthrough uses the English product interface.
+After installing HyperFileLens Community, sign in with the console URL and initial account shown in the installation output. This first-use guide follows the English product interface.
 
 ## Sign in
 
-1. Open the SaaS console or the console URL provided by the Community installer.
+1. Find the full URL labeled `Tenant` in the installation output and open it in your browser.
 2. Switch the interface language to **English**.
-3. Choose a sign-in method:
-   - Select **Password**, enter your account details, and complete the human-verification challenge.
-   - If Google sign-in is available for your account, select **Continue with Google**.
+3. Select **Password**, enter the initial account and password from the installation output, and complete the verification challenge.
 4. Select **Sign In**.
-5. If this is the first Community sign-in, change the initial password immediately.
+5. After the first sign-in, change the initial password immediately.
 6. Check the current organization, time zone, and system time.
 7. Confirm that **Protection → Backup Wizard** opens successfully.
 
@@ -26,5 +24,3 @@ SaaS users sign in with their registered account. Community users open the conso
 - The browser can access the console without certificate or network errors.
 - The test directory is ready at `C:\HFL-Quickstart`.
 - You know which Windows host contains the test directory.
-
-Next: [Add a backup source](/en/docs/getting-started/add-source).

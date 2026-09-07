@@ -11,7 +11,7 @@ Deploy a Proxy on a Linux host that can reach the required NAS or local storage.
 
 - Prepare an Ubuntu amd64 host that meets the [system requirements](/en/docs/deployment/requirements).
 - Confirm that the host can reach the HyperFileLens control plane and the NAS or local disk you plan to use.
-- For NAS, confirm that the SMB or NFS service and port are reachable from the Proxy host. See [Network and Ports](/en/docs/deployment/network).
+- For NAS, confirm that the SMB or NFS service and port are reachable from the Proxy host. See [Network and ports](/en/docs/deployment/network).
 
 ## Install the Proxy
 
@@ -24,7 +24,7 @@ Deploy a Proxy on a Linux host that can reach the required NAS or local storage.
 
 When adding a NAS source, NAS target, or Proxy local-disk target, select the deployed Proxy and complete connection validation.
 
-The console uses the address reported by the Proxy by default. Change <span class="hfl-ui">Repository Server Address</span> only when an Agent or Private Data Gateway cannot reach Proxy storage through that address. Enter an address those components can actually reach and allow the required ports.
+The console uses the address reported by the Proxy by default. Change <span class="hfl-ui">Repository Server Address</span> only when an Agent or Private Data Gateway cannot reach the Proxy's storage through that address. Enter an address that is reachable from those components and allow the required ports.
 
 ## Verify the Proxy
 
@@ -35,4 +35,4 @@ In the console, confirm that:
 - The expected folders are available from the relevant source or target page.
 - The Proxy reconnects automatically after its host or service restarts.
 
-If registration or storage validation fails, or the Proxy remains offline, see [Installation and Nodes](/en/docs/troubleshooting/installation-nodes).
+If registration or storage validation fails, or the Proxy remains offline, see [Installation and nodes](/en/docs/troubleshooting/installation-nodes).

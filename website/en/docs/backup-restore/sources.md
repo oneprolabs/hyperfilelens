@@ -1,9 +1,9 @@
 ---
-title: Manage Backup Sources
+title: Manage backup sources
 description: Add and verify host and NAS backup sources.
 ---
 
-# Manage Backup Sources
+# Manage backup sources
 
 A backup source is the entry point for protected data. HyperFileLens can protect files on a host running an Agent or access a NAS share through a Proxy.
 
@@ -11,7 +11,7 @@ A backup source is the entry point for protected data. HyperFileLens can protect
 
 Deploy the Agent on a Linux, Windows, or macOS host. In the English interface, open **Protection → Backup Wizard → Backup Sources**, select **Add Source → Source Host**, choose the operating system, and run the displayed installation command on the destination host.
 
-The installation command contains one-time registration information. Do not copy the complete command into public documentation, issues, or chat. After the node connects, refresh the list and confirm:
+The installation command contains one-time registration information. Do not copy the full command into public documentation, issues, or chats. After the node connects, refresh the list and confirm:
 
 - **Lifecycle Status** is **Registered**;
 - **Connectivity** is **Online**;
@@ -29,7 +29,7 @@ Avoid selecting:
 
 ## NAS shares
 
-Select **Add Source → NAS**, configure the share protocol, address, and credentials, and choose a Proxy that can reach the share. Verify the path, protocol, credentials, and character set before saving. The Proxy must have a working data path to the NAS; console access alone is not sufficient.
+Select **Add Source → NAS**, configure the share protocol, address, and credentials, and choose a Proxy that can reach the share. Verify the path, protocol, credentials, and character set before saving. The Proxy must be able to connect to the NAS; access to the console alone is not sufficient.
 
 If non-ASCII names appear incorrectly, check the Proxy mount character set and operating-system support. Do not work around the problem by renaming production files.
 
@@ -40,4 +40,4 @@ If non-ASCII names appear incorrectly, check the Proxy mount character set and o
 - Compare the selected scope with the intended protected data.
 - Keep node versions compatible with the current control plane.
 
-Backup configurations, tasks, snapshots, and restore records are associated with the source. If a host is temporarily offline, restore the Agent or network connection first instead of registering a duplicate node. Installation commands and registration credentials must never appear in public troubleshooting material.
+Backup configurations, tasks, snapshots, and restore records are associated with the source. If a host is temporarily offline, restore its Agent or network connectivity instead of registering a duplicate node. Never include installation commands or registration credentials in public troubleshooting material.

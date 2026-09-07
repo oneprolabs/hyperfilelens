@@ -1,9 +1,9 @@
 ---
-title: Product Workflow
+title: Product workflow
 description: Understand how backups, snapshots, restores, and AI-powered insights work together in HyperFileLens.
 ---
 
-# Product Workflow
+# Product workflow
 
 HyperFileLens is built around backup snapshots. A backup configuration connects the data to protect, its target storage, and the policy that controls execution. Once a backup job creates a snapshot, you can restore files and folders or select snapshot data for AI-powered analysis.
 
@@ -22,7 +22,7 @@ The data protection lifecycle is straightforward:
 3. [View tasks and snapshots](/en/docs/backup-restore/snapshots) to confirm that the expected files are present.
 4. [Restore files and directories](/en/docs/backup-restore/restore) to prove that the protected data is usable.
 
-See the [Backup and Restore workflow](/en/docs/backup-restore/) for the complete guide.
+See the [backup and restore workflow](/en/docs/backup-restore/) for the complete guide.
 
 ## Insights
 
@@ -31,8 +31,8 @@ Insights works with existing backup snapshots and does not read live files from 
 1. Select a backup configuration, a specific snapshot, and the files or folders to analyze.
 2. Use the default Public Data Gateway, or select a Private Data Gateway that can reach the repository.
 3. Create an insight session and wait for the selected data to be prepared.
-4. Use citations to understand the evidence and source material behind an answer.
+4. Open citations to review the source material behind an answer.
 
 ## First-time use
 
-If you are new to HyperFileLens, follow the [Quick Start](/en/docs/) and use the same test data to complete a backup, restore, and insight session. Once that workflow succeeds, configure schedules, retention, and routine validation for your actual data and recovery requirements.
+If you are new to HyperFileLens, follow the [Quick start](/en/docs/) to run a backup, restore a test file, and create an Insights session with the same sample data. Once you have completed the workflow, configure schedules, retention, and routine restore tests for the data you need to protect.

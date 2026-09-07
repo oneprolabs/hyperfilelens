@@ -1,13 +1,13 @@
 ---
-title: Create an Insights Session
-description: Select snapshot data and a Data Gateway, then create and use an AI Copilot Chat.
+title: Create an Insights session
+description: Select snapshot data and a Data Gateway, then create and use an Insights session.
 ---
 
-# Create an Insights Session
+# Create an Insights session
 
-Open **Insights → AI Copilot** and select **New Chat**. Each Chat binds to one protected snapshot and an explicit file or folder scope.
+Open **Insights → AI Copilot** and select **New Chat**. Each session is tied to one protected snapshot and an explicit file or folder scope.
 
-## Create a Chat
+## Create a session
 
 1. Under **Data Source**, select a configured backup source.
 2. Select **Latest available snapshot** or a specific snapshot point.
@@ -22,13 +22,13 @@ Open **Insights → AI Copilot** and select **New Chat**. Each Chat binds to one
 
 ![Synthetic snapshot file selected for an Insights Chat with account, host, and repository identifiers blurred](/docs/getting-started/insights-select-data.png)
 
-The creation button remains disabled until the required source, snapshot, data scope, analysis type, and Gateway are valid. Follow the page message instead of repeatedly submitting the same request.
+The creation button remains disabled until you have selected a valid source, snapshot, data scope, analysis type, and Data Gateway. Follow the guidance on the page instead of repeatedly submitting the same request.
 
 ## Wait for preparation
 
-The selected Data Gateway restores the chosen snapshot scope into an isolated workspace and prepares it for the Chat. The session can show queued, preparing, ready, or failed states. Wait for **Ready** before asking questions.
+The selected Data Gateway restores the chosen snapshot data to an isolated workspace and prepares it for the session. A session can be queued, preparing, ready, or failed. Wait until it is **Ready** before asking questions.
 
-![Knowledge Q&A configured with a Public Data Gateway and private Gateway availability shown, with account, host, and Gateway identifiers blurred](/docs/getting-started/insights-gateway-ready.png)
+![Knowledge Q&A configured with a Public Data Gateway and Private Data Gateway availability shown, with account, host, and gateway identifiers blurred](/docs/getting-started/insights-gateway-ready.png)
 
 ## Ask and verify
 
@@ -39,4 +39,4 @@ Begin with a narrow question that has a checkable answer. State the expected for
 - “Compare these two version folders and list the significant changes.”
 - “Identify the main implementation files and explain the call path.”
 
-Open citations and compare the answer with the snapshot files. If the evidence is weak, narrow the question or explicitly request citations. A Chat remains tied to its original snapshot even when live source files later change.
+Open citations to review the source material behind the answer. If the evidence is insufficient, narrow the question or explicitly request citations. A session remains tied to its original snapshot even if the live source files change later.

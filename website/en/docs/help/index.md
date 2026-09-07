@@ -1,11 +1,11 @@
 ---
-title: Help Center
+title: Help center
 description: Find product concepts, supported configurations, security guidance, and troubleshooting for HyperFileLens.
 ---
 
-# Help Center
+# Help center
 
-Use Product Reference to understand product behavior and supported boundaries. Use Troubleshooting when an installation, connection, job, or page is already failing.
+Use the product reference to understand how HyperFileLens works and what it supports. Use the troubleshooting guides when an installation, connection, job, or page is not working as expected.
 
 ## Product reference
 
@@ -17,6 +17,6 @@ Use Product Reference to understand product behavior and supported boundaries. U
 
 - [Troubleshooting Guide](/en/docs/troubleshooting/): Locate a problem by the stage where it occurred.
 - [Accounts and Sign-in](/en/docs/troubleshooting/account-sign-in): Resolve console access, sign-in, and stale-page issues.
-- [Installation and Nodes](/en/docs/troubleshooting/installation-nodes): Resolve Community, Agent, Proxy, and Private Data Gateway installation or connectivity issues.
+- [Installation and nodes](/en/docs/troubleshooting/installation-nodes): Resolve installation or connectivity issues affecting HyperFileLens Community, an Agent, a Proxy, or a Private Data Gateway.
 - [Backup, Storage, and Restore](/en/docs/troubleshooting/protection): Resolve folder browsing, storage validation, backup, snapshot, and restore failures.
-- [Insights and Data Gateway](/en/docs/troubleshooting/insights): Resolve session creation, data preparation, gateway, and answer-quality issues.
+- [Insights and Data Gateway](/en/docs/troubleshooting/insights): Resolve session creation, data preparation, gateway, and answer quality issues.

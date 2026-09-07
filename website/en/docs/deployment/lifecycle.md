@@ -1,13 +1,11 @@
 ---
-title: Upgrade and Recovery
+title: Upgrade and recovery
 description: Check, back up, and upgrade HyperFileLens Community, and respond safely to upgrade failures.
 ---
 
-# Upgrade and Recovery
+# Upgrade and recovery
 
-This page applies to self-hosted HyperFileLens Community. OnePro Cloud upgrades the official SaaS; no user action is required.
-
-Use the installer for Community status checks, system backups, and upgrades. Do not manually replace runtime files or container images in the installation directory.
+Use the installer to check the status of HyperFileLens Community, create system backups, and perform upgrades. Do not manually replace runtime files or container images in the installation directory.
 
 ## Before upgrading
 
@@ -27,7 +25,7 @@ The upgrade process automatically creates and validates a system backup before m
 sudo /opt/hyperfilelens/install.sh backup
 ```
 
-The installer keeps the three most recent valid system backups. These backups protect Community control-plane configuration and operational data. They do not include business files from backup sources and do not replace backup and restore testing in the product.
+The installer retains the three most recent valid system backups. These backups protect the Community control plane's configuration and operational data. They do not include data from protected sources and do not replace backup and restore testing in the product.
 
 ## Run the upgrade
 
@@ -40,11 +38,11 @@ curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deplo
   | sudo bash -s -- --mirror global --tag vX.Y.Z
 ```
 
-Replace `vX.Y.Z` with the target release. The installer detects the existing Community environment and starts the upgrade workflow.
+Replace `vX.Y.Z` with the target release. The installer detects the existing Community deployment and starts the upgrade workflow.
 
 ### Upgrade from a release package
 
-If you already have the target Community release package, pass its complete path:
+If you already have the release package for the target version, provide its full path:
 
 ```bash
 sudo /opt/hyperfilelens/install.sh upgrade \
@@ -69,4 +67,4 @@ After a failure:
 1. Do not repeat the upgrade, delete system backups, or replace runtime files manually.
 2. Run `status` and record the current version and unhealthy services.
 3. Keep the installer log and system backups.
-4. Follow the recovery instructions in the target release notes. If none are provided, see [Installation and Nodes](/en/docs/troubleshooting/installation-nodes).
+4. Follow the recovery instructions in the target release notes. If none are provided, see [Installation and nodes](/en/docs/troubleshooting/installation-nodes).

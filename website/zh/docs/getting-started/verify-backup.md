@@ -40,5 +40,3 @@ description: 检查首次备份任务状态、快照状态和快照中的文件�
 - 快照状态为 **Available**；
 - 快照源路径为 `C:\HFL-Quickstart`；
 - `restore-check.txt` 和 `insights\device-inventory.csv` 均可在浏览器中找到。
-
-下一步：[恢复测试文件](/zh/docs/getting-started/first-restore)。

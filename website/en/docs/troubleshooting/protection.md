@@ -1,9 +1,9 @@
 ---
-title: Backup, Storage, and Restore
+title: Backup, storage, and restore
 description: Troubleshoot folder browsing, repository validation, backup jobs, snapshots, and restores.
 ---
 
-# Backup, Storage, and Restore
+# Backup, storage, and restore
 
 Run connection validation again from the relevant page. If a job has already started, begin with the failed step in its details.
 
@@ -34,7 +34,7 @@ A large clock difference can also break object-storage request signing. Synchron
 - For NAS, confirm the address, protocol, share path, and credentials.
 - For local storage, confirm that the directory exists, is writable, and has enough free space.
 - If another Agent or Private Data Gateway needs Proxy storage, confirm that the <span class="hfl-ui">Repository Server Address</span> is reachable from its network and that the required ports are allowed.
-- Do not select a directory that already contains business data or another backup repository.
+- Do not select a directory that already contains user data or another backup repository.
 
 ## A backup fails or partially succeeds
 

@@ -5,32 +5,7 @@ description: 根据使用方式部署 HyperFileLens 控制平面、备份组件�
 
 # 部署指南
 
-<p class="hfl-doc-lead">部署范围取决于使用方式和数据访问路径。官方 SaaS 无需部署控制平面；社区版需要在自有环境安装控制平面。两种方式均可按备份源、目标存储和智能洞察的网络要求部署 Agent、Proxy 或 Private Data Gateway。</p>
-
-## 确定部署范围
-
-<div class="hfl-deployment-grid">
-  <section class="hfl-deployment-card">
-    <small>官方托管</small>
-    <strong>官方 SaaS</strong>
-    <dl>
-      <div><dt>控制平面</dt><dd>由 OnePro Cloud 托管，无需自行部署。</dd></div>
-      <div><dt>Agent</dt><dd>保护主机文件时，安装在需要保护的 Windows、Linux 或 macOS 主机上。</dd></div>
-      <div><dt>Proxy</dt><dd>接入 NAS 或本地存储时，部署在能够访问相应存储的网络中。</dd></div>
-      <div><dt>Private Data Gateway</dt><dd>默认使用公共 Data Gateway；备份仓库位于私有网络且公共网关无法访问时部署。</dd></div>
-    </dl>
-  </section>
-  <section class="hfl-deployment-card">
-    <small>自托管</small>
-    <strong>社区版</strong>
-    <dl>
-      <div><dt>控制平面</dt><dd>部署在自有 Ubuntu 主机，并自行维护运行环境。</dd></div>
-      <div><dt>Agent</dt><dd>保护主机文件时，安装在需要保护的 Windows、Linux 或 macOS 主机上。</dd></div>
-      <div><dt>Proxy</dt><dd>接入 NAS 或本地存储时，部署在能够访问相应存储的网络中。</dd></div>
-      <div><dt>Private Data Gateway</dt><dd>安装时默认部署公共 Data Gateway；备份仓库位于私有网络且公共网关无法访问时，再部署私有网关。</dd></div>
-    </dl>
-  </section>
-</div>
+<p class="hfl-doc-lead">社区版控制平面部署在自有 Ubuntu 主机。根据备份源、目标存储和快照数据所在的网络，按需部署 Agent、Proxy 或 Private Data Gateway。</p>
 
 ## 部署社区版
 

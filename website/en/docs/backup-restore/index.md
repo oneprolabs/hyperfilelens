@@ -1,11 +1,11 @@
 ---
-title: Backup and Restore
+title: Backup and restore
 description: Protect data from a backup source, verify snapshots, and restore files and directories.
 ---
 
-# Backup and Restore
+# Backup and restore
 
-The HyperFileLens data-protection workflow starts with a readable backup source, writes data to target storage through a backup configuration, and creates snapshots. An actual restore then confirms that the protected data is usable. A successful task confirms that execution finished; snapshot contents and restore results show whether the expected data can be recovered.
+The HyperFileLens data-protection workflow starts with an accessible backup source. A backup configuration writes the selected data to target storage and creates snapshots. A restore test then confirms that the protected data can be recovered. A successful task means that the job finished; the snapshot contents and restore results show whether the expected data is available.
 
 ## Workflow
 
@@ -20,13 +20,13 @@ The HyperFileLens data-protection workflow starts with a readable backup source,
 
 - **The source is readable:** The Agent or Proxy is online, and the selected folders exist and are readable.
 - **The target is writable:** The object storage, NAS, or local repository passes validation and uses a dedicated location.
-- **The snapshot is recoverable:** The task finishes, the snapshot contains the expected folders, and an actual restore succeeds.
+- **The snapshot is recoverable:** The task finishes, the snapshot contains the expected folders, and a restore test succeeds.
 
-A **Partially Succeeded** task does not mean that all data is protected. Review failed directories, skipped items, and the actual data size before deciding whether the snapshot satisfies the recovery requirement.
+A **Partially Succeeded** task does not mean that all data is protected. Review failed directories, skipped items, and the amount of data captured before deciding whether the snapshot meets your recovery requirements.
 
 ![Completed first backup with Backup Task showing Succeeded and account, host, and repository details blurred](/docs/getting-started/backup-succeeded.png)
 
-## Recommended first validation
+## Recommended first test
 
 Use a small set of synthetic test files for the first end-to-end run. Do not begin with an entire system drive, a production share, or a large directory. The validation is complete when:
 
