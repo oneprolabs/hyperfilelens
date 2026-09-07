@@ -86,7 +86,7 @@ HyperFileLens 官方 SaaS 由 OnePro Cloud 提供和运营，无需自行部署�
 社区版可部署在自有 Ubuntu 主机上。安装主机需要满足以下基本条件：
 
 - Ubuntu 20.04、22.04 或 24.04，amd64 架构。
-- 至少 2 核 CPU、4 GiB 内存，以及 `/opt` 所在磁盘 20 GiB 可用空间。
+- 至少 4 核 CPU、8 GiB 内存，以及 `/opt` 所在磁盘 20 GiB 可用空间；正式使用建议配备 8 核 CPU 和 16 GiB 内存。
 - Docker Engine 24.0.0 及以上版本、Docker Compose V2 2.20.0 及以上版本，并且 Docker daemon 正常运行。如果主机完全没有安装 Docker，在线安装程序可以通过所选区域的软件源安装 Docker CE 和 Compose V2。如果主机已有受支持且运行正常的 Docker CE 运行时，但缺少 Compose V2，在线安装程序仅会在软件包计划不改变现有 Docker 运行时的情况下安装固定版本的 Compose 插件。
 - 已安装 `curl` 和 Python 3，具备 `sudo` 权限，并可访问 Gitee、镜像仓库、所选或已有的 Docker CE 软件源和 Ubuntu 软件源。
 

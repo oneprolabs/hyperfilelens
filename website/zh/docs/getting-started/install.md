@@ -10,7 +10,7 @@ HyperFileLens 社区版可部署在自有 Ubuntu 主机上。在线安装程序�
 ## 安装前准备
 
 - Ubuntu 20.04、22.04 或 24.04，amd64 架构。
-- 至少 2 核 CPU 和 4 GiB 内存，建议使用 4 核 CPU 和 8 GiB 以上内存。
+- 至少 4 核 CPU 和 8 GiB 内存，建议使用 8 核 CPU 和 16 GiB 以上内存。
 - `/opt` 所在磁盘至少有 20 GiB 可用空间。
 - Docker Engine 24.0.0 及以上版本、Docker Compose V2 2.20.0 及以上版本，并且 Docker daemon 正常运行。如果主机完全没有安装 Docker，在线安装程序可以通过所选区域的软件源安装 Docker CE 和 Compose V2。如果主机已有受支持且运行正常的 Docker CE 运行时，但缺少 Compose V2，在线安装程序仅会在软件包计划不改变现有 Docker 运行时的情况下安装固定版本的 Compose 插件。
 - 已安装 `curl` 和 Python 3，并具备 `sudo` 权限。

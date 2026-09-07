@@ -1,9 +1,9 @@
 ---
-title: Installation and Nodes
+title: Installation and nodes
 description: Troubleshoot control-plane installation and Agent, Proxy, or Data Gateway registration and connectivity.
 ---
 
-# Installation and Nodes
+# Installation and nodes
 
 Start with the error shown by the installer or console, then check the matching system and network conditions.
 

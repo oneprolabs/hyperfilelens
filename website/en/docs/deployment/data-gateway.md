@@ -9,7 +9,7 @@ A Data Gateway reads the snapshot files selected by a user and prepares them for
 
 ## Public and Private Data Gateways
 
-- A **Public Data Gateway** is the default. It is platform-provided in the official SaaS and included with a Community installation.
+- A **Public Data Gateway** is the default and is deployed with the Community control plane.
 - A **Private Data Gateway** runs on a network you manage. Use one when the Public Data Gateway cannot reach the backup repository or when data processing must remain in your network.
 
 If the Public Data Gateway can reach the repository, you normally do not need to deploy a private gateway.
@@ -17,7 +17,7 @@ If the Public Data Gateway can reach the repository, you normally do not need to
 ## Before deployment
 
 - Prepare an Ubuntu 20.04, 22.04, or 24.04 amd64 host with at least 2 CPU cores, 4 GiB of memory, and 50 GiB of free space.
-- Confirm that the host can reach both the HyperFileLens control plane and the required backup repositories. See [Network and Ports](/en/docs/deployment/network).
+- Confirm that the host can reach both the HyperFileLens control plane and the required backup repositories. See [Network and ports](/en/docs/deployment/network).
 - If Docker is not installed, the installer adds the runtime included with the release. If Docker is already present, use Docker Engine 24.0.0 or later and Compose V2 2.20.0 or later.
 
 ## Deploy the gateway
@@ -36,4 +36,4 @@ In the console, confirm that:
 - The gateway can reach the repositories that will be used by Insights.
 - A test session can select the gateway and prepare data from the selected snapshot.
 
-If installation fails, the gateway remains offline, or the AI engine is unhealthy, see [Installation and Nodes](/en/docs/troubleshooting/installation-nodes).
+If installation fails, the gateway remains offline, or the AI engine is unhealthy, see [Installation and nodes](/en/docs/troubleshooting/installation-nodes).

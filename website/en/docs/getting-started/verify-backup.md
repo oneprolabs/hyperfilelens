@@ -5,7 +5,7 @@ description: Verify the first backup task, snapshot status, and snapshot content
 
 # Check tasks and snapshots
 
-A successful task confirms that the backup execution finished. Inspecting the snapshot confirms that the expected files are actually present. Check both.
+A **Succeeded** task means that the backup job completed. Inspect the resulting snapshot to confirm that it contains the expected files.
 
 ## Check the task
 
@@ -40,5 +40,3 @@ Confirm that both `restore-check.txt` and `insights\device-inventory.csv` are vi
 - The snapshot **Status** is **Available**.
 - The snapshot source path is `C:\HFL-Quickstart`.
 - `restore-check.txt` and `insights\device-inventory.csv` are visible in the browser.
-
-Next: [Restore a test file](/en/docs/getting-started/first-restore).

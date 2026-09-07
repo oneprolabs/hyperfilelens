@@ -1,11 +1,11 @@
 ---
-title: System Requirements
-description: Review the system requirements for Community, Agent, Proxy, and Private Data Gateway hosts.
+title: System requirements
+description: Review the system requirements for HyperFileLens Community, Agent, Proxy, and Private Data Gateway hosts.
 ---
 
-# System Requirements
+# System requirements
 
-<p class="hfl-doc-lead">Before installing the Community control plane or another HyperFileLens component, verify that the target host meets the platform, resource, and runtime requirements below. The official SaaS does not require a control-plane host; check only the Agents, Proxies, or Private Data Gateways you deploy.</p>
+<p class="hfl-doc-lead">Before installing the HyperFileLens Community control plane, an Agent, a Proxy, or a Private Data Gateway, verify that each host meets the applicable platform, resource, and runtime requirements below.</p>
 
 ## Community control plane
 
@@ -13,8 +13,8 @@ description: Review the system requirements for Community, Agent, Proxy, and Pri
 | --- | --- | --- |
 | Operating system | Ubuntu 20.04, 22.04, or 24.04 | Ubuntu 22.04 or 24.04 |
 | Architecture | amd64 | amd64 |
-| CPU | 2 cores | 4 or more cores |
-| Memory | 4 GiB | 8 GiB or more |
+| CPU | 4 cores | 8 or more cores |
+| Memory | 8 GiB | 16 GiB or more |
 | Free space on `/opt` | 20 GiB | 40 GiB |
 | Docker Engine | 24.0.0 | 24.0.0 or later |
 | Docker Compose | 2.20.0, Compose V2 | 2.20.0 or later |

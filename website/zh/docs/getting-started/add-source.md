@@ -55,5 +55,3 @@ description: 将本次示例使用的 Windows 主机接入 HyperFileLens。
 - Windows 主机出现在 **Backup Sources** 表格中。
 - **Lifecycle Status** 为 **Registered**。
 - **Connectivity** 为 **Online**。
-
-下一步：[配置备份源](/zh/docs/getting-started/configure-source)。

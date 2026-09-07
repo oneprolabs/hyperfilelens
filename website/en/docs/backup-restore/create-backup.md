@@ -1,11 +1,11 @@
 ---
-title: Create and Run Backups
+title: Create and run backups
 description: Select data, assign target storage, review the configuration, and run a backup.
 ---
 
-# Create and Run Backups
+# Create and run backups
 
-Open **Protection → Backup Wizard**. The workflow moves through **Backup Sources**, **Backup Configuration**, **Target Storage**, and **Start Backup**. For the first validation, use a small synthetic dataset and run the backup manually.
+Open **Protection → Backup Wizard**. The workflow moves through **Backup Sources**, **Backup Configuration**, **Target Storage**, and **Start Backup**. For your first test, use a small sample dataset and run the backup manually.
 
 ## 1. Select the backup scope
 
@@ -23,7 +23,7 @@ Use the estimated size to detect an obviously incorrect selection. It is not a g
 
 Under **Target Repository**, assign a compatible repository to each source. The wizard excludes targets that are incompatible with the source platform, Proxy binding, or network capabilities.
 
-Saving the configuration validates the node, mounts, write access, repository state, and repository ownership. Resolve the reported validation error before retrying; do not create another repository for the same physical location.
+Saving the configuration validates the node, mounts, write access, repository state, and repository ownership. Resolve any reported validation error before retrying; do not create another repository for the same storage location.
 
 ![Huawei Cloud OBS repository assigned to the Windows backup source with account, host, IP, and repository information blurred](/docs/getting-started/assigned-target-repository.png)
 

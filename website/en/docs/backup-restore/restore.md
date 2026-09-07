@@ -1,18 +1,18 @@
 ---
-title: Restore Files and Directories
+title: Restore files and directories
 description: Create a restore task from an available snapshot and validate the recovered data.
 ---
 
-# Restore Files and Directories
+# Restore files and directories
 
 You can run a preset restore plan or create a new manual task. Use a manual task when the snapshot, scope, destination node, destination folder, or conflict policy needs to change.
 
-For the first validation, restore only a small synthetic file set to an independent test directory and select **Skip**. Do not point a test restore at the source directory or overwrite existing files.
+For your first restore test, restore a small set of sample files to a separate test directory and select **Skip**. Do not restore test data to the source directory or overwrite existing files.
 
 ## Before starting
 
 - The source has at least one successful or partially successful snapshot.
-- The snapshot contains an available physical directory.
+- The snapshot contains files or directories that are available for restore.
 - The destination Agent is online, and the destination directory is writable.
 - The destination disk has enough free space.
 - The conflict policy is explicitly set to **Skip** or **Overwrite**; use **Skip** when uncertain.
@@ -47,7 +47,7 @@ Plans suit a fixed destination and repeatable recovery exercise. Use a manual ta
 
 ## Verify the result
 
-After the task finishes, inspect the actual files on the destination host instead of relying only on the console status. A stopped task can leave incomplete files in the destination.
+After the task finishes, inspect the restored files on the destination host instead of relying only on the console status. A stopped task may leave incomplete files in the destination directory.
 
 Confirm that **Restore Task** is **Succeeded** on **Start Backup**, then open **Restore Records** in the source details. Check the record status, file-item status, restored count, and destination path.
 

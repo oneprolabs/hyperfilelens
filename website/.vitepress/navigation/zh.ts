@@ -4,8 +4,6 @@ const quickStart: DefaultTheme.SidebarItem[] = [
   {
     text: '快速开始',
     items: [
-      { text: '选择使用方式', link: '/zh/docs/' },
-      { text: '使用官方 SaaS', link: '/zh/docs/getting-started/saas' },
       { text: '安装社区版', link: '/zh/docs/getting-started/install' },
     ],
   },
@@ -19,6 +17,7 @@ const quickStart: DefaultTheme.SidebarItem[] = [
       { text: '创建并运行首次备份', link: '/zh/docs/getting-started/first-backup' },
       { text: '检查任务与快照', link: '/zh/docs/getting-started/verify-backup' },
       { text: '恢复测试文件', link: '/zh/docs/getting-started/first-restore' },
+      { text: '配置洞察模型', link: '/zh/docs/getting-started/configure-insights-model' },
       { text: '创建洞察会话', link: '/zh/docs/getting-started/first-insight' },
     ],
   },
@@ -51,7 +50,6 @@ const product: DefaultTheme.SidebarItem[] = [
       { text: '创建洞察会话', link: '/zh/docs/insights/copilot' },
       { text: '配置 AI 模型', link: '/zh/docs/insights/models' },
       { text: '使用 Private Data Gateway', link: '/zh/docs/insights/data-gateway' },
-      { text: '查看 AI 使用量', link: '/zh/docs/insights/usage' },
       { text: '会话与数据范围', link: '/zh/docs/insights/privacy' },
     ],
   },
@@ -126,7 +124,7 @@ export const zhThemeConfig: DefaultTheme.Config = {
   nav: [
     {
       text: '快速开始',
-      link: '/zh/docs/',
+      link: '/zh/docs/getting-started/install',
       activeMatch: '^/zh/docs/(?:$|getting-started/)',
     },
     {

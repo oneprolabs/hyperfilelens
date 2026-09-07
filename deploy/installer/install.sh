@@ -1662,16 +1662,18 @@ ensure_bridge_network() {
 warn_host_resources() {
 	local cpu_count mem_total_kib mem_available_kib swap_total_kib
 	cpu_count="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 0)"
-	if [[ ! "${cpu_count}" =~ ^[0-9]+$ || "${cpu_count}" -lt 2 ]]; then
-		warn "fewer than 2 CPU cores detected (${cpu_count:-unknown}); installation will continue with reduced throughput"
+	if [[ ! "${cpu_count}" =~ ^[0-9]+$ || "${cpu_count}" -lt 4 ]]; then
+		warn "fewer than the minimum 4 CPU cores detected (${cpu_count:-unknown}); installation will continue but may be unstable under concurrent load"
+	elif [[ "${cpu_count}" -lt 8 ]]; then
+		warn "fewer than the recommended 8 CPU cores detected (${cpu_count}); installation will continue"
 	fi
 	mem_total_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
 	mem_available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null)"
 	swap_total_kib="$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
-	if [[ "${mem_total_kib:-0}" -lt $((4 * 1024 * 1024)) ]]; then
-		warn "less than 4 GiB physical memory detected; installation will continue but may be unstable under concurrent load"
-	elif [[ "${mem_total_kib:-0}" -lt $((8 * 1024 * 1024)) ]]; then
-		warn "less than the recommended 8 GiB physical memory detected; installation will continue"
+	if [[ "${mem_total_kib:-0}" -lt $((8 * 1024 * 1024)) ]]; then
+		warn "less than the minimum 8 GiB physical memory detected; installation will continue but may be unstable under concurrent load"
+	elif [[ "${mem_total_kib:-0}" -lt $((16 * 1024 * 1024)) ]]; then
+		warn "less than the recommended 16 GiB physical memory detected; installation will continue"
 	fi
 	if [[ "${mem_available_kib:-0}" -lt $((2500 * 1024)) ]]; then
 		warn "less than 2.5 GiB memory is currently available; installation will continue"

@@ -1,15 +1,15 @@
 ---
-title: Jobs, Alerts, and Audit Logs
+title: Jobs, alerts, and audit logs
 description: Review operational health, jobs, alerts, notifications, and audit records.
 ---
 
-# Jobs, Alerts, and Audit Logs
+# Jobs, alerts, and audit logs
 
 <p class="hfl-doc-lead">Use operational health and alerts to identify problems, then open the relevant job to locate the failed stage. Audit logs show who made an important change, when it happened, and whether it succeeded.</p>
 
 ## Check operational health
 
-Open <span class="hfl-path">Operations → Operational Health</span> to review active alerts, offline components, backup-source issues, and recent failed jobs. Start with the affected resource or job details; host logs are not normally the first troubleshooting step.
+Open <span class="hfl-path">Operations → Operational Health</span> to review active alerts, offline components, backup source issues, and recent failed jobs. Start with the affected resource or job details; host logs are not normally the first troubleshooting step.
 
 ## Review jobs
 

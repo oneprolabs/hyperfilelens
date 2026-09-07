@@ -10,13 +10,14 @@ Insights uses a protected backup snapshot, not the live Windows source. This ste
 ## Before you start
 
 - The first snapshot is **Available** and contains `insights\device-inventory.csv`.
+- A default Agent model is configured and ready.
 - A **Public Data Gateway** is available in the current environment.
 - Your account can create an AI Copilot session.
 
-## Open New Chat
+## Open the New Chat page
 
 1. Open **Insights → AI Copilot**.
-2. Select **New Chat** above the Chat list. A first-time account may instead show **Start New Chat** in the main panel.
+2. Select **New Chat** above the session list. For a first-time account, the main panel may show **Start New Chat** instead.
 
 ![Current AI Copilot page with AI Copilot under Applications, Data Gateways under AI Engine, and real account, host, and Gateway identifiers blurred](/docs/getting-started/insights-empty.png)
 
@@ -33,8 +34,8 @@ Insights uses a protected backup snapshot, not the live Windows source. This ste
 
 1. Under **Analysis Type**, select **Knowledge Q&A (Recommended)**.
 2. Under **Data Privacy**, select **Public Data Gateway**.
-3. Confirm the snapshot, file scope, and Public Gateway in the summary.
-4. Do not select **Private Data Gateway** for this run; the page reports that no online Private Data Gateway is available.
+3. Confirm the snapshot, file scope, and Public Data Gateway in the summary.
+4. Keep the Public Data Gateway selected for this test. A Private Data Gateway is not required.
 
 ![Knowledge Q&A and Public Data Gateway selected with account, host, and Gateway name blurred](/docs/getting-started/insights-gateway-ready.png)
 
@@ -52,10 +53,10 @@ How many devices are listed in this file?
 Please list each device name and its status.
 ```
 
-The expected answer is three devices: Atlas (Active), Beacon (Active), and Cedar (Inactive). Manually check the numbers, names, and statuses against the source CSV.
+The expected answer is three devices: Atlas (Active), Beacon (Active), and Cedar (Inactive). Confirm that the answer includes those names and statuses and provides citations to the selected CSV.
 
 ![AI Copilot answer listing three devices and their statuses; account, host, and Gateway identifiers blurred](/docs/getting-started/chat-answer.png)
 
 If the button is unavailable or preparation fails, check the snapshot, file scope, Public Data Gateway, and default AI model before retrying. Do not repeatedly submit the same request.
 
-The First Use Insights check is complete: the session is **Ready**, the answer lists three devices and their statuses, and the result matches rows 2–4 of `device-inventory.csv`.
+You have completed the first Insights test when the session is **Ready**, the answer lists the three devices and their statuses, and the citations point to rows 2–4 of `device-inventory.csv`.

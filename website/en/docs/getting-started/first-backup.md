@@ -20,7 +20,7 @@ This walkthrough uses the Huawei Cloud OBS repository created in the previous st
 
 ## Optional restore plan
 
-Select **Next** to open **Restore Plan**. A restore plan is optional and presets the restore scope, target node, destination directory, and whether same-name files are skipped or overwritten.
+Select **Next** to open **Restore Plan**. A restore plan is optional and preconfigures the restore scope, target node, destination directory, and how files with the same name are handled.
 
 Enable a restore plan when the same restore rule will be reused. For temporary restores, historical versions, or changing the destination, use a manual restore instead. For this first backup, leave the plan unconfigured and select **Next**.
 
@@ -48,5 +48,3 @@ After creation, the wizard returns to **Start Backup**. The table lists the back
 ![First backup completed with Backup Task Succeeded and the account, host, and repository information blurred](/docs/getting-started/backup-succeeded.png)
 
 Do not close the Windows Agent or change the repository credentials while the task is running. Continue to task and snapshot verification only after **Backup Task** shows **Succeeded**.
-
-Next: [Check tasks and snapshots](/en/docs/getting-started/verify-backup).

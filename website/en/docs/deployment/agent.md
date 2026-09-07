@@ -10,7 +10,7 @@ Install an Agent on each Windows, Linux, or macOS host whose local files you wan
 ## Before deployment
 
 - Confirm that the host meets the [system requirements](/en/docs/deployment/requirements).
-- Confirm that it can reach the HyperFileLens control plane and the target storage you plan to use. See [Network and Ports](/en/docs/deployment/network).
+- Confirm that it can reach the HyperFileLens control plane and the target storage you plan to use. See [Network and ports](/en/docs/deployment/network).
 - Use an account with access to the files you want to protect. The installer determines how the Agent runs from the identity used to execute the command.
 
 ## Install the Agent
@@ -29,4 +29,4 @@ In the console, confirm that:
 - You can browse the required folders and select the intended backup paths.
 - For a persistent installation, the Agent reconnects automatically after the host or service restarts.
 
-If registration fails or the Agent remains offline, see [Installation and Nodes](/en/docs/troubleshooting/installation-nodes).
+If registration fails or the Agent remains offline, see [Installation and nodes](/en/docs/troubleshooting/installation-nodes).

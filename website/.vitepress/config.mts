@@ -3,78 +3,76 @@ import { zhThemeConfig } from './navigation/zh'
 
 const enQuickStart = [
   {
-    text: 'Quick Start',
+    text: 'Quick start',
     items: [
-      { text: 'Getting Started', link: '/en/docs/' },
-      { text: 'Use HyperFileLens SaaS', link: '/en/docs/getting-started/saas' },
-      { text: 'Install Community', link: '/en/docs/getting-started/install' },
+      { text: 'Install HyperFileLens Community', link: '/en/docs/getting-started/install' },
     ],
   },
   {
-    text: 'First Use',
+    text: 'First use',
     items: [
-      { text: 'Sign in to the Console', link: '/en/docs/getting-started/sign-in' },
-      { text: 'Add a Backup Source', link: '/en/docs/getting-started/add-source' },
-      { text: 'Configure the Backup Source', link: '/en/docs/getting-started/configure-source' },
-      { text: 'Add Target Storage', link: '/en/docs/getting-started/add-target' },
-      { text: 'Create and Run the First Backup', link: '/en/docs/getting-started/first-backup' },
-      { text: 'Check Tasks and Snapshots', link: '/en/docs/getting-started/verify-backup' },
-      { text: 'Restore a Test File', link: '/en/docs/getting-started/first-restore' },
-      { text: 'Create an Insights Session', link: '/en/docs/getting-started/first-insight' },
+      { text: 'Sign in to the console', link: '/en/docs/getting-started/sign-in' },
+      { text: 'Add a backup source', link: '/en/docs/getting-started/add-source' },
+      { text: 'Configure the backup source', link: '/en/docs/getting-started/configure-source' },
+      { text: 'Add target storage', link: '/en/docs/getting-started/add-target' },
+      { text: 'Create and run the first backup', link: '/en/docs/getting-started/first-backup' },
+      { text: 'Check tasks and snapshots', link: '/en/docs/getting-started/verify-backup' },
+      { text: 'Restore a test file', link: '/en/docs/getting-started/first-restore' },
+      { text: 'Configure an AI model for Insights', link: '/en/docs/getting-started/configure-insights-model' },
+      { text: 'Create an Insights session', link: '/en/docs/getting-started/first-insight' },
     ],
   },
 ]
 
 const enProduct = [
   {
-    text: 'Product Usage',
+    text: 'Product guide',
     items: [
-      { text: 'Product Workflow', link: '/en/docs/product/' },
+      { text: 'Product workflow', link: '/en/docs/product/' },
     ],
   },
   {
-    text: 'Backup & Restore',
+    text: 'Backup and restore',
     items: [
-      { text: 'Usage Flow', link: '/en/docs/backup-restore/' },
-      { text: 'Manage Backup Sources', link: '/en/docs/backup-restore/sources' },
-      { text: 'Manage Target Storage', link: '/en/docs/backup-restore/targets' },
-      { text: 'Create and Run Backups', link: '/en/docs/backup-restore/create-backup' },
-      { text: 'Policies and Retention', link: '/en/docs/backup-restore/policies' },
-      { text: 'View Tasks and Snapshots', link: '/en/docs/backup-restore/snapshots' },
-      { text: 'Restore Files and Directories', link: '/en/docs/backup-restore/restore' },
+      { text: 'Workflow', link: '/en/docs/backup-restore/' },
+      { text: 'Manage backup sources', link: '/en/docs/backup-restore/sources' },
+      { text: 'Manage target storage', link: '/en/docs/backup-restore/targets' },
+      { text: 'Create and run backups', link: '/en/docs/backup-restore/create-backup' },
+      { text: 'Policies and retention', link: '/en/docs/backup-restore/policies' },
+      { text: 'View tasks and snapshots', link: '/en/docs/backup-restore/snapshots' },
+      { text: 'Restore files and directories', link: '/en/docs/backup-restore/restore' },
     ],
   },
   {
     text: 'Insights',
     items: [
-      { text: 'Usage Flow', link: '/en/docs/insights/' },
-      { text: 'Prepare a Snapshot', link: '/en/docs/insights/prepare' },
-      { text: 'Create an Insights Session', link: '/en/docs/insights/copilot' },
-      { text: 'Configure AI Models', link: '/en/docs/insights/models' },
+      { text: 'Workflow', link: '/en/docs/insights/' },
+      { text: 'Prepare a snapshot', link: '/en/docs/insights/prepare' },
+      { text: 'Create an Insights session', link: '/en/docs/insights/copilot' },
+      { text: 'Configure AI models', link: '/en/docs/insights/models' },
       { text: 'Use a Private Data Gateway', link: '/en/docs/insights/data-gateway' },
-      { text: 'View AI Usage', link: '/en/docs/insights/usage' },
-      { text: 'Session and Data Scope', link: '/en/docs/insights/privacy' },
+      { text: 'Session and data scope', link: '/en/docs/insights/privacy' },
     ],
   },
 ]
 
 const enOperations = [
   {
-    text: 'Deployment & Operations',
+    text: 'Deployment and operations',
     items: [
-      { text: 'Deployment Guide', link: '/en/docs/deployment/' },
+      { text: 'Deployment guide', link: '/en/docs/deployment/' },
     ],
   },
   {
-    text: 'Deploy Community',
+    text: 'Deploy HyperFileLens Community',
     items: [
-      { text: 'System Requirements', link: '/en/docs/deployment/requirements' },
-      { text: 'Network and Ports', link: '/en/docs/deployment/network' },
-      { text: 'Post-installation Checks', link: '/en/docs/deployment/post-install' },
+      { text: 'System requirements', link: '/en/docs/deployment/requirements' },
+      { text: 'Network and ports', link: '/en/docs/deployment/network' },
+      { text: 'Post-installation checks', link: '/en/docs/deployment/post-install' },
     ],
   },
   {
-    text: 'Component Deployment',
+    text: 'Component deployment',
     items: [
       { text: 'Deploy an Agent', link: '/en/docs/deployment/agent' },
       { text: 'Deploy a Proxy', link: '/en/docs/deployment/proxy' },
@@ -84,32 +82,32 @@ const enOperations = [
   {
     text: 'Operations',
     items: [
-      { text: 'Upgrade and Recovery', link: '/en/docs/deployment/lifecycle' },
-      { text: 'Jobs, Alerts, and Audit Logs', link: '/en/docs/deployment/operations' },
+      { text: 'Upgrade and recovery', link: '/en/docs/deployment/lifecycle' },
+      { text: 'Jobs, alerts, and audit logs', link: '/en/docs/deployment/operations' },
     ],
   },
 ]
 
 const enHelp = [
   {
-    text: 'Help Center',
+    text: 'Help center',
     items: [],
   },
   {
-    text: 'Product Reference',
+    text: 'Product reference',
     items: [
-      { text: 'Core Concepts', link: '/en/docs/reference/' },
-      { text: 'Supported Configurations', link: '/en/docs/reference/support-matrix' },
-      { text: 'Security & Limits', link: '/en/docs/reference/limitations-security' },
+      { text: 'Core concepts', link: '/en/docs/reference/' },
+      { text: 'Supported configurations', link: '/en/docs/reference/support-matrix' },
+      { text: 'Security and limits', link: '/en/docs/reference/limitations-security' },
     ],
   },
   {
     text: 'Troubleshooting',
     items: [
-      { text: 'Troubleshooting Guide', link: '/en/docs/troubleshooting/' },
-      { text: 'Accounts and Sign-in', link: '/en/docs/troubleshooting/account-sign-in' },
-      { text: 'Installation and Nodes', link: '/en/docs/troubleshooting/installation-nodes' },
-      { text: 'Backup, Storage, and Restore', link: '/en/docs/troubleshooting/protection' },
+      { text: 'Troubleshooting guide', link: '/en/docs/troubleshooting/' },
+      { text: 'Accounts and sign-in', link: '/en/docs/troubleshooting/account-sign-in' },
+      { text: 'Installation and nodes', link: '/en/docs/troubleshooting/installation-nodes' },
+      { text: 'Backup, storage, and restore', link: '/en/docs/troubleshooting/protection' },
       { text: 'Insights and Data Gateway', link: '/en/docs/troubleshooting/insights' },
     ],
   },
@@ -140,18 +138,18 @@ export default defineConfig({
     i18nRouting: true,
     nav: [
       {
-        text: 'Quick Start',
-        link: '/en/docs/',
+        text: 'Quick start',
+        link: '/en/docs/getting-started/install',
         activeMatch: '^/en/docs/(?:$|getting-started/)',
       },
       {
-        text: 'Product Usage',
+        text: 'Product guide',
         link: '/en/docs/product/',
         activeMatch: '^/en/docs/(product|backup-restore|insights)/',
       },
-      { text: 'Deployment & Operations', link: '/en/docs/deployment/' },
+      { text: 'Deployment and operations', link: '/en/docs/deployment/' },
       {
-        text: 'Help Center',
+        text: 'Help center',
         link: '/en/docs/help/',
         activeMatch: '^/en/docs/(help|reference|troubleshooting)/',
       },

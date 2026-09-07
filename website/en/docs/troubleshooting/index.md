@@ -1,11 +1,11 @@
 ---
-title: Troubleshooting Guide
+title: Troubleshooting guide
 description: Locate HyperFileLens installation, node, backup, restore, and Insights problems by the stage that failed.
 ---
 
-# Troubleshooting Guide
+# Troubleshooting guide
 
-Use the message on the page and the job details to identify where the failure occurred before changing configuration. Changing several conditions at once makes the cause harder to isolate.
+Use the message shown on the page and the job details to identify where the failure occurred before changing the configuration. Changing several settings at once makes the cause harder to isolate.
 
 ## Recommended sequence
 
@@ -42,4 +42,4 @@ Use the message on the page and the job details to identify where the failure oc
 
 ## Before opening an issue
 
-After confirming that the problem is reproducible, search [GitHub Issues](https://github.com/oneprolabs/hyperfilelens/issues) for an existing report. For a new issue, include the version, operating system, reproduction steps, and complete error message. Attach only the relevant, sanitized logs needed for investigation.
+After confirming that the problem is reproducible, search [GitHub Issues](https://github.com/oneprolabs/hyperfilelens/issues) for an existing report. When opening a new issue, include the product version, operating system, steps to reproduce the problem, and the complete error message. Attach only the relevant, sanitized logs needed for investigation.
