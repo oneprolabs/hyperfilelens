@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   validate-enterprise-build:
-    name: Validate · Enterprise build
+    name: Validate · Enterprise release
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -28,7 +28,7 @@ jobs:
           }
 
   build-enterprise:
-    name: Build & Deploy · Enterprise
+    name: Release · Enterprise
     needs: validate-enterprise-build
     uses: ./.github/workflows/release_pipeline.yml
     with:

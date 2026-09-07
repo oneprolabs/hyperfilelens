@@ -41,7 +41,7 @@ env:
 
 jobs:
   prepare:
-    name: Prepare · Images and Enterprise candidate
+    name: Validate · Release context
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -143,7 +143,7 @@ jobs:
           echo "commit=$commit" >>"$GITHUB_OUTPUT"
 
   quality:
-    name: Verify · SaaS delivery contracts
+    name: Verify · Delivery contracts
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -173,7 +173,7 @@ jobs:
           ./tools/sourcelens/update-runtime-contract.sh --check
 
   verify-public-images:
-    name: Verify · Public Community images
+    name: Verify · Community image delivery
     needs:
       - prepare
       - build-hfl-images
@@ -198,7 +198,7 @@ jobs:
         run: ./deploy/online/verify-public-images.sh build/saas-metadata
 
   build-hfl-images:
-    name: Build · HFL · ${{ matrix.name }}
+    name: Publish · HFL image · ${{ matrix.name }}
     needs: [prepare, quality]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -343,20 +343,26 @@ jobs:
           retention-days: 3
 
   resolve-upstream-images:
-    name: Verify · Upstream · ${{ matrix.component }}
+    name: Verify · Upstream image · ${{ matrix.name }}
     needs: [prepare, quality]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        component:
-          - sourcelens-backend
-          - sourcelens-frontend
-          - sourcelens-lensnode
-          - sourcelens-nginx
-          - postgres
-          - redis
+        include:
+          - component: sourcelens-backend
+            name: SourceLens Backend
+          - component: sourcelens-frontend
+            name: SourceLens Frontend
+          - component: sourcelens-lensnode
+            name: SourceLens LensNode
+          - component: sourcelens-nginx
+            name: NGINX
+          - component: postgres
+            name: PostgreSQL
+          - component: redis
+            name: Redis
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -396,7 +402,7 @@ jobs:
           retention-days: 3
 
   build-agent-assets:
-    name: Build · Agent asset · ${{ matrix.asset }}
+    name: Build · Agent bundle · ${{ matrix.name }}
     needs: [prepare, quality]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -406,14 +412,19 @@ jobs:
         include:
           - target: linux:amd64
             asset: linux-amd64
+            name: Linux/AMD64
           - target: linux:arm64
             asset: linux-arm64
+            name: Linux/ARM64
           - target: darwin:amd64
             asset: darwin-amd64
+            name: macOS/AMD64
           - target: darwin:arm64
             asset: darwin-arm64
+            name: macOS/ARM64
           - target: windows:amd64
             asset: windows-amd64
+            name: Windows/AMD64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -474,7 +485,7 @@ jobs:
           retention-days: 3
 
   build-language-assets:
-    name: Build · Language assets
+    name: Build · Language bundle
     needs: [prepare, quality]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -716,7 +727,7 @@ jobs:
           retention-days: 3
 
   assemble-candidate:
-    name: Assemble · Registry candidate
+    name: Assemble · Enterprise SaaS candidate
     needs:
       - prepare
       - build-hfl-images
