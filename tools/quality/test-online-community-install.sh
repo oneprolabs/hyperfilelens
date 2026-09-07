@@ -351,10 +351,32 @@ case "${1:-} ${2:-}" in
 	printf '%s\n' "${HFL_TEST_DOCKER_COMPOSE_VERSION:-2.39.1}"
 	exit 0
 	;;
-"pull --platform")
-	printf '\rDocker native pull progress: %s\n' "${4:-unknown}"
+"compose --parallel")
+	[[ "${3:-}" == 5 ]]
+	compose_file=""
+	previous=""
+	for argument in "$@"; do
+		if [[ "${previous}" == -f ]]; then
+			compose_file=${argument}
+			break
+		fi
+		previous=${argument}
+	done
+	[[ -f "${compose_file}" ]]
+	image_count=$(grep -c '^    image: ' "${compose_file}")
+	platform_count=$(grep -c '^    platform: "linux/amd64"$' "${compose_file}")
+	[[ "${platform_count}" == "${image_count}" ]]
+	[[ " $* " == *' pull --ignore-pull-failures '* ]]
+	printf '\rDocker Compose native pull progress: parallel=%s images=%s\n' \
+		"${3}" "${image_count}"
 	if [[ "${HFL_TEST_DOCKER_PULL_FAIL:-0}" == "1" ]]; then
 		printf 'registry rejected test image: access denied\n' >&2
+		exit 23
+	fi
+	if [[ -n "${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT:-}" ]] \
+		&& grep -Fq "docker.io/oneprolabs/${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT}:" \
+			"${compose_file}"; then
+		printf 'preferred registry rejected test image: access denied\n' >&2
 		exit 23
 	fi
 	exit 0
@@ -362,8 +384,17 @@ case "${1:-} ${2:-}" in
 "image inspect")
 	ref=${3:-}
 	format=${5:-}
+	if [[ "${HFL_TEST_DOCKER_PULL_FAIL:-0}" == "1" && "${ref}" == */* ]]; then
+		exit 1
+	fi
+	if [[ -n "${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT:-}" \
+		&& "${ref}" == "docker.io/oneprolabs/${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT}:"* ]]; then
+		exit 1
+	fi
 	if [[ "${format}" == *RepoDigests* ]]; then
 		printf '["%s@%s"]\n' "${ref%:*}" "${digest}"
+	elif [[ "${format}" == *Architecture* ]]; then
+		printf 'linux/amd64\n'
 	else
 		printf '%s\n' "${revision}"
 	fi
@@ -1371,13 +1402,16 @@ PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--version v1.2.3 \
 		--region global \
 		--output "${candidate}" >"${prepare_log}" 2>&1
-grep -F 'Docker native pull progress:' "${prepare_log}" >/dev/null
-for heading in 'Runtime images' 'Release assets' 'Release package'; do
+grep -F 'Docker Compose native pull progress: parallel=5 images=11' \
+	"${prepare_log}" >/dev/null
+for heading in 'Installation images' 'Release package'; do
 	grep -Fx "${heading}" "${prepare_log}" >/dev/null
 done
-grep -F '[ OK ] Runtime image 1/8 ready ·' "${prepare_log}" >/dev/null
-grep -F '[ OK ] Release asset image 3/3 ready ·' "${prepare_log}" >/dev/null
-grep -F '[ OK ] All 8 runtime images are ready' "${prepare_log}" >/dev/null
+grep -F '[....] Pulling 11 installation images concurrently · maximum 5 active downloads' \
+	"${prepare_log}" >/dev/null
+grep -F '[ OK ] Installation image 1/11 ready ·' "${prepare_log}" >/dev/null
+grep -F '[ OK ] Installation image 11/11 ready ·' "${prepare_log}" >/dev/null
+grep -F '[ OK ] All 11 installation images are ready' "${prepare_log}" >/dev/null
 grep -F '[ OK ] Community release package prepared ·' "${prepare_log}" >/dev/null
 if grep -F 'Untagged:' "${prepare_log}" >/dev/null; then
 	printf 'ERROR: temporary asset image cleanup leaked into online output\n' >&2
@@ -1387,6 +1421,22 @@ if grep -F 'cid-' "${prepare_log}" >/dev/null; then
 	printf 'ERROR: temporary asset container cleanup leaked into online output\n' >&2
 	exit 1
 fi
+fallback_candidate="${tmp}/fallback-candidate"
+fallback_prepare_log="${tmp}/prepare-fallback.log"
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 \
+	HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT=hyperfilelens-backend \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--output "${fallback_candidate}" >"${fallback_prepare_log}" 2>&1
+grep -F '[WARN] 1 installation image(s) were not available from the preferred registry' \
+	"${fallback_prepare_log}" >/dev/null
+grep -F '[....] Retrying 1 installation image(s) from the fallback registry' \
+	"${fallback_prepare_log}" >/dev/null
+grep -F 'Docker Compose native pull progress: parallel=5 images=1' \
+	"${fallback_prepare_log}" >/dev/null
 failed_prepare_log="${tmp}/prepare-failed.log"
 if PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 	HFL_ONLINE_NATIVE_PROGRESS=1 HFL_TEST_DOCKER_PULL_FAIL=1 \

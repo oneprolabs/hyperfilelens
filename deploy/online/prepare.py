@@ -24,6 +24,7 @@ from typing import Any
 VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 REVISION_PATTERN = re.compile(r"[0-9a-f]{40}")
+PULL_PARALLELISM = 5
 GLOBAL_PREFIX = os.environ.get(
     "HFL_GLOBAL_REGISTRY_PREFIX", "docker.io/oneprolabs"
 ).rstrip("/")
@@ -60,6 +61,7 @@ class ResolvedImage:
 
     spec: ImageSpec
     digest: str
+    source_ref: str
 
     def manifest_entry(self) -> dict[str, Any]:
         """Return the normalized registry delivery manifest entry."""
@@ -364,51 +366,142 @@ def image_digest(ref: str) -> str:
     return valid[0]
 
 
-def resolve_image(
-    spec: ImageSpec,
-    preferred_region: str,
-    position: int,
-    total: int,
-) -> ResolvedImage:
-    """Pull one public image with regional fallback and retain its local alias."""
-    fallback = "global" if preferred_region == "cn" else "cn"
-    failures: list[str] = []
-    image_kind = "release asset image" if spec.asset_kind else "runtime image"
-    for region in (preferred_region, fallback):
-        source_ref = spec.source_ref(region)
+def verify_image_platform(ref: str) -> None:
+    """Reject a cached or pulled image for an unexpected runtime platform."""
+    completed = run(
+        ["docker", "image", "inspect", ref, "--format", "{{.Os}}/{{.Architecture}}"],
+        capture_output=True,
+    )
+    platform = (completed.stdout or "").strip()
+    if platform != "linux/amd64":
+        raise ValueError(
+            f"image {ref} has unexpected platform {platform or '<missing>'}"
+        )
+
+
+def write_pull_plan(path: pathlib.Path, specs: list[ImageSpec], region: str) -> None:
+    """Write a pull-only Compose model for one registry region."""
+    lines = ["services:"]
+    for spec in specs:
+        lines.extend(
+            (
+                f"  {spec.component}:",
+                f"    image: {json.dumps(spec.source_ref(region))}",
+                '    platform: "linux/amd64"',
+            )
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def pull_image_batch(
+    specs: list[ImageSpec], region: str
+) -> subprocess.CompletedProcess[str]:
+    """Pull one image batch through Docker Compose's native scheduler."""
+    with tempfile.TemporaryDirectory(prefix="hfl-online-pull-") as temporary:
+        compose_file = pathlib.Path(temporary) / "docker-compose.yml"
+        write_pull_plan(compose_file, specs, region)
         print(
-            f"[....] Pulling {image_kind} ({position}/{total}): {source_ref}",
+            f"[....] Pulling {len(specs)} installation images concurrently "
+            f"· maximum {PULL_PARALLELISM} active downloads",
             flush=True,
         )
-        # A PTY preserves Docker's familiar live renderer. The online parent
-        # mirrors the relayed stream into its durable, timestamped session log.
-        completed = run_with_native_progress(
-            ["docker", "pull", "--platform", "linux/amd64", source_ref]
+        # A PTY preserves Compose's familiar aggregate progress renderer. The
+        # online parent mirrors the relayed stream into its durable log.
+        return run_with_native_progress(
+            [
+                "docker",
+                "compose",
+                "--parallel",
+                str(PULL_PARALLELISM),
+                "-f",
+                str(compose_file),
+                "pull",
+                "--ignore-pull-failures",
+            ]
         )
-        if completed.returncode != 0:
-            detail = re.sub(
+
+
+def inspect_pulled_images(
+    specs: list[ImageSpec], region: str
+) -> tuple[dict[str, ResolvedImage], list[ImageSpec]]:
+    """Resolve usable images from one region without trusting Compose output."""
+    resolved: dict[str, ResolvedImage] = {}
+    unresolved: list[ImageSpec] = []
+    for spec in specs:
+        source_ref = spec.source_ref(region)
+        try:
+            verify_image_platform(source_ref)
+            digest = image_digest(source_ref)
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            unresolved.append(spec)
+            continue
+        resolved[spec.component] = ResolvedImage(
+            spec=spec,
+            digest=digest,
+            source_ref=source_ref,
+        )
+    return resolved, unresolved
+
+
+def pull_images(specs: list[ImageSpec], preferred_region: str) -> list[ResolvedImage]:
+    """Pull all images concurrently with a selective regional fallback."""
+    fallback_region = "global" if preferred_region == "cn" else "cn"
+    primary = pull_image_batch(specs, preferred_region)
+    resolved, unresolved = inspect_pulled_images(specs, preferred_region)
+
+    if unresolved:
+        print(
+            f"[WARN] {len(unresolved)} installation image(s) were not available "
+            "from the preferred registry",
+            flush=True,
+        )
+
+    fallback_output = ""
+    if unresolved:
+        print(
+            f"[....] Retrying {len(unresolved)} installation image(s) from "
+            "the fallback registry",
+            flush=True,
+        )
+        fallback = pull_image_batch(unresolved, fallback_region)
+        fallback_output = fallback.stdout or ""
+        fallback_resolved, unresolved = inspect_pulled_images(
+            unresolved, fallback_region
+        )
+        resolved.update(fallback_resolved)
+
+    if unresolved:
+        details = (
+            re.sub(
                 r"\x1b\[[0-9;?]*[ -/]*[@-~]",
                 "",
-                completed.stdout or "",
-            ).replace("\r", "\n").strip()
-            if detail:
-                detail = detail[-500:]
-            else:
-                detail = f"docker pull exited with status {completed.returncode}"
-            failures.append(f"{source_ref}: {detail}")
-            continue
-        digest = image_digest(source_ref)
-        run(["docker", "tag", source_ref, spec.local_ref])
+                "\n".join((primary.stdout or "", fallback_output)),
+            )
+            .replace("\r", "\n")
+            .strip()
+        )
+        if details:
+            details = f"; Docker output: {details[-1000:]}"
+        failures = "; ".join(
+            f"{spec.source_ref(preferred_region)} or {spec.source_ref(fallback_region)}"
+            for spec in unresolved
+        )
+        raise RuntimeError(
+            f"neither public registry could provide: {failures}{details}"
+        )
+
+    result: list[ResolvedImage] = []
+    total = len(specs)
+    for position, spec in enumerate(specs, start=1):
+        image = resolved[spec.component]
+        run(["docker", "tag", image.source_ref, spec.local_ref])
         print(
-            f"[ OK ] {image_kind.capitalize()} {position}/{total} ready · "
-            f"{spec.local_ref}@{digest}",
+            f"[ OK ] Installation image {position}/{total} ready · "
+            f"{spec.local_ref}@{image.digest}",
             flush=True,
         )
-        return ResolvedImage(spec=spec, digest=digest)
-    raise RuntimeError(
-        f"neither public registry could provide {spec.local_ref}: "
-        + "; ".join(failures)
-    )
+        result.append(image)
+    return result
 
 
 def image_revision(ref: str) -> str:
@@ -726,17 +819,11 @@ def main() -> int:
         )
         for kind in ("agent", "gateway", "language")
     ]
-    print("\nRuntime images", flush=True)
-    runtime = [
-        resolve_image(spec, args.region, position, len(runtime_specs))
-        for position, spec in enumerate(runtime_specs, start=1)
-    ]
-    print(f"[ OK ] All {len(runtime)} runtime images are ready", flush=True)
-    print("\nRelease assets", flush=True)
-    assets = [
-        resolve_image(spec, args.region, position, len(asset_specs))
-        for position, spec in enumerate(asset_specs, start=1)
-    ]
+    print("\nInstallation images", flush=True)
+    images = pull_images(runtime_specs + asset_specs, args.region)
+    runtime = images[: len(runtime_specs)]
+    assets = images[len(runtime_specs) :]
+    print(f"[ OK ] All {len(images)} installation images are ready", flush=True)
 
     revision = image_revision(f"hyperfilelens-backend:{version}")
     if image_revision(f"hyperfilelens-frontend:{version}") != revision:
