@@ -43,8 +43,8 @@ x-api: &api
       condition: service_healthy
   command: api
   stop_grace_period: 90s
-  mem_limit: 512m
-  cpus: 0.50
+  mem_limit: 1g
+  cpus: 1.00
   healthcheck:
     test:
       [
@@ -80,8 +80,8 @@ x-web: &web
     - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/hyperfilelens/lang-packs:ro
   networks:
     - default
-  mem_limit: 128m
-  cpus: 0.125
+  mem_limit: 512m
+  cpus: 0.50
   healthcheck:
     test:
       [
@@ -147,8 +147,8 @@ services:
         condition: service_healthy
     command: scheduler
     stop_grace_period: 60s
-    mem_limit: 256m
-    cpus: 0.25
+    mem_limit: 512m
+    cpus: 0.50
     healthcheck:
       test:
         [
@@ -300,8 +300,8 @@ services:
       options:
         max-size: "10m"
         max-file: "10"
-    mem_limit: 128m
-    cpus: 0.125
+    mem_limit: 512m
+    cpus: 0.50
 
 networks:
   bridge:

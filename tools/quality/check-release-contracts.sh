@@ -1632,11 +1632,14 @@ grep -E '^[[:space:]]*11444[[:space:]]+ops;' \
 grep -F 'proxy_set_header X-HFL-Site-Role $hfl_site;' \
 	"${ROOT}/deploy/nginx/snippets/hfl-backend-proxy-headers.inc" >/dev/null
 for resource in \
-	'mem_limit: 128m' 'mem_limit: 256m' 'mem_limit: 512m' \
-	'cpus: 0.125' 'cpus: 0.25' 'cpus: 0.50' 'cpus: 1.00'; do
+	'mem_limit: 512m' 'mem_limit: 1g' 'cpus: 0.50' 'cpus: 1.00'; do
 	grep -F "${resource}" "${ROOT}/deploy/docker-compose.yml" \
 		"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
 done
+hfl_api_contract="$(sed -n '/^x-api: &api$/,/^x-web: &web$/p' \
+	"${ROOT}/deploy/docker-compose.yml")"
+grep -F '  mem_limit: 1g' <<<"${hfl_api_contract}" >/dev/null
+grep -F '  cpus: 1.00' <<<"${hfl_api_contract}" >/dev/null
 grep -F '    mem_limit: ${HFL_WORKER_MEMORY_LIMIT:-2g}' \
 	"${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F '    cpus: ${HFL_WORKER_CPU_LIMIT:-1.0}' \
@@ -1648,10 +1651,12 @@ grep -F 'HFL_WORKER_CPU_LIMIT=1.0' "${ROOT}/.env.example" >/dev/null
 	"${ROOT}/deploy/docker/backend-entrypoint.sh" || true)" -eq 2 ]] \
 	|| { printf 'ERROR: production and development Workers must default to two processes\n' >&2; exit 1; }
 sourcelens_compose_template="${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml"
-[[ "$(grep -Fc '    mem_limit: 2g' "${sourcelens_compose_template}" || true)" -eq 2 ]] \
-	|| { printf 'ERROR: bundled SourceLens API and LensNode must both use a 2 GiB limit\n' >&2; exit 1; }
-[[ "$(grep -Fc '    cpus: 1.00' "${sourcelens_compose_template}" || true)" -eq 2 ]] \
-	|| { printf 'ERROR: bundled SourceLens API and LensNode must both use a 1 CPU limit\n' >&2; exit 1; }
+grep -F '      API_WORKERS: "2"' "${sourcelens_compose_template}" >/dev/null
+grep -F '      CELERY_CONCURRENCY: "2"' "${sourcelens_compose_template}" >/dev/null
+[[ "$(grep -Fc '    mem_limit: 2g' "${sourcelens_compose_template}" || true)" -eq 3 ]] \
+	|| { printf 'ERROR: bundled SourceLens API, Worker, and LensNode must use a 2 GiB limit\n' >&2; exit 1; }
+[[ "$(grep -Fc '    cpus: 1.00' "${sourcelens_compose_template}" || true)" -eq 3 ]] \
+	|| { printf 'ERROR: bundled SourceLens API, Worker, and LensNode must use a 1 CPU limit\n' >&2; exit 1; }
 grep -F '      UVICORN_WS_PING_INTERVAL: "45"' \
 	"${sourcelens_compose_template}" >/dev/null
 grep -F '      UVICORN_WS_PING_TIMEOUT: "180"' \
@@ -1660,11 +1665,15 @@ grep -F '    mem_limit: 2g' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 grep -F '    cpus: 1.00' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
-if grep -E 'mem_limit: (64|320|384|448)m|cpus: (0\.05|0\.10|0\.15|0\.20|0\.30)' \
+if grep -E 'mem_limit: (64|128|256|320|384|448)m|cpus: (0\.05|0\.10|0\.125|0\.15|0\.20|0\.25|0\.30)' \
 	"${ROOT}/deploy/docker-compose.yml" \
-	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" \
+	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null; then
+	printf 'ERROR: control-plane services must use at least 0.5 CPU and 512 MiB memory\n' >&2
+	exit 1
+fi
+if grep -E 'mem_limit: (64|320|384|448)m|cpus: (0\.05|0\.10|0\.15|0\.20|0\.30)' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null; then
-	printf 'ERROR: deployment resources must use the normalized human-readable limits\n' >&2
+	printf 'ERROR: gateway resources must use the normalized human-readable limits\n' >&2
 	exit 1
 fi
 grep -F 'MemoryHigh=512M' "${ROOT}/src/agent/packaging/install/install.sh" >/dev/null
