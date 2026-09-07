@@ -1,9 +1,47 @@
 #!/usr/bin/env bash
-# Deploy one already-built Enterprise SaaS candidate from registry images.
+# Install or upgrade one already-built Enterprise SaaS candidate from registry images.
 set -euo pipefail
+
+resolve_deployment_action() {
+	local install_root=$1 present=0 path
+	local -a identity_files=(.env VERSION MANIFEST.json)
+	if [[ -L "${install_root}" || ( -e "${install_root}" && ! -d "${install_root}" ) ]]; then
+		printf 'ERROR: unsafe HyperFileLens installation root: %s\n' "${install_root}" >&2
+		return 1
+	fi
+	for path in "${identity_files[@]}"; do
+		if [[ -e "${install_root}/${path}" || -L "${install_root}/${path}" ]]; then
+			present=$((present + 1))
+		fi
+	done
+	if ((present == 0)); then
+		if [[ -d "${install_root}" ]] \
+			&& find "${install_root}" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+			printf 'ERROR: HyperFileLens installation root contains unrecognized state: %s\n' \
+				"${install_root}" >&2
+			return 1
+		fi
+		printf 'install\n'
+		return 0
+	fi
+	if ((present != ${#identity_files[@]})); then
+		printf 'ERROR: incomplete HyperFileLens installation under %s; expected .env, VERSION, and MANIFEST.json together\n' \
+			"${install_root}" >&2
+		return 1
+	fi
+	for path in "${identity_files[@]}"; do
+		if [[ ! -f "${install_root}/${path}" || -L "${install_root}/${path}" ]]; then
+			printf 'ERROR: unsafe HyperFileLens installation identity file: %s\n' \
+				"${install_root}/${path}" >&2
+			return 1
+		fi
+	done
+	printf 'upgrade\n'
+}
 
 candidate_archive=""
 candidate_sha256=""
+expected_tag=""
 registry_credentials=""
 registry_region=""
 runtime_env_file=""
@@ -15,6 +53,7 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--candidate) candidate_archive=${2:-}; shift 2 ;;
 	--candidate-sha256) candidate_sha256=${2:-}; shift 2 ;;
+	--expected-tag) expected_tag=${2:-}; shift 2 ;;
 	--registry-credentials) registry_credentials=${2:-}; shift 2 ;;
 	--registry-region) registry_region=${2:-}; shift 2 ;;
 	--runtime-env-file) runtime_env_file=${2:-}; shift 2 ;;
@@ -29,6 +68,7 @@ done
 [[ "${registry_credentials}" =~ ^/var/tmp/hyperfilelens-saas-[0-9]+-[0-9]+/registry\.json$ ]]
 [[ "${runtime_env_file}" =~ ^/var/tmp/hyperfilelens-saas-[0-9]+-[0-9]+/runtime\.env$ ]]
 [[ "${candidate_sha256}" =~ ^[0-9a-f]{64}$ ]]
+[[ "${expected_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
 [[ "${registry_region}" =~ ^(cn|global)$ ]]
 [[ -n "${direct_host}" && "${direct_host}" != *[[:space:]]* ]]
 for file in "${candidate_archive}" "${registry_credentials}" "${runtime_env_file}"; do
@@ -55,6 +95,7 @@ flock 9
 stage_dir="$(dirname "${candidate_archive}")"
 extract_dir="${stage_dir}/extract"
 docker_config="${stage_dir}/docker-config"
+install_root="/opt/hyperfilelens"
 asset_container=""
 rm -rf -- "${extract_dir}" "${docker_config}"
 install -d -m 0700 "${extract_dir}" "${docker_config}"
@@ -70,6 +111,7 @@ cleanup() {
 		"${stage_dir}/asset-language"
 	rm -f -- \
 		"${stage_dir}/assets.tsv" \
+		"${stage_dir}/previous-MANIFEST.json" \
 		"${registry_credentials}" \
 		"${runtime_env_file}" \
 		"${candidate_archive}"
@@ -78,6 +120,16 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+deployment_action="$(resolve_deployment_action "${install_root}")"
+printf '[INFO] Enterprise SaaS deployment action: %s\n' "${deployment_action}"
+previous_id=""
+previous_manifest_snapshot="${stage_dir}/previous-MANIFEST.json"
+if [[ "${deployment_action}" == "upgrade" ]]; then
+	previous_manifest="${install_root}/MANIFEST.json"
+	previous_id="$(sha256sum "${previous_manifest}" | cut -c1-12)"
+	cp "${previous_manifest}" "${previous_manifest_snapshot}"
+fi
 
 python3 - "${candidate_archive}" <<'PY'
 import pathlib
@@ -106,6 +158,29 @@ mapfile -t roots < <(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d -prin
 	exit 1
 }
 candidate_root=${roots[0]}
+python3 - "${candidate_root}/MANIFEST.json" "${expected_tag}" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest_path = pathlib.Path(sys.argv[1])
+expected_tag = sys.argv[2]
+try:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as error:
+    raise SystemExit(f"candidate manifest is invalid: {error}") from error
+expected_version = expected_tag[1:]
+if manifest.get("product") != "hyperfilelens":
+    raise SystemExit("candidate product identity is invalid")
+if manifest.get("edition") != "enterprise":
+    raise SystemExit("candidate is not Enterprise edition")
+if manifest.get("channel") != "release":
+    raise SystemExit("candidate is not a release build")
+if manifest.get("artifact_id") != expected_tag or manifest.get("version") != expected_version:
+    raise SystemExit("candidate does not match the requested release tag")
+if (manifest.get("delivery") or {}).get("mode") != "registry":
+    raise SystemExit("candidate is not registry-backed")
+PY
 
 read_credential() {
 	python3 - "${registry_credentials}" "$1" <<'PY'
@@ -276,32 +351,39 @@ if find "${candidate_root}/payload" -type l -print -quit | grep -q .; then
 	exit 1
 fi
 
-install -d -m 0700 /opt/hyperfilelens/data/deployment-candidates
-previous_manifest="/opt/hyperfilelens/MANIFEST.json"
-if [[ -f "${previous_manifest}" ]]; then
-	previous_id="$(sha256sum "${previous_manifest}" | cut -c1-12)"
-	install -d -m 0700 "/opt/hyperfilelens/data/deployment-candidates/${previous_id}"
-	cp "${previous_manifest}" "/opt/hyperfilelens/data/deployment-candidates/${previous_id}/MANIFEST.json"
-fi
-
-upgrade_args=(
-	upgrade --from "${candidate_root}" --yes --with-sourcelens
+deployment_args=(
+	"${deployment_action}" --yes --with-sourcelens
 	--direct-host "${direct_host}"
 	--runtime-env-file "${runtime_env_file}"
 )
-[[ -z "${public_url}" ]] || upgrade_args+=(--public-url "${public_url}")
-[[ -z "${admin_public_url}" ]] || upgrade_args+=(--admin-public-url "${admin_public_url}")
-HFL_REGISTRY_REGION="${registry_region}" \
-	HFL_UPGRADE_ARTIFACT_SHA256="${candidate_sha256}" \
-	bash "${candidate_root}/install.sh" "${upgrade_args[@]}"
+if [[ "${deployment_action}" == "upgrade" ]]; then
+	deployment_args+=(--from "${candidate_root}")
+fi
+[[ -z "${public_url}" ]] || deployment_args+=(--public-url "${public_url}")
+[[ -z "${admin_public_url}" ]] || deployment_args+=(--admin-public-url "${admin_public_url}")
+if [[ "${deployment_action}" == "upgrade" ]]; then
+	HFL_REGISTRY_REGION="${registry_region}" \
+		HFL_UPGRADE_ARTIFACT_SHA256="${candidate_sha256}" \
+		bash "${candidate_root}/install.sh" "${deployment_args[@]}"
+else
+	HFL_REGISTRY_REGION="${registry_region}" \
+		bash "${candidate_root}/install.sh" "${deployment_args[@]}"
+fi
 
 candidate_id="$(sha256sum "${candidate_root}/MANIFEST.json" | cut -c1-12)"
-candidate_history="/opt/hyperfilelens/data/deployment-candidates/${candidate_id}"
+candidate_history_root="${install_root}/data/deployment-candidates"
+candidate_history="${candidate_history_root}/${candidate_id}"
+install -d -m 0700 "${candidate_history_root}"
+if [[ -n "${previous_id}" ]]; then
+	previous_history="${candidate_history_root}/${previous_id}"
+	install -d -m 0700 "${previous_history}"
+	cp "${previous_manifest_snapshot}" "${previous_history}/MANIFEST.json"
+fi
 install -d -m 0700 "${candidate_history}"
 cp "${candidate_root}/MANIFEST.json" "${candidate_history}/MANIFEST.json"
-printf '%s\n' "${candidate_id}" >"/opt/hyperfilelens/data/deployment-candidates/current"
+printf '%s\n' "${candidate_id}" >"${candidate_history_root}/current"
 if [[ -n "${previous_id:-}" && "${previous_id}" != "${candidate_id}" ]]; then
-	printf '%s\n' "${previous_id}" >"/opt/hyperfilelens/data/deployment-candidates/previous"
+	printf '%s\n' "${previous_id}" >"${candidate_history_root}/previous"
 fi
 
 # Candidate manifests are small, but an upgrade can run frequently. Keep the

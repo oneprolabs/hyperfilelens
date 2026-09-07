@@ -1,5 +1,5 @@
 name: HFL Enterprise SaaS deploy
-description: Deploy one registry-backed Candidate to an already-installed official environment
+description: Install or upgrade one official environment from a registry-backed Candidate
 inputs:
   target:
     description: Official target name, test or prod
@@ -127,11 +127,12 @@ runs:
             "$RUNNER_TEMP/saas-stage/registry.json" \
             "$RUNNER_TEMP/saas-stage/runtime.env" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$remote_dir/"
-    - name: Upgrade target from Candidate
+    - name: Install or upgrade target from Candidate
       shell: bash
       env:
         APP_PUBLIC_URL: ${{ inputs.public_url }}
         ADMIN_PUBLIC_URL: ${{ inputs.admin_public_url }}
+        EXPECTED_TAG: ${{ inputs.tag }}
       run: |
           set -euo pipefail
           remote_dir="/var/tmp/hyperfilelens-saas-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -141,6 +142,7 @@ runs:
             bash -s -- \
               --candidate "$remote_dir/candidate.tar.gz" \
               --candidate-sha256 "$candidate_sha" \
+              --expected-tag "$EXPECTED_TAG" \
               --registry-credentials "$remote_dir/registry.json" \
               --registry-region "$HFL_REGISTRY_REGION" \
               --runtime-env-file "$remote_dir/runtime.env" \
