@@ -30,7 +30,7 @@ env:
 
 jobs:
   prepare:
-    name: Prepare
+    name: Prepare · Release candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -318,7 +318,7 @@ jobs:
           fi
 
   quality:
-    name: Quality
+    name: Verify · Quality gates
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -544,7 +544,7 @@ jobs:
         run: go test ./...
 
   build-hfl-images:
-    name: Build · HFL · ${{ matrix.component == 'hfl-backend' && 'backend' || 'frontend' }}
+    name: Build · HFL image · ${{ matrix.name }}
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -556,12 +556,14 @@ jobs:
       matrix:
         include:
           - component: hfl-backend
+            name: Backend
             repository: hyperfilelens-backend
             context: .
             dockerfile: deploy/docker/backend.Dockerfile
             cache_scope: hfl-backend
             needs_kopia: true
           - component: hfl-frontend
+            name: Frontend
             repository: hyperfilelens-frontend
             context: .
             dockerfile: deploy/docker/frontend.Dockerfile
@@ -681,7 +683,7 @@ jobs:
           docker system df || true
 
   build-sourcelens-images:
-    name: Build · SourceLens · ${{ matrix.component }}
+    name: Build · SourceLens image · ${{ matrix.name }}
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -691,7 +693,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [backend, frontend, lensnode]
+        include:
+          - component: backend
+            name: Backend
+          - component: frontend
+            name: Frontend
+          - component: lensnode
+            name: LensNode
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -733,7 +741,7 @@ jobs:
           docker builder prune -af || true
 
   build-agent:
-    name: Build · Agent · ${{ matrix.asset }}
+    name: Build · Agent bundle · ${{ matrix.name }}
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -746,14 +754,19 @@ jobs:
         include:
           - target: linux:amd64
             asset: linux-amd64
+            name: Linux/AMD64
           - target: linux:arm64
             asset: linux-arm64
+            name: Linux/ARM64
           - target: darwin:amd64
             asset: darwin-amd64
+            name: macOS/AMD64
           - target: darwin:arm64
             asset: darwin-arm64
+            name: macOS/ARM64
           - target: windows:amd64
             asset: windows-amd64
+            name: Windows/AMD64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -782,7 +795,7 @@ jobs:
 
   certify-source-host:
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
-    name: Certify · Agent · ${{ matrix.asset }}
+    name: Certify · Agent bundle · ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     needs: [prepare, build-agent]
@@ -796,26 +809,31 @@ jobs:
             platform: linux
             arch: amd64
             asset: linux-amd64
+            name: Linux/AMD64
             runner: ubuntu-24.04
           - target: linux:arm64
             platform: linux
             arch: arm64
             asset: linux-arm64
+            name: Linux/ARM64
             runner: ubuntu-24.04-arm
           - target: darwin:amd64
             platform: darwin
             arch: amd64
             asset: darwin-amd64
+            name: macOS/AMD64
             runner: macos-15-intel
           - target: darwin:arm64
             platform: darwin
             arch: arm64
             asset: darwin-arm64
+            name: macOS/ARM64
             runner: macos-15
           - target: windows:amd64
             platform: windows
             arch: amd64
             asset: windows-amd64
+            name: Windows/AMD64
             runner: windows-2022
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -992,7 +1010,7 @@ jobs:
         run: ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" _internal-hfl-images.tar --clobber
 
   export-sourcelens-bundle:
-    name: Package · SourceLens
+    name: Package · SourceLens bundle
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -1054,7 +1072,7 @@ jobs:
         run: ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" _internal-runtime-images.tar --clobber
 
   build-language-packs:
-    name: Build · Language packs
+    name: Build · Language bundle
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20

@@ -157,9 +157,13 @@ case "${1:-} ${2:-}" in
 		count=$((count + 1))
 		printf '%s\n' "${count}" >"${HFL_TEST_MIRROR_MARKER}"
 		case "${HFL_TEST_MIRROR_MODE:-success}" in
-		flaky429 | always429)
+		flaky429 | always429 | flakyStream)
 			if [[ "${count}" -lt 3 ]]; then
-				printf 'unexpected status from HEAD request: 429 Too Many Requests\n' >&2
+				if [[ "${HFL_TEST_MIRROR_MODE}" == "flakyStream" ]]; then
+					printf 'failed to copy: stream error: stream ID 1; INTERNAL_ERROR; received from peer\n' >&2
+				else
+					printf 'unexpected status from HEAD request: 429 Too Many Requests\n' >&2
+				fi
 				exit 1
 			fi
 			if [[ "${HFL_TEST_MIRROR_MODE}" == always429 ]]; then
@@ -280,6 +284,16 @@ HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
 
 printf '0\n' >"${mirror_marker}"
 HFL_TEST_MIRROR_MODE=flaky429 \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/example/hyperfilelens-backend:1.0.0-ee \
+		"${digest}" \
+		registry.example.cn/example/hyperfilelens-backend:1.0.0-ee
+[[ "$(cat "${mirror_marker}")" -eq 3 ]]
+
+printf '0\n' >"${mirror_marker}"
+HFL_TEST_MIRROR_MODE=flakyStream \
 	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
 	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
 	"${ROOT}/release/ci/mirror-saas-image.sh" \

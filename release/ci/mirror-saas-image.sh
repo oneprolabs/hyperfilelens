@@ -29,7 +29,7 @@ trap 'rm -f "${copy_log}" "${inspect_log}" "${inspect_output}"' EXIT
 
 mirror_error_is_retryable() {
 	grep -Eiq \
-		'too many requests|(status|response|http)[^[:cntrl:]]*(408|429|500|502|503|504)|request timeout|timeout|deadline exceeded|connection (reset|refused)|unexpected eof|tls handshake timeout|temporary failure|i/o timeout|network is unreachable|no such host' \
+		'too many requests|(status|response|http)[^[:cntrl:]]*(408|429|500|502|503|504)|request timeout|timeout|deadline exceeded|connection (reset|refused)|unexpected eof|tls handshake timeout|temporary failure|i/o timeout|network is unreachable|no such host|stream error[^[:cntrl:]]*internal_error' \
 		"$@"
 }
 
