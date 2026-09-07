@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
-# Verify that the complete Community online-install image set is anonymous.
+# Verify one region of the complete Community online-install image set.
 set -euo pipefail
 
-[[ $# -eq 1 && -d "$1" ]] || {
-	printf 'Usage: %s METADATA_DIR\n' "$0" >&2
+[[ $# -eq 2 && -d "$1" ]] || {
+	printf 'Usage: %s METADATA_DIR cn|global\n' "$0" >&2
 	exit 2
 }
 metadata_dir=$1
+region=$2
+[[ "${region}" == cn || "${region}" == global ]] || {
+	printf 'ERROR: image verification region must be cn or global\n' >&2
+	exit 2
+}
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 docker_config="$(mktemp -d)"
 tasks="$(mktemp)"
 trap 'rm -rf "${docker_config}"; rm -f "${tasks}"' EXIT
 
-python3 - "${metadata_dir}" "${root}/deploy/online/sourcelens/runtime.json" >"${tasks}" <<'PY'
+python3 - "${metadata_dir}" "${root}/deploy/online/sourcelens/runtime.json" \
+	"${region}" >"${tasks}" <<'PY'
 import json
 import pathlib
 import re
@@ -20,6 +26,7 @@ import sys
 
 root = pathlib.Path(sys.argv[1])
 runtime = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+selected_region = sys.argv[3]
 if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", str(runtime.get("git_ref") or "")):
     raise SystemExit("invalid online SourceLens git_ref")
 if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", str(runtime.get("version") or "")):
@@ -83,6 +90,8 @@ for path in sorted(root.glob("*.json")):
         if len(sources) != 2 or regions != {"cn", "global"}:
             raise SystemExit(f"public image sources are incomplete in {path}")
         for source in sources:
+            if str(source.get("region") or "") != selected_region:
+                continue
             ref = str(source.get("ref") or "")
             selected[ref] = digest
 
@@ -92,8 +101,11 @@ if sourcelens_components != {
     "sourcelens-lensnode",
 }:
     raise SystemExit("online SourceLens component metadata is incomplete")
-if len(selected) != 22:
-    raise SystemExit(f"expected 22 unique Community image refs, found {len(selected)}")
+if len(selected) != 11:
+    raise SystemExit(
+        f"expected 11 unique {selected_region} Community image refs, "
+        f"found {len(selected)}"
+    )
 for ref, digest in sorted(selected.items()):
     print(f"{ref}\t{digest}")
 PY
