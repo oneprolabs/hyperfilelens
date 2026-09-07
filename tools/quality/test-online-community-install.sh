@@ -1353,6 +1353,13 @@ grep -Fq 'Version        v1.2.12' "${latest_log}" || {
 }
 grep -Fq 'Docker Engine  29.6.1 · reuse' "${latest_log}"
 grep -Fq 'Docker Compose 2.39.1 · reuse' "${latest_log}"
+for removed_target_field in Action Source Registry; do
+	if grep -Eq "^  ${removed_target_field}[[:space:]]" "${latest_log}"; then
+		printf 'ERROR: online target still displays %s\n' \
+			"${removed_target_field}" >&2
+		exit 1
+	fi
+done
 latest_session_log="$(find "${test_install_root}/logs" -maxdepth 1 -type f \
 	-name 'install-*.log' -print -quit)"
 [[ -n "${latest_session_log}" ]]
@@ -1535,6 +1542,22 @@ assert manifest["runtime_images"] == {
     "backend": "hyperfilelens-backend:1.2.3",
     "frontend": "hyperfilelens-frontend:1.2.3",
 }
+registry_images = {
+    entry["component"]: entry for entry in manifest["delivery"]["registry_images"]
+}
+for component, local_ref in {
+    "postgres": "postgres:17",
+    "redis": "redis:alpine",
+    "sourcelens-nginx": "nginx:stable-alpine",
+}.items():
+    sources = {
+        source["region"]: source["ref"]
+        for source in registry_images[component]["sources"]
+    }
+    assert sources == {
+        "cn": f"dockerproxy.net/library/{local_ref}",
+        "global": f"docker.io/library/{local_ref}",
+    }
 assets = manifest["delivery"]["asset_images"]
 assert {entry["local_ref"] for entry in assets} == {
     "hyperfilelens-agent-assets:1.2.3",
@@ -1582,10 +1605,13 @@ for entry in entries:
     )
 
 PY
-# LensNode is distributed inside gateway-assets rather than pulled by the
-# Console host, but its sources remain part of publication checks.
-"${ROOT}/release/ci/write-upstream-image-metadata.sh" \
-	sourcelens-lensnode "${metadata}/sourcelens-lensnode.json"
+# Recreate upstream metadata through the same helper used by the release
+# workflow. LensNode remains a publication check even though gateway-assets
+# delivers it to the Gateway host.
+for component in sourcelens-lensnode sourcelens-nginx postgres redis; do
+	"${ROOT}/release/ci/write-upstream-image-metadata.sh" \
+		"${component}" "${metadata}/${component}.json"
+done
 PATH="${fake_bin}:${PATH}" "${online}/verify-public-images.sh" "${metadata}"
 
 # Source only defines functions because install.sh guards main with BASH_SOURCE.
