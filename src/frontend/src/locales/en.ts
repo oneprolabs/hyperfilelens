@@ -75,6 +75,10 @@ export const en = {
       clientAborted: '',
       unknown: 'Something went wrong. Please try again.',
       validationFailed: 'Please check the form and try again.',
+      aiModelConnectionTestFailed:
+        'The AI model connection test failed. Check the provider, model, API endpoint, and credentials, then try again.',
+      aiModelConnectionTestRequired:
+        'Re-enter the API key so this inactive model can be tested before it is enabled.',
       authForbidden: "You don't have permission to perform this action.",
       resourceNotFound: "This resource doesn't exist or was removed.",
       resourceConflict: 'This action conflicts with the current state. Refresh and try again.',
@@ -1174,6 +1178,8 @@ export const en = {
       modelCustom: 'Custom Model ID',
       labelCapabilities: 'Capabilities',
       btnCreateModel: 'Add Model',
+      addingModel: 'Adding Model…',
+      testingAndAddingModel: 'Testing and Adding…',
       editModel: 'Edit AI Model',
       saveSuccess: 'AI model saved.',
       deleteTitle: 'Delete AI model',
@@ -1188,6 +1194,10 @@ export const en = {
       modelPlaceholder: 'Select or type a model id',
       formRequired: 'Provider and model are required.',
       apiKeyRequired: 'API key is required for new models.',
+      apiKeyRequiredForConnectionChange:
+        'Enter the API key again to verify changes to an active model connection.',
+      apiKeyRequiredForActivation:
+        'Enter the API key again to test this model before enabling it.',
       apiKeyKeepPlaceholder: 'Leave blank to keep the current key',
       testNeedModel: 'Select a provider and model before testing.',
       labelDefault: 'Default',
@@ -1220,8 +1230,19 @@ export const en = {
       apiKeyEncryptHint: 'Keys are encrypted at rest and decrypted only for tests and calls.',
       activeHint: 'Inactive models stay in the list but are hidden from Copilot model selection.',
       testConnection: 'Test Connection',
-      connectivityOk: '√ OK',
+      connectivityOk: 'Connection test succeeded.',
       connectivityFail: '× Failed: {detail}',
+      connectionTestSuccessTitle: 'Connection Successful',
+      connectionTestSuccessDescription:
+        'HFL reached {provider} and received a valid response from {model}.',
+      connectionTestFailureTitle: 'Connection Failed',
+      connectionTestFailureFallback:
+        'The provider did not accept this model configuration. Check the model, endpoint, and credentials.',
+      connectionTestProvider: 'Provider',
+      connectionTestModel: 'Model',
+      connectionTestEndpoint: 'API Base URL',
+      connectionTestDefaultEndpoint: 'Provider default endpoint',
+      connectionTestReady: 'Configuration verified in {duration} and ready to save.',
     },
     dataGateway: {
       colOrigin: 'Origin',

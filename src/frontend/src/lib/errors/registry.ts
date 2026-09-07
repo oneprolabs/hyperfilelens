@@ -6,6 +6,8 @@ export const ERROR_CODE_I18N_KEYS: Record<string, string> = {
   'CLIENT.ABORTED': 'errors.codes.clientAborted',
   'UNKNOWN.ERROR': 'errors.codes.unknown',
   'VALIDATION.FAILED': 'errors.codes.validationFailed',
+  'AI_MODEL.CONNECTION_TEST_FAILED': 'errors.codes.aiModelConnectionTestFailed',
+  'AI_MODEL.CONNECTION_TEST_REQUIRED': 'errors.codes.aiModelConnectionTestRequired',
   'AUTH.FORBIDDEN': 'errors.codes.authForbidden',
   'RESOURCE.NOT_FOUND': 'errors.codes.resourceNotFound',
   'RESOURCE.CONFLICT': 'errors.codes.resourceConflict',
@@ -60,6 +62,10 @@ export const ERROR_CODE_FALLBACK_EN: Record<string, string> = {
   'CLIENT.OFFLINE': 'You are offline. Check your network connection.',
   'UNKNOWN.ERROR': 'Something went wrong. Please try again.',
   'VALIDATION.FAILED': 'Please check the form and try again.',
+  'AI_MODEL.CONNECTION_TEST_FAILED':
+    'The AI model connection test failed. Check the provider, model, API endpoint, and credentials, then try again.',
+  'AI_MODEL.CONNECTION_TEST_REQUIRED':
+    'Re-enter the API key so this inactive model can be tested before it is enabled.',
   'AUTH.FORBIDDEN': "You don't have permission to perform this action.",
   'RESOURCE.NOT_FOUND': "This resource doesn't exist or was removed.",
   'STORAGE.REPOSITORY_ALREADY_EXISTS': 'A Kopia repository already exists at the selected location. Import is not supported in this version. Choose a different storage location.',
