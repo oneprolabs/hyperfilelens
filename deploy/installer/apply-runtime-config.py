@@ -15,7 +15,8 @@ RUNTIME_KEYS = {
     "HFL_EMAIL_SIGNUP_ENABLED",
     "HFL_EMAIL_CODE_LOGIN_ENABLED",
     "HFL_GOOGLE_OAUTH_ENABLED",
-    "HFL_GA_MEASUREMENT_ID",
+    "HFL_WEBSITE_GA_MEASUREMENT_ID",
+    "HFL_TENANT_GA_MEASUREMENT_ID",
     "HFL_INSECURE_TLS",
     "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY",
     "HFL_DEPLOY_TARGET",
@@ -207,17 +208,29 @@ def google_runtime_updates(values: Dict[str, str]) -> Dict[str, str]:
     }
 
 
-def analytics_runtime_update(values: Dict[str, str]) -> Tuple[bool, str]:
-    """Return whether SaaS analytics was staged and its validated ID."""
-    if "HFL_GA_MEASUREMENT_ID" not in values:
-        return False, ""
-    measurement_id = values.get("HFL_GA_MEASUREMENT_ID", "").strip()
-    if not measurement_id:
-        return True, ""
-    if not GA4_MEASUREMENT_ID_PATTERN.fullmatch(measurement_id):
-        warn("invalid GA4 measurement ID; analytics is disabled")
-        return True, ""
-    return True, measurement_id
+def analytics_runtime_updates(
+    values: Dict[str, str],
+) -> Tuple[Dict[str, str], Set[str]]:
+    """Validate independently managed Website and Tenant GA4 data streams."""
+    updates: Dict[str, str] = {}
+    removals: Set[str] = set()
+    for surface, name in (
+        ("Website", "HFL_WEBSITE_GA_MEASUREMENT_ID"),
+        ("Tenant", "HFL_TENANT_GA_MEASUREMENT_ID"),
+    ):
+        if name not in values:
+            continue
+        measurement_id = values.get(name, "").strip()
+        if measurement_id and GA4_MEASUREMENT_ID_PATTERN.fullmatch(measurement_id):
+            updates[name] = measurement_id
+        else:
+            removals.add(name)
+            if measurement_id:
+                warn(
+                    f"invalid {surface} GA4 measurement ID; "
+                    f"{surface} analytics is disabled"
+                )
+    return updates, removals
 
 
 def valid_sentry_dsn(value: str) -> bool:
@@ -367,7 +380,9 @@ def apply_configuration(
             current[key] = value
 
     updates: Dict[str, str] = {}
-    removals: Set[str] = set()
+    # Always purge the retired single-stream key. Its value is never read or
+    # migrated, including standalone installs without a staged runtime file.
+    removals: Set[str] = {"HFL_" + "GA_MEASUREMENT_ID"}
     runtime_values = read_runtime_values(runtime_path)
     if runtime_path is not None:
         signup_enabled = runtime_values.get("HFL_EMAIL_SIGNUP_ENABLED", "").lower()
@@ -401,13 +416,11 @@ def apply_configuration(
                 "SENTRY_SEND_DEFAULT_PII",
             }
         )
-        analytics_staged, measurement_id = analytics_runtime_update(runtime_values)
-        if analytics_staged:
-            if measurement_id:
-                updates["HFL_GA_MEASUREMENT_ID"] = measurement_id
-            else:
-                removals.add("HFL_GA_MEASUREMENT_ID")
-
+        analytics_updates, analytics_removals = analytics_runtime_updates(
+            runtime_values
+        )
+        updates.update(analytics_updates)
+        removals.update(analytics_removals)
         gateway_enabled = runtime_values.get(
             "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY", ""
         ).lower()

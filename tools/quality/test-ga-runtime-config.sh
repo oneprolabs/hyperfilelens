@@ -14,20 +14,35 @@ HFL_WEBSITE_CONFIG_OUTPUT="${website}" \
 	HFL_TENANT_CONFIG_OUTPUT="${tenant}" \
 	HFL_ADMIN_CONFIG_OUTPUT="${admin}" \
 	HFL_WEBSITE_APP_URL="https://app.hyperfilelens.com" \
-	HFL_GA_MEASUREMENT_ID="G-0RX9GZJCWF" \
+	HFL_WEBSITE_GA_MEASUREMENT_ID="G-0RX9GZJCWF" \
+	HFL_TENANT_GA_MEASUREMENT_ID="G-NMVD54BHJ3" \
 	sh "${renderer}"
 
 grep -Fx "window.__HFL_WEBSITE_CONFIG__ = Object.freeze({ appUrl: 'https://app.hyperfilelens.com', gaMeasurementId: 'G-0RX9GZJCWF' })" \
 	"${website}" >/dev/null
-grep -F "gaMeasurementId: 'G-0RX9GZJCWF'" "${tenant}" >/dev/null
+grep -F "gaMeasurementId: 'G-NMVD54BHJ3'" "${tenant}" >/dev/null
 grep -F "gaMeasurementId: ''" "${admin}" >/dev/null
 
 invalid_output="$(HFL_WEBSITE_CONFIG_OUTPUT="${website}" \
 	HFL_TENANT_CONFIG_OUTPUT="${tenant}" \
 	HFL_ADMIN_CONFIG_OUTPUT="${admin}" \
-	HFL_GA_MEASUREMENT_ID="G invalid" sh "${renderer}" 2>&1)"
-grep -F 'WARNING: invalid GA4 measurement ID' <<<"${invalid_output}" >/dev/null
+	HFL_WEBSITE_GA_MEASUREMENT_ID="G invalid" \
+	HFL_TENANT_GA_MEASUREMENT_ID="G-NMVD54BHJ3" \
+	sh "${renderer}" 2>&1)"
+grep -F 'WARNING: invalid Website GA4 measurement ID' <<<"${invalid_output}" >/dev/null
+grep -F "gaMeasurementId: ''" "${website}" >/dev/null
+grep -F "gaMeasurementId: 'G-NMVD54BHJ3'" "${tenant}" >/dev/null
+
+invalid_output="$(HFL_WEBSITE_CONFIG_OUTPUT="${website}" \
+	HFL_TENANT_CONFIG_OUTPUT="${tenant}" \
+	HFL_ADMIN_CONFIG_OUTPUT="${admin}" \
+	HFL_WEBSITE_GA_MEASUREMENT_ID="G-0RX9GZJCWF" \
+	HFL_TENANT_GA_MEASUREMENT_ID="invalid" \
+	sh "${renderer}" 2>&1)"
+grep -F 'WARNING: invalid Tenant GA4 measurement ID' <<<"${invalid_output}" >/dev/null
+grep -F "gaMeasurementId: 'G-0RX9GZJCWF'" "${website}" >/dev/null
 grep -F "gaMeasurementId: ''" "${tenant}" >/dev/null
+grep -F "gaMeasurementId: ''" "${admin}" >/dev/null
 
 grep -F 'alias /usr/share/nginx/runtime/tenant-app-runtime-config.js;' \
 	"${ROOT}/deploy/nginx/web.conf" >/dev/null
@@ -35,8 +50,26 @@ grep -F 'alias /usr/share/nginx/runtime/admin-app-runtime-config.js;' \
 	"${ROOT}/deploy/nginx/web.conf" >/dev/null
 grep -F '<script src="/app-runtime-config.js"></script>' \
 	"${ROOT}/src/frontend/index.html" >/dev/null
-grep -F 'PROD_GA_MEASUREMENT_ID' \
+grep -F 'PROD_WEBSITE_GA_MEASUREMENT_ID' \
 	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+grep -F 'PROD_TENANT_GA_MEASUREMENT_ID' \
+	"${ROOT}/.github/workflows/enterprise_promotion.yml" >/dev/null
+for production_key in \
+	PROD_WEBSITE_GA_MEASUREMENT_ID \
+	PROD_TENANT_GA_MEASUREMENT_ID; do
+	grep -F "vars.${production_key}" \
+		"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml" >/dev/null
+done
+for runtime_key in \
+	HFL_WEBSITE_GA_MEASUREMENT_ID \
+	HFL_TENANT_GA_MEASUREMENT_ID; do
+	grep -F "${runtime_key}" \
+		"${ROOT}/.github/actions/deploy-saas/action.yml" >/dev/null
+done
+grep -F "website_ga_measurement_id: ''" \
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
+grep -F "tenant_ga_measurement_id: ''" \
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F 'ga4_measurement_id_pattern.fullmatch(candidate)' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F "event_callback: completeNavigation" \
@@ -59,12 +92,13 @@ end = workflow.index(end_marker, start)
 renderer = textwrap.dedent(workflow[start:end])
 
 
-def render(target: str, measurement_id: str, filename: str):
+def render(target: str, website_id: str, tenant_id: str, filename: str):
     output = pathlib.Path(sys.argv[2], filename)
     environment = os.environ.copy()
     environment.update(
         DEPLOY_TARGET=target,
-        HFL_GA_MEASUREMENT_ID=measurement_id,
+        HFL_WEBSITE_GA_MEASUREMENT_ID=website_id,
+        HFL_TENANT_GA_MEASUREMENT_ID=tenant_id,
     )
     completed = subprocess.run(
         [sys.executable, "-", str(output)],
@@ -78,25 +112,50 @@ def render(target: str, measurement_id: str, filename: str):
         line.split("=", 1)
         for line in output.read_text(encoding="utf-8").splitlines()
     )
-    return values["HFL_GA_MEASUREMENT_ID"], completed.stdout
+    return (
+        values["HFL_WEBSITE_GA_MEASUREMENT_ID"],
+        values["HFL_TENANT_GA_MEASUREMENT_ID"],
+        completed.stdout,
+    )
 
 
-assert render("prod", "  G-0RX9GZJCWF\t", "trimmed.env") == ("G-0RX9GZJCWF", "")
-invalid_value, invalid_output = render(
-    "prod", "G-0RX9GZJCWF\ninvalid", "multiline.env"
+assert render("prod", "  G-0RX9GZJCWF\t", "G-NMVD54BHJ3", "valid.env") == (
+    "G-0RX9GZJCWF",
+    "G-NMVD54BHJ3",
+    "",
 )
-assert invalid_value == ""
-assert "::warning title=Google Analytics configuration::" in invalid_output
-assert render("community", "G-0RX9GZJCWF", "community.env") == ("", "")
+website_id, tenant_id, output = render(
+    "prod", "G-0RX9GZJCWF\ninvalid", "G-NMVD54BHJ3", "invalid.env"
+)
+assert website_id == ""
+assert tenant_id == "G-NMVD54BHJ3"
+assert "::warning title=Google Analytics configuration::" in output
+assert render("community", "G-0RX9GZJCWF", "G-NMVD54BHJ3", "community.env") == (
+    "",
+    "",
+    "",
+)
 PY
 
-if grep -R -E '(TEST|PREPROD)_GA_MEASUREMENT_ID' "${ROOT}/.github/workflows" >/dev/null; then
-	printf 'ERROR: Google Analytics must be configured only for the PROD SaaS target\n' >&2
+if grep -R -E '(TEST|COMMUNITY|PREPROD)_(WEBSITE|TENANT)_GA_MEASUREMENT_ID' \
+	"${ROOT}/.github/workflows" >/dev/null; then
+	printf 'ERROR: Google Analytics must be configured only for the PROD target\n' >&2
 	exit 1
 fi
 if grep -R -F 'VITE_GA_ID' "${ROOT}/src/frontend" "${ROOT}/website" >/dev/null; then
 	printf 'ERROR: HFL analytics must remain runtime-configured, not image-baked\n' >&2
 	exit 1
 fi
+for retired_key in \
+	"HFL_$(printf '%s' GA_MEASUREMENT_ID)" \
+	"PROD_$(printf '%s' GA_MEASUREMENT_ID)"; do
+	if grep -R -F "${retired_key}" "${ROOT}" \
+		--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist \
+		--exclude-dir=cache --exclude-dir=__pycache__ >/dev/null; then
+		printf 'ERROR: retired analytics key remains in the repository: %s\n' \
+			"${retired_key}" >&2
+		exit 1
+	fi
+done
 
 printf 'Runtime Google Analytics configuration checks passed.\n'

@@ -1352,6 +1352,8 @@ jobs:
       email_code_login_enabled: ${{ vars.TEST_EMAIL_CODE_LOGIN_ENABLED == 'true' }}
       google_oauth_enabled: ${{ vars.TEST_GOOGLE_OAUTH_ENABLED == 'true' }}
       google_client_id: ${{ vars.TEST_GOOGLE_CLIENT_ID }}
+      website_ga_measurement_id: ''
+      tenant_ga_measurement_id: ''
       sentry_enabled: ${{ vars.TEST_SENTRY_ENABLED == 'true' }}
       platform_gateway_auto_deploy: ${{ vars.TEST_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
       hfl_insecure_tls: ${{ vars.TEST_HFL_INSECURE_TLS }}
@@ -1429,6 +1431,8 @@ jobs:
       email_signup_enabled: false
       email_code_login_enabled: false
       google_oauth_enabled: false
+      website_ga_measurement_id: ''
+      tenant_ga_measurement_id: ''
       sentry_enabled: ${{ vars.COMMUNITY_SENTRY_ENABLED == 'true' }}
       platform_gateway_auto_deploy: ${{ vars.COMMUNITY_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
       hfl_insecure_tls: ${{ vars.COMMUNITY_HFL_INSECURE_TLS }}

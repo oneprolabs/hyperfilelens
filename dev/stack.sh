@@ -721,7 +721,7 @@ cache_update() {
 }
 
 prepare_website_static() {
-	local force=$1 fingerprint app_url
+	local force=$1 fingerprint app_url website_ga_measurement_id
 	WEBSITE_ARTIFACT_REBUILT=0
 	fingerprint="$(cache_fingerprint website -- "npm=${OPT_NPM_REGISTRY}" \
 		"platform=linux/amd64" "base=${HFL_WEBSITE_BASE_IMAGE}")"
@@ -753,8 +753,10 @@ prepare_website_static() {
 	fi
 
 	app_url="$(read_env_value FRONTEND_URL)"
+	website_ga_measurement_id="$(read_env_value HFL_WEBSITE_GA_MEASUREMENT_ID)"
 	HFL_WEBSITE_CONFIG_OUTPUT="${WEBSITE_OUTPUT}/public/website-runtime-config.js" \
 		HFL_WEBSITE_APP_URL="${app_url}" \
+		HFL_WEBSITE_GA_MEASUREMENT_ID="${website_ga_measurement_id}" \
 		sh "${WEBSITE_OUTPUT}/runtime-config.sh"
 }
 

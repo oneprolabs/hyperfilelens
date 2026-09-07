@@ -9,7 +9,7 @@ trap 'rm -rf "${tmp}"' EXIT
 valid="${tmp}/valid.js"
 HFL_WEBSITE_CONFIG_OUTPUT="${valid}" \
 	HFL_WEBSITE_APP_URL="https://app.hyperfilelens.com" \
-	HFL_GA_MEASUREMENT_ID="G-0RX9GZJCWF" \
+	HFL_WEBSITE_GA_MEASUREMENT_ID="G-0RX9GZJCWF" \
 	sh "${renderer}"
 grep -Fx "window.__HFL_WEBSITE_CONFIG__ = Object.freeze({ appUrl: 'https://app.hyperfilelens.com', gaMeasurementId: 'G-0RX9GZJCWF' })" \
 	"${valid}" >/dev/null
@@ -23,8 +23,8 @@ grep -Fx "window.__HFL_WEBSITE_CONFIG__ = Object.freeze({ appUrl: '', gaMeasurem
 
 invalid_ga="${tmp}/invalid-ga.js"
 output="$(HFL_WEBSITE_CONFIG_OUTPUT="${invalid_ga}" \
-	HFL_GA_MEASUREMENT_ID="invalid" sh "${renderer}" 2>&1)"
-grep -F 'WARNING: invalid GA4 measurement ID' <<<"${output}" >/dev/null
+	HFL_WEBSITE_GA_MEASUREMENT_ID="invalid" sh "${renderer}" 2>&1)"
+grep -F 'WARNING: invalid Website GA4 measurement ID' <<<"${output}" >/dev/null
 grep -Fx "window.__HFL_WEBSITE_CONFIG__ = Object.freeze({ appUrl: '', gaMeasurementId: '' })" \
 	"${invalid_ga}" >/dev/null
 

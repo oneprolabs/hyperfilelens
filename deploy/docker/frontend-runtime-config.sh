@@ -6,7 +6,8 @@ website_output=${HFL_WEBSITE_CONFIG_OUTPUT:-/usr/share/nginx/website/website-run
 tenant_output=${HFL_TENANT_CONFIG_OUTPUT:-/usr/share/nginx/runtime/tenant-app-runtime-config.js}
 admin_output=${HFL_ADMIN_CONFIG_OUTPUT:-/usr/share/nginx/runtime/admin-app-runtime-config.js}
 app_url=${HFL_WEBSITE_APP_URL:-}
-ga_measurement_id=${HFL_GA_MEASUREMENT_ID:-}
+website_ga_measurement_id=${HFL_WEBSITE_GA_MEASUREMENT_ID:-}
+tenant_ga_measurement_id=${HFL_TENANT_GA_MEASUREMENT_ID:-}
 sentry_enabled=${HFL_SENTRY_ENABLED:-false}
 sentry_dsn=${HFL_SENTRY_DSN:-}
 sentry_environment=${HFL_SENTRY_ENVIRONMENT:-}
@@ -19,11 +20,21 @@ if [ -n "${app_url}" ] && ! printf '%s' "${app_url}" \
   app_url=
 fi
 
-if [ -n "${ga_measurement_id}" ] && ! printf '%s' "${ga_measurement_id}" \
-  | grep -Eq '^G-[A-Z0-9]+$'; then
-  printf '%s\n' '[frontend-config] WARNING: invalid GA4 measurement ID; analytics is disabled' >&2
-  ga_measurement_id=
-fi
+validate_ga_measurement_id() {
+  surface=$1
+  measurement_id=$2
+  if [ -n "${measurement_id}" ] && ! printf '%s' "${measurement_id}" \
+    | grep -Eq '^G-[A-Z0-9]+$'; then
+    printf '%s\n' "[frontend-config] WARNING: invalid ${surface} GA4 measurement ID; ${surface} analytics is disabled" >&2
+    return 1
+  fi
+  return 0
+}
+
+validate_ga_measurement_id Website "${website_ga_measurement_id}" \
+  || website_ga_measurement_id=
+validate_ga_measurement_id Tenant "${tenant_ga_measurement_id}" \
+  || tenant_ga_measurement_id=
 
 case "$(printf '%s' "${sentry_enabled}" | tr '[:upper:]' '[:lower:]')" in
   1|true|yes|on) sentry_enabled=true ;;
@@ -66,9 +77,9 @@ write_config() {
 }
 
 write_config "${website_output}" \
-  "window.__HFL_WEBSITE_CONFIG__ = Object.freeze({ appUrl: '${app_url%/}', gaMeasurementId: '${ga_measurement_id}' })"
+  "window.__HFL_WEBSITE_CONFIG__ = Object.freeze({ appUrl: '${app_url%/}', gaMeasurementId: '${website_ga_measurement_id}' })"
 write_config "${tenant_output}" \
-  "window.__HFL_APP_CONFIG__ = Object.freeze({ gaMeasurementId: '${ga_measurement_id}', sentryEnabled: ${sentry_enabled}, sentryDsn: '${sentry_dsn}', sentryEnvironment: '${sentry_environment}', sentryRelease: '${sentry_release}', sentryTracesSampleRate: ${sentry_traces_sample_rate}, sentrySurface: 'tenant' })"
+  "window.__HFL_APP_CONFIG__ = Object.freeze({ gaMeasurementId: '${tenant_ga_measurement_id}', sentryEnabled: ${sentry_enabled}, sentryDsn: '${sentry_dsn}', sentryEnvironment: '${sentry_environment}', sentryRelease: '${sentry_release}', sentryTracesSampleRate: ${sentry_traces_sample_rate}, sentrySurface: 'tenant' })"
 # Platform Operations and Django Admin must never emit SaaS analytics.
 write_config "${admin_output}" \
   "window.__HFL_APP_CONFIG__ = Object.freeze({ gaMeasurementId: '', sentryEnabled: ${sentry_enabled}, sentryDsn: '${sentry_dsn}', sentryEnvironment: '${sentry_environment}', sentryRelease: '${sentry_release}', sentryTracesSampleRate: ${sentry_traces_sample_rate}, sentrySurface: 'admin' })"
