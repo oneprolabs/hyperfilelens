@@ -86,8 +86,13 @@ on:
         required: false
         default: ''
         type: string
-      ga_measurement_id:
-        description: Optional GA4 measurement ID for the official SaaS deployment
+      website_ga_measurement_id:
+        description: Optional Website and Docs GA4 measurement ID
+        required: false
+        default: ''
+        type: string
+      tenant_ga_measurement_id:
+        description: Optional Tenant Console GA4 measurement ID
         required: false
         default: ''
         type: string
@@ -225,7 +230,8 @@ jobs:
           GOOGLE_OAUTH_ENABLED: ${{ inputs.google_oauth_enabled }}
           GOOGLE_CLIENT_ID: ${{ inputs.google_client_id }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.google_client_secret }}
-          GA_MEASUREMENT_ID: ${{ inputs.ga_measurement_id }}
+          WEBSITE_GA_MEASUREMENT_ID: ${{ inputs.website_ga_measurement_id }}
+          TENANT_GA_MEASUREMENT_ID: ${{ inputs.tenant_ga_measurement_id }}
           SENTRY_ENABLED: ${{ inputs.sentry_enabled }}
           SENTRY_BACKEND_DSN: ${{ secrets.sentry_backend_dsn }}
           SENTRY_FRONTEND_DSN: ${{ secrets.sentry_frontend_dsn }}
@@ -332,7 +338,8 @@ jobs:
               echo '::warning title=Google OAuth configuration::Google OAuth settings are missing or malformed; deployment will preserve the installed Google configuration.'
             fi
           fi
-          if [[ "$DEPLOY_TARGET" != "prod" && -n "$GA_MEASUREMENT_ID" ]]; then
+          if [[ "$DEPLOY_TARGET" != "prod" ]] \
+            && { [[ -n "$WEBSITE_GA_MEASUREMENT_ID" ]] || [[ -n "$TENANT_GA_MEASUREMENT_ID" ]]; }; then
             echo '::warning title=Google Analytics configuration::Analytics is only supported for the production SaaS target; the supplied value will be ignored.'
           fi
           if [[ "$SENTRY_ENABLED" == "true" ]] \
@@ -420,7 +427,8 @@ jobs:
           HFL_EMAIL_SIGNUP_ENABLED: ${{ inputs.email_signup_enabled }}
           HFL_EMAIL_CODE_LOGIN_ENABLED: ${{ inputs.email_code_login_enabled }}
           HFL_GOOGLE_OAUTH_ENABLED: ${{ inputs.google_oauth_enabled }}
-          HFL_GA_MEASUREMENT_ID: ${{ inputs.ga_measurement_id }}
+          HFL_WEBSITE_GA_MEASUREMENT_ID: ${{ inputs.website_ga_measurement_id }}
+          HFL_TENANT_GA_MEASUREMENT_ID: ${{ inputs.tenant_ga_measurement_id }}
           SENTRY_ENABLED: ${{ inputs.sentry_enabled }}
           SENTRY_BACKEND_DSN: ${{ secrets.sentry_backend_dsn }}
           SENTRY_FRONTEND_DSN: ${{ secrets.sentry_frontend_dsn }}
@@ -443,7 +451,8 @@ jobs:
               "HFL_EMAIL_SIGNUP_ENABLED",
               "HFL_EMAIL_CODE_LOGIN_ENABLED",
               "HFL_GOOGLE_OAUTH_ENABLED",
-              "HFL_GA_MEASUREMENT_ID",
+              "HFL_WEBSITE_GA_MEASUREMENT_ID",
+              "HFL_TENANT_GA_MEASUREMENT_ID",
               "HFL_INSECURE_TLS",
               "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY",
               "HFL_DEPLOY_TARGET",
@@ -479,7 +488,10 @@ jobs:
               elif name == "SENTRY_TRACES_SAMPLE_RATE":
                   # Error tracking is enabled by default; performance tracing is opt-in.
                   value = "0"
-              if name == "HFL_GA_MEASUREMENT_ID":
+              if name in {
+                  "HFL_WEBSITE_GA_MEASUREMENT_ID",
+                  "HFL_TENANT_GA_MEASUREMENT_ID",
+              }:
                   if os.environ.get("DEPLOY_TARGET") != "prod":
                       value = ""
                   else:

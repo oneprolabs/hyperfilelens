@@ -146,7 +146,8 @@ jobs:
       email_code_login_enabled: ${{ vars.PROD_EMAIL_CODE_LOGIN_ENABLED == 'true' }}
       google_oauth_enabled: ${{ vars.PROD_GOOGLE_OAUTH_ENABLED == 'true' }}
       google_client_id: ${{ vars.PROD_GOOGLE_CLIENT_ID }}
-      ga_measurement_id: ${{ vars.PROD_GA_MEASUREMENT_ID }}
+      website_ga_measurement_id: ${{ vars.PROD_WEBSITE_GA_MEASUREMENT_ID }}
+      tenant_ga_measurement_id: ${{ vars.PROD_TENANT_GA_MEASUREMENT_ID }}
       sentry_enabled: ${{ vars.PROD_SENTRY_ENABLED == 'true' }}
       platform_gateway_auto_deploy: ${{ vars.PROD_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
       hfl_insecure_tls: ${{ vars.PROD_HFL_INSECURE_TLS }}

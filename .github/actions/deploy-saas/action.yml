@@ -74,23 +74,29 @@ runs:
           import os, pathlib, re, sys
           names = (
               "HFL_EMAIL_SIGNUP_ENABLED", "HFL_EMAIL_CODE_LOGIN_ENABLED",
-              "HFL_GOOGLE_OAUTH_ENABLED", "HFL_GA_MEASUREMENT_ID", "HFL_INSECURE_TLS",
+              "HFL_GOOGLE_OAUTH_ENABLED", "HFL_WEBSITE_GA_MEASUREMENT_ID",
+              "HFL_TENANT_GA_MEASUREMENT_ID", "HFL_INSECURE_TLS",
               "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY", "SENTRY_ENABLED", "SENTRY_BACKEND_DSN",
               "SENTRY_FRONTEND_DSN", "TURNSTILE_ENABLED", "TURNSTILE_SITE_KEY",
               "TURNSTILE_SECRET_KEY", "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME",
               "SMTP_PASSWORD", "SMTP_SECURITY", "EMAIL_FROM", "GOOGLE_CLIENT_ID",
               "GOOGLE_CLIENT_SECRET",
           )
+          analytics_surfaces = {
+              "HFL_WEBSITE_GA_MEASUREMENT_ID": "Website",
+              "HFL_TENANT_GA_MEASUREMENT_ID": "Tenant",
+          }
           lines = [f"HFL_DEPLOY_TARGET={os.environ['DEPLOY_TARGET']}"]
           lines.append(f"SENTRY_ENVIRONMENT={'hfl-production' if os.environ['DEPLOY_TARGET'] == 'prod' else 'hfl-test'}")
           lines.append("SENTRY_TRACES_SAMPLE_RATE=0")
           for name in names:
               value = os.environ.get(name, "")
               if "\n" in value or "\r" in value or "\0" in value:
-                  if name == "HFL_GA_MEASUREMENT_ID":
+                  if name in analytics_surfaces:
                       print(
                           "::warning title=Google Analytics configuration::"
-                          "The GA4 measurement ID is malformed; analytics will be disabled."
+                          f"{analytics_surfaces[name]} GA4 measurement ID is malformed; "
+                          "analytics for that surface will be disabled."
                       )
                       lines.append(f"{name}=")
                       continue
@@ -99,12 +105,17 @@ runs:
                       f"Ignoring malformed {name}; the installed value will be preserved."
                   )
                   continue
-              if name == "HFL_GA_MEASUREMENT_ID" and value and not re.fullmatch(r"G-[A-Z0-9]+", value):
-                  print(
-                      "::warning title=Google Analytics configuration::"
-                      "The GA4 measurement ID is malformed; analytics will be disabled."
-                  )
-                  value = ""
+              if name in analytics_surfaces:
+                  candidate = value.strip(" \t")
+                  if candidate and not re.fullmatch(r"G-[A-Z0-9]+", candidate):
+                      print(
+                          "::warning title=Google Analytics configuration::"
+                          f"{analytics_surfaces[name]} GA4 measurement ID is malformed; "
+                          "analytics for that surface will be disabled."
+                      )
+                      value = ""
+                  else:
+                      value = candidate
               lines.append(f"{name}={value}")
           pathlib.Path(sys.argv[1]).write_text("\n".join(lines) + "\n", encoding="utf-8")
           PY
