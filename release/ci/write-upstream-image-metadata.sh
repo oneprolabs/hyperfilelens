@@ -60,10 +60,7 @@ postgres | redis | sourcelens-nginx)
 	local_ref=${pinned%@*}
 	digest=${pinned##*@}
 	global_ref="docker.io/library/${local_ref}"
-	# Docker Library has no first-party China registry. Third-party accelerators
-	# may rewrite manifests, so the formal digest-pinned contract uses Docker Hub
-	# for both regions instead of weakening identity verification.
-	cn_ref="docker.io/library/${local_ref}"
+	cn_ref="dockerproxy.net/library/${local_ref}"
 	;;
 *)
 	printf 'ERROR: unsupported upstream image component: %s\n' "${component}" >&2

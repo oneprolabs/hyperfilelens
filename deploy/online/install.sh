@@ -18,7 +18,6 @@ SESSION_DIR=""
 SOURCE_NAME=""
 REGION=""
 TAGS_API_URL=""
-REGISTRY_NAME=""
 RELEASE_VERSION=""
 RELEASE_COMMIT=""
 RECENT_TAGS=""
@@ -203,9 +202,6 @@ print_target() {
 Target
   Version        ${TAG}
   Edition        Community
-  Action         ${INSTALL_ACTION}
-  Source         ${SOURCE_NAME}
-  Registry       ${REGISTRY_NAME}
   Install path   ${INSTALL_ROOT}
   Platform       ${PRETTY_NAME:-Ubuntu} · linux/amd64
   Log file       ${ONLINE_LOG_FILE}
@@ -322,14 +318,12 @@ configure_mirror() {
 		SOURCE_NAME="Gitee"
 		REGION="cn"
 		TAGS_API_URL="https://gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1"
-		REGISTRY_NAME="Alibaba Cloud"
 		DOCKER_CE_APT_BASE="${HFL_DOCKER_CE_APT_BASE:-${DEFAULT_CN_DOCKER_CE_APT_BASE}}"
 		;;
 	global)
 		SOURCE_NAME="GitHub"
 		REGION="global"
 		TAGS_API_URL="https://api.github.com/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1"
-		REGISTRY_NAME="Docker Hub"
 		DOCKER_CE_APT_BASE="${HFL_DOCKER_CE_APT_BASE:-${DEFAULT_GLOBAL_DOCKER_CE_APT_BASE}}"
 		;;
 	*) fail "--mirror must be cn or global" ;;

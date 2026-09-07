@@ -92,10 +92,8 @@ if sourcelens_components != {
     "sourcelens-lensnode",
 }:
     raise SystemExit("online SourceLens component metadata is incomplete")
-# Docker Library has no first-party China registry, so its three immutable
-# refs are intentionally shared by both region entries.
-if len(selected) != 19:
-    raise SystemExit(f"expected 19 unique Community image refs, found {len(selected)}")
+if len(selected) != 22:
+    raise SystemExit(f"expected 22 unique Community image refs, found {len(selected)}")
 for ref, digest in sorted(selected.items()):
     print(f"{ref}\t{digest}")
 PY

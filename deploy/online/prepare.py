@@ -36,7 +36,7 @@ PUBLIC_GLOBAL_PREFIX = os.environ.get(
     "HFL_PUBLIC_GLOBAL_REGISTRY_PREFIX", "docker.io/library"
 ).rstrip("/")
 PUBLIC_CN_PREFIX = os.environ.get(
-    "HFL_PUBLIC_CN_REGISTRY_PREFIX", "docker.io/library"
+    "HFL_PUBLIC_CN_REGISTRY_PREFIX", "dockerproxy.net/library"
 ).rstrip("/")
 
 
