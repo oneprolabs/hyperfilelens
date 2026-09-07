@@ -39,6 +39,14 @@ grep -Fq 'registry_login_count > 0' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
 grep -Fq 'for prefix in "${registry_region}" "${fallback_region}"' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+grep -Fq 'Enterprise SaaS deployment action:' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+grep -Fq 'deployment_args+=(--from "${candidate_root}")' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+grep -Fq -- '--expected-tag "$EXPECTED_TAG"' \
+	"${ROOT}/.github/actions/deploy-saas/action.yml"
+grep -Fq 'candidate does not match the requested release tag' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
 grep -Fq 'platform-gateway ensure' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
 grep -Fq 'reconcile-saas-ai-model.sh agent' \
@@ -64,6 +72,47 @@ for deploy_job in deploy-test deploy-prod; do
 done
 grep -Fq "format('hyperfilelens-package-{0}', github.event_name == 'push' && github.ref_name || inputs.tag)" \
 	"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml"
+
+deployment_state_function="$(awk '
+	/^resolve_deployment_action\(\) \{/ { capture = 1 }
+	capture { print }
+	capture && /^}$/ { exit }
+' "${ROOT}/.github/scripts/remote-saas-deploy.sh")"
+eval "${deployment_state_function}"
+state_root="${tmp}/deployment-state"
+[[ "$(resolve_deployment_action "${state_root}")" == "install" ]]
+mkdir -p "${state_root}"
+[[ "$(resolve_deployment_action "${state_root}")" == "install" ]]
+touch "${state_root}/unexpected"
+if resolve_deployment_action "${state_root}" >"${tmp}/state.out" 2>"${tmp}/state.err"; then
+	printf 'ERROR: SaaS deployment accepted an installation root with unknown state\n' >&2
+	exit 1
+fi
+grep -Fq 'installation root contains unrecognized state' "${tmp}/state.err"
+rm -f "${state_root}/unexpected"
+touch "${state_root}/.env" "${state_root}/VERSION" "${state_root}/MANIFEST.json"
+[[ "$(resolve_deployment_action "${state_root}")" == "upgrade" ]]
+rm -f "${state_root}/MANIFEST.json"
+if resolve_deployment_action "${state_root}" >"${tmp}/state.out" 2>"${tmp}/state.err"; then
+	printf 'ERROR: SaaS deployment accepted an incomplete installation identity\n' >&2
+	exit 1
+fi
+grep -Fq 'incomplete HyperFileLens installation' "${tmp}/state.err"
+touch "${state_root}/MANIFEST.json"
+rm -f "${state_root}/VERSION"
+ln -s /etc/os-release "${state_root}/VERSION"
+if resolve_deployment_action "${state_root}" >"${tmp}/state.out" 2>"${tmp}/state.err"; then
+	printf 'ERROR: SaaS deployment accepted a symbolic-link installation identity\n' >&2
+	exit 1
+fi
+grep -Fq 'unsafe HyperFileLens installation identity file' "${tmp}/state.err"
+rm -rf "${state_root}"
+ln -s "${tmp}" "${state_root}"
+if resolve_deployment_action "${state_root}" >"${tmp}/state.out" 2>"${tmp}/state.err"; then
+	printf 'ERROR: SaaS deployment accepted a symbolic-link installation root\n' >&2
+	exit 1
+fi
+grep -Fq 'unsafe HyperFileLens installation root' "${tmp}/state.err"
 
 package_root="${tmp}/candidate"
 fake_bin="${tmp}/bin"
