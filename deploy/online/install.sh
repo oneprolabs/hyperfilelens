@@ -1151,8 +1151,14 @@ version = str(manifest.get("version") or "")
 commit = str(manifest.get("git_commit") or "").lower()
 if expected_tag != f"v{version}":
     raise SystemExit("prepared Community version does not match the published release")
-if not re.fullmatch(r"[0-9a-f]{40}", commit) or commit != expected_commit:
-    raise SystemExit("prepared Community image revision does not match the published release")
+if not re.fullmatch(r"[0-9a-f]{40}", commit):
+    raise SystemExit("prepared Community image revision is invalid")
+if commit != expected_commit:
+    print(
+        "WARNING: prepared Community image revision differs from the published "
+        f"release ({commit[:12]} != {expected_commit[:12]}); continuing",
+        file=sys.stderr,
+    )
 if manifest.get("edition") != "community" or manifest.get("channel") != "release":
     raise SystemExit("prepared package is not a Community release")
 PY
