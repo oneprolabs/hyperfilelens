@@ -276,7 +276,15 @@ const activeAssistant = computed((): LensCopilotAssistant | null => {
   const session = activeSession.value
   if (!session?.sl_assistant_uuid) return null
   const fromList = assistantByUuid.value.get(session.sl_assistant_uuid)
-  if (fromList) return fromList
+  if (fromList) {
+    return {
+      ...fromList,
+      // SourceLens collection responses are compact; the HFL session keeps
+      // the effective model selection used by this Chat.
+      agent_model_ref: session.agent_model_ref,
+      multimodal_model_ref: session.multimodal_model_ref ?? null,
+    }
+  }
   if (session.assistant_name) {
     return {
       uuid: session.sl_assistant_uuid,

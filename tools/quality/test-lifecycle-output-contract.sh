@@ -380,7 +380,7 @@ target_output="$({
 	CMD=restart
 	restart_force=1
 	WITH_SOURCELENS=1
-	SOURCELENS_GIT_REF=v0.47.9
+	SOURCELENS_GIT_REF=v0.49.5
 	EXTENSION_SOURCES=("https://github.com/example/hyperfilelens-ee.git@v1.2.3")
 	LOG_FILE="${fixture}/build/logs/dev-restart.log"
 	print_dev_target
@@ -388,7 +388,7 @@ target_output="$({
 grep -F '  Command        restart --force' <<<"${target_output}" >/dev/null
 grep -F '  Extension      remote Git source configured' <<<"${target_output}" >/dev/null
 grep -F '  Extension rev  v1.2.3' <<<"${target_output}" >/dev/null
-grep -F '  SourceLens     bundled / v0.47.9' <<<"${target_output}" >/dev/null
+grep -F '  SourceLens     bundled / v0.49.5' <<<"${target_output}" >/dev/null
 grep -F '  Host platform  ' <<<"${target_output}" >/dev/null
 grep -F '  Runtime        linux/amd64' <<<"${target_output}" >/dev/null
 grep -F '  Session log    build/logs/dev-restart.log' <<<"${target_output}" >/dev/null
