@@ -248,6 +248,37 @@ describe('InsightCopilot question submission', () => {
     wrapper.unmount()
   })
 
+  it('uses the Chat model selection when the Assistant list is compact', async () => {
+    mocks.listCopilotSessions.mockResolvedValue([{
+      ...sessionRow(),
+      agent_model_ref: 'agent-model',
+      multimodal_model_ref: 'vision-model',
+    }])
+    mocks.listCopilotAssistants.mockResolvedValue([{
+      uuid: 'assistant-1',
+      name: 'Backup Assistant',
+      slug: 'backup-assistant',
+      status: 'active',
+      selected_task: 'backup_qa',
+      supports_document_attachments: true,
+    }])
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+
+    const wrapper = mountCopilot(i18n)
+    await flushPromises()
+
+    const composer = wrapper.getComponent(CopilotComposer)
+    expect(composer.props('supportsImages')).toBe(true)
+    expect(composer.props('supportsDocuments')).toBe(true)
+    wrapper.unmount()
+  })
+
   it('uses a compact Chat-specific delete confirmation', async () => {
     const i18n = createI18n({
       legacy: false,

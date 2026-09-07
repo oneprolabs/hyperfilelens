@@ -93,6 +93,146 @@ class AssistantLifecycleBoundaryTests(TestCase):
         return other_user, other_link, other_source
 
     @mock.patch("apps.lens_bridge.services.assistants.sl_client.request_json")
+    def test_legacy_assistant_list_is_supported(self, request_json):
+        request_json.return_value = [
+            {
+                "uuid": str(self.assistant_uuid),
+                "selected_task": "knowledge_qa",
+            }
+        ]
+
+        rows = assistants._list_remote_assistants()
+
+        self.assertEqual(rows[0]["selected_task"], "knowledge_qa")
+        request_json.assert_called_once_with(
+            "GET",
+            "/api/lens/assistants/",
+            params={"page": 1, "page_size": 100},
+        )
+
+    @mock.patch("apps.lens_bridge.services.assistants.sl_client.request_json")
+    def test_org_assistant_list_reads_every_paginated_page(self, request_json):
+        prefix = assistants._org_prefix(self.org)
+        first_page = [
+            {
+                "uuid": str(uuid.uuid4()),
+                "slug": f"another-org-{index}",
+            }
+            for index in range(100)
+        ]
+        request_json.side_effect = [
+            {"count": 101, "next": "page=2", "results": first_page},
+            {
+                "count": 101,
+                "next": None,
+                "results": [
+                    {
+                        "uuid": str(self.assistant_uuid),
+                        "slug": f"{prefix}-assistant",
+                        "name": "Assistant",
+                        "capability": "code_analysis",
+                        "status": "active",
+                    }
+                ],
+            },
+        ]
+
+        rows = assistants.list_org_assistants(self.org, user=self.user)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["selected_task"], "code_analysis")
+        self.assertEqual(
+            request_json.call_args_list,
+            [
+                mock.call(
+                    "GET",
+                    "/api/lens/assistants/",
+                    params={"page": 1, "page_size": 100},
+                ),
+                mock.call(
+                    "GET",
+                    "/api/lens/assistants/",
+                    params={"page": 2, "page_size": 100},
+                ),
+            ],
+        )
+
+    @mock.patch("apps.lens_bridge.services.assistants.sl_client.request_json")
+    def test_assistant_list_rejects_malformed_pagination(self, request_json):
+        request_json.return_value = {"count": 1, "results": []}
+
+        with self.assertRaisesMessage(
+            assistants.sl_client.LensBridgeError,
+            "pagination was inconsistent",
+        ):
+            assistants._list_remote_assistants()
+
+    @mock.patch("apps.lens_bridge.services.assistants.sl_client.request_json")
+    def test_assistant_detail_normalizes_capability(self, request_json):
+        prefix = assistants._org_prefix(self.org)
+        request_json.return_value = {
+            "uuid": str(self.assistant_uuid),
+            "slug": f"{prefix}-assistant",
+            "capability": "code_analysis",
+        }
+
+        result = assistants.get_org_assistant(
+            self.org,
+            self.assistant_uuid,
+            user=self.user,
+        )
+
+        self.assertEqual(result["selected_task"], "code_analysis")
+
+    @mock.patch(
+        "apps.lens_bridge.services.org_skills.sync_assistant_skill_links"
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.assistants._knowledge_source_execution",
+        return_value={
+            "lensnode_uuid": "37941d34-a8bf-49d7-bfab-f8e61a350645",
+            "selected_dirs": [{"path": "/workspace/manual-source"}],
+        },
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.assistants._validate_assistant_tool_bindings"
+    )
+    @mock.patch("apps.lens_bridge.services.assistants.sl_client.request_json")
+    def test_assistant_create_normalizes_capability(
+        self,
+        request_json,
+        _validate_bindings,
+        _knowledge_source_execution,
+        _sync_skills,
+    ):
+        source = LensKnowledgeSource.objects.create(
+            organization=self.org,
+            name="Manual source",
+            gateway=self.gateway,
+            gateway_link=self.gateway_link,
+            source_path="/workspace/manual-source",
+            created_by=self.user,
+        )
+        assistant_uuid = uuid.uuid4()
+        request_json.return_value = {
+            "uuid": str(assistant_uuid),
+            "slug": "manual-assistant",
+            "capability": "knowledge_qa",
+        }
+
+        result = assistants.create_org_assistant(
+            self.org,
+            {
+                "name": "Manual assistant",
+                "knowledge_source_id": source.id,
+                "selected_task": "knowledge_qa",
+            },
+            user=self.user,
+        )
+
+        self.assertEqual(result["selected_task"], "knowledge_qa")
+
+    @mock.patch("apps.lens_bridge.services.assistants.sl_client.request_json")
     def test_tenant_assistant_rejects_raw_execution_identity(self, request_json):
         with self.assertRaises(ValidationError):
             assistants.create_org_assistant(
@@ -312,6 +452,7 @@ class AssistantLifecycleBoundaryTests(TestCase):
                 "uuid": str(self.assistant_uuid),
                 "slug": f"{prefix}-manual",
                 "name": "Updated",
+                "capability": "code_analysis",
             }
 
         request_json.side_effect = response_for
@@ -331,3 +472,4 @@ class AssistantLifecycleBoundaryTests(TestCase):
             )
 
         self.assertEqual(result["name"], "Updated")
+        self.assertEqual(result["selected_task"], "code_analysis")

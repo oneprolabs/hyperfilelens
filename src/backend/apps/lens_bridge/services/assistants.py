@@ -57,6 +57,74 @@ def _unwrap_list(raw: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _normalize_assistant(item: dict[str, Any]) -> dict[str, Any]:
+    """Keep the HFL Assistant contract stable across SourceLens releases."""
+
+    normalized = dict(item)
+    if not normalized.get("selected_task") and normalized.get("capability"):
+        normalized["selected_task"] = normalized["capability"]
+    return normalized
+
+
+def _list_remote_assistants() -> list[dict[str, Any]]:
+    """Return every SourceLens Assistant across legacy and paginated APIs."""
+
+    page_size = 100
+    items: list[dict[str, Any]] = []
+    expected_count: int | None = None
+    seen_pages: set[tuple[str, ...]] = set()
+    for page in range(1, 1001):
+        raw = sl_client.request_json(
+            "GET",
+            "/api/lens/assistants/",
+            params={"page": page, "page_size": page_size},
+        )
+        if isinstance(raw, list):
+            if page != 1 or any(not isinstance(row, dict) for row in raw):
+                raise sl_client.LensBridgeError(
+                    "SourceLens Assistant list returned an invalid payload."
+                )
+            return [_normalize_assistant(row) for row in raw]
+        if not isinstance(raw, dict):
+            raise sl_client.LensBridgeError(
+                "SourceLens Assistant list returned an invalid payload."
+            )
+        rows = raw.get("results")
+        count = raw.get("count")
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise sl_client.LensBridgeError(
+                "SourceLens Assistant list returned invalid results."
+            )
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise sl_client.LensBridgeError(
+                "SourceLens Assistant list returned an invalid count."
+            )
+        if expected_count is None:
+            expected_count = count
+        elif count != expected_count:
+            raise sl_client.LensBridgeError(
+                "SourceLens Assistant list count changed during pagination."
+            )
+        offset = (page - 1) * page_size
+        remaining = max(0, count - offset)
+        if len(rows) != min(page_size, remaining):
+            raise sl_client.LensBridgeError(
+                "SourceLens Assistant pagination was inconsistent."
+            )
+        signature = tuple(str(row.get("uuid") or "") for row in rows)
+        if rows and signature in seen_pages:
+            raise sl_client.LensBridgeError(
+                "SourceLens Assistant pagination did not advance."
+            )
+        seen_pages.add(signature)
+        items.extend(_normalize_assistant(row) for row in rows)
+        if len(items) >= count:
+            return items
+    raise sl_client.LensBridgeError(
+        "SourceLens Assistant pagination limit was reached."
+    )
+
+
 def _org_prefix(org: Organization) -> str:
     return get_or_create_org_link(org).resolved_prefix()
 
@@ -102,7 +170,7 @@ def _serialize_list_row(
         "slug": item.get("slug") or "",
         "status": item.get("status") or "unknown",
         "lensnode_uuid": item.get("lensnode") or item.get("lensnode_uuid"),
-        "selected_task": item.get("selected_task") or "",
+        "selected_task": item.get("selected_task") or item.get("capability") or "",
         "selected_dir": first_dir,
         "agent_model_ref": item.get("agent_model_ref"),
         "multimodal_model_ref": item.get("multimodal_model_ref"),
@@ -180,8 +248,7 @@ def list_org_assistants(
     user: AbstractBaseUser,
     can_manage_all: bool = False,
 ) -> list[dict[str, Any]]:
-    raw = sl_client.request_json("GET", "/api/lens/assistants/")
-    items = _unwrap_list(raw)
+    items = _list_remote_assistants()
 
     ks_by_uuid = _ks_by_assistant_uuid(org)
     link_by_uuid = assistant_access.links_for_org(org)
@@ -234,7 +301,7 @@ def get_org_assistant(
         can_manage_all=can_manage_all,
     ):
         raise NotFound("Assistant not found.")
-    merged = assistant_access.merge_link_fields(dict(data), link)
+    merged = assistant_access.merge_link_fields(_normalize_assistant(data), link)
     ks = ks_by_uuid.get(str(assistant_uuid))
     if ks is None and link.knowledge_source_id is not None:
         ks = link.knowledge_source
@@ -451,7 +518,7 @@ def create_org_assistant(
         assistant_uuid=assistant_uuid,
         created_by=user,
     )
-    return assistant_access.merge_link_fields(data, link)
+    return assistant_access.merge_link_fields(_normalize_assistant(data), link)
 
 
 def update_org_assistant(
@@ -525,7 +592,7 @@ def update_org_assistant(
             knowledge_source=ks,
             created_by=user,
         )
-    return assistant_access.merge_link_fields(data, link)
+    return assistant_access.merge_link_fields(_normalize_assistant(data), link)
 
 
 def delete_org_assistant(
