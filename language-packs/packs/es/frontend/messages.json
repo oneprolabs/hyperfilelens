@@ -1298,7 +1298,7 @@
       "step3SearchSourceName": "Origen de copia de seguridad",
       "step3SearchHostname": "Nombre de host",
       "step3SearchIp": "IP",
-      "step3SearchPlaceholder": "Buscar el campo seleccionado",
+      "step3SearchPlaceholder": "Introduzca el texto de búsqueda",
       "step3SourceStatus": "Estado del ciclo de vida",
       "step3Availability": "Conectividad",
       "step3BackupTask": "Copia de seguridad",
@@ -6038,7 +6038,7 @@
         "title": "Alertas activas",
         "firing": "Activa",
         "acknowledged": "Recibido",
-        "searchPlaceholder": "Alertas o recursos de búsqueda",
+        "searchPlaceholder": "Buscar alertas / recursos",
         "firstTriggered": "Primero desencadenado"
       }
     },
@@ -6140,7 +6140,7 @@
       "colTarget": "Destino",
       "logsTotal": "Total de registros",
       "logsCount": "Entrega",
-      "logsSearch": "Alerta de búsqueda o recursos",
+      "logsSearch": "Buscar alertas / recursos",
       "logsAlert": "Alerta",
       "logsChannel": "Canal",
       "logsPolicy": "Artículo",

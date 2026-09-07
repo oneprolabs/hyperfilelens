@@ -828,7 +828,7 @@ export const enProtectionPages = {
     step3SearchSourceName: 'Backup Source',
     step3SearchHostname: 'Hostname',
     step3SearchIp: 'IP',
-    step3SearchPlaceholder: 'Search the selected field',
+    step3SearchPlaceholder: 'Enter search text',
     step3SourceStatus: 'Lifecycle Status',
     step3Availability: 'Connectivity',
     step3BackupTask: 'Backup',
