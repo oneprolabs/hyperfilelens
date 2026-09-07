@@ -399,10 +399,11 @@ def apply_configuration(
             warn(
                 "invalid email-code login value; preserving installed email-code login setting"
             )
-        insecure_tls = runtime_values.get("HFL_INSECURE_TLS", "")
-        if insecure_tls not in {"0", "1"}:
-            raise SystemExit("HFL_INSECURE_TLS must be 0 or 1")
-        updates["HFL_INSECURE_TLS"] = insecure_tls
+        if "HFL_INSECURE_TLS" in runtime_values:
+            insecure_tls = runtime_values["HFL_INSECURE_TLS"]
+            if insecure_tls not in {"0", "1"}:
+                raise SystemExit("HFL_INSECURE_TLS must be 0 or 1")
+            updates["HFL_INSECURE_TLS"] = insecure_tls
         updates.update(smtp_runtime_updates(runtime_values))
         updates.update(google_runtime_updates(runtime_values))
         sentry_updates, sentry_removals = sentry_runtime_updates(runtime_values)
