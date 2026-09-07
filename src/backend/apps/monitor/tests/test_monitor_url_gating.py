@@ -43,6 +43,7 @@ class MonitorUrlGatingTests(SimpleTestCase):
             text = _route_text(monitor_urls.urlpatterns)
             self.assertNotIn("nodes/", text)
             self.assertIn("system/", text)
+            self.assertIn("events/", text)
 
     def test_nodes_routes_present_when_extensions_enabled(self):
         class _StubView(APIView):

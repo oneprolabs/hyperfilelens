@@ -1,4 +1,5 @@
-from .system_monitor import SystemMonitorView
 from .attention import AttentionView
+from .events import EventView
+from .system_monitor import SystemMonitorView
 
-__all__ = ["SystemMonitorView", "AttentionView"]
+__all__ = ["AttentionView", "EventView", "SystemMonitorView"]

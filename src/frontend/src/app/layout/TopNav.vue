@@ -97,14 +97,6 @@ function handleNavClick(event: MouseEvent, to: string) {
     </nav>
 
     <div class="right-menu">
-      <span
-        class="timezone-display desktop-navigation-control"
-        :title="timezoneDisplay"
-      >
-        <span class="timezone-display__label">{{ t('nav.timezone') }}</span>
-        <span>{{ timezoneOffsetDisplay }}</span>
-      </span>
-
       <span class="desktop-navigation-control"><OrgSwitcher /></span>
 
       <a
@@ -123,13 +115,21 @@ function handleNavClick(event: MouseEvent, to: string) {
         <span>{{ t('nav.platformOps') }}</span>
       </a>
 
-      <div class="alerts-btn">
-        <NavNotificationPopover />
-      </div>
+      <span
+        class="timezone-display desktop-navigation-control"
+        :title="timezoneDisplay"
+      >
+        <span class="timezone-display__label">{{ t('nav.timezone') }}</span>
+        <span>{{ timezoneOffsetDisplay }}</span>
+      </span>
 
       <span class="desktop-navigation-control">
         <LanguageSwitcher variant="navigation" />
       </span>
+
+      <div class="alerts-btn">
+        <NavNotificationPopover />
+      </div>
 
       <NavUserMenu />
     </div>
@@ -296,6 +296,17 @@ function handleNavClick(event: MouseEvent, to: string) {
 
 .alerts-btn {
   position: relative;
+}
+
+@media (min-width: 1024px) {
+  .right-menu {
+    gap: 6px;
+  }
+
+  .alerts-btn {
+    margin-right: -4px;
+    margin-left: -4px;
+  }
 }
 
 @media (min-width: 1024px) and (max-width: 1439.98px) {

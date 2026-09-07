@@ -1,7 +1,7 @@
 import { api } from './api'
 import { unwrapApiPayload, asList } from './parse'
 import { getEffectiveOrgKey } from '../composables/useAuth'
-import { listRecords, listPolicies as listAlertPolicies } from './alertApi'
+import { listRecords, listPolicies as listAlertPolicies, type AlertRecord } from './alertApi'
 import { auditStatistics } from './auditApi'
 import { taskStatistics, listTasks, type TaskRow, type TaskStatistics } from './taskApi'
 import { listAllNodes } from './nodeApi'
@@ -70,13 +70,23 @@ export function nodeAttentionLinkForRole(role: string | undefined, nodeId: numbe
   return `${path}?${params.toString()}`
 }
 
-export type DashboardAttentionItem = {
+export type DashboardEventItem = {
   id: string
-  kind: 'task' | 'alert' | 'node' | 'source'
   title: string
   detail: string
-  to: string
+  severity: 'information' | 'warning' | 'critical'
   at?: string
+  to: string
+}
+
+export type DashboardAlertItem = {
+  id: string
+  title: string
+  detail: string
+  severity: string
+  status: string
+  at?: string
+  to: string
 }
 
 export type TaskDayBucket = {
@@ -144,23 +154,46 @@ export type DashboardOverview = {
   repositories: RepoUsageRow[]
   topRepos: RepoUsageRow[]
   notificationFailed: number
-  attentionCount: number
-  attention: DashboardAttentionItem[]
+  eventsCount: number
+  events: DashboardEventItem[]
+  activeAlertsCount: number
+  activeAlerts: DashboardAlertItem[]
   isEmpty: boolean
 }
 
-type AttentionPage = {
-  count: number
-  results: DashboardAttentionItem[]
+type ApiOperationalEvent = {
+  id?: string | number
+  title?: string
+  details?: string
+  severity?: 'information' | 'warning' | 'critical'
+  occurred_at?: string
+  target_path?: string
 }
 
-async function loadAttentionPage(): Promise<AttentionPage> {
+type EventPreviewPage = {
+  count: number
+  results: ApiOperationalEvent[]
+}
+
+async function loadEventsPreview(): Promise<EventPreviewPage> {
   const data = unwrapApiPayload<Record<string, unknown>>(
-    await api<unknown>('/api/v1/monitors/attention/?page=1&page_size=10&preview=diverse'),
+    await api<unknown>('/api/v1/monitors/events/?period=24h&page=1&page_size=5'),
   )
   return {
     count: Number(data.count) || 0,
-    results: asList<DashboardAttentionItem>(data),
+    results: asList<ApiOperationalEvent>(data),
+  }
+}
+
+function dashboardAlertItem(record: AlertRecord): DashboardAlertItem {
+  return {
+    id: String(record.id),
+    title: record.title || 'Alert',
+    detail: record.message || record.resourceName || record.resource_name || '',
+    severity: record.severity || 'info',
+    status: record.status || 'firing',
+    at: record.lastTriggeredAt || record.last_triggered_at || record.createdAt || record.created_at,
+    to: '/ops/alerts',
   }
 }
 
@@ -478,7 +511,7 @@ export async function loadDashboardOverview(
     backupConfigsPage,
     restorePlansEnabledPage,
     restoreTasksPage,
-    attentionPage,
+    eventsPage,
   ] = await Promise.all([
     fetchCurrentLicense().catch(() => ({
       is_valid: false,
@@ -508,8 +541,8 @@ export async function loadDashboardOverview(
     })),
     listAllNodes().catch(() => []),
     api<unknown>('/api/v1/storage/repositories/?page_size=200').then((raw) => asList<ApiRepository>(raw)).catch(() => []),
-    listRecords({ status: 'firing', page_size: 10 }).catch(() => ({ count: 0, results: [] })),
-    listRecords({ status: 'acknowledged', page_size: 1 }).catch(() => ({ count: 0, results: [] })),
+    listRecords({ status: 'firing', page_size: 5 }).catch(() => ({ count: 0, results: [] })),
+    listRecords({ status: 'acknowledged', page_size: 5 }).catch(() => ({ count: 0, results: [] })),
     listAlertPolicies({ page_size: 1 }).catch(() => ({ count: 0, results: [] })),
     auditStatistics().catch(() => ({
       total_count: 0,
@@ -529,7 +562,7 @@ export async function loadDashboardOverview(
       page_size: 30,
       exclude_insight_workspace_restores: 'true',
     }).catch(() => ({ count: 0, results: [] })),
-    loadAttentionPage().catch(() => ({ count: 0, results: [] })),
+    loadEventsPreview().catch(() => ({ count: 0, results: [] })),
   ])
 
   const nodeAvailability = summarizeNodeAvailability(nodes)
@@ -583,6 +616,22 @@ export async function loadDashboardOverview(
     reposRaw.length === 0
 
   const repositories = repositoryUsageRows(reposRaw)
+  const activeAlerts = [
+    ...alertsFiringPage.results.map(dashboardAlertItem),
+    ...alertsAckPage.results.map(dashboardAlertItem),
+  ].sort((a, b) => {
+    const aTime = a.at ? Date.parse(a.at) : 0
+    const bTime = b.at ? Date.parse(b.at) : 0
+    return bTime - aTime
+  })
+  const events = eventsPage.results.map((event) => ({
+    id: String(event.id ?? ''),
+    title: event.title || 'Event',
+    detail: event.details || '',
+    severity: event.severity || 'information',
+    at: event.occurred_at,
+    to: event.target_path || '/ops/events',
+  }))
 
   return {
     orgName,
@@ -627,8 +676,10 @@ export async function loadDashboardOverview(
     repositories,
     topRepos: topRepos(reposRaw),
     notificationFailed: Number(notifyStats.failed) || 0,
-    attentionCount: attentionPage.count,
-    attention: attentionPage.results,
+    eventsCount: eventsPage.count,
+    events,
+    activeAlertsCount: (alertsFiringPage.count || alertsFiringPage.results.length) + (alertsAckPage.count || alertsAckPage.results.length),
+    activeAlerts,
     isEmpty,
   }
 }

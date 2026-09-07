@@ -5,6 +5,9 @@ import { resolveTenantOpsRoutes } from '../ops/resolveRoutes'
 
 const platformOpsRoutes = resolvePlatformOpsRoutes()
 const tenantOpsRoutes = resolveTenantOpsRoutes()
+const tenantOpsEntryPath = tenantOpsRoutes.some((route) => route.path === 'ops/host-monitor')
+  ? '/ops/host-monitor'
+  : '/ops/events'
 import { beginRouteRequestScope } from '../lib/routeRequestAbort'
 import { beginRouteTransition, finishRouteTransition } from '../lib/routeTransition'
 import { lazyRoute } from './lazyRoute'
@@ -47,7 +50,7 @@ const EditProxyFsRepositoryPage = lazyRoute(() => import('../pages/node/EditProx
 const NodesDeployPage = lazyRoute(() => import('../pages/node/NodesDeploy.vue'))
 const AssetsSnapshotsPage = lazyRoute(() => import('../pages/node/Snapshots.vue'))
 const OpsTasksPage = lazyRoute(() => import('../pages/ops/Tasks.vue'))
-const OpsAttentionPage = lazyRoute(() => import('../pages/ops/Attention.vue'))
+const OpsEventsPage = lazyRoute(() => import('../pages/ops/Events.vue'))
 const OpsAlertPoliciesPage = lazyRoute(() => import('../pages/ops/AlertPolicies.vue'))
 const OpsAlertPolicyEditorPage = lazyRoute(() => import('../pages/ops/AlertPolicyEditorPage.vue'))
 const OpsAlertIncidentsPage = lazyRoute(() => import('../pages/ops/AlertIncidents.vue'))
@@ -148,9 +151,10 @@ export const router = createRouter({
         { path: 'node/members', component: SettingsMembersPage },
         { path: 'node/subscription', component: SubscriptionPage },
         { path: 'node/snapshots', component: AssetsSnapshotsPage },
-        { path: 'ops', redirect: '/ops/health' },
+        { path: 'ops', redirect: tenantOpsEntryPath },
         ...tenantOpsRoutes,
-        { path: 'ops/health', component: OpsAttentionPage },
+        { path: 'ops/events', component: OpsEventsPage },
+        { path: 'ops/health', redirect: '/ops/events' },
         { path: 'ops/tasks', component: OpsTasksPage },
         { path: 'ops/alerts', component: OpsAlertIncidentsPage },
         { path: 'ops/alerts/rules', component: OpsAlertPoliciesPage },

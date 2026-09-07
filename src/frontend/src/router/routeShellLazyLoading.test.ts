@@ -11,4 +11,11 @@ describe('route shell loading', () => {
     expect(tenantRoute?.component).toEqual(expect.any(Function))
     expect(platformRoute?.component).toEqual(expect.any(Function))
   })
+
+  it('uses System Monitoring as the Operations entry when the extension contributes it', () => {
+    const opsRoute = router.getRoutes().find(route => route.path === '/ops')
+    const hasSystemMonitoring = router.getRoutes().some(route => route.path === '/ops/host-monitor')
+
+    expect(opsRoute?.redirect).toBe(hasSystemMonitoring ? '/ops/host-monitor' : '/ops/events')
+  })
 })

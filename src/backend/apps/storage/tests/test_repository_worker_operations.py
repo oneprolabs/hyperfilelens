@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from apps.iam.models import Organization
+from apps.monitor.models import OperationalEvent
 from apps.storage.repositories.models import Credential, Repository
 from apps.storage.services.internal import repository_credential_rotation
 from apps.storage.services.internal.repository_check import (
@@ -100,6 +101,34 @@ class RepositoryWorkerOperationTests(TestCase):
         self.assertEqual(repository_task.task.status, Task.Status.FAILED)
         self.assertNotIn("old-secret", repository_task.task.error_message)
         self.assertIn("******", repository_task.task.error_message)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_check.probe_repository_health"
+    )
+    def test_concurrent_offline_transition_does_not_emit_a_duplicate_event(
+        self,
+        probe_health,
+    ):
+        repository = self._s3_repository()
+        repository_task = enqueue_repository_check_task(repository=repository)
+
+        def mark_offline_then_fail(_repository):
+            Repository.objects.filter(pk=repository.id).update(
+                health=Repository.Health.OFFLINE,
+            )
+            raise RuntimeError("probe failed")
+
+        probe_health.side_effect = mark_offline_then_fail
+        with self.captureOnCommitCallbacks(execute=True):
+            result = run_repository_check_task(repository_task_id=repository_task.id)
+
+        repository.refresh_from_db()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(repository.health, Repository.Health.OFFLINE)
+        self.assertIsNotNone(repository.last_checked_at)
+        self.assertFalse(
+            OperationalEvent.objects.filter(event_type="repository.offline").exists()
+        )
 
     @mock.patch(
         "apps.storage.services.internal.repository_check.probe_repository_health"

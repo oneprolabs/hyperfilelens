@@ -83,6 +83,8 @@ describe('NavUserMenu product identity', () => {
     expect(wrapper.get('.nav-user-product__name').text()).toBe(
       'HyperFileLens v0.2.1 · Enterprise',
     )
+    expect(wrapper.get('.nav-user-menu__email').attributes('title')).toBe('owner@example.test')
+    expect(wrapper.get('.nav-user-menu__role').text()).toBe('Owner')
   })
 
   it('uses a localized development label when the valid profile has no version', async () => {

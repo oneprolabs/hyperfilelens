@@ -19,7 +19,7 @@ describe('primary navigation icons', () => {
       "{ to: '/protection', label: t('nav.protection'), icon: ShieldCheck }",
     )
     expect(primaryNavSource).toContain(
-      "{ to: '/insight', label: t('nav.insight'), icon: ChartNoAxesCombined }",
+      "{ to: '/insight', label: t('nav.insight'), icon: Sparkles }",
     )
     expect(primaryNavSource).toContain("{ to: '/node', label: t('nav.node'), icon: Settings }")
     expect(primaryNavSource).toContain("{ to: '/ops', label: t('nav.ops'), icon: Activity }")
