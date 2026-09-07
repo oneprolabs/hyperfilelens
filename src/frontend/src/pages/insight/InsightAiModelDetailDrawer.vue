@@ -9,6 +9,7 @@ import { defaultAiModelDisplayName } from '../../lib/aiModelDisplay'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import { capabilityClass, lookupModelCapabilities } from '../../lib/aiModelCapabilities'
 import { DETAIL_EMPTY, isDetailEmpty } from '../../lib/nodeInventoryDisplay'
+import { apiErrorMessageI18n } from '../../lib/api'
 import {
   fetchLensModelCatalog,
   fetchLensModelDetail,
@@ -17,6 +18,10 @@ import {
 } from '../../lib/lensApi'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
+import {
+  aiModelConnectionTestFailureDetail,
+  aiModelConnectionTestSucceeded,
+} from '../../composables/useAiModelForm'
 
 const props = defineProps<{
   modelValue: boolean
@@ -135,13 +140,26 @@ async function testConnection() {
   testing.value = true
   try {
     const response = await testSavedLensModel(uuid)
-    const result = response as { ok?: boolean; success?: boolean }
-    if (result.ok === false || result.success === false) {
-      throw new Error(t('insight.aiSettings.connectivityFail', { detail: '' }))
+    if (!aiModelConnectionTestSucceeded(response)) {
+      ElMessage.error({
+        message: aiModelConnectionTestFailureDetail(
+          response,
+          t('insight.aiSettings.connectionTestFailureFallback'),
+        ),
+        grouping: true,
+      })
+      return
     }
     ElMessage.success({ message: t('insight.aiSettings.connectivityOk'), grouping: true })
-  } catch {
-    ElMessage.error({ message: t('insight.aiSettings.connectivityFail', { detail: '' }), grouping: true })
+  } catch (error) {
+    ElMessage.error({
+      message: apiErrorMessageI18n(
+        error,
+        t,
+        t('insight.aiSettings.connectionTestFailureFallback'),
+      ),
+      grouping: true,
+    })
   } finally {
     testing.value = false
   }
@@ -371,6 +389,7 @@ onUnmounted(() => {
           {{ t('common.cancel') }}
         </ElButton>
         <ElButton
+          v-if="detail.is_active !== false"
           :loading="testing"
           @click="testConnection"
         >

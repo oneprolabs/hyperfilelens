@@ -4,7 +4,7 @@ import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensModelsPath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, ChevronDown } from 'lucide-vue-next'
+import { ArrowLeft, ChevronDown, CircleCheck, CircleX } from 'lucide-vue-next'
 import AiProviderIcon from '../../components/ai-model/AiProviderIcon.vue'
 import { useAiModelForm } from '../../composables/useAiModelForm'
 
@@ -25,6 +25,8 @@ const {
   testing,
   testOk,
   testDetail,
+  testSummary,
+  apiKeyRequiredForSave,
   modelDropdownOpen,
   useCustomModel,
   providers,
@@ -50,6 +52,23 @@ const pageDesc = computed(() =>
   isEditing.value ? t('insight.aiSettings.editModelPageDesc') : t('insight.aiSettings.addModelPageDesc'),
 )
 
+const busy = computed(() => loading.value || saving.value || testing.value)
+
+const testDuration = computed(() => {
+  const durationMs = testSummary.value?.durationMs
+  if (durationMs == null) return ''
+  if (durationMs < 1000) return `${durationMs} ms`
+  return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} s`
+})
+
+const submitLabel = computed(() => {
+  if (isEditing.value) return t('common.save')
+  if (!saving.value) return t('insight.aiSettings.btnCreateModel')
+  return form.is_active
+    ? t('insight.aiSettings.testingAndAddingModel')
+    : t('insight.aiSettings.addingModel')
+})
+
 function handleBack() {
   router.push(lensModelsPath())
 }
@@ -59,8 +78,11 @@ async function handleSubmit() {
   if (ok) router.push(lensModelsPath())
 }
 
-onMounted(() => {
-  void init()
+onMounted(async () => {
+  await init()
+  if (isEditing.value && route.query.enable === '1') {
+    form.is_active = true
+  }
 })
 </script>
 
@@ -233,13 +255,15 @@ onMounted(() => {
 
                 <ElFormItem
                   :label="t('insight.aiSettings.labelApiKey')"
-                  :required="!isEditing"
+                  :required="apiKeyRequiredForSave"
                 >
                   <ElInput
                     v-model="form.api_key"
                     type="password"
                     show-password
-                    :placeholder="isEditing ? t('insight.aiSettings.apiKeyKeepPlaceholder') : t('insight.aiSettings.apiKeyPlaceholder')"
+                    :placeholder="apiKeyRequiredForSave
+                      ? t('insight.aiSettings.apiKeyPlaceholder')
+                      : t('insight.aiSettings.apiKeyKeepPlaceholder')"
                   />
                   <p class="ai-model-field-hint">
                     {{ t('insight.aiSettings.apiKeyEncryptHint') }}
@@ -274,15 +298,63 @@ onMounted(() => {
                   </p>
                 </ElFormItem>
               </ElForm>
-            </section>
 
-            <div
-              v-if="testOk != null"
-              class="ai-model-test-result"
-              :class="{ 'is-ok': testOk, 'is-fail': !testOk }"
-            >
-              {{ testDetail }}
-            </div>
+              <div
+                v-if="testOk != null"
+                class="ai-model-test-result"
+                :class="{ 'is-ok': testOk, 'is-fail': !testOk }"
+                :role="testOk ? 'status' : 'alert'"
+                :aria-live="testOk ? 'polite' : 'assertive'"
+              >
+                <div class="ai-model-test-result__header">
+                  <CircleCheck
+                    v-if="testOk"
+                    :size="20"
+                    aria-hidden="true"
+                  />
+                  <CircleX
+                    v-else
+                    :size="20"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <div class="ai-model-test-result__title">
+                      {{ testOk
+                        ? t('insight.aiSettings.connectionTestSuccessTitle')
+                        : t('insight.aiSettings.connectionTestFailureTitle') }}
+                    </div>
+                    <p class="ai-model-test-result__detail">
+                      {{ testDetail }}
+                    </p>
+                  </div>
+                </div>
+
+                <dl
+                  v-if="testSummary"
+                  class="ai-model-test-result__summary"
+                >
+                  <div>
+                    <dt>{{ t('insight.aiSettings.connectionTestProvider') }}</dt>
+                    <dd>{{ testSummary.provider }}</dd>
+                  </div>
+                  <div>
+                    <dt>{{ t('insight.aiSettings.connectionTestModel') }}</dt>
+                    <dd>{{ testSummary.model }}</dd>
+                  </div>
+                  <div>
+                    <dt>{{ t('insight.aiSettings.connectionTestEndpoint') }}</dt>
+                    <dd>{{ testSummary.endpoint }}</dd>
+                  </div>
+                </dl>
+
+                <p
+                  v-if="testOk && testDuration"
+                  class="ai-model-test-result__footer"
+                >
+                  {{ t('insight.aiSettings.connectionTestReady', { duration: testDuration }) }}
+                </p>
+              </div>
+            </section>
           </div>
         </div>
       </div>
@@ -290,21 +362,24 @@ onMounted(() => {
       <footer class="fullscreen-form-footer">
         <ElButton
           :loading="testing"
-          :disabled="testing || loading"
+          :disabled="busy"
           @click="runTest"
         >
           {{ t('insight.aiSettings.testConnection') }}
         </ElButton>
-        <ElButton @click="handleBack">
+        <ElButton
+          :disabled="saving"
+          @click="handleBack"
+        >
           {{ t('common.cancel') }}
         </ElButton>
         <ElButton
           type="primary"
           :loading="saving"
-          :disabled="saving || loading"
+          :disabled="busy"
           @click="handleSubmit"
         >
-          {{ isEditing ? t('common.save') : t('insight.aiSettings.btnCreateModel') }}
+          {{ submitLabel }}
         </ElButton>
       </footer>
     </div>
@@ -490,22 +565,87 @@ onMounted(() => {
 }
 
 .ai-model-test-result {
-  margin-top: 4px;
-  padding: 10px 12px;
-  border-radius: var(--radius-control, 8px);
-  font-size: 13px;
-  line-height: 1.45;
+  margin-top: 8px;
+  padding: 16px;
+  border: 1px solid;
+  border-radius: var(--radius-card, 12px);
 }
 
 .ai-model-test-result.is-ok {
-  background: rgb(240 253 244);
-  color: rgb(21 128 61);
-  border: 1px solid rgb(187 247 208);
+  background: var(--color-success-light);
+  color: var(--color-success-text);
+  border-color: var(--color-success-border);
 }
 
 .ai-model-test-result.is-fail {
-  background: rgb(254 242 242);
-  color: rgb(185 28 28);
-  border: 1px solid rgb(254 202 202);
+  background: var(--color-error-light);
+  color: var(--color-error-text);
+  border-color: var(--color-error-border);
+}
+
+.ai-model-test-result__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.ai-model-test-result__header > svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.ai-model-test-result__title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.ai-model-test-result__detail {
+  margin: 3px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ai-model-test-result__summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.ai-model-test-result__summary > div {
+  min-width: 0;
+}
+
+.ai-model-test-result__summary dt {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.ai-model-test-result__summary dd {
+  overflow-wrap: anywhere;
+  margin: 3px 0 0;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ai-model-test-result__footer {
+  margin: 12px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+@media (max-width: 720px) {
+  .ai-model-test-result__summary {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
 }
 </style>

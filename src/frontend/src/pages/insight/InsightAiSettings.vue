@@ -7,7 +7,7 @@ import { ChevronDown, CirclePlay, CircleStop, Images, Pencil, Plus, RefreshCw, S
 import { ElMessage, type ElTable } from 'element-plus'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
-import { apiErrorMessage } from '../../lib/api'
+import { apiErrorMessage, apiErrorMessageI18n } from '../../lib/api'
 import {
   deleteLensModel,
   fetchLensHealth,
@@ -131,9 +131,12 @@ function openDetail(row: LensLlmConfig) {
   detailOpen.value = true
 }
 
-function openEdit(row: LensLlmConfig | string) {
+function openEdit(row: LensLlmConfig | string, enable = false) {
   const uuid = typeof row === 'string' ? row : row.uuid
-  router.push(`${lensModelsPath()}/${uuid}/edit`)
+  router.push({
+    path: `${lensModelsPath()}/${uuid}/edit`,
+    query: enable ? { enable: '1' } : undefined,
+  })
 }
 
 function onSelectionChange(rows: LensLlmConfig[]) {
@@ -148,7 +151,10 @@ async function setActive(row: LensLlmConfig, isActive: boolean) {
     ElMessage.success({ message: t('insight.aiSettings.saveSuccess'), grouping: true })
     await load()
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
+    ElMessage.error({
+      message: apiErrorMessageI18n(err, t, t('errors.generic.requestFailed')),
+      grouping: true,
+    })
   }
 }
 
@@ -203,10 +209,14 @@ async function deleteSelected() {
   await deleteRow(row)
 }
 
-async function enableSelected() {
+function enableSelected() {
   const row = singleSelected.value
-  if (!row || row.deployment_managed) return
-  await setActive(row, true)
+  if (!row || row.deployment_managed || row.is_active !== false) return
+  ElMessage.info({
+    message: t('insight.aiSettings.apiKeyRequiredForActivation'),
+    grouping: true,
+  })
+  openEdit(row, true)
 }
 
 async function disableSelected() {

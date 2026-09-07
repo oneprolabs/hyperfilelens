@@ -1,7 +1,7 @@
 import { computed, reactive, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { apiErrorMessage } from '../lib/api'
+import { apiErrorMessage, apiErrorMessageI18n } from '../lib/api'
 import { openErrorDetails } from '../lib/errors/details'
 import { aiProviderLabel } from '../lib/aiProviderDisplay'
 import { defaultAiModelDisplayName } from '../lib/aiModelDisplay'
@@ -15,6 +15,7 @@ import {
   fetchLensModelCatalog,
   fetchLensModelDetail,
   fetchLensModelProviders,
+  testSavedLensModel,
   testLensModel,
   updateLensModel,
 } from '../lib/lensApi'
@@ -40,11 +41,42 @@ export type AiCatalogProvider = {
   models?: AiCatalogModel[]
 }
 
+export type AiModelConnectionTestSummary = {
+  provider: string
+  model: string
+  endpoint: string
+  durationMs: number
+}
+
+type AiModelConnectionSettings = {
+  provider: string
+  model: string
+  apiBase: string
+  isActive: boolean
+}
+
 type ProviderSchemaEntry = {
   default_api_base?: string
   default_model?: string
   required?: string[]
   optional?: string[]
+}
+
+export function aiModelConnectionTestSucceeded(result: unknown) {
+  if (!result || typeof result !== 'object') return false
+  const payload = result as { ok?: unknown; success?: unknown }
+  if ('ok' in payload) return payload.ok === true
+  if ('success' in payload) return payload.success === true
+  return false
+}
+
+export function aiModelConnectionTestFailureDetail(result: unknown, fallback: string) {
+  if (!result || typeof result !== 'object') return fallback
+  const payload = result as { message?: unknown; detail?: unknown; error?: unknown }
+  for (const value of [payload.message, payload.detail, payload.error]) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return fallback
 }
 
 function providerDisplayName(row: AiCatalogProvider) {
@@ -59,9 +91,11 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
   const testing = ref(false)
   const testOk = ref<boolean | null>(null)
   const testDetail = ref('')
+  const testSummary = ref<AiModelConnectionTestSummary | null>(null)
   const modelDropdownOpen = ref(false)
   const useCustomModel = ref(false)
   const nameTouched = ref(false)
+  const initialConnectionSettings = ref<AiModelConnectionSettings | null>(null)
 
   const providers = ref<AiCatalogProvider[]>([])
   const capabilityLabels = ref<Record<string, string>>({})
@@ -150,6 +184,8 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
     nameTouched.value = false
     testOk.value = null
     testDetail.value = ''
+    testSummary.value = null
+    initialConnectionSettings.value = null
     applyProviderDefaults(form.provider)
     syncSuggestedName()
   }
@@ -170,6 +206,7 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
     useCustomModel.value = false
     testOk.value = null
     testDetail.value = ''
+    testSummary.value = null
     applyProviderDefaults(providerId)
     resetNameAutoFill()
   }
@@ -237,6 +274,12 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
     form.api_key = ''
     form.api_base = detail.config?.api_base || ''
     form.is_active = detail.is_active !== false
+    initialConnectionSettings.value = {
+      provider: form.provider,
+      model: form.model,
+      apiBase: form.api_base,
+      isActive: form.is_active,
+    }
     nameTouched.value = Boolean(form.name)
     if (!form.name) syncSuggestedName()
     const inList = currentProviderModels.value.some((m) => m.id === form.model)
@@ -255,6 +298,7 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
       useCustomModel.value = false
       testOk.value = null
       testDetail.value = ''
+      testSummary.value = null
       applyProviderDefaults(next)
       resetNameAutoFill()
     },
@@ -265,6 +309,15 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
     () => {
       if (isEditing.value && nameTouched.value) return
       syncSuggestedName()
+    },
+  )
+
+  watch(
+    () => [form.provider, form.model, form.api_key, form.api_base],
+    () => {
+      testOk.value = null
+      testDetail.value = ''
+      testSummary.value = null
     },
   )
 
@@ -283,18 +336,87 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
     }
   }
 
-  function buildPayload() {
+  function buildConfigPayload() {
     const config: Record<string, string> = {
       model: form.model.trim(),
+      api_base: form.api_base.trim(),
     }
-    if (form.api_base.trim()) config.api_base = form.api_base.trim()
     if (form.api_key.trim()) config.api_key = form.api_key.trim()
+    return config
+  }
+
+  function buildPayload() {
     return {
       name: form.name.trim(),
       provider: form.provider,
-      config,
+      config: buildConfigPayload(),
       is_active: form.is_active,
     }
+  }
+
+  function connectionSettingsChanged() {
+    const initial = initialConnectionSettings.value
+    if (!initial) return false
+    return (
+      form.provider !== initial.provider ||
+      form.model.trim() !== initial.model.trim() ||
+      form.api_base.trim() !== initial.apiBase.trim() ||
+      Boolean(form.api_key.trim())
+    )
+  }
+
+  const apiKeyRequiredForSave = computed(() => {
+    if (!editingUuid.value) return true
+    return Boolean(
+      form.is_active &&
+      (connectionSettingsChanged() || initialConnectionSettings.value?.isActive === false),
+    )
+  })
+
+  function buildUpdatePayload() {
+    const initial = initialConnectionSettings.value
+    if (!initial) return buildPayload()
+    const payload: Record<string, unknown> = { name: form.name.trim() }
+    if (connectionSettingsChanged()) {
+      payload.provider = form.provider
+      payload.config = buildConfigPayload()
+      payload.is_active = form.is_active
+    } else if (form.is_active !== initial.isActive) {
+      payload.is_active = form.is_active
+    }
+    return payload
+  }
+
+  function currentConnectionTestSummary(): Omit<AiModelConnectionTestSummary, 'durationMs'> {
+    const provider = currentProvider.value
+    const providerLabel = provider ? providerDisplayName(provider) : form.provider
+    const schema = providerSchemas.value[form.provider]
+    return {
+      provider: providerLabel,
+      model: form.model.trim(),
+      endpoint:
+        form.api_base.trim() ||
+        provider?.default_api_base ||
+        schema?.default_api_base ||
+        t('insight.aiSettings.connectionTestDefaultEndpoint'),
+    }
+  }
+
+  function connectionSettingsSignature() {
+    return JSON.stringify([
+      form.provider,
+      form.model.trim(),
+      form.api_key,
+      form.api_base.trim(),
+    ])
+  }
+
+  function canTestSavedConfiguration() {
+    return Boolean(
+      editingUuid.value &&
+      initialConnectionSettings.value?.isActive !== false &&
+      !connectionSettingsChanged(),
+    )
   }
 
   async function runTest() {
@@ -302,24 +424,50 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
       ElMessage.warning({ message: t('insight.aiSettings.testNeedModel'), grouping: true })
       return false
     }
+    const testSavedConfiguration = canTestSavedConfiguration()
+    if (!testSavedConfiguration && !form.api_key.trim()) {
+      const messageKey = !editingUuid.value
+        ? 'insight.aiSettings.apiKeyRequired'
+        : initialConnectionSettings.value?.isActive === false
+          ? 'insight.aiSettings.apiKeyRequiredForActivation'
+          : 'insight.aiSettings.apiKeyRequiredForConnectionChange'
+      ElMessage.warning({ message: t(messageKey), grouping: true })
+      return false
+    }
     testing.value = true
     testOk.value = null
     testDetail.value = ''
+    testSummary.value = null
+    const startedAt = Date.now()
+    const summary = currentConnectionTestSummary()
+    const testedSettings = connectionSettingsSignature()
     try {
-      const res = await testLensModel(buildPayload())
-      const ok = (res as { ok?: boolean }).ok ?? (res as { success?: boolean }).success ?? true
+      const res = testSavedConfiguration
+        ? await testSavedLensModel(editingUuid.value!)
+        : await testLensModel(buildPayload())
+      if (testedSettings !== connectionSettingsSignature()) return false
+      const ok = aiModelConnectionTestSucceeded(res)
       testOk.value = ok
-      testDetail.value =
-        (res as { message?: string }).message ||
-        (res as { detail?: string }).detail ||
-        (ok ? t('insight.aiSettings.connectivityOk') : t('insight.aiSettings.connectivityFail', { detail: '' }))
+      testSummary.value = {
+        ...summary,
+        durationMs: Math.max(0, Date.now() - startedAt),
+      }
+      testDetail.value = ok
+        ? t('insight.aiSettings.connectionTestSuccessDescription', {
+            provider: summary.provider,
+            model: summary.model,
+          })
+        : aiModelConnectionTestFailureDetail(
+            res,
+            t('insight.aiSettings.connectionTestFailureFallback'),
+          )
       if (ok) {
         ElMessage.success({ message: t('insight.aiSettings.connectivityOk'), grouping: true })
       } else {
         openErrorDetails({
           error: res,
           overrides: {
-            title: t('insight.aiSettings.connectivityFail', { detail: '' }),
+            title: t('insight.aiSettings.connectionTestFailureTitle'),
             summary: testDetail.value,
             issue: testDetail.value,
             rawDetail: res,
@@ -328,12 +476,21 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
       }
       return ok
     } catch (err) {
+      if (testedSettings !== connectionSettingsSignature()) return false
       testOk.value = false
-      testDetail.value = apiErrorMessage(err, t('insight.aiSettings.connectivityFail', { detail: '' }))
+      testSummary.value = {
+        ...summary,
+        durationMs: Math.max(0, Date.now() - startedAt),
+      }
+      testDetail.value = apiErrorMessageI18n(
+        err,
+        t,
+        t('insight.aiSettings.connectionTestFailureFallback'),
+      )
       openErrorDetails({
         error: err,
         overrides: {
-          title: t('insight.aiSettings.connectivityFail', { detail: '' }),
+          title: t('insight.aiSettings.connectionTestFailureTitle'),
           summary: testDetail.value,
           issue: testDetail.value,
         },
@@ -360,17 +517,31 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
       ElMessage.warning({ message: t('insight.aiSettings.apiKeyRequired'), grouping: true })
       return false
     }
+    if (editingUuid.value && apiKeyRequiredForSave.value && !form.api_key.trim()) {
+      ElMessage.warning({
+        message: t(
+          initialConnectionSettings.value?.isActive === false
+            ? 'insight.aiSettings.apiKeyRequiredForActivation'
+            : 'insight.aiSettings.apiKeyRequiredForConnectionChange',
+        ),
+        grouping: true,
+      })
+      return false
+    }
     saving.value = true
     try {
       if (editingUuid.value) {
-        await updateLensModel(editingUuid.value, buildPayload())
+        await updateLensModel(editingUuid.value, buildUpdatePayload())
       } else {
         await createLensModel(buildPayload())
       }
       ElMessage.success({ message: t('insight.aiSettings.saveSuccess'), grouping: true })
       return true
     } catch (err) {
-      ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
+      ElMessage.error({
+        message: apiErrorMessageI18n(err, t, t('errors.generic.requestFailed')),
+        grouping: true,
+      })
       return false
     } finally {
       saving.value = false
@@ -383,6 +554,8 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
     testing,
     testOk,
     testDetail,
+    testSummary,
+    apiKeyRequiredForSave,
     modelDropdownOpen,
     useCustomModel,
     providers,
