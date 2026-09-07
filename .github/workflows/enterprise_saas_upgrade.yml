@@ -173,7 +173,7 @@ jobs:
           ./tools/sourcelens/update-runtime-contract.sh --check
 
   verify-public-images:
-    name: Verify · Community image delivery
+    name: Verify · Community image delivery · Global
     needs:
       - prepare
       - build-hfl-images
@@ -194,8 +194,8 @@ jobs:
           path: build/saas-metadata
           merge-multiple: true
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Verify anonymous access and mirror identity
-        run: ./deploy/online/verify-public-images.sh build/saas-metadata
+      - name: Verify global anonymous access and image identity
+        run: ./deploy/online/verify-public-images.sh build/saas-metadata global
 
   build-hfl-images:
     name: Publish · HFL image · ${{ matrix.name }}
@@ -369,7 +369,7 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.prepare.outputs.commit }}
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Verify regional sources and record metadata
+      - name: Verify global source and record metadata
         shell: bash
         run: |
           set -euo pipefail
@@ -377,24 +377,25 @@ jobs:
           ./release/ci/write-upstream-image-metadata.sh \
             "${{ matrix.component }}" "$metadata"
           expected="$(jq -r '.digest' "$metadata")"
-          while IFS= read -r ref; do
-            immutable_ref="${ref%:*}@$expected"
-            manifest="$(docker buildx imagetools inspect "$immutable_ref" --format '{{json .Manifest}}')"
-            actual="$(jq -r '.digest // empty' <<<"$manifest")"
-            [[ "$actual" == "$expected" ]] || {
-              printf 'ERROR: upstream digest mismatch for %s (%s != %s)\n' \
-                "$immutable_ref" "${actual:-missing}" "$expected" >&2
-              exit 1
-            }
-            image_config="$(docker buildx imagetools inspect \
-              "$immutable_ref" --format '{{json .Image}}')"
-            jq -e '(.os == "linux" and .architecture == "amd64")
-              or has("linux/amd64")' <<<"$image_config" >/dev/null || {
-              printf 'ERROR: upstream image has no linux/amd64 variant: %s\n' \
-                "$immutable_ref" >&2
-              exit 1
-            }
-          done < <(jq -r '.sources[].ref' "$metadata" | sort -u)
+          ref="$(jq -er '[.sources[] | select(.region == "global") | .ref]
+            | if length == 1 then .[0] else error("missing unique global source") end' \
+            "$metadata")"
+          immutable_ref="${ref%:*}@$expected"
+          manifest="$(docker buildx imagetools inspect "$immutable_ref" --format '{{json .Manifest}}')"
+          actual="$(jq -r '.digest // empty' <<<"$manifest")"
+          [[ "$actual" == "$expected" ]] || {
+            printf 'ERROR: upstream digest mismatch for %s (%s != %s)\n' \
+              "$immutable_ref" "${actual:-missing}" "$expected" >&2
+            exit 1
+          }
+          image_config="$(docker buildx imagetools inspect \
+            "$immutable_ref" --format '{{json .Image}}')"
+          jq -e '(.os == "linux" and .architecture == "amd64")
+            or has("linux/amd64")' <<<"$image_config" >/dev/null || {
+            printf 'ERROR: upstream image has no linux/amd64 variant: %s\n' \
+              "$immutable_ref" >&2
+            exit 1
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: saas-metadata-${{ matrix.component }}

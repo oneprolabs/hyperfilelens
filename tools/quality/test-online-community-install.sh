@@ -28,9 +28,7 @@ grep -Fq 'api.github.com/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1
 grep -Fq 'gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1' \
 	"${online}/install.sh"
 grep -Fq 'recent fallback tags:' "${online}/install.sh"
-grep -Fq 'prepared Community image revision is invalid' \
-	"${online}/install.sh"
-grep -Fq 'prepared Community image revision differs from the published' \
+grep -Fq 'prepared Community image revision does not match the published release' \
 	"${online}/install.sh"
 grep -Fq 'run this command through sudo' "${online}/install.sh"
 grep -Fq 'https://mirrors.aliyun.com/docker-ce/linux/ubuntu' "${online}/install.sh"
@@ -110,6 +108,12 @@ if grep -Eq 'publish-community-channel|community-channel|git push origin HEAD:ma
 fi
 grep -Fq 'write-upstream-image-metadata.sh' "${workflow}"
 grep -Fq 'resolve-upstream-images:' "${workflow}"
+grep -Fq './deploy/online/verify-public-images.sh build/saas-metadata global' "${workflow}"
+grep -Fq 'select(.region == "global")' "${workflow}"
+if grep -Fq ".sources[].ref" "${workflow}"; then
+	printf 'ERROR: SaaS workflow still verifies every regional upstream source\n' >&2
+	exit 1
+fi
 if grep -Eq '^  (build-sourcelens-images|publish-runtime-images):' "${workflow}"; then
 	printf 'ERROR: SaaS workflow still publishes rebuilt upstream images\n' >&2
 	exit 1
@@ -560,18 +564,20 @@ mkdir -p "${identity_candidate}"
 cat >"${identity_candidate}/MANIFEST.json" <<'JSON'
 {"version":"1.2.3","git_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","edition":"community","channel":"release"}
 JSON
-revision_warning_log="${tmp}/revision-warning.log"
-(
+revision_mismatch_log="${tmp}/revision-mismatch.log"
+if (
 	# shellcheck disable=SC1090
 	source "${online_functions}"
 	candidate="${identity_candidate}"
 	TAG=v1.2.3
 	RELEASE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 	verify_candidate_release
-) >"${revision_warning_log}" 2>&1
-grep -Fq 'prepared Community image revision differs from the published release' \
-	"${revision_warning_log}"
-grep -Fq '(aaaaaaaaaaaa != bbbbbbbbbbbb); continuing' "${revision_warning_log}"
+) >"${revision_mismatch_log}" 2>&1; then
+	printf 'ERROR: mismatched Community image revision was accepted\n' >&2
+	exit 1
+fi
+grep -Fq 'prepared Community image revision does not match the published release' \
+	"${revision_mismatch_log}"
 matching_revision_log="${tmp}/matching-revision.log"
 (
 	# shellcheck disable=SC1090
@@ -604,7 +610,8 @@ if (
 	printf 'ERROR: invalid Community image revision was accepted\n' >&2
 	exit 1
 fi
-grep -Fq 'prepared Community image revision is invalid' "${invalid_revision_log}"
+grep -Fq 'prepared Community image revision does not match the published release' \
+	"${invalid_revision_log}"
 
 apt_retry_log="${tmp}/apt-retry.log"
 apt_retry_saved="${tmp}/logs/install-test-apt.log"
@@ -1665,7 +1672,8 @@ for component in sourcelens-lensnode sourcelens-nginx postgres redis; do
 	"${ROOT}/release/ci/write-upstream-image-metadata.sh" \
 		"${component}" "${metadata}/${component}.json"
 done
-PATH="${fake_bin}:${PATH}" "${online}/verify-public-images.sh" "${metadata}"
+PATH="${fake_bin}:${PATH}" "${online}/verify-public-images.sh" "${metadata}" global
+PATH="${fake_bin}:${PATH}" "${online}/verify-public-images.sh" "${metadata}" cn
 
 # Source only defines functions because install.sh guards main with BASH_SOURCE.
 source "${ROOT}/deploy/installer/install.sh"
