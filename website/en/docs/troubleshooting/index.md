@@ -18,22 +18,22 @@ Use the message shown on the page and the job details to identify where the fail
 ## Choose a scenario
 
 <div class="hfl-doc-grid">
-  <a class="hfl-doc-card" href="/en/docs/troubleshooting/account-sign-in">
+  <a class="hfl-doc-card" href="/docs/troubleshooting/account-sign-in">
     <small>Account access</small>
     <strong>Console or sign-in unavailable</strong>
     <span>Check the console address, sign-in method, account state, and browser access.</span>
   </a>
-  <a class="hfl-doc-card" href="/en/docs/troubleshooting/installation-nodes">
+  <a class="hfl-doc-card" href="/docs/troubleshooting/installation-nodes">
     <small>Installation and connectivity</small>
     <strong>Installation failed or a node is offline</strong>
     <span>Check system prerequisites, the installation command, component state, and control-plane connectivity.</span>
   </a>
-  <a class="hfl-doc-card" href="/en/docs/troubleshooting/protection">
+  <a class="hfl-doc-card" href="/docs/troubleshooting/protection">
     <small>Data protection</small>
     <strong>Backup, repository, or restore failed</strong>
     <span>Check folder permissions, object storage, NAS, Proxy storage access, snapshots, and the restore destination.</span>
   </a>
-  <a class="hfl-doc-card" href="/en/docs/troubleshooting/insights">
+  <a class="hfl-doc-card" href="/docs/troubleshooting/insights">
     <small>Insights</small>
     <strong>Data Gateway or AI Copilot unavailable</strong>
     <span>Check models, snapshot scope, the Public or Private Data Gateway, and data-preparation status.</span>

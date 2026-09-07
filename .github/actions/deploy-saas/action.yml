@@ -162,7 +162,7 @@ runs:
             -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             -o TCPKeepAlive=yes -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            'curl -kfsS https://127.0.0.1:11442/en/ >/dev/null &&
+            'curl -kfsS https://127.0.0.1:11442/ >/dev/null &&
              curl -kfsS https://127.0.0.1:11443/health/ready >/dev/null &&
              curl -kfsS https://127.0.0.1:11444/ >/dev/null &&
              curl -kfsS https://127.0.0.1:11445/ >/dev/null'

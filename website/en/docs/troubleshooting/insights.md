@@ -26,7 +26,7 @@ If <span class="hfl-ui">Automatic</span> reports that no Public Data Gateway is 
 - Confirm that its version is compatible with the control plane.
 - Check free disk space on the gateway host.
 
-If installation did not finish, see [Installation and nodes](/en/docs/troubleshooting/installation-nodes).
+If installation did not finish, see [Installation and nodes](/docs/troubleshooting/installation-nodes).
 
 ## Data preparation does not complete
 

@@ -9,18 +9,18 @@ description: Deploy the HyperFileLens control plane, backup components, and Priv
 
 ## Deploy HyperFileLens Community
 
-1. Review the [system requirements](/en/docs/deployment/requirements).
-2. Plan the required [network connections and ports](/en/docs/deployment/network).
-3. Follow [Install HyperFileLens Community](/en/docs/getting-started/install).
-4. Complete the [post-installation checks](/en/docs/deployment/post-install).
+1. Review the [system requirements](/docs/deployment/requirements).
+2. Plan the required [network connections and ports](/docs/deployment/network).
+3. Follow [Install HyperFileLens Community](/docs/getting-started/install).
+4. Complete the [post-installation checks](/docs/deployment/post-install).
 
 ## Deploy components
 
-- [Deploy an Agent](/en/docs/deployment/agent) on a Windows, Linux, or macOS host to read local files and run backup and restore jobs.
-- [Deploy a Proxy](/en/docs/deployment/proxy) on a network that can reach NAS or local storage and provide storage access for backup and restore jobs.
-- [Deploy a Private Data Gateway](/en/docs/deployment/data-gateway) on a network that can reach a private backup repository when the Public Data Gateway cannot. The gateway prepares selected snapshot data for Insights.
+- [Deploy an Agent](/docs/deployment/agent) on a Windows, Linux, or macOS host to read local files and run backup and restore jobs.
+- [Deploy a Proxy](/docs/deployment/proxy) on a network that can reach NAS or local storage and provide storage access for backup and restore jobs.
+- [Deploy a Private Data Gateway](/docs/deployment/data-gateway) on a network that can reach a private backup repository when the Public Data Gateway cannot. The gateway prepares selected snapshot data for Insights.
 
 ## Operate HyperFileLens Community
 
-- Use the installer to [upgrade HyperFileLens Community and recover from upgrade failures](/en/docs/deployment/lifecycle).
-- Use [jobs, alerts, and audit logs](/en/docs/deployment/operations) to monitor day-to-day operation and investigate exceptions.
+- Use the installer to [upgrade HyperFileLens Community and recover from upgrade failures](/docs/deployment/lifecycle).
+- Use [jobs, alerts, and audit logs](/docs/deployment/operations) to monitor day-to-day operation and investigate exceptions.

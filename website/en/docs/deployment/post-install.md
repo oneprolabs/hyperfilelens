@@ -15,7 +15,7 @@ On the Community host, run:
 sudo /opt/hyperfilelens/install.sh status
 ```
 
-Confirm that all services are running normally and record the installed version. If a service is unhealthy, see [Installation and nodes](/en/docs/troubleshooting/installation-nodes).
+Confirm that all services are running normally and record the installed version. If a service is unhealthy, see [Installation and nodes](/docs/troubleshooting/installation-nodes).
 
 ## 2. Sign in to the console
 
@@ -33,4 +33,4 @@ Confirm that the top navigation includes the following areas and that each one o
 - **Configuration:** Open organization information, member roles, and system settings.
 - **Operations:** Open operational health, alerts, jobs, and audit information.
 
-If a service or page does not open, record the message shown on the page and the product version, then see [Installation and nodes](/en/docs/troubleshooting/installation-nodes).
+If a service or page does not open, record the message shown on the page and the product version, then see [Installation and nodes](/docs/troubleshooting/installation-nodes).

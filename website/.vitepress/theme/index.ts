@@ -10,7 +10,7 @@ import { enDocA11yLabels, zhDocA11yLabels } from './languages'
 function localizeDocCopyButtons(path: string) {
   const labels = path.startsWith('/zh/docs')
     ? zhDocA11yLabels
-    : path.startsWith('/en/docs')
+    : path.startsWith('/docs')
       ? enDocA11yLabels
       : null
   if (!labels) return
@@ -35,7 +35,7 @@ function localizeDocCopyButtons(path: string) {
 function localizeDocLabels(path: string) {
   const labels = path.startsWith('/zh/docs')
     ? zhDocA11yLabels
-    : path.startsWith('/en/docs')
+    : path.startsWith('/docs')
       ? enDocA11yLabels
       : null
   if (!labels) return
@@ -122,16 +122,18 @@ function englishDocFallback(route: string) {
 }
 
 function updateDocLanguageLinks(path: string) {
-  const match = path.match(/^\/(en|zh)(\/docs(?:\/.*)?$)/)
-  if (!match) return
+  const chineseMatch = path.match(/^\/zh(\/docs(?:\/.*)?$)/)
+  const englishMatch = path.match(/^(\/docs(?:\/.*)?$)/)
+  if (!chineseMatch && !englishMatch) return
 
-  const [, currentLocale, rawRoute] = match
+  const currentLocale = chineseMatch ? 'zh' : 'en'
+  const rawRoute = chineseMatch?.[1] ?? englishMatch?.[1] ?? '/docs'
   const route = normalizeDocRoute(rawRoute)
   const targetLocale = currentLocale === 'en' ? 'zh' : 'en'
   const targetRoute = targetLocale === 'en' && !englishDocRoutes.has(route)
     ? englishDocFallback(route)
     : route
-  const target = `/${targetLocale}${targetRoute}`
+  const target = targetLocale === 'zh' ? `/zh${targetRoute}` : targetRoute
 
   document
     .querySelectorAll<HTMLAnchorElement>('.VPNavBarTranslations a, .VPNavScreenTranslations a')
@@ -141,7 +143,7 @@ function updateDocLanguageLinks(path: string) {
 }
 
 function decorateDocSidebar(path: string) {
-  if (!/^\/(?:en|zh)\/docs(?:\/|$)/.test(path)) return
+  if (!/^\/(?:zh\/)?docs(?:\/|$)/.test(path)) return
 
   const iconSets = {
     quickStart: [
@@ -166,7 +168,7 @@ function decorateDocSidebar(path: string) {
     ],
   } as const
 
-  const docsPath = path.replace(/^\/(?:en|zh)/, '')
+  const docsPath = path.replace(/^\/zh/, '')
   const section = docsPath.startsWith('/docs/deployment/')
     ? 'operations'
     : docsPath.startsWith('/docs/product/') ||
@@ -188,7 +190,7 @@ function decorateDocSidebar(path: string) {
     document.querySelectorAll<HTMLElement>('.VPSidebarItem.level-0 > .item .text').forEach((title, index) => {
       const icon = icons[index]
       const group = title.closest<HTMLElement>('.VPSidebarItem.level-0')
-      if (group && section === 'help' && index === 0 && /^\/(?:en|zh)\/docs\/help\/?$/.test(path)) {
+      if (group && section === 'help' && index === 0 && /^\/(?:zh\/)?docs\/help\/?$/.test(path)) {
         group.classList.add('hfl-sidebar-current')
       }
       if (group && section === 'help' && index === 0 && !group.querySelector(':scope > .items')) {
@@ -208,7 +210,7 @@ function decorateDocSidebar(path: string) {
 }
 
 function revealActiveSidebarItem(path: string) {
-  if (!/^\/(?:en|zh)\/docs(?:\/|$)/.test(path)) return
+  if (!/^\/(?:zh\/)?docs(?:\/|$)/.test(path)) return
 
   const sidebar = document.querySelector<HTMLElement>('.VPSidebar')
   const activeItem = sidebar?.querySelector<HTMLElement>('.VPSidebarItem.is-active')
@@ -227,14 +229,19 @@ function revealActiveSidebarItem(path: string) {
   sidebar.scrollTop = activeTop - (sidebar.clientHeight - activeRect.height) / 2
 }
 
+function publishedPath(path: string) {
+  return path.replace(/^\/en(?=\/docs(?:\/|$))/, '')
+}
+
 function enhanceDocPage(path: string) {
+  const pathForPublication = publishedPath(path)
   window.requestAnimationFrame(() => {
-    localizeDocCopyButtons(path)
-    localizeDocLabels(path)
-    decorateDocSidebar(path)
-    revealActiveSidebarItem(path)
-    updateDocLanguageLinks(path)
-    window.setTimeout(() => updateDocLanguageLinks(path), 80)
+    localizeDocCopyButtons(pathForPublication)
+    localizeDocLabels(pathForPublication)
+    decorateDocSidebar(pathForPublication)
+    revealActiveSidebarItem(pathForPublication)
+    updateDocLanguageLinks(pathForPublication)
+    window.setTimeout(() => updateDocLanguageLinks(pathForPublication), 80)
   })
 }
 

@@ -17,7 +17,7 @@ If the Public Data Gateway can reach the repository, you normally do not need to
 ## Before deployment
 
 - Prepare an Ubuntu 20.04, 22.04, or 24.04 amd64 host with at least 2 CPU cores, 4 GiB of memory, and 50 GiB of free space.
-- Confirm that the host can reach both the HyperFileLens control plane and the required backup repositories. See [Network and ports](/en/docs/deployment/network).
+- Confirm that the host can reach both the HyperFileLens control plane and the required backup repositories. See [Network and ports](/docs/deployment/network).
 - If Docker is not installed, the installer adds the runtime included with the release. If Docker is already present, use Docker Engine 24.0.0 or later and Compose V2 2.20.0 or later.
 
 ## Deploy the gateway
@@ -36,4 +36,4 @@ In the console, confirm that:
 - The gateway can reach the repositories that will be used by Insights.
 - A test session can select the gateway and prepare data from the selected snapshot.
 
-If installation fails, the gateway remains offline, or the AI engine is unhealthy, see [Installation and nodes](/en/docs/troubleshooting/installation-nodes).
+If installation fails, the gateway remains offline, or the AI engine is unhealthy, see [Installation and nodes](/docs/troubleshooting/installation-nodes).

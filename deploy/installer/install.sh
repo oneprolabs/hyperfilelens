@@ -1322,7 +1322,7 @@ wait_for_public_endpoints() {
 	[[ -n "${tenant_port}" ]] || tenant_port=11443
 	deadline=$((SECONDS + timeout_seconds))
 	while ((SECONDS < deadline)); do
-		if curl -kfsS "https://127.0.0.1:${website_port}/en/" >/dev/null 2>&1 \
+		if curl -kfsS "https://127.0.0.1:${website_port}/" >/dev/null 2>&1 \
 			&& curl -kfsS "https://127.0.0.1:${tenant_port}/health/ready" >/dev/null 2>&1; then
 			return 0
 		fi
@@ -3777,7 +3777,7 @@ print_console_access_summary() {
 	fi
 	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
 		printf '  Website · %s\n' "${website_port}"
-		print_nested_value "URL" "https://${host}:${website_port}/en/"
+		print_nested_value "URL" "https://${host}:${website_port}/"
 		print_nested_value "Bind" "${website_bind}"
 
 		printf '\n  Tenant · %s\n' "${tenant_port}"
@@ -3840,7 +3840,7 @@ print_console_access_summary() {
 		print_nested_value "URL" "https://${host}:${tenant_port}/swagger"
 		print_nested_value "Authentication" "HyperFileLens account"
 	else
-		print_value "Website" "https://${host}:${website_port}/en/  (${website_bind})"
+		print_value "Website" "https://${host}:${website_port}/  (${website_bind})"
 		print_value "Tenant" "https://${host}:${tenant_port}/  (${tenant_bind})"
 		print_value "Platform Ops" "https://${host}:${admin_port}/  (${admin_bind})"
 		print_value "Django Admin" "https://${host}:${admin_port}/admin/"

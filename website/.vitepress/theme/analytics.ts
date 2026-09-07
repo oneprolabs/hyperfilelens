@@ -27,9 +27,9 @@ let activePagePath = '/'
 let lastTrackedPagePath = ''
 
 function websitePageMetadata(path: string) {
-  const isDocs = /^\/(?:en|zh)(?:-[^/]+)?\/docs(?:\/|$)/.test(path)
+  const isDocs = /^\/(?:zh\/)?docs(?:\/|$)/.test(path)
   const locale = path.startsWith('/zh') ? 'zh' : 'en'
-  const relative = path.replace(/^\/(?:en|zh)(?:-[^/]+)?\//, '').replace(/^docs\/?/, '')
+  const relative = path.replace(/^\/zh\//, '').replace(/^\//, '').replace(/^docs\/?/, '')
   const slug = relative.replace(/\/$/, '').replace(/[^a-zA-Z0-9/_-]+/g, '_') || 'home'
   let pageGroup = 'home'
   if (isDocs) {
@@ -60,7 +60,9 @@ function websitePageTitle(path: string, isDocs: boolean): string {
 function sanitizedPath(value: string): string {
   try {
     const parsed = new URL(value, window.location.origin)
-    return parsed.pathname || '/'
+    const path = parsed.pathname || '/'
+    if (path === '/en' || path === '/en/') return '/'
+    return path.replace(/^\/en(?=\/docs(?:\/|$))/, '')
   } catch {
     return '/'
   }

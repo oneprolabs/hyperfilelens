@@ -9,9 +9,9 @@ Deploy a Proxy on a Linux host that can reach the required NAS or local storage.
 
 ## Before deployment
 
-- Prepare an Ubuntu amd64 host that meets the [system requirements](/en/docs/deployment/requirements).
+- Prepare an Ubuntu amd64 host that meets the [system requirements](/docs/deployment/requirements).
 - Confirm that the host can reach the HyperFileLens control plane and the NAS or local disk you plan to use.
-- For NAS, confirm that the SMB or NFS service and port are reachable from the Proxy host. See [Network and ports](/en/docs/deployment/network).
+- For NAS, confirm that the SMB or NFS service and port are reachable from the Proxy host. See [Network and ports](/docs/deployment/network).
 
 ## Install the Proxy
 
@@ -35,4 +35,4 @@ In the console, confirm that:
 - The expected folders are available from the relevant source or target page.
 - The Proxy reconnects automatically after its host or service restarts.
 
-If registration or storage validation fails, or the Proxy remains offline, see [Installation and nodes](/en/docs/troubleshooting/installation-nodes).
+If registration or storage validation fails, or the Proxy remains offline, see [Installation and nodes](/docs/troubleshooting/installation-nodes).

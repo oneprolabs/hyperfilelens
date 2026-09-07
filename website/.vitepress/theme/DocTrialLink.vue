@@ -10,7 +10,11 @@ const props = defineProps<{
 
 const route = useRoute()
 const appOrigin = ref('')
-const isDocs = computed(() => route.path.startsWith('/zh/docs') || route.path.startsWith('/en/docs'))
+const isDocs = computed(() =>
+  route.path.startsWith('/zh/docs')
+  || route.path.startsWith('/docs')
+  || route.path.startsWith('/en/docs'),
+)
 const label = computed(() => route.path.startsWith('/zh/docs') ? siteTrialLabels.zh : siteTrialLabels.en)
 
 function validOrigin(value: string): string {

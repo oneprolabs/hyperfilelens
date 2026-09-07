@@ -1168,20 +1168,21 @@ onMounted(async () => {
   box-sizing: border-box;
   width: 100%;
   min-height: var(--app-viewport-height);
-  padding: 64px 48px;
+  padding: 64px max(48px, calc((100vw - 1440px) / 2));
   background-color: #08090c;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(420px, 2fr);
   align-items: center;
-  justify-content: center;
   overflow-x: hidden;
   overflow-y: auto;
   position: relative;
 }
 
 .left-logo {
-  width: min(540px, 44vw);
-  min-width: 480px;
-  margin-right: clamp(64px, 7vw, 96px);
+  width: min(540px, 100%);
+  min-width: 0;
+  margin: 0;
+  justify-self: center;
   z-index: 10;
   display: flex;
   align-items: center;
@@ -1191,6 +1192,7 @@ onMounted(async () => {
   box-sizing: border-box;
   min-width: 420px;
   width: 420px;
+  justify-self: center;
   padding: 30px;
   background: linear-gradient(180deg, rgba(30, 26, 40, 0.92), rgba(20, 17, 28, 0.94));
   border-radius: 18px;
@@ -1715,6 +1717,7 @@ onMounted(async () => {
   .login-container {
     min-height: var(--app-viewport-height);
     height: auto;
+    display: flex;
     flex-direction: column;
     justify-content: flex-start;
     gap: 18px;

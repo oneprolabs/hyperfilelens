@@ -725,7 +725,7 @@ prepare_website_static() {
 	WEBSITE_ARTIFACT_REBUILT=0
 	fingerprint="$(cache_fingerprint website -- "npm=${OPT_NPM_REGISTRY}" \
 		"platform=linux/amd64" "base=${HFL_WEBSITE_BASE_IMAGE}")"
-	if [[ "${force}" -eq 1 ]] || [[ ! -f "${WEBSITE_OUTPUT}/public/en/index.html" ]] \
+	if [[ "${force}" -eq 1 ]] || [[ ! -f "${WEBSITE_OUTPUT}/public/index.html" ]] \
 		|| ! cache_matches website-static "${fingerprint}"; then
 		[[ "${DEV_OFFLINE}" -eq 0 ]] \
 			|| die "Website static artifact is missing or stale in offline mode"
@@ -1212,7 +1212,7 @@ Development stack is ready
 User access
 
   Website
-    URL              https://localhost:${website_port}/en/
+    URL              https://localhost:${website_port}/
     Purpose          Main HyperFileLens website
     Listen           ${website_bind}:${website_port}
 
@@ -1875,7 +1875,7 @@ cmd_status() {
 	else
 		log "SourceLens runtime has not been prepared"
 	fi
-	if [[ -f "${WEBSITE_OUTPUT}/public/en/index.html" ]]; then
+	if [[ -f "${WEBSITE_OUTPUT}/public/index.html" ]]; then
 		printf 'ok      Website static artifact %s\n' "${WEBSITE_OUTPUT}"
 	else
 		printf 'pending Website static artifact (created by up)\n'

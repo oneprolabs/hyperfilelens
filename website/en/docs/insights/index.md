@@ -9,12 +9,12 @@ HyperFileLens Insights analyzes protected backup snapshots. A Data Gateway prepa
 
 ## Workflow
 
-1. [Prepare a snapshot](/en/docs/insights/prepare) and confirm that the required files are available.
-2. [Create an Insights session](/en/docs/insights/copilot), choosing a snapshot, data scope, analysis type, and Data Gateway.
+1. [Prepare a snapshot](/docs/insights/prepare) and confirm that the required files are available.
+2. [Create an Insights session](/docs/insights/copilot), choosing a snapshot, data scope, analysis type, and Data Gateway.
 3. Ask a question whose answer can be checked against the selected files and citations.
-4. Have a platform administrator [configure AI models](/en/docs/insights/models) when the required models are not ready.
-5. [Use a Private Data Gateway](/en/docs/insights/data-gateway) only when the Public Data Gateway cannot reach the repository or processing must remain in a managed network.
-6. Understand and manage the [session and data scope](/en/docs/insights/privacy).
+4. Have a platform administrator [configure AI models](/docs/insights/models) when the required models are not ready.
+5. [Use a Private Data Gateway](/docs/insights/data-gateway) only when the Public Data Gateway cannot reach the repository or processing must remain in a managed network.
+6. Understand and manage the [session and data scope](/docs/insights/privacy).
 
 ![AI Copilot answer based on a synthetic CSV with account, host, and Gateway identifiers blurred while the cited result remains visible](/docs/getting-started/chat-answer.png)
 
