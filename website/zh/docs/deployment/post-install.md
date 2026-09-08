@@ -19,8 +19,8 @@ sudo /opt/hyperfilelens/install.sh status
 
 ## 2. 登录控制台
 
-1. 在安装完成时显示的访问地址中，打开标记为 `Tenant` 的完整地址。
-2. 使用安装结果中列出的初始账户登录。
+1. 在安装结果的 `Access` 区域找到 `HyperFileLens · 11443`，并在浏览器中打开其 `URL`。
+2. 使用同一区域显示的 `Email` 和 `Password` 登录。
 3. 首次登录后修改密码。
 
 ## 3. 确认产品页面

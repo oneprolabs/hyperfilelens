@@ -36,7 +36,7 @@ const sourceLensUrl = 'https://github.com/HyperBDR/sourcelens'
 const installCommand = [
   'curl -fsSL \\',
   '  https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh \\',
-  '  | sudo bash -s -- --mirror cn',
+  '  | sudo bash -s -- --mirror cn --yes',
 ].join('\n')
 const copied = ref(false)
 let copyResetTimer: number | undefined
@@ -67,19 +67,11 @@ async function copyInstallCommand() {
 
 function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
   const target = loginUrl.value
-  if (!target || target === '#') return
-  if (
-    event.button !== 0
-    || event.metaKey
-    || event.ctrlKey
-    || event.shiftKey
-    || event.altKey
-  ) {
-    trackWebsiteOpenApp(placement)
+  if (!target || target === '#') {
+    event.preventDefault()
     return
   }
-  event.preventDefault()
-  trackWebsiteOpenApp(placement, () => window.location.assign(target))
+  trackWebsiteOpenApp(placement)
 }
 </script>
 
@@ -135,17 +127,17 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <nav aria-label="主导航">
           <a href="#use-cases">使用场景</a>
           <a href="#how-it-works">工作原理</a>
-          <a href="/zh/docs/" target="_blank" rel="noopener noreferrer">文档</a>
+          <a href="/zh/docs/getting-started/install" target="_blank" rel="noopener noreferrer">文档</a>
           <a href="#open-source">开源</a>
           <a href="#contact">联系我们</a>
         </nav>
         <div class="header-actions">
           <LanguageSwitcher current="zh" />
-          <a class="github-link" :href="githubUrl" aria-label="HyperFileLens GitHub 仓库">
+          <a class="github-link" :href="githubUrl" target="_blank" rel="noopener noreferrer" aria-label="HyperFileLens GitHub 仓库">
             <svg aria-hidden="true"><use href="#icon-github" /></svg>
             <span>GitHub</span>
           </a>
-          <a class="header-cta" :href="loginUrl" @click="openApp($event, 'header')">免费试用</a>
+          <a class="header-cta" :href="loginUrl" target="_blank" rel="noopener noreferrer" @click="openApp($event, 'header')">免费试用</a>
         </div>
       </div>
     </header>
@@ -154,7 +146,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-backdrop" aria-hidden="true"></div>
         <div class="hero-copy">
-          <a class="open-source-pill" :href="githubUrl">
+          <a class="open-source-pill" :href="githubUrl" target="_blank" rel="noopener noreferrer">
             <svg aria-hidden="true"><use href="#icon-github" /></svg>
             OneProLabs · Apache 2.0
             <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
@@ -165,13 +157,13 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             且不影响生产环境。
           </p>
           <div class="hero-actions">
-            <a class="button button-primary" :href="loginUrl" @click="openApp($event, 'hero')">
+            <a class="button button-primary" :href="loginUrl" target="_blank" rel="noopener noreferrer" @click="openApp($event, 'hero')">
               <img src="/brand/icons/hyperfilelens-mark-32.png" alt="" class="button-logo" />
               试用 HyperFileLens
               <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
               <span class="free-badge">免费</span>
             </a>
-            <a class="button button-secondary" :href="githubUrl">
+            <a class="button button-secondary" :href="githubUrl" target="_blank" rel="noopener noreferrer">
               <svg aria-hidden="true"><use href="#icon-github" /></svg>
               查看 GitHub 仓库
             </a>
@@ -276,12 +268,12 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
               <p>社区版免费开源，自带 S3 兼容存储和 AI 模型或 API Key；企业版能力将在后续版本提供。</p>
             </div>
             <div class="open-source-actions">
-              <a class="button button-light" :href="githubUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>查看 GitHub 仓库</a>
-              <a class="button button-dark-outline" :href="githubUrl">⭐ 点个 Star</a>
+              <a class="button button-light" :href="githubUrl" target="_blank" rel="noopener noreferrer"><svg aria-hidden="true"><use href="#icon-github" /></svg>查看 GitHub 仓库</a>
+              <a class="button button-dark-outline" :href="githubUrl" target="_blank" rel="noopener noreferrer">⭐ 点个 Star</a>
             </div>
             <div class="open-source-links">
-              <a class="source-link" :href="sourceLensUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>AI 引擎仓库</a>
-              <a class="source-link" href="/zh/docs/getting-started/install">安装指南 <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
+              <a class="source-link" :href="sourceLensUrl" target="_blank" rel="noopener noreferrer"><svg aria-hidden="true"><use href="#icon-github" /></svg>AI 引擎仓库</a>
+              <a class="source-link" href="/zh/docs/getting-started/install" target="_blank" rel="noopener noreferrer">安装指南 <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
             </div>
             <p class="beta-note">HyperFileLens 目前处于公测阶段。</p>
           </div>
@@ -332,7 +324,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
               <h3>技术支持</h3>
             </div>
             <p>遇到问题或者发现 bug？在 GitHub 上提交一下，剩下的交给我们。</p>
-            <a class="text-link" :href="`${githubUrl}/issues`">提交 Issue <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
+            <a class="text-link" :href="`${githubUrl}/issues`" target="_blank" rel="noopener noreferrer">提交 Issue <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
           </article>
         </div>
       </section>
@@ -343,12 +335,12 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       <div class="footer-brand">
         <a class="brand" href="/zh/"><img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-on-light.png" alt="HyperFileLens" /></a>
         <p>开源备份工具，内置 Agentic AI 洞察能力，由 OneProLabs 出品。</p>
-        <a class="footer-social" :href="githubUrl" aria-label="HyperFileLens GitHub 仓库"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
+        <a class="footer-social" :href="githubUrl" target="_blank" rel="noopener noreferrer" aria-label="HyperFileLens GitHub 仓库"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
       </div>
       <div class="footer-links">
-        <div><strong>产品</strong><a href="#use-cases">使用场景</a><a href="#how-it-works">工作原理</a><a href="/zh/docs/">文档</a><a :href="loginUrl" @click="openApp($event, 'footer')">免费试用</a></div>
-        <div><strong>开源</strong><a :href="githubUrl">HyperFileLens</a><a :href="sourceLensUrl">AI 引擎</a><a :href="`${githubUrl}/releases`">发布版本</a></div>
-        <div><strong>联系我们</strong><a href="mailto:oneprolabs@oneprocloud.com">企业部署</a><a :href="`${githubUrl}/issues`">技术支持</a></div>
+        <div><strong>产品</strong><a href="#use-cases">使用场景</a><a href="#how-it-works">工作原理</a><a href="/zh/docs/getting-started/install" target="_blank" rel="noopener noreferrer">文档</a><a :href="loginUrl" target="_blank" rel="noopener noreferrer" @click="openApp($event, 'footer')">免费试用</a></div>
+        <div><strong>开源</strong><a :href="githubUrl" target="_blank" rel="noopener noreferrer">HyperFileLens</a><a :href="sourceLensUrl" target="_blank" rel="noopener noreferrer">AI 引擎</a><a :href="`${githubUrl}/releases`" target="_blank" rel="noopener noreferrer">发布版本</a></div>
+        <div><strong>联系我们</strong><a href="mailto:oneprolabs@oneprocloud.com">企业部署</a><a :href="`${githubUrl}/issues`" target="_blank" rel="noopener noreferrer">技术支持</a></div>
       </div>
       <div class="footer-bottom"><span>© 2026 OneProLabs</span><span>公测中 · 开放共建</span></div>
     </footer>

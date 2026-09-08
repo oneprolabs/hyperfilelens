@@ -7,7 +7,7 @@ description: Troubleshoot HyperFileLens Community console access, sign-in, langu
 
 ## The console does not open
 
-Open the full URL labeled `Tenant` in the installation output. If the console does not open:
+Open the `URL` listed under `HyperFileLens · 11443` in the `Access` section of the installation output. If the console does not open:
 
 1. Run `sudo /opt/hyperfilelens/install.sh status` on the installation host and confirm that the services are healthy.
 2. Confirm that the address, port, and reverse-proxy configuration match the current deployment.
@@ -17,7 +17,7 @@ Open the full URL labeled `Tenant` in the installation output. If the console do
 
 - For the first sign-in, use the initial account and password shown by the installer.
 - After changing the initial password, use the new value and check for leading or trailing spaces.
-- Confirm that you opened the `Tenant` address rather than a system-administration address.
+- Confirm that you opened the `URL` under `HyperFileLens · 11443`, not the `Platform Ops · 11444` administration endpoint.
 - Do not edit the database directly to recover an account. Have an administrator use the account-recovery method supported by the installed release.
 
 ## Simplified Chinese is unavailable
