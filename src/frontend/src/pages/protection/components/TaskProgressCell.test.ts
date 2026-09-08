@@ -47,19 +47,12 @@ const i18n = createI18n({
   },
 })
 
-const ElProgressStub = {
-  props: ['percentage'],
-  template: '<div class="el-progress-stub" :data-percentage="percentage" />',
-}
-
 function mountCell(
-  progress: number | undefined,
   overrides: Record<string, unknown> = {},
   stopping = false,
 ) {
   return mount(TaskProgressCell, {
     props: {
-      progress,
       stopping,
       transferProgress: {
         phase: 'transferring',
@@ -80,48 +73,42 @@ function mountCell(
     },
     global: {
       plugins: [i18n],
-      stubs: { ElProgress: ElProgressStub },
     },
   })
 }
 
 describe('TaskProgressCell', () => {
-  it('uses the logical snapshot percent while transferring', () => {
-    const wrapper = mountCell(59.1)
+  it('keeps task progress graphics and percentages out while preserving orchestration', () => {
+    const wrapper = mountCell()
 
-    expect(wrapper.get('.task-progress-cell__percent').text()).toBe('0.28%')
-    expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('0.28')
+    expect(wrapper.find('el-progress').exists()).toBe(false)
+    expect(wrapper.find('.task-progress-cell__percent').exists()).toBe(false)
     expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Backing up')
     expect(wrapper.get('.task-progress-cell__label').attributes('title')).toBeUndefined()
+    expect(wrapper.text()).not.toContain('%')
     expect(wrapper.text()).not.toContain('947')
   })
 
-  it('falls back to the byte-based display percent when task progress is unavailable', () => {
-    const wrapper = mountCell(undefined)
-
-    expect(wrapper.get('.task-progress-cell__percent').text()).toBe('0.28%')
-    expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('0.28')
-  })
-
-  it('does not show a numeric snapshot percent when the byte total is unknown', () => {
-    const wrapper = mountCell(59.1, {
+  it('does not add a percentage when the byte total is unknown', () => {
+    const wrapper = mountCell({
       bytes_total: null,
       bytes_total_known: false,
     })
 
     expect(wrapper.find('.task-progress-cell__percent').exists()).toBe(false)
-    expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('0')
+    expect(wrapper.text()).not.toContain('%')
   })
 
-  it('keeps task progress stable while the task is stopping', () => {
-    const wrapper = mountCell(59.1, {}, true)
+  it('keeps the stopping state without progress graphics or percentages', () => {
+    const wrapper = mountCell({}, true)
 
-    expect(wrapper.get('.task-progress-cell__percent').text()).toBe('59.10%')
-    expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('59.1')
+    expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Stopping backup…')
+    expect(wrapper.find('.task-progress-cell__spinner').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('%')
   })
 
   it('hides Kopia hashed and uploaded counters from user-facing labels', () => {
-    const wrapper = mountCell(59.1, {
+    const wrapper = mountCell({
       label_key: 'protection.taskProgress.transfer.uploadedAndHashed',
       label_args: { uploaded: 123, hashed: 947 },
     })
@@ -131,16 +118,16 @@ describe('TaskProgressCell', () => {
     expect(wrapper.text()).not.toContain('947')
   })
 
-  it('uses Step 3 progress for restore transfers too', () => {
-    const wrapper = mountCell(65.4, {
+  it('preserves restore orchestration and transfer metrics without a percentage', () => {
+    const wrapper = mountCell({
       label_key: 'protection.taskProgress.restore.transferring',
       label_args: { done: 72_592, total: 333_000 },
       step3_display_percent: 10.2,
     })
 
     expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Restoring')
-    expect(wrapper.get('.task-progress-cell__percent').text()).toBe('10.20%')
-    expect(wrapper.get('.el-progress-stub').attributes('data-percentage')).toBe('10.2')
+    expect(wrapper.find('.task-progress-cell__percent').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('%')
     expect(wrapper.get('.task-progress-cell__metric-line').text()).toBe(
       'Data restored: 858 MB / 300 GB · 5.47 MB/s',
     )
@@ -153,7 +140,7 @@ describe('TaskProgressCell', () => {
   })
 
   it('labels hash throughput and exposes only the metric tooltip', () => {
-    const wrapper = mountCell(14.55, {
+    const wrapper = mountCell({
       progress_schema_version: 1,
       bytes_done: 0,
       bytes_total: null,
@@ -172,7 +159,7 @@ describe('TaskProgressCell', () => {
   })
 
   it('renders all metrics in one ellipsizing text node', () => {
-    const wrapper = mountCell(59.1)
+    const wrapper = mountCell()
     const line = wrapper.get('.task-progress-cell__metric-line')
 
     expect(line.text()).toBe('Processed: 858 MB / 300 GB · 18.4 MB/s · 15 min left')
@@ -183,7 +170,7 @@ describe('TaskProgressCell', () => {
   })
 
   it('provides structured overflow tooltip text without standalone separators', () => {
-    const wrapper = mountCell(59.1)
+    const wrapper = mountCell()
     const metric = wrapper.get('.task-progress-cell__metric-line')
 
     expect(wrapper.get('.task-progress-cell').attributes()).toHaveProperty('data-table-overflow-explicit-only')
@@ -196,7 +183,7 @@ describe('TaskProgressCell', () => {
   })
 
   it('keeps processed bytes and speed in the hover text when the total is unknown', () => {
-    const wrapper = mountCell(24.75, {
+    const wrapper = mountCell({
       bytes_total: null,
       bytes_total_known: false,
       processing_speed_bps: 8.74 * 1024 * 1024,

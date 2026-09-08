@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import {
   capacityLabel,
   formatEtaSeconds,
   formatSpeedBps,
-  resolveDisplayPercent,
   shouldShowMetrics,
-  shouldShowPercentMetric,
   type KopiaProgressPayload,
 } from '../../../lib/kopiaProgress'
 
@@ -22,30 +20,10 @@ const props = withDefaults(defineProps<{
 
 const aggregate = computed(() => props.progress?.aggregate ?? null)
 const orchestrationLabel = computed(() => String(props.progress?.orchestration_label || '').trim())
-const estimatingStartedAt = ref<number | null>(null)
-
-watch(
-  () => String(props.progress?.orchestration_phase || '').toLowerCase(),
-  (phase, previous) => {
-    if (phase === 'estimating' && previous !== 'estimating') {
-      estimatingStartedAt.value = Date.now()
-      return
-    }
-    if (phase !== 'estimating') {
-      estimatingStartedAt.value = null
-    }
-  },
-  { immediate: true },
-)
-
-const percent = computed(() => resolveDisplayPercent(props.progress, {
-  estimatingStartedAt: estimatingStartedAt.value,
-}))
 const capacity = computed(() => capacityLabel(aggregate.value))
 const speed = computed(() => formatSpeedBps(aggregate.value?.upload_speed_bps))
 const eta = computed(() => formatEtaSeconds(aggregate.value?.eta_seconds))
 const showMetrics = computed(() => !props.compact && (shouldShowMetrics(props.progress) || props.failed))
-const showPercentMetric = computed(() => shouldShowPercentMetric(props.progress))
 </script>
 
 <template>
@@ -64,13 +42,6 @@ const showPercentMetric = computed(() => shouldShowPercentMetric(props.progress)
       />
       {{ orchestrationLabel }}
     </p>
-    <el-progress
-      class="protection-flow-progress kopia-transfer-progress__bar"
-      :percentage="percent"
-      :status="failed ? 'exception' : undefined"
-      :stroke-width="compact ? 7 : 8"
-      :show-text="compact"
-    />
     <p
       v-if="showMetrics"
       class="kopia-transfer-progress__metrics"
@@ -80,7 +51,6 @@ const showPercentMetric = computed(() => shouldShowPercentMetric(props.progress)
         v-else
         class="hfl-empty-mark"
       >—</span>
-      <span v-if="showPercentMetric">{{ percent }}%</span>
       <span :class="{ 'hfl-empty-mark': !speed }">{{ speed || '—' }}</span>
       <span :class="{ 'hfl-empty-mark': !eta }">{{ eta || '—' }}</span>
     </p>

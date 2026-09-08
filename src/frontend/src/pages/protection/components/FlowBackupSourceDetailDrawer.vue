@@ -116,14 +116,11 @@ import {
   restoreRecordTargetDisplayPath,
   restoreRecordTaskStatus,
   restoreRecordTimeState,
-  shouldShowRestoreRecordProgress,
 } from './restoreRecordDisplay'
 import { flowSourceDiskCountText, flowSourceMemoryText } from '../../../lib/flowSourceDisplay'
 import { formatNodeBytes } from '../../../lib/nodeInventoryDisplay'
 import { isSnapshotDirectoryBrowsable } from './snapshotBrowseEligibility'
 import {
-  formatTaskProgressBarPercent,
-  formatTaskProgressPercent,
   isTransferProgress,
   type TaskRuntimePayload,
   type TransferProgress,
@@ -1102,14 +1099,6 @@ function restoreRecordStatus(record: RestoreRecord) {
   return restoreRecordTaskStatus(record)
 }
 
-function restoreRecordProgressValue(record: RestoreRecord) {
-  return formatTaskProgressBarPercent(record.task_summary?.progress ?? 0)
-}
-
-function restoreRecordProgressText(record: RestoreRecord) {
-  return formatTaskProgressPercent(restoreRecordProgressValue(record))
-}
-
 type RestoreRecordTimeField = 'started' | 'duration' | 'finished'
 type RestoreRecordEndTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 
@@ -1543,14 +1532,6 @@ function openTaskResourceTab() {
   activeTaskDetailTab.value = 'resources'
   const type = selectedResourceType.value || firstResourceType()
   if (type) void loadResourceType(type)
-}
-
-function progressValue(task: TaskRow) {
-  return formatTaskProgressBarPercent(task.progress)
-}
-
-function progressText(task: TaskRow) {
-  return formatTaskProgressPercent(task.progress)
 }
 
 function stepDisplayName(stepName?: string | null, taskType?: string | null) {
@@ -4766,7 +4747,7 @@ function onClosed() {
                       </span>
                       <div class="restore-record-time-summary__copy">
                         <span class="restore-record-time-summary__label">
-                          {{ t('protection.backupsPage.flowRestoreRecordStartedAt') }}
+                          {{ t('protection.backupDetail.colStart') }}
                         </span>
                         <span class="restore-record-time-summary__value-line">
                           <span
@@ -4787,7 +4768,7 @@ function onClosed() {
                                 type="button"
                                 class="restore-record-time-summary__issue"
                                 :title="restoreRecordTimeIssue(row, 'started')"
-                                :aria-label="t('protection.backupsPage.flowRestoreRecordTimeIssueAria', { field: t('protection.backupsPage.flowRestoreRecordStartedAt') })"
+                                :aria-label="t('protection.backupsPage.flowRestoreRecordTimeIssueAria', { field: t('protection.backupDetail.colStart') })"
                               >
                                 <Info :size="13" />
                               </button>
@@ -4846,7 +4827,7 @@ function onClosed() {
                       </span>
                       <div class="restore-record-time-summary__copy">
                         <span class="restore-record-time-summary__label">
-                          {{ t('protection.backupsPage.flowRestoreRecordFinishedAt') }}
+                          {{ t('protection.backupDetail.colEnd') }}
                         </span>
                         <span class="restore-record-time-summary__value-line">
                           <span
@@ -4867,7 +4848,7 @@ function onClosed() {
                                 type="button"
                                 class="restore-record-time-summary__issue"
                                 :title="restoreRecordTimeIssue(row, 'finished')"
-                                :aria-label="t('protection.backupsPage.flowRestoreRecordTimeIssueAria', { field: t('protection.backupsPage.flowRestoreRecordFinishedAt') })"
+                                :aria-label="t('protection.backupsPage.flowRestoreRecordTimeIssueAria', { field: t('protection.backupDetail.colEnd') })"
                               >
                                 <Info :size="13" />
                               </button>
@@ -5226,20 +5207,9 @@ function onClosed() {
               width="148"
             >
               <template #default="{ row }">
-                <div class="restore-record-status-progress">
-                  <div
-                    v-if="shouldShowRestoreRecordProgress(row)"
-                    class="restore-record-status-progress__bar"
-                  >
-                    <ElProgress
-                      :percentage="restoreRecordProgressValue(row)"
-                      :stroke-width="6"
-                      :show-text="false"
-                    />
-                    <span>{{ restoreRecordProgressText(row) }}</span>
-                  </div>
+                <div class="restore-record-status">
                   <TaskStatusTag
-                    v-else-if="restoreRecordStatus(row)"
+                    v-if="restoreRecordStatus(row)"
                     :status="restoreRecordStatus(row)"
                   />
                   <ElTag
@@ -5481,23 +5451,6 @@ function onClosed() {
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('protection.backupsPage.flowTaskColProgress')"
-              min-width="165"
-            >
-              <template #default="{ row }">
-                <div class="hfl-task-list-progress">
-                  <div class="hfl-task-list-progress__track">
-                    <div
-                      class="hfl-task-list-progress__fill"
-                      :class="`hfl-task-list-progress__fill--${row.status}`"
-                      :style="{ width: `${progressValue(row)}%` }"
-                    />
-                  </div>
-                  <span class="hfl-task-list-progress__text">{{ progressText(row) }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column
               :label="t('ops.task.colTrigger')"
               width="105"
             >
@@ -5511,14 +5464,25 @@ function onClosed() {
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('protection.backupDetail.colCreated')"
+              :label="t('protection.backupDetail.colStart')"
               min-width="160"
             >
               <template #default="{ row }">
                 <span
                   class="hfl-table-cell-time"
-                  :class="{ 'hfl-empty-mark': !row.created_at }"
-                >{{ formatNullableTime(row.created_at) }}</span>
+                  :class="{ 'hfl-empty-mark': !(row.started_at || row.created_at) }"
+                >{{ formatNullableTime(row.started_at || row.created_at) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.colEnd')"
+              min-width="160"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !row.finished_at }"
+                >{{ formatNullableTime(row.finished_at) }}</span>
               </template>
             </el-table-column>
             <template #empty>
@@ -5739,26 +5703,9 @@ function onClosed() {
 
         <TaskProgressCell
           v-if="activeTask.status === 'pending' || activeTask.status === 'waiting' || activeTask.status === 'blocked' || activeTask.status === 'running'"
-          :progress="progressValue(activeTask)"
           :transfer-progress="activeTransferProgress"
           :failed="false"
         />
-        <div
-          v-else
-          class="dp-task-detail__progress-block"
-        >
-          <div class="dp-task-detail__progress-head">
-            <span>{{ t('protection.backupsPage.flowTaskColProgress') }}</span>
-            <span>{{ progressText(activeTask) }}</span>
-          </div>
-          <div class="dp-task-detail__progress-track">
-            <div
-              class="dp-task-detail__progress-fill"
-              :class="`dp-task-detail__progress-fill--${activeTask.status}`"
-              :style="{ width: `${progressValue(activeTask)}%` }"
-            />
-          </div>
-        </div>
       </section>
 
       <ElAlert
@@ -7566,29 +7513,8 @@ function onClosed() {
   background: color-mix(in srgb, var(--el-color-warning) 10%, transparent);
 }
 
-.restore-record-status-progress {
-  display: grid;
-  gap: 7px;
+.restore-record-status {
   min-width: 0;
-}
-
-.restore-record-status-progress__bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.restore-record-status-progress__bar :deep(.el-progress) {
-  flex: 1;
-  min-width: 70px;
-}
-
-.restore-record-status-progress__bar span {
-  flex: 0 0 auto;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
 }
 
 :global(.create-recovery-plan-tooltip__mapping .create-recovery-plan-mapping__text) {
@@ -7746,49 +7672,6 @@ function onClosed() {
   border-color: rgb(251 207 232);
   background: rgb(253 242 248);
   color: rgb(219 39 119);
-}
-
-.dp-source-task-progress {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-}
-
-.dp-source-task-progress__track {
-  height: 9px;
-  overflow: hidden;
-  border-radius: 999px;
-  background-color: rgb(226 232 240);
-}
-
-.dp-source-task-progress__fill {
-  height: 100%;
-  min-width: 4px;
-  border-radius: inherit;
-  background-color: var(--color-info);
-  transition: width 0.35s ease;
-}
-
-.dp-source-task-progress__fill--success {
-  background-color: var(--color-success);
-}
-
-.dp-source-task-progress__fill--failed,
-.dp-source-task-progress__fill--timeout {
-  background-color: var(--color-error);
-}
-
-.dp-source-task-progress__fill--pending,
-.dp-source-task-progress__fill--cancelled {
-  background-color: rgb(100 116 139);
-}
-
-.dp-source-task-progress__text {
-  color: var(--color-info);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  font-size: 11px;
-  font-weight: 800;
 }
 
 .dp-task-detail__header-bar {
@@ -8031,51 +7914,6 @@ function onClosed() {
 
 .dp-task-detail__time-value--strong {
   color: var(--color-info);
-}
-
-.dp-task-detail__progress-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-  color: rgb(100 116 139);
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.dp-task-detail__progress-head span:last-child {
-  color: var(--color-info);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-}
-
-.dp-task-detail__progress-track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background-color: rgb(226 232 240);
-}
-
-.dp-task-detail__progress-fill {
-  height: 100%;
-  min-width: 4px;
-  border-radius: inherit;
-  background-color: var(--color-info);
-  transition: width 0.35s ease;
-}
-
-.dp-task-detail__progress-fill--success {
-  background-color: var(--color-success);
-}
-
-.dp-task-detail__progress-fill--failed,
-.dp-task-detail__progress-fill--timeout {
-  background-color: var(--color-error);
-}
-
-.dp-task-detail__progress-fill--pending,
-.dp-task-detail__progress-fill--cancelled {
-  background-color: rgb(100 116 139);
 }
 
 .dp-task-detail__tabs {
