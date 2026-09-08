@@ -82,12 +82,16 @@ HFL_ONLINE_CONSOLE_MARKER=__TEST_ONLINE_CONSOLE__
 HFL_REGISTRY_REGION=cn
 online_output="$(print_online_community_summary 2>&1)"
 unset HFL_ONLINE_CHILD HFL_ONLINE_CONSOLE_MARKER HFL_REGISTRY_REGION
-for heading in 'HyperFileLens · 11443' 'Platform Ops · 11444'; do
-	grep -F "${heading}" <<<"${online_output}" >/dev/null
+for heading in '  HyperFileLens' '  Platform Ops'; do
+	grep -Fx "${heading}" <<<"${online_output}" >/dev/null
 done
+[[ "${online_output}" == *$'Access\n\n  HyperFileLens'* ]]
 grep -F 'linux/amd64' <<<"${online_output}" >/dev/null
-grep -F 'Email          admin@hyperfilelens.com' <<<"${online_output}" >/dev/null
-grep -F 'Password       Admin@123' <<<"${online_output}" >/dev/null
+grep -F 'URL            https://192.0.2.10:11443/' <<<"${online_output}" >/dev/null
+grep -F 'URL            https://192.0.2.10:11444/' <<<"${online_output}" >/dev/null
+[[ "$(grep -Fc 'Email          admin@hyperfilelens.com' <<<"${online_output}")" -eq 2 ]]
+[[ "$(grep -Fc 'Password       Admin@123' <<<"${online_output}")" -eq 2 ]]
+[[ "$(grep -Fc 'Organization   HyperFileLens' <<<"${online_output}")" -eq 1 ]]
 grep -F 'sudo docker compose -f' <<<"${online_output}" >/dev/null
 grep -F 'Online upgrade  curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh | sudo bash -s -- --mirror cn' \
 	<<<"${online_output}" >/dev/null
@@ -97,8 +101,8 @@ global_upgrade_command="$(HFL_REGISTRY_REGION=global online_community_upgrade_co
 grep -F 'https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh' \
 	<<<"${global_upgrade_command}" >/dev/null
 grep -F -- '--mirror global' <<<"${global_upgrade_command}" >/dev/null
-for internal_endpoint in 'Website ·' 'Tenant ·' 'Django Admin' 'Insight Console' \
-	'API / Swagger' 0.0.0.0; do
+for internal_endpoint in 'Website ·' 'Tenant ·' 'HyperFileLens ·' \
+	'Platform Ops ·' 'Django Admin' 'Insight Console' 'API / Swagger' 0.0.0.0; do
 	if grep -F "${internal_endpoint}" <<<"${online_output}" >/dev/null; then
 		echo "Online summary exposed internal endpoint detail: ${internal_endpoint}" >&2
 		exit 1
@@ -158,7 +162,8 @@ sourcelens_installed() { return 0; }
 
 # Compact status resolves service health without emitting Compose tables or
 # internal-only entry points.
-status_output="$(
+status_output="$({
+	configure_logging() { :; }
 	init_install_root() { :; }
 	require_docker() { :; }
 	read_active_color() { printf 'blue'; }
@@ -171,20 +176,39 @@ status_output="$(
 		[[ "${1:-}" == ps ]]
 		printf 'fixture-gateway-container\n'
 	}
-	cmd_status
-)"
+	main status
+} 2>&1)"
+grep -Fx 'HyperFileLens Status' <<<"${status_output}" >/dev/null
 grep -F 'Status            Healthy' <<<"${status_output}" >/dev/null
 grep -F 'HyperFileLens     https://192.0.2.10:11443/' <<<"${status_output}" >/dev/null
 grep -F 'Platform Ops      https://192.0.2.10:11444/' <<<"${status_output}" >/dev/null
 grep -F 'Insight           Healthy' <<<"${status_output}" >/dev/null
 grep -F 'Platform Gateway  Running' <<<"${status_output}" >/dev/null
+[[ "${status_output}" == *$'Access\n\n  HyperFileLens'* ]]
+[[ "${status_output}" == *$'Services\n\n  Insight'* ]]
+[[ "${status_output}" == *$'Management\n\n  Logs'* ]]
 for hidden_status_detail in 11442 '/admin/' 11445 swagger 0.0.0.0 'Active color' \
-	'Deployment phase' 'Agent releases'; do
+	'Deployment phase' 'Agent releases' INSTALLER 'status completed' \
+	'already in install directory'; do
 	if grep -F "${hidden_status_detail}" <<<"${status_output}" >/dev/null; then
 		echo "Compact status exposed unnecessary detail: ${hidden_status_detail}" >&2
 		exit 1
 	fi
 done
+
+# Routine status output omits installer-only progress messages.
+status_materialize_output="$(
+	INSTALL_DIR="${fixture}"
+	SESSION_ACTION=status
+	materialize_to_install_dir "${fixture}" 2>&1
+)"
+[[ -z "${status_materialize_output}" ]]
+status_finish_output="$(
+	SESSION_STARTED=1
+	SESSION_ACTION=status
+	finish_session 0 2>&1
+)"
+[[ -z "${status_finish_output}" ]]
 
 # Immediate health inspection requires every requested service to exist and be
 # running or healthy.

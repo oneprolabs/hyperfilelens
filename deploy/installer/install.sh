@@ -349,6 +349,8 @@ print_status_value() {
 	printf '  %-17s %s\n' "${label}" "${value}"
 }
 
+print_spaced_section() { printf '\n%s\n\n' "$1"; }
+
 print_result() {
 	printf '\n%s\n%s\n%s\n' \
 		'================================================================' "$1" \
@@ -392,7 +394,9 @@ finish_session() {
 	if [[ "${SESSION_STARTED}" -eq 1 ]]; then
 		SESSION_STARTED=0
 		if [[ "${rc}" -eq 0 ]]; then
-			ok "HyperFileLens ${SESSION_ACTION} completed"
+			if [[ "${SESSION_ACTION}" != "status" ]]; then
+				ok "HyperFileLens ${SESSION_ACTION} completed"
+			fi
 		else
 			printf '[FAIL] HyperFileLens %s exited with status %s.\n' "${SESSION_ACTION}" "${rc}" >&2
 			printf '       Full log: %s\n' "${LOG_FILE}" >&2
@@ -810,7 +814,9 @@ materialize_to_install_dir() {
 	source="$(safe_normalize_dir "${source}")"
 	INSTALL_DIR="$(safe_normalize_dir "${INSTALL_DIR}")"
 	if [[ "${source}" == "${INSTALL_DIR}" ]]; then
-		log "already in install directory ${INSTALL_DIR}"
+		if [[ "${SESSION_ACTION}" != "status" ]]; then
+			log "already in install directory ${INSTALL_DIR}"
+		fi
 		return 0
 	fi
 	step "Copying release package ${source} -> ${INSTALL_DIR} ..."
@@ -4060,8 +4066,8 @@ print_online_community_summary() {
 	print_value "Config file" "${env_file}"
 	print_value "Log file" "${LOG_FILE}"
 
-	print_section "Access"
-	printf '  HyperFileLens · %s\n' "${tenant_port}"
+	print_spaced_section "Access"
+	printf '  HyperFileLens\n'
 	print_nested_value "URL" "https://${host}:${tenant_port}/"
 	if [[ "${seed}" == "1" ]]; then
 		if [[ "${show_credentials}" -eq 1 ]]; then
@@ -4073,7 +4079,7 @@ print_online_community_summary() {
 		print_nested_value "Organization" "${seed_org}"
 	fi
 
-	printf '\n  Platform Ops · %s\n' "${admin_port}"
+	printf '\n  Platform Ops\n'
 	print_nested_value "URL" "https://${host}:${admin_port}/"
 	if [[ "${seed}" == "1" ]]; then
 		if [[ "${show_credentials}" -eq 1 ]]; then
@@ -5651,6 +5657,7 @@ cmd_restart() {
 }
 
 cmd_status() {
+	printf '%s\n\n' "HyperFileLens Status"
 	init_install_root
 	if [[ ! -f "${ROOT}/.env" ]]; then
 		warn "missing .env; install has not been run"
@@ -5694,21 +5701,20 @@ cmd_status() {
 		fi
 	fi
 
-	print_section "HyperFileLens"
 	print_status_value "Version" "${version}"
 	print_status_value "Edition" "$(display_edition_from_dir "${ROOT}")"
 	print_status_value "Status" "${hfl_status}"
 	print_status_value "Install path" "${ROOT}"
 
-	print_section "Access"
+	print_spaced_section "Access"
 	print_status_value "HyperFileLens" "https://${host}:${tenant_port}/"
 	print_status_value "Platform Ops" "https://${host}:${admin_port}/"
 
-	print_section "Services"
+	print_spaced_section "Services"
 	print_status_value "Insight" "${insight_status}"
 	print_status_value "Platform Gateway" "${gateway_status}"
 
-	print_section "Management"
+	print_spaced_section "Management"
 	print_status_value "Logs" "sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"
 	print_status_value "Restart" "sudo ${ROOT}/install.sh restart"
 }
@@ -7411,7 +7417,9 @@ main() {
 	SESSION_STARTED=1
 	trap finish_session EXIT
 	trap 'exit 130' INT TERM
-	print_banner "${banner_title}"
+	if [[ "${requested_cmd}" != "status" ]]; then
+		print_banner "${banner_title}"
+	fi
 
 	if [[ $# -eq 0 ]]; then
 		cmd_install
