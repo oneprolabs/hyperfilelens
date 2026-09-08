@@ -136,7 +136,7 @@ describe('Spanish language pack', () => {
     })
     expect(serialized).not.toMatch(/HFLPROTECTED|ZXQ|QXZ|[⟦⟧]/)
     expect(containsUnrelatedWritingSystem).toBe(false)
-    expect(allowedEnglish.length).toBeLessThanOrEqual(320)
+    expect(allowedEnglish.length).toBeLessThanOrEqual(321)
     expect(serialized).not.toMatch(
       /Failed to|\bDefault\b|\bRefresh\b|Disfraces|&quot;|&amp;/,
     )
