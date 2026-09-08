@@ -88,7 +88,8 @@ for summary_contract in \
 	grep -Fq "${summary_contract}" "${installer}"
 done
 for online_output_contract in \
-	'[4/8] Verifying prepared container images' \
+	'[3/4] Starting HyperFileLens' \
+	'[4/4] Verifying installation' \
 	'Verifying prepared runtime image' \
 	'Core data services' \
 	'Database initialization' \
@@ -587,7 +588,77 @@ matching_revision_log="${tmp}/matching-revision.log"
 	RELEASE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	verify_candidate_release
 ) >"${matching_revision_log}" 2>&1
-[[ ! -s "${matching_revision_log}" ]]
+if [[ -s "${matching_revision_log}" ]]; then
+	printf 'ERROR: matching Community release validation produced unexpected output\n' >&2
+	cat "${matching_revision_log}" >&2
+	exit 1
+fi
+
+# A fresh online installation keeps child details in the durable log and
+# forwards only explicitly marked lines to the terminal.
+child_success_package="${tmp}/child-success-package"
+child_success_log="${tmp}/child-success.log"
+child_success_terminal="${tmp}/child-success.terminal"
+mkdir -p "${child_success_package}"
+cat >"${child_success_package}/install.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'framework detail retained only in the durable log\n'
+printf '%s%s\n' "${HFL_ONLINE_CONSOLE_MARKER}" '  [ OK ] Concise child result'
+SH
+chmod 755 "${child_success_package}/install.sh"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	REGION=global
+	TAG=v1.2.3
+	ONLINE_LOG_FILE="${child_success_log}"
+	exec 3>"${child_success_terminal}"
+	run_fresh_community_install "${child_success_package}"
+)
+grep -Fq 'framework detail retained only in the durable log' "${child_success_log}"
+grep -Fq '  [ OK ] Concise child result' "${child_success_log}"
+grep -Fxq '  [ OK ] Concise child result' "${child_success_terminal}"
+if grep -Fq 'framework detail retained only in the durable log' \
+	"${child_success_terminal}" \
+	|| grep -Fq '__HFL_ONLINE_CONSOLE__' "${child_success_log}" \
+	|| grep -Fq '__HFL_ONLINE_CONSOLE__' "${child_success_terminal}"; then
+	printf 'ERROR: fresh-install child output filtering contract was violated\n' >&2
+	exit 1
+fi
+
+child_failure_package="${tmp}/child-failure-package"
+child_failure_log="${tmp}/child-failure.log"
+child_failure_terminal="${tmp}/child-failure.terminal"
+mkdir -p "${child_failure_package}"
+cat >"${child_failure_package}/install.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'internal child failure detail\n'
+exit 23
+SH
+chmod 755 "${child_failure_package}/install.sh"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	REGION=global
+	TAG=v1.2.3
+	ONLINE_LOG_FILE="${child_failure_log}"
+	exec 3>&1
+	run_fresh_community_install "${child_failure_package}"
+) >"${child_failure_terminal}" 2>&1; then
+	printf 'ERROR: a failed child installer was reported as successful\n' >&2
+	exit 1
+fi
+grep -Fq 'internal child failure detail' "${child_failure_log}"
+grep -Fq '[FAIL] HyperFileLens Community v1.2.3 installation failed' \
+	"${child_failure_terminal}"
+grep -Fq "review the full log: ${child_failure_log}" "${child_failure_terminal}"
+if grep -Fq 'internal child failure detail' "${child_failure_terminal}"; then
+	printf 'ERROR: child failure details leaked into concise terminal output\n' >&2
+	exit 1
+fi
+
 python3 - "${identity_candidate}/MANIFEST.json" <<'PY'
 import json
 import pathlib
@@ -1017,10 +1088,33 @@ compose_target_log="${tmp}/compose-target.log"
 	DOCKER_CE_SOURCE_NAME='Docker CE · https://download.docker.com/linux/ubuntu'
 	print_target
 ) >"${compose_target_log}"
-grep -Fq 'Docker Engine  29.2.1 · reuse' "${compose_target_log}"
-grep -Fq 'Docker Compose not installed → install docker-compose-plugin 5.0.2-1~ubuntu.24.04~noble' \
+grep -Fq 'System requirements' "${compose_target_log}"
+grep -Fq 'Docker Engine    Ready · 29.2.1' "${compose_target_log}"
+grep -Fq 'Docker Compose   Will install · 5.0.2-1~ubuntu.24.04~noble' \
 	"${compose_target_log}"
-grep -Fq 'Install scope  Compose V2 plugin only' "${compose_target_log}"
+grep -Fq 'Docker service   Running' "${compose_target_log}"
+grep -Fq 'The required Docker Compose plugin will be installed on this host.' \
+	"${compose_target_log}"
+
+upgrade_target_log="${tmp}/upgrade-target.log"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	TAG=v1.2.3
+	ONLINE_LOG_FILE=/opt/hyperfilelens/logs/install-test.log
+	INSTALL_ACTION=Upgrade
+	DOCKER_RUNTIME_ACTION=reuse
+	DOCKER_ENGINE_VERSION=29.2.1
+	DOCKER_COMPOSE_VERSION=5.0.2
+	print_target
+) >"${upgrade_target_log}"
+grep -Fx 'Host runtime' "${upgrade_target_log}" >/dev/null
+grep -Fq 'Docker Engine  29.2.1 · reuse' "${upgrade_target_log}"
+grep -Fq 'Docker Compose 5.0.2 · reuse' "${upgrade_target_log}"
+if grep -Fq 'System requirements' "${upgrade_target_log}"; then
+	printf 'ERROR: fresh-install system-requirements output leaked into upgrades\n' >&2
+	exit 1
+fi
 (
 	# shellcheck disable=SC1090
 	source "${online_functions}"
@@ -1345,9 +1439,7 @@ source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 replacements = {
     'INSTALL_ROOT="/opt/hyperfilelens"': f'INSTALL_ROOT="{sys.argv[3]}"',
     '[[ "${EUID}" -eq 0 ]] || fail "run this command through sudo"': ":",
-    "\nconfirm_installation\ninstall_host_tools\n": (
-        "\nconfirm_installation\n:\n"
-    ),
+    "\ninstall_host_tools\n": "\n:\n",
     'SESSION_DIR="$(mktemp -d /var/tmp/hyperfilelens-online.XXXXXX)"': (
         f'SESSION_DIR="$(mktemp -d "{sys.argv[4]}/online-session.XXXXXX")"'
     ),
@@ -1411,8 +1503,9 @@ grep -Fq 'Version        v1.2.12' "${latest_log}" || {
 	cat "${latest_log}" >&2
 	exit 1
 }
-grep -Fq 'Docker Engine  29.6.1 · reuse' "${latest_log}"
-grep -Fq 'Docker Compose 2.39.1 · reuse' "${latest_log}"
+grep -Fq 'System requirements' "${latest_log}"
+grep -Fq 'Docker Engine    Ready · 29.6.1' "${latest_log}"
+grep -Fq 'Docker Compose   Ready · 2.39.1' "${latest_log}"
 for removed_target_field in Action Source Registry; do
 	if grep -Eq "^  ${removed_target_field}[[:space:]]" "${latest_log}"; then
 		printf 'ERROR: online target still displays %s\n' \
@@ -1424,9 +1517,10 @@ latest_session_log="$(find "${test_install_root}/logs" -maxdepth 1 -type f \
 	-name 'install-*.log' -print -quit)"
 [[ -n "${latest_session_log}" ]]
 grep -Fq 'HyperFileLens Community Online Installer' "${latest_session_log}"
-grep -Fq 'Resolving Community tags from GitHub' "${latest_session_log}"
+grep -Fq 'Resolving HyperFileLens Community release from GitHub' "${latest_session_log}"
 grep -Fq 'Community release resolved · v1.2.12 · commit cccccccccccc' "${latest_session_log}"
-grep -Fq 'Release contract' "${latest_session_log}"
+grep -Fq 'Downloading v1.2.12 installation contract from GitHub' \
+	"${latest_session_log}"
 grep -Fq "Log file       ${latest_session_log}" "${latest_log}"
 grep -Fq 'recent fallback tags: v1.2.11, v1.2.10, v1.2.9, v1.2.8, v1.2.7, v1.2.6, v1.2.5, v1.2.4, v1.2.3, v1.2.2' \
 	"${latest_log}"
@@ -1533,18 +1627,21 @@ PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--source-root "${ROOT}" \
 		--version v1.2.3 \
 		--region global \
+		--concise-output \
 		--output "${candidate}" >"${prepare_log}" 2>&1
 grep -F 'Docker Compose native pull progress: parallel=5 images=10' \
 	"${prepare_log}" >/dev/null
-for heading in 'Installation images' 'Release package'; do
-	grep -Fx "${heading}" "${prepare_log}" >/dev/null
-done
-grep -F '[....] Pulling 10 installation images concurrently · maximum 5 active downloads' \
+grep -F '[....] Pulling 10 container images · up to 5 concurrent downloads' \
 	"${prepare_log}" >/dev/null
-grep -F '[ OK ] Installation image 1/10 ready ·' "${prepare_log}" >/dev/null
-grep -F '[ OK ] Installation image 10/10 ready ·' "${prepare_log}" >/dev/null
-grep -F '[ OK ] All 10 installation images are ready' "${prepare_log}" >/dev/null
-grep -F '[ OK ] Community release package prepared ·' "${prepare_log}" >/dev/null
+grep -F '[ OK ] All 10 container images are ready' "${prepare_log}" >/dev/null
+grep -F '[....] Preparing Agent, Data Gateway, and language packages' \
+	"${prepare_log}" >/dev/null
+grep -F '[ OK ] Agent, Data Gateway, and language packages are ready' \
+	"${prepare_log}" >/dev/null
+if grep -F 'Installation image 1/10 ready' "${prepare_log}" >/dev/null; then
+	printf 'ERROR: per-image digest confirmation leaked into concise output\n' >&2
+	exit 1
+fi
 if grep -F 'Untagged:' "${prepare_log}" >/dev/null; then
 	printf 'ERROR: temporary asset image cleanup leaked into online output\n' >&2
 	exit 1
@@ -1553,6 +1650,24 @@ if grep -F 'cid-' "${prepare_log}" >/dev/null; then
 	printf 'ERROR: temporary asset container cleanup leaked into online output\n' >&2
 	exit 1
 fi
+
+# Online upgrades continue to use the existing detailed preparation output.
+upgrade_candidate="${tmp}/upgrade-candidate"
+upgrade_prepare_log="${tmp}/prepare-upgrade.log"
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--output "${upgrade_candidate}" >"${upgrade_prepare_log}" 2>&1
+grep -Fx 'Installation images' "${upgrade_prepare_log}" >/dev/null
+grep -F '[....] Pulling 10 installation images concurrently · maximum 5 active downloads' \
+	"${upgrade_prepare_log}" >/dev/null
+grep -F '[ OK ] Installation image 1/10 ready ·' "${upgrade_prepare_log}" >/dev/null
+grep -Fx 'Release package' "${upgrade_prepare_log}" >/dev/null
+grep -F '[ OK ] Community release package prepared ·' \
+	"${upgrade_prepare_log}" >/dev/null
+
 fallback_candidate="${tmp}/fallback-candidate"
 fallback_prepare_log="${tmp}/prepare-fallback.log"
 PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
@@ -1562,6 +1677,7 @@ PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--source-root "${ROOT}" \
 		--version v1.2.3 \
 		--region global \
+		--concise-output \
 		--output "${fallback_candidate}" >"${fallback_prepare_log}" 2>&1
 grep -F '[WARN] 1 installation image(s) were not available from the preferred registry' \
 	"${fallback_prepare_log}" >/dev/null
@@ -1576,6 +1692,7 @@ if PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--source-root "${ROOT}" \
 		--version v1.2.3 \
 		--region global \
+		--concise-output \
 		--output "${tmp}/failed-candidate" \
 		>"${failed_prepare_log}" 2>&1; then
 	printf 'ERROR: failed Docker pulls unexpectedly prepared an online package\n' >&2

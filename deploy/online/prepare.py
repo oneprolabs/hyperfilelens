@@ -511,17 +511,23 @@ def write_pull_plan(path: pathlib.Path, specs: list[ImageSpec], region: str) -> 
 
 
 def pull_image_batch(
-    specs: list[ImageSpec], region: str
+    specs: list[ImageSpec], region: str, *, concise_output: bool = False
 ) -> subprocess.CompletedProcess[str]:
     """Pull one image batch through Docker Compose's native scheduler."""
     with tempfile.TemporaryDirectory(prefix="hfl-online-pull-") as temporary:
         compose_file = pathlib.Path(temporary) / "docker-compose.yml"
         write_pull_plan(compose_file, specs, region)
-        print(
-            f"[....] Pulling {len(specs)} installation images concurrently "
-            f"· maximum {PULL_PARALLELISM} active downloads",
-            flush=True,
-        )
+        if concise_output:
+            message = (
+                f"  [....] Pulling {len(specs)} container images "
+                f"· up to {PULL_PARALLELISM} concurrent downloads"
+            )
+        else:
+            message = (
+                f"[....] Pulling {len(specs)} installation images concurrently "
+                f"· maximum {PULL_PARALLELISM} active downloads"
+            )
+        print(message, flush=True)
         # A PTY preserves Compose's familiar aggregate progress renderer. The
         # online parent mirrors the relayed stream into its durable log.
         return run_with_native_progress(
@@ -563,27 +569,38 @@ def inspect_pulled_images(
     return resolved, unresolved
 
 
-def pull_images(specs: list[ImageSpec], preferred_region: str) -> list[ResolvedImage]:
+def pull_images(
+    specs: list[ImageSpec],
+    preferred_region: str,
+    *,
+    concise_output: bool = False,
+) -> list[ResolvedImage]:
     """Pull all images concurrently with a selective regional fallback."""
     fallback_region = "global" if preferred_region == "cn" else "cn"
-    primary = pull_image_batch(specs, preferred_region)
+    primary = pull_image_batch(
+        specs, preferred_region, concise_output=concise_output
+    )
     resolved, unresolved = inspect_pulled_images(specs, preferred_region)
 
     if unresolved:
+        prefix = "  " if concise_output else ""
         print(
-            f"[WARN] {len(unresolved)} installation image(s) were not available "
-            "from the preferred registry",
+            f"{prefix}[WARN] {len(unresolved)} installation image(s) were not "
+            "available from the preferred registry",
             flush=True,
         )
 
     fallback_output = ""
     if unresolved:
+        prefix = "  " if concise_output else ""
         print(
-            f"[....] Retrying {len(unresolved)} installation image(s) from "
-            "the fallback registry",
+            f"{prefix}[....] Retrying {len(unresolved)} installation image(s) "
+            "from the fallback registry",
             flush=True,
         )
-        fallback = pull_image_batch(unresolved, fallback_region)
+        fallback = pull_image_batch(
+            unresolved, fallback_region, concise_output=concise_output
+        )
         fallback_output = fallback.stdout or ""
         fallback_resolved, unresolved = inspect_pulled_images(
             unresolved, fallback_region
@@ -615,11 +632,12 @@ def pull_images(specs: list[ImageSpec], preferred_region: str) -> list[ResolvedI
     for position, spec in enumerate(specs, start=1):
         image = resolved[spec.component]
         run(["docker", "tag", image.source_ref, spec.local_ref])
-        print(
-            f"[ OK ] Installation image {position}/{total} ready · "
-            f"{spec.local_ref}@{image.digest}",
-            flush=True,
-        )
+        if not concise_output:
+            print(
+                f"[ OK ] Installation image {position}/{total} ready · "
+                f"{spec.local_ref}@{image.digest}",
+                flush=True,
+            )
         result.append(image)
     return result
 
@@ -893,6 +911,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--version", required=True)
     parser.add_argument("--region", choices=("cn", "global"), required=True)
     parser.add_argument("--output", type=pathlib.Path, required=True)
+    parser.add_argument("--concise-output", action="store_true")
     return parser.parse_args()
 
 
@@ -950,11 +969,19 @@ def main() -> int:
         )
         for kind in ("agent", "gateway", "language")
     ]
-    print("\nInstallation images", flush=True)
-    images = pull_images(runtime_specs + asset_specs, args.region)
+    if not args.concise_output:
+        print("\nInstallation images", flush=True)
+    images = pull_images(
+        runtime_specs + asset_specs,
+        args.region,
+        concise_output=args.concise_output,
+    )
     runtime = images[: len(runtime_specs)]
     assets = images[len(runtime_specs) :]
-    print(f"[ OK ] All {len(images)} installation images are ready", flush=True)
+    if args.concise_output:
+        print(f"  [ OK ] All {len(images)} container images are ready", flush=True)
+    else:
+        print(f"[ OK ] All {len(images)} installation images are ready", flush=True)
 
     revision = image_revision(f"hyperfilelens-backend:{version}")
     if image_revision(f"hyperfilelens-frontend:{version}") != revision:
@@ -964,18 +991,32 @@ def main() -> int:
         "gateway": "Data Gateway packages",
         "language": "Language packs",
     }
-    print("\nRelease package", flush=True)
+    if args.concise_output:
+        print(
+            "\n  [....] Preparing Agent, Data Gateway, and language packages",
+            flush=True,
+        )
+    else:
+        print("\nRelease package", flush=True)
     for asset in assets:
         label = asset_labels[asset.spec.asset_kind]
-        print(f"[....] Preparing {label}", flush=True)
+        if not args.concise_output:
+            print(f"[....] Preparing {label}", flush=True)
         try:
             extract_asset(asset, target / "payload")
         finally:
             discard_asset_image(asset)
-        print(f"[ OK ] {label} are ready", flush=True)
+        if not args.concise_output:
+            print(f"[ OK ] {label} are ready", flush=True)
+    if args.concise_output:
+        print(
+            "  [ OK ] Agent, Data Gateway, and language packages are ready",
+            flush=True,
+        )
     sourcelens = write_sourcelens_build_info(source, target, runtime, lensnode_spec)
     write_manifest(target, version, revision, runtime, assets, sourcelens)
-    print(f"[ OK ] Community release package prepared · {target}")
+    if not args.concise_output:
+        print(f"[ OK ] Community release package prepared · {target}")
     return 0
 
 

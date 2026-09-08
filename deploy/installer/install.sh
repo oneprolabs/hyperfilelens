@@ -337,10 +337,38 @@ print_value() {
 	printf '  %-14s %s\n' "${label}" "${value}"
 }
 
+print_status_value() {
+	local label=$1 value=${2:-}
+	[[ -n "${value}" ]] || return 0
+	printf '  %-17s %s\n' "${label}" "${value}"
+}
+
 print_result() {
 	printf '\n%s\n%s\n%s\n' \
 		'================================================================' "$1" \
 		'================================================================'
+}
+
+online_console_enabled() {
+	[[ "${HFL_ONLINE_CHILD:-0}" == "1" \
+		&& -n "${HFL_ONLINE_CONSOLE_MARKER:-}" ]]
+}
+
+online_console_line() {
+	online_console_enabled || return 0
+	printf '%s%s\n' "${HFL_ONLINE_CONSOLE_MARKER}" "${1:-}"
+}
+
+online_console_section() {
+	online_console_line
+	online_console_line "$1"
+}
+
+online_console_block() {
+	local line
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		online_console_line "${line}"
+	done
 }
 
 print_warning_summary() {
@@ -1151,6 +1179,21 @@ active_api_service() {
 container_health_status() {
 	local cid=$1
 	docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}" 2>/dev/null || true
+}
+
+service_group_ready_now() {
+	local compose_function=$1 service cids cid status
+	shift
+	for service in "$@"; do
+		cids="$("${compose_function}" ps -q "${service}" 2>/dev/null)" || return 1
+		[[ -n "${cids}" ]] || return 1
+		while IFS= read -r cid; do
+			[[ -n "${cid}" ]] || continue
+			status="$(container_health_status "${cid}")"
+			[[ "${status}" == "healthy" || "${status}" == "running" ]] || return 1
+		done <<<"${cids}"
+	done
+	return 0
 }
 
 wait_for_services_health() {
@@ -3951,6 +3994,83 @@ print_console_access_summary() {
 	fi
 }
 
+print_online_community_summary() {
+	local env_file="${ROOT}/.env"
+	local host seed seed_email seed_pass seed_org tenant_port admin_port
+	local show_credentials=0 credentials_note
+	[[ -f "${env_file}" ]] || return 0
+	host="$(resolve_console_host)"
+	seed="$(read_env_value SEED_INITIAL_DATA)"
+	seed_email="$(read_env_value SEED_ADMIN_EMAIL)"
+	seed_pass="$(read_env_value SEED_ADMIN_PASSWORD)"
+	seed_org="$(read_env_value SEED_ORG_NAME)"
+	tenant_port="$(read_env_value HFL_TENANT_PORT)"
+	[[ -n "${tenant_port}" ]] || tenant_port=11443
+	admin_port="$(read_env_value HFL_ADMIN_PORT)"
+	[[ -n "${admin_port}" ]] || admin_port=11444
+
+	if [[ "${seed}" == "1" ]]; then
+		[[ -n "${seed_email}" ]] || seed_email="admin@hyperfilelens.com"
+		[[ -n "${seed_pass}" ]] || seed_pass="Admin@123"
+		[[ -n "${seed_org}" ]] || seed_org="HyperFileLens"
+		case "${SHOW_GENERATED_CREDENTIALS}" in
+		1 | true | yes | on) show_credentials=1 ;;
+		0 | false | no | off) show_credentials=0 ;;
+		auto) [[ "${INTERACTIVE_SESSION}" -eq 1 ]] && show_credentials=1 || true ;;
+		*) die "invalid HFL_SHOW_GENERATED_CREDENTIALS=${SHOW_GENERATED_CREDENTIALS}" ;;
+		esac
+		credentials_note="stored in ${env_file}; values are hidden in non-interactive logs"
+	fi
+
+	print_result "Installation completed successfully"
+	print_section "Installation summary"
+	print_value "Version" "$(read_version)"
+	print_value "Edition" "$(display_edition_from_dir "${ROOT}")"
+	print_value "Platform" "$(installation_platform_display)"
+	print_value "Install path" "${ROOT}"
+	print_value "Config file" "${env_file}"
+	print_value "Log file" "${LOG_FILE}"
+
+	print_section "Access"
+	printf '  HyperFileLens · %s\n' "${tenant_port}"
+	print_nested_value "URL" "https://${host}:${tenant_port}/"
+	if [[ "${seed}" == "1" ]]; then
+		if [[ "${show_credentials}" -eq 1 ]]; then
+			print_nested_value "Email" "${seed_email}"
+			print_nested_value "Password" "${seed_pass}"
+		else
+			print_nested_value "Credentials" "${credentials_note}"
+		fi
+		print_nested_value "Organization" "${seed_org}"
+	fi
+
+	printf '\n  Platform Ops · %s\n' "${admin_port}"
+	print_nested_value "URL" "https://${host}:${admin_port}/"
+	if [[ "${seed}" == "1" ]]; then
+		if [[ "${show_credentials}" -eq 1 ]]; then
+			print_nested_value "Email" "${seed_email}"
+			print_nested_value "Password" "${seed_pass}"
+		else
+			print_nested_value "Credentials" "${credentials_note}"
+		fi
+	else
+		warn "Initial seeding is disabled (SEED_INITIAL_DATA=${seed:-0}); no default admin account will be created automatically."
+	fi
+
+	if [[ "${seed}" == "1" ]]; then
+		SESSION_WARNINGS+=("Change all default passwords after the first login.")
+	fi
+	print_warning_summary
+
+	print_section "Management commands"
+	print_value "Status" "sudo ${ROOT}/install.sh status"
+	print_value "Logs" "sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"
+	print_value "Restart" "sudo ${ROOT}/install.sh restart"
+	print_value "Backup" "sudo ${ROOT}/install.sh backup"
+	print_value "Upgrade" "sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
+	print_value "Uninstall" "sudo ${ROOT}/install.sh uninstall"
+}
+
 print_platform_gateway_summary() {
 	local host=$1 tenant_port=$2
 	local node_id organization version service container_id ai_engine console_state
@@ -5225,7 +5345,7 @@ repair_existing_multimodal_model() {
 # --- Commands ---
 
 cmd_install() {
-	local sourcelens_mode=-1 allow_main_build=0
+	local sourcelens_mode=-1 allow_main_build=0 concise_online=0 summary_output=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--with-sourcelens) sourcelens_mode=1 ;;
@@ -5252,6 +5372,12 @@ cmd_install() {
 	# destination .env remains authoritative when auto-deploy was disabled.
 	ROOT="${INSTALL_DIR}"
 	preflight_local_platform_gateway_agent_conflict
+	if online_console_enabled; then
+		concise_online=1
+		online_console_section "[3/4] Starting HyperFileLens"
+		online_console_line
+		online_console_line "  [....] Preparing configuration and runtime assets"
+	fi
 	if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
 		print_section "Target"
 		print_value "Version" "${version}"
@@ -5310,6 +5436,11 @@ cmd_install() {
 	if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
 		ok "Required container images are available"
 	fi
+	if [[ "${concise_online}" -eq 1 ]]; then
+		online_console_line "  [ OK ] Configuration and runtime assets are ready"
+		online_console_line
+		online_console_line "  [....] Starting HyperFileLens and Insight services"
+	fi
 
 	print_section "[5/8] Installing insight services"
 	if should_install_sourcelens "${sourcelens_mode}"; then
@@ -5345,6 +5476,11 @@ cmd_install() {
 				|| die "could not record the installed SourceLens bundle identity"
 		fi
 	fi
+	if [[ "${concise_online}" -eq 1 ]]; then
+		online_console_line "  [ OK ] Application services are ready"
+		online_console_line
+		online_console_line "  [....] Preparing the local Platform Data Gateway"
+	fi
 	print_section "[7/8] Preparing platform services"
 	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
 		print_section "Identity and email"
@@ -5360,6 +5496,15 @@ cmd_install() {
 	ensure_local_platform_gateway
 	prune_agent_release_media
 	ok "Platform configuration and managed services are ready"
+	if [[ "${concise_online}" -eq 1 ]]; then
+		if local_platform_gateway_agent_is_managed \
+			&& [[ "${LOCAL_PLATFORM_GATEWAY_VERIFIED}" -eq 1 ]]; then
+			online_console_line "  [ OK ] Platform Data Gateway is online"
+		else
+			online_console_line "  [ OK ] Platform services are ready"
+		fi
+		online_console_section "[4/4] Verifying installation"
+	fi
 
 	print_section "[8/8] Verifying installation"
 	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
@@ -5367,8 +5512,27 @@ cmd_install() {
 	else
 		compose_all_profiles ps
 	fi
-	print_result "Installation completed successfully"
-	print_console_access_summary
+	if [[ "${concise_online}" -eq 1 ]]; then
+		online_console_line
+		online_console_line "  HyperFileLens       Ready"
+		online_console_line "  Platform Ops        Ready"
+		if [[ "${sourcelens_mode}" -ne 0 \
+			&& "$(configured_sourcelens_mode)" == "bundled" ]] \
+			&& sourcelens_installed; then
+			online_console_line "  Insight services    Ready"
+		fi
+		if local_platform_gateway_agent_is_managed \
+			&& [[ "${LOCAL_PLATFORM_GATEWAY_VERIFIED}" -eq 1 ]]; then
+			online_console_line "  Platform Gateway    Online"
+		fi
+		online_console_line
+		online_console_line "  [ OK ] Installation verification passed"
+		summary_output="$(print_online_community_summary)"
+		online_console_block <<<"${summary_output}"
+	else
+		print_result "Installation completed successfully"
+		print_console_access_summary
+	fi
 }
 
 cmd_platform_gateway() {
@@ -5457,41 +5621,65 @@ cmd_restart() {
 
 cmd_status() {
 	init_install_root
-	local version
-	version="$(read_version)"
-	printf 'Version: %s\n' "${version}"
-	printf 'Install dir: %s\n' "${ROOT}"
-	local active_color deployment_phase
-	if active_color="$(read_active_color)"; then
-		printf 'Active color: %s\n' "${active_color}"
-	else
-		printf 'Active color: legacy/unset\n'
-	fi
-	deployment_phase="$(grep -E '^phase=' "$(blue_green_state_dir)/deployment-state" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-	printf 'Deployment phase: %s\n' "${deployment_phase:-unknown}"
-	if sourcelens_installed; then
-		printf 'Insight services: installed at %s (network %s)\n' \
-			"${SOURCELENS_INSTALL_DIR}" "${HFL_BRIDGE_NETWORK}"
-	else
-		printf 'Insight services: not installed\n'
-	fi
-	if [[ -f "${ROOT}/data/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz" ]]; then
-		printf 'Platform Data Gateway: AI engine bundle present\n'
-	else
-		printf 'Platform Data Gateway: AI engine bundle missing\n'
-	fi
-	if [[ -d "${ROOT}/data/media/agent-releases" ]]; then
-		local versions
-		versions="$(find "${ROOT}/data/media/agent-releases" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -V | tr '\n' ' ')"
-		printf 'Agent releases: %s\n' "${versions:-none}"
-	fi
-	if [[ -f "${ROOT}/.env" ]]; then
-		require_docker
-		compose_all_profiles ps
-		print_console_access_summary "Access and management" 0
-	else
+	if [[ ! -f "${ROOT}/.env" ]]; then
 		warn "missing .env; install has not been run"
+		return 0
 	fi
+	require_docker
+	local version active_color host tenant_port admin_port
+	local hfl_status="Degraded" insight_status="Not installed" gateway_status="Not installed"
+	local container_id=""
+	version="$(read_version)"
+	host="$(resolve_console_host)"
+	tenant_port="$(read_env_value HFL_TENANT_PORT)"
+	[[ -n "${tenant_port}" ]] || tenant_port=11443
+	admin_port="$(read_env_value HFL_ADMIN_PORT)"
+	[[ -n "${admin_port}" ]] || admin_port=11444
+
+	if active_color="$(read_active_color)" \
+		&& service_group_ready_now compose_all_profiles \
+			postgres redis worker scheduler "api-${active_color}" "web-${active_color}" nginx; then
+		hfl_status="Healthy"
+	fi
+	if [[ "$(configured_sourcelens_mode)" == "external" ]]; then
+		insight_status="External"
+	elif sourcelens_installed; then
+		insight_status="Degraded"
+		if service_group_ready_now sourcelens_compose \
+			api "$(sourcelens_web_service)" worker scheduler postgres redis nginx; then
+			insight_status="Healthy"
+		fi
+	fi
+	if local_platform_gateway_agent_is_managed; then
+		gateway_status="Degraded"
+		container_id="$(docker ps -q \
+			--filter 'label=com.hyperfilelens.managed=true' \
+			--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
+			--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
+			--filter 'label=com.docker.compose.service=lensnode' 2>/dev/null | head -1)"
+		if systemctl is-active --quiet hyperfilelens-agent.service \
+			&& [[ -n "${container_id}" ]]; then
+			gateway_status="Running"
+		fi
+	fi
+
+	print_section "HyperFileLens"
+	print_status_value "Version" "${version}"
+	print_status_value "Edition" "$(display_edition_from_dir "${ROOT}")"
+	print_status_value "Status" "${hfl_status}"
+	print_status_value "Install path" "${ROOT}"
+
+	print_section "Access"
+	print_status_value "HyperFileLens" "https://${host}:${tenant_port}/"
+	print_status_value "Platform Ops" "https://${host}:${admin_port}/"
+
+	print_section "Services"
+	print_status_value "Insight" "${insight_status}"
+	print_status_value "Platform Gateway" "${gateway_status}"
+
+	print_section "Management"
+	print_status_value "Logs" "sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"
+	print_status_value "Restart" "sudo ${ROOT}/install.sh restart"
 }
 
 cmd_manage() {
