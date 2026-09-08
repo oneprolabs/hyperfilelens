@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   Archive,
   Ban,
-  ArrowLeft,
   ArrowRight,
   Camera,
   Check,
@@ -19,7 +18,6 @@ import {
   CircleHelp,
   Clock3,
   Copy,
-  Download,
   File,
   Filter,
   Folder,
@@ -40,28 +38,23 @@ import {
 } from 'lucide-vue-next'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { pushToast } from '../../../lib/toast/store'
-import type { ElTree } from 'element-plus'
+import HflHelpTip from '../../../components/HflHelpTip.vue'
 import HflPopover from '../../../components/HflPopover.vue'
 import HflPagination from '../../../components/HflPagination.vue'
+import SnapshotPointDetailPanel from './SnapshotPointDetailPanel.vue'
 import { useDrawerTableMaxHeight } from '../../../composables/useDrawerTableMaxHeight'
 import { apiErrorMessage } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
 import { getNode, type EnrollmentOs } from '../../../lib/nodeApi'
 import AgentPlatformBrandIcon from '../../../components/agent-deploy/AgentPlatformBrandIcon.vue'
 import type {
-  BackupSnapshotBrowserEntry,
   BackupConfig,
   BackupConfigDirectory,
   BackupConfigDetail,
   BackupConfigRecoveryPlan,
   BackupSourceSnapshot,
-  BackupSourceSnapshotDirectory,
 } from '../../../lib/protectionBackupConfigApi'
 import {
-  browseBackupSnapshotDirectory,
-  createBackupSnapshotDirectoryDownloadTask,
-  createBackupSnapshotDirectoryBatchDownloadTask,
-  createSnapshotArtifactDownloadUrl,
   deleteBackupConfig,
   getBackupSourceSnapshot,
   listBackupSourceSnapshots,
@@ -119,7 +112,6 @@ import {
 } from './restoreRecordDisplay'
 import { flowSourceDiskCountText, flowSourceMemoryText } from '../../../lib/flowSourceDisplay'
 import { formatNodeBytes } from '../../../lib/nodeInventoryDisplay'
-import { isSnapshotDirectoryBrowsable } from './snapshotBrowseEligibility'
 import {
   isTransferProgress,
   type TaskRuntimePayload,
@@ -154,22 +146,6 @@ export type FlowSourceDetailTabInput =
   | 'configs'
   | 'executions'
   | 'restore'
-
-type SnapshotBrowserTreeNode = BackupSnapshotBrowserEntry & {
-  id: string
-  label: string
-  disabled?: boolean
-  loaded?: boolean
-  isLeaf?: boolean
-  children?: SnapshotBrowserTreeNode[]
-  loadMore?: boolean
-  nextCursor?: string
-  parentPath?: string
-  loadedCount?: number
-  loadingMore?: boolean
-}
-
-const SNAPSHOT_BROWSER_PAGE_LIMIT = 200
 
 type ResourceDetailRow = {
   key: string
@@ -257,6 +233,11 @@ const emit = defineEmits<{
 }>()
 
 const { t, te } = useI18n()
+
+function showFlowSourceFeedback(message: string, type: 'error' | 'warning', title?: string) {
+  pushToast({ type, title, message })
+}
+
 const router = useRouter()
 const stopConfirmDialog = useProtectionStopConfirmDialog()
 const stopConfirmOpen = stopConfirmDialog.open
@@ -288,24 +269,10 @@ const { tableMaxHeight: restoreTableMaxHeight, containerRef: restoreTableRef } =
 const { tableMaxHeight: sourceTasksTableMaxHeight, containerRef: sourceTasksTableRef } = useDrawerTableMaxHeight()
 const { tableMaxHeight: taskResourceTableMaxHeight, containerRef: taskResourceTableRef } = useDrawerTableMaxHeight()
 const selectedSnapshotId = ref<number | null>(null)
-const expandedSnapshotRowKeys = ref<number[]>([])
 const snapshotDetailLoading = ref(false)
 const snapshotDetailError = ref('')
 const snapshotDetails = ref(new Map<number, BackupSourceSnapshot>())
-const selectedSnapshotDirectory = ref<BackupSourceSnapshotDirectory | null>(null)
-const fileBrowserDrawerOpen = ref(false)
-const browserLoading = ref(false)
-const browserError = ref('')
-const browserPath = ref('')
-const browserParentPath = ref('')
-const browserEntries = ref<BackupSnapshotBrowserEntry[]>([])
-const browserTreeRef = ref<InstanceType<typeof ElTree> | null>(null)
-const browserTreeEntries = ref<SnapshotBrowserTreeNode[]>([])
-const browserTreeVersion = ref(0)
-const selectedBrowserPaths = ref<Set<string>>(new Set())
-const downloadingSelected = ref(false)
-const selectedSnapshotFileChecked = ref(false)
-const downloadingSnapshotFile = ref(false)
+const snapshotDetailDrawerOpen = ref(false)
 const sourceSnapshotRows = ref<BackupSourceSnapshot[]>([])
 const sourceSnapshotsLoading = ref(false)
 const sourceSnapshotsError = ref('')
@@ -476,7 +443,7 @@ async function retryCurrentConfigProvision() {
     emit('config-changed')
     ElMessage.success({ message: t('protection.backupsPage.provisionRetryQueued'), grouping: true })
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+    showFlowSourceFeedback(apiErrorMessage(err), 'error')
   } finally {
     provisionRetrying.value = false
   }
@@ -508,7 +475,7 @@ async function discardCurrentFailedConfig() {
     emit('config-changed')
     ElMessage.success({ message: t('protection.backupsPage.provisionDiscarded'), grouping: true })
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+    showFlowSourceFeedback(apiErrorMessage(err), 'error')
   } finally {
     provisionDiscarding.value = false
   }
@@ -550,7 +517,6 @@ const selectedSnapshot = computed(() => {
     ?? realSourceSnapshots.value.find((snapshot) => snapshot.id === selectedSnapshotId.value)
     ?? null
 })
-const selectedSnapshotDirectories = computed(() => selectedSnapshot.value?.directories || [])
 const sourceEndpoint = computed((): { sourceType: RestoreEndpointType; sourceRefId: number } | null => {
   const source = props.source
   if (!source) return null
@@ -570,20 +536,6 @@ const backupSummarySnapshotCountText = computed(() => {
   return sourceDetailLoading.value ? '...' : '—'
 })
 const backupSummarySnapshotCountTitle = computed(() => sourceDetailError.value)
-const browserBreadcrumbs = computed(() => {
-  const parts = browserPath.value.split('/').filter(Boolean)
-  const crumbs = [{ label: t('protection.backupsPage.snapshotBrowserRoot'), path: '' }]
-  let current = ''
-  for (const part of parts) {
-    current = current ? `${current}/${part}` : part
-    crumbs.push({ label: part, path: current })
-  }
-  return crumbs
-})
-const selectedBrowserPathList = computed(() => Array.from(selectedBrowserPaths.value).sort())
-const selectedBrowserPathCount = computed(() => selectedBrowserPaths.value.size)
-const selectedSnapshotDirectoryIsFile = computed(() => selectedSnapshotDirectory.value?.path_type === 'file')
-const selectedSnapshotFileCount = computed(() => (selectedSnapshotDirectoryIsFile.value && selectedSnapshotFileChecked.value ? 1 : 0))
 const displayedRestoreRecords = computed(() => {
   const target = targetedRestoreRecord.value
   if (!target || restoreRecords.value.some((record) => record.id === target.id)) return restoreRecords.value
@@ -780,6 +732,14 @@ const taskDetailDrawerSize = computed(() => {
   if (Number.isFinite(numeric) && numeric > 0) return `${Math.max(650, Math.min(775, (numeric - 120) * 1.25))}px`
   return '700px'
 })
+const snapshotDetailDrawerSize = computed(() => {
+  const nestedWidth = Number.parseFloat(nestedDrawerSize.value)
+  const desiredWidth = Number.isFinite(nestedWidth) ? Math.min(860, nestedWidth + 40) : 840
+  const outerMatch = String(props.drawerSize || '').trim().match(/^(\d+(?:\.\d+)?)px$/)
+  if (!outerMatch) return `${Math.round(desiredWidth)}px`
+  const outerWidth = Number(outerMatch[1])
+  return `${Math.round(Math.min(desiredWidth, Math.max(280, outerWidth - 48)))}px`
+})
 const activeTaskUuid = computed(() => activeTask.value?.task_uuid || '')
 const activeTaskDependencies = computed(() =>
   (activeTask.value?.dependencies || []).filter((dependency) => dependency.is_active),
@@ -879,7 +839,7 @@ async function cancelActiveBackupTask() {
     ElMessage.success({ message: t('protection.backupsPage.backupTaskCancelSuccess'), grouping: true })
     await refreshActiveTask()
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+    showFlowSourceFeedback(apiErrorMessage(err), 'error')
   } finally {
     backupTaskActionBusy.value = false
   }
@@ -1757,7 +1717,7 @@ async function refreshActiveTask() {
       if (type) void loadResourceType(type)
     }
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.loadFailed')), grouping: true })
+    showFlowSourceFeedback(apiErrorMessage(err, t('errors.generic.loadFailed')), 'error')
   } finally {
     activeTaskLoading.value = false
   }
@@ -1797,7 +1757,7 @@ async function openTaskDetailByUuid(taskUuid?: string | null) {
     const task = await getTask(uuid)
     openTaskDetail(task)
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.loadFailed')), grouping: true })
+    showFlowSourceFeedback(apiErrorMessage(err, t('errors.generic.loadFailed')), 'error')
   }
 }
 
@@ -1929,19 +1889,6 @@ function fmtBytes(n: number) {
 function fmtReferenceBytes(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—'
   return fmtBytes(Math.max(0, Number(value)))
-}
-
-function fmtReferencePercent(value: number | null | undefined) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—'
-  return `${(Math.max(0, Number(value)) * 100).toFixed(1)}%`
-}
-
-function fmtCombinedReduction(snapshot: BackupSourceSnapshot) {
-  if (!snapshot.storage_stats_available) return '—'
-  if (snapshot.fully_reused) return t('protection.backupsPage.snapshotStorageFullyReused')
-  const value = Number(snapshot.combined_reduction_ratio)
-  if (!Number.isFinite(value) || value <= 0) return '—'
-  return `${value.toFixed(2)} : 1`
 }
 
 function snapshotDisplayDirectories(snapshot: BackupSourceSnapshot) {
@@ -2095,133 +2042,61 @@ function snapshotStatusLabel(status?: string): string {
   if (normalized === 'partial') return t('protection.backupsPage.snapshotStatusPartial')
   if (normalized === 'failed') return t('protection.backupsPage.snapshotStatusFailed')
   if (normalized === 'creating') return t('protection.backupsPage.snapshotStatusCreating')
+  if (normalized === 'running') return t('protection.backupsPage.snapshotStatusRunning')
   if (normalized === 'deleted') return t('protection.backupsPage.snapshotStatusDeleted')
   if (normalized === 'deleting') return t('protection.backupsPage.snapshotStatusDeleting')
   if (normalized === 'delete_failed') return t('protection.backupsPage.snapshotStatusDeleteFailed')
   return status || t('protection.backupDetail.durationDash')
 }
 
+function snapshotStatusInProgress(status?: string) {
+  const normalized = String(status || '').toLowerCase()
+  return normalized === 'creating' || normalized === 'running'
+}
+
 function isVisibleSourceSnapshot(snapshot: BackupSourceSnapshot) {
   return !HIDDEN_SOURCE_SNAPSHOT_STATUSES.includes(String(snapshot.status || '').toLowerCase())
 }
 
-function canBrowseSnapshotDirectory(dir: BackupSourceSnapshotDirectory) {
-  return isSnapshotDirectoryBrowsable(selectedSnapshot.value?.status, dir)
+function closeSnapshotDetailDrawer() {
+  snapshotDetailDrawerOpen.value = false
+  selectedSnapshotId.value = null
+  snapshotDetailLoading.value = false
+  snapshotDetailError.value = ''
 }
 
-function snapshotDirectoryKind(dir: BackupSourceSnapshotDirectory) {
-  return dir.path_type === 'file' ? 'file' : 'dir'
+function resetSnapshotDetailDrawer() {
+  snapshotDetailDrawerOpen.value = false
+  selectedSnapshotId.value = null
+  snapshotDetailLoading.value = false
+  snapshotDetailError.value = ''
 }
 
-function snapshotDirectoryIcon(dir: BackupSourceSnapshotDirectory) {
-  return snapshotDirectoryKind(dir) === 'file' ? File : Folder
-}
-
-function snapshotFileFallbackName(dir: BackupSourceSnapshotDirectory) {
-  return dir.display_name || dir.source_path.split(/[\\/]/).filter(Boolean).pop() || 'snapshot-file'
-}
-
-function clearSnapshotFileSelection() {
-  selectedSnapshotFileChecked.value = false
-  downloadingSnapshotFile.value = false
-}
-
-function openSnapshotFileBrowser(dir: BackupSourceSnapshotDirectory) {
-  if (!canBrowseSnapshotDirectory(dir)) return
-  selectedSnapshotDirectory.value = dir
-  fileBrowserDrawerOpen.value = true
-  browserLoading.value = false
-  browserError.value = ''
-  browserPath.value = ''
-  browserParentPath.value = ''
-  browserEntries.value = []
-  browserTreeEntries.value = []
-  browserTreeVersion.value += 1
-  selectedBrowserPaths.value = new Set()
-  browserTreeRef.value?.setCheckedKeys([])
-  clearSnapshotFileSelection()
-}
-
-function toggleSnapshotFileSelection() {
-  selectedSnapshotFileChecked.value = !selectedSnapshotFileChecked.value
-}
-
-async function downloadSelectedSnapshotFile() {
-  const dir = selectedSnapshotDirectory.value
-  if (!dir || !selectedSnapshotFileChecked.value || !selectedSnapshotDirectoryIsFile.value) {
-    ElMessage.warning({ message: t('protection.backupsPage.snapshotBrowserSelectBeforeDownload'), grouping: true })
-    return
-  }
-  downloadingSnapshotFile.value = true
-  try {
-    const task = await createBackupSnapshotDirectoryDownloadTask(dir.id, '')
-    const artifactId = await waitForDownloadArtifact(task.task_uuid)
-    await startNativeArtifactDownload(artifactId)
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
-  } finally {
-    downloadingSnapshotFile.value = false
-  }
-}
-
-async function startNativeArtifactDownload(artifactId: number) {
-  const result = await createSnapshotArtifactDownloadUrl(artifactId)
-  const anchor = document.createElement('a')
-  anchor.href = result.url
-  anchor.rel = 'noopener'
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-}
-
-function closeSnapshotFileBrowser() {
-  fileBrowserDrawerOpen.value = false
-  clearSnapshotFileSelection()
-}
-
-function resetSnapshotBrowser() {
-  selectedSnapshotDirectory.value = null
-  fileBrowserDrawerOpen.value = false
-  browserLoading.value = false
-  browserError.value = ''
-  browserPath.value = ''
-  browserParentPath.value = ''
-  browserEntries.value = []
-  browserTreeEntries.value = []
-  browserTreeVersion.value += 1
-  selectedBrowserPaths.value = new Set()
-  downloadingSelected.value = false
-  clearSnapshotFileSelection()
-}
-
-async function selectSnapshot(row: BackupSourceSnapshot) {
+async function loadSelectedSnapshot(row: BackupSourceSnapshot) {
   selectedSnapshotId.value = row.id
-  resetSnapshotBrowser()
   snapshotDetailLoading.value = true
   snapshotDetailError.value = ''
   try {
     const detail = await getBackupSourceSnapshot(row.id)
+    if (selectedSnapshotId.value !== row.id) return
     snapshotDetails.value.set(row.id, detail)
   } catch (err) {
+    if (selectedSnapshotId.value !== row.id) return
     snapshotDetailError.value = apiErrorMessage(err, t('errors.generic.loadFailed'))
   } finally {
-    snapshotDetailLoading.value = false
+    if (selectedSnapshotId.value === row.id) snapshotDetailLoading.value = false
   }
 }
 
-async function expandSnapshot(row: BackupSourceSnapshot) {
-  expandedSnapshotRowKeys.value = [row.id]
-  await selectSnapshot(row)
+function openSnapshotDetailDrawer(row: BackupSourceSnapshot) {
+  selectedSnapshotId.value = row.id
+  snapshotDetailDrawerOpen.value = true
+  void loadSelectedSnapshot(row)
 }
 
-function toggleSnapshot(row: BackupSourceSnapshot) {
-  if (expandedSnapshotRowKeys.value.includes(row.id)) {
-    expandedSnapshotRowKeys.value = []
-    selectedSnapshotId.value = null
-    resetSnapshotBrowser()
-    return
-  }
-  void expandSnapshot(row)
+function retrySelectedSnapshotDetail() {
+  const snapshot = selectedSnapshot.value
+  if (snapshot) void loadSelectedSnapshot(snapshot)
 }
 
 function canRestoreSnapshot(row: BackupSourceSnapshot) {
@@ -2234,7 +2109,9 @@ function snapshotRestoreDisabledReason(row: BackupSourceSnapshot) {
   }
   const status = String(row.status || '').toLowerCase()
   if (status !== 'available' && status !== 'partial') {
-    return t('protection.backupsPage.snapshotReasonStatusUnavailable')
+    return t('protection.backupsPage.snapshotReasonStatusUnavailable', {
+      status: snapshotStatusLabel(row.status),
+    })
   }
   return t('protection.backupsPage.snapshotReasonNoUsableDirectories')
 }
@@ -2242,269 +2119,6 @@ function snapshotRestoreDisabledReason(row: BackupSourceSnapshot) {
 function openSnapshotRestore(row: BackupSourceSnapshot) {
   if (!canRestoreSnapshot(row)) return
   emit('restore-snapshot', { snapshotId: row.id })
-}
-
-function onSnapshotExpandChange(row: BackupSourceSnapshot, expandedRows: BackupSourceSnapshot[]) {
-  const expanded = expandedRows.some((item) => item.id === row.id)
-  if (!expanded) {
-    expandedSnapshotRowKeys.value = expandedRows.map((item) => item.id)
-    if (selectedSnapshotId.value === row.id) {
-      selectedSnapshotId.value = null
-      resetSnapshotBrowser()
-    }
-    return
-  }
-  void expandSnapshot(row)
-}
-
-async function openSnapshotDirectory(dir: BackupSourceSnapshotDirectory, path = '') {
-  if (!canBrowseSnapshotDirectory(dir)) return
-  if (snapshotDirectoryKind(dir) === 'file') {
-    openSnapshotFileBrowser(dir)
-    return
-  }
-  clearSnapshotFileSelection()
-  const previousDirectory = selectedSnapshotDirectory.value
-  const previousPath = browserPath.value
-  const previousParentPath = browserParentPath.value
-  const previousEntries = browserEntries.value
-  const previousTreeEntries = browserTreeEntries.value
-  selectedSnapshotDirectory.value = dir
-  fileBrowserDrawerOpen.value = true
-  browserLoading.value = true
-  browserError.value = ''
-  browserEntries.value = []
-  browserTreeEntries.value = []
-  browserTreeVersion.value += 1
-  selectedBrowserPaths.value = new Set()
-  browserTreeRef.value?.setCheckedKeys([])
-  try {
-    const result = await browseBackupSnapshotDirectory(dir.id, {
-      path,
-      limit: SNAPSHOT_BROWSER_PAGE_LIMIT,
-    })
-    browserPath.value = result.path || ''
-    browserParentPath.value = result.parent_path || ''
-    browserEntries.value = result.entries
-    browserTreeEntries.value = browserPageTreeNodes(result, browserPath.value, 0)
-    browserTreeVersion.value += 1
-    refreshBrowserTreeDisabled()
-  } catch (err) {
-    browserError.value = apiErrorMessage(err, t('errors.generic.loadFailed'))
-    if (previousDirectory?.id === dir.id && (previousPath || previousEntries.length)) {
-      browserPath.value = previousPath
-      browserParentPath.value = previousParentPath
-      browserEntries.value = previousEntries
-      browserTreeEntries.value = previousTreeEntries
-      browserTreeVersion.value += 1
-    } else {
-      browserPath.value = ''
-      browserParentPath.value = ''
-      browserEntries.value = []
-      browserTreeEntries.value = []
-      browserTreeVersion.value += 1
-    }
-  } finally {
-    browserLoading.value = false
-  }
-}
-
-function browserEntryToTreeNode(entry: BackupSnapshotBrowserEntry): SnapshotBrowserTreeNode {
-  return {
-    ...entry,
-    id: entry.path,
-    label: entry.name,
-    disabled: isBrowserPathDisabled(entry.path),
-    loaded: entry.type !== 'dir',
-    isLeaf: entry.type !== 'dir',
-    children: entry.type === 'dir' ? [] : undefined,
-  }
-}
-
-function browserPageTreeNodes(
-  result: Awaited<ReturnType<typeof browseBackupSnapshotDirectory>>,
-  parentPath: string,
-  previouslyLoaded: number,
-) {
-  const entries = result.entries.map((entry) => browserEntryToTreeNode(entry))
-  const loadedCount = previouslyLoaded + entries.length
-  if (result.has_more && result.next_cursor) {
-    entries.push({
-      id: `snapshot-browser-load-more:${parentPath}:${result.next_cursor}`,
-      label: t('protection.backupsPage.snapshotBrowserLoadMore'),
-      name: t('protection.backupsPage.snapshotBrowserLoadMore'),
-      path: parentPath,
-      type: 'load-more',
-      size_bytes: 0,
-      downloadable: false,
-      disabled: true,
-      loaded: true,
-      isLeaf: true,
-      loadMore: true,
-      nextCursor: result.next_cursor,
-      parentPath,
-      loadedCount,
-    })
-  }
-  return entries
-}
-
-function isRelatedBrowserPath(a: string, b: string) {
-  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
-}
-
-function isBrowserPathDisabled(path: string) {
-  for (const selectedPath of selectedBrowserPaths.value) {
-    if (selectedPath !== path && isRelatedBrowserPath(path, selectedPath)) return true
-  }
-  return false
-}
-
-function refreshBrowserTreeDisabled(nodes: SnapshotBrowserTreeNode[] = browserTreeEntries.value) {
-  for (const node of nodes) {
-    node.disabled = node.loadMore || isBrowserPathDisabled(node.path)
-    if (node.children?.length) refreshBrowserTreeDisabled(node.children)
-  }
-  browserTreeEntries.value = [...browserTreeEntries.value]
-}
-
-async function loadBrowserTreeNode(node: { data?: SnapshotBrowserTreeNode; level: number }, resolve: (data: SnapshotBrowserTreeNode[]) => void) {
-  if (node.level === 0) {
-    resolve(browserTreeEntries.value)
-    return
-  }
-  const data = node.data
-  if (!data || data.type !== 'dir' || !selectedSnapshotDirectory.value) {
-    resolve([])
-    return
-  }
-  try {
-    const result = await browseBackupSnapshotDirectory(selectedSnapshotDirectory.value.id, {
-      path: data.path,
-      limit: SNAPSHOT_BROWSER_PAGE_LIMIT,
-    })
-    const children = browserPageTreeNodes(result, data.path, 0)
-    data.children = children
-    data.loaded = true
-    resolve(children)
-    refreshBrowserTreeDisabled()
-  } catch (err) {
-    data.loaded = false
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.loadFailed')), grouping: true })
-    resolve([])
-  }
-}
-
-function replaceBrowserLoadMoreNode(
-  nodes: SnapshotBrowserTreeNode[],
-  id: string,
-  replacements: SnapshotBrowserTreeNode[],
-): boolean {
-  const index = nodes.findIndex((node) => node.id === id)
-  if (index >= 0) {
-    nodes.splice(index, 1, ...replacements)
-    return true
-  }
-  return nodes.some((node) => node.children && replaceBrowserLoadMoreNode(node.children, id, replacements))
-}
-
-async function loadMoreBrowserTreeEntries(data: SnapshotBrowserTreeNode) {
-  const directory = selectedSnapshotDirectory.value
-  if (!directory || !data.loadMore || !data.nextCursor || data.loadingMore) return
-  const directoryId = directory.id
-  const parentPath = data.parentPath || ''
-  const treeVersion = browserTreeVersion.value
-  data.loadingMore = true
-  browserTreeEntries.value = [...browserTreeEntries.value]
-  try {
-    const result = await browseBackupSnapshotDirectory(directoryId, {
-      path: parentPath,
-      limit: SNAPSHOT_BROWSER_PAGE_LIMIT,
-      cursor: data.nextCursor,
-    })
-    if (selectedSnapshotDirectory.value?.id !== directoryId || browserTreeVersion.value !== treeVersion) return
-    const replacements = browserPageTreeNodes(result, parentPath, data.loadedCount || 0)
-    if (!replaceBrowserLoadMoreNode(browserTreeEntries.value, data.id, replacements)) return
-    for (const replacement of replacements) {
-      browserTreeRef.value?.insertBefore(replacement, data)
-    }
-    browserTreeRef.value?.remove(data)
-    if (parentPath === browserPath.value) {
-      browserEntries.value = [...browserEntries.value, ...result.entries]
-    }
-    browserTreeEntries.value = [...browserTreeEntries.value]
-    refreshBrowserTreeDisabled()
-    await nextTick()
-    syncBrowserTreeCheckedKeys()
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.loadFailed')), grouping: true })
-  } finally {
-    data.loadingMore = false
-    browserTreeEntries.value = [...browserTreeEntries.value]
-  }
-}
-
-function syncBrowserTreeCheckedKeys() {
-  browserTreeRef.value?.setCheckedKeys(selectedBrowserPathList.value)
-}
-
-function normalizeBrowserDownloadPaths(paths: string[]): string[] {
-  const sorted = [...paths].sort((a, b) => a.length - b.length)
-  const kept: string[] = []
-  for (const path of sorted) {
-    if (kept.some((parent) => path === parent || path.startsWith(`${parent}/`))) continue
-    kept.push(path)
-  }
-  return kept.sort()
-}
-
-function clearBrowserSelection() {
-  selectedBrowserPaths.value = new Set()
-  refreshBrowserTreeDisabled()
-  syncBrowserTreeCheckedKeys()
-}
-
-function onBrowserTreeCheckChange(data: SnapshotBrowserTreeNode, checked: boolean) {
-  const next = new Set(selectedBrowserPaths.value)
-  if (!checked) {
-    next.delete(data.path)
-  } else {
-    for (const path of Array.from(next)) {
-      if (isRelatedBrowserPath(data.path, path)) next.delete(path)
-    }
-    next.add(data.path)
-  }
-  selectedBrowserPaths.value = next
-  refreshBrowserTreeDisabled()
-  syncBrowserTreeCheckedKeys()
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
-function artifactIdFromTask(task: { result_payload?: unknown }) {
-  const payload = task.result_payload && typeof task.result_payload === 'object'
-    ? task.result_payload as Record<string, unknown>
-    : {}
-  const id = Number(payload.artifact_id || 0)
-  return Number.isFinite(id) && id > 0 ? id : 0
-}
-
-async function waitForDownloadArtifact(taskUuid: string) {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    const task = await getTask(taskUuid)
-    if (task.status === 'success') {
-      const artifactId = artifactIdFromTask(task)
-      if (artifactId > 0) return artifactId
-      throw new Error(t('protection.backupsPage.snapshotBrowserDownloadNotReady'))
-    }
-    if (task.status === 'failed' || task.status === 'cancelled' || task.status === 'timeout') {
-      throw new Error(task.error_message || t('protection.backupsPage.snapshotBrowserDownloadFailed'))
-    }
-    await wait(1000)
-  }
-  throw new Error(t('protection.backupsPage.snapshotBrowserDownloadTimeout'))
 }
 
 async function loadOverviewForSource(options: { silent?: boolean } = {}) {
@@ -2536,8 +2150,8 @@ async function loadOverviewForSource(options: { silent?: boolean } = {}) {
 async function loadSnapshotsForSource() {
   const endpoint = sourceEndpoint.value
   sourceSnapshotRows.value = []
-  // Tab activation refreshes the list while its controlled expansion state is retained.
-  // Keep loaded details too, so a retained expanded row never falls back to an empty summary row.
+  // Keep an open detail drawer stable while a manual refresh replaces the list rows.
+  // Its cached detail prevents the drawer from briefly falling back to an incomplete list row.
   sourceSnapshotsError.value = ''
   if (!endpoint) {
     snapshotPagination.count = 0
@@ -2568,25 +2182,6 @@ async function loadSnapshotsForSource() {
   } finally {
     requests.releaseSignal('flow-source-snapshots', signal)
     if (!signal.aborted) sourceSnapshotsLoading.value = false
-  }
-}
-
-async function downloadSelectedBrowserPaths() {
-  if (!selectedSnapshotDirectory.value) return
-  const paths = normalizeBrowserDownloadPaths(selectedBrowserPathList.value)
-  if (!paths.length) {
-    ElMessage.warning({ message: t('protection.backupsPage.snapshotBrowserSelectBeforeDownload'), grouping: true })
-    return
-  }
-  downloadingSelected.value = true
-  try {
-    const task = await createBackupSnapshotDirectoryBatchDownloadTask(selectedSnapshotDirectory.value.id, paths)
-    const artifactId = await waitForDownloadArtifact(task.task_uuid)
-    await startNativeArtifactDownload(artifactId)
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
-  } finally {
-    downloadingSelected.value = false
   }
 }
 
@@ -2841,7 +2436,10 @@ function applyInitialTabs() {
 watch(
   () => props.modelValue,
   async (open) => {
-    if (!open) return
+    if (!open) {
+      resetSnapshotDetailDrawer()
+      return
+    }
     applyInitialTabs()
     await nextTick()
     if (activeTab.value === 'overview' && props.scrollTo) {
@@ -2861,7 +2459,8 @@ watch(
   { immediate: true },
 )
 
-watch(activeTab, async () => {
+watch(activeTab, async (tab) => {
+  if (tab !== 'snapshots') resetSnapshotDetailDrawer()
   await nextTick()
   if (activeTab.value === 'overview' && props.scrollTo) scrollToSection()
 })
@@ -2983,9 +2582,8 @@ watch(
   () => [snapshotPagination.page, snapshotPagination.pageSize] as const,
   () => {
     selectedSnapshotId.value = null
-    expandedSnapshotRowKeys.value = []
     snapshotDetails.value = new Map()
-    resetSnapshotBrowser()
+    resetSnapshotDetailDrawer()
     if (props.modelValue && activeTab.value === 'snapshots') void loadSnapshotsForSource()
   },
 )
@@ -2994,7 +2592,6 @@ watch(sourceId, () => {
   sourceDetail.value = null
   sourceDetailError.value = ''
   selectedSnapshotId.value = null
-  expandedSnapshotRowKeys.value = []
   snapshotDetails.value = new Map()
   snapshotPagination.page = 1
   snapshotPagination.pageSize = DETAIL_PAGE_SIZE
@@ -3034,7 +2631,7 @@ watch(sourceId, () => {
   taskAdvancedFilterOpen.value = false
   taskPagination.page = 1
   taskPagination.pageSize = DETAIL_PAGE_SIZE
-  resetSnapshotBrowser()
+  resetSnapshotDetailDrawer()
 })
 
 watch(activeTaskUuid, () => {
@@ -3052,7 +2649,7 @@ watch(
     if (Number.isFinite(snapshotId) && snapshotId > 0) {
       snapshotDetails.value.delete(snapshotId)
       if (selectedSnapshotId.value === snapshotId) {
-        void selectSnapshot({ id: snapshotId } as BackupSourceSnapshot)
+        void loadSelectedSnapshot({ id: snapshotId } as BackupSourceSnapshot)
       }
     }
     if (activeTask.value) void loadActiveBackupSnapshot(activeTask.value)
@@ -3080,7 +2677,6 @@ function onClosed() {
   sourceDetail.value = null
   sourceDetailError.value = ''
   selectedSnapshotId.value = null
-  expandedSnapshotRowKeys.value = []
   sourceSnapshotRows.value = []
   sourceSnapshotsError.value = ''
   resetSnapshotSearch()
@@ -3113,7 +2709,7 @@ function onClosed() {
   taskPagination.pageSize = DETAIL_PAGE_SIZE
   taskDetailOpen.value = false
   closeTaskDetail()
-  resetSnapshotBrowser()
+  resetSnapshotDetailDrawer()
   snapshotDetails.value = new Map()
   activeBackupSnapshot.value = null
   emit('closed')
@@ -3918,298 +3514,9 @@ function onClosed() {
             stripe
             row-key="id"
             :max-height="snapshotTableMaxHeight"
-            :expand-row-keys="expandedSnapshotRowKeys"
             :header-cell-style="TABLE_HEADER_STYLE"
             class="hfl-list-table snapshot-points-table"
-            @expand-change="onSnapshotExpandChange"
           >
-            <el-table-column
-              type="expand"
-              width="35"
-              fixed
-            >
-              <template #default="{ row }">
-                <div class="snapshot-directory-expand-panel">
-                  <el-alert
-                    v-if="selectedSnapshotId === row.id && snapshotDetailError"
-                    :title="snapshotDetailError"
-                    type="error"
-                    show-icon
-                    :closable="false"
-                  />
-                  <div
-                    v-else-if="selectedSnapshotId === row.id && snapshotDetailLoading"
-                    class="py-6"
-                  >
-                    <el-skeleton
-                      :rows="3"
-                      animated
-                    />
-                  </div>
-                  <template v-else-if="selectedSnapshotId === row.id && selectedSnapshot">
-                    <section class="snapshot-efficiency-summary">
-                      <dl class="snapshot-efficiency-summary__metrics">
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotRecoverableData') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotRecoverableDataHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtBytes(snapshotDisplaySize(selectedSnapshot)) }}</dd>
-                        </div>
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotNewOriginalData') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotNewOriginalDataHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtReferenceBytes(selectedSnapshot.new_original_content_bytes) }}</dd>
-                        </div>
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotNewStorage') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotNewStorageHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtReferenceBytes(selectedSnapshot.new_packed_content_bytes) }}</dd>
-                        </div>
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotDataReuse') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotDataReuseHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtReferencePercent(selectedSnapshot.data_reuse_ratio) }}</dd>
-                        </div>
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotCompressionSavings') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotCompressionSavingsHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtReferencePercent(selectedSnapshot.compression_savings_ratio) }}</dd>
-                        </div>
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotCombinedReduction') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotCombinedReductionHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtCombinedReduction(selectedSnapshot) }}</dd>
-                        </div>
-                      </dl>
-                    </section>
-                    <el-table
-                      v-if="selectedSnapshotDirectories.length"
-                      v-table-column-resize="'protection.flowBackupSource.snapshotDirectories'"
-                      v-table-overflow-title
-                      :data="selectedSnapshotDirectories"
-                      :max-height="snapshotTableMaxHeight"
-                      :fit="false"
-                      stripe
-                      :header-cell-style="TABLE_HEADER_STYLE"
-                      class="hfl-list-table hfl-list-table--compact snapshot-directory-table"
-                    >
-                      <el-table-column
-                        :label="t('protection.backupDetail.colBackupDir')"
-                        width="240"
-                      >
-                        <template #default="{ row: dir }">
-                          <button
-                            v-if="canBrowseSnapshotDirectory(dir)"
-                            type="button"
-                            class="hfl-table-name-link snapshot-directory-path-cell"
-                            @click.stop="openSnapshotDirectory(dir)"
-                          >
-                            <span class="snapshot-directory-path-cell__parent">
-                              <component
-                                :is="snapshotDirectoryIcon(dir)"
-                                :size="15"
-                                class="snapshot-directory-path-cell__icon"
-                                :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
-                              />
-                              <span class="snapshot-directory-path-cell__path hfl-table-cell-mono">{{ dir.source_path }}</span>
-                            </span>
-                          </button>
-                          <span
-                            v-else
-                            class="snapshot-directory-path-cell snapshot-directory-path-cell--disabled"
-                          >
-                            <span class="snapshot-directory-path-cell__parent">
-                              <component
-                                :is="snapshotDirectoryIcon(dir)"
-                                :size="15"
-                                class="snapshot-directory-path-cell__icon"
-                                :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
-                              />
-                              <code class="snapshot-directory-path-cell__path flow-source-list-drawer-path hfl-table-cell-mono">{{ dir.source_path }}</code>
-                            </span>
-                          </span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.backupsPage.snapshotBrowserDirectorySnapshotId')"
-                        width="180"
-                      >
-                        <template #default="{ row: dir }">
-                          <span
-                            class="hfl-table-cell-mono"
-                            :class="{ 'hfl-empty-mark': !dir.kopia_snapshot_id }"
-                          >{{ dir.kopia_snapshot_id || '—' }}</span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.backupsPage.snapshotRecoverableData')"
-                        width="140"
-                        align="right"
-                      >
-                        <template #default="{ row: dir }">
-                          {{ fmtBytes(dir.size_bytes) }}
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.backupsPage.snapshotBrowserFileDirCount')"
-                        width="110"
-                        align="right"
-                      >
-                        <template #default="{ row: dir }">
-                          {{ dir.file_count }}/{{ dir.dir_count }}
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.backupDetail.labelStatus')"
-                        width="92"
-                      >
-                        <template #default="{ row: dir }">
-                          <el-tag
-                            :type="lifecycleStatusTagAttrs(dir.status).type"
-                            :class="lifecycleStatusTagAttrs(dir.status).class"
-                            size="small"
-                          >
-                            {{ snapshotStatusLabel(dir.status) }}
-                          </el-tag>
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.backupDetail.colError')"
-                        width="220"
-                      >
-                        <template #default="{ row: dir }">
-                          <span
-                            v-if="dir.error_message"
-                            class="snapshot-directory-error"
-                          >
-                            {{ dir.error_code ? `[${dir.error_code}] ` : '' }}{{ dir.error_message }}
-                          </span>
-                          <span
-                            v-else
-                            class="hfl-empty-mark"
-                          >{{ t('protection.backupDetail.durationDash') }}</span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.sourceResources.colActions')"
-                        width="120"
-                        fixed="right"
-                        align="center"
-                        class-name="hfl-table-actions-col"
-                        header-class-name="hfl-table-actions-col"
-                      >
-                        <template #default="{ row: dir }">
-                          <div class="snapshot-point-actions">
-                            <button
-                              type="button"
-                              class="snapshot-point-actions__button snapshot-point-actions__button--browse"
-                              :title="t('protection.backupsPage.snapshotBrowserBrowse')"
-                              :disabled="!canBrowseSnapshotDirectory(dir)"
-                              @click.stop="openSnapshotDirectory(dir)"
-                            >
-                              <FolderOpen
-                                :size="14"
-                                class="snapshot-point-actions__icon"
-                                aria-hidden="true"
-                              />
-                              <span>{{ t('protection.backupsPage.snapshotBrowserBrowse') }}</span>
-                            </button>
-                          </div>
-                        </template>
-                      </el-table-column>
-                    </el-table>
-                    <el-empty
-                      v-else
-                      :description="t('protection.backupsPage.snapshotBrowserEmptyDirectories')"
-                      :image-size="56"
-                    />
-                  </template>
-                </div>
-              </template>
-            </el-table-column>
             <el-table-column
               :label="t('protection.backupDetail.colSnapId')"
               width="140"
@@ -4219,7 +3526,7 @@ function onClosed() {
                 <button
                   type="button"
                   class="hfl-table-name-link hfl-table-cell-mono hfl-table-name-link--single"
-                  @click.stop="toggleSnapshot(row)"
+                  @click.stop="openSnapshotDetailDrawer(row)"
                 >
                   {{ row.snapshot_uid || `#${row.id}` }}
                 </button>
@@ -4232,9 +3539,15 @@ function onClosed() {
               <template #default="{ row }">
                 <el-tag
                   :type="lifecycleStatusTagAttrs(row.status).type"
-                  :class="lifecycleStatusTagAttrs(row.status).class"
+                  :class="['snapshot-status-tag', lifecycleStatusTagAttrs(row.status).class]"
                   size="small"
                 >
+                  <LoaderCircle
+                    v-if="snapshotStatusInProgress(row.status)"
+                    :size="12"
+                    class="snapshot-status-tag__spinner"
+                    aria-hidden="true"
+                  />
                   {{ snapshotStatusLabel(row.status) }}
                 </el-tag>
               </template>
@@ -4268,19 +3581,43 @@ function onClosed() {
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('protection.backupsPage.snapshotListSize')"
-              width="88"
+              :label="t('protection.backupsPage.snapshotNewStorage')"
+              width="128"
               align="right"
+              label-class-name="hfl-table-no-tooltip"
             >
+              <template #header>
+                <span class="snapshot-point-table-header-with-tip">
+                  <span>{{ t('protection.backupsPage.snapshotNewStorage') }}</span>
+                  <HflHelpTip
+                    :content="t('protection.backupsPage.snapshotNewStorageHint')"
+                    :aria-label="t('protection.backupsPage.snapshotNewStorageHint')"
+                    :size="13"
+                    popper-class="snapshot-metric-help-popper"
+                  />
+                </span>
+              </template>
               <template #default="{ row }">
                 {{ fmtReferenceBytes(row.new_packed_content_bytes) }}
               </template>
             </el-table-column>
             <el-table-column
               :label="t('protection.backupsPage.snapshotRecoverableData')"
-              width="105"
+              width="125"
               align="right"
+              label-class-name="hfl-table-no-tooltip"
             >
+              <template #header>
+                <span class="snapshot-point-table-header-with-tip">
+                  <span>{{ t('protection.backupsPage.snapshotRecoverableData') }}</span>
+                  <HflHelpTip
+                    :content="t('protection.backupsPage.snapshotRecoverableDataHint')"
+                    :aria-label="t('protection.backupsPage.snapshotRecoverableDataHint')"
+                    :size="13"
+                    popper-class="snapshot-metric-help-popper"
+                  />
+                </span>
+              </template>
               <template #default="{ row }">
                 {{ fmtBytes(snapshotDisplaySize(row)) }}
               </template>
@@ -4329,15 +3666,15 @@ function onClosed() {
                   <button
                     type="button"
                     class="snapshot-point-actions__button snapshot-point-actions__button--browse"
-                    :title="t('protection.backupsPage.snapshotViewAction')"
-                    @click.stop="toggleSnapshot(row)"
+                    :title="t('protection.backupsPage.snapshotBrowserBrowse')"
+                    @click.stop="openSnapshotDetailDrawer(row)"
                   >
                     <FolderOpen
                       :size="14"
                       class="snapshot-point-actions__icon"
                       aria-hidden="true"
                     />
-                    <span>{{ t('protection.backupsPage.snapshotViewAction') }}</span>
+                    <span>{{ t('protection.backupsPage.snapshotBrowserBrowse') }}</span>
                   </button>
                 </div>
               </template>
@@ -4359,236 +3696,60 @@ function onClosed() {
           </div>
           <Teleport to="body">
             <div
-              v-if="fileBrowserDrawerOpen"
-              class="dp-snapshot-file-browser-shell"
-              @click.self="closeSnapshotFileBrowser"
+              v-if="snapshotDetailDrawerOpen"
+              class="dp-snapshot-detail-drawer-shell"
+              @click.self="closeSnapshotDetailDrawer"
             >
-              <aside class="dp-snapshot-file-browser-panel">
-                <header class="dp-snapshot-file-browser-panel__header">
-                  <div class="min-w-0 pr-2">
-                    <div class="truncate text-base font-semibold text-slate-900">
-                      {{ t('protection.backupsPage.snapshotBrowserPreviewTitle') }}
-                    </div>
-                    <div
-                      v-if="selectedSnapshotDirectory"
-                      class="truncate text-xs text-slate-500"
+              <aside
+                class="dp-snapshot-detail-drawer"
+                role="dialog"
+                aria-modal="true"
+                :aria-label="t('protection.backupsPage.snapshotBrowserPreviewTitle')"
+                :style="{ width: snapshotDetailDrawerSize }"
+              >
+                <header class="dp-snapshot-detail-drawer__header">
+                  <div
+                    v-if="selectedSnapshot"
+                    class="dp-snapshot-detail-drawer__identity"
+                  >
+                    <strong>{{ selectedSnapshot.snapshot_uid || `#${selectedSnapshot.id}` }}</strong>
+                    <ElTag
+                      size="small"
+                      class="snapshot-status-tag"
+                      v-bind="lifecycleStatusTagAttrs(selectedSnapshot.status)"
                     >
-                      {{ selectedSnapshotDirectory.source_path }}
-                    </div>
+                      <LoaderCircle
+                        v-if="snapshotStatusInProgress(selectedSnapshot.status)"
+                        :size="12"
+                        class="snapshot-status-tag__spinner"
+                        aria-hidden="true"
+                      />
+                      {{ snapshotStatusLabel(selectedSnapshot.status) }}
+                    </ElTag>
+                    <span>
+                      {{ formatNullableTime(selectedSnapshot.finished_at
+                        || selectedSnapshot.started_at
+                        || selectedSnapshot.created_at) }}
+                    </span>
                   </div>
                   <button
                     type="button"
-                    class="dp-snapshot-file-browser-panel__close"
-                    @click="closeSnapshotFileBrowser"
+                    class="dp-snapshot-detail-drawer__close"
+                    :title="t('common.close')"
+                    :aria-label="t('common.close')"
+                    @click="closeSnapshotDetailDrawer"
                   >
                     <X :size="18" />
                   </button>
                 </header>
-                <div
-                  v-if="selectedSnapshotDirectory"
-                  class="dp-snapshot-file-browser dp-snapshot-file-browser-panel__body"
-                >
-                  <template v-if="selectedSnapshotDirectoryIsFile">
-                    <div class="dp-snapshot-file-browser__toolbar">
-                      <div class="dp-snapshot-file-browser__toolbar-main">
-                        <ElButton
-                          type="primary"
-                          size="small"
-                          :loading="downloadingSnapshotFile"
-                          :disabled="!selectedSnapshotFileChecked"
-                          @click="downloadSelectedSnapshotFile"
-                        >
-                          <Download
-                            :size="14"
-                            class="mr-1"
-                          />
-                          {{ t('protection.backupsPage.snapshotBrowserDownload') }}
-                        </ElButton>
-                        <div class="min-w-0">
-                          <div class="text-sm font-medium text-slate-800">
-                            {{ snapshotFileFallbackName(selectedSnapshotDirectory) }}
-                          </div>
-                          <div class="truncate text-xs text-slate-500">
-                            {{ selectedSnapshotDirectory.source_path }}
-                          </div>
-                        </div>
-                      </div>
-                      <div class="dp-snapshot-file-browser__toolbar-actions">
-                        <span class="dp-snapshot-file-browser__selected">
-                          {{ t('protection.backupsPage.snapshotBrowserSelectedCount', { n: selectedSnapshotFileCount }) }}
-                        </span>
-                        <ElButton
-                          v-if="selectedSnapshotFileChecked"
-                          size="small"
-                          @click="clearSnapshotFileSelection"
-                        >
-                          {{ t('protection.backupsPage.snapshotBrowserClearSelection') }}
-                        </ElButton>
-                      </div>
-                    </div>
-
-                    <div
-                      class="dp-snapshot-file-browser__file-row"
-                      :class="{ 'is-selected': selectedSnapshotFileChecked }"
-                      role="button"
-                      tabindex="0"
-                      @click="toggleSnapshotFileSelection"
-                      @keydown.enter.prevent="toggleSnapshotFileSelection"
-                      @keydown.space.prevent="toggleSnapshotFileSelection"
-                    >
-                      <ElCheckbox
-                        :model-value="selectedSnapshotFileChecked"
-                        @change="selectedSnapshotFileChecked = Boolean($event)"
-                        @click.stop
-                      />
-                      <span class="dp-snapshot-file-browser__entry">
-                        <File
-                          :size="15"
-                          class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--file"
-                        />
-                        <span class="truncate">{{ snapshotFileFallbackName(selectedSnapshotDirectory) }}</span>
-                      </span>
-                      <span class="dp-snapshot-file-browser__tree-path truncate">{{ selectedSnapshotDirectory.source_path }}</span>
-                      <span class="dp-snapshot-file-browser__tree-size">{{ fmtBytes(selectedSnapshotDirectory.size_bytes) }}</span>
-                      <span
-                        class="dp-snapshot-file-browser__tree-time"
-                        :class="{ 'hfl-empty-mark': !selectedSnapshotDirectory.created_at }"
-                      >{{ formatNullableTime(selectedSnapshotDirectory.created_at) }}</span>
-                    </div>
-                  </template>
-                  <template v-else>
-                    <div class="dp-snapshot-file-browser__toolbar">
-                      <div class="dp-snapshot-file-browser__toolbar-main">
-                        <ElButton
-                          type="primary"
-                          size="small"
-                          :loading="downloadingSelected"
-                          :disabled="!selectedBrowserPathCount"
-                          @click="downloadSelectedBrowserPaths"
-                        >
-                          <Download
-                            :size="14"
-                            class="mr-1"
-                          />
-                          {{ t('protection.backupsPage.snapshotBrowserDownload') }}
-                        </ElButton>
-                        <div class="min-w-0">
-                          <div class="text-sm font-medium text-slate-800">
-                            {{ selectedSnapshotDirectory.source_path }}
-                          </div>
-                          <div class="dp-snapshot-file-browser__crumbs">
-                            <template
-                              v-for="(crumb, index) in browserBreadcrumbs"
-                              :key="crumb.path || 'root'"
-                            >
-                              <button
-                                type="button"
-                                class="source-more-link"
-                                @click="openSnapshotDirectory(selectedSnapshotDirectory, crumb.path)"
-                              >
-                                {{ crumb.label }}
-                              </button>
-                              <span
-                                v-if="index < browserBreadcrumbs.length - 1"
-                                class="text-slate-400"
-                              >/</span>
-                            </template>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="dp-snapshot-file-browser__toolbar-actions">
-                        <span class="dp-snapshot-file-browser__selected">
-                          {{ t('protection.backupsPage.snapshotBrowserSelectedCount', { n: selectedBrowserPathCount }) }}
-                        </span>
-                        <ElButton
-                          v-if="selectedBrowserPathCount"
-                          size="small"
-                          @click="clearBrowserSelection"
-                        >
-                          {{ t('protection.backupsPage.snapshotBrowserClearSelection') }}
-                        </ElButton>
-                        <ElButton
-                          v-if="browserParentPath || browserPath"
-                          size="small"
-                          @click="openSnapshotDirectory(selectedSnapshotDirectory, browserParentPath)"
-                        >
-                          <ArrowLeft
-                            :size="14"
-                            class="mr-1"
-                          />
-                          {{ t('protection.backupsPage.snapshotBrowserParent') }}
-                        </ElButton>
-                      </div>
-                    </div>
-
-                    <el-alert
-                      v-if="browserError"
-                      :title="browserError"
-                      type="error"
-                      show-icon
-                      :closable="false"
-                    />
-                    <el-tree
-                      ref="browserTreeRef"
-                      :key="`${selectedSnapshotDirectory.id}:${browserPath}:${browserTreeVersion}`"
-                      v-loading="browserLoading"
-                      node-key="id"
-                      show-checkbox
-                      check-strictly
-                      lazy
-                      :load="loadBrowserTreeNode"
-                      :props="{ children: 'children', label: 'label', disabled: 'disabled', isLeaf: 'isLeaf' }"
-                      class="dp-snapshot-file-browser__tree"
-                      empty-text=" "
-                      @check-change="onBrowserTreeCheckChange"
-                    >
-                      <template #default="{ data }">
-                        <div
-                          v-if="data.loadMore"
-                          class="dp-snapshot-file-browser__load-more"
-                        >
-                          <span>{{ t('protection.backupsPage.snapshotBrowserPartialCount', { n: data.loadedCount }) }}</span>
-                          <ElButton
-                            type="primary"
-                            link
-                            :loading="data.loadingMore"
-                            @click.stop="loadMoreBrowserTreeEntries(data)"
-                          >
-                            {{ t('protection.backupsPage.snapshotBrowserLoadMore') }}
-                          </ElButton>
-                        </div>
-                        <div
-                          v-else
-                          class="dp-snapshot-file-browser__tree-row"
-                        >
-                          <span class="dp-snapshot-file-browser__entry">
-                            <Folder
-                              v-if="data.type === 'dir'"
-                              :size="15"
-                              class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--dir"
-                            />
-                            <File
-                              v-else
-                              :size="15"
-                              class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--file"
-                            />
-                            <span class="truncate">{{ data.name }}</span>
-                          </span>
-                          <span class="dp-snapshot-file-browser__tree-path truncate">{{ data.path }}</span>
-                          <span class="dp-snapshot-file-browser__tree-size">{{ data.type === 'dir' ? '—' : fmtBytes(data.size_bytes) }}</span>
-                          <span
-                            class="dp-snapshot-file-browser__tree-time"
-                            :class="{ 'hfl-empty-mark': !data.modified_at }"
-                          >{{ formatNullableTime(data.modified_at) }}</span>
-                        </div>
-                      </template>
-                    </el-tree>
-                    <el-empty
-                      v-if="!browserLoading && !browserError && !browserTreeEntries.length"
-                      :description="t('protection.backupsPage.snapshotBrowserEmpty')"
-                      :image-size="48"
-                    />
-                  </template>
+                <div class="dp-snapshot-detail-drawer__body">
+                  <SnapshotPointDetailPanel
+                    :snapshot="selectedSnapshot"
+                    :loading="snapshotDetailLoading"
+                    :error="snapshotDetailError"
+                    :source-kind="sourceEndpoint?.sourceType || 'agent'"
+                    @retry="retrySelectedSnapshotDetail"
+                  />
                 </div>
               </aside>
             </div>
@@ -6211,6 +5372,28 @@ function onClosed() {
 </template>
 
 <style scoped>
+.snapshot-status-tag {
+  gap: 4px;
+}
+
+.snapshot-status-tag__spinner {
+  flex: 0 0 auto;
+  animation: snapshot-status-spin 0.8s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes snapshot-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snapshot-status-tag__spinner {
+    animation: none;
+  }
+}
+
 .dp-flow-source-detail-drawer__header {
   width: 100%;
   padding-right: 8px;
@@ -6223,95 +5406,28 @@ function onClosed() {
   color: rgb(30 41 59);
 }
 
-.snapshot-points-table {
-  container-type: inline-size;
-}
-
-.snapshot-directory-expand-panel {
-  position: sticky;
-  left: 35px;
+:global(.snapshot-metric-help-popper.el-popper) {
   box-sizing: border-box;
-  width: calc(100cqw - 49px);
-  min-width: 0;
-  max-width: calc(100cqw - 49px);
-  overflow-x: auto;
-  margin-left: 35px;
-  padding: 8px 0 10px 14px;
-  border-left: 2px solid rgb(226 232 240);
-  contain: inline-size;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 32px)) !important;
+  z-index: 3800 !important;
+  padding: 11px 13px !important;
+  border: 1px solid rgb(203 213 225) !important;
+  border-radius: 8px !important;
+  background: rgb(255 255 255) !important;
+  color: rgb(51 65 85) !important;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 10px 28px rgb(15 23 42 / 16%) !important;
 }
 
-.snapshot-directory-table {
-  width: 100%;
-  min-width: 0;
-}
-
-.snapshot-efficiency-summary {
-  margin: 0 0 12px;
-  padding: 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  background: var(--el-fill-color-light);
-}
-
-.snapshot-efficiency-summary__metrics {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(112px, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.snapshot-efficiency-summary__metric {
-  min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  background: var(--el-bg-color);
-}
-
-.snapshot-efficiency-summary__metric dt {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--el-text-color-secondary);
-  font-size: 11px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.snapshot-efficiency-summary__metric-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.snapshot-efficiency-summary__metric-info {
-  flex: 0 0 auto;
-  color: var(--el-text-color-secondary);
-  cursor: help;
-}
-
-.snapshot-efficiency-summary__metric dd {
-  margin: 3px 0 0;
-  color: var(--el-text-color-primary);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 650;
-  line-height: 20px;
-}
-
-@media (max-width: 1180px) {
-  .snapshot-efficiency-summary__metrics {
-    grid-template-columns: repeat(3, minmax(112px, 1fr));
-  }
-}
-
-@media (max-width: 760px) {
-  .snapshot-efficiency-summary__metrics {
-    grid-template-columns: repeat(2, minmax(112px, 1fr));
-  }
+:global(.snapshot-metric-help-popper.el-popper .el-popper__arrow::before) {
+  border-color: rgb(203 213 225) !important;
+  background: rgb(255 255 255) !important;
 }
 
 .hfl-list-table .snapshot-point-time {
@@ -6370,32 +5486,30 @@ function onClosed() {
   flex: 0 0 14px;
 }
 
-.snapshot-point-actions__button--restore {
+.snapshot-point-actions__button--restore,
+.snapshot-point-actions__button--browse {
   border-color: oklch(87% 0.065 274.039);
   color: oklch(51.1% 0.262 276.966);
 }
 
-.snapshot-point-actions__button--restore .snapshot-point-actions__icon {
+.snapshot-point-actions__button--restore .snapshot-point-actions__icon,
+.snapshot-point-actions__button--browse .snapshot-point-actions__icon {
   color: oklch(58.5% 0.233 277.117);
 }
 
-.snapshot-point-actions__button--restore:not(:disabled):hover {
+.snapshot-point-actions__button--restore:not(:disabled):hover,
+.snapshot-point-actions__button--browse:not(:disabled):hover {
   border-color: oklch(78.5% 0.115 274.713);
   background: oklch(96.2% 0.018 272.314);
 }
 
-.snapshot-point-actions__button--browse {
-  border-color: oklch(92.9% 0.013 255.508);
-  color: oklch(37.2% 0.044 257.287);
-}
-
-.snapshot-point-actions__button--browse .snapshot-point-actions__icon {
-  color: oklch(55.4% 0.046 257.417);
-}
-
-.snapshot-point-actions__button--browse:not(:disabled):hover {
-  border-color: oklch(86.9% 0.022 252.894);
-  background: oklch(98.4% 0.003 247.858);
+.snapshot-point-table-header-with-tip {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
 .snapshot-point-actions__button:disabled {
@@ -6414,58 +5528,6 @@ function onClosed() {
 .snapshot-point-actions__button:focus-visible {
   outline: 2px solid rgba(99, 102, 241, 0.28);
   outline-offset: 2px;
-}
-
-.snapshot-directory-path-cell {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  flex-direction: column;
-  align-items: stretch;
-  text-align: left;
-}
-
-.snapshot-directory-path-cell__parent {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-}
-
-.snapshot-directory-path-cell__icon {
-  flex: 0 0 auto;
-}
-
-.snapshot-directory-path-cell__icon--dir {
-  color: #d97706;
-}
-
-.snapshot-directory-path-cell__icon--file {
-  color: #2563eb;
-}
-
-.snapshot-directory-path-cell__path {
-  width: 0;
-  min-width: 0;
-  max-width: 100%;
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.snapshot-directory-path-cell--disabled {
-  color: rgb(71 85 105);
-}
-
-@media (max-width: 760px) {
-  .snapshot-directory-expand-panel {
-    left: 21px;
-    width: calc(100cqw - 27px);
-    max-width: calc(100cqw - 27px);
-    margin-left: 21px;
-    padding-left: 10px;
-  }
 }
 
 .dp-flow-source-overview {
@@ -8330,19 +7392,19 @@ function onClosed() {
   font-size: 11px;
 }
 
-.dp-snapshot-file-browser-shell {
+.dp-snapshot-detail-drawer-shell {
   position: fixed;
   inset: 0;
   z-index: 3600;
+  background: rgb(15 23 42 / 18%);
   pointer-events: auto;
 }
 
-.dp-snapshot-file-browser-panel {
+.dp-snapshot-detail-drawer {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(720px, 92vw);
   display: flex;
   flex-direction: column;
   background: #fff;
@@ -8350,8 +7412,9 @@ function onClosed() {
   pointer-events: auto;
 }
 
-.dp-snapshot-file-browser-panel__header {
+.dp-snapshot-detail-drawer__header {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -8360,7 +7423,7 @@ function onClosed() {
   border-bottom: 1px solid rgb(226 232 240);
 }
 
-.dp-snapshot-file-browser-panel__close {
+.dp-snapshot-detail-drawer__close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8373,166 +7436,40 @@ function onClosed() {
   cursor: pointer;
 }
 
-.dp-snapshot-file-browser-panel__close:hover {
+.dp-snapshot-detail-drawer__close:hover {
   background: rgb(241 245 249);
   color: rgb(15 23 42);
 }
 
-.dp-snapshot-file-browser-panel__body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 16px;
-}
-
-.dp-snapshot-file-browser {
+.dp-snapshot-detail-drawer__identity {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.dp-snapshot-file-browser__toolbar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: #fff;
-}
-
-.dp-snapshot-file-browser__toolbar-main {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
   min-width: 0;
-}
-
-.dp-snapshot-file-browser__toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.dp-snapshot-file-browser__selected {
-  font-size: 12px;
-  color: rgb(100 116 139);
-  white-space: nowrap;
-}
-
-.dp-snapshot-file-browser__crumbs {
-  display: flex;
+  flex: 1;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-  font-size: 12px;
+  gap: 8px 12px;
 }
 
-.dp-snapshot-file-browser__entry {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.dp-snapshot-file-browser__file-row {
-  display: grid;
-  grid-template-columns: 28px minmax(160px, 1.4fr) minmax(120px, 1fr) 88px 136px;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  min-height: 36px;
-  padding: 5px 10px;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 8px;
-  background: #fff;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.dp-snapshot-file-browser__file-row:hover,
-.dp-snapshot-file-browser__file-row.is-selected {
-  border-color: var(--color-info-border);
-  background: var(--color-info-light);
-}
-
-.dp-snapshot-file-browser__tree {
-  border: 0;
-  border-radius: 0;
-  padding: 2px 0;
-  background: transparent;
-}
-
-.dp-snapshot-file-browser__tree :deep(.el-tree-node__content) {
-  height: 30px;
-}
-
-.dp-snapshot-file-browser__tree-row {
-  display: grid;
-  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 1fr) 88px 136px;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  padding-right: 10px;
-  font-size: 13px;
-}
-
-.dp-snapshot-file-browser__load-more {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  padding-right: 10px;
-  color: rgb(100 116 139);
-  font-size: 12px;
-}
-
-.dp-snapshot-file-browser__tree :deep(.el-tree-node__content:has(.dp-snapshot-file-browser__load-more) > .el-checkbox) {
-  visibility: hidden;
-}
-
-.dp-snapshot-file-browser__tree-path,
-.dp-snapshot-file-browser__tree-size,
-.dp-snapshot-file-browser__tree-time {
-  color: rgb(100 116 139);
-  font-size: 12px;
-}
-
-.dp-snapshot-file-browser__tree-size,
-.dp-snapshot-file-browser__tree-time {
+.dp-snapshot-detail-drawer__identity strong {
+  overflow: hidden;
+  color: rgb(15 23 42);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 16px;
+  font-weight: 650;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-@media (max-width: 760px) {
-  .dp-snapshot-file-browser__toolbar {
-    flex-direction: column;
-  }
+.dp-snapshot-detail-drawer__identity > span {
+  color: rgb(100 116 139);
+  font-size: 12px;
+}
 
-  .dp-snapshot-file-browser__toolbar-main,
-  .dp-snapshot-file-browser__toolbar-actions {
-    width: 100%;
-    flex-wrap: wrap;
-  }
-
-  .dp-snapshot-file-browser__tree-row {
-    grid-template-columns: minmax(120px, 1fr) 72px;
-  }
-
-  .dp-snapshot-file-browser__file-row {
-    grid-template-columns: 28px minmax(120px, 1fr) 72px;
-  }
-
-  .dp-snapshot-file-browser__tree-path,
-  .dp-snapshot-file-browser__tree-time,
-  .dp-snapshot-file-browser__file-row .dp-snapshot-file-browser__tree-path,
-  .dp-snapshot-file-browser__file-row .dp-snapshot-file-browser__tree-time {
-    display: none;
-  }
+.dp-snapshot-detail-drawer__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px 16px 16px;
 }
 
 .dp-task-detail__directories {

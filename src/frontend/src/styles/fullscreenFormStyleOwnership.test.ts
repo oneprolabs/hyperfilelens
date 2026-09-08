@@ -52,6 +52,7 @@ describe('fullscreen form style ownership', () => {
       'pages/ops/AlertPolicyEditorPage.vue',
       'pages/ops/NotificationChannelEditorPage.vue',
       'pages/protection/BackupCreateWizard.vue',
+      'pages/protection/BackupDataBrowser.vue',
       'pages/protection/BackupSources.vue',
       'pages/protection/DataProtection.vue',
       'pages/protection/PolicyEditorPage.vue',

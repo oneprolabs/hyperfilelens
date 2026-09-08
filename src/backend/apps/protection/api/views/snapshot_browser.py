@@ -17,17 +17,21 @@ from apps.iam.permissions_org import IsOrgOperator, IsOrgReader
 from apps.protection.services.snapshot_browser import (
     SnapshotBrowserError,
     SnapshotBrowserForbidden,
+    SnapshotMultiDownloadUnsupported,
     browse_snapshot_directory,
     download_snapshot_file,
 )
+from common.errors import AppError
 from apps.protection.services.snapshot_download import (
+    create_snapshot_group_download_task,
     create_snapshot_batch_download_task,
     create_snapshot_download_task,
     create_snapshot_artifact_file_token,
     accept_snapshot_artifact_upload,
+    delete_downloaded_snapshot_artifact,
     get_snapshot_download_artifact,
-    mark_artifact_downloaded,
     SnapshotArtifactUploadError,
+    SnapshotDownloadSizeLimitExceeded,
     validate_snapshot_artifact_file_token,
 )
 from apps.protection.models import SnapshotDownloadArtifact
@@ -154,9 +158,54 @@ class SnapshotDirectoryBatchDownloadTaskView(APIView):
             message = str(exc)
             if "not found" in message.lower():
                 raise NotFound(message) from exc
-            raise ValidationError({"detail": message}) from exc
+            raise ValidationError({"paths": message}) from exc
         except Exception as exc:
             raise ValidationError({"detail": str(exc)}) from exc
+        return Response(TaskSerializer(task).data, status=201)
+
+
+class SnapshotGroupDownloadTaskView(APIView):
+    permission_classes = [IsAuthenticated, IsOrgOperator]
+
+    def post(self, request, snapshot_id: int):
+        org = require_org(request)
+        groups = request.data.get("groups")
+        if not isinstance(groups, list):
+            raise ValidationError({"groups": "Must be a list."})
+        try:
+            task = create_snapshot_group_download_task(
+                organization_id=org.id,
+                snapshot_id=int(snapshot_id),
+                groups=groups,
+            )
+        except SnapshotBrowserForbidden as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except SnapshotMultiDownloadUnsupported as exc:
+            raise AppError(
+                code="PROTECTION.SNAPSHOT_MULTI_DOWNLOAD_UPGRADE_REQUIRED",
+                status=409,
+                title="Cross-Source Path download requires a backup source upgrade.",
+                diagnostic=str(exc),
+            ) from exc
+        except SnapshotDownloadSizeLimitExceeded as exc:
+            raise AppError(
+                code="PROTECTION.SNAPSHOT_DOWNLOAD_SIZE_LIMIT_EXCEEDED",
+                status=400,
+                title="Snapshot download exceeds the size limit.",
+                diagnostic=str(exc),
+                meta={
+                    "selected_size_bytes": exc.selected_size_bytes,
+                    "max_size_bytes": exc.max_size_bytes,
+                },
+            ) from exc
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
+            raise ValidationError(detail) from exc
+        except (SnapshotBrowserError, ValueError) as exc:
+            message = str(exc)
+            if "not found" in message.lower():
+                raise NotFound(message) from exc
+            raise ValidationError({"groups": message}) from exc
         return Response(TaskSerializer(task).data, status=201)
 
 
@@ -190,8 +239,13 @@ class SnapshotDownloadArtifactFileView(APIView):
         path = Path(artifact.storage_path)
         if not path.exists() or not path.is_file():
             raise NotFound("snapshot download file not found")
-        mark_artifact_downloaded(artifact=artifact)
         response = FileResponse(open(path, "rb"), content_type=artifact.content_type)
+        response._resource_closers.append(
+            lambda: delete_downloaded_snapshot_artifact(
+                organization_id=org.id,
+                artifact_id=artifact.id,
+            )
+        )
         filename = quote(artifact.filename)
         response["Content-Disposition"] = f"attachment; filename*=UTF-8''{filename}"
         response["Content-Length"] = str(artifact.size_bytes)

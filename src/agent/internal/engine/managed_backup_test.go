@@ -2404,6 +2404,228 @@ func TestZipDirectoryContentsToFileDoesNotFollowSymlinks(t *testing.T) {
 	}
 }
 
+func TestSnapshotDownloadGroupsParsesCrossSourcePathSelection(t *testing.T) {
+	groups, hasGroups, err := snapshotDownloadGroups(Payload{Extra: map[string]any{
+		"groups": []any{
+			map[string]any{
+				"snapshot_id":     "snapshot-one",
+				"source_path":     "/data/projects",
+				"path_type":       "directory",
+				"root_size_bytes": float64(0),
+				"paths":           []any{"docs", "readme.txt", "readme.txt"},
+			},
+			map[string]any{
+				"snapshot_id":     "snapshot-two",
+				"source_path":     `C:\\logs`,
+				"path_type":       "file",
+				"root_size_bytes": float64(42),
+				"paths":           []any{""},
+			},
+		},
+	}})
+	if err != nil || !hasGroups {
+		t.Fatalf("snapshotDownloadGroups() error=%v hasGroups=%v", err, hasGroups)
+	}
+	if len(groups) != 2 || !slices.Equal(groups[0].paths, []string{"docs", "readme.txt"}) {
+		t.Fatalf("unexpected groups: %#v", groups)
+	}
+	if groups[1].pathType != "file" || groups[1].rootSizeBytes != 42 || !slices.Equal(groups[1].paths, []string{""}) {
+		t.Fatalf("unexpected root file group: %#v", groups[1])
+	}
+}
+
+func TestSnapshotDownloadGroupsParsesDirectoryRootSelection(t *testing.T) {
+	groups, hasGroups, err := snapshotDownloadGroups(Payload{Extra: map[string]any{
+		"groups": []any{map[string]any{
+			"snapshot_id":     "snapshot-one",
+			"source_path":     "/data/projects",
+			"path_type":       "directory",
+			"root_size_bytes": float64(2048),
+			"paths":           []any{""},
+		}},
+	}})
+	if err != nil || !hasGroups || len(groups) != 1 {
+		t.Fatalf("snapshotDownloadGroups() error=%v hasGroups=%v groups=%#v", err, hasGroups, groups)
+	}
+	if groups[0].pathType != "directory" || !slices.Equal(groups[0].paths, []string{""}) {
+		t.Fatalf("unexpected directory root group: %#v", groups[0])
+	}
+	size, err := snapshotDownloadSelectionLogicalSize(
+		context.Background(), "", "", nil, groups[0], "",
+	)
+	if err != nil || size != 2048 {
+		t.Fatalf("snapshotDownloadSelectionLogicalSize() size=%d err=%v", size, err)
+	}
+}
+
+func TestSnapshotDownloadGroupsRejectsRootAndChildSelection(t *testing.T) {
+	_, _, err := snapshotDownloadGroups(Payload{Extra: map[string]any{
+		"groups": []any{map[string]any{
+			"snapshot_id": "snapshot-one",
+			"source_path": "/data/projects",
+			"path_type":   "directory",
+			"paths":       []any{"", "docs"},
+		}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "parent and child") {
+		t.Fatalf("expected root/child conflict, got %v", err)
+	}
+}
+
+func TestRestoreSnapshotDownloadGroupsRestoresDirectoryRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a POSIX shell script")
+	}
+	bin := filepath.Join(t.TempDir(), "fake-kopia.sh")
+	script := "#!/bin/sh\nif [ \"$2\" = \"restore\" ]; then mkdir -p \"$4\"; printf restored > \"$4/restored.txt\"; fi\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	restoreRoot := t.TempDir()
+	err := restoreSnapshotDownloadGroups(
+		context.Background(),
+		bin,
+		"repository.config",
+		nil,
+		restoreRoot,
+		[]snapshotDownloadGroup{{
+			snapshotID: "snapshot-one",
+			sourcePath: "/data/projects",
+			pathType:   "directory",
+			paths:      []string{""},
+		}},
+		map[string]any{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(restoreRoot, snapshotDownloadArchiveRoot, "restored.txt"))
+	if err != nil || string(content) != "restored" {
+		t.Fatalf("directory root was not restored into archive root: content=%q err=%v", content, err)
+	}
+}
+
+func TestSnapshotDownloadGroupsRejectsMoreThanMaximumSelection(t *testing.T) {
+	paths := make([]any, snapshotDownloadMaxSelections+1)
+	for index := range paths {
+		paths[index] = fmt.Sprintf("file-%03d.dat", index)
+	}
+	_, hasGroups, err := snapshotDownloadGroups(Payload{Extra: map[string]any{
+		"groups": []any{map[string]any{
+			"snapshot_id": "snapshot-one",
+			"source_path": "/data",
+			"path_type":   "directory",
+			"paths":       paths,
+		}},
+	}})
+	if !hasGroups || err == nil || !strings.Contains(err.Error(), "at most 100") {
+		t.Fatalf("expected maximum selection error, got hasGroups=%v err=%v", hasGroups, err)
+	}
+}
+
+func TestSnapshotDownloadGroupsRejectsParentChildSelection(t *testing.T) {
+	_, _, err := snapshotDownloadGroups(Payload{Extra: map[string]any{
+		"groups": []any{map[string]any{
+			"snapshot_id": "snapshot-one",
+			"source_path": "/data",
+			"path_type":   "directory",
+			"paths":       []any{"docs", "docs/readme.txt"},
+		}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "parent and child") {
+		t.Fatalf("expected parent/child conflict, got %v", err)
+	}
+}
+
+func TestSnapshotDownloadSourceDirectoryNamesAreSafeAndDistinct(t *testing.T) {
+	longMultibytePath := "/" + strings.Repeat(string(rune(1<<16)), 100)
+	groups := []snapshotDownloadGroup{
+		{sourcePath: "/data/projects"},
+		{sourcePath: `C:\\logs\\app`},
+		{sourcePath: "/DATA/PROJECTS"},
+		{sourcePath: "/invalid/<reports>:2026"},
+		{sourcePath: longMultibytePath},
+		{sourcePath: "/data/projects", snapshotID: "snapshot-duplicate"},
+	}
+	names := snapshotDownloadSourceDirectoryNames(groups)
+	if names[0] != "data__projects--"+snapshotDownloadSourcePathHash(groups[0].sourcePath) {
+		t.Fatalf("unexpected slash replacement/collision name: %q", names[0])
+	}
+	if names[1] != "C_drive__logs__app" {
+		t.Fatalf("unexpected Windows source path name: %q", names[1])
+	}
+	if names[2] == names[0] || !strings.HasPrefix(names[2], "DATA__PROJECTS--") {
+		t.Fatalf("case-insensitive collision was not disambiguated: %#v", names[:3])
+	}
+	if names[3] != "invalid___reports__2026" {
+		t.Fatalf("invalid characters were not sanitized: %q", names[3])
+	}
+	if len(names[4]) > snapshotDownloadSourceDirMaxBytes || !utf8.ValidString(names[4]) {
+		t.Fatalf("long source path name is unsafe: bytes=%d valid=%v", len(names[4]), utf8.ValidString(names[4]))
+	}
+	if strings.EqualFold(names[0], names[5]) || !strings.HasPrefix(names[5], "data__projects--") {
+		t.Fatalf("identical source paths were not disambiguated: %#v", []string{names[0], names[5]})
+	}
+}
+
+func TestSnapshotDownloadZIPAlwaysContainsFixedTopLevelDirectory(t *testing.T) {
+	restoreRoot := t.TempDir()
+	archiveRoot := filepath.Join(restoreRoot, snapshotDownloadArchiveRoot)
+	if err := os.MkdirAll(filepath.Join(archiveRoot, "data__projects", "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveRoot, "data__projects", "docs", "guide.txt"), []byte("guide"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), snapshotDownloadArchiveRoot+".zip")
+	if err := zipDirectoryContentsToFile(restoreRoot, destination, 0); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := zip.OpenReader(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	entries := make([]string, 0, len(archive.File))
+	for _, entry := range archive.File {
+		entries = append(entries, entry.Name)
+	}
+	if !slices.Contains(entries, "snapshot-download/data__projects/docs/guide.txt") {
+		t.Fatalf("unexpected ZIP layout: %#v", archive.File)
+	}
+}
+
+func TestCleanupStaleSnapshotDownloadDirsRemovesOnlyExpiredDirectories(t *testing.T) {
+	tempRoot := t.TempDir()
+	now := time.Now()
+	stale := filepath.Join(tempRoot, "hfl-kopia-download-stale")
+	fresh := filepath.Join(tempRoot, "hfl-kopia-download-fresh")
+	unrelated := filepath.Join(tempRoot, "other-stale")
+	for _, candidate := range []string{stale, fresh, unrelated} {
+		if err := os.Mkdir(candidate, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := now.Add(-snapshotDownloadStaleAge - time.Minute)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(unrelated, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanupStaleSnapshotDownloadDirs(tempRoot, now)
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale snapshot directory was not removed: %v", err)
+	}
+	for _, candidate := range []string{fresh, unrelated} {
+		if _, err := os.Stat(candidate); err != nil {
+			t.Fatalf("non-expired candidate was removed: %s: %v", candidate, err)
+		}
+	}
+}
+
 func TestParseKopiaPackedBytesJSON(t *testing.T) {
 	got := parseKopiaPackedBytes(`{"totalPackedSize": 2048}`)
 	if got != 2048 {

@@ -169,6 +169,8 @@ func NormalizeKind(kind string) string {
 		return "lens.snapshot.scope.resolve"
 	case "snapshot.download", "kopia.snapshot.download":
 		return "snapshot.download"
+	case "snapshot.download.plan", "kopia.snapshot.download.plan":
+		return "snapshot.download.plan"
 	case "snapshot.delete", "snapshot.remove", "kopia.snapshot.delete", "kopia.snapshot.remove":
 		return "snapshot.delete"
 	case "repository.policy.apply", "repo.policy.apply", "kopia.policy.apply":

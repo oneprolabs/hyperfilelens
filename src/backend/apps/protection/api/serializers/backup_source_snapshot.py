@@ -6,6 +6,7 @@ from apps.protection.models import (
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
 )
+from apps.protection.services.snapshot_download import snapshot_download_limits
 
 _SNAPSHOT_SIZE_KEYS = ("size_bytes", "sizeBytes", "total_size", "totalSize", "total_size_bytes", "totalSizeBytes", "size")
 _SNAPSHOT_FILE_COUNT_KEYS = ("file_count", "fileCount", "total_file_count", "totalFileCount", "files")
@@ -293,6 +294,7 @@ class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
 
 class BackupSourceSnapshotDetailSerializer(BackupSourceSnapshotListSerializer):
     directories = BackupSourceSnapshotDirectorySerializer(many=True, read_only=True)
+    download_limits = serializers.SerializerMethodField()
 
     class Meta(BackupSourceSnapshotListSerializer.Meta):
         fields = BackupSourceSnapshotListSerializer.Meta.fields + [
@@ -300,5 +302,9 @@ class BackupSourceSnapshotDetailSerializer(BackupSourceSnapshotListSerializer):
             "error_message",
             "metadata",
             "directories",
+            "download_limits",
         ]
         read_only_fields = fields
+
+    def get_download_limits(self, obj: BackupSourceSnapshot) -> dict[str, int]:
+        return snapshot_download_limits()
