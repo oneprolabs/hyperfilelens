@@ -61,6 +61,14 @@ export interface PlatformEnvironmentSettings {
   health: Record<string, unknown>
 }
 
+export interface PlatformExternalAccessSettings {
+  external_access_url: string
+  effective_url: string
+  source: 'deployment' | 'runtime'
+  suggested_url: string
+  editable: boolean
+}
+
 /** Legacy Admin Console paths; OSS also serves `/api/v1/instance-settings/*`. */
 export async function fetchPlatformEmailSettings() {
   return get<PlatformEmailSettings>('/api/v1/platform-ops/platform/settings/email')
@@ -93,6 +101,22 @@ export async function patchPlatformIdentitySettings(body: Record<string, unknown
 
 export async function fetchPlatformEnvironment() {
   return get<PlatformEnvironmentSettings>('/api/v1/platform-ops/platform/settings/environment')
+}
+
+export async function fetchPlatformExternalAccess() {
+  return get<PlatformExternalAccessSettings>(
+    '/api/v1/platform-ops/platform/settings/external-access',
+  )
+}
+
+export async function patchPlatformExternalAccess(externalAccessUrl: string) {
+  return send<PlatformExternalAccessSettings>(
+    '/api/v1/platform-ops/platform/settings/external-access',
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ external_access_url: externalAccessUrl }),
+    },
+  )
 }
 
 /** Per–Public Gateway infrastructure capacity (EE Platform Ops). */

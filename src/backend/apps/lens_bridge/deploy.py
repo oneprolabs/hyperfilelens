@@ -1,4 +1,4 @@
-"""SourceLens bridge credentials and base URL (env-only)."""
+"""Resolve SourceLens bridge credentials and deployment URLs."""
 
 from __future__ import annotations
 
@@ -54,6 +54,17 @@ def sourcelens_version() -> str:
 
 def lens_gateway_base_url() -> str:
     """SourceLens URL reachable from enrolled gateway hosts (native OS, not Docker DNS)."""
+    if sourcelens_mode() == "bundled":
+        from apps.instance_settings.services.external_access import (
+            configured_external_access_url,
+        )
+        from common.deploy.product import COMMUNITY_EDITION, product_edition
+
+        if product_edition() == COMMUNITY_EDITION:
+            configured = configured_external_access_url()
+            if configured:
+                return f"{configured}{LENS_GATEWAY_PUBLIC_PATH}"
+
     explicit = env_str("LENS_GATEWAY_BASE_URL", "").rstrip("/")
     if explicit:
         return explicit

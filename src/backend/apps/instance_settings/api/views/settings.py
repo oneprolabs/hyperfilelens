@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
 from django.core.mail import EmailMessage, get_connection
 from rest_framework import status
@@ -23,6 +24,13 @@ from apps.iam.config import (
 )
 from apps.insight import conf as insight_conf
 from apps.instance_settings.permissions import HasPlatformPermission
+from apps.instance_settings.services.external_access import (
+    configured_external_access_url,
+    effective_external_access_url,
+    external_access_source,
+    set_external_access_url,
+    suggested_external_access_url,
+)
 from common.platform_audit import write_platform_audit_log
 from common.platform_authz import ADMIN_USERS_MANAGE, INFRA_AI_MODELS_MANAGE
 from apps.configuration.services import runtime_settings as runtime_settings_svc
@@ -89,6 +97,7 @@ from apps.configuration.services.runtime_settings import (
     langfuse_secret_key,
 )
 from apps.storage import conf as storage_conf
+from common.deploy.product import COMMUNITY_EDITION, product_edition
 from common.deploy.site import tenant_public_url
 
 logger = logging.getLogger(__name__)
@@ -637,6 +646,74 @@ class PlatformOpsSettingsEnvironmentView(APIView):
         )
 
 
+class PlatformOpsSettingsExternalAccessView(APIView):
+    """Configure the canonical external tenant origin for Community installs."""
+
+    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
+
+    def get(self, request):
+        editable = product_edition() == COMMUNITY_EDITION
+        return Response(
+            {
+                "external_access_url": (
+                    configured_external_access_url() if editable else ""
+                ),
+                "effective_url": effective_external_access_url(),
+                "source": external_access_source(),
+                "suggested_url": (
+                    suggested_external_access_url(request) if editable else ""
+                ),
+                "editable": editable,
+            }
+        )
+
+    def patch(self, request):
+        if product_edition() != COMMUNITY_EDITION:
+            return Response(
+                {
+                    "detail": (
+                        "External access is managed by Enterprise deployment "
+                        "configuration."
+                    ),
+                    "code": "EXTERNAL_ACCESS_MANAGED_BY_DEPLOYMENT",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        data = request.data
+        if not isinstance(data, Mapping):
+            return Response(
+                {
+                    "detail": "Request body must be a JSON object.",
+                    "code": "EXTERNAL_ACCESS_REQUEST_INVALID",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if "external_access_url" not in data:
+            return Response(
+                {
+                    "detail": "external_access_url is required.",
+                    "code": "EXTERNAL_ACCESS_URL_REQUIRED",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            value = set_external_access_url(
+                data["external_access_url"],
+                user=request.user,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc), "code": "EXTERNAL_ACCESS_URL_INVALID"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        _audit(
+            request,
+            "platform_settings.external_access.update",
+            {"configured": bool(value)},
+        )
+        return self.get(request)
+
+
 # Stable aliases (prefer these in new code)
 InstanceSettingsEmailView = PlatformOpsSettingsEmailView
 InstanceSettingsEmailTestView = PlatformOpsSettingsEmailTestView
@@ -645,3 +722,4 @@ InstanceSettingsAiView = PlatformOpsSettingsAiView
 InstanceSettingsAiTestView = PlatformOpsSettingsAiTestView
 InstanceSettingsDefaultsView = PlatformOpsSettingsDefaultsView
 InstanceSettingsEnvironmentView = PlatformOpsSettingsEnvironmentView
+InstanceSettingsExternalAccessView = PlatformOpsSettingsExternalAccessView

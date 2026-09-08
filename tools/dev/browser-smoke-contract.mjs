@@ -1,5 +1,6 @@
 const COMMUNITY_PLATFORM_ROUTES = Object.freeze([
   '/platform-ops/engine/ai-settings',
+  '/platform-ops/platform/external-access',
   '/platform-ops/platform/runtime-environment',
 ])
 

@@ -1,5 +1,7 @@
 """Tests for enrollment bootstrap API."""
 
+from unittest.mock import patch
+
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory
@@ -124,6 +126,37 @@ class BootstrapViewTests(TestCase):
         body = response.content.decode("utf-8")
         self.assertIn("[FAIL ]", body)
         self.assertIn("configured HTTPS tenant origin", body)
+
+    @override_settings(
+        HFL_INSECURE_TLS=False,
+        FRONTEND_URL="https://192.168.0.89:11443",
+    )
+    @patch(
+        "apps.node.api.views.bootstrap.product_edition",
+        return_value="community",
+    )
+    def test_community_bootstrap_accepts_the_current_nat_origin(self, _edition):
+        params = {
+            "type": "linux",
+            "org": self.org.key,
+            "role": "agent",
+            "token": self.token_row.token,
+            "api_base": "https://113.44.213.250:11443",
+        }
+        request = self.factory.get(
+            "/api/v1/node/enrollment/bootstrap",
+            params,
+            secure=True,
+            HTTP_HOST="113.44.213.250:11443",
+        )
+
+        response = BootstrapView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "https://113.44.213.250:11443",
+            response.content.decode("utf-8"),
+        )
 
     def test_windows_bootstrap_renders(self):
         response = self._get("windows")

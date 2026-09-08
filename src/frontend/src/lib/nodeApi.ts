@@ -1,4 +1,5 @@
 import { getEffectiveOrgKey } from '../composables/useAuth'
+import { getCachedDeployProfile } from '../composables/useDeployProfile'
 import { api } from './api'
 import { asList, extractEnrollmentToken, unwrapApiPayload } from './parse'
 import { publishedAgentVersionLabel } from './agentVersion'
@@ -18,6 +19,14 @@ function orgKey(): string {
 
 /** Public API origin for enrollment scripts (same host as the console). */
 export function publicApiBase(): string {
+  const profile = getCachedDeployProfile()
+  if (profile?.tenant_public_url_source === 'runtime') {
+    try {
+      return new URL(profile.tenant_public_url).origin
+    } catch {
+      // Fall back to the origin that successfully loaded the console.
+    }
+  }
   if (typeof window !== 'undefined' && window.location?.origin) {
     return window.location.origin.replace(/\/$/, '')
   }

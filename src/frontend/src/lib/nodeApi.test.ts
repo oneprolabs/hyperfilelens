@@ -17,7 +17,12 @@ import {
   startNodeOperationsBatch,
   updateNode,
   fetchMinimalInstallerManifest,
+  publicApiBase,
 } from './nodeApi'
+import {
+  clearDeployProfileCache,
+  fetchDeployProfile,
+} from '../composables/useDeployProfile'
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>()
@@ -32,8 +37,25 @@ vi.mock('../composables/useAuth', () => ({
 }))
 
 afterEach(() => {
+  clearDeployProfileCache()
   vi.clearAllMocks()
   vi.unstubAllGlobals()
+})
+
+describe('public API origin', () => {
+  it('uses the administrator override after the deploy profile is loaded', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        site_role: 'tenant',
+        tenant_public_url: 'https://public.example.com',
+        tenant_public_url_source: 'runtime',
+      }),
+    }))
+    await fetchDeployProfile(true)
+
+    expect(publicApiBase()).toBe('https://public.example.com')
+  })
 })
 
 const installerManifest = {

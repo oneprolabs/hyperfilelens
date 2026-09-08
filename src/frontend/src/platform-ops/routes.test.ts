@@ -13,6 +13,7 @@ describe('platformOpsRoutes (community)', () => {
     expect(engine?.children?.some((route) => route.path === 'gateways' && 'redirect' in route)).toBe(true)
     expect(engine?.children?.some((route) => route.path === 'usage')).toBe(false)
     expect(platformOpsRoutes.some((route) => route.path === 'platform/email')).toBe(true)
+    expect(platformOpsRoutes.some((route) => route.path === 'platform/external-access')).toBe(true)
     expect(platformOpsRoutes.some((route) => route.path === 'platform/runtime-environment')).toBe(true)
   })
 })

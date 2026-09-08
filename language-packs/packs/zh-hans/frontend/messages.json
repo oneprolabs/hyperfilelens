@@ -6790,6 +6790,7 @@
       "notificationHistory": "通知历史记录",
       "platformIntegrations": "集成",
       "platformAuthentication": "验证",
+      "platformExternalAccess": "外部访问",
       "platformRuntime": "运行环境",
       "auditLogs": "审核日志",
       "platformTurnstile": "Cloudflare 十字转门",
@@ -6989,10 +6990,31 @@
         "enableHint": "由 TURNSTILE_ENABLED 部署环境变量控制。"
       },
       "defaultsTitle": "平台默认值",
+      "externalAccessTitle": "外部访问",
       "loadFailed": "加载配置失败",
       "saveSuccess": "配置已保存",
       "saveFailed": "保存配置失败",
       "source": "来源：{source}",
+      "externalAccess": {
+        "intro": "设置远程 Agent 和 Data Gateway 可访问的租户地址。留空则使用安装时的默认地址。",
+        "managed": "外部访问地址由企业版部署配置管理。",
+        "urlLabel": "外部访问地址",
+        "urlPlaceholder": "https://hfl.example.com",
+        "urlHint": "仅输入 HTTP 或 HTTPS 访问源；启用 TLS 校验时必须使用 HTTPS。不要包含路径、查询参数或片段。",
+        "suggested": "根据当前连接建议：",
+        "useSuggested": "使用建议地址",
+        "restoreAutomatic": "恢复自动配置",
+        "saved": "外部访问地址已更新",
+        "effectiveTitle": "生效配置",
+        "effectiveUrl": "生效地址",
+        "source": "配置来源",
+        "sourceValue": {
+          "deployment": "安装默认值",
+          "runtime": "管理控制台覆盖值"
+        },
+        "impactTitle": "影响范围",
+        "impact": "新生成的 Agent 和 Data Gateway 安装命令、注册回调以及内置 SourceLens 访问将使用此地址。随部署安装的本地 Data Gateway 仍使用本机回环地址。"
+      },
       "email": {
         "intro": "配置平台通知与验证邮件使用的 SMTP 发信服务。",
         "passwordHint": "留空则保留当前密码。",

@@ -81,6 +81,23 @@ grep -Fx 'HFL_EMAIL_CODE_LOGIN_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'HFL_GOOGLE_OAUTH_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'HFL_WEBSITE_GA_MEASUREMENT_ID=G-0RX9GZJCWF' "${env_file}" >/dev/null
 grep -Fx 'HFL_TENANT_GA_MEASUREMENT_ID=G-NMVD54BHJ3' "${env_file}" >/dev/null
+
+community_env="${tmp}/community.env"
+cat >"${community_env}" <<'ENV'
+HFL_EDITION=community
+FRONTEND_URL=https://192.168.0.89:11443
+DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,192.168.0.89
+CSRF_TRUSTED_ORIGINS=https://127.0.0.1:11443
+CORS_ALLOWED_ORIGINS=
+ENV
+python3 "${helper}" \
+	--env-file "${community_env}" \
+	--direct-host "192.168.0.89" \
+	--public-url "https://113.44.213.250:11443" \
+	--admin-public-url "https://admin.community.example:11444" >/dev/null
+grep -Fx 'DJANGO_ALLOWED_HOSTS=*' "${community_env}" >/dev/null
+grep -E '^CSRF_TRUSTED_ORIGINS=.*https://113\.44\.213\.250:11443' "${community_env}" >/dev/null
+grep -E '^CORS_ALLOWED_ORIGINS=.*https://113\.44\.213\.250:11443' "${community_env}" >/dev/null
 if grep -F "${retired_analytics_key}=" "${env_file}" >/dev/null; then
 	printf 'ERROR: the retired single-stream analytics key must be removed\n' >&2
 	exit 1

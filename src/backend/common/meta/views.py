@@ -31,6 +31,9 @@ class DeployProfileView(APIView):
     authentication_classes = [OptionalJWTAuthenticationFromCookies]
 
     def get(self, request):
+        from apps.instance_settings.services.external_access import (
+            external_access_source,
+        )
         from apps.configuration.services.runtime_settings import (
             email_code_login_enabled,
             email_delivery_configured,
@@ -56,6 +59,7 @@ class DeployProfileView(APIView):
                 and email_delivery_configured()
             ),
             "tenant_public_url": tenant_public_url(),
+            "tenant_public_url_source": external_access_source(),
             "admin_console_url": admin_console_public_url(request),
             # Site-local post-login path (tenant "/" vs ops AI Models / Overview).
             "landing_path": default_landing_path(request),
