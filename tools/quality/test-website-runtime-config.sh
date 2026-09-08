@@ -50,7 +50,7 @@ grep -F "rewrites: (id) => id.startsWith('en/') ? id.slice(3) : id" \
 	"${ROOT}/website/.vitepress/config.mts" >/dev/null
 grep -F '<a class="brand" href="/" aria-label="HyperFileLens home">' \
 	"${ROOT}/website/.vitepress/theme/HomeLanding.vue" >/dev/null
-grep -F '<a href="/docs/" target="_blank" rel="noopener noreferrer">Documentation</a>' \
+grep -F '<a href="/docs/getting-started/install" target="_blank" rel="noopener noreferrer">Documentation</a>' \
 	"${ROOT}/website/.vitepress/theme/HomeLanding.vue" >/dev/null
 if grep -R -F '/en/docs' --exclude-dir=dist --exclude-dir=cache \
 	"${ROOT}/website/en" >/dev/null \

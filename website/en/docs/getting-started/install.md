@@ -9,15 +9,23 @@ HyperFileLens Community runs on an Ubuntu host that you manage. The online insta
 
 ## Before you install
 
-- Ubuntu 20.04, 22.04, or 24.04 on amd64.
-- At least 4 CPU cores and 8 GiB of memory. For regular use, 8 cores and 16 GiB or more are recommended.
-- At least 20 GiB of free space on the disk that contains `/opt`.
-- Docker Engine 24.0.0 or later and Docker Compose V2 2.20.0 or later, with the Docker daemon running. If Docker is entirely absent, the online installer can install Docker CE and Compose V2 from the selected regional package source. If a supported, healthy Docker CE runtime is present but Compose V2 is missing, the installer can add only the pinned Compose plugin when the package plan leaves the existing Docker runtime unchanged.
-- `curl`, Python 3, and `sudo` access.
-- Network access to GitHub, the container registry, the selected or existing Docker CE source, and the Ubuntu package repositories.
-- Ports `11442–11445` available on the installation host.
+| Item | Requirement |
+| --- | --- |
+| Operating system | Ubuntu 20.04, 22.04, or 24.04 on amd64 |
+| CPU and memory | Minimum: 4 CPU cores and 8 GiB of memory; recommended: 8 cores and 16 GiB or more |
+| Disk space | At least 20 GiB of free space on the disk that contains `/opt` |
+| Container runtime | Docker Engine 24.0.0 or later and Docker Compose V2 2.20.0 or later, with the Docker daemon running |
+| Required tools | `curl`, Python 3, and `sudo` access |
+| Network access | Access to GitHub, the container registry, Docker CE package sources, and Ubuntu package repositories |
+| Service ports | `11442–11445/TCP` available on the installation host |
 
-The online installer supports Docker CE only; Ubuntu `docker.io`, Moby, Snap, and other unrecognized runtimes must be repaired or replaced manually. An existing Docker CE installation is reused when it meets these requirements. If its version is too old, the daemon is unavailable, or Compose V2 cannot be added without changing existing Docker packages, repair or upgrade Docker manually before continuing. The installer does not replace or repair an existing Docker Engine, and uninstalling HyperFileLens does not remove Docker, Compose, containerd, or a Docker CE apt source created by the installer.
+::: info Docker environment
+
+- **Install or reuse:** If Docker is not installed, the installer can install Docker CE and Compose V2. It reuses an existing installation when it meets the requirements above. If only Compose V2 is missing, the installer adds it only when the existing Docker packages can remain unchanged.
+- **Supported runtime:** Docker CE is the only supported runtime. Ubuntu `docker.io`, Moby, Snap, and unrecognized runtimes must be addressed manually. The installer does not replace or repair an existing Docker installation.
+- **Uninstall behavior:** Uninstalling HyperFileLens does not remove Docker, Compose, containerd, or a Docker CE package source configured by the installer.
+
+:::
 
 ## Run the installer
 
@@ -25,21 +33,10 @@ On the prepared Ubuntu host, run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh \
-  | sudo bash -s -- --mirror global
+  | sudo bash -s -- --mirror global --yes
 ```
 
-The installer shows the release version and download sources before it starts. Review the information, then wait for the installation and services to finish starting.
-
-### Install a specific release (optional)
-
-To install a published version explicitly:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh \
-  | sudo bash -s -- --mirror global --tag vX.Y.Z
-```
-
-Replace `vX.Y.Z` with the version you want to install.
+The installer displays the release version and download sources, then continues automatically. Wait for the installation to finish and the services to start.
 
 ## Check the installation
 
@@ -51,6 +48,11 @@ sudo /opt/hyperfilelens/install.sh status
 
 Confirm that all core services are running or healthy. If installation fails, record the error shown in the terminal, verify the prerequisites above, and then run the installer again.
 
-When installation finishes, the terminal displays several access URLs. Find the full URL labeled `Tenant` and open it in your browser to access the HyperFileLens console. The other URLs are intended for the website or system administration and are not needed for first-time use.
+After a successful installation, the `Access` section lists these endpoints:
 
-Sign in with the initial account shown by the installer, then change the initial password immediately.
+| Endpoint | Purpose |
+| --- | --- |
+| `HyperFileLens · 11443` | Product console for backup, restore, Insights, and organization administration |
+| `Platform Ops · 11444` | Platform administration console for AI models, system configuration, and operations |
+
+For first-time use, copy the `URL` listed under `HyperFileLens · 11443` and open it in your browser. Sign in with the `Email` and `Password` shown in the same section, then change the initial password immediately. Backup, restore, and Insights workflows run in the product console. Open `Platform Ops · 11444` only to configure AI models or perform platform administration.

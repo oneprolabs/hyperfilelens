@@ -9,9 +9,9 @@ After installing HyperFileLens Community, sign in with the console URL and initi
 
 ## Sign in
 
-1. Find the full URL labeled `Tenant` in the installation output and open it in your browser.
+1. In the `Access` section of the installation output, find `HyperFileLens · 11443` and open its `URL` in your browser.
 2. Switch the interface language to **English**.
-3. Select **Password**, enter the initial account and password from the installation output, and complete the verification challenge.
+3. Select **Password**, enter the `Email` and `Password` shown under `HyperFileLens · 11443`, and complete the verification challenge.
 4. Select **Sign In**.
 5. After the first sign-in, change the initial password immediately.
 6. Check the current organization, time zone, and system time.

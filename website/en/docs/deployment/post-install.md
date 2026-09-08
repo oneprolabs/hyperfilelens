@@ -19,8 +19,8 @@ Confirm that all services are running normally and record the installed version.
 
 ## 2. Sign in to the console
 
-1. Find the full URL labeled `Tenant` in the installation output and open it in your browser.
-2. Sign in with the initial account shown by the installer.
+1. In the `Access` section of the installation output, find `HyperFileLens · 11443` and open its `URL` in your browser.
+2. Sign in with the `Email` and `Password` shown in the same section.
 3. Change the initial password after signing in for the first time.
 
 ## 3. Check the product areas

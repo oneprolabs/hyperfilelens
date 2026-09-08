@@ -33,11 +33,10 @@ const loginUrl = computed(() => `${appOrigin.value || '#'}${appOrigin.value ? '/
 
 const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
 const sourceLensUrl = 'https://github.com/HyperBDR/sourcelens'
-const communityInstallGuideUrl = 'https://github.com/oneprolabs/hyperfilelens#community-online-installation'
 const installCommand = [
   'curl -fsSL \\',
   '  https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh \\',
-  '  | sudo bash -s -- --mirror global',
+  '  | sudo bash -s -- --mirror global --yes',
 ].join('\n')
 const copied = ref(false)
 let copyResetTimer: number | undefined
@@ -68,19 +67,11 @@ async function copyInstallCommand() {
 
 function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
   const target = loginUrl.value
-  if (!target || target === '#') return
-  if (
-    event.button !== 0
-    || event.metaKey
-    || event.ctrlKey
-    || event.shiftKey
-    || event.altKey
-  ) {
-    trackWebsiteOpenApp(placement)
+  if (!target || target === '#') {
+    event.preventDefault()
     return
   }
-  event.preventDefault()
-  trackWebsiteOpenApp(placement, () => window.location.assign(target))
+  trackWebsiteOpenApp(placement)
 }
 </script>
 
@@ -136,17 +127,17 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         <nav aria-label="Main navigation">
           <a href="#use-cases">Use Cases</a>
           <a href="#how-it-works">How It Works</a>
-          <a href="/docs/" target="_blank" rel="noopener noreferrer">Documentation</a>
+          <a href="/docs/getting-started/install" target="_blank" rel="noopener noreferrer">Documentation</a>
           <a href="#open-source">Open Source</a>
           <a href="#contact">Contact</a>
         </nav>
         <div class="header-actions">
           <LanguageSwitcher current="en" />
-          <a class="github-link" :href="githubUrl" aria-label="HyperFileLens on GitHub">
+          <a class="github-link" :href="githubUrl" target="_blank" rel="noopener noreferrer" aria-label="HyperFileLens on GitHub">
             <svg aria-hidden="true"><use href="#icon-github" /></svg>
             <span>GitHub</span>
           </a>
-          <a class="header-cta" :href="loginUrl" @click="openApp($event, 'header')">Try free</a>
+          <a class="header-cta" :href="loginUrl" target="_blank" rel="noopener noreferrer" @click="openApp($event, 'header')">Try free</a>
         </div>
       </div>
     </header>
@@ -155,7 +146,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-backdrop" aria-hidden="true"></div>
         <div class="hero-copy">
-          <a class="open-source-pill" :href="githubUrl">
+          <a class="open-source-pill" :href="githubUrl" target="_blank" rel="noopener noreferrer">
             <svg aria-hidden="true"><use href="#icon-github" /></svg>
             OneProLabs · Apache 2.0
             <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
@@ -166,13 +157,13 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
             or any other text format — without touching production.
           </p>
           <div class="hero-actions">
-            <a class="button button-primary" :href="loginUrl" @click="openApp($event, 'hero')">
+            <a class="button button-primary" :href="loginUrl" target="_blank" rel="noopener noreferrer" @click="openApp($event, 'hero')">
               <img src="/brand/icons/hyperfilelens-mark-32.png" alt="" class="button-logo" />
               Try HyperFileLens
               <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
               <span class="free-badge">Free</span>
             </a>
-            <a class="button button-secondary" :href="githubUrl">
+            <a class="button button-secondary" :href="githubUrl" target="_blank" rel="noopener noreferrer">
               <svg aria-hidden="true"><use href="#icon-github" /></svg>
               View on GitHub
             </a>
@@ -277,12 +268,12 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
               <p>Community is free and open source, with S3-compatible storage and an AI model or API key. Enterprise capabilities will be available in a later release.</p>
             </div>
             <div class="open-source-actions">
-              <a class="button button-light" :href="githubUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>View on GitHub</a>
-              <a class="button button-dark-outline" :href="githubUrl">⭐ Star this project</a>
+              <a class="button button-light" :href="githubUrl" target="_blank" rel="noopener noreferrer"><svg aria-hidden="true"><use href="#icon-github" /></svg>View on GitHub</a>
+              <a class="button button-dark-outline" :href="githubUrl" target="_blank" rel="noopener noreferrer">⭐ Star this project</a>
             </div>
             <div class="open-source-links">
-              <a class="source-link" :href="sourceLensUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>AI engine repo</a>
-              <a class="source-link" :href="communityInstallGuideUrl">Installation guide <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
+              <a class="source-link" :href="sourceLensUrl" target="_blank" rel="noopener noreferrer"><svg aria-hidden="true"><use href="#icon-github" /></svg>AI engine repo</a>
+              <a class="source-link" href="/docs/getting-started/install" target="_blank" rel="noopener noreferrer">Installation guide <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
             </div>
             <p class="beta-note">HyperFileLens is currently in public beta.</p>
           </div>
@@ -333,7 +324,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
               <h3>Technical support</h3>
             </div>
             <p>Running into an issue or found a bug? File it on GitHub and we'll take it from there.</p>
-            <a class="text-link" :href="`${githubUrl}/issues`">Open an issue <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
+            <a class="text-link" :href="`${githubUrl}/issues`" target="_blank" rel="noopener noreferrer">Open an issue <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
           </article>
         </div>
       </section>
@@ -344,12 +335,12 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
       <div class="footer-brand">
         <a class="brand" href="/"><img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-on-light.png" alt="HyperFileLens" /></a>
         <p>Open source backup with agentic AI insight, by OneProLabs.</p>
-        <a class="footer-social" :href="githubUrl" aria-label="HyperFileLens on GitHub"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
+        <a class="footer-social" :href="githubUrl" target="_blank" rel="noopener noreferrer" aria-label="HyperFileLens on GitHub"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
       </div>
       <div class="footer-links">
-        <div><strong>Product</strong><a href="#use-cases">Use Cases</a><a href="#how-it-works">How It Works</a><a :href="loginUrl" @click="openApp($event, 'footer')">Try free</a></div>
-        <div><strong>Open Source</strong><a :href="githubUrl">HyperFileLens</a><a :href="sourceLensUrl">AI engine</a><a :href="`${githubUrl}/releases`">Releases</a></div>
-        <div><strong>Contact</strong><a href="mailto:oneprolabs@oneprocloud.com">Enterprise deployment</a><a :href="`${githubUrl}/issues`">Technical support</a></div>
+        <div><strong>Product</strong><a href="#use-cases">Use Cases</a><a href="#how-it-works">How It Works</a><a :href="loginUrl" target="_blank" rel="noopener noreferrer" @click="openApp($event, 'footer')">Try free</a></div>
+        <div><strong>Open Source</strong><a :href="githubUrl" target="_blank" rel="noopener noreferrer">HyperFileLens</a><a :href="sourceLensUrl" target="_blank" rel="noopener noreferrer">AI engine</a><a :href="`${githubUrl}/releases`" target="_blank" rel="noopener noreferrer">Releases</a></div>
+        <div><strong>Contact</strong><a href="mailto:oneprolabs@oneprocloud.com">Enterprise deployment</a><a :href="`${githubUrl}/issues`" target="_blank" rel="noopener noreferrer">Technical support</a></div>
       </div>
       <div class="footer-bottom"><span>© 2026 OneProLabs</span><span>Public beta · Built in the open</span></div>
     </footer>

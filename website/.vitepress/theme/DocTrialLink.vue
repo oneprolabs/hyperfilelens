@@ -42,19 +42,11 @@ const loginUrl = computed(() => `${appOrigin.value || '#'}${appOrigin.value ? '/
 
 function openApp(event: MouseEvent) {
   const target = loginUrl.value
-  if (!target || target === '#') return
-  if (
-    event.button !== 0
-    || event.metaKey
-    || event.ctrlKey
-    || event.shiftKey
-    || event.altKey
-  ) {
-    trackWebsiteOpenApp('docs_header')
+  if (!target || target === '#') {
+    event.preventDefault()
     return
   }
-  event.preventDefault()
-  trackWebsiteOpenApp('docs_header', () => window.location.assign(target))
+  trackWebsiteOpenApp('docs_header')
 }
 </script>
 
@@ -63,6 +55,8 @@ function openApp(event: MouseEvent) {
     v-if="isDocs"
     :class="['hfl-doc-trial', `hfl-doc-trial--${props.placement}`]"
     :href="loginUrl"
+    target="_blank"
+    rel="noopener noreferrer"
     @click="openApp"
   >
     {{ label }}

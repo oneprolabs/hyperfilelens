@@ -35,4 +35,4 @@ Insights works with existing backup snapshots and does not read live files from 
 
 ## First-time use
 
-If you are new to HyperFileLens, follow the [Quick start](/docs/) to run a backup, restore a test file, and create an Insights session with the same sample data. Once you have completed the workflow, configure schedules, retention, and routine restore tests for the data you need to protect.
+If you are new to HyperFileLens, follow the [Quick start](/docs/getting-started/install) to run a backup, restore a test file, and create an Insights session with the same sample data. Once you have completed the workflow, configure schedules, retention, and routine restore tests for the data you need to protect.
