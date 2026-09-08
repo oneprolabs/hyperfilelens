@@ -36,9 +36,17 @@ def _spec(
 def all_key_specs() -> tuple[ConfigKeySpec, ...]:
     from apps.iam import conf as iam_conf
     from apps.insight import conf as insight_conf
+    from apps.instance_settings import conf as instance_settings_conf
     from apps.storage import conf as storage_conf
 
     return (
+        _spec(
+            key=instance_settings_conf.CONFIG_KEY_EXTERNAL_ACCESS_URL,
+            category="deployment",
+            value_type=GlobalConfig.ValueType.STRING,
+            description="Community external access URL",
+            owning_app="instance_settings",
+        ),
         _spec(
             key=storage_conf.CONFIG_KEY_RETENTION,
             category="backup",

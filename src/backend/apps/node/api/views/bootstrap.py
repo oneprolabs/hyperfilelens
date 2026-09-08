@@ -10,6 +10,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.iam.models import Organization
+from apps.instance_settings.services.external_access import (
+    normalize_external_access_url,
+)
 from apps.node.api import permissions as node_permissions
 from apps.node.api.views.bootstrap_templates import (
     BOOTSTRAP_GATEWAY_LINUX,
@@ -24,17 +27,41 @@ from apps.node.api.views.enrollment_helpers import (
     token_usable_for_bootstrap,
 )
 from apps.node.models import Node, NodeToken
+from common.deploy.product import COMMUNITY_EDITION, product_edition
 from common.deploy.site import enrollment_tls_verify, tenant_public_url
 
 
-def _strict_api_base_valid(api_base: str) -> bool:
-    """Return whether strict enrollment targets the configured HTTPS origin."""
+def _api_base_valid(request: Request, api_base: str) -> bool:
+    """Return whether enrollment targets a trusted browser-facing origin."""
+    try:
+        normalized = normalize_external_access_url(api_base)
+    except ValueError:
+        return False
+    if not normalized:
+        return False
+
+    # Community installs default to insecure enrollment so NAT, EIP, and
+    # user-provided hostnames work before a canonical URL is configured.
     if not enrollment_tls_verify():
         return True
-    canonical = tenant_public_url()
-    return bool(
-        api_base and api_base == canonical and urlsplit(api_base).scheme == "https"
-    )
+    if urlsplit(normalized).scheme != "https":
+        return False
+
+    if product_edition() == COMMUNITY_EDITION:
+        try:
+            request_origin = normalize_external_access_url(
+                f"{request.scheme}://{request.get_host()}"
+            )
+            canonical = normalize_external_access_url(tenant_public_url())
+        except ValueError:
+            return False
+        return normalized in {request_origin, canonical}
+
+    try:
+        canonical = normalize_external_access_url(tenant_public_url())
+    except ValueError:
+        return False
+    return normalized == canonical
 
 
 def _bootstrap_error_response(script_type: str, message: str) -> HttpResponse:
@@ -96,7 +123,7 @@ def _parse_enrollment_query(
             )
         return Response({"error": "org/role/token required"}, status=400)
 
-    if not _strict_api_base_valid(api_base):
+    if not _api_base_valid(request, api_base):
         return _bootstrap_error_response(
             script_type,
             "api_base must match the configured HTTPS tenant origin",
@@ -250,7 +277,7 @@ def _parse_gateway_bootstrap_query(
             "org and token are required in the gateway enrollment link",
         )
 
-    if not _strict_api_base_valid(api_base):
+    if not _api_base_valid(request, api_base):
         return _bootstrap_error_response(
             "linux",
             "api_base must match the configured HTTPS tenant origin",

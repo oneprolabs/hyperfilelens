@@ -10,13 +10,14 @@ vi.mock('vue-i18n', () => ({
 }))
 
 describe('usePlatformOpsSideNav (community)', () => {
-  it('exposes AI Models and Runtime only', () => {
+  it('exposes AI Models and essential platform settings only', () => {
     const menus = usePlatformOpsSideNav().value
     const items = menus.flatMap((item) => item.children || [item])
     const paths = items.map((item) => item.to).filter(Boolean)
 
     expect(paths).toEqual([
       '/platform-ops/engine/ai-settings',
+      '/platform-ops/platform/external-access',
       '/platform-ops/platform/runtime-environment',
     ])
     expect(paths.some((path) => path?.includes('/gateways'))).toBe(false)

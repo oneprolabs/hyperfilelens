@@ -4606,6 +4606,7 @@ export const en = {
       notificationHistory: 'Notification History',
       platformIntegrations: 'Integrations',
       platformAuthentication: 'Authentication',
+      platformExternalAccess: 'External Access',
       platformRuntime: 'Runtime Environment',
       auditLogs: 'Audit Logs',
       platformEmail: 'Email (SMTP)',
@@ -5135,11 +5136,35 @@ export const en = {
         secretHint: 'Leave blank to keep the current secret key.',
       },
       defaultsTitle: 'Platform Defaults',
+      externalAccessTitle: 'External Access',
       environmentTitle: 'Runtime Environment',
       loadFailed: 'Failed to load settings',
       saveSuccess: 'Settings saved',
       saveFailed: 'Failed to save settings',
       source: 'Source: {source}',
+      externalAccess: {
+        intro:
+          'Set the tenant URL that remote Agents and Data Gateways can reach. Leave it empty to use the installation default.',
+        managed: 'External access is managed by Enterprise deployment configuration.',
+        urlLabel: 'External access URL',
+        urlPlaceholder: 'https://hfl.example.com',
+        urlHint:
+          'Enter only the HTTP or HTTPS origin; HTTPS is required when TLS verification is enabled. Do not include a path, query, or fragment.',
+        suggested: 'Suggested from this connection:',
+        useSuggested: 'Use suggestion',
+        restoreAutomatic: 'Restore automatic',
+        saved: 'External access URL updated',
+        effectiveTitle: 'Effective configuration',
+        effectiveUrl: 'Effective URL',
+        source: 'Configuration source',
+        sourceValue: {
+          deployment: 'Installation default',
+          runtime: 'Admin Console override',
+        },
+        impactTitle: 'What this affects',
+        impact:
+          'New Agent and Data Gateway installation commands, enrollment callbacks, and bundled SourceLens access use this URL. The local deployment-managed Data Gateway continues to use the local loopback address.',
+      },
       email: {
         intro: 'Configure outbound SMTP for platform notifications and verification emails.',
         extensionRequiredTitle: 'Enterprise email console is unavailable',

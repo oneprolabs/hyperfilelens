@@ -448,12 +448,18 @@ def apply_configuration(
         direct_host = ""
     direct_allowed_host = direct_host.strip("[]")
     direct_url_host = host_for_url(direct_host)
-    allowed_hosts = comma_values(
-        current.get("DJANGO_ALLOWED_HOSTS", ""), exclude_wildcard=True
+    community_install = current.get("HFL_EDITION", "").strip().lower() == "community"
+    allowed_hosts = (
+        ["*"]
+        if community_install
+        else comma_values(
+            current.get("DJANGO_ALLOWED_HOSTS", ""), exclude_wildcard=True
+        )
     )
     csrf_origins = comma_values(current.get("CSRF_TRUSTED_ORIGINS", ""))
     cors_origins = comma_values(current.get("CORS_ALLOWED_ORIGINS", ""))
-    append_unique(allowed_hosts, "localhost", "127.0.0.1", direct_allowed_host)
+    if not community_install:
+        append_unique(allowed_hosts, "localhost", "127.0.0.1", direct_allowed_host)
     append_unique(
         csrf_origins,
         "https://localhost:11443",
@@ -471,7 +477,8 @@ def apply_configuration(
         parsed = parse_public_origin(public_url)
         if parsed:
             public_origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
-            append_unique(allowed_hosts, parsed.hostname or "")
+            if not community_install:
+                append_unique(allowed_hosts, parsed.hostname or "")
             append_unique(csrf_origins, public_origin)
             append_unique(cors_origins, public_origin)
             updates.update(
@@ -497,7 +504,8 @@ def apply_configuration(
         parsed = parse_public_origin(admin_public_url)
         if parsed:
             admin_origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
-            append_unique(allowed_hosts, parsed.hostname or "")
+            if not community_install:
+                append_unique(allowed_hosts, parsed.hostname or "")
             append_unique(csrf_origins, admin_origin)
             append_unique(cors_origins, admin_origin)
             updates["HFL_ADMIN_PUBLIC_URL"] = admin_origin

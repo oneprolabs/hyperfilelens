@@ -6838,6 +6838,7 @@
       "notificationHistory": "Historial de notificaciones",
       "platformIntegrations": "Integraciones",
       "platformAuthentication": "Autenticación",
+      "platformExternalAccess": "Acceso externo",
       "platformRuntime": "Entorno de ejecución",
       "auditLogs": "Registros de auditoría",
       "platformEmail": "Email (SMTP)",
@@ -7362,11 +7363,32 @@
         "secretHint": "Déjelo vacío para conservar la clave secreta actual."
       },
       "defaultsTitle": "Predeterminados de la plataforma",
+      "externalAccessTitle": "Acceso externo",
       "environmentTitle": "Entorno de ejecución",
       "loadFailed": "No se pudo cargar la configuración",
       "saveSuccess": "Ajustes guardados",
       "saveFailed": "Error al guardar la configuración",
       "source": "Fuente: {source}",
+      "externalAccess": {
+        "intro": "Establezca la URL de la organización accesible para Agents y Data Gateways remotos. Déjela vacía para usar el valor predeterminado de la instalación.",
+        "managed": "El acceso externo se gestiona mediante la configuración de despliegue Enterprise.",
+        "urlLabel": "URL de acceso externo",
+        "urlPlaceholder": "https://hfl.example.com",
+        "urlHint": "Introduzca solo el origen HTTP o HTTPS; HTTPS es obligatorio cuando la verificación TLS está habilitada. No incluya una ruta, consulta ni fragmento.",
+        "suggested": "Sugerencia según esta conexión:",
+        "useSuggested": "Usar sugerencia",
+        "restoreAutomatic": "Restaurar configuración automática",
+        "saved": "URL de acceso externo actualizada",
+        "effectiveTitle": "Configuración efectiva",
+        "effectiveUrl": "URL efectiva",
+        "source": "Fuente de configuración",
+        "sourceValue": {
+          "deployment": "Valor predeterminado de instalación",
+          "runtime": "Anulación de la consola de administración"
+        },
+        "impactTitle": "Elementos afectados",
+        "impact": "Los nuevos comandos de instalación de Agent y Data Gateway, las devoluciones de registro y el acceso a SourceLens incluido usan esta URL. El Data Gateway local gestionado por el despliegue continúa usando la dirección de bucle invertido local."
+      },
       "email": {
         "intro": "Configure el servidor SMTP saliente para las notificaciones de la plataforma y los correos de verificación.",
         "extensionRequiredTitle": "La consola de correo empresarial no está disponible",

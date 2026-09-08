@@ -2416,7 +2416,10 @@ sub_key("TURNSTILE_ENABLED", "false")
 tenant_port = "11443"
 frontend_url = f"https://{host}:{tenant_port}"
 sub_key("FRONTEND_URL", frontend_url)
-sub_key("DJANGO_ALLOWED_HOSTS", f"localhost,127.0.0.1,{host}")
+sub_key(
+    "DJANGO_ALLOWED_HOSTS",
+    "*" if edition == "community" else f"localhost,127.0.0.1,{host}",
+)
 sub_key(
     "CSRF_TRUSTED_ORIGINS",
     f"https://localhost:{tenant_port},https://127.0.0.1:{tenant_port},{frontend_url}",
