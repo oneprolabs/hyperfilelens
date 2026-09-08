@@ -2966,6 +2966,7 @@ export const en = {
       activationTitle: 'License Activation',
       historyTitle: 'License History',
       historyEmpty: 'No history recorded',
+      historyLoadFailed: 'License history is temporarily unavailable.',
       currentEdition: 'Current license',
       editionEnterprise: '💎 Enterprise',
       editionTrial: 'Trial',
@@ -2987,6 +2988,8 @@ export const en = {
       activationStep2Title: 'Step 2: Paste the License Key',
       copyIdentification: 'Copy',
       copyFailed: 'Failed to copy the identification code',
+      loadFailed: 'Unable to load license information. Refresh the page and try again.',
+      machineCodeLoadFailed: 'Unable to load the identification code. Refresh the page and try again.',
       activationPrompt: 'Enter the official license key:',
       activateNow: 'Activate License',
       instanceSharedHint:

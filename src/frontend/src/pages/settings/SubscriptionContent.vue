@@ -23,6 +23,7 @@ import {
   quotaUsagePercent,
   SUBSCRIPTION_QUOTA_FALLBACK_LIMITS,
 } from '../../lib/licenseQuotaDisplay'
+import { isAbortError } from '../../lib/api'
 import { formatAppDate, formatAppDateTime } from '../../lib/dateTime'
 import { statusTagAttrs } from '../../lib/statusTag'
 
@@ -40,6 +41,8 @@ const effectiveQuotaByKey = ref<Record<string, EffectiveQuotaUsage>>({})
 const machineCode = ref('')
 const canManageInstanceLicense = ref(false)
 const licenseHistory = ref<LicenseHistoryRow[]>([])
+const historyLoadFailed = ref(false)
+const machineCodeLoadFailed = ref(false)
 const activationCode = ref('')
 const activating = ref(false)
 
@@ -190,8 +193,27 @@ function historyStatusTagAttrs(row: LicenseHistoryRow) {
 
 async function loadAll() {
   loading.value = true
+  historyLoadFailed.value = false
+  machineCodeLoadFailed.value = false
   try {
-    const [current, history] = await Promise.all([fetchCurrentLicense(), fetchLicenseHistory()])
+    const [currentResult, historyResult] = await Promise.allSettled([
+      fetchCurrentLicense(),
+      fetchLicenseHistory(),
+    ])
+    const canceledResult = [currentResult, historyResult].find(
+      (result): result is PromiseRejectedResult =>
+        result.status === 'rejected' && isAbortError(result.reason),
+    )
+    if (canceledResult) throw canceledResult.reason
+    if (currentResult.status === 'rejected') throw currentResult.reason
+
+    const current = currentResult.value
+    if (historyResult.status === 'fulfilled') {
+      licenseHistory.value = historyResult.value
+    } else {
+      historyLoadFailed.value = true
+      licenseHistory.value = []
+    }
     usage.value = current.usage || {}
     machineCode.value = current.machine_code || ''
     limits.value = { ...FALLBACK_LIMITS, ...(current.limits || {}) }
@@ -205,7 +227,8 @@ async function loadAll() {
         effectiveQuotaByKey.value = Object.fromEntries(
           (effective.quota_usage || []).map((row) => [row.key, row]),
         )
-      } catch {
+      } catch (e: unknown) {
+        if (isAbortError(e)) throw e
         // Keep the compatible limits/usage from the current-license payload.
       }
     }
@@ -229,14 +252,24 @@ async function loadAll() {
     } else {
       currentLicense.value = null
     }
-    licenseHistory.value = history
     if (canManageInstanceLicense.value && !machineCode.value) {
-      const mc = await fetchMachineCode()
-      machineCode.value = mc.machine_code
+      try {
+        const mc = await fetchMachineCode()
+        machineCode.value = mc.machine_code
+      } catch (e: unknown) {
+        if (isAbortError(e)) throw e
+        machineCodeLoadFailed.value = true
+      }
     }
   } catch (e: unknown) {
-    const msg = e && typeof e === 'object' && 'message' in e ? String((e as { message: string }).message) : ''
-    ElMessage.error({ message: msg || t('settings.subscription.activateFailed'), grouping: true })
+    if (isAbortError(e)) return
+    const message = e && typeof e === 'object' && 'message' in e
+      ? String((e as { message?: unknown }).message || '').trim()
+      : ''
+    ElMessage.error({
+      message: message || t('settings.subscription.loadFailed'),
+      grouping: true,
+    })
     currentLicense.value = null
     instanceShared.value = false
     canManageInstanceLicense.value = false
@@ -383,6 +416,14 @@ onMounted(loadAll)
 
       <div class="subscription-activation">
         <template v-if="canActivateHere">
+          <ElAlert
+            v-if="machineCodeLoadFailed"
+            class="subscription-activation__warning"
+            type="warning"
+            show-icon
+            :closable="false"
+            :title="t('settings.subscription.machineCodeLoadFailed')"
+          />
           <div class="subscription-activation__step">
             <h3 class="subscription-activation__step-title">
               {{ t('settings.subscription.activationStep1Title') }}
@@ -410,6 +451,7 @@ onMounted(loadAll)
               v-model="activationCode"
               type="textarea"
               :rows="4"
+              :disabled="machineCodeLoadFailed"
               :placeholder="t('settings.subscription.activationPlaceholder')"
               class="subscription-activation__input font-mono"
             />
@@ -418,7 +460,7 @@ onMounted(loadAll)
                 type="primary"
                 size="large"
                 :loading="activating"
-                :disabled="!activationCode.trim()"
+                :disabled="machineCodeLoadFailed || !activationCode.trim()"
                 @click="submitActivate"
               >
                 {{ t('settings.subscription.activateNow') }}
@@ -450,7 +492,11 @@ onMounted(loadAll)
           class="hfl-list-table"
         >
           <template #empty>
-            <el-empty :description="t('settings.subscription.historyEmpty')" />
+            <el-empty
+              :description="historyLoadFailed
+                ? t('settings.subscription.historyLoadFailed')
+                : t('settings.subscription.historyEmpty')"
+            />
           </template>
 
           <el-table-column
@@ -685,6 +731,10 @@ onMounted(loadAll)
 
 .subscription-activation__step + .subscription-activation__step {
   margin-top: 24px;
+}
+
+.subscription-activation__warning {
+  margin-bottom: 16px;
 }
 
 .subscription-activation__step-title {
