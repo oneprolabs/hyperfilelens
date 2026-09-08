@@ -6997,7 +6997,8 @@
       "source": "来源：{source}",
       "externalAccess": {
         "intro": "设置远程 Agent 和 Data Gateway 可访问的租户地址。留空则使用安装时的默认地址。",
-        "managed": "外部访问地址由企业版部署配置管理。",
+        "managed": "部署策略已禁用外部访问配置修改。",
+        "networkNotice": "此设置不会配置 DNS、反向代理、TLS 证书、NAT 或防火墙。使用前请确保该地址可访问。",
         "urlLabel": "外部访问地址",
         "urlPlaceholder": "https://hfl.example.com",
         "urlHint": "仅输入 HTTP 或 HTTPS 访问源；启用 TLS 校验时必须使用 HTTPS。不要包含路径、查询参数或片段。",

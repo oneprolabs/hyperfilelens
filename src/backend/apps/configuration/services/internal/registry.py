@@ -44,7 +44,7 @@ def all_key_specs() -> tuple[ConfigKeySpec, ...]:
             key=instance_settings_conf.CONFIG_KEY_EXTERNAL_ACCESS_URL,
             category="deployment",
             value_type=GlobalConfig.ValueType.STRING,
-            description="Community external access URL",
+            description="Instance external access URL",
             owning_app="instance_settings",
         ),
         _spec(

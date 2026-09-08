@@ -1,13 +1,12 @@
-"""Configure the Community external-access URL."""
+"""Configure the instance external-access URL."""
 
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.instance_settings.services.external_access import set_external_access_url
-from common.deploy.product import COMMUNITY_EDITION, product_edition
 
 
 class Command(BaseCommand):
-    help = "Set or clear the Community external access URL."
+    help = "Set or clear the instance external access URL."
 
     def add_arguments(self, parser):
         group = parser.add_mutually_exclusive_group(required=True)
@@ -19,10 +18,6 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        if product_edition() != COMMUNITY_EDITION:
-            raise CommandError(
-                "External access is managed by Enterprise deployment configuration."
-            )
         try:
             value = set_external_access_url("" if options["clear"] else options["url"])
         except ValueError as exc:

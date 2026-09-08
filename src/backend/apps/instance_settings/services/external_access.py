@@ -1,4 +1,4 @@
-"""Community external-access URL configuration."""
+"""Instance-level external-access URL configuration."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from django.conf import settings
 from apps.configuration.models import GlobalConfig
 from apps.configuration.selectors.interface import get_config, invalidate_config_cache
 from apps.instance_settings.conf import CONFIG_KEY_EXTERNAL_ACCESS_URL
-from common.deploy.product import COMMUNITY_EDITION, product_edition
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
@@ -79,20 +78,16 @@ def configured_external_access_url() -> str:
 
 
 def effective_external_access_url() -> str:
-    """Resolve Community override, then the deployment-provided URL."""
-    if product_edition() == COMMUNITY_EDITION:
-        configured = configured_external_access_url()
-        if configured:
-            return configured
+    """Resolve the administrator override, then the deployment-provided URL."""
+    configured = configured_external_access_url()
+    if configured:
+        return configured
     return str(getattr(settings, "FRONTEND_URL", "")).strip().rstrip("/")
 
 
 def external_access_source() -> str:
     """Describe the source used by ``effective_external_access_url``."""
-    if (
-        product_edition() == COMMUNITY_EDITION
-        and configured_external_access_url()
-    ):
+    if configured_external_access_url():
         return "runtime"
     return "deployment"
 
@@ -118,11 +113,7 @@ def suggested_external_access_url(request: HttpRequest) -> str:
 
 
 def set_external_access_url(value: object, *, user=None) -> str:
-    """Set or clear the Community external-access URL override."""
-    if product_edition() != COMMUNITY_EDITION:
-        raise ValueError(
-            "External access is managed by Enterprise deployment configuration."
-        )
+    """Set or clear the instance external-access URL override."""
     normalized = normalize_external_access_url(value)
     if (
         normalized
@@ -141,7 +132,7 @@ def set_external_access_url(value: object, *, user=None) -> str:
                 "value": normalized,
                 "value_type": GlobalConfig.ValueType.STRING,
                 "category": "deployment",
-                "description": "Community external access URL",
+                "description": "Instance external access URL",
                 "is_active": True,
                 "updated_by": user,
             },

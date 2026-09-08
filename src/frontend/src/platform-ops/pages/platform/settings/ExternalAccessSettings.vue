@@ -93,6 +93,13 @@ onMounted(load)
           </p>
 
           <el-alert
+            type="warning"
+            :closable="false"
+            :title="t('platformOps.settings.externalAccess.networkNotice')"
+            class="external-access__notice"
+          />
+
+          <el-alert
             v-if="!meta.editable"
             type="info"
             :closable="false"
@@ -195,6 +202,10 @@ onMounted(load)
 .external-access__form {
   max-width: 760px;
   margin-top: 20px;
+}
+
+.external-access__notice {
+  margin-top: 16px;
 }
 
 .external-access__hint {
