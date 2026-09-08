@@ -405,11 +405,6 @@ function alertStatusLabel(status: string) {
     : t('dashboard.alertStatusFiring')
 }
 
-function taskProgressValue(progress: TaskRow['progress']): number {
-  const n = Number(progress)
-  return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0
-}
-
 function runningTaskLabel(row: TaskRow) {
   return (row.display_name || '').trim() || taskTypeLabel(row.task_type)
 }
@@ -1255,13 +1250,6 @@ onMounted(refresh)
               >
                 <div class="running-item__head">
                   <span class="running-item__name">{{ runningTaskLabel(task) }}</span>
-                  <span class="running-item__pct">{{ taskProgressValue(task.progress) }}%</span>
-                </div>
-                <div class="running-track">
-                  <div
-                    class="running-fill"
-                    :style="{ width: `${taskProgressValue(task.progress)}%` }"
-                  />
                 </div>
                 <div class="running-item__meta">
                   <span>{{ taskTypeLabel(task.task_type) }}</span>
@@ -3287,27 +3275,6 @@ onMounted(refresh)
   white-space: nowrap;
   max-width: 160px;
   color: #1d2129;
-}
-
-.running-item__pct {
-  font-variant-numeric: tabular-nums;
-  color: var(--dashboard-primary);
-  font-weight: 600;
-}
-
-.running-track {
-  height: 0.375rem;
-  border-radius: 9999px;
-  background: #f3f4f6;
-  overflow: hidden;
-  margin-bottom: 0.375rem;
-}
-
-.running-fill {
-  height: 100%;
-  border-radius: 9999px;
-  background: linear-gradient(to right, var(--dashboard-primary), var(--dashboard-primary-mid));
-  transition: width 0.5s;
 }
 
 .running-item__meta {

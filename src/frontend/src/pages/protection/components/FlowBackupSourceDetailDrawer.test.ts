@@ -32,7 +32,7 @@ function buttonWithHandler(source: string, handler: string, marker: string) {
 }
 
 describe('FlowBackupSourceDetailDrawer task columns', () => {
-  it('removes Current Step and keeps the remaining columns within the full-size drawer', () => {
+  it('removes Current Step and Progress and shows normalized task start and end times', () => {
     const tasksTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupDetail.tabTasks\')" name="tasks">',
       '<ElDrawer v-model="taskAdvancedFilterOpen"',
@@ -42,11 +42,15 @@ describe('FlowBackupSourceDetailDrawer task columns', () => {
     expect(tasksTab).toContain('<el-table-column :label="t(\'ops.task.colName\')" width="275" fixed>')
     expect(tasksTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colTaskType\')" width="205">')
     expect(tasksTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colTaskStatus\')" width="115">')
-    expect(tasksTab).toContain('<el-table-column :label="t(\'protection.backupsPage.flowTaskColProgress\')" min-width="165">')
+    expect(tasksTab).not.toContain("t('protection.backupsPage.flowTaskColProgress')")
     expect(tasksTab).toContain('<el-table-column :label="t(\'ops.task.colTrigger\')" width="105">')
-    expect(tasksTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colCreated\')" min-width="160">')
+    expect(tasksTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colStart\')" min-width="160">')
+    expect(tasksTab).toContain('formatNullableTime(row.started_at || row.created_at)')
+    expect(tasksTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colEnd\')" min-width="160">')
+    expect(tasksTab).toContain('formatNullableTime(row.finished_at)')
+    expect(tasksTab).not.toContain('formatNullableTime(row.finished_at || row.created_at)')
 
-    expect(275 + 205 + 115 + 165 + 105 + 160).toBeLessThanOrEqual(1040)
+    expect(275 + 205 + 115 + 105 + 160 + 160).toBeLessThanOrEqual(1040)
   })
 
   it('keeps insight workspace restores out of the Protection task list', () => {
@@ -327,8 +331,9 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(timer).toContain('RESTORE_RECORD_DURATION_INTERVAL_MS')
     expect(drawer).toContain('stopRestoreRecordDurationTimer()')
     expect(drawer).toContain("flowRestoreRecordSubmittedAt")
-    expect(drawer).toContain("flowRestoreRecordStartedAt")
-    expect(drawer).toContain("flowRestoreRecordFinishedAt")
+    expect(drawer).toContain("t('protection.backupDetail.colStart')")
+    expect(drawer).toContain("t('protection.backupDetail.colEnd')")
+    expect(drawer).not.toContain("t('protection.backupsPage.flowRestoreRecordFinishedAt')")
     expect(drawer).toContain("flowRestoreRecordTaskDetailsMissing")
     expect(drawer).toContain("flowRestoreRecordStartNotRecorded")
     expect(drawer).toContain("flowRestoreRecordFinishNotRecorded")

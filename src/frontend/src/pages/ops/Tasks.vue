@@ -26,7 +26,6 @@ import { apiErrorMessage, apiErrorMessageI18n } from '../../lib/api'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import { notifyError, notifySuccess } from '../../lib/notify'
 import { formatLocalDateTime } from '../../lib/dateTime'
-import { formatTaskProgressBarPercent, formatTaskProgressPercent } from '../../lib/kopiaProgress'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { getNode } from '../../lib/nodeApi'
 import { getBackupSourceSnapshot } from '../../lib/protectionBackupConfigApi'
@@ -192,7 +191,7 @@ const timeModeOptions = computed(() => [
 ])
 const timeFieldOptions = computed(() => [
   { value: 'created', label: t('ops.task.timeFieldCreated') },
-  { value: 'finished', label: t('ops.task.timeFieldFinished') },
+  { value: 'finished', label: t('ops.task.endTime') },
 ])
 const taskDateTimeRangePresets = computed(() => [
   { value: '24h', label: t('ops.task.time24h'), hours: 24 },
@@ -335,14 +334,6 @@ function valueLabel(scope: 'resourceValue', value?: string | null) {
   if (!value) return t('ops.task.emptyMark')
   const key = `ops.task.${scope}.${value}`
   return te(key) ? t(key) : t('ops.task.unknownValue')
-}
-
-function progressValue(row: TaskRow) {
-  return formatTaskProgressBarPercent(row.progress)
-}
-
-function progressText(row: TaskRow) {
-  return formatTaskProgressPercent(row.progress)
 }
 
 function formatTime(iso?: string | null) {
@@ -1245,23 +1236,6 @@ watch(
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('ops.task.colProgress')"
-              min-width="160"
-            >
-              <template #default="{ row }">
-                <div class="hfl-task-list-progress">
-                  <div class="hfl-task-list-progress__track">
-                    <div
-                      class="hfl-task-list-progress__fill"
-                      :class="`hfl-task-list-progress__fill--${displayTaskStatus(row)}`"
-                      :style="{ width: `${progressValue(row)}%` }"
-                    />
-                  </div>
-                  <span class="hfl-task-list-progress__text">{{ progressText(row) }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column
               :label="t('ops.task.colTrigger')"
               width="110"
             >
@@ -1275,7 +1249,7 @@ watch(
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('ops.task.startedAt')"
+              :label="t('ops.task.startTime')"
               width="165"
             >
               <template #default="{ row }">
@@ -1286,7 +1260,7 @@ watch(
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('ops.task.finishedAt')"
+              :label="t('ops.task.endTime')"
               width="165"
             >
               <template #default="{ row }">
@@ -1547,14 +1521,14 @@ watch(
               />
               <div class="hfl-task-drawer__time-grid">
                 <div>
-                  <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startedAt') }}</span>
+                  <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startTime') }}</span>
                   <span
                     class="hfl-task-drawer__time-value"
                     :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }"
                   >{{ formatTime(activeTask.started_at || activeTask.created_at) }}</span>
                 </div>
                 <div>
-                  <span class="hfl-task-drawer__metric-label">{{ t('ops.task.finishedAt') }}</span>
+                  <span class="hfl-task-drawer__metric-label">{{ t('ops.task.endTime') }}</span>
                   <span
                     class="hfl-task-drawer__time-value"
                     :class="{ 'hfl-empty-mark': !activeTask.finished_at }"
@@ -1571,19 +1545,6 @@ watch(
             </div>
           </div>
 
-          <div class="hfl-task-drawer__progress-block">
-            <div class="hfl-task-drawer__progress-head">
-              <span>{{ t('ops.task.progressLabel') }}</span>
-              <span>{{ progressText(activeTask) }}</span>
-            </div>
-            <div class="hfl-task-drawer__progress-track">
-              <div
-                class="hfl-task-drawer__progress-fill"
-                :class="`hfl-task-drawer__progress-fill--${displayTaskStatus(activeTask)}`"
-                :style="{ width: `${progressValue(activeTask)}%` }"
-              />
-            </div>
-          </div>
         </section>
 
         <ElAlert
@@ -2482,59 +2443,6 @@ watch(
 
 .hfl-task-drawer__time-value--strong {
   color: var(--color-info);
-}
-
-.hfl-task-drawer__progress-block {
-  padding-top: 2px;
-}
-
-.hfl-task-drawer__progress-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--color-text-secondary);
-}
-
-.hfl-task-drawer__progress-head span:last-child {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  color: var(--color-info);
-}
-
-.hfl-task-drawer__progress-track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background-color: var(--color-border);
-}
-
-.hfl-task-drawer__progress-fill {
-  height: 100%;
-  min-width: 4px;
-  border-radius: inherit;
-  background-color: var(--color-info);
-  transition: width 0.35s ease;
-}
-
-.hfl-task-drawer__progress-fill--success {
-  background-color: var(--color-success);
-}
-
-.hfl-task-drawer__progress-fill--partial {
-  background-color: var(--color-warning);
-}
-
-.hfl-task-drawer__progress-fill--failed,
-.hfl-task-drawer__progress-fill--timeout {
-  background-color: var(--color-error);
-}
-
-.hfl-task-drawer__progress-fill--pending,
-.hfl-task-drawer__progress-fill--cancelled {
-  background-color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__timeline-icon--success {

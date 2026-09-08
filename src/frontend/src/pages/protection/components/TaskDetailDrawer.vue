@@ -21,7 +21,6 @@ import {
 import { apiErrorMessage, apiErrorMessageI18n } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
 import { formatLocalDateTime } from '../../../lib/dateTime'
-import { formatTaskProgressBarPercent, formatTaskProgressPercent } from '../../../lib/kopiaProgress'
 import { getNode } from '../../../lib/nodeApi'
 import { getBackupSourceSnapshot } from '../../../lib/protectionBackupConfigApi'
 import { cancelProtectionBackupTask } from '../../../lib/protectionBackupTaskApi'
@@ -239,14 +238,6 @@ function backupSourceConnectivityLabel(value?: string) {
 
 function backupSourceConnectivityTagType(value?: string): 'success' | 'danger' {
   return value === 'online' ? 'success' : 'danger'
-}
-
-function progressValue(row: TaskRow) {
-  return formatTaskProgressBarPercent(row.progress)
-}
-
-function progressText(row: TaskRow) {
-  return formatTaskProgressPercent(row.progress)
 }
 
 function formatTime(iso?: string | null) {
@@ -863,14 +854,14 @@ watch(
             />
             <div class="hfl-task-drawer__time-grid">
               <div>
-                <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startedAt') }}</span>
+                <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startTime') }}</span>
                 <span
                   class="hfl-task-drawer__time-value"
                   :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }"
                 >{{ formatTime(activeTask.started_at || activeTask.created_at) }}</span>
               </div>
               <div>
-                <span class="hfl-task-drawer__metric-label">{{ t('ops.task.finishedAt') }}</span>
+                <span class="hfl-task-drawer__metric-label">{{ t('ops.task.endTime') }}</span>
                 <span
                   class="hfl-task-drawer__time-value"
                   :class="{ 'hfl-empty-mark': !activeTask.finished_at }"
@@ -884,19 +875,6 @@ watch(
                 >{{ taskDuration(activeTask) }}</span>
               </div>
             </div>
-          </div>
-        </div>
-        <div class="hfl-task-drawer__progress-block">
-          <div class="hfl-task-drawer__progress-head">
-            <span>{{ t('ops.task.progressLabel') }}</span>
-            <span>{{ progressText(activeTask) }}</span>
-          </div>
-          <div class="hfl-task-drawer__progress-track">
-            <div
-              class="hfl-task-drawer__progress-fill"
-              :class="`hfl-task-drawer__progress-fill--${activeTask.status}`"
-              :style="{ width: `${progressValue(activeTask)}%` }"
-            />
           </div>
         </div>
       </section>
@@ -1426,7 +1404,6 @@ watch(
 .hfl-task-drawer__header-actions,
 .hfl-task-drawer__metric,
 .hfl-task-drawer__metric-tags,
-.hfl-task-drawer__progress-head,
 .hfl-task-drawer__steps-head,
 .hfl-task-drawer__step-card-head,
 .hfl-task-drawer__step-duration,
@@ -1659,43 +1636,6 @@ watch(
   min-width: 0;
   flex-direction: column;
   gap: 4px;
-}
-
-.hfl-task-drawer__progress-block {
-  padding-top: 2px;
-}
-
-.hfl-task-drawer__progress-head {
-  gap: 12px;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  color: rgb(71 85 105);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.hfl-task-drawer__progress-track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgb(226 232 240);
-}
-
-.hfl-task-drawer__progress-fill {
-  height: 100%;
-  min-width: 4px;
-  border-radius: inherit;
-  background: var(--color-info);
-  transition: width 0.35s ease;
-}
-
-.hfl-task-drawer__progress-fill--success {
-  background: rgb(22 163 74);
-}
-
-.hfl-task-drawer__progress-fill--failed,
-.hfl-task-drawer__progress-fill--timeout {
-  background: rgb(220 38 38);
 }
 
 .hfl-task-drawer__tabs {
@@ -2356,18 +2296,8 @@ watch(
   white-space: nowrap;
 }
 
-.hfl-task-drawer--target-repositories .hfl-task-drawer__time-value--strong,
-.hfl-task-drawer--target-repositories .hfl-task-drawer__progress-head span:last-child {
+.hfl-task-drawer--target-repositories .hfl-task-drawer__time-value--strong {
   color: var(--color-info);
-}
-
-.hfl-task-drawer--target-repositories .hfl-task-drawer__progress-head span:last-child {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-}
-
-.hfl-task-drawer--target-repositories .hfl-task-drawer__progress-fill--pending,
-.hfl-task-drawer--target-repositories .hfl-task-drawer__progress-fill--cancelled {
-  background: rgb(100 116 139);
 }
 
 .hfl-task-drawer--target-repositories .hfl-task-drawer__tab-panel {

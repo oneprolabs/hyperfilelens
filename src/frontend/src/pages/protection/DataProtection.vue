@@ -62,7 +62,7 @@ import TaskProgressCell from './components/TaskProgressCell.vue'
 import TaskTerminalOutcomeCell from './components/TaskTerminalOutcomeCell.vue'
 import TaskStatusTag from '../../components/TaskStatusTag.vue'
 import TaskDetailDrawer from './components/TaskDetailDrawer.vue'
-import { isTransferProgress, type TransferProgress, formatTaskProgressPercent } from '../../lib/kopiaProgress'
+import { isTransferProgress, type TransferProgress } from '../../lib/kopiaProgress'
 import TargetRepositoryDetailCard from './components/TargetRepositoryDetailCard.vue'
 import type { TargetRepositoryItem } from './components/TargetRepositoryPicker.vue'
 import { useBackupWizardSourcePendingOps } from './composables/useBackupWizardSourcePendingOps'
@@ -3254,11 +3254,6 @@ function sourceResetRunning(sourceId: string) {
   return sourceResetState(sourceId) === 'resetting'
 }
 
-function sourceResetProgress(sourceId: string) {
-  const progress = Number(resetTaskForSource(sourceId)?.progress ?? 0)
-  return Number.isFinite(progress) ? Math.max(0, Math.min(100, Math.round(progress))) : 0
-}
-
 function sourceResetStatusLabel(sourceId: string) {
   const state = sourceResetState(sourceId)
   if (state === 'resetting') return t('protection.backupsPage.resetStatusResetting')
@@ -4917,7 +4912,6 @@ function step3StopBackupConfirmItems(): ProtectionStopConfirmItem[] {
     .filter((row) => sourceBackupRuntime(row.id).running)
     .map((row) => ({
       name: row.name || row.hostname || row.id,
-      description: formatTaskProgressPercent(sourceBackupRuntime(row.id).progress),
       hint: row.nodeIp || row.hostname || undefined,
     }))
 }
@@ -4930,7 +4924,6 @@ function step3StopRestoreConfirmItems(): ProtectionStopConfirmItem[] {
       return {
         name: row.name || row.hostname || row.id,
         hint: record?.target_path || undefined,
-        description: formatTaskProgressPercent(sourceRestoreRuntime(row.id).progress),
       }
     })
 }
@@ -11283,12 +11276,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           <TaskProgressCell
                             v-if="sourceBackupCellPhase(row.id) === 'running'"
                             :failed="sourceBackupRuntime(row.id).failed"
-                            :progress="sourceBackupRuntime(row.id).progress"
                             :transfer-progress="sourceBackupRuntime(row.id).transferProgress"
                           />
                           <TaskProgressCell
                             v-else-if="sourceBackupCellPhase(row.id) === 'stopping'"
-                            :progress="sourceBackupRuntime(row.id).progress"
                             :transfer-progress="sourceBackupRuntime(row.id).transferProgress"
                             stopping
                           />
@@ -11315,12 +11306,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           <TaskProgressCell
                             v-if="sourceRestoreCellPhase(row.id) === 'running'"
                             :failed="sourceRestoreRuntime(row.id).failed"
-                            :progress="sourceRestoreRuntime(row.id).progress"
                             :transfer-progress="sourceRestoreRuntime(row.id).transferProgress"
                           />
                           <TaskProgressCell
                             v-else-if="sourceRestoreCellPhase(row.id) === 'stopping'"
-                            :progress="sourceRestoreRuntime(row.id).progress"
                             :transfer-progress="sourceRestoreRuntime(row.id).transferProgress"
                             stopping
                           />
@@ -11375,18 +11364,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           @click.stop="openResetTaskDetail(row)"
                         >
                           <span class="reset-status-cell__label">{{ sourceResetStatusLabel(row.id) }}</span>
-                          <span
-                            v-if="sourceResetState(row.id) === 'resetting'"
-                            class="reset-status-cell__progress"
-                          >
-                            <span class="reset-status-cell__track">
-                              <span
-                                class="reset-status-cell__fill"
-                                :style="{ width: `${sourceResetProgress(row.id)}%` }"
-                              />
-                            </span>
-                            <span class="reset-status-cell__percent">{{ sourceResetProgress(row.id) }}%</span>
-                          </span>
                         </button>
                         <FlowSourceReadyStatusCell
                           v-else
@@ -12382,18 +12359,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   </template>
                 </el-table-column>
                 <el-table-column
-                  :label="t('protection.backupsPage.flowTaskColProgress')"
-                  min-width="130"
-                >
-                  <template #default="{ row }">
-                    <el-progress
-                      :percentage="row.progress"
-                      :stroke-width="7"
-                    />
-                  </template>
-                </el-table-column>
-                <el-table-column
-                  :label="t('protection.backupsPage.flowRestoreRecordColCreated')"
+                  :label="t('protection.backupDetail.colStart')"
                   min-width="150"
                 >
                   <template #default="{ row }">
@@ -12444,19 +12410,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   </template>
                 </el-table-column>
                 <el-table-column
-                  :label="t('protection.backupsPage.flowTaskColProgress')"
-                  width="120"
-                >
-                  <template #default="{ row }">
-                    <el-progress
-                      :percentage="row.progress"
-                      :status="row.status === 'failed' ? 'exception' : undefined"
-                      :stroke-width="7"
-                    />
-                  </template>
-                </el-table-column>
-                <el-table-column
-                  :label="t('protection.backupsPage.flowRestoreRecordColCreated')"
+                  :label="t('protection.backupDetail.colStart')"
                   min-width="150"
                 >
                   <template #default="{ row }">
@@ -12467,7 +12421,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   </template>
                 </el-table-column>
                 <el-table-column
-                  :label="t('protection.backupsPage.flowRestoreRecordColFinished')"
+                  :label="t('protection.backupDetail.colEnd')"
                   min-width="150"
                 >
                   <template #default="{ row }">
@@ -19649,26 +19603,6 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   }
 }
 
-.protection-flow-progress {
-  max-width: 100%;
-}
-
-.protection-flow-progress :deep(.el-progress-bar__outer) {
-  background-color: rgb(226 232 240);
-}
-
-.protection-flow-progress :deep(.el-progress-bar__inner) {
-  background-color: var(--color-info);
-}
-
-.protection-flow-progress.is-exception :deep(.el-progress-bar__inner) {
-  background-color: var(--color-error);
-}
-
-.protection-flow-progress.is-success :deep(.el-progress-bar__inner) {
-  background-color: var(--color-success);
-}
-
 .flow-source-list-drawer-table :deep(.el-table__cell) {
   vertical-align: middle;
 }
@@ -20385,35 +20319,6 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 
 .reset-status-cell--reset_failed .reset-status-cell__label {
   color: rgb(185 28 28);
-}
-
-.reset-status-cell__progress {
-  display: grid;
-  width: 86px;
-  grid-template-columns: 1fr 28px;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: rgb(100 116 139);
-}
-
-.reset-status-cell__track {
-  height: 5px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgb(254 243 199);
-}
-
-.reset-status-cell__fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: rgb(245 158 11);
-}
-
-.reset-status-cell__percent {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
 }
 
 @media (min-width: 1200px) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElButton, ElDialog, ElTable, ElTableColumn, ElTag } from 'element-plus'
+import { ElButton, ElDialog, ElTable, ElTableColumn } from 'element-plus'
 import { AlertTriangle } from 'lucide-vue-next'
 import {
   buildStopConfirmMessage,
@@ -133,26 +133,6 @@ function confirm() {
                 <div class="hfl-flow-action-dialog__source-cell">
                   <span class="hfl-flow-action-dialog__source-name">{{ row.name }}</span>
                 </div>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              :label="t('protection.backupsPage.stopConfirmColProgress')"
-              width="120"
-            >
-              <template #default="{ row }">
-                <ElTag
-                  v-if="row.description"
-                  size="small"
-                  effect="light"
-                  type="warning"
-                  class="tabular-nums"
-                >
-                  {{ row.description }}
-                </ElTag>
-                <span
-                  v-else
-                  class="hfl-table-cell-time hfl-empty-mark"
-                >—</span>
               </template>
             </ElTableColumn>
             <ElTableColumn

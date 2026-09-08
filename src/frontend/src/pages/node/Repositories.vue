@@ -1534,11 +1534,6 @@ function repositoryTaskLabel(scope: 'operation' | 'status' | 'trigger', value?: 
   return translated === key ? enumDisplayLabel(value) : translated
 }
 
-function repositoryTaskProgress(task: TaskRow) {
-  const value = Number(task.progress || 0)
-  return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0
-}
-
 function resetAssociatedSources() {
   associatedSources.value = []
   associatedSourcesPage.value = 1
@@ -4184,17 +4179,6 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </template>
                 </ElTableColumn>
                 <ElTableColumn
-                  :label="t('repositoriesPage.tasksProgress')"
-                  min-width="150"
-                >
-                  <template #default="{ row }">
-                    <ElProgress
-                      :percentage="repositoryTaskProgress(row)"
-                      :stroke-width="7"
-                    />
-                  </template>
-                </ElTableColumn>
-                <ElTableColumn
                   :label="t('repositoriesPage.tasksTrigger')"
                   min-width="130"
                 >
@@ -4208,11 +4192,19 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </template>
                 </ElTableColumn>
                 <ElTableColumn
-                  :label="t('repositoriesPage.tasksCreated')"
+                  :label="t('repositoriesPage.tasksStartTime')"
                   width="180"
                 >
                   <template #default="{ row }">
-                    <span :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatLocalDateTime(row.created_at) }}</span>
+                    <span :class="{ 'hfl-empty-mark': !(row.started_at || row.created_at) }">{{ formatLocalDateTime(row.started_at || row.created_at) }}</span>
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn
+                  :label="t('repositoriesPage.tasksEndTime')"
+                  width="180"
+                >
+                  <template #default="{ row }">
+                    <span :class="{ 'hfl-empty-mark': !row.finished_at }">{{ formatLocalDateTime(row.finished_at) }}</span>
                   </template>
                 </ElTableColumn>
               </ElTable>

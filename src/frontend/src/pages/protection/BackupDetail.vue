@@ -97,8 +97,8 @@ type DetailSnapshotDir = DemoSnapshotDir
 type DetailSnapshot = {
   apiId: number
   id: string
-  startTime: string
-  endTime: string
+  startTime?: string | null
+  endTime?: string | null
   sizeBytes: number
   fileCount: number
   dirCount: number
@@ -303,7 +303,8 @@ type DemoTask = {
   id: string
   type: string
   status: DemoTaskStatus
-  createdAt: string
+  startTime: string
+  endTime: string
   duration: string
   trigger: string
   executor: string
@@ -327,12 +328,12 @@ const taskList = computed<DemoTask[]>(() => {
     const payload = taskPayload(task)
     const sourceName = sourceLabel()
     const status = String(task.status || 'pending') as DemoTaskStatus
-    const createdAt = fmtDateTime(task.created_at)
     return {
       id: task.task_uuid || String(task.id),
       type: task.display_name || taskTypeLabel(task.task_type),
       status,
-      createdAt,
+      startTime: task.started_at || task.created_at,
+      endTime: task.finished_at,
       duration: taskDurationText(task.started_at || task.created_at || '', task.finished_at || ''),
       trigger: triggerLabel(task.trigger_type || String(payload.trigger_type || '')),
       executor: sourceName || `${payload.source_type || ''}:${payload.source_ref_id || ''}`,
@@ -1318,15 +1319,27 @@ function closeDeleteSnapshotDialog() {
                 </template>
               </el-table-column>
               <el-table-column
-                :label="t('protection.backupDetail.colCreated')"
+                :label="t('protection.backupDetail.colStart')"
                 min-width="180"
-                prop="createdAt"
+                prop="startTime"
               >
                 <template #default="{ row }">
                   <span
                     class="hfl-table-cell-time"
-                    :class="{ 'hfl-empty-mark': !row.createdAt }"
-                  >{{ row.createdAt || '—' }}</span>
+                    :class="{ 'hfl-empty-mark': !row.startTime }"
+                  >{{ fmtDateTime(row.startTime) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column
+                :label="t('protection.backupDetail.colEnd')"
+                min-width="180"
+                prop="endTime"
+              >
+                <template #default="{ row }">
+                  <span
+                    class="hfl-table-cell-time"
+                    :class="{ 'hfl-empty-mark': !row.endTime }"
+                  >{{ fmtDateTime(row.endTime) }}</span>
                 </template>
               </el-table-column>
               <template #empty>
