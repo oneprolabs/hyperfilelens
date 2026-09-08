@@ -1275,6 +1275,13 @@ if grep -F 'install.sh" platform-gateway ensure' "${remote_deploy}" >/dev/null; 
 	printf 'ERROR: remote deployment must not repeat installer-owned Gateway ensure\n' >&2
 	exit 1
 fi
+saas_deploy_action="${ROOT}/.github/actions/deploy-saas/action.yml"
+if grep -F 'platform-gateway ensure' "${saas_deploy_action}" >/dev/null; then
+	printf 'ERROR: SaaS deployment must not repeat installer-owned Gateway ensure\n' >&2
+	exit 1
+fi
+grep -F 'platform-gateway verify --required --timeout 180' \
+	"${saas_deploy_action}" >/dev/null
 grep -F -- '--public-url) PUBLIC_URL=' "${remote_deploy}" >/dev/null
 grep -F -- '--admin-public-url) ADMIN_PUBLIC_URL=' "${remote_deploy}" >/dev/null
 grep -F -- '--direct-host) DIRECT_HOST=' "${remote_deploy}" >/dev/null

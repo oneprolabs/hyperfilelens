@@ -2,7 +2,9 @@ package enroll
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -89,6 +91,20 @@ func checkConsoleReachable(ctx context.Context, apiBase string) reachResult {
 }
 
 func checkWSSReachable(ctx context.Context, wssURL string) reachResult {
+	return checkWSSReachableWithRetry(
+		ctx,
+		wssURL,
+		30*time.Second,
+		[]time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 8 * time.Second},
+	)
+}
+
+func checkWSSReachableWithRetry(
+	ctx context.Context,
+	wssURL string,
+	retryWindow time.Duration,
+	retryDelays []time.Duration,
+) reachResult {
 	wssURL = strings.TrimSpace(wssURL)
 	if wssURL == "" {
 		return reachResult{
@@ -106,9 +122,6 @@ func checkWSSReachable(ctx context.Context, wssURL string) reachResult {
 	}
 
 	endpoint := parsed.Scheme + "://" + parsed.Host
-	dialCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-
 	if parsed.Scheme != "ws" && parsed.Scheme != "wss" {
 		return reachResult{
 			Title:  "Control-plane WebSocket scheme is unsupported",
@@ -116,12 +129,38 @@ func checkWSSReachable(ctx context.Context, wssURL string) reachResult {
 		}
 	}
 
+	retryCtx, cancel := context.WithTimeout(ctx, retryWindow)
+	defer cancel()
+	for attempt := 0; ; attempt++ {
+		result, retry := checkWSSReachableOnce(retryCtx, parsed, endpoint)
+		if result.OK || !retry || attempt >= len(retryDelays) || retryCtx.Err() != nil {
+			return result
+		}
+
+		delay := retryDelays[attempt]
+		timer := time.NewTimer(delay)
+		select {
+		case <-retryCtx.Done():
+			timer.Stop()
+			return result
+		case <-timer.C:
+		}
+	}
+}
+
+func checkWSSReachableOnce(
+	ctx context.Context,
+	parsed *url.URL,
+	endpoint string,
+) (reachResult, bool) {
+	dialCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 8 * time.Second,
 		Proxy:            http.ProxyFromEnvironment,
 		TLSClientConfig:  tlsclient.Config(),
 	}
-	conn, response, err := dialer.DialContext(dialCtx, wssURL, nil)
+	conn, response, err := dialer.DialContext(dialCtx, parsed.String(), nil)
 	if response != nil && response.Body != nil {
 		_ = response.Body.Close()
 	}
@@ -133,7 +172,7 @@ func checkWSSReachable(ctx context.Context, wssURL string) reachResult {
 			OK:     true,
 			Title:  "Control plane WebSocket endpoint reachable",
 			Detail: endpoint + " accepted the WebSocket handshake",
-		}
+		}, false
 	}
 	if response != nil &&
 		(response.StatusCode == http.StatusBadRequest ||
@@ -147,7 +186,7 @@ func checkWSSReachable(ctx context.Context, wssURL string) reachResult {
 				endpoint,
 				response.StatusCode,
 			),
-		}
+		}, false
 	}
 	detail := fmt.Sprintf("%s - %s", endpoint, shortenErr(err))
 	if response != nil {
@@ -156,7 +195,28 @@ func checkWSSReachable(ctx context.Context, wssURL string) reachResult {
 	return reachResult{
 		Title:  "WebSocket endpoint unreachable",
 		Detail: detail,
+	}, transientWSSFailure(response, err)
+}
+
+func transientWSSFailure(response *http.Response, err error) bool {
+	if response != nil {
+		switch response.StatusCode {
+		case http.StatusBadGateway,
+			http.StatusServiceUnavailable,
+			http.StatusGatewayTimeout:
+			return true
+		default:
+			return false
+		}
 	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return dnsErr.IsTimeout || dnsErr.IsTemporary
+	}
+	var networkErr net.Error
+	return errors.As(err, &networkErr) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func websocketDialAddress(parsed *url.URL) string {
