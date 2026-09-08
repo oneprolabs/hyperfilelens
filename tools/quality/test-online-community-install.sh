@@ -28,6 +28,9 @@ grep -Fq 'api.github.com/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1
 grep -Fq 'gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1' \
 	"${online}/install.sh"
 grep -Fq 'recent fallback tags:' "${online}/install.sh"
+grep -Fq 'prepare_status == 75' "${online}/install.sh"
+grep -Fq 'Container image downloads could not be completed after retrying the preferred registry and trying the fallback' \
+	"${online}/install.sh"
 grep -Fq 'prepared Community image revision does not match the published release' \
 	"${online}/install.sh"
 grep -Fq 'run this command through sudo' "${online}/install.sh"
@@ -233,6 +236,20 @@ if spec is None or spec.loader is None:
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
+
+for message in (
+    "dial tcp [::1]:443: network is unreachable",
+    "short read: unexpected EOF",
+    "unexpected commit digest; expected sha256:test",
+    "received unexpected HTTP status: 503 Service Unavailable",
+):
+    assert module.registry_failure_is_transient(message), message
+for message in (
+    "manifest unknown: manifest unknown",
+    "pull access denied",
+    "no matching manifest for linux/amd64",
+):
+    assert not module.registry_failure_is_transient(message), message
 
 runtime = json.loads(
     (root / "deploy/online/sourcelens/runtime.json").read_text(encoding="utf-8")
@@ -440,8 +457,25 @@ case "${1:-} ${2:-}" in
 	printf '\rDocker Compose native pull progress: parallel=%s images=%s\n' \
 		"${3}" "${image_count}"
 	if [[ "${HFL_TEST_DOCKER_PULL_FAIL:-0}" == "1" ]]; then
-		printf 'registry rejected test image: access denied\n' >&2
+		if [[ "${HFL_TEST_DOCKER_PULL_ERROR:-denied}" == network ]]; then
+			printf 'short read: unexpected EOF\n' >&2
+		else
+			printf 'registry rejected test image: access denied\n' >&2
+		fi
 		exit 23
+	fi
+	if [[ -n "${HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT:-}" ]] \
+		&& grep -Fq "docker.io/oneprolabs/${HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT}:" \
+			"${compose_file}"; then
+		count=0
+		[[ ! -f "${HFL_TEST_DOCKER_PULL_MARKER}" ]] \
+			|| count="$(cat "${HFL_TEST_DOCKER_PULL_MARKER}")"
+		count=$((count + 1))
+		printf '%s\n' "${count}" >"${HFL_TEST_DOCKER_PULL_MARKER}"
+		if ((count <= ${HFL_TEST_DOCKER_TRANSIENT_FAILURES:-1})); then
+			printf 'short read: unexpected EOF\n' >&2
+			exit 23
+		fi
 	fi
 	if [[ -n "${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT:-}" ]] \
 		&& grep -Fq "docker.io/oneprolabs/${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT}:" \
@@ -461,6 +495,15 @@ case "${1:-} ${2:-}" in
 	if [[ -n "${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT:-}" \
 		&& "${ref}" == "docker.io/oneprolabs/${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT}:"* ]]; then
 		exit 1
+	fi
+	if [[ -n "${HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT:-}" \
+		&& "${ref}" == "docker.io/oneprolabs/${HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT}:"* ]]; then
+		count=0
+		[[ ! -f "${HFL_TEST_DOCKER_PULL_MARKER}" ]] \
+			|| count="$(cat "${HFL_TEST_DOCKER_PULL_MARKER}")"
+		if ((count <= ${HFL_TEST_DOCKER_TRANSIENT_FAILURES:-1})); then
+			exit 1
+		fi
 	fi
 	if [[ "${format}" == *RepoDigests* ]]; then
 		repository=${ref%%@*}
@@ -1717,14 +1760,17 @@ fi
 grep -Fq 'repeated page 2' "${repeated_page_log}"
 
 prepare_log="${tmp}/prepare.log"
-PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+if ! PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 	HFL_ONLINE_NATIVE_PROGRESS=1 \
 	python3 "${online}/prepare.py" \
 		--source-root "${ROOT}" \
 		--version v1.2.3 \
 		--region global \
 		--concise-output \
-		--output "${candidate}" >"${prepare_log}" 2>&1
+		--output "${candidate}" >"${prepare_log}" 2>&1; then
+	cat "${prepare_log}" >&2
+	exit 1
+fi
 grep -F 'Docker Compose native pull progress: parallel=5 images=10' \
 	"${prepare_log}" >/dev/null
 grep -F '[....] Pulling 10 container images · up to 5 concurrent downloads' \
@@ -1781,6 +1827,48 @@ grep -F '[....] Retrying 1 installation image(s) from the fallback registry' \
 	"${fallback_prepare_log}" >/dev/null
 grep -F 'Docker Compose native pull progress: parallel=5 images=1' \
 	"${fallback_prepare_log}" >/dev/null
+
+retry_marker="${tmp}/preferred-registry-retries"
+retry_candidate="${tmp}/retry-candidate"
+retry_prepare_log="${tmp}/prepare-retry.log"
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 \
+	HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT=hyperfilelens-backend \
+	HFL_TEST_DOCKER_PULL_MARKER="${retry_marker}" \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--concise-output \
+		--output "${retry_candidate}" >"${retry_prepare_log}" 2>&1
+[[ "$(cat "${retry_marker}")" -eq 2 ]]
+grep -F 'retrying 1 image(s) from the preferred registry in 0 seconds' \
+	"${retry_prepare_log}" >/dev/null
+if grep -Fq 'from the fallback registry' "${retry_prepare_log}"; then
+	printf 'ERROR: successful preferred-registry retry used the fallback registry\n' >&2
+	exit 1
+fi
+
+retry_fallback_marker="${tmp}/preferred-registry-fallback-retries"
+retry_fallback_candidate="${tmp}/retry-fallback-candidate"
+retry_fallback_log="${tmp}/prepare-retry-fallback.log"
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 \
+	HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT=hyperfilelens-backend \
+	HFL_TEST_DOCKER_TRANSIENT_FAILURES=2 \
+	HFL_TEST_DOCKER_PULL_MARKER="${retry_fallback_marker}" \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--concise-output \
+		--output "${retry_fallback_candidate}" >"${retry_fallback_log}" 2>&1
+[[ "$(cat "${retry_fallback_marker}")" -eq 2 ]]
+grep -F 'Retrying 1 installation image(s) from the fallback registry' \
+	"${retry_fallback_log}" >/dev/null
+
 failed_prepare_log="${tmp}/prepare-failed.log"
 if PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 	HFL_ONLINE_NATIVE_PROGRESS=1 HFL_TEST_DOCKER_PULL_FAIL=1 \
@@ -1798,6 +1886,29 @@ grep -Fq 'registry rejected test image: access denied' "${failed_prepare_log}"
 grep -Fq 'docker.io/oneprolabs/hyperfilelens-backend:1.2.3' "${failed_prepare_log}"
 grep -Fq 'registry.cn-beijing.aliyuncs.com/oneprolabs/hyperfilelens-backend:1.2.3' \
 	"${failed_prepare_log}"
+
+network_prepare_log="${tmp}/prepare-network-failed.log"
+set +e
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 \
+	HFL_TEST_DOCKER_PULL_FAIL=1 HFL_TEST_DOCKER_PULL_ERROR=network \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--concise-output \
+		--output "${tmp}/network-failed-candidate" \
+		>"${network_prepare_log}" 2>&1
+network_prepare_status=$?
+set -e
+[[ "${network_prepare_status}" -eq 75 ]]
+grep -Fq '[ERROR] Temporary container registry failure:' "${network_prepare_log}"
+if grep -Eq 'incomplete or unavailable|recommended retry:' \
+	"${network_prepare_log}"; then
+	printf 'ERROR: registry network failure was reported as a release-tag failure\n' >&2
+	exit 1
+fi
 [[ -r "${candidate}/payload/runtime/compose-runtime.sh" ]]
 [[ ! -x "${candidate}/payload/runtime/compose-runtime.sh" ]]
 "${candidate}/install.sh" --help >/dev/null

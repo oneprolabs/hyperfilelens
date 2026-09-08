@@ -37,6 +37,10 @@ grep -Fq -- '--registry-region "$HFL_REGISTRY_REGION"' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
 grep -Fq 'registry_login_count > 0' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+grep -Fq 'pull_registry_image "${immutable_ref}" "${attempts}"' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+grep -Fq 'HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS:-15' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
 grep -Fq 'for prefix in "${registry_region}" "${fallback_region}"' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
 grep -Fq 'Enterprise SaaS deployment action:' \
@@ -217,6 +221,24 @@ case "${1:-} ${2:-}" in
 "pull --platform")
 	ref="${4:-}"
 	printf '%s\n' "${ref}" >>"${HFL_TEST_PULL_MARKER}"
+	transient_match=0
+	case "${HFL_TEST_TRANSIENT_REGION:-}" in
+	cn) [[ "${ref}" == registry.example.cn/* ]] && transient_match=1 ;;
+	global) [[ "${ref}" == docker.io/* ]] && transient_match=1 ;;
+	"") ;;
+	*) exit 2 ;;
+	esac
+	if ((transient_match == 1)); then
+		count=0
+		[[ ! -f "${HFL_TEST_TRANSIENT_MARKER}" ]] \
+			|| count="$(cat "${HFL_TEST_TRANSIENT_MARKER}")"
+		count=$((count + 1))
+		printf '%s\n' "${count}" >"${HFL_TEST_TRANSIENT_MARKER}"
+		if ((count <= ${HFL_TEST_TRANSIENT_FAILURES:-1})); then
+			printf 'short read: unexpected EOF\n' >&2
+			exit 1
+		fi
+	fi
 	case "${HFL_TEST_FAIL_REGION:-}" in
 	cn) [[ "${ref}" == registry.example.cn/* ]] && exit 1 ;;
 	global) [[ "${ref}" == docker.io/* ]] && exit 1 ;;
@@ -445,6 +467,29 @@ HFL_TEST_FAIL_REGION=global HFL_REGISTRY_REGION=global \
 [[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
 [[ "$(sed -n '1p' "${pull_marker}")" == docker.io/* ]]
 [[ "$(sed -n '2p' "${pull_marker}")" == registry.example.cn/* ]]
+
+transient_marker="${tmp}/transient-pulls"
+rm -f "${tag_marker}" "${transient_marker}"
+: >"${pull_marker}"
+HFL_TEST_TRANSIENT_REGION=cn HFL_TEST_TRANSIENT_MARKER="${transient_marker}" \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 HFL_REGISTRY_REGION=cn \
+	load_images_from_manifest 0 "${package_root}"
+[[ -f "${tag_marker}" ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
+[[ "$(sed -n '1p' "${pull_marker}")" == registry.example.cn/* ]]
+[[ "$(sed -n '2p' "${pull_marker}")" == registry.example.cn/* ]]
+
+rm -f "${tag_marker}" "${transient_marker}"
+: >"${pull_marker}"
+HFL_TEST_TRANSIENT_REGION=cn HFL_TEST_TRANSIENT_FAILURES=2 \
+	HFL_TEST_TRANSIENT_MARKER="${transient_marker}" \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 HFL_REGISTRY_REGION=cn \
+	load_images_from_manifest 0 "${package_root}"
+[[ -f "${tag_marker}" ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 3 ]]
+[[ "$(sed -n '1p' "${pull_marker}")" == registry.example.cn/* ]]
+[[ "$(sed -n '2p' "${pull_marker}")" == registry.example.cn/* ]]
+[[ "$(sed -n '3p' "${pull_marker}")" == docker.io/* ]]
 
 rm -f "${tag_marker}"
 : >"${pull_marker}"

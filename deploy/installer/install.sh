@@ -2581,8 +2581,10 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
+import time
 
 root = pathlib.Path(sys.argv[1])
 skip_sourcelens = sys.argv[2] == "1"
@@ -2591,6 +2593,19 @@ with (root / "MANIFEST.json").open(encoding="utf-8") as fh:
 delivery = manifest.get("delivery") or {"mode": "offline"}
 delivery_mode = str(delivery.get("mode") or "offline")
 online_child = os.environ.get("HFL_ONLINE_CHILD") == "1"
+registry_retry_delay = os.environ.get("HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS", "15")
+registry_retry_delay_seconds = (
+    min(int(registry_retry_delay), 300) if registry_retry_delay.isdecimal() else 15
+)
+transient_registry_error = re.compile(
+    r"network is unreachable|no route to host|connection (?:refused|reset|timed out)"
+    r"|i/o timeout|context deadline exceeded|tls handshake timeout|client\.timeout"
+    r"|request canceled|unexpected eof|short read|unexpected commit digest"
+    r"|too many requests"
+    r"|(?:http (?:response )?status|status(?: code)?(?: from [^:\n]+)?)"
+    r"[^0-9\n]{0,16}(?:429|5[0-9]{2})",
+    re.IGNORECASE,
+)
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -2695,21 +2710,35 @@ if delivery_mode == "registry":
             else:
                 print(f"[ OK ] Reusing registry image: {local_ref}@{digest}")
             continue
-        for source in sources:
+        for source_index, source in enumerate(sources):
             source_ref = str(source.get("ref") or "")
             repository = source_ref.rsplit(":", 1)[0]
             immutable_ref = f"{repository}@{digest}"
-            completed = subprocess.run(
-                ["docker", "pull", "--platform", "linux/amd64", immutable_ref],
-                check=False,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            )
-            if completed.returncode == 0:
-                pulled = immutable_ref
+            attempts = 2 if source_index == 0 else 1
+            for attempt in range(1, attempts + 1):
+                completed = subprocess.run(
+                    ["docker", "pull", "--platform", "linux/amd64", immutable_ref],
+                    check=False,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+                if completed.returncode == 0:
+                    pulled = immutable_ref
+                    break
+                output = completed.stdout.strip()
+                errors.append(f"{immutable_ref}: {output[-500:]}")
+                if attempt < attempts and transient_registry_error.search(output):
+                    print(
+                        "[WARN] Temporary container registry error; "
+                        f"retrying the preferred source in "
+                        f"{registry_retry_delay_seconds} seconds"
+                    )
+                    time.sleep(registry_retry_delay_seconds)
+                    continue
                 break
-            errors.append(f"{immutable_ref}: {completed.stdout.strip()[-500:]}")
+            if pulled:
+                break
         if not pulled:
             print(
                 f"[install.sh] ERROR: no registry source could provide {local_ref}",
