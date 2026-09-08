@@ -673,6 +673,559 @@ class CopilotChatTeardownTests(TestCase):
             LensGatewayChatSlot.objects.filter(session_link=self.session).exists()
         )
 
+    @mock.patch(
+        "apps.lens_bridge.services.gateway_readiness.gateway_runtime_state",
+        return_value={"hfl_agent_online": False},
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.chat_lifecycle.gateway_chat_queue.wake_gateway_queue"
+    )
+    def test_force_delete_private_chat_releases_slot_and_retains_remote_cleanup(
+        self,
+        wake_gateway_queue,
+        _gateway_runtime_state,
+    ):
+        self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
+        self.gateway_link.save(update_fields=["scope", "updated_at"])
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.status = LensSessionLink.Status.ARCHIVED
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.BLOCKED
+        self.session.sl_session_uuid = None
+        self.session.sl_assistant_uuid = None
+        self.session.teardown_state_json = {
+            "intent": "delete_session",
+            "blocking": {
+                "reason": "cleanup_workspace",
+                "intervention_required": True,
+            },
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "status",
+                "cleanup_intent",
+                "cleanup_status",
+                "sl_session_uuid",
+                "sl_assistant_uuid",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+        self.knowledge_source.sl_assistant_uuid = None
+        self.knowledge_source.sl_datasource_uuid = None
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.teardown_state_json = {
+            "cancel_chat_restore": {"status": "success"},
+            "cancel_conversion": {"status": "success"},
+            "blocking": {
+                "reason": "cleanup_workspace",
+                "intervention_required": True,
+            }
+        }
+        self.knowledge_source.save(
+            update_fields=[
+                "sl_assistant_uuid",
+                "sl_datasource_uuid",
+                "lifecycle_status",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+        self.workspace_binding.state = LensWorkspaceBinding.State.DELETING
+        self.workspace_binding.save(update_fields=["state", "updated_at"])
+        LensGatewayChatSlot.objects.create(
+            gateway_link=self.gateway_link,
+            slot_number=1,
+            session_link=self.session,
+            session_generation=self.session.provision_generation,
+            acquired_at=timezone.now(),
+            heartbeat_at=timezone.now(),
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            result = chat_lifecycle.force_delete_private_copilot_chat(
+                self.session,
+                requested_by=self.user,
+            )
+
+        result.refresh_from_db()
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            result.lifecycle_status,
+            LensSessionLink.LifecycleStatus.DELETING,
+        )
+        self.assertEqual(result.cleanup_status, LensSessionLink.CleanupStatus.PENDING)
+        self.assertFalse(
+            LensGatewayChatSlot.objects.filter(session_link=self.session).exists()
+        )
+        self.assertEqual(
+            result.teardown_state_json["forced_remote_cleanup"]["status"],
+            "pending",
+        )
+        self.assertEqual(
+            self.knowledge_source.teardown_state_json["forced_remote_cleanup"][
+                "workspace_uid"
+            ],
+            str(self.workspace_binding.workspace_uid),
+        )
+        self.assertNotIn("blocking", self.knowledge_source.teardown_state_json)
+        wake_gateway_queue.assert_called_once_with(self.gateway_link.id)
+
+        repeated = chat_lifecycle.force_delete_private_copilot_chat(
+            self.session,
+            requested_by=self.user,
+        )
+        self.assertEqual(
+            repeated.teardown_state_json["forced_remote_cleanup"]["requested_at"],
+            result.teardown_state_json["forced_remote_cleanup"]["requested_at"],
+        )
+
+    def test_force_delete_requires_workspace_to_be_only_remaining_cleanup(self):
+        self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
+        self.gateway_link.save(update_fields=["scope", "updated_at"])
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.BLOCKED
+        self.session.teardown_state_json = {
+            "blocking": {
+                "reason": "cleanup_workspace",
+                "intervention_required": True,
+            }
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "cleanup_intent",
+                "cleanup_status",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.teardown_state_json = {
+            "cancel_chat_restore": {"status": "success"},
+            "cancel_conversion": {"status": "success"},
+            "blocking": {
+                "reason": "cleanup_workspace",
+                "intervention_required": True,
+            },
+        }
+        self.knowledge_source.save(
+            update_fields=[
+                "lifecycle_status",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+        self.workspace_binding.state = LensWorkspaceBinding.State.DELETING
+        self.workspace_binding.save(update_fields=["state", "updated_at"])
+
+        self.assertFalse(chat_lifecycle.can_force_delete_private_chat(self.session))
+
+        self.session.sl_session_uuid = None
+        self.session.sl_assistant_uuid = None
+        self.session.save(
+            update_fields=["sl_session_uuid", "sl_assistant_uuid", "updated_at"]
+        )
+        self.knowledge_source.sl_assistant_uuid = None
+        self.knowledge_source.sl_datasource_uuid = None
+        self.knowledge_source.save(
+            update_fields=["sl_assistant_uuid", "sl_datasource_uuid", "updated_at"]
+        )
+        self.session.refresh_from_db()
+        self.assertTrue(chat_lifecycle.can_force_delete_private_chat(self.session))
+
+        state = dict(self.knowledge_source.teardown_state_json)
+        state["cancel_conversion"] = {"status": "waiting"}
+        self.knowledge_source.teardown_state_json = state
+        self.knowledge_source.save(
+            update_fields=["teardown_state_json", "updated_at"]
+        )
+        self.session.refresh_from_db()
+        self.assertFalse(chat_lifecycle.can_force_delete_private_chat(self.session))
+
+        state["cancel_conversion"] = {"status": "success"}
+        self.knowledge_source.teardown_claim_token = uuid.uuid4()
+        self.knowledge_source.teardown_state_json = state
+        self.knowledge_source.save(
+            update_fields=[
+                "teardown_claim_token",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+        self.session.refresh_from_db()
+        self.assertFalse(chat_lifecycle.can_force_delete_private_chat(self.session))
+
+    @mock.patch("apps.node.services.internal.agent_task.run_agent_task_sync")
+    def test_completed_forced_cleanup_releases_snapshot_lease(
+        self,
+        run_agent_task,
+    ):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="forced-cleanup-snapshot",
+            idempotency_key="forced-cleanup-snapshot",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        self.gateway.organization = self.tenant
+        self.gateway.save(update_fields=["organization", "updated_at"])
+        self.gateway_link.organization = self.tenant
+        self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
+        self.gateway_link.owner_user = self.user
+        self.gateway_link.save(
+            update_fields=["organization", "scope", "owner_user", "updated_at"]
+        )
+        self.workspace_binding.execution_organization_id = self.tenant.id
+        self.workspace_binding.save(
+            update_fields=["execution_organization_id", "updated_at"]
+        )
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.status = LensSessionLink.Status.ARCHIVED
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.BLOCKED
+        self.session.sl_session_uuid = None
+        self.session.sl_assistant_uuid = None
+        self.session.backup_source_snapshot_id = snapshot.id
+        self.session.teardown_state_json = {
+            "intent": "delete_session",
+            "revoke_shares": {"status": "success"},
+            "delete_session": {"status": "success"},
+            "delete_assistant": {"status": "success"},
+            "blocking": {
+                "reason": "cleanup_workspace",
+                "intervention_required": True,
+            },
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "status",
+                "cleanup_intent",
+                "cleanup_status",
+                "sl_session_uuid",
+                "sl_assistant_uuid",
+                "backup_source_snapshot_id",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+        self.knowledge_source.sl_assistant_uuid = None
+        self.knowledge_source.sl_datasource_uuid = None
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.teardown_state_json = {
+            "cancel_chat_restore": {"status": "success"},
+            "cancel_conversion": {"status": "success"},
+            "blocking": {
+                "reason": "cleanup_workspace",
+                "intervention_required": True,
+            },
+        }
+        self.knowledge_source.save(
+            update_fields=[
+                "sl_assistant_uuid",
+                "sl_datasource_uuid",
+                "lifecycle_status",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+        self.workspace_binding.state = LensWorkspaceBinding.State.DELETING
+        self.workspace_binding.save(update_fields=["state", "updated_at"])
+        acquire_snapshot_usage(
+            organization_id=self.tenant.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id=self.session.id,
+        )
+        run_agent_task.return_value = mock.MagicMock(
+            ok=True,
+            timed_out=False,
+            task=mock.MagicMock(id=uuid.uuid4(), last_error=""),
+        )
+
+        chat_lifecycle.force_delete_private_copilot_chat(
+            self.session,
+            requested_by=self.user,
+        )
+        reconcile_snapshot_usage_leases()
+        self.assertTrue(
+            SnapshotUsageLease.objects.filter(snapshot_id=snapshot.id).exists()
+        )
+
+        result = chat_lifecycle.run_copilot_chat_teardown(
+            session_link_id=self.session.id
+        )
+
+        self.assertEqual(result["status"], "deleted")
+        self.session.refresh_from_db()
+        self.knowledge_source.refresh_from_db()
+        self.workspace_binding.refresh_from_db()
+        self.assertEqual(
+            self.session.teardown_state_json["forced_remote_cleanup"]["status"],
+            "complete",
+        )
+        self.assertEqual(
+            self.knowledge_source.teardown_state_json["forced_remote_cleanup"][
+                "status"
+            ],
+            "complete",
+        )
+        self.assertEqual(
+            self.workspace_binding.state,
+            LensWorkspaceBinding.State.DELETED,
+        )
+        self.assertIsNone(self.session.knowledge_source_id)
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(snapshot_id=snapshot.id).exists()
+        )
+
+    def test_force_delete_is_not_available_for_public_gateway(self):
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.BLOCKED
+        self.session.sl_session_uuid = None
+        self.session.sl_assistant_uuid = None
+        self.session.teardown_state_json = {
+            "blocking": {
+                "reason": "cleanup_workspace",
+                "intervention_required": True,
+            }
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "cleanup_intent",
+                "cleanup_status",
+                "sl_session_uuid",
+                "sl_assistant_uuid",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+        self.knowledge_source.sl_assistant_uuid = None
+        self.knowledge_source.sl_datasource_uuid = None
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.teardown_state_json = {
+            "cancel_chat_restore": {"status": "success"},
+            "cancel_conversion": {"status": "success"},
+            "blocking": {
+                "reason": "cleanup_workspace",
+                "intervention_required": True,
+            },
+        }
+        self.knowledge_source.save(
+            update_fields=[
+                "sl_assistant_uuid",
+                "sl_datasource_uuid",
+                "lifecycle_status",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+
+        self.assertFalse(chat_lifecycle.can_force_delete_private_chat(self.session))
+
+    @mock.patch(
+        "apps.lens_bridge.tasks.knowledge_source_teardown."
+        "execute_knowledge_source_teardown_task.delay"
+    )
+    @mock.patch(
+        "apps.lens_bridge.tasks.chat_lifecycle."
+        "execute_copilot_chat_teardown_task.delay"
+    )
+    @mock.patch(
+        "apps.node.services.internal.node_registry.agent_ws_routable",
+        return_value=False,
+    )
+    def test_forced_cleanup_reconciler_waits_while_private_gateway_is_offline(
+        self,
+        _agent_ws_routable,
+        chat_delay,
+        knowledge_source_delay,
+    ):
+        marker = {
+            "status": "pending",
+            "session_link_id": self.session.id,
+            "workspace_uid": str(self.workspace_binding.workspace_uid),
+        }
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.PENDING
+        self.session.teardown_state_json = {"forced_remote_cleanup": marker}
+        self.session.teardown_next_retry_at = timezone.now()
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "cleanup_intent",
+                "cleanup_status",
+                "teardown_state_json",
+                "teardown_next_retry_at",
+                "updated_at",
+            ]
+        )
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.teardown_state_json = {
+            "forced_remote_cleanup": marker
+        }
+        self.knowledge_source.teardown_next_retry_at = timezone.now()
+        self.knowledge_source.save(
+            update_fields=[
+                "lifecycle_status",
+                "teardown_state_json",
+                "teardown_next_retry_at",
+                "updated_at",
+            ]
+        )
+
+        result = reconcile_lens_resource_teardowns_task(limit=10)
+
+        self.assertEqual(result["queued"], 0)
+        chat_delay.assert_not_called()
+        knowledge_source_delay.assert_not_called()
+
+    @mock.patch(
+        "apps.lens_bridge.tasks.knowledge_source_teardown."
+        "execute_knowledge_source_teardown_task.delay"
+    )
+    @mock.patch(
+        "apps.lens_bridge.tasks.chat_lifecycle."
+        "execute_copilot_chat_teardown_task.delay"
+    )
+    @mock.patch(
+        "apps.node.services.internal.node_registry.agent_ws_routable",
+        return_value=True,
+    )
+    def test_forced_cleanup_reconciler_resumes_when_private_gateway_is_online(
+        self,
+        _agent_ws_routable,
+        chat_delay,
+        knowledge_source_delay,
+    ):
+        marker = {
+            "status": "pending",
+            "session_link_id": self.session.id,
+            "workspace_uid": str(self.workspace_binding.workspace_uid),
+        }
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.PENDING
+        self.session.teardown_state_json = {"forced_remote_cleanup": marker}
+        self.session.teardown_next_retry_at = timezone.now()
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "cleanup_intent",
+                "cleanup_status",
+                "teardown_state_json",
+                "teardown_next_retry_at",
+                "updated_at",
+            ]
+        )
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.teardown_state_json = {
+            "forced_remote_cleanup": marker
+        }
+        self.knowledge_source.teardown_next_retry_at = timezone.now()
+        self.knowledge_source.save(
+            update_fields=[
+                "lifecycle_status",
+                "teardown_state_json",
+                "teardown_next_retry_at",
+                "updated_at",
+            ]
+        )
+
+        result = reconcile_lens_resource_teardowns_task(limit=10)
+
+        self.assertEqual(result["queued"], 1)
+        chat_delay.assert_called_once_with(session_link_id=self.session.id)
+        knowledge_source_delay.assert_not_called()
+
+    @mock.patch(
+        "apps.lens_bridge.tasks.knowledge_source_teardown."
+        "execute_knowledge_source_teardown_task.delay"
+    )
+    @mock.patch(
+        "apps.lens_bridge.tasks.chat_lifecycle."
+        "execute_copilot_chat_teardown_task.delay"
+    )
+    @mock.patch("apps.node.services.internal.node_registry.agent_ws_routable")
+    def test_offline_forced_cleanup_does_not_starve_an_online_gateway(
+        self,
+        agent_ws_routable,
+        chat_delay,
+        knowledge_source_delay,
+    ):
+        second_gateway = Node.objects.create(
+            organization=self.tenant,
+            name="second-private-gateway",
+            role=Node.Role.GATEWAY,
+        )
+        second_gateway_link = LensGatewayLink.objects.create(
+            organization=self.tenant,
+            gateway=second_gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.ORGANIZATION,
+            workspace_root="/workspace/second/data",
+        )
+        online_session = LensSessionLink.objects.create(
+            organization=self.tenant,
+            hfl_user=self.user,
+            gateway_link=second_gateway_link,
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            cleanup_intent=LensSessionLink.CleanupIntent.DELETE_SESSION,
+            cleanup_status=LensSessionLink.CleanupStatus.PENDING,
+            teardown_next_retry_at=timezone.now(),
+            teardown_state_json={
+                "forced_remote_cleanup": {"status": "pending"}
+            },
+        )
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.PENDING
+        self.session.teardown_next_retry_at = timezone.now() - timedelta(minutes=1)
+        self.session.teardown_state_json = {
+            "forced_remote_cleanup": {"status": "pending"}
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "cleanup_intent",
+                "cleanup_status",
+                "teardown_next_retry_at",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+        agent_ws_routable.side_effect = lambda *, agent_id: (
+            agent_id == second_gateway.id
+        )
+
+        result = reconcile_lens_resource_teardowns_task(limit=1)
+
+        self.assertEqual(result["session_ids"], [online_session.id])
+        chat_delay.assert_called_once_with(session_link_id=online_session.id)
+        knowledge_source_delay.assert_not_called()
+
     @mock.patch("apps.lens_bridge.services.assistant_access.soft_delete_assistant_link")
     @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
     @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")

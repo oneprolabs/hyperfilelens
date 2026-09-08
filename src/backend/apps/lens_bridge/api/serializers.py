@@ -507,6 +507,7 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
     lifecycle_error_meta = serializers.SerializerMethodField()
     queue_position = serializers.SerializerMethodField()
     queue_ahead = serializers.SerializerMethodField()
+    force_delete_available = serializers.SerializerMethodField()
 
     class Meta:
         model = LensSessionLink
@@ -541,6 +542,7 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             "queue_ahead",
             "cleanup_intent",
             "cleanup_status",
+            "force_delete_available",
             "document_conversion",
             "data_context",
             "lifecycle_error",
@@ -590,6 +592,13 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
                 active_count=active_cache[obj.gateway_link_id],
             )
         return int(cache[obj.id])
+
+    def get_force_delete_available(self, obj: LensSessionLink) -> bool:
+        from apps.lens_bridge.services.chat_lifecycle import (
+            can_force_delete_private_chat,
+        )
+
+        return can_force_delete_private_chat(obj)
 
     def get_assistant_name(self, obj: LensSessionLink) -> str | None:
         cache = self.context.get("assistant_names") or {}

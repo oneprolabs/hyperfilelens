@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 
 from django.core import signing
 from django.db import transaction
+from django.db.models import Q
 from django.http import JsonResponse, StreamingHttpResponse
 from django.urls import reverse
 from rest_framework import status, viewsets
@@ -1180,6 +1181,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         if self.action in (
             "create",
             "destroy",
+            "force_delete",
             "create_run",
             "feedback",
             "set_model",
@@ -1203,8 +1205,19 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         return LensSessionLink.objects.filter(
             organization=self.org,
             hfl_user=self.request.user,
-            status=LensSessionLink.Status.ACTIVE,
-        ).select_related("knowledge_source", "gateway_link__gateway")
+        ).filter(
+            Q(status=LensSessionLink.Status.ACTIVE)
+            | Q(
+                lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+                cleanup_intent=LensSessionLink.CleanupIntent.DELETE_SESSION,
+            )
+        ).exclude(
+            teardown_state_json__forced_remote_cleanup__status="pending"
+        ).select_related(
+            "knowledge_source",
+            "knowledge_source__workspace_binding",
+            "gateway_link__gateway",
+        )
 
     def list(self, request):
         rows = list(self._user_sessions().order_by("-created_at", "-id"))
@@ -1524,6 +1537,27 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         link = chat_lifecycle.request_copilot_chat_teardown(link)
         return Response(
             LensSessionLinkSerializer(link).data, status=status.HTTP_202_ACCEPTED
+        )
+
+    @action(detail=True, methods=["post"], url_path="force-delete")
+    def force_delete(self, request, pk=None):
+        link = LensSessionLink.objects.filter(
+            pk=pk,
+            organization=self.org,
+            hfl_user=request.user,
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+        ).select_related("knowledge_source", "gateway_link__gateway").first()
+        if link is None:
+            raise NotFound()
+        from apps.lens_bridge.services import chat_lifecycle
+
+        link = chat_lifecycle.force_delete_private_copilot_chat(
+            link,
+            requested_by=request.user,
+        )
+        return Response(
+            LensSessionLinkSerializer(link).data,
+            status=status.HTTP_202_ACCEPTED,
         )
 
     @action(detail=True, methods=["post"], url_path="retry")

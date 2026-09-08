@@ -347,6 +347,7 @@ export type LensSessionLink = {
   queue_ahead?: number
   cleanup_intent?: 'none' | 'reset_for_retry' | 'delete_session' | string
   cleanup_status?: 'none' | 'pending' | 'running' | 'blocked' | 'complete' | string
+  force_delete_available?: boolean
   document_conversion?: DocumentConversion | null
   data_context?: SessionDataContext | null
   last_message_at: string | null
@@ -1621,11 +1622,20 @@ export async function streamCopilotRun(
   }
 }
 
-export async function deleteCopilotSession(sessionId: number): Promise<void> {
-  await api(lensUrl(`copilot/sessions/${sessionId}/`), {
+export async function deleteCopilotSession(sessionId: number): Promise<LensSessionLink> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/`), {
     method: 'DELETE',
     headers: lensHeaders(),
   })
+  return lensPayload<LensSessionLink>(raw)
+}
+
+export async function forceDeleteCopilotSession(sessionId: number): Promise<LensSessionLink> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/force-delete/`), {
+    method: 'POST',
+    headers: lensHeaders(),
+  })
+  return lensPayload<LensSessionLink>(raw)
 }
 
 export type LensChatBinding = {

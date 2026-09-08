@@ -18,6 +18,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   retry: []
   delete: []
+  forceDelete: []
 }>()
 
 const { t } = useI18n()
@@ -114,6 +115,9 @@ const isCleanupBlocked = computed(() => (
 const isDeleteCleanupBlocked = computed(() => (
   isCleanupBlocked.value && props.session.lifecycle_status === 'deleting'
 ))
+const isForceDeleteAvailable = computed(() => (
+  isDeleteCleanupBlocked.value && props.session.force_delete_available === true
+))
 const isGatewayQueued = computed(() => (
   props.session.lifecycle_status === 'provisioning'
   && props.session.provision_phase === 'queued'
@@ -151,11 +155,23 @@ function stepState(index: number) {
       class="copilot-lifecycle-card is-failed"
     >
       <span class="copilot-lifecycle-icon is-failed"><TriangleAlert :size="30" /></span>
-      <h2>Chat Cleanup Needs Attention</h2>
-      <p>Active processing could not be confirmed as stopped. Temporary data remains protected so cleanup can be retried safely.</p>
+      <h2>{{ isDeleteCleanupBlocked ? 'Chat Couldn’t Be Deleted' : 'Chat Cleanup Paused' }}</h2>
+      <p v-if="isForceDeleteAvailable">
+        The Private Data Gateway could not remove its local Chat workspace. Retry, or force delete the Chat while workspace cleanup continues automatically in the background.
+      </p>
+      <p v-else>
+        Cleanup could not finish safely. Retry when the Data Gateway is available.
+      </p>
       <div class="copilot-lifecycle-actions">
         <ElButton @click="emit('delete')">
           {{ isDeleteCleanupBlocked ? 'Retry Delete' : 'Delete Chat' }}
+        </ElButton>
+        <ElButton
+          v-if="isForceDeleteAvailable"
+          type="danger"
+          @click="emit('forceDelete')"
+        >
+          Force Delete
         </ElButton>
       </div>
     </div>

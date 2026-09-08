@@ -906,14 +906,20 @@ export const en = {
       unpinSession: 'Unpin Chat',
       tryAgain: 'Try Again',
       deleteSession: 'Delete Chat',
+      forceDelete: 'Force Delete',
       sessionActions: 'Actions for {title}',
       shareUnavailable: 'Share becomes available after the session has a completed answer.',
       sessionPinned: 'Chat pinned.',
       sessionUnpinned: 'Chat unpinned.',
       sessionActionFailed: 'Unable to update this chat.',
       deleteConfirm: 'Delete “{name}”?',
+      forceDeleteConfirm: 'Force Delete “{name}”?',
       deleteConfirmMessage:
         'This will delete the Chat, its conversation history, shared links, and temporary resources. This action cannot be undone.',
+      forceDeleteConfirmMessage:
+        'The Private Data Gateway could not remove its local Chat workspace. The Chat and its slot will be removed immediately, and workspace cleanup will continue automatically in the background.',
+      forceDeleteComplete:
+        'Chat deleted. Local workspace cleanup will continue automatically in the background.',
       renamePlaceholder: 'Enter chat name',
       renameFailed: 'Failed to rename chat',
       sessionRecovering: 'Recovering chat…',
