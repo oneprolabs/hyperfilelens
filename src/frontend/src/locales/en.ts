@@ -5145,7 +5145,9 @@ export const en = {
       externalAccess: {
         intro:
           'Set the tenant URL that remote Agents and Data Gateways can reach. Leave it empty to use the installation default.',
-        managed: 'External access is managed by Enterprise deployment configuration.',
+        managed: 'External access changes are disabled by deployment policy.',
+        networkNotice:
+          'This setting does not configure DNS, reverse proxies, TLS certificates, NAT, or firewalls. Make the URL reachable before using it.',
         urlLabel: 'External access URL',
         urlPlaceholder: 'https://hfl.example.com',
         urlHint:

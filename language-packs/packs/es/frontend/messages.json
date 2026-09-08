@@ -7371,7 +7371,8 @@
       "source": "Fuente: {source}",
       "externalAccess": {
         "intro": "Establezca la URL de la organización accesible para Agents y Data Gateways remotos. Déjela vacía para usar el valor predeterminado de la instalación.",
-        "managed": "El acceso externo se gestiona mediante la configuración de despliegue Enterprise.",
+        "managed": "Los cambios de acceso externo están deshabilitados por la política de despliegue.",
+        "networkNotice": "Esta configuración no configura DNS, proxies inversos, certificados TLS, NAT ni firewalls. Asegúrese de que la URL sea accesible antes de usarla.",
         "urlLabel": "URL de acceso externo",
         "urlPlaceholder": "https://hfl.example.com",
         "urlHint": "Introduzca solo el origen HTTP o HTTPS; HTTPS es obligatorio cuando la verificación TLS está habilitada. No incluya una ruta, consulta ni fragmento.",

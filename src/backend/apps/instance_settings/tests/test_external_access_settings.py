@@ -1,4 +1,4 @@
-"""Community external-access settings tests."""
+"""Instance external-access settings tests."""
 
 import os
 from unittest.mock import patch
@@ -72,12 +72,12 @@ class ExternalAccessSettingsTests(TestCase):
             HTTP_X_HFL_SITE_ROLE="ops",
         )
 
-    def _store_ignored_runtime_override(self):
+    def _store_runtime_override(self):
         GlobalConfig.objects.create(
             key=CONFIG_KEY_EXTERNAL_ACCESS_URL,
             scope=GlobalConfig.Scope.GLOBAL,
             tenant_key="",
-            value="https://ignored.example.com",
+            value="https://runtime.example.com",
             value_type=GlobalConfig.ValueType.STRING,
             category="deployment",
             is_active=True,
@@ -89,7 +89,10 @@ class ExternalAccessSettingsTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["external_access_url"], "")
-        self.assertEqual(response.data["effective_url"], "https://192.168.0.89:11443")
+        self.assertEqual(
+            response.data["effective_url"],
+            "https://192.168.0.89:11443",
+        )
         self.assertEqual(response.data["source"], "deployment")
         self.assertEqual(response.data["suggested_url"], "https://113.44.213.250:11443")
         self.assertTrue(response.data["editable"])
@@ -208,25 +211,26 @@ class ExternalAccessSettingsTests(TestCase):
         call_command("configure_external_access", clear=True)
         self.assertEqual(configured_external_access_url(), "")
 
-    @patch(
-        "apps.instance_settings.services.external_access.product_edition",
-        return_value="enterprise",
-    )
-    def test_enterprise_effective_url_ignores_runtime_override(self, _edition):
-        self._store_ignored_runtime_override()
+    def test_effective_url_prefers_runtime_override(self):
+        self._store_runtime_override()
 
         self.assertEqual(
             effective_external_access_url(),
-            "https://192.168.0.89:11443",
+            "https://runtime.example.com",
         )
 
-    @patch(
-        "apps.instance_settings.services.external_access.product_edition",
-        return_value="enterprise",
-    )
-    def test_enterprise_service_rejects_runtime_updates(self, _edition):
-        with self.assertRaisesMessage(ValueError, "managed by Enterprise"):
-            set_external_access_url("https://other.example.com", user=self.staff)
+    def test_enterprise_service_accepts_runtime_updates(self):
+        with patch.dict(os.environ, {"HFL_EDITION": "enterprise"}):
+            value = set_external_access_url(
+                "https://enterprise.example.com",
+                user=self.staff,
+            )
+
+        self.assertEqual(value, "https://enterprise.example.com")
+        self.assertEqual(
+            effective_external_access_url(),
+            "https://enterprise.example.com",
+        )
 
     def test_normalizer_supports_ipv6_origins(self):
         self.assertEqual(
@@ -234,35 +238,22 @@ class ExternalAccessSettingsTests(TestCase):
             "https://[2001:db8::1]:11443",
         )
 
-    @patch(
-        "apps.instance_settings.api.views.settings.product_edition",
-        return_value="enterprise",
-    )
-    def test_enterprise_patch_remains_deployment_managed(self, _edition):
-        response = self._patch("https://other.example.com")
+    def test_enterprise_patch_sets_runtime_override(self):
+        with patch.dict(os.environ, {"HFL_EDITION": "enterprise"}):
+            response = self._patch("https://enterprise.example.com")
 
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(
-            response.data["code"],
-            "EXTERNAL_ACCESS_MANAGED_BY_DEPLOYMENT",
+            response.data["external_access_url"],
+            "https://enterprise.example.com",
         )
+        self.assertEqual(response.data["source"], "runtime")
+        self.assertTrue(response.data["editable"])
 
-    @patch(
-        "apps.instance_settings.services.external_access.product_edition",
-        return_value="enterprise",
-    )
-    @patch(
-        "apps.instance_settings.api.views.settings.product_edition",
-        return_value="enterprise",
-    )
-    def test_enterprise_get_hides_ignored_runtime_override(
-        self,
-        _view_edition,
-        _service_edition,
-    ):
-        self._store_ignored_runtime_override()
-
-        response = self._get()
+    def test_enterprise_patch_can_restore_deployment_default(self):
+        with patch.dict(os.environ, {"HFL_EDITION": "enterprise"}):
+            self._patch("https://enterprise.example.com")
+            response = self._patch("")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["external_access_url"], "")
@@ -271,5 +262,25 @@ class ExternalAccessSettingsTests(TestCase):
             "https://192.168.0.89:11443",
         )
         self.assertEqual(response.data["source"], "deployment")
-        self.assertEqual(response.data["suggested_url"], "")
-        self.assertFalse(response.data["editable"])
+
+    def test_enterprise_get_reports_runtime_override(self):
+        self._store_runtime_override()
+
+        with patch.dict(os.environ, {"HFL_EDITION": "enterprise"}):
+            response = self._get()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data["external_access_url"],
+            "https://runtime.example.com",
+        )
+        self.assertEqual(
+            response.data["effective_url"],
+            "https://runtime.example.com",
+        )
+        self.assertEqual(response.data["source"], "runtime")
+        self.assertEqual(
+            response.data["suggested_url"],
+            "https://113.44.213.250:11443",
+        )
+        self.assertTrue(response.data["editable"])

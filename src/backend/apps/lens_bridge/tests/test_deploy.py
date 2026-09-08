@@ -112,12 +112,10 @@ class LensDeployUrlTest(unittest.TestCase):
         "apps.instance_settings.services.external_access.configured_external_access_url",
         return_value="https://public.example.com:11443",
     )
-    @patch("common.deploy.product.product_edition", return_value="community")
     @patch("apps.lens_bridge.deploy.env_str")
-    def test_community_runtime_url_precedes_bundled_gateway_override(
+    def test_runtime_url_precedes_bundled_gateway_override(
         self,
         env_str,
-        _edition,
         _configured_url,
     ):
         values = {

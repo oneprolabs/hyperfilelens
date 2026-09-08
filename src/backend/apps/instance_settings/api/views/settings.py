@@ -97,7 +97,6 @@ from apps.configuration.services.runtime_settings import (
     langfuse_secret_key,
 )
 from apps.storage import conf as storage_conf
-from common.deploy.product import COMMUNITY_EDITION, product_edition
 from common.deploy.site import tenant_public_url
 
 logger = logging.getLogger(__name__)
@@ -647,38 +646,22 @@ class PlatformOpsSettingsEnvironmentView(APIView):
 
 
 class PlatformOpsSettingsExternalAccessView(APIView):
-    """Configure the canonical external tenant origin for Community installs."""
+    """Configure the canonical external tenant origin for this instance."""
 
     permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
 
     def get(self, request):
-        editable = product_edition() == COMMUNITY_EDITION
         return Response(
             {
-                "external_access_url": (
-                    configured_external_access_url() if editable else ""
-                ),
+                "external_access_url": configured_external_access_url(),
                 "effective_url": effective_external_access_url(),
                 "source": external_access_source(),
-                "suggested_url": (
-                    suggested_external_access_url(request) if editable else ""
-                ),
-                "editable": editable,
+                "suggested_url": suggested_external_access_url(request),
+                "editable": True,
             }
         )
 
     def patch(self, request):
-        if product_edition() != COMMUNITY_EDITION:
-            return Response(
-                {
-                    "detail": (
-                        "External access is managed by Enterprise deployment "
-                        "configuration."
-                    ),
-                    "code": "EXTERNAL_ACCESS_MANAGED_BY_DEPLOYMENT",
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
         data = request.data
         if not isinstance(data, Mapping):
             return Response(
