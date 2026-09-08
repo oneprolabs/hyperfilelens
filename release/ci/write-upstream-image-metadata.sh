@@ -16,6 +16,7 @@ cn_ref=""
 local_ref=""
 digest=""
 role=""
+upstream_ref=""
 
 case "${component}" in
 sourcelens-backend | sourcelens-frontend | sourcelens-lensnode)
@@ -59,8 +60,15 @@ postgres | redis | sourcelens-nginx)
 	esac
 	local_ref=${pinned%@*}
 	digest=${pinned##*@}
-	global_ref="docker.io/library/${local_ref}"
-	cn_ref="dockerproxy.net/library/${local_ref}"
+	repository=${local_ref%:*}
+	tag=${local_ref##*:}
+	digest_short=${digest#sha256:}
+	mirror_tag="${tag}-${digest_short:0:12}"
+	global_prefix=${HFL_GLOBAL_REGISTRY_PREFIX:-docker.io/oneprolabs}
+	cn_prefix=${HFL_CN_REGISTRY_PREFIX:-registry.cn-beijing.aliyuncs.com/oneprolabs}
+	global_ref="${global_prefix%/}/${repository}:${mirror_tag}"
+	cn_ref="${cn_prefix%/}/${repository}:${mirror_tag}"
+	upstream_ref="docker.io/library/${local_ref}"
 	;;
 *)
 	printf 'ERROR: unsupported upstream image component: %s\n' "${component}" >&2
@@ -83,6 +91,7 @@ jq -n \
 	--arg digest "${digest}" \
 	--arg global_ref "${global_ref}" \
 	--arg cn_ref "${cn_ref}" \
+	--arg upstream_ref "${upstream_ref}" \
 	'{
 	  component: $component,
 	  role: $role,
@@ -93,7 +102,8 @@ jq -n \
 	    {region: "cn", ref: $cn_ref},
 	    {region: "global", ref: $global_ref}
 	  ]
-	}' >"${output}"
+	} + if $upstream_ref == "" then {} else {upstream_ref: $upstream_ref} end' \
+	>"${output}"
 
 if [[ "${component}" == "sourcelens-backend" \
 	|| "${component}" == "sourcelens-frontend" \

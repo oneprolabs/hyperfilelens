@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Copy an immutable image manifest to the secondary registry and verify its digest.
+# Copy an immutable image manifest to a delivery registry and verify its digest.
 set -euo pipefail
 
-[[ $# -eq 3 ]] || {
-	printf 'Usage: %s SOURCE_REF DIGEST DESTINATION_REF\n' "$0" >&2
+[[ $# -eq 3 || ( $# -eq 4 && $4 == --if-missing ) ]] || {
+	printf 'Usage: %s SOURCE_REF DIGEST DESTINATION_REF [--if-missing]\n' "$0" >&2
 	exit 2
 }
 
 source_ref=$1
 digest=$2
 destination_ref=$3
+if_missing=${4:-}
 [[ "${source_ref}" == */*:* && "${destination_ref}" == */*:* ]]
 [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
 
@@ -33,6 +34,12 @@ mirror_error_is_retryable() {
 		"$@"
 }
 
+mirror_error_is_missing() {
+	grep -Eiq \
+		'manifest unknown|name unknown|not found|(status|response|http)[^[:cntrl:]]*404' \
+		"$@"
+}
+
 wait_before_retry() {
 	local failed_attempt=$1
 	local operation=$2
@@ -47,6 +54,45 @@ wait_before_retry() {
 		"${operation}" "${wait_seconds}" >&2
 	sleep "${wait_seconds}"
 }
+
+if [[ "${if_missing}" == --if-missing ]]; then
+	for ((attempt = 1; attempt <= attempts; attempt++)); do
+		: >"${inspect_log}"
+		: >"${inspect_output}"
+		printf '[....] Checking mirrored image (attempt %s/%s): %s\n' \
+			"${attempt}" "${attempts}" "${destination_ref}"
+		if docker buildx imagetools inspect \
+			"${destination_ref}" --format '{{json .Manifest}}' \
+			>"${inspect_output}" 2>"${inspect_log}"; then
+			destination_digest="$(jq -r '.digest // empty' <"${inspect_output}")"
+			if [[ "${destination_digest}" == "${digest}" ]]; then
+				printf '[SKIP] Mirrored image already available: %s\n' \
+					"${destination_ref}"
+				exit 0
+			fi
+			printf 'ERROR: immutable mirror tag has digest %s, expected %s: %s\n' \
+				"${destination_digest:-missing}" "${digest}" "${destination_ref}" >&2
+			exit 1
+		fi
+		if mirror_error_is_missing "${inspect_output}" "${inspect_log}"; then
+			printf '[INFO] Mirrored image is not present and will be created: %s\n' \
+				"${destination_ref}"
+			break
+		fi
+		[[ ! -s "${inspect_output}" ]] || cat "${inspect_output}" >&2
+		[[ ! -s "${inspect_log}" ]] || cat "${inspect_log}" >&2
+		if ! mirror_error_is_retryable "${inspect_output}" "${inspect_log}"; then
+			printf 'ERROR: registry mirror check failed with a non-retryable error\n' >&2
+			exit 1
+		fi
+		if ((attempt == attempts)); then
+			printf 'ERROR: registry mirror check failed after %s attempts\n' \
+				"${attempts}" >&2
+			exit 1
+		fi
+		wait_before_retry "${attempt}" check
+	done
+fi
 
 copy_status=1
 for ((attempt = 1; attempt <= attempts; attempt++)); do

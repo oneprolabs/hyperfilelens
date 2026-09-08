@@ -50,6 +50,7 @@ grep -Fq 'Acquire::http::Timeout=60' "${online}/install.sh"
 grep -Fq 'Acquire::https::Timeout=60' "${online}/install.sh"
 grep -Fq 'DPkg::Lock::Timeout=120' "${online}/install.sh"
 grep -Fq 'apt_install_with_network_retry' "${online}/install.sh"
+grep -Fq 'apt_update_quiet' "${online}/install.sh"
 grep -Fq 'apt_failure_is_transient' "${online}/install.sh"
 grep -Fq 'dpkg_state_clean_for_retry' "${online}/install.sh"
 grep -Fq 'preserve_apt_failure_log' "${online}/install.sh"
@@ -109,12 +110,12 @@ if grep -Eq 'publish-community-channel|community-channel|git push origin HEAD:ma
 fi
 grep -Fq 'write-upstream-image-metadata.sh' "${workflow}"
 grep -Fq 'resolve-upstream-images:' "${workflow}"
-grep -Fq './deploy/online/verify-public-images.sh build/saas-metadata global' "${workflow}"
+grep -Fq 'Verify · Community image delivery · ${{ matrix.name }}' "${workflow}"
+grep -Fq 'build/saas-metadata ${{ matrix.region }}' "${workflow}"
 grep -Fq 'select(.region == "global")' "${workflow}"
-if grep -Fq ".sources[].ref" "${workflow}"; then
-	printf 'ERROR: SaaS workflow still verifies every regional upstream source\n' >&2
-	exit 1
-fi
+grep -Fq "'.upstream_ref'" "${workflow}"
+grep -Fq 'Ensure owned delivery mirrors' "${workflow}"
+grep -Fq '"$destination_ref" --if-missing' "${workflow}"
 if grep -Eq '^  (build-sourcelens-images|publish-runtime-images):' "${workflow}"; then
 	printf 'ERROR: SaaS workflow still publishes rebuilt upstream images\n' >&2
 	exit 1
@@ -152,7 +153,7 @@ actual = {
 if actual != expected:
     raise SystemExit(f"unexpected HFL publish matrix: {sorted(actual)}")
 # One matrix build publishes four HFL tags; the three asset jobs publish one
-# tag each. No third-party image may introduce another push operation.
+# tag each. Shared runtime mirrors copy verified manifests without rebuilding.
 if text.count("          push: true\n") != 4:
     raise SystemExit("SaaS workflow must contain exactly seven effective image publishes")
 if 'has("linux/amd64")' not in text:
@@ -733,6 +734,62 @@ mkdir -p "$(dirname "${apt_retry_saved}")"
 	fi
 	[[ "${APT_FAILURE_DPKG_CLEAN}" -eq 1 ]]
 	cmp -s "${final_log}" "${final_saved}"
+)
+
+apt_update_terminal="${tmp}/apt-update-terminal.log"
+apt_update_log="${tmp}/apt-update.log"
+apt_update_install_log="${tmp}/logs/apt-update-install.log"
+(
+	# Successful package metadata output is retained in the installation log but
+	# does not obscure the concise terminal progress.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_LOG_FILE="${apt_update_install_log}"
+	apt-get() {
+		printf 'Hit:1 https://mirror.example/ubuntu noble InRelease\n'
+		printf 'Reading package lists...\n'
+	}
+	apt_update_quiet "${apt_update_log}"
+) >"${apt_update_terminal}" 2>&1
+[[ ! -s "${apt_update_terminal}" ]]
+grep -Fq 'Hit:1 https://mirror.example/ubuntu noble InRelease' \
+	"${apt_update_install_log}"
+grep -Fq 'Reading package lists...' "${apt_update_install_log}"
+
+apt_update_failure_terminal="${tmp}/apt-update-failure-terminal.log"
+apt_update_failure_log="${tmp}/apt-update-failure.log"
+apt_update_failure_install_log="${tmp}/logs/apt-update-failure-install.log"
+apt_update_failure_saved="${tmp}/logs/apt-update-failure-install-apt.log"
+if (
+	# Failed metadata refreshes retain their complete diagnostics and surface the
+	# useful tail in the terminal.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_LOG_FILE="${apt_update_failure_install_log}"
+	apt-get() {
+		printf 'E: Failed to fetch https://mirror.example/InRelease (Connection timed out)\n'
+		return 100
+	}
+	apt_update_quiet "${apt_update_failure_log}"
+) >"${apt_update_failure_terminal}" 2>&1; then
+	printf 'ERROR: a failed package metadata refresh was accepted\n' >&2
+	exit 1
+fi
+grep -Fq 'E: Failed to fetch https://mirror.example/InRelease' \
+	"${apt_update_failure_terminal}"
+grep -Fq "Full APT output saved to ${apt_update_failure_saved}" \
+	"${apt_update_failure_terminal}"
+cmp -s "${apt_update_failure_log}" "${apt_update_failure_saved}"
+
+(
+	# Fresh-install runtime progress is indented beneath its numbered stage,
+	# while upgrade progress remains top-level.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	INSTALL_ACTION=Install
+	[[ "$(installation_step_indent)" == '  ' ]]
+	INSTALL_ACTION=Upgrade
+	[[ -z "$(installation_step_indent)" ]]
 )
 
 (
@@ -1727,13 +1784,16 @@ for component, local_ref in {
     "redis": "redis:alpine",
     "sourcelens-nginx": "nginx:stable-alpine",
 }.items():
+    digest_short = registry_images[component]["digest"].partition(":")[2][:12]
+    repository, tag = local_ref.rsplit(":", 1)
+    mirror_ref = f"{repository}:{tag}-{digest_short}"
     sources = {
         source["region"]: source["ref"]
         for source in registry_images[component]["sources"]
     }
     assert sources == {
-        "cn": f"dockerproxy.net/library/{local_ref}",
-        "global": f"docker.io/library/{local_ref}",
+        "cn": f"registry.cn-beijing.aliyuncs.com/oneprolabs/{mirror_ref}",
+        "global": f"docker.io/oneprolabs/{mirror_ref}",
     }
 assets = manifest["delivery"]["asset_images"]
 assert {entry["local_ref"] for entry in assets} == {

@@ -32,12 +32,6 @@ CN_PREFIX = os.environ.get(
     "HFL_CN_REGISTRY_PREFIX",
     "registry.cn-beijing.aliyuncs.com/oneprolabs",
 ).rstrip("/")
-PUBLIC_GLOBAL_PREFIX = os.environ.get(
-    "HFL_PUBLIC_GLOBAL_REGISTRY_PREFIX", "docker.io/library"
-).rstrip("/")
-PUBLIC_CN_PREFIX = os.environ.get(
-    "HFL_PUBLIC_CN_REGISTRY_PREFIX", "dockerproxy.net/library"
-).rstrip("/")
 
 
 @dataclass(frozen=True)
@@ -241,7 +235,7 @@ def load_sourcelens_runtime(source: pathlib.Path) -> dict[str, Any]:
 
 
 def load_public_runtime_specs(source: pathlib.Path) -> list[ImageSpec]:
-    """Load pinned Docker Library images without evaluating shell code."""
+    """Load pinned shared images delivered through the HFL registries."""
     path = source / "tools/dependencies/versions/runtime-images.env"
     values: dict[str, str] = {}
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -262,13 +256,15 @@ def load_public_runtime_specs(source: pathlib.Path) -> list[ImageSpec]:
         local_ref, separator, digest = pinned.partition("@")
         if not separator or not DIGEST_PATTERN.fullmatch(digest):
             raise ValueError(f"{variable} must contain a pinned sha256 digest")
+        repository, tag = local_ref.rsplit(":", 1)
+        mirror_tag = f"{tag}-{digest.partition(':')[2][:12]}"
         specs.append(
             ImageSpec(
                 component,
                 role,
                 local_ref,
-                f"{PUBLIC_GLOBAL_PREFIX}/{local_ref}",
-                f"{PUBLIC_CN_PREFIX}/{local_ref}",
+                f"{GLOBAL_PREFIX}/{repository}:{mirror_tag}",
+                f"{CN_PREFIX}/{repository}:{mirror_tag}",
                 digest,
             )
         )
@@ -577,9 +573,7 @@ def pull_images(
 ) -> list[ResolvedImage]:
     """Pull all images concurrently with a selective regional fallback."""
     fallback_region = "global" if preferred_region == "cn" else "cn"
-    primary = pull_image_batch(
-        specs, preferred_region, concise_output=concise_output
-    )
+    primary = pull_image_batch(specs, preferred_region, concise_output=concise_output)
     resolved, unresolved = inspect_pulled_images(specs, preferred_region)
 
     if unresolved:
