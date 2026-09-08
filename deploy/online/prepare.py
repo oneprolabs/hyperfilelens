@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,6 +26,10 @@ VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 REVISION_PATTERN = re.compile(r"[0-9a-f]{40}")
 PULL_PARALLELISM = 5
+_PULL_RETRY_DELAY = os.environ.get("HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS", "15")
+PULL_RETRY_DELAY_SECONDS = (
+    min(int(_PULL_RETRY_DELAY), 300) if _PULL_RETRY_DELAY.isdecimal() else 15
+)
 GLOBAL_PREFIX = os.environ.get(
     "HFL_GLOBAL_REGISTRY_PREFIX", "docker.io/oneprolabs"
 ).rstrip("/")
@@ -32,6 +37,20 @@ CN_PREFIX = os.environ.get(
     "HFL_CN_REGISTRY_PREFIX",
     "registry.cn-beijing.aliyuncs.com/oneprolabs",
 ).rstrip("/")
+
+TRANSIENT_REGISTRY_ERROR = re.compile(
+    r"network is unreachable|no route to host|connection (?:refused|reset|timed out)"
+    r"|i/o timeout|context deadline exceeded|tls handshake timeout|client\.timeout"
+    r"|request canceled|unexpected eof|short read|unexpected commit digest"
+    r"|too many requests"
+    r"|(?:http (?:response )?status|status(?: code)?(?: from [^:\n]+)?)"
+    r"[^0-9\n]{0,16}(?:429|5[0-9]{2})",
+    re.IGNORECASE,
+)
+
+
+class RegistryNetworkError(RuntimeError):
+    """Report a registry failure caused by a retryable transport condition."""
 
 
 @dataclass(frozen=True)
@@ -565,6 +584,16 @@ def inspect_pulled_images(
     return resolved, unresolved
 
 
+def registry_failure_is_transient(output: str) -> bool:
+    """Return whether Docker reported a retryable registry transport failure."""
+    return bool(TRANSIENT_REGISTRY_ERROR.search(output))
+
+
+def wait_before_registry_retry() -> None:
+    """Pause before one same-registry retry."""
+    time.sleep(PULL_RETRY_DELAY_SECONDS)
+
+
 def pull_images(
     specs: list[ImageSpec],
     preferred_region: str,
@@ -574,7 +603,26 @@ def pull_images(
     """Pull all images concurrently with a selective regional fallback."""
     fallback_region = "global" if preferred_region == "cn" else "cn"
     primary = pull_image_batch(specs, preferred_region, concise_output=concise_output)
+    pull_outputs = [primary.stdout or ""]
     resolved, unresolved = inspect_pulled_images(specs, preferred_region)
+
+    if unresolved and registry_failure_is_transient(primary.stdout or ""):
+        prefix = "  " if concise_output else ""
+        print(
+            f"{prefix}[WARN] Temporary container registry error; "
+            f"retrying {len(unresolved)} image(s) from the preferred registry "
+            f"in {PULL_RETRY_DELAY_SECONDS} seconds",
+            flush=True,
+        )
+        wait_before_registry_retry()
+        retry = pull_image_batch(
+            unresolved, preferred_region, concise_output=concise_output
+        )
+        pull_outputs.append(retry.stdout or "")
+        retry_resolved, unresolved = inspect_pulled_images(
+            unresolved, preferred_region
+        )
+        resolved.update(retry_resolved)
 
     if unresolved:
         prefix = "  " if concise_output else ""
@@ -584,7 +632,6 @@ def pull_images(
             flush=True,
         )
 
-    fallback_output = ""
     if unresolved:
         prefix = "  " if concise_output else ""
         print(
@@ -595,7 +642,7 @@ def pull_images(
         fallback = pull_image_batch(
             unresolved, fallback_region, concise_output=concise_output
         )
-        fallback_output = fallback.stdout or ""
+        pull_outputs.append(fallback.stdout or "")
         fallback_resolved, unresolved = inspect_pulled_images(
             unresolved, fallback_region
         )
@@ -606,7 +653,7 @@ def pull_images(
             re.sub(
                 r"\x1b\[[0-9;?]*[ -/]*[@-~]",
                 "",
-                "\n".join((primary.stdout or "", fallback_output)),
+                "\n".join(pull_outputs),
             )
             .replace("\r", "\n")
             .strip()
@@ -617,9 +664,10 @@ def pull_images(
             f"{spec.source_ref(preferred_region)} or {spec.source_ref(fallback_region)}"
             for spec in unresolved
         )
-        raise RuntimeError(
-            f"neither public registry could provide: {failures}{details}"
-        )
+        message = f"neither public registry could provide: {failures}{details}"
+        if any(registry_failure_is_transient(output) for output in pull_outputs):
+            raise RegistryNetworkError(message)
+        raise RuntimeError(message)
 
     result: list[ResolvedImage] = []
     total = len(specs)
@@ -1017,6 +1065,9 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except RegistryNetworkError as error:
+        print(f"[ERROR] Temporary container registry failure: {error}", file=sys.stderr)
+        raise SystemExit(75) from error
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         print(f"[FAIL] {error}", file=sys.stderr)
         raise SystemExit(1) from error

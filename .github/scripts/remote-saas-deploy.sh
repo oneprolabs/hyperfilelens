@@ -111,6 +111,7 @@ cleanup() {
 		"${stage_dir}/asset-language"
 	rm -f -- \
 		"${stage_dir}/assets.tsv" \
+		"${stage_dir}/registry-pull.log" \
 		"${stage_dir}/previous-MANIFEST.json" \
 		"${registry_credentials}" \
 		"${runtime_env_file}" \
@@ -215,6 +216,44 @@ done
 }
 
 export DOCKER_CONFIG="${docker_config}"
+registry_pull_retry_delay="${HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS:-15}"
+if [[ ! "${registry_pull_retry_delay}" =~ ^[0-9]+$ ]] \
+	|| ((registry_pull_retry_delay > 300)); then
+	printf 'ERROR: HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS must be an integer from 0 to 300\n' >&2
+	exit 2
+fi
+
+registry_pull_is_transient() {
+	grep -Eiq \
+		'network is unreachable|no route to host|connection (refused|reset|timed out)|i/o timeout|context deadline exceeded|tls handshake timeout|client\.timeout|request canceled|unexpected eof|short read|unexpected commit digest|too many requests|(http (response )?status|status( code)?( from [^:]+)?)[^0-9]{0,16}(429|5[0-9][0-9])' \
+		"$1"
+}
+
+pull_registry_image() {
+	local immutable_ref=$1 attempts=$2 attempt=1 rc=1
+	local diagnostics="${stage_dir}/registry-pull.log"
+	while ((attempt <= attempts)); do
+		: >"${diagnostics}"
+		if docker pull --platform linux/amd64 "${immutable_ref}" 2>&1 \
+			| tee "${diagnostics}"; then
+			rm -f -- "${diagnostics}"
+			return 0
+		else
+			rc=$?
+		fi
+		if ((attempt < attempts)) && registry_pull_is_transient "${diagnostics}"; then
+			printf '[WARN] Temporary container registry error; retrying the preferred source in %s seconds\n' \
+				"${registry_pull_retry_delay}" >&2
+			sleep "${registry_pull_retry_delay}"
+			attempt=$((attempt + 1))
+			continue
+		fi
+		break
+	done
+	rm -f -- "${diagnostics}"
+	return "${rc}"
+}
+
 python3 - "${candidate_root}/MANIFEST.json" "${registry_region}" >"${stage_dir}/assets.tsv" <<'PY'
 import json, pathlib, re, sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -263,13 +302,17 @@ PY
 while IFS=$'\t' read -r kind digest local_ref source_one source_two; do
 	[[ -n "${kind}" ]] || continue
 	pulled=""
+	source_index=0
 	for source_ref in "${source_one}" "${source_two}"; do
 		[[ -n "${source_ref}" ]] || continue
 		immutable_ref="${source_ref%:*}@${digest}"
-		if docker pull --platform linux/amd64 "${immutable_ref}"; then
+		attempts=1
+		((source_index == 0)) && attempts=2
+		if pull_registry_image "${immutable_ref}" "${attempts}"; then
 			pulled="${immutable_ref}"
 			break
 		fi
+		source_index=$((source_index + 1))
 	done
 	[[ -n "${pulled}" ]] || {
 		printf 'ERROR: could not pull %s asset image\n' "${kind}" >&2
