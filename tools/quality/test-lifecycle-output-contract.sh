@@ -60,26 +60,27 @@ grep -F 'adminpassword' <<<"${output}" >/dev/null
 grep -F 'install.sh upgrade --from /path/to/new-release.tar.gz' <<<"${output}" >/dev/null
 grep -F 'install.sh uninstall' <<<"${output}" >/dev/null
 
-# The online installer groups each login with its endpoint while preserving
-# the same credential visibility policy as the standalone installer.
+# A fresh Community online installation exposes only the two user-facing
+# entry points while preserving the existing credential visibility policy.
 SESSION_WARNINGS=()
 HFL_ONLINE_CHILD=1
-online_output="$(print_console_access_summary 2>&1)"
-unset HFL_ONLINE_CHILD
-for heading in \
-	'Website · 11442' \
-	'Tenant · 11443' \
-	'Platform Ops · 11444' \
-	'Django Admin · 11444' \
-	'Insight Console · 11445' \
-	'API / Swagger · 11443'; do
+HFL_ONLINE_CONSOLE_MARKER=__TEST_ONLINE_CONSOLE__
+online_output="$(print_online_community_summary 2>&1)"
+unset HFL_ONLINE_CHILD HFL_ONLINE_CONSOLE_MARKER
+for heading in 'HyperFileLens · 11443' 'Platform Ops · 11444'; do
 	grep -F "${heading}" <<<"${online_output}" >/dev/null
 done
 grep -F 'linux/amd64' <<<"${online_output}" >/dev/null
 grep -F 'Email          admin@hyperfilelens.com' <<<"${online_output}" >/dev/null
 grep -F 'Password       Admin@123' <<<"${online_output}" >/dev/null
-grep -F 'Username       admin' <<<"${online_output}" >/dev/null
 grep -F 'sudo docker compose -f' <<<"${online_output}" >/dev/null
+for internal_endpoint in 'Website ·' 'Tenant ·' 'Django Admin' 'Insight Console' \
+	'API / Swagger' 0.0.0.0; do
+	if grep -F "${internal_endpoint}" <<<"${online_output}" >/dev/null; then
+		echo "Online summary exposed internal endpoint detail: ${internal_endpoint}" >&2
+		exit 1
+	fi
+done
 if grep -F 'Login credentials' <<<"${online_output}" >/dev/null; then
 	echo 'Online summary split credentials away from their access endpoints' >&2
 	exit 1
@@ -88,14 +89,16 @@ fi
 INTERACTIVE_SESSION=0
 SESSION_WARNINGS=()
 HFL_ONLINE_CHILD=1
-noninteractive_online_output="$(print_console_access_summary 2>&1)"
-unset HFL_ONLINE_CHILD
+HFL_ONLINE_CONSOLE_MARKER=__TEST_ONLINE_CONSOLE__
+noninteractive_online_output="$(print_online_community_summary 2>&1)"
+unset HFL_ONLINE_CHILD HFL_ONLINE_CONSOLE_MARKER
 INTERACTIVE_SESSION=1
 grep -F 'values are hidden in non-interactive logs' \
 	<<<"${noninteractive_online_output}" >/dev/null
 if grep -F 'Admin@123' <<<"${noninteractive_online_output}" >/dev/null \
 	|| grep -F 'adminpassword' <<<"${noninteractive_online_output}" >/dev/null; then
 	echo 'Online non-interactive summary exposed generated credentials' >&2
+	printf '%s\n' "${noninteractive_online_output}" >&2
 	exit 1
 fi
 
@@ -128,6 +131,52 @@ if grep -F 'Insight Console' <<<"${hfl_only_output}" >/dev/null; then
 	exit 1
 fi
 sourcelens_installed() { return 0; }
+
+# Compact status resolves service health without emitting Compose tables or
+# internal-only entry points.
+status_output="$(
+	init_install_root() { :; }
+	require_docker() { :; }
+	read_active_color() { printf 'blue'; }
+	service_group_ready_now() { return 0; }
+	configured_sourcelens_mode() { printf 'bundled'; }
+	sourcelens_installed() { return 0; }
+	local_platform_gateway_agent_is_managed() { return 0; }
+	systemctl() { [[ "$*" == 'is-active --quiet hyperfilelens-agent.service' ]]; }
+	docker() {
+		[[ "${1:-}" == ps ]]
+		printf 'fixture-gateway-container\n'
+	}
+	cmd_status
+)"
+grep -F 'Status            Healthy' <<<"${status_output}" >/dev/null
+grep -F 'HyperFileLens     https://192.0.2.10:11443/' <<<"${status_output}" >/dev/null
+grep -F 'Platform Ops      https://192.0.2.10:11444/' <<<"${status_output}" >/dev/null
+grep -F 'Insight           Healthy' <<<"${status_output}" >/dev/null
+grep -F 'Platform Gateway  Running' <<<"${status_output}" >/dev/null
+for hidden_status_detail in 11442 '/admin/' 11445 swagger 0.0.0.0 'Active color' \
+	'Deployment phase' 'Agent releases'; do
+	if grep -F "${hidden_status_detail}" <<<"${status_output}" >/dev/null; then
+		echo "Compact status exposed unnecessary detail: ${hidden_status_detail}" >&2
+		exit 1
+	fi
+done
+
+# Immediate health inspection requires every requested service to exist and be
+# running or healthy.
+(
+	compose_fixture() {
+		[[ "${1:-}" == ps && "${2:-}" == -q ]]
+		printf 'cid-%s\n' "${3}"
+	}
+	container_health_status() { printf 'healthy'; }
+	service_group_ready_now compose_fixture api web
+	container_health_status() {
+		[[ "$1" != cid-web ]] || { printf 'exited'; return 0; }
+		printf 'healthy'
+	}
+	! service_group_ready_now compose_fixture api web
+)
 
 # The online status table is diagnostic output, not a new installation gate.
 # A transient Compose inspection failure must remain visible without turning a

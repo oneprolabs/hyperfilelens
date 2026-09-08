@@ -26,6 +26,7 @@ INSTALL_ACTION="Install"
 MAX_TAG_PAGES=100
 ONLINE_LOG_FILE=""
 ONLINE_INTERACTIVE=0
+ONLINE_CHILD_CONSOLE_MARKER="__HFL_ONLINE_CONSOLE__"
 HOST_UBUNTU_CODENAME=""
 DOCKER_CE_APT_BASE=""
 DOCKER_CE_GPG_URL=""
@@ -101,6 +102,21 @@ capture_log_stream() {
 	tee "/dev/fd/${console_fd}" \
 		| tr '\r' '\n' \
 		| timestamp_log_stream "${log_file}"
+}
+
+capture_child_install_stream() {
+	local log_file=$1 console_fd=$2 line timestamp rendered
+	local TZ=UTC
+	export TZ
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		rendered="${line}"
+		if [[ "${line}" == "${ONLINE_CHILD_CONSOLE_MARKER}"* ]]; then
+			rendered="${line#"${ONLINE_CHILD_CONSOLE_MARKER}"}"
+			printf '%s\n' "${rendered}" >"/dev/fd/${console_fd}"
+		fi
+		printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
+		printf '[%s] %s\n' "${timestamp}" "${rendered}" >>"${log_file}"
+	done
 }
 
 apt_failure_is_transient() {
@@ -207,28 +223,55 @@ Target
   Log file       ${ONLINE_LOG_FILE}
 EOF
 
-	printf '\nHost runtime\n'
+	if [[ "${INSTALL_ACTION}" == "Upgrade" ]]; then
+		printf '\nHost runtime\n'
+		case "${DOCKER_RUNTIME_ACTION}" in
+		install)
+			printf '  Docker Engine  not installed → install %s\n' "${DOCKER_TARGET_ENGINE_VERSION}"
+			printf '  Docker Compose not installed → install %s\n' "${DOCKER_TARGET_COMPOSE_VERSION}"
+			printf '  Package source %s\n' "${DOCKER_CE_SOURCE_NAME}"
+			printf '  Docker service enable and start\n'
+			printf '  Lifecycle      retained when HyperFileLens is removed\n'
+			;;
+		install-compose)
+			printf '  Docker Engine  %s · reuse\n' "${DOCKER_ENGINE_VERSION}"
+			printf '  Docker Compose not installed → install docker-compose-plugin %s\n' \
+				"${DOCKER_COMPOSE_PACKAGE_VERSION}"
+			printf '  Package source %s\n' "${DOCKER_CE_SOURCE_NAME}"
+			printf '  Install scope  Compose V2 plugin only\n'
+			printf '  Docker service active\n'
+			printf '  Lifecycle      retained when HyperFileLens is removed\n'
+			;;
+		reuse)
+			printf '  Docker Engine  %s · reuse\n' "${DOCKER_ENGINE_VERSION}"
+			printf '  Docker Compose %s · reuse\n' "${DOCKER_COMPOSE_VERSION}"
+			printf '  Docker service active\n'
+			;;
+		*) fail "internal Docker runtime action is invalid" ;;
+		esac
+		return 0
+	fi
+
+	printf '\nSystem requirements\n\n'
 	case "${DOCKER_RUNTIME_ACTION}" in
 	install)
-		printf '  Docker Engine  not installed → install %s\n' "${DOCKER_TARGET_ENGINE_VERSION}"
-		printf '  Docker Compose not installed → install %s\n' "${DOCKER_TARGET_COMPOSE_VERSION}"
-		printf '  Package source %s\n' "${DOCKER_CE_SOURCE_NAME}"
-		printf '  Docker service enable and start\n'
-		printf '  Lifecycle      retained when HyperFileLens is removed\n'
+		printf '  %-16s %s\n' 'Docker Engine' "Will install · ${DOCKER_TARGET_ENGINE_VERSION}"
+		printf '  %-16s %s\n' 'Docker Compose' "Will install · ${DOCKER_TARGET_COMPOSE_VERSION}"
+		printf '  %-16s %s\n' 'Docker service' 'Will enable and start'
+		printf '\nThe required container runtime will be installed on this host.\n'
 		;;
 	install-compose)
-		printf '  Docker Engine  %s · reuse\n' "${DOCKER_ENGINE_VERSION}"
-		printf '  Docker Compose not installed → install docker-compose-plugin %s\n' \
-			"${DOCKER_COMPOSE_PACKAGE_VERSION}"
-		printf '  Package source %s\n' "${DOCKER_CE_SOURCE_NAME}"
-		printf '  Install scope  Compose V2 plugin only\n'
-		printf '  Docker service active\n'
-		printf '  Lifecycle      retained when HyperFileLens is removed\n'
+		printf '  %-16s %s\n' 'Docker Engine' "Ready · ${DOCKER_ENGINE_VERSION}"
+		printf '  %-16s %s\n' 'Docker Compose' \
+			"Will install · ${DOCKER_COMPOSE_PACKAGE_VERSION}"
+		printf '  %-16s %s\n' 'Docker service' 'Running'
+		printf '\nThe required Docker Compose plugin will be installed on this host.\n'
 		;;
 	reuse)
-		printf '  Docker Engine  %s · reuse\n' "${DOCKER_ENGINE_VERSION}"
-		printf '  Docker Compose %s · reuse\n' "${DOCKER_COMPOSE_VERSION}"
-		printf '  Docker service active\n'
+		printf '  %-16s %s\n' 'Docker Engine' "Ready · ${DOCKER_ENGINE_VERSION}"
+		printf '  %-16s %s\n' 'Docker Compose' "Ready · ${DOCKER_COMPOSE_VERSION}"
+		printf '  %-16s %s\n' 'Docker service' 'Running'
+		printf '\n  [ OK ] System requirements are satisfied\n'
 		;;
 	*) fail "internal Docker runtime action is invalid" ;;
 	esac
@@ -943,16 +986,35 @@ download_file() {
 	local output=$2
 	local max_time=${3:-120}
 	local partial="${output}.part"
-	rm -f -- "${partial}"
+	local diagnostics="${output}.curl-errors"
+	rm -f -- "${partial}" "${diagnostics}"
+	if [[ "${INSTALL_ACTION}" == "Upgrade" ]]; then
+		if curl --fail --show-error --silent --location \
+			"${CURL_RETRY_ARGS[@]}" \
+			--connect-timeout 15 --max-time "${max_time}" \
+			-H 'Cache-Control: no-cache' "${url}" -o "${partial}"; then
+			if mv -f -- "${partial}" "${output}"; then
+				return 0
+			fi
+		fi
+		rm -f -- "${partial}"
+		return 1
+	fi
 	if curl --fail --show-error --silent --location \
 		"${CURL_RETRY_ARGS[@]}" \
 		--connect-timeout 15 --max-time "${max_time}" \
-		-H 'Cache-Control: no-cache' "${url}" -o "${partial}"; then
+		-H 'Cache-Control: no-cache' "${url}" -o "${partial}" \
+		2>"${diagnostics}"; then
+		if [[ -s "${diagnostics}" && -n "${ONLINE_LOG_FILE}" ]]; then
+			timestamp_log_stream "${ONLINE_LOG_FILE}" <"${diagnostics}"
+		fi
+		rm -f -- "${diagnostics}"
 		if mv -f -- "${partial}" "${output}"; then
 			return 0
 		fi
 	fi
-	rm -f -- "${partial}"
+	[[ ! -s "${diagnostics}" ]] || cat "${diagnostics}" >&2
+	rm -f -- "${partial}" "${diagnostics}"
 	return 1
 }
 
@@ -976,7 +1038,11 @@ resolve_tag() {
 	local -a values=()
 	local -A seen_page_fingerprints=()
 	requested_tag="${TAG}"
-	printf '[....] Resolving Community tags from %s\n' "${SOURCE_NAME}"
+	if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+		printf '  [....] Resolving HyperFileLens Community release from %s\n' "${SOURCE_NAME}"
+	else
+		printf '[....] Resolving Community tags from %s\n' "${SOURCE_NAME}"
+	fi
 	page=1
 	while :; do
 		page_url="$(tag_page_url "${page}")"
@@ -1099,8 +1165,13 @@ PY
 	TAG="${values[0]}"
 	RELEASE_VERSION="${values[1]}"
 	RELEASE_COMMIT="${values[2]}"
-	printf '[ OK ] Community release resolved · %s · commit %s\n' \
-		"${TAG}" "${RELEASE_COMMIT:0:12}"
+	if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+		printf '  [ OK ] Community release resolved · %s · commit %s\n' \
+			"${TAG}" "${RELEASE_COMMIT:0:12}"
+	else
+		printf '[ OK ] Community release resolved · %s · commit %s\n' \
+			"${TAG}" "${RELEASE_COMMIT:0:12}"
+	fi
 }
 
 confirm_installation() {
@@ -1108,8 +1179,36 @@ confirm_installation() {
 	((ASSUME_YES == 1)) && return 0
 	[[ -r /dev/tty ]] \
 		|| fail "interactive confirmation requires a terminal; use --yes only for automation"
-	read -r -p 'Continue? [y/N] ' answer </dev/tty
+	if [[ "${INSTALL_ACTION}" == "Upgrade" ]]; then
+		read -r -p 'Continue? [y/N] ' answer </dev/tty
+	else
+		read -r -p "Proceed with the HyperFileLens Community ${TAG} installation? [y/N] " answer </dev/tty
+	fi
 	case "${answer}" in y | Y | yes | YES | Yes) ;; *) fail "installation cancelled" ;; esac
+}
+
+run_fresh_community_install() {
+	local package=$1 rc status
+	local -a pipeline_status=()
+	set +e
+	HFL_REGISTRY_REGION="${REGION}" HFL_ONLINE_CHILD=1 HFL_PARENT_LOGGING=1 \
+		HFL_PARENT_INTERACTIVE="${ONLINE_INTERACTIVE}" HFL_LOG_FILE="${ONLINE_LOG_FILE}" \
+		HFL_ONLINE_CONSOLE_MARKER="${ONLINE_CHILD_CONSOLE_MARKER}" HFL_NO_BANNER=1 \
+		bash "${package}/install.sh" install --with-sourcelens --yes \
+		2>&1 \
+		| tr '\r' '\n' \
+		| sed $'s/\033\\[[0-9;?]*[ -/]*[@-~]//g' \
+		| capture_child_install_stream "${ONLINE_LOG_FILE}" 3
+	pipeline_status=("${PIPESTATUS[@]}")
+	set -e
+	rc=${pipeline_status[0]}
+	for status in "${pipeline_status[@]:1}"; do
+		[[ "${status}" -eq 0 ]] \
+			|| fail "could not write the complete installation output to ${ONLINE_LOG_FILE}"
+	done
+	if [[ "${rc}" -ne 0 ]]; then
+		fail "HyperFileLens Community ${TAG} installation failed; review the full log: ${ONLINE_LOG_FILE}"
+	fi
 }
 
 download_source_archive() {
@@ -1118,9 +1217,14 @@ download_source_archive() {
 	global) url="https://codeload.github.com/oneprolabs/hyperfilelens/tar.gz/${RELEASE_COMMIT}" ;;
 	cn) url="https://gitee.com/oneprolabs/hyperfilelens/repository/archive/${RELEASE_COMMIT}.tar.gz" ;;
 	esac
-	printf '\nRelease contract\n'
-	printf '[....] Downloading %s installation contract from %s (commit %s)\n' \
-		"${TAG}" "${SOURCE_NAME}" "${RELEASE_COMMIT:0:12}"
+	if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+		printf '  [....] Downloading %s installation contract from %s (commit %s)\n' \
+			"${TAG}" "${SOURCE_NAME}" "${RELEASE_COMMIT:0:12}"
+	else
+		printf '\nRelease contract\n'
+		printf '[....] Downloading %s installation contract from %s (commit %s)\n' \
+			"${TAG}" "${SOURCE_NAME}" "${RELEASE_COMMIT:0:12}"
+	fi
 	if ! download_file "${url}" "${SESSION_DIR}/source.tar.gz" 300; then
 		fail_with_tag_guidance "Community release ${TAG} cannot be downloaded from ${SOURCE_NAME}"
 	fi
@@ -1130,7 +1234,11 @@ download_source_archive() {
 	[[ -x "${SESSION_DIR}/source/deploy/online/install.sh" \
 		&& -f "${SESSION_DIR}/source/deploy/online/prepare.py" ]] \
 		|| fail_with_tag_guidance "Community tag ${TAG} does not provide the online installation contract"
-	printf '[ OK ] Downloaded installation contract from %s\n' "${SOURCE_NAME}"
+	if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+		printf '  [ OK ] Installation contract downloaded from %s\n' "${SOURCE_NAME}"
+	else
+		printf '[ OK ] Downloaded installation contract from %s\n' "${SOURCE_NAME}"
+	fi
 }
 
 verify_candidate_release() {
@@ -1209,28 +1317,47 @@ if [[ "${DOCKER_RUNTIME_ACTION}" != reuse ]]; then
 fi
 print_target
 confirm_installation
+
+if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+	printf '\n[1/4] Preparing installation\n\n'
+	printf '  [....] Validating the release package and host environment\n'
+fi
 install_host_tools
 if [[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]; then
 	download_source_archive
 fi
 ensure_online_docker_runtime
+if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+	printf '  [ OK ] Release package and host requirements are ready\n'
+	printf '\n[2/4] Downloading installation assets\n\n'
+fi
 
 export HFL_GLOBAL_REGISTRY_PREFIX="${GLOBAL_REGISTRY_PREFIX}"
 export HFL_CN_REGISTRY_PREFIX="${CN_REGISTRY_PREFIX}"
 export HFL_REGISTRY_REGION="${REGION}"
 export HFL_ONLINE_NATIVE_PROGRESS="${ONLINE_INTERACTIVE}"
 candidate="${SESSION_DIR}/hyperfilelens-${RELEASE_VERSION}-online"
+prepare_args=(
+	--source-root "${SESSION_DIR}/source"
+	--version "${TAG}"
+	--region "${REGION}"
+	--output "${candidate}"
+)
+if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+	prepare_args+=(--concise-output)
+fi
 if ! python3 "${SESSION_DIR}/source/deploy/online/prepare.py" \
-	--source-root "${SESSION_DIR}/source" \
-	--version "${TAG}" \
-	--region "${REGION}" \
-	--output "${candidate}"; then
+	"${prepare_args[@]}"; then
 	fail_with_tag_guidance "Community tag ${TAG} is incomplete or unavailable"
 fi
 if ! verify_candidate_release; then
 	fail_with_tag_guidance "Community tag ${TAG} failed release identity validation"
 fi
-printf '[ OK ] Release package and installation assets are ready\n'
+if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+	printf '  [ OK ] All installation assets are ready\n'
+else
+	printf '[ OK ] Release package and installation assets are ready\n'
+fi
 
 if [[ "${INSTALL_ACTION}" == Upgrade ]]; then
 	printf '[....] Upgrading the existing installation to %s\n' "${TAG}"
@@ -1239,9 +1366,5 @@ if [[ "${INSTALL_ACTION}" == Upgrade ]]; then
 		HFL_NO_BANNER=1 bash "${candidate}/install.sh" \
 		upgrade --from "${candidate}" --yes --with-sourcelens
 else
-	printf '[....] Installing HyperFileLens Community %s\n' "${TAG}"
-	HFL_REGISTRY_REGION="${REGION}" HFL_ONLINE_CHILD=1 HFL_PARENT_LOGGING=1 \
-		HFL_PARENT_INTERACTIVE="${ONLINE_INTERACTIVE}" HFL_LOG_FILE="${ONLINE_LOG_FILE}" \
-		HFL_NO_BANNER=1 bash "${candidate}/install.sh" \
-		install --with-sourcelens --yes
+	run_fresh_community_install "${candidate}"
 fi
