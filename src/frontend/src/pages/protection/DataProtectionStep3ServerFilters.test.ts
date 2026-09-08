@@ -44,6 +44,22 @@ describe('Backup Wizard Step 3 server filters', () => {
     expect(table).not.toContain(':title="target.location ? `${target.name}\\n${target.location}` : target.name"')
   })
 
+  it('keeps the dedicated Backup Paths popover as the only hover detail', () => {
+    const table = sourceBetween('<el-table\n                    ref="step3TableRef"', '<template #empty>')
+    const columnStart = table.indexOf(":label=\"t('protection.backupsPage.flowBackupColBackupDirs')\"")
+    const columnEnd = table.indexOf('</el-table-column>', columnStart)
+    const column = table.slice(columnStart, columnEnd)
+
+    expect(columnStart).toBeGreaterThan(-1)
+    expect(column).toContain('class-name="hfl-table-no-tooltip"')
+    expect(column).toContain('label-class-name="hfl-table-no-tooltip"')
+    expect(column).toContain('class="table-stack-list hfl-table-no-tooltip"')
+    expect(column).toContain('<HflPopover')
+    expect(column).toContain('v-for="dir in sourceConfigDirRows(row.id)"')
+    expect(column).not.toContain('data-table-overflow-title')
+    expect(column).not.toContain('show-overflow-tooltip')
+  })
+
   it('vertically aligns backup policy and file filter values', () => {
     const table = sourceBetween('<el-table\n                    ref="step3TableRef"', '<template #empty>')
 

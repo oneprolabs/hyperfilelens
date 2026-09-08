@@ -1944,6 +1944,30 @@ function onFlowSourceDetailClosed() {
   flowSourceDetailRestoreRecordTaskUuid.value = ''
 }
 
+const step3SnapshotBrowserEnabled = computed(() => step3SourceSelection.value.length === 1)
+
+function openSelectedSnapshotFiles() {
+  if (!step3SnapshotBrowserEnabled.value) return
+  const source = step3SourceSelection.value[0]
+  if (!source) return
+
+  const sourceType = source.id.startsWith('agent:')
+    ? 'agent'
+    : source.id.startsWith('nas:')
+      ? 'nas'
+      : source.type === 'host' ? 'agent' : 'nas'
+  const sourceRefId = Number(source.refId ?? source.id.split(':').pop())
+  if (!Number.isInteger(sourceRefId) || sourceRefId <= 0) {
+    ElMessage.error({ message: t('errors.generic.loadFailed'), grouping: true })
+    return
+  }
+
+  void router.push({
+    name: 'protection-backup-data-browser',
+    params: { sourceType, sourceRefId },
+  })
+}
+
 watch(backupTaskDetailOpen, (open) => {
   if (!open) backupTaskDetailUuid.value = ''
 })
@@ -7607,7 +7631,12 @@ function usableSnapshotDirectories(snapshot: RecoverySnapshotOption | BackupSour
 function restorePlanSnapshotCompatibility(plan: RecoveryPlanSummary, snapshot: RecoverySnapshotOption): SnapshotCompatibility {
   const status = String(snapshot.status || '').toLowerCase()
   if (status !== 'available' && status !== 'partial') {
-    return { compatible: false, reason: t('protection.backupsPage.snapshotReasonStatusUnavailable') }
+    return {
+      compatible: false,
+      reason: t('protection.backupsPage.snapshotReasonStatusUnavailable', {
+        status: snapshotStatusLabel(snapshot.status),
+      }),
+    }
   }
   const directories = usableSnapshotDirectories(snapshot)
   if (!directories.length) {
@@ -10270,6 +10299,27 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       </ElButton>
                     </span>
                   </ElTooltip>
+                  <ElTooltip
+                    :content="t('protection.backupsPage.snapshotBrowserSelectOneSourceHint')"
+                    placement="bottom"
+                    :disabled="step3SnapshotBrowserEnabled"
+                    :show-after="300"
+                    :hide-after="FLOW_DETAIL_POPOVER_HIDE_AFTER_MS"
+                  >
+                    <span class="dp-flow-step3-action-tooltip">
+                      <ElButton
+                        class="hfl-btn-with-icon dp-flow-step3-action-btn dp-flow-step3-action-btn--browse shrink-0"
+                        :disabled="!step3SnapshotBrowserEnabled"
+                        @click="openSelectedSnapshotFiles"
+                      >
+                        <FolderOpen
+                          :size="16"
+                          class="dp-flow-step3-action-btn__icon shrink-0"
+                        />
+                        {{ t('protection.backupsPage.snapshotBrowserOpen') }}
+                      </ElButton>
+                    </span>
+                  </ElTooltip>
                   <ElDropdown
                     ref="flowMoreActionsDropdownRef"
                     trigger="click"
@@ -11084,14 +11134,21 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         <FlowSourceConnectionCell :row="row" />
                       </template>
                     </el-table-column>
+                    <!--
+                      Backup Paths owns its hover detail through the HflPopover below.
+                      Keep the shared overflow tooltip disabled for this entire column;
+                      otherwise truncated preview rows produce a second, incomplete tooltip.
+                    -->
                     <el-table-column
                       :label="t('protection.backupsPage.flowBackupColBackupDirs')"
                       :min-width="FLOW_START_BACKUP_TABLE_COL_MIN.backupDirs"
+                      class-name="hfl-table-no-tooltip"
+                      label-class-name="hfl-table-no-tooltip"
                     >
                       <template #default="{ row }">
                         <div
                           v-if="sourceConfigDirRows(row.id).length"
-                          class="table-stack-list"
+                          class="table-stack-list hfl-table-no-tooltip"
                         >
                           <HflPopover
                             placement="right-start"
@@ -19065,6 +19122,44 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   min-width: 6.5rem;
 }
 
+.dp-flow-step3-action-btn--browse.el-button:not(.is-disabled) {
+  --color-border: oklch(87% 0.065 274.039);
+  --color-text-title: oklch(51.1% 0.262 276.966);
+  --el-button-border-color: oklch(87% 0.065 274.039);
+  --el-button-bg-color: #fff;
+  --el-button-text-color: oklch(51.1% 0.262 276.966);
+  border-color: oklch(87% 0.065 274.039);
+  border-radius: 6px;
+  background: #fff;
+  color: oklch(51.1% 0.262 276.966);
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 5%);
+}
+
+.dp-flow-step3-action-btn--browse.el-button:not(.is-disabled) .dp-flow-step3-action-btn__icon {
+  color: oklch(58.5% 0.233 277.117);
+}
+
+.dp-flow-step3-action-btn--browse.el-button.is-disabled,
+.dp-flow-step3-action-btn--browse.el-button.is-disabled:hover,
+.dp-flow-step3-action-btn--browse.el-button.is-disabled:focus,
+.dp-flow-step3-action-btn--browse.el-button.is-disabled:active {
+  border-color: oklch(92.9% 0.013 255.508);
+  background: oklch(98.4% 0.003 247.858);
+  color: oklch(70.4% 0.04 256.788);
+  opacity: 0.7;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.dp-flow-step3-action-btn--browse.el-button.is-disabled .dp-flow-step3-action-btn__icon {
+  color: oklch(70.4% 0.04 256.788);
+}
+
+.dp-flow-step3-action-btn--browse.el-button:focus-visible {
+  outline: 2px solid rgb(99 102 241 / 28%);
+  outline-offset: 2px;
+}
+
 .dp-flow-steps-row {
   --dp-hbr-primary: var(--color-primary, var(--el-color-primary, #2563eb));
   --dp-hbr-primary-deep: color-mix(in srgb, var(--dp-hbr-primary) 88%, #000);
@@ -20650,6 +20745,18 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 </style>
 
 <style>
+#app .dp-flow-step3-action-btn--browse.el-button:not(.is-disabled):hover,
+#app .dp-flow-step3-action-btn--browse.el-button:not(.is-disabled):focus,
+#app .dp-flow-step3-action-btn--browse.el-button:not(.is-disabled):active {
+  border-color: oklch(78.5% 0.115 274.713) !important;
+  background: oklch(96.2% 0.018 272.314) !important;
+  color: oklch(51.1% 0.262 276.966) !important;
+}
+
+#app .dp-flow-step3-action-btn--browse.el-button:not(.is-disabled):hover {
+  border-color: var(--color-primary-hover, #4e3fd4) !important;
+}
+
 .restore-already-running-dialog .el-message-box__message {
   width: 100%;
 }

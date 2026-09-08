@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"hyperfilelens/agent/internal/controller"
+	"hyperfilelens/agent/internal/engine"
 	"hyperfilelens/agent/internal/enroll"
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/infra/database"
@@ -28,6 +29,7 @@ const heartbeatCollectionInterval = 30 * time.Second
 const durableRegistrationRetryInterval = 5 * time.Minute
 const lifecycleRepairInterval = 10 * time.Second
 const lifecycleRepairTimeout = 10 * time.Minute
+const snapshotDownloadCleanupInterval = time.Hour
 
 // Agent is the runtime composition root coordinating module startup and shutdown.
 type Agent struct {
@@ -74,6 +76,7 @@ func (a *Agent) Startup(ctx context.Context) error {
 	if err := Setup(ctx, cfg); err != nil {
 		return err
 	}
+	engine.CleanupStaleSnapshotDownloadArtifacts()
 
 	dataRoot, logDir, _, err := ResolveLayout(cfg)
 	if err != nil {
@@ -117,8 +120,22 @@ func (a *Agent) Startup(ctx context.Context) error {
 	}
 	envPath, jsonPath := a.store.Paths()
 	slog.Info("config files", "env_file", envPath, "json_file", jsonPath)
+	go snapshotDownloadCleanupLoop(ctx)
 
 	return nil
+}
+
+func snapshotDownloadCleanupLoop(ctx context.Context) {
+	ticker := time.NewTicker(snapshotDownloadCleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			engine.CleanupStaleSnapshotDownloadArtifacts()
+		}
+	}
 }
 
 // Run blocks until ctx is cancelled.

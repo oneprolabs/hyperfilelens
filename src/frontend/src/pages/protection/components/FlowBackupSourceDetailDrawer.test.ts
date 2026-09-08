@@ -8,27 +8,20 @@ import { compactSourceText } from '../../../test/sourceText'
 const drawer = compactSourceText(
   readFileSync(resolve(process.cwd(), 'src/pages/protection/components/FlowBackupSourceDetailDrawer.vue'), 'utf8'),
 )
+const snapshotPanel = compactSourceText(
+  readFileSync(resolve(process.cwd(), 'src/pages/protection/components/SnapshotPointDetailPanel.vue'), 'utf8'),
+)
 
-function sourceBetween(start: string, end: string) {
-  const startIndex = drawer.indexOf(start)
-  const endIndex = drawer.indexOf(end, startIndex)
+function sourceTextBetween(source: string, start: string, end: string) {
+  const startIndex = source.indexOf(start)
+  const endIndex = source.indexOf(end, startIndex)
   expect(startIndex).toBeGreaterThanOrEqual(0)
   expect(endIndex).toBeGreaterThan(startIndex)
-  return drawer.slice(startIndex, endIndex)
+  return source.slice(startIndex, endIndex)
 }
 
-function buttonWithHandler(source: string, handler: string, marker: string) {
-  let handlerIndex = source.indexOf(handler)
-  while (handlerIndex >= 0) {
-    const startIndex = source.lastIndexOf('<button', handlerIndex)
-    const endIndex = source.indexOf('</button>', handlerIndex)
-    expect(startIndex).toBeGreaterThanOrEqual(0)
-    expect(endIndex).toBeGreaterThan(handlerIndex)
-    const button = source.slice(startIndex, endIndex)
-    if (button.includes(marker)) return button
-    handlerIndex = source.indexOf(handler, handlerIndex + handler.length)
-  }
-  throw new Error(`Unable to find button containing ${handler} and ${marker}`)
+function sourceBetween(start: string, end: string) {
+  return sourceTextBetween(drawer, start, end)
 }
 
 describe('FlowBackupSourceDetailDrawer task columns', () => {
@@ -158,7 +151,7 @@ describe('FlowBackupSourceDetailDrawer target validation refresh', () => {
   })
 })
 
-describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
+describe('FlowBackupSourceDetailDrawer snapshot detail drawer', () => {
   it('adds snapshot filters and refresh without an advanced-filter entry', () => {
     const snapshotTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',
@@ -166,7 +159,7 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     )
     const loader = sourceBetween(
       'async function loadSnapshotsForSource()',
-      'async function downloadSelectedBrowserPaths()',
+      'async function loadRestoreRecordsForSource',
     )
 
     expect(snapshotTab).toContain('v-model="snapshotFilterId"')
@@ -183,7 +176,7 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
   it('allows snapshot restore actions while the source backup is active', () => {
     const restoreGuard = sourceBetween(
       'function canRestoreSnapshot(row: BackupSourceSnapshot)',
-      'function onSnapshotExpandChange',
+      'function openSnapshotRestore',
     )
 
     expect(drawer).not.toContain('restoreBlockedByBackup?: boolean')
@@ -192,39 +185,36 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(restoreGuard).not.toContain('restoreBlockedByBackup')
   })
 
-  it('shows storage metrics without the reference explanation header', () => {
+  it('shows compact storage metrics in the snapshot detail panel', () => {
     const snapshotTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',
     )
-    const expandedSummary = sourceBetween(
-      '<section class="snapshot-efficiency-summary">',
-      '<el-table v-if="selectedSnapshotDirectories.length"',
+    const overview = sourceTextBetween(
+      snapshotPanel,
+      '<section class="snapshot-point-detail-section snapshot-point-detail-section--overview">',
+      '<section class="snapshot-point-detail-section snapshot-point-detail-section--browser">',
     )
 
-    expect(snapshotTab).toContain("t('protection.backupsPage.snapshotListSize')")
+    expect(snapshotTab).toContain("t('protection.backupsPage.snapshotNewStorage')")
     expect(snapshotTab).toContain("t('protection.backupsPage.snapshotRecoverableData')")
     expect(snapshotTab).toContain('fmtReferenceBytes(row.new_packed_content_bytes)')
-    expect(expandedSummary).not.toContain('snapshot-efficiency-summary__header')
-    expect(expandedSummary).not.toContain("t('protection.backupsPage.snapshotStorageEfficiencyTitle')")
-    expect(expandedSummary).not.toContain("t('protection.backupsPage.snapshotStorageEfficiencyLead')")
-    expect(expandedSummary).not.toContain("t('protection.backupsPage.snapshotStorageReferenceHint')")
-    expect(expandedSummary).toContain('selectedSnapshot.new_original_content_bytes')
-    expect(expandedSummary).toContain('selectedSnapshot.new_packed_content_bytes')
-    expect(expandedSummary).toContain('selectedSnapshot.data_reuse_ratio')
-    expect(expandedSummary).toContain('selectedSnapshot.compression_savings_ratio')
-    expect(expandedSummary).toContain('fmtCombinedReduction(selectedSnapshot)')
-    expect(expandedSummary.match(/snapshot-efficiency-summary__metric-info/g)).toHaveLength(6)
-    expect(expandedSummary.match(/append-to="body"/g)).toHaveLength(6)
-    expect(expandedSummary.match(/:z-index="3600"/g)).toHaveLength(6)
-    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotRecoverableDataHint')")
-    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotNewOriginalDataHint')")
-    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotNewStorageHint')")
-    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotDataReuseHint')")
-    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotCompressionSavingsHint')")
-    expect(expandedSummary).toContain("t('protection.backupsPage.snapshotCombinedReductionHint')")
-    expect(drawer).toContain('Math.max(0, Number(value))')
-    expect(drawer).toContain('return `${value.toFixed(2)} : 1`')
+    expect(overview).not.toContain("t('protection.backupsPage.snapshotStorageEfficiencyTitle')")
+    expect(overview).toContain('snapshot.new_original_content_bytes')
+    expect(overview).toContain('snapshot.new_packed_content_bytes')
+    expect(overview).toContain('snapshot.data_reuse_ratio')
+    expect(overview).toContain('snapshot.compression_savings_ratio')
+    expect(overview).toContain('fmtCombinedReduction(snapshot)')
+    expect(overview.match(/<HflHelpTip/g)).toHaveLength(6)
+    expect(overview.match(/popper-class="snapshot-metric-help-popper"/g)).toHaveLength(6)
+    expect(overview).toContain("t('protection.backupsPage.snapshotRecoverableDataHint')")
+    expect(overview).toContain("t('protection.backupsPage.snapshotNewOriginalDataHint')")
+    expect(overview).toContain("t('protection.backupsPage.snapshotNewStorageHint')")
+    expect(overview).toContain("t('protection.backupsPage.snapshotDataReuseHint')")
+    expect(overview).toContain("t('protection.backupsPage.snapshotCompressionSavingsHint')")
+    expect(overview).toContain("t('protection.backupsPage.snapshotCombinedReductionHint')")
+    expect(snapshotPanel).toContain('Math.max(0, Number(value))')
+    expect(snapshotPanel).toContain('return `${value.toFixed(2)} : 1`')
     expect(enProtectionPages.backupsPage.snapshotListSize).toBe('Size')
     expect(enProtectionPages.backupsPage.snapshotRecoverableData).toBe('Restore Size')
     expect(enProtectionPages.backupsPage.snapshotNewOriginalData).toBe('New Data')
@@ -232,30 +222,34 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(enProtectionPages.backupsPage.snapshotDataReuse).toBe('Reuse Rate')
     expect(enProtectionPages.backupsPage.snapshotCompressionSavings).toBe('Compression Savings')
     expect(enProtectionPages.backupsPage.snapshotCombinedReduction).toBe('Reduction Ratio')
+    const snapshotMetricHints = [
+      enProtectionPages.backupsPage.snapshotRecoverableDataHint,
+      enProtectionPages.backupsPage.snapshotNewOriginalDataHint,
+      enProtectionPages.backupsPage.snapshotNewStorageHint,
+      enProtectionPages.backupsPage.snapshotDataReuseHint,
+      enProtectionPages.backupsPage.snapshotCompressionSavingsHint,
+      enProtectionPages.backupsPage.snapshotCombinedReductionHint,
+    ]
+    expect(snapshotMetricHints.every((hint) => !hint.includes('\n'))).toBe(true)
+    expect(snapshotMetricHints.every((hint) => /\(.+\)/.test(hint))).toBe(true)
+    expect(enProtectionPages.backupsPage.snapshotDataReuseHint).toContain('1 − New Data ÷ Restore Size')
+    expect(enProtectionPages.backupsPage.snapshotCompressionSavingsHint).toContain('1 − Snapshot Size ÷ New Data')
+    expect(enProtectionPages.backupsPage.snapshotCombinedReductionHint).toContain('Restore Size ÷ Snapshot Size')
     expect(enProtectionPages.backupsPage.snapshotStorageFullyReused).toBe('Fully reused')
   })
 
-  it('distinguishes viewing a snapshot from browsing a directory', () => {
+  it('opens the same snapshot detail drawer from the ID and Browse action', () => {
     const snapshotTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',
     )
-    const snapshotAction = buttonWithHandler(
-      snapshotTab,
-      '@click.stop="toggleSnapshot(row)"',
-      'snapshot-point-actions__button',
-    )
-    const directoryAction = buttonWithHandler(
-      snapshotTab,
-      '@click.stop="openSnapshotDirectory(dir)"',
-      'snapshot-point-actions__button',
-    )
-
-    expect(snapshotAction).toContain("t('protection.backupsPage.snapshotViewAction')")
-    expect(snapshotAction).not.toContain("t('protection.backupsPage.snapshotBrowserBrowse')")
-    expect(directoryAction).toContain("t('protection.backupsPage.snapshotBrowserBrowse')")
-    expect(directoryAction).not.toContain("t('protection.backupsPage.snapshotViewAction')")
-    expect(enProtectionPages.backupsPage.snapshotViewAction).toBe('View')
+    expect(snapshotTab.match(/@click\.stop="openSnapshotDetailDrawer\(row\)"/g)).toHaveLength(2)
+    expect(snapshotTab).toContain('<SnapshotPointDetailPanel')
+    expect(snapshotTab).toContain("t('protection.backupsPage.snapshotBrowserBrowse')")
+    expect(snapshotTab).not.toContain("t('protection.backupsPage.snapshotViewAction')")
+    expect(snapshotTab).not.toContain('type="expand"')
+    expect(snapshotTab).not.toContain(':expand-row-keys')
+    expect(snapshotPanel).toContain('@click="browseSnapshotDirectory(directory)"')
     expect(enProtectionPages.backupsPage.snapshotBrowserBrowse).toBe('Browse')
   })
 
@@ -268,9 +262,16 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colSnapId\')" width="140" fixed>')
     expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colSnapStart\')" width="150">')
     expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupDetail.colSnapEnd\')" width="150">')
-    expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupsPage.snapshotListSize\')" width="88" align="right">')
-    expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupsPage.snapshotRecoverableData\')" width="105" align="right">')
+    expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupsPage.snapshotNewStorage\')" width="128" align="right" label-class-name="hfl-table-no-tooltip"><template #header><span class="snapshot-point-table-header-with-tip"><span>{{ t(\'protection.backupsPage.snapshotNewStorage\') }}</span><HflHelpTip :content="t(\'protection.backupsPage.snapshotNewStorageHint\')"')
+    expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.backupsPage.snapshotRecoverableData\')" width="125" align="right" label-class-name="hfl-table-no-tooltip"><template #header><span class="snapshot-point-table-header-with-tip"><span>{{ t(\'protection.backupsPage.snapshotRecoverableData\') }}</span><HflHelpTip :content="t(\'protection.backupsPage.snapshotRecoverableDataHint\')"')
+    expect(snapshotTab.match(/<HflHelpTip/g)).toHaveLength(2)
+    expect(snapshotTab.match(/popper-class="snapshot-metric-help-popper"/g)).toHaveLength(2)
     expect(snapshotTab).toContain('<el-table-column :label="t(\'protection.sourceResources.colActions\')" width="171"')
+    expect(drawer).toMatch(/\.snapshot-point-actions__button--restore,\s*\.snapshot-point-actions__button--browse\s*{[^}]*color:\s*oklch\(51\.1% 0\.262 276\.966\);/s)
+    expect(drawer).toContain(':global(.snapshot-metric-help-popper.el-popper)')
+    expect(drawer).toContain('max-width: min(320px, calc(100vw - 32px)) !important;')
+    expect(drawer).toContain('z-index: 3800 !important;')
+    expect(drawer).toContain('white-space: normal;')
     expect(drawer).toContain('gap: 6px;')
     expect(drawer).toContain('padding: 0 3px;')
     expect(drawer).toContain('padding: 3px 8px;')
@@ -278,12 +279,34 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
       .toBeLessThan(snapshotTab.indexOf("t('protection.backupDetail.colSnapStart')"))
   })
 
-  it('keeps expanded snapshot details pinned to the main table viewport', () => {
-    expect(drawer).toContain('class="hfl-list-table snapshot-points-table"')
-    expect(drawer).toContain('.snapshot-points-table { container-type: inline-size; }')
-    expect(drawer).toContain('.snapshot-directory-expand-panel { position: sticky; left: 35px;')
-    expect(drawer).toContain('width: calc(100cqw - 49px);')
-    expect(drawer).toContain('.snapshot-directory-table { width: 100%; min-width: 0; }')
+  it('uses a wider second-level drawer with internal scrolling', () => {
+    expect(drawer).toContain('class="dp-snapshot-detail-drawer-shell"')
+    expect(drawer).toContain('class="dp-snapshot-detail-drawer"')
+    expect(drawer).toContain('role="dialog"')
+    expect(drawer).toContain('aria-modal="true"')
+    expect(drawer).toContain('const snapshotDetailDrawerSize = computed(() => {')
+    expect(drawer).toContain('Math.min(desiredWidth, Math.max(280, outerWidth - 48))')
+    expect(drawer).toContain(':style="{ width: snapshotDetailDrawerSize }"')
+    expect(drawer).toContain('.dp-snapshot-detail-drawer__body { flex: 1; min-height: 0; overflow: hidden;')
+    expect(snapshotPanel).toContain('grid-template-rows: 116px minmax(0, 1fr);')
+    expect(snapshotPanel).toContain('grid-template-columns: repeat(3, minmax(150px, 1fr));')
+    expect(snapshotPanel).toContain('.snapshot-point-detail-source-tree { min-width: 0; min-height: 0; overflow: auto;')
+  })
+
+  it('keeps source paths independently expandable and downloads one grouped selection', () => {
+    expect(snapshotPanel).toContain('const browserStates = reactive(new Map<number, DirectoryBrowserState>())')
+    expect(snapshotPanel).toContain('state.expanded = !state.expanded')
+    expect(snapshotPanel).toContain('if (state.expanded && !state.loaded && !state.loading) void openDirectory(directory, state.path)')
+    expect(snapshotPanel).toContain('v-for="directory in snapshotDirectories"')
+    expect(snapshotPanel).toContain(':model-value="sourcePathChecked(directory)"')
+    expect(snapshotPanel).toContain("state.rootChecked ? ['']")
+    expect(snapshotPanel).toContain('createBackupSnapshotDownloadTask(props.snapshot.id, selectedDownloadGroups.value)')
+    expect(snapshotPanel).toContain('projectedCount > maxSelectedItems.value')
+    expect(snapshotPanel).toContain("apiError?.errorCode === 'PROTECTION.SNAPSHOT_MULTI_DOWNLOAD_UPGRADE_REQUIRED'")
+    expect(snapshotPanel).toContain('pushToast({ message, type, title })')
+    expect(snapshotPanel).toContain('background: #fff;')
+    expect(snapshotPanel).toContain('background: rgb(241 245 249);')
+    expect(snapshotPanel).toContain('z-index: 3800 !important;')
   })
 
   it('keeps expanded restore details pinned to the drawer viewport', () => {
@@ -404,18 +427,18 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
   it('preserves loaded snapshot details when the active tab refreshes its list', () => {
     const loader = sourceBetween(
       'async function loadSnapshotsForSource()',
-      'async function downloadSelectedBrowserPaths()',
+      'async function loadRestoreRecordsForSource',
     )
 
     expect(loader).not.toContain('snapshotDetails.value = new Map()')
-    expect(loader).not.toContain('expandedSnapshotRowKeys.value = []')
     expect(loader).not.toContain('selectedSnapshotId.value = null')
   })
 
   it('hands ready snapshot artifacts to the browser without buffering a Blob', () => {
-    const downloader = sourceBetween(
+    const downloader = sourceTextBetween(
+      snapshotPanel,
       'async function startNativeArtifactDownload',
-      'function closeSnapshotFileBrowser',
+      'async function downloadSelection',
     )
 
     expect(downloader).toContain('createSnapshotArtifactDownloadUrl(artifactId)')
@@ -425,7 +448,8 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
   })
 
   it('loads snapshot directory pages on demand and explains partial results', () => {
-    const pagination = sourceBetween(
+    const pagination = sourceTextBetween(
+      snapshotPanel,
       'function browserPageTreeNodes(',
       'function syncBrowserTreeCheckedKeys',
     )
@@ -434,24 +458,24 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(pagination).toContain('async function loadMoreBrowserTreeEntries')
     expect(pagination).toContain('cursor: data.nextCursor')
     expect(pagination).toContain('replaceBrowserLoadMoreNode')
-    expect(pagination).toContain('browserTreeRef.value?.insertBefore(replacement, data)')
-    expect(pagination).toContain('browserTreeRef.value?.remove(data)')
-    expect(pagination).toContain('browserEntries.value = [...browserEntries.value, ...result.entries]')
-    expect(drawer).toContain("t('protection.backupsPage.snapshotBrowserPartialCount', { n: data.loadedCount })")
-    expect(drawer).toContain('@click.stop="loadMoreBrowserTreeEntries(data)"')
+    expect(pagination).toContain('browserTree(directory.id)?.insertBefore(replacement, data)')
+    expect(pagination).toContain('browserTree(directory.id)?.remove(data)')
+    expect(pagination).toContain('state.entries = [...state.entries, ...result.entries]')
+    expect(snapshotPanel).toContain("t('protection.backupsPage.snapshotBrowserPartialCount', { n: data.loadedCount })")
+    expect(snapshotPanel).toContain('@click.stop="loadMoreBrowserTreeEntries(directory, data)"')
     expect(enProtectionPages.backupsPage.snapshotBrowserPartialCount).toBe('{n} items loaded. More items are available.')
     expect(enProtectionPages.backupsPage.snapshotBrowserLoadMore).toBe('Load more')
   })
 
-  it('clears cached expansion state when pagination changes', () => {
+  it('closes the snapshot detail drawer when pagination changes', () => {
     const paginationWatcher = sourceBetween(
       '() => [snapshotPagination.page, snapshotPagination.pageSize] as const,',
       'watch(sourceId,',
     )
 
     expect(paginationWatcher).toContain('selectedSnapshotId.value = null')
-    expect(paginationWatcher).toContain('expandedSnapshotRowKeys.value = []')
     expect(paginationWatcher).toContain('snapshotDetails.value = new Map()')
+    expect(paginationWatcher).toContain('resetSnapshotDetailDrawer()')
   })
 })
 

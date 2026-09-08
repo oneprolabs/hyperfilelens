@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { isSnapshotDirectoryBrowsable } from './snapshotBrowseEligibility'
+import {
+  browsableSnapshotDirectories,
+  findBrowsableSnapshots,
+  findFirstBrowsableSnapshotDirectory,
+  isSnapshotDirectoryBrowsable,
+} from './snapshotBrowseEligibility'
 
 const availableDirectory = {
   status: 'available',
@@ -37,4 +42,77 @@ describe('isSnapshotDirectoryBrowsable', () => {
       })).toBe(false)
     },
   )
+})
+
+describe('findFirstBrowsableSnapshotDirectory', () => {
+  it('selects a directory from the newest browsable snapshot in API order', () => {
+    const result = findFirstBrowsableSnapshotDirectory([
+      {
+        id: 3,
+        status: 'creating',
+        directories: [{ ...availableDirectory, id: 31 }],
+      },
+      {
+        id: 2,
+        status: 'partial',
+        directories: [
+          { ...availableDirectory, id: 21, status: 'failed' },
+          { ...availableDirectory, id: 22 },
+        ],
+      },
+      {
+        id: 1,
+        status: 'available',
+        directories: [{ ...availableDirectory, id: 11 }],
+      },
+    ])
+
+    expect(result?.snapshot.id).toBe(2)
+    expect(result?.directory.id).toBe(22)
+  })
+
+  it('returns null when no snapshot contains a browsable directory', () => {
+    expect(findFirstBrowsableSnapshotDirectory([
+      {
+        status: 'available',
+        directories: [{ status: 'available', kopia_snapshot_id: null }],
+      },
+      {
+        status: 'failed',
+        directories: [{ ...availableDirectory }],
+      },
+    ])).toBeNull()
+  })
+})
+
+describe('snapshot browser selector options', () => {
+  const snapshots = [
+    {
+      id: 3,
+      status: 'creating',
+      directories: [{ ...availableDirectory, id: 31 }],
+    },
+    {
+      id: 2,
+      status: 'partial',
+      directories: [
+        { ...availableDirectory, id: 21, status: 'failed' },
+        { ...availableDirectory, id: 22 },
+        { ...availableDirectory, id: 23 },
+      ],
+    },
+    {
+      id: 1,
+      status: 'available',
+      directories: [{ ...availableDirectory, id: 11 }],
+    },
+  ]
+
+  it('keeps only browsable snapshots in API order', () => {
+    expect(findBrowsableSnapshots(snapshots).map((snapshot) => snapshot.id)).toEqual([2, 1])
+  })
+
+  it('keeps only browsable protected paths for the selected snapshot', () => {
+    expect(browsableSnapshotDirectories(snapshots[1]).map((directory) => directory.id)).toEqual([22, 23])
+  })
 })

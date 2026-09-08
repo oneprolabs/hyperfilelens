@@ -48,6 +48,10 @@ const (
 	snapshotFailureSampleLimit           = 10
 	snapshotFailurePathLimit             = 1024
 	snapshotFailureErrorLimit            = 2048
+	snapshotDownloadMaxSelections        = 100
+	snapshotDownloadArchiveRoot          = "snapshot-download"
+	snapshotDownloadStaleAge             = 24 * time.Hour
+	snapshotDownloadSourceDirMaxBytes    = 180
 )
 
 type repositoryPrepareMode uint8
@@ -2514,13 +2518,390 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 	return "success", result, ""
 }
 
+type snapshotDownloadGroup struct {
+	snapshotID    string
+	sourcePath    string
+	pathType      string
+	rootSizeBytes int64
+	paths         []string
+}
+
+func snapshotDownloadGroups(p Payload) ([]snapshotDownloadGroup, bool, error) {
+	raw, exists := p.Extra["groups"]
+	if !exists || raw == nil {
+		return nil, false, nil
+	}
+	items, ok := raw.([]any)
+	if !ok || len(items) == 0 {
+		return nil, true, fmt.Errorf("snapshot download groups must be a non-empty list")
+	}
+	groups := make([]snapshotDownloadGroup, 0, len(items))
+	selectedCount := 0
+	for _, item := range items {
+		data, ok := item.(map[string]any)
+		if !ok {
+			return nil, true, fmt.Errorf("snapshot download group is invalid")
+		}
+		group := snapshotDownloadGroup{
+			snapshotID: strings.TrimSpace(stringValue(data["snapshot_id"])),
+			sourcePath: strings.TrimSpace(stringValue(data["source_path"])),
+			pathType:   strings.ToLower(strings.TrimSpace(stringValue(data["path_type"]))),
+		}
+		if group.snapshotID == "" || group.sourcePath == "" {
+			return nil, true, fmt.Errorf("snapshot download group identity is invalid")
+		}
+		if group.pathType != "file" && group.pathType != "directory" {
+			return nil, true, fmt.Errorf("snapshot download group path type is invalid")
+		}
+		if value, valueOK := exactInt64Value(data["root_size_bytes"]); valueOK && value >= 0 {
+			group.rootSizeBytes = value
+		}
+		rawPaths, ok := data["paths"].([]any)
+		if !ok || len(rawPaths) == 0 {
+			return nil, true, fmt.Errorf("snapshot download group paths must be a non-empty list")
+		}
+		seen := map[string]struct{}{}
+		for _, rawPath := range rawPaths {
+			value := strings.TrimSpace(stringValue(rawPath))
+			value = strings.ReplaceAll(value, "\\", "/")
+			if value != "" {
+				if path.IsAbs(value) || filepath.VolumeName(value) != "" {
+					return nil, true, fmt.Errorf("snapshot download path is invalid")
+				}
+				value = strings.Trim(value, "/")
+				value = path.Clean(value)
+				if value == "." || value == ".." || strings.HasPrefix(value, "../") {
+					return nil, true, fmt.Errorf("snapshot download path is invalid")
+				}
+			}
+			if _, duplicate := seen[value]; duplicate {
+				continue
+			}
+			seen[value] = struct{}{}
+			group.paths = append(group.paths, value)
+		}
+		if len(group.paths) == 0 || snapshotDownloadPathsConflict(group.paths) {
+			return nil, true, fmt.Errorf("parent and child snapshot paths cannot be downloaded together")
+		}
+		selectedCount += len(group.paths)
+		if selectedCount > snapshotDownloadMaxSelections {
+			return nil, true, fmt.Errorf("at most %d snapshot paths can be downloaded", snapshotDownloadMaxSelections)
+		}
+		groups = append(groups, group)
+	}
+	return groups, true, nil
+}
+
+func snapshotDownloadPathsConflict(paths []string) bool {
+	ordered := append([]string(nil), paths...)
+	sort.Strings(ordered)
+	for index, current := range ordered {
+		if current == "" && len(ordered) > 1 {
+			return true
+		}
+		for _, candidate := range ordered[index+1:] {
+			if strings.HasPrefix(candidate, current+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func snapshotDownloadSelectionLogicalSize(
+	ctx context.Context,
+	bin string,
+	configFile string,
+	env map[string]string,
+	group snapshotDownloadGroup,
+	selectedPath string,
+) (int64, error) {
+	if selectedPath == "" {
+		if (group.pathType != "file" && group.pathType != "directory") || group.rootSizeBytes < 0 {
+			return 0, fmt.Errorf("snapshot Source Path size is invalid")
+		}
+		return group.rootSizeBytes, nil
+	}
+	selection, inspectResult, inspectErr := inspectManagedSnapshotSelection(
+		ctx,
+		bin,
+		configFile,
+		env,
+		group.snapshotID,
+		selectedPath,
+	)
+	if inspectErr != nil {
+		return 0, fmt.Errorf("%s", snapshotBrowseFailureMessage(inspectResult, inspectErr))
+	}
+	if selection.invalidType || !selection.found {
+		return 0, fmt.Errorf("selected snapshot path is unavailable")
+	}
+	if selection.pathType == "file" {
+		return selection.sizeBytes, nil
+	}
+	target := snapshotObjectPath(group.snapshotID, selectedPath)
+	var sizeBytes int64
+	var invalid bool
+	res, runErr := process.RunStreamingDiscardStdout(
+		ctx,
+		bin,
+		[]string{"--config-file=" + configFile, "ls", "-lr", target},
+		env,
+		"",
+		func(line string, stderr bool) {
+			if stderr {
+				return
+			}
+			mode, size, _, _, ok := parseInsightSnapshotLongLine(line)
+			if !ok {
+				if strings.TrimSpace(line) != "" {
+					invalid = true
+				}
+				return
+			}
+			entryType, valid := classifyInsightSnapshotEntry(mode, size)
+			if !valid {
+				invalid = true
+				return
+			}
+			if entryType != "file" {
+				return
+			}
+			if size > 0 && sizeBytes <= math.MaxInt64-size {
+				sizeBytes += size
+			} else if size > 0 {
+				invalid = true
+			}
+		},
+	)
+	if runErr != nil {
+		return 0, fmt.Errorf("%s", snapshotBrowseFailureMessage(res, runErr))
+	}
+	if invalid {
+		return 0, fmt.Errorf("snapshot download selection contains invalid entries")
+	}
+	return sizeBytes, nil
+}
+
+func (e *Engine) runManagedSnapshotDownloadPlan(
+	ctx context.Context,
+	rep ReporterSink,
+	taskID string,
+	p Payload,
+) (string, map[string]any, string) {
+	groups, hasGroups, groupsErr := snapshotDownloadGroups(p)
+	if groupsErr != nil {
+		return "failed", nil, groupsErr.Error()
+	}
+	if !hasGroups {
+		return "failed", nil, "snapshot download groups are required"
+	}
+	bin, err := e.kopiaBin(ctx)
+	if err != nil {
+		return "failed", nil, err.Error()
+	}
+	configFile, env, result, _, prepErr := e.prepareManagedRepository(ctx, rep, taskID, p, repositoryPrepareConnect)
+	if prepErr != "" {
+		return "failed", result, prepErr
+	}
+	var logicalSizeBytes int64
+	selectedCount := 0
+	for _, group := range groups {
+		for _, selectedPath := range group.paths {
+			sizeBytes, sizeErr := snapshotDownloadSelectionLogicalSize(
+				ctx,
+				bin,
+				configFile,
+				env,
+				group,
+				selectedPath,
+			)
+			if sizeErr != nil {
+				return "failed", result, sizeErr.Error()
+			}
+			if sizeBytes > 0 && logicalSizeBytes > math.MaxInt64-sizeBytes {
+				return "failed", result, "snapshot download logical size overflowed"
+			}
+			logicalSizeBytes += sizeBytes
+			selectedCount++
+		}
+	}
+	result["logical_size_bytes"] = logicalSizeBytes
+	result["selected_count"] = selectedCount
+	result["group_count"] = len(groups)
+	return "success", result, ""
+}
+
+func sanitizeSnapshotDownloadSourcePath(sourcePath string) string {
+	value := strings.TrimSpace(strings.ReplaceAll(sourcePath, "\\", "/"))
+	if value == "" || value == "/" {
+		return "root"
+	}
+	parts := make([]string, 0)
+	if len(value) >= 2 && value[1] == ':' && ((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z')) {
+		parts = append(parts, strings.ToUpper(value[:1])+"_drive")
+		value = value[2:]
+	}
+	for _, part := range strings.Split(strings.Trim(value, "/"), "/") {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." {
+			continue
+		}
+		part = regexp.MustCompile(`[<>:"|?*\x00-\x1f]`).ReplaceAllString(part, "_")
+		part = strings.Trim(part, " .")
+		if part == "" || part == ".." {
+			part = "_"
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return "root"
+	}
+	return strings.Join(parts, "__")
+}
+
+func snapshotDownloadSourcePathHash(sourcePath string) string {
+	digest := sha256.Sum256([]byte(strings.ReplaceAll(strings.TrimSpace(sourcePath), "\\", "/")))
+	return hex.EncodeToString(digest[:4])
+}
+
+func truncateSnapshotDownloadDirectoryName(value string, suffix string) string {
+	limit := snapshotDownloadSourceDirMaxBytes - len(suffix)
+	if limit < 1 || len(value) <= limit {
+		return value + suffix
+	}
+	end := limit
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return strings.TrimRight(value[:end], " ._") + suffix
+}
+
+func snapshotDownloadSourceDirectoryNames(groups []snapshotDownloadGroup) []string {
+	bases := make([]string, len(groups))
+	counts := map[string]int{}
+	for index, group := range groups {
+		bases[index] = sanitizeSnapshotDownloadSourcePath(group.sourcePath)
+		counts[strings.ToLower(bases[index])]++
+	}
+	names := make([]string, len(groups))
+	usedNames := map[string]struct{}{}
+	for index, group := range groups {
+		suffix := ""
+		if counts[strings.ToLower(bases[index])] > 1 || len(bases[index]) > snapshotDownloadSourceDirMaxBytes {
+			suffix = "--" + snapshotDownloadSourcePathHash(group.sourcePath)
+		}
+		candidate := truncateSnapshotDownloadDirectoryName(bases[index], suffix)
+		for collisionIndex := 2; ; collisionIndex++ {
+			key := strings.ToLower(candidate)
+			if _, exists := usedNames[key]; !exists {
+				usedNames[key] = struct{}{}
+				break
+			}
+			collisionSuffix := fmt.Sprintf(
+				"--%s-%d",
+				snapshotDownloadSourcePathHash(group.sourcePath+"\x00"+group.snapshotID),
+				collisionIndex,
+			)
+			candidate = truncateSnapshotDownloadDirectoryName(bases[index], collisionSuffix)
+		}
+		names[index] = candidate
+	}
+	return names
+}
+
+func restoreSnapshotDownloadGroups(
+	ctx context.Context,
+	bin string,
+	configFile string,
+	env map[string]string,
+	restoreRoot string,
+	groups []snapshotDownloadGroup,
+	result map[string]any,
+) error {
+	archiveRoot := filepath.Join(restoreRoot, snapshotDownloadArchiveRoot)
+	if err := os.MkdirAll(archiveRoot, 0o700); err != nil {
+		return err
+	}
+	directoryNames := snapshotDownloadSourceDirectoryNames(groups)
+	for groupIndex, group := range groups {
+		groupRoot := archiveRoot
+		if len(groups) > 1 {
+			groupRoot = filepath.Join(groupRoot, directoryNames[groupIndex])
+			if err := os.MkdirAll(groupRoot, 0o700); err != nil {
+				return err
+			}
+		}
+		for _, requestedPath := range group.paths {
+			target := snapshotObjectPath(group.snapshotID, requestedPath)
+			isDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, target)
+			result["snapshot_download_inspect"] = commandResult(inspectRes)
+			if inspectErr != nil && !snapshotDownloadInspectNotDirectory(inspectRes) {
+				return fmt.Errorf("%s", snapshotDownloadFailureMessage(inspectRes, inspectErr))
+			}
+			restoreTarget := groupRoot
+			if requestedPath == "" {
+				if group.pathType == "directory" {
+					if !isDir {
+						return fmt.Errorf("snapshot root download path is invalid")
+					}
+				} else if isDir || group.pathType != "file" {
+					return fmt.Errorf("snapshot root download path is invalid")
+				} else {
+					restoreTarget = filepath.Join(groupRoot, snapshotDownloadFilename(group.sourcePath))
+				}
+			} else {
+				restoreTarget = filepath.Join(groupRoot, filepath.FromSlash(requestedPath))
+			}
+			if err := os.MkdirAll(filepath.Dir(restoreTarget), 0o700); err != nil {
+				return err
+			}
+			restoreArgs := []string{"--config-file=" + configFile, "restore", target, restoreTarget}
+			res, runErr := process.Run(ctx, bin, restoreArgs, env, "")
+			result["snapshot_download"] = commandResult(res)
+			if runErr != nil {
+				return fmt.Errorf("%s", snapshotDownloadFailureMessage(res, runErr))
+			}
+		}
+	}
+	return nil
+}
+
+func cleanupStaleSnapshotDownloadDirs(tempRoot string, now time.Time) {
+	matches, err := filepath.Glob(filepath.Join(tempRoot, "hfl-kopia-download-*"))
+	if err != nil {
+		return
+	}
+	cutoff := now.Add(-snapshotDownloadStaleAge)
+	for _, candidate := range matches {
+		info, statErr := os.Lstat(candidate)
+		if statErr != nil || !info.IsDir() || info.ModTime().After(cutoff) {
+			continue
+		}
+		if removeErr := os.RemoveAll(candidate); removeErr != nil {
+			slog.Warn("snapshot_download", "event", "stale_temp_cleanup_failed", "path", candidate, "err", removeErr.Error())
+		}
+	}
+}
+
+// CleanupStaleSnapshotDownloadArtifacts removes recovery directories left by
+// an interrupted download. Normal task completion removes them immediately;
+// this scan is the 24-hour fallback for process termination and other crashes.
+func CleanupStaleSnapshotDownloadArtifacts() {
+	cleanupStaleSnapshotDownloadDirs(os.TempDir(), time.Now())
+}
+
 func (e *Engine) runManagedSnapshotDownload(
 	ctx context.Context,
 	rep ReporterSink,
 	taskID string,
 	p Payload,
 ) (string, map[string]any, string) {
-	if p.SnapshotID == "" {
+	groups, hasGroups, groupsErr := snapshotDownloadGroups(p)
+	if groupsErr != nil {
+		return "failed", nil, groupsErr.Error()
+	}
+	if p.SnapshotID == "" && !hasGroups {
 		return "failed", nil, "snapshot_id is required"
 	}
 	bin, err := e.kopiaBin(ctx)
@@ -2531,6 +2912,7 @@ func (e *Engine) runManagedSnapshotDownload(
 	if prepErr != "" {
 		return "failed", result, prepErr
 	}
+	CleanupStaleSnapshotDownloadArtifacts()
 	tempDir, mkErr := os.MkdirTemp("", "hfl-kopia-download-*")
 	if mkErr != nil {
 		return "failed", result, mkErr.Error()
@@ -2540,39 +2922,59 @@ func (e *Engine) runManagedSnapshotDownload(
 	if err := os.MkdirAll(restoreRoot, 0o700); err != nil {
 		return "failed", result, err.Error()
 	}
-	requestedPaths, pathsErr := snapshotDownloadPaths(p)
-	if pathsErr != nil {
-		return "failed", result, pathsErr.Error()
-	}
-	batchDownload := len(requestedPaths) > 0
-	forceZip := batchDownload
-	if len(requestedPaths) == 0 {
-		requestedPaths = []string{strings.Trim(strings.TrimSpace(p.Path), "/\\")}
-	}
+	requestedPaths := []string(nil)
+	batchDownload := false
+	forceZip := false
 	var singleIsDir bool
-	for _, requestedPath := range requestedPaths {
-		target := snapshotObjectPath(p.SnapshotID, requestedPath)
-		isDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, target)
-		result["snapshot_download_inspect"] = commandResult(inspectRes)
-		if inspectErr != nil && !snapshotDownloadInspectNotDirectory(inspectRes) {
-			return "failed", result, snapshotDownloadFailureMessage(inspectRes, inspectErr)
+	if hasGroups {
+		if restoreErr := restoreSnapshotDownloadGroups(
+			ctx,
+			bin,
+			configFile,
+			env,
+			restoreRoot,
+			groups,
+			result,
+		); restoreErr != nil {
+			return "failed", result, restoreErr.Error()
 		}
-		singleIsDir = isDir
-		forceZip = forceZip || isDir
-		restoreTarget := restoreRoot
-		if batchDownload {
-			restoreTarget = filepath.Join(restoreRoot, filepath.FromSlash(requestedPath))
-			if err := os.MkdirAll(filepath.Dir(restoreTarget), 0o700); err != nil {
-				return "failed", result, err.Error()
+		batchDownload = true
+		forceZip = true
+	} else {
+		var pathsErr error
+		requestedPaths, pathsErr = snapshotDownloadPaths(p)
+		if pathsErr != nil {
+			return "failed", result, pathsErr.Error()
+		}
+		batchDownload = len(requestedPaths) > 0
+		forceZip = batchDownload
+		if len(requestedPaths) == 0 {
+			requestedPaths = []string{strings.Trim(strings.TrimSpace(p.Path), "/\\")}
+		}
+		for _, requestedPath := range requestedPaths {
+			target := snapshotObjectPath(p.SnapshotID, requestedPath)
+			isDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, target)
+			result["snapshot_download_inspect"] = commandResult(inspectRes)
+			if inspectErr != nil && !snapshotDownloadInspectNotDirectory(inspectRes) {
+				return "failed", result, snapshotDownloadFailureMessage(inspectRes, inspectErr)
 			}
-		} else if !isDir {
-			restoreTarget = filepath.Join(restoreRoot, snapshotDownloadFilename(requestedPath))
-		}
-		restoreArgs := []string{"--config-file=" + configFile, "restore", target, restoreTarget}
-		res, runErr := process.Run(ctx, bin, restoreArgs, env, "")
-		result["snapshot_download"] = commandResult(res)
-		if runErr != nil {
-			return "failed", result, snapshotDownloadFailureMessage(res, runErr)
+			singleIsDir = isDir
+			forceZip = forceZip || isDir
+			restoreTarget := restoreRoot
+			if batchDownload {
+				restoreTarget = filepath.Join(restoreRoot, filepath.FromSlash(requestedPath))
+				if err := os.MkdirAll(filepath.Dir(restoreTarget), 0o700); err != nil {
+					return "failed", result, err.Error()
+				}
+			} else if !isDir {
+				restoreTarget = filepath.Join(restoreRoot, snapshotDownloadFilename(requestedPath))
+			}
+			restoreArgs := []string{"--config-file=" + configFile, "restore", target, restoreTarget}
+			res, runErr := process.Run(ctx, bin, restoreArgs, env, "")
+			result["snapshot_download"] = commandResult(res)
+			if runErr != nil {
+				return "failed", result, snapshotDownloadFailureMessage(res, runErr)
+			}
 		}
 	}
 
@@ -2584,7 +2986,11 @@ func (e *Engine) runManagedSnapshotDownload(
 	filename := ""
 	contentType := "application/octet-stream"
 	if forceZip {
-		filename = snapshotDownloadArchiveName(p.Path, batchDownload)
+		if hasGroups {
+			filename = snapshotDownloadArchiveRoot + ".zip"
+		} else {
+			filename = snapshotDownloadArchiveName(p.Path, batchDownload)
+		}
 		artifactPath = filepath.Join(tempDir, filename)
 		maxBytes := int64(0)
 		if hasUpload {
