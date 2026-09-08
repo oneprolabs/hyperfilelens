@@ -145,8 +145,8 @@ describe('CopilotLifecycleState', () => {
       cleanup_status: 'blocked',
     }))
 
-    expect(wrapper.text()).toContain('Chat Cleanup Needs Attention')
-    expect(wrapper.text()).toContain('Temporary data remains protected')
+    expect(wrapper.text()).toContain('Chat Cleanup Paused')
+    expect(wrapper.text()).toContain('Cleanup could not finish safely')
     expect(wrapper.text()).not.toContain('Deleting Chat')
   })
 
@@ -157,9 +157,25 @@ describe('CopilotLifecycleState', () => {
       cleanup_status: 'blocked',
     }))
 
-    expect(wrapper.text()).toContain('Chat Cleanup Needs Attention')
+    expect(wrapper.text()).toContain('Chat Couldn’t Be Deleted')
     expect(wrapper.text()).toContain('Retry Delete')
+    expect(wrapper.text()).not.toContain('Force Delete')
     expect(wrapper.text()).not.toContain('Deleting Chat')
+  })
+
+  it('offers force delete only for an eligible private workspace cleanup', async () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'deleting',
+      cleanup_intent: 'delete_session',
+      cleanup_status: 'blocked',
+      gateway_scope: 'organization',
+      force_delete_available: true,
+    }))
+
+    expect(wrapper.text()).toContain('Private Data Gateway could not remove')
+    expect(wrapper.text()).toContain('Force Delete')
+    await wrapper.findAll('.copilot-lifecycle-actions button')[1]!.trigger('click')
+    expect(wrapper.emitted('forceDelete')).toHaveLength(1)
   })
 
   it('shows a safe lifecycle error and hides retry for configuration failures', () => {

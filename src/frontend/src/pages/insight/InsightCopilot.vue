@@ -18,6 +18,7 @@ import {
   createCopilotRun,
   deleteCopilotAttachment,
   deleteCopilotSession,
+  forceDeleteCopilotSession,
   fetchCopilotReadiness,
   fetchLensHealth,
   listCopilotAssistants,
@@ -83,6 +84,7 @@ const activeSessionId = ref<number | null>(null)
 const deleteOpen = ref(false)
 const deleteLoading = ref(false)
 const deleteTarget = ref<SessionRow | null>(null)
+const deleteMode = ref<'normal' | 'force'>('normal')
 const shareOpen = ref(false)
 const shareTarget = ref<SessionRow | null>(null)
 const executionSettingsOpen = ref(false)
@@ -530,7 +532,25 @@ async function pollSessionLifecycle(sessionId: number) {
         sessions.value = toSessionRows(rows)
         refreshPollerSessions()
         const current = sessions.value.find((row) => row.id === sessionId)
-        if (!current) return
+        if (!current) {
+          copilotStore.detachSessionStream(sessionId)
+          const copy = { ...messagesBySession.value }
+          delete copy[sessionId]
+          messagesBySession.value = copy
+          if (activeSessionId.value === sessionId) {
+            clearComposerAttachments({ deleteDocuments: false })
+            activeSessionId.value = sessions.value[0]?.id ?? null
+            if (activeSessionId.value != null) {
+              await copilotStore.syncSession(
+                activeSessionId.value,
+                syncHandlers,
+                activeSessionId.value,
+                { attachStream: true },
+              )
+            }
+          }
+          return
+        }
         if (current.lifecycle_status === 'ready') {
           if (activeSessionId.value === sessionId) {
             await copilotStore.syncSession(sessionId, syncHandlers, sessionId, { attachStream: true })
@@ -640,7 +660,18 @@ function retryActiveSession() {
 
 function deleteSession(row: SessionRow) {
   deleteTarget.value = row
+  deleteMode.value = 'normal'
   deleteOpen.value = true
+}
+
+function forceDeleteSession(row: SessionRow) {
+  deleteTarget.value = row
+  deleteMode.value = 'force'
+  deleteOpen.value = true
+}
+
+function forceDeleteActiveSession() {
+  if (activeSession.value) forceDeleteSession(activeSession.value)
 }
 
 function shareSession(row: SessionRow) {
@@ -654,27 +685,39 @@ async function confirmDeleteSession() {
   if (!row) return
   deleteLoading.value = true
   try {
-    await deleteCopilotSession(row.id)
-    copilotStore.detachSessionStream(row.id)
-    sessions.value = sessions.value.filter((item) => item.id !== row.id)
-    const copy = { ...messagesBySession.value }
-    delete copy[row.id]
-    messagesBySession.value = copy
-    if (activeSessionId.value === row.id) {
-      clearComposerAttachments({ deleteDocuments: false })
-      activeSessionId.value = sessions.value[0]?.id ?? null
-      if (activeSessionId.value != null) {
-        await copilotStore.syncSession(
-          activeSessionId.value,
-          syncHandlers,
-          activeSessionId.value,
-          { attachStream: true },
-        )
-      }
-    }
+    const updated = deleteMode.value === 'force'
+      ? await forceDeleteCopilotSession(row.id)
+      : await deleteCopilotSession(row.id)
+    sessions.value = sessions.value.map((item) => item.id === row.id
+      ? { ...updated, group: item.group }
+      : item)
     refreshPollerSessions()
     deleteOpen.value = false
     deleteTarget.value = null
+    if (deleteMode.value === 'force' || updated.lifecycle_status === 'deleted') {
+      copilotStore.detachSessionStream(row.id)
+      sessions.value = sessions.value.filter((item) => item.id !== row.id)
+      const copy = { ...messagesBySession.value }
+      delete copy[row.id]
+      messagesBySession.value = copy
+      if (activeSessionId.value === row.id) {
+        clearComposerAttachments({ deleteDocuments: false })
+        activeSessionId.value = sessions.value[0]?.id ?? null
+        if (activeSessionId.value != null) {
+          await copilotStore.syncSession(
+            activeSessionId.value,
+            syncHandlers,
+            activeSessionId.value,
+            { attachStream: true },
+          )
+        }
+      }
+      if (deleteMode.value === 'force') {
+        ElMessage.success(t('insight.copilot.forceDeleteComplete'))
+      }
+    } else {
+      void pollSessionLifecycle(row.id)
+    }
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
   } finally {
@@ -1163,6 +1206,7 @@ onUnmounted(() => {
           :session="activeSession"
           @retry="retryActiveSession"
           @delete="deleteActiveSession"
+          @force-delete="forceDeleteActiveSession"
         />
 
         <div
@@ -1213,12 +1257,19 @@ onUnmounted(() => {
     </div>
     <DangerConfirmDialog
       v-model="deleteOpen"
-      :title="t('insight.copilot.deleteConfirm', {
-        name: deleteTarget?.title || t('insight.copilot.newChatTitle'),
-      })"
-      :message="t('insight.copilot.deleteConfirmMessage')"
+      :title="t(
+        deleteMode === 'force'
+          ? 'insight.copilot.forceDeleteConfirm'
+          : 'insight.copilot.deleteConfirm',
+        { name: deleteTarget?.title || t('insight.copilot.newChatTitle') },
+      )"
+      :message="deleteMode === 'force'
+        ? t('insight.copilot.forceDeleteConfirmMessage')
+        : t('insight.copilot.deleteConfirmMessage')"
       :cancel-text="t('insight.copilot.btnCancel')"
-      :confirm-text="t('insight.copilot.deleteSession')"
+      :confirm-text="deleteMode === 'force'
+        ? t('insight.copilot.forceDelete')
+        : t('insight.copilot.deleteSession')"
       :loading="deleteLoading"
       @confirm="confirmDeleteSession"
       @cancel="deleteTarget = null"

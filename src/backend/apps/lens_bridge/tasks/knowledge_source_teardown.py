@@ -69,9 +69,18 @@ def due_knowledge_source_teardown_ids(
 
     now = now or timezone.now()
     stale_claim = now - timedelta(seconds=TEARDOWN_CLAIM_TTL_SECONDS)
-    return list(
+    reconcile_limit = max(1, min(int(limit), 500))
+    candidates = (
         LensKnowledgeSource.all_objects.filter(
             lifecycle_status=LensKnowledgeSource.LifecycleStatus.DELETING,
+        )
+        # A force-deleted Chat remains the single lifecycle orchestrator for
+        # its remote cleanup debt and invokes Knowledge Source teardown under
+        # the owning workspace identity. Do not race that path with a second
+        # standalone teardown task.
+        .filter(
+            Q(teardown_state_json__forced_remote_cleanup__status__isnull=True)
+            | ~Q(teardown_state_json__forced_remote_cleanup__status="pending")
         )
         .filter(
             Q(
@@ -89,6 +98,8 @@ def due_knowledge_source_teardown_ids(
             Q(teardown_claimed_at__isnull=True)
             | Q(teardown_claimed_at__lte=stale_claim)
         )
-        .order_by("teardown_next_retry_at", "id")
-        .values_list("id", flat=True)[: max(1, min(int(limit), 500))]
+    )
+    return list(
+        candidates.order_by("teardown_next_retry_at", "id")
+        .values_list("id", flat=True)[:reconcile_limit]
     )

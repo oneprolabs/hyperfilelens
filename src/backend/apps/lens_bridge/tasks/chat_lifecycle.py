@@ -177,7 +177,8 @@ def reconcile_lens_resource_teardowns_task(*, limit: int = 100) -> dict:
 
     now = timezone.now()
     stale_claim = now - timedelta(seconds=TEARDOWN_CLAIM_TTL_SECONDS)
-    session_ids = list(
+    reconcile_limit = max(1, min(int(limit), 500))
+    candidates = (
         LensSessionLink.objects.filter(
             (
                 (
@@ -216,8 +217,46 @@ def reconcile_lens_resource_teardowns_task(*, limit: int = 100) -> dict:
             | Q(teardown_next_retry_at__lte=now)
         )
         .filter(Q(teardown_claimed_at__isnull=True) | Q(teardown_claimed_at__lte=stale_claim))
+    )
+    eligible_ids = set(
+        candidates.filter(
+            Q(teardown_state_json__forced_remote_cleanup__status__isnull=True)
+            | ~Q(teardown_state_json__forced_remote_cleanup__status="pending")
+        )
         .order_by("teardown_next_retry_at", "id")
-        .values_list("id", flat=True)[: max(1, min(int(limit), 500))]
+        .values_list("id", flat=True)[:reconcile_limit]
+    )
+    forced_gateways = list(
+        candidates.filter(
+            teardown_state_json__forced_remote_cleanup__status="pending",
+            gateway_link_id__isnull=False,
+        )
+        .values_list("gateway_link_id", "gateway_link__gateway_id")
+        .distinct()
+    )
+    if forced_gateways:
+        from apps.node.services.internal.node_registry import agent_ws_routable
+
+        online_gateway_ids: list[int] = []
+        online_by_agent: dict[int, bool] = {}
+        for gateway_link_id, raw_agent_id in forced_gateways:
+            agent_id = int(raw_agent_id)
+            if agent_id not in online_by_agent:
+                online_by_agent[agent_id] = agent_ws_routable(agent_id=agent_id)
+            if online_by_agent[agent_id]:
+                online_gateway_ids.append(int(gateway_link_id))
+        eligible_ids.update(
+            candidates.filter(
+                teardown_state_json__forced_remote_cleanup__status="pending",
+                gateway_link_id__in=online_gateway_ids,
+            )
+            .order_by("teardown_next_retry_at", "id")
+            .values_list("id", flat=True)[:reconcile_limit]
+        )
+    session_ids = list(
+        candidates.filter(pk__in=eligible_ids)
+        .order_by("teardown_next_retry_at", "id")
+        .values_list("id", flat=True)[:reconcile_limit]
     )
     queued_session_ids: list[int] = []
     failures: list[dict[str, str | int]] = []

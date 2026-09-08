@@ -610,6 +610,20 @@ def run_knowledge_source_teardown(
     if knowledge_source is None:
         return {"knowledge_source_id": knowledge_source_id, "status": "missing"}
     state = dict(knowledge_source.teardown_state_json or {})
+    forced_cleanup = teardown_blocking.forced_remote_cleanup(state)
+    if owner_session_link_id is None and forced_cleanup.get("status") == "pending":
+        try:
+            forced_owner_id = int(forced_cleanup.get("session_link_id"))
+        except (TypeError, ValueError):
+            forced_owner_id = 0
+        if forced_owner_id and LensSessionLink.objects.filter(
+            pk=forced_owner_id,
+            knowledge_source_id=knowledge_source.id,
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            cleanup_intent=LensSessionLink.CleanupIntent.DELETE_SESSION,
+            teardown_state_json__forced_remote_cleanup__status="pending",
+        ).exists():
+            owner_session_link_id = forced_owner_id
     stop_assessment: managed_datasource.ConversionStopAssessment | None = None
     restore_stop_assessment: ChatRestoreStopAssessment | None = None
     blocking_step = "validate_gateway_workload"
@@ -759,6 +773,14 @@ def run_knowledge_source_teardown(
             status="success",
         )
         state = teardown_blocking.clear_blocking(state)
+        if forced_cleanup.get("status") == "pending":
+            forced_cleanup.update(
+                {
+                    "status": "complete",
+                    "completed_at": timezone.now().isoformat(),
+                }
+            )
+            state[teardown_blocking.FORCED_REMOTE_CLEANUP_KEY] = forced_cleanup
         now = timezone.now()
         updated = LensKnowledgeSource.all_objects.filter(
             pk=knowledge_source.id,
@@ -827,7 +849,15 @@ def run_knowledge_source_teardown(
             remote_status=remote_status,
             stop_confirmation_source=stop_confirmation_source,
         )
+        forced_cleanup_pending = forced_cleanup.get("status") == "pending"
         requires_intervention = bool(blocking["intervention_required"])
+        if forced_cleanup_pending:
+            # Force deletion separates the user-visible Chat from its durable
+            # remote cleanup debt. Keep the low-frequency reconciliation alive
+            # instead of returning this expected offline case to an operator.
+            requires_intervention = False
+            blocking["intervention_required"] = False
+            state["blocking"] = blocking
         retry_at = (
             None
             if requires_intervention
@@ -838,9 +868,13 @@ def run_knowledge_source_teardown(
             teardown_claim_token=claim_token,
         ).update(
             status_detail=(
-                "Knowledge source cleanup requires operator intervention."
-                if requires_intervention
-                else "Knowledge source cleanup is incomplete and will be retried."
+                "Remote workspace cleanup is pending until the Data Gateway can complete it."
+                if forced_cleanup_pending
+                else (
+                    "Knowledge source cleanup requires operator intervention."
+                    if requires_intervention
+                    else "Knowledge source cleanup is incomplete and will be retried."
+                )
             ),
             teardown_claim_token=None,
             teardown_claimed_at=None,

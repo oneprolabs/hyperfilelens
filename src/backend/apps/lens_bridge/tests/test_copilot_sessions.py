@@ -459,6 +459,111 @@ class CopilotSessionApiTests(TestCase):
         "apps.lens_bridge.api.views._source_lens_session_meta",
         return_value={},
     )
+    def test_list_hides_force_deleted_chat_while_remote_cleanup_is_pending(
+        self,
+        _session_meta,
+        _assistants,
+    ):
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.status = LensSessionLink.Status.ARCHIVED
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.PENDING
+        self.session.teardown_state_json = {
+            "forced_remote_cleanup": {"status": "pending"}
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "status",
+                "cleanup_intent",
+                "cleanup_status",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+
+        response = self.client.get(
+            reverse("lens-copilot-session-list"),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json().get("data", response.json()), [])
+
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "force_delete_private_copilot_chat"
+    )
+    def test_force_delete_endpoint_returns_the_durable_deleting_state(
+        self,
+        force_delete,
+    ):
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.BLOCKED
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "cleanup_intent",
+                "cleanup_status",
+                "updated_at",
+            ]
+        )
+        force_delete.return_value = self.session
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-force-delete",
+                kwargs={"pk": self.session.pk},
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 202)
+        force_delete.assert_called_once_with(
+            self.session,
+            requested_by=self.user,
+        )
+
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "force_delete_private_copilot_chat"
+    )
+    def test_force_delete_endpoint_cannot_access_another_users_chat(
+        self,
+        force_delete,
+    ):
+        other_user = get_user_model().objects.create_user(
+            username="other-chat-owner",
+            email="other-chat-owner@example.com",
+        )
+        other_session = LensSessionLink.objects.create(
+            organization=self.org,
+            hfl_user=other_user,
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            cleanup_intent=LensSessionLink.CleanupIntent.DELETE_SESSION,
+            cleanup_status=LensSessionLink.CleanupStatus.BLOCKED,
+        )
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-force-delete",
+                kwargs={"pk": other_session.pk},
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 404)
+        force_delete.assert_not_called()
+
+    @patch(
+        "apps.lens_bridge.api.views.copilot_service.list_copilot_assistants",
+        return_value=[],
+    )
+    @patch(
+        "apps.lens_bridge.api.views._source_lens_session_meta",
+        return_value={},
+    )
     def test_list_stays_ordered_by_creation_when_an_older_chat_gets_an_answer(
         self,
         _session_meta,

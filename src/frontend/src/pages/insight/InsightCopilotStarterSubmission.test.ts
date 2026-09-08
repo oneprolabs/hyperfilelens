@@ -13,6 +13,7 @@ import CopilotComposer from './copilot/CopilotComposer.vue'
 const mocks = vi.hoisted(() => ({
   createCopilotRun: vi.fn(),
   deleteCopilotAttachment: vi.fn(),
+  forceDeleteCopilotSession: vi.fn(),
   listCopilotAssistants: vi.fn(),
   listCopilotSessions: vi.fn(),
   syncCopilotSession: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock('../../lib/lensApi', () => ({
   createCopilotRun: mocks.createCopilotRun,
   deleteCopilotAttachment: mocks.deleteCopilotAttachment,
   deleteCopilotSession: vi.fn(),
+  forceDeleteCopilotSession: mocks.forceDeleteCopilotSession,
   fetchCopilotReadiness: vi.fn().mockResolvedValue({
     default_agent_model_ref: 'agent-model',
     default_multimodal_model_ref: null,
@@ -94,6 +96,11 @@ const DangerConfirmDialogStub = defineComponent({
   emits: ['update:modelValue', 'confirm', 'cancel'],
   template: '<section v-if="modelValue" class="delete-chat-dialog">{{ title }} {{ message }} {{ cancelText }} {{ confirmText }}</section>',
 })
+const ForceDeleteLifecycle = defineComponent({
+  props: { session: { type: Object, required: true } },
+  emits: ['forceDelete'],
+  template: '<button class="force-delete-trigger" @click="$emit(\'forceDelete\')">Force Delete</button>',
+})
 
 function sessionRow(
   activeRun: { uuid: string; status: string } | null = null,
@@ -123,6 +130,7 @@ function mountCopilot(
   i18n: ReturnType<typeof createI18n>,
   sessionSidebar = SimpleStub,
   dangerConfirmDialog = SimpleStub,
+  lifecycleState = SimpleStub,
 ) {
   return mount(InsightCopilot, {
     global: {
@@ -130,7 +138,7 @@ function mountCopilot(
       stubs: {
         CopilotSessionSidebar: sessionSidebar,
         CopilotContextBar: SimpleStub,
-        CopilotLifecycleState: SimpleStub,
+        CopilotLifecycleState: lifecycleState,
         CopilotEmptyState: SimpleStub,
         CopilotShareDialog: SimpleStub,
         CopilotExecutionSettingsDialog: SimpleStub,
@@ -167,6 +175,11 @@ describe('InsightCopilot question submission', () => {
       last_viewed_at: '2026-08-11T08:01:00Z',
     })
     mocks.streamCopilotRun.mockResolvedValue(undefined)
+    mocks.forceDeleteCopilotSession.mockResolvedValue({
+      ...sessionRow(null, 'deleting'),
+      cleanup_intent: 'delete_session',
+      cleanup_status: 'pending',
+    })
     mocks.deleteCopilotAttachment.mockResolvedValue(undefined)
     mocks.uploadCopilotAttachment.mockResolvedValue({
       uuid: '00000000-0000-4000-8000-000000000001',
@@ -299,6 +312,41 @@ describe('InsightCopilot question submission', () => {
     expect(dialog.props('items')).toBeUndefined()
     expect(dialog.props('cancelText')).toBe('Cancel')
     expect(dialog.props('confirmText')).toBe('Delete Chat')
+    wrapper.unmount()
+  })
+
+  it('confirms force deletion for a blocked private Chat cleanup', async () => {
+    mocks.listCopilotSessions.mockResolvedValue([{
+      ...sessionRow(null, 'deleting'),
+      cleanup_intent: 'delete_session',
+      cleanup_status: 'blocked',
+      force_delete_available: true,
+    }])
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+    const wrapper = mountCopilot(
+      i18n,
+      SimpleStub,
+      DangerConfirmDialogStub,
+      ForceDeleteLifecycle,
+    )
+    await flushPromises()
+
+    await wrapper.get('.force-delete-trigger').trigger('click')
+    await nextTick()
+    const dialog = wrapper.findComponent(DangerConfirmDialogStub)
+    expect(dialog.props('title')).toBe('Force Delete “Chat”?')
+    expect(dialog.props('confirmText')).toBe('Force Delete')
+    expect(dialog.props('message')).toBe(en.insight.copilot.forceDeleteConfirmMessage)
+
+    dialog.vm.$emit('confirm')
+    await flushPromises()
+    expect(mocks.forceDeleteCopilotSession).toHaveBeenCalledWith(444)
     wrapper.unmount()
   })
 
