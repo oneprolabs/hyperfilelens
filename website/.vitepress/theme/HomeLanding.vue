@@ -31,8 +31,8 @@ onMounted(() => {
 
 const loginUrl = computed(() => `${appOrigin.value || '#'}${appOrigin.value ? '/login' : ''}`)
 
-const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
-const sourceLensUrl = 'https://github.com/HyperBDR/sourcelens'
+const githubUrl = 'https://github.com/oneprolabs/hyperfilelens'
+const sourceLensUrl = 'https://github.com/oneprolabs/sourcelens'
 const installCommand = [
   'curl -fsSL \\',
   '  https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh \\',
