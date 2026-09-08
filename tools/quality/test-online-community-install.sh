@@ -42,8 +42,8 @@ grep -Fq 'DOCKER_PACKAGE_INSTALL_ATTEMPTED' "${online}/install.sh"
 grep -Fq 'COMPOSE_PACKAGE_INSTALL_ATTEMPTED' "${online}/install.sh"
 grep -Fq 'validate_compose_only_install_plan' "${online}/install.sh"
 grep -Fq 'selected_docker_apt_source_present' "${online}/install.sh"
-grep -Fq 'foreign_docker_runtime_present' "${online}/install.sh"
 grep -Fq 'docker_ce_runtime_present' "${online}/install.sh"
+grep -Fq 'unsupported_docker_runtime_present' "${online}/install.sh"
 grep -Fq 'docker_apt_source_present' "${online}/install.sh"
 grep -Fq 'Acquire::Retries=3' "${online}/install.sh"
 grep -Fq 'Acquire::http::Timeout=60' "${online}/install.sh"
@@ -1067,11 +1067,73 @@ if (
 	printf 'ERROR: foreign Docker runtime was accepted for Compose-only bootstrap\n' >&2
 	exit 1
 fi
-grep -Fq 'not a Docker CE installation' "${foreign_runtime_log}"
-foreign_complete_runtime_log="${tmp}/foreign-complete-runtime.log"
+grep -Fq 'existing Docker runtime does not provide Docker Compose V2' \
+	"${foreign_runtime_log}"
+(
+	# A complete compatible runtime is reused based on its capabilities rather
+	# than its package source. Version strings may include distribution suffixes.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	docker() {
+		case "${1:-} ${2:-}" in
+		"info ") return 0 ;;
+		"version --format") printf '29.1.3\n' ;;
+		"compose version") printf '2.40.3+ds1-0ubuntu1~24.04.1\n' ;;
+		esac
+		return 1
+	}
+	dpkg-query() {
+		[[ "${*: -1}" == docker.io ]] || return 1
+		printf 'ii '
+	}
+	inspect_docker_runtime
+	[[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]
+	[[ "${DOCKER_ENGINE_VERSION}" == 29.1.3 ]]
+	[[ "${DOCKER_COMPOSE_VERSION}" == '2.40.3+ds1-0ubuntu1~24.04.1' ]]
+)
+unsupported_complete_runtime_log="${tmp}/unsupported-complete-runtime.log"
 if (
-	# A non-Docker-CE runtime is rejected even when it already exposes Compose;
-	# the online installer only supports Docker CE for its managed contract.
+	# Supporting Ubuntu's Docker Engine package must not implicitly accept other
+	# Docker-compatible runtimes such as Podman.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	docker() {
+		case "${1:-} ${2:-}" in
+		"info ") return 0 ;;
+		"version --format") printf '29.1.3\n' ;;
+		"compose version") printf '2.40.3\n' ;;
+		esac
+		return 1
+	}
+	dpkg-query() {
+		[[ "${*: -1}" == podman-docker ]] || return 1
+		printf 'ii '
+	}
+	inspect_docker_runtime
+) >"${unsupported_complete_runtime_log}" 2>&1; then
+	printf 'ERROR: unsupported Docker-compatible runtime was accepted\n' >&2
+	exit 1
+fi
+grep -Fq 'Docker command is provided by Podman or Snap' \
+	"${unsupported_complete_runtime_log}"
+(
+	# Snap Docker remains unsupported because confinement can block deployment
+	# bind mounts even when its client reports compatible versions.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	dpkg-query() { return 1; }
+	command() {
+		if [[ "${1:-}" == -v && "${2:-}" == docker ]]; then
+			printf '/snap/bin/docker\n'
+			return 0
+		fi
+		builtin command "$@"
+	}
+	unsupported_docker_runtime_present
+)
+(
+	# A complete compatible static or otherwise unrecognized Docker runtime is
+	# reused without relying on package-manager ownership.
 	# shellcheck disable=SC1090
 	source "${online_functions}"
 	docker() {
@@ -1082,20 +1144,14 @@ if (
 		esac
 		return 1
 	}
-	dpkg-query() {
-		[[ "${*: -1}" == docker.io ]] || return 1
-		printf 'ii '
-	}
+	dpkg-query() { return 1; }
 	inspect_docker_runtime
-) >"${foreign_complete_runtime_log}" 2>&1; then
-	printf 'ERROR: complete foreign Docker runtime was accepted\n' >&2
-	exit 1
-fi
-grep -Fq 'not a Docker CE installation' "${foreign_complete_runtime_log}"
+	[[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]
+)
 unrecognized_runtime_log="${tmp}/unrecognized-runtime-compose.log"
 if (
-	# A healthy static or otherwise unrecognized Docker binary is not sufficient
-	# evidence that the Docker CE apt plugin can be added safely.
+	# An otherwise compatible runtime without Compose cannot receive a Docker CE
+	# package unless the Engine is itself a complete Docker CE installation.
 	# shellcheck disable=SC1090
 	source "${online_functions}"
 	docker() {
@@ -1109,28 +1165,11 @@ if (
 	dpkg-query() { return 1; }
 	inspect_docker_runtime
 ) >"${unrecognized_runtime_log}" 2>&1; then
-	printf 'ERROR: unrecognized Docker runtime was accepted for Compose-only bootstrap\n' >&2
+	printf 'ERROR: unrecognized Docker runtime received Compose-only bootstrap\n' >&2
 	exit 1
 fi
-grep -Fq 'not a Docker CE installation' "${unrecognized_runtime_log}"
-(
-	# A removed docker.io package with residual configuration (dpkg "rc") does
-	# not identify the active Docker Engine as Ubuntu's runtime.
-	# shellcheck disable=SC1090
-	source "${online_functions}"
-	dpkg-query() {
-		[[ "${*: -1}" == docker.io ]] || return 1
-		printf 'rc '
-	}
-	command() {
-		if [[ "${1:-}" == -v && "${2:-}" == docker ]]; then
-			printf '/usr/bin/docker\n'
-			return 0
-		fi
-		builtin command "$@"
-	}
-	! foreign_docker_runtime_present
-)
+grep -Fq 'existing Docker runtime does not provide Docker Compose V2' \
+	"${unrecognized_runtime_log}"
 compose_target_log="${tmp}/compose-target.log"
 (
 	# shellcheck disable=SC1090

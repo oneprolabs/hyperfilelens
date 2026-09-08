@@ -465,16 +465,6 @@ docker_package_payload_present() {
 	[[ -n "${state}" && "${state}" != n && "${state}" != c ]]
 }
 
-foreign_docker_runtime_present() {
-	local package docker_path
-	for package in docker.io moby-engine moby-cli moby-containerd moby-compose podman-docker; do
-		docker_package_installed "${package}" && return 0
-	done
-	docker_path="$(command -v docker 2>/dev/null || true)"
-	[[ "${docker_path}" == /snap/* ]] && return 0
-	return 1
-}
-
 docker_package_installed() {
 	local status
 	status="$(dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null || true)"
@@ -484,6 +474,13 @@ docker_package_installed() {
 docker_ce_runtime_present() {
 	docker_package_installed docker-ce \
 		&& docker_package_installed docker-ce-cli
+}
+
+unsupported_docker_runtime_present() {
+	local docker_path
+	docker_package_installed podman-docker && return 0
+	docker_path="$(command -v docker 2>/dev/null || true)"
+	[[ "${docker_path}" == /snap/* ]]
 }
 
 docker_residual_state_present() {
@@ -583,8 +580,8 @@ inspect_docker_runtime() {
 	DOCKER_ENGINE_VERSION=""
 	DOCKER_COMPOSE_VERSION=""
 	if command -v docker >/dev/null 2>&1; then
-		if foreign_docker_runtime_present || ! docker_ce_runtime_present; then
-			fail "the existing Docker runtime is not a Docker CE installation; install Docker CE and Compose V2 manually, then rerun this installer"
+		if unsupported_docker_runtime_present; then
+			fail "the existing Docker command is provided by Podman or Snap, which is not supported; install Docker Engine and Compose V2 manually, then rerun this installer"
 		fi
 		docker info >/dev/null 2>&1 \
 			|| fail "Docker is installed but its daemon is unavailable; start or repair Docker manually, then rerun this installer"
@@ -595,6 +592,9 @@ inspect_docker_runtime() {
 			|| fail "Docker Engine ${DOCKER_ENGINE_VERSION} does not meet the minimum required version ${MIN_DOCKER_ENGINE_VERSION}; upgrade Docker manually, then rerun this installer"
 		DOCKER_COMPOSE_VERSION="$(docker_compose_version)"
 		if [[ -z "${DOCKER_COMPOSE_VERSION}" ]]; then
+			if ! docker_ce_runtime_present; then
+				fail "the existing Docker runtime does not provide Docker Compose V2; install a compatible Compose V2 plugin manually, then rerun this installer"
+			fi
 			if ! selected_docker_apt_source_present && docker_apt_source_present; then
 				DOCKER_CE_SOURCE_NAME="Existing Docker CE apt source"
 			fi
