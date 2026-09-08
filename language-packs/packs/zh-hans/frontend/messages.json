@@ -2655,7 +2655,7 @@
         "unmounted": "未挂载",
         "error": "挂载错误"
       },
-      "detailTabStorage": "贮存",
+      "detailTabStorage": "存储",
       "colRepositories": "存储仓库",
       "localStorageTitle": "本地存储",
       "localStorageHint": "此 Proxy Host 可用本地文件系统。网络挂载不计入列表容量。",
