@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useRoute, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Menu } from 'lucide-vue-next'
+import { ElMessage } from 'element-plus'
+import { ArrowLeft, LoaderCircle, Menu } from 'lucide-vue-next'
 import NavUserMenu from '../../components/NavUserMenu.vue'
 import Sidebar from '../../components/Sidebar.vue'
 import { useTheme } from '../../composables/useTheme'
@@ -10,6 +11,7 @@ import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import { applyThemeVars } from '../composables/applyThemeVars'
 import { useResolvedPlatformOpsSideNav } from '../composables/useResolvedPlatformOpsSideNav'
 import { platformOpsRouteViewKey } from '../lib/platformOpsRouteViewKey'
+import { openTenantApplication } from '../lib/tenantApplicationNavigation'
 import MobileNavigationDrawer from '../../components/MobileNavigationDrawer.vue'
 import '../styles/platform-ops-ui.css'
 import '../styles/monitoring.css'
@@ -19,7 +21,7 @@ const { t } = useI18n()
 const route = useRoute()
 const { theme } = useTheme()
 
-const tenantUrl = ref('')
+const returningToTenant = ref(false)
 const themeVersion = ref(0)
 const fallbackSidebarCollapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
 const fallbackMenuItems = useResolvedPlatformOpsSideNav()
@@ -35,17 +37,6 @@ const routeSkeletonShowsCards = computed(
     || route.path === '/platform-ops/orgs',
 )
 
-onMounted(async () => {
-  const profile = await fetchDeployProfile()
-  if (profile?.tenant_public_url) {
-    try {
-      tenantUrl.value = new URL(profile.tenant_public_url).toString()
-    } catch {
-      tenantUrl.value = ''
-    }
-  }
-})
-
 watch(
   theme,
   async (mode) => {
@@ -57,9 +48,26 @@ watch(
   { immediate: true },
 )
 
-function goTenantConsole() {
-  if (!tenantUrl.value) return
-  window.location.assign(tenantUrl.value)
+function showTenantNavigationError() {
+  ElMessage.error({
+    message: `${t('platformOps.settings.loadFailed')}: ${t('platformOps.settings.externalAccess.urlLabel')}`,
+    grouping: true,
+  })
+}
+
+async function goTenantConsole() {
+  if (returningToTenant.value) return
+  returningToTenant.value = true
+  try {
+    const navigated = await openTenantApplication(() => fetchDeployProfile(true))
+    if (!navigated) {
+      showTenantNavigationError()
+    }
+  } catch {
+    showTenantNavigationError()
+  } finally {
+    returningToTenant.value = false
+  }
 }
 
 function toggleFallbackSidebar() {
@@ -109,10 +117,18 @@ watch(
           type="button"
           class="platform-ops-return"
           :aria-label="t('platformOps.nav.backToConsole')"
-          :disabled="!tenantUrl"
+          :aria-busy="returningToTenant"
+          :disabled="returningToTenant"
           @click="goTenantConsole"
         >
+          <LoaderCircle
+            v-if="returningToTenant"
+            class="platform-ops-return__spinner"
+            :size="16"
+            aria-hidden="true"
+          />
           <ArrowLeft
+            v-else
             :size="16"
             aria-hidden="true"
           />
@@ -299,9 +315,24 @@ watch(
   white-space: nowrap;
 }
 
-.platform-ops-return:hover {
+.platform-ops-return:not(:disabled):hover {
   border-color: var(--color-primary, #6d5ef6);
   color: var(--nav-item-hover-color, #fff);
+}
+
+.platform-ops-return:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.platform-ops-return__spinner {
+  animation: platform-ops-return-spin 0.8s linear infinite;
+}
+
+@keyframes platform-ops-return-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .platform-ops-main {

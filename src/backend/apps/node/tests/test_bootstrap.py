@@ -207,7 +207,11 @@ class BootstrapViewTests(TestCase):
         body = response.content.decode("utf-8")
         self.assertTrue(body.startswith("#!/usr/bin/env bash"))
         self.assertIn("[FAIL ]", body)
-        self.assertIn("invalid or expired enrollment link", body)
+        self.assertIn("invalid, expired, or revoked", body)
+        self.assertIn(
+            "copy the currently displayed install command",
+            body,
+        )
 
     def test_missing_token_returns_executable_error_script(self):
         response = self._get("linux", token="")

@@ -79,7 +79,8 @@ class BootstrapGatewayViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.content.decode("utf-8")
         self.assertIn("[FAIL ]", body)
-        self.assertIn("invalid or expired enrollment link", body)
+        self.assertIn("invalid, expired, or revoked", body)
+        self.assertIn("copy the currently displayed install command", body)
 
     def test_used_gateway_token_still_returns_bootstrap_script(self):
         self.token_row.is_active = False

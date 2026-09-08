@@ -70,12 +70,11 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain('Registers a Private Data Gateway with HyperFileLens')
   })
 
-  it('revokes enrollment tokens discarded by command regeneration', () => {
+  it('revokes only enrollment tokens discarded before their command is displayed', () => {
     const wizard = source('src/components/NodeLifecycleWizard.vue')
 
     expect(wizard).toContain('await revokeIssuedEnrollment(issued.tokenId, platformEnrollment)')
-    expect(wizard).toContain('void revokeIssuedEnrollment(staleTokenId, staleTokenIsPlatform)')
-    expect(wizard).toContain('enrollmentTokenIsPlatform.value')
+    expect(wizard).not.toContain('void revokeIssuedEnrollment(staleTokenId, staleTokenIsPlatform)')
     expect(wizard).toContain('await revokeEnrollmentToken(tokenId).catch(() => undefined)')
     expect(wizard).toContain('fetchNodeMaintenanceRelease')
     expect(wizard).not.toContain('createNodeToken({ role: props.role')
