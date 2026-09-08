@@ -19,7 +19,7 @@ from apps.lens_bridge.models import (
 )
 
 DEFAULT_CHAT_PREPARE_CONCURRENCY = 1
-DEFAULT_CHAT_QUEUE_CAPACITY = 10
+DEFAULT_CHAT_QUEUE_CAPACITY = 20
 MAX_CHAT_PREPARE_CONCURRENCY = 32
 MAX_CHAT_QUEUE_CAPACITY = 1000
 # Slot release/configuration changes wake eligible sessions immediately. This

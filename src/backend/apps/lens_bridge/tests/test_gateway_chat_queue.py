@@ -54,6 +54,24 @@ class GatewayChatQueueTests(TestCase):
             gateway_queue_entered_at=timezone.now(),
         )
 
+    def test_new_gateway_uses_default_waiting_queue_capacity(self):
+        gateway = Node.objects.create(
+            organization=self.organization,
+            name="default-queue-gateway",
+            role=Node.Role.GATEWAY,
+        )
+
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.organization,
+            gateway=gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+            origin=LensGatewayLink.Origin.USER,
+        )
+
+        self.assertEqual(gateway_link.chat_queue_capacity, 20)
+        self.assertEqual(gateway_chat_queue.DEFAULT_CHAT_QUEUE_CAPACITY, 20)
+
     def test_same_gateway_is_fifo_and_reports_running_chat_ahead(self):
         first = self._session()
         second = self._session()

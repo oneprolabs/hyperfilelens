@@ -236,7 +236,7 @@ class LensGatewayLink(OrganizationScopedModel):
     capacity_bytes = models.BigIntegerField(default=-1)
     # Heavy Chat preparation (restore + conversion) is scheduled per Gateway.
     chat_prepare_concurrency = models.PositiveSmallIntegerField(default=1)
-    chat_queue_capacity = models.PositiveIntegerField(default=10)
+    chat_queue_capacity = models.PositiveIntegerField(default=20)
 
     class Meta:
         db_table = "lens_bridge_gateway_link"
