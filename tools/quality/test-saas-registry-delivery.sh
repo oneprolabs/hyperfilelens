@@ -35,14 +35,58 @@ grep -Fq 'HFL_REGISTRY_REGION: ${{ vars.PROD_REGISTRY_REGION }}' \
 	"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml"
 grep -Fq -- '--registry-region "$HFL_REGISTRY_REGION"' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
-grep -Fq 'registry_login_count > 0' \
+grep -Fq 'read_credential "${registry_region}_host"' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
-grep -Fq 'pull_registry_image "${immutable_ref}" "${attempts}"' \
+grep -Fq 'registry_pull_attempts=5' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+grep -Fq 'pull_registry_image "${immutable_ref}"' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
 grep -Fq 'HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS:-15' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
-grep -Fq 'for prefix in "${registry_region}" "${fallback_region}"' \
-	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+if grep -Fq 'fallback_region' "${ROOT}/.github/scripts/remote-saas-deploy.sh"; then
+	printf 'ERROR: SaaS deployment still contains a cross-region fallback\n' >&2
+	exit 1
+fi
+retry_delay_function="$(awk '
+	/^registry_retry_delay_for_attempt\(\) \{/ { capture = 1 }
+	capture { print }
+	capture && /^}$/ { exit }
+' "${ROOT}/.github/scripts/remote-saas-deploy.sh")"
+registry_pull_retry_delay=15
+eval "${retry_delay_function}"
+[[ "$(registry_retry_delay_for_attempt 1)" -eq 15 ]]
+[[ "$(registry_retry_delay_for_attempt 2)" -eq 30 ]]
+[[ "$(registry_retry_delay_for_attempt 3)" -eq 60 ]]
+[[ "$(registry_retry_delay_for_attempt 4)" -eq 60 ]]
+for function_name in registry_pull_is_transient pull_registry_image; do
+	function_definition="$(awk -v name="${function_name}" '
+		$0 ~ "^" name "\\(\\) \\{" { capture = 1 }
+		capture { print }
+		capture && /^}$/ { exit }
+	' "${ROOT}/.github/scripts/remote-saas-deploy.sh")"
+	eval "${function_definition}"
+done
+registry_pull_retry_delay=0
+registry_pull_attempts=5
+registry_name="Docker Hub"
+stage_dir="${tmp}/saas-pull-retry"
+saas_pull_marker="${tmp}/saas-pull-attempts"
+mkdir -p "${stage_dir}"
+docker() {
+	local count=0
+	[[ ! -f "${saas_pull_marker}" ]] || count="$(cat "${saas_pull_marker}")"
+	count=$((count + 1))
+	printf '%s\n' "${count}" >"${saas_pull_marker}"
+	if ((count < 5)); then
+		printf 'short read: unexpected EOF\n' >&2
+		return 1
+	fi
+	return 0
+}
+pull_registry_image \
+	"docker.io/example/hyperfilelens-agent-assets@${digest}" >/dev/null 2>&1
+unset -f docker
+[[ "$(cat "${saas_pull_marker}")" -eq 5 ]]
 grep -Fq 'Enterprise SaaS deployment action:' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
 grep -Fq 'deployment_args+=(--from "${candidate_root}")' \
@@ -433,14 +477,19 @@ fi
 [[ "$(cat "${mirror_marker}")" -eq 1 ]]
 [[ "$(cat "${mirror_inspect_marker}")" -eq 0 ]]
 source "${ROOT}/deploy/installer/install.sh"
-HFL_TEST_FAIL_REGION=cn HFL_REGISTRY_REGION=cn \
-	load_images_from_manifest 0 "${package_root}"
-[[ -f "${tag_marker}" ]]
-[[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
+if HFL_TEST_FAIL_REGION=cn HFL_REGISTRY_REGION=cn \
+	load_images_from_manifest 0 "${package_root}" >/dev/null 2>&1; then
+	printf 'ERROR: CN registry failure used another registry\n' >&2
+	exit 1
+fi
+[[ ! -e "${tag_marker}" ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 1 ]]
 [[ "$(sed -n '1p' "${pull_marker}")" == registry.example.cn/* ]]
-[[ "$(sed -n '2p' "${pull_marker}")" == docker.io/* ]]
+
+: >"${pull_marker}"
 HFL_REGISTRY_REGION=cn load_images_from_manifest 0 "${package_root}"
-[[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
+[[ -f "${tag_marker}" ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 1 ]]
 online_registry_output="$(
 	HFL_ONLINE_CHILD=1 HFL_REGISTRY_REGION=cn \
 		load_images_from_manifest 0 "${package_root}"
@@ -461,12 +510,14 @@ HFL_REGISTRY_REGION=global load_images_from_manifest 0 "${package_root}"
 
 rm -f "${tag_marker}"
 : >"${pull_marker}"
-HFL_TEST_FAIL_REGION=global HFL_REGISTRY_REGION=global \
-	load_images_from_manifest 0 "${package_root}"
-[[ -f "${tag_marker}" ]]
-[[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
+if HFL_TEST_FAIL_REGION=global HFL_REGISTRY_REGION=global \
+	load_images_from_manifest 0 "${package_root}" >/dev/null 2>&1; then
+	printf 'ERROR: Global registry failure used another registry\n' >&2
+	exit 1
+fi
+[[ ! -e "${tag_marker}" ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 1 ]]
 [[ "$(sed -n '1p' "${pull_marker}")" == docker.io/* ]]
-[[ "$(sed -n '2p' "${pull_marker}")" == registry.example.cn/* ]]
 
 transient_marker="${tmp}/transient-pulls"
 rm -f "${tag_marker}" "${transient_marker}"
@@ -489,17 +540,17 @@ HFL_TEST_TRANSIENT_REGION=cn HFL_TEST_TRANSIENT_FAILURES=2 \
 [[ "$(wc -l <"${pull_marker}")" -eq 3 ]]
 [[ "$(sed -n '1p' "${pull_marker}")" == registry.example.cn/* ]]
 [[ "$(sed -n '2p' "${pull_marker}")" == registry.example.cn/* ]]
-[[ "$(sed -n '3p' "${pull_marker}")" == docker.io/* ]]
+[[ "$(sed -n '3p' "${pull_marker}")" == registry.example.cn/* ]]
 
 rm -f "${tag_marker}"
 : >"${pull_marker}"
 if HFL_TEST_FAIL_REGION=both HFL_REGISTRY_REGION=cn \
 	load_images_from_manifest 0 "${package_root}" >/dev/null 2>&1; then
-	printf 'ERROR: registry delivery accepted two unavailable sources\n' >&2
+	printf 'ERROR: registry delivery accepted an unavailable selected source\n' >&2
 	exit 1
 fi
 [[ ! -e "${tag_marker}" ]]
-[[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 1 ]]
 
 export DEPLOY_SSH_HOST=test.example.com
 export DEPLOY_SSH_PORT=22

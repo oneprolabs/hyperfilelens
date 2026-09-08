@@ -2595,8 +2595,10 @@ delivery_mode = str(delivery.get("mode") or "offline")
 online_child = os.environ.get("HFL_ONLINE_CHILD") == "1"
 registry_retry_delay = os.environ.get("HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS", "15")
 registry_retry_delay_seconds = (
-    min(int(registry_retry_delay), 300) if registry_retry_delay.isdecimal() else 15
+    min(int(registry_retry_delay), 60) if registry_retry_delay.isdecimal() else 15
 )
+registry_pull_attempts = 5
+registry_retry_max_delay_seconds = 60
 transient_registry_error = re.compile(
     r"network is unreachable|no route to host|connection (?:refused|reset|timed out)"
     r"|i/o timeout|context deadline exceeded|tls handshake timeout|client\.timeout"
@@ -2660,11 +2662,22 @@ def has_expected_digest(ref: str, digest: str) -> bool:
     )
 
 
+def registry_retry_delay_for_attempt(completed_attempt: int) -> int:
+    return min(
+        registry_retry_delay_seconds * (2 ** (completed_attempt - 1)),
+        registry_retry_max_delay_seconds,
+    )
+
+
+def registry_display_name(region: str) -> str:
+    return "Alibaba Cloud" if region == "cn" else "Docker Hub"
+
+
 if delivery_mode == "registry":
-    preferred_region = os.environ.get("HFL_REGISTRY_REGION", "").strip()
-    if preferred_region not in {"cn", "global"}:
+    selected_region = os.environ.get("HFL_REGISTRY_REGION", "").strip()
+    if selected_region not in {"cn", "global"}:
         raise SystemExit("registry delivery requires HFL_REGISTRY_REGION=cn or global")
-    fallback_region = "global" if preferred_region == "cn" else "cn"
+    registry_name = registry_display_name(selected_region)
     registry_images = [
         image
         for image in (delivery.get("registry_images") or [])
@@ -2684,10 +2697,7 @@ if delivery_mode == "registry":
             raise SystemExit(
                 f"registry image sources must contain cn and global regions: {local_ref}"
             )
-        sources = [
-            sources_by_region[preferred_region],
-            sources_by_region[fallback_region],
-        ]
+        source = sources_by_region[selected_region]
         pulled = ""
         errors = []
         if online_child:
@@ -2710,38 +2720,39 @@ if delivery_mode == "registry":
             else:
                 print(f"[ OK ] Reusing registry image: {local_ref}@{digest}")
             continue
-        for source_index, source in enumerate(sources):
-            source_ref = str(source.get("ref") or "")
-            repository = source_ref.rsplit(":", 1)[0]
-            immutable_ref = f"{repository}@{digest}"
-            attempts = 2 if source_index == 0 else 1
-            for attempt in range(1, attempts + 1):
-                completed = subprocess.run(
-                    ["docker", "pull", "--platform", "linux/amd64", immutable_ref],
-                    check=False,
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
+        source_ref = str(source.get("ref") or "")
+        repository = source_ref.rsplit(":", 1)[0]
+        immutable_ref = f"{repository}@{digest}"
+        for attempt in range(1, registry_pull_attempts + 1):
+            completed = subprocess.run(
+                ["docker", "pull", "--platform", "linux/amd64", immutable_ref],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            if completed.returncode == 0:
+                pulled = immutable_ref
+                break
+            output = completed.stdout.strip()
+            errors.append(f"{immutable_ref}: {output[-500:]}")
+            if (
+                attempt < registry_pull_attempts
+                and transient_registry_error.search(output)
+            ):
+                delay = registry_retry_delay_for_attempt(attempt)
+                print(
+                    f"[WARN] Temporary {registry_name} image download error; "
+                    f"retrying in {delay} seconds "
+                    f"({attempt + 1}/{registry_pull_attempts})"
                 )
-                if completed.returncode == 0:
-                    pulled = immutable_ref
-                    break
-                output = completed.stdout.strip()
-                errors.append(f"{immutable_ref}: {output[-500:]}")
-                if attempt < attempts and transient_registry_error.search(output):
-                    print(
-                        "[WARN] Temporary container registry error; "
-                        f"retrying the preferred source in "
-                        f"{registry_retry_delay_seconds} seconds"
-                    )
-                    time.sleep(registry_retry_delay_seconds)
-                    continue
-                break
-            if pulled:
-                break
+                time.sleep(delay)
+                continue
+            break
         if not pulled:
             print(
-                f"[install.sh] ERROR: no registry source could provide {local_ref}",
+                f"[install.sh] ERROR: selected {registry_name} registry "
+                f"could not provide {local_ref}",
                 file=sys.stderr,
             )
             for error in errors:
