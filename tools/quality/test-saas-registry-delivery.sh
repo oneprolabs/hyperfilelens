@@ -95,7 +95,12 @@ grep -Fq -- '--expected-tag "$EXPECTED_TAG"' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
 grep -Fq 'candidate does not match the requested release tag' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
-grep -Fq 'platform-gateway ensure' \
+if grep -Fq 'platform-gateway ensure' \
+	"${ROOT}/.github/actions/deploy-saas/action.yml"; then
+	printf 'ERROR: SaaS deployment must not repeat installer-owned Gateway ensure\n' >&2
+	exit 1
+fi
+grep -Fq 'platform-gateway verify --required --timeout 180' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
 grep -Fq 'reconcile-saas-ai-model.sh agent' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
