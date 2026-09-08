@@ -31,6 +31,12 @@ from common.deploy.product import COMMUNITY_EDITION, product_edition
 from common.deploy.site import enrollment_tls_verify, tenant_public_url
 
 
+INVALID_ENROLLMENT_LINK_MESSAGE = (
+    "This enrollment link is invalid, expired, or revoked. "
+    "Return to the console and copy the currently displayed install command."
+)
+
+
 def _api_base_valid(request: Request, api_base: str) -> bool:
     """Return whether enrollment targets a trusted browser-facing origin."""
     try:
@@ -160,7 +166,7 @@ def _parse_enrollment_query(
         ):
             return _bootstrap_error_response(
                 script_type,
-                "invalid or expired enrollment link",
+                INVALID_ENROLLMENT_LINK_MESSAGE,
             )
         return Response({"error": "invalid enrollment token"}, status=401)
 
@@ -290,7 +296,7 @@ def _parse_gateway_bootstrap_query(
     if not token_usable_for_bootstrap(org=org, token=token, role=role):
         return _bootstrap_error_response(
             "linux",
-            "invalid or expired enrollment link",
+            INVALID_ENROLLMENT_LINK_MESSAGE,
         )
 
     return org_key, token, api_base

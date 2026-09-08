@@ -31,7 +31,13 @@ export interface DeployProfile {
 export const PLATFORM_OPS_LANDING_PATH = '/platform-ops/engine/ai-settings'
 
 let cachedProfile: DeployProfile | null = null
-let inflight: Promise<DeployProfile | null> | null = null
+let cacheRevision = 0
+let requestSequence = 0
+let inflight: {
+  id: number
+  revision: number
+  promise: Promise<DeployProfile | null>
+} | null = null
 
 function parseDeployProfilePayload(raw: unknown): DeployProfile | null {
   if (!raw || typeof raw !== 'object') return null
@@ -48,23 +54,29 @@ function parseDeployProfilePayload(raw: unknown): DeployProfile | null {
 
 export async function fetchDeployProfile(force = false): Promise<DeployProfile | null> {
   if (!force && cachedProfile) return cachedProfile
-  if (inflight) return inflight
+  const revision = cacheRevision
+  if (inflight?.revision === revision) return inflight.promise
 
-  inflight = (async () => {
+  const requestId = ++requestSequence
+  const request = (async () => {
     try {
-      const res = await fetch('/api/v1/meta/deploy-profile', { credentials: 'include' })
+      const res = await fetch('/api/v1/meta/deploy-profile', {
+        credentials: 'include',
+        ...(force ? { cache: 'no-store' as const } : {}),
+      })
       if (!res.ok) return null
       const payload = parseDeployProfilePayload(await res.json())
-      cachedProfile = payload
+      if (revision === cacheRevision) cachedProfile = payload
       return payload
     } catch {
       return null
     } finally {
-      inflight = null
+      if (inflight?.id === requestId) inflight = null
     }
   })()
+  inflight = { id: requestId, revision, promise: request }
 
-  return inflight
+  return request
 }
 
 export function getCachedDeployProfile(): DeployProfile | null {
@@ -73,6 +85,7 @@ export function getCachedDeployProfile(): DeployProfile | null {
 
 export function clearDeployProfileCache(): void {
   cachedProfile = null
+  cacheRevision += 1
 }
 
 export function shouldForceDeployProfileRefresh(

@@ -103,8 +103,6 @@ const effectiveInstallationMode = computed<NodeInstallationMode>(() => (
     : 'system'
 ))
 const supportOpen = ref(false)
-const enrollmentTokenId = ref<number | null>(null)
-const enrollmentTokenIsPlatform = ref(false)
 const enrollmentExpiresAt = ref<string | null>(null)
 const tokenClock = ref(Date.now())
 let tokenStatusTimer: ReturnType<typeof setInterval> | null = null
@@ -373,8 +371,6 @@ async function refreshInstallCommand(gen: number) {
     }
     installCommand.value = issued.command
     installGenerated.value = true
-    enrollmentTokenId.value = issued.tokenId
-    enrollmentTokenIsPlatform.value = platformEnrollment
     enrollmentExpiresAt.value = issued.expiresAt
     emit('enrollmentIssued', {
       tokenId: issued.tokenId,
@@ -480,12 +476,7 @@ watch(
     if (isLinuxOnlyRole(props.role) && props.os !== 'linux') {
       emit('update:os', 'linux')
     }
-    const staleTokenId = enrollmentTokenId.value
-    const staleTokenIsPlatform = enrollmentTokenIsPlatform.value
     clearInstallCommand()
-    if (staleTokenId) {
-      void revokeIssuedEnrollment(staleTokenId, staleTokenIsPlatform)
-    }
     refreshAll()
   },
   { immediate: true },
@@ -549,8 +540,6 @@ function clearInstallCommand() {
   installGenerated.value = false
   installCommand.value = ''
   copied.value = false
-  enrollmentTokenId.value = null
-  enrollmentTokenIsPlatform.value = false
   enrollmentExpiresAt.value = null
 }
 
@@ -561,6 +550,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  generation += 1
   if (tokenStatusTimer) clearInterval(tokenStatusTimer)
 })
 
