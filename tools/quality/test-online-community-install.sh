@@ -10,6 +10,19 @@ export PYTHONDONTWRITEBYTECODE=1
 
 bash -n "${online}/install.sh"
 PYTHONPYCACHEPREFIX="${tmp}/pycache" python3 -m py_compile "${online}/prepare.py"
+HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=15 python3 - "${online}/prepare.py" <<'PY'
+import runpy
+import sys
+
+module = runpy.run_path(sys.argv[1], run_name="hfl_prepare_retry_test")
+assert [module["registry_retry_delay"](attempt) for attempt in range(1, 5)] == [
+    15,
+    30,
+    60,
+    60,
+]
+assert module["PULL_ATTEMPTS"] == 5
+PY
 
 help_output="$("${online}/install.sh" --help)"
 grep -Fq -- '--mirror cn|global' <<<"${help_output}"
@@ -29,7 +42,7 @@ grep -Fq 'gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page
 	"${online}/install.sh"
 grep -Fq 'recent fallback tags:' "${online}/install.sh"
 grep -Fq 'prepare_status == 75' "${online}/install.sh"
-grep -Fq 'Container image downloads could not be completed after retrying the preferred registry and trying the fallback' \
+grep -Fq 'Container image downloads could not be completed after 5 attempts from the selected registry' \
 	"${online}/install.sh"
 grep -Fq 'prepared Community image revision does not match the published release' \
 	"${online}/install.sh"
@@ -480,7 +493,7 @@ case "${1:-} ${2:-}" in
 	if [[ -n "${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT:-}" ]] \
 		&& grep -Fq "docker.io/oneprolabs/${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT}:" \
 			"${compose_file}"; then
-		printf 'preferred registry rejected test image: access denied\n' >&2
+		printf 'selected registry rejected test image: access denied\n' >&2
 		exit 23
 	fi
 	exit 0
@@ -1810,9 +1823,8 @@ grep -Fx 'Release package' "${upgrade_prepare_log}" >/dev/null
 grep -F '[ OK ] Community release package prepared ·' \
 	"${upgrade_prepare_log}" >/dev/null
 
-fallback_candidate="${tmp}/fallback-candidate"
-fallback_prepare_log="${tmp}/prepare-fallback.log"
-PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+selected_failure_log="${tmp}/prepare-selected-failure.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 	HFL_ONLINE_NATIVE_PROGRESS=1 \
 	HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT=hyperfilelens-backend \
 	python3 "${online}/prepare.py" \
@@ -1820,13 +1832,17 @@ PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--version v1.2.3 \
 		--region global \
 		--concise-output \
-		--output "${fallback_candidate}" >"${fallback_prepare_log}" 2>&1
-grep -F '[WARN] 1 installation image(s) were not available from the preferred registry' \
-	"${fallback_prepare_log}" >/dev/null
-grep -F '[....] Retrying 1 installation image(s) from the fallback registry' \
-	"${fallback_prepare_log}" >/dev/null
-grep -F 'Docker Compose native pull progress: parallel=5 images=1' \
-	"${fallback_prepare_log}" >/dev/null
+		--output "${tmp}/selected-failure-candidate" \
+		>"${selected_failure_log}" 2>&1; then
+	printf 'ERROR: selected-registry rejection used another registry\n' >&2
+	exit 1
+fi
+grep -F 'selected registry rejected test image: access denied' \
+	"${selected_failure_log}" >/dev/null
+if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${selected_failure_log}"; then
+	printf 'ERROR: Global preparation contacted the CN registry\n' >&2
+	exit 1
+fi
 
 retry_marker="${tmp}/preferred-registry-retries"
 retry_candidate="${tmp}/retry-candidate"
@@ -1843,31 +1859,35 @@ PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--concise-output \
 		--output "${retry_candidate}" >"${retry_prepare_log}" 2>&1
 [[ "$(cat "${retry_marker}")" -eq 2 ]]
-grep -F 'retrying 1 image(s) from the preferred registry in 0 seconds' \
+grep -F 'Temporary Docker Hub image download error; retrying 1 image(s) in 0 seconds (2/5)' \
 	"${retry_prepare_log}" >/dev/null
-if grep -Fq 'from the fallback registry' "${retry_prepare_log}"; then
-	printf 'ERROR: successful preferred-registry retry used the fallback registry\n' >&2
+if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${retry_prepare_log}"; then
+	printf 'ERROR: successful Docker Hub retry contacted the CN registry\n' >&2
 	exit 1
 fi
 
-retry_fallback_marker="${tmp}/preferred-registry-fallback-retries"
-retry_fallback_candidate="${tmp}/retry-fallback-candidate"
-retry_fallback_log="${tmp}/prepare-retry-fallback.log"
+five_attempt_marker="${tmp}/selected-registry-five-attempts"
+five_attempt_candidate="${tmp}/five-attempt-candidate"
+five_attempt_log="${tmp}/prepare-five-attempt.log"
 PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 	HFL_ONLINE_NATIVE_PROGRESS=1 \
 	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 \
 	HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT=hyperfilelens-backend \
-	HFL_TEST_DOCKER_TRANSIENT_FAILURES=2 \
-	HFL_TEST_DOCKER_PULL_MARKER="${retry_fallback_marker}" \
+	HFL_TEST_DOCKER_TRANSIENT_FAILURES=4 \
+	HFL_TEST_DOCKER_PULL_MARKER="${five_attempt_marker}" \
 	python3 "${online}/prepare.py" \
 		--source-root "${ROOT}" \
 		--version v1.2.3 \
 		--region global \
 		--concise-output \
-		--output "${retry_fallback_candidate}" >"${retry_fallback_log}" 2>&1
-[[ "$(cat "${retry_fallback_marker}")" -eq 2 ]]
-grep -F 'Retrying 1 installation image(s) from the fallback registry' \
-	"${retry_fallback_log}" >/dev/null
+		--output "${five_attempt_candidate}" >"${five_attempt_log}" 2>&1
+[[ "$(cat "${five_attempt_marker}")" -eq 5 ]]
+grep -F 'Temporary Docker Hub image download error; retrying 1 image(s) in 0 seconds (5/5)' \
+	"${five_attempt_log}" >/dev/null
+if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${five_attempt_log}"; then
+	printf 'ERROR: five-attempt Docker Hub retry contacted the CN registry\n' >&2
+	exit 1
+fi
 
 failed_prepare_log="${tmp}/prepare-failed.log"
 if PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
@@ -1884,8 +1904,10 @@ if PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 fi
 grep -Fq 'registry rejected test image: access denied' "${failed_prepare_log}"
 grep -Fq 'docker.io/oneprolabs/hyperfilelens-backend:1.2.3' "${failed_prepare_log}"
-grep -Fq 'registry.cn-beijing.aliyuncs.com/oneprolabs/hyperfilelens-backend:1.2.3' \
-	"${failed_prepare_log}"
+if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${failed_prepare_log}"; then
+	printf 'ERROR: failed Global preparation contacted the CN registry\n' >&2
+	exit 1
+fi
 
 network_prepare_log="${tmp}/prepare-network-failed.log"
 set +e
@@ -1904,6 +1926,12 @@ network_prepare_status=$?
 set -e
 [[ "${network_prepare_status}" -eq 75 ]]
 grep -Fq '[ERROR] Temporary container registry failure:' "${network_prepare_log}"
+grep -Fq 'the selected Docker Hub registry could not provide:' \
+	"${network_prepare_log}"
+if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${network_prepare_log}"; then
+	printf 'ERROR: failed Docker Hub retries contacted the CN registry\n' >&2
+	exit 1
+fi
 if grep -Eq 'incomplete or unavailable|recommended retry:' \
 	"${network_prepare_log}"; then
 	printf 'ERROR: registry network failure was reported as a release-tag failure\n' >&2

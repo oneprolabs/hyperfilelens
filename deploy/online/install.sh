@@ -1388,7 +1388,7 @@ prepare_status=0
 python3 "${SESSION_DIR}/source/deploy/online/prepare.py" "${prepare_args[@]}" \
 	|| prepare_status=$?
 if ((prepare_status == 75)); then
-	fail "Container image downloads could not be completed after retrying the preferred registry and trying the fallback; wait briefly, check registry connectivity, and rerun the same command"
+	fail "Container image downloads could not be completed after 5 attempts from the selected registry; check registry connectivity and rerun the same command"
 fi
 if ((prepare_status != 0)); then
 	fail_with_tag_guidance "Community tag ${TAG} is incomplete or unavailable"

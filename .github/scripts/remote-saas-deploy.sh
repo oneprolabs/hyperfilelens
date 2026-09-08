@@ -193,35 +193,44 @@ print(value, end="")
 PY
 }
 
-registry_login_count=0
-fallback_region="global"
-[[ "${registry_region}" == "cn" ]] || fallback_region="cn"
-for prefix in "${registry_region}" "${fallback_region}"; do
-	host="$(read_credential "${prefix}_host")"
-	username="$(read_credential "${prefix}_username")"
-	password="$(read_credential "${prefix}_password")"
-	[[ "${host}" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ && -n "${username}" && -n "${password}" ]]
-	if printf '%s' "${password}" | DOCKER_CONFIG="${docker_config}" docker login \
-		--username "${username}" --password-stdin "${host}" >/dev/null 2>&1; then
-		registry_login_count=$((registry_login_count + 1))
-		printf '[ OK ] Authenticated registry source: %s\n' "${host}"
-	else
-		printf '[WARN] Registry source is temporarily unavailable: %s\n' "${host}" >&2
-	fi
-	unset password
-done
-((registry_login_count > 0)) || {
-	printf 'ERROR: neither registry source is available\n' >&2
+registry_host="$(read_credential "${registry_region}_host")"
+registry_username="$(read_credential "${registry_region}_username")"
+registry_password="$(read_credential "${registry_region}_password")"
+registry_name="Docker Hub"
+[[ "${registry_region}" == "cn" ]] && registry_name="Alibaba Cloud"
+[[ "${registry_host}" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ \
+	&& -n "${registry_username}" && -n "${registry_password}" ]]
+if ! printf '%s' "${registry_password}" | DOCKER_CONFIG="${docker_config}" docker login \
+	--username "${registry_username}" --password-stdin "${registry_host}" >/dev/null 2>&1; then
+	printf 'ERROR: selected registry is unavailable: %s\n' "${registry_host}" >&2
 	exit 1
-}
+fi
+unset registry_password
+printf '[ OK ] Authenticated registry source: %s\n' "${registry_host}"
 
 export DOCKER_CONFIG="${docker_config}"
-registry_pull_retry_delay="${HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS:-15}"
-if [[ ! "${registry_pull_retry_delay}" =~ ^[0-9]+$ ]] \
-	|| ((registry_pull_retry_delay > 300)); then
+registry_pull_retry_delay_config="${HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS:-15}"
+if [[ ! "${registry_pull_retry_delay_config}" =~ ^[0-9]+$ ]] \
+	|| ((registry_pull_retry_delay_config > 300)); then
 	printf 'ERROR: HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS must be an integer from 0 to 300\n' >&2
 	exit 2
 fi
+registry_pull_retry_delay=${registry_pull_retry_delay_config}
+((registry_pull_retry_delay <= 60)) || registry_pull_retry_delay=60
+registry_pull_attempts=5
+
+registry_retry_delay_for_attempt() {
+	local completed_attempt=$1 delay=${registry_pull_retry_delay} count=1
+	while ((count < completed_attempt)); do
+		delay=$((delay * 2))
+		((delay < 60)) || {
+			delay=60
+			break
+		}
+		count=$((count + 1))
+	done
+	printf '%s' "${delay}"
+}
 
 registry_pull_is_transient() {
 	grep -Eiq \
@@ -230,9 +239,9 @@ registry_pull_is_transient() {
 }
 
 pull_registry_image() {
-	local immutable_ref=$1 attempts=$2 attempt=1 rc=1
+	local immutable_ref=$1 attempt=1 rc=1 delay
 	local diagnostics="${stage_dir}/registry-pull.log"
-	while ((attempt <= attempts)); do
+	while ((attempt <= registry_pull_attempts)); do
 		: >"${diagnostics}"
 		if docker pull --platform linux/amd64 "${immutable_ref}" 2>&1 \
 			| tee "${diagnostics}"; then
@@ -241,10 +250,13 @@ pull_registry_image() {
 		else
 			rc=$?
 		fi
-		if ((attempt < attempts)) && registry_pull_is_transient "${diagnostics}"; then
-			printf '[WARN] Temporary container registry error; retrying the preferred source in %s seconds\n' \
-				"${registry_pull_retry_delay}" >&2
-			sleep "${registry_pull_retry_delay}"
+		if ((attempt < registry_pull_attempts)) \
+			&& registry_pull_is_transient "${diagnostics}"; then
+			delay="$(registry_retry_delay_for_attempt "${attempt}")"
+			printf '[WARN] Temporary %s image download error; retrying in %s seconds (%s/%s)\n' \
+				"${registry_name}" "${delay}" "$((attempt + 1))" \
+				"${registry_pull_attempts}" >&2
+			sleep "${delay}"
 			attempt=$((attempt + 1))
 			continue
 		fi
@@ -257,8 +269,7 @@ pull_registry_image() {
 python3 - "${candidate_root}/MANIFEST.json" "${registry_region}" >"${stage_dir}/assets.tsv" <<'PY'
 import json, pathlib, re, sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-preferred_region = sys.argv[2]
-fallback_region = "global" if preferred_region == "cn" else "cn"
+selected_region = sys.argv[2]
 delivery = manifest.get("delivery") or {}
 if delivery.get("mode") != "registry":
     raise SystemExit("candidate is not registry-backed")
@@ -284,41 +295,30 @@ for image in asset_images:
     sources_by_region = {str(item.get("region") or ""): item for item in sources}
     if len(sources) != 2 or set(sources_by_region) != {"cn", "global"}:
         raise SystemExit("candidate asset sources must contain cn and global regions")
-    refs = [
-        str(sources_by_region[region].get("ref") or "")
-        for region in (preferred_region, fallback_region)
-    ]
+    refs = {
+        region: str(sources_by_region[region].get("ref") or "")
+        for region in ("cn", "global")
+    }
     if any(
         not re.fullmatch(
             r"[a-z0-9][a-z0-9.-]*(?::[0-9]+)?/[a-z0-9._/-]+:[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
             ref,
         )
-        for ref in refs
+        for ref in refs.values()
     ):
         raise SystemExit("candidate contains invalid asset sources")
-    print("\t".join([kind, digest, local_ref, *refs]))
+    print("\t".join([kind, digest, local_ref, refs[selected_region]]))
 PY
 
-while IFS=$'\t' read -r kind digest local_ref source_one source_two; do
+while IFS=$'\t' read -r kind digest local_ref source_ref; do
 	[[ -n "${kind}" ]] || continue
-	pulled=""
-	source_index=0
-	for source_ref in "${source_one}" "${source_two}"; do
-		[[ -n "${source_ref}" ]] || continue
-		immutable_ref="${source_ref%:*}@${digest}"
-		attempts=1
-		((source_index == 0)) && attempts=2
-		if pull_registry_image "${immutable_ref}" "${attempts}"; then
-			pulled="${immutable_ref}"
-			break
-		fi
-		source_index=$((source_index + 1))
-	done
-	[[ -n "${pulled}" ]] || {
-		printf 'ERROR: could not pull %s asset image\n' "${kind}" >&2
+	immutable_ref="${source_ref%:*}@${digest}"
+	if ! pull_registry_image "${immutable_ref}"; then
+		printf 'ERROR: could not pull %s asset image from selected %s registry (%s)\n' \
+			"${kind}" "${registry_name}" "${registry_host}" >&2
 		exit 1
-	}
-	docker tag "${pulled}" "${local_ref}"
+	fi
+	docker tag "${immutable_ref}" "${local_ref}"
 	asset_extract="${stage_dir}/asset-${kind}"
 	rm -rf -- "${asset_extract}"
 	install -d -m 0700 "${asset_extract}"

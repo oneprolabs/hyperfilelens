@@ -26,10 +26,12 @@ VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 REVISION_PATTERN = re.compile(r"[0-9a-f]{40}")
 PULL_PARALLELISM = 5
+PULL_ATTEMPTS = 5
 _PULL_RETRY_DELAY = os.environ.get("HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS", "15")
 PULL_RETRY_DELAY_SECONDS = (
-    min(int(_PULL_RETRY_DELAY), 300) if _PULL_RETRY_DELAY.isdecimal() else 15
+    min(int(_PULL_RETRY_DELAY), 60) if _PULL_RETRY_DELAY.isdecimal() else 15
 )
+PULL_RETRY_MAX_DELAY_SECONDS = 60
 GLOBAL_PREFIX = os.environ.get(
     "HFL_GLOBAL_REGISTRY_PREFIX", "docker.io/oneprolabs"
 ).rstrip("/")
@@ -589,64 +591,53 @@ def registry_failure_is_transient(output: str) -> bool:
     return bool(TRANSIENT_REGISTRY_ERROR.search(output))
 
 
-def wait_before_registry_retry() -> None:
-    """Pause before one same-registry retry."""
-    time.sleep(PULL_RETRY_DELAY_SECONDS)
+def registry_retry_delay(completed_attempt: int) -> int:
+    """Return the capped delay before the next same-registry attempt."""
+    return min(
+        PULL_RETRY_DELAY_SECONDS * (2 ** (completed_attempt - 1)),
+        PULL_RETRY_MAX_DELAY_SECONDS,
+    )
+
+
+def registry_display_name(region: str) -> str:
+    """Return the user-facing name of one configured registry region."""
+    return "Alibaba Cloud" if region == "cn" else "Docker Hub"
 
 
 def pull_images(
     specs: list[ImageSpec],
-    preferred_region: str,
+    selected_region: str,
     *,
     concise_output: bool = False,
 ) -> list[ResolvedImage]:
-    """Pull all images concurrently with a selective regional fallback."""
-    fallback_region = "global" if preferred_region == "cn" else "cn"
-    primary = pull_image_batch(specs, preferred_region, concise_output=concise_output)
-    pull_outputs = [primary.stdout or ""]
-    resolved, unresolved = inspect_pulled_images(specs, preferred_region)
-
-    if unresolved and registry_failure_is_transient(primary.stdout or ""):
+    """Pull all images concurrently from the selected registry region."""
+    registry_name = registry_display_name(selected_region)
+    pull_outputs: list[str] = []
+    resolved: dict[str, ResolvedImage] = {}
+    unresolved = specs
+    for attempt in range(1, PULL_ATTEMPTS + 1):
+        pull = pull_image_batch(
+            unresolved, selected_region, concise_output=concise_output
+        )
+        output = pull.stdout or ""
+        pull_outputs.append(output)
+        attempt_resolved, unresolved = inspect_pulled_images(
+            unresolved, selected_region
+        )
+        resolved.update(attempt_resolved)
+        if not unresolved:
+            break
+        if attempt >= PULL_ATTEMPTS or not registry_failure_is_transient(output):
+            break
+        delay = registry_retry_delay(attempt)
         prefix = "  " if concise_output else ""
         print(
-            f"{prefix}[WARN] Temporary container registry error; "
-            f"retrying {len(unresolved)} image(s) from the preferred registry "
-            f"in {PULL_RETRY_DELAY_SECONDS} seconds",
+            f"{prefix}[WARN] Temporary {registry_name} image download error; "
+            f"retrying {len(unresolved)} image(s) in {delay} seconds "
+            f"({attempt + 1}/{PULL_ATTEMPTS})",
             flush=True,
         )
-        wait_before_registry_retry()
-        retry = pull_image_batch(
-            unresolved, preferred_region, concise_output=concise_output
-        )
-        pull_outputs.append(retry.stdout or "")
-        retry_resolved, unresolved = inspect_pulled_images(
-            unresolved, preferred_region
-        )
-        resolved.update(retry_resolved)
-
-    if unresolved:
-        prefix = "  " if concise_output else ""
-        print(
-            f"{prefix}[WARN] {len(unresolved)} installation image(s) were not "
-            "available from the preferred registry",
-            flush=True,
-        )
-
-    if unresolved:
-        prefix = "  " if concise_output else ""
-        print(
-            f"{prefix}[....] Retrying {len(unresolved)} installation image(s) "
-            "from the fallback registry",
-            flush=True,
-        )
-        fallback = pull_image_batch(
-            unresolved, fallback_region, concise_output=concise_output
-        )
-        pull_outputs.append(fallback.stdout or "")
-        fallback_resolved, unresolved = inspect_pulled_images(
-            unresolved, fallback_region
-        )
-        resolved.update(fallback_resolved)
+        time.sleep(delay)
 
     if unresolved:
         details = (
@@ -660,12 +651,12 @@ def pull_images(
         )
         if details:
             details = f"; Docker output: {details[-1000:]}"
-        failures = "; ".join(
-            f"{spec.source_ref(preferred_region)} or {spec.source_ref(fallback_region)}"
-            for spec in unresolved
+        failures = "; ".join(spec.source_ref(selected_region) for spec in unresolved)
+        message = (
+            f"the selected {registry_name} registry could not provide: "
+            f"{failures}{details}"
         )
-        message = f"neither public registry could provide: {failures}{details}"
-        if any(registry_failure_is_transient(output) for output in pull_outputs):
+        if registry_failure_is_transient(pull_outputs[-1]):
             raise RegistryNetworkError(message)
         raise RuntimeError(message)
 
