@@ -4129,6 +4129,15 @@ print_online_community_summary() {
 	fi
 	print_warning_summary
 
+	print_section "Next steps"
+	print_management_value "AI model" \
+		"Open Platform Ops → AI Engine → AI Models, add and test a model,"
+	print_management_value "" "then set it as Default Agent."
+	print_management_value "External access" \
+		"If users connect through a public IP or domain, open Platform Ops"
+	print_management_value "" \
+		"→ Platform → External Access and set the public HyperFileLens URL."
+
 	print_section "Management commands"
 	print_management_value "Status" "sudo ${ROOT}/install.sh status"
 	print_management_value "Logs" "sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"

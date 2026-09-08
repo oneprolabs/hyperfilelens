@@ -64,6 +64,10 @@ if grep -F 'Online upgrade' <<<"${output}" >/dev/null \
 	echo 'Offline summary exposed online-installation upgrade labels' >&2
 	exit 1
 fi
+if grep -Fx 'Next steps' <<<"${output}" >/dev/null; then
+	echo 'Offline summary exposed Community online-installation guidance' >&2
+	exit 1
+fi
 
 HFL_ONLINE_CHILD=1
 HFL_REGISTRY_REGION=global
@@ -92,6 +96,16 @@ grep -F 'URL            https://192.0.2.10:11444/' <<<"${online_output}" >/dev/n
 [[ "$(grep -Fc 'Email          admin@hyperfilelens.com' <<<"${online_output}")" -eq 2 ]]
 [[ "$(grep -Fc 'Password       Admin@123' <<<"${online_output}")" -eq 2 ]]
 [[ "$(grep -Fc 'Organization   HyperFileLens' <<<"${online_output}")" -eq 1 ]]
+grep -Fx 'Next steps' <<<"${online_output}" >/dev/null
+grep -F 'AI model        Open Platform Ops → AI Engine → AI Models, add and test a model,' \
+	<<<"${online_output}" >/dev/null
+grep -F '                  then set it as Default Agent.' \
+	<<<"${online_output}" >/dev/null
+grep -F 'External access If users connect through a public IP or domain, open Platform Ops' \
+	<<<"${online_output}" >/dev/null
+grep -F '                  → Platform → External Access and set the public HyperFileLens URL.' \
+	<<<"${online_output}" >/dev/null
+[[ "${online_output}" == *$'Warnings\n'*$'Next steps\n'*$'Management commands\n'* ]]
 grep -F 'sudo docker compose -f' <<<"${online_output}" >/dev/null
 grep -F 'Online upgrade  curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh | sudo bash -s -- --mirror cn' \
 	<<<"${online_output}" >/dev/null
