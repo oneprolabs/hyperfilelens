@@ -1211,8 +1211,9 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                 lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
                 cleanup_intent=LensSessionLink.CleanupIntent.DELETE_SESSION,
             )
-        ).exclude(
-            teardown_state_json__forced_remote_cleanup__status="pending"
+        ).filter(
+            Q(teardown_state_json__forced_remote_cleanup__status__isnull=True)
+            | ~Q(teardown_state_json__forced_remote_cleanup__status="pending")
         ).select_related(
             "knowledge_source",
             "knowledge_source__workspace_binding",
