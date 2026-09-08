@@ -59,14 +59,29 @@ grep -F 'Admin@123' <<<"${output}" >/dev/null
 grep -F 'adminpassword' <<<"${output}" >/dev/null
 grep -F 'install.sh upgrade --from /path/to/new-release.tar.gz' <<<"${output}" >/dev/null
 grep -F 'install.sh uninstall' <<<"${output}" >/dev/null
+if grep -F 'Online upgrade' <<<"${output}" >/dev/null \
+	|| grep -F 'Offline upgrade' <<<"${output}" >/dev/null; then
+	echo 'Offline summary exposed online-installation upgrade labels' >&2
+	exit 1
+fi
+
+HFL_ONLINE_CHILD=1
+HFL_REGISTRY_REGION=global
+online_upgrade_output="$(print_console_access_summary 2>&1)"
+unset HFL_ONLINE_CHILD HFL_REGISTRY_REGION
+grep -F 'Online upgrade  curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh | sudo bash -s -- --mirror global' \
+	<<<"${online_upgrade_output}" >/dev/null
+grep -F "Offline upgrade sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz" \
+	<<<"${online_upgrade_output}" >/dev/null
 
 # A fresh Community online installation exposes only the two user-facing
 # entry points while preserving the existing credential visibility policy.
 SESSION_WARNINGS=()
 HFL_ONLINE_CHILD=1
 HFL_ONLINE_CONSOLE_MARKER=__TEST_ONLINE_CONSOLE__
+HFL_REGISTRY_REGION=cn
 online_output="$(print_online_community_summary 2>&1)"
-unset HFL_ONLINE_CHILD HFL_ONLINE_CONSOLE_MARKER
+unset HFL_ONLINE_CHILD HFL_ONLINE_CONSOLE_MARKER HFL_REGISTRY_REGION
 for heading in 'HyperFileLens · 11443' 'Platform Ops · 11444'; do
 	grep -F "${heading}" <<<"${online_output}" >/dev/null
 done
@@ -74,6 +89,14 @@ grep -F 'linux/amd64' <<<"${online_output}" >/dev/null
 grep -F 'Email          admin@hyperfilelens.com' <<<"${online_output}" >/dev/null
 grep -F 'Password       Admin@123' <<<"${online_output}" >/dev/null
 grep -F 'sudo docker compose -f' <<<"${online_output}" >/dev/null
+grep -F 'Online upgrade  curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh | sudo bash -s -- --mirror cn' \
+	<<<"${online_output}" >/dev/null
+grep -F "Offline upgrade sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz" \
+	<<<"${online_output}" >/dev/null
+global_upgrade_command="$(HFL_REGISTRY_REGION=global online_community_upgrade_command)"
+grep -F 'https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh' \
+	<<<"${global_upgrade_command}" >/dev/null
+grep -F -- '--mirror global' <<<"${global_upgrade_command}" >/dev/null
 for internal_endpoint in 'Website ·' 'Tenant ·' 'Django Admin' 'Insight Console' \
 	'API / Swagger' 0.0.0.0; do
 	if grep -F "${internal_endpoint}" <<<"${online_output}" >/dev/null; then
@@ -90,8 +113,9 @@ INTERACTIVE_SESSION=0
 SESSION_WARNINGS=()
 HFL_ONLINE_CHILD=1
 HFL_ONLINE_CONSOLE_MARKER=__TEST_ONLINE_CONSOLE__
+HFL_REGISTRY_REGION=cn
 noninteractive_online_output="$(print_online_community_summary 2>&1)"
-unset HFL_ONLINE_CHILD HFL_ONLINE_CONSOLE_MARKER
+unset HFL_ONLINE_CHILD HFL_ONLINE_CONSOLE_MARKER HFL_REGISTRY_REGION
 INTERACTIVE_SESSION=1
 grep -F 'values are hidden in non-interactive logs' \
 	<<<"${noninteractive_online_output}" >/dev/null

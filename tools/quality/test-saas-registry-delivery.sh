@@ -186,6 +186,16 @@ case "${1:-} ${2:-}" in
 		count=$((count + 1))
 		printf '%s\n' "${count}" >"${HFL_TEST_MIRROR_INSPECT_MARKER}"
 		case "${HFL_TEST_MIRROR_INSPECT_MODE:-success}" in
+		missing-once)
+			if [[ "${count}" -eq 1 ]]; then
+				printf 'manifest unknown: manifest unknown\n' >&2
+				exit 1
+			fi
+			;;
+		mismatch)
+			printf '{"digest":"sha256:%s"}\n' "$(printf 'f%.0s' {1..64})"
+			exit 0
+			;;
 		flaky429)
 			if [[ "${count}" -lt 3 ]]; then
 				printf 'unexpected status from HEAD request: 429 Too Many Requests\n' >&2
@@ -280,6 +290,48 @@ HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
 	"${digest}" \
 	registry.example.cn/example/hyperfilelens-backend:1.0.0-ee
 [[ "$(cat "${mirror_marker}")" -eq 1 ]]
+[[ "$(cat "${mirror_inspect_marker}")" -eq 1 ]]
+
+printf '0\n' >"${mirror_marker}"
+printf '0\n' >"${mirror_inspect_marker}"
+HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/library/postgres:17 \
+		"${digest}" \
+		docker.io/example/postgres:17-aaaaaaaaaaaa \
+		--if-missing
+[[ "$(cat "${mirror_marker}")" -eq 0 ]]
+[[ "$(cat "${mirror_inspect_marker}")" -eq 1 ]]
+
+printf '0\n' >"${mirror_marker}"
+printf '0\n' >"${mirror_inspect_marker}"
+HFL_TEST_MIRROR_INSPECT_MODE=missing-once \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/library/postgres:17 \
+		"${digest}" \
+		docker.io/example/postgres:17-aaaaaaaaaaaa \
+		--if-missing
+[[ "$(cat "${mirror_marker}")" -eq 1 ]]
+[[ "$(cat "${mirror_inspect_marker}")" -eq 2 ]]
+
+printf '0\n' >"${mirror_marker}"
+printf '0\n' >"${mirror_inspect_marker}"
+if HFL_TEST_MIRROR_INSPECT_MODE=mismatch \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/library/postgres:17 \
+		"${digest}" \
+		docker.io/example/postgres:17-aaaaaaaaaaaa \
+		--if-missing \
+		>/dev/null 2>&1; then
+	printf 'ERROR: immutable mirror tag accepted a conflicting digest\n' >&2
+	exit 1
+fi
+[[ "$(cat "${mirror_marker}")" -eq 0 ]]
 [[ "$(cat "${mirror_inspect_marker}")" -eq 1 ]]
 
 printf '0\n' >"${mirror_marker}"

@@ -207,6 +207,29 @@ preserve_apt_failure_log() {
 	printf '[INFO] Full APT output saved to %s\n' "${preserved_log}" >&2
 }
 
+apt_update_quiet() {
+	local update_log=$1
+	if LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" update >"${update_log}" 2>&1; then
+		if [[ -n "${ONLINE_LOG_FILE}" && -s "${update_log}" ]]; then
+			timestamp_log_stream "${ONLINE_LOG_FILE}" <"${update_log}"
+		fi
+		return 0
+	fi
+	if [[ -n "${ONLINE_LOG_FILE}" && -s "${update_log}" ]]; then
+		timestamp_log_stream "${ONLINE_LOG_FILE}" <"${update_log}"
+	fi
+	preserve_apt_failure_log "${update_log}"
+	tail -n 20 "${update_log}" >&2 || true
+	return 1
+}
+
+installation_step_indent() {
+	if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+		printf '  '
+	fi
+	return 0
+}
+
 print_target() {
 	# Keep the online bootstrap target separate from the child package installer.
 	# The child runs in parent-session mode and therefore does not print another
@@ -330,6 +353,7 @@ check_host() {
 install_host_tools() {
 	local -a missing=()
 	local tool plan="${SESSION_DIR}/host-tools-apt-plan.log"
+	local update_log="${SESSION_DIR}/host-tools-apt-update.log"
 	for tool in ca-certificates openssl python3 rsync tar; do
 		case "${tool}" in
 		ca-certificates) [[ -f /etc/ssl/certs/ca-certificates.crt ]] || missing+=(ca-certificates) ;;
@@ -337,8 +361,9 @@ install_host_tools() {
 		esac
 	done
 	if ((${#missing[@]})); then
-		printf '[....] Installing required host tools: %s\n' "${missing[*]}"
-		apt-get "${APT_RETRY_ARGS[@]}" update \
+		printf '%s[....] Installing required host tools: %s\n' \
+			"$(installation_step_indent)" "${missing[*]}"
+		apt_update_quiet "${update_log}" \
 			|| fail "could not refresh Ubuntu package metadata for required host tools"
 		if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
 			--no-install-recommends install \
@@ -715,12 +740,14 @@ install_docker_prerequisites() {
 	local -a missing=()
 	local plan="${SESSION_DIR}/docker-prerequisites.plan"
 	local install_log="${SESSION_DIR}/docker-prerequisites-install.log"
+	local update_log="${SESSION_DIR}/docker-prerequisites-update.log"
 	command -v apt-get >/dev/null 2>&1 || fail "apt-get is required to install Docker CE"
 	command -v gpg >/dev/null 2>&1 || missing+=(gnupg)
 	[[ -f /etc/ssl/certs/ca-certificates.crt ]] || missing+=(ca-certificates)
 	if ((${#missing[@]})); then
-		printf '[....] Installing Docker CE source prerequisites: %s\n' "${missing[*]}"
-		apt-get "${APT_RETRY_ARGS[@]}" update \
+		printf '%s[....] Installing Docker CE source prerequisites: %s\n' \
+			"$(installation_step_indent)" "${missing[*]}"
+		apt_update_quiet "${update_log}" \
 			|| fail "could not refresh Ubuntu package metadata for Docker CE prerequisites"
 		if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
 			--no-install-recommends install \
@@ -746,7 +773,8 @@ configure_docker_apt_source() {
 	local gnupg_home="${SESSION_DIR}/gnupg"
 	local fingerprint source_file="${SESSION_DIR}/hyperfilelens-docker.list"
 	mkdir -m 0700 "${gnupg_home}"
-	printf '[....] Configuring %s\n' "${DOCKER_CE_SOURCE_NAME}"
+	printf '%s[....] Configuring %s\n' "$(installation_step_indent)" \
+		"${DOCKER_CE_SOURCE_NAME}"
 	download_file "${DOCKER_CE_GPG_URL}" "${key_ascii}" 120 \
 		|| fail "could not download the Docker CE signing key from ${DOCKER_CE_GPG_URL}"
 	fingerprint="$(GNUPGHOME="${gnupg_home}" gpg --batch --show-keys --with-colons "${key_ascii}" 2>/dev/null \
@@ -760,7 +788,7 @@ configure_docker_apt_source() {
 	printf 'deb [arch=amd64 signed-by=/etc/apt/keyrings/hyperfilelens-docker.gpg] %s %s stable\n' \
 		"${DOCKER_CE_APT_BASE}" "${HOST_UBUNTU_CODENAME}" >"${source_file}"
 	install -m 0644 "${source_file}" /etc/apt/sources.list.d/hyperfilelens-docker.list
-	printf '[ OK ] Docker CE package source is ready\n'
+	printf '%s[ OK ] Docker CE package source is ready\n' "$(installation_step_indent)"
 }
 
 selected_docker_apt_source_present() {
@@ -779,11 +807,13 @@ selected_docker_apt_source_present() {
 ensure_docker_apt_source() {
 	local apt_root="${1:-/etc/apt}"
 	if selected_docker_apt_source_present "${apt_root}"; then
-		printf '[ OK ] Existing %s will be reused\n' "${DOCKER_CE_SOURCE_NAME}"
+		printf '%s[ OK ] Existing %s will be reused\n' \
+			"$(installation_step_indent)" "${DOCKER_CE_SOURCE_NAME}"
 		return 0
 	fi
 	if docker_apt_source_present "${apt_root}"; then
-		printf '[ OK ] Existing Docker CE apt source will be reused\n'
+		printf '%s[ OK ] Existing Docker CE apt source will be reused\n' \
+			"$(installation_step_indent)"
 		return 0
 	fi
 	install_docker_prerequisites
@@ -814,6 +844,7 @@ validate_compose_only_install_plan() {
 install_online_docker_runtime() {
 	local plan="${SESSION_DIR}/docker-apt-plan.log"
 	local install_log="${SESSION_DIR}/docker-apt-install.log"
+	local update_log="${SESSION_DIR}/docker-apt-update.log"
 	local attempt
 	local -a packages=(
 		"docker-ce=${DOCKER_ENGINE_PACKAGE_VERSION}"
@@ -828,8 +859,9 @@ install_online_docker_runtime() {
 	assert_clean_dpkg_state
 	install_docker_prerequisites
 	configure_docker_apt_source
-	printf '[....] Resolving Docker Engine and Docker Compose V2 packages\n'
-	apt-get "${APT_RETRY_ARGS[@]}" update \
+	printf '%s[....] Resolving Docker Engine and Docker Compose V2 packages\n' \
+		"$(installation_step_indent)"
+	apt_update_quiet "${update_log}" \
 		|| fail "could not update the selected Docker CE package source"
 	if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
 		--no-install-recommends install \
@@ -839,7 +871,8 @@ install_online_docker_runtime() {
 		fail "Docker CE package dependencies could not be resolved"
 	fi
 	validate_apt_install_plan "${plan}" "Docker CE installation"
-	printf '[....] Installing Docker Engine and Docker Compose V2\n'
+	printf '%s[....] Installing Docker Engine and Docker Compose V2\n' \
+		"$(installation_step_indent)"
 	DOCKER_PACKAGE_INSTALL_ATTEMPTED=1
 	if ! apt_install_with_network_retry "${install_log}" \
 		install -y --no-remove \
@@ -849,7 +882,8 @@ install_online_docker_runtime() {
 		fail "Docker Engine and Docker Compose V2 installation failed"
 	fi
 	DOCKER_BOOTSTRAPPED=1
-	printf '[....] Enabling and starting Docker service\n'
+	printf '%s[....] Enabling and starting Docker service\n' \
+		"$(installation_step_indent)"
 	systemctl enable --now docker >/dev/null 2>&1 \
 		|| fail "Docker was installed but docker.service could not be enabled and started"
 	for attempt in {1..30}; do
@@ -869,13 +903,14 @@ install_online_docker_runtime() {
 	docker_version_ge "${DOCKER_COMPOSE_VERSION}" "${MIN_DOCKER_COMPOSE_VERSION}" \
 		|| fail "installed Docker Compose ${DOCKER_COMPOSE_VERSION:-unknown} does not meet the minimum required version ${MIN_DOCKER_COMPOSE_VERSION}"
 	DOCKER_RUNTIME_ACTION="reuse"
-	printf '[ OK ] Docker Engine %s and Docker Compose %s are ready\n' \
-		"${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
+	printf '%s[ OK ] Docker Engine %s and Docker Compose %s are ready\n' \
+		"$(installation_step_indent)" "${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
 }
 
 install_online_compose_plugin() {
 	local plan="${SESSION_DIR}/compose-apt-plan.log"
 	local install_log="${SESSION_DIR}/compose-apt-install.log"
+	local update_log="${SESSION_DIR}/compose-apt-update.log"
 	local original_engine_version="${DOCKER_ENGINE_VERSION}"
 	[[ -n "${DOCKER_COMPOSE_PACKAGE_VERSION}" ]] \
 		|| fail "Docker Compose V2 package version was not resolved"
@@ -889,8 +924,9 @@ install_online_compose_plugin() {
 		fi
 	fi
 	ensure_docker_apt_source
-	printf '[....] Resolving Docker Compose V2 package\n'
-	apt-get "${APT_RETRY_ARGS[@]}" update \
+	printf '%s[....] Resolving Docker Compose V2 package\n' \
+		"$(installation_step_indent)"
+	apt_update_quiet "${update_log}" \
 		|| fail "could not update the selected Docker CE package source"
 	if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
 		--no-install-recommends install \
@@ -901,8 +937,10 @@ install_online_compose_plugin() {
 	fi
 	validate_apt_install_plan "${plan}" "Docker Compose V2 installation"
 	validate_compose_only_install_plan "${plan}"
-	printf '[ OK ] Docker Compose V2 package plan is safe\n'
-	printf '[....] Installing Docker Compose V2 plugin\n'
+	printf '%s[ OK ] Docker Compose V2 package plan is safe\n' \
+		"$(installation_step_indent)"
+	printf '%s[....] Installing Docker Compose V2 plugin\n' \
+		"$(installation_step_indent)"
 	COMPOSE_PACKAGE_INSTALL_ATTEMPTED=1
 	if ! apt_install_with_network_retry "${install_log}" \
 		install -y --no-remove --no-upgrade --no-install-recommends \
@@ -920,15 +958,15 @@ install_online_compose_plugin() {
 	docker_version_ge "${DOCKER_COMPOSE_VERSION}" "${MIN_DOCKER_COMPOSE_VERSION}" \
 		|| fail "installed Docker Compose ${DOCKER_COMPOSE_VERSION:-unknown} does not meet the minimum required version ${MIN_DOCKER_COMPOSE_VERSION}"
 	DOCKER_RUNTIME_ACTION="reuse"
-	printf '[ OK ] Docker Compose %s is ready; Docker Engine %s was reused unchanged\n' \
-		"${DOCKER_COMPOSE_VERSION}" "${DOCKER_ENGINE_VERSION}"
+	printf '%s[ OK ] Docker Compose %s is ready; Docker Engine %s was reused unchanged\n' \
+		"$(installation_step_indent)" "${DOCKER_COMPOSE_VERSION}" "${DOCKER_ENGINE_VERSION}"
 }
 
 ensure_online_docker_runtime() {
 	case "${DOCKER_RUNTIME_ACTION}" in
 	reuse)
-		printf '[ OK ] Existing Docker Engine %s and Docker Compose %s are supported\n' \
-			"${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
+		printf '%s[ OK ] Existing Docker Engine %s and Docker Compose %s are supported\n' \
+			"$(installation_step_indent)" "${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
 		;;
 	install-compose) install_online_compose_plugin ;;
 	install) install_online_docker_runtime ;;

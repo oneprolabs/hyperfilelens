@@ -337,6 +337,12 @@ print_value() {
 	printf '  %-14s %s\n' "${label}" "${value}"
 }
 
+print_management_value() {
+	local label=$1 value=${2:-}
+	[[ -n "${value}" ]] || return 0
+	printf '  %-15s %s\n' "${label}" "${value}"
+}
+
 print_status_value() {
 	local label=$1 value=${2:-}
 	[[ -n "${value}" ]] || return 0
@@ -1703,7 +1709,7 @@ ensure_bridge_network() {
 }
 
 warn_host_resources() {
-	local cpu_count mem_total_kib mem_available_kib swap_total_kib
+	local cpu_count mem_total_kib mem_available_kib
 	cpu_count="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 0)"
 	if [[ ! "${cpu_count}" =~ ^[0-9]+$ || "${cpu_count}" -lt 4 ]]; then
 		warn "fewer than the minimum 4 CPU cores detected (${cpu_count:-unknown}); installation will continue but may be unstable under concurrent load"
@@ -1712,7 +1718,6 @@ warn_host_resources() {
 	fi
 	mem_total_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
 	mem_available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null)"
-	swap_total_kib="$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
 	if [[ "${mem_total_kib:-0}" -lt $((8 * 1024 * 1024)) ]]; then
 		warn "less than the minimum 8 GiB physical memory detected; installation will continue but may be unstable under concurrent load"
 	elif [[ "${mem_total_kib:-0}" -lt $((16 * 1024 * 1024)) ]]; then
@@ -1720,9 +1725,6 @@ warn_host_resources() {
 	fi
 	if [[ "${mem_available_kib:-0}" -lt $((2500 * 1024)) ]]; then
 		warn "less than 2.5 GiB memory is currently available; installation will continue"
-	fi
-	if [[ "${swap_total_kib:-0}" -eq 0 ]]; then
-		warn "no swap is configured; installation will continue, but memory pressure can invoke the host OOM killer"
 	fi
 }
 
@@ -3788,6 +3790,10 @@ print_console_access_summary() {
 	local host seed seed_email seed_pass seed_org sourcelens_mode sourcelens_console_port
 	local website_bind website_port tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
 	local sl_env sl_user sl_email sl_pass show_credentials=0 credentials_note
+	local management_printer=print_value
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		management_printer=print_management_value
+	fi
 	host="$(resolve_console_host)"
 	seed="$(read_env_value SEED_INITIAL_DATA)"
 	seed_email="$(read_env_value SEED_ADMIN_EMAIL)"
@@ -3978,20 +3984,43 @@ print_console_access_summary() {
 	print_warning_summary
 
 	print_section "Management commands"
-	print_value "Status" "sudo ${ROOT}/install.sh status"
+	"${management_printer}" "Status" "sudo ${ROOT}/install.sh status"
 	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
-		print_value "Logs" "sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"
+		"${management_printer}" "Logs" \
+			"sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"
 	fi
-	print_value "Start" "sudo ${ROOT}/install.sh start"
-	print_value "Stop" "sudo ${ROOT}/install.sh stop"
-	print_value "Restart" "sudo ${ROOT}/install.sh restart"
-	print_value "Backup" "sudo ${ROOT}/install.sh backup"
-	print_value "Upgrade" "sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
-	print_value "Uninstall" "sudo ${ROOT}/install.sh uninstall"
+	"${management_printer}" "Start" "sudo ${ROOT}/install.sh start"
+	"${management_printer}" "Stop" "sudo ${ROOT}/install.sh stop"
+	"${management_printer}" "Restart" "sudo ${ROOT}/install.sh restart"
+	"${management_printer}" "Backup" "sudo ${ROOT}/install.sh backup"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		"${management_printer}" "Online upgrade" "$(online_community_upgrade_command)"
+		"${management_printer}" "Offline upgrade" \
+			"sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
+	else
+		"${management_printer}" "Upgrade" \
+			"sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
+	fi
+	"${management_printer}" "Uninstall" "sudo ${ROOT}/install.sh uninstall"
 	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]] \
 		&& local_platform_gateway_agent_is_managed; then
-		print_value "Gateway status" "sudo ${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh status"
+		"${management_printer}" "Gateway status" \
+			"sudo ${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh status"
 	fi
+}
+
+online_community_upgrade_command() {
+	case "${HFL_REGISTRY_REGION:-}" in
+	cn)
+		printf '%s' \
+			'curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh | sudo bash -s -- --mirror cn'
+		;;
+	global)
+		printf '%s' \
+			'curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh | sudo bash -s -- --mirror global'
+		;;
+	*) die "online Community summary requires HFL_REGISTRY_REGION=cn or global" ;;
+	esac
 }
 
 print_online_community_summary() {
@@ -4063,12 +4092,14 @@ print_online_community_summary() {
 	print_warning_summary
 
 	print_section "Management commands"
-	print_value "Status" "sudo ${ROOT}/install.sh status"
-	print_value "Logs" "sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"
-	print_value "Restart" "sudo ${ROOT}/install.sh restart"
-	print_value "Backup" "sudo ${ROOT}/install.sh backup"
-	print_value "Upgrade" "sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
-	print_value "Uninstall" "sudo ${ROOT}/install.sh uninstall"
+	print_management_value "Status" "sudo ${ROOT}/install.sh status"
+	print_management_value "Logs" "sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"
+	print_management_value "Restart" "sudo ${ROOT}/install.sh restart"
+	print_management_value "Backup" "sudo ${ROOT}/install.sh backup"
+	print_management_value "Online upgrade" "$(online_community_upgrade_command)"
+	print_management_value "Offline upgrade" \
+		"sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
+	print_management_value "Uninstall" "sudo ${ROOT}/install.sh uninstall"
 }
 
 print_platform_gateway_summary() {
