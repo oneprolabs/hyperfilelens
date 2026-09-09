@@ -2,6 +2,19 @@ import type { LocationQuery, LocationQueryRaw } from 'vue-router'
 
 export const LOGIN_ROUTE_NAME = 'login'
 
+type LoginSiteProfile = {
+  site_role: 'tenant' | 'ops'
+  platform_ops_access_allowed: boolean
+  tenant_public_url: string
+  landing_path: string
+  admin_console_landing_path: string
+}
+
+export type AuthenticatedLoginTarget =
+  | { kind: 'internal'; path: string }
+  | { kind: 'external'; url: string }
+  | { kind: 'unavailable' }
+
 const ENCODED_PATH_DELIMITER_PATTERN = /%(?:25)*(?:2e|2f|5c)/i
 
 function containsControlCharacter(value: string): boolean {
@@ -34,6 +47,39 @@ export function resolveSafeLoginRedirect(
   } catch {
     return null
   }
+}
+
+export function resolveAuthenticatedLoginTarget(
+  profile: LoginSiteProfile,
+  redirect: unknown,
+  origin = currentOrigin(),
+): AuthenticatedLoginTarget {
+  const safeRedirect = resolveSafeLoginRedirect(redirect, origin)
+  if (profile.site_role === 'ops') {
+    if (!profile.platform_ops_access_allowed) {
+      return profile.tenant_public_url
+        ? { kind: 'external', url: profile.tenant_public_url }
+        : { kind: 'unavailable' }
+    }
+    if (safeRedirect?.startsWith('/platform-ops')) {
+      return { kind: 'internal', path: safeRedirect }
+    }
+    const landingPath = profile.landing_path.startsWith('/platform-ops')
+      ? profile.landing_path
+      : profile.admin_console_landing_path
+    return landingPath
+      ? { kind: 'internal', path: landingPath }
+      : { kind: 'unavailable' }
+  }
+
+  if (
+    safeRedirect
+    && !safeRedirect.startsWith('/platform-ops')
+    && !safeRedirect.startsWith('/admin')
+  ) {
+    return { kind: 'internal', path: safeRedirect }
+  }
+  return { kind: 'internal', path: profile.landing_path || '/' }
 }
 
 export function withoutLegacySessionReason(query: LocationQuery): LocationQueryRaw | null {

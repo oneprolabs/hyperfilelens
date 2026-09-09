@@ -338,9 +338,13 @@ msgstr "服务器错误"
 msgid "Session expired. Please login again."
 msgstr "会话已过期，请重新登录。"
 
-#: src/backend/apps/iam/services/token_service.py:209
-msgid "Suspicious login activity detected"
-msgstr "检测到异常登录活动"
+#: src/backend/apps/iam/services/token_service.py:294
+msgid "Login session is no longer valid. Please login again."
+msgstr "登录状态已失效，请重新登录。"
+
+#: src/backend/apps/iam/services/token_service.py:257
+msgid "Login session refresh is already in progress"
+msgstr "登录会话刷新正在进行中"
 
 #: src/backend/apps/iam/services/verification_email.py:38
 msgid "Thank you for choosing <strong>HyperFileLens</strong>. Please use the following verification code to complete your registration:"
