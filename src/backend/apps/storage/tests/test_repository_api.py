@@ -65,6 +65,24 @@ from apps.task.models import Task
 
 class StorageRepositoryApiTests(TestCase):
     def setUp(self):
+        # Storage network effects now happen before repository acceptance.
+        self.preflight_probe = mock.patch(
+            "apps.storage.services.internal.s3_creation_preflight.verify_empty_prefix"
+        )
+        self.probe = self.preflight_probe.start()
+        self.addCleanup(self.preflight_probe.stop)
+        bucket_patch = mock.patch("apps.storage.services.internal.s3_creation_preflight.create_s3_bucket")
+        self.preflight_bucket = bucket_patch.start()
+        self.addCleanup(bucket_patch.stop)
+        style_patch = mock.patch(
+            "apps.storage.services.internal.repository_initializer.resolve_s3_url_style",
+            side_effect=lambda **args: "path" if args["s3_url_style"] == "auto" else args["s3_url_style"],
+        )
+        style_patch.start()
+        self.addCleanup(style_patch.stop)
+        absent_patch = mock.patch("apps.storage.services.internal.s3_creation_preflight.ensure_s3_bucket_absent")
+        absent_patch.start()
+        self.addCleanup(absent_patch.stop)
         self.client = APIClient()
         user_model = get_user_model()
         self.user = user_model.objects.create_user(
@@ -174,6 +192,27 @@ class StorageRepositoryApiTests(TestCase):
         )
         return run_repository_create_task(repository_task_id=repository_task.id)
 
+    def test_preflight_failure_returns_error_without_repository_or_credential(self):
+        from apps.storage.services.internal.s3_client import S3ClientError
+        self.probe.side_effect = S3ClientError("Unable to delete probe: super-secret")
+        response = self._post_repository(self._s3_payload())
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Repository.objects.count(), 0)
+        self.assertEqual(Credential.objects.count(), 0)
+        self.assertNotIn("super-secret", str(response.data))
+        self.assertIn("Unable to delete probe", str(response.data))
+
+    def test_new_bucket_creation_failure_returns_error_without_repository(self):
+        from apps.storage.services.internal.s3_client import S3ClientError
+        self.preflight_bucket.side_effect = S3ClientError("Bucket creation denied")
+        payload = self._s3_payload()
+        payload["s3_bucket_mode"] = "new"
+        response = self._post_repository(payload)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Repository.objects.count(), 0)
+        self.assertEqual(Credential.objects.count(), 0)
+        self.probe.assert_not_called()
+
     def test_create_s3_repository_requires_bucket_mode(self):
         payload = self._s3_payload()
         payload.pop("s3_bucket_mode")
@@ -265,7 +304,7 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(
             nested.status_code, status.HTTP_400_BAD_REQUEST, nested.content
         )
-        self.assertIn("overlaps repository", str(nested.data))
+        self.assertIn("overlaps an existing repository", str(nested.data))
         self.assertFalse(Repository.objects.filter(name="nested-s3").exists())
 
     def test_create_managed_s3_repository_rejects_unknown_catalog_region(self):
@@ -512,7 +551,7 @@ class StorageRepositoryApiTests(TestCase):
             self.assertEqual(
                 response.status_code, status.HTTP_202_ACCEPTED, response.content
             )
-            self.assertEqual(response.data["config"]["s3_url_style"], url_style)
+            self.assertEqual(response.data["config"]["s3_url_style"], "path" if url_style == "auto" else url_style)
             repo = Repository.objects.get(name=f"provider-{platform}")
             result = self._run_create_task(repo)
             self.assertEqual(result["status"], "success")

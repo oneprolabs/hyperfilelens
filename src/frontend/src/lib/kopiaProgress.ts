@@ -164,19 +164,20 @@ export function formatSpeedBps(value: number | null | undefined): string | null 
   return `${formatBytes(bps)}/s`
 }
 
-export function transferEtaText(t: TranslateFn, value: number | null | undefined): string | null {
+export function transferEtaText(t: TranslateFn, value: number | null | undefined, backup = false): string | null {
+  const key = backup ? 'backupEta' : 'eta'
   const seconds = Number(value || 0)
   if (!Number.isFinite(seconds) || seconds <= 0) return null
-  if (seconds < 60) return t('protection.taskProgress.etaSeconds', { n: seconds })
-  if (seconds < 3600) return t('protection.taskProgress.etaMinutes', { n: Math.ceil(seconds / 60) })
+  if (seconds < 60) return t(`protection.taskProgress.${key}Seconds`, { n: seconds })
+  if (seconds < 3600) return t(`protection.taskProgress.${key}Minutes`, { n: Math.ceil(seconds / 60) })
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.ceil((seconds % 3600) / 60)
   return minutes > 0
-    ? t('protection.taskProgress.etaHoursMinutes', { h: hours, m: minutes })
-    : t('protection.taskProgress.etaHours', { n: hours })
+    ? t(`protection.taskProgress.${key}HoursMinutes`, { h: hours, m: minutes })
+    : t(`protection.taskProgress.${key}Hours`, { n: hours })
 }
 
-export function transferCapacityText(t: TranslateFn, transfer?: TransferProgress | null): string | null {
+export function transferCapacityText(t: TranslateFn, transfer?: TransferProgress | null, preserveLegacyRestore = false): string | null {
   if (!transfer) return null
   const isRestore = String(transfer.label_key || '').includes('taskProgress.restore.')
   const schemaV2 = Number(transfer.progress_schema_version || 1) >= 2
@@ -184,6 +185,12 @@ export function transferCapacityText(t: TranslateFn, transfer?: TransferProgress
     ? Number(transfer.processed_bytes ?? transfer.bytes_done ?? 0)
     : Number(transfer.bytes_done || 0)
   const done = formatBytes(processedBytes)
+  if (!isRestore && !preserveLegacyRestore) {
+    if (transfer.bytes_total_known && transfer.bytes_total != null) {
+      return t('protection.taskProgress.backupBytesCapacity', { done, total: formatBytes(transfer.bytes_total) })
+    }
+    return processedBytes > 0 ? t('protection.taskProgress.backupBytes', { size: done }) : null
+  }
   if (transfer.bytes_total_known && transfer.bytes_total != null) {
     const total = formatBytes(transfer.bytes_total)
     if (isRestore) {
@@ -274,6 +281,8 @@ export function transferSpeedParts(
 ): string[] {
   if (!transfer) return []
   const isRestore = String(transfer.label_key || '').includes('taskProgress.restore.')
+  if (!isRestore && !options.labelRestoreMetrics && !options.allowUnclassifiedSpeed) return []
+  // Legacy restore callers can supply classification through options instead of a label.
   const processingSpeed = formatSpeedBps(transfer.processing_speed_bps)
   if (processingSpeed && !isRestore) {
     return options.labelProcessingSpeed
@@ -303,7 +312,7 @@ export function transferMetricParts(
 ): string[] {
   if (!transfer) return []
   const parts: string[] = []
-  const capacity = transferCapacityText(t, transfer)
+  const capacity = transferCapacityText(t, transfer, options.labelRestoreMetrics)
   if (capacity) parts.push(capacity)
   parts.push(...transferSpeedParts(t, transfer, options))
   const phase = String(transfer.phase || '').toLowerCase()
@@ -311,7 +320,7 @@ export function transferMetricParts(
     ? null
     : options.labelRestoreMetrics
       ? restoreTransferEtaText(t, transfer.eta_seconds)
-      : transferEtaText(t, transfer.eta_seconds)
+      : transferEtaText(t, transfer.eta_seconds, !String(transfer.label_key || '').includes('taskProgress.restore.'))
   if (eta) parts.push(eta)
   return parts
 }

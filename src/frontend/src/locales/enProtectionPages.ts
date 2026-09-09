@@ -1,6 +1,13 @@
 /** English copy for data protection sub-pages */
 export const enProtectionPages = {
   taskProgress: {
+    backupBytes: 'Backup progress: {size}',
+    backupBytesCapacity: 'Backup progress: {done} / {total}',
+    backupEtaSeconds: 'About {n}s remaining',
+    backupEtaMinutes: 'About {n} min remaining',
+    backupEtaHours: 'About {n}h remaining',
+    backupEtaHoursMinutes: 'About {h}h {m}m remaining',
+
     bytesTransferred: '{size} transferred',
     bytesProcessed: 'Processed: {size}',
     bytesCapacity: '{done} / {total}',

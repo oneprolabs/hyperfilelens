@@ -871,6 +871,16 @@ class InitializeS3RepositoryBucketModeTests(TestCase):
         create_bucket.assert_called_once()
         check_bucket.assert_not_called()
 
+    @mock.patch("apps.storage.services.internal.repository_initializer.create_s3_repository")
+    @mock.patch("apps.storage.services.internal.repository_initializer.create_s3_bucket")
+    def test_preflighted_new_bucket_keeps_origin_without_recreating(self, create_bucket, create_repo):
+        repository = self._repository(Repository.S3BucketMode.NEW)
+        repository.config["s3_bucket_prepared"] = True
+        initialize_s3_repository(repository)
+        create_bucket.assert_not_called()
+        create_repo.assert_called_once()
+        self.assertEqual(repository.s3_bucket_mode, Repository.S3BucketMode.NEW)
+
     @mock.patch(
         "apps.storage.services.internal.repository_initializer.create_s3_repository"
     )

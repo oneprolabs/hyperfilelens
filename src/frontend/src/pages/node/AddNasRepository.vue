@@ -17,6 +17,7 @@ import {
 import { listAllNodes } from '../../lib/nodeApi'
 import { SMB_MOUNT_OPTION_EXAMPLES } from '../../lib/nasMountTroubleshooting'
 import { defaultNasMountOptions } from '../../lib/nasMountOptions'
+import { buildNasRepositoryName } from '../../lib/nasRepositoryName'
 import { preflightNasRepositoryCreate, showNasDraftPreflightGuidance } from '../../lib/nasDraftPreflight'
 import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
 import type { ApiNode } from '../../types/node'
@@ -76,6 +77,26 @@ const nfsExport = ref('')
 
 /* Step 1: repo info */
 const repoName = ref('')
+const repoNameManuallyEdited = ref(false)
+
+function syncAutoRepoName() {
+  if (repoNameManuallyEdited.value) return
+  repoName.value = buildNasRepositoryName(
+    protocol.value,
+    protocol.value === 'smb' ? smbHost.value : nfsHost.value,
+    protocol.value === 'smb' ? smbShare.value : nfsExport.value,
+  )
+  if (repoName.value) clearFieldError('repoName')
+}
+
+function onRepoNameInput(value: string) {
+  repoNameManuallyEdited.value = !!value.trim()
+  clearFieldError('repoName')
+  if (!repoNameManuallyEdited.value) syncAutoRepoName()
+}
+
+watch([protocol, smbHost, smbShare, nfsHost, nfsExport], syncAutoRepoName)
+
 const quota = ref(0)
 const quotaUnit = ref<RepositoryQuotaUnit>('GB')
 const enableQuotaAlert = ref(false)
@@ -694,7 +715,7 @@ watch(enableQuotaAlert, (enabled) => {
                     <ElInput
                       v-model="repoName"
                       :placeholder="t('repositoriesPage.phRepoName')"
-                      @input="clearFieldError('repoName')"
+                      @input="onRepoNameInput"
                     />
                     <div class="mt-1 text-xs text-[rgb(100_116_139)]">
                       {{ t('addNasRepo.hintRepositoryName') }}

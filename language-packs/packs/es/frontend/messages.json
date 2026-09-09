@@ -488,6 +488,13 @@
       "filters": "Filtros"
     },
     "taskProgress": {
+      "backupBytes": "Progreso de la copia de seguridad: {size}",
+      "backupBytesCapacity": "Progreso de la copia de seguridad: {done} / {total}",
+      "backupEtaSeconds": "Quedan aproximadamente {n} s",
+      "backupEtaMinutes": "Quedan aproximadamente {n} min",
+      "backupEtaHours": "Quedan aproximadamente {n} h",
+      "backupEtaHoursMinutes": "Quedan aproximadamente {h} h {m} min",
+
       "bytesTransferred": "{size} transferido",
       "bytesProcessed": "Procesado: {size}",
       "bytesCapacity": "{done} / {total}",
@@ -4951,7 +4958,7 @@
     "hintSmbUsername": "Usuario SMB utilizado para acceder al recurso compartido; por ejemplo, backup_user.",
     "hintSmbPassword": "Contraseña del recurso compartido; se oculta en los registros y mensajes de error.",
     "hintSmbDomain": "Utilice CORP o WORKGROUP para entornos de dominio; deje vacío para usuarios locales.",
-    "hintRepositoryName": "Nombre que se mostrará en las listas de repositorios y en las configuraciones de copia de seguridad; por ejemplo, NAS de producción.",
+    "hintRepositoryName": "Se completa automáticamente con el protocolo, el servidor y el último segmento de la ruta del recurso compartido. Puede editarlo; borre el nombre para restaurar el nombre automático.",
     "errSmbHost": "Introduzca la dirección del servidor",
     "errSmbShare": "Introduzca el nombre del recurso compartido"
   },
@@ -5112,6 +5119,7 @@
     "errBucket": "Por favor, seleccione un bucket",
     "errBucketName": "Por favor, introduzca un nombre de bucket",
     "bucketNameErrors": {
+      "aws_reserved": "Este nombre utiliza un prefijo o sufijo reservado de Amazon S3.",
       "aliyun": "Use entre 3 y 63 letras minúsculas, números o guiones; comience y termine con una letra o un número.",
       "dns": "Use entre 3 y 63 letras minúsculas, números, guiones o puntos; comience y termine con una letra o un número.",
       "dns_label": "Cada parte entre períodos debe comenzar y terminar con una letra o número.",

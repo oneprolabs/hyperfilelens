@@ -132,7 +132,7 @@ import {
 } from '../../lib/storageProviderCatalogApi'
 import { storageRepositoryLocation } from '../../lib/storageRepositoryDisplay'
 import { booleanStatusTag } from '../../lib/statusTag'
-import { DEFAULT_S3_OBJECT_PREFIX, normalizeS3EndpointInput } from '../../lib/s3PlatformDisplay'
+import { generateS3ObjectPrefix, normalizeS3EndpointInput } from '../../lib/s3PlatformDisplay'
 import {
   useProtectionDemoStore,
   type DemoDirTreeItem,
@@ -1170,7 +1170,7 @@ const addTargetS3Endpoint = ref('')
 const addTargetS3Region = ref('')
 const addTargetS3Bucket = ref('')
 const addTargetS3BucketMode = ref<'existing' | 'new'>('existing')
-const addTargetS3Prefix = ref(DEFAULT_S3_OBJECT_PREFIX)
+const addTargetS3Prefix = ref(generateS3ObjectPrefix())
 const addTargetS3AccessKey = ref('')
 const addTargetS3SecretKey = ref('')
 const addTargetS3UrlStyle = ref<AddTargetS3UrlStyle>(defaultS3UrlStyle(undefined))
@@ -2770,7 +2770,7 @@ function resetAddTargetForm(kind: AddTargetRepoKind = addTargetKind.value) {
   addTargetS3Region.value = ''
   addTargetS3Bucket.value = ''
   addTargetS3BucketMode.value = 'existing'
-  addTargetS3Prefix.value = DEFAULT_S3_OBJECT_PREFIX
+  addTargetS3Prefix.value = generateS3ObjectPrefix()
   addTargetS3AccessKey.value = ''
   addTargetS3SecretKey.value = ''
   addTargetS3UrlStyle.value = defaultS3UrlStyle(undefined)
