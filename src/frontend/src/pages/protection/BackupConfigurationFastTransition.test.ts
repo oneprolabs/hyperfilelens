@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { transpile } from 'typescript'
 
 const page = readFileSync(resolve(process.cwd(), 'src/pages/protection/DataProtection.vue'), 'utf8')
 const wizard = readFileSync(resolve(process.cwd(), 'src/pages/protection/BackupCreateWizard.vue'), 'utf8')
@@ -15,6 +16,37 @@ function sourceBetween(source: string, startMarker: string, endMarker: string) {
 }
 
 describe('backup configuration fast transition', () => {
+  it.each(['success', 'failure', 'leave'] as const)('coordinates delayed reconciliation: %s', async (outcome) => {
+    let settle!: () => void
+    let fail!: (error: Error) => void
+    const pending = new Promise<void>((resolve, reject) => { settle = resolve; fail = reject })
+    const refresh = vi.fn().mockReturnValue(pending)
+    const normalLoad = vi.fn().mockResolvedValue(undefined)
+    const activeStep = { value: 2 }
+    const initialLoad = { value: true }
+    const source = sourceBetween(page, 'let createdBackupRefresh:', 'function finishCreateAndGoToStep3')
+    const createHarness = new Function(
+      'refreshStep3AfterMoreAction', 'refreshFlowStepData', 'flowMainStep',
+      'step3InitialLoadPending', 'pageRequests', 'showApiError',
+      transpile(source) + '\nreturn { reconcileCreatedBackupConfigs, refreshEnteredFlowStep };',
+    )
+    const harness = createHarness(refresh, normalLoad, activeStep, initialLoad,
+      { isAbortError: () => false }, vi.fn())
+    harness.reconcileCreatedBackupConfigs(['agent:1'])
+    const entry = harness.refreshEnteredFlowStep(2)
+    expect(refresh).toHaveBeenCalledOnce()
+    expect(normalLoad).not.toHaveBeenCalled()
+    if (outcome === 'success') initialLoad.value = false
+    if (outcome === 'leave') activeStep.value = 1
+    if (outcome === 'failure') fail(new Error('Count request failed'))
+    else settle()
+    await entry
+    expect(normalLoad).toHaveBeenCalledTimes(outcome === 'failure' ? 1 : 0)
+    activeStep.value = 2
+    await harness.refreshEnteredFlowStep(2)
+    expect(normalLoad).toHaveBeenCalledTimes(outcome === 'failure' ? 2 : 1)
+  })
+
   it('uses the authoritative create response without repeating the pipeline update', () => {
     const create = sourceBetween(wizard, 'async function runCreateBackup', 'function editableGroupPayloads')
 
@@ -36,7 +68,7 @@ describe('backup configuration fast transition', () => {
     expect(complete).not.toContain('await refreshStep3AfterMoreAction')
     expect(reconcile).toContain('showLoading: true')
     expect(page).not.toContain('skipNextFlowStepRefresh')
-    expect(page).toContain('void refreshFlowStepData(step)')
+    expect(page).toContain('void refreshEnteredFlowStep(step)')
   })
 
   it('shows Step 3 loading for the full post-create refresh chain', () => {
