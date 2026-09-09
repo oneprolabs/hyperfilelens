@@ -22,7 +22,22 @@ class KopiaProgressAggregatorTests(SimpleTestCase):
         )
 
         self.assertEqual(aggregate["lanes_done"], 1)
+        self.assertEqual(aggregate["lanes_running"], 0)
+        self.assertEqual(aggregate["lanes_queued"], 0)
         self.assertEqual(aggregate["lanes_total"], 1)
+
+    def test_aggregate_counts_running_and_queued_lanes(self):
+        aggregate = aggregate_lanes([
+            {"id": "running", "status": "running", "progress": {}},
+            {"id": "dispatching", "status": "dispatching", "progress": {}},
+            {"id": "queued", "status": "pending", "progress": {}},
+            {"id": "done", "status": "success", "progress": {}},
+        ])
+
+        self.assertEqual(aggregate["lanes_running"], 2)
+        self.assertEqual(aggregate["lanes_queued"], 1)
+        self.assertEqual(aggregate["lanes_done"], 1)
+        self.assertEqual(aggregate["lanes_total"], 4)
 
     def test_aggregate_parallel_lanes(self):
         lanes = [
@@ -385,6 +400,42 @@ class KopiaProgressDisplayTests(SimpleTestCase):
         self.assertEqual(phase, "estimating")
         self.assertEqual(meta["label_key"], "protection.taskProgress.backup.estimating")
 
+    def test_backup_label_exposes_running_and_queued_directories(self):
+        lanes = [
+            {"id": "running", "status": "running", "progress": {}},
+            {"id": "queued", "status": "pending", "progress": {}},
+        ]
+        meta, phase = backup_orchestration_label_meta(
+            task_status="running",
+            lanes=lanes,
+            aggregate=aggregate_lanes(lanes),
+        )
+
+        self.assertEqual(phase, "estimating")
+        self.assertEqual(meta, {
+            "label_key": "protection.taskProgress.backup.runningQueued",
+            "label_args": {"running": 1, "queued": 1, "done": 0, "total": 2},
+        })
+
+    def test_backup_label_exposes_all_queued_directories(self):
+        lanes = [
+            {"id": "queued-1", "status": "pending", "progress": {}},
+            {"id": "queued-2", "status": "pending", "progress": {}},
+        ]
+        meta, phase = backup_orchestration_label_meta(
+            task_status="running",
+            lanes=lanes,
+            aggregate=aggregate_lanes(lanes),
+        )
+
+        self.assertEqual(phase, "queued")
+        self.assertEqual(meta["label_key"], "protection.taskProgress.backup.queued")
+        self.assertEqual(meta["label_args"], {
+            "queued": 2,
+            "done": 0,
+            "total": 2,
+        })
+
     def test_restore_estimating_uses_placeholder_display(self):
         payload = enrich_kopia_progress_payload(
             {
@@ -556,7 +607,71 @@ class KopiaFailureMessageTests(SimpleTestCase):
                 "task": type("AgentTask", (), {"last_error": "exit 1: exit status 1"})(),
             },
         )()
-        self.assertEqual(_directory_error(outcome)[0], "KOPIA_SNAPSHOT_FATAL")
+        self.assertEqual(_directory_error(outcome)[0], "SOURCE_ITEMS_UNREADABLE")
+
+    def test_structured_access_denied_is_not_reported_as_process_death(self):
+        from apps.protection.services.backup_task import classify_kopia_execution_failure
+
+        result = {
+            "snapshot": {
+                "rootEntry": {
+                    "summ": {
+                        "errors": [{
+                            "path": "C:/System Volume Information",
+                            "error": "Access is denied.",
+                        }]
+                    }
+                }
+            },
+            "exit_code": 1,
+        }
+
+        code, _message = classify_kopia_execution_failure(
+            result,
+            last_error="exit 1: exit status 1",
+        )
+
+        self.assertEqual(code, "SOURCE_ITEMS_UNREADABLE")
+
+    def test_file_lock_signal_and_generic_exit_keep_distinct_codes(self):
+        from apps.protection.services.backup_task import classify_kopia_execution_failure
+
+        locked = {
+            "snapshot": {
+                "rootEntry": {
+                    "summ": {
+                        "errors": [{
+                            "path": "C:/data/database.db",
+                            "error": (
+                                "The process cannot access the file because it is "
+                                "being used by another process."
+                            ),
+                        }]
+                    }
+                }
+            }
+        }
+        self.assertEqual(
+            classify_kopia_execution_failure(locked)[0],
+            "SOURCE_FILE_LOCKED",
+        )
+        self.assertEqual(
+            classify_kopia_execution_failure({}, last_error="signal: killed")[0],
+            "KOPIA_SIGNAL_KILLED",
+        )
+        self.assertEqual(
+            classify_kopia_execution_failure(
+                locked,
+                last_error="signal: killed",
+            )[0],
+            "KOPIA_SIGNAL_KILLED",
+        )
+        self.assertEqual(
+            classify_kopia_execution_failure(
+                {}, last_error="exit 1: exit status 1"
+            )[0],
+            "KOPIA_PROCESS_DIED",
+        )
 
     def test_failure_metadata_uses_exact_agent_cause_counts(self):
         from apps.protection.services.backup_task import kopia_snapshot_failure_metadata

@@ -13,6 +13,8 @@ export type KopiaProgressAggregate = {
   upload_speed_bps?: number | null
   eta_seconds: number | null
   lanes_done: number
+  lanes_running?: number
+  lanes_queued?: number
   lanes_total: number
   slowest_lane?: { id?: string; name?: string; eta_seconds?: number } | null
 }
@@ -82,6 +84,8 @@ export type TransferProgress = {
   eta_source?: string | null
   show_metrics?: boolean
   lanes_done?: number
+  lanes_running?: number
+  lanes_queued?: number
   lanes_total?: number
   estimating_started_at?: string
 }

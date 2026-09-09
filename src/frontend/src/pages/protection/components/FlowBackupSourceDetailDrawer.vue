@@ -2043,6 +2043,7 @@ function snapshotStatusLabel(status?: string): string {
   if (normalized === 'failed') return t('protection.backupsPage.snapshotStatusFailed')
   if (normalized === 'creating') return t('protection.backupsPage.snapshotStatusCreating')
   if (normalized === 'running') return t('protection.backupsPage.snapshotStatusRunning')
+  if (normalized === 'pending') return t('protection.backupsPage.snapshotStatusQueued')
   if (normalized === 'deleted') return t('protection.backupsPage.snapshotStatusDeleted')
   if (normalized === 'deleting') return t('protection.backupsPage.snapshotStatusDeleting')
   if (normalized === 'delete_failed') return t('protection.backupsPage.snapshotStatusDeleteFailed')
@@ -2051,7 +2052,7 @@ function snapshotStatusLabel(status?: string): string {
 
 function snapshotStatusInProgress(status?: string) {
   const normalized = String(status || '').toLowerCase()
-  return normalized === 'creating' || normalized === 'running'
+  return normalized === 'creating' || normalized === 'running' || normalized === 'pending'
 }
 
 function isVisibleSourceSnapshot(snapshot: BackupSourceSnapshot) {

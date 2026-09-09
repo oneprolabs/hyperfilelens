@@ -1959,6 +1959,54 @@ def _is_generic_exit_message(message: str) -> bool:
     return False
 
 
+def classify_kopia_execution_failure(
+    result: dict[str, Any] | None,
+    *,
+    last_error: str = "",
+) -> tuple[str, str]:
+    """Classify a failed Kopia execution from its most specific evidence."""
+    result = result if isinstance(result, dict) else {}
+    message = extract_kopia_failure_message(result, last_error=last_error)
+    if not message:
+        message = str(last_error or "Agent backup command failed.").strip()
+
+    lower = message.lower()
+    last_error_lower = str(last_error or "").lower()
+    if "unable to get policy tree" in lower or "policy not found" in lower:
+        return "KOPIA_POLICY_NOT_FOUND", message[:2000]
+    if any(
+        marker in last_error_lower
+        for marker in ("signal", "sigkill", "exit 137", "exit 9")
+    ):
+        return "KOPIA_SIGNAL_KILLED", message[:2000]
+
+    failure_metadata = kopia_snapshot_failure_metadata(result)
+    failure_details = failure_metadata.get("failure_details")
+    if isinstance(failure_details, dict):
+        if failure_details.get("category") == "source_file_locked":
+            return "SOURCE_FILE_LOCKED", message[:2000]
+        return "SOURCE_ITEMS_UNREADABLE", message[:2000]
+
+    if "fatal error" in lower or "error when processing" in lower:
+        return "KOPIA_SNAPSHOT_FATAL", message[:2000]
+
+    exit_codes: list[int] = []
+    for command_result in (result, result.get("snapshot_create")):
+        if not isinstance(command_result, dict):
+            continue
+        try:
+            exit_codes.append(int(command_result.get("exit_code")))
+        except (TypeError, ValueError):
+            continue
+    if (
+        any(exit_code != 0 for exit_code in exit_codes)
+        or _is_generic_exit_message(last_error)
+        or "exit" in last_error_lower
+    ):
+        return "KOPIA_PROCESS_DIED", message[:2000]
+    return "AGENT_BACKUP_FAILED", message[:2000]
+
+
 def _directory_error(outcome, *, timed_out: bool = False) -> tuple[str, str]:
     if timed_out:
         return (
@@ -1967,26 +2015,10 @@ def _directory_error(outcome, *, timed_out: bool = False) -> tuple[str, str]:
         )
     result = outcome.result if isinstance(outcome.result, dict) else {}
     last_error = str(outcome.task.last_error or "").strip()
-    message = extract_kopia_failure_message(result, last_error=last_error)
-    if not message:
-        message = "Agent backup command failed."
-    lower = message.lower()
-    if str(result.get("error_code") or "") == "KOPIA_POLICY_NOT_FOUND" or (
-        "unable to get policy tree" in lower or "policy not found" in lower
-    ):
+    if str(result.get("error_code") or "") == "KOPIA_POLICY_NOT_FOUND":
+        message = extract_kopia_failure_message(result, last_error=last_error)
         return "KOPIA_POLICY_NOT_FOUND", message
-    failure_details = extract_kopia_snapshot_failure_details(result)
-    if failure_details and all(
-        _is_windows_file_lock_error(item["error"]) for item in failure_details
-    ):
-        return "SOURCE_FILE_LOCKED", message
-    if failure_details:
-        return "KOPIA_SNAPSHOT_FATAL", message
-    if "fatal error" in lower or "error when processing" in lower:
-        return "KOPIA_SNAPSHOT_FATAL", message
-    if _is_generic_exit_message(last_error) or "exit" in last_error.lower():
-        return "KOPIA_PROCESS_DIED", message
-    return "AGENT_BACKUP_FAILED", message
+    return classify_kopia_execution_failure(result, last_error=last_error)
 
 
 def _directory_snapshot_result(

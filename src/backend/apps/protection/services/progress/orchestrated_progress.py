@@ -109,7 +109,7 @@ def orchestrated_task_percent(
                 end_percent=BACKUP_ESTIMATE_END,
             )
             return max(_float(task.progress) or 0.0, creep)
-        if phase in {"preparing", "dispatching", "stalled"}:
+        if phase in {"preparing", "dispatching", "queued", "stalled"}:
             return max(_float(task.progress) or 0.0, BACKUP_PREPARE_END)
         if step == "create_logic_snapshot":
             return max(_float(task.progress) or 0.0, min(BACKUP_LOGIC_END, 1.0))
@@ -168,6 +168,8 @@ def slim_transfer_progress(kopia_payload: dict[str, Any]) -> dict[str, Any]:
         "eta_source": aggregate.get("eta_source"),
         "show_metrics": bool(kopia_payload.get("show_metrics")),
         "lanes_done": int(aggregate.get("lanes_done") or 0),
+        "lanes_running": int(aggregate.get("lanes_running") or 0),
+        "lanes_queued": int(aggregate.get("lanes_queued") or 0),
         "lanes_total": int(aggregate.get("lanes_total") or 0),
     }
 
