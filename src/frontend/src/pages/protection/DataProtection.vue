@@ -802,10 +802,17 @@ function restoreRecordsForSource(sourceId: string) {
   const endpoint = parseEndpointUiId(sourceId)
   if (!endpoint) return []
   const configIds = new Set(sourceBackupConfigIds(sourceId))
+  if (!configIds.size) return []
+  const currentSnapshotIds = new Set(
+    backupSnapshotRows.value
+      .filter((snapshot) => configIds.has(Number(snapshot.backup_config_id)))
+      .map((snapshot) => Number(snapshot.id)),
+  )
   return restoreRecordRows.value.filter((record) => {
-    if (endpointUiId(record.source_type, record.source_ref_id) === sourceId) return true
+    if (endpointUiId(record.source_type, record.source_ref_id) !== sourceId) return false
     const configId = Number(record.backup_config_id || 0)
-    return configId > 0 && configIds.has(configId)
+    if (configId > 0) return configIds.has(configId)
+    return currentSnapshotIds.has(Number(record.source_snapshot_id))
   })
 }
 
