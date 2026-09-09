@@ -216,6 +216,18 @@ const roleLabel = computed(() => {
   return t('nodesPage.roleAgent')
 })
 
+const installFlowInstallKeyByRole: Record<NodeRole, string> = {
+  agent: 'nodeLifecycle.installFlowInstallAgent',
+  proxy: 'nodeLifecycle.installFlowInstallProxy',
+  gateway: 'nodeLifecycle.installFlowInstallGateway',
+}
+
+const installedTitleKeyByRole: Record<NodeRole, string> = {
+  agent: 'nodeLifecycle.installedAgentTitle',
+  proxy: 'nodeLifecycle.installedProxyTitle',
+  gateway: 'nodeLifecycle.installedGatewayTitle',
+}
+
 const paths = computed(() => installPathsSummary(
   props.os,
   props.role,
@@ -303,6 +315,10 @@ const installFlowRegisterText = computed(() => {
   }
   return t('nodeLifecycle.installFlowRegister')
 })
+
+const installFlowInstallText = computed(() => t(installFlowInstallKeyByRole[props.role]))
+
+const installedComponentTitle = computed(() => t(installedTitleKeyByRole[props.role]))
 
 const consoleBarTitle = computed(() => {
   if (props.maintenanceOnly) return maintenanceExecution.value.title
@@ -989,7 +1005,7 @@ defineExpose({ clearInstallCommand })
                 </p>
                 <p class="install-flow-note__step">
                   <strong>{{ t('nodeLifecycle.installFlowStepInstall') }}</strong>
-                  {{ t('nodeLifecycle.installFlowInstall') }}
+                  {{ installFlowInstallText }}
                 </p>
                 <p class="install-flow-note__step">
                   <strong>{{ t('nodeLifecycle.installFlowStepRegister') }}</strong>
@@ -1004,7 +1020,7 @@ defineExpose({ clearInstallCommand })
               <div class="agent-install-wizard__platform">
                 <div class="agent-install-wizard__section-title">
                   <span class="fullscreen-form-section__indicator" />
-                  <h3>{{ t('nodeLifecycle.installedAgentTitle') }}</h3>
+                  <h3>{{ installedComponentTitle }}</h3>
                 </div>
                 <div class="agent-install-wizard__platform-summary">
                   <span class="agent-install-wizard__platform-icon-wrap">
