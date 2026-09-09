@@ -2,7 +2,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Cpu,
-  Globe2,
+  Network,
   Settings,
 } from 'lucide-vue-next'
 import type { MenuItem } from '../../components/ModulePage.vue'
@@ -33,7 +33,7 @@ export function usePlatformOpsSideNav() {
         {
           label: t('platformOps.nav.platformExternalAccess'),
           to: '/platform-ops/platform/external-access',
-          icon: Globe2,
+          icon: Network,
           pageTitle: t('platformOps.settings.externalAccessTitle'),
         },
         {

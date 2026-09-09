@@ -63,6 +63,7 @@
   "insight.copilot.roleAi",
   "insight.aiSettings.apiBasePlaceholder",
   "insight.aiSettings.labelUuid",
+  "insight.aiSettings.topP",
   "insight.dataGateway.statusAiPrefix",
   "nodesPage.colIp",
   "nodesPage.roleAgent",

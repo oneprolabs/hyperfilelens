@@ -19,7 +19,7 @@ Prepare:
 
 ## Open AI Models
 
-1. In the `Access` section of the installation output, find `Platform Ops · 11444` and open its `URL` in your browser.
+1. In the `Access` section of the installation output, find `Platform Ops` and open its `URL` in your browser.
 2. Sign in with a platform administrator account.
 3. Open **AI Engine → AI Models**.
 4. Select **Add AI Model**.

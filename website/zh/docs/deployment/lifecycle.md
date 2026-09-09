@@ -31,14 +31,14 @@ sudo /opt/hyperfilelens/install.sh backup
 
 ### 在线升级
 
-使用中国大陆下载源时，运行：
+使用中国大陆下载源时，重新运行社区版在线安装命令：
 
 ```bash
 curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh \
-  | sudo bash -s -- --mirror cn --tag vX.Y.Z
+  | sudo bash -s -- --mirror cn --yes
 ```
 
-将 `vX.Y.Z` 替换为目标版本号。安装程序会识别现有社区版环境，并进入升级流程。
+安装程序会识别现有社区版环境，获取最新发布版本，并进入受管理的升级流程。
 
 ### 使用 Release 包升级
 

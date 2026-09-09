@@ -74,6 +74,7 @@ export type LensLlmConfig = {
     model?: string
     api_base?: string
     api_key?: string
+    [key: string]: unknown
   }
   is_active?: boolean
   is_default?: boolean

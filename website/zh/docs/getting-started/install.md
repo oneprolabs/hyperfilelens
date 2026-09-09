@@ -54,7 +54,7 @@ sudo /opt/hyperfilelens/install.sh status
 
 | 入口 | 用途 |
 | --- | --- |
-| `HyperFileLens · 11443` | 产品控制台，用于备份、恢复、智能洞察和组织内管理 |
-| `Platform Ops · 11444` | 平台管理控制台，用于 AI 模型、系统配置和平台运维 |
+| `HyperFileLens` | 产品控制台，用于备份、恢复、智能洞察和组织内管理 |
+| `Platform Ops` | 平台管理控制台，用于 AI 模型、系统配置和平台运维 |
 
-首次使用时，在 `HyperFileLens · 11443` 下复制 `URL` 并通过浏览器打开，然后使用同一区域显示的 `Email` 和 `Password` 登录。首次登录后请立即修改初始密码。备份、恢复和智能洞察在产品控制台中完成；配置 AI 模型或执行平台管理操作时，才需进入 `Platform Ops · 11444`。
+首次使用时，在 `HyperFileLens` 下复制 `URL` 并通过浏览器打开，然后使用同一区域显示的 `Email` 和 `Password` 登录。首次登录后请立即修改初始密码。备份、恢复和智能洞察在产品控制台中完成；配置 AI 模型或执行平台管理操作时，才需进入 `Platform Ops`。

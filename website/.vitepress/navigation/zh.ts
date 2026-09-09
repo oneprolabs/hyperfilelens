@@ -81,8 +81,9 @@ const operations: DefaultTheme.SidebarItem[] = [
   {
     text: '运行维护',
     items: [
-      { text: '升级与恢复', link: '/zh/docs/deployment/lifecycle' },
       { text: '任务、告警与审计', link: '/zh/docs/deployment/operations' },
+      { text: '升级与恢复', link: '/zh/docs/deployment/lifecycle' },
+      { text: '卸载社区版', link: '/zh/docs/deployment/uninstall' },
     ],
   },
 ]

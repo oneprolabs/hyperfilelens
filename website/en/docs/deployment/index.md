@@ -22,5 +22,6 @@ description: Deploy the HyperFileLens control plane, backup components, and Priv
 
 ## Operate HyperFileLens Community
 
-- Use the installer to [upgrade HyperFileLens Community and recover from upgrade failures](/docs/deployment/lifecycle).
-- Use [jobs, alerts, and audit logs](/docs/deployment/operations) to monitor day-to-day operation and investigate exceptions.
+- [Jobs, alerts, and audit logs](/docs/deployment/operations): review task status, alerts, and audit records during routine operations and troubleshooting.
+- [Upgrade and recovery](/docs/deployment/lifecycle): upgrade HyperFileLens Community, verify the result, and respond safely to upgrade failures.
+- [Uninstall HyperFileLens Community](/docs/deployment/uninstall): remove the complete deployment, or remove the runtime while retaining configuration and business data.

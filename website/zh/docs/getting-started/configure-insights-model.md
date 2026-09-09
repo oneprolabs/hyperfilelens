@@ -19,7 +19,7 @@ description: 连接 AI 模型，并设置智能洞察所需的默认 Agent 模�
 
 ## 打开 AI Models
 
-1. 在安装结果的 `Access` 区域找到 `Platform Ops · 11444`，并在浏览器中打开其 `URL`。
+1. 在安装结果的 `Access` 区域找到 `Platform Ops`，并在浏览器中打开其 `URL`。
 2. 使用平台管理员账户登录。
 3. 打开 **AI Engine → AI Models**。
 4. 选择 **Add AI Model**。

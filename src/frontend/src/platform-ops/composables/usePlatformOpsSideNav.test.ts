@@ -25,5 +25,9 @@ describe('usePlatformOpsSideNav (community)', () => {
     expect(paths.some((path) => path?.includes('/authentication'))).toBe(false)
     expect(paths.some((path) => path?.includes('/overview'))).toBe(false)
     expect(paths.some((path) => path?.includes('/users'))).toBe(false)
+    expect(menus.map((item) => item.label)).toEqual([
+      'platformOps.nav.groupEngine',
+      'platformOps.nav.groupPlatform',
+    ])
   })
 })

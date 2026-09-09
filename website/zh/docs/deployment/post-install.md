@@ -19,7 +19,7 @@ sudo /opt/hyperfilelens/install.sh status
 
 ## 2. 登录控制台
 
-1. 在安装结果的 `Access` 区域找到 `HyperFileLens · 11443`，并在浏览器中打开其 `URL`。
+1. 在安装结果的 `Access` 区域找到 `HyperFileLens`，并在浏览器中打开其 `URL`。
 2. 使用同一区域显示的 `Email` 和 `Password` 登录。
 3. 首次登录后修改密码。
 

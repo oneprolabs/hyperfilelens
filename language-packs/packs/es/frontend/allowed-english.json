@@ -115,6 +115,7 @@
   "insight.copilot.agentActivityTokens",
   "insight.aiSettings.apiBasePlaceholder",
   "insight.aiSettings.labelUuid",
+  "insight.aiSettings.topP",
   "insight.kb.colGateway",
   "insight.kb.statusError",
   "insight.kb.wizardStepGateway",

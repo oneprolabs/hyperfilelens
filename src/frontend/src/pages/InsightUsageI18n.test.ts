@@ -24,7 +24,7 @@ describe('Insight usage localization', () => {
     const usage = String.fromCodePoint(0x7528, 0x91cf)
     expect(en.insight.side.usage).toBe('Usage')
     expect(zhHans.insight.side.usage).toBe(usage)
-    expect(zhHans.platformOps.nav.engineUsage).toBe(usage)
+    expect(zhHans.platformOps.nav.engineUsage).toBe(`AI ${usage}`)
   })
 
   it('routes every primary page surface through the locale catalog', () => {
