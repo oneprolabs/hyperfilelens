@@ -30,7 +30,9 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain("generateInstallCommand: 'Generate install command'")
     expect(locale).toContain('Copy the command and run it in a shell on the target host')
     expect(locale).toContain("installFlowDownload: 'Downloads the small installer and checks the target host'")
-    expect(locale).toContain("installFlowInstall: 'Downloads the required components and installs the Agent'")
+    expect(locale).toContain("installFlowInstallAgent: 'Downloads the required components and installs the Agent'")
+    expect(locale).toContain("installFlowInstallProxy: 'Downloads the required components and installs the Proxy'")
+    expect(locale).toContain("installFlowInstallGateway: 'Downloads and installs the Data Gateway components'")
   })
 
   it('presents operating system and command without a protection-mode picker', () => {
@@ -66,8 +68,25 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain('Ubuntu 20.04, 22.04, or 24.04 LTS')
     expect(locale).toContain('amd64')
     expect(locale).toContain("gatewayReqDiskSub: 'Local runtime and workspace storage'")
-    expect(locale).toContain('Registers a Public Data Gateway with HyperFileLens')
-    expect(locale).toContain('Registers a Private Data Gateway with HyperFileLens')
+    expect(locale).toContain('Registers the Public Data Gateway with HyperFileLens')
+    expect(locale).toContain('Registers the Private Data Gateway with HyperFileLens')
+  })
+
+  it('uses product-role terminology in install and maintenance summaries', () => {
+    const wizard = source('src/components/NodeLifecycleWizard.vue')
+    const locale = source('src/locales/en.ts')
+
+    expect(wizard).toContain("agent: 'nodeLifecycle.installFlowInstallAgent'")
+    expect(wizard).toContain("proxy: 'nodeLifecycle.installFlowInstallProxy'")
+    expect(wizard).toContain("gateway: 'nodeLifecycle.installFlowInstallGateway'")
+    expect(wizard).toContain("agent: 'nodeLifecycle.installedAgentTitle'")
+    expect(wizard).toContain("proxy: 'nodeLifecycle.installedProxyTitle'")
+    expect(wizard).toContain("gateway: 'nodeLifecycle.installedGatewayTitle'")
+    expect(wizard).toContain('{{ installFlowInstallText }}')
+    expect(wizard).toContain('<h3>{{ installedComponentTitle }}</h3>')
+    expect(locale).toContain("installedAgentTitle: 'Installed Agent'")
+    expect(locale).toContain("installedProxyTitle: 'Installed Proxy'")
+    expect(locale).toContain("installedGatewayTitle: 'Installed Data Gateway'")
   })
 
   it('revokes only enrollment tokens discarded before their command is displayed', () => {
