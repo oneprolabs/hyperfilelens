@@ -32,7 +32,10 @@ SESSION_ACTION="operation"
 INTERACTIVE_SESSION=0
 declare -a SESSION_WARNINGS=()
 declare -a OWNED_INSTALLATION_CONTAINER_IDS=()
+declare -a RETAINED_INSTALLATION_IMAGES=()
 MANAGED_BRIDGE_NETWORK_REMOVED=0
+INSTALLATION_IMAGES_REMOVED=0
+INSTALLATION_IMAGES_RETAINED=0
 PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"
 PUBLIC_URL="${HFL_PUBLIC_URL:-}"
 ADMIN_PUBLIC_URL="${HFL_ADMIN_PUBLIC_URL:-}"
@@ -3656,64 +3659,274 @@ cleanup_upgrade_tmp() {
 	fi
 }
 
-remove_manifest_images() {
+remove_installation_images() {
+	local include_hfl=${1:-1} include_sourcelens=${2:-1} output="" status label detail
+	INSTALLATION_IMAGES_REMOVED=0
+	INSTALLATION_IMAGES_RETAINED=0
+	RETAINED_INSTALLATION_IMAGES=()
 	[[ -f "${ROOT}/MANIFEST.json" ]] || return 0
-	step "Removing application Docker images..."
-	python3 - "${ROOT}" <<'PY'
+	step "Removing installation Docker images ..."
+	if ! output="$(python3 - "${ROOT}/MANIFEST.json" \
+		"${include_hfl}" "${include_sourcelens}" <<'PY'
 import json
 import subprocess
 import sys
-with open(f"{sys.argv[1]}/MANIFEST.json", encoding="utf-8") as fh:
+
+with open(sys.argv[1], encoding="utf-8") as fh:
     manifest = json.load(fh)
-seen = set()
+include_hfl = sys.argv[2] == "1"
+include_sourcelens = sys.argv[3] == "1"
 
 
-def installer_owned_ref(ref):
-    repository = ref.split("@", 1)[0].rsplit(":", 1)[0]
-    name = repository.rsplit("/", 1)[-1]
-    return name.startswith("hyperfilelens-")
+def selected(role):
+    normalized = str(role or "")
+    if normalized == "shared":
+        return include_hfl and include_sourcelens
+    is_sourcelens = normalized.startswith("sourcelens")
+    return include_sourcelens if is_sourcelens else include_hfl
 
 
-entries = list(manifest.get("images", []))
-entries.extend(
-    {"refs": [entry.get("local_ref", "")]}
-    for entry in (manifest.get("delivery") or {}).get("asset_images", [])
+def repository(ref):
+    value = str(ref or "").split("@", 1)[0]
+    slash = value.rfind("/")
+    colon = value.rfind(":")
+    return value[:colon] if colon > slash else value
+
+
+def inspect(ref):
+    completed = subprocess.run(
+        ["docker", "image", "inspect", ref],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or "").strip()
+        missing = detail.lower()
+        if "no such image" in missing or "no such object" in missing:
+            return None
+        raise SystemExit(
+            f"could not inspect Docker image {ref}: "
+            f"{detail or 'unknown Docker error'}"
+        )
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"Docker returned invalid image metadata for {ref}: {error}")
+    if not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], dict):
+        raise SystemExit(f"Docker returned incomplete image metadata for {ref}")
+    return value[0]
+
+
+def image_id(value):
+    raw = str(value or "")
+    return raw[7:] if raw.startswith("sha256:") else raw
+
+
+def has_digest(image, digest):
+    return any(
+        str(item).rsplit("@", 1)[-1] == digest
+        for item in image.get("RepoDigests") or []
+    )
+
+
+docker_ready = subprocess.run(
+    ["docker", "info"],
+    check=False,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
 )
-for entry in entries:
-    if str(entry.get("role", "")).startswith("sourcelens"):
+if docker_ready.returncode != 0:
+    raise SystemExit("Docker is unavailable while resolving installation images")
+
+
+records = []
+delivery_refs = set()
+delivery = manifest.get("delivery") or {}
+for group in ("registry_images", "asset_images"):
+    for entry in delivery.get(group) or []:
+        local_ref = str(entry.get("local_ref") or "")
+        if not local_ref or not selected(entry.get("role")):
+            continue
+        records.append(
+            {
+                "label": local_ref,
+                "local_ref": local_ref,
+                "digest": str(entry.get("digest") or ""),
+                "sources": [
+                    str(source.get("ref") or "")
+                    for source in entry.get("sources") or []
+                    if source.get("ref")
+                ],
+            }
+        )
+        delivery_refs.add(local_ref)
+
+for entry in manifest.get("images") or []:
+    if not selected(entry.get("role")):
         continue
-    for ref in entry.get("refs", []):
-        tag = ref.split("@", 1)[0]
-        # Upstream and Docker Library tags are shared host caches rather than
-        # installer-owned artifacts. Removing them could disrupt unrelated
-        # containers on the same host, so only clean HFL-owned image names.
-        if not tag or not installer_owned_ref(tag):
+    for ref in entry.get("refs") or []:
+        value = str(ref or "")
+        if value and value not in delivery_refs:
+            records.append(
+                {"label": value, "local_ref": value, "digest": "", "sources": []}
+            )
+
+groups = {}
+for record in records:
+    immutable_refs = []
+    digest = record["digest"]
+    if digest.startswith("sha256:"):
+        immutable_refs = [
+            f"{repository(source)}@{digest}" for source in record["sources"]
+        ]
+    anchor_refs = [record["local_ref"], *immutable_refs]
+    anchors = {}
+    for ref in anchor_refs:
+        value = inspect(ref)
+        if value and (
+            ref != record["local_ref"]
+            or not digest.startswith("sha256:")
+            or has_digest(value, digest)
+        ):
+            anchors[ref] = image_id(value.get("Id"))
+
+    # A mutable source tag is eligible only when it still identifies the same
+    # immutable image as the installed local tag or declared digest.
+    for source in record["sources"]:
+        value = inspect(source)
+        if not value:
             continue
-        if tag in seen:
+        current_id = image_id(value.get("Id"))
+        digest_matches = has_digest(value, digest)
+        if digest_matches or (
+            not digest.startswith("sha256:") and current_id in anchors.values()
+        ):
+            anchors[source] = current_id
+
+    for ref, current_id in anchors.items():
+        if not current_id:
             continue
-        seen.add(tag)
-        print(f"[install.sh] removing image {tag}")
-        image_ids = subprocess.run(
-            ["docker", "image", "ls", "--quiet", "--no-trunc", tag],
-            stdout=subprocess.PIPE,
+        group = groups.setdefault(current_id, {"labels": set(), "refs": set()})
+        group["labels"].add(record["label"])
+        group["refs"].add(ref)
+
+containers = subprocess.run(
+    ["docker", "ps", "-aq", "--no-trunc"],
+    check=False,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+)
+if containers.returncode != 0:
+    raise SystemExit("Docker containers could not be enumerated safely")
+users = {}
+for container_id in containers.stdout.split():
+    completed = subprocess.run(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.Image}}\t{{.Name}}",
+            container_id,
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        raise SystemExit(
+            f"Docker container {container_id[:12]} could not be inspected safely"
+        )
+    raw_id, _, raw_name = completed.stdout.strip().partition("\t")
+    current_id = image_id(raw_id)
+    name = raw_name.lstrip("/") or container_id[:12]
+    users.setdefault(current_id, []).append(f"{name} ({container_id[:12]})")
+
+for current_id, group in sorted(groups.items(), key=lambda item: sorted(item[1]["labels"])):
+    label = ", ".join(sorted(group["labels"]))
+    if users.get(current_id):
+        print(
+            f"RETAINED\t{label}\tused by container(s): "
+            + ", ".join(sorted(users[current_id]))
+        )
+        continue
+
+    for ref in sorted(group["refs"]):
+        if not inspect(ref):
+            continue
+        removed = subprocess.run(
+            ["docker", "image", "rm", ref],
+            check=False,
             text=True,
-            check=True,
-        ).stdout.split()
-        if not image_ids:
-            print(f"[install.sh] image not present: {tag}")
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        if removed.returncode != 0 and inspect(ref):
+            detail = (removed.stderr or "").strip().splitlines()
+            reason = detail[-1] if detail else "unknown Docker error"
+            raise SystemExit(f"could not remove Docker image reference {ref}: {reason}")
+
+    remaining = inspect(f"sha256:{current_id}") or inspect(current_id)
+    if remaining:
+        remaining_refs = sorted(
+            str(ref)
+            for ref in [
+                *(remaining.get("RepoTags") or []),
+                *(remaining.get("RepoDigests") or []),
+            ]
+            if ref
+        )
+        if remaining_refs:
+            print(
+                f"RETAINED\t{label}\tshared by other image reference(s): "
+                + ", ".join(remaining_refs)
+            )
             continue
-        removed = subprocess.run(["docker", "image", "rm", "-f", tag], check=False)
-        if removed.returncode != 0:
-            remaining = subprocess.run(
-                ["docker", "image", "ls", "--quiet", "--no-trunc", tag],
-                stdout=subprocess.PIPE,
-                text=True,
-                check=True,
-            ).stdout.split()
-            if remaining:
-                raise SystemExit(f"failed to remove image: {tag}")
-            print(f"[install.sh] image was already removed: {tag}")
+        removed = subprocess.run(
+            ["docker", "image", "rm", f"sha256:{current_id}"],
+            check=False,
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        if removed.returncode != 0 and (inspect(f"sha256:{current_id}") or inspect(current_id)):
+            detail = (removed.stderr or "").strip().splitlines()
+            reason = detail[-1] if detail else "unknown Docker error"
+            raise SystemExit(
+                f"could not remove untagged Docker image sha256:{current_id}: {reason}"
+            )
+    print(f"REMOVED\t{label}\tinstallation image references removed")
 PY
+	)"; then
+		warn "Installation Docker image cleanup could not be completed; remaining images were retained"
+		return 1
+	fi
+	while IFS=$'\t' read -r status label detail; do
+		[[ -n "${status}" ]] || continue
+		case "${status}" in
+		REMOVED)
+			INSTALLATION_IMAGES_REMOVED=$((INSTALLATION_IMAGES_REMOVED + 1))
+			debug "Removed installation Docker image ${label}"
+			;;
+		RETAINED)
+			INSTALLATION_IMAGES_RETAINED=$((INSTALLATION_IMAGES_RETAINED + 1))
+			RETAINED_INSTALLATION_IMAGES+=("${label}: ${detail}")
+			warn "Retained Docker image ${label}; ${detail}"
+			;;
+		esac
+	done <<<"${output}"
+	if [[ "${INSTALLATION_IMAGES_RETAINED}" -eq 0 ]]; then
+		if [[ "${INSTALLATION_IMAGES_REMOVED}" -eq 0 ]]; then
+			ok "No installation Docker images were present"
+		else
+			ok "All ${INSTALLATION_IMAGES_REMOVED} installation Docker images were removed"
+		fi
+	else
+		log "Docker image cleanup: ${INSTALLATION_IMAGES_REMOVED} removed; ${INSTALLATION_IMAGES_RETAINED} retained"
+	fi
 }
 
 uninstall_hfl_runtime() {
@@ -3732,7 +3945,6 @@ uninstall_hfl_runtime() {
 	fi
 	remove_owned_installation_containers "HyperFileLens" hyperfilelens
 	remove_empty_owned_compose_networks hyperfilelens
-	remove_manifest_images || return 1
 }
 
 version_lt() {
@@ -4300,60 +4512,8 @@ stop_bundled_sourcelens() {
 }
 
 remove_sourcelens_images() {
-	local manifest="${ROOT}/MANIFEST.json"
-	[[ -f "${manifest}" ]] || return 0
-	step "Removing SourceLens Docker images ..."
-	python3 - "${manifest}" <<'PY'
-import json
-import subprocess
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as fh:
-    manifest = json.load(fh)
-seen = set()
-
-
-def installer_owned_ref(ref):
-    repository = ref.split("@", 1)[0].rsplit(":", 1)[0]
-    name = repository.rsplit("/", 1)[-1]
-    return name.startswith("hyperfilelens-")
-
-
-for entry in manifest.get("images", []):
-    role = entry.get("role", "")
-    if not role.startswith("sourcelens"):
-        continue
-    for ref in entry.get("refs", []):
-        tag = ref.split("@", 1)[0]
-        # New registry-backed releases use the upstream SourceLens and Docker
-        # Library names directly. Those shared tags are not owned by HFL.
-        if not installer_owned_ref(tag):
-            continue
-        if tag in seen:
-            continue
-        seen.add(tag)
-        print(f"[install.sh] removing SourceLens image {tag}")
-        image_ids = subprocess.run(
-            ["docker", "image", "ls", "--quiet", "--no-trunc", tag],
-            stdout=subprocess.PIPE,
-            text=True,
-            check=True,
-        ).stdout.split()
-        if not image_ids:
-            print(f"[install.sh] SourceLens image not present: {tag}")
-            continue
-        removed = subprocess.run(["docker", "image", "rm", "-f", tag], check=False)
-        if removed.returncode != 0:
-            remaining = subprocess.run(
-                ["docker", "image", "ls", "--quiet", "--no-trunc", tag],
-                stdout=subprocess.PIPE,
-                text=True,
-                check=True,
-            ).stdout.split()
-            if remaining:
-                raise SystemExit(f"failed to remove SourceLens image: {tag}")
-            print(f"[install.sh] SourceLens image was already removed: {tag}")
-PY
+	remove_installation_images 0 1 \
+		|| die "SourceLens Docker image cleanup could not be verified"
 }
 
 purge_sourcelens_data_dir() {
@@ -4386,7 +4546,6 @@ uninstall_bundled_sourcelens() {
 	fi
 	remove_owned_installation_containers "SourceLens" hyperfilelens-sourcelens sourcelens
 	remove_empty_owned_compose_networks hyperfilelens-sourcelens sourcelens
-	remove_sourcelens_images || return 1
 	if [[ "${purge_data}" -eq 1 ]]; then
 		purge_sourcelens_data_dir || return 1
 	fi
@@ -6991,7 +7150,7 @@ cmd_uninstall() {
 	fi
 	print_section "Removal plan"
 	print_value "Containers" "remove"
-	print_value "App images" "remove"
+	print_value "Docker images" "remove when not used by other containers"
 	if [[ "${full_runtime}" -eq 1 ]]; then
 		print_value "Shared network" "remove when installer-managed and unused"
 	else
@@ -7040,23 +7199,27 @@ cmd_uninstall() {
 		platform_gateway_removed=1
 	fi
 
+	if ! uninstall_hfl_runtime; then
+		die "HyperFileLens runtime uninstall did not complete; application data was preserved"
+	fi
+	runtime_removed=1
 	if [[ "${with_sourcelens}" -eq 1 ]]; then
-		if ! uninstall_bundled_sourcelens "${purge_sourcelens_data}"; then
+		if ! uninstall_bundled_sourcelens 0; then
 			die "SourceLens uninstall did not complete; HyperFileLens data was preserved"
 		fi
 		if [[ "${sourcelens_present}" -eq 1 ]]; then
 			sourcelens_removed=1
 		fi
-		[[ "${purge_sourcelens_data}" -eq 0 || "${sourcelens_data_present}" -eq 0 ]] \
-			|| sourcelens_data_removed=1
 	fi
-	if ! uninstall_hfl_runtime; then
-		die "HyperFileLens runtime uninstall did not complete; application data was preserved"
-	fi
-	runtime_removed=1
 	if [[ "${full_runtime}" -eq 1 ]]; then
 		remove_managed_bridge_network
 		bridge_network_removed="${MANAGED_BRIDGE_NETWORK_REMOVED}"
+	fi
+	remove_installation_images 1 "${with_sourcelens}" \
+		|| die "Docker image cleanup could not be verified; configuration and data were preserved"
+	if [[ "${purge_sourcelens_data}" -eq 1 && "${purge_data}" -eq 0 ]]; then
+		purge_sourcelens_data_dir
+		[[ "${sourcelens_data_present}" -eq 0 ]] || sourcelens_data_removed=1
 	fi
 
 	if [[ "${purge_media}" -eq 1 ]]; then
@@ -7105,9 +7268,11 @@ cmd_uninstall() {
 		|| "${application_files_removed}" -eq 1 || "${install_root_removed}" -eq 1 ]]; then
 		print_section "Removed"
 		[[ "${platform_gateway_removed}" -eq 0 ]] || print_value "Platform Data Gateway" "local Agent, AI engine, and data"
-		[[ "${runtime_removed}" -eq 0 ]] || print_value "Runtime" "HyperFileLens containers, application images, and Compose networks"
+		[[ "${runtime_removed}" -eq 0 ]] || print_value "Runtime" "HyperFileLens containers and Compose networks"
 		[[ "${bridge_network_removed}" -eq 0 ]] || print_value "Shared network" "${HFL_BRIDGE_NETWORK}"
-		[[ "${sourcelens_removed}" -eq 0 ]] || print_value "Insight" "application containers and images"
+		[[ "${sourcelens_removed}" -eq 0 ]] || print_value "Insight" "application containers"
+		[[ "${INSTALLATION_IMAGES_REMOVED}" -eq 0 ]] \
+			|| print_value "Docker images" "${INSTALLATION_IMAGES_REMOVED} installation image(s)"
 		if [[ "${install_root_removed}" -eq 1 ]]; then
 			print_value "Installation root" "${ROOT} (including configuration, data, backups, and logs)"
 		else
@@ -7154,6 +7319,9 @@ cmd_uninstall() {
 	if [[ "${session_log_removed}" -eq 0 ]]; then
 		print_value "Log file" "${LOG_FILE}"
 	fi
+	for retained_image in "${RETAINED_INSTALLATION_IMAGES[@]}"; do
+		print_value "Docker image" "${retained_image}"
+	done
 
 	print_section "Notes"
 	printf '  - Host Docker CE is not removed by HyperFileLens uninstall.\n'
