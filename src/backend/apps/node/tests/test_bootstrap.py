@@ -165,6 +165,32 @@ class BootstrapViewTests(TestCase):
         self.assertIn("$bin install", body)
         self.assertIn("bootstrap-token-abc", body)
 
+    def test_windows_bootstrap_reports_security_software_block(self):
+        response = self._get("windows")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("function Test-HflSecuritySoftwareBlock", body)
+        self.assertIn("$exception.NativeErrorCode -eq 225", body)
+        self.assertIn(
+            "([int64]$exception.HResult -band 4294967295) -eq 2147942625",
+            body,
+        )
+        self.assertEqual(
+            body.count("Test-HflSecuritySoftwareBlock -ErrorRecord $_"),
+            2,
+        )
+        self.assertIn(
+            "Windows security software blocked the HyperFileLens enrollment helper.",
+            body,
+        )
+        self.assertIn(
+            "Review the detection in your security software. Once the helper is "
+            "allowed, run the installation command again.",
+            body,
+        )
+        self.assertNotIn("Get-MpThreatDetection", body)
+
     def test_user_continuous_token_rejects_non_linux_bootstrap(self):
         self.token_row.installation_mode = NodeInstallationMode.USER_CONTINUOUS
         self.token_row.save(update_fields=["installation_mode"])
