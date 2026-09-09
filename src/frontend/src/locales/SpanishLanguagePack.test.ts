@@ -51,7 +51,7 @@ describe('Spanish language pack', () => {
 
   it('ships reviewed labels for authentication, protection, and Insight', () => {
     expect(spanish.login.welcomeTitle).toBe('Bienvenido a HyperFileLens')
-    expect(spanish.login.emailCodeMethod).toBe('Código por correo')
+    expect(spanish.login.emailCodeMethod).toBe('Código de verificación')
     expect(spanish.login.forgotPwd).toBe('¿Olvidó su contraseña?')
     expect(spanish.login.noAccount).toBe('¿No tiene una cuenta?')
     expect(spanish.account.menuSignOut).toBe('Cerrar sesión')

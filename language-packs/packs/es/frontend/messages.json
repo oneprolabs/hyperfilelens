@@ -6709,7 +6709,7 @@
     "passwordErrIncorrect": "Contraseña incorrecta",
     "methodLabel": "Método de inicio de sesión",
     "passwordMethod": "Contraseña",
-    "emailCodeMethod": "Código por correo",
+    "emailCodeMethod": "Código de verificación",
     "emailCodePlaceholder": "Código de verificación de 6 dígitos",
     "emailCodeSend": "Enviar código",
     "emailCodeSending": "Enviando...",

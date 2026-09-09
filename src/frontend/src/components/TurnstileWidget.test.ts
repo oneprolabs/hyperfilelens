@@ -26,6 +26,9 @@ const i18n = createI18n({
     fr: {
       login: { captchaLoading: 'Chargement de la vérification humaine...' },
     },
+    'zh-hans': {
+      login: { captchaLoading: 'Localized human verification message' },
+    },
   },
 })
 
@@ -243,13 +246,13 @@ describe('TurnstileWidget lifecycle', () => {
     await flushPromises()
     await vi.advanceTimersByTimeAsync(100)
 
-    i18n.global.locale.value = 'fr'
+    i18n.global.locale.value = 'zh-hans'
     await flushPromises()
 
     expect(wrapper.emitted('invalidate')).toHaveLength(1)
     expect(wrapper.emitted('expire')).toBeUndefined()
     expect(remove).toHaveBeenCalledWith('widget-1')
-    expect(renderOptions.at(-1)?.language).toBe('fr')
+    expect(renderOptions.at(-1)?.language).toBe('zh-cn')
 
     renderOptions[0].callback('stale-language-token')
     expect(wrapper.emitted('success')).toBeUndefined()
