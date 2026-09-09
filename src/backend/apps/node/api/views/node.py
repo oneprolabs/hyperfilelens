@@ -186,6 +186,8 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         status = (self.request.query_params.get("status") or "").strip()
         if status:
             queryset = queryset.filter(status=status)
+        if role == NodeRole.AGENT:
+            return queryset.order_by("-created_at", "-id")
         return queryset.order_by("name", "id")
 
     def _build_enrichments(self, nodes) -> dict[int, dict]:
