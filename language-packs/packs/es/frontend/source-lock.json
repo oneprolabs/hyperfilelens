@@ -4720,7 +4720,7 @@
   "addNasRepo.hintSmbUsername": "5b1322416041607f7ba0caf1853c8ff21e97b65cdf0ccacbd42f399a561c5d89",
   "addNasRepo.hintSmbPassword": "8817dfc2d6ce2901eb2046f223c3c091c17bfefa3334978ba759fe5968133e2f",
   "addNasRepo.hintSmbDomain": "ccd0d9e333125d258209435c3771d86cffa0dc2b491b9165fdcfa32551bcd43a",
-  "addNasRepo.hintRepositoryName": "c945c7640f176432374479331aac5d56a686b6eed4b1a450a97a6ff2b7dfe43b",
+  "addNasRepo.hintRepositoryName": "42eda0550a9f32cb96534994be63653f01433e12c42a4c5f07e9fa6d98656ea6",
   "addNasRepo.errSmbHost": "6a1d6c46a09a9b3179f56b77e8eb596c192028af8fcb4599d29a89a485fe809d",
   "addNasRepo.errSmbShare": "4e2b152216e2c68bd59da47d0f856d86d04393767962c0a4764984274e344602",
   "repairNasRepo.pageTitle": "8146447b21f15a48db265dddc772d1331e892941b13dacb381fb4a067d0536ff",
@@ -7324,5 +7324,12 @@
   "ops.events.periods.last24Hours": "40a0883809c7ca84c786a4cee4ed7e992478d3a918dabad542a769e5b825f050",
   "ops.events.periods.last7Days": "136d396e5c05f59bb18e3d760ba68d84c6e0bcf25ab57e58bc031640fd79b49c",
   "ops.events.periods.last30Days": "f20bf702ea490aa6f439c7227c786f8d85f6d5e171d8b5b579d20b8bbccb90b1",
-  "ops.events.periods.allTime": "097d42c984a3540698ef4e45fb60244341a3f4dba05d5615a5a7d181e8d23c81"
+  "ops.events.periods.allTime": "097d42c984a3540698ef4e45fb60244341a3f4dba05d5615a5a7d181e8d23c81",
+  "protection.taskProgress.backupBytes": "830b3ad48bfc1d6f0f787cbdd376585ffbbab156c647d8c8aa6f008c91226d38",
+  "protection.taskProgress.backupBytesCapacity": "2b8a55e936d776e638c4cdd7b64983ba833e8ce0abfc33bf78161a403517b899",
+  "protection.taskProgress.backupEtaSeconds": "50d8a5e3f0c8e139dd85f1c6927df46a8d567e2efa531840033aafb678cfec5f",
+  "protection.taskProgress.backupEtaMinutes": "3d378689d0dd9857a6c28b2dfc908b9ac042061d2d1cdead3b2ddf717481127d",
+  "protection.taskProgress.backupEtaHours": "13c9d74dbe80f7397cc7f7b80ac2bcbedd012d2350511a96e3d983e7e1b27f83",
+  "protection.taskProgress.backupEtaHoursMinutes": "10c3b7b37edab973d91fe042e411275edc9915f9f0b0a0330517c177f5b8dc4e",
+  "addS3Repo.bucketNameErrors.aws_reserved": "e56222f921707e10f8c93f84c524105e51e930b33b16bbc3ff5e37523382a922"
 }

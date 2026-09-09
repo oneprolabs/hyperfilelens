@@ -2,7 +2,12 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  formatTaskProgressBarPercent,
+  formatTaskProgressPercent,
   formatSpeedBps,
+  parseTaskProgressValue,
+  resolveStep3DisplayPercent,
+  shouldShowStep3Percent,
   shouldShowTransferMetrics,
   transferCapacityText,
   transferProgressLabel,
@@ -11,11 +16,13 @@ import {
 } from '../../../lib/kopiaProgress'
 
 const props = withDefaults(defineProps<{
+  progress?: number | string | null
   transferProgress?: TransferProgress | null
   compact?: boolean
   failed?: boolean
   stopping?: boolean
 }>(), {
+  progress: 0,
   transferProgress: null,
   compact: false,
   failed: false,
@@ -24,7 +31,39 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 
+const taskProgressValue = computed(() => {
+  const taskProgress = Number(props.progress)
+  if (!Number.isFinite(taskProgress) || taskProgress <= 0) return null
+  return parseTaskProgressValue(taskProgress)
+})
+const displayPercent = computed(() => {
+  const transfer = props.transferProgress
+  const step3 = Number(transfer?.step3_display_percent)
+  if (props.stopping && taskProgressValue.value != null) {
+    return taskProgressValue.value
+  }
+  if (props.stopping && Number.isFinite(step3)) {
+    return parseTaskProgressValue(step3)
+  }
+  if (shouldShowStep3Percent(transfer)) {
+    return resolveStep3DisplayPercent(transfer, 0)
+  }
+  return 0
+})
+const barPercent = computed(() => formatTaskProgressBarPercent(displayPercent.value))
+const progressText = computed(() => formatTaskProgressPercent(displayPercent.value))
+const showRightPercent = computed(() => {
+  if (isRestore.value || !backupTransferStage.value) return false
+  if (props.stopping && taskProgressValue.value != null) return true
+  return shouldShowStep3Percent(props.transferProgress)
+})
 const isRestore = computed(() => String(props.transferProgress?.label_key || '').includes('taskProgress.restore.'))
+const backupTransferStage = computed(() => {
+  const phase = String(props.transferProgress?.phase || '').toLowerCase()
+  const label = String(props.transferProgress?.label_key || '')
+  const preparing = /taskProgress\.backup\.(preparingLogic|preparing|dispatching|estimating)$/.test(label)
+  return !preparing && ['transferring', 'finalizing', 'done'].includes(phase)
+})
 const orchestrationLabel = computed(() => {
   if (props.stopping) {
     const key = String(props.transferProgress?.label_key || '').trim()
@@ -44,7 +83,11 @@ const showSpinner = computed(() => {
 })
 const metricParts = computed(() => {
   if (props.compact) return []
-  if (!shouldShowTransferMetrics(props.transferProgress) && !props.failed) return []
+  if (!isRestore.value && !backupTransferStage.value) return []
+  const transfer = props.transferProgress
+  const finalizingBackup = !isRestore.value && transfer?.phase === 'finalizing'
+    && !['reconnecting', 'offline_pending'].includes(String(transfer.execution_state || '').toLowerCase())
+  if (!shouldShowTransferMetrics(transfer) && !props.failed && !finalizingBackup) return []
   return transferMetricParts(t, props.transferProgress)
 })
 const metricLine = computed(() => metricParts.value.join(' · '))
@@ -70,7 +113,7 @@ const overflowTitle = computed(() => {
     data-table-overflow-explicit-only
   >
     <div
-      v-if="orchestrationLabel"
+      v-if="orchestrationLabel || showRightPercent"
       class="task-progress-cell__row1"
     >
       <p
@@ -88,7 +131,19 @@ const overflowTitle = computed(() => {
           :data-table-overflow-title-always="isRestore || undefined"
         >{{ orchestrationLabel }}</span>
       </p>
+      <span
+        v-if="showRightPercent"
+        class="task-progress-cell__percent"
+      >{{ progressText }}</span>
     </div>
+    <el-progress
+      v-if="!isRestore && backupTransferStage"
+      class="protection-flow-progress task-progress-cell__bar"
+      :percentage="barPercent"
+      :status="failed ? 'exception' : stopping ? 'warning' : undefined"
+      :stroke-width="compact ? 7 : 8"
+      :show-text="false"
+    />
     <p
       class="task-progress-cell__metrics"
       :class="{ 'is-empty': !(isRestore ? restoreMetricLine : metricLine) }"
@@ -137,6 +192,13 @@ const overflowTitle = computed(() => {
   white-space: nowrap;
 }
 
+.task-progress-cell__percent {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--el-text-color-regular);
+}
+
 .task-progress-cell__spinner {
   width: 10px;
   height: 10px;
@@ -145,6 +207,20 @@ const overflowTitle = computed(() => {
   border-radius: 50%;
   animation: task-progress-spin 0.8s linear infinite;
   flex-shrink: 0;
+}
+
+.task-progress-cell__bar {
+  width: 100%;
+  min-height: 8px;
+  margin: 0;
+}
+
+.task-progress-cell__bar :deep(.el-progress) {
+  width: 100%;
+}
+
+.task-progress-cell__bar :deep(.el-progress-bar) {
+  width: 100%;
 }
 
 .task-progress-cell__metrics {

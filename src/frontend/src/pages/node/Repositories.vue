@@ -17,7 +17,7 @@ import { useListSearch } from '../../composables/useListSearch'
 import { nasMountProtocolIcon } from '../../lib/resourceIcons'
 import { nasRepositoryFailureMessage } from '../../lib/nasMountTroubleshooting'
 import {
-  DEFAULT_S3_OBJECT_PREFIX,
+  generateS3ObjectPrefix,
   distinctS3EndpointPair,
   s3EndpointDisplay,
   s3PlatformLabelKey,
@@ -747,7 +747,7 @@ const form = ref({
   bucket: '',
   region: '',
   endpoint: '',
-  prefix: DEFAULT_S3_OBJECT_PREFIX,
+  prefix: generateS3ObjectPrefix(),
   access_key_id: '',
   secret_access_key: '',
   s3_url_style: 'auto' as S3UrlStyle,
@@ -2037,7 +2037,7 @@ function resetForm() {
     bucket: '',
     region: '',
     endpoint: '',
-    prefix: DEFAULT_S3_OBJECT_PREFIX,
+    prefix: generateS3ObjectPrefix(),
     access_key_id: '',
     secret_access_key: '',
     s3_url_style: 'auto',

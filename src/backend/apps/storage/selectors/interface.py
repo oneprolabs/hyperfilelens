@@ -84,7 +84,7 @@ def list_repositories(
             queryset=active_lifecycle_operations,
             to_attr="active_lifecycle_operations",
         ),
-    ).order_by("name", "id")
+    ).order_by("-created_at", "-id")
 
 
 def _repository_field_search_q(field: str, term: str) -> Q | None:

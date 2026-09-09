@@ -2683,7 +2683,7 @@ export const en = {
     hintSmbUsername: 'SMB user used to access the shared directory, e.g. backup_user.',
     hintSmbPassword: 'Password for the shared directory; logs and errors are masked.',
     hintSmbDomain: 'Use CORP or WORKGROUP for domain environments; leave empty for local users.',
-    hintRepositoryName: 'Display name used in repository lists and backup configs, e.g. Production NAS backup.',
+    hintRepositoryName: 'Automatically filled from the protocol, server, and last part of the shared path. You can edit it; clear the name to restore automatic naming.',
     errSmbHost: 'Enter server address',
     errSmbShare: 'Enter share name',
   },
@@ -2844,6 +2844,7 @@ export const en = {
     errBucket: 'Please select a bucket',
     errBucketName: 'Please enter a bucket name',
     bucketNameErrors: {
+      aws_reserved: 'This name uses an Amazon S3 reserved prefix or suffix.',
       aliyun: 'Use 3–63 lowercase letters, numbers, or hyphens; start and end with a letter or number.',
       dns: 'Use 3–63 lowercase letters, numbers, hyphens, or periods; start and end with a letter or number.',
       dns_label: 'Each part between periods must start and end with a letter or number.',

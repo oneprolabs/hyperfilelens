@@ -4878,6 +4878,7 @@ function onClosed() {
 
         <TaskProgressCell
           v-if="activeTask.status === 'pending' || activeTask.status === 'waiting' || activeTask.status === 'blocked' || activeTask.status === 'running'"
+          :progress="activeTask.progress"
           :transfer-progress="activeTransferProgress"
           :failed="false"
         />

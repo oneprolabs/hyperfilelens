@@ -11338,7 +11338,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     </el-table-column>
                     <el-table-column
                       :label="t('protection.backupsPage.flowBackupColCurrentTaskStatus')"
-                      min-width="228"
+                      min-width="272"
                     >
                       <template #default="{ row }">
                         <button
@@ -11351,10 +11351,12 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           <TaskProgressCell
                             v-if="sourceBackupCellPhase(row.id) === 'running'"
                             :failed="sourceBackupRuntime(row.id).failed"
+                            :progress="sourceBackupRuntime(row.id).progress"
                             :transfer-progress="sourceBackupRuntime(row.id).transferProgress"
                           />
                           <TaskProgressCell
                             v-else-if="sourceBackupCellPhase(row.id) === 'stopping'"
+                            :progress="sourceBackupRuntime(row.id).progress"
                             :transfer-progress="sourceBackupRuntime(row.id).transferProgress"
                             stopping
                           />

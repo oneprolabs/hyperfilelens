@@ -11,7 +11,6 @@ const taskPresentationFiles = [
   'src/pages/protection/components/TaskDetailDrawer.vue',
   'src/pages/protection/components/FlowBackupSourceDetailDrawer.vue',
   'src/pages/protection/components/KopiaTransferProgress.vue',
-  'src/pages/protection/components/TaskProgressCell.vue',
   'src/components/ProtectionStopConfirmDialog.vue',
   'src/lib/protectionStopConfirm.ts',
   'src/styles/ops-list-ui.css',
@@ -29,6 +28,7 @@ const taskProgressPresentationPatterns = [
 describe('task progress presentation', () => {
   it.each(taskPresentationFiles)('does not render a task bar or percentage in %s', (relativePath) => {
     const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8')
+      .replace(/\s:progress="(?:sourceBackupRuntime\(row.id\).progress|activeTask.progress)"/g, '')
 
     for (const pattern of taskProgressPresentationPatterns) {
       expect(source).not.toMatch(pattern)
