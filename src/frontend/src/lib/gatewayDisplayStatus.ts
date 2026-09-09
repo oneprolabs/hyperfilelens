@@ -1,6 +1,16 @@
 import type { ApiNode } from '../types/node'
 
-export type GatewayAiPhase = 'not_provisioned' | 'pending_install' | 'online' | 'offline' | 'error'
+export type GatewayAiPhase =
+  | 'not_provisioned'
+  | 'pending_install'
+  | 'online'
+  | 'agent_offline'
+  | 'offline'
+  | 'error'
+
+type GatewayStatusNode = ApiNode & {
+  managed_by_hfl?: boolean
+}
 
 export type GatewayDisplayStatus = {
   labelKey: string
@@ -9,15 +19,18 @@ export type GatewayDisplayStatus = {
   spinning?: boolean
 }
 
-const AGENT_ONLINE_KEY = 'protection.sourceResources.nodeStatusOnline'
+const AGENT_READY_KEYS = new Set([
+  'nodeLifecycle.state.active',
+  'protection.sourceResources.nodeStatusOnline',
+])
 
 export function resolveGatewayDisplayStatus(
-  node: ApiNode,
+  node: GatewayStatusNode,
   aiPhase: GatewayAiPhase,
   resolveDisplayStatus: (node: ApiNode) => GatewayDisplayStatus,
 ): GatewayDisplayStatus {
   const agentDisplay = resolveDisplayStatus(node)
-  if (agentDisplay.labelKey !== AGENT_ONLINE_KEY) {
+  if (node.managed_by_hfl === false || !AGENT_READY_KEYS.has(agentDisplay.labelKey)) {
     return agentDisplay
   }
 
@@ -32,6 +45,8 @@ export function resolveGatewayDisplayStatus(
         tagType: 'info',
         spinning: true,
       }
+    case 'agent_offline':
+      return { labelKey: 'protection.sourceResources.nodeStatusOffline', tagType: 'danger' }
     case 'offline':
       return { labelKey: 'insight.dataGateway.gatewayPhase.degraded', tagType: 'danger' }
     case 'error':
