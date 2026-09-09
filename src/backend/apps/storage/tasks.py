@@ -50,6 +50,7 @@ from apps.storage.services.internal.kopia_cli import (
     KopiaCliError,
     KopiaControlDecision,
     KopiaExecutionLeaseLost,
+    KopiaProcessTerminatedError,
     KopiaRepositoryBusyError,
     run_maintenance,
 )
@@ -760,6 +761,15 @@ def _execute_repository_operation(
                     progress=10,
                 )
             )
+            _raise_for_control_decision(
+                _set_repository_operation_step(
+                    repository_task,
+                    execution_token,
+                    "verify_repository_owner",
+                    status=TaskStep.Status.RUNNING,
+                    progress=10,
+                )
+            )
             if (
                 repository_task.execution_target is None
                 or not repository_execution_target_has_owned_location(
@@ -909,6 +919,7 @@ def _execute_repository_operation(
         )
         return {"status": "lease_lost", "repository_task_id": repository_task.id}
     except RepositoryAgentOperationStateUnknown as exc:
+        task.refresh_from_db(fields=["current_step", "progress"])
         record_recovery_decision(
             task=task,
             plan=RecoveryPlan(
@@ -920,51 +931,28 @@ def _execute_repository_operation(
                 },
             ),
         )
-        decision = _set_repository_operation_step(
-            repository_task,
-            execution_token,
-            task.current_step or "run_repository_operation",
-            status=TaskStep.Status.FAILED,
-            progress=int(task.progress),
-        )
-        interrupted = _finalize_control_interruption(
-            decision=decision,
-            repository_task=repository_task,
-            execution_token=execution_token,
-        )
-        if interrupted is not None:
-            return interrupted
-        finalize_repository_operation(
+        failed_task = finalize_repository_operation(
             repository_task_id=repository_task.id,
             succeeded=False,
             error_code=CONTROL_PLANE_RESTART_INTERRUPTED,
             error_message=str(exc),
             expected_execution_token=execution_token,
         )
-        return {"status": "failed", "repository_task_id": repository_task.id}
+        return {"status": failed_task.status, "repository_task_id": repository_task.id}
     except Exception as exc:
-        decision = _set_repository_operation_step(
-            repository_task,
-            execution_token,
-            task.current_step or "run_repository_operation",
-            status=TaskStep.Status.FAILED,
-            progress=int(task.progress),
+        logger.warning(
+            "Repository maintenance failed task_uuid=%s: %s",
+            task.task_uuid,
+            scrub_secrets(str(exc)),
         )
-        interrupted = _finalize_control_interruption(
-            decision=decision,
-            repository_task=repository_task,
-            execution_token=execution_token,
-        )
-        if interrupted is not None:
-            return interrupted
-        finalize_repository_operation(
+        failed_task = finalize_repository_operation(
             repository_task_id=repository_task.id,
             succeeded=False,
             error_code=_repository_operation_error_code(exc),
-            error_message=str(scrub_secrets(str(exc))),
+            error_message=_repository_operation_error_message(exc),
             expected_execution_token=execution_token,
         )
-        return {"status": "failed", "repository_task_id": repository_task.id}
+        return {"status": failed_task.status, "repository_task_id": repository_task.id}
 
 
 def _recover_controller_repository_operation(repository_task: RepositoryTask) -> dict:
@@ -1027,20 +1015,6 @@ def _recover_controller_repository_operation(repository_task: RepositoryTask) ->
             },
         ),
     )
-    decision = _set_repository_operation_step(
-        repository_task,
-        recovery_token,
-        task.current_step or "run_repository_operation",
-        status=TaskStep.Status.FAILED,
-        progress=int(task.progress),
-    )
-    interrupted = _finalize_control_interruption(
-        decision=decision,
-        repository_task=repository_task,
-        execution_token=recovery_token,
-    )
-    if interrupted is not None:
-        return interrupted
     failed_task = finalize_repository_operation(
         repository_task_id=repository_task.id,
         succeeded=False,
@@ -1086,30 +1060,6 @@ def _raise_for_control_decision(decision: KopiaControlDecision) -> None:
         raise KopiaExecutionLeaseLost(
             "Kopia repository maintenance execution lease was lost"
         )
-
-
-def _finalize_control_interruption(
-    *,
-    decision: KopiaControlDecision,
-    repository_task: RepositoryTask,
-    execution_token: UUID | None,
-) -> dict | None:
-    if decision == KopiaControlDecision.CONTINUE:
-        return None
-    if decision == KopiaControlDecision.LOST_LEASE:
-        return {"status": "lease_lost", "repository_task_id": repository_task.id}
-    repository_task.refresh_from_db(fields=["cancel_reason"])
-    cancelled_task = finalize_repository_operation(
-        repository_task_id=repository_task.id,
-        succeeded=False,
-        cancelled=True,
-        error_message=repository_task.cancel_reason,
-        expected_execution_token=execution_token,
-    )
-    return {
-        "status": cancelled_task.status,
-        "repository_task_id": repository_task.id,
-    }
 
 
 def _execute_maintenance(
@@ -1255,11 +1205,45 @@ def _controller_execution_control(
 
 
 def _repository_operation_error_code(exc: Exception) -> str:
-    if isinstance(exc, (TimeoutError, RepositoryAgentOperationTimeout)):
+    if isinstance(exc, (TimeoutError, RepositoryAgentOperationTimeout)) or (
+        isinstance(exc, KopiaCliError) and "timed out" in str(exc).lower()
+    ):
         return "REPOSITORY_OPERATION_TIMEOUT"
     if isinstance(exc, KopiaCliError):
-        return "KOPIA_MAINTENANCE_FAILED"
+        return "REPOSITORY_MAINTENANCE_FAILED"
     return "REPOSITORY_OPERATION_FAILED"
+
+
+def _repository_operation_error_message(exc: Exception) -> str:
+    from apps.task.event_text import neutral_event_text
+
+    if isinstance(exc, KopiaProcessTerminatedError):
+        return (
+            "Repository maintenance stopped unexpectedly. Check Controller "
+            "resource and service diagnostics before retrying."
+        )
+    if isinstance(exc, (TimeoutError, RepositoryAgentOperationTimeout)) or (
+        isinstance(exc, KopiaCliError) and "timed out" in str(exc).lower()
+    ):
+        return (
+            "Repository maintenance exceeded its execution time limit. Check "
+            "the repository owner's activity and storage connectivity before retrying."
+        )
+    if isinstance(exc, KopiaRepositoryBusyError):
+        return "Repository is busy with another operation. Wait for it to finish before retrying maintenance."
+    message = str(exc).lower()
+    if isinstance(exc, KopiaCliError):
+        if any(marker in message for marker in ("accessdenied", "access denied", "permission denied")):
+            return "Repository maintenance was denied access to storage. Check the repository credentials and permissions before retrying."
+        if any(marker in message for marker in ("connection refused", "no such host", "name resolution")):
+            return "Repository maintenance could not connect to storage. Check the storage endpoint and network connectivity before retrying."
+        return (
+            "Repository maintenance could not complete. Check the repository "
+            "configuration and Controller service logs for this task before retrying."
+        )
+    return neutral_event_text(str(scrub_secrets(str(exc)))) or (
+        "Repository maintenance failed. Check service logs for this task before retrying."
+    )
 
 
 @shared_task(name="apps.storage.tasks.run_storage_provider_validation")

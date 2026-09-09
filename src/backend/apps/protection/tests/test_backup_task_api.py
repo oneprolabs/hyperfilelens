@@ -3154,7 +3154,7 @@ class ProtectionBackupTaskApiTests(TestCase):
                 step__step_name="kopia_snapshot",
                 message="Directory backup failed",
                 metadata__error_code="AGENT_BACKUP_FAILED",
-                metadata__error_message__contains="kopia repository connect failed",
+                metadata__error_message__contains="repository engine repository connect failed",
             ).exists()
         )
         terminal_event = TaskEvent.objects.get(
