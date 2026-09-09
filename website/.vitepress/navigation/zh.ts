@@ -11,13 +11,14 @@ const quickStart: DefaultTheme.SidebarItem[] = [
     text: '首次使用',
     items: [
       { text: '登录控制台', link: '/zh/docs/getting-started/sign-in' },
+      { text: '配置外部访问（按需）', link: '/zh/docs/getting-started/configure-external-access' },
       { text: '添加备份源', link: '/zh/docs/getting-started/add-source' },
       { text: '配置备份源', link: '/zh/docs/getting-started/configure-source' },
       { text: '添加目标存储', link: '/zh/docs/getting-started/add-target' },
       { text: '创建并运行首次备份', link: '/zh/docs/getting-started/first-backup' },
       { text: '检查任务与快照', link: '/zh/docs/getting-started/verify-backup' },
       { text: '恢复测试文件', link: '/zh/docs/getting-started/first-restore' },
-      { text: '配置洞察模型', link: '/zh/docs/getting-started/configure-insights-model' },
+      { text: '配置 AI 模型', link: '/zh/docs/getting-started/configure-insights-model' },
       { text: '创建洞察会话', link: '/zh/docs/getting-started/first-insight' },
     ],
   },
@@ -115,7 +116,7 @@ const help: DefaultTheme.SidebarItem[] = [
 
 export const zhThemeConfig: DefaultTheme.Config = {
   logo: {
-    light: '/brand/images/hyperfilelens-lockup-on-light.png',
+    light: '/brand/images/hyperfilelens-lockup-transparent-on-light.png',
     dark: '/brand/images/hyperfilelens-lockup-on-dark.png',
     alt: 'HyperFileLens',
   },

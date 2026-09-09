@@ -12,13 +12,14 @@ const enQuickStart = [
     text: 'First use',
     items: [
       { text: 'Sign in to the console', link: '/docs/getting-started/sign-in' },
+      { text: 'Configure external access (when needed)', link: '/docs/getting-started/configure-external-access' },
       { text: 'Add a backup source', link: '/docs/getting-started/add-source' },
       { text: 'Configure the backup source', link: '/docs/getting-started/configure-source' },
       { text: 'Add target storage', link: '/docs/getting-started/add-target' },
       { text: 'Create and run the first backup', link: '/docs/getting-started/first-backup' },
       { text: 'Check tasks and snapshots', link: '/docs/getting-started/verify-backup' },
       { text: 'Restore a test file', link: '/docs/getting-started/first-restore' },
-      { text: 'Configure an AI model for Insights', link: '/docs/getting-started/configure-insights-model' },
+      { text: 'Configure AI models', link: '/docs/getting-started/configure-insights-model' },
       { text: 'Create an Insights session', link: '/docs/getting-started/first-insight' },
     ],
   },
@@ -132,7 +133,7 @@ export default defineConfig({
   ],
   themeConfig: {
     logo: {
-      light: '/brand/images/hyperfilelens-lockup-on-light.png',
+      light: '/brand/images/hyperfilelens-lockup-transparent-on-light.png',
       dark: '/brand/images/hyperfilelens-lockup-on-dark.png',
       alt: 'HyperFileLens',
     },

@@ -476,9 +476,11 @@ onMounted(() => {
               >
                 <AiProviderIcon
                   :provider="row.provider || row.name || ''"
-                  size="sm"
+                  size="md"
                 />
-                <span>{{ aiProviderLabel(row.provider || row.name || '') }}</span>
+                <span class="insight-ai-models-provider__label">
+                  {{ aiProviderLabel(row.provider || row.name || '') }}
+                </span>
               </span>
               <span
                 v-else
@@ -569,8 +571,14 @@ onMounted(() => {
 }
 
 .insight-ai-models-provider {
-  display: inline-flex;
+  display: inline-flex !important;
+  min-height: 24px;
   align-items: center;
   gap: 8px;
+  vertical-align: middle;
+}
+
+.insight-ai-models-provider__label {
+  line-height: normal;
 }
 </style>

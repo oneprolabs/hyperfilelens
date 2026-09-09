@@ -122,7 +122,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
     <header class="site-header-wrap">
       <div class="site-header">
         <a class="brand" href="/" aria-label="HyperFileLens home">
-          <img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-on-light.png" alt="HyperFileLens" />
+          <img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-transparent-on-light.png" alt="HyperFileLens" />
         </a>
         <nav aria-label="Main navigation">
           <a href="#use-cases">Use Cases</a>
@@ -333,7 +333,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
 
     <footer>
       <div class="footer-brand">
-        <a class="brand" href="/"><img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-on-light.png" alt="HyperFileLens" /></a>
+        <a class="brand" href="/"><img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-transparent-on-light.png" alt="HyperFileLens" /></a>
         <p>Open source backup with agentic AI insight, by OneProLabs.</p>
         <a class="footer-social" :href="githubUrl" target="_blank" rel="noopener noreferrer" aria-label="HyperFileLens on GitHub"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
       </div>

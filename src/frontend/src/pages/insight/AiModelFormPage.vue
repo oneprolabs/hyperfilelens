@@ -593,13 +593,17 @@ onMounted(async () => {
 }
 
 .ai-provider-card__text {
+  flex: 1;
   min-width: 0;
 }
 
 .ai-provider-card__name {
+  overflow: hidden;
   font-size: 14px;
   font-weight: 600;
   color: var(--color-text-title);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-provider-card__meta {

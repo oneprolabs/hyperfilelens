@@ -66,6 +66,7 @@ const englishDocRoutes = new Set([
   '/docs',
   '/docs/getting-started/install',
   '/docs/getting-started/sign-in',
+  '/docs/getting-started/configure-external-access',
   '/docs/getting-started/add-source',
   '/docs/getting-started/configure-source',
   '/docs/getting-started/add-target',

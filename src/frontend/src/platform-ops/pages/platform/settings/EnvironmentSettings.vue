@@ -8,6 +8,7 @@ import PlatformOpsRefreshButton from '../../../components/PlatformOpsRefreshButt
 import { useResolvedPlatformOpsSideNav } from '../../../composables/useResolvedPlatformOpsSideNav'
 import { fetchPlatformEnvironment, type PlatformEnvironmentSettings } from '../../../lib/platformOpsApi'
 import { apiErrorMessage } from '../../../../lib/api'
+import { RuntimeServiceConnections } from '@ext/platform/platform-ops/runtimeServiceConnections'
 
 const { t } = useI18n()
 const sideNav = useResolvedPlatformOpsSideNav()
@@ -113,6 +114,8 @@ onMounted(load)
             </div>
           </div>
         </PlatformOpsDetailSection>
+
+        <RuntimeServiceConnections />
 
         <PlatformOpsDetailSection :title="t('platformOps.settings.environment.effectiveTitle')">
           <div

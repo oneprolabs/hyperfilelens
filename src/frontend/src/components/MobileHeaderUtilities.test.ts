@@ -8,6 +8,7 @@ function source(path: string) {
 
 const appShell = source('src/app/layout/AppShell.vue')
 const topNav = source('src/app/layout/TopNav.vue')
+const platformOpsShell = source('src/platform-ops/layout/PlatformOpsShell.vue')
 const drawer = source('src/components/MobileNavigationDrawer.vue')
 const languageSwitcher = source('src/components/LanguageSwitcher.vue')
 const userMenu = source('src/components/NavUserMenu.vue')
@@ -53,6 +54,19 @@ describe('mobile header utilities', () => {
     expect(register).toMatch(
       /\.register-box-title\s*{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto;[\s\S]*?align-items:\s*center/,
     )
+  })
+
+  it('keeps time zone and language available in the Admin Console header', () => {
+    const returnIndex = platformOpsShell.indexOf('class="platform-ops-return"')
+    const timezoneIndex = platformOpsShell.indexOf('class="platform-ops-timezone platform-ops-header__desktop-utility"')
+    const languageIndex = platformOpsShell.indexOf('<LanguageSwitcher variant="navigation" />')
+    const userIndex = platformOpsShell.indexOf('<NavUserMenu />')
+
+    expect(returnIndex).toBeGreaterThan(-1)
+    expect(timezoneIndex).toBeGreaterThan(returnIndex)
+    expect(languageIndex).toBeGreaterThan(timezoneIndex)
+    expect(userIndex).toBeGreaterThan(languageIndex)
+    expect(platformOpsShell).toContain(':timezone-offset-display="timezoneOffsetDisplay"')
   })
 
   it('compacts only the interactive navigation language switcher below 1440px', () => {

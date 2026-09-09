@@ -14,6 +14,7 @@ from common.platform_authz import (
     ADMIN_INSTANCE_LICENSE_ACTIVATE,
     COMMERCE_ORG_QUOTA_MANAGE,
     INFRA_AI_MODELS_MANAGE,
+    INFRA_RELEASE_PACKAGES_VIEW,
     ROLE_BILLING_OPERATOR,
     ROLE_INFRA_OPERATOR,
     ROLE_PLATFORM_ADMIN,
@@ -32,6 +33,7 @@ class PlatformAuthzCatalogTest(SimpleTestCase):
         infra = permissions_for_role(ROLE_INFRA_OPERATOR)
         billing = permissions_for_role(ROLE_BILLING_OPERATOR)
         self.assertIn(INFRA_AI_MODELS_MANAGE, infra)
+        self.assertIn(INFRA_RELEASE_PACKAGES_VIEW, infra)
         self.assertNotIn(COMMERCE_ORG_QUOTA_MANAGE, infra)
         self.assertIn(COMMERCE_ORG_QUOTA_MANAGE, billing)
         self.assertNotIn(INFRA_AI_MODELS_MANAGE, billing)

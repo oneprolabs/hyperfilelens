@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, LoaderCircle, Menu } from 'lucide-vue-next'
 import NavUserMenu from '../../components/NavUserMenu.vue'
+import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 import Sidebar from '../../components/Sidebar.vue'
 import { useTheme } from '../../composables/useTheme'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
@@ -27,11 +28,20 @@ const fallbackSidebarCollapsed = ref(localStorage.getItem('sidebar-collapsed') =
 const fallbackMenuItems = useResolvedPlatformOpsSideNav()
 const mobileNavigationOpen = ref(false)
 
+const timezoneOffsetDisplay = computed(() => {
+  const offset = new Date().getTimezoneOffset()
+  const sign = offset <= 0 ? '+' : '-'
+  const absOffset = Math.abs(offset)
+  const hours = String(Math.floor(absOffset / 60)).padStart(2, '0')
+  const minutes = String(absOffset % 60).padStart(2, '0')
+  return `GMT${sign}${hours}:${minutes}`
+})
+const timezoneDisplay = computed(() => `${t('nav.timezone')}${timezoneOffsetDisplay.value}`)
+
 const routeSkeletonShowsCards = computed(
   () => route.path.startsWith('/platform-ops/monitoring')
     || route.path.startsWith('/platform-ops/alert-center')
     || route.path.startsWith('/platform-ops/audit-center')
-    || route.path.startsWith('/platform-ops/platform/integrations')
     || route.path === '/platform-ops/overview'
     || route.path === '/platform-ops/users'
     || route.path === '/platform-ops/orgs',
@@ -134,6 +144,16 @@ watch(
           />
           <span>{{ t('platformOps.nav.backToConsole') }}</span>
         </button>
+        <span
+          class="platform-ops-timezone platform-ops-header__desktop-utility"
+          :title="timezoneDisplay"
+        >
+          <span class="platform-ops-timezone__label">{{ t('nav.timezone') }}</span>
+          <span>{{ timezoneOffsetDisplay }}</span>
+        </span>
+        <span class="platform-ops-header__desktop-utility">
+          <LanguageSwitcher variant="navigation" />
+        </span>
         <NavUserMenu />
       </div>
     </header>
@@ -141,6 +161,7 @@ watch(
       v-model="mobileNavigationOpen"
       :title="t('platformOps.nav.title')"
       :module-items="fallbackMenuItems"
+      :timezone-offset-display="timezoneOffsetDisplay"
     />
     <main class="platform-ops-main">
       <RouterView v-slot="{ Component, route: viewRoute }">
@@ -297,6 +318,22 @@ watch(
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.platform-ops-timezone {
+  display: flex;
+  height: 32px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--tz-border, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  background: var(--tz-bg, rgba(255, 255, 255, 0.06));
+  color: var(--tz-color, #c9cdd4);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 
 .platform-ops-return {
@@ -575,6 +612,10 @@ watch(
     margin-left: auto;
   }
 
+  .platform-ops-header__desktop-utility {
+    display: none;
+  }
+
   .platform-ops-return {
     display: none;
   }
@@ -590,6 +631,17 @@ watch(
 
   .platform-ops-main__route-fallback-content {
     padding: 12px;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1439.98px) {
+  .platform-ops-timezone {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .platform-ops-timezone__label {
+    display: none;
   }
 }
 

@@ -11,6 +11,11 @@ declare module '@ext/platform/platform-ops/composables/usePlatformOpsSideNav' {
   export function usePlatformOpsSideNav(): ComputedRef<unknown[]> | null
 }
 
+declare module '@ext/platform/platform-ops/runtimeServiceConnections' {
+  import type { Component } from 'vue'
+  export const RuntimeServiceConnections: Component
+}
+
 declare module '@ext/platform/ops/routes' {
   export const tenantOpsRoutes: Array<Record<string, unknown>>
 }

@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/public/brand/source/hyperfilelens-lockup-on-dark.png">
-  <img alt="HyperFileLens" src="website/public/brand/source/hyperfilelens-lockup-on-light.png" width="320">
+  <img alt="HyperFileLens" src="website/public/brand/images/hyperfilelens-lockup-transparent-on-light.png" width="320">
 </picture>
 
 [English](README.md) | 中文
