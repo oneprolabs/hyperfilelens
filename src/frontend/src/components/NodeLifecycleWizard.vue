@@ -296,9 +296,9 @@ const isNewAgentInstallation = computed(() => props.role === 'agent' && props.no
 
 const installLeadKey = computed(() => {
   if (isNewAgentInstallation.value) {
-    return props.os === 'macos'
-      ? 'nodeLifecycle.installLeadAutomaticMacos'
-      : 'nodeLifecycle.installLeadAutomatic'
+    if (props.os === 'windows') return 'nodeLifecycle.installLeadAutomaticWindows'
+    if (props.os === 'macos') return 'nodeLifecycle.installLeadAutomaticMacos'
+    return 'nodeLifecycle.installLeadAutomaticLinux'
   }
   if (effectiveInstallationMode.value === 'user' || effectiveInstallationMode.value === 'user_continuous') return 'nodeLifecycle.installLeadUser'
   if (props.os === 'windows') return 'nodeLifecycle.installLeadWindows'

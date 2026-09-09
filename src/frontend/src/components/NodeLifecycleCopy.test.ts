@@ -9,6 +9,9 @@ function source(path: string) {
 describe('Node lifecycle copy', () => {
   it('keeps headings and action copy consistent', () => {
     const locale = source('src/locales/en.ts')
+    const chinese = JSON.parse(source('../../language-packs/packs/zh-hans/frontend/messages.json'))
+    const spanish = JSON.parse(source('../../language-packs/packs/es/frontend/messages.json'))
+    const css = source('src/styles/agent-install-wizard.css')
 
     expect(locale).toContain("installCommandStep: 'Run the Install Command'")
     expect(locale).toContain("installationModeSystem: 'Host files · continuous'")
@@ -19,14 +22,33 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain('installationModeUserPermission:')
     expect(locale).toContain('installationModeUserContinuousPermission:')
     expect(wizardSource()).toContain("const isNewAgentInstallation = computed(() => props.role === 'agent' && props.nodeId == null)")
-    expect(wizardSource()).toContain("? 'nodeLifecycle.installLeadAutomaticMacos'")
-    expect(wizardSource()).toContain(": 'nodeLifecycle.installLeadAutomatic'")
+    expect(wizardSource()).toContain("return 'nodeLifecycle.installLeadAutomaticLinux'")
+    expect(wizardSource()).toContain("return 'nodeLifecycle.installLeadAutomaticWindows'")
+    expect(wizardSource()).toContain("return 'nodeLifecycle.installLeadAutomaticMacos'")
     expect(wizardSource()).toContain("...(isNewAgentInstallation.value\n              ? {}")
     expect(wizardSource()).toContain("os === 'linux' ? 'user_continuous' : 'user'")
     expect(wizardSource()).not.toContain('selectedInstallationMode')
     expect(wizardSource()).not.toContain('installationModeOptions')
-    expect(locale).toContain('never changes mode silently')
+    expect(locale).toContain('Run the command below in a shell on the target Linux host.')
+    expect(locale).toContain('Run the command below in PowerShell on the target Windows host.')
+    expect(locale).toContain('Run the command below in Terminal on the target Mac.')
+    expect(locale).toContain('The installer shows the installation mode before proceeding.')
+    expect(locale).not.toContain('The installer confirms the installation mode before proceeding.')
     expect(locale).toContain('grant HyperFileLens Agent Full Disk Access')
+    expect(chinese.nodeLifecycle.installLeadAutomaticLinux).toContain('Linux')
+    expect(chinese.nodeLifecycle.installLeadAutomaticWindows).toContain('PowerShell')
+    expect(chinese.nodeLifecycle.installLeadAutomaticMacos).toContain('Mac')
+    for (const message of [
+      chinese.nodeLifecycle.installLeadAutomaticLinux,
+      chinese.nodeLifecycle.installLeadAutomaticWindows,
+      chinese.nodeLifecycle.installLeadAutomaticMacos,
+    ]) {
+      expect(message).toContain('\n')
+    }
+    expect(spanish.nodeLifecycle.installLeadAutomaticLinux).toContain('Ejecute el siguiente comando en una terminal del host Linux de destino.\nAcceso:')
+    expect(spanish.nodeLifecycle.installLeadAutomaticWindows).toContain('Ejecute el siguiente comando en PowerShell en el equipo Windows de destino.\nAcceso:')
+    expect(spanish.nodeLifecycle.installLeadAutomaticMacos).toContain('Ejecute el siguiente comando en Terminal en el Mac de destino.\nAcceso:')
+    expect(css).toMatch(/agent-install-wizard__command-lead[\s\S]*?white-space: pre-line/)
     expect(locale).toContain("generateInstallCommand: 'Generate install command'")
     expect(locale).toContain('Copy the command and run it in a shell on the target host')
     expect(locale).toContain("installFlowDownload: 'Downloads the small installer and checks the target host'")

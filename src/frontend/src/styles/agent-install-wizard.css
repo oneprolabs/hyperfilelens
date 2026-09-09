@@ -93,6 +93,7 @@
 
 .resource-add-fullscreen .agent-install-wizard__command-lead {
   margin: -8px 0 14px;
+  white-space: pre-line;
 }
 
 .resource-add-fullscreen .agent-install-wizard--source-host .agent-install-wizard__command-lead strong {
