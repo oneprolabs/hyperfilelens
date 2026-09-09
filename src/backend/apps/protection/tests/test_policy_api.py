@@ -92,6 +92,19 @@ class ProtectionPolicyApiTests(TestCase):
         self.assertIn(policy_id, [row["id"] for row in listing.data["results"]])
         self.assertEqual(policy_display_name(policy_id=policy_id, organization_id=self.org.id), "Daily production policy")
 
+    def test_legacy_retention_only_policy_preserves_and_validates_timezone(self):
+        payload = self._policy_payload("Retention timezone")
+        payload["schedule"] = {"enabled": False, "cron_expr": "0 0 * * *", "timezone": "Asia/Shanghai"}
+        response = self.client.post("/api/v1/protection/policies/", payload, format="json", **self._headers())
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(response.data["schedule"], payload["schedule"])
+        saved = BackupPolicy.objects.get(id=response.data["id"])
+        self.assertEqual(saved.schedule, payload["schedule"])
+        payload["name"] = "Invalid retention timezone"
+        payload["schedule"]["timezone"] = "Mars/Olympus"
+        response = self.client.post("/api/v1/protection/policies/", payload, format="json", **self._headers())
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_structured_schedule_validates_and_round_trips(self):
         weekly = self._policy_payload("Shanghai weekdays")
         weekly["schedule"] = {

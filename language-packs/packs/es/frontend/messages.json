@@ -2154,6 +2154,7 @@
       "hintSimpleInterval": "Configure un intervalo o calendario fácil de usar.",
       "labelInterval": "Repetir todos",
       "scheduleTimezone": "Zona horaria",
+      "policyTimezoneHint": "Esta zona horaria se aplica a la programación de copias de seguridad y a la retención. Los cambios afectan a las evaluaciones futuras, incluidas las instantáneas existentes; las tareas completadas y las marcas de tiempo no cambian.",
       "scheduleTimezonePlaceholder": "Seleccione una zona horaria IANA",
       "scheduleStartsAt": "Hora de inicio",
       "scheduleStartsAtPlaceholder": "Seleccione la primera fecha y hora elegibles",

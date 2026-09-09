@@ -7378,5 +7378,6 @@
   "protection.taskProgress.backupEtaMinutes": "3d378689d0dd9857a6c28b2dfc908b9ac042061d2d1cdead3b2ddf717481127d",
   "protection.taskProgress.backupEtaHours": "13c9d74dbe80f7397cc7f7b80ac2bcbedd012d2350511a96e3d983e7e1b27f83",
   "protection.taskProgress.backupEtaHoursMinutes": "10c3b7b37edab973d91fe042e411275edc9915f9f0b0a0330517c177f5b8dc4e",
-  "addS3Repo.bucketNameErrors.aws_reserved": "e56222f921707e10f8c93f84c524105e51e930b33b16bbc3ff5e37523382a922"
+  "addS3Repo.bucketNameErrors.aws_reserved": "e56222f921707e10f8c93f84c524105e51e930b33b16bbc3ff5e37523382a922",
+  "protection.policiesPage.policyTimezoneHint": "a9d325d5700bc099d8052341e0a51fdc1b33a8a2b563199b7ac3505472ad803f"
 }

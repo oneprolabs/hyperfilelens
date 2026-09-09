@@ -257,6 +257,69 @@ class PolicyExecutionTests(TestCase):
             _schedule_fire_key(schedule, now=repeated),
         )
 
+    def test_legacy_cron_uses_explicit_timezone_and_preserves_utc_fallback(self):
+        schedule = {"enabled": True, "cron_expr": "30 0 * * *"}
+        now = datetime(2026, 9, 8, 16, 30, tzinfo=UTC)
+        self.assertFalse(schedule_matches_now(schedule, now=now))
+        self.assertEqual(_schedule_fire_key(schedule, now=now), "202609081630")
+        schedule["timezone"] = "Asia/Shanghai"
+        self.assertTrue(schedule_matches_now(schedule, now=now))
+        self.assertEqual(_schedule_fire_key(schedule, now=now), "202609090030")
+
+    def test_retention_uses_policy_calendar_boundaries_with_scheduling_disabled(self):
+        cases = [
+            ("day", "Asia/Shanghai", "2026-09-08T15:30:00+00:00", "2026-09-08T16:30:00+00:00"),
+            ("week", "Asia/Shanghai", "2026-09-06T15:30:00+00:00", "2026-09-06T16:30:00+00:00"),
+            ("month", "Asia/Shanghai", "2026-08-31T15:30:00+00:00", "2026-08-31T16:30:00+00:00"),
+            ("year", "Asia/Shanghai", "2025-12-31T15:30:00+00:00", "2025-12-31T16:30:00+00:00"),
+            ("hour", "Asia/Kathmandu", "2026-09-08T16:10:00+00:00", "2026-09-08T16:20:00+00:00"),
+        ]
+        fields = {"hour": ("hourly", "hours"), "day": ("daily", "days"),
+                  "week": ("weekly", "weeks"), "month": ("monthly", "months"),
+                  "year": ("annual", "years")}
+        for unit, zone, before, after in cases:
+            with self.subTest(unit=unit):
+                BackupSourceSnapshot.objects.all().delete()
+                old = self._snapshot(f"{unit}-before", datetime.fromisoformat(before))
+                latest = self._snapshot(f"{unit}-after", datetime.fromisoformat(after))
+                prefix, amount = fields[unit]
+                self.policy.retention = {"enabled": True, "recent_points": 1,
+                                         f"{prefix}_enabled": True, f"{prefix}_{amount}": 2}
+                self.policy.schedule = {"enabled": False, "timezone": zone}
+                now = latest.finished_at + timedelta(minutes=5)
+                with timezone.override("America/Los_Angeles"):
+                    self.assertEqual(retention_delete_candidates_for_config(
+                        config=self.config, policy=self.policy, now=now), [])
+                old.refresh_from_db()
+                self.assertEqual(old.finished_at, datetime.fromisoformat(before))
+                self.assertIsNone(old.deleted_at)
+                for fallback in ({}, {"timezone": "UTC"}, {"timezone": "Invalid/Zone"}):
+                    self.policy.schedule = fallback
+                    with timezone.override("Asia/Shanghai"):
+                        candidates = retention_delete_candidates_for_config(
+                            config=self.config, policy=self.policy, now=now)
+                    self.assertEqual([snapshot.id for snapshot in candidates], [old.id])
+
+    def test_retention_dst_window_is_elapsed_time_and_repeated_hour_is_one_bucket(self):
+        from zoneinfo import ZoneInfo
+
+        self.policy.schedule = {"enabled": False, "timezone": "America/New_York"}
+        self.policy.retention = {"enabled": True, "recent_points": 1,
+                                 "hourly_enabled": True, "hourly_hours": 2}
+        old = self._snapshot("dst-outside", datetime(2026, 3, 8, 6, 0, tzinfo=UTC))
+        kept = self._snapshot("dst-inside", datetime(2026, 3, 8, 6, 45, tzinfo=UTC))
+        self._snapshot("dst-latest", datetime(2026, 3, 8, 8, 0, tzinfo=UTC))
+        now = datetime(2026, 3, 8, 8, 30, tzinfo=UTC).astimezone(ZoneInfo("America/New_York"))
+        candidates = retention_delete_candidates_for_config(config=self.config, policy=self.policy, now=now)
+        self.assertEqual([snapshot.id for snapshot in candidates], [old.id])
+        self.assertNotIn(kept.id, [snapshot.id for snapshot in candidates])
+        BackupSourceSnapshot.objects.all().delete()
+        first = self._snapshot("dst-first", datetime(2026, 11, 1, 5, 30, tzinfo=UTC))
+        self._snapshot("dst-repeat", datetime(2026, 11, 1, 6, 30, tzinfo=UTC))
+        candidates = retention_delete_candidates_for_config(
+            config=self.config, policy=self.policy, now=datetime(2026, 11, 1, 6, 45, tzinfo=UTC))
+        self.assertEqual([snapshot.id for snapshot in candidates], [first.id])
+
     def test_retention_candidates_are_logical_snapshots(self):
         now = timezone.now()
         old = self._snapshot("old-logical", now - timedelta(days=3))

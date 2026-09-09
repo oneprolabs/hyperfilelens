@@ -248,3 +248,19 @@ describe('protection policy schedule mapping', () => {
     expect(policyFormToWritePayload(form).schedule.starts_at).toBe('2026-08-13T14:30:00')
   })
 })
+
+describe('shared policy timezone', () => {
+  it.each(['0 0 * * *', '30 9 * * 1-5'])('preserves a legacy timezone with scheduling disabled: %s', (cron) => {
+    const form = backupPolicyToForm(policyWithSchedule({ enabled: false, cron_expr: cron, timezone: 'Asia/Shanghai' }))
+    expect(form.scheduleTimezone).toBe('Asia/Shanghai')
+    expect(policyFormToWritePayload(form).schedule).toMatchObject({ enabled: false, timezone: 'Asia/Shanghai' })
+    expect(backupPolicyToForm(policyWithSchedule(policyFormToWritePayload(form).schedule)).scheduleTimezone).toBe('Asia/Shanghai')
+    form.scheduleTimezone = ''
+    expect(validateScheduleForm(form)).toBe('Select a time zone.')
+  })
+
+  it('keeps legacy policies without a timezone in UTC', () => {
+    const form = backupPolicyToForm(policyWithSchedule({ enabled: false, cron_expr: '0 0 * * *' }))
+    expect(form.scheduleTimezone).toBe('UTC')
+  })
+})
