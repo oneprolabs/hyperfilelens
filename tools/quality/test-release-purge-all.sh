@@ -123,8 +123,9 @@ fi
 	sourcelens_runtime_present
 )
 
-# Uninstall removes historical HFL aliases but preserves upstream and Docker
-# Library image tags, which may be shared by unrelated workloads on the host.
+# Installation image cleanup removes every exact manifest reference after all
+# managed containers are gone. Images used by any running or stopped foreign
+# container, and layers with unrelated tags, are retained without force.
 (
 	set -euo pipefail
 	source "${REPO_ROOT}/deploy/installer/install.sh"
@@ -138,36 +139,303 @@ fi
     {"role": "sourcelens-backend", "refs": ["oneprolabs/sourcelens-backend:0.49.5"]},
     {"role": "sourcelens-nginx", "refs": ["nginx:stable-alpine"]},
     {"role": "sourcelens-frontend", "refs": ["hyperfilelens-sourcelens-frontend:legacy"]}
-  ]
+  ],
+  "delivery": {
+    "mode": "registry",
+    "registry_images": [
+      {
+        "role": "hyperfilelens",
+        "local_ref": "hyperfilelens-backend:1.0.0",
+        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "sources": [
+          {"region": "cn", "ref": "registry.example.cn/oneprolabs/hyperfilelens-backend:1.0.0"},
+          {"region": "global", "ref": "docker.io/oneprolabs/hyperfilelens-backend:1.0.0"}
+        ]
+      },
+      {
+        "role": "sourcelens-backend",
+        "local_ref": "oneprolabs/sourcelens-backend:0.49.5",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "sources": [
+          {"region": "cn", "ref": "registry.example.cn/oneprolabs/sourcelens-backend:0.49.5"},
+          {"region": "global", "ref": "docker.io/oneprolabs/sourcelens-backend:0.49.5"}
+        ]
+      },
+      {
+        "role": "shared",
+        "local_ref": "postgres:17",
+        "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sources": [
+          {"region": "cn", "ref": "registry.example.cn/oneprolabs/postgres:17-pinned"},
+          {"region": "global", "ref": "docker.io/oneprolabs/postgres:17-pinned"}
+        ]
+      },
+      {
+        "role": "shared",
+        "local_ref": "redis:alpine",
+        "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "sources": [
+          {"region": "cn", "ref": "registry.example.cn/oneprolabs/redis:alpine-pinned"},
+          {"region": "global", "ref": "docker.io/oneprolabs/redis:alpine-pinned"}
+        ]
+      },
+      {
+        "role": "sourcelens-nginx",
+        "local_ref": "nginx:stable-alpine",
+        "digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "sources": [
+          {"region": "cn", "ref": "registry.example.cn/oneprolabs/nginx:stable-alpine-pinned"},
+          {"region": "global", "ref": "docker.io/oneprolabs/nginx:stable-alpine-pinned"}
+        ]
+      }
+    ],
+    "asset_images": [
+      {
+        "role": "language-assets",
+        "local_ref": "hyperfilelens-language-assets:1.0.0",
+        "digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+        "sources": [
+          {"region": "cn", "ref": "registry.example.cn/oneprolabs/hyperfilelens-language-assets:1.0.0"},
+          {"region": "global", "ref": "docker.io/oneprolabs/hyperfilelens-language-assets:1.0.0"}
+        ]
+      },
+      {
+        "role": "gateway-assets",
+        "local_ref": "hyperfilelens-gateway-assets:1.0.0",
+        "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+        "sources": [
+          {"region": "cn", "ref": "registry.example.cn/oneprolabs/hyperfilelens-gateway-assets:1.0.0"},
+          {"region": "global", "ref": "docker.io/oneprolabs/hyperfilelens-gateway-assets:1.0.0"}
+        ]
+      }
+    ]
+  }
 }
 JSON
-	removed="${fixture}/removed-image-tags"
-	: >"${removed}"
+	state="${fixture}/image-ownership-state.json"
+	warnings="${fixture}/image-ownership-warnings"
+	cat >"${state}" <<'JSON'
+{
+  "images": {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {"refs": ["hyperfilelens-backend:1.0.0", "registry.example.cn/oneprolabs/hyperfilelens-backend:1.0.0", "registry.example.cn/oneprolabs/hyperfilelens-backend@sha256:1111111111111111111111111111111111111111111111111111111111111111"]},
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {"refs": ["oneprolabs/sourcelens-backend:0.49.5", "docker.io/oneprolabs/sourcelens-backend:0.49.5", "docker.io/oneprolabs/sourcelens-backend@sha256:2222222222222222222222222222222222222222222222222222222222222222"]},
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {"refs": ["postgres:17", "registry.example.cn/oneprolabs/postgres:17-pinned", "registry.example.cn/oneprolabs/postgres@sha256:3333333333333333333333333333333333333333333333333333333333333333"]},
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": {"refs": ["redis:alpine", "docker.io/oneprolabs/redis:alpine-pinned", "docker.io/oneprolabs/redis@sha256:4444444444444444444444444444444444444444444444444444444444444444"]},
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {"refs": ["nginx:stable-alpine", "registry.example.cn/oneprolabs/nginx:stable-alpine-pinned", "registry.example.cn/oneprolabs/nginx@sha256:5555555555555555555555555555555555555555555555555555555555555555"]},
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff": {"refs": ["hyperfilelens-language-assets:1.0.0", "docker.io/oneprolabs/hyperfilelens-language-assets:1.0.0", "docker.io/oneprolabs/hyperfilelens-language-assets@sha256:6666666666666666666666666666666666666666666666666666666666666666"]},
+    "1212121212121212121212121212121212121212121212121212121212121212": {"refs": ["hyperfilelens-sourcelens-frontend:legacy"]},
+    "7777777777777777777777777777777777777777777777777777777777777777": {"refs": ["hyperfilelens-gateway-assets:1.0.0", "registry.example.cn/oneprolabs/hyperfilelens-gateway-assets:1.0.0", "registry.example.cn/oneprolabs/hyperfilelens-gateway-assets@sha256:7777777777777777777777777777777777777777777777777777777777777777", "example/customer-gateway-cache:latest"]},
+    "9999999999999999999999999999999999999999999999999999999999999999": {"refs": ["example/unmanaged:latest"]}
+  },
+  "containers": {
+    "running-container-id": {"image": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "name": "customer-redis"},
+    "stopped-container-id": {"image": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "name": "customer-nginx"}
+  }
+}
+JSON
+	: >"${warnings}"
 	mkdir -p "${fixture}/image-ownership-bin"
-	cat >"${fixture}/image-ownership-bin/docker" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-case "$*" in
-"image ls --quiet --no-trunc hyperfilelens-backend:1.0.0") printf '%s\n' backend-id ;;
-"image ls --quiet --no-trunc hyperfilelens-sourcelens-frontend:legacy") printf '%s\n' sourcelens-id ;;
-"image rm -f hyperfilelens-backend:1.0.0") printf '%s\n' hyperfilelens-backend:1.0.0 >>"${HFL_TEST_REMOVED_TAGS}" ;;
-"image rm -f hyperfilelens-sourcelens-frontend:legacy") printf '%s\n' hyperfilelens-sourcelens-frontend:legacy >>"${HFL_TEST_REMOVED_TAGS}" ;;
-*) printf 'unexpected Docker image cleanup: %s\n' "$*" >&2; exit 90 ;;
-esac
-SH
+	cat >"${fixture}/image-ownership-bin/docker" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(os.environ["HFL_TEST_DOCKER_STATE"])
+state = json.loads(path.read_text(encoding="utf-8"))
+args = sys.argv[1:]
+
+
+def save():
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+
+def find_image(ref):
+    raw = ref[7:] if ref.startswith("sha256:") else ref
+    if raw in state["images"]:
+        return raw, state["images"][raw]
+    for image_id, image in state["images"].items():
+        if ref in image["refs"]:
+            return image_id, image
+    return None, None
+
+
+if args == ["info"]:
+    if os.environ.get("HFL_TEST_DOCKER_INFO_FAILURE") == "1":
+        raise SystemExit(1)
+elif args == ["ps", "-aq", "--no-trunc"]:
+    print("\n".join(state["containers"]))
+elif len(args) == 4 and args[:2] == ["inspect", "--format"]:
+    container = state["containers"].get(args[3])
+    if not container:
+        raise SystemExit(1)
+    print(f"sha256:{container['image']}\t/{container['name']}")
+elif len(args) == 3 and args[:2] == ["image", "inspect"]:
+    if (
+        os.environ.get("HFL_TEST_DOCKER_INSPECT_FAILURE") == "1"
+        and args[2] == "redis:alpine"
+    ):
+        print("Error response from daemon: temporary daemon failure", file=sys.stderr)
+        raise SystemExit(1)
+    image_id, image = find_image(args[2])
+    if not image:
+        print(f"Error response from daemon: No such image: {args[2]}", file=sys.stderr)
+        raise SystemExit(1)
+    tags = [ref for ref in image["refs"] if "@" not in ref]
+    digests = [ref for ref in image["refs"] if "@" in ref]
+    print(json.dumps([{"Id": f"sha256:{image_id}", "RepoTags": tags, "RepoDigests": digests}]))
+elif len(args) == 3 and args[:2] == ["image", "rm"]:
+    ref = args[2]
+    if ref == "-f":
+        raise SystemExit("forced image removal is forbidden")
+    if os.environ.get("HFL_TEST_DOCKER_RM_FAILURE") == "1":
+        print("Error response from daemon: temporary image removal failure", file=sys.stderr)
+        raise SystemExit(1)
+    image_id, image = find_image(ref)
+    if not image:
+        raise SystemExit(1)
+    if ref.startswith("sha256:") or ref == image_id:
+        if image["refs"]:
+            raise SystemExit("image still has references")
+        del state["images"][image_id]
+    else:
+        image["refs"].remove(ref)
+        if not image["refs"]:
+            del state["images"][image_id]
+    save()
+else:
+    raise SystemExit(f"unexpected Docker image cleanup: {' '.join(args)}")
+PY
 	chmod 755 "${fixture}/image-ownership-bin/docker"
-	export HFL_TEST_REMOVED_TAGS="${removed}"
+	export HFL_TEST_DOCKER_STATE="${state}"
 	export PATH="${fixture}/image-ownership-bin:${PATH}"
 	step() { :; }
-	remove_manifest_images
+	ok() { :; }
+	log() { :; }
+	debug() { :; }
+	warn() {
+		SESSION_WARNINGS+=("$*")
+		printf '%s\n' "$*" >>"${warnings}"
+	}
+	remove_installation_images 1 1
+	[[ "${INSTALLATION_IMAGES_REMOVED}" -eq 5 ]]
+	[[ "${INSTALLATION_IMAGES_RETAINED}" -eq 3 ]]
+	grep -F 'redis:alpine; used by container(s): customer-redis (running-cont)' \
+		"${warnings}" >/dev/null
+	grep -F 'nginx:stable-alpine; used by container(s): customer-nginx (stopped-cont)' \
+		"${warnings}" >/dev/null
+	grep -F 'hyperfilelens-gateway-assets:1.0.0; shared by other image reference(s): example/customer-gateway-cache:latest' \
+		"${warnings}" >/dev/null
+	python3 - "${state}" <<'PY'
+import json
+import pathlib
+import sys
+
+state = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert set(state["images"]) == {
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "7777777777777777777777777777777777777777777777777777777777777777",
+    "9999999999999999999999999999999999999999999999999999999999999999",
+}
+gateway = state["images"]["7777777777777777777777777777777777777777777777777777777777777777"]
+assert gateway["refs"] == ["example/customer-gateway-cache:latest"]
+assert len(state["images"]["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]["refs"]) == 3
+assert len(state["images"]["eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"]["refs"]) == 3
+assert state["images"]["9999999999999999999999999999999999999999999999999999999999999999"]["refs"] == ["example/unmanaged:latest"]
+PY
+	export HFL_TEST_DOCKER_INSPECT_FAILURE=1
+	if remove_installation_images 1 1 >/dev/null 2>&1; then
+		printf 'Docker image inspection failure was accepted\n' >&2
+		exit 1
+	fi
+	unset HFL_TEST_DOCKER_INSPECT_FAILURE
+	python3 - "${state}" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+path.write_text(
+    json.dumps(
+        {
+            "images": {
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+                    "refs": [
+                        "hyperfilelens-backend:1.0.0",
+                        "registry.example.cn/oneprolabs/hyperfilelens-backend:1.0.0",
+                        "registry.example.cn/oneprolabs/hyperfilelens-backend@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                    ]
+                },
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+                    "refs": [
+                        "oneprolabs/sourcelens-backend:0.49.5",
+                        "docker.io/oneprolabs/sourcelens-backend:0.49.5",
+                        "docker.io/oneprolabs/sourcelens-backend@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                    ]
+                },
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {
+                    "refs": [
+                        "postgres:17",
+                        "registry.example.cn/oneprolabs/postgres:17-pinned",
+                        "registry.example.cn/oneprolabs/postgres@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+                    ]
+                }
+            },
+            "containers": {},
+        }
+    ),
+    encoding="utf-8",
+)
+PY
 	remove_sourcelens_images
-	mapfile -t removed_tags <"${removed}"
-	[[ "${removed_tags[*]}" == \
-		'hyperfilelens-backend:1.0.0 hyperfilelens-sourcelens-frontend:legacy' ]]
+	python3 - "${state}" <<'PY'
+import json
+import pathlib
+import sys
+
+state = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert set(state["images"]) == {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+}
+PY
+	remove_installation_images 1 0
+	python3 - "${state}" <<'PY'
+import json
+import pathlib
+import sys
+
+state = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert set(state["images"]) == {
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}
+PY
+	export HFL_TEST_DOCKER_RM_FAILURE=1
+	if remove_installation_images 1 1 >/dev/null 2>&1; then
+		printf 'Docker image removal failure was accepted\n' >&2
+		exit 1
+	fi
+	unset HFL_TEST_DOCKER_RM_FAILURE
+	remove_installation_images 1 1
+	python3 - "${state}" <<'PY'
+import json
+import pathlib
+import sys
+
+state = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert not state["images"]
+PY
+	export HFL_TEST_DOCKER_INFO_FAILURE=1
+	if remove_installation_images 1 1 >/dev/null 2>&1; then
+		printf 'unverified Docker image cleanup was accepted\n' >&2
+		exit 1
+	fi
 )
 
 # The real SourceLens fallback must remove verified orphan containers before
-# images and data. Image cleanup failure must preserve data for retry.
+# its data. Container cleanup failure must preserve data for retry.
 run_sourcelens_component_contract() (
 	set -euo pipefail
 	source "${REPO_ROOT}/deploy/installer/install.sh"
@@ -177,12 +445,11 @@ run_sourcelens_component_contract() (
 	: >"${events}"
 	sourcelens_installed() { return 1; }
 	sourcelens_runtime_present() { return 0; }
-	remove_owned_installation_containers() { printf '%s\n' containers >>"${events}"; }
-	remove_empty_owned_compose_networks() { printf 'networks:%s\n' "$*" >>"${events}"; }
-	remove_sourcelens_images() {
-		printf '%s\n' images >>"${events}"
-		[[ "${scenario}" != image_failure ]]
+	remove_owned_installation_containers() {
+		printf '%s\n' containers >>"${events}"
+		[[ "${scenario}" != container_failure ]] || die "simulated container cleanup failure"
 	}
+	remove_empty_owned_compose_networks() { printf 'networks:%s\n' "$*" >>"${events}"; }
 	purge_sourcelens_data_dir() { printf '%s\n' data >>"${events}"; }
 	step() { :; }
 	warn() { :; }
@@ -192,13 +459,13 @@ run_sourcelens_component_contract() (
 
 run_sourcelens_component_contract orphan_success
 mapfile -t component_events <"${fixture}/component-events-orphan_success"
-[[ "${component_events[*]}" == 'containers networks:hyperfilelens-sourcelens sourcelens images data' ]]
-if run_sourcelens_component_contract image_failure >/dev/null 2>&1; then
-	printf 'SourceLens image cleanup failure was accepted\n' >&2
+[[ "${component_events[*]}" == 'containers networks:hyperfilelens-sourcelens sourcelens data' ]]
+if run_sourcelens_component_contract container_failure >/dev/null 2>&1; then
+	printf 'SourceLens container cleanup failure was accepted\n' >&2
 	exit 1
 fi
-mapfile -t image_failure_events <"${fixture}/component-events-image_failure"
-[[ "${image_failure_events[*]}" == 'containers networks:hyperfilelens-sourcelens sourcelens images' ]]
+mapfile -t container_failure_events <"${fixture}/component-events-container_failure"
+[[ "${container_failure_events[*]}" == 'containers' ]]
 
 # The shared bridge is removed only when HyperFileLens created it and no
 # containers remain attached. Foreign or still-used networks are retained.
@@ -300,10 +567,11 @@ if grep -F 'No such file or directory' "${complete_output}" >/dev/null; then
 	exit 1
 fi
 
-# Plain uninstall and --purge-all must remove the installer-owned Gateway first,
-# then bundled SourceLens, and only then stop the HFL control plane. --keep-data
-# removes the same runtimes while retaining persistent state. Explicit legacy
-# selection flags keep their narrower behavior.
+# Plain uninstall and --purge-all remove the installer-owned Gateway first,
+# then HFL and bundled SourceLens containers. Networks and images are cleaned
+# only after both application stacks are down. --keep-data removes the same
+# runtimes while retaining persistent state. Explicit legacy selection flags
+# keep their narrower behavior.
 run_uninstall_contract() (
 	set -euo pipefail
 	source "${REPO_ROOT}/deploy/installer/install.sh"
@@ -331,12 +599,15 @@ run_uninstall_contract() (
 	uninstall_hfl_runtime() {
 		printf '%s\n' hfl >>"${events}"
 		[[ "${scenario}" != hfl_failure ]] || return 1
-		printf '%s\n' images >>"${events}"
 	}
 	remove_managed_bridge_network() {
 		printf '%s\n' bridge >>"${events}"
 		[[ "${scenario}" != bridge_failure ]] || die "simulated shared network cleanup failure"
 		MANAGED_BRIDGE_NETWORK_REMOVED=1
+	}
+	remove_installation_images() {
+		printf 'images:%s:%s\n' "$1" "$2" >>"${events}"
+		[[ "${scenario}" != image_failure ]]
 	}
 	remove_complete_installation_root() { printf '%s\n' root >>"${events}"; }
 	remove_installation_files_preserving_data() { printf '%s\n' application-files >>"${events}"; }
@@ -357,31 +628,38 @@ run_uninstall_contract() (
 
 run_uninstall_contract managed
 mapfile -t default_events <"${fixture}/events-managed"
-[[ "${default_events[*]}" == 'gateway sourcelens:1 hfl images bridge data config root' ]]
+[[ "${default_events[*]}" == 'gateway hfl sourcelens:0 bridge images:1:1 data config root' ]]
 
 run_uninstall_contract purge --purge-all
 mapfile -t purge_events <"${fixture}/events-purge"
-[[ "${purge_events[*]}" == 'gateway sourcelens:1 hfl images bridge data config root' ]]
+[[ "${purge_events[*]}" == 'gateway hfl sourcelens:0 bridge images:1:1 data config root' ]]
 
 run_uninstall_contract keep --keep-data
 mapfile -t keep_events <"${fixture}/events-keep"
-[[ "${keep_events[*]}" == 'gateway sourcelens:0 hfl images bridge application-files' ]]
+[[ "${keep_events[*]}" == 'gateway hfl sourcelens:0 bridge images:1:1 application-files' ]]
 
 run_uninstall_contract selective --with-sourcelens
 mapfile -t selective_events <"${fixture}/events-selective"
-[[ "${selective_events[*]}" == 'sourcelens:0 hfl images' ]]
+[[ "${selective_events[*]}" == 'hfl sourcelens:0 images:1:1' ]]
+
+run_uninstall_contract selective_sourcelens_data \
+	--with-sourcelens --purge-sourcelens-data
+mapfile -t selective_sourcelens_data_events \
+	<"${fixture}/events-selective_sourcelens_data"
+[[ "${selective_sourcelens_data_events[*]}" == \
+	'hfl sourcelens:0 images:1:1 data' ]]
 
 run_uninstall_contract selective_config --purge-config
 mapfile -t selective_config_events <"${fixture}/events-selective_config"
-[[ "${selective_config_events[*]}" == 'hfl images config' ]]
+[[ "${selective_config_events[*]}" == 'hfl images:1:0 config' ]]
 
 run_uninstall_contract unmanaged
 mapfile -t unmanaged_events <"${fixture}/events-unmanaged"
-[[ "${unmanaged_events[*]}" == 'sourcelens:1 hfl images bridge data config root' ]]
+[[ "${unmanaged_events[*]}" == 'hfl sourcelens:0 bridge images:1:1 data config root' ]]
 
 run_uninstall_contract orphan
 mapfile -t orphan_events <"${fixture}/events-orphan"
-[[ "${orphan_events[*]}" == 'gateway sourcelens:1 hfl images bridge data config root' ]]
+[[ "${orphan_events[*]}" == 'gateway hfl sourcelens:0 bridge images:1:1 data config root' ]]
 
 if run_uninstall_contract docker_down >/dev/null 2>&1; then
 	printf 'plain uninstall continued without Docker\n' >&2
@@ -426,20 +704,28 @@ if run_uninstall_contract sourcelens_failure >/dev/null 2>&1; then
 	exit 1
 fi
 mapfile -t sourcelens_failure_events <"${fixture}/events-sourcelens_failure"
-[[ "${sourcelens_failure_events[*]}" == 'gateway sourcelens:1' ]]
+[[ "${sourcelens_failure_events[*]}" == 'gateway hfl sourcelens:0' ]]
 
 if run_uninstall_contract hfl_failure >/dev/null 2>&1; then
 	printf 'complete uninstall continued after HyperFileLens cleanup failure\n' >&2
 	exit 1
 fi
 mapfile -t hfl_failure_events <"${fixture}/events-hfl_failure"
-[[ "${hfl_failure_events[*]}" == 'gateway sourcelens:1 hfl' ]]
+[[ "${hfl_failure_events[*]}" == 'gateway hfl' ]]
 
 if run_uninstall_contract bridge_failure >/dev/null 2>&1; then
 	printf 'complete uninstall continued after shared network cleanup failure\n' >&2
 	exit 1
 fi
 mapfile -t bridge_failure_events <"${fixture}/events-bridge_failure"
-[[ "${bridge_failure_events[*]}" == 'gateway sourcelens:1 hfl images bridge' ]]
+[[ "${bridge_failure_events[*]}" == 'gateway hfl sourcelens:0 bridge' ]]
+
+if run_uninstall_contract image_failure >/dev/null 2>&1; then
+	printf 'complete uninstall continued after unverified image cleanup\n' >&2
+	exit 1
+fi
+mapfile -t image_failure_events <"${fixture}/events-image_failure"
+[[ "${image_failure_events[*]}" == \
+	'gateway hfl sourcelens:0 bridge images:1:1' ]]
 
 printf 'Release purge-all ownership and lifecycle contracts passed.\n'
