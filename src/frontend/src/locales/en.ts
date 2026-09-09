@@ -1963,10 +1963,12 @@ export const en = {
     installLeadMacos:
       'Copy into {terminal} and run with {sudo}. After installation, grant HyperFileLens Agent Full Disk Access in System Settings; otherwise it can protect only readable files.',
     installLeadUser: 'Copy and run the command as the current user. Do not use sudo or an elevated terminal.',
-    installLeadAutomatic:
-      'Copy and run the command using the identity you intend to protect. On Linux, a normal user installs continuous user-level protection; on Windows and macOS, a normal user installs current-user protection. Root or an elevated Administrator installs host-level protection. The installer reports the detected identity and never changes mode silently.',
+    installLeadAutomaticLinux:
+      'Run the command below in a shell on the target Linux host.\nAccess: Running it as a regular user uses that user\'s permissions; running it as root uses host-level permissions. The installer shows the installation mode before proceeding.',
+    installLeadAutomaticWindows:
+      'Run the command below in PowerShell on the target Windows host.\nAccess: Running it in a standard window uses the current user\'s permissions; running it in an elevated window uses host-level permissions. The installer shows the installation mode before proceeding.',
     installLeadAutomaticMacos:
-      'Copy and run the command using the identity you intend to protect. A normal user installs user-level protection; root installs host-level protection. The installer reports the detected identity and never changes mode silently. After installation, grant HyperFileLens Agent Full Disk Access in System Settings; otherwise it can protect only readable files.',
+      'Run the command below in Terminal on the target Mac.\nAccess: Running it as a regular user uses that user\'s permissions; running it as root uses host-level permissions. After installation, grant HyperFileLens Agent Full Disk Access.',
     installLeadAdministrator: 'Administrator',
     installLeadTerminal: 'Terminal',
     installFlowLabel: 'What This Command Does',

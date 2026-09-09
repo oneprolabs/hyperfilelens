@@ -45,6 +45,7 @@ function mountWizard() {
     global: {
       plugins: [i18n],
       stubs: {
+        I18nT: false,
         ElAlert: true,
         ElCheckbox: true,
         ElRadio: true,
@@ -78,6 +79,28 @@ describe('Node lifecycle enrollment token ownership', () => {
 
     expect(wrapper.get('.agent-install-wizard__console-pre').text()).toBe('install-windows')
     expect(mocks.revokeEnrollmentToken).not.toHaveBeenCalled()
+  })
+
+  it('shows installation guidance for the selected operating system', async () => {
+    mocks.issueEnrollmentInstall.mockResolvedValue(issued(4, 'install-command'))
+
+    const wrapper = mountWizard()
+    await flushPromises()
+    expect(wrapper.get('.agent-install-wizard__command-lead').text()).toContain(
+      'target Linux host',
+    )
+
+    await wrapper.setProps({ os: 'windows' })
+    await flushPromises()
+    expect(wrapper.get('.agent-install-wizard__command-lead').text()).toContain(
+      'target Windows host',
+    )
+
+    await wrapper.setProps({ os: 'macos' })
+    await flushPromises()
+    expect(wrapper.get('.agent-install-wizard__command-lead').text()).toContain(
+      'target Mac',
+    )
   })
 
   it('revokes a token returned by an obsolete request before its command is displayed', async () => {
