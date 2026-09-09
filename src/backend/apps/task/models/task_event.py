@@ -1,5 +1,7 @@
 from django.db import models
 
+from apps.task.event_text import neutral_event_metadata, neutral_event_text
+
 from .task import Task
 from .task_step import TaskStep
 
@@ -24,6 +26,13 @@ class TaskEvent(models.Model):
     message = models.TextField()
     metadata = models.JSONField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    def save(self, *args, **kwargs):
+        # Apply to both collection and later failure-detail refreshes. Keep the
+        # caller's metadata untouched so service logs retain engine diagnostics.
+        self.message = neutral_event_text(self.message)
+        self.metadata = neutral_event_metadata(self.metadata)
+        return super().save(*args, **kwargs)
 
     class Meta:
         db_table = "task_event"

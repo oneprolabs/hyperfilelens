@@ -3,6 +3,17 @@ import { en } from '../locales/en'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from './taskEventDisplay'
 
 describe('task event internationalization', () => {
+  it('localizes neutral collected events without exposing the engine name', () => {
+    const messages = [
+      ['Deleting repository engine snapshots for reset', 'deletingKopiaSnapshotsForReset'],
+      ['repository engine snapshot already absent; continuing reset cleanup', 'kopiaSnapshotAlreadyAbsent'],
+      ['Deleting physical repository engine snapshot', 'deletingPhysicalKopiaSnapshot'],
+    ] as const
+    for (const [message, key] of messages) {
+      expect(taskEventMessageKey(message)).toBe(`ops.task.eventMessage.${key}`)
+      expect(en.ops.task.eventMessage[key]).not.toMatch(/kopia/i)
+    }
+  })
   it('covers every repository cleanup step exposed by the backend', () => {
     const cleanupSteps = [
       'cleanup_direct_nas_repositories',
@@ -86,6 +97,12 @@ describe('task event internationalization', () => {
   })
 
   it('parses repository step status events', () => {
+    expect(parseTaskStepStatusEvent('Step REPOSITORY_snapshot running')).toEqual({
+      step: 'kopia_snapshot', status: 'running',
+    })
+    expect(parseTaskStepStatusEvent('Step delete_REPOSITORY_snapshots failed')).toEqual({
+      step: 'delete_kopia_snapshots', status: 'failed',
+    })
     expect(parseTaskStepStatusEvent('Step delete_physical_repository running')).toEqual({
       step: 'delete_physical_repository',
       status: 'running',

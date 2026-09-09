@@ -21,7 +21,9 @@ from apps.storage.services.internal.repository_operations import (
     schedule_due_maintenance,
     start_controller_repository_operation,
 )
-from apps.storage.services.internal.kopia_cli import KopiaExecutionLeaseLost, KopiaResult
+from apps.storage.services.internal.kopia_cli import (
+    KopiaCliError, KopiaExecutionLeaseLost, KopiaProcessTerminatedError, KopiaResult,
+)
 from apps.storage.services.internal.nas_repository import nas_agent_repository_subdir
 from apps.storage.services.internal.repository_location import (
     mark_repository_location_owned,
@@ -31,11 +33,82 @@ from apps.storage.services.internal.repository_location import (
     reserve_repository_location,
 )
 from apps.storage.tasks import execute_repository_operation
-from apps.task.models import Task
+from apps.task.models import Task, TaskStep
 from apps.task.services.interface import start_task
 
 
 class RepositoryTaskTests(TestCase):
+    @patch("apps.storage.tasks.sync_organization_repositories")
+    @patch("apps.storage.tasks.run_maintenance")
+    @patch("apps.storage.tasks.try_acquire_background_storage_capacity")
+    def test_terminated_maintenance_fails_actual_step_and_skips_successors(
+        self, acquire_capacity, run_maintenance, sync_repositories,
+    ):
+        discover_repository_execution_targets()
+        repository_task = create_repository_operation_task(
+            target_id=self.repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_FULL,
+        )
+        lease = MagicMock(valid=True)
+        lease.__enter__.return_value = lease
+        acquire_capacity.return_value = lease
+        run_maintenance.side_effect = KopiaProcessTerminatedError(signal_number=9)
+        with self.assertLogs("apps.storage.tasks", level="WARNING") as captured:
+            result = execute_repository_operation.run(repository_task_id=repository_task.id)
+        task = repository_task.task
+        task.refresh_from_db()
+        self.assertEqual(result["status"], Task.Status.FAILED)
+        self.assertEqual(task.current_step, "run_repository_operation")
+        self.assertEqual(list(task.steps.values_list("status", flat=True)), [
+            "success", "success", "failed", "skipped", "skipped",
+        ])
+        self.assertIn("stopped unexpectedly", task.error_message)
+        self.assertNotIn("memory", task.error_message.lower())
+        self.assertNotIn("kopia", task.error_code.lower())
+        self.assertIn("Kopia process was terminated by signal 9", captured.output[0])
+        terminal = task.events.get(message="Task finished with status failed")
+        self.assertEqual(terminal.step.step_name, "run_repository_operation")
+        self.assertNotIn("kopia", str(terminal.metadata).lower())
+        sync_repositories.assert_not_called()
+        count = task.events.count()
+        self.assertTrue(execute_repository_operation.run(repository_task_id=repository_task.id)["idempotent"])
+        self.assertEqual(task.events.count(), count)
+        self.assertEqual(run_maintenance.call_count, 1)
+
+    @patch("apps.storage.tasks.sync_organization_repositories", side_effect=RuntimeError("usage refresh failed"))
+    @patch("apps.storage.tasks.run_maintenance", return_value=KopiaResult(stdout="", stderr=""))
+    @patch("apps.storage.tasks.try_acquire_background_storage_capacity")
+    def test_usage_failure_preserves_successful_maintenance(self, acquire_capacity, _run, _sync):
+        discover_repository_execution_targets()
+        repository_task = create_repository_operation_task(
+            target_id=self.repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
+        lease = MagicMock(valid=True)
+        lease.__enter__.return_value = lease
+        acquire_capacity.return_value = lease
+        execute_repository_operation.run(repository_task_id=repository_task.id)
+        task = repository_task.task
+        task.refresh_from_db()
+        self.assertEqual(task.current_step, "refresh_repository_usage")
+        self.assertEqual(list(task.steps.values_list("status", flat=True)), [
+            "success", "success", "success", "failed", "skipped",
+        ])
+
+    def test_maintenance_error_messages_are_actionable(self):
+        from apps.storage.tasks import _repository_operation_error_message
+
+        for text, expected in [
+            ("Kopia CLI timed out after 120 seconds", "time limit"),
+            ("Kopia maintenance failed: AccessDenied", "credentials and permissions"),
+            ("Kopia connect failed: connection refused", "network connectivity"),
+            ("Kopia maintenance failed: opaque internal details", "service logs"),
+        ]:
+            with self.subTest(text=text):
+                message = _repository_operation_error_message(KopiaCliError(text))
+                self.assertIn(expected, message)
+                self.assertNotIn("kopia", message.lower())
+
     def setUp(self):
         self.org = Organization.objects.create(
             key="repository-task-org", name="Repository Task Org"
@@ -631,6 +704,7 @@ class RepositoryTaskTests(TestCase):
         )
         self.assertIsNone(repository_task.execution_target.active_task_id)
         self.assertIsNone(repository_task.execution_token)
+        self.assertFalse(repository_task.task.steps.filter(status=TaskStep.Status.RUNNING).exists())
         self.assertIsNotNone(
             repository_task.execution_target.maintenance_state.next_retry_at
         )
