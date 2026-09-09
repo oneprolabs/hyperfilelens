@@ -4931,11 +4931,9 @@ local_platform_gateway_agent_is_managed() {
 		&& "$(read_agent_env_value HFL_NODE_ROLE)" == "gateway" ]]
 }
 
-local_agent_installation_detected() {
+local_agent_canonical_artifacts_detected() {
 	local canonical_env="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
-	local legacy_env="${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}/agent.env"
 	[[ -e "${canonical_env}" || -L "${canonical_env}" \
-		|| -e "${legacy_env}" || -L "${legacy_env}" \
 		|| -e "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data/agent.db" \
 		|| -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data/agent.db" \
 		|| -e "${LOCAL_PLATFORM_AGENT_DATA_DIR}/INSTALLED_VERSION" \
@@ -4943,16 +4941,72 @@ local_agent_installation_detected() {
 		|| -e "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh" \
 		|| -L "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh" \
 		|| -e "${LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR}/install.sh" \
-		|| -L "${LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR}/install.sh" \
-		|| -e "${LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE}" \
+		|| -L "${LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR}/install.sh" ]]
+}
+
+local_agent_legacy_data_detected() {
+	local legacy_env="${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}/agent.env"
+	[[ -e "${legacy_env}" || -L "${legacy_env}" ]]
+}
+
+local_agent_service_detected() {
+	[[ -e "${LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE}" \
 		|| -L "${LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE}" ]]
+}
+
+local_agent_installation_detected() {
+	local_agent_canonical_artifacts_detected \
+		|| local_agent_legacy_data_detected \
+		|| local_agent_service_detected
+}
+
+local_agent_trusted_uninstaller() {
+	local canonical="${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh"
+	local legacy="${LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR}/install.sh"
+	if [[ -f "${canonical}" && ! -L "${canonical}" ]]; then
+		printf '%s' "${canonical}"
+		return 0
+	fi
+	if [[ -f "${legacy}" && ! -L "${legacy}" ]]; then
+		printf '%s' "${legacy}"
+		return 0
+	fi
+	return 1
+}
+
+fail_local_agent_installation_conflict() {
+	local uninstaller=""
+	uninstaller="$(local_agent_trusted_uninstaller || true)"
+	printf '[%s] %s\n\n' \
+		"$(hfl_color_level FAIL)" \
+		"$(hfl_finish_sentence 'A conflicting HyperFileLens Agent installation was detected')" >&2
+	if local_agent_canonical_artifacts_detected; then
+		printf '       %-17s %s\n' 'Agent root' "${LOCAL_PLATFORM_AGENT_DATA_DIR}" >&2
+	fi
+	if local_agent_legacy_data_detected; then
+		printf '       %-17s %s\n' 'Legacy data' "${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}" >&2
+	fi
+	if local_agent_service_detected; then
+		printf '       %-17s %s\n' 'Service' "${LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE}" >&2
+	fi
+	if [[ -n "${uninstaller}" ]]; then
+		printf '\n       Uninstall the existing Agent, then run this installer again:\n\n' >&2
+		printf '         sudo %s uninstall\n' "${uninstaller}" >&2
+	else
+		printf '       %-17s %s\n' 'Agent installer' 'not found' >&2
+		printf '\n       The Agent was not completely uninstalled. Remove the listed residual\n' >&2
+		printf '       resources, then run this installer again.\n' >&2
+	fi
+	printf '\n       Alternatively, install HyperFileLens on another host.\n' >&2
+	printf '       No Agent, Docker service, or configuration was changed.\n' >&2
+	exit 1
 }
 
 preflight_local_platform_gateway_agent_conflict() {
 	platform_gateway_auto_deploy_enabled || return 0
 	local_agent_installation_detected || return 0
 	local_platform_gateway_agent_is_managed && return 0
-	die "Cannot install the Platform Data Gateway because a HyperFileLens Agent is already installed on this host. Uninstall the existing Agent and run the installer again, or use another host without a HyperFileLens Agent. No changes were made to the existing Agent, Docker services, or configuration"
+	fail_local_agent_installation_conflict
 }
 
 uninstall_managed_local_platform_gateway() {
