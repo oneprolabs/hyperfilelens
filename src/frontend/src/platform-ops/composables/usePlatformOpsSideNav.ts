@@ -1,9 +1,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  Container,
   Cpu,
   Network,
-  Settings,
 } from 'lucide-vue-next'
 import type { MenuItem } from '../../components/ModulePage.vue'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
@@ -39,7 +39,7 @@ export function usePlatformOpsSideNav() {
         {
           label: t('platformOps.nav.platformRuntime'),
           to: '/platform-ops/platform/runtime-environment',
-          icon: Settings,
+          icon: Container,
           pageTitle: t('platformOps.settings.environmentTitle'),
         },
       ],

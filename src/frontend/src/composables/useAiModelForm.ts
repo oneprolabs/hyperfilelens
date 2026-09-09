@@ -181,7 +181,10 @@ export function aiModelConnectionTestFailureDetail(result: unknown, fallback: st
 }
 
 function providerDisplayName(row: AiCatalogProvider) {
-  return row.label || row.name || aiProviderLabel(row.id, row.id)
+  const canonicalLabel = aiProviderLabel(row.id, row.id)
+  return canonicalLabel !== row.id
+    ? canonicalLabel
+    : row.label || row.name || canonicalLabel
 }
 
 export function useAiModelForm(editingUuid: Ref<string | null>) {

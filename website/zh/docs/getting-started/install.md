@@ -58,3 +58,5 @@ sudo /opt/hyperfilelens/install.sh status
 | `Platform Ops` | 平台管理控制台，用于 AI 模型、系统配置和平台运维 |
 
 首次使用时，在 `HyperFileLens` 下复制 `URL` 并通过浏览器打开，然后使用同一区域显示的 `Email` 和 `Password` 登录。首次登录后请立即修改初始密码。备份、恢复和智能洞察在产品控制台中完成；配置 AI 模型或执行平台管理操作时，才需进入 `Platform Ops`。
+
+如果远程用户、Agent 或 Data Gateway 需要通过 NAT、公网 IP 或域名连接，请在登录后先[配置外部访问](/zh/docs/getting-started/configure-external-access)，再添加远程备份源。全部组件都能通过安装结果中的地址访问时，可以跳过该步骤。

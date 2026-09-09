@@ -498,6 +498,81 @@ publish_archives() {
 		hfl_log_ok "Published ${name}"
 	done
 
+	hfl_log_step "Writing release package manifest"
+	RELEASE_DIR_VALUE="${RELEASES_DIR}/${VERSION}" python3 - <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+
+release_dir = Path(os.environ["RELEASE_DIR_VALUE"])
+artifacts = []
+for path in sorted(release_dir.iterdir()):
+    if not path.is_file() or path.name == "RELEASE_MANIFEST.json":
+        continue
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    normalized = path.name.lower()
+    ubuntu_bundle = any(
+        marker in normalized for marker in ("ubuntu2004", "ubuntu2204", "ubuntu2404")
+    )
+    container_image = (
+        ("image" in normalized or "container" in normalized)
+        and normalized.endswith((".tar", ".tar.gz", ".tgz"))
+    )
+    if container_image:
+        group = "images"
+        target = "platform_runtime"
+        package_type = "container_image"
+    elif path.name.startswith("hfl-agent-"):
+        group = "node"
+        target = "proxy_host_data_gateway" if ubuntu_bundle else "source_host"
+        package_type = "ubuntu_offline_bundle" if ubuntu_bundle else "standard_package"
+    else:
+        group = "tools"
+        target = "data_gateway" if "gateway" in normalized else "source_host_proxy_host"
+        package_type = "bootstrap_script"
+    if "windows" in normalized:
+        platform = "windows"
+    elif "darwin" in normalized or "macos" in normalized:
+        platform = "macos"
+    elif "linux" in normalized or "ubuntu" in normalized:
+        platform = "linux"
+    else:
+        platform = "all"
+    if "amd64" in normalized:
+        architecture = "amd64"
+    elif "arm64" in normalized:
+        architecture = "arm64"
+    else:
+        architecture = "all"
+    artifacts.append(
+        {
+            "name": path.name,
+            "size_bytes": path.stat().st_size,
+            "sha256": digest.hexdigest(),
+            "group": group,
+            "target": target,
+            "platform": platform,
+            "architecture": architecture,
+            "package_type": package_type,
+        }
+    )
+if not artifacts:
+    raise SystemExit("release package manifest cannot be empty")
+manifest_path = release_dir / "RELEASE_MANIFEST.json"
+temporary_path = release_dir / "RELEASE_MANIFEST.json.tmp"
+temporary_path.write_text(
+    json.dumps({"schema_version": 1, "artifacts": artifacts}, indent=2) + "\n",
+    encoding="utf-8",
+)
+temporary_path.replace(manifest_path)
+PY
+	chmod 644 "${RELEASES_DIR}/${VERSION}/RELEASE_MANIFEST.json"
+	hfl_log_ok "Published RELEASE_MANIFEST.json"
+
 	hfl_log_step "Publishing hfl-enroll binaries"
 	mkdir -p "${ENROLL_BOOTSTRAP_DIR}"
 	for item in ${MATRIX}; do

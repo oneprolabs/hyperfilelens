@@ -12,6 +12,7 @@ const PROVIDER_ICON_SLUGS = new Set([
   'moonshot',
   'nvidia',
   'openai',
+  'openai-compatible',
   'openrouter',
   'qwen',
   'xai',
@@ -21,6 +22,7 @@ const PROVIDER_ICON_SLUGS = new Set([
 const PROVIDER_ICON_ALIASES: Record<string, string> = {
   amazon_nova: 'aws',
   azure_openai: 'azure',
+  openai_compatible: 'openai-compatible',
   claude: 'anthropic',
   dashscope: 'qwen',
   meta_llama: 'meta',

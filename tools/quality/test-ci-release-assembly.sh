@@ -8,6 +8,8 @@ version="${HFL_TEST_VERSION:-1.2.3}"
 edition="${HFL_TEST_EDITION:-community}"
 image_version="${version}"
 [[ "${edition}" == community ]] || image_version="${version}-ee"
+package_suffix=""
+[[ "${edition}" == community ]] || package_suffix="-ee"
 commit="0123456789abcdef0123456789abcdef01234567"
 tmp="$(mktemp -d "${ROOT}/build/ci-assembly-test.XXXXXX")"
 trap 'rm -rf "${tmp}"' EXIT
@@ -203,6 +205,17 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 		--version "${version}" \
 		--commit "${commit}" \
 		--edition "${edition}"
+
+agent_manifest="${output}/staging/hyperfilelens-${version}${package_suffix}/payload/media/agent-releases/${version}/RELEASE_MANIFEST.json"
+jq -e '
+  .schema_version == 1
+  and (.artifacts | length) == 8
+  and ([.artifacts[].name] | index("linux-amd64.fixture")) != null
+  and ([.artifacts[].name] | index("linux-arm64.fixture")) != null
+  and ([.artifacts[].name] | index("darwin-amd64.fixture")) != null
+  and ([.artifacts[].name] | index("darwin-arm64.fixture")) != null
+  and ([.artifacts[].name] | index("windows-amd64.fixture")) != null
+' "${agent_manifest}" >/dev/null
 
 (
 	cd "${output}/dist"

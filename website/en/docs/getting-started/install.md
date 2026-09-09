@@ -56,3 +56,5 @@ After a successful installation, the `Access` section lists these endpoints:
 | `Platform Ops` | Platform administration console for AI models, system configuration, and operations |
 
 For first-time use, copy the `URL` listed under `HyperFileLens` and open it in your browser. Sign in with the `Email` and `Password` shown in the same section, then change the initial password immediately. Backup, restore, and Insights workflows run in the product console. Open `Platform Ops` only to configure AI models or perform platform administration.
+
+If remote users, Agents, or Data Gateways connect through NAT, a public IP address, or a domain, [configure external access](/docs/getting-started/configure-external-access) after signing in and before adding a remote backup source. Skip that step when every component can use the address shown by the installer.

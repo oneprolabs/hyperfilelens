@@ -93,8 +93,12 @@ describe('Spanish language pack', () => {
       'Las habilidades desactivadas',
     )
     expect(spanish.insight.dataGateway.deleteForceTitle).toBe(
-      'Limpieza forzada del Data Gateway',
+      'Limpieza forzada de la puerta de enlace de datos',
     )
+    expect(spanish.protection.side.sourceAgents).toBe('Hosts proxy')
+    expect(spanish.insight.side.copilot).toBe('Copiloto de IA')
+    expect(spanish.insight.side.dataGateway).toBe('Puertas de enlace de datos')
+    expect(spanish.platformOps.nav.engineGateways).toBe('Puertas de enlace de datos')
     expect(spanish.insight.kb.sourceTypeGatewayLocalDemoHint).toContain(
       'es solo una vista previa',
     )

@@ -122,7 +122,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
     <header class="site-header-wrap">
       <div class="site-header">
         <a class="brand" href="/zh/" aria-label="HyperFileLens 首页">
-          <img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-on-light.png" alt="HyperFileLens" />
+          <img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-transparent-on-light.png" alt="HyperFileLens" />
         </a>
         <nav aria-label="主导航">
           <a href="#use-cases">使用场景</a>
@@ -333,7 +333,7 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
 
     <footer>
       <div class="footer-brand">
-        <a class="brand" href="/zh/"><img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-on-light.png" alt="HyperFileLens" /></a>
+        <a class="brand" href="/zh/"><img class="brand-lockup" src="/brand/images/hyperfilelens-lockup-transparent-on-light.png" alt="HyperFileLens" /></a>
         <p>开源备份工具，内置 Agentic AI 洞察能力，由 OneProLabs 出品。</p>
         <a class="footer-social" :href="githubUrl" target="_blank" rel="noopener noreferrer" aria-label="HyperFileLens GitHub 仓库"><svg aria-hidden="true"><use href="#icon-github" /></svg></a>
       </div>
