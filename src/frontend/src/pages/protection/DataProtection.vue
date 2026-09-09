@@ -2801,6 +2801,11 @@ watch(step1Selection, () => {
   nextTick(() => syncStep2TableSelection())
 })
 
+// Rebuild Element Plus' reserved row keys after filtering or paging removes a selection.
+watch(step3SourceSelection, () => {
+  nextTick(() => syncStep3TableSelection())
+})
+
 watch(backupSelectableRows, (list) => {
   const visibleIds = new Set(list.map((row) => row.id))
   const nextSelectedIds = selectedSourceIds.value.filter((id) => visibleIds.has(id))
