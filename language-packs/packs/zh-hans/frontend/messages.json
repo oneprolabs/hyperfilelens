@@ -6745,8 +6745,8 @@
       "admin": "管理员"
     },
     "methodLabel": "登录方式",
-    "passwordMethod": "密码",
-    "emailCodeMethod": "邮箱验证码登录",
+    "passwordMethod": "密码登录",
+    "emailCodeMethod": "邮箱验证码",
     "emailCodePlaceholder": "请输入 6 位验证码",
     "emailCodeSend": "获取验证码",
     "emailCodeSending": "发送中…",

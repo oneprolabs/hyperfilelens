@@ -4446,7 +4446,7 @@ export const en = {
     passwordErrIncorrect: 'Incorrect password',
     methodLabel: 'Sign-in method',
     passwordMethod: 'Password',
-    emailCodeMethod: 'Email code',
+    emailCodeMethod: 'Verification Code',
     emailCodePlaceholder: '6-digit verification code',
     emailCodeSend: 'Send code',
     emailCodeSending: 'Sending...',
