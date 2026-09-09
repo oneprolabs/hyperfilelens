@@ -1,6 +1,10 @@
 """Protection backup orchestration defaults (override via Django settings)."""
 
+import logging
+
 from project.settings.env import env_bool, env_int, env_str
+
+logger = logging.getLogger(__name__)
 
 PROTECTION_BACKUP_CORRELATION_TYPE = "protection.backup"
 PROTECTION_BACKUP_POLICY_PREPARE_CORRELATION_TYPE = "protection.backup.policy_prepare"
@@ -28,9 +32,50 @@ PROTECTION_BACKUP_QUEUE_STALE_SECONDS = env_int(
 PROTECTION_BACKUP_QUEUE_RECOVERY_GRACE_SECONDS = env_int(
     "PROTECTION_BACKUP_QUEUE_RECOVERY_GRACE_SECONDS", 120
 )
-PROTECTION_BACKUP_DIRECTORY_CONCURRENCY = env_str(
+_BACKUP_DIRECTORY_CONCURRENCY_DEFAULT = 2
+_BACKUP_DIRECTORY_CONCURRENCY_MAX = 2
+
+
+def _backup_directory_concurrency(raw_value: str) -> int:
+    """Return a bounded concurrency compatible with the Agent snapshot scheduler."""
+    normalized = str(raw_value or "").strip().lower()
+    if normalized == "serial":
+        return 1
+    if normalized == "parallel":
+        logger.warning(
+            "PROTECTION_BACKUP_DIRECTORY_CONCURRENCY=parallel is deprecated; "
+            "using the safe Agent-aligned limit of %s",
+            _BACKUP_DIRECTORY_CONCURRENCY_DEFAULT,
+        )
+        return _BACKUP_DIRECTORY_CONCURRENCY_DEFAULT
+    try:
+        configured = int(normalized)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid PROTECTION_BACKUP_DIRECTORY_CONCURRENCY=%r; using %s",
+            raw_value,
+            _BACKUP_DIRECTORY_CONCURRENCY_DEFAULT,
+        )
+        return _BACKUP_DIRECTORY_CONCURRENCY_DEFAULT
+    if 1 <= configured <= _BACKUP_DIRECTORY_CONCURRENCY_MAX:
+        return configured
+    logger.warning(
+        "Invalid PROTECTION_BACKUP_DIRECTORY_CONCURRENCY=%r; using %s",
+        raw_value,
+        _BACKUP_DIRECTORY_CONCURRENCY_DEFAULT,
+    )
+    return _BACKUP_DIRECTORY_CONCURRENCY_DEFAULT
+
+
+_BACKUP_DIRECTORY_CONCURRENCY_RAW = env_str(
     "PROTECTION_BACKUP_DIRECTORY_CONCURRENCY",
-    "parallel",
+    str(_BACKUP_DIRECTORY_CONCURRENCY_DEFAULT),
+)
+PROTECTION_BACKUP_DIRECTORY_CONCURRENCY = _backup_directory_concurrency(
+    _BACKUP_DIRECTORY_CONCURRENCY_RAW
+)
+PROTECTION_BACKUP_DIRECTORY_FAIL_FAST = (
+    _BACKUP_DIRECTORY_CONCURRENCY_RAW.strip().lower() == "serial"
 )
 
 PROTECTION_BACKUP_SUBSTANTIVE_STALL_WARN_SECONDS = env_int(

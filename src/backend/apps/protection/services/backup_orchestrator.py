@@ -150,6 +150,26 @@ def _directory_in_progress(status: str) -> bool:
     return str(status or "").strip().lower() in _DIRECTORY_IN_PROGRESS
 
 
+def _available_backup_dispatch_slots(*, node: Node) -> int:
+    """Serialize capacity reservation and return free Backup slots for one Agent."""
+    # advance_backup() owns the surrounding transaction. Locking the execution
+    # node makes the active-count-plus-NodeTask-create sequence safe across
+    # different backup tasks and workers. Agent delivery runs on_commit, so no
+    # WebSocket I/O occurs while this short database lock is held.
+    Node.objects.select_for_update().only("id").get(
+        pk=node.id,
+        organization_id=node.organization_id,
+    )
+    active = NodeTask.objects.filter(
+        organization_id=node.organization_id,
+        node_id=node.id,
+        correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+        kind__in=protection_conf.PROTECTION_BACKUP_NODE_TASK_KINDS,
+        status__in={NodeTask.Status.PENDING, NodeTask.Status.RUNNING},
+    ).count()
+    return max(0, protection_conf.PROTECTION_BACKUP_DIRECTORY_CONCURRENCY - active)
+
+
 def _redeliver_pending_node_task_after_commit(*, node_task: NodeTask) -> None:
     """Resume persisted work only after the orchestration transaction commits."""
     task_id = str(node_task.id)
@@ -186,13 +206,6 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
         return "AGENT_RESTARTED", last_error
     if "progress stall" in lower or "kopia_progress_stall" in lower:
         return "KOPIA_PROGRESS_STALL", last_error
-    if (
-        "signal" in lower
-        or "sigkill" in lower
-        or "exit 137" in lower
-        or "exit 9" in lower
-    ):
-        return "KOPIA_SIGNAL_KILLED", last_error or "Kopia process was killed."
     if node_task.status == NodeTask.Status.FAILED:
         structured_error = str(result.get("error_code") or "")
         repository_server_code = repository_server_diagnostic_code(result, last_error)
@@ -225,23 +238,7 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
             return "POLICY_APPLY_FAILED", (
                 public_message or f"Backup repository policy {phase} failed."
             )[:2000]
-        failure_details = bt.extract_kopia_snapshot_failure_details(result)
-        if failure_details and all(
-            bt._is_windows_file_lock_error(item["error"]) for item in failure_details
-        ):
-            message = bt.extract_kopia_failure_message(result, last_error=last_error)
-            return "SOURCE_FILE_LOCKED", message[:2000]
-        message = bt.extract_kopia_failure_message(result, last_error=last_error)
-        if not message:
-            message = last_error or "Agent backup command failed."
-        lower = message.lower()
-        if "unable to get policy tree" in lower or "policy not found" in lower:
-            return "KOPIA_POLICY_NOT_FOUND", message[:2000]
-        if "fatal error" in lower or "error when processing" in lower:
-            return "KOPIA_SNAPSHOT_FATAL", message[:2000]
-        if "exit" in lower or bt._is_generic_exit_message(last_error):
-            return "KOPIA_PROCESS_DIED", message[:2000]
-        return "AGENT_BACKUP_FAILED", message[:2000]
+        return bt.classify_kopia_execution_failure(result, last_error=last_error)
     return bt._directory_error(
         type(
             "Outcome",
@@ -969,7 +966,8 @@ def _dispatch_directory_backup(
     agent_source_path: str,
     source_path: str,
     task_kind: str = "backup.run",
-) -> None:
+    allow_new_task: bool = True,
+) -> bool:
     bt = _bt()
     operation_id = f"{task.task_uuid}-{directory_row.backup_config_dir_id}"
     operation_attempt = int(directory_row.retry_count or 0) + 1
@@ -1014,11 +1012,11 @@ def _dispatch_directory_backup(
                 snapshot_id=snapshot_id,
                 source_path=directory_row.source_path or source_path,
             )
-            return
+            return False
         directory_row.status = BackupSourceSnapshotDirectory.Status.RUNNING
         directory_row.node_task_id = existing.id
         directory_row.save(update_fields=["status", "node_task_id", "updated_at"])
-        return
+        return False
     if existing is not None and existing.status not in _NODE_TASK_TERMINAL:
         ensure_snapshot_repository_locator(
             directory=directory_row,
@@ -1038,7 +1036,10 @@ def _dispatch_directory_backup(
         )
         if existing.status == NodeTask.Status.PENDING:
             _redeliver_pending_node_task_after_commit(node_task=existing)
-        return
+        return False
+
+    if not allow_new_task:
+        return False
 
     ensure_snapshot_repository_locator(
         directory=directory_row,
@@ -1105,6 +1106,7 @@ def _dispatch_directory_backup(
             "object_name": source_path,
         },
     )
+    return True
 
 
 def _append_directory_snapshot_created_event(
@@ -1140,6 +1142,31 @@ def _append_directory_snapshot_created_event(
     )
 
 
+def _late_backup_result_matches_current_attempt(
+    *,
+    directory_row: BackupSourceSnapshotDirectory,
+    node_task: NodeTask,
+) -> bool:
+    """Fence late success to the directory's currently bound execution attempt."""
+    if directory_row.node_task_id != node_task.id or node_task.accepted_at is None:
+        return False
+    result = node_task.result if isinstance(node_task.result, dict) else {}
+    if result.get("delivery_timeout_sealed") is True:
+        return False
+    payload = node_task.payload if isinstance(node_task.payload, dict) else {}
+    expected_operation_id = (
+        f"{directory_row.source_snapshot.task_uuid}-"
+        f"{directory_row.backup_config_dir_id}"
+    )
+    if str(payload.get("operation_id") or "") != expected_operation_id:
+        return False
+    try:
+        operation_attempt = int(payload.get("operation_attempt") or 0)
+    except (TypeError, ValueError):
+        return False
+    return operation_attempt == int(directory_row.retry_count or 0) + 1
+
+
 def _maybe_adopt_late_success(
     *,
     task: Task,
@@ -1152,6 +1179,11 @@ def _maybe_adopt_late_success(
     if node_task.status != NodeTask.Status.SUCCESS:
         return False
     if directory_row.error_code not in protection_conf.LATE_SUCCESS_ADOPT_ERROR_CODES:
+        return False
+    if not _late_backup_result_matches_current_attempt(
+        directory_row=directory_row,
+        node_task=node_task,
+    ):
         return False
     previous_error_code = directory_row.error_code
     adopt_window = protection_conf.PROTECTION_BACKUP_LATE_SUCCESS_ADOPT_SECONDS
@@ -2437,8 +2469,10 @@ def advance_backup(
             }
     serial = (
         backup_protocol == _BACKUP_PROTOCOL_LEGACY
-        and protection_conf.PROTECTION_BACKUP_DIRECTORY_CONCURRENCY.strip().lower()
-        == "serial"
+        and protection_conf.PROTECTION_BACKUP_DIRECTORY_FAIL_FAST
+    )
+    available_dispatch_slots = _available_backup_dispatch_slots(
+        node=execution_target.node
     )
     prior_failed = False
 
@@ -2568,7 +2602,7 @@ def advance_backup(
                         "updated_at",
                     ]
                 )
-            _dispatch_directory_backup(
+            dispatched_new_task = _dispatch_directory_backup(
                 task=task,
                 source_snapshot=source_snapshot,
                 directory_row=directory_row,
@@ -2582,7 +2616,10 @@ def advance_backup(
                 agent_source_path=agent_source_path,
                 source_path=source_path,
                 task_kind=dispatch_kind,
+                allow_new_task=available_dispatch_slots > 0,
             )
+            if dispatched_new_task:
+                available_dispatch_slots -= 1
             directory_row.refresh_from_db()
 
         if directory_row.status not in _DIRECTORY_TERMINAL:
@@ -2656,6 +2693,19 @@ def advance_backup(
     rows = list(
         BackupSourceSnapshotDirectory.objects.filter(source_snapshot=source_snapshot)
     )
+    if any(row.status == BackupSourceSnapshotDirectory.Status.PENDING for row in rows) and not any(
+        row.status in {
+            BackupSourceSnapshotDirectory.Status.DISPATCHING,
+            BackupSourceSnapshotDirectory.Status.RUNNING,
+            BackupSourceSnapshotDirectory.Status.CREATING,
+        }
+        for row in rows
+    ):
+        from apps.protection.services.progress.backup_runtime import (
+            sync_backup_task_progress,
+        )
+
+        sync_backup_task_progress(task=task, source_snapshot=source_snapshot)
     if not rows or any(_directory_in_progress(row.status) for row in rows):
         successful = sum(
             1
@@ -3094,6 +3144,11 @@ def project_backup_node_task_result(*, node_task_id) -> dict[str, Any]:
         BackupSourceSnapshotDirectory.Status.FAILED
     }:
         return {"status": "ignored", "reason": "directory_not_recoverable"}
+    if not _late_backup_result_matches_current_attempt(
+        directory_row=directory,
+        node_task=node_task,
+    ):
+        return {"status": "ignored", "reason": "execution_attempt_mismatch"}
 
     bt = _bt()
     snapshot_id, size_bytes, file_count, dir_count, stats = (

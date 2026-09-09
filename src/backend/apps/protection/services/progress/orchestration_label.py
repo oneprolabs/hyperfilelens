@@ -52,6 +52,27 @@ def backup_orchestration_label_meta(
             "label_args": {"name": name},
         }, "stalled"
 
+    running = int(aggregate.get("lanes_running") or 0)
+    queued = int(aggregate.get("lanes_queued") or 0)
+    done = int(aggregate.get("lanes_done") or 0)
+    total = int(aggregate.get("lanes_total") or 0)
+    if queued > 0:
+        phase = "transferring" if running > 0 and has_transfer_progress(lanes) else "estimating"
+        if running > 0:
+            return {
+                "label_key": "protection.taskProgress.backup.runningQueued",
+                "label_args": {
+                    "running": running,
+                    "queued": queued,
+                    "done": done,
+                    "total": total,
+                },
+            }, phase
+        return {
+            "label_key": "protection.taskProgress.backup.queued",
+            "label_args": {"queued": queued, "done": done, "total": total},
+        }, "queued"
+
     active = any(
         str(lane.get("status") or "").lower() in {"running", "dispatching", "creating"}
         for lane in lanes

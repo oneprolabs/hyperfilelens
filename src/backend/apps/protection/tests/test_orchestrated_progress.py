@@ -61,6 +61,17 @@ class OrchestratedProgressTests(SimpleTestCase):
         self.assertGreaterEqual(percent, BACKUP_PREPARE_END)
         self.assertLessEqual(percent, BACKUP_ESTIMATE_END)
 
+    def test_backup_queued_stays_at_prepare_progress(self):
+        task = _TaskStub(progress=BACKUP_PREPARE_END, current_step="kopia_snapshot")
+
+        percent = orchestrated_task_percent(
+            task=task,
+            kopia_payload={"orchestration_phase": "queued", "aggregate": {}},
+            kind="backup",
+        )
+
+        self.assertEqual(percent, BACKUP_PREPARE_END)
+
     def test_restore_transferring_maps_kopia_percent(self):
         task = _TaskStub(current_step="restore")
         kopia_payload = {

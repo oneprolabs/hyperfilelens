@@ -30,6 +30,8 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
             "upload_speed_bps": None,
             "eta_seconds": None,
             "lanes_done": 0,
+            "lanes_running": 0,
+            "lanes_queued": 0,
             "lanes_total": 0,
             "slowest_lane": None,
         }
@@ -50,6 +52,8 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
     upload_speeds: list[int] = []
     eta_candidates: list[tuple[dict[str, Any], int]] = []
     lanes_done = 0
+    lanes_running = 0
+    lanes_queued = 0
     lanes_total = len(lanes)
     schema_version = 1
 
@@ -57,6 +61,10 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         status = str(lane.get("status") or "").lower()
         if status in _DONE_STATUSES:
             lanes_done += 1
+        elif status == "pending":
+            lanes_queued += 1
+        elif status in {"dispatching", "running", "creating"}:
+            lanes_running += 1
         normalized = lane.get("progress") or {}
         if not isinstance(normalized, dict):
             normalized = {}
@@ -172,6 +180,8 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         "upload_speed_bps": upload_speed_bps,
         "eta_seconds": eta_seconds,
         "lanes_done": lanes_done,
+        "lanes_running": lanes_running,
+        "lanes_queued": lanes_queued,
         "lanes_total": lanes_total,
         "slowest_lane": slowest_lane,
     }

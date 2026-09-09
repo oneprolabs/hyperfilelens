@@ -3644,6 +3644,7 @@ function snapshotStatusLabel(status?: string) {
   if (normalized === 'partial') return t('protection.backupsPage.snapshotStatusPartial')
   if (normalized === 'failed') return t('protection.backupsPage.snapshotStatusFailed')
   if (normalized === 'creating') return t('protection.backupsPage.snapshotStatusCreating')
+  if (normalized === 'pending') return t('protection.backupsPage.snapshotStatusQueued')
   if (normalized === 'deleted') return t('protection.backupsPage.snapshotStatusDeleted')
   if (normalized === 'deleting') return t('protection.backupsPage.snapshotStatusDeleting')
   if (normalized === 'delete_failed') return t('protection.backupsPage.snapshotStatusDeleteFailed')
