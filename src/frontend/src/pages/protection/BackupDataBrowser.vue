@@ -625,9 +625,12 @@ function scheduleDirectoryLoad(directory: BackupSourceSnapshotDirectory, path = 
 
 async function applySnapshotDetail(
   detail: BackupSourceSnapshot,
-  options: { restoreSelection?: boolean } = {},
+  options: { restoreSelection?: boolean; preserveBrowsers?: boolean } = {},
 ) {
   activeSnapshotDetail.value = detail
+  snapshotRows.value = snapshotRows.value.map((row) => row.id === detail.id ? detail : row)
+  snapshotDetailLoading.value = false
+  if (options.preserveBrowsers) return
   const browsableDirectories = browsableSnapshotDirectories(detail)
   const requestedDirectoryId = options.restoreSelection ? positiveQueryNumber(route.query.directory) : 0
   const directory = browsableDirectories.find((candidate) => candidate.id === requestedDirectoryId)
@@ -645,7 +648,7 @@ async function applySnapshotDetail(
 
 async function loadSnapshotDetail(
   snapshotId: number,
-  options: { restoreSelection?: boolean } = {},
+  options: { restoreSelection?: boolean; preserveBrowsers?: boolean } = {},
 ) {
   const currentEndpoint = endpoint.value
   const revision = ++snapshotDetailRequestRevision
@@ -672,7 +675,7 @@ async function loadSnapshotDetail(
     }
   } finally {
     requests.releaseSignal('backup-data-browser-detail', signal)
-    if (revision === snapshotDetailRequestRevision && !activeSnapshotDetail.value) {
+    if (revision === snapshotDetailRequestRevision) {
       snapshotDetailLoading.value = false
     }
   }
@@ -1631,6 +1634,19 @@ watch(
             {{ formatNullableTime(activeSnapshot.finished_at || activeSnapshot.started_at || activeSnapshot.created_at) }}
           </span>
         </div>
+        <button
+          type="button"
+          class="backup-data-snapshot-drawer__refresh"
+          :title="t('common.refresh')"
+          :aria-label="t('common.refresh')"
+          :disabled="snapshotDetailLoading || !activeSnapshotId"
+          @click="loadSnapshotDetail(activeSnapshotId, { preserveBrowsers: true })"
+        >
+          <RefreshCw
+            :size="18"
+            :class="{ 'snapshot-status-tag__spinner': snapshotDetailLoading }"
+          />
+        </button>
       </div>
     </template>
 
@@ -2045,7 +2061,15 @@ watch(
 
 <style scoped>
 .snapshot-status-tag {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.snapshot-status-tag :deep(.el-tag__content) {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
 
 .snapshot-status-tag__spinner {
@@ -2326,6 +2350,30 @@ watch(
 .backup-data-snapshot-drawer__heading {
   min-width: 0;
   flex: 0 1 auto;
+}
+
+.backup-data-snapshot-drawer__refresh {
+  display: inline-flex;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 6px;
+  color: rgb(71 85 105);
+  background: transparent;
+  cursor: pointer;
+}
+
+.backup-data-snapshot-drawer__refresh:hover:not(:disabled) {
+  background: rgb(241 245 249);
+  color: rgb(15 23 42);
+}
+
+.backup-data-snapshot-drawer__refresh:disabled {
+  color: rgb(148 163 184);
+  cursor: not-allowed;
 }
 
 .backup-data-snapshot-drawer__heading h2 {
@@ -2698,11 +2746,6 @@ watch(
 .backup-data-browser-source-tree__group.is-disabled .backup-data-browser-table__file-icon,
 .backup-data-browser-source-tree__group.is-disabled .backup-data-browser-source-tree__chevron {
   color: rgb(148 163 184);
-}
-
-.backup-data-browser-source-tree__group.is-disabled .el-tag {
-  filter: grayscale(1);
-  opacity: 0.72;
 }
 
 .backup-data-browser-source-tree__children {
