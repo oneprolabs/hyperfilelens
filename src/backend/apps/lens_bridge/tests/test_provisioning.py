@@ -4,8 +4,12 @@ from unittest.mock import MagicMock, call, patch
 from django.test import SimpleTestCase
 from rest_framework.exceptions import ValidationError
 
+from apps.lens_bridge.models import LensGatewayLink
 from apps.lens_bridge.services import sl_client
-from apps.lens_bridge.services.provisioning import _lensnode_matches_workspace
+from apps.lens_bridge.services.provisioning import (
+    _lensnode_matches_workspace,
+    apply_gateway_lensnode_snapshot,
+)
 
 
 class SlClientErrorFormatTests(SimpleTestCase):
@@ -292,6 +296,26 @@ class SlLensnodeSnapshotTests(SimpleTestCase):
         self.assertEqual(snap["sl_status"], "online")
         self.assertEqual(len(snap["sl_tasks"]), 1)
         self.assertEqual(snap["sl_tasks"][0]["title"], "Knowledge Q&A")
+
+    def test_preserves_reported_install_failure_during_snapshot_refresh(self):
+        link = MagicMock(
+            sidecar_status=LensGatewayLink.SidecarStatus.ERROR,
+            config_json={"install_status": "failed"},
+        )
+
+        apply_gateway_lensnode_snapshot(link, {"status": "offline"})
+
+        self.assertEqual(link.sidecar_status, LensGatewayLink.SidecarStatus.ERROR)
+
+    def test_online_snapshot_recovers_a_previous_install_failure(self):
+        link = MagicMock(
+            sidecar_status=LensGatewayLink.SidecarStatus.ERROR,
+            config_json={"install_status": "failed"},
+        )
+
+        apply_gateway_lensnode_snapshot(link, {"status": "online"})
+
+        self.assertEqual(link.sidecar_status, LensGatewayLink.SidecarStatus.ONLINE)
 
 
 class EnsureKsWorkspaceTests(SimpleTestCase):

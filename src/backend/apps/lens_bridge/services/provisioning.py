@@ -1411,14 +1411,19 @@ def apply_gateway_lensnode_snapshot(
     link: LensGatewayLink,
     data: dict[str, Any],
 ) -> LensGatewayLink:
-    """Persist a LensNode heartbeat payload without overriding active lifecycle work."""
-    preserve_lifecycle = link.sidecar_status in (
+    """Persist a LensNode snapshot without overriding authoritative lifecycle state."""
+    config = dict(link.config_json or {})
+    sl_status = str(data.get("status") or "").lower()
+    preserve_sidecar_status = link.sidecar_status in (
         LensGatewayLink.SidecarStatus.REMOVING,
         LensGatewayLink.SidecarStatus.UPGRADING,
+    ) or (
+        link.sidecar_status == LensGatewayLink.SidecarStatus.ERROR
+        and config.get("install_status") == "failed"
+        and sl_status != "online"
     )
     update_fields: list[str] = []
-    if not preserve_lifecycle:
-        sl_status = str(data.get("status") or "").lower()
+    if not preserve_sidecar_status:
         if sl_status == "online":
             next_status = LensGatewayLink.SidecarStatus.ONLINE
         elif sl_status == "offline":
@@ -1429,7 +1434,6 @@ def apply_gateway_lensnode_snapshot(
             link.sidecar_status = next_status
             update_fields.append("sidecar_status")
 
-    config = dict(link.config_json or {})
     snapshot = _extract_sl_lensnode_snapshot(data)
     if config.get("sl_lensnode_snapshot") != snapshot:
         config["sl_lensnode_snapshot"] = snapshot
