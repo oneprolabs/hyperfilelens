@@ -55,7 +55,7 @@ def _repository_server_failure_message(node_task: NodeTask) -> str:
     return message or "Restore repository server failed."
 
 
-def _continue_lens_workspace_restore(record_id: int) -> None:
+def _continue_restore_dispatch(record_id: int) -> None:
     """Best-effort fast path; periodic reconciliation is the durable fallback."""
 
     from apps.restore.services.interface import _dispatch_restore_items
@@ -78,9 +78,22 @@ def _continue_lens_workspace_restore(record_id: int) -> None:
             )
     except Exception:
         logger.exception(
-            "insight restore continuation dispatch failed record_id=%s",
+            "restore continuation dispatch failed record_id=%s",
             record_id,
         )
+
+
+def _node_task_failed_offline(node_task: NodeTask) -> bool:
+    if node_task.status not in {NodeTask.Status.FAILED, NodeTask.Status.TIMEOUT}:
+        return False
+    result = node_task.result if isinstance(node_task.result, dict) else {}
+    code = str(
+        result.get("error_code") or result.get("diagnostic_error_code") or ""
+    ).strip().upper()
+    if code in {"AGENT_OFFLINE", "AGENT_CONNECTION_UNSTABLE"}:
+        return True
+    message = str(node_task.last_error or "").strip().lower()
+    return "agent went offline" in message or "agent heartbeat expired" in message
 
 
 @receiver(post_save, sender=NodeTask)
@@ -162,18 +175,16 @@ def sync_restore_record_from_node_task(
             node_task=instance,
             product_task=product_task,
         )
-    if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE:
-        remaining = RestoreRecordItem.objects.filter(
-            restore_record=record,
-            node_task_id__isnull=True,
-            status=RestoreRecordItem.Status.PENDING,
-        )
-        if remaining.exists():
+    remaining = RestoreRecordItem.objects.filter(
+        restore_record=record,
+        node_task_id__isnull=True,
+        status=RestoreRecordItem.Status.PENDING,
+    )
+    if remaining.exists():
+        if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE:
             if instance.status == NodeTask.Status.SUCCESS:
                 transaction.on_commit(
-                    lambda record_id=record.id: _continue_lens_workspace_restore(
-                        record_id
-                    )
+                    lambda record_id=record.id: _continue_restore_dispatch(record_id)
                 )
             else:
                 remaining.update(
@@ -184,6 +195,17 @@ def sync_restore_record_from_node_task(
                     ),
                     terminal_projection_at=timezone.now(),
                 )
+        elif _node_task_failed_offline(instance):
+            remaining.update(
+                status=RestoreRecordItem.Status.FAILED,
+                error_code="AGENT_OFFLINE",
+                error_message="Agent remained offline beyond the reconnect grace period.",
+                terminal_projection_at=timezone.now(),
+            )
+        else:
+            transaction.on_commit(
+                lambda record_id=record.id: _continue_restore_dispatch(record_id)
+            )
     from apps.restore.services.restore_progress import sync_restore_record_progress
 
     sync_restore_record_progress(record=record)
@@ -450,6 +472,8 @@ def _restore_failure_details(
         )
     if "agent restarted before task completed" in lower:
         return "AGENT_RESTARTED", raw_message[:2000], remediation, diagnostic
+    if _node_task_failed_offline(node_task):
+        return "AGENT_OFFLINE", raw_message[:2000], remediation, diagnostic
     return (
         structured_code or "RESTORE_AGENT_FAILED",
         structured_message or raw_message[:2000],

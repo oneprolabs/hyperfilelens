@@ -32,7 +32,10 @@ from apps.restore.models import (
     RestoreRecordItem,
 )
 from apps.restore.services import interface as restore_service
-from apps.restore.services.reconciliation import reconcile_restore_node_task_projections
+from apps.restore.services.reconciliation import (
+    _resume_stranded_restore_items,
+    reconcile_restore_node_task_projections,
+)
 from apps.restore.services.task_events import (
     RESTORE_EVENT_SCHEMA_KEY,
     RESTORE_EVENT_SCHEMA_VERSION,
@@ -175,6 +178,39 @@ class RestoreApiTests(TestCase):
                 }
             ],
         }
+
+    def _manual_restore_payload_with_directory_count(self, count: int):
+        snapshot_directories = [self.snapshot_dir]
+        for index in range(1, count):
+            config_directory = BackupConfigDirectory.objects.create(
+                organization_id=self.org.id,
+                backup_config=self.config,
+                path=f"/data-{index}",
+                path_type=BackupConfigDirectory.PathType.DIRECTORY,
+                sort_order=index,
+            )
+            snapshot_directories.append(
+                BackupSourceSnapshotDirectory.objects.create(
+                    organization_id=self.org.id,
+                    source_snapshot=self.snapshot,
+                    backup_config_id=self.config.id,
+                    backup_config_dir_id=config_directory.id,
+                    source_path=config_directory.path,
+                    path_type=BackupSourceSnapshotDirectory.PathType.DIRECTORY,
+                    repository_id=self.repository.id,
+                    kopia_snapshot_id=f"kopia-snapshot-{index + 1}",
+                    status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
+                )
+            )
+        payload = self._manual_restore_payload()
+        payload["items"] = [
+            {
+                "source_snapshot_directory_id": directory.id,
+                "selected_paths": [],
+            }
+            for directory in snapshot_directories
+        ]
+        return payload, snapshot_directories
 
     def _workspace_binding(self, gateway_link: LensGatewayLink):
         gateway = gateway_link.gateway
@@ -2570,6 +2606,142 @@ class RestoreApiTests(TestCase):
                 message="Restore item completed",
             ).count(),
             1,
+        )
+
+    @patch(
+        "apps.restore.services.interface.restore_conf.DIRECTORY_CONCURRENCY",
+        4,
+    )
+    def test_user_restore_dispatches_items_through_bounded_window(self):
+        payload, _snapshot_directories = (
+            self._manual_restore_payload_with_directory_count(6)
+        )
+
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        node_tasks = NodeTask.objects.filter(
+            correlation_type="restore.record",
+            correlation_id=str(record.task_uuid),
+        )
+        self.assertEqual(node_tasks.count(), 4)
+        self.assertEqual(
+            record.items.filter(
+                status=RestoreRecordItem.Status.PENDING,
+                node_task_id__isnull=True,
+            ).count(),
+            2,
+        )
+        start_event = TaskEvent.objects.get(
+            task_id=record.task_id,
+            step__step_name="restore",
+            message="Restore execution started",
+        )
+        self.assertEqual(start_event.metadata["item_count"], 6)
+
+        first_task = node_tasks.order_by("created_at", "id").first()
+        self.assertIsNotNone(first_task)
+        first_task.status = NodeTask.Status.FAILED
+        first_task.result = {"error_code": "RESTORE_AGENT_FAILED"}
+        first_task.last_error = "one directory could not be restored"
+        with self.captureOnCommitCallbacks(execute=True):
+            first_task.save(
+                update_fields=["status", "result", "last_error", "updated_at"]
+            )
+
+        self.assertEqual(node_tasks.count(), 5)
+        self.assertEqual(
+            record.items.filter(status=RestoreRecordItem.Status.FAILED).count(),
+            1,
+        )
+        self.assertEqual(
+            record.items.filter(
+                status=RestoreRecordItem.Status.PENDING,
+                node_task_id__isnull=True,
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            TaskEvent.objects.filter(
+                task_id=record.task_id,
+                step__step_name="restore",
+                message="Restore execution started",
+            ).count(),
+            1,
+        )
+
+        with patch(
+            "apps.restore.services.reconciliation.is_node_offline_stale",
+            return_value=True,
+        ):
+            _resume_stranded_restore_items(limit=10)
+
+        stranded_item = record.items.get(node_task_id__isnull=True)
+        self.assertEqual(stranded_item.status, RestoreRecordItem.Status.FAILED)
+        self.assertEqual(stranded_item.error_code, "AGENT_OFFLINE")
+
+    @patch(
+        "apps.restore.services.interface.restore_conf.DIRECTORY_CONCURRENCY",
+        4,
+    )
+    def test_bounded_dispatch_failure_preserves_already_running_items(self):
+        payload, snapshot_directories = (
+            self._manual_restore_payload_with_directory_count(6)
+        )
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        node_tasks = NodeTask.objects.filter(
+            correlation_type="restore.record",
+            correlation_id=str(record.task_uuid),
+        ).order_by("created_at", "id")
+        self.assertEqual(node_tasks.count(), 4)
+        snapshot_directories[4].delete()
+
+        first_task = node_tasks.first()
+        self.assertIsNotNone(first_task)
+        first_task.status = NodeTask.Status.FAILED
+        first_task.last_error = "one directory could not be restored"
+        with self.captureOnCommitCallbacks(execute=True):
+            first_task.save(update_fields=["status", "last_error", "updated_at"])
+
+        record.refresh_from_db()
+        task = Task.objects.get(pk=record.task_id)
+        self.assertEqual(task.status, Task.Status.RUNNING)
+        self.assertEqual(
+            record.items.filter(
+                node_task_id__isnull=False,
+                status=RestoreRecordItem.Status.RUNNING,
+            ).count(),
+            3,
+        )
+        self.assertEqual(
+            record.items.filter(status=RestoreRecordItem.Status.FAILED).count(),
+            3,
+        )
+
+        for node_task in node_tasks.exclude(pk=first_task.pk):
+            node_task.status = NodeTask.Status.SUCCESS
+            node_task.result = {"restore_outcome": "restored"}
+            node_task.save(update_fields=["status", "result", "updated_at"])
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(
+            record.items.filter(status=RestoreRecordItem.Status.RUNNING).count(),
+            0,
         )
 
     def test_create_manual_restore_rejects_repository_being_removed(self):

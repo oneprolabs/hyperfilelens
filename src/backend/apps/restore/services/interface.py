@@ -45,6 +45,7 @@ from apps.protection.models import (
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
 )
+from apps.restore import conf as restore_conf
 from apps.restore.models import RestorePlan, RestoreRecord, RestoreRecordItem
 from apps.restore.services.task_events import (
     RESTORE_EVENT_SCHEMA_KEY,
@@ -1876,12 +1877,14 @@ def _dispatch_restore_items(
 
         target_nas_payload = {"nas": nas_payload_for_resource(target_nas)}
     all_items = list(record.items.all())
-    if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE and any(
-        item.node_task_id is not None
+    active_items = [
+        item
+        for item in all_items
+        if item.node_task_id is not None
         and item.status
         in {RestoreRecordItem.Status.PENDING, RestoreRecordItem.Status.RUNNING}
-        for item in all_items
-    ):
+    ]
+    if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE and active_items:
         # The completion callback and periodic reconciler can both request a
         # continuation.  Keep this guard at the shared dispatch boundary so a
         # second caller cannot start the next directory while one is active.
@@ -1903,11 +1906,22 @@ def _dispatch_restore_items(
         # One Chat is one Gateway scheduling unit. Dispatching every selected
         # directory at once would let a single Chat bypass the Gateway limit.
         items = items[:1]
+    else:
+        available_slots = max(
+            0,
+            restore_conf.DIRECTORY_CONCURRENCY - len(active_items),
+        )
+        items = items[:available_slots]
     if not items:
         logger.info(
-            "restore dispatch skipped restore_record_id=%s task_uuid=%s reason=no_pending_items",
+            "restore dispatch skipped restore_record_id=%s task_uuid=%s "
+            "reason=no_available_items active_items=%s concurrency=%s",
             record.id,
             record.task_uuid,
+            len(active_items),
+            1
+            if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE
+            else restore_conf.DIRECTORY_CONCURRENCY,
         )
         return
     if task.status == Task.Status.PENDING:
@@ -2117,11 +2131,22 @@ def _dispatch_restore_items(
                         "object_name": item.source_path,
                     },
                 )
+        has_pending_dispatch = record.items.filter(
+            node_task_id__isnull=True,
+            status__in=(
+                RestoreRecordItem.Status.PENDING,
+                RestoreRecordItem.Status.RUNNING,
+            ),
+        ).exists()
         _set_step_status(
             task=task,
             step_name="dispatch_agent",
-            status=TaskStep.Status.SUCCESS,
-            progress=100,
+            status=(
+                TaskStep.Status.RUNNING
+                if has_pending_dispatch
+                else TaskStep.Status.SUCCESS
+            ),
+            progress=10 if has_pending_dispatch else 100,
             task_progress=RESTORE_ESTIMATE_END,
             current_step="restore",
         )
@@ -2135,7 +2160,7 @@ def _dispatch_restore_items(
         append_restore_execution_started_event(
             task=task,
             record=record,
-            items=items,
+            items=all_items,
         )
         logger.info(
             "restore dispatch ok restore_record_id=%s task_uuid=%s item_count=%s target_node_id=%s",
@@ -2155,8 +2180,14 @@ def _dispatch_restore_items(
             correlation_id=str(record.task_uuid),
             restore_record_id=record.id,
         )
+        # Seal only work that never received a NodeTask. A later bounded batch
+        # can fail while sibling items are still running; those Agent tasks
+        # keep their existing terminal projection path and resource leases.
         RestoreRecordItem.objects.filter(
-            restore_record=record, status=RestoreRecordItem.Status.RUNNING
+            restore_record=record,
+            id__in=[item.id for item in items],
+            node_task_id__isnull=True,
+            status=RestoreRecordItem.Status.RUNNING,
         ).update(
             status=RestoreRecordItem.Status.FAILED,
             error_code="RESTORE_DISPATCH_FAILED",
@@ -2174,6 +2205,19 @@ def _dispatch_restore_items(
                 error_message=(
                     "A previous Chat workspace restore item did not complete."
                 ),
+                terminal_projection_at=timezone.now(),
+            )
+        else:
+            # Bounded user restores may still have undispatched items. They
+            # must not remain pending once dispatch can no longer continue.
+            RestoreRecordItem.objects.filter(
+                restore_record=record,
+                node_task_id__isnull=True,
+                status=RestoreRecordItem.Status.PENDING,
+            ).update(
+                status=RestoreRecordItem.Status.FAILED,
+                error_code="RESTORE_DISPATCH_FAILED",
+                error_message=error_message,
                 terminal_projection_at=timezone.now(),
             )
         append_task_step_event(
@@ -2195,6 +2239,22 @@ def _dispatch_restore_items(
             task_progress=RESTORE_ESTIMATE_END,
             current_step="dispatch_agent",
         )
+        has_active_dispatched_items = RestoreRecordItem.objects.filter(
+            restore_record=record,
+            node_task_id__isnull=False,
+            status__in=(
+                RestoreRecordItem.Status.PENDING,
+                RestoreRecordItem.Status.RUNNING,
+            ),
+        ).exists()
+        if has_active_dispatched_items:
+            logger.warning(
+                "restore dispatch failure finalization deferred "
+                "restore_record_id=%s task_uuid=%s reason=active_items",
+                record.id,
+                record.task_uuid,
+            )
+            return
         complete_task(
             task_uuid=task.task_uuid,
             organization_id=organization_id,

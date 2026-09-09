@@ -14,7 +14,6 @@ from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node import conf as node_conf
 from apps.node.services.internal import redis_store
-from apps.node.services.internal.task import fail_active_tasks_for_node
 
 logger = logging.getLogger(__name__)
 
@@ -347,11 +346,9 @@ def reconcile_stale_online_nodes(*, limit: int = 200) -> dict[str, int]:
     """
     Mark available nodes without fresh Redis routing as unavailable.
 
-    Fails in-flight ``NodeTask`` rows on affected nodes (ghost-task cleanup).
+    Active tasks are finalized separately after the full reconnect grace.
     """
     nodes_marked_offline = 0
-    tasks_failed = 0
-    task_failure_held = not redis_store.offline_task_finalization_ready()
 
     node_ids = list(
         Node.objects.filter(availability=Node.Availability.ONLINE)
@@ -389,22 +386,14 @@ def reconcile_stale_online_nodes(*, limit: int = 200) -> dict[str, int]:
             except Exception:
                 logger.debug("agent source-host sync failed node_id=%s", node.id, exc_info=True)
 
-            failed = 0
-            if not task_failure_held:
-                failed = fail_active_tasks_for_node(
-                    node_id=node.id,
-                    reason="agent heartbeat expired (registry reconcile)",
-                )
-            tasks_failed += failed
             logger.info(
-                "node %s marked offline (stale agent_loc); failed_tasks=%s",
+                "node %s marked offline (stale agent_loc); active tasks retained for reconnect grace",
                 node.id,
-                failed,
             )
 
     return {
         "nodes_marked_offline": nodes_marked_offline,
-        "tasks_failed": tasks_failed,
-        "task_failure_held": task_failure_held,
+        "tasks_failed": 0,
+        "task_failure_held": True,
         "checked_at": timezone.now().isoformat(),
     }
