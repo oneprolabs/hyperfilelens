@@ -286,7 +286,7 @@ build_matrix() {
 				go build -trimpath -ldflags "-s -w \
 				-X github.com/kopia/kopia/repo.BuildVersion=${KOPIA_VERSION} \
 				-X github.com/kopia/kopia/repo.BuildInfo=${build_info} \
-				-X github.com/kopia/kopia/repo.BuildGitHubRepo=HyperBDR/hyperfilelens" \
+				-X github.com/kopia/kopia/repo.BuildGitHubRepo=oneprolabs/hyperfilelens" \
 				-o "${output}.part" github.com/kopia/kopia
 		)
 		mv -f "${output}.part" "${output}"

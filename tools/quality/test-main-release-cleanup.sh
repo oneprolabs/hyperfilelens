@@ -87,7 +87,7 @@ run_cleanup() {
 			GH_MOCK_RELEASES="${releases}" \
 			GH_MOCK_GIT_REPO="${tmp}/seed" \
 			GH_MOCK_COMPARE_FAIL="${compare_fail}" \
-			GITHUB_REPOSITORY=HyperBDR/hyperfilelens \
+			GITHUB_REPOSITORY=oneprolabs/hyperfilelens \
 			GITHUB_STEP_SUMMARY="${tmp}/summary.md" \
 			ARTIFACT_ID="${artifact_id}" \
 			MAIN_COMMIT="${main_commit}" \
@@ -171,7 +171,7 @@ if ARTIFACT_ID=invalid \
 	MAIN_COMMIT="${second_commit}" \
 	BUILD_REQUIRED=true \
 	PUBLISH_RESULT=success \
-	GITHUB_REPOSITORY=HyperBDR/hyperfilelens \
+	GITHUB_REPOSITORY=oneprolabs/hyperfilelens \
 	"${ROOT}/.github/scripts/cleanup-main-builds.sh" >/dev/null 2>&1; then
 	printf 'ERROR: invalid Main artifact identifier was accepted\n' >&2
 	exit 1
