@@ -4,7 +4,6 @@ import { router } from '../router'
 import {
   clearDeployProfileCache,
   fetchDeployProfile,
-  resolvePostLoginPath,
   shouldForceDeployProfileRefresh,
 } from './useDeployProfile'
 import { getCorrelationHeaders } from '../lib/requestContext'
@@ -18,6 +17,7 @@ import {
   subscribeSessionNotice,
 } from '../lib/sessionNotice'
 import { clearLogoutBrowserStorage } from '../lib/logoutStorage'
+import { resolveAuthenticatedLoginTarget } from '../lib/loginNavigation'
 
 export interface User {
   id: number
@@ -425,6 +425,33 @@ export function setupAuthGuard() {
     const isPublicPath = publicPaths.some(path => to.path.startsWith(path))
     const isPlatformOpsPath = to.path.startsWith('/platform-ops')
 
+    if (to.path === '/login') {
+      const confirmation = isLoggedIn.value
+        ? { state: 'authenticated' as const, user: currentUser.value }
+        : await confirmCurrentSession()
+
+      if (confirmation.state === 'authenticated') {
+        const profile = await fetchDeployProfile(true)
+        if (!profile) {
+          next()
+          return
+        }
+
+        const target = resolveAuthenticatedLoginTarget(profile, to.query.redirect)
+        if (target.kind === 'external') {
+          window.location.replace(target.url)
+          return
+        }
+        if (target.kind === 'internal') {
+          next(target.path)
+          return
+        }
+      }
+
+      next()
+      return
+    }
+
     if (to.path === '/register') {
       const profile = await fetchDeployProfile()
       if (profile && !profile.email_signup_enabled) {
@@ -501,12 +528,6 @@ export function setupAuthGuard() {
         next('/login')
         return
       }
-    }
-
-    // If logged in and going to login page, redirect to home
-    if (isLoggedIn.value && to.path === '/login') {
-      next(await resolvePostLoginPath())
-      return
     }
 
     next()
