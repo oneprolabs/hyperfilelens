@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { ComposerTranslation } from 'vue-i18n'
 import {
-  buildUpgradeConfirmSkipLines,
+  buildUpgradeConfirmSkipGroups,
   buildUpgradeDiskSkipDetail,
   formatDiskCapacity,
+  upgradePreviewSkippedCount,
 } from './nodeLifecycleUpgradeConfirm'
 import type { NodeOperationBatchPreview } from '../types/nodeLifecycle'
 
@@ -15,7 +16,9 @@ const t = ((key: string, args?: Record<string, unknown>) => {
     return `${args?.name}: usage ${args?.used}%; max ${args?.max}%.`
   }
   if (key.endsWith('confirmSkipDiskUnknown')) return `${args?.name}: disk space is insufficient.`
-  if (key.endsWith('confirmSkipDiskFull')) return `${args?.n} disk node(s) skipped.`
+  if (key.includes('confirmSkipGroup.')) return `${key.split('.').at(-1)} (${args?.n})`
+  if (key.endsWith('confirmSkipMissingNode')) return `Node ${args?.id}`
+  if (key.includes('confirmSkipGuidance.')) return `${key.split('.').at(-1)} guidance`
   return key
 }) as unknown as ComposerTranslation
 
@@ -44,6 +47,13 @@ describe('node lifecycle upgrade disk guidance', () => {
     expect(formatDiskCapacity(null)).toBeNull()
   })
 
+  it('derives the skipped count from the complete requested selection', () => {
+    const value = preview([])
+    value.requested = 3
+    value.eligible = [{ node_id: 1, name: 'mhm' }, { node_id: 2, name: 'ubuntu2404' }]
+    expect(upgradePreviewSkippedCount(value)).toBe(1)
+  })
+
   it('explains the current and required free space', () => {
     expect(buildUpgradeDiskSkipDetail(t, {
       node_id: 1,
@@ -53,6 +63,54 @@ describe('node lifecycle upgrade disk guidance', () => {
       disk_free_bytes: 420 * 1024**2,
       required_free_bytes: 512 * 1024**2,
     })).toBe('ubuntu2404: 420 MiB available; at least 512 MiB required.')
+  })
+
+  it('identifies every skipped host and its reason', () => {
+    const value = preview([])
+    value.requested = 7
+    value.skipped_offline = [
+      { node_id: 1, name: 'offline-host', reason: 'offline' },
+      { node_id: 6, name: 'offline-host-2', reason: 'offline' },
+    ]
+    value.skipped_workload = [{ node_id: 2, name: 'busy-host', reason: 'node_workload_active' }]
+    value.skipped_in_progress = [{ node_id: 3, name: 'upgrading-host', reason: 'lifecycle_in_progress' }]
+    value.skipped_not_upgradeable = [
+      { node_id: 4, name: 'OnePro', reason: 'local_admin_required' },
+      { node_id: 7, name: 'OnePro-2', reason: 'local_admin_required' },
+    ]
+    value.missing_node_ids = [5]
+
+    expect(buildUpgradeConfirmSkipGroups(t, value)).toEqual([
+      {
+        key: 'offline',
+        title: 'offline (2)',
+        names: [{ id: 1, name: 'offline-host' }, { id: 6, name: 'offline-host-2' }],
+        guidance: 'offline guidance',
+      },
+      {
+        key: 'workload',
+        title: 'workload (1)',
+        names: [{ id: 2, name: 'busy-host' }],
+        guidance: 'workload guidance',
+      },
+      {
+        key: 'inProgress',
+        title: 'inProgress (1)',
+        names: [{ id: 3, name: 'upgrading-host' }],
+        guidance: 'inProgress guidance',
+      },
+      {
+        key: 'localAdmin',
+        title: 'localAdmin (2)',
+        names: [{ id: 4, name: 'OnePro' }, { id: 7, name: 'OnePro-2' }],
+        guidance: 'localAdmin guidance',
+      },
+      {
+        key: 'missing',
+        title: 'missing (1)',
+        names: [{ id: 5, name: 'Node 5' }],
+      },
+    ])
   })
 
   it('explains a usage limit and keeps a generic fallback for old previews', () => {
@@ -72,7 +130,7 @@ describe('node lifecycle upgrade disk guidance', () => {
   })
 
   it('adds per-node disk details to the confirmation skip list', () => {
-    expect(buildUpgradeConfirmSkipLines(t, preview([
+    expect(buildUpgradeConfirmSkipGroups(t, preview([
       {
         node_id: 1,
         name: 'ubuntu2404',
@@ -81,9 +139,11 @@ describe('node lifecycle upgrade disk guidance', () => {
         disk_free_bytes: 420 * 1024**2,
         required_free_bytes: 512 * 1024**2,
       },
-    ]))).toEqual([
-      '1 disk node(s) skipped.',
-      'ubuntu2404: 420 MiB available; at least 512 MiB required.',
-    ])
+    ]))).toEqual([{
+      key: 'diskFull',
+      title: 'diskFull (1)',
+      names: [{ id: 1, name: 'ubuntu2404' }],
+      details: ['ubuntu2404: 420 MiB available; at least 512 MiB required.'],
+    }])
   })
 })
