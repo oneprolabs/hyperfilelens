@@ -726,6 +726,9 @@ onUnmounted(resetBrowserState)
                 :aria-label="t('protection.backupsPage.snapshotRecoverableDataHint')"
                 :size="13"
                 popper-class="snapshot-metric-help-popper"
+                teleported
+                append-to="body"
+                :z-index="3800"
               />
             </dt>
             <dd>{{ fmtBytes(snapshotDisplaySize(snapshot)) }}</dd>
@@ -738,6 +741,9 @@ onUnmounted(resetBrowserState)
                 :aria-label="t('protection.backupsPage.snapshotNewOriginalDataHint')"
                 :size="13"
                 popper-class="snapshot-metric-help-popper"
+                teleported
+                append-to="body"
+                :z-index="3800"
               />
             </dt>
             <dd>{{ fmtReferenceBytes(snapshot.new_original_content_bytes) }}</dd>
@@ -750,6 +756,9 @@ onUnmounted(resetBrowserState)
                 :aria-label="t('protection.backupsPage.snapshotNewStorageHint')"
                 :size="13"
                 popper-class="snapshot-metric-help-popper"
+                teleported
+                append-to="body"
+                :z-index="3800"
               />
             </dt>
             <dd>{{ fmtReferenceBytes(snapshot.new_packed_content_bytes) }}</dd>
@@ -762,6 +771,9 @@ onUnmounted(resetBrowserState)
                 :aria-label="t('protection.backupsPage.snapshotDataReuseHint')"
                 :size="13"
                 popper-class="snapshot-metric-help-popper"
+                teleported
+                append-to="body"
+                :z-index="3800"
               />
             </dt>
             <dd>{{ fmtReferencePercent(snapshot.data_reuse_ratio) }}</dd>
@@ -774,6 +786,9 @@ onUnmounted(resetBrowserState)
                 :aria-label="t('protection.backupsPage.snapshotCompressionSavingsHint')"
                 :size="13"
                 popper-class="snapshot-metric-help-popper"
+                teleported
+                append-to="body"
+                :z-index="3800"
               />
             </dt>
             <dd>{{ fmtReferencePercent(snapshot.compression_savings_ratio) }}</dd>
@@ -786,6 +801,9 @@ onUnmounted(resetBrowserState)
                 :aria-label="t('protection.backupsPage.snapshotCombinedReductionHint')"
                 :size="13"
                 popper-class="snapshot-metric-help-popper"
+                teleported
+                append-to="body"
+                :z-index="3800"
               />
             </dt>
             <dd>{{ fmtCombinedReduction(snapshot) }}</dd>
@@ -956,6 +974,9 @@ onUnmounted(resetBrowserState)
                 :size="14"
                 placement="left"
                 popper-class="snapshot-source-path-help-popper"
+                teleported
+                append-to="body"
+                :z-index="3800"
               />
             </div>
             <div class="snapshot-point-detail-source-tree__selected">
@@ -1530,10 +1551,19 @@ onUnmounted(resetBrowserState)
 }
 
 .snapshot-status-tag {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.snapshot-status-tag :deep(.el-tag__content) {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
 
 .snapshot-status-tag__spinner {
+  flex: 0 0 auto;
   animation: snapshot-detail-spin 0.8s linear infinite;
 }
 

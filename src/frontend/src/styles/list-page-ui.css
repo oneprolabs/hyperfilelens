@@ -309,6 +309,13 @@
   white-space: nowrap;
 }
 
+.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell .snapshot-status-tag .el-tag__content {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
 .hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell .el-tag__content > span {
   min-width: 0;
   overflow: hidden;

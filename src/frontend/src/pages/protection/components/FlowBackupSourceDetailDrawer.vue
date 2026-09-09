@@ -2080,6 +2080,7 @@ async function loadSelectedSnapshot(row: BackupSourceSnapshot) {
     const detail = await getBackupSourceSnapshot(row.id)
     if (selectedSnapshotId.value !== row.id) return
     snapshotDetails.value.set(row.id, detail)
+    sourceSnapshotRows.value = sourceSnapshotRows.value.map((snapshot) => snapshot.id === detail.id ? detail : snapshot)
   } catch (err) {
     if (selectedSnapshotId.value !== row.id) return
     snapshotDetailError.value = apiErrorMessage(err, t('errors.generic.loadFailed'))
@@ -3534,7 +3535,7 @@ function onClosed() {
             </el-table-column>
             <el-table-column
               :label="t('protection.backupDetail.labelStatus')"
-              width="92"
+              width="110"
             >
               <template #default="{ row }">
                 <el-tag
@@ -3624,7 +3625,7 @@ function onClosed() {
             </el-table-column>
             <el-table-column
               :label="t('protection.backupsPage.snapshotBrowserFileDirCount')"
-              width="110"
+              width="140"
               align="right"
             >
               <template #default="{ row }">
@@ -3732,6 +3733,19 @@ function onClosed() {
                         || selectedSnapshot.created_at) }}
                     </span>
                   </div>
+                  <button
+                    type="button"
+                    class="dp-snapshot-detail-drawer__refresh"
+                    :title="t('common.refresh')"
+                    :aria-label="t('common.refresh')"
+                    :disabled="snapshotDetailLoading"
+                    @click="retrySelectedSnapshotDetail"
+                  >
+                    <RefreshCw
+                      :size="18"
+                      :class="{ 'is-spinning': snapshotDetailLoading }"
+                    />
+                  </button>
                   <button
                     type="button"
                     class="dp-snapshot-detail-drawer__close"
@@ -5373,7 +5387,15 @@ function onClosed() {
 
 <style scoped>
 .snapshot-status-tag {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.snapshot-status-tag :deep(.el-tag__content) {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
 
 .snapshot-status-tag__spinner {
@@ -7434,6 +7456,34 @@ function onClosed() {
   color: rgb(71 85 105);
   background: transparent;
   cursor: pointer;
+}
+
+.dp-snapshot-detail-drawer__refresh {
+  display: inline-flex;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 6px;
+  color: rgb(71 85 105);
+  background: transparent;
+  cursor: pointer;
+}
+
+.dp-snapshot-detail-drawer__refresh:hover:not(:disabled) {
+  background: rgb(241 245 249);
+  color: rgb(15 23 42);
+}
+
+.dp-snapshot-detail-drawer__refresh:disabled {
+  color: rgb(148 163 184);
+  cursor: not-allowed;
+}
+
+.dp-snapshot-detail-drawer__refresh .is-spinning {
+  animation: snapshot-status-spin 0.8s linear infinite;
 }
 
 .dp-snapshot-detail-drawer__close:hover {
