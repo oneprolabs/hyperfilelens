@@ -163,6 +163,7 @@ function Stop-Or-ContinueAfterFailure {
 }
 
 function Report-UninstallCompletion {
+  [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
   if ($callbackInsecureTls) {
     [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
   }
