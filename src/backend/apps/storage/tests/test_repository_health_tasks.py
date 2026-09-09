@@ -1221,6 +1221,30 @@ class AutomaticDirectNASObservationTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_health.run_agent_task_async"
     )
+    def test_active_restore_defers_entire_automatic_observation(self, run_async):
+        node = self._node("busy-restore-agent")
+        self._node("idle-restore-agent")
+        NodeTask.objects.create(
+            organization=self.organization,
+            node=node,
+            kind="restore.run",
+            correlation_type="restore.record",
+            correlation_id="active-restore",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timedelta(minutes=5),
+        )
+
+        tasks = dispatch_automatic_repository_observation(
+            repository=self.repository,
+            include_usage=True,
+        )
+
+        self.assertEqual(tasks, [])
+        run_async.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_health.run_agent_task_async"
+    )
     def test_removing_repository_does_not_dispatch_a_late_observation(self, run_async):
         self._node("removing-repository-agent")
         Repository.objects.filter(pk=self.repository.id).update(

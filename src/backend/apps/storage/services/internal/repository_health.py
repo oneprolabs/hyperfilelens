@@ -75,6 +75,12 @@ from apps.storage.services.internal.repository_usage import (
 logger = logging.getLogger(__name__)
 
 REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE = "storage.repository_health"
+_PRIMARY_DATA_TASK_CORRELATIONS = frozenset(
+    {
+        "protection.backup",
+        "restore.record",
+    }
+)
 
 
 def repository_health_lock_key(repository_id: int) -> str:
@@ -86,6 +92,19 @@ class _AgentProbeState(StrEnum):
     ONLINE = "online"
     CONFIRMED_FAILURE = "confirmed_failure"
     TRANSPORT_UNKNOWN = "transport_unknown"
+
+
+def _nodes_with_primary_data_tasks(*, node_ids: list[int]) -> set[int]:
+    """Return nodes where automatic probing should yield to data work."""
+    if not node_ids:
+        return set()
+    return set(
+        NodeTask.objects.filter(
+            node_id__in=node_ids,
+            correlation_type__in=_PRIMARY_DATA_TASK_CORRELATIONS,
+            status__in=(NodeTask.Status.PENDING, NodeTask.Status.RUNNING),
+        ).values_list("node_id", flat=True)
+    )
 
 
 def is_repository_ownership_failure(exc: Exception) -> bool:
@@ -293,6 +312,8 @@ def _dispatch_automatic_repository_observation_locked(
             repository_subdir = ""
             repository_payload = proxy_fs_repository_payload(repository)
             legacy_location = repository_has_legacy_location(repository)
+        if _nodes_with_primary_data_tasks(node_ids=[node.id]):
+            return []
         legacy_adoption = bool(
             claim is not None
             and claim.ownership_verified_at is None
@@ -338,7 +359,19 @@ def _dispatch_automatic_repository_observation_locked(
         )
         return []
 
-    online_nodes = [node for node in nodes if node.availability == Node.Availability.ONLINE]
+    busy_node_ids = _nodes_with_primary_data_tasks(
+        node_ids=[int(node.id) for node in nodes]
+    )
+    if busy_node_ids:
+        # A direct NAS observation is one aggregate sample across all of its
+        # execution nodes.  Defer the whole automatic sample so a busy node is
+        # not misclassified as offline or omitted from the expected shard set.
+        return []
+    online_nodes = [
+        node
+        for node in nodes
+        if node.availability == Node.Availability.ONLINE
+    ]
     expected_node_ids = [int(node.id) for node in online_nodes]
 
     from apps.storage.services.internal.repository_usage import (

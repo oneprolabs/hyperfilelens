@@ -445,6 +445,31 @@ class AgentNodeOnlineStatusTests(TestCase):
         self.assertEqual(self.node.availability, Node.Availability.OFFLINE)
         self.assertEqual(summary["nodes_marked_offline"], 1)
 
+    def test_reconcile_retains_active_task_for_offline_grace(self):
+        self._mark_ws_alive()
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+        self.redis.delete(redis_store.agent_loc_key(self.node.id))
+        stale_at = timezone.now() - timezone.timedelta(
+            seconds=node_conf.AGENT_LOC_TTL_SECONDS + 5,
+        )
+        Node.objects.filter(pk=self.node.id).update(last_seen_at=stale_at)
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="backup.snapshot.create",
+            correlation_type="protection.backup",
+            correlation_id="backup-reconnect-grace",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(minutes=5),
+        )
+
+        summary = reconcile_stale_online_nodes(limit=10)
+
+        node_task.refresh_from_db()
+        self.assertEqual(node_task.status, NodeTask.Status.RUNNING)
+        self.assertEqual(summary["tasks_failed"], 0)
+        self.assertTrue(summary["task_failure_held"])
+
     def test_reconcile_marks_bound_repository_offline_with_stale_proxy(self):
         self.node.role = NodeRole.PROXY
         self.node.save(update_fields=["role", "updated_at"])

@@ -1,6 +1,22 @@
-"""Runtime settings for direct NAS mount cleanup."""
+"""Runtime settings for restore orchestration."""
 
 from project.settings.env import env_int
+
+
+_DEFAULT_DIRECTORY_CONCURRENCY = 4
+_configured_directory_concurrency = env_int(
+    "PROTECTION_RESTORE_DIRECTORY_CONCURRENCY",
+    _DEFAULT_DIRECTORY_CONCURRENCY,
+)
+DIRECTORY_CONCURRENCY = (
+    _configured_directory_concurrency
+    if _configured_directory_concurrency >= 1
+    else _DEFAULT_DIRECTORY_CONCURRENCY
+)
+ACTIVITY_LEASE_SECONDS = max(
+    1,
+    env_int("PROTECTION_RESTORE_ACTIVITY_LEASE_SECONDS", 300),
+)
 
 
 DIRECT_NAS_MOUNT_CLEANUP_GRACE_SECONDS = max(
