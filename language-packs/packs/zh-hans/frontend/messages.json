@@ -2297,6 +2297,7 @@
       "freqSimple": "快速计划",
       "hintSimpleInterval": "配置用户友好的间隔或日历计划。",
       "scheduleTimezone": "时区",
+      "policyTimezoneHint": "此时区用于备份调度和保留规则。修改后会影响后续评估，包括现存快照；已完成的任务和时间戳保持不变。",
       "scheduleTimezonePlaceholder": "选择 IANA 时区",
       "scheduleStartsAt": "开始时间",
       "scheduleStartsAtPlaceholder": "选择第一个符合条件的日期和时间",

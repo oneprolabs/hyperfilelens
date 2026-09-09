@@ -1721,6 +1721,7 @@ export const enProtectionPages = {
     hintSimpleInterval: 'Configure a user-friendly interval or calendar schedule.',
     labelInterval: 'Repeat Every',
     scheduleTimezone: 'Time Zone',
+    policyTimezoneHint: 'This time zone applies to backup scheduling and retention. Changes affect future evaluations, including existing snapshots; completed tasks and timestamps stay unchanged.',
     scheduleTimezonePlaceholder: 'Select an IANA time zone',
     scheduleStartsAt: 'Start Time',
     scheduleStartsAtPlaceholder: 'Select the first eligible date and time',

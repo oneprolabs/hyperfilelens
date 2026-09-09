@@ -76,7 +76,7 @@ def _aware_minute(now=None):
     return current.replace(second=0, microsecond=0)
 
 
-def _schedule_timezone(timezone_name: str | None) -> ZoneInfo:
+def _policy_timezone(timezone_name: str | None) -> ZoneInfo:
     try:
         return ZoneInfo(str(timezone_name or "UTC"))
     except (ZoneInfoNotFoundError, ValueError):
@@ -84,11 +84,11 @@ def _schedule_timezone(timezone_name: str | None) -> ZoneInfo:
 
 
 def _schedule_local_minute(schedule: dict, *, now=None):
-    return _aware_minute(now).astimezone(_schedule_timezone(schedule.get("timezone")))
+    return _aware_minute(now).astimezone(_policy_timezone(schedule.get("timezone")))
 
 
 def cron_matches_now(cron_expr: str, *, now=None, timezone_name: str = "UTC") -> bool:
-    current = _aware_minute(now).astimezone(_schedule_timezone(timezone_name))
+    current = _aware_minute(now).astimezone(_policy_timezone(timezone_name))
     fields = str(cron_expr or "").split()
     if len(fields) != 5:
         return False
@@ -133,7 +133,7 @@ def _schedule_start_instant(schedule: dict) -> datetime | None:
     if starts_at is None:
         return None
     return starts_at.replace(
-        tzinfo=_schedule_timezone(schedule.get("timezone"))
+        tzinfo=_policy_timezone(schedule.get("timezone"))
     ).astimezone(UTC)
 
 
@@ -158,7 +158,11 @@ def schedule_matches_now(schedule: dict, *, now=None) -> bool:
         return False
     mode = str(schedule.get("mode") or "").strip().lower()
     if not mode:
-        return cron_matches_now(str(schedule.get("cron_expr") or ""), now=now)
+        return cron_matches_now(
+            str(schedule.get("cron_expr") or ""),
+            now=now,
+            timezone_name=str(schedule.get("timezone") or "UTC"),
+        )
 
     current = _schedule_local_minute(schedule, now=now)
     if not _schedule_has_started(schedule, current):
@@ -211,7 +215,7 @@ def schedule_matches_now(schedule: dict, *, now=None) -> bool:
 
 
 def _schedule_fire_key(schedule: dict, *, now=None) -> str:
-    if schedule.get("mode") and schedule.get("mode") != "interval":
+    if schedule.get("mode") != "interval":
         current = _schedule_local_minute(schedule, now=now)
     else:
         current = _aware_minute(now).astimezone(ZoneInfo("UTC"))
@@ -270,8 +274,8 @@ def _snapshot_time(snapshot: BackupSourceSnapshot):
     return snapshot.finished_at or snapshot.started_at or snapshot.created_at
 
 
-def _bucket_key(snapshot: BackupSourceSnapshot, unit: str):
-    value = timezone.localtime(_snapshot_time(snapshot))
+def _bucket_key(snapshot: BackupSourceSnapshot, unit: str, policy_timezone: ZoneInfo):
+    value = _snapshot_time(snapshot).astimezone(policy_timezone)
     if unit == "hour":
         return value.strftime("%Y%m%d%H")
     if unit == "day":
@@ -296,17 +300,19 @@ def _apply_bucket_retention(
     amount: int,
     unit: str,
     delta: timedelta,
+    policy_timezone: ZoneInfo,
 ) -> None:
     if not enabled or amount < 1:
         return
-    cutoff = now - delta
+    # Retention windows are elapsed durations, including across DST changes.
+    cutoff = now.astimezone(UTC) - delta
     seen: set[str] = set()
     for snapshot in snapshots:
         if int(snapshot.id) in protected_ids:
             continue
         if _snapshot_time(snapshot) < cutoff:
             continue
-        key = _bucket_key(snapshot, unit)
+        key = _bucket_key(snapshot, unit, policy_timezone)
         if key in seen:
             continue
         seen.add(key)
@@ -337,7 +343,9 @@ def retention_delete_candidates_for_config(
     )
     if len(snapshots) <= 1:
         return []
-    current = timezone.localtime(now or timezone.now())
+    current = now or timezone.now()
+    schedule = policy.schedule if isinstance(policy.schedule, dict) else {}
+    policy_timezone = _policy_timezone(schedule.get("timezone"))
     protected_ids = protected_snapshot_ids(snapshot.id for snapshot in snapshots)
     recent_points = max(1, int(retention.get("recent_points") or 1))
     # A temporary usage lease is a safety fence, not a retention point. Keep
@@ -354,6 +362,7 @@ def retention_delete_candidates_for_config(
         protected_ids=protected_ids,
         snapshots=snapshots,
         now=current,
+        policy_timezone=policy_timezone,
         enabled=bool(retention.get("hourly_enabled", False)),
         amount=int(retention.get("hourly_hours") or 0),
         unit="hour",
@@ -364,6 +373,7 @@ def retention_delete_candidates_for_config(
         protected_ids=protected_ids,
         snapshots=snapshots,
         now=current,
+        policy_timezone=policy_timezone,
         enabled=bool(retention.get("daily_enabled", False)),
         amount=int(retention.get("daily_days") or 0),
         unit="day",
@@ -374,6 +384,7 @@ def retention_delete_candidates_for_config(
         protected_ids=protected_ids,
         snapshots=snapshots,
         now=current,
+        policy_timezone=policy_timezone,
         enabled=bool(retention.get("weekly_enabled", False)),
         amount=int(retention.get("weekly_weeks") or 0),
         unit="week",
@@ -384,6 +395,7 @@ def retention_delete_candidates_for_config(
         protected_ids=protected_ids,
         snapshots=snapshots,
         now=current,
+        policy_timezone=policy_timezone,
         enabled=bool(retention.get("monthly_enabled", False)),
         amount=int(retention.get("monthly_months") or 0),
         unit="month",
@@ -394,6 +406,7 @@ def retention_delete_candidates_for_config(
         protected_ids=protected_ids,
         snapshots=snapshots,
         now=current,
+        policy_timezone=policy_timezone,
         enabled=bool(retention.get("annual_enabled", False)),
         amount=int(retention.get("annual_years") or 0),
         unit="year",

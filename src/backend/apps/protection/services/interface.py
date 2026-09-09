@@ -133,7 +133,10 @@ def normalize_schedule(value: Any) -> dict[str, Any]:
     raw_mode = str(value.get("mode") or "").strip().lower()
     if not raw_mode:
         cron_expr = validate_cron_expr(str(value.get("cron_expr") or ""))
-        return {"enabled": enabled, "cron_expr": cron_expr}
+        normalized = {"enabled": enabled, "cron_expr": cron_expr}
+        if "timezone" in value:
+            normalized["timezone"] = _normalize_schedule_timezone(value["timezone"])
+        return normalized
     if raw_mode not in SCHEDULE_MODES:
         raise ValidationError({"schedule": "mode is invalid."})
 

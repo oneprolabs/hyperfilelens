@@ -1016,8 +1016,8 @@ export function quickScheduleToCron(policyForm: BackupPolicyForm): string {
 }
 
 export function validateScheduleForm(policyForm: BackupPolicyForm): string {
-  if (!policyForm.sectionScheduleEnabled) return ''
   if (!policyForm.scheduleTimezone.trim()) return 'Select a time zone.'
+  if (!policyForm.sectionScheduleEnabled) return ''
   if (policyForm.scheduleStartsAt && !isValidScheduleStart(policyForm.scheduleStartsAt)) {
     return 'Start time must be a valid date and time.'
   }
@@ -1119,7 +1119,7 @@ function applyScheduleFromApi(
       simpleIntervalUnit: parsed.unit,
       simpleIntervalValue: parsed.value,
       cronExpr: expr,
-      scheduleTimezone: 'UTC',
+      scheduleTimezone: schedule?.timezone || 'UTC',
       scheduleStartsAt: '',
       scheduleTime: base.scheduleTime,
       scheduleWeekdays: base.scheduleWeekdays,
@@ -1133,7 +1133,7 @@ function applyScheduleFromApi(
     simpleIntervalUnit: base.simpleIntervalUnit,
     simpleIntervalValue: base.simpleIntervalValue,
     cronExpr: expr || base.cronExpr,
-    scheduleTimezone: 'UTC',
+    scheduleTimezone: schedule?.timezone || 'UTC',
     scheduleStartsAt: '',
     scheduleTime: base.scheduleTime,
     scheduleWeekdays: base.scheduleWeekdays,
