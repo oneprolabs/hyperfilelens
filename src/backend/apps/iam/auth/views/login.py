@@ -8,7 +8,7 @@ from django.contrib.auth import logout as django_logout
 from django.core.cache import cache
 from django.utils.translation import gettext_lazy as _
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.permissions import AllowAny
@@ -526,7 +526,20 @@ class TokenRefreshView(APIView):
     @extend_schema(
         tags=["auth"],
         summary="Refresh access token",
-        responses={200: OpenApiTypes.OBJECT},
+        responses={
+            200: OpenApiTypes.OBJECT,
+            401: OpenApiResponse(
+                response=OpenApiTypes.OBJECT,
+                description="The refresh token is absent, expired, invalid, or reused.",
+            ),
+            409: OpenApiResponse(
+                response=OpenApiTypes.OBJECT,
+                description=(
+                    "Another request is refreshing the same login session. "
+                    "The client should wait and inspect the session again."
+                ),
+            ),
+        },
     )
     def post(self, request):
         from django.conf import settings as django_settings
@@ -535,8 +548,10 @@ class TokenRefreshView(APIView):
         from apps.iam.services.token_service import (
             TokenError as TokenErrorCode,
             check_refresh_token_rotation,
+            complete_refresh_token_rotation_claim,
             extend_refresh_token_family,
             get_token_error_message,
+            release_refresh_token_rotation_claim,
         )
 
         # Check if authentication detected a token version mismatch
@@ -568,8 +583,21 @@ class TokenRefreshView(APIView):
             token_version = refresh.get("token_version", 0)
 
             # Check rotation
-            is_valid, error_code = check_refresh_token_rotation(user_id, family_id, token_jti)
+            is_valid, error_code, claim_id = check_refresh_token_rotation(
+                user_id,
+                family_id,
+                token_jti,
+            )
             if not is_valid:
+                if error_code == TokenErrorCode.REFRESH_CONCURRENT:
+                    response = _build_error_response(
+                        error_code,
+                        get_token_error_message(error_code),
+                        http_status=status.HTTP_409_CONFLICT,
+                    )
+                    response["Retry-After"] = "1"
+                    return response
+
                 # Clear cookies on security events
                 response = Response(
                     {
@@ -584,29 +612,73 @@ class TokenRefreshView(APIView):
                 _clear_token_cookies(response)
                 return response
 
-            # Get user
             try:
-                user = User.objects.get(pk=user_id)
-            except User.DoesNotExist:
-                return _build_error_response(
-                    "INVALID_TOKEN",
-                    _("User not found"),
-                    http_status=status.HTTP_401_UNAUTHORIZED,
-                )
+                # Get user
+                try:
+                    user = User.objects.get(pk=user_id)
+                except User.DoesNotExist:
+                    complete_refresh_token_rotation_claim(
+                        user_id,
+                        family_id,
+                        token_jti,
+                        claim_id,
+                    )
+                    response = _build_error_response(
+                        "INVALID_TOKEN",
+                        _("User not found"),
+                        http_status=status.HTTP_401_UNAUTHORIZED,
+                    )
+                    _clear_token_cookies(response)
+                    return response
 
-            if not user.is_active:
-                return _build_error_response(
-                    "ACCOUNT_DISABLED",
-                    _("Account has been disabled"),
-                    http_status=status.HTTP_401_UNAUTHORIZED,
-                )
+                if not user.is_active:
+                    complete_refresh_token_rotation_claim(
+                        user_id,
+                        family_id,
+                        token_jti,
+                        claim_id,
+                    )
+                    response = _build_error_response(
+                        "ACCOUNT_DISABLED",
+                        _("Account has been disabled"),
+                        http_status=status.HTTP_401_UNAUTHORIZED,
+                    )
+                    _clear_token_cookies(response)
+                    return response
 
-            # Rotate refresh token and generate a matching access token.
-            rotated_refresh = RefreshToken.for_user(user)
-            rotated_refresh["family_id"] = family_id
-            rotated_refresh["token_version"] = token_version
-            access = rotated_refresh.access_token
-            extend_refresh_token_family(user_id, family_id, token_version)
+                # Rotate refresh token and generate a matching access token.
+                rotated_refresh = RefreshToken.for_user(user)
+                rotated_refresh["family_id"] = family_id
+                rotated_refresh["token_version"] = token_version
+                access = rotated_refresh.access_token
+                extend_refresh_token_family(user_id, family_id, token_version)
+            except Exception:
+                release_refresh_token_rotation_claim(
+                    user_id,
+                    family_id,
+                    token_jti,
+                    claim_id,
+                )
+                raise
+
+            if not complete_refresh_token_rotation_claim(
+                user_id,
+                family_id,
+                token_jti,
+                claim_id,
+            ):
+                response = Response(
+                    {
+                        "code": "1001",
+                        "error": {
+                            "error_code": TokenErrorCode.TOKEN_REUSED,
+                            "message": get_token_error_message(TokenErrorCode.TOKEN_REUSED),
+                        },
+                    },
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+                _clear_token_cookies(response)
+                return response
 
             # Build response
             response = Response(

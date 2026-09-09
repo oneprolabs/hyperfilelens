@@ -2,13 +2,15 @@
 Token blacklist and refresh token rotation service.
 """
 
+import hashlib
 import logging
 import secrets
+import threading
 from datetime import datetime, timedelta
 from typing import Optional
 
 from django.conf import settings
-from django.core.cache import cache
+from django.core.cache import cache, caches
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
@@ -25,6 +27,26 @@ REFRESH_LASTUSED_PREFIX = "refresh_lastused:"
 ACCESS_TOKEN_LIFETIME = timedelta(hours=1)
 REFRESH_TOKEN_LIFETIME = timedelta(hours=24)  # 24 hours as per requirement
 ROTATION_TOKEN_LIFETIME = timedelta(days=7)  # New refresh token after rotation
+REFRESH_INFLIGHT_TTL_SECONDS = 30
+REFRESH_CLAIM_PREFIX = "inflight:"
+REFRESH_CONSUMED_STATE = 0
+
+_refresh_claim_fallback_lock = threading.Lock()
+
+_REDIS_COMPARE_AND_SET = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  redis.call('set', KEYS[1], ARGV[2], 'EX', ARGV[3])
+  return 1
+end
+return 0
+"""
+
+_REDIS_COMPARE_AND_DELETE = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('del', KEYS[1])
+end
+return 0
+"""
 
 
 def _lifetime_seconds(setting_name: str, fallback: timedelta) -> int:
@@ -51,6 +73,7 @@ class TokenError:
     PASSWORD_CHANGED = "PASSWORD_CHANGED"
     ACCOUNT_DISABLED = "ACCOUNT_DISABLED"
     TOKEN_REUSED = "TOKEN_REUSED"
+    REFRESH_CONCURRENT = "REFRESH_CONCURRENT"
     INVALID_TOKEN = "INVALID_TOKEN"
 
 
@@ -64,6 +87,75 @@ def _get_refresh_family_key(user_id: int, family_id: str) -> str:
 
 def _get_refresh_lastused_key(user_id: int) -> str:
     return f"{REFRESH_LASTUSED_PREFIX}{user_id}"
+
+
+def _get_refresh_used_jti_key(user_id: int, family_id: str, token_jti: str) -> str:
+    family_key = _get_refresh_family_key(user_id, family_id)
+    return f"{family_key}:used_jti:{token_jti}"
+
+
+def _refresh_family_fingerprint(family_id: str) -> str:
+    """Return a non-reversible identifier suitable for authentication logs."""
+    return hashlib.sha256(str(family_id).encode("utf-8")).hexdigest()[:12]
+
+
+def _redis_cache_client(key: str):
+    """Return the configured Redis client and namespaced key when available."""
+    backend = caches["default"]
+    if backend.__class__.__name__ != "RedisCache":
+        return None
+    client_factory = getattr(backend, "_cache", None)
+    get_client = getattr(client_factory, "get_client", None)
+    if not callable(get_client):
+        return None
+    return get_client(key, write=True), backend.make_key(key)
+
+
+def _compare_and_set_claim(
+    key: str,
+    expected: int,
+    replacement: int,
+    timeout: int,
+) -> bool:
+    """Atomically promote a Redis claim, with a process-safe test fallback."""
+    redis_target = _redis_cache_client(key)
+    if redis_target:
+        client, redis_key = redis_target
+        return bool(
+            client.eval(
+                _REDIS_COMPARE_AND_SET,
+                1,
+                redis_key,
+                str(expected),
+                str(replacement),
+                str(timeout),
+            )
+        )
+    with _refresh_claim_fallback_lock:
+        if cache.get(key) != expected:
+            return False
+        cache.set(key, replacement, timeout=timeout)
+        return True
+
+
+def _compare_and_delete_claim(key: str, expected: int) -> bool:
+    """Atomically release an owned Redis claim without deleting a successor."""
+    redis_target = _redis_cache_client(key)
+    if redis_target:
+        client, redis_key = redis_target
+        return bool(
+            client.eval(
+                _REDIS_COMPARE_AND_DELETE,
+                1,
+                redis_key,
+                str(expected),
+            )
+        )
+    with _refresh_claim_fallback_lock:
+        if cache.get(key) != expected:
+            return False
+        cache.delete(key)
+        return True
 
 
 def get_user_token_version(user_id: int) -> int:
@@ -128,14 +220,32 @@ def blacklist_all_user_tokens(user_id: int, reason: str) -> None:
     logger.info(f"[TOKEN] blacklist_all_user_tokens: user_id={user_id}, old_version={current_version}, new_version={current_version + 1}, reason={reason}")
 
 
-def check_refresh_token_rotation(user_id: int, family_id: str, token_jti: str) -> tuple[bool, Optional[str]]:
+def _invalidate_refresh_token_family(
+    user_id: int,
+    family_id: str,
+    current_version: int,
+) -> None:
+    family_key = _get_refresh_family_key(user_id, family_id)
+    cache.set(family_key + ":version", current_version + 1, timeout=None)
+    logger.warning(
+        "event=auth.refresh.reuse user_id=%s family_fingerprint=%s result=family_revoked",
+        user_id,
+        _refresh_family_fingerprint(family_id),
+    )
+
+
+def check_refresh_token_rotation(
+    user_id: int,
+    family_id: str,
+    token_jti: str,
+) -> tuple[bool, Optional[str], Optional[int]]:
     """
     Check and validate refresh token rotation.
 
     Returns:
-        (is_valid, error_code)
-        If valid: (True, None)
-        If invalid: (False, error_code)
+        (is_valid, error_code, claim_id)
+        If valid: (True, None, claim_id)
+        If invalid: (False, error_code, None)
 
     Rotation logic:
     - Each login session has a unique family_id
@@ -151,26 +261,81 @@ def check_refresh_token_rotation(user_id: int, family_id: str, token_jti: str) -
     current_version = cache.get(version_key, 0)
     if stored_version != current_version:
         if get_user_token_invalid_reason(user_id) == "password_changed":
-            return False, TokenError.PASSWORD_CHANGED
-        return False, TokenError.OTHER_DEVICE_LOGIN
+            return False, TokenError.PASSWORD_CHANGED, None
+        return False, TokenError.OTHER_DEVICE_LOGIN, None
 
-    # Store the jti of the refresh token after it has been exchanged.
-    # If this jti appears again, an already-rotated refresh token was reused.
-    used_jtis_key = family_key + ":used_jtis"
-    used_jtis = cache.get(used_jtis_key, set())
+    # Reject replay records created by the previous set-based implementation.
+    legacy_used_jtis_key = family_key + ":used_jtis"
+    legacy_used_jtis = cache.get(legacy_used_jtis_key, set())
+    if token_jti in legacy_used_jtis:
+        _invalidate_refresh_token_family(user_id, family_id, current_version)
+        return False, TokenError.TOKEN_REUSED, None
 
-    if token_jti in used_jtis:
-        # REUSE ATTACK! Invalidate the entire family
-        cache.set(family_key + ":version", current_version + 1, timeout=None)
-        logger.warning(f"Refresh token reuse detected for user {user_id}, family {family_id}")
-        return False, TokenError.TOKEN_REUSED
+    # ``cache.add`` is the atomic single-winner operation for all supported
+    # Django cache backends. The state remains ``inflight`` only while the
+    # winning request is issuing the replacement token. Successful issuance
+    # promotes it to ``consumed``; elapsed wall-clock time is never used to
+    # reinterpret a completed token exchange as concurrency.
+    state_key = _get_refresh_used_jti_key(user_id, family_id, token_jti)
+    claim_id = secrets.randbits(63) or 1
+    if cache.add(state_key, claim_id, timeout=REFRESH_INFLIGHT_TTL_SECONDS):
+        return True, None, claim_id
 
-    # Mark this jti as used
-    used_jtis.add(token_jti)
-    # Keep the set of used jtis for the lifetime of the family
-    cache.set(used_jtis_key, used_jtis, timeout=int(ROTATION_TOKEN_LIFETIME.total_seconds()))
+    state = cache.get(state_key)
+    if (
+        (isinstance(state, int) and state > REFRESH_CONSUMED_STATE)
+        or (isinstance(state, str) and state.startswith(REFRESH_CLAIM_PREFIX))
+    ):
+        logger.info(
+            "event=auth.refresh.concurrent user_id=%s family_fingerprint=%s result=retryable",
+            user_id,
+            _refresh_family_fingerprint(family_id),
+        )
+        return False, TokenError.REFRESH_CONCURRENT, None
 
-    return True, None
+    # Any durable state, including records from the earlier timestamp-based
+    # implementation, means this token has already completed an exchange.
+    _invalidate_refresh_token_family(user_id, family_id, current_version)
+    return False, TokenError.TOKEN_REUSED, None
+
+
+def complete_refresh_token_rotation_claim(
+    user_id: int,
+    family_id: str,
+    token_jti: str,
+    claim_id: int,
+) -> bool:
+    """Promote an owned in-flight refresh claim to a durable consumed state."""
+    state_key = _get_refresh_used_jti_key(user_id, family_id, token_jti)
+    timeout = int(ROTATION_TOKEN_LIFETIME.total_seconds())
+    if not _compare_and_set_claim(
+        state_key,
+        claim_id,
+        REFRESH_CONSUMED_STATE,
+        timeout,
+    ):
+        current_version = cache.get(f"user_token_version:{user_id}", 0)
+        _invalidate_refresh_token_family(user_id, family_id, current_version)
+        return False
+
+    # Continue writing the former set representation so a rollback cannot make
+    # tokens exchanged by this version usable again.
+    legacy_used_jtis_key = _get_refresh_family_key(user_id, family_id) + ":used_jtis"
+    legacy_used_jtis = cache.get(legacy_used_jtis_key, set())
+    legacy_used_jtis.add(token_jti)
+    cache.set(legacy_used_jtis_key, legacy_used_jtis, timeout=timeout)
+    return True
+
+
+def release_refresh_token_rotation_claim(
+    user_id: int,
+    family_id: str,
+    token_jti: str,
+    claim_id: int,
+) -> None:
+    """Allow a safe retry when refresh processing failed before issuing cookies."""
+    state_key = _get_refresh_used_jti_key(user_id, family_id, token_jti)
+    _compare_and_delete_claim(state_key, claim_id)
 
 
 def store_refresh_token_family(user_id: int, family_id: str, refresh_jti: str) -> int:
@@ -180,7 +345,6 @@ def store_refresh_token_family(user_id: int, family_id: str, refresh_jti: str) -
 
     current_version = cache.get(version_key, 0)
     cache.set(family_key + ":version", current_version, timeout=get_refresh_token_lifetime_seconds())
-    cache.set(family_key + ":used_jtis", set(), timeout=int(ROTATION_TOKEN_LIFETIME.total_seconds()))
     cache.set(_get_refresh_lastused_key(user_id), family_id, timeout=get_refresh_token_lifetime_seconds())
     return current_version
 
@@ -206,7 +370,8 @@ def get_token_error_message(error_code: str) -> str:
         TokenError.OTHER_DEVICE_LOGIN: _("Your account was logged in from another device"),
         TokenError.PASSWORD_CHANGED: _("Your password has been changed"),
         TokenError.ACCOUNT_DISABLED: _("Your account has been disabled"),
-        TokenError.TOKEN_REUSED: _("Suspicious login activity detected"),
+        TokenError.TOKEN_REUSED: _("Login session is no longer valid. Please login again."),
+        TokenError.REFRESH_CONCURRENT: _("Login session refresh is already in progress"),
         TokenError.INVALID_TOKEN: _("Invalid token"),
     }
     return messages.get(error_code, _("Authentication failed"))

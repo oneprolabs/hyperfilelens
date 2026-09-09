@@ -11,9 +11,11 @@ import { getCorrelationHeaders } from '../lib/requestContext'
 import { refreshAuthToken } from '../lib/authRefresh'
 import { i18n, setAuthenticatedLocalePreference } from '../i18n'
 import {
+  clearSharedSessionNotice,
   isSessionInvalidReason,
   sessionNoticeMessageKey,
   storeSessionNotice,
+  subscribeSessionNotice,
 } from '../lib/sessionNotice'
 import { clearLogoutBrowserStorage } from '../lib/logoutStorage'
 
@@ -90,6 +92,7 @@ function setUser(userData: User | null) {
   if (orgKey) {
     setStoredOrgKey(orgKey)
   }
+  if (userData) clearSharedSessionNotice()
 }
 
 function parseUserPayload(data: unknown): User | null {
@@ -117,6 +120,8 @@ export type CurrentSessionConfirmation =
   | { state: 'authenticated'; user: User }
   | { state: 'unauthenticated' }
   | { state: 'unknown' }
+
+let sessionConfirmationPromise: Promise<CurrentSessionConfirmation> | null = null
 
 function extractSessionErrorCode(data: unknown): string | undefined {
   if (!data || typeof data !== 'object') return undefined
@@ -215,7 +220,7 @@ export async function fetchCurrentUser(): Promise<User | null> {
 }
 
 /** Distinguish an absent session from a session that could not be inspected. */
-export async function confirmCurrentSession(): Promise<CurrentSessionConfirmation> {
+async function inspectAndConfirmCurrentSession(): Promise<CurrentSessionConfirmation> {
   try {
     const result = await fetchCurrentUserWithRefresh()
     if (result.user) return { state: 'authenticated', user: result.user }
@@ -245,6 +250,15 @@ export async function confirmCurrentSession(): Promise<CurrentSessionConfirmatio
   }
 }
 
+export function confirmCurrentSession(): Promise<CurrentSessionConfirmation> {
+  if (!sessionConfirmationPromise) {
+    sessionConfirmationPromise = inspectAndConfirmCurrentSession().finally(() => {
+      sessionConfirmationPromise = null
+    })
+  }
+  return sessionConfirmationPromise
+}
+
 function hasCompleteAccessProfile(user: User | null): boolean {
   const profile = user?.access_profile
   return !!(profile?.org_key?.trim() && profile?.role?.trim())
@@ -265,28 +279,35 @@ const WATCHDOG_INTERVAL_MS = 15_000
 let sessionWatchdogTimer: number | null = null
 let sessionWatchdogChecking = false
 let sessionExpiredHandling = false
+let sessionNoticeSubscriptionStarted = false
 
 function isPublicSessionPath(path: string): boolean {
   return ['/login', '/register', '/auth/oauth/callback', '/auth/oauth/error'].some(publicPath => path.startsWith(publicPath))
 }
 
-async function redirectToLoginForSession(reason = 'REFRESH_EXPIRED'): Promise<void> {
+async function redirectToLoginForSession(
+  reason = 'REFRESH_EXPIRED',
+  notifyBackend = true,
+  publish = true,
+): Promise<void> {
   if (sessionExpiredHandling) return
   sessionExpiredHandling = true
   try {
     const currentRoute = router.currentRoute.value
     const redirect = currentRoute.fullPath || '/'
 
-    void fetch('/api/v1/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
-      headers: getCorrelationHeaders(),
-    }).catch(() => undefined)
+    if (notifyBackend) {
+      void fetch('/api/v1/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: getCorrelationHeaders(),
+      }).catch(() => undefined)
+    }
 
     clearAuth()
 
     if (!isPublicSessionPath(currentRoute.path)) {
-      storeSessionNotice(reason)
+      storeSessionNotice(reason, undefined, Date.now(), publish)
       await router.replace({
         path: '/login',
         query: {
@@ -313,7 +334,24 @@ async function checkSessionForWatchdog(): Promise<void> {
       await redirectToLoginForSession(result.errorCode)
       return
     }
-    if (result.status === 401 && result.refreshFailed) {
+    if (
+      result.status !== undefined
+      && result.status >= 200
+      && result.status < 300
+      && result.refreshAvailable === false
+    ) {
+      await redirectToLoginForSession('REFRESH_EXPIRED', false)
+      return
+    }
+    if (
+      result.refreshFailed
+      && (
+        result.status === 401
+        || result.status === 403
+        || result.refreshStatus === 401
+        || result.refreshStatus === 403
+      )
+    ) {
       await redirectToLoginForSession(result.errorCode || 'REFRESH_EXPIRED')
     }
   } catch {
@@ -411,10 +449,6 @@ export function setupAuthGuard() {
 
       // If already logged in with a complete profile, allow access
       if (isLoggedIn.value) {
-        if (to.path === '/login') {
-          next(await resolvePostLoginPath())
-          return
-        }
         if (isPlatformOpsPath || to.meta.requiresPlatformOps) {
           const profile = await fetchDeployProfile(shouldForceDeployProfileRefresh(
             to.path,
@@ -481,6 +515,13 @@ export function setupAuthGuard() {
 
 export function setupSessionWatchdog() {
   if (typeof window === 'undefined' || sessionWatchdogTimer !== null) return
+  if (!sessionNoticeSubscriptionStarted) {
+    sessionNoticeSubscriptionStarted = true
+    subscribeSessionNotice((reason) => {
+      if (!isLoggedIn.value || isPublicSessionPath(router.currentRoute.value.path)) return
+      void redirectToLoginForSession(reason, false, false)
+    })
+  }
   sessionWatchdogTimer = window.setInterval(() => {
     void checkSessionForWatchdog()
   }, WATCHDOG_INTERVAL_MS)

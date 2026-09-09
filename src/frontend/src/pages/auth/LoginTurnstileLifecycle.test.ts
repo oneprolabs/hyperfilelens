@@ -7,7 +7,7 @@ import { createI18n } from 'vue-i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../../locales/en'
-import { storeSessionNotice } from '../../lib/sessionNotice'
+import { clearSharedSessionNotice, storeSessionNotice } from '../../lib/sessionNotice'
 import Login from './Login.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -179,13 +179,19 @@ describe('Login Turnstile lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     window.sessionStorage.clear()
+    clearSharedSessionNotice()
     for (const key of Object.keys(mocks.routeQuery)) {
       delete mocks.routeQuery[key]
     }
     mocks.fetchDeployProfile.mockResolvedValue({
+      site_role: 'tenant',
       email_signup_enabled: false,
       email_code_login_available: false,
       password_reset_available: false,
+      platform_ops_access_allowed: false,
+      tenant_public_url: 'https://tenant.example.test',
+      landing_path: '/',
+      admin_console_landing_path: '/platform-ops/overview',
     })
     mocks.turnstileBlocked = false
     mocks.loadTurnstileConfig.mockResolvedValue(undefined)
@@ -193,7 +199,7 @@ describe('Login Turnstile lifecycle', () => {
     mocks.buildTurnstilePayload.mockImplementation((token: string) => (
       token ? { turnstile_token: token } : {}
     ))
-    mocks.confirmCurrentSession.mockResolvedValue({ state: 'unknown' })
+    mocks.confirmCurrentSession.mockResolvedValue({ state: 'unauthenticated' })
     installDefaultApiMock()
   })
 
@@ -207,13 +213,52 @@ describe('Login Turnstile lifecycle', () => {
     wrapper.unmount()
   })
 
+  it('restores an existing cookie session before showing the login form', async () => {
+    mocks.confirmCurrentSession.mockResolvedValue({
+      state: 'authenticated',
+      user: successfulLoginResponse.data.user,
+    })
+    mocks.routerPush.mockResolvedValue(undefined)
+
+    const wrapper = await mountLogin(1440)
+
+    expect(mocks.confirmCurrentSession).toHaveBeenCalledOnce()
+    expect(mocks.routerPush).toHaveBeenCalledWith('/')
+    expect(wrapper.find('#login-method-panel').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('restores an authorized Admin Console session to its ops landing page', async () => {
+    mocks.confirmCurrentSession.mockResolvedValue({
+      state: 'authenticated',
+      user: { ...successfulLoginResponse.data.user, is_staff: true },
+    })
+    mocks.fetchDeployProfile.mockResolvedValue({
+      site_role: 'ops',
+      email_signup_enabled: false,
+      email_code_login_available: false,
+      password_reset_available: false,
+      platform_ops_access_allowed: true,
+      tenant_public_url: 'https://tenant.example.test',
+      landing_path: '/platform-ops/overview',
+      admin_console_landing_path: '/platform-ops/overview',
+    })
+    mocks.routerPush.mockResolvedValue(undefined)
+
+    const wrapper = await mountLogin(1440)
+
+    expect(mocks.routerPush).toHaveBeenCalledWith('/platform-ops/overview')
+    expect(wrapper.find('#login-method-panel').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('shows a backend-produced session notice only once', async () => {
     expect(storeSessionNotice('TOKEN_REUSED')).toBe(true)
 
     const firstMount = await mountLogin(1440)
     const securityNotice = firstMount.get('.session-alert')
     expect(securityNotice.text()).toContain(
-      'Unusual sign-in activity. Sign in again.',
+      'Sign-in no longer valid. Sign in again.',
     )
     expect(securityNotice.classes()).toContain('session-alert--warning')
     expect(firstMount.getComponent({ name: 'ElAlert' }).props('type')).toBe('warning')
@@ -402,10 +447,12 @@ describe('Login Turnstile lifecycle', () => {
     mocks.routerPush
       .mockResolvedValueOnce(new Error('lazy route failed'))
       .mockResolvedValueOnce(undefined)
-    mocks.confirmCurrentSession.mockResolvedValue({
-      state: 'authenticated',
-      user: successfulLoginResponse.data.user,
-    })
+    mocks.confirmCurrentSession
+      .mockResolvedValueOnce({ state: 'unauthenticated' })
+      .mockResolvedValue({
+        state: 'authenticated',
+        user: successfulLoginResponse.data.user,
+      })
     const wrapper = await mountLogin(1440)
     await fillCredentials(wrapper)
     const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
@@ -421,13 +468,16 @@ describe('Login Turnstile lifecycle', () => {
     await wrapper.get('.login-recovery button').trigger('click')
     await flushPromises()
 
-    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(1)
+    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(2)
     expect(mocks.routerPush).toHaveBeenCalledTimes(2)
     expect(emailLoginCalls()).toHaveLength(1)
     wrapper.unmount()
   })
 
   it('keeps an unknown session locked until it can be confirmed', async () => {
+    mocks.confirmCurrentSession
+      .mockResolvedValueOnce({ state: 'unauthenticated' })
+      .mockResolvedValue({ state: 'unknown' })
     mocks.api.mockImplementation(async (path: string) => {
       if (path === '/api/v1/auth/google/config') {
         return { code: '0000', data: { enabled: false } }
@@ -448,12 +498,12 @@ describe('Login Turnstile lifecycle', () => {
 
     expect(wrapper.get('.login-recovery__title').text()).toBe('Sign-in status unavailable')
     expect(wrapper.find('#login-method-panel').exists()).toBe(false)
-    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(1)
+    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(2)
     expect(emailLoginCalls()).toHaveLength(1)
 
     await wrapper.get('.login-recovery button').trigger('click')
     await flushPromises()
-    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(2)
+    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(3)
     expect(emailLoginCalls()).toHaveLength(1)
     wrapper.unmount()
   })

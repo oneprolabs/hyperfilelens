@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { resolveSafeLoginRedirect, withoutLegacySessionReason } from './loginNavigation'
+import {
+  resolveAuthenticatedLoginTarget,
+  resolveSafeLoginRedirect,
+  withoutLegacySessionReason,
+} from './loginNavigation'
 
 const ORIGIN = 'https://hyperfilelens.com'
 
@@ -52,5 +56,50 @@ describe('legacy session reason cleanup', () => {
 
   it('does not redirect a clean login route', () => {
     expect(withoutLegacySessionReason({ redirect: '/ops/tasks' })).toBeNull()
+  })
+})
+
+describe('authenticated login target', () => {
+  const tenantProfile = {
+    site_role: 'tenant' as const,
+    platform_ops_access_allowed: false,
+    tenant_public_url: 'https://app.example.test',
+    landing_path: '/',
+    admin_console_landing_path: '/platform-ops/overview',
+  }
+
+  it('keeps a tenant redirect inside the tenant application', () => {
+    expect(resolveAuthenticatedLoginTarget(
+      tenantProfile,
+      '/ops/tasks',
+      ORIGIN,
+    )).toEqual({ kind: 'internal', path: '/ops/tasks' })
+    expect(resolveAuthenticatedLoginTarget(
+      tenantProfile,
+      '/platform-ops/overview',
+      ORIGIN,
+    )).toEqual({ kind: 'internal', path: '/' })
+  })
+
+  it('uses the role-aware Admin Console landing page', () => {
+    expect(resolveAuthenticatedLoginTarget({
+      ...tenantProfile,
+      site_role: 'ops',
+      platform_ops_access_allowed: true,
+      landing_path: '/platform-ops/overview',
+    }, '/ops/tasks', ORIGIN)).toEqual({
+      kind: 'internal',
+      path: '/platform-ops/overview',
+    })
+  })
+
+  it('sends an authenticated user without ops access back to the application', () => {
+    expect(resolveAuthenticatedLoginTarget({
+      ...tenantProfile,
+      site_role: 'ops',
+    }, undefined, ORIGIN)).toEqual({
+      kind: 'external',
+      url: 'https://app.example.test',
+    })
   })
 })

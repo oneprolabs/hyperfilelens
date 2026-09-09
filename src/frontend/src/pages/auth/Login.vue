@@ -3,7 +3,7 @@ import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CircleAlert, Eye, EyeOff, Lock, Mail } from 'lucide-vue-next'
+import { CircleAlert, Eye, EyeOff, LoaderCircle, Lock, Mail } from 'lucide-vue-next'
 import { api } from '../../lib/api'
 import {
   confirmCurrentSession,
@@ -26,9 +26,9 @@ import EmailCodeLoginForm from '../../components/auth/EmailCodeLoginForm.vue'
 import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 import type { EmailCodeLoginData } from '../../lib/emailCodeLoginApi'
 import ResetPasswordCard from '../../components/auth/ResetPasswordCard.vue'
-import { fetchDeployProfile, resolvePostLoginPath } from '../../composables/useDeployProfile'
+import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import { appConfig } from '../../lib/appConfig'
-import { resolveSafeLoginRedirect } from '../../lib/loginNavigation'
+import { resolveAuthenticatedLoginTarget } from '../../lib/loginNavigation'
 import { trackAppEvent } from '../../lib/analytics'
 import {
   consumeSessionNotice,
@@ -135,19 +135,32 @@ formItems.email.placeholder = t('login.emailPh')
 formItems.password.placeholder = t('login.passwordPh')
 type LoginTransactionState =
   | 'idle'
+  | 'checking-session'
   | 'submitting'
   | 'recovering-navigation'
   | 'session-unknown'
 
-const loginState = ref<LoginTransactionState>('idle')
+const loginState = ref<LoginTransactionState>(sessionNoticeReason.value ? 'idle' : 'checking-session')
 const loginProgress = ref<'authenticating' | 'navigating'>('authenticating')
 const recoveryBusy = ref(false)
 const recoveryTarget = ref('')
 const navigationFinished = ref(false)
 const submitLoading = computed(() => loginState.value === 'submitting')
 const isRecoveryState = computed(() => (
-  loginState.value === 'recovering-navigation' || loginState.value === 'session-unknown'
+  loginState.value === 'checking-session'
+  || loginState.value === 'recovering-navigation'
+  || loginState.value === 'session-unknown'
 ))
+const recoveryTitle = computed(() => {
+  if (loginState.value === 'checking-session') return t('login.checkingSessionTitle')
+  if (loginState.value === 'recovering-navigation') return t('login.navigationRecoveryTitle')
+  return t('login.sessionUnknownTitle')
+})
+const recoveryMessage = computed(() => {
+  if (loginState.value === 'checking-session') return t('login.checkingSessionMessage')
+  if (loginState.value === 'recovering-navigation') return t('login.navigationRecoveryMessage')
+  return t('login.sessionUnknownMessage')
+})
 const showPassword = ref(false)
 const cardView = ref<'login' | 'reset'>('login')
 type AuthMode = 'password' | 'email-code'
@@ -353,22 +366,42 @@ function showSessionErrorDialog(errorCode: string) {
   })
 }
 
-async function resolveLoginTargetPath(): Promise<string> {
-  const redirect = resolveSafeLoginRedirect(route.query.redirect)
-  if (redirect) return redirect
-  return resolvePostLoginPath()
+type LoginTarget =
+  | { kind: 'internal'; path: string }
+  | { kind: 'external' }
+
+async function resolveLoginTargetPath(): Promise<LoginTarget | null> {
+  const profile = await fetchDeployProfile(true)
+  if (!profile) return null
+  const target = resolveAuthenticatedLoginTarget(profile, route.query.redirect)
+  if (target.kind === 'unavailable') return null
+  if (target.kind === 'external') {
+    window.location.replace(target.url)
+    return { kind: 'external' }
+  }
+  return target
 }
 
-async function ensureRecoveryTarget(): Promise<string> {
-  if (!recoveryTarget.value) recoveryTarget.value = await resolveLoginTargetPath()
-  return recoveryTarget.value
+async function ensureRecoveryTarget(): Promise<LoginTarget | null> {
+  if (recoveryTarget.value) return { kind: 'internal', path: recoveryTarget.value }
+  const target = await resolveLoginTargetPath()
+  if (target?.kind === 'internal') recoveryTarget.value = target.path
+  return target
 }
 
 async function navigateAfterLogin() {
   loginProgress.value = 'navigating'
   try {
     const target = await ensureRecoveryTarget()
-    const result = await router.push(target)
+    if (!target) {
+      loginState.value = 'session-unknown'
+      return
+    }
+    if (target.kind === 'external') {
+      navigationFinished.value = true
+      return
+    }
+    const result = await router.push(target.path)
     if (result === undefined) {
       navigationFinished.value = true
       return
@@ -405,6 +438,20 @@ async function confirmSessionAndRecover() {
 async function recoverUnknownAuthenticationResult() {
   loginState.value = 'session-unknown'
   await confirmSessionAndRecover()
+}
+
+async function restoreExistingSession(): Promise<void> {
+  if (sessionNoticeReason.value) {
+    loginState.value = 'idle'
+    return
+  }
+
+  const confirmation = await confirmCurrentSession()
+  if (confirmation.state === 'authenticated') {
+    await navigateAfterLogin()
+    return
+  }
+  loginState.value = confirmation.state === 'unknown' ? 'session-unknown' : 'idle'
 }
 
 function isExplicitAuthenticationFailure(error: unknown): boolean {
@@ -759,6 +806,7 @@ onUnmounted(() => {
 onMounted(async () => {
   turnstileToken.value = ''
   void loadGoogleConfig()
+  await restoreExistingSession()
   const profile = await fetchDeployProfile()
   emailSignupEnabled.value = !!profile?.email_signup_enabled
   passwordResetAvailable.value = !!profile?.password_reset_available
@@ -831,22 +879,26 @@ onMounted(async () => {
             role="status"
             aria-live="polite"
           >
+            <LoaderCircle
+              v-if="loginState === 'checking-session'"
+              class="login-recovery__icon spin-icon"
+              :size="30"
+              aria-hidden="true"
+            />
             <CircleAlert
+              v-else
               class="login-recovery__icon"
               :size="30"
               aria-hidden="true"
             />
             <h2 class="login-recovery__title">
-              {{ loginState === 'recovering-navigation'
-                ? t('login.navigationRecoveryTitle')
-                : t('login.sessionUnknownTitle') }}
+              {{ recoveryTitle }}
             </h2>
             <p class="login-recovery__message">
-              {{ loginState === 'recovering-navigation'
-                ? t('login.navigationRecoveryMessage')
-                : t('login.sessionUnknownMessage') }}
+              {{ recoveryMessage }}
             </p>
             <ElButton
+              v-if="loginState !== 'checking-session'"
               type="primary"
               class="submit-btn"
               :loading="recoveryBusy"
