@@ -596,6 +596,12 @@ export function useNodeLifecycleOps(options: {
           reason: x.reason,
         })),
         ...(preview.skipped_proxy_bound || []).map((x) => ({ nodeId: x.node_id, name: x.name, reason: 'proxy_bound' })),
+        ...(preview.skipped_disk_full || []).map((x) => ({ nodeId: x.node_id, name: x.name, reason: 'disk_full' })),
+        ...(preview.missing_node_ids || []).map((nodeId) => ({
+          nodeId,
+          name: String(nodeId),
+          reason: 'node_not_found',
+        })),
       ]
 
       logger.info('useNodeLifecycleOps.ts', 344, 'node lifecycle batch start', {
@@ -611,6 +617,20 @@ export function useNodeLifecycleOps(options: {
         scope: resolveScope(),
       })
       lastStartErrors.value = [...previewErrors, ...(batchResult.errors || [])]
+
+      const latePreviewErrors = previewStartErrors(batchResult)
+      if (latePreviewErrors.length) {
+        skipped.value.push(
+          ...latePreviewErrors.map((item) => ({
+            nodeId: Number(item.node_id),
+            name: String(item.name || item.node_id || '—'),
+            reason: String(item.code || 'not_eligible'),
+          })),
+        )
+        if (kind === 'upgrade' && !batchResult.started?.length && !batchResult.queued?.length) {
+          ElMessage.warning({ message: explainIneligiblePreview(batchResult), grouping: true })
+        }
+      }
 
       for (const started of batchResult.started || []) {
         const node = nodes.find((n) => n.id === started.node_id)
@@ -639,9 +659,12 @@ export function useNodeLifecycleOps(options: {
         })
       }
 
-      if (lastStartErrors.value.length) {
-        const first = lastStartErrors.value[0] || {}
-        const message = String(first.error || first.code || 'Node operation could not be started.')
+      if (batchResult.errors?.length) {
+        const first = batchResult.errors[0] || {}
+        const nodeId = Number(first.node_id)
+        const nodeName = nodes.find((node) => node.id === nodeId)?.name || String(nodeId || '—')
+        const error = String(first.error || first.code || 'Node operation could not be started.')
+        const message = t('nodeLifecycle.batchStartFailed', { name: nodeName, error })
         ElMessage.error({ message, grouping: true })
       }
 
@@ -651,6 +674,11 @@ export function useNodeLifecycleOps(options: {
       } else {
         finishBatch()
         await options.onRefresh?.()
+      }
+      const actualStartErrors = batchResult.errors || []
+      if (kind === 'upgrade') {
+        return (batchResult.started?.length || 0) + (batchResult.queued?.length || 0) > 0
+          && actualStartErrors.length === 0
       }
       return lastStartErrors.value.length === 0
     } catch (e) {

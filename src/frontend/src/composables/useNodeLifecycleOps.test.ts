@@ -63,11 +63,13 @@ describe('useNodeLifecycleOps batch start', () => {
       }],
     })
     let lifecycle!: ReturnType<typeof useNodeLifecycleOps>
+    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
     const wrapper = mount(defineComponent({
       setup() {
         lifecycle = useNodeLifecycleOps({
           role: 'proxy',
-          t: ((key: string) => key) as never,
+          t: ((key: string, args?: Record<string, unknown>) =>
+            `${key}:${args?.name || ''}`) as never,
         })
         return () => h('div')
       },
@@ -80,7 +82,11 @@ describe('useNodeLifecycleOps batch start', () => {
       expect(lifecycle.lastStartErrors.value).toEqual([
         expect.objectContaining({ code: 'node_offline', node_id: node.id }),
       ])
+      expect(errorMessage).toHaveBeenCalledWith(expect.objectContaining({
+        message: `nodeLifecycle.batchStartFailed:${node.name}`,
+      }))
     } finally {
+      errorMessage.mockRestore()
       wrapper.unmount()
     }
   })
@@ -137,6 +143,7 @@ describe('useNodeLifecycleOps batch start', () => {
       errors: [],
     })
     let lifecycle!: ReturnType<typeof useNodeLifecycleOps>
+    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
     const wrapper = mount(defineComponent({
       setup() {
         lifecycle = useNodeLifecycleOps({
@@ -164,7 +171,9 @@ describe('useNodeLifecycleOps batch start', () => {
       expect(lifecycle.completed.value).toEqual([
         expect.objectContaining({ nodeId: startedNode.id }),
       ])
+      expect(errorMessage).not.toHaveBeenCalled()
     } finally {
+      errorMessage.mockRestore()
       wrapper.unmount()
     }
   })
@@ -212,6 +221,25 @@ describe('useNodeLifecycleOps batch start', () => {
       warning.mockRestore()
       wrapper.unmount()
     }
+  })
+
+  it('reports a host that becomes offline after confirmation', async () => {
+    const node = { id: 44, name: 'race-host', role: 'agent', availability: 'online', routable: true } as ApiNode
+    vi.mocked(previewNodeOperationsBatch).mockResolvedValueOnce({
+      kind: 'upgrade', requested: 1, eligible: [{ node_id: node.id, name: node.name }],
+      skipped_offline: [], skipped_workload: [], skipped_in_progress: [], skipped_not_upgradeable: [], skipped_proxy_bound: [], missing_node_ids: [], max_concurrent: 5,
+    })
+    vi.mocked(startNodeOperationsBatch).mockResolvedValue({
+      kind: 'upgrade', requested: 1, eligible: [], skipped_offline: [{ node_id: node.id, name: node.name, reason: 'offline' }], skipped_workload: [], skipped_in_progress: [], skipped_not_upgradeable: [], skipped_proxy_bound: [], missing_node_ids: [], max_concurrent: 5, started: [], queued: [], errors: [],
+    })
+    const warning = vi.spyOn(ElMessage, 'warning').mockImplementation(() => undefined as never)
+    let lifecycle!: ReturnType<typeof useNodeLifecycleOps>
+    const wrapper = mount(defineComponent({ setup() { lifecycle = useNodeLifecycleOps({ role: 'agent', t: ((key: string) => key) as never }); return () => h('div') } }))
+    try {
+      await expect(lifecycle.runBatch('upgrade', [node], { skipConfirm: true })).resolves.toBe(false)
+      expect(lifecycle.skipped.value).toEqual([expect.objectContaining({ nodeId: node.id, reason: 'offline' })])
+      expect(warning).toHaveBeenCalledWith(expect.objectContaining({ message: 'nodeLifecycle.nothingEligibleOffline' }))
+    } finally { warning.mockRestore(); wrapper.unmount() }
   })
 })
 

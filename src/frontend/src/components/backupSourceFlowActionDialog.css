@@ -18,7 +18,7 @@
 }
 
 .hfl-flow-action-dialog--confirm.el-dialog {
-  --el-dialog-width: min(560px, calc(100vw - 32px));
+  --el-dialog-width: min(620px, calc(100vw - 32px));
 }
 
 .hfl-flow-action-dialog--narrow.el-dialog {
@@ -814,6 +814,141 @@ html[data-theme='hybrid'] .hfl-flow-action-dialog--delete .hfl-flow-action-dialo
   font-size: 13px;
   line-height: 1.55;
   color: var(--color-text-secondary, #70707e);
+}
+
+.hfl-upgrade-confirm .hfl-flow-action-dialog__lead {
+  align-items: flex-start;
+}
+
+.hfl-upgrade-confirm__impact {
+  margin: 0;
+  color: var(--color-text-secondary, #70707e);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.hfl-upgrade-confirm__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hfl-upgrade-confirm__stat {
+  display: inline-flex;
+  min-width: 104px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color-lighter, #e5e7eb);
+  border-radius: 8px;
+  background: var(--el-fill-color-light, #f5f7fa);
+  color: var(--el-text-color-regular, #606266);
+  font-size: 12px;
+}
+
+.hfl-upgrade-confirm__stat strong {
+  color: var(--el-text-color-primary, #303133);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 22px;
+}
+
+.hfl-upgrade-confirm__stat--upgrade {
+  border-color: color-mix(in srgb, var(--color-primary, #6d5ef6) 24%, transparent);
+  background: color-mix(in srgb, var(--color-primary, #6d5ef6) 7%, transparent);
+}
+
+.hfl-upgrade-confirm__stat--upgrade strong {
+  color: var(--color-primary, #6d5ef6);
+}
+
+.hfl-upgrade-confirm__stat--skipped {
+  border-color: var(--color-warning-border, #f2dba8);
+  background: var(--color-warning-light, #fcf3e1);
+}
+
+.hfl-upgrade-confirm__stat--skipped strong {
+  color: var(--color-warning, #e08b0b);
+}
+
+.hfl-upgrade-confirm__groups {
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-lighter, #e5e7eb);
+  border-radius: 10px;
+  background: var(--el-fill-color-blank, #fff);
+}
+
+.hfl-upgrade-confirm__groups-title {
+  margin: 0;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter, #e5e7eb);
+  background: var(--el-fill-color-light, #f5f7fa);
+  color: var(--el-text-color-primary, #303133);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.hfl-upgrade-confirm__group-list {
+  max-height: min(40vh, 340px);
+  padding: 0 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.hfl-upgrade-confirm__group {
+  padding: 11px 0;
+}
+
+.hfl-upgrade-confirm__group + .hfl-upgrade-confirm__group {
+  border-top: 1px solid var(--el-border-color-extra-light, #ebeef5);
+}
+
+.hfl-upgrade-confirm__group-title {
+  margin: 0;
+  color: var(--el-text-color-primary, #303133);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.hfl-upgrade-confirm__guidance {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.hfl-upgrade-confirm__names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.hfl-upgrade-confirm__name {
+  max-width: 100%;
+  padding: 2px 7px;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-lighter, #e5e7eb);
+  border-radius: 5px;
+  background: var(--el-fill-color-light, #f5f7fa);
+  color: var(--el-text-color-regular, #606266);
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hfl-upgrade-confirm__guidance {
+  color: var(--el-text-color-secondary, #909399);
+}
+
+.hfl-upgrade-confirm__guidance strong {
+  color: var(--el-text-color-regular, #606266);
+  font-weight: 600;
 }
 
 .hfl-flow-action-dialog__bindings-panel {
