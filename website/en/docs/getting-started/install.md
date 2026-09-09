@@ -52,7 +52,7 @@ After a successful installation, the `Access` section lists these endpoints:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `HyperFileLens · 11443` | Product console for backup, restore, Insights, and organization administration |
-| `Platform Ops · 11444` | Platform administration console for AI models, system configuration, and operations |
+| `HyperFileLens` | Product console for backup, restore, Insights, and organization administration |
+| `Platform Ops` | Platform administration console for AI models, system configuration, and operations |
 
-For first-time use, copy the `URL` listed under `HyperFileLens · 11443` and open it in your browser. Sign in with the `Email` and `Password` shown in the same section, then change the initial password immediately. Backup, restore, and Insights workflows run in the product console. Open `Platform Ops · 11444` only to configure AI models or perform platform administration.
+For first-time use, copy the `URL` listed under `HyperFileLens` and open it in your browser. Sign in with the `Email` and `Password` shown in the same section, then change the initial password immediately. Backup, restore, and Insights workflows run in the product console. Open `Platform Ops` only to configure AI models or perform platform administration.

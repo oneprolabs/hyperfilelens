@@ -97,6 +97,7 @@ const englishDocRoutes = new Set([
   '/docs/deployment/data-gateway',
   '/docs/deployment/lifecycle',
   '/docs/deployment/operations',
+  '/docs/deployment/uninstall',
   '/docs/help',
   '/docs/reference',
   '/docs/reference/support-matrix',

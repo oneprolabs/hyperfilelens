@@ -20,6 +20,7 @@ import {
 } from '../../lib/lensApi'
 import { defaultAiModelDisplayName } from '../../lib/aiModelDisplay'
 import { aiProviderLabel } from '../../lib/aiProviderDisplay'
+import AiProviderIcon from '../../components/ai-model/AiProviderIcon.vue'
 import InsightAiModelDetailDrawer from './InsightAiModelDetailDrawer.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
@@ -469,7 +470,20 @@ onMounted(() => {
             min-width="120"
           >
             <template #default="{ row }">
-              <span :class="{ 'hfl-empty-mark': !row.provider && !row.name }">{{ row.provider || row.name || '—' }}</span>
+              <span
+                v-if="row.provider || row.name"
+                class="insight-ai-models-provider"
+              >
+                <AiProviderIcon
+                  :provider="row.provider || row.name || ''"
+                  size="sm"
+                />
+                <span>{{ aiProviderLabel(row.provider || row.name || '') }}</span>
+              </span>
+              <span
+                v-else
+                class="hfl-empty-mark"
+              >—</span>
             </template>
           </el-table-column>
           <el-table-column
@@ -552,5 +566,11 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.insight-ai-models-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 </style>

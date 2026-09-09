@@ -31,14 +31,14 @@ The installer retains the three most recent valid system backups. These backups 
 
 ### Online upgrade
 
-Run the following command with the global download source:
+Run the Community online installation command again to upgrade from the global download source:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh \
-  | sudo bash -s -- --mirror global --tag vX.Y.Z
+  | sudo bash -s -- --mirror global --yes
 ```
 
-Replace `vX.Y.Z` with the target release. The installer detects the existing Community deployment and starts the upgrade workflow.
+The installer detects the existing Community deployment, retrieves the latest release, and starts the managed upgrade workflow.
 
 ### Upgrade from a release package
 

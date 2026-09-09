@@ -82,8 +82,9 @@ const enOperations = [
   {
     text: 'Operations',
     items: [
-      { text: 'Upgrade and recovery', link: '/docs/deployment/lifecycle' },
       { text: 'Jobs, alerts, and audit logs', link: '/docs/deployment/operations' },
+      { text: 'Upgrade and recovery', link: '/docs/deployment/lifecycle' },
+      { text: 'Uninstall Community', link: '/docs/deployment/uninstall' },
     ],
   },
 ]
