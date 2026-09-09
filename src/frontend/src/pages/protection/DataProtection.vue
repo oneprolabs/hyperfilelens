@@ -2326,14 +2326,28 @@ function mergeCreatedBackupConfigs({ items }: BackupCreateResultPayload) {
   return sourceIds
 }
 
+let createdBackupRefresh: Promise<unknown> | null = null
+
+async function refreshEnteredFlowStep(step: 0 | 1 | 2) {
+  if (step === 2 && createdBackupRefresh) {
+    await createdBackupRefresh
+    // A failed or interrupted reconciliation must not suppress the initial load.
+    if (!step3InitialLoadPending.value) return
+  }
+  if (flowMainStep.value === step) await refreshFlowStepData(step)
+}
+
 function reconcileCreatedBackupConfigs(sourceIds: string[]) {
-  void refreshStep3AfterMoreAction({
+  const request = refreshStep3AfterMoreAction({
     focusIds: sourceIds,
     showLoading: true,
     preserveExpandedState: true,
   }).catch((err) => {
     if (!pageRequests.isAbortError(err)) showApiError(err)
+  }).finally(() => {
+    if (createdBackupRefresh === request) createdBackupRefresh = null
   })
+  createdBackupRefresh = request
 }
 
 function finishCreateAndGoToStep3(payload: BackupCreateResultPayload) {
@@ -2824,11 +2838,8 @@ watch(flowMainStep, (step) => {
   nextTick(() => {
     updateFlowTableMaxHeight()
     if (!flowBootstrapping.value) {
-      // Always perform the normal step load after entering a step.  The
-      // create/edit reconciliation may have started first, but it uses the
-      // same request scope and can otherwise leave Step 3 empty when it is
-      // cancelled by a transition or a transient API failure.
-      void refreshFlowStepData(step)
+      // Reuse post-create reconciliation instead of aborting its count requests.
+      void refreshEnteredFlowStep(step)
     }
     if (step === 0) syncSourceTableSelection()
     if (step === 1) syncStep2TableSelection()
