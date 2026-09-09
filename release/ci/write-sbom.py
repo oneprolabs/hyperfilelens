@@ -41,7 +41,7 @@ def main() -> None:
                     "referenceCategory": "OTHER",
                     "referenceType": "vcs",
                     "referenceLocator": (
-                        "https://github.com/HyperBDR/hyperfilelens@" + commit
+                        "https://github.com/oneprolabs/hyperfilelens@" + commit
                     ),
                 }
             ],
@@ -117,7 +117,7 @@ def main() -> None:
         "SPDXID": "SPDXRef-DOCUMENT",
         "name": f"hyperfilelens-{version}",
         "documentNamespace": (
-            "https://github.com/HyperBDR/hyperfilelens/releases/"
+            "https://github.com/oneprolabs/hyperfilelens/releases/"
             f"spdx/{version}/{namespace_seed}"
         ),
         "creationInfo": {
