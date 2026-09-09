@@ -45,6 +45,14 @@ DOCKER_BOOTSTRAPPED=0
 COMPOSE_PACKAGE_INSTALL_ATTEMPTED=0
 COMPOSE_BOOTSTRAPPED=0
 APT_FAILURE_DPKG_CLEAN=0
+DOWNLOAD_BYTES=0
+DOWNLOAD_ELAPSED_SECONDS=0
+DOWNLOAD_AVERAGE_BYTES_PER_SECOND=0
+ONLINE_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent/bin"
+ONLINE_AGENT_ROOT="/opt/hyperfilelens-agent"
+ONLINE_AGENT_LEGACY_DATA_DIR="/var/lib/hyperfilelens-agent"
+ONLINE_AGENT_SYSTEMD_UNIT_FILE="/etc/systemd/system/hyperfilelens-agent.service"
+ONLINE_REQUIRED_PORTS=(11442 11443 11444 11445)
 CURL_RETRY_ARGS=()
 APT_RETRY_ARGS=(
 	-o Acquire::Retries=3
@@ -228,6 +236,80 @@ installation_step_indent() {
 		printf '  '
 	fi
 	return 0
+}
+
+format_bytes() {
+	awk -v bytes="${1:-0}" 'BEGIN {
+		split("B KiB MiB GiB TiB", units, " ")
+		value = bytes + 0
+		unit = 1
+		while (value >= 1024 && unit < 5) {
+			value /= 1024
+			unit++
+		}
+		if (unit == 1) printf "%.0f %s", value, units[unit]
+		else printf "%.1f %s", value, units[unit]
+	}'
+}
+
+format_duration() {
+	local seconds=${1:-0}
+	if ((seconds >= 3600)); then
+		printf '%dh %dm' "$((seconds / 3600))" "$(((seconds % 3600) / 60))"
+	elif ((seconds >= 60)); then
+		printf '%dm %ds' "$((seconds / 60))" "$((seconds % 60))"
+	else
+		printf '%ds' "${seconds}"
+	fi
+}
+
+download_header_size() {
+	local headers=$1
+	[[ -f "${headers}" ]] || { printf '0'; return 0; }
+	awk '
+		BEGIN { IGNORECASE = 1 }
+		/^Content-Length:/ {
+			gsub("\\r", "", $2)
+			if ($2 ~ /^[0-9]+$/) size = $2
+		}
+		/^Content-Range:/ {
+			split($3, parts, "/")
+			gsub("\\r", "", parts[2])
+			if (parts[2] ~ /^[0-9]+$/) size = parts[2]
+		}
+		END { print size + 0 }
+	' "${headers}" 2>/dev/null
+}
+
+download_progress_line() {
+	local label=$1 downloaded=$2 total=$3 elapsed=$4
+	local percent=0 filled=0 rate=0 eta=0 bar indent
+	indent="$(installation_step_indent)"
+	if ((total > 0)); then
+		percent=$((downloaded * 100 / total))
+		((percent <= 100)) || percent=100
+		filled=$((percent * 20 / 100))
+	fi
+	((elapsed > 0)) && rate=$((downloaded / elapsed))
+	bar="[$(printf '%*s' "${filled}" '' | tr ' ' '#')$(printf '%*s' "$((20 - filled))" '' | tr ' ' '-')]"
+	if ((total > 0)); then
+		if ((rate > 0 && downloaded < total)); then
+			eta=$(((total - downloaded) / rate))
+			printf '%s[....] %s %s | %d%% | %s / %s | %s/s | ETA %s' \
+				"${indent}" "${label}" "${bar}" "${percent}" \
+				"$(format_bytes "${downloaded}")" "$(format_bytes "${total}")" \
+				"$(format_bytes "${rate}")" "$(format_duration "${eta}")"
+		else
+			printf '%s[....] %s %s | %d%% | %s / %s | %s/s' \
+				"${indent}" "${label}" "${bar}" "${percent}" \
+				"$(format_bytes "${downloaded}")" "$(format_bytes "${total}")" \
+				"$(format_bytes "${rate}")"
+		fi
+		return 0
+	fi
+	printf '%s[....] %s %s downloaded | %s/s | elapsed %s' \
+		"${indent}" "${label}" "$(format_bytes "${downloaded}")" \
+		"$(format_bytes "${rate}")" "$(format_duration "${elapsed}")"
 }
 
 print_target() {
@@ -998,6 +1080,206 @@ PY
 		|| fail "this public installer upgrades Community only; the existing edition is ${existing_edition}"
 }
 
+online_agent_env_file() {
+	local canonical="${ONLINE_AGENT_ROOT}/config/agent.env"
+	local legacy="${ONLINE_AGENT_LEGACY_DATA_DIR}/agent.env"
+	if [[ -f "${canonical}" \
+		&& ( -f "${ONLINE_AGENT_ROOT}/data/agent.db" || ! -f "${legacy}" ) ]]; then
+		printf '%s' "${canonical}"
+		return 0
+	fi
+	if [[ -f "${legacy}" ]]; then
+		printf '%s' "${legacy}"
+		return 0
+	fi
+	printf '%s' "${canonical}"
+}
+
+online_agent_env_value() {
+	local key=$1 env_file
+	env_file="$(online_agent_env_file)"
+	[[ -f "${env_file}" && ! -L "${env_file}" ]] || return 0
+	grep -E "^${key}=" "${env_file}" 2>/dev/null \
+		| head -1 | cut -d= -f2- | tr -d '\r' || true
+}
+
+online_agent_canonical_artifacts_detected() {
+	local canonical_env="${ONLINE_AGENT_ROOT}/config/agent.env"
+	[[ -e "${canonical_env}" || -L "${canonical_env}" \
+		|| -e "${ONLINE_AGENT_ROOT}/data/agent.db" \
+		|| -L "${ONLINE_AGENT_ROOT}/data/agent.db" \
+		|| -e "${ONLINE_AGENT_ROOT}/INSTALLED_VERSION" \
+		|| -L "${ONLINE_AGENT_ROOT}/INSTALLED_VERSION" \
+		|| -e "${ONLINE_AGENT_INSTALL_DIR}/install.sh" \
+		|| -L "${ONLINE_AGENT_INSTALL_DIR}/install.sh" \
+		|| -e "${ONLINE_AGENT_ROOT}/install.sh" \
+		|| -L "${ONLINE_AGENT_ROOT}/install.sh" ]]
+}
+
+online_agent_legacy_data_detected() {
+	[[ -e "${ONLINE_AGENT_LEGACY_DATA_DIR}/agent.env" \
+		|| -L "${ONLINE_AGENT_LEGACY_DATA_DIR}/agent.env" ]]
+}
+
+online_agent_service_detected() {
+	[[ -e "${ONLINE_AGENT_SYSTEMD_UNIT_FILE}" \
+		|| -L "${ONLINE_AGENT_SYSTEMD_UNIT_FILE}" ]]
+}
+
+online_agent_installation_detected() {
+	online_agent_canonical_artifacts_detected \
+		|| online_agent_legacy_data_detected \
+		|| online_agent_service_detected
+}
+
+online_platform_gateway_is_managed() {
+	local env_file
+	env_file="$(online_agent_env_file)"
+	[[ ! -L "${ONLINE_AGENT_INSTALL_DIR}" \
+		&& ! -L "${ONLINE_AGENT_ROOT}" \
+		&& -f "${env_file}" && ! -L "${env_file}" ]] || return 1
+	[[ "$(online_agent_env_value HFL_ORG_KEY)" == "__platform_lens__" \
+		&& "$(online_agent_env_value HFL_NODE_ROLE)" == "gateway" ]]
+}
+
+online_agent_trusted_uninstaller() {
+	local canonical="${ONLINE_AGENT_INSTALL_DIR}/install.sh"
+	local legacy="${ONLINE_AGENT_ROOT}/install.sh"
+	if [[ -f "${canonical}" && ! -L "${canonical}" ]]; then
+		printf '%s' "${canonical}"
+		return 0
+	fi
+	if [[ -f "${legacy}" && ! -L "${legacy}" ]]; then
+		printf '%s' "${legacy}"
+		return 0
+	fi
+	return 1
+}
+
+fail_online_agent_conflict() {
+	local uninstaller=""
+	uninstaller="$(online_agent_trusted_uninstaller || true)"
+	printf '  [FAIL] A conflicting HyperFileLens Agent installation was detected\n\n' >&2
+	if online_agent_canonical_artifacts_detected; then
+		printf '         %-17s %s\n' 'Agent root' "${ONLINE_AGENT_ROOT}" >&2
+	fi
+	if online_agent_legacy_data_detected; then
+		printf '         %-17s %s\n' 'Legacy data' "${ONLINE_AGENT_LEGACY_DATA_DIR}" >&2
+	fi
+	if online_agent_service_detected; then
+		printf '         %-17s %s\n' 'Service' "${ONLINE_AGENT_SYSTEMD_UNIT_FILE}" >&2
+	fi
+	if [[ -n "${uninstaller}" ]]; then
+		printf '\n         Uninstall the existing Agent, then run this installer again:\n\n' >&2
+		printf '           sudo %s uninstall\n' "${uninstaller}" >&2
+	else
+		printf '         %-17s %s\n' 'Agent installer' 'not found' >&2
+		printf '\n         Restore the matching Agent installer and run its uninstall command,\n' >&2
+		printf '         or remove the listed residual resources manually before retrying.\n' >&2
+	fi
+	printf '\n         Alternatively, install HyperFileLens on another host.\n' >&2
+	printf '         No Agent, Docker service, or configuration was changed.\n' >&2
+	exit 1
+}
+
+preflight_online_agent_conflict() {
+	if ! online_agent_installation_detected || online_platform_gateway_is_managed; then
+		printf '  [ OK ] No conflicting HyperFileLens Agent was detected\n'
+		return 0
+	fi
+	fail_online_agent_conflict
+}
+
+preflight_online_host_resources() {
+	local cpu_count mem_total_kib mem_available_kib disk_available_bytes
+	cpu_count="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 0)"
+	if [[ ! "${cpu_count}" =~ ^[0-9]+$ ]]; then
+		printf '  [WARN] CPU capacity is below the minimum · %s available · 4 required\n' \
+			"${cpu_count:-unknown}"
+	elif ((cpu_count < 4)); then
+		printf '  [WARN] CPU capacity is below the minimum · %s available · 4 required\n' \
+			"${cpu_count}"
+	elif ((cpu_count < 8)); then
+		printf '  [WARN] CPU capacity is below the recommendation · %s available · 8 recommended\n' \
+			"${cpu_count}"
+	else
+		printf '  [ OK ] CPU capacity is sufficient · %s CPU cores available\n' "${cpu_count}"
+	fi
+	mem_total_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+	mem_available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+	if [[ ! "${mem_total_kib}" =~ ^[0-9]+$ || ! "${mem_available_kib}" =~ ^[0-9]+$ ]]; then
+		printf '  [WARN] Memory capacity could not be determined\n'
+	elif ((mem_total_kib < 8 * 1024 * 1024)); then
+		printf '  [WARN] Memory capacity is below the minimum · %s physical · %s available · 8.0 GiB required\n' \
+			"$(format_bytes "$((mem_total_kib * 1024))")" \
+			"$(format_bytes "$((mem_available_kib * 1024))")"
+	elif ((mem_total_kib < 16 * 1024 * 1024)); then
+		printf '  [WARN] Memory capacity is below the recommendation · %s physical · %s available · 16.0 GiB recommended\n' \
+			"$(format_bytes "$((mem_total_kib * 1024))")" \
+			"$(format_bytes "$((mem_available_kib * 1024))")"
+	else
+		printf '  [ OK ] Memory capacity is sufficient · %s available\n' \
+			"$(format_bytes "$((mem_available_kib * 1024))")"
+	fi
+	disk_available_bytes="$(df -PB1 "$(dirname "${INSTALL_ROOT}")" 2>/dev/null \
+		| awk 'NR == 2 {print $4}')"
+	[[ "${disk_available_bytes}" =~ ^[0-9]+$ \
+		&& "${disk_available_bytes}" -ge $((20 * 1024 * 1024 * 1024)) ]] \
+		|| fail "at least 20 GiB free disk space is required under $(dirname "${INSTALL_ROOT}")"
+	printf '  [ OK ] Disk space is sufficient · %s %s free\n' \
+		"$(dirname "${INSTALL_ROOT}")" \
+		"$(format_bytes "${disk_available_bytes}")"
+}
+
+preflight_online_ports() {
+	local failure ports_display
+	if ! failure="$(python3 - "${ONLINE_REQUIRED_PORTS[@]}" 2>&1 <<'PY'
+import socket
+import sys
+
+for raw_port in sys.argv[1:]:
+    port = int(raw_port)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        sock.bind(("0.0.0.0", port))
+    except OSError as error:
+        raise SystemExit(f"port {port} is unavailable: {error}") from error
+    finally:
+        sock.close()
+PY
+	)"; then
+		fail "${failure}"
+	fi
+	ports_display="${ONLINE_REQUIRED_PORTS[*]}"
+	ports_display="${ports_display// /, }"
+	printf '  [ OK ] Required ports are available · %s\n' "${ports_display}"
+}
+
+run_online_install_preflight() {
+	local hostname
+	printf '  [....] Running installation preflight checks\n'
+	printf '  [ OK ] Running with administrator privileges · root\n'
+	printf '  [ OK ] Operating system is supported · %s · linux/amd64\n' \
+		"${PRETTY_NAME:-Ubuntu}"
+	printf '  [ OK ] Required bootstrap commands are available · bash, curl, python3, tar\n'
+	[[ -d "${INSTALL_ROOT}" && ! -L "${INSTALL_ROOT}" && -w "${INSTALL_ROOT}" ]] \
+		|| fail "installation path is not a writable directory: ${INSTALL_ROOT}"
+	printf '  [ OK ] Installation path is ready · %s\n' "${INSTALL_ROOT}"
+	printf '  [ OK ] No existing HyperFileLens installation was found\n'
+	hostname="$(hostname 2>/dev/null || true)"
+	if [[ -z "${hostname}" || "${hostname,,}" == localhost \
+		|| "${hostname,,}" == localhost.localdomain ]]; then
+		printf '  [WARN] Hostname is not uniquely configured · %s\n' "${hostname:-unknown}"
+	else
+		printf '  [ OK ] Hostname is configured · %s\n' "${hostname}"
+	fi
+	preflight_online_agent_conflict
+	preflight_online_host_resources
+	preflight_online_ports
+	printf '  [ OK ] Installation preflight checks passed\n'
+}
+
 configure_curl_retry_options() {
 	local version_output curl_version="unknown"
 	version_output="$(curl --version 2>/dev/null || true)"
@@ -1054,6 +1336,71 @@ download_file() {
 	[[ ! -s "${diagnostics}" ]] || cat "${diagnostics}" >&2
 	rm -f -- "${partial}" "${diagnostics}"
 	return 1
+}
+
+download_file_with_progress() {
+	local url=$1 output=$2 max_time=$3 label=$4
+	local partial="${output}.part" headers="${output}.headers" diagnostics="${output}.curl-errors"
+	local started=${SECONDS} elapsed=0 downloaded=0 total=0 curl_pid curl_status=0
+	local last_console_report=-1 next_log_report=30 progress_line timestamp
+	rm -f -- "${partial}" "${headers}" "${diagnostics}"
+	curl --fail --show-error --silent --location \
+		"${CURL_RETRY_ARGS[@]}" \
+		--connect-timeout 15 --max-time "${max_time}" \
+		--dump-header "${headers}" \
+		-H 'Cache-Control: no-cache' "${url}" -o "${partial}" \
+		2>"${diagnostics}" &
+	curl_pid=$!
+	while kill -0 "${curl_pid}" 2>/dev/null; do
+		elapsed=$((SECONDS - started))
+		if ((elapsed > last_console_report)); then
+			downloaded=0
+			[[ ! -f "${partial}" ]] || downloaded="$(wc -c <"${partial}")"
+			total="$(download_header_size "${headers}")"
+			progress_line="$(download_progress_line "${label}" "${downloaded}" "${total}" "${elapsed}")"
+			if ((ONLINE_INTERACTIVE == 1)); then
+				printf '\r%s\033[K' "${progress_line}" > /dev/fd/3
+			elif ((elapsed == 0 || elapsed >= next_log_report)); then
+				printf '%s\n' "${progress_line}"
+			fi
+			last_console_report=${elapsed}
+		fi
+		if ((elapsed >= next_log_report)); then
+			if ((ONLINE_INTERACTIVE == 1)); then
+				printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
+				printf '[%s] [INFO] Download progress · %s\n' \
+					"${timestamp}" "${progress_line#*] }" >>"${ONLINE_LOG_FILE}"
+			fi
+			next_log_report=$((next_log_report + 30))
+		fi
+		sleep 1
+	done
+	if wait "${curl_pid}"; then
+		curl_status=0
+	else
+		curl_status=$?
+	fi
+	if ((ONLINE_INTERACTIVE == 1)); then
+		printf '\r\033[K' > /dev/fd/3
+	fi
+	if ((curl_status != 0)); then
+		[[ ! -s "${diagnostics}" ]] || cat "${diagnostics}" >&2
+		rm -f -- "${partial}" "${headers}" "${diagnostics}"
+		return "${curl_status}"
+	fi
+	if [[ -s "${diagnostics}" && -n "${ONLINE_LOG_FILE}" ]]; then
+		timestamp_log_stream "${ONLINE_LOG_FILE}" <"${diagnostics}"
+	fi
+	rm -f -- "${headers}" "${diagnostics}"
+	[[ -f "${partial}" ]] || return 1
+	DOWNLOAD_BYTES="$(wc -c <"${partial}")"
+	DOWNLOAD_ELAPSED_SECONDS=$((SECONDS - started))
+	((DOWNLOAD_ELAPSED_SECONDS > 0)) || DOWNLOAD_ELAPSED_SECONDS=1
+	DOWNLOAD_AVERAGE_BYTES_PER_SECOND=$((DOWNLOAD_BYTES / DOWNLOAD_ELAPSED_SECONDS))
+	if ! mv -f -- "${partial}" "${output}"; then
+		rm -f -- "${partial}"
+		return 1
+	fi
 }
 
 fail_with_tag_guidance() {
@@ -1250,33 +1597,28 @@ run_fresh_community_install() {
 }
 
 download_source_archive() {
-	local url
+	local url label
+	label="HyperFileLens ${TAG} release package"
 	case "${MIRROR}" in
 	global) url="https://codeload.github.com/oneprolabs/hyperfilelens/tar.gz/${RELEASE_COMMIT}" ;;
 	cn) url="https://gitee.com/oneprolabs/hyperfilelens/repository/archive/${RELEASE_COMMIT}.tar.gz" ;;
 	esac
-	if [[ "${INSTALL_ACTION}" == "Install" ]]; then
-		printf '  [....] Downloading %s installation contract from %s (commit %s)\n' \
-			"${TAG}" "${SOURCE_NAME}" "${RELEASE_COMMIT:0:12}"
-	else
-		printf '\nRelease contract\n'
-		printf '[....] Downloading %s installation contract from %s (commit %s)\n' \
-			"${TAG}" "${SOURCE_NAME}" "${RELEASE_COMMIT:0:12}"
-	fi
-	if ! download_file "${url}" "${SESSION_DIR}/source.tar.gz" 300; then
-		fail_with_tag_guidance "Community release ${TAG} cannot be downloaded from ${SOURCE_NAME}"
-	fi
+	printf '%s[....] Downloading %s from %s · commit %s\n' \
+		"$(installation_step_indent)" "${label}" "${SOURCE_NAME}" \
+		"${RELEASE_COMMIT:0:12}"
+	download_file_with_progress \
+		"${url}" "${SESSION_DIR}/source.tar.gz" 300 "${label}" \
+		|| fail_with_tag_guidance "Community release ${TAG} cannot be downloaded from ${SOURCE_NAME}"
 	mkdir -p "${SESSION_DIR}/source"
 	tar -xzf "${SESSION_DIR}/source.tar.gz" -C "${SESSION_DIR}/source" --strip-components=1 \
-		|| fail_with_tag_guidance "Community tag ${TAG} installation contract could not be extracted"
+		|| fail_with_tag_guidance "Community release package ${TAG} could not be extracted"
 	[[ -x "${SESSION_DIR}/source/deploy/online/install.sh" \
 		&& -f "${SESSION_DIR}/source/deploy/online/prepare.py" ]] \
-		|| fail_with_tag_guidance "Community tag ${TAG} does not provide the online installation contract"
-	if [[ "${INSTALL_ACTION}" == "Install" ]]; then
-		printf '  [ OK ] Installation contract downloaded from %s\n' "${SOURCE_NAME}"
-	else
-		printf '[ OK ] Downloaded installation contract from %s\n' "${SOURCE_NAME}"
-	fi
+		|| fail_with_tag_guidance "Community release package ${TAG} does not provide the online installer"
+	printf '%s[ OK ] %s downloaded · %s in %s · average %s/s\n' \
+		"$(installation_step_indent)" "${label}" "$(format_bytes "${DOWNLOAD_BYTES}")" \
+		"$(format_duration "${DOWNLOAD_ELAPSED_SECONDS}")" \
+		"$(format_bytes "${DOWNLOAD_AVERAGE_BYTES_PER_SECOND}")"
 }
 
 verify_candidate_release() {
@@ -1358,7 +1700,7 @@ confirm_installation
 
 if [[ "${INSTALL_ACTION}" == "Install" ]]; then
 	printf '\n[1/4] Preparing installation\n\n'
-	printf '  [....] Validating the release package and host environment\n'
+	run_online_install_preflight
 fi
 install_host_tools
 if [[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]; then

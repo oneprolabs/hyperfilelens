@@ -44,6 +44,11 @@ grep -Fq 'recent fallback tags:' "${online}/install.sh"
 grep -Fq 'prepare_status == 75' "${online}/install.sh"
 grep -Fq 'Container image downloads could not be completed after 5 attempts from the selected registry' \
 	"${online}/install.sh"
+if grep -Eq 'Release contract|installation contract|online installation contract' \
+	"${online}/install.sh"; then
+	printf 'ERROR: online installer exposes retired installation-contract wording\n' >&2
+	exit 1
+fi
 grep -Fq 'prepared Community image revision does not match the published release' \
 	"${online}/install.sh"
 grep -Fq 'run this command through sudo' "${online}/install.sh"
@@ -617,6 +622,18 @@ if source.count(marker) != 1:
 pathlib.Path(sys.argv[2]).write_text(source.split(marker, 1)[0], encoding="utf-8")
 PY
 
+(
+	# The release archive uses the same compact progress contract as the
+	# Source Host installer.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	progress_line="$(download_progress_line 'HyperFileLens v0.2.20 release package' \
+		15938355 31876710 14)"
+	[[ "${progress_line}" == *'[##########----------] | 50% | 15.2 MiB / 30.4 MiB | 1.1 MiB/s | ETA 14s' ]]
+	unknown_size="$(download_progress_line package 0 0 0)"
+	[[ "${unknown_size}" == *'package 0 B downloaded | 0 B/s | elapsed 0s' ]]
+)
+
 identity_candidate="${tmp}/identity-candidate"
 mkdir -p "${identity_candidate}"
 cat >"${identity_candidate}/MANIFEST.json" <<'JSON'
@@ -650,6 +667,95 @@ if [[ -s "${matching_revision_log}" ]]; then
 	cat "${matching_revision_log}" >&2
 	exit 1
 fi
+
+online_agent_fixture_root="${tmp}/online-agent"
+online_agent_fixture_legacy="${tmp}/online-agent-legacy"
+online_agent_fixture_service="${tmp}/hyperfilelens-agent.service"
+mkdir -p "${online_agent_fixture_root}/config"
+cat >"${online_agent_fixture_root}/config/agent.env" <<'EOF'
+HFL_ORG_KEY=tenant-org
+HFL_NODE_ROLE=agent
+EOF
+printf '[Unit]\nDescription=fixture\n' >"${online_agent_fixture_service}"
+agent_conflict_log="${tmp}/online-agent-conflict.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_AGENT_ROOT="${online_agent_fixture_root}"
+	ONLINE_AGENT_INSTALL_DIR="${online_agent_fixture_root}/bin"
+	ONLINE_AGENT_LEGACY_DATA_DIR="${online_agent_fixture_legacy}"
+	ONLINE_AGENT_SYSTEMD_UNIT_FILE="${online_agent_fixture_service}"
+	preflight_online_agent_conflict
+) >"${agent_conflict_log}" 2>&1; then
+	printf 'ERROR: online installer accepted a conflicting Agent\n' >&2
+	exit 1
+fi
+grep -Fq '[FAIL] A conflicting HyperFileLens Agent installation was detected' \
+	"${agent_conflict_log}"
+grep -Fq "Agent root        ${online_agent_fixture_root}" \
+	"${agent_conflict_log}"
+grep -Fq "Service           ${online_agent_fixture_service}" \
+	"${agent_conflict_log}"
+grep -Fq 'Agent installer   not found' "${agent_conflict_log}"
+grep -Fq 'No Agent, Docker service, or configuration was changed.' \
+	"${agent_conflict_log}"
+
+mkdir -p "${online_agent_fixture_root}/bin"
+cat >"${online_agent_fixture_root}/bin/install.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod 755 "${online_agent_fixture_root}/bin/install.sh"
+trusted_agent_conflict_log="${tmp}/online-trusted-agent-conflict.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_AGENT_ROOT="${online_agent_fixture_root}"
+	ONLINE_AGENT_INSTALL_DIR="${online_agent_fixture_root}/bin"
+	ONLINE_AGENT_LEGACY_DATA_DIR="${online_agent_fixture_legacy}"
+	ONLINE_AGENT_SYSTEMD_UNIT_FILE="${online_agent_fixture_service}"
+	preflight_online_agent_conflict
+) >"${trusted_agent_conflict_log}" 2>&1; then
+	printf 'ERROR: online installer accepted an Agent with a trusted uninstaller\n' >&2
+	exit 1
+fi
+grep -Fq "sudo ${online_agent_fixture_root}/bin/install.sh uninstall" \
+	"${trusted_agent_conflict_log}"
+
+cat >"${online_agent_fixture_root}/config/agent.env" <<'EOF'
+HFL_ORG_KEY=__platform_lens__
+HFL_NODE_ROLE=gateway
+EOF
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_AGENT_ROOT="${online_agent_fixture_root}"
+	ONLINE_AGENT_INSTALL_DIR="${online_agent_fixture_root}/bin"
+	ONLINE_AGENT_LEGACY_DATA_DIR="${online_agent_fixture_legacy}"
+	ONLINE_AGENT_SYSTEMD_UNIT_FILE="${online_agent_fixture_service}"
+	preflight_online_agent_conflict
+)
+
+rm -f "${online_agent_fixture_root}/config/agent.env"
+mkdir -p "${online_agent_fixture_legacy}"
+printf 'HFL_ORG_KEY=tenant-org\n' >"${online_agent_fixture_legacy}/agent.env"
+residual_agent_log="${tmp}/online-residual-agent.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_AGENT_ROOT="${online_agent_fixture_root}"
+	ONLINE_AGENT_INSTALL_DIR="${online_agent_fixture_root}/bin-missing"
+	ONLINE_AGENT_LEGACY_DATA_DIR="${online_agent_fixture_legacy}"
+	ONLINE_AGENT_SYSTEMD_UNIT_FILE="${tmp}/missing-agent.service"
+	preflight_online_agent_conflict
+) >"${residual_agent_log}" 2>&1; then
+	printf 'ERROR: online installer accepted residual Agent data\n' >&2
+	exit 1
+fi
+grep -Fq "Legacy data       ${online_agent_fixture_legacy}" "${residual_agent_log}"
+grep -Fq 'Agent installer   not found' "${residual_agent_log}"
+rm -rf "${online_agent_fixture_root}" "${online_agent_fixture_legacy}" \
+	"${online_agent_fixture_service}"
 
 # A fresh online installation keeps child details in the durable log and
 # forwards only explicitly marked lines to the terminal.
@@ -1590,6 +1696,24 @@ import sys
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 replacements = {
     'INSTALL_ROOT="/opt/hyperfilelens"': f'INSTALL_ROOT="{sys.argv[3]}"',
+    'ONLINE_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent/bin"': (
+        f'ONLINE_AGENT_INSTALL_DIR="{sys.argv[4]}/agent/bin"'
+    ),
+    'ONLINE_AGENT_ROOT="/opt/hyperfilelens-agent"': (
+        f'ONLINE_AGENT_ROOT="{sys.argv[4]}/agent"'
+    ),
+    'ONLINE_AGENT_LEGACY_DATA_DIR="/var/lib/hyperfilelens-agent"': (
+        f'ONLINE_AGENT_LEGACY_DATA_DIR="{sys.argv[4]}/legacy-agent"'
+    ),
+    'ONLINE_AGENT_SYSTEMD_UNIT_FILE="/etc/systemd/system/hyperfilelens-agent.service"': (
+        f'ONLINE_AGENT_SYSTEMD_UNIT_FILE="{sys.argv[4]}/hyperfilelens-agent.service"'
+    ),
+    'ONLINE_REQUIRED_PORTS=(11442 11443 11444 11445)': (
+        'ONLINE_REQUIRED_PORTS=(21442 21443 21444 21445)'
+    ),
+    "\tpreflight_online_ports\n": (
+        "\tprintf '  [ OK ] Required ports are available · 21442, 21443, 21444, 21445\\n'\n"
+    ),
     '[[ "${EUID}" -eq 0 ]] || fail "run this command through sudo"': ":",
     "\ninstall_host_tools\n": "\n:\n",
     'SESSION_DIR="$(mktemp -d /var/tmp/hyperfilelens-online.XXXXXX)"': (
@@ -1671,8 +1795,26 @@ latest_session_log="$(find "${test_install_root}/logs" -maxdepth 1 -type f \
 grep -Fq 'HyperFileLens Community Online Installer' "${latest_session_log}"
 grep -Fq 'Resolving HyperFileLens Community release from GitHub' "${latest_session_log}"
 grep -Fq 'Community release resolved · v1.2.12 · commit cccccccccccc' "${latest_session_log}"
-grep -Fq 'Downloading v1.2.12 installation contract from GitHub' \
+grep -Fq 'Downloading HyperFileLens v1.2.12 release package from GitHub · commit cccccccccccc' \
 	"${latest_session_log}"
+for preflight_line in \
+	'Running installation preflight checks' \
+	'No conflicting HyperFileLens Agent was detected' \
+	'Disk space is sufficient' \
+	'Required ports are available · 21442, 21443, 21444, 21445' \
+	'Installation preflight checks passed'; do
+	grep -Fq "${preflight_line}" "${latest_session_log}"
+done
+python3 - "${latest_session_log}" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+if text.index("Installation preflight checks passed") > text.index(
+    "Downloading HyperFileLens v1.2.12 release package"
+):
+    raise SystemExit("release package download started before online preflight completed")
+PY
 grep -Fq "Log file       ${latest_session_log}" "${latest_log}"
 grep -Fq 'recent fallback tags: v1.2.11, v1.2.10, v1.2.9, v1.2.8, v1.2.7, v1.2.6, v1.2.5, v1.2.4, v1.2.3, v1.2.2' \
 	"${latest_log}"
@@ -1723,7 +1865,7 @@ if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
 fi
 grep -Fq '[INFO] curl 7.68.0 detected; using Ubuntu-compatible retry options.' \
 	"${compatible_log}"
-grep -Fq '[....] Downloading v1.2.12 installation contract from GitHub' \
+grep -Fq '[....] Downloading HyperFileLens v1.2.12 release package from GitHub · commit cccccccccccc' \
 	"${compatible_log}"
 grep -v -- '--version' "${compatible_curl_log}" \
 	| grep -F -- '--retry-connrefused' >/dev/null

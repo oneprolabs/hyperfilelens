@@ -100,6 +100,13 @@ read_version() { tr -d ' \t\r\n' <"${ROOT}/VERSION"; }
 skip() { :; }
 step() { :; }
 ok() { :; }
+hfl_color_level() { printf '%s' "$1"; }
+hfl_finish_sentence() {
+	case "$1" in
+	*[.!?]) printf '%s' "$1" ;;
+	*) printf '%s.' "$1" ;;
+	esac
+}
 die() { printf 'FAIL: %s\n' "$1" >&2; exit "${2:-1}"; }
 require_root_or_sudo() { :; }
 require_docker() { :; }
@@ -173,7 +180,15 @@ if (preflight_local_platform_gateway_agent_conflict) >"${conflict_output_file}" 
 	exit 1
 fi
 conflict_output="$(<"${conflict_output_file}")"
-[[ "${conflict_output}" == "FAIL: Cannot install the Platform Data Gateway because a HyperFileLens Agent is already installed on this host. Uninstall the existing Agent and run the installer again, or use another host without a HyperFileLens Agent. No changes were made to the existing Agent, Docker services, or configuration" ]]
+grep -Fq '[FAIL] A conflicting HyperFileLens Agent installation was detected.' \
+	<<<"${conflict_output}"
+grep -Fq "Agent root        ${LOCAL_PLATFORM_AGENT_DATA_DIR}" \
+	<<<"${conflict_output}"
+grep -Fq 'Agent installer   not found' <<<"${conflict_output}"
+grep -Fq 'The Agent was not completely uninstalled. Remove the listed residual' \
+	<<<"${conflict_output}"
+grep -Fq 'No Agent, Docker service, or configuration was changed.' \
+	<<<"${conflict_output}"
 [[ "$(sha256sum "${canonical_env}")" == "${conflict_before}" ]]
 
 AUTO_DEPLOY=false
@@ -200,6 +215,22 @@ if (preflight_local_platform_gateway_agent_conflict) 2>/dev/null; then
 fi
 rm -f "${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}/agent.env"
 mv "${tmp}/agent-install.sh" "${agent_installer_fixture}"
+
+cat >"${canonical_env}" <<'EOF'
+HFL_ORG_KEY=tenant-org
+HFL_NODE_ROLE=agent
+EOF
+trusted_conflict_output="${tmp}/trusted-conflict-output"
+if (preflight_local_platform_gateway_agent_conflict) >"${trusted_conflict_output}" 2>&1; then
+	printf 'ERROR: preflight accepted an Agent with a trusted uninstaller\n' >&2
+	exit 1
+fi
+grep -Fq "sudo ${agent_installer_fixture} uninstall" "${trusted_conflict_output}"
+if grep -Fq 'Agent installer   not found' "${trusted_conflict_output}"; then
+	printf 'ERROR: preflight ignored the trusted Agent uninstaller\n' >&2
+	exit 1
+fi
+rm -f "${canonical_env}"
 
 python3 - "${installer}" <<'PY'
 import pathlib
