@@ -25,6 +25,25 @@ function Write-HflBootstrapLog {
   Write-Host "  [$status] $Message"
 }
 
+function Test-HflSecuritySoftwareBlock {
+  param([Parameter(Mandatory = $true)]$ErrorRecord)
+  $exception = $ErrorRecord.Exception
+  for ($depth = 0; $depth -lt 8 -and $null -ne $exception; $depth++) {
+    if (
+      $exception -is [System.ComponentModel.Win32Exception] -and
+      $exception.NativeErrorCode -eq 225
+    ) {
+      return $true
+    }
+    # Normalize signed Int32 HRESULT values before comparing 0x800700E1.
+    if (([int64]$exception.HResult -band 4294967295) -eq 2147942625) {
+      return $true
+    }
+    $exception = $exception.InnerException
+  }
+  return $false
+}
+
 function Format-HflBytes {
   param([Parameter(Mandatory = $true)][long]$Bytes)
   $units = @('B', 'KiB', 'MiB', 'GiB', 'TiB')
@@ -178,6 +197,10 @@ function Get-HflEnrollmentBinary {
     Write-HflBootstrapLog " OK  " "HyperFileLens enrollment helper downloaded ($(Format-HflBytes $downloaded))."
   }
   catch {
+    if (Test-HflSecuritySoftwareBlock -ErrorRecord $_) {
+      Remove-Item -Force -LiteralPath $partial -ErrorAction SilentlyContinue
+      throw
+    }
     if ($curlAvailable) {
       Remove-Item -Force -LiteralPath $partial -ErrorAction SilentlyContinue
       & curl.exe @curlArgs
@@ -225,6 +248,13 @@ try {
   Get-HflEnrollmentBinary -Url $enrollUrl -OutFile $bin
   & $bin install @args
   $exitCode = $LASTEXITCODE
+}
+catch {
+  if (-not (Test-HflSecuritySoftwareBlock -ErrorRecord $_)) {
+    throw
+  }
+  Write-HflBootstrapLog "FAIL " "Windows security software blocked the HyperFileLens enrollment helper."
+  Write-HflBootstrapLog "INFO " "Review the detection in your security software. Once the helper is allowed, run the installation command again."
 }
 finally {
   if (Test-Path -LiteralPath $bin) {
