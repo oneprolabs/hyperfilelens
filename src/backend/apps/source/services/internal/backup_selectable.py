@@ -845,12 +845,32 @@ def _attach_runtime_expansion(
                 backup_tasks_by_source[key].append(task)
 
     records_by_source: dict[str, list[RestoreRecord]] = defaultdict(list)
+    current_config_ids = BackupConfig.objects.filter(
+        organization_id=organization_id,
+    ).filter(source_query).values_list("id", flat=True)
+    current_snapshot_ids = (
+        BackupSourceSnapshot.objects.filter(
+            organization_id=organization_id,
+            deleted_at__isnull=True,
+            backup_config_id__in=current_config_ids,
+        )
+        .exclude(status=BackupSourceSnapshot.Status.DELETED)
+        .filter(source_query)
+        .values_list("id", flat=True)
+    )
     restore_records = (
         RestoreRecord.objects.filter(
             organization_id=organization_id,
             purpose=RestoreRecord.Purpose.USER_DATA,
         )
         .filter(source_query)
+        .filter(
+            Q(backup_config_id__in=current_config_ids)
+            | Q(
+                backup_config_id__isnull=True,
+                source_snapshot_id__in=current_snapshot_ids,
+            )
+        )
         .prefetch_related("items")
         .order_by("-created_at", "-id")
     )

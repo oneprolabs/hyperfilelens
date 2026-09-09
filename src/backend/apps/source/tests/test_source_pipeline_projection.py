@@ -10,6 +10,7 @@ from apps.iam.models import Organization
 from apps.node import conf as node_conf
 from apps.node.models import Node, NodeTask
 from apps.node.services.internal.task import complete_task as complete_node_task
+from apps.protection.models import BackupConfig, BackupSourceSnapshot
 from apps.restore.models import RestoreRecord
 from apps.source.constants import PipelineStep, ResourceType, SelectableSourceKind
 from apps.source.models import SourceBackupPipelineEntry, SourceResource
@@ -21,6 +22,7 @@ from apps.source.services.internal.source_pipeline import (
 )
 from apps.task.models import Task, TaskResource
 from apps.task.services.interface import complete_task, create_task, start_task
+from apps.storage.repositories.models import Repository
 
 
 class SourcePipelineProjectionTests(TestCase):
@@ -36,6 +38,64 @@ class SourcePipelineProjectionTests(TestCase):
             availability=Node.Availability.ONLINE,
             connection_ip_address="198.51.100.10",
             metadata={"inventory": {"hostname": "agent-reported"}},
+        )
+
+    def _create_current_backup_context(self, *, suffix: str):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name=f"pipeline-{suffix}-repo",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_bucket=f"pipeline-{suffix}-bucket",
+        )
+        config = BackupConfig.objects.create(
+            organization_id=self.org.id,
+            name=f"pipeline-{suffix}",
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            repository_id=repository.id,
+        )
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.org.id,
+            snapshot_uid=f"pipeline-{suffix}-snapshot",
+            idempotency_key=f"pipeline-{suffix}-snapshot-idem",
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            backup_config_id=config.id,
+            repository_id=repository.id,
+            task_id=0,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        return config, snapshot
+
+    def _create_user_restore_record(
+        self,
+        *,
+        task: Task,
+        config: BackupConfig,
+        snapshot: BackupSourceSnapshot,
+        restore_uid: str,
+    ) -> RestoreRecord:
+        return RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=self.agent.id,
+            purpose=RestoreRecord.Purpose.USER_DATA,
+            restore_uid=restore_uid,
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=task.id,
+            task_uuid=task.task_uuid,
+            source_type=RestoreRecord.EndpointType.AGENT,
+            source_ref_id=self.agent.id,
+            backup_config_id=config.id,
+            source_snapshot_id=snapshot.id,
+            target_type=RestoreRecord.EndpointType.AGENT,
+            target_ref_id=self.agent.id,
+            target_path="/tmp/restore",
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
         )
 
     @mock.patch("apps.source.services.internal.source_pipeline.time.sleep")
@@ -261,6 +321,7 @@ class SourcePipelineProjectionTests(TestCase):
         self.assertEqual(entry.last_backup_status, "running")
 
     def test_legacy_insight_restore_is_not_projected_as_user_restore(self):
+        config, snapshot = self._create_current_backup_context(suffix="legacy-insight")
         user_restore = create_task(
             organization_id=self.org.id,
             task_type=Task.Type.RESTORE,
@@ -273,6 +334,12 @@ class SourcePipelineProjectionTests(TestCase):
                     "is_primary": True,
                 }
             ],
+        )
+        self._create_user_restore_record(
+            task=user_restore,
+            config=config,
+            snapshot=snapshot,
+            restore_uid="pipeline-user-restore",
         )
         insight_restore = create_task(
             organization_id=self.org.id,
@@ -318,7 +385,51 @@ class SourcePipelineProjectionTests(TestCase):
         self.assertEqual(entry.last_restore_task_id, user_restore.id)
         self.assertEqual(entry.last_restore_status, "queued")
 
+    def test_reset_config_restore_is_removed_from_current_projection(self):
+        config, snapshot = self._create_current_backup_context(suffix="reset-restore")
+        restore_task = create_task(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Restore before reset",
+            resources=[
+                {
+                    "resource_type": TaskResource.Type.BACKUP_SOURCE,
+                    "resource_subtype": "agent",
+                    "resource_id": self.agent.id,
+                    "is_primary": True,
+                }
+            ],
+        )
+        restore_record = self._create_user_restore_record(
+            task=restore_task,
+            config=config,
+            snapshot=snapshot,
+            restore_uid="pipeline-reset-restore",
+        )
+        entry = ensure_pipeline_entry(
+            organization_id=self.org.id,
+            source_kind=SelectableSourceKind.AGENT,
+            ref_id=self.agent.id,
+        )
+        self.assertEqual(entry.last_restore_task_id, restore_task.id)
+
+        snapshot.delete()
+        config.delete()
+        self._create_current_backup_context(suffix="after-reset")
+        entry = ensure_pipeline_entry(
+            organization_id=self.org.id,
+            source_kind=SelectableSourceKind.AGENT,
+            ref_id=self.agent.id,
+        )
+
+        self.assertIsNone(entry.last_restore_task_id)
+        self.assertEqual(entry.last_restore_status, "none")
+        self.assertTrue(RestoreRecord.objects.filter(id=restore_record.id).exists())
+
     def test_classified_insight_task_recomputes_stale_restore_projection(self):
+        config, snapshot = self._create_current_backup_context(
+            suffix="classified-insight"
+        )
         user_restore = create_task(
             organization_id=self.org.id,
             task_type=Task.Type.RESTORE,
@@ -331,6 +442,12 @@ class SourcePipelineProjectionTests(TestCase):
                     "is_primary": True,
                 }
             ],
+        )
+        self._create_user_restore_record(
+            task=user_restore,
+            config=config,
+            snapshot=snapshot,
+            restore_uid="pipeline-classified-user-restore",
         )
         insight_restore = create_task(
             organization_id=self.org.id,
@@ -345,6 +462,12 @@ class SourcePipelineProjectionTests(TestCase):
                 }
             ],
         )
+        insight_record = self._create_user_restore_record(
+            task=insight_restore,
+            config=config,
+            snapshot=snapshot,
+            restore_uid="pipeline-classified-insight",
+        )
         entry = ensure_pipeline_entry(
             organization_id=self.org.id,
             source_kind=SelectableSourceKind.AGENT,
@@ -352,26 +475,10 @@ class SourcePipelineProjectionTests(TestCase):
         )
         self.assertEqual(entry.last_restore_task_id, insight_restore.id)
 
-        RestoreRecord.objects.create(
-            organization_id=self.org.id,
-            requesting_organization_id=self.org.id,
-            target_execution_organization_id=self.org.id,
-            target_execution_node_id=self.agent.id,
+        RestoreRecord.objects.filter(id=insight_record.id).update(
             purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
             idempotency_key="pipeline-classified-insight",
             workspace_binding_id=101,
-            restore_uid="pipeline-classified-insight",
-            source_mode=RestoreRecord.SourceMode.MANUAL,
-            task_id=insight_restore.id,
-            task_uuid=insight_restore.task_uuid,
-            source_type=RestoreRecord.EndpointType.AGENT,
-            source_ref_id=self.agent.id,
-            source_snapshot_id=101,
-            target_type=RestoreRecord.EndpointType.AGENT,
-            target_ref_id=self.agent.id,
-            target_path="/tmp/insight-classified",
-            scope=RestoreRecord.Scope.PATHS,
-            conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
         )
         insight_restore.task_type = Task.Type.INSIGHT_WORKSPACE_RESTORE
         insight_restore.save(update_fields=["task_type", "updated_at"])
