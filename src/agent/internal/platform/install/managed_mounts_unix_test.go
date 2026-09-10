@@ -35,6 +35,42 @@ mv "$HFL_TEST_MOUNT_STATE.tmp" "$HFL_TEST_MOUNT_STATE"
 	}
 }
 
+func TestDarwinGatewayWorkspaceMountDetection(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("exercises the macOS fallback without /proc/mounts")
+	}
+	for _, tc := range []struct {
+		name, mountOutput, want string
+		fail                    bool
+	}{
+		{"no workspace mount", "/dev/disk1 on / (apfs, local)", "", false},
+		{"spaces and boundary", "/dev/disk1 on / (apfs, local)\nserver:/share on /Users/test/Library/Application Support/HyperFileLens/Agent/workspace/data (nfs)\nserver:/other on /Users/test/Library/Application Support/HyperFileLens/Agent/workspace-other (nfs)", "/Users/test/Library/Application Support/HyperFileLens/Agent/workspace/data", false},
+		{"mount command failure", "", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := `set -u
+command() {
+  if [[ "$*" == "-v findmnt" ]]; then return 1; fi
+  builtin command "$@"
+}
+mount() { printf '%s\n' "$HFL_TEST_MOUNTS"; return "$HFL_TEST_MOUNT_RC"; }
+` + unixManagedMountCleanupScript + `
+collect_gateway_workspace_mount_points '/Users/test/Library/Application Support/HyperFileLens/Agent'
+`
+			cmd := exec.Command("/bin/bash", "-c", script)
+			rc := "0"
+			if tc.fail {
+				rc = "1"
+			}
+			cmd.Env = append(os.Environ(), "HFL_TEST_MOUNTS="+tc.mountOutput, "HFL_TEST_MOUNT_RC="+rc)
+			output, err := cmd.CombinedOutput()
+			if (err != nil) != tc.fail || strings.TrimSpace(string(output)) != tc.want {
+				t.Fatalf("output=%q err=%v, want=%q failure=%t", output, err, tc.want, tc.fail)
+			}
+		})
+	}
+}
+
 func TestUnixManagedMountCleanupLazyUnmountsBusyMount(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("lazy unmount is a Linux-only fallback")
