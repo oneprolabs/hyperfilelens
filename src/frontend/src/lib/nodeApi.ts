@@ -435,14 +435,27 @@ function psSingleQuoted(value: string): string {
   return `'${value.replace(/'/g, "''")}'`
 }
 
+/** Two-step PowerShell commands to avoid uBlock Origin ClickFix false positives. */
+export interface WindowsEnrollmentCommands {
+  download: string
+  execute: string
+}
+
 /**
- * Windows short command: download the rendered bootstrap stub, then run it.
+ * Windows two-step commands: download the rendered bootstrap stub, then run it.
  * Arch/checksum/download of the slim installer stays inside the bootstrap script.
+ *
+ * Split into separate download + execute commands so that uBlock Origin and
+ * similar content blockers do not flag the combined "download & run" pattern
+ * as a ClickFix attack.
  */
-function buildWindowsEnrollmentInstallCommand(url: string, tlsVerify: boolean): string {
-  const bootstrapPath =
-    "[System.IO.Path]::Combine([System.IO.Path]::GetTempPath(),'hfl-bootstrap.ps1')"
-  const psBody = [
+export function buildWindowsEnrollmentInstallCommand(
+  url: string,
+  tlsVerify: boolean,
+): WindowsEnrollmentCommands {
+  const bootstrapPath = '$env:TEMP\\hfl-bootstrap.ps1'
+
+  const downloadBody = [
     '[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12',
     ...(tlsVerify
       ? []
@@ -451,9 +464,12 @@ function buildWindowsEnrollmentInstallCommand(url: string, tlsVerify: boolean): 
           '[Net.ServicePointManager]::ServerCertificateValidationCallback={[bool]1}',
         ]),
     `(New-Object Net.WebClient).DownloadFile(${psSingleQuoted(url)},${bootstrapPath})`,
-    `& (${bootstrapPath})`,
   ].join(';')
-  return `powershell -NoProfile -ExecutionPolicy Bypass -Command "${psBody}"`
+
+  const download = `powershell -NoProfile -Command "${downloadBody}"`
+  const execute = `powershell -ExecutionPolicy Bypass -File "${bootstrapPath}"`
+
+  return { download, execute }
 }
 
 /**
@@ -496,7 +512,8 @@ export function buildEnrollmentInstallCommand(params: {
   const url = buildEnrollmentDownloadUrl({ ...params, os: params.os })
   const tlsVerify = params.tlsVerify !== false
   if (params.os === 'windows') {
-    return buildWindowsEnrollmentInstallCommand(url, tlsVerify)
+    const cmds = buildWindowsEnrollmentInstallCommand(url, tlsVerify)
+    return `${cmds.download}\n${cmds.execute}`
   }
   // Only a new Source Agent enrollment may infer its mode from the caller.
   // Preserve the historical elevated default for every infrastructure role
@@ -627,7 +644,14 @@ export async function issueEnrollmentInstall(params: {
   os: EnrollmentOs
   installationMode?: NodeInstallationMode
   note?: string
-}): Promise<{ token: string; tokenId: number; command: string; tlsVerify: boolean; expiresAt: string | null }> {
+}): Promise<{
+    token: string
+    tokenId: number
+    command: string
+    tlsVerify: boolean
+    expiresAt: string | null
+    windowsCommands?: WindowsEnrollmentCommands
+  }> {
   const org = orgKey()
   if (!org) {
     throw new Error('Missing organization key')
@@ -653,12 +677,21 @@ export async function issueEnrollmentInstall(params: {
     installationMode: automaticMode ? undefined : params.installationMode ?? 'system',
     tlsVerify: row.tls_verify,
   })
+  const url = buildEnrollmentDownloadUrl({
+    org,
+    role: params.role,
+    token: row.token,
+    os: params.os,
+  })
   return {
     token: row.token,
     tokenId: row.id,
     command,
     tlsVerify: row.tls_verify,
     expiresAt: row.expires_at ?? null,
+    ...(params.os === 'windows'
+      ? { windowsCommands: buildWindowsEnrollmentInstallCommand(url, row.tls_verify) }
+      : {}),
   }
 }
 

@@ -30,7 +30,7 @@ describe('Node lifecycle copy', () => {
     expect(wizardSource()).not.toContain('selectedInstallationMode')
     expect(wizardSource()).not.toContain('installationModeOptions')
     expect(locale).toContain('Run the command below in a shell on the target Linux host.')
-    expect(locale).toContain('Run the command below in PowerShell on the target Windows host.')
+    expect(locale).toContain('Run the commands below in PowerShell on the target Windows host.')
     expect(locale).toContain('Run the command below in Terminal on the target Mac.')
     expect(locale).toContain('The installer shows the installation mode before proceeding.')
     expect(locale).not.toContain('The installer confirms the installation mode before proceeding.')
@@ -46,7 +46,7 @@ describe('Node lifecycle copy', () => {
       expect(message).toContain('\n')
     }
     expect(spanish.nodeLifecycle.installLeadAutomaticLinux).toContain('Ejecute el siguiente comando en una terminal del host Linux de destino.\nAcceso:')
-    expect(spanish.nodeLifecycle.installLeadAutomaticWindows).toContain('Ejecute el siguiente comando en PowerShell en el equipo Windows de destino.\nAcceso:')
+    expect(spanish.nodeLifecycle.installLeadAutomaticWindows).toContain('Ejecute los siguientes comandos en PowerShell en el equipo Windows de destino.')
     expect(spanish.nodeLifecycle.installLeadAutomaticMacos).toContain('Ejecute el siguiente comando en Terminal en el Mac de destino.\nAcceso:')
     expect(css).toMatch(/agent-install-wizard__command-lead[\s\S]*?white-space: pre-line/)
     expect(locale).toContain("generateInstallCommand: 'Generate install command'")

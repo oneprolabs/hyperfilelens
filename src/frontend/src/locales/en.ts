@@ -1960,13 +1960,15 @@ export const en = {
     installLeadLinux: 'Copy the command and run it in a shell on the target host as {root} or with {sudo}.',
     installLeadWindows:
       'Copy and run in a normal {cmd} or {powershell} window. The installer requests administrator authorization when the selected protection mode requires it.',
+    windowsInstallStepDownload: 'Step 1 – Download',
+    windowsInstallStepExecute: 'Step 2 – Execute',
     installLeadMacos:
       'Copy into {terminal} and run with {sudo}. After installation, grant HyperFileLens Agent Full Disk Access in System Settings; otherwise it can protect only readable files.',
     installLeadUser: 'Copy and run the command as the current user. Do not use sudo or an elevated terminal.',
     installLeadAutomaticLinux:
       'Run the command below in a shell on the target Linux host.\nAccess: Running it as a regular user uses that user\'s permissions; running it as root uses host-level permissions. The installer shows the installation mode before proceeding.',
     installLeadAutomaticWindows:
-      'Run the command below in PowerShell on the target Windows host.\nAccess: Running it in a standard window uses the current user\'s permissions; running it in an elevated window uses host-level permissions. The installer shows the installation mode before proceeding.',
+      'Run the commands below in PowerShell on the target Windows host.\nAccess: Running it in a standard window uses the current user\'s permissions; running it in an elevated window uses host-level permissions. The installer shows the installation mode before proceeding.',
     installLeadAutomaticMacos:
       'Run the command below in Terminal on the target Mac.\nAccess: Running it as a regular user uses that user\'s permissions; running it as root uses host-level permissions. After installation, grant HyperFileLens Agent Full Disk Access.',
     installLeadAdministrator: 'Administrator',
