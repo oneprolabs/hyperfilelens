@@ -61,7 +61,9 @@ describe('backup wizard reset → Backup Configuration list (#362)', () => {
       'function syncStep3AutoRefresh()',
     )
     expect(refreshStep3).toContain('const resetTrackedIds = collectResetTrackedIds()')
-    expect(refreshStep3).toContain('const configsLoaded = await refreshBackupConfigs(signal)')
+    expect(refreshStep3).toContain(
+      'const configsLoaded = await refreshBackupConfigs(signal, { preserveOnError: true })',
+    )
     expect(refreshStep3).toContain('if (!configsLoaded) return')
     expect(refreshStep3).toContain('selectFinishedResetSourceIds(')
     expect(refreshStep3).toContain('selectTerminalFailedResetSourceIds(')
