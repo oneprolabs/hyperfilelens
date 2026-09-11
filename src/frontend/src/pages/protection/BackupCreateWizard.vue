@@ -55,7 +55,6 @@ import {
   nasMountProtocolIcon,
   targetNasSidebarIcon,
 } from '../../lib/resourceIcons'
-import { getEffectiveOrgKey } from '../../composables/useAuth'
 import { apiErrorMessage, apiErrorMessageI18n, isAbortError } from '../../lib/api'
 import { normalizeThrownError } from '../../lib/errors'
 import { openErrorDetails } from '../../lib/errors/details'
@@ -137,7 +136,7 @@ import {
   useProtectionDemoStore,
   type DemoDirTreeItem,
 } from '../../composables/useProtectionDemoStore'
-import { issueEnrollmentInstall, listAllNodes, type EnrollmentOs } from '../../lib/nodeApi'
+import { listAllNodes, type EnrollmentOs } from '../../lib/nodeApi'
 import { formatOfflineBackupPlanMessage } from './lib/offlineBackupPlanMessage'
 import {
   backupTargetIncompatibilityReason,
@@ -729,66 +728,6 @@ async function refreshProxyNodesManually() {
 }
 
 const deploySelectedOs = ref<EnrollmentOs>('linux')
-const deployScript = ref('')
-const deployScriptLoading = ref(false)
-const deployOrgKey = ref('')
-const deployScriptCache: Partial<Record<EnrollmentOs, string>> = {}
-let deployGeneration = 0
-
-
-
-
-async function refreshDeployScript(generation: number, os: EnrollmentOs) {
-  const cached = deployScriptCache[os]
-  if (cached) {
-    if (generation === deployGeneration && deploySelectedOs.value === os) {
-      deployScript.value = cached
-      deployScriptLoading.value = false
-    }
-    return
-  }
-
-  deployScriptLoading.value = true
-  deployScript.value = ''
-  if (!deployOrgKey.value) {
-    if (generation === deployGeneration && deploySelectedOs.value === os) {
-      deployScriptLoading.value = false
-    }
-    return
-  }
-  try {
-    const { command } = await issueEnrollmentInstall({
-      role: 'agent',
-      os,
-      note: 'deploy:agent:backup-wizard',
-    })
-    if (generation !== deployGeneration) return
-    deployScriptCache[os] = command
-    if (deploySelectedOs.value !== os) return
-    deployScript.value = command
-  } catch (e) {
-    if (generation === deployGeneration && deploySelectedOs.value === os) {
-      ElMessage.error({ message: apiErrorMessage(e, t('nodesDeploy.scriptLoadFailed')), grouping: true })
-    }
-  } finally {
-    if (generation === deployGeneration && deploySelectedOs.value === os) {
-      deployScriptLoading.value = false
-    }
-  }
-}
-
-function startDeploySession() {
-  deployOrgKey.value = getEffectiveOrgKey()
-  const generation = ++deployGeneration
-  const os = deploySelectedOs.value
-  const cached = deployScriptCache[os]
-  if (cached) {
-    deployScript.value = cached
-    deployScriptLoading.value = false
-    return
-  }
-  void refreshDeployScript(generation, os)
-}
 
 function resetNasForm() {
   nasProtocol.value = 'smb'
@@ -979,23 +918,7 @@ watch(addSourceOpen, (open) => {
 
 watch(addSourceType, (type) => {
   if (!addSourceOpen.value) return
-  if (type === 'hostFileSystem') {
-    startDeploySession()
-    return
-  }
-  resetNasForm()
-})
-
-watch(deploySelectedOs, (os) => {
-  if (!addSourceOpen.value || addSourceType.value !== 'hostFileSystem') return
-  const cached = deployScriptCache[os]
-  if (cached) {
-    deployScript.value = cached
-    deployScriptLoading.value = false
-    return
-  }
-  const generation = ++deployGeneration
-  void refreshDeployScript(generation, os)
+  if (type !== 'hostFileSystem') resetNasForm()
 })
 
 watch(step2Sources, (ids) => {
@@ -1018,7 +941,7 @@ function openProxyDeploy() {
 }
 
 async function copyDeployScript(text?: string) {
-  const script = text || deployScriptCache[deploySelectedOs.value] || deployScript.value
+  const script = text || ''
   if (!script) {
     ElMessage.warning({ message: t('nodesDeploy.scriptNotReady'), grouping: true })
     return

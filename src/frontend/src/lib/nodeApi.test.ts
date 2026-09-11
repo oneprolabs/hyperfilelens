@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
 import {
   buildEnrollmentInstallCommand,
+  buildWindowsEnrollmentInstallCommand,
   auditPlatformGatewayEnrollmentCopy,
   fetchLifecycleWatch,
   getGatewayNode,
@@ -267,10 +268,26 @@ describe('Data Gateway enrollment', () => {
       tlsVerify: true,
     })
 
-    expect(command).toContain('powershell -NoProfile -ExecutionPolicy Bypass -Command')
+    // Two-step Windows command: download + execute joined by newline
+    expect(command).toContain('powershell -NoProfile -Command')
+    expect(command).toContain('powershell -ExecutionPolicy Bypass -File')
     expect(command).toContain('/api/v1/node/enrollment/bootstrap?')
     expect(command).not.toContain('ServerCertificateValidationCallback')
     expect(command).not.toContain('Write-Warning')
+  })
+
+  it('returns separate download and execute commands for Windows', () => {
+    const cmds = buildWindowsEnrollmentInstallCommand(
+      'https://console.example.com/api/v1/node/enrollment/bootstrap?type=ps1',
+      true,
+    )
+
+    expect(cmds.download).toMatch(/^powershell -NoProfile -Command "/)
+    expect(cmds.download).toContain('DownloadFile')
+    expect(cmds.download).not.toContain('-ExecutionPolicy Bypass')
+    expect(cmds.execute).toMatch(/^powershell -ExecutionPolicy Bypass -File "/)
+    expect(cmds.execute).toContain('hfl-bootstrap.ps1')
+    expect(cmds.execute).not.toContain('DownloadFile')
   })
 
   it('keeps the Linux copy-paste command as a single curl one-liner', () => {
@@ -377,9 +394,26 @@ describe('Data Gateway enrollment', () => {
       tlsVerify: false,
     })
 
+    // Two-step Windows command: download includes cert-skip, execute is separate
+    expect(command).toContain('powershell -NoProfile -Command')
+    expect(command).toContain('powershell -ExecutionPolicy Bypass -File')
     expect(command).toContain('ServerCertificateValidationCallback')
     expect(command).toContain('Write-Warning')
     expect(command).toContain('/api/v1/node/enrollment/bootstrap?')
+  })
+
+  it('includes cert-skip only in the download step when TLS is disabled', () => {
+    const cmds = buildWindowsEnrollmentInstallCommand(
+      'https://self-signed.example.com/api/v1/node/enrollment/bootstrap?type=ps1',
+      false,
+    )
+
+    // Download step has the warning and cert skip
+    expect(cmds.download).toContain('ServerCertificateValidationCallback')
+    expect(cmds.download).toContain('Write-Warning')
+    // Execute step does not need them
+    expect(cmds.execute).not.toContain('ServerCertificateValidationCallback')
+    expect(cmds.execute).not.toContain('Write-Warning')
   })
 })
 

@@ -30,7 +30,7 @@ describe('Node lifecycle copy', () => {
     expect(wizardSource()).not.toContain('selectedInstallationMode')
     expect(wizardSource()).not.toContain('installationModeOptions')
     expect(locale).toContain('Run the command below in a shell on the target Linux host.')
-    expect(locale).toContain('Run the command below in PowerShell on the target Windows host.')
+    expect(locale).toContain('Run the commands below in PowerShell on the target Windows host.')
     expect(locale).toContain('Run the command below in Terminal on the target Mac.')
     expect(locale).toContain('The installer shows the installation mode before proceeding.')
     expect(locale).not.toContain('The installer confirms the installation mode before proceeding.')
@@ -46,7 +46,7 @@ describe('Node lifecycle copy', () => {
       expect(message).toContain('\n')
     }
     expect(spanish.nodeLifecycle.installLeadAutomaticLinux).toContain('Ejecute el siguiente comando en una terminal del host Linux de destino.\nAcceso:')
-    expect(spanish.nodeLifecycle.installLeadAutomaticWindows).toContain('Ejecute el siguiente comando en PowerShell en el equipo Windows de destino.\nAcceso:')
+    expect(spanish.nodeLifecycle.installLeadAutomaticWindows).toContain('Ejecute los siguientes comandos en PowerShell en el equipo Windows de destino.')
     expect(spanish.nodeLifecycle.installLeadAutomaticMacos).toContain('Ejecute el siguiente comando en Terminal en el Mac de destino.\nAcceso:')
     expect(css).toMatch(/agent-install-wizard__command-lead[\s\S]*?white-space: pre-line/)
     expect(locale).toContain("generateInstallCommand: 'Generate install command'")
@@ -55,6 +55,24 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain("installFlowInstallAgent: 'Downloads the required components and installs the Agent'")
     expect(locale).toContain("installFlowInstallProxy: 'Downloads the required components and installs the Proxy'")
     expect(locale).toContain("installFlowInstallGateway: 'Downloads and installs the Data Gateway components'")
+  })
+
+  it('uses the shared two-step Windows enrollment UI from every source-host entry point', () => {
+    const wizard = wizardSource()
+    const hostAddForm = source('src/pages/protection/components/HostAddForm.vue')
+    const dataProtection = source('src/pages/protection/DataProtection.vue')
+    const backupWizard = source('src/pages/protection/BackupCreateWizard.vue')
+
+    expect(wizard).toContain("os === 'windows' && windowsCommands && installOnly")
+    expect(wizard).toContain('windowsCommands.download')
+    expect(wizard).toContain('windowsCommands.execute')
+    expect(wizard).toContain('copiedCommand.value === command')
+    expect(hostAddForm).toContain('<NodeLifecycleWizard')
+    for (const entryPoint of [dataProtection, backupWizard]) {
+      expect(entryPoint).toContain('<HostAddForm')
+      expect(entryPoint).not.toContain('issueEnrollmentInstall')
+      expect(entryPoint).not.toContain('deployScriptCache')
+    }
   })
 
   it('presents operating system and command without a protection-mode picker', () => {

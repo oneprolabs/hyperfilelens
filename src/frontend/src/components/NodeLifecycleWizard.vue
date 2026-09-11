@@ -34,6 +34,7 @@ import {
   revokeEnrollmentToken,
   revokePlatformGatewayEnrollment,
   type EnrollmentOs,
+  type WindowsEnrollmentCommands,
 } from '../lib/nodeApi'
 import { apiErrorMessage } from '../lib/api'
 import type { NodeInstallationMode, NodeRole } from '../types/node'
@@ -84,13 +85,14 @@ const activeTab = ref<NodeLifecycleTab>(
   props.maintenanceOnly && props.initialTab === 'install' ? 'upgrade' : props.initialTab,
 )
 const installCommand = ref('')
+const windowsCommands = ref<WindowsEnrollmentCommands | null>(null)
 const upgradeCommand = ref('')
 const uninstallCommand = ref('')
 const serviceCommand = ref('')
 const loading = ref(false)
 const releaseVersion = ref('')
 const upgradeError = ref('')
-const copied = ref(false)
+const copiedCommand = ref<string | null>(null)
 const installGenerated = ref(false)
 const keepData = ref(false)
 const serviceAction = ref<'status' | 'start' | 'stop' | 'restart'>(props.initialServiceAction)
@@ -386,6 +388,7 @@ async function refreshInstallCommand(gen: number) {
       return
     }
     installCommand.value = issued.command
+    windowsCommands.value = issued.windowsCommands ?? null
     installGenerated.value = true
     enrollmentExpiresAt.value = issued.expiresAt
     emit('enrollmentIssued', {
@@ -535,15 +538,19 @@ function onOsCardKeydown(event: KeyboardEvent, next: EnrollmentOs) {
   }
 }
 
-function onCopy() {
-  const text = displayCommand.value
+function onCopy(cmd?: string) {
+  const text = cmd ?? displayCommand.value
   if (!text || loading.value) return
   emit('copy', text)
-  copied.value = true
+  copiedCommand.value = text
   if (copiedTimer) clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => {
-    copied.value = false
+    copiedCommand.value = null
   }, 2000)
+}
+
+function isCopied(command: string | undefined): boolean {
+  return Boolean(command) && copiedCommand.value === command
 }
 
 function generateInstallCommand() {
@@ -555,7 +562,8 @@ function clearInstallCommand() {
   generation += 1
   installGenerated.value = false
   installCommand.value = ''
-  copied.value = false
+  windowsCommands.value = null
+  copiedCommand.value = null
   enrollmentExpiresAt.value = null
 }
 
@@ -911,6 +919,103 @@ defineExpose({ clearInstallCommand })
               </template>
             </I18nT>
 
+            <!-- Windows two-step commands (split to avoid uBlock ClickFix false positives) -->
+            <template v-if="os === 'windows' && windowsCommands && installOnly">
+              <div class="source-script-shell agent-install-wizard__console">
+                <div class="agent-install-wizard__console-bar">
+                  <span>{{ t('nodeLifecycle.windowsInstallStepDownload') }}</span>
+                </div>
+                <div
+                  v-loading="loading"
+                  class="agent-install-wizard__console-body"
+                  element-loading-background="rgba(43, 45, 54, 0.88)"
+                >
+                  <pre class="agent-install-wizard__console-pre">{{ windowsCommands.download }}</pre>
+                </div>
+                <div class="agent-install-wizard__console-foot agent-install-wizard__console-foot--copy-only">
+                  <span
+                    v-if="installGenerated"
+                    class="agent-install-wizard__console-hint"
+                  >
+                    {{ t('nodeLifecycle.installCommandReusable') }}
+                  </span>
+                  <button
+                    v-if="generateOnDemand && !installGenerated"
+                    type="button"
+                    class="btn btn-primary agent-install-wizard__copy-btn"
+                    :disabled="loading"
+                    @click="generateInstallCommand"
+                  >
+                    <RefreshCw :size="12" :class="{ 'is-spinning': loading }" aria-hidden="true" />
+                    <span>{{ t('nodeLifecycle.generateInstallCommand') }}</span>
+                  </button>
+                  <button
+                    v-else-if="installGenerated"
+                    type="button"
+                    class="btn btn-primary agent-install-wizard__copy-btn"
+                    :class="{ 'agent-install-wizard__copy-btn--done': isCopied(windowsCommands.download) }"
+                    :disabled="loading || !tokenIsUsable"
+                    @click="onCopy(windowsCommands.download)"
+                  >
+                    <Check v-if="isCopied(windowsCommands.download)" :size="12" aria-hidden="true" />
+                    <Copy v-else :size="12" aria-hidden="true" />
+                    <span>{{ isCopied(windowsCommands.download) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="source-script-shell agent-install-wizard__console">
+                <div class="agent-install-wizard__console-bar">
+                  <span>{{ t('nodeLifecycle.windowsInstallStepExecute') }}</span>
+                  <span
+                    v-if="installGenerated"
+                    class="agent-install-wizard__token-status"
+                  >
+                    <span>{{ tokenValidityLabel }}</span>
+                  </span>
+                </div>
+                <div
+                  v-loading="loading"
+                  class="agent-install-wizard__console-body"
+                  element-loading-background="rgba(43, 45, 54, 0.88)"
+                >
+                  <pre class="agent-install-wizard__console-pre">{{ windowsCommands.execute }}</pre>
+                </div>
+                <div class="agent-install-wizard__console-foot agent-install-wizard__console-foot--copy-only">
+                  <span
+                    v-if="installGenerated"
+                    class="agent-install-wizard__console-hint"
+                  >
+                    {{ t('nodeLifecycle.installCommandReusable') }}
+                  </span>
+                  <button
+                    v-if="generateOnDemand && !installGenerated"
+                    type="button"
+                    class="btn btn-primary agent-install-wizard__copy-btn"
+                    :disabled="loading"
+                    @click="generateInstallCommand"
+                  >
+                    <RefreshCw :size="12" :class="{ 'is-spinning': loading }" aria-hidden="true" />
+                    <span>{{ t('nodeLifecycle.generateInstallCommand') }}</span>
+                  </button>
+                  <button
+                    v-else-if="installGenerated"
+                    type="button"
+                    class="btn btn-primary agent-install-wizard__copy-btn"
+                    :class="{ 'agent-install-wizard__copy-btn--done': isCopied(windowsCommands.execute) }"
+                    :disabled="loading || !tokenIsUsable"
+                    @click="onCopy(windowsCommands.execute)"
+                  >
+                    <Check v-if="isCopied(windowsCommands.execute)" :size="12" aria-hidden="true" />
+                    <Copy v-else :size="12" aria-hidden="true" />
+                    <span>{{ isCopied(windowsCommands.execute) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                  </button>
+                </div>
+              </div>
+            </template>
+
+            <!-- Single command console (Linux, Mac, non-agent Windows) -->
+            <template v-else>
             <div class="source-script-shell agent-install-wizard__console">
               <div class="agent-install-wizard__console-bar">
                 <span>{{ consoleBarTitle }}</span>
@@ -953,12 +1058,12 @@ defineExpose({ clearInstallCommand })
                   v-else-if="installGenerated"
                   type="button"
                   class="btn btn-primary agent-install-wizard__copy-btn"
-                  :class="{ 'agent-install-wizard__copy-btn--done': copied }"
+                  :class="{ 'agent-install-wizard__copy-btn--done': isCopied(displayCommand) }"
                   :disabled="!displayCommand || loading || !tokenIsUsable"
-                  @click="onCopy"
+                  @click="onCopy()"
                 >
                   <Check
-                    v-if="copied"
+                    v-if="isCopied(displayCommand)"
                     :size="12"
                     aria-hidden="true"
                   />
@@ -967,10 +1072,11 @@ defineExpose({ clearInstallCommand })
                     :size="12"
                     aria-hidden="true"
                   />
-                  <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                  <span>{{ isCopied(displayCommand) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                 </button>
               </div>
             </div>
+            </template>
 
             <div
               v-if="localCommandWarning"
@@ -1181,12 +1287,12 @@ defineExpose({ clearInstallCommand })
                     <button
                       type="button"
                       class="btn btn-primary agent-install-wizard__copy-btn"
-                      :class="{ 'agent-install-wizard__copy-btn--done': copied }"
+                      :class="{ 'agent-install-wizard__copy-btn--done': isCopied(displayCommand) }"
                       :disabled="!displayCommand || loading || (activeTab === 'install' && !tokenIsUsable)"
-                      @click="onCopy"
+                      @click="onCopy()"
                     >
                       <Check
-                        v-if="copied"
+                        v-if="isCopied(displayCommand)"
                         :size="12"
                         aria-hidden="true"
                       />
@@ -1195,7 +1301,7 @@ defineExpose({ clearInstallCommand })
                         :size="12"
                         aria-hidden="true"
                       />
-                      <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                      <span>{{ isCopied(displayCommand) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                     </button>
                   </div>
                 </div>
