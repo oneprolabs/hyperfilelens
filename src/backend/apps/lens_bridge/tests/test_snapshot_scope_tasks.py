@@ -54,6 +54,31 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
         with self.assertRaisesRegex(RuntimeError, "invalid Insight scope summary"):
             snapshot_scope_tasks.resolved_scope_summary(task)
 
+    def test_preserves_non_downloadable_symlink_reason(self):
+        task = SimpleNamespace(
+            result={
+                "entries": [
+                    {
+                        "name": "python",
+                        "path": "bin/python",
+                        "type": "symlink",
+                        "size_bytes": 18,
+                        "downloadable": False,
+                        "download_reason": "Symbolic links cannot be downloaded individually.",
+                    }
+                ]
+            }
+        )
+
+        rows = snapshot_scope_tasks.normalized_browse_entries(task)
+
+        self.assertEqual(rows[0]["type"], "symlink")
+        self.assertFalse(rows[0]["downloadable"])
+        self.assertEqual(
+            rows[0]["download_reason"],
+            "Symbolic links cannot be downloaded individually.",
+        )
+
     def test_scope_summary_rejects_invalid_file_count(self):
         task = SimpleNamespace(
             result={"path_type": "file", "file_count": 0, "size_bytes": 0}

@@ -1337,6 +1337,44 @@ func TestParseSnapshotBrowseOutputIncludesDirectoriesAndFiles(t *testing.T) {
 	}
 }
 
+func TestParseSnapshotBrowseOutputDisablesSymbolicLinks(t *testing.T) {
+	stdout := `Lrwxrwxrwx 18 2026-06-10 09:58:00 CST object-id bin/python`
+	rows := parseSnapshotBrowseTextOutput(stdout, "")
+	if len(rows) != 1 {
+		t.Fatalf("expected one entry, got %d", len(rows))
+	}
+	if rows[0]["type"] != "symlink" {
+		t.Fatalf("expected symlink type, got %#v", rows[0]["type"])
+	}
+	if rows[0]["downloadable"] != false {
+		t.Fatalf("expected symlink to be non-downloadable, got %#v", rows[0]["downloadable"])
+	}
+	if rows[0]["download_reason"] == "" {
+		t.Fatal("expected a download reason for symlink")
+	}
+}
+
+func TestSnapshotBrowseEntryTypePrefersExplicitSymlinkType(t *testing.T) {
+	typ, downloadable, reason := snapshotBrowseEntryType("-rw-r--r--", "symlink")
+	if typ != "symlink" || downloadable || reason == "" {
+		t.Fatalf("symlink type = %q, downloadable=%v, reason=%q", typ, downloadable, reason)
+	}
+}
+
+func TestParseSnapshotBrowseOutputDisablesJSONSymbolicLinks(t *testing.T) {
+	rows := parseSnapshotBrowseOutput(
+		`[{"name":"python","type":"symlink","mode":"-rw-r--r--"}]`,
+		"bin",
+		"",
+	)
+	if len(rows) != 1 || rows[0]["path"] != "bin/python" || rows[0]["type"] != "symlink" {
+		t.Fatalf("unexpected JSON symlink entry: %#v", rows)
+	}
+	if rows[0]["downloadable"] != false {
+		t.Fatalf("JSON symlink must be non-downloadable: %#v", rows[0])
+	}
+}
+
 func TestParseSnapshotBrowseOutputHandlesKopiaModeAndNestedPath(t *testing.T) {
 	stdout := `[
 		{"name":"images","type":"d","mode":"drwxr-xr-x","size":0},

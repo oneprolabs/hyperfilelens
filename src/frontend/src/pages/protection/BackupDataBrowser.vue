@@ -62,6 +62,7 @@ type SnapshotBrowserTreeNode = BackupSnapshotBrowserEntry & {
   id: string
   label: string
   disabled?: boolean
+  visualChecked?: boolean
   loaded?: boolean
   isLeaf?: boolean
   children?: SnapshotBrowserTreeNode[]
@@ -844,9 +845,16 @@ function isRelatedBrowserPath(first: string, second: string) {
 function isBrowserPathDisabled(state: DirectoryBrowserState, path: string) {
   if (state.rootChecked) return true
   for (const selectedPath of state.selectedPaths) {
-    if (selectedPath !== path && isRelatedBrowserPath(path, selectedPath)) return true
+    if (selectedPath !== path && path.startsWith(`${selectedPath}/`)) return true
   }
   return false
+}
+
+function isBrowserPathCoveredBySelectedAncestor(state: DirectoryBrowserState, path: string) {
+  if (state.rootChecked) return true
+  return Array.from(state.selectedPaths).some((selectedPath) => (
+    selectedPath !== path && path.startsWith(`${selectedPath}/`)
+  ))
 }
 
 function browserEntryToTreeNode(
@@ -858,6 +866,7 @@ function browserEntryToTreeNode(
     id: entry.path,
     label: entry.name,
     disabled: !entry.downloadable || isBrowserPathDisabled(state, entry.path),
+    visualChecked: false,
     loaded: entry.type !== 'dir',
     isLeaf: entry.type !== 'dir',
     children: entry.type === 'dir' ? [] : undefined,
@@ -899,6 +908,11 @@ function refreshBrowserTreeDisabled(
 ) {
   for (const node of nodes) {
     node.disabled = node.loadMore || !node.downloadable || isBrowserPathDisabled(state, node.path)
+    node.visualChecked = Boolean(
+      node.disabled
+      && !node.loadMore
+      && isBrowserPathCoveredBySelectedAncestor(state, node.path),
+    )
     if (node.children?.length) refreshBrowserTreeDisabled(state, node.children)
   }
   state.treeEntries = [...state.treeEntries]
@@ -2032,6 +2046,8 @@ watch(
                     <div
                       v-else
                       class="backup-data-browser-tree__row"
+                      :class="{ 'backup-data-browser-tree__row--visual-checked': data.visualChecked }"
+                      :title="data.download_reason || undefined"
                     >
                       <span class="backup-data-browser-table__name">
                         <Folder
@@ -2045,6 +2061,15 @@ watch(
                           class="backup-data-browser-table__file-icon"
                         />
                         <span class="truncate">{{ data.name }}</span>
+                        <HflHelpTip
+                          v-if="data.download_reason"
+                          :content="data.download_reason"
+                          :aria-label="data.download_reason"
+                          :size="13"
+                          popper-class="snapshot-download-restriction-help-popper"
+                          trigger-class="backup-data-browser-tree__entry-help"
+                          @click.stop
+                        />
                       </span>
                       <span class="backup-data-browser-table__path">{{ data.path }}</span>
                       <span>{{ data.type === 'dir' ? '—' : fmtBytes(data.size_bytes) }}</span>
@@ -2937,6 +2962,34 @@ watch(
 
 .backup-data-browser-tree :deep(.el-tree-node__content:has(.backup-data-browser-tree__load-more) > .el-checkbox) {
   visibility: hidden;
+}
+
+.backup-data-browser-tree :deep(.el-tree-node__content:has(.backup-data-browser-tree__row--visual-checked) > .el-checkbox .el-checkbox__inner) {
+  background-color: var(--el-checkbox-disabled-checked-input-fill);
+  border-color: var(--el-checkbox-disabled-checked-input-border-color);
+}
+
+.backup-data-browser-tree :deep(.el-tree-node__content:has(.backup-data-browser-tree__row--visual-checked) > .el-checkbox .el-checkbox__inner::after) {
+  border-color: var(--el-checkbox-disabled-checked-icon-color);
+  transform: translate(-45%, -60%) rotate(45deg) scaleY(1);
+}
+
+.backup-data-browser-table__name :deep(.backup-data-browser-tree__entry-help) {
+  flex: 0 0 auto;
+  margin-left: -3px;
+}
+
+:global(.snapshot-download-restriction-help-popper.el-popper) {
+  z-index: 4000 !important;
+  max-width: min(340px, calc(100vw - 32px)) !important;
+  padding: 10px 12px !important;
+  border: 1px solid rgb(203 213 225) !important;
+  border-radius: 8px !important;
+  background: rgb(255 255 255) !important;
+  color: rgb(51 65 85) !important;
+  line-height: 1.6;
+  white-space: normal;
+  box-shadow: 0 10px 28px rgb(15 23 42 / 16%) !important;
 }
 
 .backup-data-browser-table__empty,

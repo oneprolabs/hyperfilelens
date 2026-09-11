@@ -155,14 +155,22 @@ def _normalize_entries(raw_entries: Any, *, base_path: str, limit: int) -> list[
         item_type = str(item.get("type") or "").strip().lower()
         mode = str(item.get("mode") or item.get("permissions") or "").strip().lower()
         is_dir = bool(item.get("is_dir")) or item_type in {"dir", "directory", "d", "folder"} or mode.startswith("d")
+        normalized_type = "dir" if is_dir else (
+            "symlink" if item_type in {"symlink", "symbolic-link", "link"} or mode.startswith("l") else "file"
+        )
+        downloadable = False if normalized_type == "symlink" else item.get("downloadable", True) is not False
+        download_reason = str(item.get("download_reason") or "").strip()
+        if normalized_type == "symlink" and not download_reason:
+            download_reason = "Symbolic links cannot be downloaded individually."
         rows.append(
             {
                 "name": name,
                 "path": rel_path,
-                "type": "dir" if is_dir else "file",
+                "type": normalized_type,
                 "size_bytes": int(item.get("size_bytes") or item.get("size") or 0),
                 "modified_at": item.get("modified_at") or item.get("mod_time") or None,
-                "downloadable": item.get("downloadable", True) is not False,
+                "downloadable": downloadable,
+                "download_reason": download_reason or None,
                 "has_children": None if not is_dir else item.get("has_children"),
             }
         )
