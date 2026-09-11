@@ -1072,7 +1072,6 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-selection-summary dd { margin: 0; overflow: hidden; color: #1d2129; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .new-chat-selection-summary__status { margin: 10px 0 0; color: #4e5969; font-size: 12px; line-height: 1.5; }
 .new-chat-selection-summary__status:not(.is-error) { color: #315b9c; }
-.new-chat-selection-summary__status.is-waiting { color: #64748b; }
 .new-chat-selection-summary__status.is-error { color: var(--color-danger-text, #c45656); }
 @keyframes new-chat-loading-spin {
   to {
