@@ -128,6 +128,7 @@ export function useKnowledgeSourceForm(
   const scanEnabled = ref(true)
   const ingestPolicy = ref<LensIngestPolicy>(defaultIngestPolicy())
 
+
   const readOnlyGatewayName = ref('')
   const readOnlySourcePath = ref('')
 

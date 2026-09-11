@@ -7,6 +7,7 @@ import {
   CirclePlus,
   File,
   FolderOpen,
+  LoaderCircle,
   MessageSquare,
   Plus,
   RefreshCw,
@@ -653,7 +654,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                           'is-waiting': ['calculating', 'waiting'].includes(selectionStateForScope(scopeEntry.id).status),
                           'is-error': selectionStateForScope(scopeEntry.id).status === 'error',
                         }"
-                      >{{ scopeDataSummary(scopeEntry.id) }}</span>
+                      ><LoaderCircle v-if="['calculating', 'waiting'].includes(selectionStateForScope(scopeEntry.id).status)" class="new-chat-loading-icon" :class="{ 'is-waiting': selectionStateForScope(scopeEntry.id).status === 'waiting' }" :size="13" aria-hidden="true" />{{ scopeDataSummary(scopeEntry.id) }}</span>
                       <ElButton
                         type="danger"
                         class="new-chat-scope-row__remove"
@@ -711,14 +712,14 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       <div>
                         <dt>{{ t('insight.copilot.files') }}</dt>
                         <dd>
-                          {{ selectionTotals ? n(selectionTotals.fileCount) : t('insight.copilot.calculating') }}
+                          {{ selectionTotals ? n(selectionTotals.fileCount) : (selectionCalculationStatus === 'error' ? t('insight.copilot.unavailable') : t('insight.copilot.calculating')) }}
                           / {{ quotaCount(selectionAdmission?.selection_limits.max_files) }}
                         </dd>
                       </div>
                       <div>
                         <dt>{{ t('insight.copilot.selectedSize') }}</dt>
                         <dd>
-                          {{ selectionTotals ? formatBytes(selectionTotals.sizeBytes) : t('insight.copilot.calculating') }}
+                          {{ selectionTotals ? formatBytes(selectionTotals.sizeBytes) : (selectionCalculationStatus === 'error' ? t('insight.copilot.unavailable') : t('insight.copilot.calculating')) }}
                           / {{ quotaBytes(selectionAdmission?.selection_limits.max_bytes) }}
                         </dd>
                       </div>
@@ -750,8 +751,10 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     <p
                       v-if="submitBlocker?.code === 'selection_preview'"
                       class="new-chat-selection-summary__status"
-                      :class="{ 'is-error': selectionCalculationStatus === 'error' || Boolean(selectionAdmissionError) || Boolean(selectionAdmission?.admission.reasons.length) }"
+                      :class="{ 'is-error': selectionCalculationStatus === 'error' || Boolean(selectionAdmissionError) || Boolean(selectionAdmission?.admission.reasons.length), 'is-waiting': selectionCalculationStatus === 'waiting' }"
+                      aria-live="polite"
                     >
+                      <LoaderCircle v-if="['calculating', 'waiting'].includes(selectionCalculationStatus) || selectionAdmissionLoading" class="new-chat-loading-icon" :class="{ 'is-waiting': selectionCalculationStatus === 'waiting' }" :size="14" aria-hidden="true" />
                       {{ submitBlocker.message }}
                     </p>
                   </div>
@@ -1029,7 +1032,17 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-scope-row { border-top: 1px solid #f2f3f5; }
 .new-chat-scope-row__index { color: #86909c; font-size: 12px; font-weight: 700; text-align: center; }
 .new-chat-scope-row__summary { min-width: 0; overflow: hidden; color: #4e5969; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.new-chat-scope-row__summary.is-waiting { color: #86909c; }
+.new-chat-scope-row__summary.is-waiting { color: var(--el-color-primary, #409eff); }
+.new-chat-loading-icon {
+  display: inline-block;
+  margin-right: 5px;
+  vertical-align: -2px;
+  color: var(--el-color-primary, #409eff);
+  animation: new-chat-loading-spin .9s linear infinite;
+}
+.new-chat-loading-icon.is-waiting {
+  color: var(--el-color-primary, #409eff);
+}
 .new-chat-scope-row__summary.is-error { color: var(--color-danger-text, #c45656); }
 .new-chat-scope-row__remove { width: 34px; height: 34px; padding: 0; justify-self: center; }
 .new-chat-scope-tree { min-width: 100%; }
@@ -1047,7 +1060,20 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-selection-summary dt { color: #86909c; font-size: 12px; }
 .new-chat-selection-summary dd { margin: 0; overflow: hidden; color: #1d2129; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .new-chat-selection-summary__status { margin: 10px 0 0; color: #4e5969; font-size: 12px; line-height: 1.5; }
+.new-chat-selection-summary__status:not(.is-error) {
+  color: var(--el-color-primary, #409eff);
+}
 .new-chat-selection-summary__status.is-error { color: var(--color-danger-text, #c45656); }
+@keyframes new-chat-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .new-chat-loading-icon {
+    animation: none;
+  }
+}
 .new-chat-hint { margin: 10px 0 0; color: #86909c; font-size: 12px; line-height: 1.5; }
 .new-chat-hint--warn { color: #d46b08; }
 .new-chat-gateway-warning { display: flex; width: 100%; box-sizing: border-box; align-items: flex-start; gap: 8px; margin-top: 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--color-warning) 35%, var(--color-card-bg)); border-radius: 8px; background: color-mix(in srgb, var(--color-warning) 10%, var(--color-card-bg)); color: var(--color-warning-text); font-size: 12px; line-height: 1.5; }
