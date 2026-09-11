@@ -90,7 +90,7 @@ function createBackupScopeEntry(): BackupScopeEntry {
 export function useKnowledgeSourceForm(
   editingId: Ref<number | null>,
   sourceType: Ref<KnowledgeSourceType> = ref('backup_source'),
-  options: { snapshotGatewayLinkId?: Ref<number | null> } = {},
+  options: { snapshotGatewayLinkId?: Ref<number | null>; mockMode?: string } = {},
 ) {
   const { t } = useI18n()
 
@@ -127,6 +127,25 @@ export function useKnowledgeSourceForm(
   const gatewayDirTreeRevision = ref(0)
   const scanEnabled = ref(true)
   const ingestPolicy = ref<LensIngestPolicy>(defaultIngestPolicy())
+
+  if (options.mockMode) {
+    const now = new Date().toISOString()
+    snapshots.value = [{
+      id: 9112, snapshot_uid: 'mock-1112', source_type: 'agent', source_ref_id: 1112,
+      source_display_name: 'ray-dev (mock)', backup_config_id: 9112, backup_config_name: 'ray-dev',
+      repository_id: 9112, repository_display_name: 'Mock repository', repository_endpoint_type: 'internal',
+      repository_endpoint: 'mock://ray-dev', task_id: 9112, task_uuid: 'mock-task-1112', trigger_type: 'manual',
+      status: 'completed', started_at: now, finished_at: now, created_at: now, directory_count: 1,
+      successful_directory_count: 1, failed_directory_count: 0, kopia_snapshot_count: 1,
+      total_size_bytes: 26600000000, recoverable_size_bytes: 26600000000, directories: [{
+        id: 9112, backup_config_dir_id: 9112, source_path: '/home/ubuntu/.local', path_type: 'directory',
+        display_name: '/home/ubuntu/.local', repository_id: 9112, status: 'completed', created_at: now,
+        size_bytes: 26600000000, file_count: 1284, dir_count: 42,
+      }],
+    } as never]
+    selectedBackupConfigId.value = 9112
+    backupScopeEntries.value = [{ ...backupScopeEntries.value[0], path: '/home/ubuntu/.local', directoryId: 9112, pathType: 'dir' }]
+  }
 
   const readOnlyGatewayName = ref('')
   const readOnlySourcePath = ref('')
