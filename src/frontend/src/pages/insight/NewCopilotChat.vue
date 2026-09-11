@@ -1048,10 +1048,11 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
   display: inline-block;
   margin-right: 5px;
   vertical-align: -2px;
+  color: var(--el-color-primary, #409eff);
   animation: new-chat-loading-spin .9s linear infinite;
 }
 .new-chat-loading-icon.is-waiting {
-  opacity: .7;
+  color: #7892b8;
 }
 .new-chat-scope-row__summary.is-error { color: var(--color-danger-text, #c45656); }
 .new-chat-scope-row__remove { width: 34px; height: 34px; padding: 0; justify-self: center; }
