@@ -435,6 +435,13 @@ def normalized_browse_entries(
             "folder",
             "d",
         }
+        normalized_type = "dir" if is_directory else (
+            "symlink" if entry_type in {"symlink", "symbolic-link", "link"} else "file"
+        )
+        downloadable = False if normalized_type == "symlink" else item.get("downloadable", True) is not False
+        download_reason = str(item.get("download_reason") or "").strip()
+        if normalized_type == "symlink" and not download_reason:
+            download_reason = "Symbolic links cannot be downloaded individually."
         raw_size = item.get("size_bytes", item.get("size"))
         try:
             size_bytes = _exact_result_int(raw_size)
@@ -448,11 +455,12 @@ def normalized_browse_entries(
             {
                 "name": name,
                 "path": path,
-                "type": "dir" if is_directory else "file",
+                "type": normalized_type,
                 "size_bytes": size_bytes,
                 "size_known": size_known,
                 "modified_at": item.get("modified_at") or item.get("mod_time") or None,
-                "downloadable": item.get("downloadable", True) is not False,
+                "downloadable": downloadable,
+                "download_reason": download_reason or None,
                 "has_children": item.get("has_children"),
             }
         )

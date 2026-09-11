@@ -2078,18 +2078,23 @@ func (collector *snapshotBrowsePageCollector) consume(line string) bool {
 		return false
 	}
 	collector.seen++
-	isDir := strings.HasPrefix(strings.ToLower(mode), "d")
+	entryType, downloadable, downloadReason := snapshotBrowseEntryType(mode, "")
+	isDir := entryType == "dir"
 	path := normalizeSnapshotBrowsePath(name, name, collector.basePath, "")
-	collector.entries = append(collector.entries, map[string]any{
+	entry := map[string]any{
 		"name":         snapshotBrowseName(name, path),
 		"path":         path,
-		"type":         mapSnapshotBrowseType(isDir),
+		"type":         entryType,
 		"is_dir":       isDir,
 		"size_bytes":   size,
 		"modified_at":  modTime,
-		"downloadable": true,
+		"downloadable": downloadable,
 		"has_children": nil,
-	})
+	}
+	if downloadReason != "" {
+		entry["download_reason"] = downloadReason
+	}
+	collector.entries = append(collector.entries, entry)
 	return true
 }
 
@@ -4604,18 +4609,23 @@ func parseSnapshotBrowseTextOutput(stdout string, basePath string) []map[string]
 			continue
 		}
 		if mode, size, modTime, name, parsed := parseSnapshotBrowseLongLine(line); parsed {
-			isDir := strings.HasPrefix(strings.ToLower(mode), "d")
+			entryType, downloadable, downloadReason := snapshotBrowseEntryType(mode, "")
+			isDir := entryType == "dir"
 			path := normalizeSnapshotBrowsePath(name, name, base, "")
-			rows = append(rows, map[string]any{
+			entry := map[string]any{
 				"name":         snapshotBrowseName(name, path),
 				"path":         path,
-				"type":         mapSnapshotBrowseType(isDir),
+				"type":         entryType,
 				"is_dir":       isDir,
 				"size_bytes":   size,
 				"modified_at":  modTime,
-				"downloadable": true,
+				"downloadable": downloadable,
 				"has_children": nil,
-			})
+			}
+			if downloadReason != "" {
+				entry["download_reason"] = downloadReason
+			}
+			rows = append(rows, entry)
 			continue
 		}
 		name := strings.Trim(line, "/\\")
@@ -4655,6 +4665,27 @@ func mapSnapshotBrowseType(isDir bool) string {
 	return "file"
 }
 
+func snapshotBrowseEntryType(mode string, reportedType string) (string, bool, string) {
+	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
+	normalizedType := strings.ToLower(strings.TrimSpace(reportedType))
+	switch {
+	case normalizedType == "symlink" || normalizedType == "symbolic-link" || normalizedType == "link":
+		return "symlink", false, "Symbolic links cannot be downloaded individually."
+	case normalizedType == "dir" || normalizedType == "directory" || normalizedType == "folder":
+		return "dir", true, ""
+	case normalizedType == "file" || normalizedType == "f" || normalizedType == "regular":
+		return "file", true, ""
+	case strings.HasPrefix(normalizedMode, "l"):
+		return "symlink", false, "Symbolic links cannot be downloaded individually."
+	case strings.HasPrefix(normalizedMode, "d"):
+		return "dir", true, ""
+	case strings.HasPrefix(normalizedMode, "-"):
+		return "file", true, ""
+	default:
+		return "special", false, "Special files cannot be downloaded individually."
+	}
+}
+
 func collectSnapshotEntries(raw any, rows *[]map[string]any, basePath string, snapshotID string) {
 	switch value := raw.(type) {
 	case []any:
@@ -4691,6 +4722,8 @@ func collectSnapshotEntries(raw any, rows *[]map[string]any, basePath string, sn
 		} else if typ == "f" || typ == "regular" {
 			typ = "file"
 		}
+		entryType, downloadable, downloadReason := snapshotBrowseEntryType(mode, typ)
+		isDir = entryType == "dir"
 		size, _ := int64Value(firstPresent(value, "size", "size_bytes", "length"))
 		modTime := formatModTimeUTC(strings.TrimSpace(stringValue(firstPresent(value, "mod_time", "modified_at", "mtime", "modTime"))))
 		path := normalizeSnapshotBrowsePath(
@@ -4699,16 +4732,20 @@ func collectSnapshotEntries(raw any, rows *[]map[string]any, basePath string, sn
 			basePath,
 			snapshotID,
 		)
-		*rows = append(*rows, map[string]any{
+		entry := map[string]any{
 			"name":         snapshotBrowseName(name, path),
 			"path":         path,
-			"type":         typ,
+			"type":         entryType,
 			"is_dir":       isDir,
 			"size_bytes":   size,
 			"modified_at":  modTime,
-			"downloadable": true,
+			"downloadable": downloadable,
 			"has_children": nil,
-		})
+		}
+		if downloadReason != "" {
+			entry["download_reason"] = downloadReason
+		}
+		*rows = append(*rows, entry)
 	}
 }
 

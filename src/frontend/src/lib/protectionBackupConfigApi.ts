@@ -201,6 +201,7 @@ export type BackupSnapshotBrowserEntry = {
   size_known?: boolean
   modified_at?: string | null
   downloadable: boolean
+  download_reason?: string
   has_children?: boolean | null
 }
 
