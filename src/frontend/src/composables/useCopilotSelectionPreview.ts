@@ -36,7 +36,6 @@ type PreviewOptions = {
   gatewayMode: Ref<'auto' | 'manual'>
   scopes: ComputedRef<CopilotSelectionScope[]>
   translate?: (key: string) => string
-  mockMode?: 'calculating' | 'waiting' | 'error' | 'ready'
 }
 
 // Check once immediately after dispatch, then use a short bounded backoff.
@@ -147,8 +146,6 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
 
   const canonical = computed(() => canonicalCopilotScopes(options.scopes.value))
   const totals = computed(() => {
-    if (options.mockMode === 'ready') return { fileCount: 1284, sizeBytes: 26_600_000_000 }
-    if (options.mockMode) return null
     let fileCount = 0
     let sizeBytes = 0
     for (const scope of canonical.value.scopes) {
@@ -161,7 +158,6 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
   })
 
   const calculationStatus = computed<'idle' | 'calculating' | 'waiting' | 'error' | 'ready'>(() => {
-    if (options.mockMode) return options.mockMode
     if (!canonical.value.scopes.length) return 'idle'
     const states = canonical.value.scopes.map((scope) => scopeStates.value[scope.key] || emptyState())
     if (states.some((state) => state.status === 'error')) return 'error'
@@ -650,11 +646,6 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
   })
 
   function stateForScope(key: string): CopilotSelectionScopeState {
-    if (options.mockMode) return {
-      ...emptyState(),
-      status: options.mockMode,
-      error: options.mockMode === 'error' ? translate('insight.copilot.selectionUnavailable') : '',
-    }
     return scopeStates.value[key] || emptyState()
   }
 

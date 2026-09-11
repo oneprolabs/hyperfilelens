@@ -35,10 +35,6 @@ import {
 
 const router = useRouter()
 const { n, t } = useI18n()
-const mockSelection = new URLSearchParams(window.location.search).get('mockSelection')
-const mockSelectionMode = ['calculating', 'waiting', 'error', 'ready'].includes(mockSelection || '')
-  ? mockSelection as 'calculating' | 'waiting' | 'error' | 'ready'
-  : undefined
 
 type SubmitBlockCode =
   | 'agent_model'
@@ -118,7 +114,7 @@ const {
   validateBackupScopeEntryOnBlur,
   validateAllBackupScopeEntries,
   pickBackupScopeForEntry,
-} = useKnowledgeSourceForm(editingId, sourceType, { snapshotGatewayLinkId, mockMode: mockSelectionMode })
+} = useKnowledgeSourceForm(editingId, sourceType, { snapshotGatewayLinkId })
 
 const sourceScopes = computed(() => backupScopeEntries.value
   .filter((row) => row.path.trim() && row.directoryId)
@@ -152,7 +148,6 @@ const {
   gatewayMode,
   scopes: previewScopes,
   translate: t,
-  mockMode: mockSelectionMode,
 })
 const agentModelReady = computed(() => Boolean(readiness.value?.default_agent_model_ref))
 const visualModelReady = computed(() => Boolean(readiness.value?.default_multimodal_model_ref))
@@ -396,12 +391,6 @@ async function ensurePrivateGatewayVisible() {
 
 async function load() {
   try {
-    if (mockSelectionMode) {
-      gatewayOptions.value = [{ gateway_link_id: 9112, gateway_id: 9112, name: 'Mock Gateway', scope: 'platform', is_platform_default: true, sidecar_status: 'online', online: true, hfl_usable: true, copilot_eligible: true }]
-      gatewayOptionsResolved.value = true
-      readiness.value = { default_agent_model_ref: 'mock-agent', default_multimodal_model_ref: 'mock-vision' } as LensCopilotReadiness
-      return
-    }
     await Promise.all([
       loadSnapshots(),
       refreshGatewayOptions(false),
@@ -1071,7 +1060,9 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-selection-summary dt { color: #86909c; font-size: 12px; }
 .new-chat-selection-summary dd { margin: 0; overflow: hidden; color: #1d2129; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .new-chat-selection-summary__status { margin: 10px 0 0; color: #4e5969; font-size: 12px; line-height: 1.5; }
-.new-chat-selection-summary__status:not(.is-error) { color: #315b9c; }
+.new-chat-selection-summary__status:not(.is-error) {
+  color: var(--el-color-primary, #409eff);
+}
 .new-chat-selection-summary__status.is-error { color: var(--color-danger-text, #c45656); }
 @keyframes new-chat-loading-spin {
   to {
