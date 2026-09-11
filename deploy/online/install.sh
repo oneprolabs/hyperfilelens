@@ -80,6 +80,23 @@ fail() {
 	exit 1
 }
 
+fail_log_setup() {
+	local operation="$1" diagnostic="${2:-}"
+	local normalized="${diagnostic,,}"
+	if [[ "${normalized}" == *"read-only file system"* \
+		|| "${normalized}" == *"read-only filesystem"* \
+		|| "${normalized}" == *"erofs"* ]]; then
+		printf '[FAIL] The target filesystem is read-only.\n\n' >&2
+		printf 'The installer cannot write its log under:\n%s\n\n' \
+			"${INSTALL_ROOT}/logs" >&2
+		printf 'Remount the filesystem as read-write or repair the filesystem,\n' >&2
+		printf 'then run the installer again.\n\n' >&2
+		printf 'No HyperFileLens installation or configuration was changed.\n' >&2
+		exit 1
+	fi
+	fail "could not ${operation}"
+}
+
 print_banner() {
 	cat <<'BANNER'
  _   _                       _____ _ _      _
@@ -179,18 +196,22 @@ apt_install_with_network_retry() {
 }
 
 configure_logging() {
-	local stamp
+	local stamp log_directory diagnostic
 	[[ -t 1 || -t 2 ]] && ONLINE_INTERACTIVE=1 || true
 	stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 	ONLINE_LOG_FILE="${INSTALL_ROOT}/logs/install-${stamp}-$$.log"
-	mkdir -p "$(dirname "${ONLINE_LOG_FILE}")" \
-		|| fail "could not create the online installation log directory"
+	log_directory="$(dirname "${ONLINE_LOG_FILE}")"
+	if ! diagnostic="$(LC_ALL=C mkdir -p "${log_directory}" 2>&1)"; then
+		fail_log_setup "create the online installation log directory" "${diagnostic}"
+	fi
 	[[ ! -L "${ONLINE_LOG_FILE}" ]] \
 		|| fail "refusing to write the online installation log through a symbolic link"
-	touch "${ONLINE_LOG_FILE}" \
-		|| fail "could not create the online installation log"
-	chmod 600 "${ONLINE_LOG_FILE}" \
-		|| fail "could not secure the online installation log"
+	if ! diagnostic="$(LC_ALL=C touch "${ONLINE_LOG_FILE}" 2>&1)"; then
+		fail_log_setup "create the online installation log" "${diagnostic}"
+	fi
+	if ! diagnostic="$(LC_ALL=C chmod 600 "${ONLINE_LOG_FILE}" 2>&1)"; then
+		fail_log_setup "secure the online installation log" "${diagnostic}"
+	fi
 	exec 3>&1
 	exec 4>&2
 	exec > >(capture_log_stream "${ONLINE_LOG_FILE}" 3) \
