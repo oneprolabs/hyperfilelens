@@ -81,7 +81,7 @@ class SnapshotDirectoryBrowseView(APIView):
             )
         except SnapshotBrowserForbidden as exc:
             raise PermissionDenied(str(exc)) from exc
-        except SnapshotBrowserError as exc:
+        except (SnapshotBrowserError, DjangoValidationError) as exc:
             message = str(exc)
             if "not found" in message.lower():
                 raise NotFound(message) from exc
@@ -102,7 +102,7 @@ class SnapshotDirectoryDownloadView(APIView):
             )
         except SnapshotBrowserForbidden as exc:
             raise PermissionDenied(str(exc)) from exc
-        except SnapshotBrowserError as exc:
+        except (SnapshotBrowserError, DjangoValidationError) as exc:
             message = str(exc)
             if "not found" in message.lower():
                 raise NotFound(message) from exc

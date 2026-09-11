@@ -105,6 +105,12 @@ export function resolveErrorMessage(
 
   if (code === 'CLIENT.ABORTED') return ''
 
+  const diagnostic = String(meta?.diagnostic || normalized.message || '')
+  if (diagnostic.includes('Agent source is offline') || diagnostic.includes('agent websocket is reconnecting') || diagnostic.includes('Agent source is busy')) {
+    return 'The backup source is offline or reconnecting. Connect the source and try again.'
+  }
+
+
   if (code === 'VALIDATION.FAILED') {
     const fieldMessage = firstFieldError(normalized.fields)
     if (fieldMessage) return fieldMessage

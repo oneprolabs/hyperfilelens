@@ -124,6 +124,11 @@ function showSnapshotBrowserMessage(
 }
 
 function showSnapshotDownloadError(error: unknown) {
+  const diagnostic = String(toApiError(error)?.meta?.diagnostic || toApiError(error)?.message || '')
+  if (/agent source is offline|agent websocket is reconnecting|agent source is busy/i.test(diagnostic)) {
+    showSnapshotBrowserMessage(t('protection.backupsPage.snapshotBrowserAgentReconnecting'), 'error')
+    return
+  }
   const sizeLimit = snapshotDownloadSizeLimit(error)
   if (sizeLimit) {
     showSnapshotBrowserMessage(
@@ -191,6 +196,7 @@ const endpoint = computed<SourceEndpoint | null>(() => {
 })
 
 const endpointKey = computed(() => endpoint.value?.sourceId || '')
+const hostOnline = computed(() => source.value?.availability === 'online')
 const activeSnapshot = computed(() => activeSnapshotDetail.value ?? activeSnapshotSummary.value)
 const activeSnapshotId = computed(() => activeSnapshot.value?.id ?? 0)
 const selectedSnapshotDirectories = computed(() => activeSnapshotDetail.value?.directories || [])
@@ -414,7 +420,6 @@ async function loadSource() {
   const currentEndpoint = endpoint.value
   const revision = ++sourceRequestRevision
   requests.abortScope('backup-data-browser-source')
-  source.value = null
   sourceError.value = ''
   if (!currentEndpoint) {
     sourceError.value = t('protection.backupDetail.notFound')
@@ -431,8 +436,13 @@ async function loadSource() {
       expand: 'runtime',
     }, { signal })
     if (revision !== sourceRequestRevision || signal.aborted) return
-    source.value = result.results.find((candidate) => candidate.id === currentEndpoint.sourceId) ?? null
-    if (!source.value) sourceError.value = t('protection.backupDetail.notFound')
+    const nextSource = result.results.find((candidate) => candidate.id === currentEndpoint.sourceId)
+    if (nextSource) {
+      if (source.value) Object.assign(source.value, nextSource)
+      else source.value = nextSource
+    } else if (!source.value) {
+      sourceError.value = t('protection.backupDetail.notFound')
+    }
   } catch (error) {
     if (!requests.isAbortError(error) && revision === sourceRequestRevision) {
       sourceError.value = apiErrorMessage(error, t('errors.generic.loadFailed'))
@@ -485,6 +495,11 @@ async function loadSnapshotRows(options: { restoreDrawer?: boolean } = {}) {
     requests.releaseSignal('backup-data-browser-list', signal)
     if (revision === snapshotListRequestRevision) snapshotsLoading.value = false
   }
+}
+
+async function refreshSourceAndSnapshots() {
+  if (sourceLoading.value || snapshotsLoading.value) return
+  await Promise.all([loadSource(), loadSnapshotRows()])
 }
 
 function createDirectoryBrowserState(): DirectoryBrowserState {
@@ -720,10 +735,11 @@ function onSnapshotDrawerClosed() {
 }
 
 function canBrowseDirectory(directory: BackupSourceSnapshotDirectory) {
-  return isSnapshotDirectoryBrowsable(activeSnapshot.value?.status, directory)
+  return hostOnline.value && isSnapshotDirectoryBrowsable(activeSnapshot.value?.status, directory)
 }
 
 function directoryBrowseUnavailableReason(directory: BackupSourceSnapshotDirectory) {
+  if (!hostOnline.value) return t('protection.backupsPage.snapshotBrowserHostOffline')
   const snapshotStatus = String(activeSnapshot.value?.status || '').toLowerCase()
   if (snapshotStatus !== 'available' && snapshotStatus !== 'partial') {
     return t('protection.backupsPage.snapshotBrowserSnapshotStatusUnavailable', {
@@ -811,7 +827,10 @@ async function openDirectory(
       || revision !== state.requestRevision
       || activeSnapshotId.value !== snapshotId
     ) return
-    state.error = apiErrorMessage(error, t('errors.generic.loadFailed'))
+    const diagnostic = String(toApiError(error)?.meta?.diagnostic || toApiError(error)?.message || '')
+    state.error = /agent source is offline|agent websocket is reconnecting|agent source is busy/i.test(diagnostic)
+      ? t('protection.backupsPage.snapshotBrowserAgentReconnecting')
+      : apiErrorMessage(error, t('errors.generic.loadFailed'))
   } finally {
     releaseBrowserRequestSignal(requestKey, signal)
     if (revision === state.requestRevision) state.loading = false
@@ -1133,7 +1152,7 @@ async function startNativeArtifactDownload(artifactId: number) {
 
 async function downloadSelection() {
   const snapshotId = activeSnapshotId.value
-  if (!snapshotId || !selectedCount.value || downloadingSelected.value) {
+  if (!hostOnline.value || !snapshotId || !selectedCount.value || downloadingSelected.value) {
     showSnapshotBrowserMessage(
       t('protection.backupsPage.snapshotBrowserSelectBeforeDownload'),
       'warning',
@@ -1173,6 +1192,7 @@ async function downloadSelection() {
 async function loadPage() {
   requests.abortScope('backup-data-browser-download')
   snapshotDrawerOpen.value = false
+  source.value = null
   suppressSnapshotReload = true
   resetSearchState()
   await nextTick()
@@ -1265,7 +1285,7 @@ watch(
 
       <section
         v-if="source || sourceLoading"
-        v-loading="sourceLoading"
+        v-loading="sourceLoading && !source"
         class="backup-data-source-summary"
       >
         <div class="backup-data-source-summary__icon">
@@ -1348,12 +1368,12 @@ watch(
               class="hfl-refresh-button"
               :title="t('ops.task.btnRefresh')"
               :aria-label="t('ops.task.btnRefresh')"
-              :disabled="snapshotsLoading"
-              @click="loadSnapshotRows"
+              :disabled="sourceLoading || snapshotsLoading"
+              @click="refreshSourceAndSnapshots"
             >
               <RefreshCw
                 :size="16"
-                :class="{ 'is-spinning': snapshotsLoading }"
+                :class="{ 'is-spinning': sourceLoading || snapshotsLoading }"
               />
             </ElButton>
           </div>
@@ -1748,6 +1768,14 @@ watch(
       </section>
 
       <section class="backup-data-drawer-section backup-data-drawer-section--contents">
+        <ElAlert
+          v-if="!hostOnline"
+          :title="t('protection.backupsPage.snapshotBrowserHostOffline')"
+          type="warning"
+          show-icon
+          :closable="false"
+          class="backup-data-browser-files__offline"
+        />
         <div class="backup-data-drawer-section__title backup-data-browser-files__title">
           <span class="backup-data-browser-files__title-label">
             {{ t('protection.backupsPage.snapshotBrowserPreviewTitle') }}
@@ -1780,7 +1808,7 @@ watch(
               type="primary"
               size="small"
               :loading="downloadingSelected"
-              :disabled="!selectedCount"
+              :disabled="!selectedCount || !hostOnline"
               @click="downloadSelection"
             >
               <Download :size="14" />
@@ -2430,7 +2458,12 @@ watch(
 }
 
 .backup-data-drawer-section--contents {
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+
+.backup-data-browser-files__offline {
+  grid-row: 2;
+  margin: 8px 10px;
 }
 
 .backup-data-drawer-section--contents > .backup-data-drawer-section__title {
@@ -2438,16 +2471,16 @@ watch(
 }
 
 .backup-data-drawer-section--contents > .backup-data-browser-files__error {
-  grid-row: 2;
+  grid-row: 3;
 }
 
 .backup-data-drawer-section--contents > .backup-data-browser-source-tree,
 .backup-data-drawer-section--contents > .backup-data-browser-files__empty {
-  grid-row: 3;
+  grid-row: 4;
 }
 
 .backup-data-drawer-section--contents > .backup-data-browser-files__footer {
-  grid-row: 4;
+  grid-row: 5;
 }
 
 .backup-data-drawer-section__scroll {

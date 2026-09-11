@@ -1631,6 +1631,27 @@ import sys
 ) = sys.argv[1:12]
 embed_lensnode = str(embed_raw).strip().lower() in {"1", "true", "yes", "on"}
 text = pathlib.Path(template_path).read_text(encoding="utf-8")
+# Docker Desktop can resolve relative bind mounts against a stale project root
+# when the generated runtime tree is under build/. Render this host-owned config
+# as an absolute path so the source is unambiguous and Compose never attempts
+# to create a directory where the file already exists.
+compose_root = pathlib.Path(compose_path).resolve().parent
+postgres_config = (compose_root / "deploy/postgresql/etc/postgresql.conf").resolve()
+if not postgres_config.is_file():
+    raise SystemExit(f"missing SourceLens PostgreSQL config: {postgres_config}")
+data_root = (compose_root / "data").resolve()
+postgres_data = (data_root / "postgresql/data").resolve()
+postgres_logs = (data_root / "logs/postgresql").resolve()
+redis_data = (data_root / "redis").resolve()
+redis_logs = (data_root / "logs/redis").resolve()
+text = text.replace(
+    "./deploy/postgresql/etc/postgresql.conf:/etc/postgresql/postgresql.conf:ro",
+    f"{postgres_config}:/etc/postgresql/postgresql.conf:ro",
+)
+text = text.replace("./data/postgresql/data:/var/lib/postgresql/data", f"{postgres_data}:/var/lib/postgresql/data")
+text = text.replace("./data/logs/postgresql:/var/log/postgresql", f"{postgres_logs}:/var/log/postgresql")
+text = text.replace("./data/redis:/data", f"{redis_data}:/data")
+text = text.replace("./data/logs/redis:/var/log/redis", f"{redis_logs}:/var/log/redis")
 
 
 def render_optional_block(value: str, name: str, enabled: bool) -> str:
@@ -1722,6 +1743,13 @@ sourcelens_prepare_dev_runtime_tree() {
 	fi
 
 	sourcelens_ensure_dev_data_dirs
+	# The generated tree may contain legacy nested links (for example
+	# data/postgresql/postgresql). Remove only this disposable mount facade
+	# before recreating its canonical links; the real data lives under
+	# SOURCELENS_DATA_DIR and is preserved.
+	if [[ -e "${dev_root}/data" || -L "${dev_root}/data" ]]; then
+		rm -rf "${dev_root}/data"
+	fi
 	mkdir -p "${dev_root}/data"
 	for subdir in postgresql redis logs storage document-attachments deliverables workspace django; do
 		ln -sfn "${SOURCELENS_DATA_DIR}/${subdir}" "${dev_root}/data/${subdir}"
