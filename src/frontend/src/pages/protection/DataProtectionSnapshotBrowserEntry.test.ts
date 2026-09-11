@@ -162,7 +162,7 @@ describe('Standalone backup data browser', () => {
     expect(fileBrowserTitle).toContain('@click="clearDownloadSelection"')
     expect(fileBrowserTitle).toContain('@click="downloadSelection"')
     expect(browserPage).not.toContain('backup-data-browser-files__toolbar')
-    expect(browserPage).toMatch(/\.backup-data-drawer-section--contents\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\) auto;/s)
+    expect(browserPage).toMatch(/\.backup-data-drawer-section--contents\s*\{[^}]*grid-template-rows:\s*auto auto auto minmax\(0, 1fr\) auto;/s)
     expect(browserPage).toContain('const directory = browsableDirectories.find')
     expect(browserPage).not.toContain('?? browsableDirectories[0]')
     expect(browserPage).toContain('if (!directory) return')

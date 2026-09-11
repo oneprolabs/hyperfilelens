@@ -1700,6 +1700,8 @@
       "snapshotBrowserPageTitle": "Explorar puntos de instantánea de copia de seguridad",
       "snapshotBrowserPageDesc": "Seleccione un punto de instantánea para ver y explorar sus datos de copia de seguridad protegidos.",
       "snapshotBrowserSelectOneSourceHint": "Seleccione una fuente de copia de seguridad configurada para explorar los archivos de su instantánea más reciente.",
+      "snapshotBrowserHostOffline": "El host está desconectado. Conéctelo para explorar o descargar el contenido de la instantánea.",
+      "snapshotBrowserAgentReconnecting": "La fuente de copia de seguridad se está reconectando. Espere hasta que esté en línea y vuelva a intentarlo.",
       "snapshotBrowserSnapshotPoint": "Punto de instantánea",
       "snapshotBrowserProtectedPath": "Ruta protegida",
       "snapshotBrowserFileDirCount": "Archivos/Dirs",
@@ -1883,9 +1885,7 @@
       "backupTaskDrawerFieldTaskId": "ID de tarea",
       "backupTaskDrawerFieldCurrentPhase": "Fase actual",
       "backupTaskDrawerFieldBackupDetail": "Copia de seguridad",
-      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada.",
-      "snapshotBrowserHostOffline": "El host está desconectado. Conéctelo para explorar o descargar el contenido de la instantánea.",
-      "snapshotBrowserAgentReconnecting": "La fuente de copia de seguridad se está reconectando. Espere hasta que esté en línea y vuelva a intentarlo."
+      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada."
     },
     "backupDetail": {
       "backToList": "Volver a copias de seguridad",

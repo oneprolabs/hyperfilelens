@@ -1383,6 +1383,8 @@
       "snapshotBrowserPageTitle": "浏览备份快照点",
       "snapshotBrowserPageDesc": "选择快照点，查看并浏览其中受保护的备份数据。",
       "snapshotBrowserSelectOneSourceHint": "请选择一个已配置的备份源，以浏览其最新快照中的文件。",
+      "snapshotBrowserHostOffline": "主机已离线。请连接主机后浏览或下载快照内容。",
+      "snapshotBrowserAgentReconnecting": "备份源正在重连。请等待备份源恢复在线后重试。",
       "snapshotBrowserSnapshotPoint": "快照点",
       "snapshotBrowserProtectedPath": "保护路径",
       "snapshotBrowserFileDirCount": "文件/目录",
@@ -1855,9 +1857,7 @@
       "backupTaskRetryDirectory": "重试目录",
       "backupTaskRetryDirectorySuccess": "目录重试开始",
       "backupTaskDirectoryStatus": "目录状态",
-      "backupTaskDirectoryProgress": "进行中",
-      "snapshotBrowserHostOffline": "主机已离线。请连接主机后浏览或下载快照内容。",
-      "snapshotBrowserAgentReconnecting": "备份源正在重连。请等待备份源恢复在线后重试。"
+      "backupTaskDirectoryProgress": "进行中"
     },
     "backupDetail": {
       "backToList": "返回备份列表",
