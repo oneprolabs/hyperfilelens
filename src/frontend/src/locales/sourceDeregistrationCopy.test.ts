@@ -4,8 +4,8 @@ import { enProtectionPages } from './enProtectionPages'
 
 describe('source deregistration copy', () => {
   it('uses the concise action name at contextual source action entry points', () => {
-    expect(enProtectionPages.sourceResources.deleteBtn).toBe('Deregister Backup Source')
-    expect(enProtectionPages.backupsPage.flowActionDelete).toBe('Deregister Backup Source')
+    expect(enProtectionPages.sourceResources.deleteBtn).toBe('Deregister')
+    expect(enProtectionPages.backupsPage.flowActionDelete).toBe('Deregister')
     expect(enProtectionPages.backupsPage.btnConfirmUnregisterSource).toBe('Deregister Backup Source')
   })
 
