@@ -396,6 +396,12 @@ async function ensurePrivateGatewayVisible() {
 
 async function load() {
   try {
+    if (mockSelectionMode) {
+      gatewayOptions.value = [{ gateway_link_id: 9112, gateway_id: 9112, name: 'Mock Gateway', scope: 'platform', is_platform_default: true, sidecar_status: 'online', online: true, hfl_usable: true, copilot_eligible: true }]
+      gatewayOptionsResolved.value = true
+      readiness.value = { default_agent_model_ref: 'mock-agent', default_multimodal_model_ref: 'mock-vision' } as LensCopilotReadiness
+      return
+    }
     await Promise.all([
       loadSnapshots(),
       refreshGatewayOptions(false),

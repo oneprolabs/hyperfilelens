@@ -145,6 +145,7 @@ export function useKnowledgeSourceForm(
     } as never]
     selectedBackupConfigId.value = 9112
     backupScopeEntries.value = [{ ...backupScopeEntries.value[0], path: '/home/ubuntu/.local', directoryId: 9112, pathType: 'dir' }]
+    snapshotDetail.value = snapshots.value[0] as never
   }
 
   const readOnlyGatewayName = ref('')
@@ -405,6 +406,7 @@ export function useKnowledgeSourceForm(
   }
 
   async function loadSnapshotDetail(id: number) {
+    if (options.mockMode) return
     snapshotDetail.value = await getBackupSourceSnapshot(id)
     resetBackupScopeState()
   }
@@ -894,7 +896,7 @@ export function useKnowledgeSourceForm(
       if (isEditing.value && editingId.value != null) {
         const row = await fetchKnowledgeSource(editingId.value)
         await hydrateEditForm(row)
-      } else {
+      } else if (!options.mockMode) {
         await Promise.all([loadGateways(), loadSnapshots()])
       }
     } catch (err) {
