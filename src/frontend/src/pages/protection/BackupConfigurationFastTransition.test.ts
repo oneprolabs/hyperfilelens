@@ -24,7 +24,7 @@ describe('backup configuration fast transition', () => {
     const normalLoad = vi.fn().mockResolvedValue(undefined)
     const activeStep = { value: 2 }
     const initialLoad = { value: true }
-    const source = sourceBetween(page, 'let createdBackupRefresh:', 'function finishCreateAndGoToStep3')
+    const source = sourceBetween(page, 'let createdBackupRefresh:', 'async function finishCreateAndGoToStep3')
     const createHarness = new Function(
       'refreshStep3AfterMoreAction', 'refreshFlowStepData', 'flowMainStep',
       'step3InitialLoadPending', 'pageRequests', 'showApiError',
@@ -136,5 +136,22 @@ describe('backup configuration fast transition', () => {
     expect(page).toContain('if (step3SelectableRows.value.length === 0)')
     expect(page).toContain('await loadStep3Selectable({ signal })')
     expect(page).toContain('syncStep3AutoRefresh()')
+  })
+
+  it('does not erase repository metadata when an auxiliary refresh fails', () => {
+    const refresh = sourceBetween(page, 'async function refreshBackupConfigs(', 'function displayNameForSource')
+
+    expect(refresh).toContain('return null')
+    expect(refresh).toContain('if (repositories)')
+    expect(page).toContain('refreshBackupConfigs(signal, { preserveOnError: true })')
+  })
+
+  it('waits for created repository metadata before entering Step 3', () => {
+    const merge = sourceBetween(page, 'async function mergeCreatedBackupConfigs', 'let createdBackupRefresh')
+    const finish = sourceBetween(page, 'async function finishCreateAndGoToStep3', 'function onCreateBackupPartial')
+
+    expect(merge).toContain('await hydrateCreatedConfigRepositories(items)')
+    expect(finish).toContain('const sourceIds = await mergeCreatedBackupConfigs(payload)')
+    expect(finish.indexOf('enterStartBackupStep')).toBeGreaterThan(finish.indexOf('await mergeCreatedBackupConfigs'))
   })
 })
