@@ -1043,7 +1043,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-scope-row { border-top: 1px solid #f2f3f5; }
 .new-chat-scope-row__index { color: #86909c; font-size: 12px; font-weight: 700; text-align: center; }
 .new-chat-scope-row__summary { min-width: 0; overflow: hidden; color: #4e5969; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.new-chat-scope-row__summary.is-waiting { color: #86909c; }
+.new-chat-scope-row__summary.is-waiting { color: var(--el-color-primary, #409eff); }
 .new-chat-loading-icon {
   display: inline-block;
   margin-right: 5px;
@@ -1052,7 +1052,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
   animation: new-chat-loading-spin .9s linear infinite;
 }
 .new-chat-loading-icon.is-waiting {
-  color: #7892b8;
+  color: var(--el-color-primary, #409eff);
 }
 .new-chat-scope-row__summary.is-error { color: var(--color-danger-text, #c45656); }
 .new-chat-scope-row__remove { width: 34px; height: 34px; padding: 0; justify-self: center; }
