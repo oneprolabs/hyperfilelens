@@ -13,6 +13,8 @@ import {
   bulkDeleteBackupSources,
   parseBackupSourceDeleteError,
   preflightDeleteBackupSources,
+  SOURCE_DEREGISTER_CONFIRMATION,
+  SOURCE_FORCE_DEREGISTER_CONFIRMATION,
   type BackupSourceDeletePreflight,
   type BackupSourceDeleteReason,
   type BackupSourceDeleteResult,
@@ -66,7 +68,9 @@ const idempotencyKey = ref('')
 const frozenSourceIds = ref<string[]>([])
 const frozenSources = ref<BackupSourceUnregisterDisplayRow[]>([])
 let preflightRequestSeq = 0
-const confirmationKeyword = computed(() => force.value ? 'FORCE DEREGISTER' : 'DEREGISTER')
+const confirmationKeyword = computed(() => force.value
+  ? SOURCE_FORCE_DEREGISTER_CONFIRMATION
+  : SOURCE_DEREGISTER_CONFIRMATION)
 
 const visible = computed({
   get: () => props.modelValue,

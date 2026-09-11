@@ -5,6 +5,9 @@ import type { BackupConfigDetail } from './protectionBackupConfigApi'
 import type { BackupPolicy, FileFilterRule } from './protectionPolicyApi'
 import type { NodeInstallationMode } from '../types/node'
 
+export const SOURCE_DEREGISTER_CONFIRMATION = 'DEREGISTER'
+export const SOURCE_FORCE_DEREGISTER_CONFIRMATION = 'FORCE DEREGISTER'
+
 export type BackupSelectableRepositoryPreview = {
   id: string
   config_id: number
@@ -490,7 +493,7 @@ export function parseBackupSourceDeleteError(err: unknown): {
 export async function bulkDeleteBackupSources(
   ids: string[],
   force = false,
-  confirmation = '',
+  confirmation = force ? SOURCE_FORCE_DEREGISTER_CONFIRMATION : SOURCE_DEREGISTER_CONFIRMATION,
   idempotencyKey = '',
 ) {
   return unwrapApiPayload<BackupSourceDeleteResult>(
@@ -510,7 +513,7 @@ export async function deleteSourceResource(id: number, force = false): Promise<S
   const result = await bulkDeleteBackupSources(
     [selectableId],
     force,
-    force ? 'FORCE DEREGISTER' : 'DEREGISTER',
+    force ? SOURCE_FORCE_DEREGISTER_CONFIRMATION : SOURCE_DEREGISTER_CONFIRMATION,
   )
   return {
     deleted: result.deleted.includes(selectableId),

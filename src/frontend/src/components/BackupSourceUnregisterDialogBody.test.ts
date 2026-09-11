@@ -61,9 +61,10 @@ function mountBody(props: Record<string, unknown> = {}) {
 }
 
 describe('BackupSourceUnregisterDialogBody', () => {
-  it('always renders an independently selectable Force Cleanup option', () => {
+  it('renders the Force Deregister option independently', () => {
     const wrapper = mountBody({ preflightLoading: true })
     expect(wrapper.find('.hfl-flow-action-dialog__force-panel').exists()).toBe(true)
+    expect(wrapper.find('.hfl-flow-action-dialog__force-label').text()).toBe('Force Deregister')
     expect(wrapper.get('[data-test="force-checkbox"]').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
