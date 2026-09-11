@@ -7,6 +7,19 @@ import { en } from '../../../locales/en'
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 
 describe('TaskEventFailureDetails', () => {
+  it('renders legacy offline errors once with collapsed original details', () => {
+    const diagnostic = "{'source_ref_id': ['Agent source is offline.']}"
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: { metadata: { error_code: 'BACKUP_PRECHECK_FAILED', error_message: diagnostic } },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    expect(wrapper.findAll('.task-event-failure__remediation')).toHaveLength(1)
+    expect(wrapper.get('.task-event-failure__summary').text()).toContain('was offline')
+    expect(wrapper.get('details').attributes('open')).toBeUndefined()
+    expect(wrapper.get('details code').text()).toBe(diagnostic)
+    expect(wrapper.text()).not.toContain('Showing 0 of')
+  })
+
   it('shows actionable guidance and every structured failed file', async () => {
     const wrapper = mount(TaskEventFailureDetails, {
       props: {

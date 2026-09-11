@@ -569,6 +569,7 @@ def complete_task(
     error_code: str = "",
     error_message: str = "",
     include_error_details_in_event: bool = True,
+    event_metadata: dict[str, Any] | None = None,
 ) -> Task:
     if status not in TERMINAL_STATUSES:
         raise ValidationError("complete_task requires a terminal status.")
@@ -611,9 +612,12 @@ def complete_task(
         level=level,
         message=f"Task finished with status {status}",
         metadata=(
-            {"error_code": error_code, "error_message": error_message}
-            if include_error_details_in_event
-            else None
+            {
+                **({"error_code": error_code, "error_message": error_message}
+                   if include_error_details_in_event else {}),
+                **(event_metadata or {}),
+            }
+            or None
         ),
     )
     task_updated.send(
