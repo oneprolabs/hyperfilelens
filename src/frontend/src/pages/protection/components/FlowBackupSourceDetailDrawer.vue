@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { backupFailureMetadata } from '../../../lib/backupFailureDisplay'
 import { computed, nextTick, onUnmounted, reactive, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -1500,10 +1501,8 @@ function stepDisplayName(stepName?: string | null, taskType?: string | null) {
   return te(key) ? t(key) : t('ops.task.unknownValue')
 }
 
-function taskEventMetadata(event: TaskEventRow) {
-  const metadata = event.metadata
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {}
-  return metadata as Record<string, unknown>
+function taskEventMetadata(event: TaskEventRow): Record<string, unknown> {
+  return backupFailureMetadata(event.metadata)
 }
 
 function taskEventMetadataText(event: TaskEventRow, keys: string[]) {
@@ -5081,7 +5080,7 @@ function onClosed() {
                           v-if="eventErrorText(event)"
                           class="dp-task-detail__event-error"
                         >{{ eventErrorText(event) }}</span>
-                        <TaskEventFailureDetails :metadata="event.metadata" />
+                        <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
                       </div>
                       <span
                         class="dp-task-detail__event-time"
@@ -5147,7 +5146,7 @@ function onClosed() {
                           v-if="eventErrorText(event)"
                           class="dp-task-detail__event-error"
                         >{{ eventErrorText(event) }}</span>
-                        <TaskEventFailureDetails :metadata="event.metadata" />
+                        <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
                       </div>
                       <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
                     </div>
@@ -5199,7 +5198,7 @@ function onClosed() {
                     v-if="eventErrorText(event)"
                     class="dp-task-detail__event-error"
                   >{{ eventErrorText(event) }}</span>
-                  <TaskEventFailureDetails :metadata="event.metadata" />
+                  <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
                 </div>
                 <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
               </div>

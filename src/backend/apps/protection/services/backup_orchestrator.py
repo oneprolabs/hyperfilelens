@@ -2320,14 +2320,36 @@ def advance_backup(
             error_code=error_code,
             error_message=error_message,
         )
+        bt = _bt()
+        bt._set_step_status(
+            task=task,
+            step_name=task.current_step or "kopia_snapshot",
+            status=TaskStep.Status.FAILED,
+            progress=BACKUP_PREPARE_END,
+            current_step=task.current_step,
+        )
+        bt._finalize_remaining_steps(task, failed_step=task.current_step or "kopia_snapshot")
+        diagnostic = error_message.lower()
+        category = "backup_precheck_failed"
+        if "agent source is offline" in diagnostic or "agent websocket is reconnecting" in diagnostic:
+            category = "backup_source_offline"
+        elif "agent source is busy" in diagnostic:
+            category = "backup_source_busy"
+        failure_metadata = {
+            "error_code": error_code,
+            "failure_details": {
+                "category": category,
+            },
+        }
         complete_task(
             task_uuid=task.task_uuid,
             organization_id=organization_id,
             status=Task.Status.FAILED,
             progress=BACKUP_PREPARE_END,
-            result_payload={"source_snapshot_id": source_snapshot.id},
+            result_payload={"source_snapshot_id": source_snapshot.id, **failure_metadata},
             error_code=error_code,
             error_message=error_message,
+            event_metadata={"failure_details": failure_metadata["failure_details"]},
         )
         return {
             "task_uuid": str(task.task_uuid),

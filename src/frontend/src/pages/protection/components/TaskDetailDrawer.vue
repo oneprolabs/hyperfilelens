@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { backupFailureMetadata } from '../../../lib/backupFailureDisplay'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -321,7 +322,7 @@ function taskDuration(row: TaskRow) {
 }
 
 function taskEventMetadata(event: TaskEventRow): Record<string, unknown> {
-  return event.metadata && typeof event.metadata === 'object' ? event.metadata as Record<string, unknown> : {}
+  return backupFailureMetadata(event.metadata)
 }
 
 function hasEventDetailPanel(event: TaskEventRow) {
@@ -1052,7 +1053,7 @@ watch(
                           class="hfl-task-drawer__event-msg"
                           :class="eventMessageClass(event)"
                         >{{ eventDisplayMessage(event) }}</span>
-                        <RepositoryMaintenanceSummary :metadata="event.metadata" />
+                        <RepositoryMaintenanceSummary :metadata="taskEventMetadata(event)" />
                         <span
                           v-if="eventObjectText(event)"
                           class="hfl-task-drawer__event-object"
@@ -1061,7 +1062,7 @@ watch(
                           v-if="eventErrorText(event)"
                           class="hfl-task-drawer__event-error"
                         >{{ eventErrorText(event) }}</span>
-                        <TaskEventFailureDetails :metadata="event.metadata" />
+                        <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
                       </div>
                       <span
                         class="hfl-task-drawer__event-time"
@@ -1103,12 +1104,12 @@ watch(
                       class="hfl-task-drawer__event-msg"
                       :class="eventMessageClass(event)"
                     >{{ eventDisplayMessage(event) }}</span>
-                    <RepositoryMaintenanceSummary :metadata="event.metadata" />
+                    <RepositoryMaintenanceSummary :metadata="taskEventMetadata(event)" />
                     <span
                       v-if="eventErrorText(event)"
                       class="hfl-task-drawer__event-error"
                     >{{ eventErrorText(event) }}</span>
-                    <TaskEventFailureDetails :metadata="event.metadata" />
+                    <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
                   </div>
                   <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
                 </div>
