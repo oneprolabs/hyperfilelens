@@ -290,6 +290,22 @@ describe('tableOverflowTitle', () => {
     expect(tooltip?.textContent).toBe('Transferred: 900 MB')
   })
 
+  it('hides an open tooltip when the table scrolls', () => {
+    Object.defineProperty(content, 'clientWidth', { configurable: true, value: 80 })
+    Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 200 })
+    content.dataset.tableOverflowTitle = 'Transferred: 900 MB'
+
+    content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    vi.advanceTimersByTime(300)
+    const tooltip = document.querySelector<HTMLElement>('#hfl-table-overflow-tooltip')
+    expect(tooltip?.style.display).toBe('block')
+
+    window.dispatchEvent(new Event('scroll'))
+
+    expect(tooltip?.style.display).toBe('none')
+    delete content.dataset.tableOverflowTitle
+  })
+
   it('disconnects the active content observer when the directive is unmounted', () => {
     content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
     vi.advanceTimersByTime(300)

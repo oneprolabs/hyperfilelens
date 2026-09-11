@@ -398,7 +398,10 @@ function installWithResolvers(
     },
     onScroll: () => {
       clearPendingTooltip(state)
-      if (state.active) positionTooltip(state.active)
+      // A table can contain its own scroll viewport. Once the row moves, the
+      // fixed tooltip is no longer anchored to visible content and may cover
+      // unrelated dialog sections, so hide it until the pointer re-enters.
+      if (state.active) clearTooltip(state)
     },
     onResize: () => {
       clearPendingTooltip(state)

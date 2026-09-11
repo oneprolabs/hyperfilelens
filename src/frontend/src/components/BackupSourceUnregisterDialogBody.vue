@@ -177,7 +177,7 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
                 <span class="hfl-flow-action-dialog__source-name">{{ row.name }}</span>
                 <span class="hfl-flow-action-dialog__source-meta-row">
                   <span
-                    class="backup-source-type-tag"
+                    class="backup-source-type-tag hfl-table-no-tooltip"
                     :class="`backup-source-type-tag--${sourceTypeKind(row)}`"
                   >
                     <component
