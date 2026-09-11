@@ -753,6 +753,7 @@ class CopilotChatTeardownTests(TestCase):
 
         result.refresh_from_db()
         self.knowledge_source.refresh_from_db()
+        self.workspace_binding.refresh_from_db()
         self.assertEqual(result.lifecycle_status, LensSessionLink.LifecycleStatus.DELETED)
         self.assertTrue(result.is_deleted)
         self.assertEqual(result.cleanup_status, LensSessionLink.CleanupStatus.COMPLETE)

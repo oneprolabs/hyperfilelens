@@ -76,7 +76,10 @@ def due_knowledge_source_teardown_ids(
         )
         # Force-deleted Chat resources are terminal in HFL; their remote
         # residue is intentionally not retried when the Gateway reconnects.
-        .exclude(teardown_state_json__forced_remote_cleanup__status="pending")
+        .filter(
+            Q(teardown_state_json__forced_remote_cleanup__status__isnull=True)
+            | ~Q(teardown_state_json__forced_remote_cleanup__status="pending")
+        )
         .filter(
             Q(
                 teardown_state_json__blocking__intervention_required__isnull=True

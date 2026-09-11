@@ -2482,7 +2482,10 @@ def _record_late_source_lens_resource(
     """Reopen teardown when immediate compensation cannot delete a late resource."""
     if field not in {"sl_session_uuid", "sl_assistant_uuid"}:
         raise ValueError("Unsupported late SourceLens resource field.")
-    link = LensSessionLink.objects.select_for_update().get(pk=link_id)
+    # Provisioning responses may arrive after an explicit force delete has
+    # soft-deleted the control-plane row.  Keep using that row only to record
+    # the late remote identity for audit; never recreate active lifecycle work.
+    link = LensSessionLink.all_objects.select_for_update().get(pk=link_id)
     forced_cleanup = teardown_blocking.forced_remote_cleanup(
         link.teardown_state_json
     )

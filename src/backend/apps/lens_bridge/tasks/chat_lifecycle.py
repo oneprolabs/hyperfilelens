@@ -221,8 +221,9 @@ def reconcile_lens_resource_teardowns_task(*, limit: int = 100) -> dict:
     # A force-deleted Chat is already terminal in HFL.  Its remote residue is
     # intentionally not requeued when a Gateway later reconnects.
     eligible_ids = set(
-        candidates.exclude(
-            teardown_state_json__forced_remote_cleanup__status="pending"
+        candidates.filter(
+            Q(teardown_state_json__forced_remote_cleanup__status__isnull=True)
+            | ~Q(teardown_state_json__forced_remote_cleanup__status="pending")
         )
         .order_by("teardown_next_retry_at", "id")
         .values_list("id", flat=True)[:reconcile_limit]
