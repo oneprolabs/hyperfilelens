@@ -62,10 +62,12 @@ const props = withDefaults(defineProps<{
   loading?: boolean
   error?: string
   sourceKind?: 'agent' | 'nas'
+  hostOnline?: boolean
 }>(), {
   loading: false,
   error: '',
   sourceKind: 'agent',
+  hostOnline: true,
 })
 
 const emit = defineEmits<{
@@ -255,10 +257,12 @@ function snapshotFileFallbackName(directory: BackupSourceSnapshotDirectory) {
 }
 
 function canBrowseDirectory(directory: BackupSourceSnapshotDirectory) {
+  if (!props.hostOnline) return false
   return isSnapshotDirectoryBrowsable(props.snapshot?.status, directory)
 }
 
 function directoryBrowseUnavailableReason(directory: BackupSourceSnapshotDirectory) {
+  if (!props.hostOnline) return t('protection.backupsPage.snapshotBrowserHostOffline')
   const snapshotStatus = String(props.snapshot?.status || '').toLowerCase()
   if (snapshotStatus !== 'available' && snapshotStatus !== 'partial') {
     return t('protection.backupsPage.snapshotBrowserSnapshotStatusUnavailable', {
@@ -331,7 +335,9 @@ async function openDirectory(
     syncBrowserTreeCheckedKeys(directory.id, state)
   } catch (error) {
     if (signal.aborted || revision !== state.requestRevision || props.snapshot?.id !== snapshotId) return
-    state.error = apiErrorMessage(error, t('errors.generic.loadFailed'))
+    state.error = snapshotAgentReconnectError(error)
+      ? t('protection.backupsPage.snapshotBrowserAgentReconnecting')
+      : apiErrorMessage(error, t('errors.generic.loadFailed'))
   } finally {
     releaseBrowserRequestSignal(requestKey, signal)
     if (revision === state.requestRevision) state.loading = false
@@ -439,7 +445,7 @@ async function loadBrowserTreeNode(
     refreshBrowserTreeDisabled(state)
   } catch (error) {
     data.loaded = false
-    if (!signal.aborted) showFeedback(apiErrorMessage(error, t('errors.generic.loadFailed')), 'error')
+    if (!signal.aborted) showFeedback(snapshotAgentReconnectError(error) ? t('protection.backupsPage.snapshotBrowserAgentReconnecting') : apiErrorMessage(error, t('errors.generic.loadFailed')), 'error')
     resolve([])
   } finally {
     releaseBrowserRequestSignal(requestKey, signal)
@@ -488,7 +494,7 @@ async function loadMoreBrowserTreeEntries(
     await nextTick()
     syncBrowserTreeCheckedKeys(directory.id, state)
   } catch (error) {
-    if (!signal.aborted) showFeedback(apiErrorMessage(error, t('errors.generic.loadFailed')), 'error')
+    if (!signal.aborted) showFeedback(snapshotAgentReconnectError(error) ? t('protection.backupsPage.snapshotBrowserAgentReconnecting') : apiErrorMessage(error, t('errors.generic.loadFailed')), 'error')
   } finally {
     releaseBrowserRequestSignal(requestKey, signal)
     data.loadingMore = false
@@ -593,7 +599,16 @@ function showFeedback(message: string, type: 'error' | 'warning', title?: string
   pushToast({ message, type, title })
 }
 
+function snapshotAgentReconnectError(error: unknown) {
+  const apiError = toApiError(error)
+  return String(apiError?.meta?.diagnostic || '').includes('agent websocket is reconnecting')
+}
+
 function showDownloadError(error: unknown) {
+  if (snapshotAgentReconnectError(error)) {
+    showFeedback(t('protection.backupsPage.snapshotBrowserAgentReconnecting'), 'error')
+    return
+  }
   const sizeLimit = snapshotDownloadSizeLimit(error)
   if (sizeLimit) {
     showFeedback(
@@ -662,7 +677,7 @@ async function startNativeArtifactDownload(artifactId: number) {
 }
 
 async function downloadSelection() {
-  if (!props.snapshot?.id || !selectedCount.value || downloadingSelected.value) {
+  if (!props.hostOnline || !props.snapshot?.id || !selectedCount.value || downloadingSelected.value) {
     showFeedback(t('protection.backupsPage.snapshotBrowserSelectBeforeDownload'), 'warning')
     return
   }
@@ -814,6 +829,14 @@ onUnmounted(resetBrowserState)
     </section>
 
     <section class="snapshot-point-detail-section snapshot-point-detail-section--browser">
+      <ElAlert
+        v-if="!hostOnline"
+        :title="t('protection.backupsPage.snapshotBrowserHostOffline')"
+        type="warning"
+        show-icon
+        :closable="false"
+        class="snapshot-point-detail-browser__offline"
+      />
       <div class="snapshot-point-detail-section__title snapshot-point-detail-browser__title">
         <span>{{ t('protection.backupsPage.snapshotBrowserPreviewTitle') }}</span>
         <div
@@ -844,7 +867,7 @@ onUnmounted(resetBrowserState)
             type="primary"
             size="small"
             :loading="downloadingSelected"
-            :disabled="!selectedCount"
+            :disabled="!selectedCount || !hostOnline"
             @click="downloadSelection"
           >
             <Download :size="14" />
@@ -1151,7 +1174,12 @@ onUnmounted(resetBrowserState)
 }
 
 .snapshot-point-detail-section--browser {
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+
+.snapshot-point-detail-browser__offline {
+  grid-row: 2;
+  margin: 8px 10px;
 }
 
 .snapshot-point-detail-section__title {

@@ -1263,6 +1263,8 @@ export const enProtectionPages = {
     snapshotBrowserPageTitle: 'Browse backup Snapshot Points',
     snapshotBrowserPageDesc: 'Select a snapshot point to view and browse its protected backup data.',
     snapshotBrowserSelectOneSourceHint: 'Select one configured backup source to browse its latest snapshot files.',
+    snapshotBrowserHostOffline: 'Host is offline. Connect the host to browse or download snapshot contents.',
+    snapshotBrowserAgentReconnecting: 'The backup source is reconnecting. Please wait until it is online, then try again.',
     snapshotBrowserSnapshotPoint: 'Snapshot point',
     snapshotBrowserProtectedPath: 'Protected path',
     snapshotBrowserFileDirCount: 'Files/Dirs',

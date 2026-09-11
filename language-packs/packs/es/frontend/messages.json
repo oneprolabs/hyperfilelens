@@ -494,7 +494,6 @@
       "backupEtaMinutes": "Quedan aproximadamente {n} min",
       "backupEtaHours": "Quedan aproximadamente {n} h",
       "backupEtaHoursMinutes": "Quedan aproximadamente {h} h {m} min",
-
       "bytesTransferred": "{size} transferido",
       "bytesProcessed": "Procesado: {size}",
       "bytesCapacity": "{done} / {total}",
@@ -1701,6 +1700,8 @@
       "snapshotBrowserPageTitle": "Explorar puntos de instantánea de copia de seguridad",
       "snapshotBrowserPageDesc": "Seleccione un punto de instantánea para ver y explorar sus datos de copia de seguridad protegidos.",
       "snapshotBrowserSelectOneSourceHint": "Seleccione una fuente de copia de seguridad configurada para explorar los archivos de su instantánea más reciente.",
+      "snapshotBrowserHostOffline": "El host está desconectado. Conéctelo para explorar o descargar el contenido de la instantánea.",
+      "snapshotBrowserAgentReconnecting": "La fuente de copia de seguridad se está reconectando. Espere hasta que esté en línea y vuelva a intentarlo.",
       "snapshotBrowserSnapshotPoint": "Punto de instantánea",
       "snapshotBrowserProtectedPath": "Ruta protegida",
       "snapshotBrowserFileDirCount": "Archivos/Dirs",

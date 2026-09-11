@@ -3763,6 +3763,7 @@ function onClosed() {
                     :loading="snapshotDetailLoading"
                     :error="snapshotDetailError"
                     :source-kind="sourceEndpoint?.sourceType || 'agent'"
+                    :host-online="props.source?.availability === 'online'"
                     @retry="retrySelectedSnapshotDetail"
                   />
                 </div>

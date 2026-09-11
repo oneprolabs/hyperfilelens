@@ -7381,5 +7381,7 @@
   "protection.taskProgress.backupEtaHours": "13c9d74dbe80f7397cc7f7b80ac2bcbedd012d2350511a96e3d983e7e1b27f83",
   "protection.taskProgress.backupEtaHoursMinutes": "10c3b7b37edab973d91fe042e411275edc9915f9f0b0a0330517c177f5b8dc4e",
   "addS3Repo.bucketNameErrors.aws_reserved": "e56222f921707e10f8c93f84c524105e51e930b33b16bbc3ff5e37523382a922",
-  "protection.policiesPage.policyTimezoneHint": "a9d325d5700bc099d8052341e0a51fdc1b33a8a2b563199b7ac3505472ad803f"
+  "protection.policiesPage.policyTimezoneHint": "a9d325d5700bc099d8052341e0a51fdc1b33a8a2b563199b7ac3505472ad803f",
+  "protection.backupsPage.snapshotBrowserHostOffline": "012295c19ffa1f503a42884df63f7fbb4addbcc99291d132451cee1c38170eca",
+  "protection.backupsPage.snapshotBrowserAgentReconnecting": "c7831c7abfcff386ccbaf67f6ad8fc6593cd0de40e715380d50717a085221889"
 }
