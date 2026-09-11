@@ -347,9 +347,15 @@ func ensureGatewayDocker(ctx context.Context, cfg Config) error {
 		"HFL_DOCKER_MIN_ENGINE="+gatewayMinDockerEngine,
 		"HFL_COMPOSE_MIN_VERSION="+gatewayMinDockerCompose,
 	)
+	var stderr bytes.Buffer
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Keep live bootstrap output while retaining the installer-owned failure
+	// marker for the final HFL-INSTALL-007 summary.
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
 	if err := cmd.Run(); err != nil {
+		if detail := extractLogDetail(stderr.String()); detail != "" {
+			return fmt.Errorf("docker install script: %s", detail)
+		}
 		return fmt.Errorf("docker install script: %w", err)
 	}
 	if !dockerRuntimeReady() {

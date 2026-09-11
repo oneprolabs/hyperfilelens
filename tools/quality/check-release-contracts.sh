@@ -52,6 +52,10 @@ grep -F './tools/quality/test-docker-image-digest-alias.sh' \
 	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-offline-docker-package-plan.sh' \
 	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
+grep -F './tools/quality/test-online-confirm-retry.sh' \
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
+grep -F 'Enter y or n (or press Enter to cancel).' "${online_installer}" >/dev/null
+grep -F 'HFL_CONFIRM_TTY' "${online_installer}" >/dev/null
 grep -F './tools/quality/test-language-pack-runtime-index.sh' \
 	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-bundled-language-pack-lifecycle.sh' \

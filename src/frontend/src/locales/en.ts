@@ -4307,8 +4307,6 @@ export const en = {
       pageTitle: 'Audit Logs',
       statTotal: 'Total Records',
       statToday: 'Today',
-      statSuccessRate: 'Success Rate',
-      statFailures: 'Failures',
       export: 'Export',
       advancedFilter: 'Advanced Filters',
       cancelFilter: 'Cancel',

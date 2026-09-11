@@ -31,6 +31,8 @@ func run() int {
 	defer stop()
 	switch os.Args[1] {
 	case "install":
+		restoreConsole := enroll.DisableConsoleQuickEdit()
+		defer restoreConsole()
 		stabilizeInstallWorkingDirectory()
 		opts := enroll.ParseInstallOptions(os.Args[2:])
 		if err := enroll.WithInstallLock(ctx, func() error {
@@ -40,6 +42,8 @@ func run() int {
 			return 1
 		}
 	case "gateway-install":
+		restoreConsole := enroll.DisableConsoleQuickEdit()
+		defer restoreConsole()
 		stabilizeInstallWorkingDirectory()
 		opts := enroll.ParseInstallOptions(os.Args[2:])
 		if err := enroll.WithInstallLock(ctx, func() error {

@@ -276,8 +276,16 @@ function Assert-HflInstallationIdentity {
   }
   if ($InstallationMode -eq "account" -and $Command -eq "install") {
     $defaultRunAsUser = if ([string]::IsNullOrWhiteSpace($RunAsUser)) { $CurrentWindowsIdentity } else { $RunAsUser }
-    $selectedRunAsUser = Read-Host "Enter the existing Windows account to protect (default: $defaultRunAsUser)"
-    $RunAsUser = if ([string]::IsNullOrWhiteSpace($selectedRunAsUser)) { $defaultRunAsUser } else { $selectedRunAsUser.Trim() }
+    if ($QuietFooter -or -not [string]::IsNullOrWhiteSpace($RunAsUser)) {
+      $RunAsUser = $defaultRunAsUser
+    }
+    elseif ([Environment]::UserInteractive) {
+      $selectedRunAsUser = Read-Host "Enter the existing Windows account to protect (default: $defaultRunAsUser)"
+      $RunAsUser = if ([string]::IsNullOrWhiteSpace($selectedRunAsUser)) { $defaultRunAsUser } else { $selectedRunAsUser.Trim() }
+    }
+    else {
+      $RunAsUser = $defaultRunAsUser
+    }
   }
 }
 
@@ -498,18 +506,16 @@ function Write-HflLog {
     default { 'INFO' }
   }
   $displayLine = "  [$status] $messageText"
-  # QuietFooter suppresses duplicate inner lifecycle output, but the outer
-  # enrollment command still needs the concrete failure reason.
-  if ((-not $QuietFooter) -or ($Level -eq 'FAIL ')) {
-    if ($Level -eq 'WARN ') {
-      Write-Host $displayLine -ForegroundColor Yellow
-    }
-    elseif ($Level -eq 'FAIL ') {
-      Write-Host $displayLine -ForegroundColor Red
-    }
-    else {
-      Write-Host $displayLine
-    }
+  # QuietFooter only suppresses banners/sections/footers/summaries. Keep
+  # lifecycle lines visible so a long binary copy does not look frozen.
+  if ($Level -eq 'WARN ') {
+    Write-Host $displayLine -ForegroundColor Yellow
+  }
+  elseif ($Level -eq 'FAIL ') {
+    Write-Host $displayLine -ForegroundColor Red
+  }
+  else {
+    Write-Host $displayLine
   }
   Write-HflInstallLogLine $line
 }
@@ -1880,7 +1886,32 @@ function Start-HflServiceOnly {
         -DataRoot (Get-ResolvedDataRoot -Override "")
       return
     }
-    Start-ScheduledTask -TaskName $TaskName
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    $expectedExecutable = if ($InstallationMode -eq "user") {
+      Join-Path $InstallRoot "hfl-agent-user-launcher.exe"
+    }
+    else {
+      Join-Path $InstallRoot "hfl-agent.exe"
+    }
+    $taskAction = ($task.Actions | Select-Object -First 1).Execute
+    if ([string]::IsNullOrWhiteSpace($taskAction) -or
+        -not ([System.IO.Path]::GetFullPath($taskAction).Equals(
+          [System.IO.Path]::GetFullPath($expectedExecutable),
+          [System.StringComparison]::OrdinalIgnoreCase))) {
+      throw "Scheduled task $TaskName points to a different Agent executable; reinstall the managed task before starting it."
+    }
+    if ($task.State -in @('Running', 'Queued')) {
+      Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+      $deadline = (Get-Date).AddSeconds(30)
+      do {
+        Start-Sleep -Milliseconds 500
+        $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+      } while ($task.State -in @('Running', 'Queued') -and (Get-Date) -lt $deadline)
+      if ($task.State -in @('Running', 'Queued')) {
+        throw "Scheduled task $TaskName did not stop before restart."
+      }
+    }
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
     Write-HflOk "started $LifecycleLabel $TaskName ($(Get-HflServiceStatusLine))"
     return
   }
@@ -1891,7 +1922,18 @@ function Start-HflServiceOnly {
       -DataRoot (Get-ResolvedDataRoot -Override "")
     return
   }
-  Start-Service -Name $ServiceName
+  $serviceInfo = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+  $expectedExecutable = [System.IO.Path]::GetFullPath((Join-Path $InstallRoot "hfl-agent.exe"))
+  if ($null -eq $serviceInfo -or [string]::IsNullOrWhiteSpace($serviceInfo.PathName) -or
+      $serviceInfo.PathName.IndexOf($expectedExecutable, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+    throw "Service $ServiceName points to a different Agent executable; reinstall the managed service before starting it."
+  }
+  if ($svc.Status -eq "Running") {
+    Restart-Service -Name $ServiceName -Force -ErrorAction Stop
+  }
+  else {
+    Start-Service -Name $ServiceName -ErrorAction Stop
+  }
   Write-HflOk "started service $ServiceName ($(Get-HflServiceStatusLine))"
 }
 

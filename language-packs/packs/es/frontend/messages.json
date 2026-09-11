@@ -6583,8 +6583,6 @@
       "pageTitle": "Registros de auditoría",
       "statTotal": "Total de registros",
       "statToday": "Hoy",
-      "statSuccessRate": "Tasa de éxito",
-      "statFailures": "Fallos",
       "export": "Exportar",
       "advancedFilter": "Filtros avanzados",
       "cancelFilter": "Cancelar",

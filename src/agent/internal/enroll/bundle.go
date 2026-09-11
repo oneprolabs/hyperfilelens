@@ -178,6 +178,14 @@ func runStreamingCommand(cmd *exec.Cmd, action string) error {
 	var stderr bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+	// Enrollment invokes installers non-interactively. Do not inherit the
+	// console input, otherwise a stray prompt can block the parent command.
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		return fmt.Errorf("%s input setup failed: %w", action, err)
+	}
+	cmd.Stdin = null
+	defer null.Close()
 	if err := cmd.Run(); err != nil {
 		captured := append(append([]byte{}, stdout.Bytes()...), stderr.Bytes()...)
 		return commandError(action, err, captured)
@@ -204,14 +212,15 @@ func extractLogDetail(out string) string {
 		if line == "" {
 			continue
 		}
-		if idx := strings.Index(line, "] "); idx >= 0 && strings.HasPrefix(line, "[") {
-			parts := strings.SplitN(line[idx+2:], "] ", 2)
-			if len(parts) == 2 {
-				return strings.TrimSpace(parts[1])
+		// Installer progress lines use markers such as "[FAIL] message".
+		// Keep the actual diagnostic while avoiding a nested marker in the
+		// parent HFL-INSTALL error summary.
+		if strings.HasPrefix(line, "[") {
+			if end := strings.IndexByte(line, ']'); end >= 0 {
+				if detail := strings.TrimSpace(line[end+1:]); detail != "" {
+					return detail
+				}
 			}
-		}
-		if strings.Contains(line, "[FAIL") {
-			return line
 		}
 		return line
 	}

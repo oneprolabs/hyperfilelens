@@ -4,7 +4,7 @@ Audit read facade — cross-app callers should use this module only.
 
 from __future__ import annotations
 
-from django.db.models import Count, QuerySet
+from django.db.models import QuerySet
 from django.utils import timezone
 
 from apps.audit.models import AuditLog
@@ -53,31 +53,7 @@ def audit_statistics(*, org_key: str | None) -> dict:
     total = qs.count()
     today = timezone.now().date()
     today_count = qs.filter(created_at__date=today).count()
-    success = qs.filter(result="success").count()
-    failure = qs.filter(result="failure").count()
-    partial = qs.filter(result="partial").count()
-    action_stats = {
-        row["action"]: row["count"]
-        for row in qs.values("action").annotate(count=Count("id")).order_by("-count")[:50]
-    }
-    resource_stats = {
-        row["resource_type"]: row["count"]
-        for row in qs.exclude(resource_type="")
-        .values("resource_type")
-        .annotate(count=Count("id"))
-        .order_by("-count")[:50]
-    }
     return {
         "total_count": total,
         "today_count": today_count,
-        "success_rate": round((success / total) * 100, 2) if total else 0,
-        "failure_count": failure,
-        "partial_count": partial,
-        "action_stats": action_stats,
-        "resource_stats": resource_stats,
-        "result_stats": {
-            "success": success,
-            "failure": failure,
-            "partial": partial,
-        },
     }

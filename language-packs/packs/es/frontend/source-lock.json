@@ -6193,8 +6193,6 @@
   "ops.audit.pageTitle": "c8c084d30f194a9b6713aa700f259b280daa27fbec12826fb3a6826ab5397275",
   "ops.audit.statTotal": "b732de2603972ca32d1ae7244388c2f810ee21de0ec2cf825f33db01d74ecee4",
   "ops.audit.statToday": "5397d8be1e29249b78a1dad485a7dfc8cf9cbf685f8f7084a1dea271ab8dcd67",
-  "ops.audit.statSuccessRate": "4f75972cee840db612a4f8ede483f44abf9de6068b2d3b0c66987a787487bd6a",
-  "ops.audit.statFailures": "29e868b94fa63d6b484c9cbdd15a11f2389b5912a7935785bf24d8f61ee01234",
   "ops.audit.export": "99926cd22134f3db4c679056a93501a7ed9a27dd3028be1a72de2150fb7bce40",
   "ops.audit.advancedFilter": "e4695f710e4915aa1803b73e1b6251444f9dc9dfea4249127d579d9b7e013a47",
   "ops.audit.cancelFilter": "c0774c185060fc1366ab0c01488af84eb5e4e1f4f59229431e064de73e0de6c5",

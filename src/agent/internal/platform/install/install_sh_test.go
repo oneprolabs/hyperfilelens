@@ -336,6 +336,15 @@ func TestInstallShellUpgradeKeepsRollbackUntilLocalHealth(t *testing.T) {
 	if !strings.Contains(startOnlyBody, "hfl_systemctl daemon-reload") {
 		t.Fatal("install.sh start_service_only must reload systemd before starting a rewritten unit")
 	}
+	for _, want := range []string{
+		`hfl_systemctl is-active hyperfilelens-agent.service`,
+		`hfl_systemctl restart hyperfilelens-agent.service`,
+		`Stopping leftover hyperfilelens-agent.service before installing.`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh is missing stale-process protection %q", want)
+		}
+	}
 	if !strings.Contains(body, `if [[ -f "${state_file}" ]]; then`) {
 		t.Fatal("install.sh lifecycle commands must recover an existing state file even when its phase is unreadable")
 	}

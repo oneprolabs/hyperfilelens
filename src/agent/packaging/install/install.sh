@@ -2424,7 +2424,7 @@ gateway_resource_preflight() {
 stop_service() {
 	if agent_uses_launchd; then
 		stop_launchd_service
-		return 0
+		return $?
 	fi
 	if ! command -v systemctl >/dev/null 2>&1; then
 		log_skip "stop hyperfilelens-agent.service (systemctl not found)"
@@ -2545,7 +2545,16 @@ start_service_only() {
 	# previous running state. Reload systemd explicitly so start never uses a
 	# stale unit definition from its manager cache.
 	hfl_systemctl daemon-reload
-	hfl_systemctl start hyperfilelens-agent.service
+	local state
+	state="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null || echo inactive)"
+	case "${state}" in
+		active|activating|deactivating)
+			hfl_systemctl restart hyperfilelens-agent.service
+			;;
+		*)
+			hfl_systemctl start hyperfilelens-agent.service
+			;;
+	esac
 	log_ok "started service hyperfilelens-agent.service ($(service_status_line))"
 }
 
@@ -2585,6 +2594,23 @@ cmd_install() {
 		local command_prefix=""
 		[[ "${INSTALLATION_MODE}" == "system" ]] && command_prefix="sudo "
 		log_fail "The agent is already installed. Run ${command_prefix}./install.sh upgrade --from <package.tar.gz> instead." 2
+	fi
+
+	# A stale managed service may survive after an interrupted or manually
+	# removed installation. Stop it before replacing binaries so an old process
+	# cannot remain online while the new package is reported as installed.
+	if agent_manages_service && agent_uses_systemd; then
+		local leftover
+		leftover="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null || echo inactive)"
+		case "${leftover}" in
+			active|activating|deactivating)
+				log_warn "Stopping leftover hyperfilelens-agent.service before installing."
+				stop_service
+				;;
+		esac
+	elif agent_uses_launchd && launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
+		log_warn "Stopping leftover ${LAUNCHD_LABEL} before installing."
+		stop_service
 	fi
 
 	DATA_DIR="${DATA_DIR:-$DEFAULT_DATA}"

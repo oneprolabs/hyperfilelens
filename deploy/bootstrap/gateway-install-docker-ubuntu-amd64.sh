@@ -26,6 +26,16 @@ hfl_warn() {
 	printf '  [WARN] %s\n' "$1" >&2
 }
 
+hfl_print_apt_repair_danger() {
+	# Keep the warning next to every host-APT failure. Operators must not copy
+	# APT's repair hint without reviewing changes to unrelated host packages.
+	hfl_warn "DANGER: HyperFileLens will not run apt --fix-broken or apt upgrade."
+	hfl_warn "Those commands can remove, downgrade, or replace critical host packages"
+	hfl_warn "(python3, cloud-init, networking tools, and others) and may break this"
+	hfl_warn "machine or remote access. Preview first with:"
+	hfl_warn "  apt-get --simulate --no-download --fix-broken install"
+}
+
 hfl_fail() {
 	printf '  [FAIL] %s\n' "$1" >&2
 	exit "${2:-1}"
@@ -282,12 +292,76 @@ select_offline_docker_debs() {
 		|| hfl_fail "Docker offline bundle has no packages left to install." 3
 }
 
+# Return non-zero when the host package database is inconsistent, without
+# changing any package state. Callers decide how to render the diagnostic.
+check_host_apt_health() {
+	local audit_out="" check_log="" check_status=0
+	if command -v dpkg >/dev/null 2>&1; then
+		audit_out="$(dpkg --audit 2>/dev/null || true)"
+		if [[ -n "${audit_out}" ]]; then
+			printf '%s\n' "${audit_out}" | sed 's/^/  /' >&2
+			return 1
+		fi
+	fi
+	command -v apt-get >/dev/null 2>&1 || return 2
+	check_log="$(mktemp /tmp/hfl-apt-check-XXXXXX.log)" || return 1
+	if env DEBIAN_FRONTEND=noninteractive apt-get --quiet=2 check >"${check_log}" 2>&1; then
+		rm -f "${check_log}"
+		return 0
+	else
+		check_status=$?
+	fi
+	if grep -Eqi 'could not get lock|unable to acquire .*lock|is another process using it' "${check_log}"; then
+		check_status=3
+	fi
+	sed 's/^/  /' "${check_log}" >&2 || true
+	rm -f "${check_log}"
+	return "${check_status}"
+}
+
+# Fail before downloading the offline Docker bundle when the host apt/dpkg
+# state cannot resolve dependencies. HyperFileLens never auto-repairs apt.
+assert_host_apt_healthy() {
+	local status=0
+	if check_host_apt_health; then
+		return 0
+	else
+		status=$?
+	fi
+	if [[ "${status}" -eq 2 ]]; then
+		hfl_fail "apt-get is required for the verified offline Docker install." 2
+	fi
+	if [[ "${status}" -eq 3 ]]; then
+		hfl_fail "The host package manager is busy. Stop other apt/dpkg operations and retry the Gateway installation." 3
+	fi
+	hfl_warn "Host apt/dpkg reported an inconsistent package state:"
+	hfl_print_apt_repair_danger
+	hfl_fail "Host package manager is not healthy enough for offline Docker install." 3
+}
+
 validate_offline_docker_plan() {
 	local apt_plan="$1"
 	shift
 	if ! apt-get --simulate --no-download --no-install-recommends install "$@" \
 		>"${apt_plan}" 2>&1; then
 		tail -n 12 "${apt_plan}" >&2 || true
+		# APT can print the generic "fix-broken" suggestion for a missing
+		# dependency in the offline bundle. Re-check the host independently so
+		# that only a real host inconsistency receives repair guidance.
+		local health_status=0
+		if check_host_apt_health >/dev/null 2>&1; then
+			health_status=0
+		else
+			health_status=$?
+		fi
+		if [[ "${health_status}" -eq 3 ]]; then
+			hfl_fail "The host package manager is busy. Stop other apt/dpkg operations and retry the Gateway installation." 3
+		fi
+		if [[ "${health_status}" -ne 0 ]]; then
+			hfl_warn "Docker offline package planning also found an inconsistent host apt/dpkg state."
+			hfl_print_apt_repair_danger
+			hfl_fail "Host package manager is not healthy enough for offline Docker install." 3
+		fi
 		hfl_fail "Docker offline package plan could not be resolved without downloads." 3
 	fi
 	if grep -Eq '^The following packages will be (REMOVED|upgraded):|^[1-9][0-9]* upgraded,' "${apt_plan}"; then
@@ -334,14 +408,9 @@ if [[ -e /var/lib/docker || -e /run/docker.sock ]]; then
 	hfl_fail "Docker state exists even though the docker command is unavailable. Refusing to overwrite a partial installation." 3
 fi
 
-if command -v dpkg >/dev/null 2>&1; then
-	audit_out="$(dpkg --audit 2>/dev/null || true)"
-	if [[ -n "${audit_out}" ]]; then
-		hfl_warn "dpkg reports broken packages on this host:"
-		printf '%s\n' "${audit_out}" | sed 's/^/  /' >&2
-		hfl_fail "Repair the host package state before installing Docker." 3
-	fi
-fi
+# Catch broken or inconsistent host apt state before downloading tens of MB of
+# Docker offline packages. HyperFileLens never auto-repairs apt on customer hosts.
+assert_host_apt_healthy
 
 if ! command -v curl >/dev/null 2>&1; then
 	hfl_fail "curl is required to download Docker offline packages." 2
@@ -389,8 +458,6 @@ for package in manifest.get("packages", []):
 PY
 
 hfl_step "Installing Docker CE from offline packages (${deb_count} debs)."
-command -v apt-get >/dev/null 2>&1 \
-	|| hfl_fail "apt-get is required for the verified offline Docker install." 2
 command -v dpkg-deb >/dev/null 2>&1 \
 	|| hfl_fail "dpkg-deb is required for the verified offline Docker install." 2
 select_offline_docker_debs "${work_dir}"

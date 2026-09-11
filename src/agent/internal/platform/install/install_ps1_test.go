@@ -23,6 +23,40 @@ func TestInstallPs1CompleteRemovalDoesNotRecreateDataLogDirectory(t *testing.T) 
 	}
 }
 
+func TestInstallPs1RestartsManagedAgentBeforeVerification(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	for _, want := range []string{
+		`Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop`,
+		`$task.State -in @('Running', 'Queued')`,
+		`Scheduled task $TaskName did not stop before restart.`,
+		`points to a different Agent executable; reinstall the managed task before starting it.`,
+		`Get-CimInstance Win32_Service -Filter`,
+		`Service $ServiceName points to a different Agent executable; reinstall the managed service before starting it.`,
+		`Restart-Service -Name $ServiceName -Force -ErrorAction Stop`,
+		`Start-Service -Name $ServiceName -ErrorAction Stop`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("install.ps1 is missing stale-process protection %q", want)
+		}
+	}
+}
+
+func TestInstallPs1NonInteractiveEnrollmentCannotPromptOrLookFrozen(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	for _, want := range []string{
+		`if ($QuietFooter -or -not [string]::IsNullOrWhiteSpace($RunAsUser))`,
+		`elseif ([Environment]::UserInteractive)`,
+		`QuietFooter only suppresses banners/sections/footers/summaries`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("install.ps1 is missing non-interactive enrollment protection %q", want)
+		}
+	}
+	if strings.Contains(source, `if ((-not $QuietFooter) -or ($Level -eq 'FAIL '))`) {
+		t.Fatal("QuietFooter must not hide deploy progress lines")
+	}
+}
+
 func TestInstallPs1DoesNotRemoveInstallParent(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	for _, forbidden := range []string{

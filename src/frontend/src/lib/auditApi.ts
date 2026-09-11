@@ -66,11 +66,6 @@ export async function auditStatistics() {
   return unwrapApiPayload<{
     total_count: number
     today_count: number
-    success_rate: number
-    failure_count: number
-    action_stats: Record<string, number>
-    resource_stats: Record<string, number>
-    result_stats: Record<string, number>
   }>(await api<unknown>(`${base}/statistics/`))
 }
 

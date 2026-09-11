@@ -139,8 +139,6 @@ export type DashboardOverview = {
   audit: {
     todayCount: number
     totalCount: number
-    successRate: number
-    failureCount: number
   }
   nodesOnline: number
   nodesTotal: number
@@ -547,11 +545,6 @@ export async function loadDashboardOverview(
     auditStatistics().catch(() => ({
       total_count: 0,
       today_count: 0,
-      success_rate: 0,
-      failure_count: 0,
-      action_stats: {},
-      resource_stats: {},
-      result_stats: {},
     })),
     api<unknown>('/api/v1/protection/policies/?page_size=200').then((raw) => asList<ApiPolicy>(raw)).catch(() => []),
     api<unknown>('/api/v1/notifications/logs/stats/').then((raw) => unwrapApiPayload<{ failed?: number }>(raw)).catch(() => ({ failed: 0 })),
@@ -661,8 +654,6 @@ export async function loadDashboardOverview(
     audit: {
       todayCount: auditStats.today_count,
       totalCount: auditStats.total_count,
-      successRate: auditStats.success_rate,
-      failureCount: auditStats.failure_count,
     },
     nodesOnline: nodeAvailability.online,
     nodesTotal,

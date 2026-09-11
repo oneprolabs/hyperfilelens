@@ -1560,16 +1560,43 @@ PY
 }
 
 confirm_installation() {
-	local answer=""
+	local answer="" prompt="" tty_device="${HFL_CONFIRM_TTY:-/dev/tty}" confirm_fd
 	((ASSUME_YES == 1)) && return 0
-	[[ -r /dev/tty ]] \
+	[[ -r "${tty_device}" ]] \
 		|| fail "interactive confirmation requires a terminal; use --yes only for automation"
 	if [[ "${INSTALL_ACTION}" == "Upgrade" ]]; then
-		read -r -p 'Continue? [y/N] ' answer </dev/tty
+		prompt='Continue? [y/N] '
 	else
-		read -r -p "Proceed with the HyperFileLens Community ${TAG} installation? [y/N] " answer </dev/tty
+		prompt="Proceed with the HyperFileLens Community ${TAG} installation? [y/N] "
 	fi
-	case "${answer}" in y | Y | yes | YES | Yes) ;; *) fail "installation cancelled" ;; esac
+	# Open once so retries advance through the same tty/stream. Re-opening a
+	# redirected test file would otherwise reread the first line forever.
+	exec {confirm_fd}<"${tty_device}" \
+		|| fail "interactive confirmation requires a terminal; use --yes only for automation"
+	# Ctrl+C uses the process INT trap (exit 130) and must not be turned into a
+	# retry loop. Only blank / explicit no cancel; other input is re-prompted.
+	while true; do
+		if ! read -r -u "${confirm_fd}" -p "${prompt}" answer; then
+			exec {confirm_fd}<&-
+			fail "installation cancelled"
+		fi
+		answer="${answer%$'\r'}"
+		answer="${answer#"${answer%%[![:space:]]*}"}"
+		answer="${answer%"${answer##*[![:space:]]}"}"
+		case "${answer}" in
+		y | Y | yes | YES | Yes)
+			exec {confirm_fd}<&-
+			return 0
+			;;
+		"" | n | N | no | NO | No)
+			exec {confirm_fd}<&-
+			fail "installation cancelled"
+			;;
+		*)
+			printf '[WARN] Enter y or n (or press Enter to cancel).\n' >&2
+			;;
+		esac
+	done
 }
 
 run_fresh_community_install() {
