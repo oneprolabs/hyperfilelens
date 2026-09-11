@@ -16,7 +16,13 @@ collect_gateway_workspace_mount_points() {
   if [[ -z "$targets" && -r /proc/mounts ]]; then
     targets="$(awk '{ print $2 }' /proc/mounts)"
   elif [[ -z "$targets" ]]; then
-    return 1
+    # macOS does not provide /proc/mounts and does not ship findmnt.  The
+    # native mount utility is the authoritative fallback there.
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      targets="$(LC_ALL=C mount 2>/dev/null)" || return 1
+      targets="$(printf '%s\n' "$targets" | sed -n 's/^.* on \(.*\) ([^)]*)$/\1/p')"
+    fi
+    [[ -n "$targets" ]] || return 1
   fi
   printf '%s\n' "$targets" | awk -v root="$workspace_root" '
     BEGIN { len = length(root) }
