@@ -494,7 +494,6 @@
       "backupEtaMinutes": "Quedan aproximadamente {n} min",
       "backupEtaHours": "Quedan aproximadamente {n} h",
       "backupEtaHoursMinutes": "Quedan aproximadamente {h} h {m} min",
-
       "bytesTransferred": "{size} transferido",
       "bytesProcessed": "Procesado: {size}",
       "bytesCapacity": "{done} / {total}",
@@ -1884,7 +1883,9 @@
       "backupTaskDrawerFieldTaskId": "ID de tarea",
       "backupTaskDrawerFieldCurrentPhase": "Fase actual",
       "backupTaskDrawerFieldBackupDetail": "Copia de seguridad",
-      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada."
+      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada.",
+      "snapshotBrowserHostOffline": "El host está desconectado. Conéctelo para explorar o descargar el contenido de la instantánea.",
+      "snapshotBrowserAgentReconnecting": "La fuente de copia de seguridad se está reconectando. Espere hasta que esté en línea y vuelva a intentarlo."
     },
     "backupDetail": {
       "backToList": "Volver a copias de seguridad",

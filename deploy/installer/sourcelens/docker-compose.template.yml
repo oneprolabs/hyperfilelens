@@ -197,7 +197,7 @@ services:
       - ./deploy/postgresql/etc/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       - ./data/postgresql/data:/var/lib/postgresql/data
       - ./data/logs/postgresql:/var/log/postgresql
-    entrypoint: ["bash", "-c", "mkdir -p /var/lib/postgresql/data /var/log/postgresql && chown postgres:postgres /var/lib/postgresql/data && chmod 700 /var/lib/postgresql/data && chown -R postgres:postgres /var/log/postgresql && chmod -R 755 /var/log/postgresql && exec docker-entrypoint.sh \"$$@\""]
+    entrypoint: ["bash", "-c", "mkdir -p /var/lib/postgresql/data /var/log/postgresql && chown postgres:postgres /var/lib/postgresql/data /var/log/postgresql && chmod 700 /var/lib/postgresql/data && chmod 755 /var/log/postgresql && exec docker-entrypoint.sh \"$$@\""]
     command:
       - postgres
       - -c

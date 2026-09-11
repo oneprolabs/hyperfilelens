@@ -466,7 +466,6 @@
       "backupEtaMinutes": "预计剩余约 {n} 分钟",
       "backupEtaHours": "预计剩余约 {n} 小时",
       "backupEtaHoursMinutes": "预计剩余约 {h} 小时 {m} 分钟",
-
       "bytesTransferred": "已传输 {size}",
       "bytesProcessed": "已处理：{size}",
       "etaSeconds": "{n} 秒",
@@ -1856,7 +1855,9 @@
       "backupTaskRetryDirectory": "重试目录",
       "backupTaskRetryDirectorySuccess": "目录重试开始",
       "backupTaskDirectoryStatus": "目录状态",
-      "backupTaskDirectoryProgress": "进行中"
+      "backupTaskDirectoryProgress": "进行中",
+      "snapshotBrowserHostOffline": "主机已离线。请连接主机后浏览或下载快照内容。",
+      "snapshotBrowserAgentReconnecting": "备份源正在重连。请等待备份源恢复在线后重试。"
     },
     "backupDetail": {
       "backToList": "返回备份列表",
