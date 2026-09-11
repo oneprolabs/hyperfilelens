@@ -204,6 +204,10 @@ func PrintCommandFailureFor(operation string, err error) {
 		title = "Installation completed, but verification failed"
 		systemChange = "Agent installed; verification requires attention"
 	}
+	if operation == "install" && failure.CodeKey == "HFL-INSTALL-007" &&
+		failure.Stage != "Preflight checks" && failure.Stage != "Initialization" {
+		systemChange = "Agent installed; Docker / AI engine were not completed"
+	}
 	printResultRule(os.Stderr, title, ansiRed)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Failure")
@@ -220,6 +224,79 @@ func PrintCommandFailureFor(operation string, err error) {
 		fmt.Fprintln(os.Stderr, "  2. Confirm that any proxy supports WebSocket connections.")
 		fmt.Fprintln(os.Stderr, "  3. Review the Agent service log and run hfl-enroll status.")
 	}
+	if operation == "install" && failure.CodeKey == "HFL-INSTALL-007" &&
+		failure.Stage != "Preflight checks" && failure.Stage != "Initialization" {
+		if isHostAptBusyFailure(failure.Reason) {
+			printHostAptBusySuggestedActions()
+		} else if isHostAptUnhealthyFailure(failure.Reason) {
+			printHostAptUnhealthySuggestedActions()
+		} else {
+			printDockerOrAIEngineSuggestedActions()
+		}
+	}
+}
+
+func isHostAptBusyFailure(reason string) bool {
+	return strings.Contains(
+		strings.ToLower(reason),
+		"the host package manager is busy",
+	)
+}
+
+// isHostAptUnhealthyFailure detects Docker bootstrap failures caused by a
+// broken/inconsistent host apt state. HFL-INSTALL-007 also covers sidecar and
+// Docker runtime failures; those must not get apt --fix-broken advice.
+func isHostAptUnhealthyFailure(reason string) bool {
+	// Match only the installer-owned diagnostic. APT emits the same generic
+	// "fix-broken" hint when the offline bundle itself is incomplete, which is
+	// not evidence that unrelated host packages are corrupted.
+	return strings.Contains(
+		strings.ToLower(reason),
+		"host package manager is not healthy enough for offline docker install",
+	)
+}
+
+func printHostAptBusySuggestedActions() {
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Suggested actions:")
+	fmt.Fprintln(os.Stderr, "  1. Wait for the active apt/dpkg operation, such as unattended-upgrades, to finish.")
+	fmt.Fprintln(os.Stderr, "  2. Confirm that no apt or dpkg process is still running, then retry the Gateway installation.")
+	fmt.Fprintln(os.Stderr, "  3. Do not delete package-manager lock files while apt or dpkg is active.")
+}
+
+func printHostAptUnhealthySuggestedActions() {
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Suggested actions:")
+	fmt.Fprintln(os.Stderr, "  1. This is usually a broken or inconsistent host apt state, not a")
+	fmt.Fprintln(os.Stderr, "     HyperFileLens download failure. HyperFileLens will not repair apt")
+	fmt.Fprintln(os.Stderr, "     automatically.")
+	fmt.Fprintln(os.Stderr, "  2. Inspect only:")
+	fmt.Fprintln(os.Stderr, "       apt-get check")
+	fmt.Fprintln(os.Stderr, "       dpkg --audit")
+	fmt.Fprintln(os.Stderr, "       dpkg -l 'libpython3*'")
+	fmt.Fprintln(os.Stderr, "       apt-get --simulate --no-download --fix-broken install")
+	fmt.Fprintln(os.Stderr, "  3. DANGER: do not run apt-get --fix-broken install (or apt upgrade)")
+	fmt.Fprintln(os.Stderr, "     unless you understand and accept the package changes. That command")
+	fmt.Fprintln(os.Stderr, "     can remove, downgrade, or replace critical host packages (python3,")
+	fmt.Fprintln(os.Stderr, "     cloud-init, networking tools, and others) and may break this machine")
+	fmt.Fprintln(os.Stderr, "     or remote access. Always review --simulate output first.")
+	fmt.Fprintln(os.Stderr, "  4. Safer options: install Docker yourself (engine >= 24.0, Compose v2")
+	fmt.Fprintln(os.Stderr, "     >= 2.20) and re-run the Gateway command, or use a clean Ubuntu")
+	fmt.Fprintln(os.Stderr, "     20.04 / 22.04 / 24.04 amd64 host.")
+	fmt.Fprintln(os.Stderr, "  5. The Agent may already be registered; repair or rebuild carefully")
+	fmt.Fprintln(os.Stderr, "     before retrying enrollment.")
+}
+
+func printDockerOrAIEngineSuggestedActions() {
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Suggested actions:")
+	fmt.Fprintln(os.Stderr, "  1. Review the Docker / AI engine messages above for the concrete failure.")
+	fmt.Fprintln(os.Stderr, "  2. If Docker is already installed, confirm engine >= 24.0, Compose v2")
+	fmt.Fprintln(os.Stderr, "     >= 2.20, and that the daemon is reachable (`docker info`).")
+	fmt.Fprintln(os.Stderr, "  3. Safer options: install or repair Docker yourself and re-run the")
+	fmt.Fprintln(os.Stderr, "     Gateway command, or use a clean Ubuntu 20.04 / 22.04 / 24.04 amd64 host.")
+	fmt.Fprintln(os.Stderr, "  4. The Agent may already be registered; repair or rebuild carefully")
+	fmt.Fprintln(os.Stderr, "     before retrying enrollment.")
 }
 
 func normalizeFailureOperation(operation string) string {

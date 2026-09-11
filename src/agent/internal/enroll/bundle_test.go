@@ -18,10 +18,24 @@ func TestRunStreamingCommandReturnsCapturedFailureDetail(t *testing.T) {
 	}
 }
 
+func TestExtractLogDetailRemovesProgressMarker(t *testing.T) {
+	if got := extractLogDetail("  [FAIL] Host package manager is not healthy.\n"); got != "Host package manager is not healthy." {
+		t.Fatalf("extractLogDetail() = %q", got)
+	}
+}
+
 func TestRunStreamingCommandReturnsSuccess(t *testing.T) {
 	t.Parallel()
 	cmd := exec.Command("sh", "-c", "printf 'streamed success\\n'")
 	if err := runStreamingCommand(cmd, "fixture install"); err != nil {
 		t.Fatalf("runStreamingCommand returned %v", err)
+	}
+}
+
+func TestRunStreamingCommandDoesNotInheritConsoleInput(t *testing.T) {
+	t.Parallel()
+	cmd := exec.Command("sh", "-c", "if read value; then exit 1; fi")
+	if err := runStreamingCommand(cmd, "non-interactive fixture"); err != nil {
+		t.Fatalf("runStreamingCommand unexpectedly inherited input: %v", err)
 	}
 }

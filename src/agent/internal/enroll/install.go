@@ -433,6 +433,11 @@ func finishEnrollment(
 		service = "active"
 	}
 	logOK(fmt.Sprintf("Agent service is %s.", service))
+	// Use the installed metadata for the final summary. The running-process
+	// identity is verified by StartInstalledService before this point.
+	if ver, verErr := InstalledAgentVersion(ctx); verErr == nil && ver != "" {
+		agentVer = ver
+	}
 	logStep("Waiting for the Agent to come online.")
 	if err := enrollmentclient.WaitNodeOnline(ctx, agentCfg, nodeID, 30*time.Second); err != nil {
 		abortInstall(

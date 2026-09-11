@@ -6513,8 +6513,6 @@
       "pageTitle": "操作审计",
       "statTotal": "总记录数",
       "statToday": "今日操作",
-      "statSuccessRate": "成功率",
-      "statFailures": "失败次数",
       "export": "导出",
       "advancedFilter": "高级筛选",
       "cancelFilter": "取消",

@@ -88,11 +88,11 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 
 	if err := ensureGatewayDocker(ctx, cfg); err != nil {
 		_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "failed", err.Error())
-		logFail("Docker setup failed: "+err.Error(), 7)
+		abortInstall("Installing AI engine", "Docker setup failed: "+err.Error(), 7, "HFL-INSTALL-007")
 	}
 	if err := InstallLensSidecar(ctx, cfg, lensCfg); err != nil {
 		_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "failed", err.Error())
-		logFail("AI engine install failed: "+err.Error(), 7)
+		abortInstall("Installing AI engine", "AI engine install failed: "+err.Error(), 7, "HFL-INSTALL-007")
 	}
 	_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "success", "")
 	logOK("AI engine was installed successfully.")

@@ -32,8 +32,6 @@ const rows = ref<AuditLogRow[]>([])
 const stats = ref({
   total_count: 0,
   today_count: 0,
-  success_rate: 0,
-  failure_count: 0,
 })
 const loading = ref(false)
 const exportMenuOpen = ref(false)
@@ -268,9 +266,13 @@ function buildParams(): Record<string, string | number> {
 
 async function fetchStats() {
   try {
-    stats.value = await auditStatistics()
+    const data = await auditStatistics()
+    stats.value = {
+      total_count: data.total_count,
+      today_count: data.today_count,
+    }
   } catch {
-    stats.value = { total_count: 0, today_count: 0, success_rate: 0, failure_count: 0 }
+    stats.value = { total_count: 0, today_count: 0 }
   }
 }
 
@@ -418,7 +420,7 @@ watch(
     body-fill
   >
     <div class="hfl-ops-page hfl-ops-page--fill">
-      <div class="hfl-ops-stats-grid hfl-ops-stats-grid--4">
+      <div class="hfl-ops-stats-grid hfl-ops-stats-grid--2">
         <OpsStatCard
           :label="t('ops.audit.statTotal')"
           :value="stats.total_count"
@@ -429,18 +431,6 @@ watch(
           :label="t('ops.audit.statToday')"
           :value="stats.today_count"
           tone="info"
-          accent-side="left"
-        />
-        <OpsStatCard
-          :label="t('ops.audit.statFailures')"
-          :value="stats.failure_count"
-          tone="danger"
-          accent-side="left"
-        />
-        <OpsStatCard
-          :label="t('ops.audit.statSuccessRate')"
-          :value="`${stats.success_rate}%`"
-          tone="success"
           accent-side="left"
         />
       </div>
