@@ -13,7 +13,6 @@ import {
   RefreshCw,
   ChevronDown,
   CloudUpload,
-  Trash2,
   Search,
   HardDrive,
   Filter,
@@ -4328,6 +4327,12 @@ function removeWizardDirEntry(key: string) {
   }
 }
 
+function clearWizardDirEntries(sourceId: string) {
+  wizardDirEntries.value = wizardDirEntries.value.filter((entry) => entry.sourceId !== sourceId)
+  createSourceDirKeysBySource[sourceId] = []
+  nextTick(() => refreshCreateSourceTreeBlockedState(sourceId))
+}
+
 watch(
   wizardDirEntries,
   (entries) => {
@@ -6254,6 +6259,15 @@ function preserveShallowestPathOrder(paths: string[]) {
                         <div class="text-xs text-slate-500">
                           {{ t('protection.backupsPage.addedCount', { n: sourceSelectedCount(row.id) }) }}
                         </div>
+                        <button
+                          v-if="sourceSelectedEntries(row.id).length"
+                          type="button"
+                          :aria-label="t('protection.backupsPage.snapshotBrowserClearSelection')"
+                          class="create-dir-clear-button"
+                          @click="clearWizardDirEntries(row.id)"
+                        >
+                          {{ t('protection.backupsPage.snapshotBrowserClearSelection') }}
+                        </button>
                       </div>
                     </div>
                     <div
@@ -10972,6 +10986,31 @@ function preserveShallowestPathOrder(paths: string[]) {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.create-dir-clear-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  color: #475569 !important;
+  border: 1px solid #cbd5e1 !important;
+  background: #fff !important;
+}
+
+.create-dir-clear-button:hover,
+.create-dir-clear-button:focus-visible,
+.create-dir-clear-button:active {
+  color: #dc2626 !important;
+  border-color: #fca5a5 !important;
+  background: #fef2f2 !important;
 }
 
 .create-source-config-detail__title-row .el-checkbox {
