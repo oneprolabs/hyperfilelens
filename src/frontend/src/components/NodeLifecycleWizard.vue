@@ -92,7 +92,7 @@ const serviceCommand = ref('')
 const loading = ref(false)
 const releaseVersion = ref('')
 const upgradeError = ref('')
-const copied = ref(false)
+const copiedCommand = ref<string | null>(null)
 const installGenerated = ref(false)
 const keepData = ref(false)
 const serviceAction = ref<'status' | 'start' | 'stop' | 'restart'>(props.initialServiceAction)
@@ -542,11 +542,15 @@ function onCopy(cmd?: string) {
   const text = cmd ?? displayCommand.value
   if (!text || loading.value) return
   emit('copy', text)
-  copied.value = true
+  copiedCommand.value = text
   if (copiedTimer) clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => {
-    copied.value = false
+    copiedCommand.value = null
   }, 2000)
+}
+
+function isCopied(command: string | undefined): boolean {
+  return Boolean(command) && copiedCommand.value === command
 }
 
 function generateInstallCommand() {
@@ -559,7 +563,7 @@ function clearInstallCommand() {
   installGenerated.value = false
   installCommand.value = ''
   windowsCommands.value = null
-  copied.value = false
+  copiedCommand.value = null
   enrollmentExpiresAt.value = null
 }
 
@@ -949,13 +953,13 @@ defineExpose({ clearInstallCommand })
                     v-else-if="installGenerated"
                     type="button"
                     class="btn btn-primary agent-install-wizard__copy-btn"
-                    :class="{ 'agent-install-wizard__copy-btn--done': copied }"
+                    :class="{ 'agent-install-wizard__copy-btn--done': isCopied(windowsCommands.download) }"
                     :disabled="loading || !tokenIsUsable"
                     @click="onCopy(windowsCommands.download)"
                   >
-                    <Check v-if="copied" :size="12" aria-hidden="true" />
+                    <Check v-if="isCopied(windowsCommands.download)" :size="12" aria-hidden="true" />
                     <Copy v-else :size="12" aria-hidden="true" />
-                    <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                    <span>{{ isCopied(windowsCommands.download) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                   </button>
                 </div>
               </div>
@@ -998,13 +1002,13 @@ defineExpose({ clearInstallCommand })
                     v-else-if="installGenerated"
                     type="button"
                     class="btn btn-primary agent-install-wizard__copy-btn"
-                    :class="{ 'agent-install-wizard__copy-btn--done': copied }"
+                    :class="{ 'agent-install-wizard__copy-btn--done': isCopied(windowsCommands.execute) }"
                     :disabled="loading || !tokenIsUsable"
                     @click="onCopy(windowsCommands.execute)"
                   >
-                    <Check v-if="copied" :size="12" aria-hidden="true" />
+                    <Check v-if="isCopied(windowsCommands.execute)" :size="12" aria-hidden="true" />
                     <Copy v-else :size="12" aria-hidden="true" />
-                    <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                    <span>{{ isCopied(windowsCommands.execute) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                   </button>
                 </div>
               </div>
@@ -1054,12 +1058,12 @@ defineExpose({ clearInstallCommand })
                   v-else-if="installGenerated"
                   type="button"
                   class="btn btn-primary agent-install-wizard__copy-btn"
-                  :class="{ 'agent-install-wizard__copy-btn--done': copied }"
+                  :class="{ 'agent-install-wizard__copy-btn--done': isCopied(displayCommand) }"
                   :disabled="!displayCommand || loading || !tokenIsUsable"
                   @click="onCopy()"
                 >
                   <Check
-                    v-if="copied"
+                    v-if="isCopied(displayCommand)"
                     :size="12"
                     aria-hidden="true"
                   />
@@ -1068,7 +1072,7 @@ defineExpose({ clearInstallCommand })
                     :size="12"
                     aria-hidden="true"
                   />
-                  <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                  <span>{{ isCopied(displayCommand) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                 </button>
               </div>
             </div>
@@ -1283,12 +1287,12 @@ defineExpose({ clearInstallCommand })
                     <button
                       type="button"
                       class="btn btn-primary agent-install-wizard__copy-btn"
-                      :class="{ 'agent-install-wizard__copy-btn--done': copied }"
+                      :class="{ 'agent-install-wizard__copy-btn--done': isCopied(displayCommand) }"
                       :disabled="!displayCommand || loading || (activeTab === 'install' && !tokenIsUsable)"
-                      @click="onCopy"
+                      @click="onCopy()"
                     >
                       <Check
-                        v-if="copied"
+                        v-if="isCopied(displayCommand)"
                         :size="12"
                         aria-hidden="true"
                       />
@@ -1297,7 +1301,7 @@ defineExpose({ clearInstallCommand })
                         :size="12"
                         aria-hidden="true"
                       />
-                      <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                      <span>{{ isCopied(displayCommand) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                     </button>
                   </div>
                 </div>

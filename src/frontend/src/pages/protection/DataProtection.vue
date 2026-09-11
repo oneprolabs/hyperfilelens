@@ -86,7 +86,7 @@ import {
   type DemoSnapshot,
   type DemoSnapshotDir,
 } from '../../composables/useProtectionDemoStore'
-import { issueEnrollmentInstall, listNodes, updateNode, type EnrollmentOs } from '../../lib/nodeApi'
+import { listNodes, updateNode, type EnrollmentOs } from '../../lib/nodeApi'
 import {
   createSourceResource,
   getBackupSourcePathInfo,
@@ -2470,63 +2470,6 @@ async function refreshProxyNodesManually() {
 }
 
 const deploySelectedOs = ref<EnrollmentOs>('linux')
-const deployScript = ref('')
-const deployScriptLoading = ref(false)
-const deployScriptCache: Partial<Record<EnrollmentOs, string>> = {}
-let deployGeneration = 0
-
-
-
-
-function clearDeployScriptCache() {
-  delete deployScriptCache.linux
-  delete deployScriptCache.windows
-  delete deployScriptCache.macos
-}
-
-async function refreshDeployScript(generation: number, os: EnrollmentOs) {
-  const cached = deployScriptCache[os]
-  if (cached) {
-    if (generation === deployGeneration && deploySelectedOs.value === os) {
-      deployScript.value = cached
-      deployScriptLoading.value = false
-    }
-    return
-  }
-
-  deployScriptLoading.value = true
-  try {
-    const { command } = await issueEnrollmentInstall({
-      role: 'agent',
-      os,
-      note: 'deploy:agent:source-host',
-    })
-    if (generation !== deployGeneration) return
-    deployScriptCache[os] = command
-    if (deploySelectedOs.value !== os) return
-    deployScript.value = command
-  } catch (e) {
-    if (generation === deployGeneration && deploySelectedOs.value === os) {
-      showApiError(e, t('nodesDeploy.scriptLoadFailed'))
-    }
-  } finally {
-    if (generation === deployGeneration && deploySelectedOs.value === os) {
-      deployScriptLoading.value = false
-    }
-  }
-}
-
-function startDeploySession() {
-  const generation = ++deployGeneration
-  const os = deploySelectedOs.value
-  const cached = deployScriptCache[os]
-  if (cached) {
-    deployScript.value = cached
-    deployScriptLoading.value = false
-    return
-  }
-  void refreshDeployScript(generation, os)
-}
 
 function resetNasForm() {
   nasProtocol.value = 'smb'
@@ -2549,13 +2492,9 @@ function resetNasForm() {
 function onAddBackupSource() {
   addSourceType.value = 'hostFileSystem'
   deploySelectedOs.value = 'linux'
-  clearDeployScriptCache()
-  deployScript.value = ''
-  deployScriptLoading.value = false
   resetNasForm()
   addSourceOpen.value = true
   void loadProxyNodes()
-  startDeploySession()
   void nextTick(() => addSourceShellRef.value?.focus())
 }
 
@@ -2775,22 +2714,9 @@ watch(addSourceOpen, (open, wasOpen) => {
 watch(addSourceType, (type) => {
   if (!addSourceOpen.value) return
   if (type === 'hostFileSystem') {
-    startDeploySession()
     return
   }
   resetNasForm()
-})
-
-watch(deploySelectedOs, (os) => {
-  if (!addSourceOpen.value || addSourceType.value !== 'hostFileSystem') return
-  const cached = deployScriptCache[os]
-  if (cached) {
-    deployScript.value = cached
-    deployScriptLoading.value = false
-    return
-  }
-  const generation = ++deployGeneration
-  void refreshDeployScript(generation, os)
 })
 
 watch(selectedSourceIds, () => {
@@ -2944,7 +2870,7 @@ function openProxyDeploy() {
 }
 
 async function copyDeployScript(text?: string) {
-  const script = text || deployScriptCache[deploySelectedOs.value] || deployScript.value
+  const script = text || ''
   if (!script) {
     ElMessage.warning({ message: t('nodesDeploy.scriptNotReady'), grouping: true })
     return

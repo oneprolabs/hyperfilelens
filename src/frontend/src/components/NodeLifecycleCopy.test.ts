@@ -57,6 +57,24 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain("installFlowInstallGateway: 'Downloads and installs the Data Gateway components'")
   })
 
+  it('uses the shared two-step Windows enrollment UI from every source-host entry point', () => {
+    const wizard = wizardSource()
+    const hostAddForm = source('src/pages/protection/components/HostAddForm.vue')
+    const dataProtection = source('src/pages/protection/DataProtection.vue')
+    const backupWizard = source('src/pages/protection/BackupCreateWizard.vue')
+
+    expect(wizard).toContain("os === 'windows' && windowsCommands && installOnly")
+    expect(wizard).toContain('windowsCommands.download')
+    expect(wizard).toContain('windowsCommands.execute')
+    expect(wizard).toContain('copiedCommand.value === command')
+    expect(hostAddForm).toContain('<NodeLifecycleWizard')
+    for (const entryPoint of [dataProtection, backupWizard]) {
+      expect(entryPoint).toContain('<HostAddForm')
+      expect(entryPoint).not.toContain('issueEnrollmentInstall')
+      expect(entryPoint).not.toContain('deployScriptCache')
+    }
+  })
+
   it('presents operating system and command without a protection-mode picker', () => {
     const wizard = source('src/components/NodeLifecycleWizard.vue')
     const locale = source('src/locales/en.ts')
