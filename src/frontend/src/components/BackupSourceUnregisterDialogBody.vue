@@ -9,7 +9,12 @@ import {
   unregisterReasonLabel,
   type BackupSourceUnregisterDisplayRow,
 } from '../lib/backupSourceUnregisterDialog'
-import type { BackupSourceDeletePreflight, BackupSourceDeleteReason } from '../lib/sourceApi'
+import {
+  SOURCE_DEREGISTER_CONFIRMATION,
+  SOURCE_FORCE_DEREGISTER_CONFIRMATION,
+  type BackupSourceDeletePreflight,
+  type BackupSourceDeleteReason,
+} from '../lib/sourceApi'
 import { nasMountProtocolIcon } from '../lib/resourceIcons'
 import { backupSourceTypeIcon, backupSourceTypeIconClass, type BackupSourceType } from '../lib/sourceTypeIcons'
 import type { EnrollmentOs } from '../lib/nodeApi'
@@ -332,11 +337,11 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
       <ExactKeywordConfirmInput
         v-model="confirmText"
         class="hfl-flow-action-dialog__confirm"
-        :keyword="force ? 'FORCE DEREGISTER' : 'DEREGISTER'"
+        :keyword="force ? SOURCE_FORCE_DEREGISTER_CONFIRMATION : SOURCE_DEREGISTER_CONFIRMATION"
         :hint="force
           ? t('protection.backupsPage.deleteForceConfirmTypeKeyword')
           : t('protection.backupsPage.deleteConfirmTypeKeyword')"
-        :placeholder="force ? 'FORCE DEREGISTER' : 'DEREGISTER'"
+        :placeholder="force ? SOURCE_FORCE_DEREGISTER_CONFIRMATION : SOURCE_DEREGISTER_CONFIRMATION"
         :disabled="loading"
         @confirm="emit('confirm')"
       />
