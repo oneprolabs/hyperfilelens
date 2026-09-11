@@ -6,6 +6,9 @@
   --hfl-flow-action-line-height: 22px;
   --el-dialog-width: min(560px, calc(100vw - 32px));
   --el-dialog-border-radius: var(--radius-lg, 14px);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(var(--app-viewport-height, 100vh) - 32px);
   padding: 0;
   border: 1px solid var(--el-border-color-lighter, rgba(15, 23, 42, 0.08));
   box-shadow:
@@ -63,10 +66,15 @@
 }
 
 .hfl-flow-action-dialog.el-dialog .el-dialog__body {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  flex: 1 1 auto;
   padding: 6px 20px 4px;
 }
 
 .hfl-flow-action-dialog.el-dialog .el-dialog__footer {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -75,6 +83,12 @@
   margin: 0;
   border-top: 1px solid var(--el-border-color-extra-light, rgba(15, 23, 42, 0.06));
   background: var(--el-fill-color-blank, #fafafa);
+}
+
+@media (max-height: 680px) {
+  .hfl-flow-action-dialog.el-dialog {
+    max-height: calc(var(--app-viewport-height, 100vh) - 16px);
+  }
 }
 
 .hfl-flow-action-dialog.el-dialog .el-dialog__footer .el-button {
