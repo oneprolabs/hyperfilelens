@@ -302,7 +302,7 @@ const lifecycleOps = useNodeLifecycleOps({
     await Promise.all([
       loadBackupSelectable({ silent: true }),
       refreshPipelineCounts(),
-      refreshBackupConfigs(),
+      refreshBackupConfigs(undefined, { preserveOnError: true }),
     ])
     if (flowMainStep.value === 1) {
       await refreshFlowStepData(1, { showLoading: false })
@@ -507,7 +507,10 @@ async function refreshBackupConfigs(
       Promise.all(result.results.map((config) => getBackupConfig(config.id, { signal }))),
       listAllStorageRepositories({ page_size: 10 }, { signal }).catch((e) => {
         if (pageRequests.isAbortError(e)) throw e
-        return [] as StorageRepository[]
+        // Keep the last known repository details when this auxiliary request
+        // fails. Replacing the cache with an empty list makes valid targets
+        // render as #<id>/Unknown until the user reloads the page.
+        return null
       }),
       listBackupPolicies({ page: 1, page_size: 500 }, { signal }).catch((e) => {
         if (pageRequests.isAbortError(e)) throw e
@@ -548,7 +551,9 @@ async function refreshBackupConfigs(
       }),
     ])
     backupConfigDetailById.value = new Map(details.map((config) => [config.id, config]))
-    repositoryById.value = new Map(repositories.map((repo) => [repo.id, repo]))
+    if (repositories) {
+      repositoryById.value = new Map(repositories.map((repo) => [repo.id, repo]))
+    }
     backupPolicyById.value = new Map(policies.results.map((policy) => [policy.id, policy]))
     fileFilterById.value = new Map(filters.results.map((rule) => [rule.id, rule]))
     backupSnapshotRows.value = snapshots.results
@@ -2300,13 +2305,15 @@ type BackupCreateResultPayload = {
   items: Array<{ sourceId: string; config: BackupConfigDetail }>
 }
 
-function hydrateCreatedConfigRepositories(items: BackupCreateResultPayload['items']) {
-  void ensureRepositoryDetailsForConfigs(items.map((item) => item.config)).catch((err) => {
+async function hydrateCreatedConfigRepositories(items: BackupCreateResultPayload['items']) {
+  try {
+    await ensureRepositoryDetailsForConfigs(items.map((item) => item.config))
+  } catch (err) {
     if (!pageRequests.isAbortError(err)) showApiError(err)
-  })
+  }
 }
 
-function mergeCreatedBackupConfigs({ items }: BackupCreateResultPayload) {
+async function mergeCreatedBackupConfigs({ items }: BackupCreateResultPayload) {
   if (!items.length) return []
   const sourceIds = normalizeSourceIdList(items.map((item) => item.sourceId))
   const newlyConfiguredIds = sourceIds.filter((id) => !backupConfigSourceIds.value.has(id))
@@ -2327,9 +2334,9 @@ function mergeCreatedBackupConfigs({ items }: BackupCreateResultPayload) {
   pipelineStep2Count.value = Math.max(0, pipelineStep2Count.value - newlyConfiguredIds.length)
   pipelineStep3Count.value += newlyConfiguredIds.length
   syncRealBackupConfigsToDemoStore(items.map((item) => item.config), backupSnapshotRows.value)
-  // The create response only contains repository_id. Hydrate missing repository
-  // metadata independently so the fast Step 3 transition never falls back to #ID.
-  hydrateCreatedConfigRepositories(items)
+  // Hydrate repository metadata before the fast Step 3 transition so a valid
+  // target is not briefly rendered as its numeric fallback ID.
+  await hydrateCreatedConfigRepositories(items)
   return sourceIds
 }
 
@@ -2357,8 +2364,8 @@ function reconcileCreatedBackupConfigs(sourceIds: string[]) {
   createdBackupRefresh = request
 }
 
-function finishCreateAndGoToStep3(payload: BackupCreateResultPayload) {
-  const sourceIds = mergeCreatedBackupConfigs(payload)
+async function finishCreateAndGoToStep3(payload: BackupCreateResultPayload) {
+  const sourceIds = await mergeCreatedBackupConfigs(payload)
   closeCreate()
   const idSet = new Set(sourceIds)
   step1Selection.value = step1Selection.value.filter((id) => !idSet.has(id))
@@ -2367,7 +2374,7 @@ function finishCreateAndGoToStep3(payload: BackupCreateResultPayload) {
 }
 
 function onCreateBackupPartial(payload: BackupCreateResultPayload) {
-  mergeCreatedBackupConfigs(payload)
+  void mergeCreatedBackupConfigs(payload)
   void refreshPipelineCounts().catch(showApiError)
 }
 
@@ -4449,7 +4456,7 @@ async function refreshStep3SourceList() {
     await refreshStep3RuntimeRows(signal)
     const provisionTracked = step3SourceList.value.some((row) => Boolean(sourceProvisionState(row.id)))
     if (!resetTrackedIds.length && !provisionTracked) return
-    const configsLoaded = await refreshBackupConfigs(signal)
+    const configsLoaded = await refreshBackupConfigs(signal, { preserveOnError: true })
     if (!pageRequests.isCurrentSignal(scope, signal)) return
     // Soft-failure clears config/task rows; do not treat empty reset state as success.
     if (!configsLoaded) return
