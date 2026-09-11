@@ -1691,18 +1691,16 @@ async function loadStep3Selectable(options: { signal?: AbortSignal; syncExpanded
     expand: STEP3_EXPAND,
   }, signal ? { signal } : undefined)
   const rows = list.results.map(mapBackupSelectableToFlowRow)
-  if (options.syncExpanded !== false) {
-    const configs = syncExpandedStep3Rows(rows)
-    await ensureRepositoryDetailsForConfigs(configs, signal)
-  }
-  // Publish the table only after expanded repository/configuration details are
-  // ready, avoiding a transient #<repository-id> fallback during initial load.
   step3SelectableRows.value = rows
   step3SelectableCount.value = list.count
   if (!step3ServerFiltersActive()) pipelineStep3Count.value = list.count
   step3InitialLoadPending.value = false
   rememberSelectableRows(rows)
   reconcileBackupStartAwaitingRuntime(rows.map((row) => row.id))
+  if (options.syncExpanded !== false) {
+    const configs = syncExpandedStep3Rows(rows)
+    await ensureRepositoryDetailsForConfigs(configs, signal)
+  }
 }
 
 async function refreshStep3State(signal?: AbortSignal) {
