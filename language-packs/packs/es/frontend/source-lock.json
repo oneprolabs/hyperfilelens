@@ -66,7 +66,7 @@
   "errors.codes.storageS3BucketAccessDenied": "e5b0740716485042efd90fd53eca0e212061b969bddeba08bb1819609f5f25d4",
   "errors.codes.storageS3BucketNotFound": "34b12ba24382ce891a014d692aa13b7c5b045ff957dc47f8275ef4ea237d7d53",
   "errors.codes.storageS3BucketNameInvalid": "04a3555c1c86bcf810059dc769436746152584c11152a4ddb223e67232927bc9",
-  "errors.codes.storageS3BucketNameUnavailable": "29b11943c843b50fdf7a17513dbffe1f426f1e16891019e2c3d5fbe8530ae2b2",
+  "errors.codes.storageS3BucketNameUnavailable": "210873ca7e53476cc8fd1ce09a3a6a9c35c91e1ee98710343ee68dfe201e1180",
   "errors.codes.storageS3ConfigurationInvalid": "378d1c72da9aace33958f515439e6301e8262e2c6897ddcc27b662acae167efb",
   "errors.codes.storageS3NetworkUnavailable": "83381dd77ca3e04c9c9955881bd2098223be727ba7ba7f312f8942224885623f",
   "errors.codes.storageS3Timeout": "e5b9cd92c67a4ea79a7f26fe897b98be8d8c61fffe67bf88012388306bc45ebe",

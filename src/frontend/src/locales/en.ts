@@ -90,7 +90,7 @@ export const en = {
       storageS3BucketAccessDenied: 'The credentials cannot read and write the selected bucket. Grant the required bucket permissions, then try again.',
       storageS3BucketNotFound: 'The bucket was not found. Check the bucket name, endpoint, and Region, then try again.',
       storageS3BucketNameInvalid: 'The bucket name is not valid for this object storage provider. Check the naming rules and try again.',
-      storageS3BucketNameUnavailable: 'The bucket name is already in use. If the bucket belongs to this account, select Existing Bucket; otherwise choose another name.',
+      storageS3BucketNameUnavailable: 'This bucket name is unavailable. It may already be owned by another account or already exist in your account. If you own it, select Existing Bucket; otherwise choose a different name.',
       storageS3ConfigurationInvalid: 'The object storage connection settings are invalid. Check the endpoint, Region, URL style, and TLS setting, then try again.',
       storageS3NetworkUnavailable: 'The object storage endpoint could not be reached. Check the endpoint and network connectivity, then try again.',
       storageS3Timeout: 'The object storage request timed out. Check the endpoint and network connectivity, then try again.',

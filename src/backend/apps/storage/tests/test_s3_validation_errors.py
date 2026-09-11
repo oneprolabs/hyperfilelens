@@ -88,6 +88,8 @@ class S3ValidationErrorTests(SimpleTestCase):
         self.assertEqual(unavailable.code, "STORAGE.S3_BUCKET_NAME_UNAVAILABLE")
         self.assertEqual(owned.code, "STORAGE.S3_BUCKET_NAME_UNAVAILABLE")
         self.assertIn("Existing Bucket", unavailable.message)
+        self.assertIn("another account", unavailable.message)
+        self.assertIn("already exist in your account", unavailable.message)
         self.assertNotIn("unsafe provider detail", invalid.message)
 
     def test_clock_skew_is_distinct_and_retryable(self):

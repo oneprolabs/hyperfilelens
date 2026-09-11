@@ -82,7 +82,7 @@
       "storageS3BucketAccessDenied": "Las credenciales no pueden leer y escribir el bucket seleccionado. Conceda los permisos requeridos del bucket, luego inténtelo de nuevo.",
       "storageS3BucketNotFound": "No se encontró el bucket. Revise su nombre, el endpoint y la región, y vuelva a intentarlo.",
       "storageS3BucketNameInvalid": "El nombre del bucket no es válido para este proveedor de almacenamiento de objetos. Revise las reglas de nombres e intente de nuevo.",
-      "storageS3BucketNameUnavailable": "El nombre del bucket ya está en uso. Si el bucket pertenece a esta cuenta, seleccione el bucket existente; de lo contrario elija otro nombre.",
+      "storageS3BucketNameUnavailable": "Este nombre de bucket no está disponible. Puede que pertenezca a otra cuenta o que ya exista en su cuenta. Si es suyo, seleccione el bucket existente; de lo contrario, elija otro nombre.",
       "storageS3ConfigurationInvalid": "La configuración de conexión del almacenamiento de objetos no es válida. Compruebe el endpoint, la región, el formato de URL y TLS, y vuelva a intentarlo.",
       "storageS3NetworkUnavailable": "No se pudo acceder al endpoint de almacenamiento de objetos. Compruebe el endpoint y la conectividad de red, y vuelva a intentarlo.",
       "storageS3Timeout": "La solicitud al almacenamiento de objetos agotó el tiempo de espera. Compruebe el endpoint y la conectividad de red, y vuelva a intentarlo.",
