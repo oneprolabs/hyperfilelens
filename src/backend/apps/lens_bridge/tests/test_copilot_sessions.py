@@ -459,7 +459,7 @@ class CopilotSessionApiTests(TestCase):
         "apps.lens_bridge.api.views._source_lens_session_meta",
         return_value={},
     )
-    def test_list_hides_force_deleted_chat_while_remote_cleanup_is_pending(
+    def test_list_keeps_legacy_force_delete_chat_recoverable(
         self,
         _session_meta,
         _assistants,
@@ -488,7 +488,9 @@ class CopilotSessionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json().get("data", response.json()), [])
+        payload = response.json().get("data", response.json())
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["cleanup_status"], "pending")
 
     @patch(
         "apps.lens_bridge.services.chat_lifecycle."

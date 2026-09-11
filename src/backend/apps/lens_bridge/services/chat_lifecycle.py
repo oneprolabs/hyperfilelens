@@ -77,51 +77,81 @@ _MIN_BIGINT = -(2**63)
 
 
 def can_force_delete_private_chat(link: LensSessionLink) -> bool:
-    """Return whether only private-gateway workspace cleanup remains blocked."""
+    """Return whether an offline private Gateway can be force-deleted.
+
+    Force deletion is deliberately limited to an explicitly deleting Chat on a
+    private Gateway that is no longer routable.  The control plane can then
+    finish the deletion without waiting for a remote workspace response.
+    """
+
+    now = timezone.now()
+
+    def _claim_is_live(token: Any, claimed_at: Any, ttl_seconds: int) -> bool:
+        if token is None:
+            return False
+        # Claims are considered live by their timestamp, matching the normal
+        # worker claim rules. A malformed legacy token without a timestamp
+        # must not block force deletion forever.
+        if claimed_at is None:
+            return False
+        return claimed_at > now - timedelta(seconds=ttl_seconds)
 
     if (
         link.gateway_link_id is None
         or link.gateway_link.scope == LensGatewayLink.GatewayScope.PLATFORM
         or link.lifecycle_status != LensSessionLink.LifecycleStatus.DELETING
         or link.cleanup_intent != LensSessionLink.CleanupIntent.DELETE_SESSION
-        or link.cleanup_status != LensSessionLink.CleanupStatus.BLOCKED
+        or link.cleanup_status
+        not in {
+            LensSessionLink.CleanupStatus.PENDING,
+            LensSessionLink.CleanupStatus.RUNNING,
+            LensSessionLink.CleanupStatus.BLOCKED,
+        }
         or link.knowledge_source_id is None
-        or link.teardown_claim_token is not None
-        or link.sl_session_uuid is not None
-        or link.sl_assistant_uuid is not None
+        or _claim_is_live(
+            link.provision_claim_token,
+            link.provision_claimed_at,
+            PROVISION_CLAIM_TTL_SECONDS,
+        )
+        or _claim_is_live(
+            link.teardown_claim_token,
+            link.teardown_claimed_at,
+            TEARDOWN_CLAIM_TTL_SECONDS,
+        )
     ):
         return False
     knowledge_source = link.knowledge_source
     if (
         knowledge_source is None
         or knowledge_source.lifecycle_status
-        != LensKnowledgeSource.LifecycleStatus.DELETING
-        or knowledge_source.teardown_claim_token is not None
-        or knowledge_source.sl_assistant_uuid is not None
-        or knowledge_source.sl_datasource_uuid is not None
+        not in {
+            LensKnowledgeSource.LifecycleStatus.READY,
+            LensKnowledgeSource.LifecycleStatus.DELETING,
+        }
+        or _claim_is_live(
+            knowledge_source.teardown_claim_token,
+            knowledge_source.teardown_claimed_at,
+            TEARDOWN_CLAIM_TTL_SECONDS,
+        )
+        or _claim_is_live(
+            knowledge_source.sync_claim_token,
+            knowledge_source.sync_claimed_at,
+            knowledge_source_sync.SYNC_CLAIM_TTL_SECONDS,
+        )
     ):
         return False
     try:
         binding = knowledge_source.workspace_binding
     except LensWorkspaceBinding.DoesNotExist:
         return False
-    session_blocking = (link.teardown_state_json or {}).get("blocking")
-    knowledge_source_state = knowledge_source.teardown_state_json or {}
-    knowledge_source_blocking = knowledge_source_state.get("blocking")
-    return (
-        binding.workspace_kind == LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE
-        and binding.state == LensWorkspaceBinding.State.DELETING
-        and isinstance(session_blocking, dict)
-        and session_blocking.get("reason") == "cleanup_workspace"
-        and session_blocking.get("intervention_required") is True
-        and isinstance(knowledge_source_blocking, dict)
-        and knowledge_source_blocking.get("reason") == "cleanup_workspace"
-        and knowledge_source_blocking.get("intervention_required") is True
-        and (knowledge_source_state.get("cancel_chat_restore") or {}).get("status")
-        == "success"
-        and (knowledge_source_state.get("cancel_conversion") or {}).get("status")
-        == "success"
-    )
+    if (
+        binding.workspace_kind != LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE
+        or binding.state == LensWorkspaceBinding.State.DELETED
+    ):
+        return False
+    from apps.node.services.internal.node_registry import agent_ws_routable
+
+    return not agent_ws_routable(agent_id=link.gateway_link.gateway_id)
 
 
 class ChatProvisionLeaseLostError(RuntimeError):
@@ -839,7 +869,13 @@ def force_delete_private_copilot_chat(
     *,
     requested_by: AbstractBaseUser,
 ) -> LensSessionLink:
-    """Hide a blocked private Chat while retaining durable remote cleanup."""
+    """Force-delete an offline private Chat from the HFL control plane.
+
+    The remote Data Gateway is deliberately not retried from this path.  The
+    durable records retain the remote identities and a warning for audit, but
+    no longer participate in Chat visibility, quota accounting, or cleanup
+    scheduling.
+    """
 
     locked = (
         LensSessionLink.objects.select_for_update(of=("self",))
@@ -850,12 +886,20 @@ def force_delete_private_copilot_chat(
         )
         .get(pk=link.pk)
     )
-    if teardown_blocking.remote_cleanup_pending(locked.teardown_state_json):
+    # A legacy ``pending`` marker means the old implementation deferred remote
+    # cleanup.  It must remain force-deletable so the HFL control plane can be
+    # finalized; only the new terminal ``skipped`` marker is idempotent.
+    if (
+        teardown_blocking.forced_remote_cleanup(locked.teardown_state_json).get(
+            "status"
+        )
+        == "skipped"
+    ):
         return locked
     unavailable_error = {
         "force_delete": (
-            "Force delete is available only after all active processing "
-            "has stopped and only a Private Data Gateway workspace remains."
+            "Force delete is available only for a Chat on an offline "
+            "Private Data Gateway."
         )
     }
     if not can_force_delete_private_chat(locked):
@@ -875,13 +919,29 @@ def force_delete_private_copilot_chat(
         raise ValidationError(unavailable_error)
 
     now = timezone.now()
+    remote_resources = {
+        "run_uuid": str(locked.active_run_uuid or ""),
+        "run_status": str(locked.active_run_status or ""),
+        "session_uuid": str(locked.sl_session_uuid or ""),
+        "assistant_uuid": str(locked.sl_assistant_uuid or ""),
+        "knowledge_source_assistant_uuid": str(
+            knowledge_source.sl_assistant_uuid or ""
+        ),
+        "datasource_uuid": str(knowledge_source.sl_datasource_uuid or ""),
+        "workspace_uid": str(workspace_binding.workspace_uid),
+    }
     cleanup_record = {
-        "status": "pending",
+        "status": "skipped",
         "requested_at": now.isoformat(),
         "requested_by_user_id": requested_by.pk,
         "session_link_id": locked.id,
         "gateway_link_id": locked.gateway_link_id,
-        "workspace_uid": str(workspace_binding.workspace_uid),
+        "reason": "private_gateway_offline",
+        "remote_resources": remote_resources,
+        "warning": (
+            "The private Data Gateway is offline. Remote SourceLens resources "
+            "and gateway workspace files may remain."
+        ),
     }
 
     knowledge_source_state = teardown_blocking.clear_blocking(
@@ -890,100 +950,156 @@ def force_delete_private_copilot_chat(
     knowledge_source_state[teardown_blocking.FORCED_REMOTE_CLEANUP_KEY] = dict(
         cleanup_record
     )
-    knowledge_source.lifecycle_status = LensKnowledgeSource.LifecycleStatus.DELETING
+    knowledge_source.lifecycle_status = LensKnowledgeSource.LifecycleStatus.DELETED
+    knowledge_source.is_deleted = True
+    knowledge_source.deleted_at = now
     knowledge_source.status_detail = (
-        "Remote workspace cleanup is pending until the Data Gateway can complete it."
+        "Deleted from HFL. Remote resources may remain because the Private "
+        "Data Gateway is offline."
     )
+    # Keep remote identities in the durable force-delete audit record above,
+    # but detach the soft-deleted Knowledge Source from active HFL mappings.
+    knowledge_source.sl_assistant_uuid = None
+    knowledge_source.sl_datasource_uuid = None
     knowledge_source.teardown_state_json = knowledge_source_state
     knowledge_source.teardown_attempts = 0
     knowledge_source.teardown_claim_token = None
     knowledge_source.teardown_claimed_at = None
-    knowledge_source.teardown_next_retry_at = now
+    knowledge_source.teardown_next_retry_at = None
+    knowledge_source.sync_claim_token = None
+    knowledge_source.sync_claimed_at = None
+    knowledge_source.sync_next_poll_at = None
     knowledge_source.save(
         update_fields=[
             "lifecycle_status",
+            "is_deleted",
+            "deleted_at",
             "status_detail",
+            "sl_assistant_uuid",
+            "sl_datasource_uuid",
             "teardown_state_json",
             "teardown_attempts",
             "teardown_claim_token",
             "teardown_claimed_at",
             "teardown_next_retry_at",
+            "sync_claim_token",
+            "sync_claimed_at",
+            "sync_next_poll_at",
             "updated_at",
         ]
     )
+
+    workspace_binding.state = LensWorkspaceBinding.State.DELETED
+    workspace_binding.last_error = cleanup_record["warning"]
+    workspace_binding.capacity_accounted_bytes = 0
+    workspace_binding.capacity_accounting_status = (
+        LensWorkspaceBinding.CapacityAccountingStatus.EXACT
+    )
+    workspace_binding.is_deleted = True
+    workspace_binding.deleted_at = now
+    workspace_binding.save(
+        update_fields=[
+            "state",
+            "last_error",
+            "capacity_accounted_bytes",
+            "capacity_accounting_status",
+            "is_deleted",
+            "deleted_at",
+            "updated_at",
+        ]
+    )
+
+    for assistant_link in LensAssistantLink.all_objects.filter(
+        knowledge_source_id=knowledge_source.id,
+        lifecycle_owner=LensAssistantLink.LifecycleOwner.CHAT,
+        is_deleted=False,
+    ):
+        assistant_link.soft_delete()
 
     session_state = teardown_blocking.clear_blocking(
         dict(locked.teardown_state_json or {})
     )
     session_state[teardown_blocking.FORCED_REMOTE_CLEANUP_KEY] = dict(cleanup_record)
-    locked.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+    locked.knowledge_source = None
+    locked.sl_session_uuid = None
+    locked.sl_assistant_uuid = None
+    locked.lifecycle_status = LensSessionLink.LifecycleStatus.DELETED
     locked.status = LensSessionLink.Status.ARCHIVED
-    locked.provision_phase = LensSessionLink.ProvisionPhase.CLEANING_UP
-    locked.provision_detail = "Chat deleted. Remote workspace cleanup is pending."
+    locked.provision_phase = LensSessionLink.ProvisionPhase.DELETED
+    locked.provision_detail = cleanup_record["warning"]
     locked.lifecycle_error = ""
     locked.lifecycle_error_state_json = {}
-    locked.cleanup_status = LensSessionLink.CleanupStatus.PENDING
+    locked.cleanup_status = LensSessionLink.CleanupStatus.COMPLETE
     locked.capacity_reservation_status = (
         LensSessionLink.CapacityReservationStatus.RELEASED
     )
+    locked.capacity_reserved_bytes = 0
+    locked.capacity_reserved_at = None
     locked.teardown_state_json = session_state
     locked.teardown_claim_token = None
     locked.teardown_claimed_at = None
-    locked.teardown_next_retry_at = now
+    locked.teardown_next_retry_at = None
     locked.provision_generation += 1
     locked.provision_poll_sequence = 0
+    locked.provision_claim_token = None
+    locked.provision_claimed_at = None
+    locked.provision_next_retry_at = None
+    locked.active_run_uuid = None
+    locked.active_run_status = ""
+    locked.is_deleted = True
+    locked.deleted_at = now
     locked.save(
         update_fields=[
             "lifecycle_status",
             "status",
             "provision_phase",
             "provision_detail",
+            "knowledge_source",
             "lifecycle_error",
             "lifecycle_error_state_json",
             "cleanup_status",
             "capacity_reservation_status",
+            "capacity_reserved_bytes",
+            "capacity_reserved_at",
+            "sl_session_uuid",
+            "sl_assistant_uuid",
+            "active_run_uuid",
+            "active_run_status",
             "teardown_state_json",
             "teardown_claim_token",
             "teardown_claimed_at",
             "teardown_next_retry_at",
             "provision_generation",
             "provision_poll_sequence",
+            "provision_claim_token",
+            "provision_claimed_at",
+            "provision_next_retry_at",
+            "is_deleted",
+            "deleted_at",
             "updated_at",
         ]
     )
 
     LensGatewayChatSlot.objects.filter(session_link_id=locked.id).delete()
 
-    def _resume_remote_cleanup() -> None:
-        from apps.lens_bridge.services.gateway_readiness import gateway_runtime_state
-
-        try:
-            gateway = LensGatewayLink.objects.select_related("gateway").get(
-                pk=locked.gateway_link_id
-            )
-            if gateway_runtime_state(gateway)["hfl_agent_online"]:
-                _queue_teardown_or_record_error(locked.id)
-        except Exception:
-            # The durable session and Knowledge Source rows are the outbox.
-            # Their periodic reconcilers resume cleanup after transient broker
-            # or Redis failures, so a committed force delete must still return.
-            logger.exception(
-                "forced private Chat cleanup dispatch failed chat_id=%s ks_id=%s",
-                locked.id,
-                knowledge_source.id,
-            )
+    # The slot release is durable; wake only the local HFL queue.  No remote
+    # cleanup task is dispatched or scheduled for this explicit force delete.
+    def _wake_local_queue() -> None:
         try:
             gateway_chat_queue.wake_gateway_queue(locked.gateway_link_id)
         except Exception:
-            # Slot release is already durable. The provisioning reconciler is
-            # the fallback if an immediate queue wake cannot be dispatched.
             logger.exception(
                 "forced private Chat queue wake failed chat_id=%s gateway_link_id=%s",
                 locked.id,
                 locked.gateway_link_id,
             )
 
-    transaction.on_commit(_resume_remote_cleanup)
+    transaction.on_commit(_wake_local_queue)
+    if locked.backup_source_snapshot_id is not None:
+        release_chat_usage(
+            session_link_id=locked.id,
+            snapshot_id=locked.backup_source_snapshot_id,
+        )
     return locked
 
 
@@ -2367,6 +2483,35 @@ def _record_late_source_lens_resource(
     if field not in {"sl_session_uuid", "sl_assistant_uuid"}:
         raise ValueError("Unsupported late SourceLens resource field.")
     link = LensSessionLink.objects.select_for_update().get(pk=link_id)
+    forced_cleanup = teardown_blocking.forced_remote_cleanup(
+        link.teardown_state_json
+    )
+    if link.is_deleted and forced_cleanup.get("status") == "skipped":
+        # A late response from a fenced provisioning task must not resurrect a
+        # Chat that was explicitly force-deleted while its Gateway was offline.
+        # Keep the UUID in the force-delete audit record without reopening any
+        # lifecycle or cleanup work.
+        resource_kind = "session" if field == "sl_session_uuid" else "assistant"
+        late_resources = list(forced_cleanup.get("late_remote_resources") or [])
+        marker = {
+            "kind": resource_kind,
+            "remote_uuid": str(resource_uuid),
+            "error": error[:1000],
+            "updated_at": timezone.now().isoformat(),
+        }
+        if not any(
+            item.get("kind") == resource_kind
+            and item.get("remote_uuid") == marker["remote_uuid"]
+            for item in late_resources
+            if isinstance(item, dict)
+        ):
+            late_resources.append(marker)
+        forced_cleanup["late_remote_resources"] = late_resources
+        state = dict(link.teardown_state_json or {})
+        state[teardown_blocking.FORCED_REMOTE_CLEANUP_KEY] = forced_cleanup
+        link.teardown_state_json = state
+        link.save(update_fields=["teardown_state_json", "updated_at"])
+        return
     existing = getattr(link, field)
     if existing not in {None, resource_uuid}:
         resource_kind = "session" if field == "sl_session_uuid" else "assistant"
