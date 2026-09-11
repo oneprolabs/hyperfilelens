@@ -74,10 +74,8 @@ def due_knowledge_source_teardown_ids(
         LensKnowledgeSource.all_objects.filter(
             lifecycle_status=LensKnowledgeSource.LifecycleStatus.DELETING,
         )
-        # A force-deleted Chat remains the single lifecycle orchestrator for
-        # its remote cleanup debt and invokes Knowledge Source teardown under
-        # the owning workspace identity. Do not race that path with a second
-        # standalone teardown task.
+        # Force-deleted Chat resources are terminal in HFL; their remote
+        # residue is intentionally not retried when the Gateway reconnects.
         .filter(
             Q(teardown_state_json__forced_remote_cleanup__status__isnull=True)
             | ~Q(teardown_state_json__forced_remote_cleanup__status="pending")

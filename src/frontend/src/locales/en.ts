@@ -917,9 +917,9 @@ export const en = {
       deleteConfirmMessage:
         'This will delete the Chat, its conversation history, shared links, and temporary resources. This action cannot be undone.',
       forceDeleteConfirmMessage:
-        'The Private Data Gateway could not remove its local Chat workspace. The Chat and its slot will be removed immediately, and workspace cleanup will continue automatically in the background.',
+        'The Private Data Gateway is offline. The Chat will be deleted from HFL immediately, but remote SourceLens resources and gateway workspace files may remain.',
       forceDeleteComplete:
-        'Chat deleted. Local workspace cleanup will continue automatically in the background.',
+        'Chat deleted from HFL. Remote resources may remain on the offline Private Data Gateway.',
       renamePlaceholder: 'Enter chat name',
       renameFailed: 'Failed to rename chat',
       sessionRecovering: 'Recovering chat…',

@@ -218,6 +218,8 @@ def reconcile_lens_resource_teardowns_task(*, limit: int = 100) -> dict:
         )
         .filter(Q(teardown_claimed_at__isnull=True) | Q(teardown_claimed_at__lte=stale_claim))
     )
+    # A force-deleted Chat is already terminal in HFL.  Its remote residue is
+    # intentionally not requeued when a Gateway later reconnects.
     eligible_ids = set(
         candidates.filter(
             Q(teardown_state_json__forced_remote_cleanup__status__isnull=True)
@@ -226,33 +228,6 @@ def reconcile_lens_resource_teardowns_task(*, limit: int = 100) -> dict:
         .order_by("teardown_next_retry_at", "id")
         .values_list("id", flat=True)[:reconcile_limit]
     )
-    forced_gateways = list(
-        candidates.filter(
-            teardown_state_json__forced_remote_cleanup__status="pending",
-            gateway_link_id__isnull=False,
-        )
-        .values_list("gateway_link_id", "gateway_link__gateway_id")
-        .distinct()
-    )
-    if forced_gateways:
-        from apps.node.services.internal.node_registry import agent_ws_routable
-
-        online_gateway_ids: list[int] = []
-        online_by_agent: dict[int, bool] = {}
-        for gateway_link_id, raw_agent_id in forced_gateways:
-            agent_id = int(raw_agent_id)
-            if agent_id not in online_by_agent:
-                online_by_agent[agent_id] = agent_ws_routable(agent_id=agent_id)
-            if online_by_agent[agent_id]:
-                online_gateway_ids.append(int(gateway_link_id))
-        eligible_ids.update(
-            candidates.filter(
-                teardown_state_json__forced_remote_cleanup__status="pending",
-                gateway_link_id__in=online_gateway_ids,
-            )
-            .order_by("teardown_next_retry_at", "id")
-            .values_list("id", flat=True)[:reconcile_limit]
-        )
     session_ids = list(
         candidates.filter(pk__in=eligible_ids)
         .order_by("teardown_next_retry_at", "id")
