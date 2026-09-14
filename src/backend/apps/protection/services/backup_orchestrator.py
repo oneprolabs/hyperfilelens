@@ -733,6 +733,8 @@ def _mark_policy_prepare_failed(
     directory_row: BackupSourceSnapshotDirectory,
     node_task: NodeTask,
 ) -> None:
+    from apps.protection.services import backup_task as bt
+
     error_code, error_message = _node_task_error_code(node_task)
     if (
         error_code
