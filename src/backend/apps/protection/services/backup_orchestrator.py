@@ -231,6 +231,14 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
             return "KOPIA_POLICY_NOT_FOUND", (message or "Kopia policy not found.")[
                 :2000
             ]
+        if bt.backup_target_capacity_diagnostic(result, last_error=last_error):
+            return bt.classify_kopia_execution_failure(result, last_error=last_error)
+        if structured_error == "BACKUP_TARGET_STORAGE_FULL":
+            return (
+                structured_error,
+                "Backup target storage is full or its quota has been reached. "
+                "Free space, check the repository quota, or expand the target storage, then retry.",
+            )
         if structured_error == "POLICY_APPLY_FAILED":
             phase = str(result.get("policy_phase") or "apply")
             message = bt.extract_kopia_failure_message(result, last_error=last_error)
@@ -730,6 +738,7 @@ def _mark_policy_prepare_failed(
         error_code
         not in {
             "AGENT_PATH_FORBIDDEN",
+            "BACKUP_TARGET_STORAGE_FULL",
             "POLICY_APPLY_FAILED",
             "BACKUP_PROTECTION_POLICY_MISSING",
             "BACKUP_PROTECTION_POLICY_VERIFY_FAILED",
@@ -763,6 +772,7 @@ def _mark_policy_prepare_failed(
                     backup_config_dir_id=directory_row.backup_config_dir_id,
                 )
             ),
+            **bt.kopia_snapshot_failure_metadata(node_task.result),
             "error_code": error_code,
             "error_message": error_message,
             "source_path": directory_row.source_path,

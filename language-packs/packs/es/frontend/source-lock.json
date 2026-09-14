@@ -7381,5 +7381,8 @@
   "addS3Repo.bucketNameErrors.aws_reserved": "e56222f921707e10f8c93f84c524105e51e930b33b16bbc3ff5e37523382a922",
   "protection.policiesPage.policyTimezoneHint": "a9d325d5700bc099d8052341e0a51fdc1b33a8a2b563199b7ac3505472ad803f",
   "protection.backupsPage.snapshotBrowserHostOffline": "012295c19ffa1f503a42884df63f7fbb4addbcc99291d132451cee1c38170eca",
-  "protection.backupsPage.snapshotBrowserAgentReconnecting": "c7831c7abfcff386ccbaf67f6ad8fc6593cd0de40e715380d50717a085221889"
+  "protection.backupsPage.snapshotBrowserAgentReconnecting": "c7831c7abfcff386ccbaf67f6ad8fc6593cd0de40e715380d50717a085221889",
+  "ops.task.failureDetails.summary.BACKUP_TARGET_STORAGE_FULL": "4f04a8e79df063e246a80b314d418aceebc1fc481296afe688f9a6cfa064e03a",
+  "ops.task.failureDetails.viewOriginalError": "c2e479330e8e8f79063dc314ddd8504d6603867b51b7b1696376cee9f10838e0",
+  "ops.task.failureDetails.remediation.BACKUP_TARGET_STORAGE_FULL": "cacdbafc62ea36e401039631e03f8d17cf7019c6860a17438a307a4054ffedca"
 }
