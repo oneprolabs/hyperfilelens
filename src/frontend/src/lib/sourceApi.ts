@@ -5,6 +5,9 @@ import type { BackupConfigDetail } from './protectionBackupConfigApi'
 import type { BackupPolicy, FileFilterRule } from './protectionPolicyApi'
 import type { NodeInstallationMode } from '../types/node'
 
+export const SOURCE_DEREGISTER_CONFIRMATION = 'DEREGISTER'
+export const SOURCE_FORCE_DEREGISTER_CONFIRMATION = 'FORCE DEREGISTER'
+
 export type BackupSelectableRepositoryPreview = {
   id: string
   config_id: number
@@ -132,10 +135,14 @@ export type BackupSelectableSource = {
   mount_status?: string
   mount_point?: string
   registered_at?: string | null
+  os_name?: string
+  arch?: string
   /** Agent inventory summary; omitted for NAS sources. */
   cpu_cores?: number | null
   memory_total_bytes?: number | null
   disk_count?: number | null
+  capacity_used_bytes?: number | null
+  capacity_total_bytes?: number | null
   /** Protection wizard step for real sources: 1 pool / 2 config / 3 ready */
   pipeline_step?: 1 | 2 | 3
   backup_configs?: {
@@ -486,7 +493,7 @@ export function parseBackupSourceDeleteError(err: unknown): {
 export async function bulkDeleteBackupSources(
   ids: string[],
   force = false,
-  confirmation = '',
+  confirmation = force ? SOURCE_FORCE_DEREGISTER_CONFIRMATION : SOURCE_DEREGISTER_CONFIRMATION,
   idempotencyKey = '',
 ) {
   return unwrapApiPayload<BackupSourceDeleteResult>(
@@ -506,7 +513,7 @@ export async function deleteSourceResource(id: number, force = false): Promise<S
   const result = await bulkDeleteBackupSources(
     [selectableId],
     force,
-    force ? 'FORCE DEREGISTER' : 'DEREGISTER',
+    force ? SOURCE_FORCE_DEREGISTER_CONFIRMATION : SOURCE_DEREGISTER_CONFIRMATION,
   )
   return {
     deleted: result.deleted.includes(selectableId),

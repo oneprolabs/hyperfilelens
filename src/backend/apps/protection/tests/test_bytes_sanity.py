@@ -144,9 +144,111 @@ class LaneSamplerTests(SimpleTestCase):
         self.assertEqual(result["upload_speed_bps"], 0)
         self.assertEqual(result["speed_bps"], 0)
 
-    def test_stale_speed_and_eta_expire(self):
+    def test_active_backup_metrics_survive_short_progress_gap(self):
         now = timezone.now()
         sampled_at = now - timedelta(seconds=7)
+        result = apply_speed_and_eta(
+            lane={
+                "progress_schema_version": 2,
+                "kopia_phase": "processing",
+                "processed_bytes": 2_000,
+                "uploaded_bytes": 100,
+                "bytes_done": 2_000,
+                "bytes_total": 10_000,
+                "bytes_total_known": True,
+                "processing_speed_bps": 1_000,
+                "upload_speed_bps": 100,
+                "kopia_eta_seconds": 8,
+                "metrics_sampled_at": sampled_at.isoformat(),
+            },
+            sample={"sampled_at": sampled_at.isoformat(), "processing_counter": 2_000},
+            now=now,
+            persist_sample=False,
+        )
+        self.assertEqual(result["processing_speed_bps"], 1_000)
+        self.assertEqual(result["upload_speed_bps"], 100)
+        self.assertEqual(result["eta_seconds"], 8)
+
+    def test_active_restore_metrics_survive_short_progress_gap(self):
+        now = timezone.now()
+        sampled_at = now - timedelta(seconds=7)
+        result = apply_speed_and_eta(
+            lane={
+                "progress_schema_version": 2,
+                "kopia_phase": "restoring",
+                "processed_bytes": 2_000,
+                "uploaded_bytes": 2_000,
+                "bytes_done": 2_000,
+                "bytes_total": 10_000,
+                "bytes_total_known": True,
+                "processing_speed_bps": 1_000,
+                "upload_speed_bps": 100,
+                "kopia_eta_seconds": 80,
+                "metrics_sampled_at": sampled_at.isoformat(),
+            },
+            sample={"sampled_at": sampled_at.isoformat(), "processing_counter": 2_000},
+            now=now,
+            persist_sample=False,
+        )
+        self.assertEqual(result["upload_speed_bps"], 100)
+        self.assertEqual(result["speed_bps"], 100)
+        self.assertEqual(result["eta_seconds"], 80)
+
+    def test_sparse_active_snapshot_reuses_last_valid_speed_and_recomputes_eta(self):
+        now = timezone.now()
+        sampled_at = now - timedelta(seconds=7)
+        result = apply_speed_and_eta(
+            lane={
+                "progress_schema_version": 2,
+                "kopia_phase": "processing",
+                "processed_bytes": 3_000,
+                "bytes_done": 3_000,
+                "bytes_total": 10_000,
+                "bytes_total_known": True,
+                "metrics_sampled_at": sampled_at.isoformat(),
+            },
+            sample={
+                "sampled_at": sampled_at.isoformat(),
+                "processing_counter": 2_000,
+                "processing_speed_bps": 1_000,
+                "processing_speed_source": "kopia",
+            },
+            now=now,
+            persist_sample=False,
+        )
+        self.assertEqual(result["processing_speed_bps"], 1_000)
+        self.assertEqual(result["processing_speed_source"], "kopia")
+        self.assertEqual(result["eta_seconds"], 7)
+
+    def test_sparse_restore_snapshot_reuses_last_valid_upload_speed(self):
+        now = timezone.now()
+        sampled_at = now - timedelta(seconds=7)
+        result = apply_speed_and_eta(
+            lane={
+                "progress_schema_version": 2,
+                "kopia_phase": "restoring",
+                "processed_bytes": 3_000,
+                "bytes_done": 3_000,
+                "bytes_total": 10_000,
+                "bytes_total_known": True,
+                "metrics_sampled_at": sampled_at.isoformat(),
+            },
+            sample={
+                "sampled_at": sampled_at.isoformat(),
+                "processing_counter": 2_000,
+                "upload_speed_bps": 500,
+                "upload_speed_source": "kopia",
+            },
+            now=now,
+            persist_sample=False,
+        )
+        self.assertEqual(result["upload_speed_bps"], 500)
+        self.assertEqual(result["speed_bps"], 500)
+        self.assertEqual(result["eta_seconds"], 14)
+
+    def test_stale_speed_and_eta_expire_after_retention_window(self):
+        now = timezone.now()
+        sampled_at = now - timedelta(seconds=31)
         result = apply_speed_and_eta(
             lane={
                 "progress_schema_version": 2,

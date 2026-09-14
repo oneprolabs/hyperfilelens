@@ -40,6 +40,8 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 	for _, want := range []string{
 		`$logFile = ` + fmt.Sprintf("%q", UninstallLogPath(logDir)),
 		`install.cmd uninstall`,
+		`$cmdLine = '"' + $installCmd + '" uninstall -KeepInstallationIdentity'`,
+		`'uninstall', '-KeepInstallationIdentity'`,
 		`Stop-HflProcessesForUninstall`,
 		`Start-Sleep -Seconds 3`,
 		`Remove-InstallDirectoryResidue`,
@@ -56,6 +58,7 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 		`Stop-Or-ContinueAfterFailure`,
 		`Force Cleanup will continue with the remaining physical cleanup steps`,
 		`Report-UninstallCompletion`,
+		`[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12`,
 		`cleanup_failures = @($cleanupFailures)`,
 		`retained_resources = @($retainedResources)`,
 		`foreach ($attempt in 1..6)`,
@@ -108,6 +111,16 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 		`Confirm-UninstallArtifacts -InstallDir $install`,
 		`Remove-AgentDataDirectory -DataDir $data`,
 		`Report-UninstallCompletion`,
+	)
+	completionCallback := substringBetween(
+		t,
+		body,
+		"function Report-UninstallCompletion",
+		"function Start-DeferredRemove",
+	)
+	assertOrdered(t, completionCallback,
+		`[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12`,
+		`Invoke-RestMethod -Method Post`,
 	)
 	assertPowerShellParses(t, path)
 	assertPowerShellDataPathSafety(t, dir, body)

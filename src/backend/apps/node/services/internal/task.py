@@ -150,6 +150,20 @@ def _is_protection_backup_task(task: NodeTask) -> bool:
     )
 
 
+def _is_restore_task(*, correlation_type: str, kind: str) -> bool:
+    return correlation_type == "restore.record" and kind in {
+        "restore.run",
+        "kopia.restore",
+    }
+
+
+def _restore_watchdog_deadline(*, from_time: datetime | None = None) -> datetime:
+    from apps.restore import conf as restore_conf
+
+    base = from_time or timezone.now()
+    return base + timezone.timedelta(seconds=restore_conf.ACTIVITY_LEASE_SECONDS)
+
+
 def _is_source_nas_probe(*, correlation_type: str, kind: str) -> bool:
     return correlation_type == "source.connection_probe" and kind == "nas.test"
 
@@ -281,6 +295,8 @@ def _initial_watchdog_deadline(
     from_time: datetime | None = None,
     kind: str = "",
 ) -> datetime:
+    if _is_restore_task(correlation_type=correlation_type, kind=kind):
+        return _restore_watchdog_deadline(from_time=from_time)
     if _is_repository_initialize_task(
         correlation_type=correlation_type,
         kind=kind,
@@ -630,6 +646,18 @@ def project_node_lifecycle_task(
     payload = node_task.payload if isinstance(node_task.payload, dict) else {}
     if node_task.correlation_type != node_conf.LIFECYCLE_CORRELATION_TYPE:
         return
+    if node_task.kind == "agent.upgrade":
+        try:
+            from apps.node.services.internal.node_lifecycle_task import (
+                sync_node_upgrade_operation_task,
+            )
+
+            sync_node_upgrade_operation_task(node_task=node_task)
+        except Exception:
+            logger.exception(
+                "failed to project node upgrade task node_task_id=%s",
+                node_task.pk,
+            )
     latest_id = (
         NodeTask.objects.filter(
             node_id=node_task.node_id,

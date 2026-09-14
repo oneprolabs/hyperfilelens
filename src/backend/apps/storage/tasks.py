@@ -11,9 +11,11 @@ from django.core.exceptions import ValidationError
 from django.db.models import CharField, Exists, OuterRef, Q
 from django.db.models.functions import Cast
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from common.observability.celery_context import logged_celery_task
 
+from apps.monitor.services.events import schedule_repository_health_event
 from apps.node.models import Node, NodeTask
 from apps.storage.repositories.models import (
     Repository,
@@ -26,6 +28,9 @@ from apps.storage.services.internal.background_capacity import (
 )
 from apps.storage.services.internal.repository_location import (
     invalidate_repository_location_ownership,
+)
+from apps.storage.services.internal.repository_maintenance_summary import (
+    maintenance_summary_from_result,
 )
 from apps.storage.services.internal.repository_health import (
     dispatch_automatic_repository_observation,
@@ -45,6 +50,7 @@ from apps.storage.services.internal.kopia_cli import (
     KopiaCliError,
     KopiaControlDecision,
     KopiaExecutionLeaseLost,
+    KopiaProcessTerminatedError,
     KopiaRepositoryBusyError,
     run_maintenance,
 )
@@ -67,13 +73,17 @@ from apps.storage.services.internal.repository_operations import (
 )
 from apps.storage.services.internal.repository_secrets import scrub_secrets
 from apps.task.models import Task, TaskStep
-from apps.task.services.interface import start_task
+from apps.task.services.interface import append_task_step_event, start_task
 from apps.task.services.recovery import (
     CONTROL_PLANE_RESTART_INTERRUPTED,
     RecoveryDecision,
     RecoveryPlan,
     record_recovery_decision,
 )
+
+
+_REPOSITORY_USAGE_CAPACITY_RETRY_DELAY_SECONDS = 15
+_REPOSITORY_USAGE_CAPACITY_MAX_RETRIES = 3
 
 
 logger = logging.getLogger(__name__)
@@ -109,6 +119,7 @@ def _project_bound_node_unavailability(repository: Repository) -> bool:
         return False
     if repository.health == Repository.Health.OFFLINE:
         return True
+    previous_health = repository.health
     current_scope = Repository.objects.filter(
         pk=repository.id,
         status=Repository.Status.CREATED,
@@ -125,6 +136,13 @@ def _project_bound_node_unavailability(repository: Repository) -> bool:
     if projected:
         repository.health = Repository.Health.OFFLINE
         repository.health_failures = 0
+        schedule_repository_health_event(
+            organization_id=repository.organization_id,
+            repository_id=repository.id,
+            repository_name=repository.name,
+            previous_health=previous_health,
+            health=Repository.Health.OFFLINE,
+        )
     return projected
 
 
@@ -137,7 +155,14 @@ def enqueue_startup_repository_health_checks(sender=None, **_kwargs) -> None:
 @shared_task(name="apps.storage.tasks.reconcile_storage_repositories")
 @logged_celery_task(
     name="apps.storage.tasks.reconcile_storage_repositories",
-    trace_keys=("organization_id", "repo_type", "limit", "force", "background"),
+    trace_keys=(
+        "organization_id",
+        "repo_type",
+        "limit",
+        "force",
+        "background",
+        "capacity_retry_attempt",
+    ),
 )
 def reconcile_storage_repositories(
     *,
@@ -148,8 +173,16 @@ def reconcile_storage_repositories(
     force: bool = False,
     stale_after_seconds: int | None = 900,
     background: bool = False,
+    capacity_retry_attempt: int = 0,
+    sample_recorded_at: str | None = None,
 ):
     """Refresh repository capacity and usage metrics for dashboards and alerts."""
+    recorded_at = (
+        parse_datetime(sample_recorded_at) if sample_recorded_at else timezone.now()
+    )
+    if recorded_at is None:
+        raise ValueError("sample_recorded_at must be an ISO 8601 datetime.")
+    serialized_recorded_at = recorded_at.isoformat()
     background_lease = None
     if background:
         background_lease = try_acquire_background_storage_capacity(
@@ -157,6 +190,23 @@ def reconcile_storage_repositories(
             identity=str(uuid4()),
         )
         if background_lease is None:
+            retry_attempt = max(0, int(capacity_retry_attempt or 0))
+            retry_scheduled = retry_attempt < _REPOSITORY_USAGE_CAPACITY_MAX_RETRIES
+            if retry_scheduled:
+                reconcile_storage_repositories.apply_async(
+                    kwargs={
+                        "organization_id": organization_id,
+                        "repository_ids": repository_ids,
+                        "repo_type": repo_type,
+                        "limit": limit,
+                        "force": force,
+                        "stale_after_seconds": stale_after_seconds,
+                        "background": True,
+                        "capacity_retry_attempt": retry_attempt + 1,
+                        "sample_recorded_at": serialized_recorded_at,
+                    },
+                    countdown=_REPOSITORY_USAGE_CAPACITY_RETRY_DELAY_SECONDS,
+                )
             return {
                 "repositories_scanned": 0,
                 "repositories_synced": 0,
@@ -169,10 +219,11 @@ def reconcile_storage_repositories(
                 "snapshots_marked_deleted": 0,
                 "observations_dispatched": 0,
                 "status": "deferred_background_capacity",
+                "capacity_retry_attempt": retry_attempt,
+                "retry_scheduled": retry_scheduled,
             }
 
     def synchronize() -> dict:
-        recorded_at = timezone.now()
         if organization_id is not None:
             return sync_organization_repositories(
                 organization_id=int(organization_id),
@@ -384,6 +435,13 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                     "status": "skipped",
                     "stale": True,
                 }
+            schedule_repository_health_event(
+                organization_id=repository.organization_id,
+                repository_id=repository.id,
+                repository_name=repository.name,
+                previous_health=repository.health,
+                health=health,
+            )
         elif not current_scope.exists():
             return {
                 "repository_id": repository_id,
@@ -452,6 +510,13 @@ def _record_repository_health_failure(
     )
     if not current_scope.update(health=health, health_failures=failure_count):
         return {"repository_id": repository.id, "status": "skipped", "stale": True}
+    schedule_repository_health_event(
+        organization_id=repository.organization_id,
+        repository_id=repository.id,
+        repository_name=repository.name,
+        previous_health=repository.health,
+        health=health,
+    )
 
     if failure_count == 1 and retry_attempt == 0:
         check_storage_repository_health.apply_async(
@@ -696,6 +761,15 @@ def _execute_repository_operation(
                     progress=10,
                 )
             )
+            _raise_for_control_decision(
+                _set_repository_operation_step(
+                    repository_task,
+                    execution_token,
+                    "verify_repository_owner",
+                    status=TaskStep.Status.RUNNING,
+                    progress=10,
+                )
+            )
             if (
                 repository_task.execution_target is None
                 or not repository_execution_target_has_owned_location(
@@ -734,6 +808,21 @@ def _execute_repository_operation(
                 "remote_task_id": str(operation.node_task_id),
             }
         result = operation.result
+        summary = maintenance_summary_from_result(
+            result,
+            mode=("full" if repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_FULL else "quick"),
+        )
+        if summary is not None:
+            result = {**result, "maintenance_summary": summary}
+            append_task_step_event(
+                task=repository_task.task,
+                step_name="run_repository_operation",
+                message="Repository maintenance summary",
+                metadata={
+                    "event_type": "repository_maintenance_summary",
+                    "maintenance_summary": summary,
+                },
+            )
         _raise_for_control_decision(
             _set_repository_operation_step(
                 repository_task,
@@ -830,6 +919,7 @@ def _execute_repository_operation(
         )
         return {"status": "lease_lost", "repository_task_id": repository_task.id}
     except RepositoryAgentOperationStateUnknown as exc:
+        task.refresh_from_db(fields=["current_step", "progress"])
         record_recovery_decision(
             task=task,
             plan=RecoveryPlan(
@@ -841,51 +931,28 @@ def _execute_repository_operation(
                 },
             ),
         )
-        decision = _set_repository_operation_step(
-            repository_task,
-            execution_token,
-            task.current_step or "run_repository_operation",
-            status=TaskStep.Status.FAILED,
-            progress=int(task.progress),
-        )
-        interrupted = _finalize_control_interruption(
-            decision=decision,
-            repository_task=repository_task,
-            execution_token=execution_token,
-        )
-        if interrupted is not None:
-            return interrupted
-        finalize_repository_operation(
+        failed_task = finalize_repository_operation(
             repository_task_id=repository_task.id,
             succeeded=False,
             error_code=CONTROL_PLANE_RESTART_INTERRUPTED,
             error_message=str(exc),
             expected_execution_token=execution_token,
         )
-        return {"status": "failed", "repository_task_id": repository_task.id}
+        return {"status": failed_task.status, "repository_task_id": repository_task.id}
     except Exception as exc:
-        decision = _set_repository_operation_step(
-            repository_task,
-            execution_token,
-            task.current_step or "run_repository_operation",
-            status=TaskStep.Status.FAILED,
-            progress=int(task.progress),
+        logger.warning(
+            "Repository maintenance failed task_uuid=%s: %s",
+            task.task_uuid,
+            scrub_secrets(str(exc)),
         )
-        interrupted = _finalize_control_interruption(
-            decision=decision,
-            repository_task=repository_task,
-            execution_token=execution_token,
-        )
-        if interrupted is not None:
-            return interrupted
-        finalize_repository_operation(
+        failed_task = finalize_repository_operation(
             repository_task_id=repository_task.id,
             succeeded=False,
             error_code=_repository_operation_error_code(exc),
-            error_message=str(scrub_secrets(str(exc))),
+            error_message=_repository_operation_error_message(exc),
             expected_execution_token=execution_token,
         )
-        return {"status": "failed", "repository_task_id": repository_task.id}
+        return {"status": failed_task.status, "repository_task_id": repository_task.id}
 
 
 def _recover_controller_repository_operation(repository_task: RepositoryTask) -> dict:
@@ -948,20 +1015,6 @@ def _recover_controller_repository_operation(repository_task: RepositoryTask) ->
             },
         ),
     )
-    decision = _set_repository_operation_step(
-        repository_task,
-        recovery_token,
-        task.current_step or "run_repository_operation",
-        status=TaskStep.Status.FAILED,
-        progress=int(task.progress),
-    )
-    interrupted = _finalize_control_interruption(
-        decision=decision,
-        repository_task=repository_task,
-        execution_token=recovery_token,
-    )
-    if interrupted is not None:
-        return interrupted
     failed_task = finalize_repository_operation(
         repository_task_id=repository_task.id,
         succeeded=False,
@@ -1007,30 +1060,6 @@ def _raise_for_control_decision(decision: KopiaControlDecision) -> None:
         raise KopiaExecutionLeaseLost(
             "Kopia repository maintenance execution lease was lost"
         )
-
-
-def _finalize_control_interruption(
-    *,
-    decision: KopiaControlDecision,
-    repository_task: RepositoryTask,
-    execution_token: UUID | None,
-) -> dict | None:
-    if decision == KopiaControlDecision.CONTINUE:
-        return None
-    if decision == KopiaControlDecision.LOST_LEASE:
-        return {"status": "lease_lost", "repository_task_id": repository_task.id}
-    repository_task.refresh_from_db(fields=["cancel_reason"])
-    cancelled_task = finalize_repository_operation(
-        repository_task_id=repository_task.id,
-        succeeded=False,
-        cancelled=True,
-        error_message=repository_task.cancel_reason,
-        expected_execution_token=execution_token,
-    )
-    return {
-        "status": cancelled_task.status,
-        "repository_task_id": repository_task.id,
-    }
 
 
 def _execute_maintenance(
@@ -1083,6 +1112,7 @@ def _execute_maintenance(
                 "operation_type": repository_task.operation_type,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
+                "maintenance_summary": result.maintenance_summary,
             },
         )
 
@@ -1175,11 +1205,45 @@ def _controller_execution_control(
 
 
 def _repository_operation_error_code(exc: Exception) -> str:
-    if isinstance(exc, (TimeoutError, RepositoryAgentOperationTimeout)):
+    if isinstance(exc, (TimeoutError, RepositoryAgentOperationTimeout)) or (
+        isinstance(exc, KopiaCliError) and "timed out" in str(exc).lower()
+    ):
         return "REPOSITORY_OPERATION_TIMEOUT"
     if isinstance(exc, KopiaCliError):
-        return "KOPIA_MAINTENANCE_FAILED"
+        return "REPOSITORY_MAINTENANCE_FAILED"
     return "REPOSITORY_OPERATION_FAILED"
+
+
+def _repository_operation_error_message(exc: Exception) -> str:
+    from apps.task.event_text import neutral_event_text
+
+    if isinstance(exc, KopiaProcessTerminatedError):
+        return (
+            "Repository maintenance stopped unexpectedly. Check Controller "
+            "resource and service diagnostics before retrying."
+        )
+    if isinstance(exc, (TimeoutError, RepositoryAgentOperationTimeout)) or (
+        isinstance(exc, KopiaCliError) and "timed out" in str(exc).lower()
+    ):
+        return (
+            "Repository maintenance exceeded its execution time limit. Check "
+            "the repository owner's activity and storage connectivity before retrying."
+        )
+    if isinstance(exc, KopiaRepositoryBusyError):
+        return "Repository is busy with another operation. Wait for it to finish before retrying maintenance."
+    message = str(exc).lower()
+    if isinstance(exc, KopiaCliError):
+        if any(marker in message for marker in ("accessdenied", "access denied", "permission denied")):
+            return "Repository maintenance was denied access to storage. Check the repository credentials and permissions before retrying."
+        if any(marker in message for marker in ("connection refused", "no such host", "name resolution")):
+            return "Repository maintenance could not connect to storage. Check the storage endpoint and network connectivity before retrying."
+        return (
+            "Repository maintenance could not complete. Check the repository "
+            "configuration and Controller service logs for this task before retrying."
+        )
+    return neutral_event_text(str(scrub_secrets(str(exc)))) or (
+        "Repository maintenance failed. Check service logs for this task before retrying."
+    )
 
 
 @shared_task(name="apps.storage.tasks.run_storage_provider_validation")

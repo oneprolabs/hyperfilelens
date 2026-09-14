@@ -1,9 +1,9 @@
 ---
-title: Core Concepts
+title: Core concepts
 description: Understand organizations, backup sources, target storage, jobs, snapshots, and Data Gateways in HyperFileLens.
 ---
 
-# Core Concepts
+# Core concepts
 
 These concepts explain how product pages and jobs relate to one another. For step-by-step actions, use the relevant product guide.
 
@@ -11,7 +11,7 @@ These concepts explain how product pages and jobs relate to one another. For ste
 
 | Concept | Description |
 | --- | --- |
-| Organization | A workspace that contains users, backup resources, jobs, and business data |
+| Organization | A workspace that contains users, backup resources, jobs, and protected data |
 | Member | A user who can enter an organization and use its authorized features |
 | Role | A set of permissions that determines which organization actions a member can view or perform |
 
@@ -34,15 +34,15 @@ A backup configuration defines how protection runs. A job records each execution
 
 - An **Agent** runs on a protected host, accesses local files, and performs backup and restore jobs.
 - A **Proxy** connects NAS or local storage so it can be used as a backup source or target.
-- A **Public Data Gateway** is platform-provided and is the default way to prepare data for Insights.
+- A **Public Data Gateway** is included with the Community control plane and is the default way to prepare data for Insights.
 - A **Private Data Gateway** runs on a user-managed network to reach repositories that the Public Data Gateway cannot access or to process data in that network.
 
-An online component is connected to the control plane. Whether it can reach a backup source or target storage must still be confirmed by connection validation and actual jobs.
+An online component is connected to the control plane. Use connection validation and test jobs to confirm that it can also reach the required backup sources and target storage.
 
 ## Insights
 
-- An **insight session** is associated with a backup source, a specific snapshot, a selected data scope, and a Data Gateway.
+- An **Insights session** is associated with a backup source, a specific snapshot, a selected data scope, and a Data Gateway.
 - The **data scope** contains the files and folders explicitly selected from a snapshot for that session.
-- A **citation** locates source material used by an answer; it does not mean the conclusion has been independently verified.
+- A **citation** points to source material used in an answer; it does not independently verify the answer's conclusion.
 
 Insights works with backup snapshots, not live files on a protected host. After production files change, create a new snapshot before analyzing the updated data.

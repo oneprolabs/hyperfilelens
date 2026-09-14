@@ -177,7 +177,7 @@ func TestUserInstallationScopeAllowsLifecycleAndManagedSnapshotTasks(t *testing.
 			}
 		})
 	}
-	for _, kind := range []string{"snapshot.browse", "snapshot.download", "snapshot.delete"} {
+	for _, kind := range []string{"snapshot.browse", "snapshot.download", "snapshot.download.plan", "snapshot.delete"} {
 		t.Run(kind, func(t *testing.T) {
 			if _, err := engine.applyUserInstallationScope(kind, managedPayload); err != nil {
 				t.Fatalf("managed %s should remain available: %v", kind, err)

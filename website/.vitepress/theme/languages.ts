@@ -6,7 +6,7 @@ export interface SiteLanguage {
 
 // Add new locales here — every LanguageSwitcher instance picks it up automatically.
 export const siteLanguages: SiteLanguage[] = [
-  { code: 'en', label: 'English', path: '/en/' },
+  { code: 'en', label: 'English', path: '/' },
   { code: 'zh', label: '简体中文', path: '/zh/' },
 ]
 

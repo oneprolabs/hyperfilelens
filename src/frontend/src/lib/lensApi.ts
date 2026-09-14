@@ -74,6 +74,7 @@ export type LensLlmConfig = {
     model?: string
     api_base?: string
     api_key?: string
+    [key: string]: unknown
   }
   is_active?: boolean
   is_default?: boolean
@@ -255,6 +256,8 @@ export type LensGatewayInsight = {
   sl_runtime_status?: string
   owner_user_id?: number | null
   owner_username?: string
+  created_by_id?: number | null
+  created_by_username?: string
   owner_organization_id?: number | null
   is_platform_default?: boolean
   organization?: number
@@ -345,6 +348,7 @@ export type LensSessionLink = {
   queue_ahead?: number
   cleanup_intent?: 'none' | 'reset_for_retry' | 'delete_session' | string
   cleanup_status?: 'none' | 'pending' | 'running' | 'blocked' | 'complete' | string
+  force_delete_available?: boolean
   document_conversion?: DocumentConversion | null
   data_context?: SessionDataContext | null
   last_message_at: string | null
@@ -727,7 +731,7 @@ export type GatewayChatWorkload = {
   gateway_link_id: number
   gateway_id: number
   gateway_name: string
-  gateway_scope: 'platform' | 'user' | string
+  gateway_scope: 'platform' | 'organization' | 'user' | string
   chat_prepare_concurrency: number
   chat_queue_capacity: number
   active_chat_preparations: number
@@ -1205,7 +1209,7 @@ export async function cancelCopilotScopePreview(
 }
 
 export type LensAdmissionPreview = {
-  gateway_scope: 'platform' | 'user' | string
+  gateway_scope: 'platform' | 'organization' | 'user' | string
   selection: {
     file_count: number
     size_bytes: number
@@ -1619,11 +1623,20 @@ export async function streamCopilotRun(
   }
 }
 
-export async function deleteCopilotSession(sessionId: number): Promise<void> {
-  await api(lensUrl(`copilot/sessions/${sessionId}/`), {
+export async function deleteCopilotSession(sessionId: number): Promise<LensSessionLink> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/`), {
     method: 'DELETE',
     headers: lensHeaders(),
   })
+  return lensPayload<LensSessionLink>(raw)
+}
+
+export async function forceDeleteCopilotSession(sessionId: number): Promise<LensSessionLink> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/force-delete/`), {
+    method: 'POST',
+    headers: lensHeaders(),
+  })
+  return lensPayload<LensSessionLink>(raw)
 }
 
 export type LensChatBinding = {

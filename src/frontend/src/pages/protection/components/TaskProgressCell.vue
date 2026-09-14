@@ -4,10 +4,12 @@ import { useI18n } from 'vue-i18n'
 import {
   formatTaskProgressBarPercent,
   formatTaskProgressPercent,
+  formatSpeedBps,
   parseTaskProgressValue,
   resolveStep3DisplayPercent,
   shouldShowStep3Percent,
   shouldShowTransferMetrics,
+  transferCapacityText,
   transferProgressLabel,
   transferMetricParts,
   type TransferProgress,
@@ -51,10 +53,17 @@ const displayPercent = computed(() => {
 const barPercent = computed(() => formatTaskProgressBarPercent(displayPercent.value))
 const progressText = computed(() => formatTaskProgressPercent(displayPercent.value))
 const showRightPercent = computed(() => {
+  if (isRestore.value || !backupTransferStage.value) return false
   if (props.stopping && taskProgressValue.value != null) return true
   return shouldShowStep3Percent(props.transferProgress)
 })
 const isRestore = computed(() => String(props.transferProgress?.label_key || '').includes('taskProgress.restore.'))
+const backupTransferStage = computed(() => {
+  const phase = String(props.transferProgress?.phase || '').toLowerCase()
+  const label = String(props.transferProgress?.label_key || '')
+  const preparing = /taskProgress\.backup\.(preparingLogic|preparing|dispatching|estimating)$/.test(label)
+  return !preparing && ['transferring', 'finalizing', 'done'].includes(phase)
+})
 const orchestrationLabel = computed(() => {
   if (props.stopping) {
     const key = String(props.transferProgress?.label_key || '').trim()
@@ -74,10 +83,20 @@ const showSpinner = computed(() => {
 })
 const metricParts = computed(() => {
   if (props.compact) return []
-  if (!shouldShowTransferMetrics(props.transferProgress) && !props.failed) return []
+  if (!isRestore.value && !backupTransferStage.value) return []
+  const transfer = props.transferProgress
+  const finalizingBackup = !isRestore.value && transfer?.phase === 'finalizing'
+    && !['reconnecting', 'offline_pending'].includes(String(transfer.execution_state || '').toLowerCase())
+  if (!shouldShowTransferMetrics(transfer) && !props.failed && !finalizingBackup) return []
   return transferMetricParts(t, props.transferProgress)
 })
 const metricLine = computed(() => metricParts.value.join(' · '))
+const restoreMetricLine = computed(() => {
+  if (!isRestore.value || props.compact) return ''
+  const capacity = transferCapacityText(t, props.transferProgress)
+  const speed = formatSpeedBps(props.transferProgress?.upload_speed_bps)
+  return [capacity, speed].filter(Boolean).join(' · ')
+})
 const overflowTitle = computed(() => {
   if (!metricParts.value.length) return ''
   const metrics = transferMetricParts(t, props.transferProgress, { labelProcessingSpeed: true, labelRestoreMetrics: isRestore.value })
@@ -118,6 +137,7 @@ const overflowTitle = computed(() => {
       >{{ progressText }}</span>
     </div>
     <el-progress
+      v-if="!isRestore && backupTransferStage"
       class="protection-flow-progress task-progress-cell__bar"
       :percentage="barPercent"
       :status="failed ? 'exception' : stopping ? 'warning' : undefined"
@@ -125,16 +145,15 @@ const overflowTitle = computed(() => {
       :show-text="false"
     />
     <p
-      v-if="!isRestore"
       class="task-progress-cell__metrics"
-      :class="{ 'is-empty': !metricParts.length }"
+      :class="{ 'is-empty': !(isRestore ? restoreMetricLine : metricLine) }"
     >
       <span
-        v-if="metricLine"
+        v-if="isRestore ? restoreMetricLine : metricLine"
         class="task-progress-cell__metric-line"
-        :data-table-overflow-title="overflowTitle || undefined"
+        :data-table-overflow-title="isRestore ? undefined : overflowTitle || undefined"
         data-table-overflow-title-always
-      >{{ metricLine }}</span>
+      >{{ isRestore ? restoreMetricLine : metricLine }}</span>
     </p>
   </div>
 </template>

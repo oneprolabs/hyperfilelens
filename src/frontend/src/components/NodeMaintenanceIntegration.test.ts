@@ -43,7 +43,7 @@ describe('node maintenance UI integration', () => {
     expect(wizard).toContain("t('nodeLifecycle.localUpgradeCommandWarning')")
     expect(wizard).toContain('.agent-install-wizard--maintenance .agent-install-wizard__warn')
     expect(wizard).toContain("t('nodeLifecycle.serviceRestart')")
-    expect(wizard).toContain('const purgeAll = ref(false)')
+    expect(wizard).toContain('const keepData = ref(false)')
     expect(wizard).toContain('fetchNodeMaintenanceRelease')
     expect(wizard).toContain("scope: platformGateway ? 'platform' : 'tenant'")
     expect(wizard).not.toContain("note: 'upgrade:platform-gateway'")

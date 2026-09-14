@@ -4,8 +4,6 @@ const quickStart: DefaultTheme.SidebarItem[] = [
   {
     text: '快速开始',
     items: [
-      { text: '选择使用方式', link: '/zh/docs/' },
-      { text: '使用官方 SaaS', link: '/zh/docs/getting-started/saas' },
       { text: '安装社区版', link: '/zh/docs/getting-started/install' },
     ],
   },
@@ -13,12 +11,14 @@ const quickStart: DefaultTheme.SidebarItem[] = [
     text: '首次使用',
     items: [
       { text: '登录控制台', link: '/zh/docs/getting-started/sign-in' },
+      { text: '配置外部访问（按需）', link: '/zh/docs/getting-started/configure-external-access' },
       { text: '添加备份源', link: '/zh/docs/getting-started/add-source' },
       { text: '配置备份源', link: '/zh/docs/getting-started/configure-source' },
       { text: '添加目标存储', link: '/zh/docs/getting-started/add-target' },
       { text: '创建并运行首次备份', link: '/zh/docs/getting-started/first-backup' },
       { text: '检查任务与快照', link: '/zh/docs/getting-started/verify-backup' },
       { text: '恢复测试文件', link: '/zh/docs/getting-started/first-restore' },
+      { text: '配置 AI 模型', link: '/zh/docs/getting-started/configure-insights-model' },
       { text: '创建洞察会话', link: '/zh/docs/getting-started/first-insight' },
     ],
   },
@@ -51,7 +51,6 @@ const product: DefaultTheme.SidebarItem[] = [
       { text: '创建洞察会话', link: '/zh/docs/insights/copilot' },
       { text: '配置 AI 模型', link: '/zh/docs/insights/models' },
       { text: '使用 Private Data Gateway', link: '/zh/docs/insights/data-gateway' },
-      { text: '查看 AI 使用量', link: '/zh/docs/insights/usage' },
       { text: '会话与数据范围', link: '/zh/docs/insights/privacy' },
     ],
   },
@@ -83,8 +82,9 @@ const operations: DefaultTheme.SidebarItem[] = [
   {
     text: '运行维护',
     items: [
-      { text: '升级与恢复', link: '/zh/docs/deployment/lifecycle' },
       { text: '任务、告警与审计', link: '/zh/docs/deployment/operations' },
+      { text: '升级与恢复', link: '/zh/docs/deployment/lifecycle' },
+      { text: '卸载社区版', link: '/zh/docs/deployment/uninstall' },
     ],
   },
 ]
@@ -116,7 +116,7 @@ const help: DefaultTheme.SidebarItem[] = [
 
 export const zhThemeConfig: DefaultTheme.Config = {
   logo: {
-    light: '/brand/images/hyperfilelens-lockup-on-light.png',
+    light: '/brand/images/hyperfilelens-lockup-transparent-on-light.png',
     dark: '/brand/images/hyperfilelens-lockup-on-dark.png',
     alt: 'HyperFileLens',
   },
@@ -126,7 +126,7 @@ export const zhThemeConfig: DefaultTheme.Config = {
   nav: [
     {
       text: '快速开始',
-      link: '/zh/docs/',
+      link: '/zh/docs/getting-started/install',
       activeMatch: '^/zh/docs/(?:$|getting-started/)',
     },
     {

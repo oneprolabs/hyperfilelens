@@ -4,7 +4,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { api, apiErrorMessage } from '../../lib/api'
+import { api, apiErrorMessage, type ApiError } from '../../lib/api'
 import {
   createStorageRepository,
   storageRepositoryS3BucketMode,
@@ -13,13 +13,13 @@ import {
 } from '../../lib/storageRepositoryApi'
 import { fetchStorageProviderCatalog, type StorageProviderConfig } from '../../lib/storageProviderCatalogApi'
 import {
-  DEFAULT_S3_OBJECT_PREFIX,
+  generateS3ObjectPrefix,
   normalizeS3EndpointInput,
   normalizeS3ObjectPrefix,
   s3EndpointDisplay,
 } from '../../lib/s3PlatformDisplay'
 import { buildS3RepositoryName } from '../../lib/s3RepositoryName'
-import { s3BucketNameError } from '../../lib/s3BucketName'
+import { generateS3BucketName, s3BucketNameError } from '../../lib/s3BucketName'
 import {
   REPOSITORY_QUOTA_UNITS,
   repositoryQuotaToGb,
@@ -93,11 +93,12 @@ const repoNameManuallyEdited = ref(false)
 let syncingRepoName = false
 const bucketMode = ref<'existing' | 'new'>('existing')
 const bucket = ref('')
+const bucketDrafts: Record<'existing' | 'new', string | undefined> = { existing: '', new: undefined }
 const bucketOptions = ref<string[]>([])
 const refreshingBuckets = ref(false)
 const authStatus = ref<S3AuthStatus>('idle')
 const authError = ref('')
-const prefix = ref(DEFAULT_S3_OBJECT_PREFIX)
+const prefix = ref(generateS3ObjectPrefix())
 const quota = ref(0)
 const quotaUnit = ref<RepositoryQuotaUnit>('GB')
 const enableQuotaAlert = ref(false)
@@ -210,6 +211,7 @@ const canSubmit = computed(() =>
   && requiredAuthFieldsReady.value
   && !!repoName.value.trim()
   && !!bucket.value.trim()
+  && (bucketMode.value !== 'new' || !s3BucketNameError(normalizeS3Platform(storagePlatform.value), bucket.value))
   && (!enableQuotaAlert.value || validQuotaAlertThreshold.value),
 )
 
@@ -333,13 +335,17 @@ function resetAuthValidation() {
 function resetBucketSelectionForContext() {
   bucketOptions.value = []
   bucketSelectLoadAttemptAt = 0
+  bucketDrafts.existing = ''
   if (bucketMode.value === 'existing') bucket.value = ''
 }
 
 function setBucketMode(mode: 'existing' | 'new') {
   if (bucketMode.value === mode) return
+  bucketDrafts[bucketMode.value] = bucket.value
   bucketMode.value = mode
-  bucket.value = ''
+  if (mode === 'new' && bucketDrafts.new === undefined) bucketDrafts.new = generateS3BucketName()
+  bucket.value = bucketDrafts[mode] ?? ''
+  clearFieldError('bucket')
 }
 
 function validateAuthFields(): boolean {
@@ -449,6 +455,19 @@ watch(
 
 watch([storagePlatform, platformLabel, bucket], syncAutoRepoName, { immediate: true })
 
+function validateBucketName() {
+  if (bucketMode.value !== 'new') return
+  const error = s3BucketNameError(normalizeS3Platform(storagePlatform.value), bucket.value)
+  if (!bucket.value.trim()) errors.bucket = t('addS3Repo.errBucketName')
+  else if (error) errors.bucket = t(`addS3Repo.bucketNameErrors.${error}`)
+  else clearFieldError('bucket')
+}
+
+watch([bucket, storagePlatform, bucketMode], () => {
+  if (bucketMode.value === 'new') validateBucketName()
+  else clearFieldError('bucket')
+})
+
 function validateForm(): boolean {
   const bucketNameError = bucketMode.value === 'new' && bucket.value.trim()
     ? s3BucketNameError(normalizeS3Platform(storagePlatform.value), bucket.value)
@@ -502,7 +521,9 @@ async function onSubmit() {
       })
     }
   } catch (err) {
-    ElMessage.error({ message: storageRepositoryCreateErrorMessage(err, t), grouping: true })
+    const bucketError = (err as ApiError)?.fields?.s3_bucket?.[0]
+    if (bucketError) errors.bucket = bucketError
+    else ElMessage.error({ message: storageRepositoryCreateErrorMessage(err, t), grouping: true })
   } finally {
     busy.value = false
   }
@@ -977,16 +998,17 @@ function handleBack() {
                         v-model="bucket"
                         class="add-s3-element-field add-s3-repo-primary-input"
                         :placeholder="t('addS3Repo.phBucketNew')"
-                        @input="clearFieldError('bucket')"
+                        @blur="validateBucketName"
                       />
-                      <p class="fullscreen-form-field__hint">
-                        {{ t('addS3Repo.hintBucket') }}
-                      </p>
                       <p
                         v-if="errors.bucket"
-                        class="el-form-item__error"
+                        class="el-form-item__error add-s3-bucket-error"
+                        role="status"
                       >
                         {{ errors.bucket }}
+                      </p>
+                      <p v-else class="fullscreen-form-field__hint">
+                        {{ t('addS3Repo.hintBucket') }}
                       </p>
                     </div>
                     <!-- Prefix -->
@@ -1260,6 +1282,11 @@ function handleBack() {
 </template>
 
 <style scoped>
+.add-s3-bucket-error {
+  position: static;
+  padding-top: 4px;
+}
+
 /* ============================================
    Step Indicator
    ============================================ */

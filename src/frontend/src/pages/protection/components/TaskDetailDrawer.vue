@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { backupFailureMetadata } from '../../../lib/backupFailureDisplay'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
   ChevronRight,
@@ -20,7 +22,6 @@ import {
 import { apiErrorMessage, apiErrorMessageI18n } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
 import { formatLocalDateTime } from '../../../lib/dateTime'
-import { formatTaskProgressBarPercent, formatTaskProgressPercent } from '../../../lib/kopiaProgress'
 import { getNode } from '../../../lib/nodeApi'
 import { getBackupSourceSnapshot } from '../../../lib/protectionBackupConfigApi'
 import { cancelProtectionBackupTask } from '../../../lib/protectionBackupTaskApi'
@@ -33,6 +34,7 @@ import { useDrawerScrollReset } from '../../../composables/useDrawerScrollReset'
 import { useDrawerTableMaxHeight } from '../../../composables/useDrawerTableMaxHeight'
 import { useRepositoryTaskCancellation } from '../../../composables/useRepositoryTaskCancellation'
 import ProtectionStopConfirmDialog from '../../../components/ProtectionStopConfirmDialog.vue'
+import RepositoryMaintenanceSummary from '../../../components/RepositoryMaintenanceSummary.vue'
 import { getSourceResource } from '../../../lib/sourceApi'
 import {
   cancelStorageRepositoryTask,
@@ -45,6 +47,7 @@ import { taskResourceSnapshot } from '../../../lib/taskOutcomeDisplay'
 import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../../lib/taskBackupSourceResource'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../../lib/taskStepExpansion'
+import { taskStepTimelineTone, taskStepTranslationKey } from '../../../lib/taskStepDisplay'
 import { nasRepositoryFailureMessage } from '../../../lib/nasMountTroubleshooting'
 import TaskStatusTag from '../../../components/TaskStatusTag.vue'
 import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
@@ -238,14 +241,6 @@ function backupSourceConnectivityTagType(value?: string): 'success' | 'danger' {
   return value === 'online' ? 'success' : 'danger'
 }
 
-function progressValue(row: TaskRow) {
-  return formatTaskProgressBarPercent(row.progress)
-}
-
-function progressText(row: TaskRow) {
-  return formatTaskProgressPercent(row.progress)
-}
-
 function formatTime(iso?: string | null) {
   return formatLocalDateTime(iso, t('ops.task.emptyMark'))
 }
@@ -327,7 +322,16 @@ function taskDuration(row: TaskRow) {
 }
 
 function taskEventMetadata(event: TaskEventRow): Record<string, unknown> {
-  return event.metadata && typeof event.metadata === 'object' ? event.metadata as Record<string, unknown> : {}
+  return backupFailureMetadata(event.metadata)
+}
+
+function hasEventDetailPanel(event: TaskEventRow) {
+  const metadata = taskEventMetadata(event)
+  return ['failure_details', 'skipped_details'].some((key) => {
+    const details = metadata[key]
+    return Boolean(details && typeof details === 'object' && !Array.isArray(details))
+  }) || ['skipped_item_count', 'skipped_file_count', 'skipped_directory_count', 'skipped_special_count']
+    .some(key => Number(metadata[key]) > 0)
 }
 
 function taskEventMetadataText(event: TaskEventRow, keys: string[]) {
@@ -398,15 +402,12 @@ function eventDisplayMessage(event: TaskEventRow) {
 }
 
 function timelineIconClass(status: string) {
-  if (status === 'success') return 'hfl-task-drawer__timeline-icon--success'
-  if (status === 'failed' || status === 'timeout') return 'hfl-task-drawer__timeline-icon--danger'
-  if (status === 'running') return 'hfl-task-drawer__timeline-icon--running'
-  if (status === 'cancelled') return 'hfl-task-drawer__timeline-icon--muted'
-  return 'hfl-task-drawer__timeline-icon--pending'
+  return `hfl-task-drawer__timeline-icon--${taskStepTimelineTone(status)}`
 }
 
-function stepDisplayName(stepName: string) {
-  const key = `ops.task.step.${stepName}`
+function stepDisplayName(stepName?: string | null, taskType?: string | null) {
+  const key = taskStepTranslationKey(stepName, taskType ?? activeTask.value?.task_type)
+  if (!key) return t('ops.task.emptyMark')
   return te(key) ? t(key) : t('ops.task.unknownValue')
 }
 
@@ -854,14 +855,14 @@ watch(
             />
             <div class="hfl-task-drawer__time-grid">
               <div>
-                <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startedAt') }}</span>
+                <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startTime') }}</span>
                 <span
                   class="hfl-task-drawer__time-value"
                   :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }"
                 >{{ formatTime(activeTask.started_at || activeTask.created_at) }}</span>
               </div>
               <div>
-                <span class="hfl-task-drawer__metric-label">{{ t('ops.task.finishedAt') }}</span>
+                <span class="hfl-task-drawer__metric-label">{{ t('ops.task.endTime') }}</span>
                 <span
                   class="hfl-task-drawer__time-value"
                   :class="{ 'hfl-empty-mark': !activeTask.finished_at }"
@@ -875,19 +876,6 @@ watch(
                 >{{ taskDuration(activeTask) }}</span>
               </div>
             </div>
-          </div>
-        </div>
-        <div class="hfl-task-drawer__progress-block">
-          <div class="hfl-task-drawer__progress-head">
-            <span>{{ t('ops.task.progressLabel') }}</span>
-            <span>{{ progressText(activeTask) }}</span>
-          </div>
-          <div class="hfl-task-drawer__progress-track">
-            <div
-              class="hfl-task-drawer__progress-fill"
-              :class="`hfl-task-drawer__progress-fill--${activeTask.status}`"
-              :style="{ width: `${progressValue(activeTask)}%` }"
-            />
           </div>
         </div>
       </section>
@@ -970,6 +958,10 @@ watch(
                     v-if="step.status === 'success'"
                     :size="15"
                   />
+                  <AlertTriangle
+                    v-else-if="step.status === 'warning'"
+                    :size="13"
+                  />
                   <X
                     v-else-if="step.status === 'failed' || step.status === 'timeout'"
                     :size="15"
@@ -1037,6 +1029,7 @@ watch(
                       v-for="event in step.events"
                       :key="event.id"
                       class="hfl-task-drawer__event-row"
+                      :class="{ 'hfl-task-drawer__event-row--detail-panel': hasEventDetailPanel(event) }"
                     >
                       <span
                         class="hfl-task-drawer__event-dot"
@@ -1060,6 +1053,7 @@ watch(
                           class="hfl-task-drawer__event-msg"
                           :class="eventMessageClass(event)"
                         >{{ eventDisplayMessage(event) }}</span>
+                        <RepositoryMaintenanceSummary :metadata="taskEventMetadata(event)" />
                         <span
                           v-if="eventObjectText(event)"
                           class="hfl-task-drawer__event-object"
@@ -1068,7 +1062,7 @@ watch(
                           v-if="eventErrorText(event)"
                           class="hfl-task-drawer__event-error"
                         >{{ eventErrorText(event) }}</span>
-                        <TaskEventFailureDetails :metadata="event.metadata" />
+                        <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
                       </div>
                       <span
                         class="hfl-task-drawer__event-time"
@@ -1086,6 +1080,7 @@ watch(
                   v-for="event in unlinkedEvents"
                   :key="event.id"
                   class="hfl-task-drawer__event-row"
+                  :class="{ 'hfl-task-drawer__event-row--detail-panel': hasEventDetailPanel(event) }"
                 >
                   <span
                     class="hfl-task-drawer__event-dot"
@@ -1109,11 +1104,12 @@ watch(
                       class="hfl-task-drawer__event-msg"
                       :class="eventMessageClass(event)"
                     >{{ eventDisplayMessage(event) }}</span>
+                    <RepositoryMaintenanceSummary :metadata="taskEventMetadata(event)" />
                     <span
                       v-if="eventErrorText(event)"
                       class="hfl-task-drawer__event-error"
                     >{{ eventErrorText(event) }}</span>
-                    <TaskEventFailureDetails :metadata="event.metadata" />
+                    <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
                   </div>
                   <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
                 </div>
@@ -1409,7 +1405,6 @@ watch(
 .hfl-task-drawer__header-actions,
 .hfl-task-drawer__metric,
 .hfl-task-drawer__metric-tags,
-.hfl-task-drawer__progress-head,
 .hfl-task-drawer__steps-head,
 .hfl-task-drawer__step-card-head,
 .hfl-task-drawer__step-duration,
@@ -1644,43 +1639,6 @@ watch(
   gap: 4px;
 }
 
-.hfl-task-drawer__progress-block {
-  padding-top: 2px;
-}
-
-.hfl-task-drawer__progress-head {
-  gap: 12px;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  color: rgb(71 85 105);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.hfl-task-drawer__progress-track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgb(226 232 240);
-}
-
-.hfl-task-drawer__progress-fill {
-  height: 100%;
-  min-width: 4px;
-  border-radius: inherit;
-  background: var(--color-info);
-  transition: width 0.35s ease;
-}
-
-.hfl-task-drawer__progress-fill--success {
-  background: rgb(22 163 74);
-}
-
-.hfl-task-drawer__progress-fill--failed,
-.hfl-task-drawer__progress-fill--timeout {
-  background: rgb(220 38 38);
-}
-
 .hfl-task-drawer__tabs {
   min-width: 0;
   margin-top: 4px;
@@ -1734,6 +1692,12 @@ watch(
 .hfl-task-drawer__timeline-icon--danger {
   background: rgb(254 226 226);
   color: rgb(185 28 28);
+}
+
+.hfl-task-drawer__timeline-icon--warning {
+  border-color: var(--color-warning);
+  background-color: var(--color-warning);
+  color: #fff;
 }
 
 .hfl-task-drawer__timeline-icon--running,
@@ -1997,8 +1961,9 @@ watch(
 }
 
 .hfl-task-drawer__timeline-icon--pending {
-  background-color: rgb(100 116 139);
-  color: #fff;
+  border-color: var(--color-text-secondary);
+  background-color: transparent;
+  color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__step-card {
@@ -2123,6 +2088,32 @@ watch(
   white-space: nowrap;
 }
 
+.hfl-task-drawer__event-row--detail-panel {
+  position: relative;
+  grid-template-columns: 16px minmax(0, 1fr);
+}
+
+.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-content {
+  grid-column: 2;
+  align-items: stretch;
+}
+
+.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-msg {
+  align-self: flex-start;
+  max-width: calc(100% - 132px);
+}
+
+.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-object,
+.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-error {
+  align-self: flex-start;
+}
+
+.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-time {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
 @media (max-width: 760px) {
   .hfl-task-drawer__steps-head {
     flex-direction: column;
@@ -2140,6 +2131,20 @@ watch(
 
   .hfl-task-drawer__event-time {
     grid-column: 2;
+    max-width: 100%;
+  }
+
+  .hfl-task-drawer__event-row--detail-panel {
+    grid-template-columns: 16px minmax(0, 1fr);
+  }
+
+  .hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-time {
+    position: static;
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-msg {
     max-width: 100%;
   }
 }
@@ -2292,18 +2297,8 @@ watch(
   white-space: nowrap;
 }
 
-.hfl-task-drawer--target-repositories .hfl-task-drawer__time-value--strong,
-.hfl-task-drawer--target-repositories .hfl-task-drawer__progress-head span:last-child {
+.hfl-task-drawer--target-repositories .hfl-task-drawer__time-value--strong {
   color: var(--color-info);
-}
-
-.hfl-task-drawer--target-repositories .hfl-task-drawer__progress-head span:last-child {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-}
-
-.hfl-task-drawer--target-repositories .hfl-task-drawer__progress-fill--pending,
-.hfl-task-drawer--target-repositories .hfl-task-drawer__progress-fill--cancelled {
-  background: rgb(100 116 139);
 }
 
 .hfl-task-drawer--target-repositories .hfl-task-drawer__tab-panel {

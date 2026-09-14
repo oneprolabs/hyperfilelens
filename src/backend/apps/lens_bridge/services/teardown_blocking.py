@@ -19,6 +19,21 @@ INTERVENTION_AGE_SECONDS = max(
     int(getattr(settings, "LENS_TEARDOWN_INTERVENTION_SECONDS", 6 * 3600)),
 )
 
+FORCED_REMOTE_CLEANUP_KEY = "forced_remote_cleanup"
+
+
+def forced_remote_cleanup(state: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the durable force-delete cleanup record, when present."""
+
+    record = (state or {}).get(FORCED_REMOTE_CLEANUP_KEY)
+    return dict(record) if isinstance(record, dict) else {}
+
+
+def remote_cleanup_pending(state: dict[str, Any] | None) -> bool:
+    """Return whether user-visible deletion left gateway-local cleanup due."""
+
+    return forced_remote_cleanup(state).get("status") == "pending"
+
 
 def intervention_required(state: dict[str, Any] | None) -> bool:
     blocking = (state or {}).get("blocking")

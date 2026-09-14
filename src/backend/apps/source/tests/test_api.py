@@ -119,6 +119,36 @@ class SourceResourceApiTests(TestCase):
             status=status_value,
         )
 
+    def _create_restore_record_for_agent(
+        self,
+        *,
+        agent: Node,
+        task: Task,
+        restore_uid: str,
+        backup_config_id: int | None,
+        source_snapshot_id: int,
+    ) -> RestoreRecord:
+        return RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=agent.id,
+            purpose=RestoreRecord.Purpose.USER_DATA,
+            restore_uid=restore_uid,
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=task.id,
+            task_uuid=task.task_uuid,
+            source_type=RestoreRecord.EndpointType.AGENT,
+            source_ref_id=agent.id,
+            backup_config_id=backup_config_id,
+            source_snapshot_id=source_snapshot_id,
+            target_type=RestoreRecord.EndpointType.AGENT,
+            target_ref_id=agent.id,
+            target_path="/restore",
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
+        )
+
     def test_create_list_statistics(self):
         create = self.client.post(
             "/api/v1/source/resources/",
@@ -783,6 +813,8 @@ class SourceResourceApiTests(TestCase):
                     "cpu_cores": 8,
                     "memory_total_bytes": 16_000_000_000,
                     "disk_count": 2,
+                    "disk_used_bytes": 400_000_000_000,
+                    "disk_total_bytes": 1_000_000_000_000,
                 }
             },
         )
@@ -837,12 +869,17 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(agent_row["cpu_cores"], 8)
         self.assertEqual(agent_row["memory_total_bytes"], 16_000_000_000)
         self.assertEqual(agent_row["disk_count"], 2)
+        self.assertEqual(agent_row["os_name"], "darwin arm64")
+        self.assertEqual(agent_row["arch"], "arm64")
+        self.assertEqual(agent_row["capacity_used_bytes"], 400_000_000_000)
+        self.assertEqual(agent_row["capacity_total_bytes"], 1_000_000_000_000)
         self.assertEqual(nas_row["connection_uri"], "192.168.1.50:/export/data")
         self.assertEqual(nas_row["mount_options"], "rw,hard")
         self.assertNotIn("credentials", nas_row)
         self.assertNotIn("cpu_cores", nas_row)
         self.assertNotIn("memory_total_bytes", nas_row)
         self.assertNotIn("disk_count", nas_row)
+        self.assertNotIn("capacity_total_bytes", nas_row)
         for row in by_ids.data["results"]:
             self.assertEqual(row["pipeline_step"], 1)
 
@@ -1254,24 +1291,22 @@ class SourceResourceApiTests(TestCase):
             status=Task.Status.RUNNING,
             trigger_type=Task.TriggerType.MANUAL,
         )
-        user_record = RestoreRecord.objects.create(
-            organization_id=self.org.id,
-            requesting_organization_id=self.org.id,
-            target_execution_organization_id=self.org.id,
-            target_execution_node_id=agent.id,
-            purpose=RestoreRecord.Purpose.USER_DATA,
-            restore_uid="source-runtime-user-restore",
-            source_mode=RestoreRecord.SourceMode.MANUAL,
+        backup_config = self._create_backup_config_for_agent(
+            agent,
+            name="runtime-restore-purpose",
+        )
+        source_snapshot = self._create_source_snapshot(
+            backup_config,
+            uid="runtime-restore-purpose-snapshot",
+            status_value=BackupSourceSnapshot.Status.AVAILABLE,
             task_id=user_task.id,
-            task_uuid=user_task.task_uuid,
-            source_type=RestoreRecord.EndpointType.AGENT,
-            source_ref_id=agent.id,
-            source_snapshot_id=302,
-            target_type=RestoreRecord.EndpointType.AGENT,
-            target_ref_id=agent.id,
-            target_path="/restore",
-            scope=RestoreRecord.Scope.PATHS,
-            conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
+        )
+        user_record = self._create_restore_record_for_agent(
+            agent=agent,
+            task=user_task,
+            restore_uid="source-runtime-user-restore",
+            backup_config_id=backup_config.id,
+            source_snapshot_id=source_snapshot.id,
         )
 
         response = self.client.get(
@@ -1287,6 +1322,135 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(runtime["latest_task"]["id"], user_task.id)
         self.assertEqual(runtime["latest_record"]["id"], user_record.id)
         self.assertEqual(runtime["latest_record"]["task_uuid"], str(user_task.task_uuid))
+
+    def test_backup_selectable_runtime_uses_only_current_config_restore_records(self):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-runtime-current-restore",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.31",
+        )
+        old_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Restore from reset config",
+            status=Task.Status.SUCCESS,
+            trigger_type=Task.TriggerType.MANUAL,
+        )
+        old_config = self._create_backup_config_for_agent(
+            agent,
+            name="runtime-old-restore",
+        )
+        old_snapshot = self._create_source_snapshot(
+            old_config,
+            uid="runtime-old-restore-snapshot",
+            status_value=BackupSourceSnapshot.Status.AVAILABLE,
+            task_id=old_task.id,
+        )
+        old_record = self._create_restore_record_for_agent(
+            agent=agent,
+            task=old_task,
+            restore_uid="runtime-old-restore",
+            backup_config_id=old_config.id,
+            source_snapshot_id=old_snapshot.id,
+        )
+
+        old_snapshot_id = old_snapshot.id
+        old_snapshot.delete()
+        old_config.delete()
+        current_config = self._create_backup_config_for_agent(
+            agent,
+            name="runtime-current-restore",
+        )
+
+        response = self.client.get(
+            f"/api/v1/source/backup-selectable/?ids=agent:{agent.id}&expand=runtime",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        runtime = response.data["results"][0]["runtime"]["restore"]
+        self.assertEqual(runtime["total"], 0)
+        self.assertIsNone(runtime["latest_task"])
+        self.assertIsNone(runtime["latest_record"])
+        self.assertTrue(RestoreRecord.objects.filter(id=old_record.id).exists())
+
+        current_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Restore from current config",
+            status=Task.Status.RUNNING,
+            trigger_type=Task.TriggerType.MANUAL,
+        )
+        current_record = self._create_restore_record_for_agent(
+            agent=agent,
+            task=current_task,
+            restore_uid="runtime-current-restore",
+            backup_config_id=current_config.id,
+            source_snapshot_id=old_snapshot_id,
+        )
+
+        response = self.client.get(
+            f"/api/v1/source/backup-selectable/?ids=agent:{agent.id}&expand=runtime",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        runtime = response.data["results"][0]["runtime"]["restore"]
+        self.assertEqual(runtime["total"], 1)
+        self.assertEqual(runtime["latest_task"]["id"], current_task.id)
+        self.assertEqual(runtime["latest_record"]["id"], current_record.id)
+
+    def test_backup_selectable_runtime_supports_legacy_restore_snapshot_ownership(self):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-runtime-legacy-restore",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.32",
+        )
+        restore_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Legacy restore",
+            status=Task.Status.SUCCESS,
+            trigger_type=Task.TriggerType.MANUAL,
+        )
+        config = self._create_backup_config_for_agent(
+            agent,
+            name="runtime-legacy-restore",
+        )
+        snapshot = self._create_source_snapshot(
+            config,
+            uid="runtime-legacy-restore-snapshot",
+            status_value=BackupSourceSnapshot.Status.AVAILABLE,
+            task_id=restore_task.id,
+        )
+        self._create_restore_record_for_agent(
+            agent=agent,
+            task=restore_task,
+            restore_uid="runtime-legacy-restore",
+            backup_config_id=None,
+            source_snapshot_id=snapshot.id,
+        )
+
+        response = self.client.get(
+            f"/api/v1/source/backup-selectable/?ids=agent:{agent.id}&expand=runtime",
+            **self._headers(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["results"][0]["runtime"]["restore"]["total"], 1)
+
+        snapshot.delete()
+        response = self.client.get(
+            f"/api/v1/source/backup-selectable/?ids=agent:{agent.id}&expand=runtime",
+            **self._headers(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["results"][0]["runtime"]["restore"]["total"], 0)
 
     def test_backup_selectable_runtime_reports_historical_restorable_snapshot(self):
         agent = Node.objects.create(

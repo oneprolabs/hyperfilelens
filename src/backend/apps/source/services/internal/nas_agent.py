@@ -286,6 +286,7 @@ def _scrub_nas_task_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply_mount_success(resource: SourceResource, result: dict[str, Any]) -> None:
+    previous_availability = resource.availability
     mount_point = resource.effective_mount_point()
     resource.mount_status = MountStatus.MOUNTED
     resource.mount_point = mount_point
@@ -309,6 +310,7 @@ def apply_mount_success(resource: SourceResource, result: dict[str, Any]) -> Non
             "updated_at",
         ]
     )
+    _record_source_availability_event(resource, previous_availability)
 
 
 def apply_mount_failure(
@@ -317,6 +319,7 @@ def apply_mount_failure(
     *,
     availability_confirmed: bool,
 ) -> None:
+    previous_availability = resource.availability
     resource.mount_status = MountStatus.ERROR
     resource.mount_error = message[:2000]
     update_fields = ["mount_status", "mount_error", "updated_at"]
@@ -324,6 +327,30 @@ def apply_mount_failure(
         record_mount_availability(resource=resource, availability="offline")
         update_fields.extend(["availability", "availability_updated_at"])
     resource.save(update_fields=update_fields)
+    _record_source_availability_event(resource, previous_availability)
+
+
+def _record_source_availability_event(
+    resource: SourceResource,
+    previous_availability: str,
+) -> None:
+    """Record a confirmed source transition after its transaction commits."""
+    if resource.availability == previous_availability:
+        return
+    from apps.monitor.services.events import schedule_availability_event
+
+    schedule_availability_event(
+        organization_id=resource.organization_id,
+        source="source",
+        availability=resource.availability,
+        occurred_at=resource.availability_updated_at,
+        resource_type="source",
+        resource_id=str(resource.id),
+        resource_name=resource.name,
+        target_path="/protection/backup-sources?tab=host",
+        details=resource.mount_error or "",
+        metadata={"source_type": resource.resource_type},
+    )
 
 
 def apply_unmount_success(resource: SourceResource) -> None:

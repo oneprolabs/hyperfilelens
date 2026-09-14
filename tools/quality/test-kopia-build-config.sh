@@ -158,10 +158,18 @@ grep -F 'withBestEffortErrorHandling()' \
 	"${ROOT}/tools/kopia/patches/0004-snapshot-estimator-best-effort-errors.patch" >/dev/null
 grep -F 'TestSnapshotCreateEstimatorSkipsUnreadableSubdirectory' \
 	"${ROOT}/tools/kopia/patches/0004-snapshot-estimator-best-effort-errors.patch" >/dev/null
+grep -F 'hfl-summary' \
+	"${ROOT}/tools/kopia/patches/0005-add-entry-summary.patch" >/dev/null
+grep -F 'TestHFLEntrySummaryFallbackStates' \
+	"${ROOT}/tools/kopia/patches/0005-add-entry-summary.patch" >/dev/null
+grep -F 'features.get("hfl_entry_summary_v1") is not True' \
+	"${ROOT}/src/agent/scripts/package.sh" >/dev/null
+grep -F 'KOPIA_INFO.json is missing the HFL entry-summary capability' \
+	"${ROOT}/src/agent/scripts/package.sh" >/dev/null
 
-[[ "${#KOPIA_PATCH_FILES[@]}" -eq 4 ]]
+[[ "${#KOPIA_PATCH_FILES[@]}" -eq 5 ]]
 patch_set_digest="$(patch_set_sha256)"
 [[ "${patch_set_digest}" =~ ^[0-9a-f]{64}$ ]]
-[[ "$(patch_names)" == '0001-add-s3-url-style.patch 0002-add-structured-progress.patch 0003-disable-managed-dot-ignore.patch 0004-snapshot-estimator-best-effort-errors.patch ' ]]
+[[ "$(patch_names)" == '0001-add-s3-url-style.patch 0002-add-structured-progress.patch 0003-disable-managed-dot-ignore.patch 0004-snapshot-estimator-best-effort-errors.patch 0005-add-entry-summary.patch ' ]]
 
 printf 'Kopia build configuration checks passed.\n'

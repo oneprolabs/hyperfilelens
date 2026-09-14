@@ -25,11 +25,11 @@ This step selects the registered Windows host in the **Backup Wizard** and adds 
 
 ![C:\HFL-Quickstart added to Selected Paths with the hostname and IP address blurred](/docs/getting-started/select-backup-directory.png)
 
-## Choose backup policy and file-filter settings
+## Choose backup policy and file filter settings
 
 This test must back up everything in `C:\HFL-Quickstart`. Leave **Backup Policy** and **File Filter** unassigned, keep the current compression setting, and select **Next**.
 
-For recurring backups, use **Backup Policy** to select or create a policy. To exclude content that must not enter a snapshot, use **Filter Rule** to select or create a file-filter rule. Policies and filters change subsequent backup behavior, so do not add an unverified rule during the first-use test.
+For recurring backups, use **Backup Policy** to select or create a policy. To exclude content from snapshots, use **Filter Rule** to select or create a file filter. Policies and filters affect subsequent backups, so leave them unassigned during this first-use test.
 
 ![Optional Backup Policy and File Filter settings with the Windows hostname and account blurred](/docs/getting-started/optional-backup-policy.png)
 
@@ -40,4 +40,4 @@ For recurring backups, use **Backup Policy** to select or create a policy. To ex
 - `C:\HFL-Quickstart` appears under **Selected Paths**.
 - No filter rule excludes either test file.
 
-If no repository is available on the **Target** step, continue without leaving the configuration flow: [Add target storage](/en/docs/getting-started/add-target).
+If no repository is available on the **Target** step, continue without leaving the configuration flow: [Add target storage](/docs/getting-started/add-target).

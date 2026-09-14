@@ -476,13 +476,11 @@ onUnmounted(() => {
         <AuthTurnstileField
           :key="authTurnstileMountGeneration"
           ref="turnstileFieldRef"
-          :pending="isTurnstilePending"
           :ready="isTurnstileReady"
           :blocked="isTurnstileBlocked"
           :verified="Boolean(turnstileToken)"
           :site-key="turnstileSiteKey"
           action="register_send_code"
-          :loading-message="t('login.captchaLoading')"
           :blocked-message="t('login.captchaUnavailable')"
           :retry-label="t('login.captchaRetry')"
           :manual-retry-label="t('login.captchaManualRetry')"

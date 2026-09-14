@@ -69,7 +69,12 @@ def analysis_types_for_tasks(tasks: list[dict[str, Any]] | None) -> list[str]:
 
 
 def analysis_types_for_gateway(link: LensGatewayLink) -> list[str]:
-    """Return HFL analysis choices advertised by one Data Gateway."""
+    """Return the cached SourceLens task summary for diagnostics/API compatibility.
+
+    Chat choices are product-owned and must not be filtered by this snapshot.
+    The live SourceLens task list remains the authoritative validation when an
+    Assistant is created or its selected task is updated.
+    """
 
     # Gateway links created before task snapshots were introduced do not have
     # enough local information to advertise every task. Keep the historical
@@ -87,25 +92,6 @@ def has_gateway_task_snapshot(link: LensGatewayLink) -> bool:
     config = link.config_json or {}
     snapshot = config.get("sl_lensnode_snapshot")
     return isinstance(snapshot, dict) and "sl_tasks" in snapshot
-
-
-def validate_analysis_type_for_gateway(
-    link: LensGatewayLink,
-    analysis_type: str | None,
-) -> str:
-    """Validate a Chat choice against the selected Gateway capability snapshot."""
-
-    normalized = normalize_analysis_type(analysis_type)
-    supported = analysis_types_for_gateway(link)
-    if normalized in supported:
-        return normalized
-    # Older Gateway records may not have a task snapshot yet. Preserve the
-    # long-standing Knowledge Q&A default; live Assistant creation validates it.
-    if not has_gateway_task_snapshot(link) and normalized == "knowledge_qa":
-        return normalized
-    raise ValidationError(
-        {"analysis_type": "The selected Data Gateway does not support this analysis type."}
-    )
 
 
 def agent_rounds_for_analysis_mode(mode: str | None) -> str:
@@ -1014,7 +1000,7 @@ def _resolve_gateway_link_identity(
     *,
     org: Organization,
     gateway: Node,
-    owner_user,
+    created_by,
     normalized_scope: str | None,
 ) -> LensGatewayLink:
     """Create or verify an immutable Gateway identity under a row lock."""
@@ -1024,18 +1010,38 @@ def _resolve_gateway_link_identity(
         .filter(organization=org, gateway=gateway)
         .first()
     )
+    from apps.lens_bridge.services.gateway_ownership import (
+        PRIVATE_GATEWAY_SCOPES,
+        is_private_gateway,
+        persistence_scope_for_private_gateway,
+    )
+
+    requested_scope = (
+        normalized_scope
+        if normalized_scope is not None
+        else (
+            existing.scope
+            if existing is not None
+            else persistence_scope_for_private_gateway()
+        )
+    )
+    requested_is_platform = requested_scope == LensGatewayLink.GatewayScope.PLATFORM
     desired_scope = (
         existing.scope
-        if existing is not None and normalized_scope is None
-        else normalized_scope or LensGatewayLink.GatewayScope.USER
+        if existing is not None
+        else (
+            LensGatewayLink.GatewayScope.PLATFORM
+            if requested_is_platform
+            else persistence_scope_for_private_gateway()
+        )
     )
     if (
-        desired_scope == LensGatewayLink.GatewayScope.USER
-        and owner_user is None
+        desired_scope in PRIVATE_GATEWAY_SCOPES
+        and created_by is None
         and existing is None
     ):
         raise ValidationError(
-            {"owner_user": "Private Data Gateway requires an owner."}
+            {"created_by": "Private Data Gateway requires an installer."}
         )
     desired_origin = (
         existing.origin
@@ -1077,8 +1083,16 @@ def _resolve_gateway_link_identity(
                 organization=org,
                 gateway=gateway,
                 defaults={
-                    "workspace_root": f"/workspace/org-{org.id}/data",
-                    "owner_user": None if is_platform else owner_user,
+                    # Gateway Agent and LensNode share the same host/container
+                    # path under the unified Agent Root. Existing links retain
+                    # their persisted legacy /workspace path through
+                    # resolved_workspace_root().
+                    "workspace_root": f"/opt/hyperfilelens-agent/workspace/org-{org.id}/data",
+                    # ``owner_user`` and the legacy ``user`` scope stay
+                    # populated until the blue/green compatibility window
+                    # closes. New authorization uses only organization.
+                    "owner_user": None if is_platform else created_by,
+                    "created_by": None if is_platform else created_by,
                     "scope": desired_scope,
                     "origin": desired_origin,
                     # Infra capacity is set by Platform Ops; unlimited until configured.
@@ -1094,17 +1108,7 @@ def _resolve_gateway_link_identity(
         )
 
     link = existing
-    requested_owner_id = getattr(owner_user, "id", None)
-    if (
-        not is_platform
-        and link.scope == desired_scope
-        and requested_owner_id is not None
-        and link.owner_user_id != requested_owner_id
-    ):
-        raise ValidationError(
-            {"owner_user": "Private Data Gateway belongs to another user."}
-        )
-    if link.scope != desired_scope:
+    if is_private_gateway(link) != (not requested_is_platform):
         raise ValidationError(
             {
                 "scope": (
@@ -1113,6 +1117,9 @@ def _resolve_gateway_link_identity(
                 )
             }
         )
+    if not is_platform and link.created_by_id is None:
+        link.created_by = link.owner_user or created_by
+        link.save(update_fields=["created_by", "updated_at"])
     return link
 
 
@@ -1121,7 +1128,7 @@ def ensure_lensnode_for_gateway(
     org: Organization,
     gateway: Node,
     name: str | None = None,
-    owner_user=None,
+    created_by=None,
     scope: str | None = None,
 ) -> LensGatewayLink:
     """Idempotently associate a SourceLens LensNode with an HFL data gateway."""
@@ -1140,6 +1147,7 @@ def ensure_lensnode_for_gateway(
     if normalized_scope not in {
         None,
         LensGatewayLink.GatewayScope.PLATFORM,
+        LensGatewayLink.GatewayScope.ORGANIZATION,
         LensGatewayLink.GatewayScope.USER,
     }:
         raise ValidationError({"scope": "Data gateway scope is invalid."})
@@ -1149,7 +1157,7 @@ def ensure_lensnode_for_gateway(
     link = _resolve_gateway_link_identity(
         org=org,
         gateway=gateway,
-        owner_user=owner_user,
+        created_by=created_by,
         normalized_scope=normalized_scope,
     )
 
@@ -1198,14 +1206,14 @@ def enable_ai_on_gateway(
     org: Organization,
     gateway: Node,
     name: str | None = None,
-    owner_user=None,
+    created_by=None,
     scope: str | None = None,
 ) -> LensGatewayLink:
     return ensure_lensnode_for_gateway(
         org=org,
         gateway=gateway,
         name=name,
-        owner_user=owner_user,
+        created_by=created_by,
         scope=scope,
     )
 
@@ -1241,7 +1249,7 @@ def provision_gateway_lens_on_register(
     *,
     org: Organization,
     gateway: Node,
-    owner_user=None,
+    created_by=None,
     scope: str | None = None,
 ) -> dict[str, Any] | None:
     """Auto-provision LensNode when a gateway registers; returns enroll config or None."""
@@ -1253,7 +1261,7 @@ def provision_gateway_lens_on_register(
         link = ensure_lensnode_for_gateway(
             org=org,
             gateway=gateway,
-            owner_user=owner_user,
+            created_by=created_by,
             scope=scope,
         )
         return build_lens_enroll_config(link)
@@ -1403,14 +1411,19 @@ def apply_gateway_lensnode_snapshot(
     link: LensGatewayLink,
     data: dict[str, Any],
 ) -> LensGatewayLink:
-    """Persist a LensNode heartbeat payload without overriding active lifecycle work."""
-    preserve_lifecycle = link.sidecar_status in (
+    """Persist a LensNode snapshot without overriding authoritative lifecycle state."""
+    config = dict(link.config_json or {})
+    sl_status = str(data.get("status") or "").lower()
+    preserve_sidecar_status = link.sidecar_status in (
         LensGatewayLink.SidecarStatus.REMOVING,
         LensGatewayLink.SidecarStatus.UPGRADING,
+    ) or (
+        link.sidecar_status == LensGatewayLink.SidecarStatus.ERROR
+        and config.get("install_status") == "failed"
+        and sl_status != "online"
     )
     update_fields: list[str] = []
-    if not preserve_lifecycle:
-        sl_status = str(data.get("status") or "").lower()
+    if not preserve_sidecar_status:
         if sl_status == "online":
             next_status = LensGatewayLink.SidecarStatus.ONLINE
         elif sl_status == "offline":
@@ -1421,7 +1434,6 @@ def apply_gateway_lensnode_snapshot(
             link.sidecar_status = next_status
             update_fields.append("sidecar_status")
 
-    config = dict(link.config_json or {})
     snapshot = _extract_sl_lensnode_snapshot(data)
     if config.get("sl_lensnode_snapshot") != snapshot:
         config["sl_lensnode_snapshot"] = snapshot
@@ -1516,7 +1528,6 @@ def browse_gateway_directory(
     gateway_id: int,
     path: str = "",
     expected_scope: str | None = None,
-    expected_owner_user_id: int | None = None,
     limit: int = 200,
     wait_timeout_seconds: int = 15,
 ) -> dict[str, Any]:
@@ -1531,9 +1542,22 @@ def browse_gateway_directory(
         raise ValidationError({"gateway": "Data gateway must be online to browse directories."})
 
     link = get_gateway_link(org, gateway.id)
-    if expected_scope is not None and link.scope != expected_scope:
-        raise ValidationError({"gateway_id": "Data gateway scope is invalid."})
-    if expected_scope is not None or expected_owner_user_id is not None:
+    if expected_scope is not None:
+        from apps.lens_bridge.services.gateway_ownership import is_private_gateway
+
+        scope_matches = (
+            link.scope == expected_scope
+            or (
+                expected_scope
+                in {
+                    LensGatewayLink.GatewayScope.ORGANIZATION,
+                    LensGatewayLink.GatewayScope.USER,
+                }
+                and is_private_gateway(link)
+            )
+        )
+        if not scope_matches:
+            raise ValidationError({"gateway_id": "Data gateway scope is invalid."})
         from apps.lens_bridge.services.gateway_execution import (
             context_for_gateway_link,
         )
@@ -1541,7 +1565,6 @@ def browse_gateway_directory(
         context_for_gateway_link(
             tenant_organization=org,
             gateway_link=link,
-            expected_owner_user_id=expected_owner_user_id,
             require_ready=False,
         )
 

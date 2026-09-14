@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { backupFailureMetadata, backupFailurePresentation } from '../../../lib/backupFailureDisplay'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, ChevronRight, Lightbulb, LockKeyhole } from 'lucide-vue-next'
@@ -6,6 +7,8 @@ import { AlertTriangle, ChevronRight, Lightbulb, LockKeyhole } from 'lucide-vue-
 type FailureItem = {
   path: string
   error: string
+  cause?: string
+  item_type?: string
 }
 
 type SkippedItem = FailureItem
@@ -14,12 +17,12 @@ const props = defineProps<{
   metadata?: unknown
 }>()
 
+const MAX_SKIPPED_ITEMS = 10
+
 const { t } = useI18n()
 
-const metadataRecord = computed<Record<string, unknown>>(() => {
-  if (!props.metadata || typeof props.metadata !== 'object' || Array.isArray(props.metadata)) return {}
-  return props.metadata as Record<string, unknown>
-})
+const metadataRecord = computed(() => backupFailureMetadata(props.metadata))
+const backupFailure = computed(() => backupFailurePresentation(metadataRecord.value))
 
 const failureDetails = computed<Record<string, unknown>>(() => {
   const value = metadataRecord.value.failure_details
@@ -39,6 +42,7 @@ const backupSummary = computed<Record<string, unknown>>(() => {
   return value as Record<string, unknown>
 })
 const summarySnapshotId = computed(() => String(backupSummary.value.snapshot_id || '').trim())
+const summaryRestoreRecordId = computed(() => String(backupSummary.value.restore_record_id || '').trim())
 const failedDirectories = computed(() => {
   const value = backupSummary.value.failed_directories
   if (!Array.isArray(value)) return []
@@ -51,7 +55,16 @@ const failedDirectories = computed(() => {
 })
 
 const category = computed(() => String(failureDetails.value.category || 'source_read_failed'))
+const backupSourceOffline = computed(() => Boolean(backupFailure.value))
 const sourcePath = computed(() => String(metadataRecord.value.source_path || '').trim())
+const errorCode = computed(() => String(metadataRecord.value.error_code || '').trim())
+const restorePermissionDenied = computed(() => errorCode.value === 'RESTORE_TARGET_PERMISSION_DENIED')
+const restorePermissionMessage = computed(() => t('ops.task.failureDetails.restorePermissionDenied'))
+const restorePermissionRemediation = computed(() => t('ops.task.failureDetails.restorePermissionRemediation'))
+const restorePermissionRemediationItems = computed(() => restorePermissionRemediation.value.split('\n').map(item => item.replace(/^\d+\.\s*/, '').trim()).filter(Boolean))
+const restoreTargetPath = computed(() => String(metadataRecord.value.target_path || '').trim())
+const errorDiagnostic = computed(() => String(metadataRecord.value.error_diagnostic || '').trim())
+const originalError = computed(() => String(metadataRecord.value.error_message || '').trim())
 const items = computed<FailureItem[]>(() => {
   const value = failureDetails.value.items
   if (!Array.isArray(value)) return []
@@ -60,7 +73,39 @@ const items = computed<FailureItem[]>(() => {
     const record = item as Record<string, unknown>
     const path = String(record.path || '').trim()
     const error = String(record.error || '').trim()
-    return path || error ? [{ path, error }] : []
+    const cause = String(record.cause || '').trim()
+    const itemType = String(record.item_type || '').trim()
+    return path || error ? [{ path, error, cause, item_type: itemType }] : []
+  })
+})
+const causes = computed<Array<{ code: string; item_type: string; count: number; items: FailureItem[] }>>(() => {
+  const value = failureDetails.value.causes
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+    const record = item as Record<string, unknown>
+    const code = String(record.code || '').trim()
+    const itemType = String(record.item_type || '').trim()
+    const count = Number(record.count)
+    const sampledItems = Array.isArray(record.items)
+      ? record.items.flatMap((sample) => {
+        if (!sample || typeof sample !== 'object' || Array.isArray(sample)) return []
+        const sampleRecord = sample as Record<string, unknown>
+        const path = String(sampleRecord.path || '').trim()
+        const error = String(sampleRecord.error || '').trim()
+        return path || error
+          ? [{
+            path,
+            error,
+            cause: String(sampleRecord.cause || code).trim(),
+            item_type: String(sampleRecord.item_type || itemType).trim(),
+          }]
+          : []
+      })
+      : []
+    return code && Number.isFinite(count) && count > 0
+      ? [{ code, item_type: itemType, count, items: sampledItems }]
+      : []
   })
 })
 const remediation = computed(() => {
@@ -69,9 +114,14 @@ const remediation = computed(() => {
   return value.map(item => String(item || '').trim()).filter(Boolean)
 })
 const failureCount = computed(() => {
-  const value = Number(failureDetails.value.count)
+  const value = Number(failureDetails.value.total_count ?? failureDetails.value.count)
   return Number.isFinite(value) && value > 0 ? value : items.value.length
 })
+const reportedFailureCount = computed(() => {
+  const value = Number(failureDetails.value.reported_count)
+  return Number.isFinite(value) && value >= 0 ? value : items.value.length
+})
+const failureTruncated = computed(() => Boolean(failureDetails.value.truncated) || failureCount.value > reportedFailureCount.value)
 const skippedItems = computed<SkippedItem[]>(() => {
   const value = skippedDetails.value.items
   if (!Array.isArray(value)) return []
@@ -81,7 +131,11 @@ const skippedItems = computed<SkippedItem[]>(() => {
     const path = String(record.path || '').trim()
     const error = String(record.error || '').trim()
     return path || error ? [{ path, error }] : []
-  })
+  }).slice(0, MAX_SKIPPED_ITEMS)
+})
+const skippedItemPayloadCount = computed(() => {
+  const value = skippedDetails.value.items
+  return Array.isArray(value) ? value.length : 0
 })
 
 function positiveCount(value: unknown) {
@@ -95,20 +149,35 @@ const skippedFileCount = computed(() => (
 const skippedDirectoryCount = computed(() => (
   positiveCount(skippedDetails.value.directory_count ?? metadataRecord.value.skipped_directory_count)
 ))
+const skippedSpecialCount = computed(() => (
+  positiveCount(skippedDetails.value.special_count ?? metadataRecord.value.skipped_special_count)
+))
 const skippedCount = computed(() => (
   positiveCount(skippedDetails.value.count ?? metadataRecord.value.skipped_item_count)
-  || skippedFileCount.value + skippedDirectoryCount.value
+  || skippedFileCount.value + skippedDirectoryCount.value + skippedSpecialCount.value
   || skippedItems.value.length
 ))
 const skippedReportedCount = computed(() => (
-  positiveCount(skippedDetails.value.reported_count) || skippedItems.value.length
+  Math.min(
+    MAX_SKIPPED_ITEMS,
+    positiveCount(skippedDetails.value.reported_count) || skippedItems.value.length,
+  )
 ))
-const skippedTruncated = computed(() => Boolean(skippedDetails.value.truncated))
+const skippedTruncated = computed(() => (
+  Boolean(skippedDetails.value.truncated)
+  || skippedCount.value > skippedItems.value.length
+  || skippedItemPayloadCount.value > MAX_SKIPPED_ITEMS
+))
 const hasSkippedDetails = computed(() => skippedCount.value > 0)
 const hasDetails = computed(() => (
   items.value.length > 0
+  || causes.value.length > 0
+  || failureCount.value > 0
   || hasSkippedDetails.value
+  || restorePermissionDenied.value
   || Boolean(summarySnapshotId.value && failedDirectories.value.length)
+  || Boolean(summaryRestoreRecordId.value && failedDirectories.value.length)
+  || backupSourceOffline.value
 ))
 
 function fullPath(path: string) {
@@ -121,7 +190,16 @@ function fullPath(path: string) {
 
 function failureReason(item: FailureItem) {
   if (category.value === 'source_file_locked') return t('ops.task.failureDetails.fileLockedReason')
+  if (item.cause === 'unsupported_entry_type') return t('ops.task.failureDetails.unsupportedEntryReason')
+  if (item.cause === 'macos_privacy_denied') return t('ops.task.failureDetails.macosPrivacyReason')
+  if (item.cause === 'permission_denied') return t('ops.task.failureDetails.permissionDeniedReason')
+  if (item.cause === 'unreadable_directory') return t('ops.task.failureDetails.unreadableDirectoryReason')
   return item.error || t('ops.task.failureDetails.readFailedReason')
+}
+
+function causeLabel(code: string, count: number) {
+  const key = `ops.task.failureDetails.causes.${code}`
+  return t(key, { count })
 }
 
 function remediationText(code: string) {
@@ -136,10 +214,35 @@ function remediationText(code: string) {
     class="task-event-failure"
     :class="{ 'task-event-failure--warning': hasSkippedDetails && !items.length }"
   >
-    <template v-if="summarySnapshotId && failedDirectories.length">
+    <template v-if="backupSourceOffline">
+      <div class="task-event-failure__summary">
+        <AlertTriangle :size="15" />
+        <span>{{ backupFailure?.reason }}</span>
+      </div>
+      <div class="task-event-failure__remediation">
+        <div class="task-event-failure__label">
+          <Lightbulb :size="14" />
+          {{ t('ops.task.failureDetails.howToResolve') }}
+        </div>
+        <ol class="task-event-failure__remediation-list">
+          <li v-for="resolution in backupFailure?.resolutions" :key="resolution">{{ resolution }}</li>
+        </ol>
+      </div>
+      <details
+        v-if="originalError"
+        class="task-event-failure__files"
+      >
+        <summary>
+          <ChevronRight :size="14" />
+          {{ t('ops.task.failureDetails.technicalDetails') }}
+        </summary>
+        <code>{{ originalError }}</code>
+      </details>
+    </template>
+    <template v-if="(summarySnapshotId || summaryRestoreRecordId) && failedDirectories.length">
       <div class="task-event-failure__summary task-event-failure__summary--neutral">
-        <span>{{ t('ops.task.failureDetails.snapshotId') }}:</span>
-        <code>{{ summarySnapshotId }}</code>
+        <span>{{ t(summaryRestoreRecordId ? 'ops.task.failureDetails.restoreRecordId' : 'ops.task.failureDetails.snapshotId') }}:</span>
+        <code>{{ summaryRestoreRecordId || summarySnapshotId }}</code>
       </div>
       <div class="task-event-failure__label">
         {{ t('ops.task.failureDetails.failedDirectories') }}
@@ -160,6 +263,7 @@ function remediationText(code: string) {
           count: skippedCount,
           fileCount: skippedFileCount,
           directoryCount: skippedDirectoryCount,
+          specialCount: skippedSpecialCount,
         }) }}</span>
       </div>
 
@@ -191,7 +295,39 @@ function remediationText(code: string) {
         </ul>
       </details>
     </template>
-    <template v-if="items.length">
+    <template v-if="restorePermissionDenied">
+      <div class="task-event-failure__summary">
+        <LockKeyhole :size="15" />
+        <span>{{ restorePermissionMessage }}</span>
+      </div>
+      <div
+        v-if="restoreTargetPath"
+        class="task-event-failure__summary task-event-failure__summary--neutral"
+      >
+        <span>{{ t('ops.task.failureDetails.restoreTarget') }}:</span>
+        <code>{{ restoreTargetPath }}</code>
+      </div>
+      <div class="task-event-failure__remediation">
+        <div class="task-event-failure__label">
+          <Lightbulb :size="14" />
+          {{ t('ops.task.failureDetails.howToResolve') }}
+        </div>
+        <ol class="task-event-failure__remediation-list">
+          <li v-for="item in restorePermissionRemediationItems" :key="item">{{ item }}</li>
+        </ol>
+      </div>
+      <details
+        v-if="errorDiagnostic"
+        class="task-event-failure__files"
+      >
+        <summary>
+          <ChevronRight :size="14" />
+          {{ t('ops.task.failureDetails.technicalDetails') }}
+        </summary>
+        <code>{{ errorDiagnostic }}</code>
+      </details>
+    </template>
+    <template v-if="!backupSourceOffline && (failureCount > 0 || causes.length)">
       <div class="task-event-failure__summary">
         <LockKeyhole
           v-if="category === 'source_file_locked'"
@@ -205,6 +341,29 @@ function remediationText(code: string) {
       </div>
 
       <div
+        v-if="causes.length"
+        class="task-event-failure__causes"
+      >
+        <div
+          v-for="cause in causes"
+          :key="cause.code"
+          class="task-event-failure__cause"
+        >
+          <span>{{ causeLabel(cause.code, cause.count) }}</span>
+        </div>
+      </div>
+
+      <p
+        v-if="failureTruncated"
+        class="task-event-failure__truncated"
+      >
+        {{ t('ops.task.failureDetails.failureItemsTruncated', {
+          reportedCount: reportedFailureCount,
+          count: failureCount,
+        }) }}
+      </p>
+
+      <div
         v-if="remediation.length"
         class="task-event-failure__remediation"
       >
@@ -212,7 +371,7 @@ function remediationText(code: string) {
           <Lightbulb :size="14" />
           {{ t('ops.task.failureDetails.howToResolve') }}
         </div>
-        <ol>
+        <ol class="task-event-failure__remediation-list">
           <li
             v-for="code in remediation"
             :key="code"
@@ -222,10 +381,13 @@ function remediationText(code: string) {
         </ol>
       </div>
 
-      <details class="task-event-failure__files">
+      <details
+        v-if="items.length"
+        class="task-event-failure__files"
+      >
         <summary>
           <ChevronRight :size="14" />
-          {{ t('ops.task.failureDetails.viewAffectedFiles', { count: failureCount }) }}
+          {{ t('ops.task.failureDetails.viewAffectedItems', { count: reportedFailureCount }) }}
         </summary>
         <ul>
           <li
@@ -244,8 +406,11 @@ function remediationText(code: string) {
 <style scoped>
 .task-event-failure {
   display: grid;
+  align-self: stretch;
   gap: 9px;
+  width: 100%;
   max-width: 100%;
+  box-sizing: border-box;
   margin-top: 4px;
   border: 1px solid rgb(254 202 202);
   border-radius: 7px;
@@ -294,6 +459,19 @@ function remediationText(code: string) {
   overflow-wrap: anywhere;
 }
 
+.task-event-failure__causes {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 21px;
+}
+
+.task-event-failure__cause {
+  color: rgb(127 29 29);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .task-event-failure__directory-list {
   display: grid;
   gap: 7px;
@@ -316,9 +494,24 @@ function remediationText(code: string) {
   color: rgb(120 53 15);
 }
 
+.task-event-failure__remediation p {
+  margin: 5px 0 0;
+}
+
+.task-event-failure__numbered-remediation {
+  white-space: pre-line;
+}
+
 .task-event-failure__remediation ol {
   margin: 5px 0 0 18px;
   padding: 0;
+  list-style-type: decimal !important;
+  list-style-position: outside;
+}
+
+.task-event-failure__remediation-list li::marker {
+  color: rgb(146 64 14);
+  font-weight: 700;
 }
 
 .task-event-failure__remediation li + li {
@@ -358,6 +551,13 @@ function remediationText(code: string) {
   color: rgb(127 29 29);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.task-event-failure__files > code {
+  display: block;
+  margin-top: 8px;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

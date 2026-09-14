@@ -67,6 +67,30 @@ describe('confirmCurrentSession', () => {
     })
   })
 
+  it('shares one in-flight session check across startup consumers', async () => {
+    let resolveFetch!: (response: Response) => void
+    const response = new Promise<Response>((resolve) => {
+      resolveFetch = resolve
+    })
+    const fetchMock = vi.fn().mockReturnValue(response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const first = confirmCurrentSession()
+    const second = confirmCurrentSession()
+    resolveFetch(jsonResponse({
+      data: {
+        user: { id: 9, email: 'shared@example.com', username: 'shared' },
+        refresh_available: false,
+      },
+    }))
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ state: 'authenticated' }),
+      expect.objectContaining({ state: 'authenticated' }),
+    ])
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   it('distinguishes an explicitly absent session', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({}, 401)))
 

@@ -10,7 +10,7 @@
 .EXAMPLE
   install.cmd -WssUrl 'wss://...' -NodeToken '...'
   install.cmd upgrade -From C:\path\to\package.zip
-  install.cmd uninstall -PurgeAll
+  install.cmd uninstall
   install.cmd status
 #>
 param(
@@ -29,6 +29,7 @@ param(
   [string]$From = "",
   [switch]$NoService,
   [switch]$NoStart,
+  [switch]$KeepData,
   [switch]$PurgeAll,
   [switch]$KeepInstallationIdentity,
   [switch]$AgentOnly,
@@ -275,8 +276,16 @@ function Assert-HflInstallationIdentity {
   }
   if ($InstallationMode -eq "account" -and $Command -eq "install") {
     $defaultRunAsUser = if ([string]::IsNullOrWhiteSpace($RunAsUser)) { $CurrentWindowsIdentity } else { $RunAsUser }
-    $selectedRunAsUser = Read-Host "Enter the existing Windows account to protect (default: $defaultRunAsUser)"
-    $RunAsUser = if ([string]::IsNullOrWhiteSpace($selectedRunAsUser)) { $defaultRunAsUser } else { $selectedRunAsUser.Trim() }
+    if ($QuietFooter -or -not [string]::IsNullOrWhiteSpace($RunAsUser)) {
+      $RunAsUser = $defaultRunAsUser
+    }
+    elseif ([Environment]::UserInteractive) {
+      $selectedRunAsUser = Read-Host "Enter the existing Windows account to protect (default: $defaultRunAsUser)"
+      $RunAsUser = if ([string]::IsNullOrWhiteSpace($selectedRunAsUser)) { $defaultRunAsUser } else { $selectedRunAsUser.Trim() }
+    }
+    else {
+      $RunAsUser = $defaultRunAsUser
+    }
   }
 }
 
@@ -293,7 +302,7 @@ Commands:
   restart       Stop then start HyperFileLensAgent managed startup
   status        Show installed version, paths, and lifecycle state
   upgrade       In-place upgrade from another release package directory or .zip
-  uninstall     Stop managed startup and remove install dir (keeps data dir by default)
+  uninstall     Stop managed startup and remove the complete Agent installation
 
 Options:
   install:
@@ -313,8 +322,7 @@ Options:
                           migrates agent.db schema, overwrites binaries; removes workspace on success
 
   uninstall:
-    -PurgeAll                   Remove Agent Root and config/agent.env
-    -KeepInstallationIdentity   Keep agent.env installation identity (incomplete-install rollback)
+    -KeepData                   Preserve local configuration, data, and logs
 
 Install paths:
   $InstallRoot         Binaries and installer scripts
@@ -330,11 +338,12 @@ Examples (cmd.exe):
   install.cmd status
   install.cmd upgrade -From C:\path\to\hfl-agent-0.1.0-windows-amd64.zip
   install.cmd uninstall
-  install.cmd uninstall -PurgeAll
+  install.cmd uninstall -KeepData
 
 Examples (PowerShell, same entry point):
   .\install.cmd status
-  .\install.cmd uninstall -PurgeAll
+  .\install.cmd uninstall
+  .\install.cmd uninstall -KeepData
 
 Note: install.ps1 is invoked internally by install.cmd. Do not run install.ps1 directly
 (PowerShell execution policy and file association may block or open it in an editor).
@@ -497,18 +506,16 @@ function Write-HflLog {
     default { 'INFO' }
   }
   $displayLine = "  [$status] $messageText"
-  # QuietFooter suppresses duplicate inner lifecycle output, but the outer
-  # enrollment command still needs the concrete failure reason.
-  if ((-not $QuietFooter) -or ($Level -eq 'FAIL ')) {
-    if ($Level -eq 'WARN ') {
-      Write-Host $displayLine -ForegroundColor Yellow
-    }
-    elseif ($Level -eq 'FAIL ') {
-      Write-Host $displayLine -ForegroundColor Red
-    }
-    else {
-      Write-Host $displayLine
-    }
+  # QuietFooter only suppresses banners/sections/footers/summaries. Keep
+  # lifecycle lines visible so a long binary copy does not look frozen.
+  if ($Level -eq 'WARN ') {
+    Write-Host $displayLine -ForegroundColor Yellow
+  }
+  elseif ($Level -eq 'FAIL ') {
+    Write-Host $displayLine -ForegroundColor Red
+  }
+  else {
+    Write-Host $displayLine
   }
   Write-HflInstallLogLine $line
 }
@@ -1879,7 +1886,32 @@ function Start-HflServiceOnly {
         -DataRoot (Get-ResolvedDataRoot -Override "")
       return
     }
-    Start-ScheduledTask -TaskName $TaskName
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    $expectedExecutable = if ($InstallationMode -eq "user") {
+      Join-Path $InstallRoot "hfl-agent-user-launcher.exe"
+    }
+    else {
+      Join-Path $InstallRoot "hfl-agent.exe"
+    }
+    $taskAction = ($task.Actions | Select-Object -First 1).Execute
+    if ([string]::IsNullOrWhiteSpace($taskAction) -or
+        -not ([System.IO.Path]::GetFullPath($taskAction).Equals(
+          [System.IO.Path]::GetFullPath($expectedExecutable),
+          [System.StringComparison]::OrdinalIgnoreCase))) {
+      throw "Scheduled task $TaskName points to a different Agent executable; reinstall the managed task before starting it."
+    }
+    if ($task.State -in @('Running', 'Queued')) {
+      Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+      $deadline = (Get-Date).AddSeconds(30)
+      do {
+        Start-Sleep -Milliseconds 500
+        $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+      } while ($task.State -in @('Running', 'Queued') -and (Get-Date) -lt $deadline)
+      if ($task.State -in @('Running', 'Queued')) {
+        throw "Scheduled task $TaskName did not stop before restart."
+      }
+    }
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
     Write-HflOk "started $LifecycleLabel $TaskName ($(Get-HflServiceStatusLine))"
     return
   }
@@ -1890,7 +1922,18 @@ function Start-HflServiceOnly {
       -DataRoot (Get-ResolvedDataRoot -Override "")
     return
   }
-  Start-Service -Name $ServiceName
+  $serviceInfo = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+  $expectedExecutable = [System.IO.Path]::GetFullPath((Join-Path $InstallRoot "hfl-agent.exe"))
+  if ($null -eq $serviceInfo -or [string]::IsNullOrWhiteSpace($serviceInfo.PathName) -or
+      $serviceInfo.PathName.IndexOf($expectedExecutable, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+    throw "Service $ServiceName points to a different Agent executable; reinstall the managed service before starting it."
+  }
+  if ($svc.Status -eq "Running") {
+    Restart-Service -Name $ServiceName -Force -ErrorAction Stop
+  }
+  else {
+    Start-Service -Name $ServiceName -ErrorAction Stop
+  }
   Write-HflOk "started service $ServiceName ($(Get-HflServiceStatusLine))"
 }
 
@@ -2524,8 +2567,12 @@ function Invoke-Upgrade {
 
 function Invoke-Uninstall {
   $dataRoot = Get-ResolvedDataRoot -Override $DataDir
-  if ($PurgeAll -and -not (Test-SafeDataPath $dataRoot)) {
-    throw "Refusing PurgeAll for unexpected data directory $dataRoot."
+  $preserveData = $KeepData -or $KeepInstallationIdentity
+  if ($PurgeAll -and $preserveData) {
+    throw "-PurgeAll cannot be combined with -KeepData or -KeepInstallationIdentity."
+  }
+  if ((-not $preserveData) -and -not (Test-SafeDataPath $dataRoot)) {
+    throw "Refusing complete removal for unexpected data directory $dataRoot."
   }
   $envFile = Get-HflEnvFile $DefaultDataRoot
   $nodeId = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ID"
@@ -2547,15 +2594,11 @@ function Invoke-Uninstall {
   Write-HflSummaryLine "Service state" (Get-HflServiceStatusLine)
   Write-HflSummaryLine "Install path" $InstallRoot
   Write-HflSummaryLine "Data path" $dataRoot
-  Write-HflSummaryLine "Data removal" ($(if ($PurgeAll) { "Remove Agent data" } else { "Preserve Agent data" }))
+  Write-HflSummaryLine "Data removal" ($(if ($preserveData) { "Preserve Agent data" } else { "Remove Agent data" }))
 
   Write-HflSection "Preflight checks"
-  if ($PurgeAll -and $KeepInstallationIdentity) {
-    throw "-PurgeAll and -KeepInstallationIdentity are mutually exclusive."
-  }
-
   $agentBinary = Join-Path $InstallRoot "hfl-agent.exe"
-  if ((-not $PurgeAll) -and (-not $KeepInstallationIdentity) -and
+  if ($preserveData -and (-not $KeepInstallationIdentity) -and
       (-not (Test-Path -LiteralPath $agentBinary))) {
     throw "Cannot retire the installation identity because $agentBinary is unavailable."
   }
@@ -2565,7 +2608,7 @@ function Invoke-Uninstall {
   Remove-HflService
   Stop-HflAgentProcesses -Reason "uninstall"
 
-  if ((-not $PurgeAll) -and (-not $KeepInstallationIdentity)) {
+  if ($preserveData -and (-not $KeepInstallationIdentity)) {
     Write-HflLog -Level 'STEP ' -Message "Retiring the local installation identity."
     $retireOutput = @(& $agentBinary config retire-installation --data-dir $dataRoot 2>&1)
     foreach ($line in $retireOutput) {
@@ -2592,19 +2635,24 @@ function Invoke-Uninstall {
   Remove-HflInstallFile $InstalledVersionFile
   Write-HflSkip "remove $(Join-Path $InstallRoot 'install.cmd') (deferred; install.cmd is running this script)"
 
-  if ($PurgeAll) {
+  if (-not $preserveData) {
     Remove-HflInstallFile $envFile
   }
   elseif ($KeepInstallationIdentity) {
     Write-HflSkip "remove $envFile (preserved with installation identity for install retry)"
   }
   else {
-    Write-HflSkip "remove $envFile (preserved without installation identity; use -PurgeAll)"
+    Write-HflSkip "remove $envFile (preserved without installation identity)"
   }
 
   $uninstallLogPath = $script:HflUninstallLogPath
-  if (-not $PurgeAll) {
-    Write-HflSkip "remove data directory $dataRoot (preserved; use -PurgeAll)"
+  if ($preserveData) {
+    if ($KeepInstallationIdentity) {
+      Write-HflSkip "remove data directory $dataRoot (preserved for install retry)"
+    }
+    else {
+      Write-HflSkip "remove data directory $dataRoot (preserved by -KeepData)"
+    }
   }
   elseif ((Test-SafeDataPath $dataRoot) -and (Test-Path -LiteralPath $dataRoot)) {
     Remove-Item -Recurse -Force -LiteralPath $dataRoot
@@ -2617,9 +2665,9 @@ function Invoke-Uninstall {
     Write-HflSkip "remove data directory (none resolved)"
   }
 
-  # PurgeAll removes the data directory that owns uninstall.log. The detached
+  # Complete removal deletes the data directory that owns uninstall.log. The detached
   # install-root remover must never recreate that directory after cleanup.
-  $uninstallLog = if (-not $PurgeAll -and $uninstallLogPath) { $uninstallLogPath } else { "" }
+  $uninstallLog = if ($preserveData -and $uninstallLogPath) { $uninstallLogPath } else { "" }
   Schedule-InstallRootRemoval -InstallRoot $InstallRoot -LogFile $uninstallLog
 
   Write-HflSection "Verifying"

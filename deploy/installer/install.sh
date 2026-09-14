@@ -19,6 +19,8 @@ fi
 source "${COMPOSE_RUNTIME_FILE}"
 
 INSTALL_DIR="/opt/hyperfilelens"
+INSTALL_COMPLETE_MARKER="${INSTALL_DIR}/.install-complete"
+INSTALL_IN_PROGRESS_MARKER="${INSTALL_DIR}/.install-in-progress"
 SOURCELENS_INSTALL_DIR="${SOURCELENS_INSTALL_DIR:-${INSTALL_DIR}/sourcelens}"
 HFL_BRIDGE_NETWORK="hyperfilelens-bridge"
 UPGRADE_TMP="${INSTALL_DIR}/upgrade_tmp"
@@ -32,7 +34,10 @@ SESSION_ACTION="operation"
 INTERACTIVE_SESSION=0
 declare -a SESSION_WARNINGS=()
 declare -a OWNED_INSTALLATION_CONTAINER_IDS=()
+declare -a RETAINED_INSTALLATION_IMAGES=()
 MANAGED_BRIDGE_NETWORK_REMOVED=0
+INSTALLATION_IMAGES_REMOVED=0
+INSTALLATION_IMAGES_RETAINED=0
 PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"
 PUBLIC_URL="${HFL_PUBLIC_URL:-}"
 ADMIN_PUBLIC_URL="${HFL_ADMIN_PUBLIC_URL:-}"
@@ -62,106 +67,140 @@ LOCAL_PLATFORM_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent/bin"
 LOCAL_PLATFORM_AGENT_DATA_DIR="/opt/hyperfilelens-agent"
 LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR="/opt/hyperfilelens-agent"
 LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR="/var/lib/hyperfilelens-agent"
-LOCAL_PLATFORM_LENSNODE_ENV_FILE="/etc/hyperfilelens/lensnode.env"
+LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE="/etc/systemd/system/hyperfilelens-agent.service"
+LOCAL_PLATFORM_LENSNODE_ENV_FILE="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/lensnode.env"
+LOCAL_PLATFORM_LEGACY_LENSNODE_ENV_FILE="/etc/hyperfilelens/lensnode.env"
+LOCAL_PLATFORM_LENSNODE_COMPOSE_DIR="${LOCAL_PLATFORM_AGENT_DATA_DIR}/runtime/lensnode"
+LOCAL_PLATFORM_LEGACY_LENSNODE_COMPOSE_DIR="/etc/hyperfilelens/lensnode"
 LOCAL_PLATFORM_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
 LOCAL_PLATFORM_GATEWAY_VERIFIED=0
 
 usage() {
 	cat <<'USAGE'
-Usage: install.sh [command] [options]
+Usage: ./install.sh [command] [options]
 
-When no command is given, equivalent to: install.sh install
+When no command is specified, the install command is used.
 
 Commands:
-  install       Fresh install from this package and start services (install dir /opt/hyperfilelens)
-  backup        Create and verify one managed backup set; retain the latest three valid sets
-  start         docker compose up -d --no-build
-  stop          docker compose down
-  restart       stop then start
-  status        Show version and compose service status
-  manage        Run a Django management command in the active API color
-  platform-gateway Ensure or verify the installer-managed platform Gateway
-  upgrade       In-place upgrade from another release package directory or .tar.gz
-  uninstall     Stop and remove Docker containers and app images (does not remove the install dir; see uninstall options)
-  lang-pack     Install, list, or uninstall optional runtime language packs
+  install             Install HyperFileLens and start all configured services
+  start               Start all configured services
+  stop                Stop all configured services
+  restart             Restart all configured services
+  status              Show the installed version, paths, and service status
+  backup              Create and verify a managed backup; retain the latest three
+  upgrade             Upgrade from another release directory or .tar.gz archive
+  uninstall           Completely remove the installer-managed deployment
+  manage              Run a Django management command
+  platform-gateway    Manage the installer-owned Platform Data Gateway
+  lang-pack           Manage optional runtime language packs
 
-Options:
-  global:
-    --log-file FILE        Write the complete timestamped session log to FILE
-                           (default: /opt/hyperfilelens/logs/<command>-<time>-<pid>.log)
-    --verbose              Enable detailed logs
-    --print-config         Print effective non-secret configuration and exit
+Global options:
+  --log-file FILE             Write the complete timestamped session log to FILE
+                              Default: /opt/hyperfilelens/logs/<command>-<time>-<pid>.log
+  --verbose                   Enable detailed logging
+  --print-config              Print effective non-secret configuration and exit
+  -h, --help                  Show this help and exit
 
-  install:
-    --with-sourcelens       Install bundled SourceLens (default when sourcelens/ is present)
-    --hfl-only              Skip bundled SourceLens even when sourcelens/ is present
-    --yes                   Non-interactive compatibility flag (install has no confirmation prompt)
-    --direct-host HOST      Direct listener host or IP used for local access URLs
-    --public-url URL        Optional canonical browser origin; invalid values only warn
-    --admin-public-url URL  Optional Admin Console browser origin; invalid values only warn
-    --runtime-env-file FILE Apply staged Turnstile settings from a root-only regular file
+Install options:
+  --with-sourcelens           Install bundled SourceLens when available (default)
+  --hfl-only                  Install HyperFileLens without bundled SourceLens
+  --yes                       Non-interactive compatibility option
+  --direct-host HOST          Hostname or IP address used in local access URLs
+  --public-url URL            Canonical browser URL for the tenant console
+  --admin-public-url URL      Canonical browser URL for the Admin Console
+  --runtime-env-file FILE     Apply staged Turnstile settings from a root-only file
 
-  upgrade:
-    --from PATH             Path to a new package directory or .tar.gz release (required)
-                            Creates a verified managed backup set under backup/ before upgrade
-                            and retains the latest three valid sets
-                            Extracts the new package to upgrade_tmp, merges keys from its .env.example into .env,
-                            runs a singleton migration, starts the inactive API/Web color, validates and
-                            atomically switches stable Nginx, drains Agent WebSockets, then hands off workers;
-                            removes upgrade_tmp on success
-    --with-sourcelens       Upgrade bundled SourceLens when sourcelens/ is present (default when present)
-    --hfl-only              Skip SourceLens upgrade even when sourcelens/ is present
-    --remove-sourcelens     Stop and remove installed SourceLens under the HFL install root
-    --purge-sourcelens-data Remove SourceLens data/ (with --remove-sourcelens or uninstall --with-sourcelens)
-    --yes                   Non-interactive: continue when target version equals installed version
-    --direct-host HOST      Direct listener host or IP used for local access URLs
-    --public-url URL        Optional canonical browser origin; invalid values only warn
-    --admin-public-url URL  Optional Admin Console browser origin; invalid values only warn
-    --runtime-env-file FILE Apply staged Turnstile settings from a root-only regular file
+Upgrade options:
+  --from PATH                 Release directory or .tar.gz archive (required)
+  --with-sourcelens           Upgrade bundled SourceLens when available (default)
+  --hfl-only                  Upgrade HyperFileLens without upgrading SourceLens
+  --remove-sourcelens         Remove the installed bundled SourceLens runtime
+  --purge-sourcelens-data     Also remove SourceLens data with --remove-sourcelens
+  --yes                       Continue when the target and installed versions match
+  --direct-host HOST          Hostname or IP address used in local access URLs
+  --public-url URL            Canonical browser URL for the tenant console
+  --admin-public-url URL      Canonical browser URL for the Admin Console
+  --runtime-env-file FILE     Apply staged Turnstile settings from a root-only file
 
-  uninstall:
-    --with-sourcelens       Stop SourceLens stack and remove its application images
-    --purge-sourcelens-data Remove SourceLens data under data/sourcelens/
-    --purge-media           Remove published bootstrap and agent artifacts under data/media/
-    --purge-config          Remove .env
-    --purge-data            Remove data/; requires --with-sourcelens when bundled
-                            SourceLens is installed because its data is under data/
-    --purge-all             Completely remove the installer-managed runtime:
-                            HFL, bundled SourceLens, local Platform Data Gateway,
-                            configuration, and data (keeps install path and backups)
+  Upgrade creates and verifies a managed backup before modifying the deployment.
+  It retains the latest three valid backup sets and removes temporary upgrade
+  files after a successful Blue/Green cutover.
 
-  lang-pack:
-    install --id PACK_ID   Install a language pack bundled with this release
-    install --file PATH     Validate and atomically install a language-pack .tar.gz
-    list                    List installed language packs
-    uninstall PACK_ID       Uninstall a pack and keep it disabled across upgrades
-    remove PACK_ID          Compatibility alias for uninstall
+Uninstall options:
+  --keep-data                 Remove all managed runtime components while retaining
+                              configuration, business data, backups, and logs
+  --purge-all                 Compatibility alias for the default complete removal
 
-  platform-gateway:
-    ensure                  Deploy or repair the local platform Gateway when enabled
-    verify [options]        Read-only verification of the local platform Gateway
-      --timeout SECONDS     Wait up to 180 seconds by default (maximum 900)
-      --required            Fail when local platform Gateway auto-deploy is disabled
+  Selective compatibility options:
+    --with-sourcelens         Remove HFL and bundled SourceLens runtime components
+    --purge-sourcelens-data   Remove bundled SourceLens data
+    --purge-media             Remove published Agent and Gateway artifacts
+    --purge-config            Remove .env
+    --purge-data              Remove business data
 
-  manage:
-    COMMAND [ARGS...]       Forward a Django management command to the active API color
+  Complete removal deletes HFL, bundled SourceLens, the installer-managed local
+  Platform Data Gateway, configuration, data, backups, logs, and the installation
+  directory.
 
-    Uninstall never removes the installation directory, managed backups, or host Docker CE.
-    Use the purge options explicitly when configuration or business data must be removed.
+  Host Docker CE, Docker Compose, and independently managed workloads are never
+  removed. To retain an uninstall log, set --log-file to a path outside
+  /opt/hyperfilelens.
+
+  Selective compatibility options retain their previous limited cleanup behavior
+  when used without --keep-data or --purge-all.
+
+Platform Data Gateway actions:
+  ensure                      Deploy or repair the local Platform Data Gateway
+  verify [options]            Verify the local Platform Data Gateway without changes
+    --timeout SECONDS         Wait up to 180 seconds by default (maximum 900)
+    --required                Fail when automatic Gateway deployment is disabled
+
+Management action:
+  COMMAND [ARGS...]           Run a Django management command in the active API service
+
+Language pack actions:
+  install --id PACK_ID        Install a language pack bundled with this release
+  install --file PATH         Validate and install a language-pack .tar.gz archive
+  list                        List installed language packs
+  uninstall PACK_ID           Uninstall a language pack and keep it disabled
+  remove PACK_ID              Compatibility alias for uninstall
 
 Examples:
-  sudo ./install.sh
-  sudo ./install.sh install
-  sudo ./install.sh status
-  sudo ./install.sh restart
-  sudo ./install.sh backup
-  sudo ./install.sh upgrade --from /path/to/hyperfilelens-0.2.1-ee.tar.gz
-  sudo ./install.sh uninstall
-  sudo ./install.sh uninstall --purge-all
-  sudo ./install.sh lang-pack install --file /path/to/hyperfilelens-lang-fr-0.1.0.tar.gz
-  sudo ./install.sh lang-pack install --id zh-hans
-  sudo ./install.sh lang-pack list
-  sudo ./install.sh lang-pack uninstall zh-hans
+  Install HyperFileLens:
+    sudo ./install.sh
+
+  Show deployment status:
+    sudo ./install.sh status
+
+  Restart all configured services:
+    sudo ./install.sh restart
+
+  Create a managed backup:
+    sudo ./install.sh backup
+
+  Upgrade from a release package:
+    sudo ./install.sh upgrade --from /path/to/hyperfilelens-0.2.1-ee.tar.gz
+
+  Completely remove the managed deployment:
+    sudo ./install.sh uninstall
+
+  Remove runtime components and retain persistent state:
+    sudo ./install.sh uninstall --keep-data
+
+  Compatibility form of complete removal:
+    sudo ./install.sh uninstall --purge-all
+
+  Install a bundled language pack:
+    sudo ./install.sh lang-pack install --id zh-hans
+
+  Install a language-pack archive:
+    sudo ./install.sh lang-pack install --file /path/to/hyperfilelens-lang-fr-0.1.0.tar.gz
+
+  List installed language packs:
+    sudo ./install.sh lang-pack list
+
+  Uninstall a language pack:
+    sudo ./install.sh lang-pack uninstall zh-hans
 USAGE
 }
 
@@ -232,8 +271,8 @@ timestamp_log_stream() {
 	# from durable logs while preserving the original stream on the terminal.
 	sed $'s/\033\[[0-9;?]*[ -/]*[@-~]//g' | while IFS= read -r line || [[ -n "${line}" ]]; do
 		printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
-		printf '[%s] %s\n' "${timestamp}" "${line}" >>"${log_file}"
-	done
+		printf '[%s] %s\n' "${timestamp}" "${line}"
+	done >>"${log_file}"
 }
 
 capture_log_stream() {
@@ -303,10 +342,46 @@ print_value() {
 	printf '  %-14s %s\n' "${label}" "${value}"
 }
 
+print_management_value() {
+	local label=$1 value=${2:-}
+	[[ -n "${value}" ]] || return 0
+	printf '  %-15s %s\n' "${label}" "${value}"
+}
+
+print_status_value() {
+	local label=$1 value=${2:-}
+	[[ -n "${value}" ]] || return 0
+	printf '  %-17s %s\n' "${label}" "${value}"
+}
+
+print_spaced_section() { printf '\n%s\n\n' "$1"; }
+
 print_result() {
 	printf '\n%s\n%s\n%s\n' \
 		'================================================================' "$1" \
 		'================================================================'
+}
+
+online_console_enabled() {
+	[[ "${HFL_ONLINE_CHILD:-0}" == "1" \
+		&& -n "${HFL_ONLINE_CONSOLE_MARKER:-}" ]]
+}
+
+online_console_line() {
+	online_console_enabled || return 0
+	printf '%s%s\n' "${HFL_ONLINE_CONSOLE_MARKER}" "${1:-}"
+}
+
+online_console_section() {
+	online_console_line
+	online_console_line "$1"
+}
+
+online_console_block() {
+	local line
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		online_console_line "${line}"
+	done
 }
 
 print_warning_summary() {
@@ -324,7 +399,9 @@ finish_session() {
 	if [[ "${SESSION_STARTED}" -eq 1 ]]; then
 		SESSION_STARTED=0
 		if [[ "${rc}" -eq 0 ]]; then
-			ok "HyperFileLens ${SESSION_ACTION} completed"
+			if [[ "${SESSION_ACTION}" != "status" ]]; then
+				ok "HyperFileLens ${SESSION_ACTION} completed"
+			fi
 		else
 			printf '[FAIL] HyperFileLens %s exited with status %s.\n' "${SESSION_ACTION}" "${rc}" >&2
 			printf '       Full log: %s\n' "${LOG_FILE}" >&2
@@ -500,6 +577,17 @@ safe_assert_env_file() {
 	[[ "${path}" == "${root}/.env" ]] || die "refusing to remove unexpected env file: ${path}"
 }
 
+safe_assert_removable_install_root() {
+	local root=$1
+	root="$(safe_normalize_dir "${root}")"
+	safe_assert_absolute "${root}" "installation root"
+	[[ "${root}" == "$(safe_normalize_dir "${INSTALL_DIR}")" \
+		&& "${root}" != "/" && "$(basename "${root}")" == "hyperfilelens" ]] \
+		|| die "refusing to remove unexpected installation root: ${root}"
+	[[ ! -L "${root}" ]] || die "refusing to remove a symbolic-link installation root: ${root}"
+	safe_assert_package_root "${root}"
+}
+
 safe_assert_package_basename() {
 	local name=$1
 	[[ "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz$ ]] \
@@ -578,6 +666,27 @@ safe_rm_dir() {
 	[[ -n "${dir}" && "${dir}" != "/" ]] || die "refusing to remove unsafe directory path"
 	rm -rf "${dir}" || die "failed to remove directory: ${dir}"
 	[[ ! -e "${dir}" && ! -L "${dir}" ]] || die "directory remains after removal: ${dir}"
+}
+
+remove_installation_files_preserving_data() {
+	local entry name
+	safe_assert_removable_install_root "${ROOT}"
+	step "Removing application files while preserving control-plane data ..."
+	while IFS= read -r -d '' entry; do
+		name="$(basename "${entry}")"
+		case "${name}" in
+		.env | .installer.lock | data | backup | logs) continue ;;
+		esac
+		safe_rm_dir "${entry}"
+	done < <(find "${ROOT}" -mindepth 1 -maxdepth 1 -print0)
+	ok "Application files removed; configuration, data, backups, and logs were preserved"
+}
+
+remove_complete_installation_root() {
+	safe_assert_removable_install_root "${ROOT}"
+	step "Removing the HyperFileLens installation root ..."
+	safe_rm_dir "${ROOT}"
+	ok "HyperFileLens installation root removed (${ROOT})"
 }
 
 # --- Host / Docker ---
@@ -710,7 +819,9 @@ materialize_to_install_dir() {
 	source="$(safe_normalize_dir "${source}")"
 	INSTALL_DIR="$(safe_normalize_dir "${INSTALL_DIR}")"
 	if [[ "${source}" == "${INSTALL_DIR}" ]]; then
-		log "already in install directory ${INSTALL_DIR}"
+		if [[ "${SESSION_ACTION}" != "status" ]]; then
+			log "already in install directory ${INSTALL_DIR}"
+		fi
 		return 0
 	fi
 	step "Copying release package ${source} -> ${INSTALL_DIR} ..."
@@ -731,6 +842,8 @@ materialize_to_install_dir() {
 			--exclude 'backup/'
 			--exclude 'logs/'
 			--exclude 'upgrade_tmp/'
+			--exclude '.install-complete*'
+			--exclude '.install-in-progress*'
 		)
 		if [[ "${tls_state}" == "complete" ]]; then
 			rsync_args+=(--exclude 'deploy/nginx/certs/')
@@ -768,6 +881,26 @@ init_existing_install_root() {
 	ROOT="${INSTALL_DIR}"
 	safe_assert_package_root "${ROOT}"
 	acquire_installation_lock
+}
+
+mark_install_in_progress() {
+	local temporary
+	temporary="$(mktemp "${INSTALL_DIR}/.install-in-progress.XXXXXX")"
+	printf 'started_at=%s\n' "$(hfl_now)" >"${temporary}"
+	chmod 600 "${temporary}"
+	mv -f "${temporary}" "${INSTALL_IN_PROGRESS_MARKER}"
+}
+
+mark_install_complete() {
+	local version=$1 temporary
+	temporary="$(mktemp "${INSTALL_DIR}/.install-complete.XXXXXX")"
+	{
+		printf 'version=%s\n' "${version}"
+		printf 'completed_at=%s\n' "$(hfl_now)"
+	} >"${temporary}"
+	chmod 600 "${temporary}"
+	mv -f "${temporary}" "${INSTALL_COMPLETE_MARKER}"
+	safe_rm_file "${INSTALL_IN_PROGRESS_MARKER}"
 }
 
 require_docker() {
@@ -1087,6 +1220,21 @@ container_health_status() {
 	docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}" 2>/dev/null || true
 }
 
+service_group_ready_now() {
+	local compose_function=$1 service cids cid status
+	shift
+	for service in "$@"; do
+		cids="$("${compose_function}" ps -q "${service}" 2>/dev/null)" || return 1
+		[[ -n "${cids}" ]] || return 1
+		while IFS= read -r cid; do
+			[[ -n "${cid}" ]] || continue
+			status="$(container_health_status "${cid}")"
+			[[ "${status}" == "healthy" || "${status}" == "running" ]] || return 1
+		done <<<"${cids}"
+	done
+	return 0
+}
+
 wait_for_services_health() {
 	local timeout_seconds=$1
 	shift
@@ -1161,6 +1309,7 @@ reload_stable_nginx() {
 }
 
 start_hfl_stack() {
+	local show_sections=${1:-0}
 	local color nginx_generation_before nginx_generation_after
 	ensure_blue_green_state || return 1
 	color="$(read_active_color)" || return 1
@@ -1168,13 +1317,27 @@ start_hfl_stack() {
 		warn "could not inspect the stable Nginx instance before service convergence"
 		return 1
 	fi
+	if [[ "${show_sections}" -eq 1 ]]; then
+		print_section "Core data services"
+	fi
 	compose_in_root up -d --no-build --pull never --no-recreate postgres redis || return 1
 	# Compose v2.27 supports `up --pull` but not `run --pull`. The migration
 	# service inherits `pull_policy: never` from the release Compose model, so
 	# this remains offline without relying on a version-sensitive CLI flag.
+	if [[ "${show_sections}" -eq 1 ]]; then
+		print_section "Database initialization"
+		step "Applying backend database migrations and initial data"
+	fi
 	compose_in_root --profile tools run --rm --no-deps migration || return 1
+	if [[ "${show_sections}" -eq 1 ]]; then
+		ok "Database migrations and initial data are ready"
+		print_section "Application services"
+	fi
 	compose_in_root up -d --no-build --pull never worker scheduler || return 1
 	compose_color "${color}" up -d --no-build --pull never "api-${color}" "web-${color}" || return 1
+	if [[ "${show_sections}" -eq 1 ]]; then
+		print_section "Health checks"
+	fi
 	wait_for_color_health "${color}" || return 1
 	compose_in_root up -d --no-build --pull never nginx || return 1
 	if ! nginx_generation_after="$(stable_nginx_running_generation)"; then
@@ -1241,7 +1404,7 @@ wait_for_public_endpoints() {
 	[[ -n "${tenant_port}" ]] || tenant_port=11443
 	deadline=$((SECONDS + timeout_seconds))
 	while ((SECONDS < deadline)); do
-		if curl -kfsS "https://127.0.0.1:${website_port}/en/" >/dev/null 2>&1 \
+		if curl -kfsS "https://127.0.0.1:${website_port}/" >/dev/null 2>&1 \
 			&& curl -kfsS "https://127.0.0.1:${tenant_port}/health/ready" >/dev/null 2>&1; then
 			return 0
 		fi
@@ -1579,24 +1742,22 @@ ensure_bridge_network() {
 }
 
 warn_host_resources() {
-	local cpu_count mem_total_kib mem_available_kib swap_total_kib
+	local cpu_count mem_total_kib mem_available_kib
 	cpu_count="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 0)"
-	if [[ ! "${cpu_count}" =~ ^[0-9]+$ || "${cpu_count}" -lt 2 ]]; then
-		warn "fewer than 2 CPU cores detected (${cpu_count:-unknown}); installation will continue with reduced throughput"
+	if [[ ! "${cpu_count}" =~ ^[0-9]+$ || "${cpu_count}" -lt 4 ]]; then
+		warn "fewer than the minimum 4 CPU cores detected (${cpu_count:-unknown}); installation will continue but may be unstable under concurrent load"
+	elif [[ "${cpu_count}" -lt 8 ]]; then
+		warn "fewer than the recommended 8 CPU cores detected (${cpu_count}); installation will continue"
 	fi
 	mem_total_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
 	mem_available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null)"
-	swap_total_kib="$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
-	if [[ "${mem_total_kib:-0}" -lt $((4 * 1024 * 1024)) ]]; then
-		warn "less than 4 GiB physical memory detected; installation will continue but may be unstable under concurrent load"
-	elif [[ "${mem_total_kib:-0}" -lt $((8 * 1024 * 1024)) ]]; then
-		warn "less than the recommended 8 GiB physical memory detected; installation will continue"
+	if [[ "${mem_total_kib:-0}" -lt $((8 * 1024 * 1024)) ]]; then
+		warn "less than the minimum 8 GiB physical memory detected; installation will continue but may be unstable under concurrent load"
+	elif [[ "${mem_total_kib:-0}" -lt $((16 * 1024 * 1024)) ]]; then
+		warn "less than the recommended 16 GiB physical memory detected; installation will continue"
 	fi
 	if [[ "${mem_available_kib:-0}" -lt $((2500 * 1024)) ]]; then
 		warn "less than 2.5 GiB memory is currently available; installation will continue"
-	fi
-	if [[ "${swap_total_kib:-0}" -eq 0 ]]; then
-		warn "no swap is configured; installation will continue, but memory pressure can invoke the host OOM killer"
 	fi
 }
 
@@ -1850,10 +2011,29 @@ if delivery_mode == "registry":
         sources = image.get("sources") or []
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", role):
             raise SystemExit("registry delivery has an invalid image role")
-        if not re.fullmatch(
-            r"hyperfilelens-[a-z0-9-]+:[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
-            local_ref,
-        ):
+        valid_local_ref = False
+        if role == "hyperfilelens":
+            valid_local_ref = bool(
+                re.fullmatch(
+                    r"hyperfilelens-(?:backend|frontend):"
+                    r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
+                    local_ref,
+                )
+            )
+        elif role in {"sourcelens-backend", "sourcelens-frontend"}:
+            component = role[len("sourcelens-") :]
+            valid_local_ref = bool(
+                re.fullmatch(
+                    rf"oneprolabs/sourcelens-{component}:"
+                    r"[0-9]+\.[0-9]+\.[0-9]+",
+                    local_ref,
+                )
+            )
+        elif role == "sourcelens-nginx":
+            valid_local_ref = local_ref == "nginx:stable-alpine"
+        elif role == "shared":
+            valid_local_ref = local_ref in {"postgres:17", "redis:alpine"}
+        if not valid_local_ref:
             raise SystemExit(f"registry delivery has an invalid local image ref: {local_ref}")
         if local_ref not in declared_refs or local_ref in seen_refs:
             raise SystemExit(f"registry delivery has an undeclared or duplicate image ref: {local_ref}")
@@ -2263,7 +2443,10 @@ sub_key("TURNSTILE_ENABLED", "false")
 tenant_port = "11443"
 frontend_url = f"https://{host}:{tenant_port}"
 sub_key("FRONTEND_URL", frontend_url)
-sub_key("DJANGO_ALLOWED_HOSTS", f"localhost,127.0.0.1,{host}")
+sub_key(
+    "DJANGO_ALLOWED_HOSTS",
+    "*" if edition == "community" else f"localhost,127.0.0.1,{host}",
+)
 sub_key(
     "CSRF_TRUSTED_ORIGINS",
     f"https://localhost:{tenant_port},https://127.0.0.1:{tenant_port},{frontend_url}",
@@ -2425,8 +2608,10 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
+import time
 
 root = pathlib.Path(sys.argv[1])
 skip_sourcelens = sys.argv[2] == "1"
@@ -2434,6 +2619,22 @@ with (root / "MANIFEST.json").open(encoding="utf-8") as fh:
     manifest = json.load(fh)
 delivery = manifest.get("delivery") or {"mode": "offline"}
 delivery_mode = str(delivery.get("mode") or "offline")
+online_child = os.environ.get("HFL_ONLINE_CHILD") == "1"
+registry_retry_delay = os.environ.get("HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS", "15")
+registry_retry_delay_seconds = (
+    min(int(registry_retry_delay), 60) if registry_retry_delay.isdecimal() else 15
+)
+registry_pull_attempts = 5
+registry_retry_max_delay_seconds = 60
+transient_registry_error = re.compile(
+    r"network is unreachable|no route to host|connection (?:refused|reset|timed out)"
+    r"|i/o timeout|context deadline exceeded|tls handshake timeout|client\.timeout"
+    r"|request canceled|unexpected eof|short read|unexpected commit digest"
+    r"|too many requests"
+    r"|(?:http (?:response )?status|status(?: code)?(?: from [^:\n]+)?)"
+    r"[^0-9\n]{0,16}(?:429|5[0-9]{2})",
+    re.IGNORECASE,
+)
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -2488,11 +2689,22 @@ def has_expected_digest(ref: str, digest: str) -> bool:
     )
 
 
+def registry_retry_delay_for_attempt(completed_attempt: int) -> int:
+    return min(
+        registry_retry_delay_seconds * (2 ** (completed_attempt - 1)),
+        registry_retry_max_delay_seconds,
+    )
+
+
+def registry_display_name(region: str) -> str:
+    return "Alibaba Cloud" if region == "cn" else "Docker Hub"
+
+
 if delivery_mode == "registry":
-    preferred_region = os.environ.get("HFL_REGISTRY_REGION", "").strip()
-    if preferred_region not in {"cn", "global"}:
+    selected_region = os.environ.get("HFL_REGISTRY_REGION", "").strip()
+    if selected_region not in {"cn", "global"}:
         raise SystemExit("registry delivery requires HFL_REGISTRY_REGION=cn or global")
-    fallback_region = "global" if preferred_region == "cn" else "cn"
+    registry_name = registry_display_name(selected_region)
     registry_images = [
         image
         for image in (delivery.get("registry_images") or [])
@@ -2512,24 +2724,33 @@ if delivery_mode == "registry":
             raise SystemExit(
                 f"registry image sources must contain cn and global regions: {local_ref}"
             )
-        sources = [
-            sources_by_region[preferred_region],
-            sources_by_region[fallback_region],
-        ]
+        source = sources_by_region[selected_region]
         pulled = ""
         errors = []
-        print(
-            f"[....] Resolving registry image ({index}/{len(registry_images)}): "
-            f"{local_ref}@{digest}"
-        )
+        if online_child:
+            print(
+                f"[....] Verifying prepared runtime image "
+                f"({index}/{len(registry_images)}): {local_ref}@{digest}"
+            )
+        else:
+            print(
+                f"[....] Resolving registry image ({index}/{len(registry_images)}): "
+                f"{local_ref}@{digest}"
+            )
         if has_expected_digest(local_ref, digest):
             verify_revision(local_ref, str(image.get("role") or ""))
-            print(f"[ OK ] Reusing registry image: {local_ref}@{digest}")
+            if online_child:
+                print(
+                    f"[ OK ] Runtime image {index}/{len(registry_images)} "
+                    f"verified · {local_ref}@{digest}"
+                )
+            else:
+                print(f"[ OK ] Reusing registry image: {local_ref}@{digest}")
             continue
-        for source in sources:
-            source_ref = str(source.get("ref") or "")
-            repository = source_ref.rsplit(":", 1)[0]
-            immutable_ref = f"{repository}@{digest}"
+        source_ref = str(source.get("ref") or "")
+        repository = source_ref.rsplit(":", 1)[0]
+        immutable_ref = f"{repository}@{digest}"
+        for attempt in range(1, registry_pull_attempts + 1):
             completed = subprocess.run(
                 ["docker", "pull", "--platform", "linux/amd64", immutable_ref],
                 check=False,
@@ -2540,10 +2761,25 @@ if delivery_mode == "registry":
             if completed.returncode == 0:
                 pulled = immutable_ref
                 break
-            errors.append(f"{immutable_ref}: {completed.stdout.strip()[-500:]}")
+            output = completed.stdout.strip()
+            errors.append(f"{immutable_ref}: {output[-500:]}")
+            if (
+                attempt < registry_pull_attempts
+                and transient_registry_error.search(output)
+            ):
+                delay = registry_retry_delay_for_attempt(attempt)
+                print(
+                    f"[WARN] Temporary {registry_name} image download error; "
+                    f"retrying in {delay} seconds "
+                    f"({attempt + 1}/{registry_pull_attempts})"
+                )
+                time.sleep(delay)
+                continue
+            break
         if not pulled:
             print(
-                f"[install.sh] ERROR: no registry source could provide {local_ref}",
+                f"[install.sh] ERROR: selected {registry_name} registry "
+                f"could not provide {local_ref}",
                 file=sys.stderr,
             )
             for error in errors:
@@ -2553,8 +2789,17 @@ if delivery_mode == "registry":
         if not has_expected_digest(local_ref, digest):
             raise SystemExit(f"registry image digest was not retained locally: {local_ref}")
         verify_revision(local_ref, str(image.get("role") or ""))
-        print(f"[ OK ] Verified registry image: {local_ref}@{digest}")
-    print(f"[ OK ] Processed {len(registry_images)} registry image(s)")
+        if online_child:
+            print(
+                f"[ OK ] Runtime image {index}/{len(registry_images)} "
+                f"verified · {local_ref}@{digest}"
+            )
+        else:
+            print(f"[ OK ] Verified registry image: {local_ref}@{digest}")
+    if online_child:
+        print(f"[ OK ] All {len(registry_images)} prepared runtime images are verified")
+    else:
+        print(f"[ OK ] Processed {len(registry_images)} registry image(s)")
     raise SystemExit(0)
 if delivery_mode != "offline":
     raise SystemExit(f"unsupported release delivery mode: {delivery_mode}")
@@ -3438,53 +3683,274 @@ cleanup_upgrade_tmp() {
 	fi
 }
 
-remove_manifest_images() {
+remove_installation_images() {
+	local include_hfl=${1:-1} include_sourcelens=${2:-1} output="" status label detail
+	INSTALLATION_IMAGES_REMOVED=0
+	INSTALLATION_IMAGES_RETAINED=0
+	RETAINED_INSTALLATION_IMAGES=()
 	[[ -f "${ROOT}/MANIFEST.json" ]] || return 0
-	step "Removing application Docker images..."
-	python3 - "${ROOT}" <<'PY'
+	step "Removing installation Docker images ..."
+	if ! output="$(python3 - "${ROOT}/MANIFEST.json" \
+		"${include_hfl}" "${include_sourcelens}" <<'PY'
 import json
 import subprocess
 import sys
-with open(f"{sys.argv[1]}/MANIFEST.json", encoding="utf-8") as fh:
+
+with open(sys.argv[1], encoding="utf-8") as fh:
     manifest = json.load(fh)
-seen = set()
-entries = list(manifest.get("images", []))
-entries.extend(
-    {"refs": [entry.get("local_ref", "")]}
-    for entry in (manifest.get("delivery") or {}).get("asset_images", [])
+include_hfl = sys.argv[2] == "1"
+include_sourcelens = sys.argv[3] == "1"
+
+
+def selected(role):
+    normalized = str(role or "")
+    if normalized == "shared":
+        return include_hfl and include_sourcelens
+    is_sourcelens = normalized.startswith("sourcelens")
+    return include_sourcelens if is_sourcelens else include_hfl
+
+
+def repository(ref):
+    value = str(ref or "").split("@", 1)[0]
+    slash = value.rfind("/")
+    colon = value.rfind(":")
+    return value[:colon] if colon > slash else value
+
+
+def inspect(ref):
+    completed = subprocess.run(
+        ["docker", "image", "inspect", ref],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or "").strip()
+        missing = detail.lower()
+        if "no such image" in missing or "no such object" in missing:
+            return None
+        raise SystemExit(
+            f"could not inspect Docker image {ref}: "
+            f"{detail or 'unknown Docker error'}"
+        )
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"Docker returned invalid image metadata for {ref}: {error}")
+    if not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], dict):
+        raise SystemExit(f"Docker returned incomplete image metadata for {ref}")
+    return value[0]
+
+
+def image_id(value):
+    raw = str(value or "")
+    return raw[7:] if raw.startswith("sha256:") else raw
+
+
+def has_digest(image, digest):
+    return any(
+        str(item).rsplit("@", 1)[-1] == digest
+        for item in image.get("RepoDigests") or []
+    )
+
+
+docker_ready = subprocess.run(
+    ["docker", "info"],
+    check=False,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
 )
-for entry in entries:
-    if str(entry.get("role", "")).startswith("sourcelens"):
+if docker_ready.returncode != 0:
+    raise SystemExit("Docker is unavailable while resolving installation images")
+
+
+records = []
+delivery_refs = set()
+delivery = manifest.get("delivery") or {}
+for group in ("registry_images", "asset_images"):
+    for entry in delivery.get(group) or []:
+        local_ref = str(entry.get("local_ref") or "")
+        if not local_ref or not selected(entry.get("role")):
+            continue
+        records.append(
+            {
+                "label": local_ref,
+                "local_ref": local_ref,
+                "digest": str(entry.get("digest") or ""),
+                "sources": [
+                    str(source.get("ref") or "")
+                    for source in entry.get("sources") or []
+                    if source.get("ref")
+                ],
+            }
+        )
+        delivery_refs.add(local_ref)
+
+for entry in manifest.get("images") or []:
+    if not selected(entry.get("role")):
         continue
-    for ref in entry.get("refs", []):
-        tag = ref.split("@", 1)[0]
-        if not tag:
+    for ref in entry.get("refs") or []:
+        value = str(ref or "")
+        if value and value not in delivery_refs:
+            records.append(
+                {"label": value, "local_ref": value, "digest": "", "sources": []}
+            )
+
+groups = {}
+for record in records:
+    immutable_refs = []
+    digest = record["digest"]
+    if digest.startswith("sha256:"):
+        immutable_refs = [
+            f"{repository(source)}@{digest}" for source in record["sources"]
+        ]
+    anchor_refs = [record["local_ref"], *immutable_refs]
+    anchors = {}
+    for ref in anchor_refs:
+        value = inspect(ref)
+        if value and (
+            ref != record["local_ref"]
+            or not digest.startswith("sha256:")
+            or has_digest(value, digest)
+        ):
+            anchors[ref] = image_id(value.get("Id"))
+
+    # A mutable source tag is eligible only when it still identifies the same
+    # immutable image as the installed local tag or declared digest.
+    for source in record["sources"]:
+        value = inspect(source)
+        if not value:
             continue
-        if tag in seen:
+        current_id = image_id(value.get("Id"))
+        digest_matches = has_digest(value, digest)
+        if digest_matches or (
+            not digest.startswith("sha256:") and current_id in anchors.values()
+        ):
+            anchors[source] = current_id
+
+    for ref, current_id in anchors.items():
+        if not current_id:
             continue
-        seen.add(tag)
-        print(f"[install.sh] removing image {tag}")
-        image_ids = subprocess.run(
-            ["docker", "image", "ls", "--quiet", "--no-trunc", tag],
-            stdout=subprocess.PIPE,
+        group = groups.setdefault(current_id, {"labels": set(), "refs": set()})
+        group["labels"].add(record["label"])
+        group["refs"].add(ref)
+
+containers = subprocess.run(
+    ["docker", "ps", "-aq", "--no-trunc"],
+    check=False,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+)
+if containers.returncode != 0:
+    raise SystemExit("Docker containers could not be enumerated safely")
+users = {}
+for container_id in containers.stdout.split():
+    completed = subprocess.run(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.Image}}\t{{.Name}}",
+            container_id,
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        raise SystemExit(
+            f"Docker container {container_id[:12]} could not be inspected safely"
+        )
+    raw_id, _, raw_name = completed.stdout.strip().partition("\t")
+    current_id = image_id(raw_id)
+    name = raw_name.lstrip("/") or container_id[:12]
+    users.setdefault(current_id, []).append(f"{name} ({container_id[:12]})")
+
+for current_id, group in sorted(groups.items(), key=lambda item: sorted(item[1]["labels"])):
+    label = ", ".join(sorted(group["labels"]))
+    if users.get(current_id):
+        print(
+            f"RETAINED\t{label}\tused by container(s): "
+            + ", ".join(sorted(users[current_id]))
+        )
+        continue
+
+    for ref in sorted(group["refs"]):
+        if not inspect(ref):
+            continue
+        removed = subprocess.run(
+            ["docker", "image", "rm", ref],
+            check=False,
             text=True,
-            check=True,
-        ).stdout.split()
-        if not image_ids:
-            print(f"[install.sh] image not present: {tag}")
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        if removed.returncode != 0 and inspect(ref):
+            detail = (removed.stderr or "").strip().splitlines()
+            reason = detail[-1] if detail else "unknown Docker error"
+            raise SystemExit(f"could not remove Docker image reference {ref}: {reason}")
+
+    remaining = inspect(f"sha256:{current_id}") or inspect(current_id)
+    if remaining:
+        remaining_refs = sorted(
+            str(ref)
+            for ref in [
+                *(remaining.get("RepoTags") or []),
+                *(remaining.get("RepoDigests") or []),
+            ]
+            if ref
+        )
+        if remaining_refs:
+            print(
+                f"RETAINED\t{label}\tshared by other image reference(s): "
+                + ", ".join(remaining_refs)
+            )
             continue
-        removed = subprocess.run(["docker", "image", "rm", "-f", tag], check=False)
-        if removed.returncode != 0:
-            remaining = subprocess.run(
-                ["docker", "image", "ls", "--quiet", "--no-trunc", tag],
-                stdout=subprocess.PIPE,
-                text=True,
-                check=True,
-            ).stdout.split()
-            if remaining:
-                raise SystemExit(f"failed to remove image: {tag}")
-            print(f"[install.sh] image was already removed: {tag}")
+        removed = subprocess.run(
+            ["docker", "image", "rm", f"sha256:{current_id}"],
+            check=False,
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        if removed.returncode != 0 and (inspect(f"sha256:{current_id}") or inspect(current_id)):
+            detail = (removed.stderr or "").strip().splitlines()
+            reason = detail[-1] if detail else "unknown Docker error"
+            raise SystemExit(
+                f"could not remove untagged Docker image sha256:{current_id}: {reason}"
+            )
+    print(f"REMOVED\t{label}\tinstallation image references removed")
 PY
+	)"; then
+		warn "Installation Docker image cleanup could not be completed; remaining images were retained"
+		return 1
+	fi
+	while IFS=$'\t' read -r status label detail; do
+		[[ -n "${status}" ]] || continue
+		case "${status}" in
+		REMOVED)
+			INSTALLATION_IMAGES_REMOVED=$((INSTALLATION_IMAGES_REMOVED + 1))
+			debug "Removed installation Docker image ${label}"
+			;;
+		RETAINED)
+			INSTALLATION_IMAGES_RETAINED=$((INSTALLATION_IMAGES_RETAINED + 1))
+			RETAINED_INSTALLATION_IMAGES+=("${label}: ${detail}")
+			warn "Retained Docker image ${label}; ${detail}"
+			;;
+		esac
+	done <<<"${output}"
+	if [[ "${INSTALLATION_IMAGES_RETAINED}" -eq 0 ]]; then
+		if [[ "${INSTALLATION_IMAGES_REMOVED}" -eq 0 ]]; then
+			ok "No installation Docker images were present"
+		else
+			ok "All ${INSTALLATION_IMAGES_REMOVED} installation Docker images were removed"
+		fi
+	else
+		log "Docker image cleanup: ${INSTALLATION_IMAGES_REMOVED} removed; ${INSTALLATION_IMAGES_RETAINED} retained"
+	fi
 }
 
 uninstall_hfl_runtime() {
@@ -3503,7 +3969,6 @@ uninstall_hfl_runtime() {
 	fi
 	remove_owned_installation_containers "HyperFileLens" hyperfilelens
 	remove_empty_owned_compose_networks hyperfilelens
-	remove_manifest_images || return 1
 }
 
 version_lt() {
@@ -3579,15 +4044,41 @@ PY
 	printf '%s' "<host>"
 }
 
+print_nested_value() {
+	local label=$1 value=${2:-}
+	[[ -n "${value}" ]] || return 0
+	printf '    %-14s %s\n' "${label}" "${value}"
+}
+
+installation_platform_display() {
+	local platform_name="Linux" machine
+	if [[ -r /etc/os-release ]]; then
+		platform_name="$(
+			awk -F= '$1 == "PRETTY_NAME" {value=substr($0, index($0, "=") + 1); gsub(/^"|"$/, "", value); print value; exit}' \
+				/etc/os-release
+		)"
+		[[ -n "${platform_name}" ]] || platform_name="Linux"
+	fi
+	machine="$(uname -m)"
+	case "${machine}" in
+	x86_64) machine=amd64 ;;
+	aarch64) machine=arm64 ;;
+	esac
+	printf '%s · linux/%s' "${platform_name}" "${machine}"
+}
+
 print_console_access_summary() {
 	local summary_title=${1:-"Installation summary"}
 	local show_deployment=${2:-1}
 	local env_file="${ROOT}/.env"
 	[[ -f "${env_file}" ]] || return 0
-
 	local host seed seed_email seed_pass seed_org sourcelens_mode sourcelens_console_port
 	local website_bind website_port tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
-	local sl_env sl_user sl_email sl_pass show_credentials=0
+	local sl_env sl_user sl_email sl_pass show_credentials=0 credentials_note
+	local management_printer=print_value
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		management_printer=print_management_value
+	fi
 	host="$(resolve_console_host)"
 	seed="$(read_env_value SEED_INITIAL_DATA)"
 	seed_email="$(read_env_value SEED_ADMIN_EMAIL)"
@@ -3612,28 +4103,6 @@ print_console_access_summary() {
 	sourcelens_console_port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
 	[[ -n "${sourcelens_console_port}" ]] || sourcelens_console_port="11445"
 
-	if [[ "${show_deployment}" -eq 1 ]]; then
-		print_section "${summary_title}"
-		print_value "Version" "$(read_version)"
-		print_value "Edition" "$(display_edition_from_dir "${ROOT}")"
-		print_value "Install path" "${ROOT}"
-		print_value "Config file" "${env_file}"
-		print_value "Log file" "${LOG_FILE}"
-		print_section "Access"
-	else
-		print_section "${summary_title}"
-	fi
-	print_value "Website" "https://${host}:${website_port}/en/  (${website_bind})"
-	print_value "Tenant" "https://${host}:${tenant_port}/  (${tenant_bind})"
-	print_value "Platform Ops" "https://${host}:${admin_port}/  (${admin_bind})"
-	print_value "Django Admin" "https://${host}:${admin_port}/admin/"
-	print_value "API / Swagger" "https://${host}:${tenant_port}/swagger"
-	if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
-		print_value "Insight Console" "https://${host}:${sourcelens_console_port}/  (${sourcelens_console_bind})"
-	elif [[ "${sourcelens_mode}" == "external" ]]; then
-		print_value "Insight Console" "$(read_env_value LENS_BASE_URL) (external)"
-	fi
-
 	if [[ "${seed}" == "1" ]]; then
 		[[ -n "${seed_email}" ]] || seed_email="admin@hyperfilelens.com"
 		[[ -n "${seed_pass}" ]] || seed_pass="Admin@123"
@@ -3644,39 +4113,139 @@ print_console_access_summary() {
 		auto) [[ "${INTERACTIVE_SESSION}" -eq 1 ]] && show_credentials=1 || true ;;
 		*) die "invalid HFL_SHOW_GENERATED_CREDENTIALS=${SHOW_GENERATED_CREDENTIALS}" ;;
 		esac
-		print_section "Login credentials"
-		printf '  HyperFileLens\n'
-		if [[ "${show_credentials}" -eq 1 ]]; then
-			print_value "  Email" "${seed_email}"
-			print_value "  Password" "${seed_pass}"
-			print_value "  Applies to" "Tenant, Platform Ops and Django Admin"
-		else
-			print_value "  Credentials" "stored in ${env_file}; values are hidden in non-interactive logs"
+		credentials_note="stored in ${env_file}; values are hidden in non-interactive logs"
+	fi
+	if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
+		sl_env="${ROOT}/data/sourcelens/config/.env"
+		sl_user="$(grep -E '^DJANGO_SUPERUSER_USERNAME=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
+		sl_email="$(grep -E '^DJANGO_SUPERUSER_EMAIL=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
+		sl_pass="$(grep -E '^DJANGO_SUPERUSER_PASSWORD=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
+		[[ -n "${sl_user}" ]] || sl_user="admin"
+		[[ -n "${sl_email}" ]] || sl_email="admin@example.com"
+		[[ -n "${sl_pass}" ]] || sl_pass="adminpassword"
+	fi
+
+	if [[ "${show_deployment}" -eq 1 ]]; then
+		print_section "${summary_title}"
+		print_value "Version" "$(read_version)"
+		print_value "Edition" "$(display_edition_from_dir "${ROOT}")"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			print_value "Platform" "$(installation_platform_display)"
 		fi
-		print_value "  Organization" "${seed_org}"
+		print_value "Install path" "${ROOT}"
+		print_value "Config file" "${env_file}"
+		print_value "Log file" "${LOG_FILE}"
+		print_section "Access"
+	else
+		print_section "${summary_title}"
+	fi
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		printf '  Website · %s\n' "${website_port}"
+		print_nested_value "URL" "https://${host}:${website_port}/"
+		print_nested_value "Bind" "${website_bind}"
+
+		printf '\n  Tenant · %s\n' "${tenant_port}"
+		print_nested_value "URL" "https://${host}:${tenant_port}/"
+		if [[ "${seed}" == "1" ]]; then
+			if [[ "${show_credentials}" -eq 1 ]]; then
+				print_nested_value "Email" "${seed_email}"
+				print_nested_value "Password" "${seed_pass}"
+			else
+				print_nested_value "Credentials" "${credentials_note}"
+			fi
+			print_nested_value "Organization" "${seed_org}"
+		fi
+
+		printf '\n  Platform Ops · %s\n' "${admin_port}"
+		print_nested_value "URL" "https://${host}:${admin_port}/"
+		if [[ "${seed}" == "1" ]]; then
+			if [[ "${show_credentials}" -eq 1 ]]; then
+				print_nested_value "Email" "${seed_email}"
+				print_nested_value "Password" "${seed_pass}"
+			else
+				print_nested_value "Credentials" "${credentials_note}"
+			fi
+		fi
+
+		printf '\n  Django Admin · %s\n' "${admin_port}"
+		print_nested_value "URL" "https://${host}:${admin_port}/admin/"
+		if [[ "${seed}" == "1" ]]; then
+			if [[ "${show_credentials}" -eq 1 ]]; then
+				print_nested_value "Email" "${seed_email}"
+				print_nested_value "Password" "${seed_pass}"
+			else
+				print_nested_value "Credentials" "${credentials_note}"
+			fi
+		fi
 
 		if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
-			sl_env="${ROOT}/data/sourcelens/config/.env"
-			sl_user="$(grep -E '^DJANGO_SUPERUSER_USERNAME=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
-			sl_email="$(grep -E '^DJANGO_SUPERUSER_EMAIL=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
-			sl_pass="$(grep -E '^DJANGO_SUPERUSER_PASSWORD=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
-			[[ -n "${sl_user}" ]] || sl_user="admin"
-			[[ -n "${sl_email}" ]] || sl_email="admin@example.com"
-			[[ -n "${sl_pass}" ]] || sl_pass="adminpassword"
+			printf '\n  Insight Console · %s\n' "${sourcelens_console_port}"
+			print_nested_value "URL" "https://${host}:${sourcelens_console_port}/"
+			print_nested_value "Bind" "${sourcelens_console_bind}"
+			if [[ "${seed}" == "1" ]]; then
+				if [[ "${show_credentials}" -eq 1 ]]; then
+					print_nested_value "Username" "${sl_user}"
+					print_nested_value "Email" "${sl_email}"
+					print_nested_value "Password" "${sl_pass}"
+				else
+					print_nested_value "Credentials" "stored in ${sl_env}; values are hidden in non-interactive logs"
+				fi
+			fi
+			print_nested_value "API" "https://${host}:${tenant_port}/sourcelens/api/"
+			print_nested_value "WebSocket" "wss://${host}:${tenant_port}/sourcelens/ws/lens/lensnodes/"
+			print_nested_value "Network" "${HFL_BRIDGE_NETWORK} (private)"
+		elif [[ "${sourcelens_mode}" == "external" ]]; then
 			printf '\n  Insight Console\n'
+			print_nested_value "URL" "$(read_env_value LENS_BASE_URL)"
+			print_nested_value "Mode" "external"
+		fi
+
+		printf '\n  API / Swagger · %s\n' "${tenant_port}"
+		print_nested_value "URL" "https://${host}:${tenant_port}/swagger"
+		print_nested_value "Authentication" "HyperFileLens account"
+	else
+		print_value "Website" "https://${host}:${website_port}/  (${website_bind})"
+		print_value "Tenant" "https://${host}:${tenant_port}/  (${tenant_bind})"
+		print_value "Platform Ops" "https://${host}:${admin_port}/  (${admin_bind})"
+		print_value "Django Admin" "https://${host}:${admin_port}/admin/"
+		print_value "API / Swagger" "https://${host}:${tenant_port}/swagger"
+		if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
+			print_value "Insight Console" "https://${host}:${sourcelens_console_port}/  (${sourcelens_console_bind})"
+		elif [[ "${sourcelens_mode}" == "external" ]]; then
+			print_value "Insight Console" "$(read_env_value LENS_BASE_URL) (external)"
+		fi
+	fi
+
+	if [[ "${seed}" == "1" ]]; then
+		if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
+			print_section "Login credentials"
+			printf '  HyperFileLens\n'
 			if [[ "${show_credentials}" -eq 1 ]]; then
-				print_value "  Username" "${sl_user}"
-				print_value "  Email" "${sl_email}"
-				print_value "  Password" "${sl_pass}"
+				print_value "  Email" "${seed_email}"
+				print_value "  Password" "${seed_pass}"
+				print_value "  Applies to" "Tenant, Platform Ops and Django Admin"
 			else
-				print_value "  Credentials" "stored in ${sl_env}; values are hidden in non-interactive logs"
+				print_value "  Credentials" "${credentials_note}"
+			fi
+			print_value "  Organization" "${seed_org}"
+
+			if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
+				printf '\n  Insight Console\n'
+				if [[ "${show_credentials}" -eq 1 ]]; then
+					print_value "  Username" "${sl_user}"
+					print_value "  Email" "${sl_email}"
+					print_value "  Password" "${sl_pass}"
+				else
+					print_value "  Credentials" "stored in ${sl_env}; values are hidden in non-interactive logs"
+				fi
 			fi
 		fi
 	else
 		warn "Initial seeding is disabled (SEED_INITIAL_DATA=${seed:-0}); no default admin account will be created automatically."
 	fi
 
-	if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
+	if [[ "${HFL_ONLINE_CHILD:-0}" != "1" \
+		&& "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
 		print_section "Service endpoints"
 		print_value "Insight API" "https://${host}:${tenant_port}/sourcelens/api/"
 		print_value "Insight WSS" "wss://${host}:${tenant_port}/sourcelens/ws/lens/lensnodes/"
@@ -3700,13 +4269,131 @@ print_console_access_summary() {
 	print_warning_summary
 
 	print_section "Management commands"
-	print_value "Status" "sudo ${ROOT}/install.sh status"
-	print_value "Start" "sudo ${ROOT}/install.sh start"
-	print_value "Stop" "sudo ${ROOT}/install.sh stop"
-	print_value "Restart" "sudo ${ROOT}/install.sh restart"
-	print_value "Backup" "sudo ${ROOT}/install.sh backup"
-	print_value "Upgrade" "sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
-	print_value "Uninstall" "sudo ${ROOT}/install.sh uninstall"
+	"${management_printer}" "Status" "sudo ${ROOT}/install.sh status"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		"${management_printer}" "Logs" \
+			"sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"
+	fi
+	"${management_printer}" "Start" "sudo ${ROOT}/install.sh start"
+	"${management_printer}" "Stop" "sudo ${ROOT}/install.sh stop"
+	"${management_printer}" "Restart" "sudo ${ROOT}/install.sh restart"
+	"${management_printer}" "Backup" "sudo ${ROOT}/install.sh backup"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		"${management_printer}" "Online upgrade" "$(online_community_upgrade_command)"
+		"${management_printer}" "Offline upgrade" \
+			"sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
+	else
+		"${management_printer}" "Upgrade" \
+			"sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
+	fi
+	"${management_printer}" "Uninstall" "sudo ${ROOT}/install.sh uninstall"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]] \
+		&& local_platform_gateway_agent_is_managed; then
+		"${management_printer}" "Gateway status" \
+			"sudo ${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh status"
+	fi
+}
+
+online_community_upgrade_command() {
+	case "${HFL_REGISTRY_REGION:-}" in
+	cn)
+		printf '%s' \
+			'curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh | sudo bash -s -- --mirror cn'
+		;;
+	global)
+		printf '%s' \
+			'curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh | sudo bash -s -- --mirror global'
+		;;
+	*) die "online Community summary requires HFL_REGISTRY_REGION=cn or global" ;;
+	esac
+}
+
+print_online_community_summary() {
+	local env_file="${ROOT}/.env"
+	local host seed seed_email seed_pass seed_org tenant_port admin_port
+	local show_credentials=0 credentials_note
+	[[ -f "${env_file}" ]] || return 0
+	host="$(resolve_console_host)"
+	seed="$(read_env_value SEED_INITIAL_DATA)"
+	seed_email="$(read_env_value SEED_ADMIN_EMAIL)"
+	seed_pass="$(read_env_value SEED_ADMIN_PASSWORD)"
+	seed_org="$(read_env_value SEED_ORG_NAME)"
+	tenant_port="$(read_env_value HFL_TENANT_PORT)"
+	[[ -n "${tenant_port}" ]] || tenant_port=11443
+	admin_port="$(read_env_value HFL_ADMIN_PORT)"
+	[[ -n "${admin_port}" ]] || admin_port=11444
+
+	if [[ "${seed}" == "1" ]]; then
+		[[ -n "${seed_email}" ]] || seed_email="admin@hyperfilelens.com"
+		[[ -n "${seed_pass}" ]] || seed_pass="Admin@123"
+		[[ -n "${seed_org}" ]] || seed_org="HyperFileLens"
+		case "${SHOW_GENERATED_CREDENTIALS}" in
+		1 | true | yes | on) show_credentials=1 ;;
+		0 | false | no | off) show_credentials=0 ;;
+		auto) [[ "${INTERACTIVE_SESSION}" -eq 1 ]] && show_credentials=1 || true ;;
+		*) die "invalid HFL_SHOW_GENERATED_CREDENTIALS=${SHOW_GENERATED_CREDENTIALS}" ;;
+		esac
+		credentials_note="stored in ${env_file}; values are hidden in non-interactive logs"
+	fi
+
+	print_result "Installation completed successfully"
+	print_section "Installation summary"
+	print_value "Version" "$(read_version)"
+	print_value "Edition" "$(display_edition_from_dir "${ROOT}")"
+	print_value "Platform" "$(installation_platform_display)"
+	print_value "Install path" "${ROOT}"
+	print_value "Config file" "${env_file}"
+	print_value "Log file" "${LOG_FILE}"
+
+	print_spaced_section "Access"
+	printf '  HyperFileLens\n'
+	print_nested_value "URL" "https://${host}:${tenant_port}/"
+	if [[ "${seed}" == "1" ]]; then
+		if [[ "${show_credentials}" -eq 1 ]]; then
+			print_nested_value "Email" "${seed_email}"
+			print_nested_value "Password" "${seed_pass}"
+		else
+			print_nested_value "Credentials" "${credentials_note}"
+		fi
+		print_nested_value "Organization" "${seed_org}"
+	fi
+
+	printf '\n  Platform Ops\n'
+	print_nested_value "URL" "https://${host}:${admin_port}/"
+	if [[ "${seed}" == "1" ]]; then
+		if [[ "${show_credentials}" -eq 1 ]]; then
+			print_nested_value "Email" "${seed_email}"
+			print_nested_value "Password" "${seed_pass}"
+		else
+			print_nested_value "Credentials" "${credentials_note}"
+		fi
+	else
+		warn "Initial seeding is disabled (SEED_INITIAL_DATA=${seed:-0}); no default admin account will be created automatically."
+	fi
+
+	if [[ "${seed}" == "1" ]]; then
+		SESSION_WARNINGS+=("Change all default passwords after the first login.")
+	fi
+	print_warning_summary
+
+	print_section "Next steps"
+	print_management_value "AI model" \
+		"Open Platform Ops → AI Engine → AI Models, add and test a model,"
+	print_management_value "" "then set it as Default Agent."
+	print_management_value "External access" \
+		"If users connect through a public IP or domain, open Platform Ops"
+	print_management_value "" \
+		"→ Platform → External Access and set the public HyperFileLens URL."
+
+	print_section "Management commands"
+	print_management_value "Status" "sudo ${ROOT}/install.sh status"
+	print_management_value "Logs" "sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"
+	print_management_value "Restart" "sudo ${ROOT}/install.sh restart"
+	print_management_value "Backup" "sudo ${ROOT}/install.sh backup"
+	print_management_value "Online upgrade" "$(online_community_upgrade_command)"
+	print_management_value "Offline upgrade" \
+		"sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz"
+	print_management_value "Uninstall" "sudo ${ROOT}/install.sh uninstall"
 }
 
 print_platform_gateway_summary() {
@@ -3735,7 +4422,7 @@ print_platform_gateway_summary() {
 	[[ "${LOCAL_PLATFORM_GATEWAY_VERIFIED}" -eq 0 ]] || console_state="online"
 
 	print_section "Platform Data Gateway"
-	print_value "Role" "Private Data Gateway"
+	print_value "Role" "Platform Data Gateway"
 	print_value "Organization" "${organization:-platform_lens}"
 	print_value "Node ID" "${node_id:-unknown}"
 	print_value "Agent version" "${version:-unknown}"
@@ -3749,6 +4436,48 @@ print_platform_gateway_summary() {
 	print_value "Data" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data"
 	print_value "Logs" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/logs"
 	print_value "Install log" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/logs/install.log"
+}
+
+print_online_installation_verification() {
+	local sourcelens_mode=$1
+	local service container_id ai_engine
+	print_section "HyperFileLens services"
+	compose_all_profiles ps
+	ok "HyperFileLens services are healthy"
+
+	if [[ "${sourcelens_mode}" -ne 0 \
+		&& "$(configured_sourcelens_mode)" == "bundled" ]] \
+		&& sourcelens_installed; then
+		print_section "Insight services"
+		sourcelens_compose ps \
+			|| warn "Could not display the current Insight service status table"
+		ok "Insight services are healthy"
+	fi
+
+	local_platform_gateway_agent_is_managed || return 0
+	service="$(systemctl is-active hyperfilelens-agent.service 2>/dev/null || true)"
+	[[ -n "${service}" ]] || service="unknown"
+	container_id="$(docker ps -aq --no-trunc \
+		--filter 'label=com.hyperfilelens.managed=true' \
+		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
+		--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
+		--filter 'label=com.docker.compose.service=lensnode' 2>/dev/null | head -1)" \
+		|| container_id=""
+	ai_engine="unknown"
+	if [[ -n "${container_id}" ]]; then
+		ai_engine="$(docker inspect --format '{{.State.Status}}' "${container_id}" 2>/dev/null || true)"
+		[[ -n "${ai_engine}" ]] || ai_engine="unknown"
+	fi
+	print_section "Platform Data Gateway"
+	print_value "Agent service" "${service}"
+	print_value "AI engine" "${ai_engine}"
+	if [[ "${LOCAL_PLATFORM_GATEWAY_VERIFIED}" -eq 1 ]]; then
+		print_value "Console" "online"
+		ok "Platform Data Gateway is ready"
+	else
+		print_value "Console" "not verified by this installation"
+		skip "Platform Data Gateway readiness was not verified"
+	fi
 }
 
 package_has_sourcelens() {
@@ -3807,48 +4536,8 @@ stop_bundled_sourcelens() {
 }
 
 remove_sourcelens_images() {
-	local manifest="${ROOT}/MANIFEST.json"
-	[[ -f "${manifest}" ]] || return 0
-	step "Removing SourceLens Docker images ..."
-	python3 - "${manifest}" <<'PY'
-import json
-import subprocess
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as fh:
-    manifest = json.load(fh)
-seen = set()
-for entry in manifest.get("images", []):
-    role = entry.get("role", "")
-    if not role.startswith("sourcelens"):
-        continue
-    for ref in entry.get("refs", []):
-        tag = ref.split("@", 1)[0]
-        if tag in seen:
-            continue
-        seen.add(tag)
-        print(f"[install.sh] removing SourceLens image {tag}")
-        image_ids = subprocess.run(
-            ["docker", "image", "ls", "--quiet", "--no-trunc", tag],
-            stdout=subprocess.PIPE,
-            text=True,
-            check=True,
-        ).stdout.split()
-        if not image_ids:
-            print(f"[install.sh] SourceLens image not present: {tag}")
-            continue
-        removed = subprocess.run(["docker", "image", "rm", "-f", tag], check=False)
-        if removed.returncode != 0:
-            remaining = subprocess.run(
-                ["docker", "image", "ls", "--quiet", "--no-trunc", tag],
-                stdout=subprocess.PIPE,
-                text=True,
-                check=True,
-            ).stdout.split()
-            if remaining:
-                raise SystemExit(f"failed to remove SourceLens image: {tag}")
-            print(f"[install.sh] SourceLens image was already removed: {tag}")
-PY
+	remove_installation_images 0 1 \
+		|| die "SourceLens Docker image cleanup could not be verified"
 }
 
 purge_sourcelens_data_dir() {
@@ -3881,7 +4570,6 @@ uninstall_bundled_sourcelens() {
 	fi
 	remove_owned_installation_containers "SourceLens" hyperfilelens-sourcelens sourcelens
 	remove_empty_owned_compose_networks hyperfilelens-sourcelens sourcelens
-	remove_sourcelens_images || return 1
 	if [[ "${purge_data}" -eq 1 ]]; then
 		purge_sourcelens_data_dir || return 1
 	fi
@@ -4029,13 +4717,29 @@ if deploy.is_dir():
     )
 digest = hashlib.sha256()
 
-# Registry transit references and rebuilt image IDs can change for every HFL
-# tag even while the bundled SourceLens release remains pinned. Only semantic
-# SourceLens identity belongs in the bundle fingerprint; runtime files below
-# capture HFL-owned integration changes.
+# Registry transit references and legacy rebuilt image IDs can change for every
+# HFL tag even while the bundled SourceLens release remains pinned. Preserve
+# their upstream identity, while digest-pinned upstream/public runtime images
+# participate directly in the fingerprint.
 build_info_path = root / "BUILD_INFO.json"
 if build_info_path.is_file():
     info = json.loads(build_info_path.read_text(encoding="utf-8"))
+    semantic_images = {}
+    embedded_lensnode = bool(info.get("embed_local_lensnode", False))
+    for name, image in sorted((info.get("images") or {}).items()):
+        if name == "lensnode" and not embedded_lensnode:
+            continue
+        if name not in {"backend", "frontend", "lensnode", "nginx", "postgres", "redis"}:
+            continue
+        ref = str((image or {}).get("ref") or "")
+        repository = ref.split("@", 1)[0].rsplit(":", 1)[0].rsplit("/", 1)[-1]
+        if repository.startswith("hyperfilelens-sourcelens-"):
+            semantic_images[name] = {}
+        else:
+            semantic_images[name] = {
+                "ref": ref,
+                "digest": str((image or {}).get("digest") or ""),
+            }
     identity = {
         "git_url": info.get("git_url", ""),
         "git_ref": info.get("git_ref", ""),
@@ -4048,6 +4752,7 @@ if build_info_path.is_file():
         "build_adapter_sha256": info.get("build_adapter_sha256", ""),
         "build_compose_file": info.get("build_compose_file", ""),
         "embed_local_lensnode": info.get("embed_local_lensnode", False),
+        "images": semantic_images,
     }
     digest.update(b"BUILD_INFO.identity\0")
     digest.update(
@@ -4294,7 +4999,11 @@ install_bundled_sourcelens() {
 	console_port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
 	[[ -n "${console_port}" ]] || console_port="11445"
 	stop_bundled_sourcelens
-	step "Installing bundled SourceLens ..."
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		step "Preparing bundled Insight services"
+	else
+		step "Installing bundled SourceLens ..."
+	fi
 	SOURCELENS_INSTALL_DIR="${ROOT}/sourcelens" \
 		SOURCELENS_DATA_DIR="${ROOT}/data/sourcelens" \
 		SOURCELENS_CONFIG_DIR="${ROOT}/data/sourcelens/config" \
@@ -4405,6 +5114,84 @@ local_platform_gateway_agent_is_managed() {
 		&& "$(read_agent_env_value HFL_NODE_ROLE)" == "gateway" ]]
 }
 
+local_agent_canonical_artifacts_detected() {
+	local canonical_env="${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
+	[[ -e "${canonical_env}" || -L "${canonical_env}" \
+		|| -e "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data/agent.db" \
+		|| -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}/data/agent.db" \
+		|| -e "${LOCAL_PLATFORM_AGENT_DATA_DIR}/INSTALLED_VERSION" \
+		|| -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}/INSTALLED_VERSION" \
+		|| -e "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh" \
+		|| -L "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh" \
+		|| -e "${LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR}/install.sh" \
+		|| -L "${LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR}/install.sh" ]]
+}
+
+local_agent_legacy_data_detected() {
+	local legacy_env="${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}/agent.env"
+	[[ -e "${legacy_env}" || -L "${legacy_env}" ]]
+}
+
+local_agent_service_detected() {
+	[[ -e "${LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE}" \
+		|| -L "${LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE}" ]]
+}
+
+local_agent_installation_detected() {
+	local_agent_canonical_artifacts_detected \
+		|| local_agent_legacy_data_detected \
+		|| local_agent_service_detected
+}
+
+local_agent_trusted_uninstaller() {
+	local canonical="${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh"
+	local legacy="${LOCAL_PLATFORM_AGENT_LEGACY_INSTALL_DIR}/install.sh"
+	if [[ -f "${canonical}" && ! -L "${canonical}" ]]; then
+		printf '%s' "${canonical}"
+		return 0
+	fi
+	if [[ -f "${legacy}" && ! -L "${legacy}" ]]; then
+		printf '%s' "${legacy}"
+		return 0
+	fi
+	return 1
+}
+
+fail_local_agent_installation_conflict() {
+	local uninstaller=""
+	uninstaller="$(local_agent_trusted_uninstaller || true)"
+	printf '[%s] %s\n\n' \
+		"$(hfl_color_level FAIL)" \
+		"$(hfl_finish_sentence 'A conflicting HyperFileLens Agent installation was detected')" >&2
+	if local_agent_canonical_artifacts_detected; then
+		printf '       %-17s %s\n' 'Agent root' "${LOCAL_PLATFORM_AGENT_DATA_DIR}" >&2
+	fi
+	if local_agent_legacy_data_detected; then
+		printf '       %-17s %s\n' 'Legacy data' "${LOCAL_PLATFORM_AGENT_LEGACY_DATA_DIR}" >&2
+	fi
+	if local_agent_service_detected; then
+		printf '       %-17s %s\n' 'Service' "${LOCAL_PLATFORM_AGENT_SYSTEMD_UNIT_FILE}" >&2
+	fi
+	if [[ -n "${uninstaller}" ]]; then
+		printf '\n       Uninstall the existing Agent, then run this installer again:\n\n' >&2
+		printf '         sudo %s uninstall\n' "${uninstaller}" >&2
+	else
+		printf '       %-17s %s\n' 'Agent installer' 'not found' >&2
+		printf '\n       The Agent was not completely uninstalled. Remove the listed residual\n' >&2
+		printf '       resources, then run this installer again.\n' >&2
+	fi
+	printf '\n       Alternatively, install HyperFileLens on another host.\n' >&2
+	printf '       No Agent, Docker service, or configuration was changed.\n' >&2
+	exit 1
+}
+
+preflight_local_platform_gateway_agent_conflict() {
+	platform_gateway_auto_deploy_enabled || return 0
+	local_agent_installation_detected || return 0
+	local_platform_gateway_agent_is_managed && return 0
+	fail_local_agent_installation_conflict
+}
+
 uninstall_managed_local_platform_gateway() {
 	local installer
 	installer="$(local_platform_gateway_agent_installer)"
@@ -4489,7 +5276,7 @@ wait_for_local_platform_gateway_readiness() {
 	while true; do
 		if local_platform_gateway_readiness_once; then
 			LOCAL_PLATFORM_GATEWAY_VERIFIED=1
-			ok "Installer-managed platform Gateway is online and usable"
+			ok "Platform Data Gateway is online and usable"
 			return 0
 		fi
 		if ((SECONDS >= deadline)); then
@@ -4566,7 +5353,7 @@ verify_local_platform_gateway_agent() {
 }
 
 converge_local_platform_gateway_lensnode() {
-	local desired_id current_id container_id running script
+	local desired_id current_id container_id running script layout_migration=0 legacy_layout_adopted=0
 	desired_id="$(docker image inspect --format '{{.Id}}' \
 		"${LOCAL_PLATFORM_LENSNODE_IMAGE}" 2>/dev/null || true)"
 	[[ -n "${desired_id}" ]] \
@@ -4576,18 +5363,56 @@ converge_local_platform_gateway_lensnode() {
 		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
 		--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
 		--filter 'label=com.docker.compose.service=lensnode' | head -1)"
+	# Pre-unification Gateway containers used the SourceLens Compose project
+	# name. Find only containers tied to the known legacy LensNode directory;
+	# unrelated SourceLens LensNode projects must remain untouched.
+	if [[ -z "${container_id}" ]]; then
+		local candidate working_dir config_files
+		while IFS= read -r candidate; do
+			[[ -n "${candidate}" ]] || continue
+			working_dir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "${candidate}" 2>/dev/null || true)"
+			config_files="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "${candidate}" 2>/dev/null || true)"
+			if [[ "${working_dir}" == "${LOCAL_PLATFORM_LEGACY_LENSNODE_COMPOSE_DIR}" \
+				|| ",${config_files}," == *",${LOCAL_PLATFORM_LEGACY_LENSNODE_COMPOSE_DIR}/docker-compose.yml,"* ]]; then
+				container_id="${candidate}"
+				break
+			fi
+		done < <(docker ps -aq --no-trunc \
+			--filter 'label=com.docker.compose.project=sourcelens' \
+			--filter 'label=com.docker.compose.service=lensnode')
+	fi
 	[[ -n "${container_id}" ]] \
 		|| die "installer-managed Platform Data Gateway AI engine container is missing"
 	current_id="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
-	if [[ "${current_id}" == "${desired_id}" ]]; then
-		skip "Platform Data Gateway AI engine already uses the desired image"
+	if [[ -e "${LOCAL_PLATFORM_LEGACY_LENSNODE_ENV_FILE}" ]] \
+		|| [[ -d "${LOCAL_PLATFORM_LEGACY_LENSNODE_COMPOSE_DIR}" ]]; then
+		layout_migration=1
+		# Only authorize the sidecar's legacy adoption shortcut when the
+		# canonical env file is absent. If both layouts already exist, the
+		# sidecar must compare them and reject conflicting credentials.
+		if [[ ! -e "${LOCAL_PLATFORM_LENSNODE_ENV_FILE}" \
+			&& ! -e "${LOCAL_PLATFORM_LENSNODE_COMPOSE_DIR}/docker-compose.yml" ]]; then
+			legacy_layout_adopted=1
+		fi
+	fi
+	if [[ "${current_id}" == "${desired_id}" && "${layout_migration}" -eq 0 ]]; then
+		if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
+			skip "Platform Data Gateway AI engine already uses the desired image"
+		fi
 	else
 		script="${ROOT}/data/media/gateway-bootstrap/gateway-install-lensnode-sidecar.sh"
 		[[ -f "${script}" && ! -L "${script}" ]] \
 			|| die "Platform Data Gateway AI engine installer is missing: ${script}"
-		step "Recreating the Platform Data Gateway AI engine for a changed image"
+		if [[ "${layout_migration}" -eq 1 && "${current_id}" == "${desired_id}" ]]; then
+			step "Migrating the Platform Data Gateway AI engine into the unified Agent Root"
+		else
+			step "Recreating the Platform Data Gateway AI engine for a changed image"
+		fi
 		run_as_root env \
 			HFL_LENS_ENV_FILE="${LOCAL_PLATFORM_LENSNODE_ENV_FILE}" \
+			HFL_GATEWAY_COMPOSE_DIR="${LOCAL_PLATFORM_LENSNODE_COMPOSE_DIR}" \
+			HFL_AGENT_ROOT="${LOCAL_PLATFORM_AGENT_DATA_DIR}" \
+			HFL_LEGACY_LAYOUT_ADOPTED="${legacy_layout_adopted}" \
 			HFL_INSECURE_TLS=1 \
 			LENSNODE_IMAGE="${LOCAL_PLATFORM_LENSNODE_IMAGE}" \
 			/bin/bash "${script}"
@@ -4603,6 +5428,9 @@ converge_local_platform_gateway_lensnode() {
 	running="$(docker inspect --format '{{.State.Running}}' "${container_id}" 2>/dev/null || true)"
 	[[ "${running}" == "true" ]] \
 		|| die "installer-managed Platform Data Gateway AI engine is not running"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		ok "Platform Data Gateway AI engine is running with the desired image"
+	fi
 }
 
 ensure_local_platform_gateway() {
@@ -4712,6 +5540,55 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 	fi
 }
 
+persist_captured_command_output() {
+	local output=$1
+	[[ -n "${output}" && -n "${LOG_FILE:-}" && -f "${LOG_FILE}" \
+		&& ! -L "${LOG_FILE}" ]] || return 0
+	printf '%s\n' "${output}" | timestamp_log_stream "${LOG_FILE}"
+}
+
+render_deployment_command_output() {
+	local output=$1 line value
+	RENDERED_DEPLOYMENT_WARNINGS=0
+	persist_captured_command_output "${output}"
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		line="${line#"${line%%[![:space:]]*}"}"
+		[[ -n "${line}" ]] || continue
+		if [[ "${line}" =~ ^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[^]]+Z\][[:space:]]+\[[A-Z]+\].*\][[:space:]]+-[[:space:]]+(.*)$ ]]; then
+			line="${BASH_REMATCH[1]}"
+		fi
+		case "${line}" in
+		*Django\ Admin:\ auto-registered\ *|*QuotaProvider\ registered\ *|*AuthzProvider\ registered\ *)
+			# Framework/plugin startup records remain in the durable log. They are
+			# not results of the deployment operation itself.
+			continue
+			;;
+		Email\ sign-up:*)
+			value="${line#Email sign-up: }"
+			log "Email sign-up ${value}"
+			;;
+		Google\ OAuth:*)
+			value="${line#Google OAuth: }"
+			log "Google OAuth ${value}"
+			;;
+		Deployment-managed\ SMTP\ is\ unavailable\;*)
+			skip "SMTP synchronization skipped because SMTP is not configured"
+			;;
+		HFL_IDENTITY_STATUS=*|HFL_GOOGLE_OAUTH_STATUS=*|HFL_AI_MODEL_REPAIRED=*)
+			# Internal machine-readable result markers are represented by the
+			# surrounding structured status lines.
+			;;
+		*WARNING*|*Warning*|*warning*|*preserved*|*failed*|*Failed*)
+			RENDERED_DEPLOYMENT_WARNINGS=$((RENDERED_DEPLOYMENT_WARNINGS + 1))
+			warn "${line}"
+			;;
+		*)
+			printf '%s\n' "${line}"
+			;;
+		esac
+	done <<<"${output}"
+}
+
 sync_optional_identity_settings() {
 	step "Synchronizing optional identity and email settings"
 	local output command_status
@@ -4723,14 +5600,26 @@ sync_optional_identity_settings() {
 	command_status=$?
 	set -e
 	if [[ -n "${output}" ]]; then
-		printf '%s\n' "${output}"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			render_deployment_command_output "${output}"
+		else
+			printf '%s\n' "${output}"
+		fi
 	fi
 	if [[ "${command_status}" -ne 0 ]]; then
 		warn "Optional identity or email settings could not be synchronized; core services remain available"
 		return 0
 	fi
 	if grep -F 'HFL_IDENTITY_STATUS=warning' <<<"${output}" >/dev/null; then
-		warn "Invalid optional identity or email settings were preserved"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			if [[ "${RENDERED_DEPLOYMENT_WARNINGS:-0}" -eq 0 ]]; then
+				ok "Optional identity and email settings synchronized"
+			else
+				log "Optional identity and email synchronization completed with warnings"
+			fi
+		else
+			warn "Invalid optional identity or email settings were preserved"
+		fi
 	else
 		ok "Optional identity and email settings synchronized"
 	fi
@@ -4743,7 +5632,11 @@ sync_optional_identity_settings() {
 	command_status=$?
 	set -e
 	if [[ -n "${output}" ]]; then
-		printf '%s\n' "${output}"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			render_deployment_command_output "${output}"
+		else
+			printf '%s\n' "${output}"
+		fi
 	fi
 	if [[ "${command_status}" -ne 0 ]]; then
 		warn "Google OAuth local route or generated callback is not ready; core services remain available"
@@ -4762,7 +5655,11 @@ repair_existing_multimodal_model() {
 	command_status=$?
 	set -e
 	if [[ -n "${output}" ]]; then
-		printf '%s\n' "${output}"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			render_deployment_command_output "${output}"
+		else
+			printf '%s\n' "${output}"
+		fi
 	fi
 	if [[ "${command_status}" -ne 0 ]]; then
 		warn "Existing multimodal model capability could not be reconciled; core services remain available"
@@ -4774,7 +5671,8 @@ repair_existing_multimodal_model() {
 # --- Commands ---
 
 cmd_install() {
-	local sourcelens_mode=-1 allow_main_build=0
+	local sourcelens_mode=-1 allow_main_build=0 concise_online=0 summary_output=""
+	local had_install_in_progress=0
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--with-sourcelens) sourcelens_mode=1 ;;
@@ -4796,6 +5694,17 @@ cmd_install() {
 	if [[ "$(read_channel_from_dir "${source_root}")" == "main" && "${allow_main_build}" -ne 1 ]]; then
 		die "main channel packages require --allow-main-build"
 	fi
+	# Reject a conflicting host Agent before copying or validating the release
+	# package and before any Docker runtime or container operation. An existing
+	# destination .env remains authoritative when auto-deploy was disabled.
+	ROOT="${INSTALL_DIR}"
+	preflight_local_platform_gateway_agent_conflict
+	if online_console_enabled; then
+		concise_online=1
+		online_console_section "[3/4] Starting HyperFileLens"
+		online_console_line
+		online_console_line "  [....] Preparing configuration and runtime assets"
+	fi
 	if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
 		print_section "Target"
 		print_value "Version" "${version}"
@@ -4814,6 +5723,10 @@ cmd_install() {
 
 	print_section "[1/8] Staging and validating release package"
 	init_install_root
+	if [[ -f "${INSTALL_IN_PROGRESS_MARKER}" ]]; then
+		had_install_in_progress=1
+	fi
+	mark_install_in_progress
 	preflight_package_layout
 	validate_publish_artifacts "${ROOT}"
 	if package_has_sourcelens; then
@@ -4821,7 +5734,10 @@ cmd_install() {
 	fi
 	ok "Release package structure, manifest, and publish artifacts are valid"
 
-	if [[ -f "${ROOT}/.env" ]] && stack_containers_present; then
+	if [[ "${HFL_INSTALL_RECOVERY:-0}" != "1" ]] \
+		&& [[ "${had_install_in_progress}" -eq 0 ]] \
+		&& [[ -f "${ROOT}/.env" ]] && stack_containers_present; then
+		safe_rm_file "${INSTALL_IN_PROGRESS_MARKER}"
 		log "app containers already running under ${ROOT}; skipping duplicate install"
 		log "To upgrade run: sudo ${ROOT}/install.sh upgrade --from <package.tar.gz>"
 		print_console_access_summary "Existing installation"
@@ -4845,14 +5761,29 @@ cmd_install() {
 	sync_runtime_media
 	ok "Configuration, TLS, runtime directories, and published media are ready"
 
-	print_section "[4/8] Loading container images"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_section "[4/8] Verifying prepared container images"
+	else
+		print_section "[4/8] Loading container images"
+	fi
 	load_images_from_manifest "$([[ "${sourcelens_mode}" -eq 0 ]] && echo 1 || echo 0)"
-	ok "Required container images are available"
+	if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then
+		ok "Required container images are available"
+	fi
+	if [[ "${concise_online}" -eq 1 ]]; then
+		online_console_line "  [ OK ] Configuration and runtime assets are ready"
+		online_console_line
+		online_console_line "  [....] Starting HyperFileLens and Insight services"
+	fi
 
 	print_section "[5/8] Installing insight services"
 	if should_install_sourcelens "${sourcelens_mode}"; then
 		install_bundled_sourcelens
-		ok "Insight services are installed"
+		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+			ok "Insight services are ready"
+		else
+			ok "Insight services are installed"
+		fi
 	else
 		skip "Bundled insight service installation was not requested"
 	fi
@@ -4862,8 +5793,12 @@ cmd_install() {
 	fi
 
 	print_section "[6/8] Installing and starting HyperFileLens"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_section "Runtime policy"
+	fi
 	log "Log rotation: built into nginx container (hourly; daily or 500M; keep 30)"
-	start_hfl_stack || die "HyperFileLens active color failed to start"
+	start_hfl_stack "$([[ "${HFL_ONLINE_CHILD:-0}" == "1" ]] && echo 1 || echo 0)" \
+		|| die "HyperFileLens active color failed to start"
 	wait_for_hfl_health || die "HyperFileLens failed its post-install health gate"
 	ok "HyperFileLens data, application, worker, scheduler, and web services are healthy"
 	if [[ "${sourcelens_mode}" -eq 0 ]]; then
@@ -4875,17 +5810,65 @@ cmd_install() {
 				|| die "could not record the installed SourceLens bundle identity"
 		fi
 	fi
+	if [[ "${concise_online}" -eq 1 ]]; then
+		online_console_line "  [ OK ] Application services are ready"
+		online_console_line
+		online_console_line "  [....] Preparing the local Platform Data Gateway"
+	fi
 	print_section "[7/8] Preparing platform services"
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_section "Identity and email"
+	fi
 	sync_optional_identity_settings
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_section "Multimodal model"
+	fi
 	repair_existing_multimodal_model
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_section "Platform Data Gateway"
+	fi
 	ensure_local_platform_gateway
 	prune_agent_release_media
 	ok "Platform configuration and managed services are ready"
+	if [[ "${concise_online}" -eq 1 ]]; then
+		if local_platform_gateway_agent_is_managed \
+			&& [[ "${LOCAL_PLATFORM_GATEWAY_VERIFIED}" -eq 1 ]]; then
+			online_console_line "  [ OK ] Platform Data Gateway is online"
+		else
+			online_console_line "  [ OK ] Platform services are ready"
+		fi
+		online_console_section "[4/4] Verifying installation"
+	fi
 
 	print_section "[8/8] Verifying installation"
-	compose_all_profiles ps
-	print_result "Installation completed successfully"
-	print_console_access_summary
+	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
+		print_online_installation_verification "${sourcelens_mode}"
+	else
+		compose_all_profiles ps
+	fi
+	mark_install_complete "${version}" \
+		|| die "could not record the completed installation state"
+	if [[ "${concise_online}" -eq 1 ]]; then
+		online_console_line
+		online_console_line "  HyperFileLens       Ready"
+		online_console_line "  Platform Ops        Ready"
+		if [[ "${sourcelens_mode}" -ne 0 \
+			&& "$(configured_sourcelens_mode)" == "bundled" ]] \
+			&& sourcelens_installed; then
+			online_console_line "  Insight services    Ready"
+		fi
+		if local_platform_gateway_agent_is_managed \
+			&& [[ "${LOCAL_PLATFORM_GATEWAY_VERIFIED}" -eq 1 ]]; then
+			online_console_line "  Platform Gateway    Online"
+		fi
+		online_console_line
+		online_console_line "  [ OK ] Installation verification passed"
+		summary_output="$(print_online_community_summary)"
+		online_console_block <<<"${summary_output}"
+	else
+		print_result "Installation completed successfully"
+		print_console_access_summary
+	fi
 }
 
 cmd_platform_gateway() {
@@ -4973,42 +5956,66 @@ cmd_restart() {
 }
 
 cmd_status() {
+	printf '%s\n\n' "HyperFileLens Status"
 	init_install_root
-	local version
-	version="$(read_version)"
-	printf 'Version: %s\n' "${version}"
-	printf 'Install dir: %s\n' "${ROOT}"
-	local active_color deployment_phase
-	if active_color="$(read_active_color)"; then
-		printf 'Active color: %s\n' "${active_color}"
-	else
-		printf 'Active color: legacy/unset\n'
-	fi
-	deployment_phase="$(grep -E '^phase=' "$(blue_green_state_dir)/deployment-state" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-	printf 'Deployment phase: %s\n' "${deployment_phase:-unknown}"
-	if sourcelens_installed; then
-		printf 'Insight services: installed at %s (network %s)\n' \
-			"${SOURCELENS_INSTALL_DIR}" "${HFL_BRIDGE_NETWORK}"
-	else
-		printf 'Insight services: not installed\n'
-	fi
-	if [[ -f "${ROOT}/data/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz" ]]; then
-		printf 'Platform Data Gateway: AI engine bundle present\n'
-	else
-		printf 'Platform Data Gateway: AI engine bundle missing\n'
-	fi
-	if [[ -d "${ROOT}/data/media/agent-releases" ]]; then
-		local versions
-		versions="$(find "${ROOT}/data/media/agent-releases" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -V | tr '\n' ' ')"
-		printf 'Agent releases: %s\n' "${versions:-none}"
-	fi
-	if [[ -f "${ROOT}/.env" ]]; then
-		require_docker
-		compose_all_profiles ps
-		print_console_access_summary "Access and management" 0
-	else
+	if [[ ! -f "${ROOT}/.env" ]]; then
 		warn "missing .env; install has not been run"
+		return 0
 	fi
+	require_docker
+	local version active_color host tenant_port admin_port
+	local hfl_status="Degraded" insight_status="Not installed" gateway_status="Not installed"
+	local container_id=""
+	version="$(read_version)"
+	host="$(resolve_console_host)"
+	tenant_port="$(read_env_value HFL_TENANT_PORT)"
+	[[ -n "${tenant_port}" ]] || tenant_port=11443
+	admin_port="$(read_env_value HFL_ADMIN_PORT)"
+	[[ -n "${admin_port}" ]] || admin_port=11444
+
+	if active_color="$(read_active_color)" \
+		&& service_group_ready_now compose_all_profiles \
+			postgres redis worker scheduler "api-${active_color}" "web-${active_color}" nginx; then
+		hfl_status="Healthy"
+	fi
+	if [[ "$(configured_sourcelens_mode)" == "external" ]]; then
+		insight_status="External"
+	elif sourcelens_installed; then
+		insight_status="Degraded"
+		if service_group_ready_now sourcelens_compose \
+			api "$(sourcelens_web_service)" worker scheduler postgres redis nginx; then
+			insight_status="Healthy"
+		fi
+	fi
+	if local_platform_gateway_agent_is_managed; then
+		gateway_status="Degraded"
+		container_id="$(docker ps -q \
+			--filter 'label=com.hyperfilelens.managed=true' \
+			--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
+			--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
+			--filter 'label=com.docker.compose.service=lensnode' 2>/dev/null | head -1)"
+		if systemctl is-active --quiet hyperfilelens-agent.service \
+			&& [[ -n "${container_id}" ]]; then
+			gateway_status="Running"
+		fi
+	fi
+
+	print_status_value "Version" "${version}"
+	print_status_value "Edition" "$(display_edition_from_dir "${ROOT}")"
+	print_status_value "Status" "${hfl_status}"
+	print_status_value "Install path" "${ROOT}"
+
+	print_spaced_section "Access"
+	print_status_value "HyperFileLens" "https://${host}:${tenant_port}/"
+	print_status_value "Platform Ops" "https://${host}:${admin_port}/"
+
+	print_spaced_section "Services"
+	print_status_value "Insight" "${insight_status}"
+	print_status_value "Platform Gateway" "${gateway_status}"
+
+	print_spaced_section "Management"
+	print_status_value "Logs" "sudo docker compose -f ${ROOT}/docker-compose.yml logs -f"
+	print_status_value "Restart" "sudo ${ROOT}/install.sh restart"
 }
 
 cmd_manage() {
@@ -6104,14 +7111,18 @@ cmd_language_pack() {
 }
 
 cmd_uninstall() {
-	local purge_config=0 purge_data=0 purge_all=0
+	local purge_config=0 purge_data=0 purge_all=0 keep_data=0
 	local with_sourcelens=0 purge_sourcelens_data=0 purge_media=0
+	local option_count=0 full_runtime=0 application_files_removed=0 install_root_removed=0
+	local session_log_removed=0
 	local runtime_removed=0 sourcelens_present=0 bridge_network_removed=0
 	local sourcelens_removed=0 sourcelens_data_present=0 sourcelens_data_removed=0
 	local agent_media_present=0 agent_media_removed=0
 	local local_agent_present=0 platform_gateway_managed=0 platform_gateway_removed=0
 	while [[ $# -gt 0 ]]; do
+		option_count=$((option_count + 1))
 		case "$1" in
+		--keep-data) keep_data=1 ;;
 		--purge-config) purge_config=1 ;;
 		--purge-data) purge_data=1 ;;
 		--purge-all) purge_all=1 ;;
@@ -6122,11 +7133,27 @@ cmd_uninstall() {
 		esac
 		shift
 	done
+	# A command without uninstall options now means complete removal. Existing
+	# selective option combinations retain their historical scope so older
+	# automation cannot unexpectedly delete more state after an upgrade.
+	if [[ "${option_count}" -eq 0 ]]; then
+		purge_all=1
+	fi
+	if [[ "${keep_data}" -eq 1 \
+		&& ( "${purge_all}" -eq 1 || "${purge_config}" -eq 1 \
+			|| "${purge_data}" -eq 1 || "${purge_sourcelens_data}" -eq 1 \
+			|| "${purge_media}" -eq 1 ) ]]; then
+		die "--keep-data cannot be combined with data purge options" 2
+	fi
 	if [[ "${purge_all}" -eq 1 ]]; then
 		purge_config=1
 		purge_data=1
 		with_sourcelens=1
 		purge_sourcelens_data=1
+		full_runtime=1
+	elif [[ "${keep_data}" -eq 1 ]]; then
+		with_sourcelens=1
+		full_runtime=1
 	fi
 	if [[ "${purge_sourcelens_data}" -eq 1 && "${with_sourcelens}" -eq 0 ]]; then
 		die "--purge-sourcelens-data requires --with-sourcelens or --purge-all"
@@ -6157,14 +7184,14 @@ cmd_uninstall() {
 	fi
 	print_section "Removal plan"
 	print_value "Containers" "remove"
-	print_value "App images" "remove"
-	if [[ "${purge_all}" -eq 1 ]]; then
+	print_value "Docker images" "remove when not used by other containers"
+	if [[ "${full_runtime}" -eq 1 ]]; then
 		print_value "Shared network" "remove when installer-managed and unused"
 	else
 		print_value "Shared network" "retain"
 	fi
 	if [[ "${platform_gateway_managed}" -eq 1 ]]; then
-		print_value "Platform Data Gateway" "$([[ "${purge_all}" -eq 1 ]] && printf 'remove' || printf 'retain')"
+		print_value "Platform Data Gateway" "$([[ "${full_runtime}" -eq 1 ]] && printf 'remove' || printf 'retain')"
 	elif [[ "${local_agent_present}" -eq 1 ]]; then
 		print_value "Local Agent" "retain (not installer-managed)"
 	else
@@ -6187,32 +7214,46 @@ cmd_uninstall() {
 	else
 		print_value "Agent media" "$([[ "${purge_media}" -eq 1 || "${purge_data}" -eq 1 ]] && printf 'remove' || printf 'retain')"
 	fi
-	print_value "Backup sets" "retain"
-	print_value "Install path" "retain"
-	print_value "Log file" "${LOG_FILE}"
+	print_value "Backup sets" "$([[ "${purge_all}" -eq 1 ]] && printf 'remove' || printf 'retain')"
+	if [[ "${purge_all}" -eq 1 ]]; then
+		print_value "Install path" "remove"
+	elif [[ "${keep_data}" -eq 1 ]]; then
+		print_value "Install path" "retain preserved state only"
+	else
+		print_value "Install path" "retain"
+	fi
+	if [[ "${purge_all}" -eq 1 && "${LOG_FILE}" == "${ROOT}/"* ]]; then
+		print_value "Log file" "remove with installation path"
+	else
+		print_value "Log file" "${LOG_FILE}"
+	fi
 
-	if [[ "${purge_all}" -eq 1 && "${platform_gateway_managed}" -eq 1 ]]; then
+	if [[ "${full_runtime}" -eq 1 && "${platform_gateway_managed}" -eq 1 ]]; then
 		uninstall_managed_local_platform_gateway
 		platform_gateway_removed=1
 	fi
 
+	if ! uninstall_hfl_runtime; then
+		die "HyperFileLens runtime uninstall did not complete; application data was preserved"
+	fi
+	runtime_removed=1
 	if [[ "${with_sourcelens}" -eq 1 ]]; then
-		if ! uninstall_bundled_sourcelens "${purge_sourcelens_data}"; then
+		if ! uninstall_bundled_sourcelens 0; then
 			die "SourceLens uninstall did not complete; HyperFileLens data was preserved"
 		fi
 		if [[ "${sourcelens_present}" -eq 1 ]]; then
 			sourcelens_removed=1
 		fi
-		[[ "${purge_sourcelens_data}" -eq 0 || "${sourcelens_data_present}" -eq 0 ]] \
-			|| sourcelens_data_removed=1
 	fi
-	if ! uninstall_hfl_runtime; then
-		die "HyperFileLens runtime uninstall did not complete; application data was preserved"
-	fi
-	runtime_removed=1
-	if [[ "${purge_all}" -eq 1 ]]; then
+	if [[ "${full_runtime}" -eq 1 ]]; then
 		remove_managed_bridge_network
 		bridge_network_removed="${MANAGED_BRIDGE_NETWORK_REMOVED}"
+	fi
+	remove_installation_images 1 "${with_sourcelens}" \
+		|| die "Docker image cleanup could not be verified; configuration and data were preserved"
+	if [[ "${purge_sourcelens_data}" -eq 1 && "${purge_data}" -eq 0 ]]; then
+		purge_sourcelens_data_dir
+		[[ "${sourcelens_data_present}" -eq 0 ]] || sourcelens_data_removed=1
 	fi
 
 	if [[ "${purge_media}" -eq 1 ]]; then
@@ -6240,6 +7281,15 @@ cmd_uninstall() {
 		log "Removed .env"
 	fi
 
+	if [[ "${purge_all}" -eq 1 ]]; then
+		[[ "${LOG_FILE}" != "${ROOT}/"* ]] || session_log_removed=1
+		remove_complete_installation_root
+		install_root_removed=1
+	elif [[ "${keep_data}" -eq 1 ]]; then
+		remove_installation_files_preserving_data
+		application_files_removed=1
+	fi
+
 	if ((${#SESSION_WARNINGS[@]})); then
 		print_result "Uninstall completed with warnings"
 	else
@@ -6248,20 +7298,31 @@ cmd_uninstall() {
 	if [[ "${runtime_removed}" -eq 1 || "${sourcelens_removed}" -eq 1 \
 		|| "${sourcelens_data_removed}" -eq 1 || "${purge_data}" -eq 1 \
 		|| "${purge_config}" -eq 1 || "${agent_media_removed}" -eq 1 \
-		|| "${platform_gateway_removed}" -eq 1 || "${bridge_network_removed}" -eq 1 ]]; then
+		|| "${platform_gateway_removed}" -eq 1 || "${bridge_network_removed}" -eq 1 \
+		|| "${application_files_removed}" -eq 1 || "${install_root_removed}" -eq 1 ]]; then
 		print_section "Removed"
 		[[ "${platform_gateway_removed}" -eq 0 ]] || print_value "Platform Data Gateway" "local Agent, AI engine, and data"
-		[[ "${runtime_removed}" -eq 0 ]] || print_value "Runtime" "HyperFileLens containers, application images, and Compose networks"
+		[[ "${runtime_removed}" -eq 0 ]] || print_value "Runtime" "HyperFileLens containers and Compose networks"
 		[[ "${bridge_network_removed}" -eq 0 ]] || print_value "Shared network" "${HFL_BRIDGE_NETWORK}"
-		[[ "${sourcelens_removed}" -eq 0 ]] || print_value "Insight" "application containers and images"
-		[[ "${sourcelens_data_removed}" -eq 0 || "${purge_data}" -eq 1 ]] || print_value "Insight data" "${ROOT}/data/sourcelens"
-		[[ "${purge_data}" -eq 0 ]] || print_value "Business data" "${ROOT}/data (including Insight data and Agent media)"
-		[[ "${purge_config}" -eq 0 ]] || print_value "Configuration" "${ROOT}/.env"
-		[[ "${agent_media_removed}" -eq 0 || "${purge_data}" -eq 1 ]] || print_value "Agent media" "published Agent and Gateway artifacts"
+		[[ "${sourcelens_removed}" -eq 0 ]] || print_value "Insight" "application containers"
+		[[ "${INSTALLATION_IMAGES_REMOVED}" -eq 0 ]] \
+			|| print_value "Docker images" "${INSTALLATION_IMAGES_REMOVED} installation image(s)"
+		if [[ "${install_root_removed}" -eq 1 ]]; then
+			print_value "Installation root" "${ROOT} (including configuration, data, backups, and logs)"
+		else
+			[[ "${sourcelens_data_removed}" -eq 0 || "${purge_data}" -eq 1 ]] || print_value "Insight data" "${ROOT}/data/sourcelens"
+			[[ "${purge_data}" -eq 0 ]] || print_value "Business data" "${ROOT}/data (including Insight data and Agent media)"
+			[[ "${purge_config}" -eq 0 ]] || print_value "Configuration" "${ROOT}/.env"
+			[[ "${agent_media_removed}" -eq 0 || "${purge_data}" -eq 1 ]] || print_value "Agent media" "published Agent and Gateway artifacts"
+			[[ "${application_files_removed}" -eq 0 ]] || print_value "Application files" "removed from ${ROOT}"
+		fi
 	fi
 	print_section "Retained"
-	print_value "Install path" "${ROOT}"
-	print_value "Backup sets" "${ROOT}/backup"
+	print_value "Host Docker CE" "not managed by HyperFileLens uninstall"
+	if [[ "${install_root_removed}" -eq 0 ]]; then
+		print_value "Install path" "${ROOT}"
+		print_value "Backup sets" "${ROOT}/backup"
+	fi
 	if [[ "${sourcelens_present}" -eq 1 && "${sourcelens_removed}" -eq 0 ]]; then
 		print_value "Insight" "${SOURCELENS_INSTALL_DIR}"
 	fi
@@ -6270,7 +7331,7 @@ cmd_uninstall() {
 	elif [[ "${platform_gateway_managed}" -eq 0 && "${local_agent_present}" -eq 1 ]]; then
 		print_value "Local Agent" "${LOCAL_PLATFORM_AGENT_INSTALL_DIR} (not installer-managed)"
 	fi
-	if [[ "${purge_all}" -eq 1 ]] \
+	if [[ "${full_runtime}" -eq 1 ]] \
 		&& docker network inspect "${HFL_BRIDGE_NETWORK}" >/dev/null 2>&1; then
 		print_value "Shared network" "${HFL_BRIDGE_NETWORK}"
 	fi
@@ -6286,12 +7347,26 @@ cmd_uninstall() {
 	if [[ "${agent_media_present}" -eq 1 && "${agent_media_removed}" -eq 0 ]]; then
 		print_value "Agent media" "${ROOT}/data/media"
 	fi
-	print_value "Installer" "${ROOT}/install.sh"
+	if [[ "${install_root_removed}" -eq 0 && "${application_files_removed}" -eq 0 ]]; then
+		print_value "Installer" "${ROOT}/install.sh"
+	fi
+	if [[ "${session_log_removed}" -eq 0 ]]; then
+		print_value "Log file" "${LOG_FILE}"
+	fi
+	for retained_image in "${RETAINED_INSTALLATION_IMAGES[@]}"; do
+		print_value "Docker image" "${retained_image}"
+	done
 
 	print_section "Notes"
 	printf '  - Host Docker CE is not removed by HyperFileLens uninstall.\n'
-	printf '  - The installation directory is retained for recovery and inspection.\n'
-	print_value "Log file" "${LOG_FILE}"
+	if [[ "${keep_data}" -eq 1 ]]; then
+		printf '  - Re-run the release or online installer to restore the application from the retained state.\n'
+	elif [[ "${install_root_removed}" -eq 0 ]]; then
+		printf '  - The installation directory is retained for recovery and inspection.\n'
+	fi
+	if [[ "${session_log_removed}" -eq 1 ]]; then
+		printf '  - The session log was removed with the installation root; use --log-file outside %s to retain it.\n' "${ROOT}"
+	fi
 	print_warning_summary
 }
 
@@ -6391,6 +7466,9 @@ cmd_upgrade() {
 	print_value "Target" "${new_version} ($(display_edition_from_dir "${src_root}"))"
 	print_value "Insight" "$([[ "${remove_sourcelens}" -eq 1 ]] && printf 'remove' || [[ "${upgrade_sourcelens}" -eq 1 ]] && printf 'upgrade' || printf 'retain')"
 	log "Upgrade transaction is ready: ${cur_version} -> ${new_version}"
+	if online_console_enabled; then
+		online_console_line "  [....] Validating the existing installation and target release"
+	fi
 
 	print_section "[1/8] Validating Redis recovery requirements"
 	require_docker
@@ -6411,6 +7489,9 @@ cmd_upgrade() {
 		UPGRADE_BACKUP_DIR="${ROOT}/backup/upgrade-${backup_stamp}"
 	fi
 	record_upgrade_transaction_phase backup_complete "${UPGRADE_BACKUP_DIR}"
+	if online_console_enabled; then
+		online_console_line "  [ OK ] Upgrade backup is ready"
+	fi
 
 	print_section "[3/8] Validating the upgrade package"
 	preflight_blue_green_source "${src_root}"
@@ -6440,6 +7521,9 @@ cmd_upgrade() {
 	step "Preloading verified target images before the maintenance window ..."
 	load_images_from_manifest "$([[ "${upgrade_sourcelens}" -eq 0 ]] && echo 1 || echo 0)" "${src_root}"
 	record_upgrade_transaction_phase images_loaded
+	if online_console_enabled; then
+		online_console_line "  [ OK ] Upgrade package and prepared images are ready"
+	fi
 
 	print_section "[5/8] Preparing the Blue/Green cutover"
 	if compose_in_root ps -q 2>/dev/null | grep -q .; then
@@ -6476,6 +7560,9 @@ cmd_upgrade() {
 	record_upgrade_transaction_phase background_paused
 
 	print_section "[6/8] Applying target files, configuration, and database migration"
+	if online_console_enabled; then
+		online_console_line "  [....] Applying configuration, application files, and database migrations"
+	fi
 	# Existing releases used APP_VERSION for stable Nginx. Pin that currently
 	# running image before the new environment template is merged.
 	pin_gateway_version_if_missing "${cur_version}"
@@ -6507,8 +7594,14 @@ cmd_upgrade() {
 	compose_in_root --profile tools run --rm --no-deps migration
 	record_deployment_phase migrated "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	record_upgrade_transaction_phase migrated
+	if online_console_enabled; then
+		online_console_line "  [ OK ] Configuration and database migration are ready"
+	fi
 
 	print_section "[7/8] Starting ${target_color} and switching application traffic"
+	if online_console_enabled; then
+		online_console_line "  [....] Starting application services and switching traffic"
+	fi
 	compose_color "${target_color}" up -d --no-build --pull never \
 		"api-${target_color}" "web-${target_color}"
 	wait_for_color_health "${target_color}" \
@@ -6530,6 +7623,9 @@ cmd_upgrade() {
 	UPGRADE_HFL_COMMITTED=1
 	record_deployment_phase committed "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	remove_retired_color "${UPGRADE_PREVIOUS_COLOR}"
+	if online_console_enabled; then
+		online_console_line "  [ OK ] Application services are ready"
+	fi
 
 	# SourceLens is a separate lifecycle. An unchanged bundle is never touched;
 	# when it changes, upgrade it only after HFL traffic has safely switched.
@@ -6569,10 +7665,15 @@ cmd_upgrade() {
 	ensure_local_platform_gateway
 	record_upgrade_transaction_phase gateway_verified
 	prune_agent_release_media
+	if online_console_enabled; then
+		online_console_line "  [ OK ] Platform services are ready"
+	fi
 	prune_old_managed_image_refs
 	record_deployment_phase complete "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	write_upgrade_transaction_state complete complete "${UPGRADE_BACKUP_DIR}"
 	UPGRADE_RECOVERY_ARMED=0
+	mark_install_complete "${new_version}" \
+		|| warn "could not record the completed installation state"
 
 	print_section "[8/8] Finalizing the upgrade"
 	cleanup_upgrade_tmp
@@ -6588,6 +7689,33 @@ cmd_upgrade() {
 	print_value "Log file" "${LOG_FILE}"
 	compose_all_profiles ps
 	print_console_access_summary "Access and management" 0
+	if online_console_enabled; then
+		online_console_section "[4/4] Verifying upgrade"
+		online_console_line
+		online_console_line "  HyperFileLens       Ready"
+		online_console_line "  Platform Ops        Ready"
+		if [[ "$(configured_sourcelens_mode)" == "bundled" ]] && sourcelens_installed; then
+			online_console_line "  Insight services    Ready"
+		fi
+		if local_platform_gateway_agent_is_managed \
+			&& [[ "${LOCAL_PLATFORM_GATEWAY_VERIFIED}" -eq 1 ]]; then
+			online_console_line "  Platform Gateway    Online"
+		fi
+		online_console_line
+		online_console_line "  [ OK ] Upgrade verification passed"
+		online_console_line
+		online_console_line "================================================================"
+		online_console_line "Upgrade completed successfully"
+		online_console_line "================================================================"
+		online_console_line
+		online_console_line "Upgrade summary"
+		online_console_line "  Previous       ${cur_version}"
+		online_console_line "  Current        ${new_version}"
+		online_console_line "  Active pool    ${target_color}"
+		online_console_line "  Backup         ${UPGRADE_BACKUP_DIR}"
+		online_console_line "  Rollback data  verified"
+		online_console_line "  Log file       ${LOG_FILE}"
+	fi
 }
 
 main() {
@@ -6650,7 +7778,9 @@ main() {
 	SESSION_STARTED=1
 	trap finish_session EXIT
 	trap 'exit 130' INT TERM
-	print_banner "${banner_title}"
+	if [[ "${requested_cmd}" != "status" ]]; then
+		print_banner "${banner_title}"
+	fi
 
 	if [[ $# -eq 0 ]]; then
 		cmd_install

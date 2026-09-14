@@ -3,11 +3,12 @@ import test from 'node:test'
 
 import { resolveSmokeContract } from '../dev/browser-smoke-contract.mjs'
 
-test('Community smoke contract only covers Host platform routes', () => {
+test('Community smoke contract covers essential platform routes', () => {
   const contract = resolveSmokeContract('community')
 
   assert.deepEqual(contract.platformRoutes, [
     '/platform-ops/engine/ai-settings',
+    '/platform-ops/platform/external-access',
     '/platform-ops/platform/runtime-environment',
   ])
   assert.equal(contract.mobilePlatformStartPath, '/platform-ops/engine/ai-settings')

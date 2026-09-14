@@ -7,6 +7,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from apps.storage.repositories.models import Credential, Repository
+from apps.storage.services.internal.s3_creation_preflight import prepare_s3_creation
 from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
     check_s3_repository,
@@ -199,6 +200,7 @@ def delete_credential(*, credential: Credential) -> None:
     credential.delete()
 
 
+@prepare_s3_creation
 def create_repository(
     *,
     organization_id: int,

@@ -103,7 +103,7 @@ function formatPhaseTime(at: string | null) {
         {{ t('nodeUpgradeProgress.title') }}
       </div>
       <div class="node-upgrade-progress__version-row">
-        <span class="node-upgrade-progress__version">{{ lifecycle?.current_version || '—' }}</span>
+        <span class="node-upgrade-progress__version">{{ lifecycle?.source_version || lifecycle?.current_version || '—' }}</span>
         <ArrowRight
           :size="14"
           class="node-upgrade-progress__arrow"

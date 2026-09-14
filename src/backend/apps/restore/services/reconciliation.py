@@ -7,11 +7,17 @@ import logging
 from django.db import transaction
 from django.db.models import CharField, Exists, OuterRef, Subquery
 from django.db.models.functions import Cast
+from django.utils import timezone
 
-from apps.node.models import NodeTask
+from apps.node.models import Node, NodeTask
+from apps.node.services.internal.task_offline_reconcile import is_node_offline_stale
 from apps.restore.models import RestoreRecord, RestoreRecordItem
+from apps.restore.services.restore_progress import sync_restore_record_progress
 from apps.restore.services.task_classification import normalize_restore_task_type
-from apps.restore.signals import sync_restore_record_from_node_task
+from apps.restore.signals import (
+    _finalize_record_if_done,
+    sync_restore_record_from_node_task,
+)
 from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.models import Task
 from apps.task.services.interface import TERMINAL_STATUSES
@@ -55,7 +61,7 @@ def reconcile_restore_node_task_projections(*, limit: int = 200) -> dict[str, in
     classified, classification_failed = _classify_terminal_legacy_insight_tasks(
         limit=batch_size
     )
-    _resume_stranded_insight_restore_items(limit=batch_size)
+    _resume_stranded_restore_items(limit=batch_size)
     return {
         "candidates": len(candidates),
         "replayed": replayed,
@@ -65,8 +71,8 @@ def reconcile_restore_node_task_projections(*, limit: int = 200) -> dict[str, in
     }
 
 
-def _resume_stranded_insight_restore_items(*, limit: int) -> None:
-    """Durably continue sequential Chat restores after callback/broker failure."""
+def _resume_stranded_restore_items(*, limit: int) -> None:
+    """Durably continue bounded restores after callback or worker failure."""
 
     from apps.restore.services.interface import _dispatch_restore_items
 
@@ -79,7 +85,6 @@ def _resume_stranded_insight_restore_items(*, limit: int) -> None:
     )
     record_ids = list(
         RestoreRecord.objects.filter(
-            purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
             task_id__in=Subquery(active_task_ids),
             items__status__in=_ACTIVE_ITEM_STATUSES,
             items__node_task_id__isnull=True,
@@ -99,17 +104,22 @@ def _resume_stranded_insight_restore_items(*, limit: int) -> None:
                 if task is None:
                     continue
                 items = list(record.items.all())
-                if any(
-                    item.node_task_id is not None
+                active_items = [
+                    item
+                    for item in items
+                    if item.node_task_id is not None
                     and item.status
                     in (
                         RestoreRecordItem.Status.PENDING,
                         RestoreRecordItem.Status.RUNNING,
                     )
-                    for item in items
+                ]
+                if (
+                    record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE
+                    and active_items
                 ):
                     continue
-                if any(
+                if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE and any(
                     item.status
                     in (
                         RestoreRecordItem.Status.FAILED,
@@ -119,6 +129,35 @@ def _resume_stranded_insight_restore_items(*, limit: int) -> None:
                     for item in items
                 ):
                     continue
+                execution_node = Node.objects.filter(
+                    pk=record.target_execution_node_id,
+                    organization_id=record.target_execution_organization_id,
+                    is_deleted=False,
+                ).first()
+                if execution_node is None or is_node_offline_stale(execution_node):
+                    error_code = (
+                        "RESTORE_EXECUTION_NODE_UNAVAILABLE"
+                        if execution_node is None
+                        else "AGENT_OFFLINE"
+                    )
+                    error_message = (
+                        "Restore execution node is no longer available."
+                        if execution_node is None
+                        else "Agent remained offline beyond the reconnect grace period."
+                    )
+                    RestoreRecordItem.objects.filter(
+                        restore_record=record,
+                        node_task_id__isnull=True,
+                        status__in=_ACTIVE_ITEM_STATUSES,
+                    ).update(
+                        status=RestoreRecordItem.Status.FAILED,
+                        error_code=error_code,
+                        error_message=error_message,
+                        terminal_projection_at=timezone.now(),
+                    )
+                    sync_restore_record_progress(record=record)
+                    _finalize_record_if_done(record=record, product_task=task)
+                    continue
                 _dispatch_restore_items(
                     organization_id=record.organization_id,
                     record=record,
@@ -126,7 +165,7 @@ def _resume_stranded_insight_restore_items(*, limit: int) -> None:
                 )
         except Exception:
             logger.exception(
-                "insight restore continuation reconciliation failed record_id=%s",
+                "restore continuation reconciliation failed record_id=%s",
                 record_id,
             )
 

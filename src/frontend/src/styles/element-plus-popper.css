@@ -27,6 +27,17 @@
   overflow: visible;
 }
 
+/* Standard width for explanatory tooltips. Match the established 360px
+   information-popper measure while preserving a 16px viewport gutter. */
+.el-popper.hfl-tooltip--medium {
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 32px));
+  max-width: min(360px, calc(100vw - 32px));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 /* Keep Element Plus' bordered arrow geometry, but clip the rotated square to
    the half that belongs outside the popper. Negative insets preserve its tip. */
 .el-popper[data-popper-placement^='bottom'] > .el-popper__arrow {
@@ -57,9 +68,17 @@
   overflow: hidden;
 }
 
-.el-dropdown__popper.el-popper .el-dropdown-menu,
-.hfl-actions-dropdown.el-popper .el-dropdown-menu {
+.el-dropdown__popper.el-popper .el-dropdown-menu {
   padding: 0 !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+}
+
+.hfl-actions-dropdown.el-popper .el-dropdown-menu {
+  width: max-content;
+  min-width: 160px;
+  max-width: calc(100vw - 24px);
+  padding: 5px !important;
   border-radius: 10px !important;
   overflow: hidden;
 }
@@ -80,6 +99,25 @@
 
 .el-dropdown-menu__item--divided::before {
   margin: 0 !important;
+}
+
+/* Action groups use an inset divider with the reference's 5px space above
+   and below. Element Plus normally draws the divider on the item itself. */
+.hfl-actions-dropdown .el-dropdown-menu__item--divided {
+  position: relative;
+  margin-top: 11px !important;
+  border-top: 0;
+}
+
+.hfl-actions-dropdown .el-dropdown-menu__item--divided::before {
+  position: absolute;
+  top: -6px;
+  right: 4px;
+  left: 4px;
+  height: 1px;
+  margin: 0 !important;
+  background: var(--color-border-light);
+  content: '';
 }
 
 .hfl-pagination-size-popper.el-popper {

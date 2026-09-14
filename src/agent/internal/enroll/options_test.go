@@ -36,6 +36,32 @@ func TestParseInstallOptionsRequiresUninstallForPurge(t *testing.T) {
 	}
 }
 
+func TestParseInstallOptionsAcceptsPurgeCompatibilityForUninstall(t *testing.T) {
+	opts := ParseInstallOptions([]string{"--uninstall", "--purge-all"})
+	if opts.Invalid != "" || opts.KeepData || !opts.PurgeAll {
+		t.Fatalf("expected purge-all compatibility uninstall options: %+v", opts)
+	}
+}
+
+func TestParseInstallOptionsKeepsDataOnlyForUninstall(t *testing.T) {
+	opts := ParseInstallOptions([]string{"--uninstall", "--keep-data"})
+	if opts.Invalid != "" || !opts.KeepData || opts.PurgeAll {
+		t.Fatalf("expected keep-data uninstall options: %+v", opts)
+	}
+
+	opts = ParseInstallOptions([]string{"--keep-data"})
+	if opts.Invalid == "" {
+		t.Fatalf("expected standalone --keep-data to be rejected: %+v", opts)
+	}
+}
+
+func TestParseInstallOptionsRejectsConflictingUninstallPolicies(t *testing.T) {
+	opts := ParseInstallOptions([]string{"--uninstall", "--keep-data", "--purge-all"})
+	if opts.Invalid == "" {
+		t.Fatalf("expected conflicting uninstall policies to be rejected: %+v", opts)
+	}
+}
+
 func TestParseInstallOptionsRejectsInvalidOutputMode(t *testing.T) {
 	for _, args := range [][]string{{"--output"}, {"--output", "xml"}, {"--output=xml"}} {
 		opts := ParseInstallOptions(args)

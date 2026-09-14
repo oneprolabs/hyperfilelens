@@ -146,6 +146,8 @@ class NodeOperationBatchStartView(OrgScopedMixin, APIView):
                 "role": node.role,
                 "operation_id": result.get("operation_id"),
                 "task_id": result.get("task_id"),
+                "node_task_id": result.get("node_task_id"),
+                "task_uuid": result.get("task_uuid"),
                 "state": result.get("state"),
             },
         )

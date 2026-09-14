@@ -39,6 +39,7 @@ import {
   updateNode,
 } from '../../lib/nodeApi'
 import { canRemoteAgentUpgrade } from '../../lib/agentVersion'
+import type { GatewayAiPhase } from '../../lib/gatewayDisplayStatus'
 import {
   formatNodeBytes,
   formatNodeDate,
@@ -221,10 +222,11 @@ function ipLine(row: ApiNode) {
   return row.ip_address?.trim() || '—'
 }
 
-function aiPhase(row: InsightGatewayRow): 'not_provisioned' | 'pending_install' | 'online' | 'offline' | 'error' {
+function aiPhase(row: InsightGatewayRow): GatewayAiPhase {
   if (!bridgeReady.value) return 'not_provisioned'
   if (row.managed_by_hfl === false) return 'not_provisioned'
-  if (!row.hfl_agent_online) return 'offline'
+  if (!row.hfl_agent_online) return 'agent_offline'
+  if (row.sidecar_status === 'error') return 'error'
   if (!row.ai_enabled) {
     if (row.status === 'online') return 'error'
     return 'not_provisioned'

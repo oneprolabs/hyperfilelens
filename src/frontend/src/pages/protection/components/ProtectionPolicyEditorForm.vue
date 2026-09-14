@@ -389,6 +389,34 @@ function toggleScheduleMonthDay(day: number) {
             </p>
           </div>
         </div>
+        <div class="policy-basic-row policy-basic-row--timezone">
+          <label
+            class="policy-basic-row__label"
+            for="policy-timezone-input"
+          >
+            {{ t('protection.policiesPage.scheduleTimezone') }}
+            <span class="policy-basic-row__required">*</span>
+          </label>
+          <div class="policy-basic-row__control">
+            <el-select
+              id="policy-timezone-input"
+              v-model="policyForm.scheduleTimezone"
+              filterable
+              class="schedule-context-control"
+              :placeholder="t('protection.policiesPage.scheduleTimezonePlaceholder')"
+            >
+              <el-option
+                v-for="timezone in scheduleTimezoneOptions"
+                :key="timezone.value"
+                :label="timezone.label"
+                :value="timezone.value"
+              />
+            </el-select>
+          </div>
+          <p class="schedule-context-hint policy-basic-row__hint">
+            {{ t('protection.policiesPage.policyTimezoneHint') }}
+          </p>
+        </div>
         <div class="policy-basic-row">
           <span class="policy-basic-row__label">{{ t('protection.policiesPage.labelPolicyEnabled') }}</span>
           <div class="policy-basic-row__control policy-basic-row__control--switch">
@@ -406,6 +434,12 @@ function toggleScheduleMonthDay(day: number) {
         <el-checkbox v-model="policyForm.sectionScheduleEnabled" />
         <span class="policy-section-head__title">{{ t('protection.policiesPage.sectionCheckSchedule') }}</span>
       </div>
+      <p
+        class="schedule-context-hint"
+        data-policy-timezone
+      >
+        {{ t('protection.policiesPage.scheduleTimezone') }}: {{ policyForm.scheduleTimezone || 'UTC' }}
+      </p>
       <p
         v-if="!policyForm.sectionScheduleEnabled"
         class="policy-section-off-hint"
@@ -434,24 +468,6 @@ function toggleScheduleMonthDay(day: number) {
           </el-radio>
         </el-radio-group>
         <div class="schedule-context-grid">
-          <ElFormItem
-            :label="t('protection.policiesPage.scheduleTimezone')"
-            class="!mb-0"
-          >
-            <el-select
-              v-model="policyForm.scheduleTimezone"
-              filterable
-              class="schedule-context-control"
-              :placeholder="t('protection.policiesPage.scheduleTimezonePlaceholder')"
-            >
-              <el-option
-                v-for="timezone in scheduleTimezoneOptions"
-                :key="timezone.value"
-                :label="timezone.label"
-                :value="timezone.value"
-              />
-            </el-select>
-          </ElFormItem>
           <ElFormItem
             :label="t('protection.policiesPage.scheduleStartsAt')"
             class="!mb-0"
@@ -666,6 +682,12 @@ function toggleScheduleMonthDay(day: number) {
         <el-checkbox v-model="policyForm.sectionRetentionEnabled" />
         <span class="policy-section-head__title">{{ t('protection.policiesPage.sectionCheckRetention') }}</span>
       </div>
+      <p
+        class="schedule-context-hint"
+        data-policy-timezone
+      >
+        {{ t('protection.policiesPage.scheduleTimezone') }}: {{ policyForm.scheduleTimezone || 'UTC' }}
+      </p>
       <p
         v-if="!policyForm.sectionRetentionEnabled"
         class="policy-section-off-hint"
@@ -1235,6 +1257,14 @@ function toggleScheduleMonthDay(day: number) {
   gap: 12px;
 }
 
+.policy-basic-row--timezone {
+  row-gap: 0;
+}
+
+.policy-basic-row__hint {
+  grid-column: 2;
+}
+
 .policy-basic-row__label {
   color: rgb(51 65 85);
   font-size: 13px;
@@ -1634,6 +1664,15 @@ function toggleScheduleMonthDay(day: number) {
   .policy-basic-row {
     grid-template-columns: 1fr;
     justify-items: stretch;
+  }
+
+  .policy-basic-row--timezone {
+    row-gap: 12px;
+  }
+
+  .policy-basic-row__hint {
+    grid-column: 1;
+    margin-top: -12px;
   }
 
   .policy-basic-row__control {

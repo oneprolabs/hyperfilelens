@@ -12,6 +12,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   zai: 'Z.AI (GLM)',
   volcengine: 'Volcengine (Doubao)',
   openrouter: 'OpenRouter',
+  openai_compatible: 'OpenAI Compatible',
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -28,15 +29,16 @@ const PROVIDER_COLORS: Record<string, string> = {
   zai: '#2D5AFF',
   volcengine: '#E23B2F',
   openrouter: '#B83280',
+  openai_compatible: '#635BFF',
 }
 
 export function aiProviderLabel(provider: string, fallback?: string) {
-  const key = provider.trim().toLowerCase()
+  const key = provider.trim().toLowerCase().replace(/[\s-]+/g, '_')
   return PROVIDER_LABELS[key] || fallback || provider || '—'
 }
 
 export function aiProviderColor(provider: string) {
-  const key = provider.trim().toLowerCase().replace(/\s+/g, '_')
+  const key = provider.trim().toLowerCase().replace(/[\s-]+/g, '_')
   return PROVIDER_COLORS[key] || '#64748b'
 }
 

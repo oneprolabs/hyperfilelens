@@ -19,7 +19,11 @@ import (
 // StartInstalledService enables and starts the platform service after enrollment.
 func StartInstalledService(ctx context.Context) error {
 	if runtime.GOOS == "darwin" {
-		return startUnixScript(ctx, "start")
+		action := enrollmentServiceAction(isServiceMayHaveProcess(serviceState(ctx)), false)
+		if err := startUnixScript(ctx, action); err != nil {
+			return err
+		}
+		return verifyRunningAgentMatchesInstall(ctx)
 	}
 	return startSystemd(ctx)
 }
@@ -55,14 +59,18 @@ func startSystemd(ctx context.Context) error {
 	// then commits the retained rollback transaction.
 	statePath := install.LifecycleUpgradeStatePath(vfs.DefaultAgentDataDir())
 	if _, err := os.Stat(statePath); err == nil {
-		return startUnixScript(ctx, "start")
+		if err := startUnixScript(ctx, "start"); err != nil {
+			return err
+		}
+		return verifyRunningAgentMatchesInstall(ctx)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect pending upgrade state: %w", err)
 	}
+	action := enrollmentServiceAction(isServiceMayHaveProcess(serviceState(ctx)), false)
 	for _, args := range [][]string{
 		{"daemon-reload"},
 		{"enable", "hyperfilelens-agent.service"},
-		{"start", "hyperfilelens-agent.service"},
+		{action, "hyperfilelens-agent.service"},
 	} {
 		if installIsUserLevel() {
 			args = append([]string{"--user"}, args...)
@@ -78,9 +86,18 @@ func startSystemd(ctx context.Context) error {
 	}
 	active, _ := exec.CommandContext(ctx, "systemctl", activeArgs...).Output()
 	if strings.TrimSpace(string(active)) != "active" {
-		return fmt.Errorf("service not active after start")
+		return fmt.Errorf("service not active after %s", action)
 	}
-	return nil
+	return verifyRunningAgentMatchesInstall(ctx)
+}
+
+func isServiceMayHaveProcess(service string) bool {
+	switch strings.ToLower(strings.TrimSpace(service)) {
+	case "active", "activating", "deactivating", "running", "loaded":
+		return true
+	default:
+		return false
+	}
 }
 
 func installIsUserLevel() bool {

@@ -52,6 +52,10 @@ grep -F './tools/quality/test-docker-image-digest-alias.sh' \
 	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-offline-docker-package-plan.sh' \
 	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
+grep -F './tools/quality/test-online-confirm-retry.sh' \
+	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
+grep -F 'Enter y or n (or press Enter to cancel).' "${online_installer}" >/dev/null
+grep -F 'HFL_CONFIRM_TTY' "${online_installer}" >/dev/null
 grep -F './tools/quality/test-language-pack-runtime-index.sh' \
 	"${ROOT}/.github/workflows/release_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-bundled-language-pack-lifecycle.sh' \
@@ -133,7 +137,8 @@ services:
     image: example/frontend:latest
   lensnode:
     build:
-      context: ./lensnode
+      context: .
+      dockerfile: lensnode/Dockerfile
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     image: example/lensnode:latest
@@ -151,6 +156,9 @@ grep -F 'NPM_REGISTRY: ${NPM_REGISTRY:-}' \
 	exit 1
 }
 grep -F 'CODEGRAPH_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}' \
+	"${tmp}/docker-compose.standalone.yml" >/dev/null
+grep -Fx '      context: .' "${tmp}/docker-compose.standalone.yml" >/dev/null
+grep -Fx '      dockerfile: lensnode/Dockerfile' \
 	"${tmp}/docker-compose.standalone.yml" >/dev/null
 
 mkdir -p "${tmp}/frontend"
@@ -314,9 +322,9 @@ grep -F 'no_cache=1' <<<"${config}" >/dev/null
 grep -F -- '--prebuilt' "${ROOT}/release/build-sourcelens.sh" >/dev/null
 grep -F 'ln "${source_archive}" "${temporary}"' \
 	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
-grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.47.9}"' \
+grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.49.5}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
-grep -F 'SOURCELENS_GIT_REF=v0.47.9' \
+grep -F 'SOURCELENS_GIT_REF=v0.49.5' \
 	"${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
@@ -327,7 +335,10 @@ grep -F 'set_key("DJANGO_DEBUG", "true")' \
 for setting in \
 	'LENSNODE_PLANNING_REASONING_EFFORT: "medium"' \
 	'LENSNODE_EXECUTION_BACKEND: "trusted_container"' \
-	'LENSNODE_MAX_CONCURRENT_RUNS: "1"'; do
+	'LENSNODE_MAX_CONCURRENT_RUNS: "1"' \
+	'LENSNODE_STREAM_RECOVERY_ATTEMPTS: "3"' \
+	'LENSNODE_STREAM_RECOVERY_BACKOFF_S: "1"' \
+	'LENSNODE_STREAM_RECOVERY_BACKOFF_MAX_S: "8"'; do
 	grep -F "${setting}" \
 		"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
 done
@@ -436,7 +447,8 @@ services:
     image: example/frontend:latest
   lensnode:
     build:
-      context: ./lensnode
+      context: .
+      dockerfile: lensnode/Dockerfile
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
@@ -469,8 +481,12 @@ grep -F 'NPM_REGISTRY: ${NPM_REGISTRY:-}' \
 	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 grep -F 'CODEGRAPH_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}' \
 	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
+grep -Fx '      context: .' \
+	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
+grep -Fx '      dockerfile: lensnode/Dockerfile' \
+	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 
-grep -F '# SourceLens v0.47.9 requires no HFL functional patches.' \
+grep -F '# SourceLens v0.49.5 requires no HFL functional patches.' \
 	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
 [[ -x "${ROOT}/tools/sourcelens/update-runtime-contract.sh" ]]
 [[ -x "${ROOT}/tools/quality/test-sourcelens-runtime-contract.sh" ]]
@@ -540,7 +556,10 @@ grep -F 'LENSNODE_DRAIN_TIMEOUT_S: "240"' \
 for setting in \
 	'LENSNODE_PLANNING_REASONING_EFFORT: "medium"' \
 	'LENSNODE_EXECUTION_BACKEND: "trusted_container"' \
-	'LENSNODE_MAX_CONCURRENT_RUNS: "1"'; do
+	'LENSNODE_MAX_CONCURRENT_RUNS: "1"' \
+	'LENSNODE_STREAM_RECOVERY_ATTEMPTS: "3"' \
+	'LENSNODE_STREAM_RECOVERY_BACKOFF_S: "1"' \
+	'LENSNODE_STREAM_RECOVERY_BACKOFF_MAX_S: "8"'; do
 	grep -F "${setting}" \
 		"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 done
@@ -1152,7 +1171,7 @@ grep -F 'printLifecycleBanner(gatewayName, "Upgrade")' \
 	"${agent_gateway_lifecycle}" >/dev/null
 grep -F 'printGatewayUpgradeSuccess(gatewayName, version, service)' \
 	"${agent_gateway_lifecycle}" >/dev/null
-grep -F 'printUninstallSuccess(state, purgeAll)' \
+grep -F 'printUninstallSuccess(state, keepData)' \
 	"${agent_gateway_lifecycle}" >/dev/null
 if grep -E 'Write-HflInstallLogLine "(Success|  )' "${agent_windows_installer}" >/dev/null; then
 	printf 'ERROR: Windows Agent lifecycle output must use the timestamping display logger\n' >&2
@@ -1260,6 +1279,13 @@ if grep -F 'install.sh" platform-gateway ensure' "${remote_deploy}" >/dev/null; 
 	printf 'ERROR: remote deployment must not repeat installer-owned Gateway ensure\n' >&2
 	exit 1
 fi
+saas_deploy_action="${ROOT}/.github/actions/deploy-saas/action.yml"
+if grep -F 'platform-gateway ensure' "${saas_deploy_action}" >/dev/null; then
+	printf 'ERROR: SaaS deployment must not repeat installer-owned Gateway ensure\n' >&2
+	exit 1
+fi
+grep -F 'platform-gateway verify --required --timeout 180' \
+	"${saas_deploy_action}" >/dev/null
 grep -F -- '--public-url) PUBLIC_URL=' "${remote_deploy}" >/dev/null
 grep -F -- '--admin-public-url) ADMIN_PUBLIC_URL=' "${remote_deploy}" >/dev/null
 grep -F -- '--direct-host) DIRECT_HOST=' "${remote_deploy}" >/dev/null
@@ -1347,7 +1373,7 @@ platform_gateway_verify_line="$(grep -nF 'platform-gateway verify --required --t
 }
 grep -F 'https://127.0.0.1:11443/health/ready' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
-grep -F 'https://127.0.0.1:11442/en/' \
+grep -F 'https://127.0.0.1:11442/' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'run: ./.github/scripts/check-public-endpoint.sh' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
@@ -1618,10 +1644,10 @@ if grep -F -- '--network host' "${smoke_runner}" >/dev/null; then
 	printf 'ERROR: browser smoke must reach published ports through host-gateway\n' >&2
 	exit 1
 fi
-grep -F 'image: hyperfilelens-postgres:17' "${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F 'image: ${HFL_POSTGRES_IMAGE:-hyperfilelens-postgres:17}' \
+	"${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'absolute_redirect off;' "${ROOT}/deploy/nginx/default.conf" >/dev/null
-# Website pool (:8082) must keep / → /en/ relative; absolute redirects leak the
-# unpublished internal listen port through the public :11442 gateway.
+# Website pool (:8082) serves the default English homepage directly at /.
 grep -F 'absolute_redirect off;' "${ROOT}/deploy/nginx/web.conf" >/dev/null
 grep -F 'map $server_port $hfl_site {' \
 	"${ROOT}/deploy/nginx/snippets/hfl-log-format.conf" >/dev/null
@@ -1632,21 +1658,48 @@ grep -E '^[[:space:]]*11444[[:space:]]+ops;' \
 grep -F 'proxy_set_header X-HFL-Site-Role $hfl_site;' \
 	"${ROOT}/deploy/nginx/snippets/hfl-backend-proxy-headers.inc" >/dev/null
 for resource in \
-	'mem_limit: 128m' 'mem_limit: 256m' 'mem_limit: 512m' \
-	'cpus: 0.125' 'cpus: 0.25' 'cpus: 0.50' 'cpus: 1.00'; do
+	'mem_limit: 512m' 'mem_limit: 1g' 'cpus: 0.50' 'cpus: 1.00'; do
 	grep -F "${resource}" "${ROOT}/deploy/docker-compose.yml" \
 		"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
 done
+hfl_api_contract="$(sed -n '/^x-api: &api$/,/^x-web: &web$/p' \
+	"${ROOT}/deploy/docker-compose.yml")"
+grep -F '  mem_limit: 1g' <<<"${hfl_api_contract}" >/dev/null
+grep -F '  cpus: 1.00' <<<"${hfl_api_contract}" >/dev/null
+grep -F '    mem_limit: ${HFL_WORKER_MEMORY_LIMIT:-2g}' \
+	"${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F '    cpus: ${HFL_WORKER_CPU_LIMIT:-1.0}' \
+	"${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F 'CELERY_WORKER_CONCURRENCY=2' "${ROOT}/.env.example" >/dev/null
+grep -F 'HFL_WORKER_MEMORY_LIMIT=2g' "${ROOT}/.env.example" >/dev/null
+grep -F 'HFL_WORKER_CPU_LIMIT=1.0' "${ROOT}/.env.example" >/dev/null
+[[ "$(grep -Fc -- '--concurrency="${CELERY_WORKER_CONCURRENCY:-2}"' \
+	"${ROOT}/deploy/docker/backend-entrypoint.sh" || true)" -eq 2 ]] \
+	|| { printf 'ERROR: production and development Workers must default to two processes\n' >&2; exit 1; }
 sourcelens_compose_template="${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml"
-[[ "$(grep -Fc '    mem_limit: 2g' "${sourcelens_compose_template}" || true)" -eq 2 ]] \
-	|| { printf 'ERROR: bundled SourceLens API and LensNode must both use a 2 GiB limit\n' >&2; exit 1; }
+grep -F '      API_WORKERS: "2"' "${sourcelens_compose_template}" >/dev/null
+grep -F '      CELERY_CONCURRENCY: "2"' "${sourcelens_compose_template}" >/dev/null
+[[ "$(grep -Fc '    mem_limit: 2g' "${sourcelens_compose_template}" || true)" -eq 3 ]] \
+	|| { printf 'ERROR: bundled SourceLens API, Worker, and LensNode must use a 2 GiB limit\n' >&2; exit 1; }
+[[ "$(grep -Fc '    cpus: 1.00' "${sourcelens_compose_template}" || true)" -eq 3 ]] \
+	|| { printf 'ERROR: bundled SourceLens API, Worker, and LensNode must use a 1 CPU limit\n' >&2; exit 1; }
+grep -F '      UVICORN_WS_PING_INTERVAL: "45"' \
+	"${sourcelens_compose_template}" >/dev/null
+grep -F '      UVICORN_WS_PING_TIMEOUT: "180"' \
+	"${sourcelens_compose_template}" >/dev/null
 grep -F '    mem_limit: 2g' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
-if grep -E 'mem_limit: (64|320|384|448)m|cpus: (0\.05|0\.10|0\.15|0\.20|0\.30)' \
+grep -F '    cpus: 1.00' \
+	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
+if grep -E 'mem_limit: (64|128|256|320|384|448)m|cpus: (0\.05|0\.10|0\.125|0\.15|0\.20|0\.25|0\.30)' \
 	"${ROOT}/deploy/docker-compose.yml" \
-	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" \
+	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null; then
+	printf 'ERROR: control-plane services must use at least 0.5 CPU and 512 MiB memory\n' >&2
+	exit 1
+fi
+if grep -E 'mem_limit: (64|320|384|448)m|cpus: (0\.05|0\.10|0\.15|0\.20|0\.30)' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null; then
-	printf 'ERROR: deployment resources must use the normalized human-readable limits\n' >&2
+	printf 'ERROR: gateway resources must use the normalized human-readable limits\n' >&2
 	exit 1
 fi
 grep -F 'MemoryHigh=512M' "${ROOT}/src/agent/packaging/install/install.sh" >/dev/null
@@ -1663,5 +1716,11 @@ grep -F 'chmod 0700 "${COMPOSE_DIR}"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 grep -F 'chmod 0600 "${compose_file}"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
+grep -F 'config/lensnode.env' \
+	"${ROOT}/deploy/bootstrap/gateway-lifecycle.sh" \
+	"${ROOT}/deploy/installer/install.sh" >/dev/null
+grep -F 'runtime/lensnode' \
+	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" \
+	"${ROOT}/deploy/bootstrap/gateway-lifecycle.sh" >/dev/null
 
 printf 'Release contract checks passed.\n'

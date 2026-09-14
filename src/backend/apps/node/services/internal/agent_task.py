@@ -45,6 +45,36 @@ _TERMINAL_STATUSES = frozenset(
     },
 )
 _TASK_SYNC_DB_POLL_SECONDS = 5
+_KOPIA_CACHE_DEFAULT_MB = 1024
+_KOPIA_CACHE_MAX_MB = 65536
+
+
+def _node_kopia_cache_size_mb(node: Node) -> int:
+    """Read the optional node cache target without trusting arbitrary metadata."""
+    metadata = node.metadata if isinstance(node.metadata, dict) else {}
+    settings = metadata.get("perf_settings")
+    raw = settings.get("kopiaCacheMb") if isinstance(settings, dict) else None
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        return _KOPIA_CACHE_DEFAULT_MB
+    value = raw
+    if value < 0 or value > _KOPIA_CACHE_MAX_MB:
+        return _KOPIA_CACHE_DEFAULT_MB
+    return value
+
+
+def _attach_node_kopia_cache_policy(
+    *, node: Node, payload: dict | None
+) -> dict | None:
+    """Add the node policy to repository work executed by source nodes."""
+    if node.role not in {Node.Role.AGENT, Node.Role.PROXY}:
+        return payload
+    if not isinstance(payload, dict):
+        return payload
+    if not isinstance(payload.get("repository"), dict):
+        return payload
+    enriched = dict(payload)
+    enriched["kopia_cache_size_mb"] = _node_kopia_cache_size_mb(node)
+    return enriched
 
 
 @dataclass(frozen=True)
@@ -124,6 +154,10 @@ def run_agent_task_async(
         organization_id=organization_id,
         org=org,
         node_id=node_id,
+    )
+    payload = _attach_node_kopia_cache_policy(node=node, payload=payload)
+    persisted_payload = _attach_node_kopia_cache_policy(
+        node=node, payload=persisted_payload
     )
     logger.info(
         "agent task async dispatch %s",
@@ -295,6 +329,10 @@ def run_agent_task_sync(
         organization_id=organization_id,
         org=org,
         node_id=node_id,
+    )
+    payload = _attach_node_kopia_cache_policy(node=node, payload=payload)
+    persisted_payload = _attach_node_kopia_cache_policy(
+        node=node, payload=persisted_payload
     )
     logger.info(
         "agent task sync dispatch %s wait_seconds=%s",

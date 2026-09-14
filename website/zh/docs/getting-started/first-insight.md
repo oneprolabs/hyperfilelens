@@ -10,6 +10,7 @@ description: 基于首次备份快照创建洞察会话并使用 Public Data Gat
 ## 开始前检查
 
 - 首次备份快照状态为 **Available**，并包含 `insights\device-inventory.csv`。
+- 已配置并启用默认 Agent 模型。
 - 当前环境存在可用的 **Public Data Gateway**。
 - 当前账户拥有创建 AI Copilot 会话的权限。
 

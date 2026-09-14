@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useRoute, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Menu } from 'lucide-vue-next'
+import { ElMessage } from 'element-plus'
+import { ArrowLeft, LoaderCircle, Menu } from 'lucide-vue-next'
 import NavUserMenu from '../../components/NavUserMenu.vue'
+import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 import Sidebar from '../../components/Sidebar.vue'
 import { useTheme } from '../../composables/useTheme'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import { applyThemeVars } from '../composables/applyThemeVars'
 import { useResolvedPlatformOpsSideNav } from '../composables/useResolvedPlatformOpsSideNav'
 import { platformOpsRouteViewKey } from '../lib/platformOpsRouteViewKey'
+import { openTenantApplication } from '../lib/tenantApplicationNavigation'
 import MobileNavigationDrawer from '../../components/MobileNavigationDrawer.vue'
 import '../styles/platform-ops-ui.css'
 import '../styles/monitoring.css'
@@ -19,32 +22,30 @@ const { t } = useI18n()
 const route = useRoute()
 const { theme } = useTheme()
 
-const tenantUrl = ref('')
+const returningToTenant = ref(false)
 const themeVersion = ref(0)
 const fallbackSidebarCollapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
 const fallbackMenuItems = useResolvedPlatformOpsSideNav()
 const mobileNavigationOpen = ref(false)
 
+const timezoneOffsetDisplay = computed(() => {
+  const offset = new Date().getTimezoneOffset()
+  const sign = offset <= 0 ? '+' : '-'
+  const absOffset = Math.abs(offset)
+  const hours = String(Math.floor(absOffset / 60)).padStart(2, '0')
+  const minutes = String(absOffset % 60).padStart(2, '0')
+  return `GMT${sign}${hours}:${minutes}`
+})
+const timezoneDisplay = computed(() => `${t('nav.timezone')}${timezoneOffsetDisplay.value}`)
+
 const routeSkeletonShowsCards = computed(
   () => route.path.startsWith('/platform-ops/monitoring')
     || route.path.startsWith('/platform-ops/alert-center')
     || route.path.startsWith('/platform-ops/audit-center')
-    || route.path.startsWith('/platform-ops/platform/integrations')
     || route.path === '/platform-ops/overview'
     || route.path === '/platform-ops/users'
     || route.path === '/platform-ops/orgs',
 )
-
-onMounted(async () => {
-  const profile = await fetchDeployProfile()
-  if (profile?.tenant_public_url) {
-    try {
-      tenantUrl.value = new URL(profile.tenant_public_url).toString()
-    } catch {
-      tenantUrl.value = ''
-    }
-  }
-})
 
 watch(
   theme,
@@ -57,9 +58,26 @@ watch(
   { immediate: true },
 )
 
-function goTenantConsole() {
-  if (!tenantUrl.value) return
-  window.location.assign(tenantUrl.value)
+function showTenantNavigationError() {
+  ElMessage.error({
+    message: `${t('platformOps.settings.loadFailed')}: ${t('platformOps.settings.externalAccess.urlLabel')}`,
+    grouping: true,
+  })
+}
+
+async function goTenantConsole() {
+  if (returningToTenant.value) return
+  returningToTenant.value = true
+  try {
+    const navigated = await openTenantApplication(() => fetchDeployProfile(true))
+    if (!navigated) {
+      showTenantNavigationError()
+    }
+  } catch {
+    showTenantNavigationError()
+  } finally {
+    returningToTenant.value = false
+  }
 }
 
 function toggleFallbackSidebar() {
@@ -109,15 +127,33 @@ watch(
           type="button"
           class="platform-ops-return"
           :aria-label="t('platformOps.nav.backToConsole')"
-          :disabled="!tenantUrl"
+          :aria-busy="returningToTenant"
+          :disabled="returningToTenant"
           @click="goTenantConsole"
         >
+          <LoaderCircle
+            v-if="returningToTenant"
+            class="platform-ops-return__spinner"
+            :size="16"
+            aria-hidden="true"
+          />
           <ArrowLeft
+            v-else
             :size="16"
             aria-hidden="true"
           />
           <span>{{ t('platformOps.nav.backToConsole') }}</span>
         </button>
+        <span
+          class="platform-ops-timezone platform-ops-header__desktop-utility"
+          :title="timezoneDisplay"
+        >
+          <span class="platform-ops-timezone__label">{{ t('nav.timezone') }}</span>
+          <span>{{ timezoneOffsetDisplay }}</span>
+        </span>
+        <span class="platform-ops-header__desktop-utility">
+          <LanguageSwitcher variant="navigation" />
+        </span>
         <NavUserMenu />
       </div>
     </header>
@@ -125,6 +161,7 @@ watch(
       v-model="mobileNavigationOpen"
       :title="t('platformOps.nav.title')"
       :module-items="fallbackMenuItems"
+      :timezone-offset-display="timezoneOffsetDisplay"
     />
     <main class="platform-ops-main">
       <RouterView v-slot="{ Component, route: viewRoute }">
@@ -283,6 +320,22 @@ watch(
   gap: 4px;
 }
 
+.platform-ops-timezone {
+  display: flex;
+  height: 32px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--tz-border, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  background: var(--tz-bg, rgba(255, 255, 255, 0.06));
+  color: var(--tz-color, #c9cdd4);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
 .platform-ops-return {
   display: inline-flex;
   align-items: center;
@@ -299,9 +352,24 @@ watch(
   white-space: nowrap;
 }
 
-.platform-ops-return:hover {
+.platform-ops-return:not(:disabled):hover {
   border-color: var(--color-primary, #6d5ef6);
   color: var(--nav-item-hover-color, #fff);
+}
+
+.platform-ops-return:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.platform-ops-return__spinner {
+  animation: platform-ops-return-spin 0.8s linear infinite;
+}
+
+@keyframes platform-ops-return-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .platform-ops-main {
@@ -544,6 +612,10 @@ watch(
     margin-left: auto;
   }
 
+  .platform-ops-header__desktop-utility {
+    display: none;
+  }
+
   .platform-ops-return {
     display: none;
   }
@@ -559,6 +631,17 @@ watch(
 
   .platform-ops-main__route-fallback-content {
     padding: 12px;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1439.98px) {
+  .platform-ops-timezone {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .platform-ops-timezone__label {
+    display: none;
   }
 }
 

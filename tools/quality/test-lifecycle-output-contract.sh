@@ -5,6 +5,16 @@ ROOT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../../deploy/installer/install.sh
 source "${ROOT_REPO}/deploy/installer/install.sh"
 
+uninstall_help="$(usage)"
+grep -F 'Usage: ./install.sh [command] [options]' <<<"${uninstall_help}" >/dev/null
+grep -F 'platform-gateway    Manage the installer-owned Platform Data Gateway' <<<"${uninstall_help}" >/dev/null
+grep -F 'uninstall           Completely remove the installer-managed deployment' <<<"${uninstall_help}" >/dev/null
+grep -F -- '--keep-data                 Remove all managed runtime components while retaining' <<<"${uninstall_help}" >/dev/null
+grep -F -- '--purge-all                 Compatibility alias for the default complete removal' <<<"${uninstall_help}" >/dev/null
+grep -F 'Selective compatibility options:' <<<"${uninstall_help}" >/dev/null
+grep -F 'To retain an uninstall log, set --log-file to a path outside' <<<"${uninstall_help}" >/dev/null
+grep -F 'sudo ./install.sh uninstall --keep-data' <<<"${uninstall_help}" >/dev/null
+
 fixture="$(mktemp -d)"
 trap 'rm -rf "${fixture}"' EXIT
 ROOT="${fixture}"
@@ -31,6 +41,7 @@ read_edition_from_dir() { printf 'Enterprise'; }
 resolve_console_host() { printf '192.0.2.10'; }
 package_has_sourcelens() { return 0; }
 sourcelens_installed() { return 0; }
+local_platform_gateway_agent_is_managed() { return 1; }
 
 output="$({
 	print_banner 'HyperFileLens Installer'
@@ -39,7 +50,7 @@ output="$({
 } 2>&1)"
 
 [[ "$(grep -c 'INSTALLER' <<<"${output}")" -eq 1 ]]
-grep -F 'https://192.0.2.10:11442/en/' <<<"${output}" >/dev/null
+grep -F 'https://192.0.2.10:11442/' <<<"${output}" >/dev/null
 grep -F 'https://192.0.2.10:11443/' <<<"${output}" >/dev/null
 grep -F 'https://192.0.2.10:11444/admin/' <<<"${output}" >/dev/null
 grep -F 'https://192.0.2.10:11445/' <<<"${output}" >/dev/null
@@ -48,6 +59,110 @@ grep -F 'Admin@123' <<<"${output}" >/dev/null
 grep -F 'adminpassword' <<<"${output}" >/dev/null
 grep -F 'install.sh upgrade --from /path/to/new-release.tar.gz' <<<"${output}" >/dev/null
 grep -F 'install.sh uninstall' <<<"${output}" >/dev/null
+if grep -F 'Online upgrade' <<<"${output}" >/dev/null \
+	|| grep -F 'Offline upgrade' <<<"${output}" >/dev/null; then
+	echo 'Offline summary exposed online-installation upgrade labels' >&2
+	exit 1
+fi
+if grep -Fx 'Next steps' <<<"${output}" >/dev/null; then
+	echo 'Offline summary exposed Community online-installation guidance' >&2
+	exit 1
+fi
+
+HFL_ONLINE_CHILD=1
+HFL_REGISTRY_REGION=global
+online_upgrade_output="$(print_console_access_summary 2>&1)"
+unset HFL_ONLINE_CHILD HFL_REGISTRY_REGION
+grep -F 'Online upgrade  curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh | sudo bash -s -- --mirror global' \
+	<<<"${online_upgrade_output}" >/dev/null
+grep -F "Offline upgrade sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz" \
+	<<<"${online_upgrade_output}" >/dev/null
+
+# A fresh Community online installation exposes only the two user-facing
+# entry points while preserving the existing credential visibility policy.
+SESSION_WARNINGS=()
+HFL_ONLINE_CHILD=1
+HFL_ONLINE_CONSOLE_MARKER=__TEST_ONLINE_CONSOLE__
+HFL_REGISTRY_REGION=cn
+online_output="$(print_online_community_summary 2>&1)"
+unset HFL_ONLINE_CHILD HFL_ONLINE_CONSOLE_MARKER HFL_REGISTRY_REGION
+for heading in '  HyperFileLens' '  Platform Ops'; do
+	grep -Fx "${heading}" <<<"${online_output}" >/dev/null
+done
+[[ "${online_output}" == *$'Access\n\n  HyperFileLens'* ]]
+grep -F 'linux/amd64' <<<"${online_output}" >/dev/null
+grep -F 'URL            https://192.0.2.10:11443/' <<<"${online_output}" >/dev/null
+grep -F 'URL            https://192.0.2.10:11444/' <<<"${online_output}" >/dev/null
+[[ "$(grep -Fc 'Email          admin@hyperfilelens.com' <<<"${online_output}")" -eq 2 ]]
+[[ "$(grep -Fc 'Password       Admin@123' <<<"${online_output}")" -eq 2 ]]
+[[ "$(grep -Fc 'Organization   HyperFileLens' <<<"${online_output}")" -eq 1 ]]
+grep -Fx 'Next steps' <<<"${online_output}" >/dev/null
+grep -F 'AI model        Open Platform Ops → AI Engine → AI Models, add and test a model,' \
+	<<<"${online_output}" >/dev/null
+grep -F '                  then set it as Default Agent.' \
+	<<<"${online_output}" >/dev/null
+grep -F 'External access If users connect through a public IP or domain, open Platform Ops' \
+	<<<"${online_output}" >/dev/null
+grep -F '                  → Platform → External Access and set the public HyperFileLens URL.' \
+	<<<"${online_output}" >/dev/null
+[[ "${online_output}" == *$'Warnings\n'*$'Next steps\n'*$'Management commands\n'* ]]
+grep -F 'sudo docker compose -f' <<<"${online_output}" >/dev/null
+grep -F 'Online upgrade  curl -fsSL https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh | sudo bash -s -- --mirror cn' \
+	<<<"${online_output}" >/dev/null
+grep -F "Offline upgrade sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz" \
+	<<<"${online_output}" >/dev/null
+global_upgrade_command="$(HFL_REGISTRY_REGION=global online_community_upgrade_command)"
+grep -F 'https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh' \
+	<<<"${global_upgrade_command}" >/dev/null
+grep -F -- '--mirror global' <<<"${global_upgrade_command}" >/dev/null
+for internal_endpoint in 'Website ·' 'Tenant ·' 'HyperFileLens ·' \
+	'Platform Ops ·' 'Django Admin' 'Insight Console' 'API / Swagger' 0.0.0.0; do
+	if grep -F "${internal_endpoint}" <<<"${online_output}" >/dev/null; then
+		echo "Online summary exposed internal endpoint detail: ${internal_endpoint}" >&2
+		exit 1
+	fi
+done
+if grep -F 'Login credentials' <<<"${online_output}" >/dev/null; then
+	echo 'Online summary split credentials away from their access endpoints' >&2
+	exit 1
+fi
+
+INTERACTIVE_SESSION=0
+SESSION_WARNINGS=()
+HFL_ONLINE_CHILD=1
+HFL_ONLINE_CONSOLE_MARKER=__TEST_ONLINE_CONSOLE__
+HFL_REGISTRY_REGION=cn
+noninteractive_online_output="$(print_online_community_summary 2>&1)"
+unset HFL_ONLINE_CHILD HFL_ONLINE_CONSOLE_MARKER HFL_REGISTRY_REGION
+INTERACTIVE_SESSION=1
+grep -F 'values are hidden in non-interactive logs' \
+	<<<"${noninteractive_online_output}" >/dev/null
+if grep -F 'Admin@123' <<<"${noninteractive_online_output}" >/dev/null \
+	|| grep -F 'adminpassword' <<<"${noninteractive_online_output}" >/dev/null; then
+	echo 'Online non-interactive summary exposed generated credentials' >&2
+	printf '%s\n' "${noninteractive_online_output}" >&2
+	exit 1
+fi
+
+# Online child output keeps framework startup noise in the durable log while
+# presenting only the meaningful deployment result in the terminal.
+identity_raw=$'[2026-08-23T04:53:45.921Z] [INFO] [test:1] [-] [-/-] [server-python(apps.py:23)] - Django Admin: auto-registered 51 project model(s)\nEmail sign-up: disabled\nGoogle OAuth: disabled\nDeployment-managed SMTP is unavailable; preserved the installed email settings.\nHFL_IDENTITY_STATUS=warning'
+touch "${LOG_FILE}"
+identity_output="$({
+	HFL_ONLINE_CHILD=1
+	render_deployment_command_output "${identity_raw}"
+} 2>&1)"
+grep -F '[INFO ] Email sign-up disabled.' <<<"${identity_output}" >/dev/null
+grep -F '[INFO ] Google OAuth disabled.' <<<"${identity_output}" >/dev/null
+grep -F '[SKIP] SMTP synchronization skipped because SMTP is not configured.' \
+	<<<"${identity_output}" >/dev/null
+if grep -F 'auto-registered' <<<"${identity_output}" >/dev/null \
+	|| grep -F 'HFL_IDENTITY_STATUS=' <<<"${identity_output}" >/dev/null; then
+	echo 'Online identity output leaked framework or machine-readable noise' >&2
+	exit 1
+fi
+grep -F 'Django Admin: auto-registered 51 project model(s)' "${LOG_FILE}" >/dev/null
+grep -F 'HFL_IDENTITY_STATUS=warning' "${LOG_FILE}" >/dev/null
 
 # A bundled package is not the same as a running Insight installation. The
 # --hfl-only summary must not advertise an unavailable console or credentials.
@@ -58,6 +173,86 @@ if grep -F 'Insight Console' <<<"${hfl_only_output}" >/dev/null; then
 	exit 1
 fi
 sourcelens_installed() { return 0; }
+
+# Compact status resolves service health without emitting Compose tables or
+# internal-only entry points.
+status_output="$({
+	configure_logging() { :; }
+	init_install_root() { :; }
+	require_docker() { :; }
+	read_active_color() { printf 'blue'; }
+	service_group_ready_now() { return 0; }
+	configured_sourcelens_mode() { printf 'bundled'; }
+	sourcelens_installed() { return 0; }
+	local_platform_gateway_agent_is_managed() { return 0; }
+	systemctl() { [[ "$*" == 'is-active --quiet hyperfilelens-agent.service' ]]; }
+	docker() {
+		[[ "${1:-}" == ps ]]
+		printf 'fixture-gateway-container\n'
+	}
+	main status
+} 2>&1)"
+grep -Fx 'HyperFileLens Status' <<<"${status_output}" >/dev/null
+grep -F 'Status            Healthy' <<<"${status_output}" >/dev/null
+grep -F 'HyperFileLens     https://192.0.2.10:11443/' <<<"${status_output}" >/dev/null
+grep -F 'Platform Ops      https://192.0.2.10:11444/' <<<"${status_output}" >/dev/null
+grep -F 'Insight           Healthy' <<<"${status_output}" >/dev/null
+grep -F 'Platform Gateway  Running' <<<"${status_output}" >/dev/null
+[[ "${status_output}" == *$'Access\n\n  HyperFileLens'* ]]
+[[ "${status_output}" == *$'Services\n\n  Insight'* ]]
+[[ "${status_output}" == *$'Management\n\n  Logs'* ]]
+for hidden_status_detail in 11442 '/admin/' 11445 swagger 0.0.0.0 'Active color' \
+	'Deployment phase' 'Agent releases' INSTALLER 'status completed' \
+	'already in install directory'; do
+	if grep -F "${hidden_status_detail}" <<<"${status_output}" >/dev/null; then
+		echo "Compact status exposed unnecessary detail: ${hidden_status_detail}" >&2
+		exit 1
+	fi
+done
+
+# Routine status output omits installer-only progress messages.
+status_materialize_output="$(
+	INSTALL_DIR="${fixture}"
+	SESSION_ACTION=status
+	materialize_to_install_dir "${fixture}" 2>&1
+)"
+[[ -z "${status_materialize_output}" ]]
+status_finish_output="$(
+	SESSION_STARTED=1
+	SESSION_ACTION=status
+	finish_session 0 2>&1
+)"
+[[ -z "${status_finish_output}" ]]
+
+# Immediate health inspection requires every requested service to exist and be
+# running or healthy.
+(
+	compose_fixture() {
+		[[ "${1:-}" == ps && "${2:-}" == -q ]]
+		printf 'cid-%s\n' "${3}"
+	}
+	container_health_status() { printf 'healthy'; }
+	service_group_ready_now compose_fixture api web
+	container_health_status() {
+		[[ "$1" != cid-web ]] || { printf 'exited'; return 0; }
+		printf 'healthy'
+	}
+	! service_group_ready_now compose_fixture api web
+)
+
+# The online status table is diagnostic output, not a new installation gate.
+# A transient Compose inspection failure must remain visible without turning a
+# successfully health-checked installation into a failure.
+compose_all_profiles() { printf 'HyperFileLens fixture status\n'; }
+sourcelens_compose() {
+	printf 'Insight fixture status unavailable\n' >&2
+	return 1
+}
+SESSION_WARNINGS=()
+verification_output="$(print_online_installation_verification 1 2>&1)"
+grep -F 'Could not display the current Insight service status table' \
+	<<<"${verification_output}" >/dev/null
+grep -F 'Insight services are healthy' <<<"${verification_output}" >/dev/null
 
 grep -F 'hfl_print_banner "${title}"' "${ROOT_REPO}/dev/stack.sh" >/dev/null
 grep -F 'HFL_PARENT_SESSION=1 "${ROOT}/dev/sourcelens.sh"' \
@@ -296,7 +491,7 @@ target_output="$({
 	CMD=restart
 	restart_force=1
 	WITH_SOURCELENS=1
-	SOURCELENS_GIT_REF=v0.47.9
+	SOURCELENS_GIT_REF=v0.49.5
 	EXTENSION_SOURCES=("https://github.com/example/hyperfilelens-ee.git@v1.2.3")
 	LOG_FILE="${fixture}/build/logs/dev-restart.log"
 	print_dev_target
@@ -304,7 +499,7 @@ target_output="$({
 grep -F '  Command        restart --force' <<<"${target_output}" >/dev/null
 grep -F '  Extension      remote Git source configured' <<<"${target_output}" >/dev/null
 grep -F '  Extension rev  v1.2.3' <<<"${target_output}" >/dev/null
-grep -F '  SourceLens     bundled / v0.47.9' <<<"${target_output}" >/dev/null
+grep -F '  SourceLens     bundled / v0.49.5' <<<"${target_output}" >/dev/null
 grep -F '  Host platform  ' <<<"${target_output}" >/dev/null
 grep -F '  Runtime        linux/amd64' <<<"${target_output}" >/dev/null
 grep -F '  Session log    build/logs/dev-restart.log' <<<"${target_output}" >/dev/null

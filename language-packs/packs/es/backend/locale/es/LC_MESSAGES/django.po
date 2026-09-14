@@ -366,9 +366,13 @@ msgstr "Error del servidor"
 msgid "Session expired. Please login again."
 msgstr "La sesión ha caducado. Inicie sesión de nuevo."
 
-#: src/backend/apps/iam/services/token_service.py:209
-msgid "Suspicious login activity detected"
-msgstr "Actividad de acceso sospechosa detectada"
+#: src/backend/apps/iam/services/token_service.py:294
+msgid "Login session is no longer valid. Please login again."
+msgstr "La sesión ya no es válida. Vuelva a iniciar sesión."
+
+#: src/backend/apps/iam/services/token_service.py:257
+msgid "Login session refresh is already in progress"
+msgstr "La renovación de la sesión ya está en curso"
 
 #: src/backend/apps/iam/services/verification_email.py:38
 msgid ""

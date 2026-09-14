@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
+import { ElMessage } from 'element-plus'
 import { fetchLifecycleWatch, previewNodeOperationsBatch, startNodeOperationsBatch } from '../lib/nodeApi'
 import type { ApiNode } from '../types/node'
 import { useNodeLifecycleOps } from './useNodeLifecycleOps'
@@ -62,11 +63,13 @@ describe('useNodeLifecycleOps batch start', () => {
       }],
     })
     let lifecycle!: ReturnType<typeof useNodeLifecycleOps>
+    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
     const wrapper = mount(defineComponent({
       setup() {
         lifecycle = useNodeLifecycleOps({
           role: 'proxy',
-          t: ((key: string) => key) as never,
+          t: ((key: string, args?: Record<string, unknown>) =>
+            `${key}:${args?.name || ''}`) as never,
         })
         return () => h('div')
       },
@@ -79,7 +82,11 @@ describe('useNodeLifecycleOps batch start', () => {
       expect(lifecycle.lastStartErrors.value).toEqual([
         expect.objectContaining({ code: 'node_offline', node_id: node.id }),
       ])
+      expect(errorMessage).toHaveBeenCalledWith(expect.objectContaining({
+        message: `nodeLifecycle.batchStartFailed:${node.name}`,
+      }))
     } finally {
+      errorMessage.mockRestore()
       wrapper.unmount()
     }
   })
@@ -136,6 +143,7 @@ describe('useNodeLifecycleOps batch start', () => {
       errors: [],
     })
     let lifecycle!: ReturnType<typeof useNodeLifecycleOps>
+    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
     const wrapper = mount(defineComponent({
       setup() {
         lifecycle = useNodeLifecycleOps({
@@ -163,6 +171,131 @@ describe('useNodeLifecycleOps batch start', () => {
       expect(lifecycle.completed.value).toEqual([
         expect.objectContaining({ nodeId: startedNode.id }),
       ])
+      expect(errorMessage).not.toHaveBeenCalled()
+    } finally {
+      errorMessage.mockRestore()
+      wrapper.unmount()
+    }
+  })
+
+  it('explains an offline-only upgrade preview after connectivity becomes stale', async () => {
+    const node = {
+      id: 33,
+      organization: 1,
+      name: 'stale-source',
+      role: 'agent',
+      status: 'active',
+      availability: 'online',
+      routable: true,
+    } as ApiNode
+    vi.mocked(previewNodeOperationsBatch).mockResolvedValue({
+      kind: 'upgrade',
+      requested: 1,
+      eligible: [],
+      skipped_offline: [{ node_id: node.id, name: node.name, reason: 'offline' }],
+      skipped_workload: [],
+      skipped_in_progress: [],
+      skipped_not_upgradeable: [],
+      skipped_proxy_bound: [],
+      missing_node_ids: [],
+      max_concurrent: 5,
+    })
+    const warning = vi.spyOn(ElMessage, 'warning').mockImplementation(() => undefined as never)
+    let lifecycle!: ReturnType<typeof useNodeLifecycleOps>
+    const wrapper = mount(defineComponent({
+      setup() {
+        lifecycle = useNodeLifecycleOps({
+          role: 'agent',
+          t: ((key: string) => key) as never,
+        })
+        return () => h('div')
+      },
+    }))
+
+    try {
+      await expect(lifecycle.runBatch('upgrade', [node])).resolves.toBe(false)
+      expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+        message: 'nodeLifecycle.nothingEligibleOffline',
+      }))
+    } finally {
+      warning.mockRestore()
+      wrapper.unmount()
+    }
+  })
+
+  it('reports a host that becomes offline after confirmation', async () => {
+    const node = { id: 44, name: 'race-host', role: 'agent', availability: 'online', routable: true } as ApiNode
+    vi.mocked(previewNodeOperationsBatch).mockResolvedValueOnce({
+      kind: 'upgrade', requested: 1, eligible: [{ node_id: node.id, name: node.name }],
+      skipped_offline: [], skipped_workload: [], skipped_in_progress: [], skipped_not_upgradeable: [], skipped_proxy_bound: [], missing_node_ids: [], max_concurrent: 5,
+    })
+    vi.mocked(startNodeOperationsBatch).mockResolvedValue({
+      kind: 'upgrade', requested: 1, eligible: [], skipped_offline: [{ node_id: node.id, name: node.name, reason: 'offline' }], skipped_workload: [], skipped_in_progress: [], skipped_not_upgradeable: [], skipped_proxy_bound: [], missing_node_ids: [], max_concurrent: 5, started: [], queued: [], errors: [],
+    })
+    const warning = vi.spyOn(ElMessage, 'warning').mockImplementation(() => undefined as never)
+    let lifecycle!: ReturnType<typeof useNodeLifecycleOps>
+    const wrapper = mount(defineComponent({ setup() { lifecycle = useNodeLifecycleOps({ role: 'agent', t: ((key: string) => key) as never }); return () => h('div') } }))
+    try {
+      await expect(lifecycle.runBatch('upgrade', [node], { skipConfirm: true })).resolves.toBe(false)
+      expect(lifecycle.skipped.value).toEqual([expect.objectContaining({ nodeId: node.id, reason: 'offline' })])
+      expect(warning).toHaveBeenCalledWith(expect.objectContaining({ message: 'nodeLifecycle.nothingEligibleOffline' }))
+    } finally { warning.mockRestore(); wrapper.unmount() }
+  })
+})
+
+describe('useNodeLifecycleOps remote upgrade eligibility', () => {
+  function mountLifecycle() {
+    let lifecycle!: ReturnType<typeof useNodeLifecycleOps>
+    const wrapper = mount(defineComponent({
+      setup() {
+        lifecycle = useNodeLifecycleOps({
+          role: 'agent',
+          t: ((key: string) => key) as never,
+        })
+        return () => h('div')
+      },
+    }))
+    return { lifecycle, wrapper }
+  }
+
+  function node(overrides: Partial<ApiNode> = {}): ApiNode {
+    return {
+      id: 41,
+      organization: 1,
+      name: 'source-host',
+      role: 'agent',
+      status: 'active',
+      availability: 'online',
+      routable: true,
+      version: '1.0.0',
+      ...overrides,
+    }
+  }
+
+  it('requires the node to be online and routable', () => {
+    const { lifecycle, wrapper } = mountLifecycle()
+    const versionEligible = vi.fn(() => true)
+
+    try {
+      expect(lifecycle.canUpgradeNode(node(), versionEligible)).toBe(true)
+      expect(lifecycle.canUpgradeNode(node({ availability: 'offline' }), versionEligible)).toBe(false)
+      expect(lifecycle.canUpgradeNode(node({ routable: false }), versionEligible)).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('still rejects busy, workload-blocked, and version-ineligible nodes', () => {
+    const { lifecycle, wrapper } = mountLifecycle()
+
+    try {
+      expect(lifecycle.canUpgradeNode(node({
+        lifecycle: { kind: 'upgrade', state: 'upgrading' },
+      }), () => true)).toBe(false)
+      expect(lifecycle.canUpgradeNode(node({
+        workload: { blocked: true, reasons: [] },
+      }), () => true)).toBe(false)
+      expect(lifecycle.canUpgradeNode(node(), () => false)).toBe(false)
     } finally {
       wrapper.unmount()
     }
@@ -260,6 +393,33 @@ describe('useNodeLifecycleOps persisted queue', () => {
       expect(lifecycle.queued.value).toEqual([])
       expect(fetchLifecycleWatch).not.toHaveBeenCalled()
       expect(window.sessionStorage.getItem('hfl-node-lifecycle-queue')).toBeNull()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('presents verification pending as an in-progress upgrade', () => {
+    const { lifecycle, wrapper } = mountLifecycle()
+
+    try {
+      const display = lifecycle.resolveDisplayStatus({
+        id: 1,
+        organization: 1,
+        name: 'gateway-1',
+        role: 'agent',
+        status: 'active',
+        availability: 'online',
+        version: '1.0.0',
+        lifecycle: {
+          kind: 'upgrade',
+          state: 'verification_pending',
+          target_version: '1.0.1',
+        },
+      })
+
+      expect(display.labelKey).toBe('nodeLifecycle.state.upgrading')
+      expect(display.tagType).toBe('info')
+      expect(display.spinning).toBe(true)
     } finally {
       wrapper.unmount()
     }

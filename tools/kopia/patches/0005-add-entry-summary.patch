@@ -1,0 +1,276 @@
+diff --git a/cli/command_ls.go b/cli/command_ls.go
+index 7b830d38..6faf99f0 100644
+--- a/cli/command_ls.go
++++ b/cli/command_ls.go
+@@ -2,6 +2,7 @@
+ 
+ import (
+ 	"context"
++	"encoding/json"
+ 	"fmt"
+ 	"strings"
+ 
+@@ -10,6 +11,7 @@
+ 	"github.com/kopia/kopia/fs"
+ 	"github.com/kopia/kopia/repo"
+ 	"github.com/kopia/kopia/repo/object"
++	"github.com/kopia/kopia/snapshot"
+ 	"github.com/kopia/kopia/snapshot/snapshotfs"
+ )
+ 
+@@ -19,6 +21,7 @@ type commandList struct {
+ 	recursive     bool
+ 	showOID       bool
+ 	errorSummary  bool
++	hflSummary    bool
+ 	path          string
+ 
+ 	out textOutput
+@@ -32,6 +35,7 @@ func (c *commandList) setup(svc appServices, parent commandParent) {
+ 	cmd.Flag("recursive", "Recursive output").Short('r').BoolVar(&c.recursive)
+ 	cmd.Flag("show-object-id", "Show object IDs").Short('o').BoolVar(&c.showOID)
+ 	cmd.Flag("error-summary", "Emit error summary").Default("true").BoolVar(&c.errorSummary)
++	cmd.Flag("hfl-summary", "Emit the selected entry summary as JSON").Hidden().BoolVar(&c.hflSummary)
+ 	cmd.Arg("object-path", "Path").Required().StringVar(&c.path)
+ 	cmd.Action(svc.repositoryReaderAction(c.run))
+ 
+@@ -39,6 +43,15 @@ func (c *commandList) setup(svc appServices, parent commandParent) {
+ }
+ 
+ func (c *commandList) run(ctx context.Context, rep repo.Repository) error {
++	if c.hflSummary {
++		entry, err := snapshotfs.FilesystemEntryFromIDWithPath(ctx, rep, c.path, false)
++		if err != nil {
++			return errors.Wrap(err, "unable to get filesystem entry")
++		}
++
++		return c.printHFLSummary(entry)
++	}
++
+ 	dir, err := snapshotfs.FilesystemDirectoryFromIDWithPath(ctx, rep, c.path, false)
+ 	if err != nil {
+ 		return errors.Wrap(err, "unable to get filesystem directory entry")
+@@ -55,6 +68,65 @@ func (c *commandList) run(ctx context.Context, rep repo.Repository) error {
+ 	return c.listDirectory(ctx, dir, prefix, "")
+ }
+ 
++type hflEntrySummary struct {
++	Version           int    `json:"version"`
++	PathType          string `json:"path_type"`
++	SizeBytes         int64  `json:"size_bytes"`
++	FileCount         int64  `json:"file_count"`
++	DirectoryCount    int64  `json:"directory_count"`
++	SymlinkCount      int64  `json:"symlink_count"`
++	SummaryAvailable  bool   `json:"summary_available"`
++	Complete          bool   `json:"complete"`
++	IncompleteReason  string `json:"incomplete_reason,omitempty"`
++	FatalErrorCount   int    `json:"fatal_error_count,omitempty"`
++	IgnoredErrorCount int    `json:"ignored_error_count,omitempty"`
++}
++
++func (c *commandList) printHFLSummary(entry fs.Entry) error {
++	result, err := hflSummaryForEntry(entry)
++	if err != nil {
++		return err
++	}
++
++	return json.NewEncoder(c.out.stdout()).Encode(result)
++}
++
++func hflSummaryForEntry(entry fs.Entry) (hflEntrySummary, error) {
++	result := hflEntrySummary{Version: 1}
++
++	switch typed := entry.(type) {
++	case fs.Directory:
++		result.PathType = "directory"
++		if metadata, ok := typed.(snapshot.HasDirEntry); ok {
++			if dirEntry := metadata.DirEntry(); dirEntry != nil && dirEntry.DirSummary != nil {
++				summary := dirEntry.DirSummary
++				result.SizeBytes = summary.TotalFileSize
++				result.FileCount = summary.TotalFileCount
++				result.DirectoryCount = summary.TotalDirCount
++				result.SymlinkCount = summary.TotalSymlinkCount
++				result.SummaryAvailable = true
++				result.IncompleteReason = summary.IncompleteReason
++				result.FatalErrorCount = summary.FatalErrorCount
++				result.IgnoredErrorCount = summary.IgnoredErrorCount
++				result.Complete = summary.IncompleteReason == "" && summary.FatalErrorCount == 0
++			}
++		}
++	case fs.File:
++		result.PathType = "file"
++		result.SizeBytes = entry.Size()
++		result.FileCount = 1
++		result.Complete = true
++	case fs.Symlink:
++		result.PathType = "symlink"
++		result.SymlinkCount = 1
++		result.Complete = true
++	default:
++		result.PathType = "unsupported"
++	}
++
++	return result, nil
++}
++
+ func (c *commandList) listDirectory(ctx context.Context, d fs.Directory, prefix, indent string) error {
+ 	iter, err := d.Iterate(ctx)
+ 	if err != nil {
+diff --git a/cli/command_ls_hfl_internal_test.go b/cli/command_ls_hfl_internal_test.go
+new file mode 100644
+index 00000000..7b3dcd0a
+--- /dev/null
++++ b/cli/command_ls_hfl_internal_test.go
+@@ -0,0 +1,71 @@
++package cli
++
++import (
++	"context"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++
++	"github.com/kopia/kopia/fs"
++	"github.com/kopia/kopia/internal/mockfs"
++	"github.com/kopia/kopia/snapshot"
++)
++
++type hflTestSummaryDirectory struct {
++	fs.Directory
++	entry *snapshot.DirEntry
++}
++
++func (d hflTestSummaryDirectory) Summary(context.Context) (*fs.DirectorySummary, error) {
++	panic("entry summary must not load the selected directory")
++}
++
++func (d hflTestSummaryDirectory) DirEntry() *snapshot.DirEntry {
++	return d.entry
++}
++
++func TestHFLEntrySummaryFallbackStates(t *testing.T) {
++	directory := mockfs.NewDirectory()
++
++	missing, err := hflSummaryForEntry(hflTestSummaryDirectory{
++		Directory: directory,
++	})
++	require.NoError(t, err)
++	require.Equal(t, "directory", missing.PathType)
++	require.False(t, missing.SummaryAvailable)
++	require.False(t, missing.Complete)
++
++	incomplete, err := hflSummaryForEntry(hflTestSummaryDirectory{
++		Directory: directory,
++		entry: &snapshot.DirEntry{
++			DirSummary: &fs.DirectorySummary{
++				TotalFileSize:     42,
++				TotalFileCount:    3,
++				TotalDirCount:     2,
++				TotalSymlinkCount: 1,
++				IncompleteReason:  "incomplete snapshot",
++			},
++		},
++	})
++	require.NoError(t, err)
++	require.Equal(t, int64(42), incomplete.SizeBytes)
++	require.Equal(t, int64(3), incomplete.FileCount)
++	require.Equal(t, int64(2), incomplete.DirectoryCount)
++	require.Equal(t, int64(1), incomplete.SymlinkCount)
++	require.True(t, incomplete.SummaryAvailable)
++	require.False(t, incomplete.Complete)
++	require.Equal(t, "incomplete snapshot", incomplete.IncompleteReason)
++
++	symlink, err := hflSummaryForEntry(
++		directory.AddSymlink("link", "target", 0o777),
++	)
++	require.NoError(t, err)
++	require.Equal(t, "symlink", symlink.PathType)
++	require.Equal(t, int64(1), symlink.SymlinkCount)
++	require.True(t, symlink.Complete)
++
++	unsupported, err := hflSummaryForEntry(struct{ fs.Entry }{})
++	require.NoError(t, err)
++	require.Equal(t, "unsupported", unsupported.PathType)
++	require.False(t, unsupported.Complete)
++}
+diff --git a/cli/command_ls_hfl_test.go b/cli/command_ls_hfl_test.go
+new file mode 100644
+index 00000000..33e9d2e9
+--- /dev/null
++++ b/cli/command_ls_hfl_test.go
+@@ -0,0 +1,75 @@
++package cli_test
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++
++	"github.com/kopia/kopia/cli"
++	"github.com/kopia/kopia/internal/testutil"
++	"github.com/kopia/kopia/tests/testenv"
++)
++
++type hflEntrySummary struct {
++	Version          int    `json:"version"`
++	PathType         string `json:"path_type"`
++	SizeBytes        int64  `json:"size_bytes"`
++	FileCount        int64  `json:"file_count"`
++	DirectoryCount   int64  `json:"directory_count"`
++	SymlinkCount     int64  `json:"symlink_count"`
++	SummaryAvailable bool   `json:"summary_available"`
++	Complete         bool   `json:"complete"`
++}
++
++func TestHFLListSummary(t *testing.T) {
++	t.Parallel()
++
++	env := testenv.NewCLITest(t, testenv.RepoFormatNotImportant, testenv.NewInProcRunner(t))
++	defer env.RunAndExpectSuccess(t, "repo", "disconnect")
++	env.RunAndExpectSuccess(t, "repo", "create", "filesystem", "--path", env.RepoDir)
++
++	source := testutil.TempDirectory(t)
++	require.NoError(t, os.MkdirAll(filepath.Join(source, "selected", "nested"), 0o755))
++	require.NoError(t, os.Mkdir(filepath.Join(source, "empty"), 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(source, "selected", "one.txt"), []byte("one"), 0o644))
++	require.NoError(t, os.WriteFile(filepath.Join(source, "selected", "nested", "two.txt"), []byte("two!"), 0o644))
++
++	var manifest cli.SnapshotManifest
++	testutil.MustParseJSONLines(t, env.RunAndExpectSuccess(t, "snapshot", "create", source, "--json"), &manifest)
++
++	var directory hflEntrySummary
++	testutil.MustParseJSONLines(t, env.RunAndExpectSuccess(
++		t, "ls", "--hfl-summary", string(manifest.ID)+"/selected",
++	), &directory)
++	require.Equal(t, 1, directory.Version)
++	require.Equal(t, "directory", directory.PathType)
++	require.Equal(t, int64(7), directory.SizeBytes)
++	require.Equal(t, int64(2), directory.FileCount)
++	require.Equal(t, int64(2), directory.DirectoryCount)
++	require.Zero(t, directory.SymlinkCount)
++	require.True(t, directory.SummaryAvailable)
++	require.True(t, directory.Complete)
++
++	var file hflEntrySummary
++	testutil.MustParseJSONLines(t, env.RunAndExpectSuccess(
++		t, "ls", "--hfl-summary", string(manifest.ID)+"/selected/one.txt",
++	), &file)
++	require.Equal(t, "file", file.PathType)
++	require.Equal(t, int64(3), file.SizeBytes)
++	require.Equal(t, int64(1), file.FileCount)
++	require.Zero(t, file.DirectoryCount)
++	require.True(t, file.Complete)
++
++	var empty hflEntrySummary
++	testutil.MustParseJSONLines(t, env.RunAndExpectSuccess(
++		t, "ls", "--hfl-summary", string(manifest.ID)+"/empty",
++	), &empty)
++	require.Equal(t, "directory", empty.PathType)
++	require.Zero(t, empty.SizeBytes)
++	require.Zero(t, empty.FileCount)
++	require.Equal(t, int64(1), empty.DirectoryCount)
++	require.True(t, empty.SummaryAvailable)
++	require.True(t, empty.Complete)
++}

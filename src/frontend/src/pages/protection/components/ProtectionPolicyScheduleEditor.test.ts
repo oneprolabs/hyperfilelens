@@ -45,3 +45,16 @@ describe('protection policy quick schedule editor', () => {
     expect(wizardSource).not.toContain('`*/${Math.max(1, Number(form.simpleIntervalValue)')
   })
 })
+
+describe('shared policy timezone placement', () => {
+  it('has one editable timezone in Basic Information and read-only context for both sections', () => {
+    const basic = editorSource.slice(editorSource.indexOf('<template>'), editorSource.indexOf('data-validation-field="schedule"'))
+    expect(basic).toContain('v-model="policyForm.scheduleTimezone"')
+    expect(editorSource.match(/v-model="policyForm.scheduleTimezone"/g)).toHaveLength(1)
+    expect(editorSource.match(/data-policy-timezone/g)).toHaveLength(2)
+    for (const section of ['schedule', 'retention']) {
+      const context = editorSource.slice(editorSource.indexOf(`data-validation-field="${section}"`))
+      expect(context.indexOf('data-policy-timezone')).toBeLessThan(context.indexOf('class="policy-section-off-hint"'))
+    }
+  })
+})

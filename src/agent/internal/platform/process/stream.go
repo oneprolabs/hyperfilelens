@@ -11,9 +11,13 @@ import (
 )
 
 const (
-	streamStdoutLimit = 128 * 1024
-	streamStderrLimit = 64 * 1024
-	streamLineLimit   = 8 * 1024
+	// Kopia emits its JSON snapshot result as one line. Keep enough of that
+	// line to parse the complete error summary while retaining bounded output
+	// for commands that unexpectedly produce more data.
+	streamStdoutLimit         = 1024 * 1024
+	streamStderrLimit         = 64 * 1024
+	streamLineLimit           = 1024 * 1024
+	streamLineInitialCapacity = 8 * 1024
 )
 
 type boundedTailBuffer struct {
@@ -211,7 +215,7 @@ func captureProgressLines(
 }
 
 func readProgressLine(r *bufio.Reader) (string, int64, bool, bool, error) {
-	out := make([]byte, 0, streamLineLimit)
+	out := make([]byte, 0, streamLineInitialCapacity)
 	var rawBytes int64
 	truncated := false
 	for {

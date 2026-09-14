@@ -43,8 +43,8 @@ x-api: &api
       condition: service_healthy
   command: api
   stop_grace_period: 90s
-  mem_limit: 512m
-  cpus: 0.50
+  mem_limit: 1g
+  cpus: 1.00
   healthcheck:
     test:
       [
@@ -68,7 +68,8 @@ x-web: &web
   environment:
     TZ: UTC
     HFL_WEBSITE_APP_URL: ${FRONTEND_URL:-}
-    HFL_GA_MEASUREMENT_ID: ${HFL_GA_MEASUREMENT_ID:-}
+    HFL_WEBSITE_GA_MEASUREMENT_ID: ${HFL_WEBSITE_GA_MEASUREMENT_ID:-}
+    HFL_TENANT_GA_MEASUREMENT_ID: ${HFL_TENANT_GA_MEASUREMENT_ID:-}
     HFL_SENTRY_ENABLED: ${SENTRY_ENABLED:-false}
     HFL_SENTRY_DSN: ${SENTRY_FRONTEND_DSN:-}
     HFL_SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
@@ -80,8 +81,8 @@ x-web: &web
     - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/hyperfilelens/lang-packs:ro
   networks:
     - default
-  mem_limit: 128m
-  cpus: 0.125
+  mem_limit: 512m
+  cpus: 0.50
   healthcheck:
     test:
       [
@@ -114,8 +115,8 @@ services:
         condition: service_healthy
     command: worker
     stop_grace_period: 600s
-    mem_limit: 1g
-    cpus: 0.50
+    mem_limit: ${HFL_WORKER_MEMORY_LIMIT:-2g}
+    cpus: ${HFL_WORKER_CPU_LIMIT:-1.0}
     healthcheck:
       test:
         [
@@ -147,8 +148,8 @@ services:
         condition: service_healthy
     command: scheduler
     stop_grace_period: 60s
-    mem_limit: 256m
-    cpus: 0.25
+    mem_limit: 512m
+    cpus: 0.50
     healthcheck:
       test:
         [
@@ -199,7 +200,7 @@ services:
     profiles: ["green"]
 
   postgres:
-    image: hyperfilelens-postgres:17
+    image: ${HFL_POSTGRES_IMAGE:-hyperfilelens-postgres:17}
     pull_policy: never
     restart: unless-stopped
     env_file:
@@ -228,7 +229,7 @@ services:
     cpus: 0.50
 
   redis:
-    image: hyperfilelens-redis:alpine
+    image: ${HFL_REDIS_IMAGE:-hyperfilelens-redis:alpine}
     pull_policy: never
     restart: unless-stopped
     volumes:
@@ -257,7 +258,8 @@ services:
     environment:
       TZ: UTC
       HFL_WEBSITE_APP_URL: ${FRONTEND_URL:-}
-      HFL_GA_MEASUREMENT_ID: ${HFL_GA_MEASUREMENT_ID:-}
+      HFL_WEBSITE_GA_MEASUREMENT_ID: ${HFL_WEBSITE_GA_MEASUREMENT_ID:-}
+      HFL_TENANT_GA_MEASUREMENT_ID: ${HFL_TENANT_GA_MEASUREMENT_ID:-}
       HFL_SENTRY_ENABLED: ${SENTRY_ENABLED:-false}
       HFL_SENTRY_DSN: ${SENTRY_FRONTEND_DSN:-}
       HFL_SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
@@ -300,8 +302,8 @@ services:
       options:
         max-size: "10m"
         max-file: "10"
-    mem_limit: 128m
-    cpus: 0.125
+    mem_limit: 512m
+    cpus: 0.50
 
 networks:
   bridge:

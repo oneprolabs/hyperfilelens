@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import { backupFailureMetadata } from '../../../lib/backupFailureDisplay'
 import { computed, nextTick, onUnmounted, reactive, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
+  AlertTriangle,
   Archive,
-  ArrowLeft,
+  Ban,
+  ArrowRight,
   Camera,
   Check,
   ChevronDown,
@@ -12,9 +15,10 @@ import {
   Circle,
   CircleStop,
   CircleOff,
+  CircleAlert,
+  CircleHelp,
   Clock3,
   Copy,
-  Download,
   File,
   Filter,
   Folder,
@@ -29,32 +33,29 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  TimerOff,
   Unlink,
   X,
 } from 'lucide-vue-next'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { pushToast } from '../../../lib/toast/store'
-import type { ElTree } from 'element-plus'
+import HflHelpTip from '../../../components/HflHelpTip.vue'
 import HflPopover from '../../../components/HflPopover.vue'
 import HflPagination from '../../../components/HflPagination.vue'
+import SnapshotPointDetailPanel from './SnapshotPointDetailPanel.vue'
 import { useDrawerTableMaxHeight } from '../../../composables/useDrawerTableMaxHeight'
 import { apiErrorMessage } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
-import { getNode } from '../../../lib/nodeApi'
+import { getNode, type EnrollmentOs } from '../../../lib/nodeApi'
+import AgentPlatformBrandIcon from '../../../components/agent-deploy/AgentPlatformBrandIcon.vue'
 import type {
-  BackupSnapshotBrowserEntry,
   BackupConfig,
   BackupConfigDirectory,
   BackupConfigDetail,
   BackupConfigRecoveryPlan,
   BackupSourceSnapshot,
-  BackupSourceSnapshotDirectory,
 } from '../../../lib/protectionBackupConfigApi'
 import {
-  browseBackupSnapshotDirectory,
-  createBackupSnapshotDirectoryDownloadTask,
-  createBackupSnapshotDirectoryBatchDownloadTask,
-  createSnapshotArtifactDownloadUrl,
   deleteBackupConfig,
   getBackupSourceSnapshot,
   listBackupSourceSnapshots,
@@ -72,6 +73,7 @@ import {
 import type { BackupPolicy, FileFilterRule } from '../../../lib/protectionPolicyApi'
 import { getStorageRepository, type StorageRepository } from '../../../lib/storageRepositoryApi'
 import { lifecycleStatusTagAttrs } from '../../../lib/statusTag'
+import { taskStepTimelineTone, taskStepTranslationKey } from '../../../lib/taskStepDisplay'
 import {
   getSourceResource,
   listBackupSelectableSources,
@@ -96,17 +98,22 @@ import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 import {
+  isRestoreRecordActive,
+  normalizedRestoreRecordTaskStatus,
+  restoreRecordItemSourceKind,
+  restoreRecordItemDetail,
+  restoreRecordRemediationItems,
+  restoreRecordOutcomeMetricParts,
   restoreRecordPathMappings,
   restoreRecordRuntimeMetricParts,
   restoreRecordSnapshotLabel,
   restoreRecordTargetDisplayPath,
   restoreRecordTaskStatus,
-  shouldShowRestoreRecordProgress,
+  restoreRecordTimeState,
 } from './restoreRecordDisplay'
-import { isSnapshotDirectoryBrowsable } from './snapshotBrowseEligibility'
+import { flowSourceDiskCountText, flowSourceMemoryText } from '../../../lib/flowSourceDisplay'
+import { formatNodeBytes } from '../../../lib/nodeInventoryDisplay'
 import {
-  formatTaskProgressBarPercent,
-  formatTaskProgressPercent,
   isTransferProgress,
   type TaskRuntimePayload,
   type TransferProgress,
@@ -140,15 +147,6 @@ export type FlowSourceDetailTabInput =
   | 'configs'
   | 'executions'
   | 'restore'
-
-type SnapshotBrowserTreeNode = BackupSnapshotBrowserEntry & {
-  id: string
-  label: string
-  disabled?: boolean
-  loaded?: boolean
-  isLeaf?: boolean
-  children?: SnapshotBrowserTreeNode[]
-}
 
 type ResourceDetailRow = {
   key: string
@@ -236,6 +234,11 @@ const emit = defineEmits<{
 }>()
 
 const { t, te } = useI18n()
+
+function showFlowSourceFeedback(message: string, type: 'error' | 'warning', title?: string) {
+  pushToast({ type, title, message })
+}
+
 const router = useRouter()
 const stopConfirmDialog = useProtectionStopConfirmDialog()
 const stopConfirmOpen = stopConfirmDialog.open
@@ -267,24 +270,10 @@ const { tableMaxHeight: restoreTableMaxHeight, containerRef: restoreTableRef } =
 const { tableMaxHeight: sourceTasksTableMaxHeight, containerRef: sourceTasksTableRef } = useDrawerTableMaxHeight()
 const { tableMaxHeight: taskResourceTableMaxHeight, containerRef: taskResourceTableRef } = useDrawerTableMaxHeight()
 const selectedSnapshotId = ref<number | null>(null)
-const expandedSnapshotRowKeys = ref<number[]>([])
 const snapshotDetailLoading = ref(false)
 const snapshotDetailError = ref('')
 const snapshotDetails = ref(new Map<number, BackupSourceSnapshot>())
-const selectedSnapshotDirectory = ref<BackupSourceSnapshotDirectory | null>(null)
-const fileBrowserDrawerOpen = ref(false)
-const browserLoading = ref(false)
-const browserError = ref('')
-const browserPath = ref('')
-const browserParentPath = ref('')
-const browserEntries = ref<BackupSnapshotBrowserEntry[]>([])
-const browserTreeRef = ref<InstanceType<typeof ElTree> | null>(null)
-const browserTreeEntries = ref<SnapshotBrowserTreeNode[]>([])
-const browserTreeVersion = ref(0)
-const selectedBrowserPaths = ref<Set<string>>(new Set())
-const downloadingSelected = ref(false)
-const selectedSnapshotFileChecked = ref(false)
-const downloadingSnapshotFile = ref(false)
+const snapshotDetailDrawerOpen = ref(false)
 const sourceSnapshotRows = ref<BackupSourceSnapshot[]>([])
 const sourceSnapshotsLoading = ref(false)
 const sourceSnapshotsError = ref('')
@@ -378,7 +367,7 @@ const resourceDetails = reactive<Record<string, ResourceDetailRow[]>>({})
 const resourceErrors = reactive<Record<string, string>>({})
 
 const DEFAULT_TASK_STATUS_OPTIONS = ['pending', 'waiting', 'running', 'success', 'failed', 'cancelled', 'timeout']
-const RESTORE_RECORD_STATUS_OPTIONS = ['success', 'running', 'failed', 'cancelled', 'pending', 'timeout']
+const RESTORE_RECORD_STATUS_OPTIONS = ['success', 'running', 'failed', 'cancelled', 'pending', 'waiting', 'blocked', 'timeout']
 const SNAPSHOT_STATUS_OPTIONS = ['creating', 'available', 'partial', 'failed', 'deleting', 'delete_failed', 'deleted']
 const DEFAULT_TASK_TYPE_OPTIONS = ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'backup_config_reset', 'backup_config_provision']
 const sourceId = computed(() => props.source?.id ?? '')
@@ -408,6 +397,10 @@ function mapBackupSelectableSource(item: BackupSelectableSource): FlowSourceRow 
     cpuCores: item.cpu_cores ?? null,
     memoryTotalBytes: item.memory_total_bytes ?? null,
     diskCount: item.disk_count ?? null,
+    osName: item.os_name || '',
+    arch: item.arch || '',
+    capacityUsedBytes: item.capacity_used_bytes ?? null,
+    capacityTotalBytes: item.capacity_total_bytes ?? null,
   }
 }
 
@@ -451,7 +444,7 @@ async function retryCurrentConfigProvision() {
     emit('config-changed')
     ElMessage.success({ message: t('protection.backupsPage.provisionRetryQueued'), grouping: true })
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+    showFlowSourceFeedback(apiErrorMessage(err), 'error')
   } finally {
     provisionRetrying.value = false
   }
@@ -483,7 +476,7 @@ async function discardCurrentFailedConfig() {
     emit('config-changed')
     ElMessage.success({ message: t('protection.backupsPage.provisionDiscarded'), grouping: true })
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+    showFlowSourceFeedback(apiErrorMessage(err), 'error')
   } finally {
     provisionDiscarding.value = false
   }
@@ -525,7 +518,6 @@ const selectedSnapshot = computed(() => {
     ?? realSourceSnapshots.value.find((snapshot) => snapshot.id === selectedSnapshotId.value)
     ?? null
 })
-const selectedSnapshotDirectories = computed(() => selectedSnapshot.value?.directories || [])
 const sourceEndpoint = computed((): { sourceType: RestoreEndpointType; sourceRefId: number } | null => {
   const source = props.source
   if (!source) return null
@@ -545,20 +537,6 @@ const backupSummarySnapshotCountText = computed(() => {
   return sourceDetailLoading.value ? '...' : '—'
 })
 const backupSummarySnapshotCountTitle = computed(() => sourceDetailError.value)
-const browserBreadcrumbs = computed(() => {
-  const parts = browserPath.value.split('/').filter(Boolean)
-  const crumbs = [{ label: t('protection.backupsPage.snapshotBrowserRoot'), path: '' }]
-  let current = ''
-  for (const part of parts) {
-    current = current ? `${current}/${part}` : part
-    crumbs.push({ label: part, path: current })
-  }
-  return crumbs
-})
-const selectedBrowserPathList = computed(() => Array.from(selectedBrowserPaths.value).sort())
-const selectedBrowserPathCount = computed(() => selectedBrowserPaths.value.size)
-const selectedSnapshotDirectoryIsFile = computed(() => selectedSnapshotDirectory.value?.path_type === 'file')
-const selectedSnapshotFileCount = computed(() => (selectedSnapshotDirectoryIsFile.value && selectedSnapshotFileChecked.value ? 1 : 0))
 const displayedRestoreRecords = computed(() => {
   const target = targetedRestoreRecord.value
   if (!target || restoreRecords.value.some((record) => record.id === target.id)) return restoreRecords.value
@@ -571,11 +549,10 @@ const hasRestoreRecordFilters = computed(() => Boolean(
   || restoreRecordFilterTimeMode.value !== 'all',
 ))
 const hasActiveRestoreRecords = computed(() => displayedRestoreRecords.value.some((record) => {
-  const status = String(record.task_summary?.status || '').toLowerCase()
-  return status === 'pending' || status === 'running'
+  return isRestoreRecordActive(record)
 }))
 const hasRunningRestoreRecords = computed(() => displayedRestoreRecords.value.some((record) => (
-  String(record.task_summary?.status || '').toLowerCase() === 'running'
+  normalizedRestoreRecordStatus(record) === 'running'
 )))
 const sourceRelatedTasks = computed(() => sourceTaskRows.value)
 watch(
@@ -756,6 +733,14 @@ const taskDetailDrawerSize = computed(() => {
   if (Number.isFinite(numeric) && numeric > 0) return `${Math.max(650, Math.min(775, (numeric - 120) * 1.25))}px`
   return '700px'
 })
+const snapshotDetailDrawerSize = computed(() => {
+  const nestedWidth = Number.parseFloat(nestedDrawerSize.value)
+  const desiredWidth = Number.isFinite(nestedWidth) ? Math.min(860, nestedWidth + 40) : 840
+  const outerMatch = String(props.drawerSize || '').trim().match(/^(\d+(?:\.\d+)?)px$/)
+  if (!outerMatch) return `${Math.round(desiredWidth)}px`
+  const outerWidth = Number(outerMatch[1])
+  return `${Math.round(Math.min(desiredWidth, Math.max(280, outerWidth - 48)))}px`
+})
 const activeTaskUuid = computed(() => activeTask.value?.task_uuid || '')
 const activeTaskDependencies = computed(() =>
   (activeTask.value?.dependencies || []).filter((dependency) => dependency.is_active),
@@ -855,7 +840,7 @@ async function cancelActiveBackupTask() {
     ElMessage.success({ message: t('protection.backupsPage.backupTaskCancelSuccess'), grouping: true })
     await refreshActiveTask()
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+    showFlowSourceFeedback(apiErrorMessage(err), 'error')
   } finally {
     backupTaskActionBusy.value = false
   }
@@ -900,6 +885,25 @@ function flowSourceTypeParts(row: { type: 'host' | 'nas'; protocol?: 'nfs' | 'sm
   }
 }
 
+function flowSourceOsPlatform(row: FlowSourceRow): EnrollmentOs | null {
+  const platform = String(row.platform || '').trim().toLowerCase()
+  if (platform === 'macos' || platform === 'windows' || platform === 'linux') return platform
+  const raw = String(row.osName || '').trim().toLowerCase()
+  if (raw.includes('darwin') || raw.includes('mac')) return 'macos'
+  if (raw.includes('windows')) return 'windows'
+  if (raw.includes('linux')) return 'linux'
+  return null
+}
+
+function flowSourceOsType(row: FlowSourceRow) {
+  const platform = flowSourceOsPlatform(row)
+  if (platform === 'macos') return 'macOS'
+  if (platform === 'windows') return 'Windows'
+  if (platform === 'linux') return 'Linux'
+  const raw = String(row.osName || '').trim()
+  return raw || '—'
+}
+
 function flowSourceStatusLabel(status?: 'online' | 'offline') {
   return status === 'online'
     ? t('protection.backupsPage.nodeStatusOnline')
@@ -923,6 +927,7 @@ function flowSourceLifecycleStatusLabel(status: FlowSourceRow['status']) {
     probing: 'protection.sourceResources.capacitySyncing',
     removing: 'protection.backupsPage.sourcePendingDeleting',
     remove_failed: 'protection.backupsPage.sourcePendingDeleteFailed',
+    verification_pending: 'nodeLifecycle.state.upgrading',
   }[status] || `nodeLifecycle.state.${status}`
   return t(labelKey)
 }
@@ -1055,24 +1060,139 @@ function restoreRecordStatus(record: RestoreRecord) {
   return restoreRecordTaskStatus(record)
 }
 
-function restoreRecordProgressValue(record: RestoreRecord) {
-  return formatTaskProgressBarPercent(record.task_summary?.progress ?? 0)
+type RestoreRecordTimeField = 'started' | 'duration' | 'finished'
+type RestoreRecordEndTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
+
+const RESTORE_RECORD_TERMINAL_STATUSES = ['success', 'failed', 'cancelled', 'timeout']
+
+function normalizedRestoreRecordStatus(record: RestoreRecord) {
+  return normalizedRestoreRecordTaskStatus(record)
 }
 
-function restoreRecordProgressText(record: RestoreRecord) {
-  return formatTaskProgressPercent(restoreRecordProgressValue(record))
+function restoreRecordTimestamp(raw?: string | null) {
+  if (!raw) return null
+  const value = new Date(raw).getTime()
+  return Number.isFinite(value) ? value : null
+}
+
+function restoreRecordHasStatusTimeConflict(record: RestoreRecord) {
+  return restoreRecordTimeState(record).hasStatusTimeConflict
+}
+
+function restoreRecordHasInvalidTimeData(record: RestoreRecord) {
+  return restoreRecordTimeState(record).hasInvalidTimeData
+}
+
+function restoreRecordTimeIssue(record: RestoreRecord, field: RestoreRecordTimeField) {
+  if (!record.task_summary) return t('protection.backupsPage.flowRestoreRecordTaskDetailsMissing')
+  const status = normalizedRestoreRecordStatus(record)
+  const startedAt = record.task_summary.started_at
+  const finishedAt = record.task_summary.finished_at
+  const startedMs = restoreRecordTimestamp(startedAt)
+  const finishedMs = restoreRecordTimestamp(finishedAt)
+  if (restoreRecordHasStatusTimeConflict(record)) {
+    const statusTimeConflictAffectsField = status === 'running' ? field !== 'started' : field !== 'finished'
+    if (statusTimeConflictAffectsField) return t('protection.backupsPage.flowRestoreRecordStatusTimeConflict')
+  }
+  if (startedAt && startedMs === null && field !== 'finished') return t('protection.backupsPage.flowRestoreRecordInvalidTimeData')
+  if (finishedAt && finishedMs === null && field !== 'started') return t('protection.backupsPage.flowRestoreRecordInvalidTimeData')
+  if (startedMs !== null && finishedMs !== null && finishedMs < startedMs && field !== 'started') {
+    return t('protection.backupsPage.flowRestoreRecordInvalidTimeOrder')
+  }
+  if (status === 'running' && startedMs === null && field !== 'finished') {
+    return t('protection.backupsPage.flowRestoreRecordStartNotRecorded')
+  }
+  if (status === 'success' && startedMs === null && field !== 'finished') {
+    return t('protection.backupsPage.flowRestoreRecordStartNotRecorded')
+  }
+  if (RESTORE_RECORD_TERMINAL_STATUSES.includes(status) && finishedMs === null
+    && (field === 'finished' || (field === 'duration' && startedMs !== null))) {
+    return t('protection.backupsPage.flowRestoreRecordFinishNotRecorded')
+  }
+  return ''
+}
+
+function restoreRecordTimeValue(record: RestoreRecord, field: 'submitted' | 'started' | 'finished') {
+  if (field === 'submitted') return formatNullableTime(record.created_at)
+  const state = restoreRecordTimeState(record)
+  const kind = field === 'started' ? state.startedKind : state.finishedKind
+  const raw = field === 'started' ? state.startedAt : state.finishedAt
+  if (kind === 'value') return formatNullableTime(raw)
+  if (kind === 'not_started') return t('protection.backupsPage.flowRestoreRecordNotStarted')
+  if (kind === 'not_finished') return t('protection.backupsPage.flowRestoreRecordNotFinished')
+  return t('protection.backupsPage.flowRestoreRecordTimeUnavailable')
 }
 
 function restoreRecordDuration(record: RestoreRecord) {
-  const status = String(record.task_summary?.status || '').toLowerCase()
-  const finishedAt = record.task_summary?.finished_at
-  const end = finishedAt || (status === 'running'
+  const state = restoreRecordTimeState(record)
+  if (state.durationKind === 'not_applicable') return t('protection.backupDetail.durationDash')
+  if (state.durationKind === 'unavailable') return t('protection.backupsPage.flowRestoreRecordTimeUnavailable')
+  const end = state.durationKind === 'running'
     ? new Date(restoreRecordDurationNow.value).toISOString()
-    : null)
-  return durationText(
-    record.task_summary?.started_at || record.created_at,
-    end,
-  )
+    : state.finishedAt
+  return durationText(state.startedAt, end)
+}
+
+function restoreRecordStatusExplanation(record: RestoreRecord) {
+  if (!record.task_summary) return t('protection.backupsPage.flowRestoreRecordTaskDetailsMissing')
+  const status = normalizedRestoreRecordStatus(record)
+  const startedMs = restoreRecordTimestamp(record.task_summary.started_at)
+  const finishedMs = restoreRecordTimestamp(record.task_summary.finished_at)
+  if (restoreRecordHasStatusTimeConflict(record)) return t('protection.backupsPage.flowRestoreRecordStatusTimeConflict')
+  if (record.task_summary.started_at && startedMs === null) return t('protection.backupsPage.flowRestoreRecordInvalidTimeData')
+  if (record.task_summary.finished_at && finishedMs === null) return t('protection.backupsPage.flowRestoreRecordInvalidTimeData')
+  if (startedMs !== null && finishedMs !== null && finishedMs < startedMs) return t('protection.backupsPage.flowRestoreRecordInvalidTimeOrder')
+  if (status === 'running' && startedMs === null) return t('protection.backupsPage.flowRestoreRecordStartNotRecorded')
+  if (RESTORE_RECORD_TERMINAL_STATUSES.includes(status) && finishedMs === null) return t('protection.backupsPage.flowRestoreRecordFinishNotRecorded')
+  if (status === 'pending') return t('protection.backupsPage.flowRestoreRecordWaitingForSchedule')
+  if (status === 'waiting') return t('protection.backupsPage.flowRestoreRecordWaitingToStart')
+  if (status === 'blocked') return t('protection.backupsPage.flowRestoreRecordBlocked')
+  if (status === 'running') return t('protection.backupsPage.flowRestoreRecordInProgress')
+  if (status === 'success') return startedMs === null
+    ? t('protection.backupsPage.flowRestoreRecordStartNotRecorded')
+    : t('protection.backupsPage.flowRestoreRecordCompleted')
+  if (status === 'failed') return t(startedMs === null
+    ? 'protection.backupsPage.flowRestoreRecordFailedBeforeStart'
+    : 'protection.backupsPage.flowRestoreRecordFailedDuringExecution')
+  if (status === 'cancelled') return t(startedMs === null
+    ? 'protection.backupsPage.flowRestoreRecordCancelledBeforeStart'
+    : 'protection.backupsPage.flowRestoreRecordCancelledDuringExecution')
+  if (status === 'timeout') return t(startedMs === null
+    ? 'protection.backupsPage.flowRestoreRecordTimedOutBeforeStart'
+    : 'protection.backupsPage.flowRestoreRecordTimedOutDuringExecution')
+  return t('protection.backupsPage.flowRestoreRecordStatusUnavailable')
+}
+
+function restoreRecordEndTone(record: RestoreRecord): RestoreRecordEndTone {
+  const status = normalizedRestoreRecordStatus(record)
+  if (!record.task_summary || !status) return 'neutral'
+  if (status === 'failed' || status === 'timeout') return 'danger'
+  if (status === 'cancelled') return 'warning'
+  if (restoreRecordHasStatusTimeConflict(record) || restoreRecordHasInvalidTimeData(record)) return 'warning'
+  if (status === 'success') {
+    const startedMs = restoreRecordTimestamp(record.task_summary.started_at)
+    const finishedMs = restoreRecordTimestamp(record.task_summary.finished_at)
+    return startedMs === null || finishedMs === null || finishedMs < startedMs ? 'warning' : 'success'
+  }
+  if (status === 'blocked') return 'warning'
+  if (status === 'running') return 'info'
+  return 'neutral'
+}
+
+function restoreRecordEndIcon(record: RestoreRecord) {
+  const status = normalizedRestoreRecordStatus(record)
+  if (!record.task_summary || !status) return CircleHelp
+  if (status === 'failed') return CircleAlert
+  if (status === 'cancelled') return Ban
+  if (status === 'timeout') return TimerOff
+  if (restoreRecordHasStatusTimeConflict(record) || restoreRecordHasInvalidTimeData(record)) return CircleAlert
+  if (status === 'success') {
+    const startedMs = restoreRecordTimestamp(record.task_summary.started_at)
+    const finishedMs = restoreRecordTimestamp(record.task_summary.finished_at)
+    return startedMs === null || finishedMs === null || finishedMs < startedMs ? CircleAlert : Check
+  }
+  if (status === 'blocked') return CircleAlert
+  return Clock3
 }
 
 function restoreRecordConflictLabel(mode?: string | null) {
@@ -1092,28 +1212,64 @@ function restoreRecordModeTitle(record: RestoreRecord) {
   return `${restoreRecordModeLabel(record)} #${record.plan_id}`
 }
 
-function restoreRecordTargetName(record: RestoreRecord) {
-  const id = endpointUiId(record.target_type, Number(record.target_ref_id))
+function restoreRecordEndpointDetails(type: string, refId: number) {
+  const id = endpointUiId(type, Number(refId))
   const row = props.sourceRows.find((item) => item.id === id)
   if (row) {
-    const name = row.name || row.nodeName || row.hostname || ''
-    return row.nodeIp ? `${name} ${row.nodeIp}` : name || '—'
+    return {
+      name: row.name || row.nodeName || row.hostname || '',
+      ip: row.nodeIp || '',
+    }
   }
-  if (record.target_type === 'nas') return record.target_ref_id ? `NAS #${record.target_ref_id}` : 'NAS'
-  return record.target_ref_id ? `Host #${record.target_ref_id}` : 'Host'
+  if (type === 'nas') return { name: refId ? `NAS #${refId}` : 'NAS', ip: '' }
+  return { name: refId ? `Host #${refId}` : 'Host', ip: '' }
 }
 
-function restoreItemTargetSummary(record: RestoreRecord, item: RestoreRecordItem) {
-  const targetPath = restoreRecordTargetDisplayPath(record, item)
-  return `${targetPath} (${restoreRecordTargetName(record)})`
+function restoreRecordSourceEndpoint(record: RestoreRecord) {
+  return restoreRecordEndpointDetails(record.source_type, Number(record.source_ref_id))
+}
+
+function restoreRecordTargetEndpoint(record: RestoreRecord) {
+  return restoreRecordEndpointDetails(record.target_type, Number(record.target_ref_id))
+}
+
+function restoreRecordEndpointSummary(endpoint: { name: string, ip: string }) {
+  return [endpoint.name, endpoint.ip].filter(Boolean).join(' · ') || '—'
+}
+
+function restoreRecordMappingTitle(path: string, endpoint: { name: string, ip: string }) {
+  return [path, endpoint.name, endpoint.ip].filter(Boolean).join('\n')
 }
 
 function restoreRecordTargetSummary(record: RestoreRecord) {
-  return `${restoreRecordTargetDisplayPath(record)} (${restoreRecordTargetName(record)})`
+  return restoreRecordMappingTitle(
+    restoreRecordTargetDisplayPath(record),
+    restoreRecordTargetEndpoint(record),
+  )
 }
 
-function restoreItemSourceKind(item: RestoreRecordItem) {
-  return inferRecoveryPlanSourcePathType(item.source_path || '') === 'file' ? 'file' : 'dir'
+function restoreItemTargetSummary(record: RestoreRecord, item: RestoreRecordItem) {
+  return restoreRecordMappingTitle(
+    restoreRecordTargetDisplayPath(record, item),
+    restoreRecordTargetEndpoint(record),
+  )
+}
+
+function restoreItemSourceKind(record: RestoreRecord, item: RestoreRecordItem) {
+  return restoreRecordItemSourceKind(record, item)
+}
+
+function restoreItemTargetKind(record: RestoreRecord, item: RestoreRecordItem, sourceKind = restoreItemSourceKind(record, item)) {
+  const expandedItems = Array.isArray(record.expanded_payload?.items)
+    ? record.expanded_payload.items
+    : []
+  const expandedItem = expandedItems.find((value) => {
+    if (!value || typeof value !== 'object') return false
+    const candidate = value as Record<string, unknown>
+    return Number(candidate.source_snapshot_directory_id) === item.source_snapshot_directory_id
+      || Number(candidate.backup_config_dir_id) === item.backup_config_dir_id
+  }) as Record<string, unknown> | undefined
+  return expandedItem?.target_path_semantics === 'final' && sourceKind === 'file' ? 'file' : 'dir'
 }
 
 function resetExpandedRestoreItems() {
@@ -1141,11 +1297,14 @@ function restoreRecordRuntimeLoading(record: RestoreRecord) {
 }
 
 function restoreRecordMetrics(record: RestoreRecord) {
-  return restoreRecordRuntimeMetricParts(
-    t,
-    restoreRecordRuntime(record),
-    restoreRecordTaskStatus(record),
-  )
+  return [
+    ...restoreRecordOutcomeMetricParts(t, record),
+    ...restoreRecordRuntimeMetricParts(
+      t,
+      restoreRecordRuntime(record),
+      restoreRecordTaskStatus(record),
+    ),
+  ]
 }
 
 async function loadRestoreRecordRuntime(record: RestoreRecord) {
@@ -1336,30 +1495,14 @@ function openTaskResourceTab() {
   if (type) void loadResourceType(type)
 }
 
-function progressValue(task: TaskRow) {
-  return formatTaskProgressBarPercent(task.progress)
-}
-
-function progressText(task: TaskRow) {
-  return formatTaskProgressPercent(task.progress)
-}
-
 function stepDisplayName(stepName?: string | null, taskType?: string | null) {
-  const step = String(stepName || '')
-  if (!step) return t('protection.backupDetail.durationDash')
-  if (taskType === 'snapshot_download') {
-    if (step === 'restore') return t('ops.task.step.snapshot_download_restore')
-    if (step === 'transfer') return t('ops.task.step.snapshot_download_transfer')
-    if (step === 'finalize') return t('ops.task.step.snapshot_download_finalize')
-  }
-  const key = `ops.task.step.${step}`
+  const key = taskStepTranslationKey(stepName, taskType)
+  if (!key) return t('protection.backupDetail.durationDash')
   return te(key) ? t(key) : t('ops.task.unknownValue')
 }
 
-function taskEventMetadata(event: TaskEventRow) {
-  const metadata = event.metadata
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {}
-  return metadata as Record<string, unknown>
+function taskEventMetadata(event: TaskEventRow): Record<string, unknown> {
+  return backupFailureMetadata(event.metadata)
 }
 
 function taskEventMetadataText(event: TaskEventRow, keys: string[]) {
@@ -1370,6 +1513,16 @@ function taskEventMetadataText(event: TaskEventRow, keys: string[]) {
     if (typeof value === 'number' && Number.isFinite(value)) return String(value)
   }
   return ''
+}
+
+function hasEventDetailPanel(event: TaskEventRow) {
+  const metadata = taskEventMetadata(event)
+  return ['failure_details', 'skipped_details'].some((key) => {
+    const details = metadata[key]
+    return Boolean(details && typeof details === 'object' && !Array.isArray(details))
+  }) || taskEventMetadataText(event, ['error_code']) === 'RESTORE_TARGET_PERMISSION_DENIED'
+    || ['skipped_item_count', 'skipped_file_count', 'skipped_directory_count', 'skipped_special_count']
+    .some(key => Number(metadata[key]) > 0)
 }
 
 function taskEventMetadataList(event: TaskEventRow, key: string) {
@@ -1386,7 +1539,7 @@ function taskEventMetadataList(event: TaskEventRow, key: string) {
 function eventErrorText(event: TaskEventRow) {
   const step = activeTask.value?.steps?.find(item => item.id === event.step_id)
   if (event.message === 'Task finished with status failed' && step?.step_name === 'finalize_snapshot') return ''
-  if (taskEventMetadata(event).failure_details) return ''
+  if (hasEventDetailPanel(event)) return ''
   const message = taskEventMetadataText(event, ['error_message'])
   if (!message) return ''
   const code = taskEventMetadataText(event, ['error_code'])
@@ -1464,11 +1617,7 @@ function taskDetailTitle(task?: TaskRow | null) {
 }
 
 function timelineIconClass(status?: string) {
-  if (status === 'success') return 'dp-task-detail__timeline-icon--success'
-  if (status === 'failed' || status === 'timeout') return 'dp-task-detail__timeline-icon--danger'
-  if (status === 'running') return 'dp-task-detail__timeline-icon--running'
-  if (status === 'cancelled') return 'dp-task-detail__timeline-icon--muted'
-  return 'dp-task-detail__timeline-icon--pending'
+  return `dp-task-detail__timeline-icon--${taskStepTimelineTone(status)}`
 }
 
 function eventTone(event: TaskEventRow) {
@@ -1567,7 +1716,7 @@ async function refreshActiveTask() {
       if (type) void loadResourceType(type)
     }
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.loadFailed')), grouping: true })
+    showFlowSourceFeedback(apiErrorMessage(err, t('errors.generic.loadFailed')), 'error')
   } finally {
     activeTaskLoading.value = false
   }
@@ -1607,7 +1756,7 @@ async function openTaskDetailByUuid(taskUuid?: string | null) {
     const task = await getTask(uuid)
     openTaskDetail(task)
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.loadFailed')), grouping: true })
+    showFlowSourceFeedback(apiErrorMessage(err, t('errors.generic.loadFailed')), 'error')
   }
 }
 
@@ -1739,19 +1888,6 @@ function fmtBytes(n: number) {
 function fmtReferenceBytes(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—'
   return fmtBytes(Math.max(0, Number(value)))
-}
-
-function fmtReferencePercent(value: number | null | undefined) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—'
-  return `${(Math.max(0, Number(value)) * 100).toFixed(1)}%`
-}
-
-function fmtCombinedReduction(snapshot: BackupSourceSnapshot) {
-  if (!snapshot.storage_stats_available) return '—'
-  if (snapshot.fully_reused) return t('protection.backupsPage.snapshotStorageFullyReused')
-  const value = Number(snapshot.combined_reduction_ratio)
-  if (!Number.isFinite(value) || value <= 0) return '—'
-  return `${value.toFixed(2)} : 1`
 }
 
 function snapshotDisplayDirectories(snapshot: BackupSourceSnapshot) {
@@ -1905,133 +2041,63 @@ function snapshotStatusLabel(status?: string): string {
   if (normalized === 'partial') return t('protection.backupsPage.snapshotStatusPartial')
   if (normalized === 'failed') return t('protection.backupsPage.snapshotStatusFailed')
   if (normalized === 'creating') return t('protection.backupsPage.snapshotStatusCreating')
+  if (normalized === 'running') return t('protection.backupsPage.snapshotStatusRunning')
+  if (normalized === 'pending') return t('protection.backupsPage.snapshotStatusQueued')
   if (normalized === 'deleted') return t('protection.backupsPage.snapshotStatusDeleted')
   if (normalized === 'deleting') return t('protection.backupsPage.snapshotStatusDeleting')
   if (normalized === 'delete_failed') return t('protection.backupsPage.snapshotStatusDeleteFailed')
   return status || t('protection.backupDetail.durationDash')
 }
 
+function snapshotStatusInProgress(status?: string) {
+  const normalized = String(status || '').toLowerCase()
+  return normalized === 'creating' || normalized === 'running' || normalized === 'pending'
+}
+
 function isVisibleSourceSnapshot(snapshot: BackupSourceSnapshot) {
   return !HIDDEN_SOURCE_SNAPSHOT_STATUSES.includes(String(snapshot.status || '').toLowerCase())
 }
 
-function canBrowseSnapshotDirectory(dir: BackupSourceSnapshotDirectory) {
-  return isSnapshotDirectoryBrowsable(selectedSnapshot.value?.status, dir)
+function closeSnapshotDetailDrawer() {
+  snapshotDetailDrawerOpen.value = false
+  selectedSnapshotId.value = null
+  snapshotDetailLoading.value = false
+  snapshotDetailError.value = ''
 }
 
-function snapshotDirectoryKind(dir: BackupSourceSnapshotDirectory) {
-  return dir.path_type === 'file' ? 'file' : 'dir'
+function resetSnapshotDetailDrawer() {
+  snapshotDetailDrawerOpen.value = false
+  selectedSnapshotId.value = null
+  snapshotDetailLoading.value = false
+  snapshotDetailError.value = ''
 }
 
-function snapshotDirectoryIcon(dir: BackupSourceSnapshotDirectory) {
-  return snapshotDirectoryKind(dir) === 'file' ? File : Folder
-}
-
-function snapshotFileFallbackName(dir: BackupSourceSnapshotDirectory) {
-  return dir.display_name || dir.source_path.split(/[\\/]/).filter(Boolean).pop() || 'snapshot-file'
-}
-
-function clearSnapshotFileSelection() {
-  selectedSnapshotFileChecked.value = false
-  downloadingSnapshotFile.value = false
-}
-
-function openSnapshotFileBrowser(dir: BackupSourceSnapshotDirectory) {
-  if (!canBrowseSnapshotDirectory(dir)) return
-  selectedSnapshotDirectory.value = dir
-  fileBrowserDrawerOpen.value = true
-  browserLoading.value = false
-  browserError.value = ''
-  browserPath.value = ''
-  browserParentPath.value = ''
-  browserEntries.value = []
-  browserTreeEntries.value = []
-  browserTreeVersion.value += 1
-  selectedBrowserPaths.value = new Set()
-  browserTreeRef.value?.setCheckedKeys([])
-  clearSnapshotFileSelection()
-}
-
-function toggleSnapshotFileSelection() {
-  selectedSnapshotFileChecked.value = !selectedSnapshotFileChecked.value
-}
-
-async function downloadSelectedSnapshotFile() {
-  const dir = selectedSnapshotDirectory.value
-  if (!dir || !selectedSnapshotFileChecked.value || !selectedSnapshotDirectoryIsFile.value) {
-    ElMessage.warning({ message: t('protection.backupsPage.snapshotBrowserSelectBeforeDownload'), grouping: true })
-    return
-  }
-  downloadingSnapshotFile.value = true
-  try {
-    const task = await createBackupSnapshotDirectoryDownloadTask(dir.id, '')
-    const artifactId = await waitForDownloadArtifact(task.task_uuid)
-    await startNativeArtifactDownload(artifactId)
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
-  } finally {
-    downloadingSnapshotFile.value = false
-  }
-}
-
-async function startNativeArtifactDownload(artifactId: number) {
-  const result = await createSnapshotArtifactDownloadUrl(artifactId)
-  const anchor = document.createElement('a')
-  anchor.href = result.url
-  anchor.rel = 'noopener'
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-}
-
-function closeSnapshotFileBrowser() {
-  fileBrowserDrawerOpen.value = false
-  clearSnapshotFileSelection()
-}
-
-function resetSnapshotBrowser() {
-  selectedSnapshotDirectory.value = null
-  fileBrowserDrawerOpen.value = false
-  browserLoading.value = false
-  browserError.value = ''
-  browserPath.value = ''
-  browserParentPath.value = ''
-  browserEntries.value = []
-  browserTreeEntries.value = []
-  browserTreeVersion.value += 1
-  selectedBrowserPaths.value = new Set()
-  downloadingSelected.value = false
-  clearSnapshotFileSelection()
-}
-
-async function selectSnapshot(row: BackupSourceSnapshot) {
+async function loadSelectedSnapshot(row: BackupSourceSnapshot) {
   selectedSnapshotId.value = row.id
-  resetSnapshotBrowser()
   snapshotDetailLoading.value = true
   snapshotDetailError.value = ''
   try {
     const detail = await getBackupSourceSnapshot(row.id)
+    if (selectedSnapshotId.value !== row.id) return
     snapshotDetails.value.set(row.id, detail)
+    sourceSnapshotRows.value = sourceSnapshotRows.value.map((snapshot) => snapshot.id === detail.id ? detail : snapshot)
   } catch (err) {
+    if (selectedSnapshotId.value !== row.id) return
     snapshotDetailError.value = apiErrorMessage(err, t('errors.generic.loadFailed'))
   } finally {
-    snapshotDetailLoading.value = false
+    if (selectedSnapshotId.value === row.id) snapshotDetailLoading.value = false
   }
 }
 
-async function expandSnapshot(row: BackupSourceSnapshot) {
-  expandedSnapshotRowKeys.value = [row.id]
-  await selectSnapshot(row)
+function openSnapshotDetailDrawer(row: BackupSourceSnapshot) {
+  selectedSnapshotId.value = row.id
+  snapshotDetailDrawerOpen.value = true
+  void loadSelectedSnapshot(row)
 }
 
-function toggleSnapshot(row: BackupSourceSnapshot) {
-  if (expandedSnapshotRowKeys.value.includes(row.id)) {
-    expandedSnapshotRowKeys.value = []
-    selectedSnapshotId.value = null
-    resetSnapshotBrowser()
-    return
-  }
-  void expandSnapshot(row)
+function retrySelectedSnapshotDetail() {
+  const snapshot = selectedSnapshot.value
+  if (snapshot) void loadSelectedSnapshot(snapshot)
 }
 
 function canRestoreSnapshot(row: BackupSourceSnapshot) {
@@ -2044,7 +2110,9 @@ function snapshotRestoreDisabledReason(row: BackupSourceSnapshot) {
   }
   const status = String(row.status || '').toLowerCase()
   if (status !== 'available' && status !== 'partial') {
-    return t('protection.backupsPage.snapshotReasonStatusUnavailable')
+    return t('protection.backupsPage.snapshotReasonStatusUnavailable', {
+      status: snapshotStatusLabel(row.status),
+    })
   }
   return t('protection.backupsPage.snapshotReasonNoUsableDirectories')
 }
@@ -2052,186 +2120,6 @@ function snapshotRestoreDisabledReason(row: BackupSourceSnapshot) {
 function openSnapshotRestore(row: BackupSourceSnapshot) {
   if (!canRestoreSnapshot(row)) return
   emit('restore-snapshot', { snapshotId: row.id })
-}
-
-function onSnapshotExpandChange(row: BackupSourceSnapshot, expandedRows: BackupSourceSnapshot[]) {
-  const expanded = expandedRows.some((item) => item.id === row.id)
-  if (!expanded) {
-    expandedSnapshotRowKeys.value = expandedRows.map((item) => item.id)
-    if (selectedSnapshotId.value === row.id) {
-      selectedSnapshotId.value = null
-      resetSnapshotBrowser()
-    }
-    return
-  }
-  void expandSnapshot(row)
-}
-
-async function openSnapshotDirectory(dir: BackupSourceSnapshotDirectory, path = '') {
-  if (!canBrowseSnapshotDirectory(dir)) return
-  if (snapshotDirectoryKind(dir) === 'file') {
-    openSnapshotFileBrowser(dir)
-    return
-  }
-  clearSnapshotFileSelection()
-  const previousDirectory = selectedSnapshotDirectory.value
-  const previousPath = browserPath.value
-  const previousParentPath = browserParentPath.value
-  const previousEntries = browserEntries.value
-  const previousTreeEntries = browserTreeEntries.value
-  selectedSnapshotDirectory.value = dir
-  fileBrowserDrawerOpen.value = true
-  browserLoading.value = true
-  browserError.value = ''
-  browserEntries.value = []
-  browserTreeEntries.value = []
-  browserTreeVersion.value += 1
-  selectedBrowserPaths.value = new Set()
-  browserTreeRef.value?.setCheckedKeys([])
-  try {
-    const result = await browseBackupSnapshotDirectory(dir.id, { path })
-    browserPath.value = result.path || ''
-    browserParentPath.value = result.parent_path || ''
-    browserEntries.value = result.entries
-    browserTreeEntries.value = result.entries.map((entry) => browserEntryToTreeNode(entry))
-    browserTreeVersion.value += 1
-    refreshBrowserTreeDisabled()
-  } catch (err) {
-    browserError.value = apiErrorMessage(err, t('errors.generic.loadFailed'))
-    if (previousDirectory?.id === dir.id && (previousPath || previousEntries.length)) {
-      browserPath.value = previousPath
-      browserParentPath.value = previousParentPath
-      browserEntries.value = previousEntries
-      browserTreeEntries.value = previousTreeEntries
-      browserTreeVersion.value += 1
-    } else {
-      browserPath.value = ''
-      browserParentPath.value = ''
-      browserEntries.value = []
-      browserTreeEntries.value = []
-      browserTreeVersion.value += 1
-    }
-  } finally {
-    browserLoading.value = false
-  }
-}
-
-function browserEntryToTreeNode(entry: BackupSnapshotBrowserEntry): SnapshotBrowserTreeNode {
-  return {
-    ...entry,
-    id: entry.path,
-    label: entry.name,
-    disabled: isBrowserPathDisabled(entry.path),
-    loaded: entry.type !== 'dir',
-    isLeaf: entry.type !== 'dir',
-    children: entry.type === 'dir' ? [] : undefined,
-  }
-}
-
-function isRelatedBrowserPath(a: string, b: string) {
-  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
-}
-
-function isBrowserPathDisabled(path: string) {
-  for (const selectedPath of selectedBrowserPaths.value) {
-    if (selectedPath !== path && isRelatedBrowserPath(path, selectedPath)) return true
-  }
-  return false
-}
-
-function refreshBrowserTreeDisabled(nodes: SnapshotBrowserTreeNode[] = browserTreeEntries.value) {
-  for (const node of nodes) {
-    node.disabled = isBrowserPathDisabled(node.path)
-    if (node.children?.length) refreshBrowserTreeDisabled(node.children)
-  }
-  browserTreeEntries.value = [...browserTreeEntries.value]
-}
-
-async function loadBrowserTreeNode(node: { data?: SnapshotBrowserTreeNode; level: number }, resolve: (data: SnapshotBrowserTreeNode[]) => void) {
-  if (node.level === 0) {
-    resolve(browserTreeEntries.value)
-    return
-  }
-  const data = node.data
-  if (!data || data.type !== 'dir' || !selectedSnapshotDirectory.value) {
-    resolve([])
-    return
-  }
-  try {
-    const result = await browseBackupSnapshotDirectory(selectedSnapshotDirectory.value.id, { path: data.path })
-    const children = result.entries.map((entry) => browserEntryToTreeNode(entry))
-    data.children = children
-    data.loaded = true
-    resolve(children)
-    refreshBrowserTreeDisabled()
-  } catch (err) {
-    data.loaded = false
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.loadFailed')), grouping: true })
-    resolve([])
-  }
-}
-
-function syncBrowserTreeCheckedKeys() {
-  browserTreeRef.value?.setCheckedKeys(selectedBrowserPathList.value)
-}
-
-function normalizeBrowserDownloadPaths(paths: string[]): string[] {
-  const sorted = [...paths].sort((a, b) => a.length - b.length)
-  const kept: string[] = []
-  for (const path of sorted) {
-    if (kept.some((parent) => path === parent || path.startsWith(`${parent}/`))) continue
-    kept.push(path)
-  }
-  return kept.sort()
-}
-
-function clearBrowserSelection() {
-  selectedBrowserPaths.value = new Set()
-  refreshBrowserTreeDisabled()
-  syncBrowserTreeCheckedKeys()
-}
-
-function onBrowserTreeCheckChange(data: SnapshotBrowserTreeNode, checked: boolean) {
-  const next = new Set(selectedBrowserPaths.value)
-  if (!checked) {
-    next.delete(data.path)
-  } else {
-    for (const path of Array.from(next)) {
-      if (isRelatedBrowserPath(data.path, path)) next.delete(path)
-    }
-    next.add(data.path)
-  }
-  selectedBrowserPaths.value = next
-  refreshBrowserTreeDisabled()
-  syncBrowserTreeCheckedKeys()
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
-function artifactIdFromTask(task: { result_payload?: unknown }) {
-  const payload = task.result_payload && typeof task.result_payload === 'object'
-    ? task.result_payload as Record<string, unknown>
-    : {}
-  const id = Number(payload.artifact_id || 0)
-  return Number.isFinite(id) && id > 0 ? id : 0
-}
-
-async function waitForDownloadArtifact(taskUuid: string) {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    const task = await getTask(taskUuid)
-    if (task.status === 'success') {
-      const artifactId = artifactIdFromTask(task)
-      if (artifactId > 0) return artifactId
-      throw new Error(t('protection.backupsPage.snapshotBrowserDownloadNotReady'))
-    }
-    if (task.status === 'failed' || task.status === 'cancelled' || task.status === 'timeout') {
-      throw new Error(task.error_message || t('protection.backupsPage.snapshotBrowserDownloadFailed'))
-    }
-    await wait(1000)
-  }
-  throw new Error(t('protection.backupsPage.snapshotBrowserDownloadTimeout'))
 }
 
 async function loadOverviewForSource(options: { silent?: boolean } = {}) {
@@ -2263,8 +2151,8 @@ async function loadOverviewForSource(options: { silent?: boolean } = {}) {
 async function loadSnapshotsForSource() {
   const endpoint = sourceEndpoint.value
   sourceSnapshotRows.value = []
-  // Tab activation refreshes the list while its controlled expansion state is retained.
-  // Keep loaded details too, so a retained expanded row never falls back to an empty summary row.
+  // Keep an open detail drawer stable while a manual refresh replaces the list rows.
+  // Its cached detail prevents the drawer from briefly falling back to an incomplete list row.
   sourceSnapshotsError.value = ''
   if (!endpoint) {
     snapshotPagination.count = 0
@@ -2295,25 +2183,6 @@ async function loadSnapshotsForSource() {
   } finally {
     requests.releaseSignal('flow-source-snapshots', signal)
     if (!signal.aborted) sourceSnapshotsLoading.value = false
-  }
-}
-
-async function downloadSelectedBrowserPaths() {
-  if (!selectedSnapshotDirectory.value) return
-  const paths = normalizeBrowserDownloadPaths(selectedBrowserPathList.value)
-  if (!paths.length) {
-    ElMessage.warning({ message: t('protection.backupsPage.snapshotBrowserSelectBeforeDownload'), grouping: true })
-    return
-  }
-  downloadingSelected.value = true
-  try {
-    const task = await createBackupSnapshotDirectoryBatchDownloadTask(selectedSnapshotDirectory.value.id, paths)
-    const artifactId = await waitForDownloadArtifact(task.task_uuid)
-    await startNativeArtifactDownload(artifactId)
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
-  } finally {
-    downloadingSelected.value = false
   }
 }
 
@@ -2568,7 +2437,10 @@ function applyInitialTabs() {
 watch(
   () => props.modelValue,
   async (open) => {
-    if (!open) return
+    if (!open) {
+      resetSnapshotDetailDrawer()
+      return
+    }
     applyInitialTabs()
     await nextTick()
     if (activeTab.value === 'overview' && props.scrollTo) {
@@ -2588,7 +2460,8 @@ watch(
   { immediate: true },
 )
 
-watch(activeTab, async () => {
+watch(activeTab, async (tab) => {
+  if (tab !== 'snapshots') resetSnapshotDetailDrawer()
   await nextTick()
   if (activeTab.value === 'overview' && props.scrollTo) scrollToSection()
 })
@@ -2710,9 +2583,8 @@ watch(
   () => [snapshotPagination.page, snapshotPagination.pageSize] as const,
   () => {
     selectedSnapshotId.value = null
-    expandedSnapshotRowKeys.value = []
     snapshotDetails.value = new Map()
-    resetSnapshotBrowser()
+    resetSnapshotDetailDrawer()
     if (props.modelValue && activeTab.value === 'snapshots') void loadSnapshotsForSource()
   },
 )
@@ -2721,7 +2593,6 @@ watch(sourceId, () => {
   sourceDetail.value = null
   sourceDetailError.value = ''
   selectedSnapshotId.value = null
-  expandedSnapshotRowKeys.value = []
   snapshotDetails.value = new Map()
   snapshotPagination.page = 1
   snapshotPagination.pageSize = DETAIL_PAGE_SIZE
@@ -2761,7 +2632,7 @@ watch(sourceId, () => {
   taskAdvancedFilterOpen.value = false
   taskPagination.page = 1
   taskPagination.pageSize = DETAIL_PAGE_SIZE
-  resetSnapshotBrowser()
+  resetSnapshotDetailDrawer()
 })
 
 watch(activeTaskUuid, () => {
@@ -2779,7 +2650,7 @@ watch(
     if (Number.isFinite(snapshotId) && snapshotId > 0) {
       snapshotDetails.value.delete(snapshotId)
       if (selectedSnapshotId.value === snapshotId) {
-        void selectSnapshot({ id: snapshotId } as BackupSourceSnapshot)
+        void loadSelectedSnapshot({ id: snapshotId } as BackupSourceSnapshot)
       }
     }
     if (activeTask.value) void loadActiveBackupSnapshot(activeTask.value)
@@ -2807,7 +2678,6 @@ function onClosed() {
   sourceDetail.value = null
   sourceDetailError.value = ''
   selectedSnapshotId.value = null
-  expandedSnapshotRowKeys.value = []
   sourceSnapshotRows.value = []
   sourceSnapshotsError.value = ''
   resetSnapshotSearch()
@@ -2840,7 +2710,7 @@ function onClosed() {
   taskPagination.pageSize = DETAIL_PAGE_SIZE
   taskDetailOpen.value = false
   closeTaskDetail()
-  resetSnapshotBrowser()
+  resetSnapshotDetailDrawer()
   snapshotDetails.value = new Map()
   activeBackupSnapshot.value = null
   emit('closed')
@@ -3384,7 +3254,7 @@ function onClosed() {
                                     <span
                                       class="create-recovery-plan-mapping__arrow"
                                       aria-hidden="true"
-                                    >-&gt;</span>
+                                    ><ArrowRight :size="14" /></span>
                                     <span
                                       class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                                       :title="recoveryPlanTargetSummary(mapping.plan)"
@@ -3455,7 +3325,7 @@ function onClosed() {
                                   <span
                                     class="create-recovery-plan-mapping__arrow"
                                     aria-hidden="true"
-                                  >-&gt;</span>
+                                  ><ArrowRight :size="14" /></span>
                                   <span
                                     class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                                     :title="recoveryPlanTargetSummary(mapping.plan)"
@@ -3490,6 +3360,51 @@ function onClosed() {
                   :description="t('protection.backupsPage.flowSourceDetailConfigsEmpty')"
                   :image-size="72"
                 />
+              </section>
+              <section
+                v-if="overviewSource.type === 'host'"
+                class="hfl-detail-section"
+              >
+                <h4 class="hfl-detail-section__title">
+                  {{ t('protection.backupsPage.flowSourceDetailSectionSpecs') }}
+                </h4>
+                <div class="hfl-detail-grid">
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailOsType') }}</span>
+                    <span class="hfl-detail-row__value dp-flow-os-type">
+                      <AgentPlatformBrandIcon
+                        v-if="flowSourceOsPlatform(overviewSource)"
+                        :os="flowSourceOsPlatform(overviewSource)!"
+                        class="dp-flow-os-type__icon"
+                      />
+                      <span>{{ flowSourceOsType(overviewSource) }}</span>
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldArch') }}</span>
+                    <span class="hfl-detail-row__value">{{ overviewSource.arch || '—' }}</span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colCpu') }}</span>
+                    <span class="hfl-detail-row__value">
+                      {{ overviewSource.cpuCores != null ? t('protection.sourceResources.cpuCoresValue', { n: overviewSource.cpuCores }) : '—' }}
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colMemory') }}</span>
+                    <span class="hfl-detail-row__value">{{ flowSourceMemoryText(overviewSource) }}</span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colDiskCount') }}</span>
+                    <span class="hfl-detail-row__value">{{ flowSourceDiskCountText(overviewSource) }}</span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colCapacity') }}</span>
+                    <span class="hfl-detail-row__value">
+                      {{ overviewSource.capacityTotalBytes ? `${formatNodeBytes(overviewSource.capacityUsedBytes || 0)} / ${formatNodeBytes(overviewSource.capacityTotalBytes)}` : '—' }}
+                    </span>
+                  </div>
+                </div>
               </section>
             </template>
             <div
@@ -3600,298 +3515,9 @@ function onClosed() {
             stripe
             row-key="id"
             :max-height="snapshotTableMaxHeight"
-            :expand-row-keys="expandedSnapshotRowKeys"
             :header-cell-style="TABLE_HEADER_STYLE"
             class="hfl-list-table snapshot-points-table"
-            @expand-change="onSnapshotExpandChange"
           >
-            <el-table-column
-              type="expand"
-              width="35"
-              fixed
-            >
-              <template #default="{ row }">
-                <div class="snapshot-directory-expand-panel">
-                  <el-alert
-                    v-if="selectedSnapshotId === row.id && snapshotDetailError"
-                    :title="snapshotDetailError"
-                    type="error"
-                    show-icon
-                    :closable="false"
-                  />
-                  <div
-                    v-else-if="selectedSnapshotId === row.id && snapshotDetailLoading"
-                    class="py-6"
-                  >
-                    <el-skeleton
-                      :rows="3"
-                      animated
-                    />
-                  </div>
-                  <template v-else-if="selectedSnapshotId === row.id && selectedSnapshot">
-                    <section class="snapshot-efficiency-summary">
-                      <dl class="snapshot-efficiency-summary__metrics">
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotRecoverableData') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotRecoverableDataHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtBytes(snapshotDisplaySize(selectedSnapshot)) }}</dd>
-                        </div>
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotNewOriginalData') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotNewOriginalDataHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtReferenceBytes(selectedSnapshot.new_original_content_bytes) }}</dd>
-                        </div>
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotNewStorage') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotNewStorageHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtReferenceBytes(selectedSnapshot.new_packed_content_bytes) }}</dd>
-                        </div>
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotDataReuse') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotDataReuseHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtReferencePercent(selectedSnapshot.data_reuse_ratio) }}</dd>
-                        </div>
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotCompressionSavings') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotCompressionSavingsHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtReferencePercent(selectedSnapshot.compression_savings_ratio) }}</dd>
-                        </div>
-                        <div class="snapshot-efficiency-summary__metric">
-                          <dt>
-                            <span class="snapshot-efficiency-summary__metric-label">{{ t('protection.backupsPage.snapshotCombinedReduction') }}</span>
-                            <ElTooltip
-                              :content="t('protection.backupsPage.snapshotCombinedReductionHint')"
-                              placement="top"
-                              teleported
-                              append-to="body"
-                              :z-index="3600"
-                            >
-                              <Info
-                                :size="13"
-                                class="snapshot-efficiency-summary__metric-info"
-                                aria-hidden="true"
-                              />
-                            </ElTooltip>
-                          </dt>
-                          <dd>{{ fmtCombinedReduction(selectedSnapshot) }}</dd>
-                        </div>
-                      </dl>
-                    </section>
-                    <el-table
-                      v-if="selectedSnapshotDirectories.length"
-                      v-table-column-resize="'protection.flowBackupSource.snapshotDirectories'"
-                      v-table-overflow-title
-                      :data="selectedSnapshotDirectories"
-                      :max-height="snapshotTableMaxHeight"
-                      :fit="false"
-                      stripe
-                      :header-cell-style="TABLE_HEADER_STYLE"
-                      class="hfl-list-table hfl-list-table--compact snapshot-directory-table"
-                    >
-                      <el-table-column
-                        :label="t('protection.backupDetail.colBackupDir')"
-                        width="240"
-                      >
-                        <template #default="{ row: dir }">
-                          <button
-                            v-if="canBrowseSnapshotDirectory(dir)"
-                            type="button"
-                            class="hfl-table-name-link snapshot-directory-path-cell"
-                            @click.stop="openSnapshotDirectory(dir)"
-                          >
-                            <span class="snapshot-directory-path-cell__parent">
-                              <component
-                                :is="snapshotDirectoryIcon(dir)"
-                                :size="15"
-                                class="snapshot-directory-path-cell__icon"
-                                :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
-                              />
-                              <span class="snapshot-directory-path-cell__path hfl-table-cell-mono">{{ dir.source_path }}</span>
-                            </span>
-                          </button>
-                          <span
-                            v-else
-                            class="snapshot-directory-path-cell snapshot-directory-path-cell--disabled"
-                          >
-                            <span class="snapshot-directory-path-cell__parent">
-                              <component
-                                :is="snapshotDirectoryIcon(dir)"
-                                :size="15"
-                                class="snapshot-directory-path-cell__icon"
-                                :class="`snapshot-directory-path-cell__icon--${snapshotDirectoryKind(dir)}`"
-                              />
-                              <code class="snapshot-directory-path-cell__path flow-source-list-drawer-path hfl-table-cell-mono">{{ dir.source_path }}</code>
-                            </span>
-                          </span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.backupsPage.snapshotBrowserDirectorySnapshotId')"
-                        width="180"
-                      >
-                        <template #default="{ row: dir }">
-                          <span
-                            class="hfl-table-cell-mono"
-                            :class="{ 'hfl-empty-mark': !dir.kopia_snapshot_id }"
-                          >{{ dir.kopia_snapshot_id || '—' }}</span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.backupsPage.snapshotRecoverableData')"
-                        width="140"
-                        align="right"
-                      >
-                        <template #default="{ row: dir }">
-                          {{ fmtBytes(dir.size_bytes) }}
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.backupsPage.snapshotBrowserFileDirCount')"
-                        width="110"
-                        align="right"
-                      >
-                        <template #default="{ row: dir }">
-                          {{ dir.file_count }}/{{ dir.dir_count }}
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.backupDetail.labelStatus')"
-                        width="92"
-                      >
-                        <template #default="{ row: dir }">
-                          <el-tag
-                            :type="lifecycleStatusTagAttrs(dir.status).type"
-                            :class="lifecycleStatusTagAttrs(dir.status).class"
-                            size="small"
-                          >
-                            {{ snapshotStatusLabel(dir.status) }}
-                          </el-tag>
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.backupDetail.colError')"
-                        width="220"
-                      >
-                        <template #default="{ row: dir }">
-                          <span
-                            v-if="dir.error_message"
-                            class="snapshot-directory-error"
-                          >
-                            {{ dir.error_code ? `[${dir.error_code}] ` : '' }}{{ dir.error_message }}
-                          </span>
-                          <span
-                            v-else
-                            class="hfl-empty-mark"
-                          >{{ t('protection.backupDetail.durationDash') }}</span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column
-                        :label="t('protection.sourceResources.colActions')"
-                        width="120"
-                        fixed="right"
-                        align="center"
-                        class-name="hfl-table-actions-col"
-                        header-class-name="hfl-table-actions-col"
-                      >
-                        <template #default="{ row: dir }">
-                          <div class="snapshot-point-actions">
-                            <button
-                              type="button"
-                              class="snapshot-point-actions__button snapshot-point-actions__button--browse"
-                              :title="t('protection.backupsPage.snapshotBrowserBrowse')"
-                              :disabled="!canBrowseSnapshotDirectory(dir)"
-                              @click.stop="openSnapshotDirectory(dir)"
-                            >
-                              <FolderOpen
-                                :size="14"
-                                class="snapshot-point-actions__icon"
-                                aria-hidden="true"
-                              />
-                              <span>{{ t('protection.backupsPage.snapshotBrowserBrowse') }}</span>
-                            </button>
-                          </div>
-                        </template>
-                      </el-table-column>
-                    </el-table>
-                    <el-empty
-                      v-else
-                      :description="t('protection.backupsPage.snapshotBrowserEmptyDirectories')"
-                      :image-size="56"
-                    />
-                  </template>
-                </div>
-              </template>
-            </el-table-column>
             <el-table-column
               :label="t('protection.backupDetail.colSnapId')"
               width="140"
@@ -3901,7 +3527,7 @@ function onClosed() {
                 <button
                   type="button"
                   class="hfl-table-name-link hfl-table-cell-mono hfl-table-name-link--single"
-                  @click.stop="toggleSnapshot(row)"
+                  @click.stop="openSnapshotDetailDrawer(row)"
                 >
                   {{ row.snapshot_uid || `#${row.id}` }}
                 </button>
@@ -3909,14 +3535,20 @@ function onClosed() {
             </el-table-column>
             <el-table-column
               :label="t('protection.backupDetail.labelStatus')"
-              width="92"
+              width="110"
             >
               <template #default="{ row }">
                 <el-tag
                   :type="lifecycleStatusTagAttrs(row.status).type"
-                  :class="lifecycleStatusTagAttrs(row.status).class"
+                  :class="['snapshot-status-tag', lifecycleStatusTagAttrs(row.status).class]"
                   size="small"
                 >
+                  <LoaderCircle
+                    v-if="snapshotStatusInProgress(row.status)"
+                    :size="12"
+                    class="snapshot-status-tag__spinner"
+                    aria-hidden="true"
+                  />
                   {{ snapshotStatusLabel(row.status) }}
                 </el-tag>
               </template>
@@ -3950,26 +3582,50 @@ function onClosed() {
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('protection.backupsPage.snapshotListSize')"
-              width="88"
+              :label="t('protection.backupsPage.snapshotNewStorage')"
+              width="128"
               align="right"
+              label-class-name="hfl-table-no-tooltip"
             >
+              <template #header>
+                <span class="snapshot-point-table-header-with-tip">
+                  <span>{{ t('protection.backupsPage.snapshotNewStorage') }}</span>
+                  <HflHelpTip
+                    :content="t('protection.backupsPage.snapshotNewStorageHint')"
+                    :aria-label="t('protection.backupsPage.snapshotNewStorageHint')"
+                    :size="13"
+                    popper-class="snapshot-metric-help-popper"
+                  />
+                </span>
+              </template>
               <template #default="{ row }">
                 {{ fmtReferenceBytes(row.new_packed_content_bytes) }}
               </template>
             </el-table-column>
             <el-table-column
               :label="t('protection.backupsPage.snapshotRecoverableData')"
-              width="105"
+              width="125"
               align="right"
+              label-class-name="hfl-table-no-tooltip"
             >
+              <template #header>
+                <span class="snapshot-point-table-header-with-tip">
+                  <span>{{ t('protection.backupsPage.snapshotRecoverableData') }}</span>
+                  <HflHelpTip
+                    :content="t('protection.backupsPage.snapshotRecoverableDataHint')"
+                    :aria-label="t('protection.backupsPage.snapshotRecoverableDataHint')"
+                    :size="13"
+                    popper-class="snapshot-metric-help-popper"
+                  />
+                </span>
+              </template>
               <template #default="{ row }">
                 {{ fmtBytes(snapshotDisplaySize(row)) }}
               </template>
             </el-table-column>
             <el-table-column
               :label="t('protection.backupsPage.snapshotBrowserFileDirCount')"
-              width="110"
+              width="140"
               align="right"
             >
               <template #default="{ row }">
@@ -4011,15 +3667,15 @@ function onClosed() {
                   <button
                     type="button"
                     class="snapshot-point-actions__button snapshot-point-actions__button--browse"
-                    :title="t('protection.backupsPage.snapshotViewAction')"
-                    @click.stop="toggleSnapshot(row)"
+                    :title="t('protection.backupsPage.snapshotBrowserBrowse')"
+                    @click.stop="openSnapshotDetailDrawer(row)"
                   >
                     <FolderOpen
                       :size="14"
                       class="snapshot-point-actions__icon"
                       aria-hidden="true"
                     />
-                    <span>{{ t('protection.backupsPage.snapshotViewAction') }}</span>
+                    <span>{{ t('protection.backupsPage.snapshotBrowserBrowse') }}</span>
                   </button>
                 </div>
               </template>
@@ -4041,219 +3697,74 @@ function onClosed() {
           </div>
           <Teleport to="body">
             <div
-              v-if="fileBrowserDrawerOpen"
-              class="dp-snapshot-file-browser-shell"
-              @click.self="closeSnapshotFileBrowser"
+              v-if="snapshotDetailDrawerOpen"
+              class="dp-snapshot-detail-drawer-shell"
+              @click.self="closeSnapshotDetailDrawer"
             >
-              <aside class="dp-snapshot-file-browser-panel">
-                <header class="dp-snapshot-file-browser-panel__header">
-                  <div class="min-w-0 pr-2">
-                    <div class="truncate text-base font-semibold text-slate-900">
-                      {{ t('protection.backupsPage.snapshotBrowserPreviewTitle') }}
-                    </div>
-                    <div
-                      v-if="selectedSnapshotDirectory"
-                      class="truncate text-xs text-slate-500"
+              <aside
+                class="dp-snapshot-detail-drawer"
+                role="dialog"
+                aria-modal="true"
+                :aria-label="t('protection.backupsPage.snapshotBrowserPreviewTitle')"
+                :style="{ width: snapshotDetailDrawerSize }"
+              >
+                <header class="dp-snapshot-detail-drawer__header">
+                  <div
+                    v-if="selectedSnapshot"
+                    class="dp-snapshot-detail-drawer__identity"
+                  >
+                    <strong>{{ selectedSnapshot.snapshot_uid || `#${selectedSnapshot.id}` }}</strong>
+                    <ElTag
+                      size="small"
+                      class="snapshot-status-tag"
+                      v-bind="lifecycleStatusTagAttrs(selectedSnapshot.status)"
                     >
-                      {{ selectedSnapshotDirectory.source_path }}
-                    </div>
+                      <LoaderCircle
+                        v-if="snapshotStatusInProgress(selectedSnapshot.status)"
+                        :size="12"
+                        class="snapshot-status-tag__spinner"
+                        aria-hidden="true"
+                      />
+                      {{ snapshotStatusLabel(selectedSnapshot.status) }}
+                    </ElTag>
+                    <span>
+                      {{ formatNullableTime(selectedSnapshot.finished_at
+                        || selectedSnapshot.started_at
+                        || selectedSnapshot.created_at) }}
+                    </span>
                   </div>
                   <button
                     type="button"
-                    class="dp-snapshot-file-browser-panel__close"
-                    @click="closeSnapshotFileBrowser"
+                    class="dp-snapshot-detail-drawer__refresh"
+                    :title="t('common.refresh')"
+                    :aria-label="t('common.refresh')"
+                    :disabled="snapshotDetailLoading"
+                    @click="retrySelectedSnapshotDetail"
+                  >
+                    <RefreshCw
+                      :size="18"
+                      :class="{ 'is-spinning': snapshotDetailLoading }"
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    class="dp-snapshot-detail-drawer__close"
+                    :title="t('common.close')"
+                    :aria-label="t('common.close')"
+                    @click="closeSnapshotDetailDrawer"
                   >
                     <X :size="18" />
                   </button>
                 </header>
-                <div
-                  v-if="selectedSnapshotDirectory"
-                  class="dp-snapshot-file-browser dp-snapshot-file-browser-panel__body"
-                >
-                  <template v-if="selectedSnapshotDirectoryIsFile">
-                    <div class="dp-snapshot-file-browser__toolbar">
-                      <div class="dp-snapshot-file-browser__toolbar-main">
-                        <ElButton
-                          type="primary"
-                          size="small"
-                          :loading="downloadingSnapshotFile"
-                          :disabled="!selectedSnapshotFileChecked"
-                          @click="downloadSelectedSnapshotFile"
-                        >
-                          <Download
-                            :size="14"
-                            class="mr-1"
-                          />
-                          {{ t('protection.backupsPage.snapshotBrowserDownload') }}
-                        </ElButton>
-                        <div class="min-w-0">
-                          <div class="text-sm font-medium text-slate-800">
-                            {{ snapshotFileFallbackName(selectedSnapshotDirectory) }}
-                          </div>
-                          <div class="truncate text-xs text-slate-500">
-                            {{ selectedSnapshotDirectory.source_path }}
-                          </div>
-                        </div>
-                      </div>
-                      <div class="dp-snapshot-file-browser__toolbar-actions">
-                        <span class="dp-snapshot-file-browser__selected">
-                          {{ t('protection.backupsPage.snapshotBrowserSelectedCount', { n: selectedSnapshotFileCount }) }}
-                        </span>
-                        <ElButton
-                          v-if="selectedSnapshotFileChecked"
-                          size="small"
-                          @click="clearSnapshotFileSelection"
-                        >
-                          {{ t('protection.backupsPage.snapshotBrowserClearSelection') }}
-                        </ElButton>
-                      </div>
-                    </div>
-
-                    <div
-                      class="dp-snapshot-file-browser__file-row"
-                      :class="{ 'is-selected': selectedSnapshotFileChecked }"
-                      role="button"
-                      tabindex="0"
-                      @click="toggleSnapshotFileSelection"
-                      @keydown.enter.prevent="toggleSnapshotFileSelection"
-                      @keydown.space.prevent="toggleSnapshotFileSelection"
-                    >
-                      <ElCheckbox
-                        :model-value="selectedSnapshotFileChecked"
-                        @change="selectedSnapshotFileChecked = Boolean($event)"
-                        @click.stop
-                      />
-                      <span class="dp-snapshot-file-browser__entry">
-                        <File
-                          :size="15"
-                          class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--file"
-                        />
-                        <span class="truncate">{{ snapshotFileFallbackName(selectedSnapshotDirectory) }}</span>
-                      </span>
-                      <span class="dp-snapshot-file-browser__tree-path truncate">{{ selectedSnapshotDirectory.source_path }}</span>
-                      <span class="dp-snapshot-file-browser__tree-size">{{ fmtBytes(selectedSnapshotDirectory.size_bytes) }}</span>
-                      <span
-                        class="dp-snapshot-file-browser__tree-time"
-                        :class="{ 'hfl-empty-mark': !selectedSnapshotDirectory.created_at }"
-                      >{{ formatNullableTime(selectedSnapshotDirectory.created_at) }}</span>
-                    </div>
-                  </template>
-                  <template v-else>
-                    <div class="dp-snapshot-file-browser__toolbar">
-                      <div class="dp-snapshot-file-browser__toolbar-main">
-                        <ElButton
-                          type="primary"
-                          size="small"
-                          :loading="downloadingSelected"
-                          :disabled="!selectedBrowserPathCount"
-                          @click="downloadSelectedBrowserPaths"
-                        >
-                          <Download
-                            :size="14"
-                            class="mr-1"
-                          />
-                          {{ t('protection.backupsPage.snapshotBrowserDownload') }}
-                        </ElButton>
-                        <div class="min-w-0">
-                          <div class="text-sm font-medium text-slate-800">
-                            {{ selectedSnapshotDirectory.source_path }}
-                          </div>
-                          <div class="dp-snapshot-file-browser__crumbs">
-                            <template
-                              v-for="(crumb, index) in browserBreadcrumbs"
-                              :key="crumb.path || 'root'"
-                            >
-                              <button
-                                type="button"
-                                class="source-more-link"
-                                @click="openSnapshotDirectory(selectedSnapshotDirectory, crumb.path)"
-                              >
-                                {{ crumb.label }}
-                              </button>
-                              <span
-                                v-if="index < browserBreadcrumbs.length - 1"
-                                class="text-slate-400"
-                              >/</span>
-                            </template>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="dp-snapshot-file-browser__toolbar-actions">
-                        <span class="dp-snapshot-file-browser__selected">
-                          {{ t('protection.backupsPage.snapshotBrowserSelectedCount', { n: selectedBrowserPathCount }) }}
-                        </span>
-                        <ElButton
-                          v-if="selectedBrowserPathCount"
-                          size="small"
-                          @click="clearBrowserSelection"
-                        >
-                          {{ t('protection.backupsPage.snapshotBrowserClearSelection') }}
-                        </ElButton>
-                        <ElButton
-                          v-if="browserParentPath || browserPath"
-                          size="small"
-                          @click="openSnapshotDirectory(selectedSnapshotDirectory, browserParentPath)"
-                        >
-                          <ArrowLeft
-                            :size="14"
-                            class="mr-1"
-                          />
-                          {{ t('protection.backupsPage.snapshotBrowserParent') }}
-                        </ElButton>
-                      </div>
-                    </div>
-
-                    <el-alert
-                      v-if="browserError"
-                      :title="browserError"
-                      type="error"
-                      show-icon
-                      :closable="false"
-                    />
-                    <el-tree
-                      ref="browserTreeRef"
-                      :key="`${selectedSnapshotDirectory.id}:${browserPath}:${browserTreeVersion}`"
-                      v-loading="browserLoading"
-                      node-key="id"
-                      show-checkbox
-                      check-strictly
-                      lazy
-                      :load="loadBrowserTreeNode"
-                      :props="{ children: 'children', label: 'label', disabled: 'disabled', isLeaf: 'isLeaf' }"
-                      class="dp-snapshot-file-browser__tree"
-                      empty-text=" "
-                      @check-change="onBrowserTreeCheckChange"
-                    >
-                      <template #default="{ data }">
-                        <div class="dp-snapshot-file-browser__tree-row">
-                          <span class="dp-snapshot-file-browser__entry">
-                            <Folder
-                              v-if="data.type === 'dir'"
-                              :size="15"
-                              class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--dir"
-                            />
-                            <File
-                              v-else
-                              :size="15"
-                              class="snapshot-directory-path-cell__icon snapshot-directory-path-cell__icon--file"
-                            />
-                            <span class="truncate">{{ data.name }}</span>
-                          </span>
-                          <span class="dp-snapshot-file-browser__tree-path truncate">{{ data.path }}</span>
-                          <span class="dp-snapshot-file-browser__tree-size">{{ data.type === 'dir' ? '—' : fmtBytes(data.size_bytes) }}</span>
-                          <span
-                            class="dp-snapshot-file-browser__tree-time"
-                            :class="{ 'hfl-empty-mark': !data.modified_at }"
-                          >{{ formatNullableTime(data.modified_at) }}</span>
-                        </div>
-                      </template>
-                    </el-tree>
-                    <el-empty
-                      v-if="!browserLoading && !browserError && !browserTreeEntries.length"
-                      :description="t('protection.backupsPage.snapshotBrowserEmpty')"
-                      :image-size="48"
-                    />
-                  </template>
+                <div class="dp-snapshot-detail-drawer__body">
+                  <SnapshotPointDetailPanel
+                    :snapshot="selectedSnapshot"
+                    :loading="snapshotDetailLoading"
+                    :error="snapshotDetailError"
+                    :source-kind="sourceEndpoint?.sourceType || 'agent'"
+                    :host-online="props.source?.availability === 'online'"
+                    @retry="retrySelectedSnapshotDetail"
+                  />
                 </div>
               </aside>
             </div>
@@ -4399,7 +3910,10 @@ function onClosed() {
             >
               <template #default="{ row }">
                 <div class="restore-record-expand-panel">
-                  <div class="restore-record-time-summary">
+                  <div
+                    class="restore-record-time-summary"
+                    :class="`restore-record-time-summary--${restoreRecordEndTone(row)}`"
+                  >
                     <div class="restore-record-time-summary__point restore-record-time-summary__point--start">
                       <span
                         class="restore-record-time-summary__marker"
@@ -4411,11 +3925,31 @@ function onClosed() {
                         <span class="restore-record-time-summary__label">
                           {{ t('protection.backupDetail.colStart') }}
                         </span>
-                        <span
-                          class="restore-record-time-summary__value"
-                          :class="{ 'hfl-empty-mark': !(row.task_summary?.started_at || row.created_at) }"
-                        >
-                          {{ formatNullableTime(row.task_summary?.started_at || row.created_at) }}
+                        <span class="restore-record-time-summary__value-line">
+                          <span
+                            class="restore-record-time-summary__value"
+                            :class="{ 'hfl-empty-mark': restoreRecordTimeState(row).startedKind !== 'value' }"
+                          >
+                            {{ restoreRecordTimeValue(row, 'started') }}
+                          </span>
+                          <HflPopover
+                            v-if="restoreRecordTimeIssue(row, 'started')"
+                            trigger="click"
+                            placement="top"
+                            :width="280"
+                          >
+                            <span>{{ restoreRecordTimeIssue(row, 'started') }}</span>
+                            <template #reference>
+                              <button
+                                type="button"
+                                class="restore-record-time-summary__issue"
+                                :title="restoreRecordTimeIssue(row, 'started')"
+                                :aria-label="t('protection.backupsPage.flowRestoreRecordTimeIssueAria', { field: t('protection.backupDetail.colStart') })"
+                              >
+                                <Info :size="13" />
+                              </button>
+                            </template>
+                          </HflPopover>
                         </span>
                       </div>
                     </div>
@@ -4423,31 +3957,47 @@ function onClosed() {
                     <div class="restore-record-time-summary__duration">
                       <span class="restore-record-time-summary__duration-pill">
                         <span class="restore-record-time-summary__duration-label">
-                          {{ t('protection.backupsPage.flowSourceDetailDuration') }}
+                          {{ t('protection.backupsPage.flowRestoreRecordRunDuration') }}
                         </span>
-                        <span
-                          class="restore-record-time-summary__duration-value"
-                          :class="{ 'hfl-empty-mark': restoreRecordDuration(row) === t('protection.backupDetail.durationDash') }"
-                        >
-                          {{ restoreRecordDuration(row) }}
+                        <span class="restore-record-time-summary__value-line">
+                          <span
+                            class="restore-record-time-summary__duration-value"
+                            :class="{ 'hfl-empty-mark': !['running', 'fixed'].includes(restoreRecordTimeState(row).durationKind) }"
+                          >
+                            {{ restoreRecordDuration(row) }}
+                          </span>
+                          <HflPopover
+                            v-if="restoreRecordTimeIssue(row, 'duration')"
+                            trigger="click"
+                            placement="top"
+                            :width="280"
+                          >
+                            <span>{{ restoreRecordTimeIssue(row, 'duration') }}</span>
+                            <template #reference>
+                              <button
+                                type="button"
+                                class="restore-record-time-summary__issue"
+                                :title="restoreRecordTimeIssue(row, 'duration')"
+                                :aria-label="t('protection.backupsPage.flowRestoreRecordTimeIssueAria', { field: t('protection.backupsPage.flowRestoreRecordRunDuration') })"
+                              >
+                                <Info :size="13" />
+                              </button>
+                            </template>
+                          </HflPopover>
                         </span>
                       </span>
                     </div>
 
                     <div
                       class="restore-record-time-summary__point restore-record-time-summary__point--end"
-                      :class="{ 'restore-record-time-summary__point--pending': !row.task_summary?.finished_at }"
+                      :class="`restore-record-time-summary__point--${restoreRecordEndTone(row)}`"
                     >
                       <span
                         class="restore-record-time-summary__marker"
                         aria-hidden="true"
                       >
-                        <Check
-                          v-if="row.task_summary?.finished_at"
-                          :size="14"
-                        />
-                        <Clock3
-                          v-else
+                        <component
+                          :is="restoreRecordEndIcon(row)"
                           :size="14"
                         />
                       </span>
@@ -4455,14 +4005,58 @@ function onClosed() {
                         <span class="restore-record-time-summary__label">
                           {{ t('protection.backupDetail.colEnd') }}
                         </span>
-                        <span
-                          class="restore-record-time-summary__value"
-                          :class="{ 'hfl-empty-mark': !row.task_summary?.finished_at }"
-                        >
-                          {{ formatNullableTime(row.task_summary?.finished_at) }}
+                        <span class="restore-record-time-summary__value-line">
+                          <span
+                            class="restore-record-time-summary__value"
+                            :class="{ 'hfl-empty-mark': restoreRecordTimeState(row).finishedKind !== 'value' }"
+                          >
+                            {{ restoreRecordTimeValue(row, 'finished') }}
+                          </span>
+                          <HflPopover
+                            v-if="restoreRecordTimeIssue(row, 'finished')"
+                            trigger="click"
+                            placement="top"
+                            :width="280"
+                          >
+                            <span>{{ restoreRecordTimeIssue(row, 'finished') }}</span>
+                            <template #reference>
+                              <button
+                                type="button"
+                                class="restore-record-time-summary__issue"
+                                :title="restoreRecordTimeIssue(row, 'finished')"
+                                :aria-label="t('protection.backupsPage.flowRestoreRecordTimeIssueAria', { field: t('protection.backupDetail.colEnd') })"
+                              >
+                                <Info :size="13" />
+                              </button>
+                            </template>
+                          </HflPopover>
                         </span>
                       </div>
                     </div>
+                  </div>
+                  <div class="restore-record-time-context">
+                    <TaskStatusTag
+                      v-if="restoreRecordStatus(row)"
+                      :status="restoreRecordStatus(row)"
+                    />
+                    <ElTag
+                      v-else
+                      type="info"
+                      size="small"
+                    >
+                      {{ t('protection.backupsPage.flowRestoreRecordStatusUnknown') }}
+                    </ElTag>
+                    <span class="restore-record-time-context__explanation">
+                      {{ restoreRecordStatusExplanation(row) }}
+                    </span>
+                    <span class="restore-record-submitted-at">
+                      <span class="restore-record-submitted-at__label">
+                        {{ t('protection.backupsPage.flowRestoreRecordSubmittedAt') }}
+                      </span>
+                      <span class="restore-record-submitted-at__value">
+                        {{ restoreRecordTimeValue(row, 'submitted') }}
+                      </span>
+                    </span>
                   </div>
                   <div class="restore-record-runtime-summary">
                     <span class="restore-record-runtime-summary__label">
@@ -4501,30 +4095,46 @@ function onClosed() {
                         <div class="create-recovery-plan-mapping restore-record-mapping--with-result restore-record-snapshot-tree__parent">
                           <span
                             class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--snapshot"
-                            :title="t('protection.backupsPage.recoveryWholeSnapshot')"
+                            :title="restoreRecordMappingTitle(t('protection.backupsPage.recoveryWholeSnapshot'), restoreRecordSourceEndpoint(row))"
                           >
+                            <span class="restore-record-mapping__label">
+                              {{ t('protection.backupsPage.flowRestoreRecordSource') }}
+                            </span>
                             <Camera
                               :size="14"
                               class="create-recovery-plan-mapping__icon"
                             />
-                            <span class="create-recovery-plan-mapping__text">
-                              {{ t('protection.backupsPage.recoveryWholeSnapshot') }}
+                            <span class="restore-record-mapping__content">
+                              <span class="create-recovery-plan-mapping__text">
+                                {{ t('protection.backupsPage.recoveryWholeSnapshot') }}
+                              </span>
+                              <span class="restore-record-mapping__endpoint-meta">
+                                {{ restoreRecordEndpointSummary(restoreRecordSourceEndpoint(row)) }}
+                              </span>
                             </span>
                           </span>
                           <span
                             class="create-recovery-plan-mapping__arrow"
                             aria-hidden="true"
-                          >-&gt;</span>
+                          ><ArrowRight :size="14" /></span>
                           <span
                             class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                             :title="restoreRecordTargetSummary(row)"
                           >
+                            <span class="restore-record-mapping__label">
+                              {{ t('protection.backupsPage.flowRestoreRecordDestination') }}
+                            </span>
                             <FolderOpen
                               :size="14"
                               class="create-recovery-plan-mapping__icon"
                             />
-                            <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                              {{ restoreRecordTargetSummary(row) }}
+                            <span class="restore-record-mapping__content">
+                              <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                                {{ restoreRecordTargetDisplayPath(row) }}
+                              </span>
+                              <span class="restore-record-mapping__endpoint-meta">
+                                {{ restoreRecordEndpointSummary(restoreRecordTargetEndpoint(row)) }}
+                              </span>
                             </span>
                           </span>
                           <span class="restore-record-mapping__result">
@@ -4551,11 +4161,14 @@ function onClosed() {
                             <div class="create-recovery-plan-mapping restore-record-mapping--with-result">
                               <span
                                 class="create-recovery-plan-mapping__endpoint"
-                                :class="`create-recovery-plan-mapping__endpoint--${restoreItemSourceKind(item)}`"
-                                :title="item.source_path || '—'"
+                                :class="`create-recovery-plan-mapping__endpoint--${restoreItemSourceKind(row, item)}`"
+                                :title="restoreRecordMappingTitle(item.source_path || '—', restoreRecordSourceEndpoint(row))"
                               >
+                                <span class="restore-record-mapping__label">
+                                  {{ t('protection.backupsPage.flowRestoreRecordSource') }}
+                                </span>
                                 <File
-                                  v-if="restoreItemSourceKind(item) === 'file'"
+                                  v-if="restoreItemSourceKind(row, item) === 'file'"
                                   :size="14"
                                   class="create-recovery-plan-mapping__icon"
                                 />
@@ -4564,27 +4177,42 @@ function onClosed() {
                                   :size="14"
                                   class="create-recovery-plan-mapping__icon"
                                 />
-                                <span
-                                  class="create-recovery-plan-mapping__text hfl-table-cell-mono"
-                                  :class="{ 'hfl-empty-mark': !item.source_path }"
-                                >
-                                  {{ item.source_path || '—' }}
+                                <span class="restore-record-mapping__content">
+                                  <span
+                                    class="create-recovery-plan-mapping__text hfl-table-cell-mono"
+                                    :class="{ 'hfl-empty-mark': !item.source_path }"
+                                  >
+                                    {{ item.source_path || '—' }}
+                                  </span>
+                                  <span class="restore-record-mapping__endpoint-meta">
+                                    {{ restoreRecordEndpointSummary(restoreRecordSourceEndpoint(row)) }}
+                                  </span>
                                 </span>
                               </span>
                               <span
                                 class="create-recovery-plan-mapping__arrow"
                                 aria-hidden="true"
-                              >-&gt;</span>
+                              ><ArrowRight :size="14" /></span>
                               <span
                                 class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
+                                :class="`create-recovery-plan-mapping__endpoint--${restoreItemTargetKind(row, item)}`"
                                 :title="restoreItemTargetSummary(row, item)"
                               >
-                                <FolderOpen
+                                <span class="restore-record-mapping__label">
+                                  {{ t('protection.backupsPage.flowRestoreRecordDestination') }}
+                                </span>
+                                <component
+                                  :is="restoreItemTargetKind(row, item) === 'file' ? File : FolderOpen"
                                   :size="14"
                                   class="create-recovery-plan-mapping__icon"
                                 />
-                                <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                                  {{ restoreItemTargetSummary(row, item) }}
+                                <span class="restore-record-mapping__content">
+                                  <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                                    {{ restoreRecordTargetDisplayPath(row, item) }}
+                                  </span>
+                                  <span class="restore-record-mapping__endpoint-meta">
+                                    {{ restoreRecordEndpointSummary(restoreRecordTargetEndpoint(row)) }}
+                                  </span>
                                 </span>
                               </span>
                               <span class="restore-record-mapping__result">
@@ -4592,10 +4220,24 @@ function onClosed() {
                               </span>
                             </div>
                             <div
-                              v-if="item.error_code || item.error_message"
+                              v-if="restoreRecordItemDetail(t, item)"
                               class="restore-record-structure-entry__error"
+                              :class="{ 'restore-record-structure-entry__error--warning': item.status === 'skipped' }"
                             >
-                              {{ item.error_code ? `[${item.error_code}] ` : '' }}{{ item.error_message }}
+                              <span
+                                v-if="restoreRecordItemDetail(t, item)?.code"
+                                class="restore-record-structure-entry__error-code"
+                              >[{{ restoreRecordItemDetail(t, item)?.code }}]</span>
+                              <span
+                                v-if="restoreRecordItemDetail(t, item)?.message"
+                                class="restore-record-structure-entry__error-message"
+                              >{{ restoreRecordItemDetail(t, item)?.message }}</span>
+                                <ol
+                                  v-if="restoreRecordItemDetail(t, item)?.remediation"
+                                  class="restore-record-structure-entry__remediation"
+                                >
+                                  <li v-for="step in restoreRecordRemediationItems(restoreRecordItemDetail(t, item)?.remediation || '')" :key="step">{{ step }}</li>
+                                </ol>
                             </div>
                           </div>
                         </div>
@@ -4614,8 +4256,11 @@ function onClosed() {
                             <span
                               class="create-recovery-plan-mapping__endpoint"
                               :class="`create-recovery-plan-mapping__endpoint--${mapping.sourceKind}`"
-                              :title="mapping.sourcePath"
+                              :title="restoreRecordMappingTitle(mapping.sourcePath, restoreRecordSourceEndpoint(row))"
                             >
+                              <span class="restore-record-mapping__label">
+                                {{ t('protection.backupsPage.flowRestoreRecordSource') }}
+                              </span>
                               <File
                                 v-if="mapping.sourceKind === 'file'"
                                 :size="14"
@@ -4626,24 +4271,39 @@ function onClosed() {
                                 :size="14"
                                 class="create-recovery-plan-mapping__icon"
                               />
-                              <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                                {{ mapping.sourcePath }}
+                              <span class="restore-record-mapping__content">
+                                <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                                  {{ mapping.sourcePath }}
+                                </span>
+                                <span class="restore-record-mapping__endpoint-meta">
+                                  {{ restoreRecordEndpointSummary(restoreRecordSourceEndpoint(row)) }}
+                                </span>
                               </span>
                             </span>
                             <span
                               class="create-recovery-plan-mapping__arrow"
                               aria-hidden="true"
-                            >-&gt;</span>
+                            ><ArrowRight :size="14" /></span>
                             <span
                               class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
+                              :class="`create-recovery-plan-mapping__endpoint--${restoreItemTargetKind(row, mapping.item, mapping.sourceKind)}`"
                               :title="restoreItemTargetSummary(row, mapping.item)"
                             >
-                              <FolderOpen
+                              <span class="restore-record-mapping__label">
+                                {{ t('protection.backupsPage.flowRestoreRecordDestination') }}
+                              </span>
+                              <component
+                                :is="restoreItemTargetKind(row, mapping.item, mapping.sourceKind) === 'file' ? File : FolderOpen"
                                 :size="14"
                                 class="create-recovery-plan-mapping__icon"
                               />
-                              <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
-                                {{ restoreItemTargetSummary(row, mapping.item) }}
+                              <span class="restore-record-mapping__content">
+                                <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                                  {{ restoreRecordTargetDisplayPath(row, mapping.item) }}
+                                </span>
+                                <span class="restore-record-mapping__endpoint-meta">
+                                  {{ restoreRecordEndpointSummary(restoreRecordTargetEndpoint(row)) }}
+                                </span>
                               </span>
                             </span>
                             <span class="restore-record-mapping__result">
@@ -4651,10 +4311,24 @@ function onClosed() {
                             </span>
                           </div>
                           <div
-                            v-if="mapping.item.error_code || mapping.item.error_message"
+                            v-if="restoreRecordItemDetail(t, mapping.item)"
                             class="restore-record-structure-entry__error"
+                            :class="{ 'restore-record-structure-entry__error--warning': mapping.item.status === 'skipped' }"
                           >
-                            {{ mapping.item.error_code ? `[${mapping.item.error_code}] ` : '' }}{{ mapping.item.error_message }}
+                            <span
+                              v-if="restoreRecordItemDetail(t, mapping.item)?.code"
+                              class="restore-record-structure-entry__error-code"
+                            >[{{ restoreRecordItemDetail(t, mapping.item)?.code }}]</span>
+                            <span
+                              v-if="restoreRecordItemDetail(t, mapping.item)?.message"
+                              class="restore-record-structure-entry__error-message"
+                            >{{ restoreRecordItemDetail(t, mapping.item)?.message }}</span>
+                            <ol
+                              v-if="restoreRecordItemDetail(t, mapping.item)?.remediation"
+                              class="restore-record-structure-entry__remediation"
+                            >
+                              <li v-for="step in restoreRecordRemediationItems(restoreRecordItemDetail(t, mapping.item)?.remediation || '')" :key="step">{{ step }}</li>
+                            </ol>
                           </div>
                         </div>
                       </div>
@@ -4709,20 +4383,9 @@ function onClosed() {
               width="148"
             >
               <template #default="{ row }">
-                <div class="restore-record-status-progress">
-                  <div
-                    v-if="shouldShowRestoreRecordProgress(row)"
-                    class="restore-record-status-progress__bar"
-                  >
-                    <ElProgress
-                      :percentage="restoreRecordProgressValue(row)"
-                      :stroke-width="6"
-                      :show-text="false"
-                    />
-                    <span>{{ restoreRecordProgressText(row) }}</span>
-                  </div>
+                <div class="restore-record-status">
                   <TaskStatusTag
-                    v-else-if="restoreRecordStatus(row)"
+                    v-if="restoreRecordStatus(row)"
                     :status="restoreRecordStatus(row)"
                   />
                   <ElTag
@@ -4964,23 +4627,6 @@ function onClosed() {
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('protection.backupsPage.flowTaskColProgress')"
-              min-width="165"
-            >
-              <template #default="{ row }">
-                <div class="hfl-task-list-progress">
-                  <div class="hfl-task-list-progress__track">
-                    <div
-                      class="hfl-task-list-progress__fill"
-                      :class="`hfl-task-list-progress__fill--${row.status}`"
-                      :style="{ width: `${progressValue(row)}%` }"
-                    />
-                  </div>
-                  <span class="hfl-task-list-progress__text">{{ progressText(row) }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column
               :label="t('ops.task.colTrigger')"
               width="105"
             >
@@ -4994,14 +4640,25 @@ function onClosed() {
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('protection.backupDetail.colCreated')"
+              :label="t('protection.backupDetail.colStart')"
               min-width="160"
             >
               <template #default="{ row }">
                 <span
                   class="hfl-table-cell-time"
-                  :class="{ 'hfl-empty-mark': !row.created_at }"
-                >{{ formatNullableTime(row.created_at) }}</span>
+                  :class="{ 'hfl-empty-mark': !(row.started_at || row.created_at) }"
+                >{{ formatNullableTime(row.started_at || row.created_at) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('protection.backupDetail.colEnd')"
+              min-width="160"
+            >
+              <template #default="{ row }">
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !row.finished_at }"
+                >{{ formatNullableTime(row.finished_at) }}</span>
               </template>
             </el-table-column>
             <template #empty>
@@ -5222,26 +4879,10 @@ function onClosed() {
 
         <TaskProgressCell
           v-if="activeTask.status === 'pending' || activeTask.status === 'waiting' || activeTask.status === 'blocked' || activeTask.status === 'running'"
-          :progress="progressValue(activeTask)"
+          :progress="activeTask.progress"
           :transfer-progress="activeTransferProgress"
           :failed="false"
         />
-        <div
-          v-else
-          class="dp-task-detail__progress-block"
-        >
-          <div class="dp-task-detail__progress-head">
-            <span>{{ t('protection.backupsPage.flowTaskColProgress') }}</span>
-            <span>{{ progressText(activeTask) }}</span>
-          </div>
-          <div class="dp-task-detail__progress-track">
-            <div
-              class="dp-task-detail__progress-fill"
-              :class="`dp-task-detail__progress-fill--${activeTask.status}`"
-              :style="{ width: `${progressValue(activeTask)}%` }"
-            />
-          </div>
-        </div>
       </section>
 
       <ElAlert
@@ -5325,6 +4966,10 @@ function onClosed() {
                     v-if="step.status === 'success'"
                     :size="15"
                   />
+                  <AlertTriangle
+                    v-else-if="step.status === 'warning'"
+                    :size="13"
+                  />
                   <X
                     v-else-if="step.status === 'failed' || step.status === 'timeout'"
                     :size="15"
@@ -5400,6 +5045,7 @@ function onClosed() {
                       v-for="event in step.events"
                       :key="event.id"
                       class="dp-task-detail__event-row"
+                      :class="{ 'dp-task-detail__event-row--detail-panel': hasEventDetailPanel(event) }"
                     >
                       <span
                         class="dp-task-detail__event-dot"
@@ -5434,7 +5080,7 @@ function onClosed() {
                           v-if="eventErrorText(event)"
                           class="dp-task-detail__event-error"
                         >{{ eventErrorText(event) }}</span>
-                        <TaskEventFailureDetails :metadata="event.metadata" />
+                        <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
                       </div>
                       <span
                         class="dp-task-detail__event-time"
@@ -5465,6 +5111,7 @@ function onClosed() {
                       v-for="event in unlinkedTaskEvents"
                       :key="event.id"
                       class="dp-task-detail__event-row"
+                      :class="{ 'dp-task-detail__event-row--detail-panel': hasEventDetailPanel(event) }"
                     >
                       <span
                         class="dp-task-detail__event-dot"
@@ -5499,7 +5146,7 @@ function onClosed() {
                           v-if="eventErrorText(event)"
                           class="dp-task-detail__event-error"
                         >{{ eventErrorText(event) }}</span>
-                        <TaskEventFailureDetails :metadata="event.metadata" />
+                        <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
                       </div>
                       <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
                     </div>
@@ -5516,6 +5163,7 @@ function onClosed() {
                 v-for="event in taskDetailEvents"
                 :key="event.id"
                 class="dp-task-detail__event-row"
+                :class="{ 'dp-task-detail__event-row--detail-panel': hasEventDetailPanel(event) }"
               >
                 <span
                   class="dp-task-detail__event-dot"
@@ -5550,7 +5198,7 @@ function onClosed() {
                     v-if="eventErrorText(event)"
                     class="dp-task-detail__event-error"
                   >{{ eventErrorText(event) }}</span>
-                  <TaskEventFailureDetails :metadata="event.metadata" />
+                  <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
                 </div>
                 <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
               </div>
@@ -5740,6 +5388,36 @@ function onClosed() {
 </template>
 
 <style scoped>
+.snapshot-status-tag {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.snapshot-status-tag :deep(.el-tag__content) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.snapshot-status-tag__spinner {
+  flex: 0 0 auto;
+  animation: snapshot-status-spin 0.8s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes snapshot-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snapshot-status-tag__spinner {
+    animation: none;
+  }
+}
+
 .dp-flow-source-detail-drawer__header {
   width: 100%;
   padding-right: 8px;
@@ -5752,95 +5430,28 @@ function onClosed() {
   color: rgb(30 41 59);
 }
 
-.snapshot-points-table {
-  container-type: inline-size;
-}
-
-.snapshot-directory-expand-panel {
-  position: sticky;
-  left: 35px;
+:global(.snapshot-metric-help-popper.el-popper) {
   box-sizing: border-box;
-  width: calc(100cqw - 49px);
-  min-width: 0;
-  max-width: calc(100cqw - 49px);
-  overflow-x: auto;
-  margin-left: 35px;
-  padding: 8px 0 10px 14px;
-  border-left: 2px solid rgb(226 232 240);
-  contain: inline-size;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 32px)) !important;
+  z-index: 3800 !important;
+  padding: 11px 13px !important;
+  border: 1px solid rgb(203 213 225) !important;
+  border-radius: 8px !important;
+  background: rgb(255 255 255) !important;
+  color: rgb(51 65 85) !important;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 10px 28px rgb(15 23 42 / 16%) !important;
 }
 
-.snapshot-directory-table {
-  width: 100%;
-  min-width: 0;
-}
-
-.snapshot-efficiency-summary {
-  margin: 0 0 12px;
-  padding: 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  background: var(--el-fill-color-light);
-}
-
-.snapshot-efficiency-summary__metrics {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(112px, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.snapshot-efficiency-summary__metric {
-  min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  background: var(--el-bg-color);
-}
-
-.snapshot-efficiency-summary__metric dt {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--el-text-color-secondary);
-  font-size: 11px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.snapshot-efficiency-summary__metric-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.snapshot-efficiency-summary__metric-info {
-  flex: 0 0 auto;
-  color: var(--el-text-color-secondary);
-  cursor: help;
-}
-
-.snapshot-efficiency-summary__metric dd {
-  margin: 3px 0 0;
-  color: var(--el-text-color-primary);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 650;
-  line-height: 20px;
-}
-
-@media (max-width: 1180px) {
-  .snapshot-efficiency-summary__metrics {
-    grid-template-columns: repeat(3, minmax(112px, 1fr));
-  }
-}
-
-@media (max-width: 760px) {
-  .snapshot-efficiency-summary__metrics {
-    grid-template-columns: repeat(2, minmax(112px, 1fr));
-  }
+:global(.snapshot-metric-help-popper.el-popper .el-popper__arrow::before) {
+  border-color: rgb(203 213 225) !important;
+  background: rgb(255 255 255) !important;
 }
 
 .hfl-list-table .snapshot-point-time {
@@ -5899,32 +5510,30 @@ function onClosed() {
   flex: 0 0 14px;
 }
 
-.snapshot-point-actions__button--restore {
+.snapshot-point-actions__button--restore,
+.snapshot-point-actions__button--browse {
   border-color: oklch(87% 0.065 274.039);
   color: oklch(51.1% 0.262 276.966);
 }
 
-.snapshot-point-actions__button--restore .snapshot-point-actions__icon {
+.snapshot-point-actions__button--restore .snapshot-point-actions__icon,
+.snapshot-point-actions__button--browse .snapshot-point-actions__icon {
   color: oklch(58.5% 0.233 277.117);
 }
 
-.snapshot-point-actions__button--restore:not(:disabled):hover {
+.snapshot-point-actions__button--restore:not(:disabled):hover,
+.snapshot-point-actions__button--browse:not(:disabled):hover {
   border-color: oklch(78.5% 0.115 274.713);
   background: oklch(96.2% 0.018 272.314);
 }
 
-.snapshot-point-actions__button--browse {
-  border-color: oklch(92.9% 0.013 255.508);
-  color: oklch(37.2% 0.044 257.287);
-}
-
-.snapshot-point-actions__button--browse .snapshot-point-actions__icon {
-  color: oklch(55.4% 0.046 257.417);
-}
-
-.snapshot-point-actions__button--browse:not(:disabled):hover {
-  border-color: oklch(86.9% 0.022 252.894);
-  background: oklch(98.4% 0.003 247.858);
+.snapshot-point-table-header-with-tip {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
 .snapshot-point-actions__button:disabled {
@@ -5945,60 +5554,20 @@ function onClosed() {
   outline-offset: 2px;
 }
 
-.snapshot-directory-path-cell {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  flex-direction: column;
-  align-items: stretch;
-  text-align: left;
+.dp-flow-source-overview {
+  gap: 14px;
 }
 
-.snapshot-directory-path-cell__parent {
-  display: flex;
-  min-width: 0;
+.dp-flow-os-type {
+  display: inline-flex;
   align-items: center;
   gap: 7px;
 }
 
-.snapshot-directory-path-cell__icon {
-  flex: 0 0 auto;
-}
-
-.snapshot-directory-path-cell__icon--dir {
-  color: #d97706;
-}
-
-.snapshot-directory-path-cell__icon--file {
-  color: #2563eb;
-}
-
-.snapshot-directory-path-cell__path {
-  width: 0;
-  min-width: 0;
-  max-width: 100%;
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.snapshot-directory-path-cell--disabled {
-  color: rgb(71 85 105);
-}
-
-@media (max-width: 760px) {
-  .snapshot-directory-expand-panel {
-    left: 21px;
-    width: calc(100cqw - 27px);
-    max-width: calc(100cqw - 27px);
-    margin-left: 21px;
-    padding-left: 10px;
-  }
-}
-
-.dp-flow-source-overview {
-  gap: 14px;
+.dp-flow-os-type__icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 
 .dp-flow-source-detail-drawer .hfl-detail-section__title {
@@ -6326,7 +5895,7 @@ function onClosed() {
 .dp-flow-restore-plan-card {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
-  background: rgb(248 250 252);
+  background: var(--el-fill-color-lighter);
   padding: 10px;
 }
 
@@ -6463,9 +6032,9 @@ function onClosed() {
   gap: 8px;
   min-width: 0;
   border-radius: 6px;
-  background: #fff;
+  background: var(--el-bg-color);
   padding: 7px 8px;
-  color: rgb(51 65 85);
+  color: var(--el-text-color-regular);
   font-size: 12px;
   transition:
     background-color 0.16s ease,
@@ -6473,7 +6042,7 @@ function onClosed() {
 }
 
 .create-recovery-plan-mapping:hover {
-  background: color-mix(in srgb, var(--color-primary) 7%, #ffffff);
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--el-bg-color));
 }
 
 .create-recovery-plan-mapping--more {
@@ -6531,11 +6100,12 @@ function onClosed() {
   overflow-x: hidden;
   margin-left: 35px;
   padding: 12px 16px 14px;
-  background: rgb(248 250 252);
+  background: var(--el-fill-color-lighter);
   contain: inline-size;
 }
 
 .restore-record-time-summary {
+  --restore-record-end-color: var(--el-text-color-secondary);
   display: grid;
   grid-template-columns: minmax(176px, auto) minmax(140px, 1fr) minmax(176px, auto);
   align-items: center;
@@ -6543,6 +6113,55 @@ function onClosed() {
   min-width: 0;
   margin: 0 2px 12px;
   padding: 2px 2px 5px;
+}
+
+.restore-record-time-summary--info {
+  --restore-record-end-color: var(--color-info);
+}
+
+.restore-record-time-summary--success {
+  --restore-record-end-color: var(--color-success);
+}
+
+.restore-record-time-summary--warning {
+  --restore-record-end-color: var(--color-warning-text);
+}
+
+.restore-record-time-summary--danger {
+  --restore-record-end-color: var(--color-error);
+}
+
+.restore-record-time-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 9px;
+  min-width: 0;
+  margin: -4px 2px 12px;
+}
+
+.restore-record-time-context__explanation {
+  min-width: 0;
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.restore-record-submitted-at {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+}
+
+.restore-record-submitted-at__label {
+  font-weight: 650;
+}
+
+.restore-record-submitted-at__value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 .restore-record-time-summary__point {
@@ -6565,20 +6184,14 @@ function onClosed() {
   height: 28px;
   border: 1px solid color-mix(in srgb, var(--color-info) 22%, transparent);
   border-radius: 50%;
-  background: color-mix(in srgb, var(--color-info) 9%, #fff);
+  background: color-mix(in srgb, var(--color-info) 9%, var(--el-bg-color));
   color: var(--color-info);
 }
 
 .restore-record-time-summary__point--end .restore-record-time-summary__marker {
-  border-color: color-mix(in srgb, var(--color-success) 24%, transparent);
-  background: color-mix(in srgb, var(--color-success) 10%, #fff);
-  color: var(--color-success);
-}
-
-.restore-record-time-summary__point--pending .restore-record-time-summary__marker {
-  border-color: var(--el-border-color);
-  background: #fff;
-  color: var(--el-text-color-secondary);
+  border-color: color-mix(in srgb, var(--restore-record-end-color) 26%, var(--el-border-color));
+  background: color-mix(in srgb, var(--restore-record-end-color) 10%, var(--el-bg-color));
+  color: var(--restore-record-end-color);
 }
 
 .restore-record-time-summary__copy {
@@ -6600,7 +6213,7 @@ function onClosed() {
 .restore-record-time-summary__value {
   margin-top: 3px;
   overflow: hidden;
-  color: rgb(51 65 85);
+  color: var(--el-text-color-regular);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -6608,6 +6221,37 @@ function onClosed() {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.restore-record-time-summary__value-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.restore-record-time-summary__issue {
+  display: inline-flex;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-warning-text);
+  cursor: help;
+}
+
+.restore-record-time-summary__issue:hover {
+  background: color-mix(in srgb, var(--color-warning-text) 10%, transparent);
+}
+
+.restore-record-time-summary__issue:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
 }
 
 .restore-record-time-summary__duration {
@@ -6627,7 +6271,7 @@ function onClosed() {
     90deg,
     color-mix(in srgb, var(--color-info) 30%, var(--el-border-color)) 0%,
     color-mix(in srgb, var(--color-primary) 28%, var(--el-border-color)) 48%,
-    color-mix(in srgb, var(--color-success) 30%, var(--el-border-color)) 100%
+    color-mix(in srgb, var(--restore-record-end-color) 30%, var(--el-border-color)) 100%
   );
   content: '';
 }
@@ -6642,14 +6286,14 @@ function onClosed() {
   padding: 4px 10px;
   border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--el-border-color-lighter));
   border-radius: 999px;
-  background: rgb(248 250 252);
-  box-shadow: 0 0 0 4px rgb(248 250 252);
+  background: var(--el-fill-color-lighter);
+  box-shadow: 0 0 0 4px var(--el-fill-color-lighter);
   white-space: nowrap;
 }
 
 .restore-record-time-summary__duration-label {
   color: var(--el-text-color-secondary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 650;
 }
 
@@ -6672,7 +6316,7 @@ function onClosed() {
   padding: 9px 11px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
-  background: #fff;
+  background: var(--el-bg-color);
 }
 
 .restore-record-runtime-summary__label {
@@ -6692,7 +6336,7 @@ function onClosed() {
 .restore-record-runtime-summary__metric {
   padding: 3px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-primary) 8%, #fff);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--el-bg-color));
   color: var(--el-text-color-regular);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -6742,7 +6386,7 @@ function onClosed() {
     background: linear-gradient(
       180deg,
       color-mix(in srgb, var(--color-info) 30%, var(--el-border-color)) 0%,
-      color-mix(in srgb, var(--color-success) 30%, var(--el-border-color)) 100%
+      color-mix(in srgb, var(--restore-record-end-color) 30%, var(--el-border-color)) 100%
     );
   }
 
@@ -6754,6 +6398,36 @@ function onClosed() {
     align-items: flex-start;
     flex-direction: column;
   }
+
+  .restore-record-time-context {
+    align-items: flex-start;
+  }
+
+  .restore-record-submitted-at {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+
+  .restore-record-mapping--with-result {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .restore-record-mapping--with-result .create-recovery-plan-mapping__arrow {
+    justify-self: start;
+    transform: rotate(90deg);
+  }
+
+  .restore-record-mapping--with-result .restore-record-mapping__result {
+    justify-content: flex-start;
+  }
+
+  .restore-record-mapping--with-result .create-recovery-plan-mapping__endpoint--target {
+    border-top: 1px solid var(--el-border-color-lighter);
+    border-left: 0;
+    padding-top: 6px;
+    padding-left: 0;
+  }
 }
 
 .restore-record-structure-card {
@@ -6762,6 +6436,40 @@ function onClosed() {
 
 .restore-record-mapping--with-result {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(112px, auto);
+}
+
+.restore-record-mapping--with-result .create-recovery-plan-mapping__endpoint--target {
+  border-left: 1px solid var(--el-border-color-lighter);
+  padding-left: 8px;
+}
+
+.restore-record-mapping__label {
+  grid-column: 1 / -1;
+  color: var(--el-text-color-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.restore-record-mapping__content {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.restore-record-mapping__endpoint-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.create-recovery-plan-mapping__endpoint--target.create-recovery-plan-mapping__endpoint--file .create-recovery-plan-mapping__icon {
+  color: #2563eb;
 }
 
 .restore-record-expand-panel .create-recovery-plan-mapping {
@@ -6810,7 +6518,7 @@ function onClosed() {
 
 .restore-record-snapshot-tree__parent {
   border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--el-border-color-lighter));
-  background: color-mix(in srgb, var(--color-primary) 5%, #fff);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--el-bg-color));
 }
 
 .restore-record-snapshot-tree__children {
@@ -6847,40 +6555,52 @@ function onClosed() {
 }
 
 .restore-record-structure-entry__error {
+  display: grid;
+  gap: 3px;
   margin: 0 8px;
   padding: 7px 8px;
-  border: 1px solid rgb(254 202 202);
+  border: 1px solid color-mix(in srgb, var(--color-error-text) 24%, transparent);
   border-radius: 6px;
-  color: rgb(185 28 28);
-  background: rgb(254 242 242);
+  color: var(--color-error-text);
+  background: color-mix(in srgb, var(--color-error-text) 8%, transparent);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.restore-record-structure-entry__error-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
-.restore-record-status-progress {
-  display: grid;
-  gap: 7px;
+.restore-record-structure-entry__error-message {
   min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
-.restore-record-status-progress__bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.restore-record-structure-entry__remediation {
   min-width: 0;
+  margin: 5px 0 0 18px;
+  padding: 0;
+  color: var(--el-text-color-regular);
+  overflow-wrap: anywhere;
+  list-style-type: decimal;
 }
 
-.restore-record-status-progress__bar :deep(.el-progress) {
-  flex: 1;
-  min-width: 70px;
+.restore-record-structure-entry__remediation li + li {
+  margin-top: 3px;
 }
 
-.restore-record-status-progress__bar span {
-  flex: 0 0 auto;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
+.restore-record-structure-entry__error--warning {
+  border-color: color-mix(in srgb, var(--el-color-warning) 32%, transparent);
+  color: var(--el-color-warning-dark-2);
+  background: color-mix(in srgb, var(--el-color-warning) 10%, transparent);
+}
+
+.restore-record-status {
+  min-width: 0;
 }
 
 :global(.create-recovery-plan-tooltip__mapping .create-recovery-plan-mapping__text) {
@@ -7038,49 +6758,6 @@ function onClosed() {
   border-color: rgb(251 207 232);
   background: rgb(253 242 248);
   color: rgb(219 39 119);
-}
-
-.dp-source-task-progress {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-}
-
-.dp-source-task-progress__track {
-  height: 9px;
-  overflow: hidden;
-  border-radius: 999px;
-  background-color: rgb(226 232 240);
-}
-
-.dp-source-task-progress__fill {
-  height: 100%;
-  min-width: 4px;
-  border-radius: inherit;
-  background-color: var(--color-info);
-  transition: width 0.35s ease;
-}
-
-.dp-source-task-progress__fill--success {
-  background-color: var(--color-success);
-}
-
-.dp-source-task-progress__fill--failed,
-.dp-source-task-progress__fill--timeout {
-  background-color: var(--color-error);
-}
-
-.dp-source-task-progress__fill--pending,
-.dp-source-task-progress__fill--cancelled {
-  background-color: rgb(100 116 139);
-}
-
-.dp-source-task-progress__text {
-  color: var(--color-info);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  font-size: 11px;
-  font-weight: 800;
 }
 
 .dp-task-detail__header-bar {
@@ -7325,51 +7002,6 @@ function onClosed() {
   color: var(--color-info);
 }
 
-.dp-task-detail__progress-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-  color: rgb(100 116 139);
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.dp-task-detail__progress-head span:last-child {
-  color: var(--color-info);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-}
-
-.dp-task-detail__progress-track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background-color: rgb(226 232 240);
-}
-
-.dp-task-detail__progress-fill {
-  height: 100%;
-  min-width: 4px;
-  border-radius: inherit;
-  background-color: var(--color-info);
-  transition: width 0.35s ease;
-}
-
-.dp-task-detail__progress-fill--success {
-  background-color: var(--color-success);
-}
-
-.dp-task-detail__progress-fill--failed,
-.dp-task-detail__progress-fill--timeout {
-  background-color: var(--color-error);
-}
-
-.dp-task-detail__progress-fill--pending,
-.dp-task-detail__progress-fill--cancelled {
-  background-color: rgb(100 116 139);
-}
-
 .dp-task-detail__tabs {
   min-width: 0;
   margin-top: 4px;
@@ -7443,6 +7075,12 @@ function onClosed() {
   color: #fff;
 }
 
+.dp-task-detail__timeline-icon--warning {
+  border-color: var(--color-warning);
+  background-color: var(--color-warning);
+  color: #fff;
+}
+
 .dp-task-detail__timeline-icon--running {
   border-color: var(--color-info);
   background-color: var(--color-info);
@@ -7468,8 +7106,9 @@ function onClosed() {
 }
 
 .dp-task-detail__timeline-icon--pending {
-  background-color: rgb(100 116 139);
-  color: #fff;
+  border-color: var(--color-text-secondary);
+  background-color: transparent;
+  color: var(--color-text-secondary);
 }
 
 .dp-task-detail__step-card {
@@ -7663,6 +7302,48 @@ function onClosed() {
   white-space: nowrap;
 }
 
+.dp-task-detail__event-row--detail-panel {
+  position: relative;
+  grid-template-columns: 16px minmax(0, 1fr);
+}
+
+.dp-task-detail__event-row--detail-panel .dp-task-detail__event-content {
+  grid-column: 2;
+  align-items: stretch;
+}
+
+.dp-task-detail__event-row--detail-panel .dp-task-detail__event-msg {
+  align-self: flex-start;
+  max-width: calc(100% - 132px);
+}
+
+.dp-task-detail__event-row--detail-panel .dp-task-detail__event-object,
+.dp-task-detail__event-row--detail-panel .dp-task-detail__event-error {
+  align-self: flex-start;
+}
+
+.dp-task-detail__event-row--detail-panel .dp-task-detail__event-time {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+@media (max-width: 760px) {
+  .dp-task-detail__event-row--detail-panel {
+    grid-template-columns: 16px minmax(0, 1fr);
+  }
+
+  .dp-task-detail__event-row--detail-panel .dp-task-detail__event-time {
+    position: static;
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .dp-task-detail__event-row--detail-panel .dp-task-detail__event-msg {
+    max-width: 100%;
+  }
+}
+
 .dp-task-detail__empty-line {
   padding: 6px 0;
   color: rgb(100 116 139);
@@ -7735,19 +7416,19 @@ function onClosed() {
   font-size: 11px;
 }
 
-.dp-snapshot-file-browser-shell {
+.dp-snapshot-detail-drawer-shell {
   position: fixed;
   inset: 0;
   z-index: 3600;
+  background: rgb(15 23 42 / 18%);
   pointer-events: auto;
 }
 
-.dp-snapshot-file-browser-panel {
+.dp-snapshot-detail-drawer {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(720px, 92vw);
   display: flex;
   flex-direction: column;
   background: #fff;
@@ -7755,8 +7436,9 @@ function onClosed() {
   pointer-events: auto;
 }
 
-.dp-snapshot-file-browser-panel__header {
+.dp-snapshot-detail-drawer__header {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -7765,7 +7447,7 @@ function onClosed() {
   border-bottom: 1px solid rgb(226 232 240);
 }
 
-.dp-snapshot-file-browser-panel__close {
+.dp-snapshot-detail-drawer__close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7778,151 +7460,68 @@ function onClosed() {
   cursor: pointer;
 }
 
-.dp-snapshot-file-browser-panel__close:hover {
+.dp-snapshot-detail-drawer__refresh {
+  display: inline-flex;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 6px;
+  color: rgb(71 85 105);
+  background: transparent;
+  cursor: pointer;
+}
+
+.dp-snapshot-detail-drawer__refresh:hover:not(:disabled) {
   background: rgb(241 245 249);
   color: rgb(15 23 42);
 }
 
-.dp-snapshot-file-browser-panel__body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 16px;
+.dp-snapshot-detail-drawer__refresh:disabled {
+  color: rgb(148 163 184);
+  cursor: not-allowed;
 }
 
-.dp-snapshot-file-browser {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.dp-snapshot-detail-drawer__refresh .is-spinning {
+  animation: snapshot-status-spin 0.8s linear infinite;
 }
 
-.dp-snapshot-file-browser__toolbar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: #fff;
+.dp-snapshot-detail-drawer__close:hover {
+  background: rgb(241 245 249);
+  color: rgb(15 23 42);
 }
 
-.dp-snapshot-file-browser__toolbar-main {
+.dp-snapshot-detail-drawer__identity {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
   min-width: 0;
-}
-
-.dp-snapshot-file-browser__toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.dp-snapshot-file-browser__selected {
-  font-size: 12px;
-  color: rgb(100 116 139);
-  white-space: nowrap;
-}
-
-.dp-snapshot-file-browser__crumbs {
-  display: flex;
+  flex: 1;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-  font-size: 12px;
+  gap: 8px 12px;
 }
 
-.dp-snapshot-file-browser__entry {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+.dp-snapshot-detail-drawer__identity strong {
+  overflow: hidden;
+  color: rgb(15 23 42);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 16px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.dp-snapshot-file-browser__file-row {
-  display: grid;
-  grid-template-columns: 28px minmax(160px, 1.4fr) minmax(120px, 1fr) 88px 136px;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  min-height: 36px;
-  padding: 5px 10px;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 8px;
-  background: #fff;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.dp-snapshot-file-browser__file-row:hover,
-.dp-snapshot-file-browser__file-row.is-selected {
-  border-color: var(--color-info-border);
-  background: var(--color-info-light);
-}
-
-.dp-snapshot-file-browser__tree {
-  border: 0;
-  border-radius: 0;
-  padding: 2px 0;
-  background: transparent;
-}
-
-.dp-snapshot-file-browser__tree :deep(.el-tree-node__content) {
-  height: 30px;
-}
-
-.dp-snapshot-file-browser__tree-row {
-  display: grid;
-  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 1fr) 88px 136px;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  padding-right: 10px;
-  font-size: 13px;
-}
-
-.dp-snapshot-file-browser__tree-path,
-.dp-snapshot-file-browser__tree-size,
-.dp-snapshot-file-browser__tree-time {
+.dp-snapshot-detail-drawer__identity > span {
   color: rgb(100 116 139);
   font-size: 12px;
 }
 
-.dp-snapshot-file-browser__tree-size,
-.dp-snapshot-file-browser__tree-time {
-  white-space: nowrap;
-}
-
-@media (max-width: 760px) {
-  .dp-snapshot-file-browser__toolbar {
-    flex-direction: column;
-  }
-
-  .dp-snapshot-file-browser__toolbar-main,
-  .dp-snapshot-file-browser__toolbar-actions {
-    width: 100%;
-    flex-wrap: wrap;
-  }
-
-  .dp-snapshot-file-browser__tree-row {
-    grid-template-columns: minmax(120px, 1fr) 72px;
-  }
-
-  .dp-snapshot-file-browser__file-row {
-    grid-template-columns: 28px minmax(120px, 1fr) 72px;
-  }
-
-  .dp-snapshot-file-browser__tree-path,
-  .dp-snapshot-file-browser__tree-time,
-  .dp-snapshot-file-browser__file-row .dp-snapshot-file-browser__tree-path,
-  .dp-snapshot-file-browser__file-row .dp-snapshot-file-browser__tree-time {
-    display: none;
-  }
+.dp-snapshot-detail-drawer__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px 16px 16px;
 }
 
 .dp-task-detail__directories {

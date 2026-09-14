@@ -7,12 +7,12 @@ import {
   Plus,
   Pencil,
   ArrowLeft,
+  ArrowRight,
   X,
   Database,
   RefreshCw,
   ChevronDown,
   CloudUpload,
-  Trash2,
   Search,
   HardDrive,
   Filter,
@@ -54,7 +54,6 @@ import {
   nasMountProtocolIcon,
   targetNasSidebarIcon,
 } from '../../lib/resourceIcons'
-import { getEffectiveOrgKey } from '../../composables/useAuth'
 import { apiErrorMessage, apiErrorMessageI18n, isAbortError } from '../../lib/api'
 import { normalizeThrownError } from '../../lib/errors'
 import { openErrorDetails } from '../../lib/errors/details'
@@ -131,12 +130,12 @@ import {
 } from '../../lib/storageProviderCatalogApi'
 import { storageRepositoryLocation } from '../../lib/storageRepositoryDisplay'
 import { booleanStatusTag } from '../../lib/statusTag'
-import { DEFAULT_S3_OBJECT_PREFIX, normalizeS3EndpointInput } from '../../lib/s3PlatformDisplay'
+import { generateS3ObjectPrefix, normalizeS3EndpointInput } from '../../lib/s3PlatformDisplay'
 import {
   useProtectionDemoStore,
   type DemoDirTreeItem,
 } from '../../composables/useProtectionDemoStore'
-import { issueEnrollmentInstall, listAllNodes, type EnrollmentOs } from '../../lib/nodeApi'
+import { listAllNodes, type EnrollmentOs } from '../../lib/nodeApi'
 import { formatOfflineBackupPlanMessage } from './lib/offlineBackupPlanMessage'
 import {
   backupTargetIncompatibilityReason,
@@ -728,66 +727,6 @@ async function refreshProxyNodesManually() {
 }
 
 const deploySelectedOs = ref<EnrollmentOs>('linux')
-const deployScript = ref('')
-const deployScriptLoading = ref(false)
-const deployOrgKey = ref('')
-const deployScriptCache: Partial<Record<EnrollmentOs, string>> = {}
-let deployGeneration = 0
-
-
-
-
-async function refreshDeployScript(generation: number, os: EnrollmentOs) {
-  const cached = deployScriptCache[os]
-  if (cached) {
-    if (generation === deployGeneration && deploySelectedOs.value === os) {
-      deployScript.value = cached
-      deployScriptLoading.value = false
-    }
-    return
-  }
-
-  deployScriptLoading.value = true
-  deployScript.value = ''
-  if (!deployOrgKey.value) {
-    if (generation === deployGeneration && deploySelectedOs.value === os) {
-      deployScriptLoading.value = false
-    }
-    return
-  }
-  try {
-    const { command } = await issueEnrollmentInstall({
-      role: 'agent',
-      os,
-      note: 'deploy:agent:backup-wizard',
-    })
-    if (generation !== deployGeneration) return
-    deployScriptCache[os] = command
-    if (deploySelectedOs.value !== os) return
-    deployScript.value = command
-  } catch (e) {
-    if (generation === deployGeneration && deploySelectedOs.value === os) {
-      ElMessage.error({ message: apiErrorMessage(e, t('nodesDeploy.scriptLoadFailed')), grouping: true })
-    }
-  } finally {
-    if (generation === deployGeneration && deploySelectedOs.value === os) {
-      deployScriptLoading.value = false
-    }
-  }
-}
-
-function startDeploySession() {
-  deployOrgKey.value = getEffectiveOrgKey()
-  const generation = ++deployGeneration
-  const os = deploySelectedOs.value
-  const cached = deployScriptCache[os]
-  if (cached) {
-    deployScript.value = cached
-    deployScriptLoading.value = false
-    return
-  }
-  void refreshDeployScript(generation, os)
-}
 
 function resetNasForm() {
   nasProtocol.value = 'smb'
@@ -978,23 +917,7 @@ watch(addSourceOpen, (open) => {
 
 watch(addSourceType, (type) => {
   if (!addSourceOpen.value) return
-  if (type === 'hostFileSystem') {
-    startDeploySession()
-    return
-  }
-  resetNasForm()
-})
-
-watch(deploySelectedOs, (os) => {
-  if (!addSourceOpen.value || addSourceType.value !== 'hostFileSystem') return
-  const cached = deployScriptCache[os]
-  if (cached) {
-    deployScript.value = cached
-    deployScriptLoading.value = false
-    return
-  }
-  const generation = ++deployGeneration
-  void refreshDeployScript(generation, os)
+  if (type !== 'hostFileSystem') resetNasForm()
 })
 
 watch(step2Sources, (ids) => {
@@ -1017,7 +940,7 @@ function openProxyDeploy() {
 }
 
 async function copyDeployScript(text?: string) {
-  const script = text || deployScriptCache[deploySelectedOs.value] || deployScript.value
+  const script = text || ''
   if (!script) {
     ElMessage.warning({ message: t('nodesDeploy.scriptNotReady'), grouping: true })
     return
@@ -1034,6 +957,8 @@ const messageLocale = computed<MessageLocale>(() => 'en')
 
 const createOpen = ref(false)
 const createStep = ref(0)
+const filterPolicyBatchActionsOpen = ref(false)
+const recoveryPlanBatchActionsOpen = ref(false)
 const createCompletedSteps = ref<Set<number>>(new Set())
 type BackupConfigEditSection = 'paths' | 'policy' | 'recovery-plan'
 const editConfigs = ref<BackupConfigDetail[]>([])
@@ -1167,7 +1092,7 @@ const addTargetS3Endpoint = ref('')
 const addTargetS3Region = ref('')
 const addTargetS3Bucket = ref('')
 const addTargetS3BucketMode = ref<'existing' | 'new'>('existing')
-const addTargetS3Prefix = ref(DEFAULT_S3_OBJECT_PREFIX)
+const addTargetS3Prefix = ref(generateS3ObjectPrefix())
 const addTargetS3AccessKey = ref('')
 const addTargetS3SecretKey = ref('')
 const addTargetS3UrlStyle = ref<AddTargetS3UrlStyle>(defaultS3UrlStyle(undefined))
@@ -2767,7 +2692,7 @@ function resetAddTargetForm(kind: AddTargetRepoKind = addTargetKind.value) {
   addTargetS3Region.value = ''
   addTargetS3Bucket.value = ''
   addTargetS3BucketMode.value = 'existing'
-  addTargetS3Prefix.value = DEFAULT_S3_OBJECT_PREFIX
+  addTargetS3Prefix.value = generateS3ObjectPrefix()
   addTargetS3AccessKey.value = ''
   addTargetS3SecretKey.value = ''
   addTargetS3UrlStyle.value = defaultS3UrlStyle(undefined)
@@ -4400,6 +4325,12 @@ function removeWizardDirEntry(key: string) {
     }
     nextTick(() => refreshCreateSourceTreeBlockedState(removed.sourceId))
   }
+}
+
+function clearWizardDirEntries(sourceId: string) {
+  wizardDirEntries.value = wizardDirEntries.value.filter((entry) => entry.sourceId !== sourceId)
+  createSourceDirKeysBySource[sourceId] = []
+  nextTick(() => refreshCreateSourceTreeBlockedState(sourceId))
 }
 
 watch(
@@ -6328,6 +6259,15 @@ function preserveShallowestPathOrder(paths: string[]) {
                         <div class="text-xs text-slate-500">
                           {{ t('protection.backupsPage.addedCount', { n: sourceSelectedCount(row.id) }) }}
                         </div>
+                        <button
+                          v-if="sourceSelectedEntries(row.id).length"
+                          type="button"
+                          :aria-label="t('protection.backupsPage.snapshotBrowserClearSelection')"
+                          class="create-dir-clear-button"
+                          @click="clearWizardDirEntries(row.id)"
+                        >
+                          {{ t('protection.backupsPage.snapshotBrowserClearSelection') }}
+                        </button>
                       </div>
                     </div>
                     <div
@@ -6595,32 +6535,38 @@ function preserveShallowestPathOrder(paths: string[]) {
                 </ElButton>
                 <ElDropdown
                   trigger="click"
+                  popper-class="hfl-actions-dropdown"
                   @command="openFilterPolicyBatchDialog"
+                  @visible-change="filterPolicyBatchActionsOpen = $event"
                 >
                   <ElButton class="hfl-btn-with-icon">
                     <span>{{ t('protection.backupsPage.btnBatchActions') }}</span>
                     <ChevronDown
                       :size="15"
                       stroke-width="2"
-                      class="shrink-0"
+                      class="shrink-0 hfl-list-more__chev"
+                      :class="{ 'hfl-list-more__chev--open': filterPolicyBatchActionsOpen }"
                     />
                   </ElButton>
                   <template #dropdown>
                     <ElDropdownMenu>
                       <ElDropdownItem
                         command="policy"
+                        :icon="ClipboardCheck"
                         :disabled="checkedFilterPolicyGroups.length === 0"
                       >
                         {{ t('protection.backupsPage.batchPolicyAction') }}
                       </ElDropdownItem>
                       <ElDropdownItem
                         command="filter"
+                        :icon="Filter"
                         :disabled="checkedFilterPolicyGroups.length === 0"
                       >
                         {{ t('protection.backupsPage.batchFileFilterAction') }}
                       </ElDropdownItem>
                       <ElDropdownItem
                         command="compression"
+                        :icon="Archive"
                         :disabled="checkedFilterPolicyGroups.length === 0"
                       >
                         {{ t('protection.backupsPage.batchCompressionAction') }}
@@ -8086,26 +8032,31 @@ function preserveShallowestPathOrder(paths: string[]) {
               <div class="create-source-config-toolbar__divider" />
               <ElDropdown
                 trigger="click"
+                popper-class="hfl-actions-dropdown"
                 @command="(command) => applyBatchRecoveryPlanEnabled(command === 'enable')"
+                @visible-change="recoveryPlanBatchActionsOpen = $event"
               >
                 <ElButton class="hfl-btn-with-icon">
                   <span>{{ t('protection.backupsPage.btnBatchActions') }}</span>
                   <ChevronDown
                     :size="15"
                     stroke-width="2"
-                    class="shrink-0"
+                    class="shrink-0 hfl-list-more__chev"
+                    :class="{ 'hfl-list-more__chev--open': recoveryPlanBatchActionsOpen }"
                   />
                 </ElButton>
                 <template #dropdown>
                   <ElDropdownMenu>
                     <ElDropdownItem
                       command="enable"
+                      :icon="ShieldCheck"
                       :disabled="checkedRecoveryPlanDisabledGroups.length === 0"
                     >
                       {{ t('protection.backupsPage.batchEnableRecoveryPlanAction') }}
                     </ElDropdownItem>
                     <ElDropdownItem
                       command="disable"
+                      :icon="CircleOff"
                       :disabled="checkedRecoveryPlanEnabledGroups.length === 0"
                     >
                       {{ t('protection.backupsPage.batchDisableRecoveryPlanAction') }}
@@ -8916,7 +8867,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                               <span
                                 class="create-recovery-plan-mapping__arrow"
                                 aria-hidden="true"
-                              >-&gt;</span>
+                              ><ArrowRight :size="14" /></span>
                               <span
                                 class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                               >
@@ -9007,7 +8958,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                             <span
                               class="create-recovery-plan-mapping__arrow"
                               aria-hidden="true"
-                            >-&gt;</span>
+                            ><ArrowRight :size="14" /></span>
                             <span
                               class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                             >
@@ -9518,7 +9469,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 <span
                                   class="create-recovery-plan-mapping__arrow"
                                   aria-hidden="true"
-                                >-&gt;</span>
+                                ><ArrowRight :size="14" /></span>
                                 <span
                                   class="create-recovery-plan-mapping__endpoint create-recovery-plan-mapping__endpoint--target"
                                   :title="recoveryDirPlanTargetSummary(dirPlan)"
@@ -11035,6 +10986,31 @@ function preserveShallowestPathOrder(paths: string[]) {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.create-dir-clear-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  color: #475569 !important;
+  border: 1px solid #cbd5e1 !important;
+  background: #fff !important;
+}
+
+.create-dir-clear-button:hover,
+.create-dir-clear-button:focus-visible,
+.create-dir-clear-button:active {
+  color: #dc2626 !important;
+  border-color: #fca5a5 !important;
+  background: #fef2f2 !important;
 }
 
 .create-source-config-detail__title-row .el-checkbox {
@@ -14068,11 +14044,11 @@ function preserveShallowestPathOrder(paths: string[]) {
   grid-template-columns: 72px minmax(0, 1fr);
   align-items: start;
   column-gap: 10px;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
   color: rgb(15 23 42);
   font-size: 12px;
   line-height: 1.55;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 :global(.create-policy-option-popper .policy-retention-detail-list__line--summary) {
@@ -14091,9 +14067,9 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 :global(.create-policy-option-popper .policy-retention-detail-list__text) {
   min-width: 0;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
   color: rgb(15 23 42);
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .target-select-with-meta {

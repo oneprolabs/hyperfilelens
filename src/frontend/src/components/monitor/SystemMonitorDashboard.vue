@@ -15,7 +15,7 @@ defineProps<{
     label: string
     value: string
     sub: string
-    accent: 'indigo' | 'green' | 'orange' | 'pink'
+    tone: 'primary' | 'success' | 'warning' | 'danger' | 'info' | 'firing' | 'neutral'
     icon: unknown
   }>
   hasChartData: (option: unknown) => boolean
@@ -51,7 +51,7 @@ const { t } = useI18n()
         :label="card.label"
         :value="card.value"
         :sub="card.sub"
-        :accent="card.accent"
+        :tone="card.tone"
         accent-side="left"
       >
         <template #icon>

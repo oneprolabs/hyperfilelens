@@ -5,7 +5,7 @@ description: 安装 HyperFileLens 社区版、Agent、Proxy 和 Private Data Gat
 
 # 系统要求
 
-<p class="hfl-doc-lead">安装社区版控制平面或相关组件前，请确认目标主机满足以下平台、资源和运行条件。官方 SaaS 无需部署控制平面，只需检查实际部署的 Agent、Proxy 或 Private Data Gateway。</p>
+<p class="hfl-doc-lead">安装社区版控制平面、Agent、Proxy 或 Private Data Gateway 前，请确认相应主机满足以下平台、资源和运行条件。</p>
 
 ## 社区版控制平面
 
@@ -13,8 +13,8 @@ description: 安装 HyperFileLens 社区版、Agent、Proxy 和 Private Data Gat
 | --- | --- | --- |
 | 操作系统 | Ubuntu 20.04、22.04 或 24.04 | Ubuntu 22.04 或 24.04 |
 | 架构 | amd64 | amd64 |
-| CPU | 2 核 | 4 核以上 |
-| 内存 | 4 GiB | 8 GiB 以上 |
+| CPU | 4 核 | 8 核以上 |
+| 内存 | 8 GiB | 16 GiB 以上 |
 | `/opt` 可用空间 | 20 GiB | 40 GiB |
 | Docker Engine | 24.0.0 | 24.0.0 及以上 |
 | Docker Compose | 2.20.0（Compose V2） | 2.20.0 及以上 |

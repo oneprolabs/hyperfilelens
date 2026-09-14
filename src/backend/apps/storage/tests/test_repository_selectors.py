@@ -47,7 +47,7 @@ class RepositorySelectorTests(TestCase):
                 flat=True,
             )
         )
-        self.assertEqual(names, ["created-repo", "failed-repo", "removed-repo"])
+        self.assertEqual(names, ["removed-repo", "failed-repo", "created-repo"])
 
     def test_status_filter_can_narrow_results(self):
         Repository.objects.create(
@@ -69,3 +69,17 @@ class RepositorySelectorTests(TestCase):
             ).values_list("name", flat=True)
         )
         self.assertEqual(names, ["failed-repo"])
+
+    def test_newest_first_with_stable_tie_breaker_before_pagination(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        oldest = Repository.objects.create(organization_id=self.org.id, name="A", repo_type="s3")
+        second = Repository.objects.create(organization_id=self.org.id, name="Z", repo_type="nas")
+        newest = Repository.objects.create(organization_id=self.org.id, name="B", repo_type="s3")
+        now = timezone.now()
+        Repository.objects.filter(pk=oldest.pk).update(created_at=now - timedelta(days=1))
+        Repository.objects.filter(pk__in=[second.pk, newest.pk]).update(created_at=now)
+        rows = list_repositories(organization_id=self.org.id)
+        self.assertEqual(list(rows.values_list("id", flat=True)[:2]), [newest.id, second.id])
+        self.assertEqual(list(rows.values_list("id", flat=True)[2:]), [oldest.id])
+        self.assertEqual(list(list_repositories(organization_id=self.org.id, repo_type="s3").values_list("id", flat=True)), [newest.id, oldest.id])

@@ -6,6 +6,8 @@ export const ERROR_CODE_I18N_KEYS: Record<string, string> = {
   'CLIENT.ABORTED': 'errors.codes.clientAborted',
   'UNKNOWN.ERROR': 'errors.codes.unknown',
   'VALIDATION.FAILED': 'errors.codes.validationFailed',
+  'AI_MODEL.CONNECTION_TEST_FAILED': 'errors.codes.aiModelConnectionTestFailed',
+  'AI_MODEL.CONNECTION_TEST_REQUIRED': 'errors.codes.aiModelConnectionTestRequired',
   'AUTH.FORBIDDEN': 'errors.codes.authForbidden',
   'RESOURCE.NOT_FOUND': 'errors.codes.resourceNotFound',
   'RESOURCE.CONFLICT': 'errors.codes.resourceConflict',
@@ -60,6 +62,10 @@ export const ERROR_CODE_FALLBACK_EN: Record<string, string> = {
   'CLIENT.OFFLINE': 'You are offline. Check your network connection.',
   'UNKNOWN.ERROR': 'Something went wrong. Please try again.',
   'VALIDATION.FAILED': 'Please check the form and try again.',
+  'AI_MODEL.CONNECTION_TEST_FAILED':
+    'The AI model connection test failed. Check the provider, model, API endpoint, and credentials, then try again.',
+  'AI_MODEL.CONNECTION_TEST_REQUIRED':
+    'Re-enter the API key so this inactive model can be tested before it is enabled.',
   'AUTH.FORBIDDEN': "You don't have permission to perform this action.",
   'RESOURCE.NOT_FOUND': "This resource doesn't exist or was removed.",
   'STORAGE.REPOSITORY_ALREADY_EXISTS': 'A Kopia repository already exists at the selected location. Import is not supported in this version. Choose a different storage location.',
@@ -70,7 +76,7 @@ export const ERROR_CODE_FALLBACK_EN: Record<string, string> = {
   'STORAGE.S3_BUCKET_ACCESS_DENIED': 'The credentials cannot read and write the selected bucket. Grant the required bucket permissions, then try again.',
   'STORAGE.S3_BUCKET_NOT_FOUND': 'The bucket was not found. Check the bucket name, endpoint, and Region, then try again.',
   'STORAGE.S3_BUCKET_NAME_INVALID': 'The bucket name is not valid for this object storage provider. Check the naming rules and try again.',
-  'STORAGE.S3_BUCKET_NAME_UNAVAILABLE': 'The bucket name is already in use. If the bucket belongs to this account, select Existing Bucket; otherwise choose another name.',
+  'STORAGE.S3_BUCKET_NAME_UNAVAILABLE': 'This bucket name is unavailable. It may already be owned by another account or already exist in your account. If you own it, select Existing Bucket; otherwise choose a different name.',
   'STORAGE.S3_CONFIGURATION_INVALID': 'The object storage connection settings are invalid. Check the endpoint, Region, URL style, and TLS setting, then try again.',
   'STORAGE.S3_NETWORK_UNAVAILABLE': 'The object storage endpoint could not be reached. Check the endpoint and network connectivity, then try again.',
   'STORAGE.S3_TIMEOUT': 'The object storage request timed out. Check the endpoint and network connectivity, then try again.',

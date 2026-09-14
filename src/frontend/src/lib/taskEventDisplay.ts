@@ -23,12 +23,16 @@ const taskEventMessageKeys: Record<string, string> = {
   'source repository connectivity probe started': 'ops.task.eventMessage.sourceRepositoryConnectivityProbeStarted',
   'repository usage refresh queued': 'ops.task.eventMessage.repositoryUsageRefreshQueued',
   'repository usage refresh queue failed': 'ops.task.eventMessage.repositoryUsageRefreshQueueFailed',
+  'repository maintenance summary': 'ops.task.eventMessage.repositoryMaintenanceSummary',
   'backup finished with failed directories': 'ops.task.eventMessage.backupFinishedWithFailedDirectories',
   'backup completed with skipped items': 'ops.task.eventMessage.backupCompletedWithSkippedItems',
   'backup configuration reset failed': 'ops.task.eventMessage.backupConfigurationResetFailed',
   'deleting kopia snapshots for reset': 'ops.task.eventMessage.deletingKopiaSnapshotsForReset',
+  'deleting repository engine snapshots for reset': 'ops.task.eventMessage.deletingKopiaSnapshotsForReset',
   'kopia snapshot already absent; continuing reset cleanup': 'ops.task.eventMessage.kopiaSnapshotAlreadyAbsent',
+  'repository engine snapshot already absent; continuing reset cleanup': 'ops.task.eventMessage.kopiaSnapshotAlreadyAbsent',
   'deleting physical kopia snapshot': 'ops.task.eventMessage.deletingPhysicalKopiaSnapshot',
+  'deleting physical repository engine snapshot': 'ops.task.eventMessage.deletingPhysicalKopiaSnapshot',
   'physical snapshot delete failed': 'ops.task.eventMessage.physicalSnapshotDeleteFailed',
   'starting snapshot download': 'ops.task.eventMessage.startingSnapshotDownload',
   'snapshot download artifact is ready': 'ops.task.eventMessage.snapshotDownloadArtifactReady',
@@ -39,10 +43,12 @@ const taskEventMessageKeys: Record<string, string> = {
   'restore repository server failed': 'ops.task.eventMessage.restoreRepositoryServerFailed',
   'restore execution started': 'ops.task.eventMessage.restoreExecutionStarted',
   'restore item completed': 'ops.task.eventMessage.restoreItemCompleted',
+  'restore item skipped': 'ops.task.eventMessage.restoreItemSkipped',
   'restore item failed': 'ops.task.eventMessage.restoreItemFailed',
   'restore item cancelled': 'ops.task.eventMessage.restoreItemCancelled',
   'restore stopped by user': 'ops.task.eventMessage.restoreStoppedByUser',
   'restore finished with failed items': 'ops.task.eventMessage.restoreFinishedWithFailedItems',
+  'restore finished with skipped items': 'ops.task.eventMessage.restoreFinishedWithSkippedItems',
   'restore finished successfully': 'ops.task.eventMessage.restoreFinishedSuccessfully',
   'source deregistration prepared': 'ops.task.eventMessage.sourceUnregisterPrepared',
   'source unregister prepared': 'ops.task.eventMessage.sourceUnregisterPrepared',
@@ -107,5 +113,11 @@ export function taskEventMessageKey(message?: unknown): string | null {
 export function parseTaskStepStatusEvent(message?: unknown): { step: string; status: string } | null {
   const match = /^step ([a-z0-9_]+) ([a-z_]+)$/i.exec(String(message || '').trim())
   if (!match) return null
-  return { step: match[1], status: match[2].toLowerCase() }
+  // The collector neutralizes embedded engine names; step identifiers remain
+  // stable in the API and are still needed to resolve existing translations.
+  const step = ({
+    REPOSITORY_snapshot: 'kopia_snapshot',
+    delete_REPOSITORY_snapshots: 'delete_kopia_snapshots',
+  } as Record<string, string>)[match[1]] || match[1]
+  return { step, status: match[2].toLowerCase() }
 }

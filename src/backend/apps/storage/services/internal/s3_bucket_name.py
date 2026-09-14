@@ -19,6 +19,11 @@ def s3_bucket_name_error(*, platform: object, bucket: object) -> str:
 
     normalized_platform = str(platform or "").strip().lower()
     name = str(bucket or "").strip()
+    if normalized_platform == "aws" and (
+        name.startswith(("xn--", "sthree-", "amzn-s3-demo-"))
+        or name.endswith(("-s3alias", "--ol-s3", ".mrap", "--x-s3", "--table-s3"))
+    ):
+        return "Bucket names cannot use an Amazon S3 reserved prefix or suffix."
     if normalized_platform == "aliyun":
         if not _ALIYUN_BUCKET_RE.fullmatch(name):
             return (

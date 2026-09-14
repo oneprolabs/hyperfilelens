@@ -86,7 +86,7 @@ async function fillRequiredNfsFields(wrapper: VueWrapper) {
   await nextTick()
   fieldInput(wrapper, en.addNasRepo.fieldNfsHost).vm.$emit('update:modelValue', '192.168.50.10')
   fieldInput(wrapper, en.addNasRepo.fieldNfsExport).vm.$emit('update:modelValue', '/exports/backup')
-  fieldInput(wrapper, en.repositoriesPage.fieldRepoName).vm.$emit('update:modelValue', 'Primary NAS')
+  await fieldInput(wrapper, en.repositoriesPage.fieldRepoName).find('input').setValue('Primary NAS')
   await nextTick()
 }
 
@@ -95,7 +95,7 @@ async function fillRequiredSmbFields(wrapper: VueWrapper) {
   fieldInput(wrapper, en.addNasRepo.fieldSmbShare).vm.$emit('update:modelValue', 'smb-share')
   fieldInput(wrapper, en.repositoriesPage.fieldSmbUsername).vm.$emit('update:modelValue', 'backup')
   fieldInput(wrapper, en.repositoriesPage.fieldSmbPassword).vm.$emit('update:modelValue', 'secret')
-  fieldInput(wrapper, en.repositoriesPage.fieldRepoName).vm.$emit('update:modelValue', 'Primary SMB')
+  await fieldInput(wrapper, en.repositoriesPage.fieldRepoName).find('input').setValue('Primary SMB')
   await nextTick()
 }
 
@@ -116,6 +116,28 @@ function submitButton(wrapper: VueWrapper) {
 }
 
 describe('AddNasRepository Proxy decision', () => {
+  it('auto-names NAS repositories, preserves manual edits and restores automation when cleared', async () => {
+    const wrapper = await mountForm({ embedded: true })
+    const input = (label: string) => fieldInput(wrapper, label).find('input')
+    const name = () => input(en.repositoriesPage.fieldRepoName)
+    await input(en.addNasRepo.fieldSmbHost).setValue('192.168.1.10')
+    await input(en.addNasRepo.fieldSmbShare).setValue('backup')
+    expect((name().element as HTMLInputElement).value).toBe('SMB(192.168.1.10/backup)')
+    await name().setValue('My NAS')
+    await input(en.addNasRepo.fieldSmbShare).setValue('archive')
+    expect((name().element as HTMLInputElement).value).toBe('My NAS')
+    wrapper.findComponent(ElRadioGroup).vm.$emit('update:modelValue', 'nfs')
+    await nextTick()
+    await input(en.addNasRepo.fieldNfsHost).setValue('nas.example.com')
+    await input(en.addNasRepo.fieldNfsExport).setValue('/volume1/backup')
+    expect((name().element as HTMLInputElement).value).toBe('My NAS')
+    await name().setValue('')
+    expect((name().element as HTMLInputElement).value).toBe('NFS(nas.example.com/backup)')
+    await input(en.addNasRepo.fieldNfsExport).setValue('/volume1/archive/')
+    expect((name().element as HTMLInputElement).value).toBe('NFS(nas.example.com/archive)')
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.listAllNodes.mockResolvedValue(proxyNodes)

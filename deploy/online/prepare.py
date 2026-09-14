@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,13 @@ from typing import Any
 VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 REVISION_PATTERN = re.compile(r"[0-9a-f]{40}")
+PULL_PARALLELISM = 5
+PULL_ATTEMPTS = 5
+_PULL_RETRY_DELAY = os.environ.get("HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS", "15")
+PULL_RETRY_DELAY_SECONDS = (
+    min(int(_PULL_RETRY_DELAY), 60) if _PULL_RETRY_DELAY.isdecimal() else 15
+)
+PULL_RETRY_MAX_DELAY_SECONDS = 60
 GLOBAL_PREFIX = os.environ.get(
     "HFL_GLOBAL_REGISTRY_PREFIX", "docker.io/oneprolabs"
 ).rstrip("/")
@@ -32,26 +40,56 @@ CN_PREFIX = os.environ.get(
     "registry.cn-beijing.aliyuncs.com/oneprolabs",
 ).rstrip("/")
 
+TRANSIENT_REGISTRY_ERROR = re.compile(
+    r"network is unreachable|no route to host|connection (?:refused|reset|timed out)"
+    r"|i/o timeout|context deadline exceeded|tls handshake timeout|client\.timeout"
+    r"|request canceled|unexpected eof|short read|unexpected commit digest"
+    r"|too many requests"
+    r"|(?:http (?:response )?status|status(?: code)?(?: from [^:\n]+)?)"
+    r"[^0-9\n]{0,16}(?:429|5[0-9]{2})",
+    re.IGNORECASE,
+)
+PERMANENT_REGISTRY_ERROR = re.compile(
+    r"manifest unknown|pull access denied|requested access to|access denied|unauthorized|forbidden"
+    r"|no matching manifest|invalid reference format|repository does not exist",
+    re.IGNORECASE,
+)
+
+
+class RegistryNetworkError(RuntimeError):
+    """Report a registry failure caused by a retryable transport condition."""
+
+
+class RegistryImageError(RuntimeError):
+    """Report a required image that is unavailable or cannot be accessed."""
+
+
+class RegistryPreparationError(RuntimeError):
+    """Report a non-network failure while preparing required images."""
+
 
 @dataclass(frozen=True)
 class ImageSpec:
-    """Describe one published image and its local runtime identity."""
+    """Describe one image source pair and its local runtime identity."""
 
     component: str
     role: str
-    repository: str
-    tag: str
+    local_ref: str
+    global_ref: str
+    cn_ref: str
+    expected_digest: str = ""
     asset_kind: str = ""
 
-    @property
-    def local_ref(self) -> str:
-        """Return the registry-independent image reference used by Compose."""
-        return f"{self.repository}:{self.tag}"
-
     def source_ref(self, region: str) -> str:
-        """Return the published source reference for a registry region."""
-        prefix = CN_PREFIX if region == "cn" else GLOBAL_PREFIX
-        return f"{prefix}/{self.repository}:{self.tag}"
+        """Return the declared source reference for a registry region."""
+        return self.cn_ref if region == "cn" else self.global_ref
+
+    def pull_ref(self, region: str) -> str:
+        """Return an immutable ref when the source has a pinned digest."""
+        source = self.source_ref(region)
+        if not self.expected_digest:
+            return source
+        return f"{source.rsplit(':', 1)[0]}@{self.expected_digest}"
 
 
 @dataclass(frozen=True)
@@ -60,6 +98,7 @@ class ResolvedImage:
 
     spec: ImageSpec
     digest: str
+    source_ref: str
 
     def manifest_entry(self) -> dict[str, Any]:
         """Return the normalized registry delivery manifest entry."""
@@ -190,6 +229,113 @@ def replace_env_values(path: pathlib.Path, values: dict[str, str]) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def load_sourcelens_runtime(source: pathlib.Path) -> dict[str, Any]:
+    """Load and validate the pinned upstream SourceLens image contract."""
+    path = source / "deploy/online/sourcelens/runtime.json"
+    runtime = json.loads(path.read_text(encoding="utf-8"))
+    version = str(runtime.get("version") or "")
+    images = runtime.get("images") or {}
+    git_ref = str(runtime.get("git_ref") or "")
+    git_commit = str(runtime.get("git_commit") or "")
+    if (
+        not VERSION_PATTERN.fullmatch(version)
+        or git_ref != f"v{version}"
+        or not REVISION_PATTERN.fullmatch(git_commit)
+        or set(images)
+        != {
+            "backend",
+            "frontend",
+            "lensnode",
+        }
+    ):
+        raise ValueError("SourceLens runtime image contract is incomplete")
+    for name, image in images.items():
+        digest = str(image.get("digest") or "")
+        local_ref = str(image.get("local_ref") or "")
+        sources = image.get("sources") or {}
+        if not DIGEST_PATTERN.fullmatch(digest):
+            raise ValueError(f"SourceLens {name} image digest is invalid")
+        if local_ref != f"oneprolabs/sourcelens-{name}:{version}":
+            raise ValueError(f"SourceLens {name} local image ref is invalid")
+        if sources != {
+            "cn": (
+                "registry.cn-beijing.aliyuncs.com/oneprolabs/"
+                f"sourcelens-{name}:{version}"
+            ),
+            "global": f"docker.io/oneprolabs/sourcelens-{name}:{version}",
+        }:
+            raise ValueError(f"SourceLens {name} image sources are incomplete")
+    return runtime
+
+
+def load_public_runtime_specs(source: pathlib.Path) -> list[ImageSpec]:
+    """Load pinned shared images delivered through the HFL registries."""
+    path = source / "tools/dependencies/versions/runtime-images.env"
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, separator, value = line.partition("=")
+        if separator:
+            values[name] = value
+    definitions = (
+        ("postgres", "shared", "POSTGRES_IMAGE"),
+        ("redis", "shared", "REDIS_IMAGE"),
+        ("sourcelens-nginx", "sourcelens-nginx", "NGINX_IMAGE"),
+    )
+    specs: list[ImageSpec] = []
+    for component, role, variable in definitions:
+        pinned = values.get(variable, "")
+        local_ref, separator, digest = pinned.partition("@")
+        if not separator or not DIGEST_PATTERN.fullmatch(digest):
+            raise ValueError(f"{variable} must contain a pinned sha256 digest")
+        repository, tag = local_ref.rsplit(":", 1)
+        mirror_tag = f"{tag}-{digest.partition(':')[2][:12]}"
+        specs.append(
+            ImageSpec(
+                component,
+                role,
+                local_ref,
+                f"{GLOBAL_PREFIX}/{repository}:{mirror_tag}",
+                f"{CN_PREFIX}/{repository}:{mirror_tag}",
+                digest,
+            )
+        )
+    return specs
+
+
+def sourcelens_image_spec(runtime: dict[str, Any], name: str) -> ImageSpec:
+    """Build one ImageSpec from the SourceLens runtime contract."""
+    image = runtime["images"][name]
+    return ImageSpec(
+        f"sourcelens-{name}",
+        f"sourcelens-{name}",
+        image["local_ref"],
+        image["sources"]["global"],
+        image["sources"]["cn"],
+        image["digest"],
+    )
+
+
+def hfl_image_spec(
+    component: str,
+    role: str,
+    repository: str,
+    tag: str,
+    asset_kind: str = "",
+) -> ImageSpec:
+    """Build one HFL-owned regional image specification."""
+    return ImageSpec(
+        component,
+        role,
+        f"{repository}:{tag}",
+        f"{GLOBAL_PREFIX}/{repository}:{tag}",
+        f"{CN_PREFIX}/{repository}:{tag}",
+        asset_kind=asset_kind,
+    )
+
+
 def copy_runtime_files(
     source: pathlib.Path, target: pathlib.Path, version: str
 ) -> None:
@@ -206,6 +352,8 @@ def copy_runtime_files(
             "HFL_EDITION": "community",
             "HFL_BACKEND_IMAGE": f"hyperfilelens-backend:{version}",
             "HFL_FRONTEND_IMAGE": f"hyperfilelens-frontend:{version}",
+            "HFL_POSTGRES_IMAGE": "postgres:17",
+            "HFL_REDIS_IMAGE": "redis:alpine",
             "HFL_GATEWAY_VERSION": version,
             "HFL_RELEASE_CHANNEL": "release",
             "AGENT_VERSION": version,
@@ -250,9 +398,9 @@ def copy_runtime_files(
 def render_sourcelens_compose(
     template: pathlib.Path,
     destination: pathlib.Path,
-    version: str,
+    image_refs: dict[str, str],
 ) -> None:
-    """Render the shared SourceLens Compose template with HFL-versioned refs."""
+    """Render the shared SourceLens Compose template with upstream refs."""
     text = template.read_text(encoding="utf-8")
     for block in ("EMBED_BACKEND_ENV", "EMBED_LENSNODE_SERVICE"):
         pattern = re.compile(rf"(?ms)^# HFL_{block}_BEGIN\n(.*?)^# HFL_{block}_END\n")
@@ -260,13 +408,12 @@ def render_sourcelens_compose(
             raise ValueError(f"SourceLens template has an invalid {block} block")
         text = pattern.sub("", text)
     replacements = {
-        "__SOURCELENS_BACKEND_IMAGE__": (f"hyperfilelens-sourcelens-backend:{version}"),
-        "__SOURCELENS_FRONTEND_IMAGE__": (
-            f"hyperfilelens-sourcelens-frontend:{version}"
-        ),
-        "__SOURCELENS_LENSNODE_IMAGE__": (
-            f"hyperfilelens-sourcelens-lensnode:{version}"
-        ),
+        "__SOURCELENS_BACKEND_IMAGE__": image_refs["backend"],
+        "__SOURCELENS_FRONTEND_IMAGE__": image_refs["frontend"],
+        "__SOURCELENS_LENSNODE_IMAGE__": image_refs["lensnode"],
+        "__SOURCELENS_NGINX_IMAGE__": image_refs["nginx"],
+        "__SOURCELENS_POSTGRES_IMAGE__": image_refs["postgres"],
+        "__SOURCELENS_REDIS_IMAGE__": image_refs["redis"],
         "__SOURCELENS_CONSOLE_BIND_ADDRESS__": "0.0.0.0",
         "__SOURCELENS_CONSOLE_PORT__": "11445",
     }
@@ -277,7 +424,9 @@ def render_sourcelens_compose(
     destination.write_text(text, encoding="utf-8")
 
 
-def stage_sourcelens(source: pathlib.Path, target: pathlib.Path, version: str) -> None:
+def stage_sourcelens(
+    source: pathlib.Path, target: pathlib.Path, image_refs: dict[str, str]
+) -> None:
     """Stage the repository-owned SourceLens runtime tree."""
     online = source / "deploy/online/sourcelens"
     root = target / "sourcelens"
@@ -304,7 +453,7 @@ def stage_sourcelens(source: pathlib.Path, target: pathlib.Path, version: str) -
     render_sourcelens_compose(
         source / "deploy/installer/sourcelens/docker-compose.template.yml",
         root / "docker-compose.yml",
-        version,
+        image_refs,
     )
     shutil.copy2(online / "nginx/default.conf", root / "deploy/nginx/default.conf")
     shutil.copytree(
@@ -350,7 +499,7 @@ def image_digest(ref: str) -> str:
         capture_output=True,
     )
     values = json.loads((completed.stdout or "[]").strip())
-    repository_path = ref.rsplit(":", 1)[0].split("/", 1)[-1]
+    repository_path = ref.split("@", 1)[0].rsplit(":", 1)[0].split("/", 1)[-1]
     digests = {
         value.rsplit("@", 1)[-1]
         for value in values
@@ -364,47 +513,183 @@ def image_digest(ref: str) -> str:
     return valid[0]
 
 
-def resolve_image(
-    spec: ImageSpec,
-    preferred_region: str,
-    position: int,
-    total: int,
-) -> ResolvedImage:
-    """Pull one public image with regional fallback and retain its local alias."""
-    fallback = "global" if preferred_region == "cn" else "cn"
-    failures: list[str] = []
-    image_kind = "release asset image" if spec.asset_kind else "runtime image"
-    for region in (preferred_region, fallback):
-        source_ref = spec.source_ref(region)
+def verify_image_platform(ref: str) -> None:
+    """Reject a cached or pulled image for an unexpected runtime platform."""
+    completed = run(
+        ["docker", "image", "inspect", ref, "--format", "{{.Os}}/{{.Architecture}}"],
+        capture_output=True,
+    )
+    platform = (completed.stdout or "").strip()
+    if platform != "linux/amd64":
+        raise ValueError(
+            f"image {ref} has unexpected platform {platform or '<missing>'}"
+        )
+
+
+def write_pull_plan(path: pathlib.Path, specs: list[ImageSpec], region: str) -> None:
+    """Write a pull-only Compose model for one registry region."""
+    lines = ["services:"]
+    for spec in specs:
+        lines.extend(
+            (
+                f"  {spec.component}:",
+                f"    image: {json.dumps(spec.pull_ref(region))}",
+                '    platform: "linux/amd64"',
+            )
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def pull_image_batch(
+    specs: list[ImageSpec], region: str, *, concise_output: bool = False
+) -> subprocess.CompletedProcess[str]:
+    """Pull one image batch through Docker Compose's native scheduler."""
+    with tempfile.TemporaryDirectory(prefix="hfl-online-pull-") as temporary:
+        compose_file = pathlib.Path(temporary) / "docker-compose.yml"
+        write_pull_plan(compose_file, specs, region)
+        if concise_output:
+            message = (
+                f"  [....] Pulling {len(specs)} container images "
+                f"· up to {PULL_PARALLELISM} concurrent downloads"
+            )
+        else:
+            message = (
+                f"[....] Pulling {len(specs)} installation images concurrently "
+                f"· maximum {PULL_PARALLELISM} active downloads"
+            )
+        print(message, flush=True)
+        # A PTY preserves Compose's familiar aggregate progress renderer. The
+        # online parent mirrors the relayed stream into its durable log.
+        return run_with_native_progress(
+            [
+                "docker",
+                "compose",
+                "--parallel",
+                str(PULL_PARALLELISM),
+                "-f",
+                str(compose_file),
+                "pull",
+                "--ignore-pull-failures",
+            ]
+        )
+
+
+def inspect_pulled_images(
+    specs: list[ImageSpec], region: str
+) -> tuple[dict[str, ResolvedImage], list[ImageSpec]]:
+    """Resolve usable images from one region without trusting Compose output."""
+    resolved: dict[str, ResolvedImage] = {}
+    unresolved: list[ImageSpec] = []
+    for spec in specs:
+        source_ref = spec.pull_ref(region)
+        try:
+            verify_image_platform(source_ref)
+            # Inspecting an immutable ref proves that Docker retained the
+            # requested manifest identity. Multi-arch pulls may expose both
+            # index and child RepoDigests, so do not require a singular value.
+            digest = spec.expected_digest or image_digest(source_ref)
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            unresolved.append(spec)
+            continue
+        resolved[spec.component] = ResolvedImage(
+            spec=spec,
+            digest=digest,
+            source_ref=source_ref,
+        )
+    return resolved, unresolved
+
+
+def registry_failure_is_transient(output: str) -> bool:
+    """Return whether Docker reported a retryable registry transport failure."""
+    return bool(TRANSIENT_REGISTRY_ERROR.search(output))
+
+
+def registry_failure_is_terminal(output: str) -> bool:
+    """Return whether Docker reported a non-retryable image failure."""
+    return bool(PERMANENT_REGISTRY_ERROR.search(output))
+
+
+def registry_retry_delay(completed_attempt: int) -> int:
+    """Return the capped delay before the next same-registry attempt."""
+    return min(
+        PULL_RETRY_DELAY_SECONDS * (2 ** (completed_attempt - 1)),
+        PULL_RETRY_MAX_DELAY_SECONDS,
+    )
+
+
+def pull_images(
+    specs: list[ImageSpec],
+    selected_region: str,
+    *,
+    concise_output: bool = False,
+) -> list[ResolvedImage]:
+    """Pull all images concurrently from the selected registry region."""
+    pull_outputs: list[str] = []
+    resolved: dict[str, ResolvedImage] = {}
+    unresolved = specs
+    for attempt in range(1, PULL_ATTEMPTS + 1):
+        pull = pull_image_batch(
+            unresolved, selected_region, concise_output=concise_output
+        )
+        output = pull.stdout or ""
+        pull_outputs.append(output)
+        attempt_resolved, unresolved = inspect_pulled_images(
+            unresolved, selected_region
+        )
+        resolved.update(attempt_resolved)
+        if not unresolved:
+            break
+        if (
+            attempt >= PULL_ATTEMPTS
+            or registry_failure_is_terminal(output)
+            or not registry_failure_is_transient(output)
+        ):
+            break
+        delay = registry_retry_delay(attempt)
+        prefix = "  " if concise_output else ""
         print(
-            f"[....] Pulling {image_kind} ({position}/{total}): {source_ref}",
+            f"{prefix}[WARN] {len(unresolved)} required container images "
+            "are not ready locally",
             flush=True,
         )
-        # A PTY preserves Docker's familiar live renderer. The online parent
-        # mirrors the relayed stream into its durable, timestamped session log.
-        completed = run_with_native_progress(
-            ["docker", "pull", "--platform", "linux/amd64", source_ref]
+        print(
+            f"{prefix}       Retrying in {delay} seconds "
+            f"({attempt + 1}/{PULL_ATTEMPTS})",
+            flush=True,
         )
-        if completed.returncode != 0:
-            detail = re.sub(
-                r"\x1b\[[0-9;?]*[ -/]*[@-~]",
-                "",
-                completed.stdout or "",
-            ).replace("\r", "\n").strip()
-            if detail:
-                detail = detail[-500:]
-            else:
-                detail = f"docker pull exited with status {completed.returncode}"
-            failures.append(f"{source_ref}: {detail}")
-            continue
-        digest = image_digest(source_ref)
-        run(["docker", "tag", source_ref, spec.local_ref])
-        print(f"[ OK ] {image_kind.title()} ready: {spec.local_ref}@{digest}", flush=True)
-        return ResolvedImage(spec=spec, digest=digest)
-    raise RuntimeError(
-        f"neither public registry could provide {spec.local_ref}: "
-        + "; ".join(failures)
-    )
+        time.sleep(delay)
+
+    if unresolved:
+        if registry_failure_is_terminal(pull_outputs[-1]):
+            raise RegistryImageError(
+                "Required container images are unavailable or access was denied."
+            )
+        if pull.returncode == 0:
+            raise RegistryPreparationError(
+                "Required container images could not be verified locally."
+            )
+        if not registry_failure_is_transient(pull_outputs[-1]):
+            raise RegistryPreparationError(
+                "Docker could not prepare the required container images."
+            )
+        raise RegistryNetworkError(
+            "Required container images could not be downloaded completely "
+            f"after {attempt} attempt(s)."
+        )
+
+    result: list[ResolvedImage] = []
+    total = len(specs)
+    for position, spec in enumerate(specs, start=1):
+        image = resolved[spec.component]
+        run(["docker", "tag", image.source_ref, spec.local_ref])
+        if not concise_output:
+            print(
+                f"[ OK ] Installation image {position}/{total} ready · "
+                f"{spec.local_ref}@{image.digest}",
+                flush=True,
+            )
+        result.append(image)
+    return result
 
 
 def image_revision(ref: str) -> str:
@@ -540,6 +825,7 @@ def write_sourcelens_build_info(
     source: pathlib.Path,
     target: pathlib.Path,
     runtime: list[ResolvedImage],
+    lensnode: ImageSpec,
 ) -> dict[str, Any]:
     """Write the semantic SourceLens bundle identity used by upgrades."""
     base = json.loads(
@@ -560,7 +846,7 @@ def write_sourcelens_build_info(
         "build_compose_file": "docker-compose.standalone.yml",
         "network": "hyperfilelens-bridge",
         "install_dir": "/opt/hyperfilelens/sourcelens",
-        "lensnode_image": by_component["sourcelens-lensnode"].spec.local_ref,
+        "lensnode_image": lensnode.local_ref,
         "embed_local_lensnode": False,
         "images": {
             name: {
@@ -570,14 +856,25 @@ def write_sourcelens_build_info(
                 ),
                 "digest": by_component[f"sourcelens-{name}"].digest,
             }
-            for name in ("backend", "frontend", "lensnode")
+            for name in ("backend", "frontend")
         },
     }
-    nginx = by_component["sourcelens-nginx"]
-    info["images"]["nginx"] = {
-        "ref": nginx.spec.local_ref,
-        "digest": nginx.digest,
+    info["images"]["lensnode"] = {
+        "ref": lensnode.local_ref,
+        "upstream_ref": lensnode.source_ref("global"),
+        "digest": lensnode.expected_digest,
     }
+    for name, component in (
+        ("nginx", "sourcelens-nginx"),
+        ("postgres", "postgres"),
+        ("redis", "redis"),
+    ):
+        image = by_component[component]
+        info["images"][name] = {
+            "ref": image.spec.local_ref,
+            "upstream_ref": image.spec.source_ref("global"),
+            "digest": image.digest,
+        }
     (target / "sourcelens/BUILD_INFO.json").write_text(
         json.dumps(info, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -664,6 +961,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--version", required=True)
     parser.add_argument("--region", choices=("cn", "global"), required=True)
     parser.add_argument("--output", type=pathlib.Path, required=True)
+    parser.add_argument("--concise-output", action="store_true")
     return parser.parse_args()
 
 
@@ -680,40 +978,39 @@ def main() -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
 
     copy_runtime_files(source, target, version)
-    stage_sourcelens(source, target, version)
+    sourcelens_runtime = load_sourcelens_runtime(source)
+    sourcelens_specs = [
+        sourcelens_image_spec(sourcelens_runtime, name)
+        for name in ("backend", "frontend")
+    ]
+    lensnode_spec = sourcelens_image_spec(sourcelens_runtime, "lensnode")
+    public_specs = load_public_runtime_specs(source)
+    public_by_component = {spec.component: spec for spec in public_specs}
+    stage_sourcelens(
+        source,
+        target,
+        {
+            "backend": sourcelens_specs[0].local_ref,
+            "frontend": sourcelens_specs[1].local_ref,
+            "lensnode": lensnode_spec.local_ref,
+            "nginx": public_by_component["sourcelens-nginx"].local_ref,
+            "postgres": public_by_component["postgres"].local_ref,
+            "redis": public_by_component["redis"].local_ref,
+        },
+    )
 
     runtime_specs = [
-        ImageSpec("hfl-backend", "hyperfilelens", "hyperfilelens-backend", version),
-        ImageSpec("hfl-frontend", "hyperfilelens", "hyperfilelens-frontend", version),
-        ImageSpec(
-            "sourcelens-backend",
-            "sourcelens-backend",
-            "hyperfilelens-sourcelens-backend",
-            version,
+        hfl_image_spec(
+            "hfl-backend", "hyperfilelens", "hyperfilelens-backend", version
         ),
-        ImageSpec(
-            "sourcelens-frontend",
-            "sourcelens-frontend",
-            "hyperfilelens-sourcelens-frontend",
-            version,
+        hfl_image_spec(
+            "hfl-frontend", "hyperfilelens", "hyperfilelens-frontend", version
         ),
-        ImageSpec(
-            "sourcelens-lensnode",
-            "sourcelens-lensnode",
-            "hyperfilelens-sourcelens-lensnode",
-            version,
-        ),
-        ImageSpec(
-            "sourcelens-nginx",
-            "sourcelens-nginx",
-            "hyperfilelens-sourcelens-nginx",
-            "stable-alpine",
-        ),
-        ImageSpec("postgres", "shared", "hyperfilelens-postgres", "17"),
-        ImageSpec("redis", "shared", "hyperfilelens-redis", "alpine"),
+        *sourcelens_specs,
+        *public_specs,
     ]
     asset_specs = [
-        ImageSpec(
+        hfl_image_spec(
             f"{kind}-assets",
             f"{kind}-assets",
             f"hyperfilelens-{kind}-assets",
@@ -722,15 +1019,19 @@ def main() -> int:
         )
         for kind in ("agent", "gateway", "language")
     ]
-    runtime = [
-        resolve_image(spec, args.region, position, len(runtime_specs))
-        for position, spec in enumerate(runtime_specs, start=1)
-    ]
-    print(f"[ OK ] Runtime images are ready: {len(runtime)} images", flush=True)
-    assets = [
-        resolve_image(spec, args.region, position, len(asset_specs))
-        for position, spec in enumerate(asset_specs, start=1)
-    ]
+    if not args.concise_output:
+        print("\nInstallation images", flush=True)
+    images = pull_images(
+        runtime_specs + asset_specs,
+        args.region,
+        concise_output=args.concise_output,
+    )
+    runtime = images[: len(runtime_specs)]
+    assets = images[len(runtime_specs) :]
+    if args.concise_output:
+        print(f"  [ OK ] All {len(images)} container images are ready", flush=True)
+    else:
+        print(f"[ OK ] All {len(images)} installation images are ready", flush=True)
 
     revision = image_revision(f"hyperfilelens-backend:{version}")
     if image_revision(f"hyperfilelens-frontend:{version}") != revision:
@@ -740,23 +1041,47 @@ def main() -> int:
         "gateway": "Data Gateway packages",
         "language": "Language packs",
     }
+    if args.concise_output:
+        print(
+            "\n  [....] Preparing Agent, Data Gateway, and language packages",
+            flush=True,
+        )
+    else:
+        print("\nRelease package", flush=True)
     for asset in assets:
         label = asset_labels[asset.spec.asset_kind]
-        print(f"[....] Preparing {label}", flush=True)
+        if not args.concise_output:
+            print(f"[....] Preparing {label}", flush=True)
         try:
             extract_asset(asset, target / "payload")
         finally:
             discard_asset_image(asset)
-        print(f"[ OK ] {label} are ready", flush=True)
-    sourcelens = write_sourcelens_build_info(source, target, runtime)
+        if not args.concise_output:
+            print(f"[ OK ] {label} are ready", flush=True)
+    if args.concise_output:
+        print(
+            "  [ OK ] Agent, Data Gateway, and language packages are ready",
+            flush=True,
+        )
+    sourcelens = write_sourcelens_build_info(source, target, runtime, lensnode_spec)
     write_manifest(target, version, revision, runtime, assets, sourcelens)
-    print(f"[ OK ] Prepared Community package: {target}")
+    if not args.concise_output:
+        print(f"[ OK ] Community release package prepared · {target}")
     return 0
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except RegistryNetworkError as error:
+        print(f"[ERROR] Temporary container registry failure: {error}", file=sys.stderr)
+        raise SystemExit(75) from error
+    except RegistryImageError as error:
+        print(f"[ERROR] {error}", file=sys.stderr)
+        raise SystemExit(76) from error
+    except RegistryPreparationError as error:
+        print(f"[ERROR] {error}", file=sys.stderr)
+        raise SystemExit(77) from error
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         print(f"[FAIL] {error}", file=sys.stderr)
         raise SystemExit(1) from error

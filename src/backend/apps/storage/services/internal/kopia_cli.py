@@ -10,6 +10,7 @@ import subprocess
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -24,6 +25,10 @@ from apps.storage.services.internal.repository_secrets import (
     secret_values_for_scrub,
 )
 from apps.storage.services.internal.repository_endpoints import repository_control_endpoint
+from apps.storage.services.internal.repository_maintenance_summary import (
+    parse_maintenance_info_summary,
+    parse_maintenance_stderr_summary,
+)
 from apps.storage.services.internal.s3_url_style import (
     S3_URL_STYLE_AUTO,
     S3_URL_STYLE_VIRTUAL_HOSTED,
@@ -75,6 +80,7 @@ KopiaControlCallback = Callable[[], KopiaControlDecision]
 class KopiaResult:
     stdout: str
     stderr: str
+    maintenance_summary: dict | None = None
 
 
 def create_s3_repository(repository: Repository, *, timeout_seconds: int | None = None) -> KopiaResult:
@@ -176,6 +182,7 @@ def run_maintenance(
     args = ["maintenance", "run"]
     if full:
         args.append("--full")
+    maintenance_started_at = datetime.now(UTC)
     result = _run_repository_command(
         repository,
         args,
@@ -185,7 +192,33 @@ def run_maintenance(
     )
     if result.returncode != 0:
         raise KopiaCliError(_format_failure("Kopia repository maintenance failed", result))
-    return KopiaResult(stdout=result.stdout, stderr=result.stderr)
+    mode = "full" if full else "quick"
+    summary = None
+    try:
+        info = _run_repository_command(
+            repository,
+            ["maintenance", "info", "--json"],
+            timeout_seconds=timeout_seconds,
+            config_file=config_file,
+            control=control,
+        )
+        if info.returncode == 0:
+            summary = parse_maintenance_info_summary(
+                info.stdout,
+                mode=mode,
+                started_at=maintenance_started_at,
+            )
+    except (KopiaCliCancelled, KopiaExecutionLeaseLost):
+        raise
+    except KopiaCliError:
+        summary = None
+    if summary is None:
+        summary = parse_maintenance_stderr_summary(result.stderr, mode=mode)
+    return KopiaResult(
+        stdout=result.stdout,
+        stderr=result.stderr,
+        maintenance_summary=summary,
+    )
 
 
 def delete_s3_snapshots(

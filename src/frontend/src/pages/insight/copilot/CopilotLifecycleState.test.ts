@@ -8,6 +8,11 @@ import type { LensSessionLink } from '../../../lib/lensApi'
 import { en } from '../../../locales/en'
 import CopilotLifecycleState from './CopilotLifecycleState.vue'
 
+const ButtonStub = {
+  props: ['type'],
+  template: '<button :data-type="type"><slot /></button>',
+}
+
 function session(overrides: Partial<LensSessionLink> = {}): LensSessionLink {
   return {
     id: 1,
@@ -75,7 +80,7 @@ function mountState(value: LensSessionLink) {
     global: {
       plugins: [i18n],
       stubs: {
-        ElButton: { template: '<button><slot /></button>' },
+        ElButton: ButtonStub,
       },
     },
   })
@@ -140,8 +145,8 @@ describe('CopilotLifecycleState', () => {
       cleanup_status: 'blocked',
     }))
 
-    expect(wrapper.text()).toContain('Chat Cleanup Needs Attention')
-    expect(wrapper.text()).toContain('Temporary data remains protected')
+    expect(wrapper.text()).toContain('Chat Cleanup Paused')
+    expect(wrapper.text()).toContain('Cleanup could not finish safely')
     expect(wrapper.text()).not.toContain('Deleting Chat')
   })
 
@@ -152,9 +157,41 @@ describe('CopilotLifecycleState', () => {
       cleanup_status: 'blocked',
     }))
 
-    expect(wrapper.text()).toContain('Chat Cleanup Needs Attention')
+    expect(wrapper.text()).toContain('Chat Couldn’t Be Deleted')
     expect(wrapper.text()).toContain('Retry Delete')
+    expect(wrapper.text()).not.toContain('Force Delete')
     expect(wrapper.text()).not.toContain('Deleting Chat')
+  })
+
+  it('offers force delete for an eligible offline private Gateway cleanup', async () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'deleting',
+      cleanup_intent: 'delete_session',
+      cleanup_status: 'blocked',
+      gateway_scope: 'organization',
+      force_delete_available: true,
+    }))
+
+    expect(wrapper.text()).toContain('Private Data Gateway is offline')
+    expect(wrapper.text()).toContain('Force Delete')
+    await wrapper.findAll('.copilot-lifecycle-actions button')[1]!.trigger('click')
+    expect(wrapper.emitted('forceDelete')).toHaveLength(1)
+  })
+
+  it('offers force delete while an eligible private Gateway cleanup is pending', async () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'deleting',
+      cleanup_intent: 'delete_session',
+      cleanup_status: 'pending',
+      gateway_scope: 'organization',
+      force_delete_available: true,
+    }))
+
+    expect(wrapper.text()).toContain('Deleting Chat')
+    expect(wrapper.text()).toContain('Private Data Gateway is offline')
+    expect(wrapper.text()).toContain('Force Delete')
+    await wrapper.get('.copilot-lifecycle-actions button').trigger('click')
+    expect(wrapper.emitted('forceDelete')).toHaveLength(1)
   })
 
   it('shows a safe lifecycle error and hides retry for configuration failures', () => {
@@ -180,6 +217,20 @@ describe('CopilotLifecycleState', () => {
     expect(wrapper.text()).toContain('Bring its Agent and LensNode online')
     expect(wrapper.text()).not.toContain('internal gateway diagnostic')
     expect(wrapper.text()).toContain('Try Again')
+  })
+
+  it('uses the Protection button hierarchy for retryable preparation failures', () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'failed',
+      lifecycle_error_code: 'INSIGHT.DATA_GATEWAY_UNAVAILABLE',
+      lifecycle_error_retryable: true,
+    }))
+    const buttons = wrapper.findAll('.copilot-lifecycle-actions button')
+
+    expect(buttons.map((button) => [button.text(), button.attributes('data-type')])).toEqual([
+      ['Delete Chat', 'danger'],
+      ['Try Again', 'primary'],
+    ])
   })
 
   it('uses quota context for Public Data Gateway capacity failures', () => {

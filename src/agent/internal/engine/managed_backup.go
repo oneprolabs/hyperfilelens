@@ -45,6 +45,13 @@ const (
 	repositoryAlreadyExistsMessage       = "A Kopia repository already exists at the selected location. Import is not supported in this version. Choose a different storage location."
 	nasRepositoryWriteDeniedCode         = "NAS_REPOSITORY_WRITE_DENIED"
 	nasRepositoryWriteDeniedMessage      = "The NAS share was mounted, but the Agent does not have permission to write repository data."
+	snapshotFailureSampleLimit           = 10
+	snapshotFailurePathLimit             = 1024
+	snapshotFailureErrorLimit            = 2048
+	snapshotDownloadMaxSelections        = 100
+	snapshotDownloadArchiveRoot          = "snapshot-download"
+	snapshotDownloadStaleAge             = 24 * time.Hour
+	snapshotDownloadSourceDirMaxBytes    = 180
 )
 
 type repositoryPrepareMode uint8
@@ -94,6 +101,7 @@ type repositoryOwnership struct {
 var (
 	kopiaS3URLStyleCapabilities sync.Map
 	backupOperationIDPattern    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	snapshotFatalCountPattern   = regexp.MustCompile(`(?i)found\s+(\d+)\s+fatal\s+error`)
 )
 
 func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
@@ -562,6 +570,11 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	if envErr != nil {
 		return "", nil, nil, repositorySpec{}, envErr.Error()
 	}
+	cachePolicy, cachePolicyErr := kopiaCachePolicyFromPayload(p)
+	if cachePolicyErr != nil {
+		return "", nil, nil, spec, cachePolicyErr.Error()
+	}
+	cacheArgs := cachePolicy.flags()
 	if spec.Type == "s3" {
 		env["AWS_ACCESS_KEY_ID"] = spec.AccessKeyID
 		env["AWS_SECRET_ACCESS_KEY"] = spec.SecretAccessKey
@@ -674,6 +687,13 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		"repository_create":  nil,
 		"repository_connect": nil,
 	}
+	if cacheErr := applyManagedKopiaCachePolicy(ctx, bin, configFile, env, cachePolicy); cacheErr != nil {
+		// A running repository operation must not be made unavailable solely
+		// because its cache policy could not be refreshed. Keep the last valid
+		// config and report the deferred application in the task result.
+		result["kopia_cache_policy_error"] = cacheErr.Error()
+		slog.Warn("managed_repository", "event", "cache_policy_apply_deferred", "task_id", taskID, "err", cacheErr.Error())
+	}
 	if spec.Type == "s3" && mode != repositoryPrepareInitialize && !skipOwnershipCheck {
 		client, ownershipErr := newS3CleanupClient(spec)
 		if ownershipErr == nil {
@@ -713,7 +733,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	}
 	runConnect := func(event string) (process.Result, error) {
 		started := time.Now()
-		connectArgs := repositoryArgs(configFile, spec, false)
+		connectArgs := append(repositoryArgs(configFile, spec, false), cacheArgs...)
 		slog.Info("managed_repository", "event", event+"_begin", "task_id", taskID, "repo_type", spec.Type)
 		connectRes, connectErr := runProcessWithTimeout(
 			ctx, managedRepositoryKopiaCommandTimeout, bin, connectArgs, env, "",
@@ -725,7 +745,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 
 	statusVerified := false
 	if mode == repositoryPrepareInitialize {
-		createArgs := repositoryArgs(configFile, spec, true)
+		createArgs := append(repositoryArgs(configFile, spec, true), cacheArgs...)
 		started := time.Now()
 		slog.Info("managed_repository", "event", "create_begin", "task_id", taskID, "repo_type", spec.Type)
 		createRes, createErr := runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, createArgs, env, "")
@@ -991,7 +1011,21 @@ func (e *Engine) runManagedRepositoryMaintenance(
 		return "failed", result, err.Error()
 	}
 	maintenanceConfigFile := strings.TrimSuffix(configFile, filepath.Ext(configFile)) + ".maintenance.config"
-	connectArgs := repositoryArgs(maintenanceConfigFile, spec, false)
+	cachePolicy, cacheErr := kopiaCachePolicyFromPayload(p)
+	if cacheErr != nil {
+		return "failed", result, cacheErr.Error()
+	}
+	cacheArgs := cachePolicy.flags()
+	if cacheErr := applyManagedKopiaCachePolicy(ctx, bin, maintenanceConfigFile, env, cachePolicy); cacheErr != nil {
+		result["maintenance_kopia_cache_policy_error"] = cacheErr.Error()
+		slog.Warn(
+			"managed_repository",
+			"event", "maintenance_cache_policy_apply_deferred",
+			"task_id", taskID,
+			"err", cacheErr.Error(),
+		)
+	}
+	connectArgs := append(repositoryArgs(maintenanceConfigFile, spec, false), cacheArgs...)
 	connectResult, connectErr := process.Run(ctx, bin, connectArgs, env, "")
 	if connectErr != nil {
 		statusArgs := []string{"--config-file=" + maintenanceConfigFile, "repository", "status"}
@@ -1042,6 +1076,7 @@ func (e *Engine) runManagedRepositoryMaintenance(
 		"phase":          "repository_maintenance",
 		"operation_type": operationType,
 	})
+	maintenanceStartedAt := time.Now().UTC()
 	maintenanceResult, maintenanceErr := process.Run(ctx, bin, args, env, "")
 	result["operation_type"] = operationType
 	result["repository_type"] = spec.Type
@@ -1051,6 +1086,21 @@ func (e *Engine) runManagedRepositoryMaintenance(
 			return "failed", result, "canceled"
 		}
 		return "failed", result, maintenanceErr.Error()
+	}
+	infoResult, _ := process.Run(
+		ctx,
+		bin,
+		[]string{"--config-file=" + maintenanceConfigFile, "maintenance", "info", "--json"},
+		env,
+		"",
+	)
+	if summary := buildMaintenanceSummary(
+		infoResult.Stdout,
+		maintenanceResult.Stderr,
+		strings.TrimPrefix(operationType, "maintenance."),
+		maintenanceStartedAt,
+	); summary != nil {
+		result["maintenance_summary"] = summary
 	}
 	appendRepositoryUsageMetrics(ctx, bin, configFile, env, spec, result)
 	return "success", result, ""
@@ -1543,11 +1593,13 @@ func runPreparedManagedSnapshot(
 
 	snapshotArgs := managedBackupSnapshotArgs(configFile, sourcePath, operationID)
 	progressState := newKopiaProgressReporter()
+	failureCollector := newSnapshotFailureCollector()
 	runCtx, cancelRun := context.WithCancel(ctx)
 	stallSeconds := kopiaProgressStallSeconds()
 	stallDone := make(chan struct{})
 	go monitorKopiaProgressStall(runCtx, cancelRun, progressState, stallSeconds, stallDone)
-	onProgressLine := func(line string, _ bool) {
+	onProgressLine := func(line string, stderr bool) {
+		failureCollector.observe(line)
 		snapshot, ok := kopia.ParseProgressLine(line)
 		if !ok {
 			return
@@ -1568,9 +1620,31 @@ func runPreparedManagedSnapshot(
 	stalled := runCtx.Err() != nil && ctx.Err() == nil && progressState.stallExceeded(stallSeconds)
 	close(stallDone)
 	cancelRun()
-	result["snapshot_create"] = commandResult(res)
-	if parsed := parseSnapshotOutput(res.Stdout); len(parsed) > 0 {
-		for key, value := range parsed {
+	parsedResult := parseSnapshotOutput(res.Stdout)
+	failureSummary, _ := parsedResult["snapshot_failure_summary"].(map[string]any)
+	if failureSummary == nil {
+		failureSummary = failureCollector.summary()
+	}
+	command := commandResult(res)
+	if failureSummary != nil {
+		// Full Kopia JSON and stderr repeat the same per-path failures and can be
+		// hundreds of kilobytes. Preserve bounded tails for legacy diagnostics;
+		// the stable summary below is the authoritative transport contract.
+		delete(command, "stdout")
+		delete(command, "stdout_tail")
+		delete(command, "stderr")
+		result["snapshot_failure_summary"] = failureSummary
+		result["snapshot"] = compactSnapshotFailureProjection(failureSummary)
+	}
+	result["snapshot_create"] = command
+	if len(parsedResult) > 0 {
+		if failureSummary != nil {
+			delete(parsedResult, "snapshot")
+		}
+		for key, value := range parsedResult {
+			if key == "snapshot_failure_summary" && failureSummary != nil {
+				continue
+			}
 			result[key] = value
 		}
 	}
@@ -1952,6 +2026,85 @@ type insightSnapshotBrowseCollector struct {
 	skippedSpecialCount int64
 }
 
+type snapshotBrowsePageCollector struct {
+	basePath string
+	offset   int
+	limit    int
+	seen     int
+	entries  []map[string]any
+	hasMore  bool
+	invalid  bool
+}
+
+func newSnapshotBrowsePageCollector(basePath string, limit int, cursor string) (*snapshotBrowsePageCollector, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	offset := 0
+	if strings.TrimSpace(cursor) != "" {
+		parsed, err := strconv.Atoi(strings.TrimSpace(cursor))
+		if err != nil || parsed < 0 {
+			return nil, fmt.Errorf("cursor must be a non-negative integer")
+		}
+		offset = parsed
+	}
+	return &snapshotBrowsePageCollector{
+		basePath: strings.Trim(strings.TrimSpace(basePath), "/\\"),
+		offset:   offset,
+		limit:    limit,
+		entries:  make([]map[string]any, 0, limit),
+	}, nil
+}
+
+func (collector *snapshotBrowsePageCollector) consume(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return true
+	}
+	mode, size, modTime, name, ok := parseSnapshotBrowseLongLine(line)
+	if !ok {
+		collector.invalid = true
+		return false
+	}
+	if collector.seen < collector.offset {
+		collector.seen++
+		return true
+	}
+	if len(collector.entries) >= collector.limit {
+		collector.hasMore = true
+		return false
+	}
+	collector.seen++
+	entryType, downloadable, downloadReason := snapshotBrowseEntryType(mode, "")
+	isDir := entryType == "dir"
+	path := normalizeSnapshotBrowsePath(name, name, collector.basePath, "")
+	entry := map[string]any{
+		"name":         snapshotBrowseName(name, path),
+		"path":         path,
+		"type":         entryType,
+		"is_dir":       isDir,
+		"size_bytes":   size,
+		"modified_at":  modTime,
+		"downloadable": downloadable,
+		"has_children": nil,
+	}
+	if downloadReason != "" {
+		entry["download_reason"] = downloadReason
+	}
+	collector.entries = append(collector.entries, entry)
+	return true
+}
+
+func (collector *snapshotBrowsePageCollector) nextCursor() string {
+	if !collector.hasMore {
+		return ""
+	}
+	return strconv.Itoa(collector.offset + len(collector.entries))
+}
+
 func newInsightSnapshotBrowseCollector(basePath string, limit int) *insightSnapshotBrowseCollector {
 	if limit <= 0 || limit > 500 {
 		limit = 500
@@ -2101,21 +2254,37 @@ func (e *Engine) runManagedSnapshotBrowse(
 	if prepErr != "" {
 		return "failed", result, prepErr
 	}
-	target := snapshotObjectPath(p.SnapshotID, p.Path)
-	args := []string{"--config-file=" + configFile, "ls", "--json", target}
-	res, runErr := process.Run(ctx, bin, args, env, "")
-	if runErr != nil && snapshotBrowseJsonUnsupported(res) {
-		args = []string{"--config-file=" + configFile, "ls", "-l", target}
-		res, runErr = process.Run(ctx, bin, args, env, "")
+	collector, collectorErr := newSnapshotBrowsePageCollector(p.Path, p.Limit, p.Cursor)
+	if collectorErr != nil {
+		return "failed", result, collectorErr.Error()
 	}
+	target := snapshotObjectPath(p.SnapshotID, p.Path)
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	res, runErr := process.RunStreamingDiscardStdout(
+		runCtx,
+		bin,
+		[]string{"--config-file=" + configFile, "ls", "-l", target},
+		env,
+		"",
+		func(line string, stderr bool) {
+			if !stderr && !collector.consume(line) {
+				cancelRun()
+			}
+		},
+	)
 	result["snapshot_browse"] = commandResult(res)
 	result["path"] = strings.Trim(strings.TrimSpace(p.Path), "/\\")
 	result["snapshot_id"] = p.SnapshotID
-	entries := parseSnapshotBrowseOutput(res.Stdout, p.Path, p.SnapshotID)
-	result["entries"] = entries
-	result["count"] = len(entries)
-	result["has_more"] = false
-	if runErr != nil {
+	result["entries"] = collector.entries
+	result["count"] = len(collector.entries)
+	result["has_more"] = collector.hasMore
+	result["next_cursor"] = collector.nextCursor()
+	if collector.invalid {
+		return "failed", result, "snapshot browse returned invalid directory entries"
+	}
+	limitReached := collector.hasMore && ctx.Err() == nil
+	if runErr != nil && !limitReached {
 		return "failed", result, snapshotBrowseFailureMessage(res, runErr)
 	}
 	return "success", result, ""
@@ -2354,13 +2523,390 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 	return "success", result, ""
 }
 
+type snapshotDownloadGroup struct {
+	snapshotID    string
+	sourcePath    string
+	pathType      string
+	rootSizeBytes int64
+	paths         []string
+}
+
+func snapshotDownloadGroups(p Payload) ([]snapshotDownloadGroup, bool, error) {
+	raw, exists := p.Extra["groups"]
+	if !exists || raw == nil {
+		return nil, false, nil
+	}
+	items, ok := raw.([]any)
+	if !ok || len(items) == 0 {
+		return nil, true, fmt.Errorf("snapshot download groups must be a non-empty list")
+	}
+	groups := make([]snapshotDownloadGroup, 0, len(items))
+	selectedCount := 0
+	for _, item := range items {
+		data, ok := item.(map[string]any)
+		if !ok {
+			return nil, true, fmt.Errorf("snapshot download group is invalid")
+		}
+		group := snapshotDownloadGroup{
+			snapshotID: strings.TrimSpace(stringValue(data["snapshot_id"])),
+			sourcePath: strings.TrimSpace(stringValue(data["source_path"])),
+			pathType:   strings.ToLower(strings.TrimSpace(stringValue(data["path_type"]))),
+		}
+		if group.snapshotID == "" || group.sourcePath == "" {
+			return nil, true, fmt.Errorf("snapshot download group identity is invalid")
+		}
+		if group.pathType != "file" && group.pathType != "directory" {
+			return nil, true, fmt.Errorf("snapshot download group path type is invalid")
+		}
+		if value, valueOK := exactInt64Value(data["root_size_bytes"]); valueOK && value >= 0 {
+			group.rootSizeBytes = value
+		}
+		rawPaths, ok := data["paths"].([]any)
+		if !ok || len(rawPaths) == 0 {
+			return nil, true, fmt.Errorf("snapshot download group paths must be a non-empty list")
+		}
+		seen := map[string]struct{}{}
+		for _, rawPath := range rawPaths {
+			value := strings.TrimSpace(stringValue(rawPath))
+			value = strings.ReplaceAll(value, "\\", "/")
+			if value != "" {
+				if path.IsAbs(value) || filepath.VolumeName(value) != "" {
+					return nil, true, fmt.Errorf("snapshot download path is invalid")
+				}
+				value = strings.Trim(value, "/")
+				value = path.Clean(value)
+				if value == "." || value == ".." || strings.HasPrefix(value, "../") {
+					return nil, true, fmt.Errorf("snapshot download path is invalid")
+				}
+			}
+			if _, duplicate := seen[value]; duplicate {
+				continue
+			}
+			seen[value] = struct{}{}
+			group.paths = append(group.paths, value)
+		}
+		if len(group.paths) == 0 || snapshotDownloadPathsConflict(group.paths) {
+			return nil, true, fmt.Errorf("parent and child snapshot paths cannot be downloaded together")
+		}
+		selectedCount += len(group.paths)
+		if selectedCount > snapshotDownloadMaxSelections {
+			return nil, true, fmt.Errorf("at most %d snapshot paths can be downloaded", snapshotDownloadMaxSelections)
+		}
+		groups = append(groups, group)
+	}
+	return groups, true, nil
+}
+
+func snapshotDownloadPathsConflict(paths []string) bool {
+	ordered := append([]string(nil), paths...)
+	sort.Strings(ordered)
+	for index, current := range ordered {
+		if current == "" && len(ordered) > 1 {
+			return true
+		}
+		for _, candidate := range ordered[index+1:] {
+			if strings.HasPrefix(candidate, current+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func snapshotDownloadSelectionLogicalSize(
+	ctx context.Context,
+	bin string,
+	configFile string,
+	env map[string]string,
+	group snapshotDownloadGroup,
+	selectedPath string,
+) (int64, error) {
+	if selectedPath == "" {
+		if (group.pathType != "file" && group.pathType != "directory") || group.rootSizeBytes < 0 {
+			return 0, fmt.Errorf("snapshot Source Path size is invalid")
+		}
+		return group.rootSizeBytes, nil
+	}
+	selection, inspectResult, inspectErr := inspectManagedSnapshotSelection(
+		ctx,
+		bin,
+		configFile,
+		env,
+		group.snapshotID,
+		selectedPath,
+	)
+	if inspectErr != nil {
+		return 0, fmt.Errorf("%s", snapshotBrowseFailureMessage(inspectResult, inspectErr))
+	}
+	if selection.invalidType || !selection.found {
+		return 0, fmt.Errorf("selected snapshot path is unavailable")
+	}
+	if selection.pathType == "file" {
+		return selection.sizeBytes, nil
+	}
+	target := snapshotObjectPath(group.snapshotID, selectedPath)
+	var sizeBytes int64
+	var invalid bool
+	res, runErr := process.RunStreamingDiscardStdout(
+		ctx,
+		bin,
+		[]string{"--config-file=" + configFile, "ls", "-lr", target},
+		env,
+		"",
+		func(line string, stderr bool) {
+			if stderr {
+				return
+			}
+			mode, size, _, _, ok := parseInsightSnapshotLongLine(line)
+			if !ok {
+				if strings.TrimSpace(line) != "" {
+					invalid = true
+				}
+				return
+			}
+			entryType, valid := classifyInsightSnapshotEntry(mode, size)
+			if !valid {
+				invalid = true
+				return
+			}
+			if entryType != "file" {
+				return
+			}
+			if size > 0 && sizeBytes <= math.MaxInt64-size {
+				sizeBytes += size
+			} else if size > 0 {
+				invalid = true
+			}
+		},
+	)
+	if runErr != nil {
+		return 0, fmt.Errorf("%s", snapshotBrowseFailureMessage(res, runErr))
+	}
+	if invalid {
+		return 0, fmt.Errorf("snapshot download selection contains invalid entries")
+	}
+	return sizeBytes, nil
+}
+
+func (e *Engine) runManagedSnapshotDownloadPlan(
+	ctx context.Context,
+	rep ReporterSink,
+	taskID string,
+	p Payload,
+) (string, map[string]any, string) {
+	groups, hasGroups, groupsErr := snapshotDownloadGroups(p)
+	if groupsErr != nil {
+		return "failed", nil, groupsErr.Error()
+	}
+	if !hasGroups {
+		return "failed", nil, "snapshot download groups are required"
+	}
+	bin, err := e.kopiaBin(ctx)
+	if err != nil {
+		return "failed", nil, err.Error()
+	}
+	configFile, env, result, _, prepErr := e.prepareManagedRepository(ctx, rep, taskID, p, repositoryPrepareConnect)
+	if prepErr != "" {
+		return "failed", result, prepErr
+	}
+	var logicalSizeBytes int64
+	selectedCount := 0
+	for _, group := range groups {
+		for _, selectedPath := range group.paths {
+			sizeBytes, sizeErr := snapshotDownloadSelectionLogicalSize(
+				ctx,
+				bin,
+				configFile,
+				env,
+				group,
+				selectedPath,
+			)
+			if sizeErr != nil {
+				return "failed", result, sizeErr.Error()
+			}
+			if sizeBytes > 0 && logicalSizeBytes > math.MaxInt64-sizeBytes {
+				return "failed", result, "snapshot download logical size overflowed"
+			}
+			logicalSizeBytes += sizeBytes
+			selectedCount++
+		}
+	}
+	result["logical_size_bytes"] = logicalSizeBytes
+	result["selected_count"] = selectedCount
+	result["group_count"] = len(groups)
+	return "success", result, ""
+}
+
+func sanitizeSnapshotDownloadSourcePath(sourcePath string) string {
+	value := strings.TrimSpace(strings.ReplaceAll(sourcePath, "\\", "/"))
+	if value == "" || value == "/" {
+		return "root"
+	}
+	parts := make([]string, 0)
+	if len(value) >= 2 && value[1] == ':' && ((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z')) {
+		parts = append(parts, strings.ToUpper(value[:1])+"_drive")
+		value = value[2:]
+	}
+	for _, part := range strings.Split(strings.Trim(value, "/"), "/") {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." {
+			continue
+		}
+		part = regexp.MustCompile(`[<>:"|?*\x00-\x1f]`).ReplaceAllString(part, "_")
+		part = strings.Trim(part, " .")
+		if part == "" || part == ".." {
+			part = "_"
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return "root"
+	}
+	return strings.Join(parts, "__")
+}
+
+func snapshotDownloadSourcePathHash(sourcePath string) string {
+	digest := sha256.Sum256([]byte(strings.ReplaceAll(strings.TrimSpace(sourcePath), "\\", "/")))
+	return hex.EncodeToString(digest[:4])
+}
+
+func truncateSnapshotDownloadDirectoryName(value string, suffix string) string {
+	limit := snapshotDownloadSourceDirMaxBytes - len(suffix)
+	if limit < 1 || len(value) <= limit {
+		return value + suffix
+	}
+	end := limit
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return strings.TrimRight(value[:end], " ._") + suffix
+}
+
+func snapshotDownloadSourceDirectoryNames(groups []snapshotDownloadGroup) []string {
+	bases := make([]string, len(groups))
+	counts := map[string]int{}
+	for index, group := range groups {
+		bases[index] = sanitizeSnapshotDownloadSourcePath(group.sourcePath)
+		counts[strings.ToLower(bases[index])]++
+	}
+	names := make([]string, len(groups))
+	usedNames := map[string]struct{}{}
+	for index, group := range groups {
+		suffix := ""
+		if counts[strings.ToLower(bases[index])] > 1 || len(bases[index]) > snapshotDownloadSourceDirMaxBytes {
+			suffix = "--" + snapshotDownloadSourcePathHash(group.sourcePath)
+		}
+		candidate := truncateSnapshotDownloadDirectoryName(bases[index], suffix)
+		for collisionIndex := 2; ; collisionIndex++ {
+			key := strings.ToLower(candidate)
+			if _, exists := usedNames[key]; !exists {
+				usedNames[key] = struct{}{}
+				break
+			}
+			collisionSuffix := fmt.Sprintf(
+				"--%s-%d",
+				snapshotDownloadSourcePathHash(group.sourcePath+"\x00"+group.snapshotID),
+				collisionIndex,
+			)
+			candidate = truncateSnapshotDownloadDirectoryName(bases[index], collisionSuffix)
+		}
+		names[index] = candidate
+	}
+	return names
+}
+
+func restoreSnapshotDownloadGroups(
+	ctx context.Context,
+	bin string,
+	configFile string,
+	env map[string]string,
+	restoreRoot string,
+	groups []snapshotDownloadGroup,
+	result map[string]any,
+) error {
+	archiveRoot := filepath.Join(restoreRoot, snapshotDownloadArchiveRoot)
+	if err := os.MkdirAll(archiveRoot, 0o700); err != nil {
+		return err
+	}
+	directoryNames := snapshotDownloadSourceDirectoryNames(groups)
+	for groupIndex, group := range groups {
+		groupRoot := archiveRoot
+		if len(groups) > 1 {
+			groupRoot = filepath.Join(groupRoot, directoryNames[groupIndex])
+			if err := os.MkdirAll(groupRoot, 0o700); err != nil {
+				return err
+			}
+		}
+		for _, requestedPath := range group.paths {
+			target := snapshotObjectPath(group.snapshotID, requestedPath)
+			isDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, target)
+			result["snapshot_download_inspect"] = commandResult(inspectRes)
+			if inspectErr != nil && !snapshotDownloadInspectNotDirectory(inspectRes) {
+				return fmt.Errorf("%s", snapshotDownloadFailureMessage(inspectRes, inspectErr))
+			}
+			restoreTarget := groupRoot
+			if requestedPath == "" {
+				if group.pathType == "directory" {
+					if !isDir {
+						return fmt.Errorf("snapshot root download path is invalid")
+					}
+				} else if isDir || group.pathType != "file" {
+					return fmt.Errorf("snapshot root download path is invalid")
+				} else {
+					restoreTarget = filepath.Join(groupRoot, snapshotDownloadFilename(group.sourcePath))
+				}
+			} else {
+				restoreTarget = filepath.Join(groupRoot, filepath.FromSlash(requestedPath))
+			}
+			if err := os.MkdirAll(filepath.Dir(restoreTarget), 0o700); err != nil {
+				return err
+			}
+			restoreArgs := []string{"--config-file=" + configFile, "restore", target, restoreTarget}
+			res, runErr := process.Run(ctx, bin, restoreArgs, env, "")
+			result["snapshot_download"] = commandResult(res)
+			if runErr != nil {
+				return fmt.Errorf("%s", snapshotDownloadFailureMessage(res, runErr))
+			}
+		}
+	}
+	return nil
+}
+
+func cleanupStaleSnapshotDownloadDirs(tempRoot string, now time.Time) {
+	matches, err := filepath.Glob(filepath.Join(tempRoot, "hfl-kopia-download-*"))
+	if err != nil {
+		return
+	}
+	cutoff := now.Add(-snapshotDownloadStaleAge)
+	for _, candidate := range matches {
+		info, statErr := os.Lstat(candidate)
+		if statErr != nil || !info.IsDir() || info.ModTime().After(cutoff) {
+			continue
+		}
+		if removeErr := os.RemoveAll(candidate); removeErr != nil {
+			slog.Warn("snapshot_download", "event", "stale_temp_cleanup_failed", "path", candidate, "err", removeErr.Error())
+		}
+	}
+}
+
+// CleanupStaleSnapshotDownloadArtifacts removes recovery directories left by
+// an interrupted download. Normal task completion removes them immediately;
+// this scan is the 24-hour fallback for process termination and other crashes.
+func CleanupStaleSnapshotDownloadArtifacts() {
+	cleanupStaleSnapshotDownloadDirs(os.TempDir(), time.Now())
+}
+
 func (e *Engine) runManagedSnapshotDownload(
 	ctx context.Context,
 	rep ReporterSink,
 	taskID string,
 	p Payload,
 ) (string, map[string]any, string) {
-	if p.SnapshotID == "" {
+	groups, hasGroups, groupsErr := snapshotDownloadGroups(p)
+	if groupsErr != nil {
+		return "failed", nil, groupsErr.Error()
+	}
+	if p.SnapshotID == "" && !hasGroups {
 		return "failed", nil, "snapshot_id is required"
 	}
 	bin, err := e.kopiaBin(ctx)
@@ -2371,6 +2917,7 @@ func (e *Engine) runManagedSnapshotDownload(
 	if prepErr != "" {
 		return "failed", result, prepErr
 	}
+	CleanupStaleSnapshotDownloadArtifacts()
 	tempDir, mkErr := os.MkdirTemp("", "hfl-kopia-download-*")
 	if mkErr != nil {
 		return "failed", result, mkErr.Error()
@@ -2380,39 +2927,59 @@ func (e *Engine) runManagedSnapshotDownload(
 	if err := os.MkdirAll(restoreRoot, 0o700); err != nil {
 		return "failed", result, err.Error()
 	}
-	requestedPaths, pathsErr := snapshotDownloadPaths(p)
-	if pathsErr != nil {
-		return "failed", result, pathsErr.Error()
-	}
-	batchDownload := len(requestedPaths) > 0
-	forceZip := batchDownload
-	if len(requestedPaths) == 0 {
-		requestedPaths = []string{strings.Trim(strings.TrimSpace(p.Path), "/\\")}
-	}
+	requestedPaths := []string(nil)
+	batchDownload := false
+	forceZip := false
 	var singleIsDir bool
-	for _, requestedPath := range requestedPaths {
-		target := snapshotObjectPath(p.SnapshotID, requestedPath)
-		isDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, target)
-		result["snapshot_download_inspect"] = commandResult(inspectRes)
-		if inspectErr != nil && !snapshotDownloadInspectNotDirectory(inspectRes) {
-			return "failed", result, snapshotDownloadFailureMessage(inspectRes, inspectErr)
+	if hasGroups {
+		if restoreErr := restoreSnapshotDownloadGroups(
+			ctx,
+			bin,
+			configFile,
+			env,
+			restoreRoot,
+			groups,
+			result,
+		); restoreErr != nil {
+			return "failed", result, restoreErr.Error()
 		}
-		singleIsDir = isDir
-		forceZip = forceZip || isDir
-		restoreTarget := restoreRoot
-		if batchDownload {
-			restoreTarget = filepath.Join(restoreRoot, filepath.FromSlash(requestedPath))
-			if err := os.MkdirAll(filepath.Dir(restoreTarget), 0o700); err != nil {
-				return "failed", result, err.Error()
+		batchDownload = true
+		forceZip = true
+	} else {
+		var pathsErr error
+		requestedPaths, pathsErr = snapshotDownloadPaths(p)
+		if pathsErr != nil {
+			return "failed", result, pathsErr.Error()
+		}
+		batchDownload = len(requestedPaths) > 0
+		forceZip = batchDownload
+		if len(requestedPaths) == 0 {
+			requestedPaths = []string{strings.Trim(strings.TrimSpace(p.Path), "/\\")}
+		}
+		for _, requestedPath := range requestedPaths {
+			target := snapshotObjectPath(p.SnapshotID, requestedPath)
+			isDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, target)
+			result["snapshot_download_inspect"] = commandResult(inspectRes)
+			if inspectErr != nil && !snapshotDownloadInspectNotDirectory(inspectRes) {
+				return "failed", result, snapshotDownloadFailureMessage(inspectRes, inspectErr)
 			}
-		} else if !isDir {
-			restoreTarget = filepath.Join(restoreRoot, snapshotDownloadFilename(requestedPath))
-		}
-		restoreArgs := []string{"--config-file=" + configFile, "restore", target, restoreTarget}
-		res, runErr := process.Run(ctx, bin, restoreArgs, env, "")
-		result["snapshot_download"] = commandResult(res)
-		if runErr != nil {
-			return "failed", result, snapshotDownloadFailureMessage(res, runErr)
+			singleIsDir = isDir
+			forceZip = forceZip || isDir
+			restoreTarget := restoreRoot
+			if batchDownload {
+				restoreTarget = filepath.Join(restoreRoot, filepath.FromSlash(requestedPath))
+				if err := os.MkdirAll(filepath.Dir(restoreTarget), 0o700); err != nil {
+					return "failed", result, err.Error()
+				}
+			} else if !isDir {
+				restoreTarget = filepath.Join(restoreRoot, snapshotDownloadFilename(requestedPath))
+			}
+			restoreArgs := []string{"--config-file=" + configFile, "restore", target, restoreTarget}
+			res, runErr := process.Run(ctx, bin, restoreArgs, env, "")
+			result["snapshot_download"] = commandResult(res)
+			if runErr != nil {
+				return "failed", result, snapshotDownloadFailureMessage(res, runErr)
+			}
 		}
 	}
 
@@ -2424,7 +2991,11 @@ func (e *Engine) runManagedSnapshotDownload(
 	filename := ""
 	contentType := "application/octet-stream"
 	if forceZip {
-		filename = snapshotDownloadArchiveName(p.Path, batchDownload)
+		if hasGroups {
+			filename = snapshotDownloadArchiveRoot + ".zip"
+		} else {
+			filename = snapshotDownloadArchiveName(p.Path, batchDownload)
+		}
 		artifactPath = filepath.Join(tempDir, filename)
 		maxBytes := int64(0)
 		if hasUpload {
@@ -2776,6 +3347,19 @@ func (e *Engine) runManagedRestore(
 	if targetPath == "" {
 		return "failed", nil, "target_path is required"
 	}
+	conflictMode, err := managedRestoreConflictMode(p)
+	if err != nil {
+		return "failed", map[string]any{
+			"error_code":          "RESTORE_CONFLICT_MODE_INVALID",
+			"error_message":       err.Error(),
+			"restore_outcome":     "failed",
+			"target_path":         targetPath,
+			"conflict_mode":       strings.TrimSpace(stringValue(p.Extra["conflict_mode"])),
+			"restored_item_count": 0,
+			"skipped_item_count":  0,
+			"failed_item_count":   1,
+		}, err.Error()
+	}
 	if err := e.ensureNASMounted(ctx, p); err != nil {
 		return "failed", nil, err.Error()
 	}
@@ -2798,12 +3382,40 @@ func (e *Engine) runManagedRestore(
 		return "failed", managedRestoreResult(result, spec, p), managedRestorePreparationFailureMessage(result, prepErr, spec, p)
 	}
 	result = managedRestoreResult(result, spec, p)
+	result["target_path"] = targetPath
+	result["conflict_mode"] = conflictMode
 	selectedPaths := restoreSelectedPaths(p)
 	if len(selectedPaths) == 0 {
 		selectedPaths = []string{""}
 	}
+	entrySummaries := make(map[string]kopia.EntrySummary, len(selectedPaths))
+	scopeTotals := restoreScopeTotals{}
+	scopeTotalsKnown := true
+	for _, selectedPath := range selectedPaths {
+		summary, _, summaryErr := inspectManagedRestoreEntrySummary(
+			ctx,
+			bin,
+			configFile,
+			env,
+			p.SnapshotID,
+			selectedPath,
+		)
+		if summaryErr != nil {
+			scopeTotalsKnown = false
+			continue
+		}
+		entrySummaries[selectedPath] = summary
+		var totalsOK bool
+		scopeTotals, totalsOK = addRestoreEntrySummary(scopeTotals, summary)
+		if !totalsOK {
+			scopeTotalsKnown = false
+		}
+	}
 	restored := make([]map[string]any, 0, len(selectedPaths))
+	restoredPathCount := 0
+	skippedPathCount := 0
 	var completedBytes int64
+	var completedCount int64
 	var skippedSpecialCount int64
 	progressState := newKopiaProgressReporter()
 	runCtx, cancelRun := context.WithCancel(ctx)
@@ -2812,6 +3424,9 @@ func (e *Engine) runManagedRestore(
 	stallDone := make(chan struct{})
 	go monitorKopiaProgressStall(runCtx, cancelRun, progressState, stallSeconds, stallDone)
 	defer close(stallDone)
+	if scopeTotalsKnown {
+		_ = sendProgress(ctx, rep, taskID, scopeTotals.progressPayload(0, 0))
+	}
 
 	for pathIndex, selectedPath := range selectedPaths {
 		source := snapshotObjectPath(p.SnapshotID, selectedPath)
@@ -2822,25 +3437,63 @@ func (e *Engine) runManagedRestore(
 		if err := validateLensManagedRestoreTarget(p, restoreTarget); err != nil {
 			return "failed", result, err.Error()
 		}
-		sourceIsDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, source)
-		sourceObjectType := "directory"
-		if inspectErr != nil {
-			sourceObjectType = "unknown"
-		} else if !sourceIsDir {
-			sourceObjectType = "file"
+		summary, hasSummary := entrySummaries[selectedPath]
+		sourceIsDir := hasSummary && summary.PathType == "directory"
+		sourceObjectType := summary.PathType
+		var inspectRes process.Result
+		var inspectErr error
+		if !hasSummary || sourceObjectType == "unsupported" {
+			sourceIsDir, inspectRes, inspectErr = snapshotDownloadTargetIsDir(ctx, bin, configFile, env, source)
+			sourceObjectType = "directory"
+			if inspectErr != nil {
+				sourceObjectType = "unknown"
+			} else if !sourceIsDir {
+				sourceObjectType = "file"
+			}
 		}
 		restoreEntry := map[string]any{
 			"snapshot_path":      source,
 			"target_path":        restoreTarget,
 			"source_is_dir":      sourceIsDir,
 			"source_object_type": sourceObjectType,
-			"snapshot_inspect":   managedRestoreCommandResult(inspectRes, spec, p),
+		}
+		if hasSummary {
+			restoreEntry["snapshot_summary"] = summary
+		} else {
+			restoreEntry["snapshot_inspect"] = managedRestoreCommandResult(inspectRes, spec, p)
 		}
 		if inspectErr != nil {
 			restored = append(restored, restoreEntry)
 			result["restore_results"] = restored
 			result["restore_inspect"] = managedRestoreCommandResult(inspectRes, spec, p)
 			return "failed", result, snapshotRestoreInspectFailureMessage(inspectRes, inspectErr, spec, p)
+		}
+		directFinalTarget := restoreTargetPathSemantics(p) == "final" && len(selectedPaths) == 1
+		if conflictMode == "skip" && directFinalTarget {
+			targetExists, existsErr := restoreTargetExists(restoreTarget)
+			if existsErr != nil {
+				restoreEntry["restore_outcome"] = "failed"
+				restoreEntry["inspect_target_error"] = existsErr.Error()
+				restored = append(restored, restoreEntry)
+				result["restore_results"] = restored
+				rawMessage := fmt.Sprintf("Unable to inspect restore target %q: %v", restoreTarget, existsErr)
+				code, publicMessage, remediation := classifyManagedRestoreFailure(rawMessage, restoreTarget, conflictMode)
+				if code == "RESTORE_AGENT_FAILED" {
+					code = "RESTORE_TARGET_INSPECTION_FAILED"
+				}
+				setManagedRestoreFailureResult(result, code, publicMessage, rawMessage, restoreTarget, conflictMode)
+				if remediation != "" {
+					result["error_remediation"] = remediation
+				}
+				return "failed", result, publicMessage
+			}
+			if targetExists {
+				restoreEntry["restore_outcome"] = "skipped"
+				restoreEntry["skip_reason"] = "target_exists"
+				restored = append(restored, restoreEntry)
+				skippedPathCount++
+				continue
+			}
 		}
 		preparePath := restorePrepareTargetPathForSelection(p, targetPath, len(selectedPaths), sourceIsDir)
 		restoreEntry["prepare_path"] = preparePath
@@ -2854,12 +3507,23 @@ func (e *Engine) runManagedRestore(
 			restoreEntry["prepare_error"] = mkErr.Error()
 			restored = append(restored, restoreEntry)
 			result["restore_results"] = restored
-			return "failed", result, mkErr.Error()
+			rawMessage := mkErr.Error()
+			code, publicMessage, remediation := classifyManagedRestoreFailure(rawMessage, restoreTarget, conflictMode)
+			if code == "RESTORE_AGENT_FAILED" {
+				code = "RESTORE_TARGET_PREPARATION_FAILED"
+			}
+			setManagedRestoreFailureResult(result, code, publicMessage, rawMessage, restoreTarget, conflictMode)
+			if remediation != "" {
+				result["error_remediation"] = remediation
+			}
+			return "failed", result, publicMessage
 		}
 		pathOffset := completedBytes
+		pathCountOffset := completedCount
 		pathIndexValue := pathIndex + 1
 		pathTotal := len(selectedPaths)
 		var lastPathTotal int64
+		var lastPathCount int64
 		onProgressLine := func(line string, _ bool) {
 			snapshot, ok := kopia.ParseRestoreProgressLine(line)
 			if !ok {
@@ -2868,26 +3532,22 @@ func (e *Engine) runManagedRestore(
 			if snapshot.TotalBytes > 0 {
 				lastPathTotal = snapshot.TotalBytes
 			}
+			if snapshot.TotalCount > 0 {
+				lastPathCount = snapshot.TotalCount
+			}
 			payload := kopia.RestoreProgressPayload(snapshot)
 			payload["path_index"] = pathIndexValue
 			payload["path_total"] = pathTotal
-			if pathOffset > 0 {
-				if done, ok := payload["bytes_done"].(int64); ok {
-					payload["bytes_done"] = done + pathOffset
-				}
-				if total, ok := payload["bytes_total"].(int64); ok && total > 0 {
-					payload["bytes_total"] = total + pathOffset
-				}
-			}
+			applyRestoreScopeProgress(payload, scopeTotals, scopeTotalsKnown, pathOffset, pathCountOffset)
 			progressState.maybeSendRestore(runCtx, rep, taskID, payload)
 		}
 		restoreArgs := []string{
 			"--config-file=" + configFile,
 			"--progress",
 			"restore",
-			source,
-			restoreTarget,
 		}
+		restoreArgs = append(restoreArgs, managedRestoreConflictArgs(conflictMode)...)
+		restoreArgs = append(restoreArgs, source, restoreTarget)
 		res, runErr := process.RunStreaming(runCtx, bin, restoreArgs, env, "", onProgressLine)
 		restoreEntry["result"] = managedRestoreCommandResult(res, spec, p)
 		restored = append(restored, restoreEntry)
@@ -2898,8 +3558,16 @@ func (e *Engine) runManagedRestore(
 			}
 			result["restore_results"] = restored
 			result["restore"] = managedRestoreCommandResult(res, spec, p)
-			return "failed", result, managedRestoreFailureMessage(res, runErr, spec, p)
+			rawMessage := managedRestoreFailureMessage(res, runErr, spec, p)
+			code, publicMessage, remediation := classifyManagedRestoreFailure(rawMessage, restoreTarget, conflictMode)
+			setManagedRestoreFailureResult(result, code, publicMessage, rawMessage, restoreTarget, conflictMode)
+			if remediation != "" {
+				result["error_remediation"] = remediation
+			}
+			return "failed", result, publicMessage
 		}
+		restoreEntry["restore_outcome"] = "restored"
+		restoredPathCount++
 		if insightContentPolicy == insightRegularFilesOnlyPolicy {
 			skipped, contentErr := enforceInsightRestoreContent(restoreTarget)
 			if contentErr != nil {
@@ -2909,8 +3577,12 @@ func (e *Engine) runManagedRestore(
 			skippedSpecialCount += skipped
 			restoreEntry["skipped_special_count"] = skipped
 		}
-		if lastPathTotal > 0 {
+		if hasSummary && summary.Complete {
+			completedBytes += summary.SizeBytes
+			completedCount += summary.TotalCount()
+		} else if lastPathTotal > 0 || lastPathCount > 0 {
 			completedBytes += lastPathTotal
+			completedCount += lastPathCount
 		}
 	}
 	if err := validateLensManagedRestoreTarget(p, targetPath); err != nil {
@@ -2921,20 +3593,125 @@ func (e *Engine) runManagedRestore(
 	result["selected_paths"] = selectedPaths
 	result["restore_results"] = restored
 	result["count"] = len(restored)
+	result["conflict_mode"] = conflictMode
+	result["restored_path_count"] = restoredPathCount
+	result["skipped_path_count"] = skippedPathCount
+	result["failed_item_count"] = 0
+	if restoredPathCount == 0 && skippedPathCount > 0 {
+		result["restore_outcome"] = "skipped"
+		result["skip_reason"] = "target_exists"
+		result["restored_item_count"] = 0
+		result["skipped_item_count"] = 1
+	} else {
+		result["restore_outcome"] = "restored"
+		result["restored_item_count"] = 1
+		result["skipped_item_count"] = 0
+	}
+	if scopeTotalsKnown {
+		result["restore_scope_summary"] = restoreScopeSummaryResult(scopeTotals)
+	}
 	if insightContentPolicy == insightRegularFilesOnlyPolicy {
 		result["insight_content_policy"] = insightRegularFilesOnlyPolicy
 		result["skipped_special_count"] = skippedSpecialCount
 	}
-	_ = sendProgress(ctx, rep, taskID, map[string]any{
-		"phase":             "kopia_transfer",
-		"kopia_phase":       "restore_completed",
-		"kopia_percent":     100,
-		"percent":           100,
-		"bytes_done":        maxInt64(completedBytes, 1),
-		"bytes_total":       maxInt64(completedBytes, 1),
-		"bytes_total_known": true,
-	})
+	completionProgress := map[string]any{
+		"progress_schema_version": 1,
+		"phase":                   "kopia_transfer",
+		"kopia_phase":             "restore_completed",
+		"kopia_percent":           100,
+		"percent":                 100,
+		"bytes_done":              completedBytes,
+		"processed_bytes":         completedBytes,
+		"bytes_total":             completedBytes,
+		"total_bytes":             completedBytes,
+		"bytes_total_known":       completedBytes > 0,
+		"processed_count":         completedCount,
+		"total_count":             completedCount,
+	}
+	if scopeTotalsKnown {
+		completionProgress["bytes_total"] = scopeTotals.SizeBytes
+		completionProgress["total_bytes"] = scopeTotals.SizeBytes
+		completionProgress["bytes_total_known"] = true
+		completionProgress["total_count"] = scopeTotals.totalCount()
+		completionProgress["file_total"] = scopeTotals.totalCount()
+		completionProgress["total_file_count"] = scopeTotals.FileCount
+		completionProgress["total_directory_count"] = scopeTotals.DirectoryCount
+		completionProgress["total_symlink_count"] = scopeTotals.SymlinkCount
+		completionProgress["totals_source"] = "snapshot_summary"
+	}
+	_ = sendProgress(ctx, rep, taskID, completionProgress)
 	return "success", result, ""
+}
+
+func managedRestoreConflictMode(p Payload) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(stringValue(p.Extra["conflict_mode"])))
+	if mode == "" {
+		// Older control planes did not send this field. Preserve their historical
+		// overwrite behavior while making new requests explicit.
+		return "overwrite", nil
+	}
+	if mode != "skip" && mode != "overwrite" {
+		return "", fmt.Errorf("unsupported restore conflict mode %q", mode)
+	}
+	return mode, nil
+}
+
+func managedRestoreConflictArgs(conflictMode string) []string {
+	if conflictMode == "skip" {
+		return []string{
+			"--skip-existing",
+			"--no-overwrite-files",
+			"--no-overwrite-symlinks",
+			"--skip-owners",
+			"--skip-permissions",
+			"--skip-times",
+		}
+	}
+	return []string{
+		"--overwrite-files",
+		"--overwrite-directories",
+		"--overwrite-symlinks",
+	}
+}
+
+func restoreTargetExists(targetPath string) (bool, error) {
+	_, err := os.Lstat(targetPath)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func classifyManagedRestoreFailure(rawMessage string, targetPath string, conflictMode string) (string, string, string) {
+	lower := strings.ToLower(rawMessage)
+	if strings.Contains(lower, "permission denied") || strings.Contains(lower, "access denied") {
+		message := fmt.Sprintf("Permission denied while writing restore target %q.", targetPath)
+		remediation := "Verify that the Agent service account can modify the existing target and write to its parent directory. Use Skip to preserve an existing target."
+		return "RESTORE_TARGET_PERMISSION_DENIED", message, remediation
+	}
+	return "RESTORE_AGENT_FAILED", rawMessage, ""
+}
+
+func setManagedRestoreFailureResult(
+	result map[string]any,
+	code string,
+	publicMessage string,
+	rawMessage string,
+	targetPath string,
+	conflictMode string,
+) {
+	result["restore_outcome"] = "failed"
+	result["error_code"] = code
+	result["error_message"] = truncateFailureTail("", publicMessage, 2000)
+	result["error_diagnostic"] = truncateFailureTail("", rawMessage, 2000)
+	result["target_path"] = targetPath
+	result["conflict_mode"] = conflictMode
+	result["restored_item_count"] = 0
+	result["skipped_item_count"] = 0
+	result["failed_item_count"] = 1
 }
 
 func orchestrationProgressPayload(phase string, label string, extra map[string]any) map[string]any {
@@ -3241,16 +4018,40 @@ func restoreSelectedPaths(p Payload) []string {
 	}
 	paths := make([]string, 0, len(raw))
 	for _, item := range raw {
-		value := strings.Trim(strings.TrimSpace(fmt.Sprint(item)), "/\\")
+		value := strings.TrimSpace(fmt.Sprint(item))
 		if value == "" || value == "." {
+			return []string{""}
+		}
+		value = strings.Trim(path.Clean(filepath.ToSlash(value)), "/")
+		if value == "" || value == "." {
+			return []string{""}
+		}
+		covered := false
+		for _, existing := range paths {
+			if restorePathCoversSelection(existing, value) {
+				covered = true
+				break
+			}
+		}
+		if covered {
 			continue
 		}
-		paths = append(paths, filepath.ToSlash(value))
+		filtered := paths[:0]
+		for _, existing := range paths {
+			if !restorePathCoversSelection(value, existing) {
+				filtered = append(filtered, existing)
+			}
+		}
+		paths = append(filtered, value)
 	}
 	if len(paths) == 0 {
 		return []string{""}
 	}
 	return paths
+}
+
+func restorePathCoversSelection(ancestor string, candidate string) bool {
+	return candidate == ancestor || strings.HasPrefix(candidate, ancestor+"/")
 }
 
 func restoreTargetPathForSelection(p Payload, targetPath string, selectedPath string) string {
@@ -3808,18 +4609,23 @@ func parseSnapshotBrowseTextOutput(stdout string, basePath string) []map[string]
 			continue
 		}
 		if mode, size, modTime, name, parsed := parseSnapshotBrowseLongLine(line); parsed {
-			isDir := strings.HasPrefix(strings.ToLower(mode), "d")
+			entryType, downloadable, downloadReason := snapshotBrowseEntryType(mode, "")
+			isDir := entryType == "dir"
 			path := normalizeSnapshotBrowsePath(name, name, base, "")
-			rows = append(rows, map[string]any{
+			entry := map[string]any{
 				"name":         snapshotBrowseName(name, path),
 				"path":         path,
-				"type":         mapSnapshotBrowseType(isDir),
+				"type":         entryType,
 				"is_dir":       isDir,
 				"size_bytes":   size,
 				"modified_at":  modTime,
-				"downloadable": true,
+				"downloadable": downloadable,
 				"has_children": nil,
-			})
+			}
+			if downloadReason != "" {
+				entry["download_reason"] = downloadReason
+			}
+			rows = append(rows, entry)
 			continue
 		}
 		name := strings.Trim(line, "/\\")
@@ -3859,6 +4665,27 @@ func mapSnapshotBrowseType(isDir bool) string {
 	return "file"
 }
 
+func snapshotBrowseEntryType(mode string, reportedType string) (string, bool, string) {
+	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
+	normalizedType := strings.ToLower(strings.TrimSpace(reportedType))
+	switch {
+	case normalizedType == "symlink" || normalizedType == "symbolic-link" || normalizedType == "link":
+		return "symlink", false, "Symbolic links cannot be downloaded individually."
+	case normalizedType == "dir" || normalizedType == "directory" || normalizedType == "folder":
+		return "dir", true, ""
+	case normalizedType == "file" || normalizedType == "f" || normalizedType == "regular":
+		return "file", true, ""
+	case strings.HasPrefix(normalizedMode, "l"):
+		return "symlink", false, "Symbolic links cannot be downloaded individually."
+	case strings.HasPrefix(normalizedMode, "d"):
+		return "dir", true, ""
+	case strings.HasPrefix(normalizedMode, "-"):
+		return "file", true, ""
+	default:
+		return "special", false, "Special files cannot be downloaded individually."
+	}
+}
+
 func collectSnapshotEntries(raw any, rows *[]map[string]any, basePath string, snapshotID string) {
 	switch value := raw.(type) {
 	case []any:
@@ -3895,6 +4722,8 @@ func collectSnapshotEntries(raw any, rows *[]map[string]any, basePath string, sn
 		} else if typ == "f" || typ == "regular" {
 			typ = "file"
 		}
+		entryType, downloadable, downloadReason := snapshotBrowseEntryType(mode, typ)
+		isDir = entryType == "dir"
 		size, _ := int64Value(firstPresent(value, "size", "size_bytes", "length"))
 		modTime := formatModTimeUTC(strings.TrimSpace(stringValue(firstPresent(value, "mod_time", "modified_at", "mtime", "modTime"))))
 		path := normalizeSnapshotBrowsePath(
@@ -3903,16 +4732,20 @@ func collectSnapshotEntries(raw any, rows *[]map[string]any, basePath string, sn
 			basePath,
 			snapshotID,
 		)
-		*rows = append(*rows, map[string]any{
+		entry := map[string]any{
 			"name":         snapshotBrowseName(name, path),
 			"path":         path,
-			"type":         typ,
+			"type":         entryType,
 			"is_dir":       isDir,
 			"size_bytes":   size,
 			"modified_at":  modTime,
-			"downloadable": true,
+			"downloadable": downloadable,
 			"has_children": nil,
-		})
+		}
+		if downloadReason != "" {
+			entry["download_reason"] = downloadReason
+		}
+		*rows = append(*rows, entry)
 	}
 }
 
@@ -4233,6 +5066,12 @@ func snapshotResultFromParsed(parsed any) map[string]any {
 	result := map[string]any{
 		"snapshot": parsed,
 	}
+	if failureSummary := snapshotFailureSummary(parsed); failureSummary != nil {
+		// Keep a compact diagnostic alongside the full snapshot. The wire
+		// result is intentionally bounded and may discard the large snapshot
+		// tree before the backend can build user-facing failure details.
+		result["snapshot_failure_summary"] = failureSummary
+	}
 	if id := findStringKey(parsed, "id", "snapshot_id", "snapshotID", "kopia_snapshot_id"); id != "" {
 		result["kopia_snapshot_id"] = id
 	}
@@ -4290,6 +5129,187 @@ func snapshotResultFromParsed(parsed any) map[string]any {
 		result["stats"] = stats
 	}
 	return result
+}
+
+func snapshotFailureSummary(parsed any) map[string]any {
+	parsedMap, ok := parsed.(map[string]any)
+	if !ok {
+		return nil
+	}
+	rootEntry, ok := parsedMap["rootEntry"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	summary, ok := rootEntry["summ"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	errors, ok := summary["errors"].([]any)
+	if !ok || len(errors) == 0 {
+		return nil
+	}
+	collector := newSnapshotFailureCollector()
+	for _, raw := range errors {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		collector.add(stringValue(item["path"]), stringValue(item["error"]))
+	}
+	collector.reportedTotal = len(errors)
+	return collector.summary()
+}
+
+type snapshotFailureCollector struct {
+	reportedTotal  int
+	observedCount  int
+	causeCounts    map[string]int
+	itemTypes      map[string]string
+	itemTypeCounts map[string]int
+	items          []any
+}
+
+func newSnapshotFailureCollector() *snapshotFailureCollector {
+	return &snapshotFailureCollector{
+		causeCounts:    map[string]int{},
+		itemTypes:      map[string]string{},
+		itemTypeCounts: map[string]int{},
+		items:          make([]any, 0, snapshotFailureSampleLimit),
+	}
+}
+
+func (c *snapshotFailureCollector) observe(line string) {
+	if match := snapshotFatalCountPattern.FindStringSubmatch(line); len(match) == 2 {
+		if count, err := strconv.Atoi(match[1]); err == nil && count > c.reportedTotal {
+			c.reportedTotal = count
+		}
+	}
+	path, failure, ok := parseSnapshotFailureLine(line)
+	if ok {
+		c.add(path, failure)
+	}
+}
+
+func (c *snapshotFailureCollector) add(path string, failure string) {
+	path = strings.TrimSpace(path)
+	failure = strings.TrimSpace(failure)
+	if path == "" && failure == "" {
+		return
+	}
+	cause, itemType := snapshotFailureCause(failure)
+	c.observedCount++
+	c.causeCounts[cause]++
+	c.itemTypes[cause] = itemType
+	c.itemTypeCounts[itemType]++
+	if len(c.items) >= snapshotFailureSampleLimit {
+		return
+	}
+	c.items = append(c.items, map[string]any{
+		"path":      truncateSnapshotFailureHead(path, snapshotFailurePathLimit),
+		"error":     truncateFailureTail("", failure, snapshotFailureErrorLimit),
+		"cause":     cause,
+		"item_type": itemType,
+	})
+}
+
+func (c *snapshotFailureCollector) summary() map[string]any {
+	total := max(c.reportedTotal, c.observedCount)
+	if total == 0 {
+		return nil
+	}
+	causeCounts := make(map[string]int, len(c.causeCounts)+1)
+	itemTypes := make(map[string]string, len(c.itemTypes)+1)
+	itemTypeCounts := make(map[string]int, len(c.itemTypeCounts)+1)
+	for cause, count := range c.causeCounts {
+		causeCounts[cause] = count
+		itemTypes[cause] = c.itemTypes[cause]
+	}
+	for itemType, count := range c.itemTypeCounts {
+		itemTypeCounts[itemType] = count
+	}
+	if unclassified := total - c.observedCount; unclassified > 0 {
+		causeCounts["snapshot_errors"] += unclassified
+		itemTypes["snapshot_errors"] = "unknown"
+		itemTypeCounts["unknown"] += unclassified
+	}
+	return map[string]any{
+		"total_count":      total,
+		"reported_count":   len(c.items),
+		"truncated":        total > len(c.items),
+		"cause_counts":     causeCounts,
+		"item_types":       itemTypes,
+		"item_type_counts": itemTypeCounts,
+		"items":            c.items,
+	}
+}
+
+func parseSnapshotFailureLine(line string) (string, string, bool) {
+	const marker = `error when processing "`
+	lower := strings.ToLower(line)
+	start := strings.Index(lower, marker)
+	if start < 0 {
+		return "", "", false
+	}
+	rest := line[start+len(marker):]
+	separator := strings.Index(rest, `":`)
+	if separator < 0 {
+		return "", "", false
+	}
+	return strings.TrimSpace(rest[:separator]), strings.TrimSpace(rest[separator+2:]), true
+}
+
+func snapshotFailureCause(failure string) (string, string) {
+	lower := strings.ToLower(failure)
+	if strings.Contains(lower, "unknown or unsupported entry type") ||
+		strings.Contains(lower, "unsupported entry type") ||
+		strings.Contains(lower, "unsupported filesystem entry") ||
+		strings.Contains(lower, "unix socket") ||
+		strings.Contains(lower, "socket") ||
+		strings.Contains(lower, "named pipe") {
+		return "unsupported_entry_type", "special"
+	}
+	itemType := "file"
+	for _, marker := range []string{
+		"readdir", "read directory", "open directory", "cannot list directory",
+		"unable to list directory", "cannot create iterator", "unable to read directory",
+	} {
+		if strings.Contains(lower, marker) {
+			itemType = "directory"
+			break
+		}
+	}
+	if strings.Contains(lower, "operation not permitted") {
+		return "macos_privacy_denied", itemType
+	}
+	if strings.Contains(lower, "permission denied") || strings.Contains(lower, "access denied") {
+		return "permission_denied", itemType
+	}
+	if itemType == "directory" {
+		return "unreadable_directory", itemType
+	}
+	return "unreadable_file", itemType
+}
+
+func truncateSnapshotFailureHead(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	end := limit - len("...")
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return value[:end] + "..."
+}
+
+func compactSnapshotFailureProjection(summary map[string]any) map[string]any {
+	return map[string]any{
+		"rootEntry": map[string]any{
+			"summ": map[string]any{
+				"errors": summary["items"],
+			},
+		},
+	}
 }
 
 func decodeJSONLoose(raw string) (any, bool) {

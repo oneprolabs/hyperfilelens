@@ -18,6 +18,7 @@ import {
   createCopilotRun,
   deleteCopilotAttachment,
   deleteCopilotSession,
+  forceDeleteCopilotSession,
   fetchCopilotReadiness,
   fetchLensHealth,
   listCopilotAssistants,
@@ -38,7 +39,6 @@ import {
   type LensCopilotRunOutcome,
   type LensCopilotResponseState,
   type LensCopilotAssistant,
-  type LensAnalysisType,
   type LensGatewayInsight,
   type LensCopilotGatewayOption,
   type LensKnowledgeSource,
@@ -84,11 +84,11 @@ const activeSessionId = ref<number | null>(null)
 const deleteOpen = ref(false)
 const deleteLoading = ref(false)
 const deleteTarget = ref<SessionRow | null>(null)
+const deleteMode = ref<'normal' | 'force'>('normal')
 const shareOpen = ref(false)
 const shareTarget = ref<SessionRow | null>(null)
 const executionSettingsOpen = ref(false)
 const messagesBySession = ref<Record<number, CopilotDisplayMessage[]>>({})
-const selectedStarterBySession = ref<Record<number, string>>({})
 const input = ref('')
 const composerAttachments = ref<CopilotComposerAttachment[]>([])
 const retryDraft = ref<CopilotRetryDraft | null>(null)
@@ -118,7 +118,7 @@ function welcomeMessage(sessionId: number, createdAt?: string | null): CopilotDi
     id: `welcome-${sessionId}`,
     role: 'assistant',
     text: t('insight.copilot.welcome'),
-    starterChips: true,
+    isWelcome: true,
     createdAt: createdAt || new Date().toISOString(),
   }
 }
@@ -129,10 +129,10 @@ function withWelcomeMessage(
   createdAt?: string | null,
 ): CopilotDisplayMessage[] {
   const withoutWelcome = mapped.filter(
-    (row) => !row.starterChips && row.id !== `welcome-${sessionId}`,
+    (row) => !row.isWelcome && row.id !== `welcome-${sessionId}`,
   )
   const existingWelcome = mapped.find(
-    (row) => row.starterChips || row.id === `welcome-${sessionId}`,
+    (row) => row.isWelcome || row.id === `welcome-${sessionId}`,
   )
   const welcome = existingWelcome ?? welcomeMessage(sessionId, createdAt)
   return [welcome, ...withoutWelcome]
@@ -274,19 +274,19 @@ const activeSession = computed(() =>
   sessions.value.find((row) => row.id === activeSessionId.value) ?? null,
 )
 
-const activeSupportedAnalysisTypes = computed<LensAnalysisType[]>(() => {
-  const gatewayLinkId = activeSession.value?.gateway_link
-  const gateway = copilotGatewayOptions.value.find(
-    (row) => row.gateway_link_id === gatewayLinkId,
-  )
-  return gateway?.analysis_types ?? ['knowledge_qa']
-})
-
 const activeAssistant = computed((): LensCopilotAssistant | null => {
   const session = activeSession.value
   if (!session?.sl_assistant_uuid) return null
   const fromList = assistantByUuid.value.get(session.sl_assistant_uuid)
-  if (fromList) return fromList
+  if (fromList) {
+    return {
+      ...fromList,
+      // SourceLens collection responses are compact; the HFL session keeps
+      // the effective model selection used by this Chat.
+      agent_model_ref: session.agent_model_ref,
+      multimodal_model_ref: session.multimodal_model_ref ?? null,
+    }
+  }
   if (session.assistant_name) {
     return {
       uuid: session.sl_assistant_uuid,
@@ -352,11 +352,6 @@ const supportsDocumentAttachments = computed(() =>
   activeAssistant.value?.supports_document_attachments === true
   && activeAssistant.value?.selected_task !== 'general_chat',
 )
-
-const selectedStarterKey = computed(() => {
-  const sessionId = activeSessionId.value
-  return sessionId == null ? '' : selectedStarterBySession.value[sessionId] || ''
-})
 
 const emptyPhase = computed((): CopilotEmptyPhase => {
   if (loading.value) return 'loading'
@@ -537,7 +532,25 @@ async function pollSessionLifecycle(sessionId: number) {
         sessions.value = toSessionRows(rows)
         refreshPollerSessions()
         const current = sessions.value.find((row) => row.id === sessionId)
-        if (!current) return
+        if (!current) {
+          copilotStore.detachSessionStream(sessionId)
+          const copy = { ...messagesBySession.value }
+          delete copy[sessionId]
+          messagesBySession.value = copy
+          if (activeSessionId.value === sessionId) {
+            clearComposerAttachments({ deleteDocuments: false })
+            activeSessionId.value = sessions.value[0]?.id ?? null
+            if (activeSessionId.value != null) {
+              await copilotStore.syncSession(
+                activeSessionId.value,
+                syncHandlers,
+                activeSessionId.value,
+                { attachStream: true },
+              )
+            }
+          }
+          return
+        }
         if (current.lifecycle_status === 'ready') {
           if (activeSessionId.value === sessionId) {
             await copilotStore.syncSession(sessionId, syncHandlers, sessionId, { attachStream: true })
@@ -647,7 +660,18 @@ function retryActiveSession() {
 
 function deleteSession(row: SessionRow) {
   deleteTarget.value = row
+  deleteMode.value = 'normal'
   deleteOpen.value = true
+}
+
+function forceDeleteSession(row: SessionRow) {
+  deleteTarget.value = row
+  deleteMode.value = 'force'
+  deleteOpen.value = true
+}
+
+function forceDeleteActiveSession() {
+  if (activeSession.value) forceDeleteSession(activeSession.value)
 }
 
 function shareSession(row: SessionRow) {
@@ -661,30 +685,39 @@ async function confirmDeleteSession() {
   if (!row) return
   deleteLoading.value = true
   try {
-    await deleteCopilotSession(row.id)
-    copilotStore.detachSessionStream(row.id)
-    sessions.value = sessions.value.filter((item) => item.id !== row.id)
-    const copy = { ...messagesBySession.value }
-    delete copy[row.id]
-    messagesBySession.value = copy
-    const starterCopy = { ...selectedStarterBySession.value }
-    delete starterCopy[row.id]
-    selectedStarterBySession.value = starterCopy
-    if (activeSessionId.value === row.id) {
-      clearComposerAttachments({ deleteDocuments: false })
-      activeSessionId.value = sessions.value[0]?.id ?? null
-      if (activeSessionId.value != null) {
-        await copilotStore.syncSession(
-          activeSessionId.value,
-          syncHandlers,
-          activeSessionId.value,
-          { attachStream: true },
-        )
-      }
-    }
+    const updated = deleteMode.value === 'force'
+      ? await forceDeleteCopilotSession(row.id)
+      : await deleteCopilotSession(row.id)
+    sessions.value = sessions.value.map((item) => item.id === row.id
+      ? { ...updated, group: item.group }
+      : item)
     refreshPollerSessions()
     deleteOpen.value = false
     deleteTarget.value = null
+    if (deleteMode.value === 'force' || updated.lifecycle_status === 'deleted') {
+      copilotStore.detachSessionStream(row.id)
+      sessions.value = sessions.value.filter((item) => item.id !== row.id)
+      const copy = { ...messagesBySession.value }
+      delete copy[row.id]
+      messagesBySession.value = copy
+      if (activeSessionId.value === row.id) {
+        clearComposerAttachments({ deleteDocuments: false })
+        activeSessionId.value = sessions.value[0]?.id ?? null
+        if (activeSessionId.value != null) {
+          await copilotStore.syncSession(
+            activeSessionId.value,
+            syncHandlers,
+            activeSessionId.value,
+            { attachStream: true },
+          )
+        }
+      }
+      if (deleteMode.value === 'force') {
+        ElMessage.success(t('insight.copilot.forceDeleteComplete'))
+      }
+    } else {
+      void pollSessionLifecycle(row.id)
+    }
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
   } finally {
@@ -700,16 +733,6 @@ function updateComposerHeight(height: number) {
   if (Number.isFinite(height) && height > 0) {
     composerHeight.value = Math.ceil(height)
   }
-}
-
-async function applyStarterChip(key: string, text: string) {
-  const sessionId = activeSessionId.value
-  if (sessionId == null || submissionBlocked.value) return
-  selectedStarterBySession.value = {
-    ...selectedStarterBySession.value,
-    [sessionId]: key,
-  }
-  await submitQuestion(text)
 }
 
 function retryQuestion(draft: CopilotRetryDraft) {
@@ -1183,6 +1206,7 @@ onUnmounted(() => {
           :session="activeSession"
           @retry="retryActiveSession"
           @delete="deleteActiveSession"
+          @force-delete="forceDeleteActiveSession"
         />
 
         <div
@@ -1201,9 +1225,7 @@ onUnmounted(() => {
             :streaming-elapsed-seconds="activeStream?.thinkingElapsedSeconds ?? 0"
             :stream-error="activeStream?.streamError ?? ''"
             :bubble-tag="bubbleTag"
-            :selected-starter-key="selectedStarterKey"
             :starter-disabled="submissionBlocked"
-            @starter-chip="applyStarterChip"
             @retry-question="retryQuestion"
             @feedback-updated="applyFeedbackUpdate"
           />
@@ -1235,11 +1257,19 @@ onUnmounted(() => {
     </div>
     <DangerConfirmDialog
       v-model="deleteOpen"
-      :title="t('insight.copilot.deleteConfirm')"
-      :message="t('insight.copilot.deleteConfirm')"
-      :items="deleteTarget ? [{ key: deleteTarget.id, name: deleteTarget.title }] : []"
+      :title="t(
+        deleteMode === 'force'
+          ? 'insight.copilot.forceDeleteConfirm'
+          : 'insight.copilot.deleteConfirm',
+        { name: deleteTarget?.title || t('insight.copilot.newChatTitle') },
+      )"
+      :message="deleteMode === 'force'
+        ? t('insight.copilot.forceDeleteConfirmMessage')
+        : t('insight.copilot.deleteConfirmMessage')"
       :cancel-text="t('insight.copilot.btnCancel')"
-      :confirm-text="t('insight.copilot.btnConfirm')"
+      :confirm-text="deleteMode === 'force'
+        ? t('insight.copilot.forceDelete')
+        : t('insight.copilot.deleteSession')"
       :loading="deleteLoading"
       @confirm="confirmDeleteSession"
       @cancel="deleteTarget = null"
@@ -1252,7 +1282,6 @@ onUnmounted(() => {
     <CopilotExecutionSettingsDialog
       v-model="executionSettingsOpen"
       :session="activeSession"
-      :supported-analysis-types="activeSupportedAnalysisTypes"
       @saved="applyExecutionSettings"
     />
   </div>

@@ -69,7 +69,8 @@ def list_tasks(
                 search_filter = Q(display_name__icontains=text)
             elif search_field == "uuid":
                 try:
-                    search_filter = Q(task_uuid=UUID(text))
+                    value = UUID(text)
+                    search_filter = Q(task_uuid=value) | Q(node_tasks__id=value)
                 except ValueError:
                     search_filter = Q(pk__in=[])
             else:
@@ -77,10 +78,11 @@ def list_tasks(
                     error_code__icontains=text
                 )
                 try:
-                    search_filter |= Q(task_uuid=UUID(text))
+                    value = UUID(text)
+                    search_filter |= Q(task_uuid=value) | Q(node_tasks__id=value)
                 except ValueError:
                     pass
-            queryset = queryset.filter(search_filter)
+            queryset = queryset.filter(search_filter).distinct()
     if created_after:
         queryset = queryset.filter(created_at__gte=created_after)
     if created_before:

@@ -53,6 +53,9 @@ export type NodeLifecycleInfo = {
   state: NodeLifecycleState
   phase?: NodeLifecyclePhase | null
   task_id?: string | null
+  node_task_id?: string | null
+  task_uuid?: string | null
+  source_version?: string | null
   target_version?: string | null
   current_version?: string | null
   started_at?: string | null
@@ -74,8 +77,10 @@ export type NodeWorkloadInfo = {
 }
 
 export type NodeOperationStartResult = {
-  operation_id: string
+  operation_id: string | null
   task_id?: string | null
+  node_task_id?: string | null
+  task_uuid?: string | null
   node_id: number
   kind: NodeLifecycleKind
   state: NodeLifecycleState

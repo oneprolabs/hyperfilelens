@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   booleanStatusTag,
+  alertStatusTagAttrs,
   lifecycleStatusTone,
   severityStatusTagAttrs,
   statusTagAttrs,
@@ -53,6 +54,15 @@ describe('status tag semantic helpers', () => {
   it('keeps neutral separate from the purple info tone', () => {
     expect(statusTagAttrs('neutral')).toEqual({ class: 'hfl-tag--neutral' })
     expect(statusTagAttrs('info')).toEqual({ type: 'info' })
+  })
+
+  it.each([
+    ['firing', { class: 'hfl-tag--firing' }],
+    ['acknowledged', { type: 'info' }],
+    ['resolved', { type: 'success' }],
+    ['pending', { class: 'hfl-tag--neutral' }],
+  ])('maps alert status %s to its lifecycle tone', (status, attrs) => {
+    expect(alertStatusTagAttrs(status)).toEqual(attrs)
   })
 
   it.each([

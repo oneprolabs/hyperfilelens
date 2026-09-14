@@ -4,16 +4,14 @@ withDefaults(
     label: string
     value: string | number
     sub?: string
-    accent?: 'red' | 'yellow' | 'green' | 'blue' | 'indigo' | 'orange' | 'pink' | 'gray'
+    tone?: 'primary' | 'success' | 'warning' | 'danger' | 'info' | 'firing' | 'neutral'
     accentSide?: 'left' | 'top'
-    valueClass?: string
     pulse?: boolean
   }>(),
   {
-    accent: 'indigo',
+    tone: 'primary',
     accentSide: 'top',
     sub: '',
-    valueClass: '',
     pulse: false,
   },
 )
@@ -23,7 +21,7 @@ withDefaults(
   <div
     class="hfl-ops-stat-card"
     :class="[
-      `hfl-ops-stat-card--${accent}`,
+      `hfl-ops-stat-card--tone-${tone}`,
       accentSide === 'left' ? 'hfl-ops-stat-card--side-left' : 'hfl-ops-stat-card--side-top',
     ]"
   >
@@ -40,10 +38,7 @@ withDefaults(
       </div>
     </div>
     <div class="hfl-ops-stat-card__value-row">
-      <div
-        class="hfl-ops-stat-card__value"
-        :class="valueClass"
-      >
+      <div class="hfl-ops-stat-card__value">
         {{ value }}
       </div>
       <span

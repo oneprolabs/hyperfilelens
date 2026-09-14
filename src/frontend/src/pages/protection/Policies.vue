@@ -1126,6 +1126,7 @@ function onMoreDisable() {
           </ElButton>
           <ElDropdown
             trigger="click"
+            popper-class="hfl-actions-dropdown"
             @visible-change="moreActionsOpen = $event"
           >
             <ElButton :loading="listActionLoading">

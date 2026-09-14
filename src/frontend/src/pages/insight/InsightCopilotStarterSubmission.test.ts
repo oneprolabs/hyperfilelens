@@ -13,6 +13,7 @@ import CopilotComposer from './copilot/CopilotComposer.vue'
 const mocks = vi.hoisted(() => ({
   createCopilotRun: vi.fn(),
   deleteCopilotAttachment: vi.fn(),
+  forceDeleteCopilotSession: vi.fn(),
   listCopilotAssistants: vi.fn(),
   listCopilotSessions: vi.fn(),
   syncCopilotSession: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock('../../lib/lensApi', () => ({
   createCopilotRun: mocks.createCopilotRun,
   deleteCopilotAttachment: mocks.deleteCopilotAttachment,
   deleteCopilotSession: vi.fn(),
+  forceDeleteCopilotSession: mocks.forceDeleteCopilotSession,
   fetchCopilotReadiness: vi.fn().mockResolvedValue({
     default_agent_model_ref: 'agent-model',
     default_multimodal_model_ref: null,
@@ -75,6 +77,30 @@ function deferred<T>() {
 }
 
 const SimpleStub = defineComponent({ template: '<div />' })
+const DeleteTriggerSidebar = defineComponent({
+  props: {
+    sessions: { type: Array, default: () => [] },
+  },
+  emits: ['delete'],
+  template: '<button class="delete-chat-trigger" @click="$emit(\'delete\', sessions[0])">Delete</button>',
+})
+const DangerConfirmDialogStub = defineComponent({
+  props: {
+    modelValue: Boolean,
+    title: String,
+    message: String,
+    items: Array,
+    cancelText: String,
+    confirmText: String,
+  },
+  emits: ['update:modelValue', 'confirm', 'cancel'],
+  template: '<section v-if="modelValue" class="delete-chat-dialog">{{ title }} {{ message }} {{ cancelText }} {{ confirmText }}</section>',
+})
+const ForceDeleteLifecycle = defineComponent({
+  props: { session: { type: Object, required: true } },
+  emits: ['forceDelete'],
+  template: '<button class="force-delete-trigger" @click="$emit(\'forceDelete\')">Force Delete</button>',
+})
 
 function sessionRow(
   activeRun: { uuid: string; status: string } | null = null,
@@ -103,6 +129,8 @@ function sessionRow(
 function mountCopilot(
   i18n: ReturnType<typeof createI18n>,
   sessionSidebar = SimpleStub,
+  dangerConfirmDialog = SimpleStub,
+  lifecycleState = SimpleStub,
 ) {
   return mount(InsightCopilot, {
     global: {
@@ -110,10 +138,11 @@ function mountCopilot(
       stubs: {
         CopilotSessionSidebar: sessionSidebar,
         CopilotContextBar: SimpleStub,
-        CopilotLifecycleState: SimpleStub,
+        CopilotLifecycleState: lifecycleState,
         CopilotEmptyState: SimpleStub,
         CopilotShareDialog: SimpleStub,
-        DangerConfirmDialog: SimpleStub,
+        CopilotExecutionSettingsDialog: SimpleStub,
+        DangerConfirmDialog: dangerConfirmDialog,
         ElDrawer: SimpleStub,
         ElImage: SimpleStub,
       },
@@ -121,7 +150,7 @@ function mountCopilot(
   })
 }
 
-describe('InsightCopilot starter question submission', () => {
+describe('InsightCopilot question submission', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.listCopilotSessions.mockResolvedValue([sessionRow()])
@@ -146,6 +175,11 @@ describe('InsightCopilot starter question submission', () => {
       last_viewed_at: '2026-08-11T08:01:00Z',
     })
     mocks.streamCopilotRun.mockResolvedValue(undefined)
+    mocks.forceDeleteCopilotSession.mockResolvedValue({
+      ...sessionRow(null, 'deleting'),
+      cleanup_intent: 'delete_session',
+      cleanup_status: 'pending',
+    })
     mocks.deleteCopilotAttachment.mockResolvedValue(undefined)
     mocks.uploadCopilotAttachment.mockResolvedValue({
       uuid: '00000000-0000-4000-8000-000000000001',
@@ -209,9 +243,7 @@ describe('InsightCopilot starter question submission', () => {
     expect(mocks.listCopilotSessions).toHaveBeenCalledTimes(callsAfterUnmount)
   })
 
-  it('submits the starter question without copying it into the composer', async () => {
-    const createRequest = deferred<{ uuid: string; status: string }>()
-    mocks.createCopilotRun.mockReturnValue(createRequest.promise)
+  it('shows a single welcome message without starter question cards', async () => {
     const i18n = createI18n({
       legacy: false,
       locale: 'en',
@@ -222,26 +254,99 @@ describe('InsightCopilot starter question submission', () => {
     const wrapper = mountCopilot(i18n)
     await flushPromises()
 
-    const firstChip = wrapper.get('.copilot-chip-box')
-    await firstChip.trigger('click')
-    await nextTick()
+    expect(wrapper.get('.message-card--welcome').text()).toBe(en.insight.copilot.welcome)
+    expect(wrapper.find('.copilot-chip-grid').exists()).toBe(false)
+    expect(wrapper.find('.copilot-chip-box').exists()).toBe(false)
+    expect(mocks.createCopilotRun).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 
-    expect(mocks.createCopilotRun).toHaveBeenCalledTimes(1)
-    expect(mocks.createCopilotRun).toHaveBeenCalledWith(
-      444,
-      en.insight.copilot.chipQuerySopsPrompt,
-      expect.stringMatching(/^copilot-444-/),
-      [],
-      undefined,
-    )
-    expect(wrapper.get('.copilot-input-field').element).toHaveProperty('value', '')
-    expect(firstChip.attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('.thinking-panel-live').exists()).toBe(true)
-    expect(wrapper.get('.copilot-input-field').attributes('disabled')).toBeUndefined()
-    expect(wrapper.get('.copilot-send-btn--stop').attributes('disabled')).toBeDefined()
+  it('uses the Chat model selection when the Assistant list is compact', async () => {
+    mocks.listCopilotSessions.mockResolvedValue([{
+      ...sessionRow(),
+      agent_model_ref: 'agent-model',
+      multimodal_model_ref: 'vision-model',
+    }])
+    mocks.listCopilotAssistants.mockResolvedValue([{
+      uuid: 'assistant-1',
+      name: 'Backup Assistant',
+      slug: 'backup-assistant',
+      status: 'active',
+      selected_task: 'backup_qa',
+      supports_document_attachments: true,
+    }])
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
 
-    createRequest.resolve({ uuid: 'run-444', status: 'queued' })
+    const wrapper = mountCopilot(i18n)
     await flushPromises()
+
+    const composer = wrapper.getComponent(CopilotComposer)
+    expect(composer.props('supportsImages')).toBe(true)
+    expect(composer.props('supportsDocuments')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('uses a compact Chat-specific delete confirmation', async () => {
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+    const wrapper = mountCopilot(i18n, DeleteTriggerSidebar, DangerConfirmDialogStub)
+    await flushPromises()
+
+    await wrapper.get('.delete-chat-trigger').trigger('click')
+    await nextTick()
+    const dialog = wrapper.findComponent(DangerConfirmDialogStub)
+
+    expect(dialog.props('title')).toBe('Delete “Chat”?')
+    expect(dialog.props('message')).toBe(en.insight.copilot.deleteConfirmMessage)
+    expect(dialog.props('items')).toBeUndefined()
+    expect(dialog.props('cancelText')).toBe('Cancel')
+    expect(dialog.props('confirmText')).toBe('Delete Chat')
+    wrapper.unmount()
+  })
+
+  it('confirms force deletion for a blocked private Chat cleanup', async () => {
+    mocks.listCopilotSessions.mockResolvedValue([{
+      ...sessionRow(null, 'deleting'),
+      cleanup_intent: 'delete_session',
+      cleanup_status: 'blocked',
+      force_delete_available: true,
+    }])
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+    const wrapper = mountCopilot(
+      i18n,
+      SimpleStub,
+      DangerConfirmDialogStub,
+      ForceDeleteLifecycle,
+    )
+    await flushPromises()
+
+    await wrapper.get('.force-delete-trigger').trigger('click')
+    await nextTick()
+    const dialog = wrapper.findComponent(DangerConfirmDialogStub)
+    expect(dialog.props('title')).toBe('Force Delete “Chat”?')
+    expect(dialog.props('confirmText')).toBe('Force Delete')
+    expect(dialog.props('message')).toBe(en.insight.copilot.forceDeleteConfirmMessage)
+
+    dialog.vm.$emit('confirm')
+    await flushPromises()
+    expect(mocks.forceDeleteCopilotSession).toHaveBeenCalledWith(444)
     wrapper.unmount()
   })
 
@@ -323,7 +428,10 @@ describe('InsightCopilot starter question submission', () => {
     const wrapper = mountCopilot(i18n)
     await flushPromises()
 
-    await wrapper.get('.copilot-chip-box').trigger('click')
+    const composer = wrapper.findComponent(CopilotComposer)
+    composer.vm.$emit('update:modelValue', 'Summarize this backup')
+    await nextTick()
+    composer.vm.$emit('send')
     await flushPromises()
 
     expect(mocks.createCopilotRun).toHaveBeenCalledTimes(1)

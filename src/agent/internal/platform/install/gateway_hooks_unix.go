@@ -53,21 +53,21 @@ run_gateway_sidecar_uninstall_if_needed() {
   local api_base org token node_id insecure bootstrap script tmp curl_tls purge_args
   [[ -f "$env_file" ]] || return 0
   grep -q '^HFL_NODE_ROLE=gateway' "$env_file" || return 0
-  api_base="$(grep -E '^HFL_API_BASE=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
-  org="$(grep -E '^HFL_ORG_KEY=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
-  token="$(grep -E '^HFL_NODE_CREDENTIAL=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
-  [[ -n "$token" ]] || token="$(grep -E '^HFL_NODE_TOKEN=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
-  node_id="$(grep -E '^HFL_NODE_ID=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
+  api_base="$(grep -E '^HFL_API_BASE=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')" || api_base=""
+  org="$(grep -E '^HFL_ORG_KEY=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')" || org=""
+  token="$(grep -E '^HFL_NODE_CREDENTIAL=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')" || token=""
+  [[ -n "$token" ]] || token="$(grep -E '^HFL_NODE_TOKEN=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')" || token=""
+  node_id="$(grep -E '^HFL_NODE_ID=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')" || node_id=""
   insecure="$(grep -E '^HFL_INSECURE_TLS=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' || true)"
-  [[ -n "$api_base" && -n "$org" && -n "$token" && -n "$node_id" ]] || {
-    log "WARN " "Gateway sidecar uninstall skipped (incomplete agent.env credentials)."
-    return 0
-  }
   curl_tls=()
   [[ "$insecure" != "0" ]] && curl_tls=(-k)
   script="$INSTALL_DIR/libexec/gateway-lifecycle.sh"
   tmp=""
   if [[ ! -x "$script" ]]; then
+    [[ -n "$api_base" && -n "$org" && -n "$token" && -n "$node_id" ]] || {
+      log "FAIL " "Gateway sidecar uninstall cannot continue because the local lifecycle script and download credentials are unavailable."
+      return 1
+    }
     bootstrap="${api_base%/}/media/gateway-bootstrap"
     tmp="$(mktemp -d)"
     script="${tmp}/gateway-lifecycle.sh"

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"hyperfilelens/agent/internal/controller"
+	"hyperfilelens/agent/internal/engine"
 	"hyperfilelens/agent/internal/enroll"
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/infra/database"
@@ -26,6 +27,9 @@ const controlPlanePollInterval = 5 * time.Second
 const gatewayObservabilityRefreshInterval = 10 * time.Minute
 const heartbeatCollectionInterval = 30 * time.Second
 const durableRegistrationRetryInterval = 5 * time.Minute
+const lifecycleRepairInterval = 10 * time.Second
+const lifecycleRepairTimeout = 10 * time.Minute
+const snapshotDownloadCleanupInterval = time.Hour
 
 // Agent is the runtime composition root coordinating module startup and shutdown.
 type Agent struct {
@@ -39,10 +43,12 @@ type Agent struct {
 	taskFixer *controller.TaskFixer
 	monitor   *monitor.Collector
 
-	heartbeatMu      sync.RWMutex
-	storageInventory map[string]any
-	monitorMetrics   map[string]any
-	registrationOnce sync.Once
+	heartbeatMu           sync.RWMutex
+	storageInventory      map[string]any
+	monitorMetrics        map[string]any
+	registrationOnce      sync.Once
+	lifecycleRepairMu     sync.Mutex
+	lifecycleRepairActive bool
 
 	idleLogged bool
 }
@@ -70,6 +76,7 @@ func (a *Agent) Startup(ctx context.Context) error {
 	if err := Setup(ctx, cfg); err != nil {
 		return err
 	}
+	engine.CleanupStaleSnapshotDownloadArtifacts()
 
 	dataRoot, logDir, _, err := ResolveLayout(cfg)
 	if err != nil {
@@ -96,7 +103,7 @@ func (a *Agent) Startup(ctx context.Context) error {
 	)
 	a.taskFixer = controller.NewTaskFixer(repo, a.tracker, dataRoot, logDir)
 
-	if _, err := a.taskFixer.RepairRunning(ctx); err != nil {
+	if _, err := a.repairRunning(ctx); err != nil {
 		return err
 	}
 
@@ -113,8 +120,22 @@ func (a *Agent) Startup(ctx context.Context) error {
 	}
 	envPath, jsonPath := a.store.Paths()
 	slog.Info("config files", "env_file", envPath, "json_file", jsonPath)
+	go snapshotDownloadCleanupLoop(ctx)
 
 	return nil
+}
+
+func snapshotDownloadCleanupLoop(ctx context.Context) {
+	ticker := time.NewTicker(snapshotDownloadCleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			engine.CleanupStaleSnapshotDownloadArtifacts()
+		}
+	}
 }
 
 // Run blocks until ctx is cancelled.
@@ -155,6 +176,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			slog.Warn("node registration before websocket failed", "err", err)
 		}
 
+		rootCtx := ctx
 		err := a.connector.Run(ctx,
 			func(ctx context.Context, msg []byte) error {
 				return a.wire.Handle(ctx, msg, a.connector)
@@ -162,7 +184,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			func(ctx context.Context) error {
 				a.wire.SetTaskResultAckEnabled(a.connector.TaskResultAckEnabled())
 				if a.taskFixer != nil {
-					if _, err := a.taskFixer.RepairRunning(ctx); err != nil {
+					if _, err := a.repairRunning(ctx); err != nil {
 						slog.Warn("connect lifecycle repair failed", "err", err)
 					}
 				}
@@ -183,7 +205,7 @@ func (a *Agent) Run(ctx context.Context) error {
 				); err != nil {
 					return err
 				}
-				go a.deferredLifecycleRepair(context.WithoutCancel(ctx))
+				a.startDeferredLifecycleRepair(rootCtx)
 				if a.store.Current().Role == model.RoleGateway {
 					go a.gatewayObservabilityLoop(ctx)
 				}
@@ -435,30 +457,60 @@ func (a *Agent) waitControlPlaneConfig(ctx context.Context) {
 }
 
 // deferredLifecycleRepair re-checks detached upgrade/uninstall tasks after reconnect.
-// Startup repair can run while install.ps1 is still executing; this flushes success once logs exist.
+// Startup repair can run while the installer is still executing; this persists
+// the terminal result for the existing task-result outbox once evidence exists.
 func (a *Agent) deferredLifecycleRepair(ctx context.Context) {
-	delays := []time.Duration{10 * time.Second, 25 * time.Second}
-	for _, delay := range delays {
+	defer func() {
+		a.lifecycleRepairMu.Lock()
+		a.lifecycleRepairActive = false
+		a.lifecycleRepairMu.Unlock()
+	}()
+	ticker := time.NewTicker(lifecycleRepairInterval)
+	defer ticker.Stop()
+	for {
+		if a.taskFixer == nil {
+			return
+		}
+		startedAt, err := a.taskFixer.PendingLifecycleStartedAt(ctx)
+		if err != nil {
+			slog.Warn("deferred lifecycle repair lookup failed", "err", err)
+		} else if startedAt == nil {
+			return
+		} else if time.Since(*startedAt) >= lifecycleRepairTimeout {
+			slog.Warn("deferred lifecycle repair timed out", "started_at", startedAt)
+			return
+		}
+
+		if _, err := a.repairRunning(ctx); err != nil {
+			slog.Warn("deferred lifecycle repair failed", "err", err)
+		}
+
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(delay):
-		}
-		if a.taskFixer == nil || a.wire == nil || a.connector == nil {
-			return
-		}
-		repaired, err := a.taskFixer.RepairRunning(ctx)
-		if err != nil {
-			slog.Warn("deferred lifecycle repair failed", "err", err)
-			continue
-		}
-		if len(repaired) == 0 {
-			continue
-		}
-		if err := a.wire.FlushUnreportedResults(ctx, a.connector); err != nil {
-			slog.Warn("flush deferred lifecycle repair failed", "err", err)
+		case <-ticker.C:
 		}
 	}
+}
+
+func (a *Agent) startDeferredLifecycleRepair(ctx context.Context) {
+	a.lifecycleRepairMu.Lock()
+	if a.lifecycleRepairActive {
+		a.lifecycleRepairMu.Unlock()
+		return
+	}
+	a.lifecycleRepairActive = true
+	a.lifecycleRepairMu.Unlock()
+	go a.deferredLifecycleRepair(ctx)
+}
+
+func (a *Agent) repairRunning(ctx context.Context) ([]model.Task, error) {
+	a.lifecycleRepairMu.Lock()
+	defer a.lifecycleRepairMu.Unlock()
+	if a.taskFixer == nil {
+		return nil, nil
+	}
+	return a.taskFixer.RepairRunning(ctx)
 }
 
 // Shutdown stops active tasks and releases resources.

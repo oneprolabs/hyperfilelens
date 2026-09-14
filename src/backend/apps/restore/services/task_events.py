@@ -113,6 +113,17 @@ def append_restore_item_terminal_event(
         metadata["error_code"] = item.error_code
     if item.error_message:
         metadata["error_message"] = item.error_message
+    result = item.result_payload if isinstance(item.result_payload, dict) else {}
+    for key in (
+        "restore_outcome",
+        "skip_reason",
+        "conflict_mode",
+        "error_remediation",
+        "error_diagnostic",
+    ):
+        value = result.get(key)
+        if value not in (None, ""):
+            metadata[key] = value
     return append_task_step_event(
         task=task,
         step_name=_RESTORE_STEP_NAME,

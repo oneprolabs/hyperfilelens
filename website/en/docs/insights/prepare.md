@@ -1,20 +1,20 @@
 ---
-title: Prepare a Snapshot
-description: Verify a backup snapshot and choose an appropriate scope before creating an Insights Chat.
+title: Prepare a snapshot
+description: Verify a backup snapshot and choose an appropriate data scope before creating an Insights session.
 ---
 
-# Prepare a Snapshot
+# Prepare a snapshot
 
-Insights analyzes an existing backup snapshot, not current files on the source host. Before creating a Chat, confirm that the snapshot is available and contains the version of the data you intend to analyze.
+Insights analyzes an existing backup snapshot, not the current files on the source host. Before creating a session, confirm that the snapshot is available and contains the version of the data you want to analyze.
 
 ## 1. Verify the snapshot
 
-Open the backup-source details and select **Snapshot Points**. Check:
+Open the backup source details and select **Snapshot Points**. Check:
 
 - the snapshot status is **Available**;
 - it belongs to the intended backup source and repository;
 - its completion time represents the version you need;
-- the required physical directory can be browsed;
+- the required files or directories can be browsed;
 - backup policies and filters did not exclude required content.
 
 ![Available snapshot in Snapshot Points with host information blurred while snapshot identifiers, times, sizes, and file counts remain visible](/docs/getting-started/snapshot-points-available.png)
@@ -31,11 +31,11 @@ Do not select directories containing credentials, private keys, access tokens, p
 
 ## 3. Check prerequisites
 
-A Chat also requires:
+An Insights session also requires:
 
 - a ready default Agent model;
 - a ready multimodal model when images or scanned documents must be understood;
 - an available Public Data Gateway, or an online Private Data Gateway that can reach the repository;
-- sufficient organization and Gateway capacity.
+- sufficient organization and gateway capacity.
 
-If the creation page reports a missing prerequisite, resolve that exact condition before submitting another Chat.
+If the creation page reports a missing prerequisite, resolve that condition before trying to create the session again.

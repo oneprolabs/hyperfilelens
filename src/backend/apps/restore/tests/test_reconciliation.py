@@ -140,7 +140,7 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
             update_fields=["terminal_projection_at", "updated_at"]
         )
 
-    @patch("apps.restore.services.reconciliation._resume_stranded_insight_restore_items")
+    @patch("apps.restore.services.reconciliation._resume_stranded_restore_items")
     @patch("apps.restore.services.reconciliation.sync_restore_record_from_node_task")
     @patch(
         "apps.restore.services.reconciliation._classify_terminal_legacy_insight_tasks",
@@ -172,7 +172,7 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
         resume_insight.assert_called_once_with(limit=20)
         self.assertEqual(projector.call_args_list, [call(NodeTask, first)])
 
-    @patch("apps.restore.services.reconciliation._resume_stranded_insight_restore_items")
+    @patch("apps.restore.services.reconciliation._resume_stranded_restore_items")
     @patch("apps.restore.services.reconciliation.logger.exception")
     @patch(
         "apps.restore.services.reconciliation._classify_terminal_legacy_insight_tasks",
@@ -218,7 +218,7 @@ class RestoreProjectionReconciliationTests(SimpleTestCase):
         resume_insight.assert_called_once_with(limit=20)
         log_exception.assert_called_once()
 
-    @patch("apps.restore.services.reconciliation._resume_stranded_insight_restore_items")
+    @patch("apps.restore.services.reconciliation._resume_stranded_restore_items")
     @patch("apps.restore.services.reconciliation.logger.exception")
     @patch(
         "apps.restore.services.reconciliation._classify_terminal_legacy_insight_tasks",

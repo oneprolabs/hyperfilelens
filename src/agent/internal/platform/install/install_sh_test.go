@@ -11,6 +11,27 @@ import (
 	"testing"
 )
 
+func TestUnixUninstallCommandUsesExplicitDataPolicy(t *testing.T) {
+	tests := []struct {
+		name                     string
+		keepData                 bool
+		keepInstallationIdentity bool
+		want                     string
+	}{
+		{name: "complete removal", want: "uninstall --quiet-footer --purge-all"},
+		{name: "preserve data", keepData: true, want: "uninstall --quiet-footer --keep-data"},
+		{name: "rollback", keepData: true, keepInstallationIdentity: true, want: "uninstall --quiet-footer --keep-installation-identity"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, args := uninstallCommand("/tmp/hfl-agent", test.keepData, test.keepInstallationIdentity)
+			if got := strings.Join(args, " "); got != test.want {
+				t.Fatalf("uninstall args=%q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestInstallShellRetiresIdentityBeforeRemovingAgent(t *testing.T) {
 	t.Parallel()
 	_, currentFile, _, ok := runtime.Caller(0)
@@ -314,6 +335,15 @@ func TestInstallShellUpgradeKeepsRollbackUntilLocalHealth(t *testing.T) {
 	startOnlyBody := body[startOnly : startOnly+startOnlyEnd]
 	if !strings.Contains(startOnlyBody, "hfl_systemctl daemon-reload") {
 		t.Fatal("install.sh start_service_only must reload systemd before starting a rewritten unit")
+	}
+	for _, want := range []string{
+		`hfl_systemctl is-active hyperfilelens-agent.service`,
+		`hfl_systemctl restart hyperfilelens-agent.service`,
+		`Stopping leftover hyperfilelens-agent.service before installing.`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh is missing stale-process protection %q", want)
+		}
 	}
 	if !strings.Contains(body, `if [[ -f "${state_file}" ]]; then`) {
 		t.Fatal("install.sh lifecycle commands must recover an existing state file even when its phase is unreadable")

@@ -18,15 +18,16 @@ SESSION_DIR=""
 SOURCE_NAME=""
 REGION=""
 TAGS_API_URL=""
-REGISTRY_NAME=""
 RELEASE_VERSION=""
 RELEASE_COMMIT=""
 RECENT_TAGS=""
 INSTALL_ROOT="/opt/hyperfilelens"
 INSTALL_ACTION="Install"
+INSTALL_RECOVERY=0
 MAX_TAG_PAGES=100
 ONLINE_LOG_FILE=""
 ONLINE_INTERACTIVE=0
+ONLINE_CHILD_CONSOLE_MARKER="__HFL_ONLINE_CONSOLE__"
 HOST_UBUNTU_CODENAME=""
 DOCKER_CE_APT_BASE=""
 DOCKER_CE_GPG_URL=""
@@ -44,8 +45,22 @@ DOCKER_PACKAGE_INSTALL_ATTEMPTED=0
 DOCKER_BOOTSTRAPPED=0
 COMPOSE_PACKAGE_INSTALL_ATTEMPTED=0
 COMPOSE_BOOTSTRAPPED=0
+APT_FAILURE_DPKG_CLEAN=0
+DOWNLOAD_BYTES=0
+DOWNLOAD_ELAPSED_SECONDS=0
+DOWNLOAD_AVERAGE_BYTES_PER_SECOND=0
+ONLINE_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent/bin"
+ONLINE_AGENT_ROOT="/opt/hyperfilelens-agent"
+ONLINE_AGENT_LEGACY_DATA_DIR="/var/lib/hyperfilelens-agent"
+ONLINE_AGENT_SYSTEMD_UNIT_FILE="/etc/systemd/system/hyperfilelens-agent.service"
+ONLINE_REQUIRED_PORTS=(11442 11443 11444 11445)
 CURL_RETRY_ARGS=()
-APT_RETRY_ARGS=(-o Acquire::Retries=3 -o DPkg::Lock::Timeout=120)
+APT_RETRY_ARGS=(
+	-o Acquire::Retries=3
+	-o Acquire::http::Timeout=60
+	-o Acquire::https::Timeout=60
+	-o DPkg::Lock::Timeout=120
+)
 
 usage() {
 	cat <<'USAGE'
@@ -64,6 +79,23 @@ USAGE
 fail() {
 	printf '[FAIL] %s\n' "$*" >&2
 	exit 1
+}
+
+fail_log_setup() {
+	local operation="$1" diagnostic="${2:-}"
+	local normalized="${diagnostic,,}"
+	if [[ "${normalized}" == *"read-only file system"* \
+		|| "${normalized}" == *"read-only filesystem"* \
+		|| "${normalized}" == *"erofs"* ]]; then
+		printf '[FAIL] The target filesystem is read-only.\n\n' >&2
+		printf 'The installer cannot write its log under:\n%s\n\n' \
+			"${INSTALL_ROOT}/logs" >&2
+		printf 'Remount the filesystem as read-write or repair the filesystem,\n' >&2
+		printf 'then run the installer again.\n\n' >&2
+		printf 'No HyperFileLens installation or configuration was changed.\n' >&2
+		exit 1
+	fi
+	fail "could not ${operation}"
 }
 
 print_banner() {
@@ -98,23 +130,208 @@ capture_log_stream() {
 		| timestamp_log_stream "${log_file}"
 }
 
+capture_child_install_stream() {
+	local log_file=$1 console_fd=$2 line timestamp rendered
+	local TZ=UTC
+	export TZ
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		rendered="${line}"
+		if [[ "${line}" == "${ONLINE_CHILD_CONSOLE_MARKER}"* ]]; then
+			rendered="${line#"${ONLINE_CHILD_CONSOLE_MARKER}"}"
+			printf '%s\n' "${rendered}" >"/dev/fd/${console_fd}"
+		fi
+		printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
+		printf '[%s] %s\n' "${timestamp}" "${rendered}" >>"${log_file}"
+	done
+}
+
+apt_failure_is_transient() {
+	local log_file=${1:-}
+	[[ -s "${log_file}" ]] || return 1
+	grep -Eiq \
+		'failed to fetch.*(timed out|could not connect|connection (reset|failed)|temporary failure resolving|could not resolve|network is unreachable)|connection timed out|could not connect|connection reset|connection failed|temporary failure resolving|could not resolve|network is unreachable|tls.*(error|connection)' \
+		"${log_file}"
+}
+
+dpkg_state_clean_for_retry() {
+	local audit_output
+	if ! audit_output="$(dpkg --audit 2>&1)"; then
+		printf '[WARN] Ubuntu package state could not be inspected; automatic retry is disabled.\n' >&2
+		[[ -z "${audit_output}" ]] || printf '%s\n' "${audit_output}" >&2
+		return 1
+	fi
+	if [[ -n "${audit_output}" ]]; then
+		printf '[WARN] Ubuntu package state is incomplete; automatic retry is disabled.\n' >&2
+		printf '%s\n' "${audit_output}" >&2
+		return 1
+	fi
+	return 0
+}
+
+apt_install_with_network_retry() {
+	local install_log=$1
+	shift
+	local attempt=1
+	while :; do
+		if DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+			"$@" >"${install_log}" 2>&1; then
+			return 0
+		fi
+		if ((attempt >= 2)) || ! apt_failure_is_transient "${install_log}"; then
+			if ((attempt >= 2)) && apt_failure_is_transient "${install_log}" \
+				&& dpkg_state_clean_for_retry; then
+				APT_FAILURE_DPKG_CLEAN=1
+			fi
+			preserve_apt_failure_log "${install_log}"
+			return 1
+		fi
+		if ! dpkg_state_clean_for_retry; then
+			preserve_apt_failure_log "${install_log}"
+			return 1
+		fi
+		printf '[ OK ] Ubuntu package state is clean\n' >&2
+		printf '[....] APT package download failed; retrying in 60 seconds (2/2)\n' >&2
+		sleep 60
+		attempt=2
+	done
+}
+
 configure_logging() {
-	local stamp
+	local stamp log_directory diagnostic
 	[[ -t 1 || -t 2 ]] && ONLINE_INTERACTIVE=1 || true
 	stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 	ONLINE_LOG_FILE="${INSTALL_ROOT}/logs/install-${stamp}-$$.log"
-	mkdir -p "$(dirname "${ONLINE_LOG_FILE}")" \
-		|| fail "could not create the online installation log directory"
+	log_directory="$(dirname "${ONLINE_LOG_FILE}")"
+	if ! diagnostic="$(LC_ALL=C mkdir -p "${log_directory}" 2>&1)"; then
+		fail_log_setup "create the online installation log directory" "${diagnostic}"
+	fi
 	[[ ! -L "${ONLINE_LOG_FILE}" ]] \
 		|| fail "refusing to write the online installation log through a symbolic link"
-	touch "${ONLINE_LOG_FILE}" \
-		|| fail "could not create the online installation log"
-	chmod 600 "${ONLINE_LOG_FILE}" \
-		|| fail "could not secure the online installation log"
+	if ! diagnostic="$(LC_ALL=C touch "${ONLINE_LOG_FILE}" 2>&1)"; then
+		fail_log_setup "create the online installation log" "${diagnostic}"
+	fi
+	if ! diagnostic="$(LC_ALL=C chmod 600 "${ONLINE_LOG_FILE}" 2>&1)"; then
+		fail_log_setup "secure the online installation log" "${diagnostic}"
+	fi
 	exec 3>&1
 	exec 4>&2
 	exec > >(capture_log_stream "${ONLINE_LOG_FILE}" 3) \
 		2> >(capture_log_stream "${ONLINE_LOG_FILE}" 4)
+}
+
+preserve_apt_failure_log() {
+	local source_log=${1:-}
+	local preserved_log
+	[[ -n "${ONLINE_LOG_FILE}" && -s "${source_log}" ]] || return 0
+	preserved_log="${ONLINE_LOG_FILE%.log}-apt.log"
+	if [[ -L "${preserved_log}" ]]; then
+		printf '[WARN] Refusing to write the APT diagnostic log through a symbolic link: %s\n' \
+			"${preserved_log}" >&2
+		return 0
+	fi
+	if ! install -m 0600 "${source_log}" "${preserved_log}"; then
+		printf '[WARN] Could not preserve the full APT diagnostic log: %s\n' \
+			"${preserved_log}" >&2
+		return 0
+	fi
+	printf '[INFO] Full APT output saved to %s\n' "${preserved_log}" >&2
+}
+
+apt_update_quiet() {
+	local update_log=$1
+	if LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" update >"${update_log}" 2>&1; then
+		if [[ -n "${ONLINE_LOG_FILE}" && -s "${update_log}" ]]; then
+			timestamp_log_stream "${ONLINE_LOG_FILE}" <"${update_log}"
+		fi
+		return 0
+	fi
+	if [[ -n "${ONLINE_LOG_FILE}" && -s "${update_log}" ]]; then
+		timestamp_log_stream "${ONLINE_LOG_FILE}" <"${update_log}"
+	fi
+	preserve_apt_failure_log "${update_log}"
+	tail -n 20 "${update_log}" >&2 || true
+	return 1
+}
+
+installation_step_indent() {
+	if [[ "${INSTALL_ACTION}" == "Install" || "${INSTALL_ACTION}" == "Upgrade" ]]; then
+		printf '  '
+	fi
+	return 0
+}
+
+format_bytes() {
+	awk -v bytes="${1:-0}" 'BEGIN {
+		split("B KiB MiB GiB TiB", units, " ")
+		value = bytes + 0
+		unit = 1
+		while (value >= 1024 && unit < 5) {
+			value /= 1024
+			unit++
+		}
+		if (unit == 1) printf "%.0f %s", value, units[unit]
+		else printf "%.1f %s", value, units[unit]
+	}'
+}
+
+format_duration() {
+	local seconds=${1:-0}
+	if ((seconds >= 3600)); then
+		printf '%dh %dm' "$((seconds / 3600))" "$(((seconds % 3600) / 60))"
+	elif ((seconds >= 60)); then
+		printf '%dm %ds' "$((seconds / 60))" "$((seconds % 60))"
+	else
+		printf '%ds' "${seconds}"
+	fi
+}
+
+download_header_size() {
+	local headers=$1
+	[[ -f "${headers}" ]] || { printf '0'; return 0; }
+	awk '
+		BEGIN { IGNORECASE = 1 }
+		/^Content-Length:/ {
+			gsub("\\r", "", $2)
+			if ($2 ~ /^[0-9]+$/) size = $2
+		}
+		/^Content-Range:/ {
+			split($3, parts, "/")
+			gsub("\\r", "", parts[2])
+			if (parts[2] ~ /^[0-9]+$/) size = parts[2]
+		}
+		END { print size + 0 }
+	' "${headers}" 2>/dev/null
+}
+
+download_progress_line() {
+	local label=$1 downloaded=$2 total=$3 elapsed=$4
+	local percent=0 filled=0 rate=0 eta=0 bar indent
+	indent="$(installation_step_indent)"
+	if ((total > 0)); then
+		percent=$((downloaded * 100 / total))
+		((percent <= 100)) || percent=100
+		filled=$((percent * 20 / 100))
+	fi
+	((elapsed > 0)) && rate=$((downloaded / elapsed))
+	bar="[$(printf '%*s' "${filled}" '' | tr ' ' '#')$(printf '%*s' "$((20 - filled))" '' | tr ' ' '-')]"
+	if ((total > 0)); then
+		if ((rate > 0 && downloaded < total)); then
+			eta=$(((total - downloaded) / rate))
+			printf '%s[....] %s %s | %d%% | %s / %s | %s/s | ETA %s' \
+				"${indent}" "${label}" "${bar}" "${percent}" \
+				"$(format_bytes "${downloaded}")" "$(format_bytes "${total}")" \
+				"$(format_bytes "${rate}")" "$(format_duration "${eta}")"
+		else
+			printf '%s[....] %s %s | %d%% | %s / %s | %s/s' \
+				"${indent}" "${label}" "${bar}" "${percent}" \
+				"$(format_bytes "${downloaded}")" "$(format_bytes "${total}")" \
+				"$(format_bytes "${rate}")"
+		fi
+		return 0
+	fi
+	printf '%s[....] %s %s downloaded | %s/s | elapsed %s' \
+		"${indent}" "${label}" "$(format_bytes "${downloaded}")" \
+		"$(format_bytes "${rate}")" "$(format_duration "${elapsed}")"
 }
 
 print_target() {
@@ -128,36 +345,60 @@ print_target() {
 Target
   Version        ${TAG}
   Edition        Community
-  Action         ${INSTALL_ACTION}
-  Source         ${SOURCE_NAME}
-  Registry       ${REGISTRY_NAME}
   Install path   ${INSTALL_ROOT}
   Platform       ${PRETTY_NAME:-Ubuntu} · linux/amd64
   Log file       ${ONLINE_LOG_FILE}
 EOF
 
-	printf '\nHost runtime\n'
+	if [[ "${INSTALL_ACTION}" == "Upgrade" ]]; then
+		printf '\nHost runtime\n'
+		case "${DOCKER_RUNTIME_ACTION}" in
+		install)
+			printf '  Docker Engine  not installed → install %s\n' "${DOCKER_TARGET_ENGINE_VERSION}"
+			printf '  Docker Compose not installed → install %s\n' "${DOCKER_TARGET_COMPOSE_VERSION}"
+			printf '  Package source %s\n' "${DOCKER_CE_SOURCE_NAME}"
+			printf '  Docker service enable and start\n'
+			printf '  Lifecycle      retained when HyperFileLens is removed\n'
+			;;
+		install-compose)
+			printf '  Docker Engine  %s · reuse\n' "${DOCKER_ENGINE_VERSION}"
+			printf '  Docker Compose not installed → install docker-compose-plugin %s\n' \
+				"${DOCKER_COMPOSE_PACKAGE_VERSION}"
+			printf '  Package source %s\n' "${DOCKER_CE_SOURCE_NAME}"
+			printf '  Install scope  Compose V2 plugin only\n'
+			printf '  Docker service active\n'
+			printf '  Lifecycle      retained when HyperFileLens is removed\n'
+			;;
+		reuse)
+			printf '  Docker Engine  %s · reuse\n' "${DOCKER_ENGINE_VERSION}"
+			printf '  Docker Compose %s · reuse\n' "${DOCKER_COMPOSE_VERSION}"
+			printf '  Docker service active\n'
+			;;
+		*) fail "internal Docker runtime action is invalid" ;;
+		esac
+		return 0
+	fi
+
+	printf '\nSystem requirements\n\n'
 	case "${DOCKER_RUNTIME_ACTION}" in
 	install)
-		printf '  Docker Engine  not installed → install %s\n' "${DOCKER_TARGET_ENGINE_VERSION}"
-		printf '  Docker Compose not installed → install %s\n' "${DOCKER_TARGET_COMPOSE_VERSION}"
-		printf '  Package source %s\n' "${DOCKER_CE_SOURCE_NAME}"
-		printf '  Docker service enable and start\n'
-		printf '  Lifecycle      retained when HyperFileLens is removed\n'
+		printf '  %-16s %s\n' 'Docker Engine' "Will install · ${DOCKER_TARGET_ENGINE_VERSION}"
+		printf '  %-16s %s\n' 'Docker Compose' "Will install · ${DOCKER_TARGET_COMPOSE_VERSION}"
+		printf '  %-16s %s\n' 'Docker service' 'Will enable and start'
+		printf '\nThe required container runtime will be installed on this host.\n'
 		;;
 	install-compose)
-		printf '  Docker Engine  %s · reuse\n' "${DOCKER_ENGINE_VERSION}"
-		printf '  Docker Compose not installed → install docker-compose-plugin %s\n' \
-			"${DOCKER_COMPOSE_PACKAGE_VERSION}"
-		printf '  Package source %s\n' "${DOCKER_CE_SOURCE_NAME}"
-		printf '  Install scope  Compose V2 plugin only\n'
-		printf '  Docker service active\n'
-		printf '  Lifecycle      retained when HyperFileLens is removed\n'
+		printf '  %-16s %s\n' 'Docker Engine' "Ready · ${DOCKER_ENGINE_VERSION}"
+		printf '  %-16s %s\n' 'Docker Compose' \
+			"Will install · ${DOCKER_COMPOSE_PACKAGE_VERSION}"
+		printf '  %-16s %s\n' 'Docker service' 'Running'
+		printf '\nThe required Docker Compose plugin will be installed on this host.\n'
 		;;
 	reuse)
-		printf '  Docker Engine  %s · reuse\n' "${DOCKER_ENGINE_VERSION}"
-		printf '  Docker Compose %s · reuse\n' "${DOCKER_COMPOSE_VERSION}"
-		printf '  Docker service active\n'
+		printf '  %-16s %s\n' 'Docker Engine' "Ready · ${DOCKER_ENGINE_VERSION}"
+		printf '  %-16s %s\n' 'Docker Compose' "Ready · ${DOCKER_COMPOSE_VERSION}"
+		printf '  %-16s %s\n' 'Docker service' 'Running'
+		printf '\n  [ OK ] System requirements are satisfied\n'
 		;;
 	*) fail "internal Docker runtime action is invalid" ;;
 	esac
@@ -166,7 +407,10 @@ EOF
 cleanup() {
 	local rc=$?
 	trap - EXIT INT TERM
-	if ((rc != 0 && COMPOSE_PACKAGE_INSTALL_ATTEMPTED == 1 && COMPOSE_BOOTSTRAPPED == 0)); then
+	if ((rc != 0 && APT_FAILURE_DPKG_CLEAN == 1)); then
+		printf '\n[WARN] APT package installation failed after the retry.\n' >&2
+		printf '[INFO] Ubuntu package state is clean. Run the same HyperFileLens installation command again later.\n' >&2
+	elif ((rc != 0 && COMPOSE_PACKAGE_INSTALL_ATTEMPTED == 1 && COMPOSE_BOOTSTRAPPED == 0)); then
 		printf '\n[WARN] Docker Compose V2 plugin installation did not complete and may have left a partially installed package.\n' >&2
 		printf '[INFO] The existing Docker Engine was not replaced; review dpkg --audit and repair the package state manually before retrying.\n' >&2
 	elif ((rc != 0 && COMPOSE_BOOTSTRAPPED == 1)); then
@@ -213,6 +457,7 @@ check_host() {
 install_host_tools() {
 	local -a missing=()
 	local tool plan="${SESSION_DIR}/host-tools-apt-plan.log"
+	local update_log="${SESSION_DIR}/host-tools-apt-update.log"
 	for tool in ca-certificates openssl python3 rsync tar; do
 		case "${tool}" in
 		ca-certificates) [[ -f /etc/ssl/certs/ca-certificates.crt ]] || missing+=(ca-certificates) ;;
@@ -220,8 +465,9 @@ install_host_tools() {
 		esac
 	done
 	if ((${#missing[@]})); then
-		printf '[....] Installing required host tools: %s\n' "${missing[*]}"
-		apt-get "${APT_RETRY_ARGS[@]}" update \
+		printf '%s[....] Installing required host tools: %s\n' \
+			"$(installation_step_indent)" "${missing[*]}"
+		apt_update_quiet "${update_log}" \
 			|| fail "could not refresh Ubuntu package metadata for required host tools"
 		if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
 			--no-install-recommends install \
@@ -244,14 +490,12 @@ configure_mirror() {
 		SOURCE_NAME="Gitee"
 		REGION="cn"
 		TAGS_API_URL="https://gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1"
-		REGISTRY_NAME="Alibaba Cloud"
 		DOCKER_CE_APT_BASE="${HFL_DOCKER_CE_APT_BASE:-${DEFAULT_CN_DOCKER_CE_APT_BASE}}"
 		;;
 	global)
 		SOURCE_NAME="GitHub"
 		REGION="global"
 		TAGS_API_URL="https://api.github.com/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1"
-		REGISTRY_NAME="Docker Hub"
 		DOCKER_CE_APT_BASE="${HFL_DOCKER_CE_APT_BASE:-${DEFAULT_GLOBAL_DOCKER_CE_APT_BASE}}"
 		;;
 	*) fail "--mirror must be cn or global" ;;
@@ -325,16 +569,6 @@ docker_package_payload_present() {
 	[[ -n "${state}" && "${state}" != n && "${state}" != c ]]
 }
 
-foreign_docker_runtime_present() {
-	local package docker_path
-	for package in docker.io moby-engine moby-cli moby-containerd moby-compose podman-docker; do
-		docker_package_installed "${package}" && return 0
-	done
-	docker_path="$(command -v docker 2>/dev/null || true)"
-	[[ "${docker_path}" == /snap/* ]] && return 0
-	return 1
-}
-
 docker_package_installed() {
 	local status
 	status="$(dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null || true)"
@@ -344,6 +578,13 @@ docker_package_installed() {
 docker_ce_runtime_present() {
 	docker_package_installed docker-ce \
 		&& docker_package_installed docker-ce-cli
+}
+
+unsupported_docker_runtime_present() {
+	local docker_path
+	docker_package_installed podman-docker && return 0
+	docker_path="$(command -v docker 2>/dev/null || true)"
+	[[ "${docker_path}" == /snap/* ]]
 }
 
 docker_residual_state_present() {
@@ -443,8 +684,8 @@ inspect_docker_runtime() {
 	DOCKER_ENGINE_VERSION=""
 	DOCKER_COMPOSE_VERSION=""
 	if command -v docker >/dev/null 2>&1; then
-		if foreign_docker_runtime_present || ! docker_ce_runtime_present; then
-			fail "the existing Docker runtime is not a Docker CE installation; install Docker CE and Compose V2 manually, then rerun this installer"
+		if unsupported_docker_runtime_present; then
+			fail "the existing Docker command is provided by Podman or Snap, which is not supported; install Docker Engine and Compose V2 manually, then rerun this installer"
 		fi
 		docker info >/dev/null 2>&1 \
 			|| fail "Docker is installed but its daemon is unavailable; start or repair Docker manually, then rerun this installer"
@@ -455,6 +696,9 @@ inspect_docker_runtime() {
 			|| fail "Docker Engine ${DOCKER_ENGINE_VERSION} does not meet the minimum required version ${MIN_DOCKER_ENGINE_VERSION}; upgrade Docker manually, then rerun this installer"
 		DOCKER_COMPOSE_VERSION="$(docker_compose_version)"
 		if [[ -z "${DOCKER_COMPOSE_VERSION}" ]]; then
+			if ! docker_ce_runtime_present; then
+				fail "the existing Docker runtime does not provide Docker Compose V2; install a compatible Compose V2 plugin manually, then rerun this installer"
+			fi
 			if ! selected_docker_apt_source_present && docker_apt_source_present; then
 				DOCKER_CE_SOURCE_NAME="Existing Docker CE apt source"
 			fi
@@ -600,23 +844,26 @@ install_docker_prerequisites() {
 	local -a missing=()
 	local plan="${SESSION_DIR}/docker-prerequisites.plan"
 	local install_log="${SESSION_DIR}/docker-prerequisites-install.log"
+	local update_log="${SESSION_DIR}/docker-prerequisites-update.log"
 	command -v apt-get >/dev/null 2>&1 || fail "apt-get is required to install Docker CE"
 	command -v gpg >/dev/null 2>&1 || missing+=(gnupg)
 	[[ -f /etc/ssl/certs/ca-certificates.crt ]] || missing+=(ca-certificates)
 	if ((${#missing[@]})); then
-		printf '[....] Installing Docker CE source prerequisites: %s\n' "${missing[*]}"
-		apt-get "${APT_RETRY_ARGS[@]}" update \
+		printf '%s[....] Installing Docker CE source prerequisites: %s\n' \
+			"$(installation_step_indent)" "${missing[*]}"
+		apt_update_quiet "${update_log}" \
 			|| fail "could not refresh Ubuntu package metadata for Docker CE prerequisites"
 		if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
 			--no-install-recommends install \
 			"${missing[@]}" >"${plan}" 2>&1; then
+			preserve_apt_failure_log "${plan}"
 			tail -n 20 "${plan}" >&2 || true
 			fail "Docker CE source prerequisites could not be resolved"
 		fi
 		validate_apt_install_plan "${plan}" "Docker CE prerequisite installation"
-		if ! DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+		if ! apt_install_with_network_retry "${install_log}" \
 			install -y --no-remove \
-			--no-upgrade --no-install-recommends "${missing[@]}" >"${install_log}" 2>&1; then
+			--no-upgrade --no-install-recommends "${missing[@]}"; then
 			tail -n 20 "${install_log}" >&2 || true
 			fail "Docker CE source prerequisites could not be installed"
 		fi
@@ -630,7 +877,8 @@ configure_docker_apt_source() {
 	local gnupg_home="${SESSION_DIR}/gnupg"
 	local fingerprint source_file="${SESSION_DIR}/hyperfilelens-docker.list"
 	mkdir -m 0700 "${gnupg_home}"
-	printf '[....] Configuring %s\n' "${DOCKER_CE_SOURCE_NAME}"
+	printf '%s[....] Configuring %s\n' "$(installation_step_indent)" \
+		"${DOCKER_CE_SOURCE_NAME}"
 	download_file "${DOCKER_CE_GPG_URL}" "${key_ascii}" 120 \
 		|| fail "could not download the Docker CE signing key from ${DOCKER_CE_GPG_URL}"
 	fingerprint="$(GNUPGHOME="${gnupg_home}" gpg --batch --show-keys --with-colons "${key_ascii}" 2>/dev/null \
@@ -644,7 +892,7 @@ configure_docker_apt_source() {
 	printf 'deb [arch=amd64 signed-by=/etc/apt/keyrings/hyperfilelens-docker.gpg] %s %s stable\n' \
 		"${DOCKER_CE_APT_BASE}" "${HOST_UBUNTU_CODENAME}" >"${source_file}"
 	install -m 0644 "${source_file}" /etc/apt/sources.list.d/hyperfilelens-docker.list
-	printf '[ OK ] Docker CE package source is ready\n'
+	printf '%s[ OK ] Docker CE package source is ready\n' "$(installation_step_indent)"
 }
 
 selected_docker_apt_source_present() {
@@ -663,11 +911,13 @@ selected_docker_apt_source_present() {
 ensure_docker_apt_source() {
 	local apt_root="${1:-/etc/apt}"
 	if selected_docker_apt_source_present "${apt_root}"; then
-		printf '[ OK ] Existing %s will be reused\n' "${DOCKER_CE_SOURCE_NAME}"
+		printf '%s[ OK ] Existing %s will be reused\n' \
+			"$(installation_step_indent)" "${DOCKER_CE_SOURCE_NAME}"
 		return 0
 	fi
 	if docker_apt_source_present "${apt_root}"; then
-		printf '[ OK ] Existing Docker CE apt source will be reused\n'
+		printf '%s[ OK ] Existing Docker CE apt source will be reused\n' \
+			"$(installation_step_indent)"
 		return 0
 	fi
 	install_docker_prerequisites
@@ -698,6 +948,7 @@ validate_compose_only_install_plan() {
 install_online_docker_runtime() {
 	local plan="${SESSION_DIR}/docker-apt-plan.log"
 	local install_log="${SESSION_DIR}/docker-apt-install.log"
+	local update_log="${SESSION_DIR}/docker-apt-update.log"
 	local attempt
 	local -a packages=(
 		"docker-ce=${DOCKER_ENGINE_PACKAGE_VERSION}"
@@ -712,27 +963,31 @@ install_online_docker_runtime() {
 	assert_clean_dpkg_state
 	install_docker_prerequisites
 	configure_docker_apt_source
-	printf '[....] Resolving Docker Engine and Docker Compose V2 packages\n'
-	apt-get "${APT_RETRY_ARGS[@]}" update \
+	printf '%s[....] Resolving Docker Engine and Docker Compose V2 packages\n' \
+		"$(installation_step_indent)"
+	apt_update_quiet "${update_log}" \
 		|| fail "could not update the selected Docker CE package source"
 	if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
 		--no-install-recommends install \
 		"${packages[@]}" >"${plan}" 2>&1; then
+		preserve_apt_failure_log "${plan}"
 		tail -n 20 "${plan}" >&2 || true
 		fail "Docker CE package dependencies could not be resolved"
 	fi
 	validate_apt_install_plan "${plan}" "Docker CE installation"
-	printf '[....] Installing Docker Engine and Docker Compose V2\n'
+	printf '%s[....] Installing Docker Engine and Docker Compose V2\n' \
+		"$(installation_step_indent)"
 	DOCKER_PACKAGE_INSTALL_ATTEMPTED=1
-	if ! DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+	if ! apt_install_with_network_retry "${install_log}" \
 		install -y --no-remove \
 		--no-upgrade --no-install-recommends \
-		"${packages[@]}" >"${install_log}" 2>&1; then
+		"${packages[@]}"; then
 		tail -n 20 "${install_log}" >&2 || true
 		fail "Docker Engine and Docker Compose V2 installation failed"
 	fi
 	DOCKER_BOOTSTRAPPED=1
-	printf '[....] Enabling and starting Docker service\n'
+	printf '%s[....] Enabling and starting Docker service\n' \
+		"$(installation_step_indent)"
 	systemctl enable --now docker >/dev/null 2>&1 \
 		|| fail "Docker was installed but docker.service could not be enabled and started"
 	for attempt in {1..30}; do
@@ -752,13 +1007,14 @@ install_online_docker_runtime() {
 	docker_version_ge "${DOCKER_COMPOSE_VERSION}" "${MIN_DOCKER_COMPOSE_VERSION}" \
 		|| fail "installed Docker Compose ${DOCKER_COMPOSE_VERSION:-unknown} does not meet the minimum required version ${MIN_DOCKER_COMPOSE_VERSION}"
 	DOCKER_RUNTIME_ACTION="reuse"
-	printf '[ OK ] Docker Engine %s and Docker Compose %s are ready\n' \
-		"${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
+	printf '%s[ OK ] Docker Engine %s and Docker Compose %s are ready\n' \
+		"$(installation_step_indent)" "${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
 }
 
 install_online_compose_plugin() {
 	local plan="${SESSION_DIR}/compose-apt-plan.log"
 	local install_log="${SESSION_DIR}/compose-apt-install.log"
+	local update_log="${SESSION_DIR}/compose-apt-update.log"
 	local original_engine_version="${DOCKER_ENGINE_VERSION}"
 	[[ -n "${DOCKER_COMPOSE_PACKAGE_VERSION}" ]] \
 		|| fail "Docker Compose V2 package version was not resolved"
@@ -772,23 +1028,27 @@ install_online_compose_plugin() {
 		fi
 	fi
 	ensure_docker_apt_source
-	printf '[....] Resolving Docker Compose V2 package\n'
-	apt-get "${APT_RETRY_ARGS[@]}" update \
+	printf '%s[....] Resolving Docker Compose V2 package\n' \
+		"$(installation_step_indent)"
+	apt_update_quiet "${update_log}" \
 		|| fail "could not update the selected Docker CE package source"
 	if ! LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" --simulate --no-remove --no-upgrade \
 		--no-install-recommends install \
 		"docker-compose-plugin=${DOCKER_COMPOSE_PACKAGE_VERSION}" >"${plan}" 2>&1; then
+		preserve_apt_failure_log "${plan}"
 		tail -n 20 "${plan}" >&2 || true
 		fail "Docker Compose V2 package dependencies could not be resolved without changing the existing Docker runtime"
 	fi
 	validate_apt_install_plan "${plan}" "Docker Compose V2 installation"
 	validate_compose_only_install_plan "${plan}"
-	printf '[ OK ] Docker Compose V2 package plan is safe\n'
-	printf '[....] Installing Docker Compose V2 plugin\n'
+	printf '%s[ OK ] Docker Compose V2 package plan is safe\n' \
+		"$(installation_step_indent)"
+	printf '%s[....] Installing Docker Compose V2 plugin\n' \
+		"$(installation_step_indent)"
 	COMPOSE_PACKAGE_INSTALL_ATTEMPTED=1
-	if ! DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get "${APT_RETRY_ARGS[@]}" \
+	if ! apt_install_with_network_retry "${install_log}" \
 		install -y --no-remove --no-upgrade --no-install-recommends \
-		"docker-compose-plugin=${DOCKER_COMPOSE_PACKAGE_VERSION}" >"${install_log}" 2>&1; then
+		"docker-compose-plugin=${DOCKER_COMPOSE_PACKAGE_VERSION}"; then
 		tail -n 20 "${install_log}" >&2 || true
 		fail "Docker Compose V2 plugin installation failed"
 	fi
@@ -802,15 +1062,15 @@ install_online_compose_plugin() {
 	docker_version_ge "${DOCKER_COMPOSE_VERSION}" "${MIN_DOCKER_COMPOSE_VERSION}" \
 		|| fail "installed Docker Compose ${DOCKER_COMPOSE_VERSION:-unknown} does not meet the minimum required version ${MIN_DOCKER_COMPOSE_VERSION}"
 	DOCKER_RUNTIME_ACTION="reuse"
-	printf '[ OK ] Docker Compose %s is ready; Docker Engine %s was reused unchanged\n' \
-		"${DOCKER_COMPOSE_VERSION}" "${DOCKER_ENGINE_VERSION}"
+	printf '%s[ OK ] Docker Compose %s is ready; Docker Engine %s was reused unchanged\n' \
+		"$(installation_step_indent)" "${DOCKER_COMPOSE_VERSION}" "${DOCKER_ENGINE_VERSION}"
 }
 
 ensure_online_docker_runtime() {
 	case "${DOCKER_RUNTIME_ACTION}" in
 	reuse)
-		printf '[ OK ] Existing Docker Engine %s and Docker Compose %s are supported\n' \
-			"${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
+		printf '%s[ OK ] Existing Docker Engine %s and Docker Compose %s are supported\n' \
+			"$(installation_step_indent)" "${DOCKER_ENGINE_VERSION}" "${DOCKER_COMPOSE_VERSION}"
 		;;
 	install-compose) install_online_compose_plugin ;;
 	install) install_online_docker_runtime ;;
@@ -819,11 +1079,20 @@ ensure_online_docker_runtime() {
 }
 
 inspect_existing_installation() {
-	local existing_edition
-	if [[ ! -e "${INSTALL_ROOT}/.env" && ! -e "${INSTALL_ROOT}/MANIFEST.json" ]]; then
+	local existing_edition complete_marker progress_marker
+	complete_marker="${INSTALL_ROOT}/.install-complete"
+	progress_marker="${INSTALL_ROOT}/.install-in-progress"
+	if [[ -f "${complete_marker}" ]]; then
+		INSTALL_ACTION="Upgrade"
+	elif [[ -f "${progress_marker}" ]]; then
+		INSTALL_ACTION="Install"
+		INSTALL_RECOVERY=1
 		return 0
+	elif [[ ! -e "${INSTALL_ROOT}/.env" && ! -e "${INSTALL_ROOT}/MANIFEST.json" ]]; then
+		return 0
+	else
+		INSTALL_ACTION="Upgrade"
 	fi
-	INSTALL_ACTION="Upgrade"
 	[[ -f "${INSTALL_ROOT}/.env" && -f "${INSTALL_ROOT}/MANIFEST.json" ]] \
 		|| fail "${INSTALL_ROOT} contains an incomplete installation; recover or remove it before continuing"
 	existing_edition="$(python3 - "${INSTALL_ROOT}/MANIFEST.json" <<'PY'
@@ -840,6 +1109,210 @@ PY
 	)" || fail "the existing installation manifest is invalid"
 	[[ "${existing_edition}" == community ]] \
 		|| fail "this public installer upgrades Community only; the existing edition is ${existing_edition}"
+}
+
+online_agent_env_file() {
+	local canonical="${ONLINE_AGENT_ROOT}/config/agent.env"
+	local legacy="${ONLINE_AGENT_LEGACY_DATA_DIR}/agent.env"
+	if [[ -f "${canonical}" \
+		&& ( -f "${ONLINE_AGENT_ROOT}/data/agent.db" || ! -f "${legacy}" ) ]]; then
+		printf '%s' "${canonical}"
+		return 0
+	fi
+	if [[ -f "${legacy}" ]]; then
+		printf '%s' "${legacy}"
+		return 0
+	fi
+	printf '%s' "${canonical}"
+}
+
+online_agent_env_value() {
+	local key=$1 env_file
+	env_file="$(online_agent_env_file)"
+	[[ -f "${env_file}" && ! -L "${env_file}" ]] || return 0
+	grep -E "^${key}=" "${env_file}" 2>/dev/null \
+		| head -1 | cut -d= -f2- | tr -d '\r' || true
+}
+
+online_agent_canonical_artifacts_detected() {
+	local canonical_env="${ONLINE_AGENT_ROOT}/config/agent.env"
+	[[ -e "${canonical_env}" || -L "${canonical_env}" \
+		|| -e "${ONLINE_AGENT_ROOT}/data/agent.db" \
+		|| -L "${ONLINE_AGENT_ROOT}/data/agent.db" \
+		|| -e "${ONLINE_AGENT_ROOT}/INSTALLED_VERSION" \
+		|| -L "${ONLINE_AGENT_ROOT}/INSTALLED_VERSION" \
+		|| -e "${ONLINE_AGENT_INSTALL_DIR}/install.sh" \
+		|| -L "${ONLINE_AGENT_INSTALL_DIR}/install.sh" \
+		|| -e "${ONLINE_AGENT_ROOT}/install.sh" \
+		|| -L "${ONLINE_AGENT_ROOT}/install.sh" ]]
+}
+
+online_agent_legacy_data_detected() {
+	[[ -e "${ONLINE_AGENT_LEGACY_DATA_DIR}/agent.env" \
+		|| -L "${ONLINE_AGENT_LEGACY_DATA_DIR}/agent.env" ]]
+}
+
+online_agent_service_detected() {
+	[[ -e "${ONLINE_AGENT_SYSTEMD_UNIT_FILE}" \
+		|| -L "${ONLINE_AGENT_SYSTEMD_UNIT_FILE}" ]]
+}
+
+online_agent_installation_detected() {
+	online_agent_canonical_artifacts_detected \
+		|| online_agent_legacy_data_detected \
+		|| online_agent_service_detected
+}
+
+online_platform_gateway_is_managed() {
+	local env_file
+	env_file="$(online_agent_env_file)"
+	[[ ! -L "${ONLINE_AGENT_INSTALL_DIR}" \
+		&& ! -L "${ONLINE_AGENT_ROOT}" \
+		&& -f "${env_file}" && ! -L "${env_file}" ]] || return 1
+	[[ "$(online_agent_env_value HFL_ORG_KEY)" == "__platform_lens__" \
+		&& "$(online_agent_env_value HFL_NODE_ROLE)" == "gateway" ]]
+}
+
+online_agent_trusted_uninstaller() {
+	local canonical="${ONLINE_AGENT_INSTALL_DIR}/install.sh"
+	local legacy="${ONLINE_AGENT_ROOT}/install.sh"
+	if [[ -f "${canonical}" && ! -L "${canonical}" ]]; then
+		printf '%s' "${canonical}"
+		return 0
+	fi
+	if [[ -f "${legacy}" && ! -L "${legacy}" ]]; then
+		printf '%s' "${legacy}"
+		return 0
+	fi
+	return 1
+}
+
+fail_online_agent_conflict() {
+	local uninstaller=""
+	uninstaller="$(online_agent_trusted_uninstaller || true)"
+	printf '  [FAIL] A conflicting HyperFileLens Agent installation was detected\n\n' >&2
+	if online_agent_canonical_artifacts_detected; then
+		printf '         %-17s %s\n' 'Agent root' "${ONLINE_AGENT_ROOT}" >&2
+	fi
+	if online_agent_legacy_data_detected; then
+		printf '         %-17s %s\n' 'Legacy data' "${ONLINE_AGENT_LEGACY_DATA_DIR}" >&2
+	fi
+	if online_agent_service_detected; then
+		printf '         %-17s %s\n' 'Service' "${ONLINE_AGENT_SYSTEMD_UNIT_FILE}" >&2
+	fi
+	if [[ -n "${uninstaller}" ]]; then
+		printf '\n         Uninstall the existing Agent, then run this installer again:\n\n' >&2
+		printf '           sudo %s uninstall\n' "${uninstaller}" >&2
+	else
+		printf '         %-17s %s\n' 'Agent installer' 'not found' >&2
+		printf '\n         Restore the matching Agent installer and run its uninstall command,\n' >&2
+		printf '         or remove the listed residual resources manually before retrying.\n' >&2
+	fi
+	printf '\n         Alternatively, install HyperFileLens on another host.\n' >&2
+	printf '         No Agent, Docker service, or configuration was changed.\n' >&2
+	exit 1
+}
+
+preflight_online_agent_conflict() {
+	if ! online_agent_installation_detected || online_platform_gateway_is_managed; then
+		printf '  [ OK ] No conflicting HyperFileLens Agent was detected\n'
+		return 0
+	fi
+	fail_online_agent_conflict
+}
+
+preflight_online_host_resources() {
+	local cpu_count mem_total_kib mem_available_kib disk_available_bytes
+	cpu_count="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 0)"
+	if [[ ! "${cpu_count}" =~ ^[0-9]+$ ]]; then
+		printf '  [WARN] CPU capacity is below the minimum · %s available · 4 required\n' \
+			"${cpu_count:-unknown}"
+	elif ((cpu_count < 4)); then
+		printf '  [WARN] CPU capacity is below the minimum · %s available · 4 required\n' \
+			"${cpu_count}"
+	elif ((cpu_count < 8)); then
+		printf '  [WARN] CPU capacity is below the recommendation · %s available · 8 recommended\n' \
+			"${cpu_count}"
+	else
+		printf '  [ OK ] CPU capacity is sufficient · %s CPU cores available\n' "${cpu_count}"
+	fi
+	mem_total_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+	mem_available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+	if [[ ! "${mem_total_kib}" =~ ^[0-9]+$ || ! "${mem_available_kib}" =~ ^[0-9]+$ ]]; then
+		printf '  [WARN] Memory capacity could not be determined\n'
+	elif ((mem_total_kib < 8 * 1024 * 1024)); then
+		printf '  [WARN] Memory capacity is below the minimum · %s physical · %s available · 8.0 GiB required\n' \
+			"$(format_bytes "$((mem_total_kib * 1024))")" \
+			"$(format_bytes "$((mem_available_kib * 1024))")"
+	elif ((mem_total_kib < 16 * 1024 * 1024)); then
+		printf '  [WARN] Memory capacity is below the recommendation · %s physical · %s available · 16.0 GiB recommended\n' \
+			"$(format_bytes "$((mem_total_kib * 1024))")" \
+			"$(format_bytes "$((mem_available_kib * 1024))")"
+	else
+		printf '  [ OK ] Memory capacity is sufficient · %s available\n' \
+			"$(format_bytes "$((mem_available_kib * 1024))")"
+	fi
+	disk_available_bytes="$(df -PB1 "$(dirname "${INSTALL_ROOT}")" 2>/dev/null \
+		| awk 'NR == 2 {print $4}')"
+	[[ "${disk_available_bytes}" =~ ^[0-9]+$ \
+		&& "${disk_available_bytes}" -ge $((20 * 1024 * 1024 * 1024)) ]] \
+		|| fail "at least 20 GiB free disk space is required under $(dirname "${INSTALL_ROOT}")"
+	printf '  [ OK ] Disk space is sufficient · %s %s free\n' \
+		"$(dirname "${INSTALL_ROOT}")" \
+		"$(format_bytes "${disk_available_bytes}")"
+}
+
+preflight_online_ports() {
+	local failure ports_display
+	if ! failure="$(python3 - "${ONLINE_REQUIRED_PORTS[@]}" 2>&1 <<'PY'
+import socket
+import sys
+
+for raw_port in sys.argv[1:]:
+    port = int(raw_port)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        sock.bind(("0.0.0.0", port))
+    except OSError as error:
+        raise SystemExit(f"port {port} is unavailable: {error}") from error
+    finally:
+        sock.close()
+PY
+	)"; then
+		fail "${failure}"
+	fi
+	ports_display="${ONLINE_REQUIRED_PORTS[*]}"
+	ports_display="${ports_display// /, }"
+	printf '  [ OK ] Required ports are available · %s\n' "${ports_display}"
+}
+
+run_online_install_preflight() {
+	local hostname
+	printf '  [....] Running installation preflight checks\n'
+	printf '  [ OK ] Running with administrator privileges · root\n'
+	printf '  [ OK ] Operating system is supported · %s · linux/amd64\n' \
+		"${PRETTY_NAME:-Ubuntu}"
+	printf '  [ OK ] Required bootstrap commands are available · bash, curl, python3, tar\n'
+	[[ -d "${INSTALL_ROOT}" && ! -L "${INSTALL_ROOT}" && -w "${INSTALL_ROOT}" ]] \
+		|| fail "installation path is not a writable directory: ${INSTALL_ROOT}"
+	printf '  [ OK ] Installation path is ready · %s\n' "${INSTALL_ROOT}"
+	if ((INSTALL_RECOVERY == 1)); then
+		printf '  [ OK ] Previous installation attempt detected · recovery will continue\n'
+	else
+		printf '  [ OK ] No existing HyperFileLens installation was found\n'
+	fi
+	hostname="$(hostname 2>/dev/null || true)"
+	if [[ -z "${hostname}" || "${hostname,,}" == localhost \
+		|| "${hostname,,}" == localhost.localdomain ]]; then
+		printf '  [WARN] Hostname is not uniquely configured · %s\n' "${hostname:-unknown}"
+	else
+		printf '  [ OK ] Hostname is configured · %s\n' "${hostname}"
+	fi
+	preflight_online_agent_conflict
+	preflight_online_host_resources
+	preflight_online_ports
+	printf '  [ OK ] Installation preflight checks passed\n'
 }
 
 configure_curl_retry_options() {
@@ -868,17 +1341,101 @@ download_file() {
 	local output=$2
 	local max_time=${3:-120}
 	local partial="${output}.part"
-	rm -f -- "${partial}"
+	local diagnostics="${output}.curl-errors"
+	rm -f -- "${partial}" "${diagnostics}"
+	if [[ "${INSTALL_ACTION}" == "Upgrade" ]]; then
+		if curl --fail --show-error --silent --location \
+			"${CURL_RETRY_ARGS[@]}" \
+			--connect-timeout 15 --max-time "${max_time}" \
+			-H 'Cache-Control: no-cache' "${url}" -o "${partial}"; then
+			if mv -f -- "${partial}" "${output}"; then
+				return 0
+			fi
+		fi
+		rm -f -- "${partial}"
+		return 1
+	fi
 	if curl --fail --show-error --silent --location \
 		"${CURL_RETRY_ARGS[@]}" \
 		--connect-timeout 15 --max-time "${max_time}" \
-		-H 'Cache-Control: no-cache' "${url}" -o "${partial}"; then
+		-H 'Cache-Control: no-cache' "${url}" -o "${partial}" \
+		2>"${diagnostics}"; then
+		if [[ -s "${diagnostics}" && -n "${ONLINE_LOG_FILE}" ]]; then
+			timestamp_log_stream "${ONLINE_LOG_FILE}" <"${diagnostics}"
+		fi
+		rm -f -- "${diagnostics}"
 		if mv -f -- "${partial}" "${output}"; then
 			return 0
 		fi
 	fi
-	rm -f -- "${partial}"
+	[[ ! -s "${diagnostics}" ]] || cat "${diagnostics}" >&2
+	rm -f -- "${partial}" "${diagnostics}"
 	return 1
+}
+
+download_file_with_progress() {
+	local url=$1 output=$2 max_time=$3 label=$4
+	local partial="${output}.part" headers="${output}.headers" diagnostics="${output}.curl-errors"
+	local started=${SECONDS} elapsed=0 downloaded=0 total=0 curl_pid curl_status=0
+	local last_console_report=-1 next_log_report=30 progress_line timestamp
+	rm -f -- "${partial}" "${headers}" "${diagnostics}"
+	curl --fail --show-error --silent --location \
+		"${CURL_RETRY_ARGS[@]}" \
+		--connect-timeout 15 --max-time "${max_time}" \
+		--dump-header "${headers}" \
+		-H 'Cache-Control: no-cache' "${url}" -o "${partial}" \
+		2>"${diagnostics}" &
+	curl_pid=$!
+	while kill -0 "${curl_pid}" 2>/dev/null; do
+		elapsed=$((SECONDS - started))
+		if ((elapsed > last_console_report)); then
+			downloaded=0
+			[[ ! -f "${partial}" ]] || downloaded="$(wc -c <"${partial}")"
+			total="$(download_header_size "${headers}")"
+			progress_line="$(download_progress_line "${label}" "${downloaded}" "${total}" "${elapsed}")"
+			if ((ONLINE_INTERACTIVE == 1)); then
+				printf '\r%s\033[K' "${progress_line}" > /dev/fd/3
+			elif ((elapsed == 0 || elapsed >= next_log_report)); then
+				printf '%s\n' "${progress_line}"
+			fi
+			last_console_report=${elapsed}
+		fi
+		if ((elapsed >= next_log_report)); then
+			if ((ONLINE_INTERACTIVE == 1)); then
+				printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
+				printf '[%s] [INFO] Download progress · %s\n' \
+					"${timestamp}" "${progress_line#*] }" >>"${ONLINE_LOG_FILE}"
+			fi
+			next_log_report=$((next_log_report + 30))
+		fi
+		sleep 1
+	done
+	if wait "${curl_pid}"; then
+		curl_status=0
+	else
+		curl_status=$?
+	fi
+	if ((ONLINE_INTERACTIVE == 1)); then
+		printf '\r\033[K' > /dev/fd/3
+	fi
+	if ((curl_status != 0)); then
+		[[ ! -s "${diagnostics}" ]] || cat "${diagnostics}" >&2
+		rm -f -- "${partial}" "${headers}" "${diagnostics}"
+		return "${curl_status}"
+	fi
+	if [[ -s "${diagnostics}" && -n "${ONLINE_LOG_FILE}" ]]; then
+		timestamp_log_stream "${ONLINE_LOG_FILE}" <"${diagnostics}"
+	fi
+	rm -f -- "${headers}" "${diagnostics}"
+	[[ -f "${partial}" ]] || return 1
+	DOWNLOAD_BYTES="$(wc -c <"${partial}")"
+	DOWNLOAD_ELAPSED_SECONDS=$((SECONDS - started))
+	((DOWNLOAD_ELAPSED_SECONDS > 0)) || DOWNLOAD_ELAPSED_SECONDS=1
+	DOWNLOAD_AVERAGE_BYTES_PER_SECOND=$((DOWNLOAD_BYTES / DOWNLOAD_ELAPSED_SECONDS))
+	if ! mv -f -- "${partial}" "${output}"; then
+		rm -f -- "${partial}"
+		return 1
+	fi
 }
 
 fail_with_tag_guidance() {
@@ -901,7 +1458,11 @@ resolve_tag() {
 	local -a values=()
 	local -A seen_page_fingerprints=()
 	requested_tag="${TAG}"
-	printf '[....] Resolving Community tags from %s\n' "${SOURCE_NAME}"
+	if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+		printf '  [....] Resolving HyperFileLens Community release from %s\n' "${SOURCE_NAME}"
+	else
+		printf '[....] Resolving Community tags from %s\n' "${SOURCE_NAME}"
+	fi
 	page=1
 	while :; do
 		page_url="$(tag_page_url "${page}")"
@@ -1024,35 +1585,103 @@ PY
 	TAG="${values[0]}"
 	RELEASE_VERSION="${values[1]}"
 	RELEASE_COMMIT="${values[2]}"
+	if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+		printf '  [ OK ] Community release resolved · %s · commit %s\n' \
+			"${TAG}" "${RELEASE_COMMIT:0:12}"
+	else
+		printf '[ OK ] Community release resolved · %s · commit %s\n' \
+			"${TAG}" "${RELEASE_COMMIT:0:12}"
+	fi
 }
 
 confirm_installation() {
-	local answer=""
+	local answer="" prompt="" tty_device="${HFL_CONFIRM_TTY:-/dev/tty}" confirm_fd
 	((ASSUME_YES == 1)) && return 0
-	[[ -r /dev/tty ]] \
+	[[ -r "${tty_device}" ]] \
 		|| fail "interactive confirmation requires a terminal; use --yes only for automation"
-	read -r -p 'Continue? [y/N] ' answer </dev/tty
-	case "${answer}" in y | Y | yes | YES | Yes) ;; *) fail "installation cancelled" ;; esac
+	if [[ "${INSTALL_ACTION}" == "Upgrade" ]]; then
+		prompt='Continue? [y/N] '
+	else
+		prompt="Proceed with the HyperFileLens Community ${TAG} installation? [y/N] "
+	fi
+	# Open once so retries advance through the same tty/stream. Re-opening a
+	# redirected test file would otherwise reread the first line forever.
+	exec {confirm_fd}<"${tty_device}" \
+		|| fail "interactive confirmation requires a terminal; use --yes only for automation"
+	# Ctrl+C uses the process INT trap (exit 130) and must not be turned into a
+	# retry loop. Only blank / explicit no cancel; other input is re-prompted.
+	while true; do
+		if ! read -r -u "${confirm_fd}" -p "${prompt}" answer; then
+			exec {confirm_fd}<&-
+			fail "installation cancelled"
+		fi
+		answer="${answer%$'\r'}"
+		answer="${answer#"${answer%%[![:space:]]*}"}"
+		answer="${answer%"${answer##*[![:space:]]}"}"
+		case "${answer}" in
+		y | Y | yes | YES | Yes)
+			exec {confirm_fd}<&-
+			return 0
+			;;
+		"" | n | N | no | NO | No)
+			exec {confirm_fd}<&-
+			fail "installation cancelled"
+			;;
+		*)
+			printf '[WARN] Enter y or n (or press Enter to cancel).\n' >&2
+			;;
+		esac
+	done
+}
+
+run_fresh_community_install() {
+	local package=$1 rc status
+	local -a pipeline_status=()
+	set +e
+	HFL_REGISTRY_REGION="${REGION}" HFL_ONLINE_CHILD=1 HFL_PARENT_LOGGING=1 \
+		HFL_INSTALL_RECOVERY="${INSTALL_RECOVERY}" \
+		HFL_PARENT_INTERACTIVE="${ONLINE_INTERACTIVE}" HFL_LOG_FILE="${ONLINE_LOG_FILE}" \
+		HFL_ONLINE_CONSOLE_MARKER="${ONLINE_CHILD_CONSOLE_MARKER}" HFL_NO_BANNER=1 \
+		bash "${package}/install.sh" install --with-sourcelens --yes \
+		2>&1 \
+		| tr '\r' '\n' \
+		| sed $'s/\033\\[[0-9;?]*[ -/]*[@-~]//g' \
+		| capture_child_install_stream "${ONLINE_LOG_FILE}" 3
+	pipeline_status=("${PIPESTATUS[@]}")
+	set -e
+	rc=${pipeline_status[0]}
+	for status in "${pipeline_status[@]:1}"; do
+		[[ "${status}" -eq 0 ]] \
+			|| fail "could not write the complete installation output to ${ONLINE_LOG_FILE}"
+	done
+	if [[ "${rc}" -ne 0 ]]; then
+		fail "HyperFileLens Community ${TAG} installation failed; review the full log: ${ONLINE_LOG_FILE}"
+	fi
 }
 
 download_source_archive() {
-	local url
+	local url label
+	label="HyperFileLens ${TAG} release package"
 	case "${MIRROR}" in
 	global) url="https://codeload.github.com/oneprolabs/hyperfilelens/tar.gz/${RELEASE_COMMIT}" ;;
 	cn) url="https://gitee.com/oneprolabs/hyperfilelens/repository/archive/${RELEASE_COMMIT}.tar.gz" ;;
 	esac
-	printf '[....] Downloading %s installation contract from %s (commit %s)\n' \
-		"${TAG}" "${SOURCE_NAME}" "${RELEASE_COMMIT:0:12}"
-	if ! download_file "${url}" "${SESSION_DIR}/source.tar.gz" 300; then
-		fail_with_tag_guidance "Community release ${TAG} cannot be downloaded from ${SOURCE_NAME}"
-	fi
+	printf '%s[....] Downloading %s from %s · commit %s\n' \
+		"$(installation_step_indent)" "${label}" "${SOURCE_NAME}" \
+		"${RELEASE_COMMIT:0:12}"
+	download_file_with_progress \
+		"${url}" "${SESSION_DIR}/source.tar.gz" 300 "${label}" \
+		|| fail_with_tag_guidance "Community release ${TAG} cannot be downloaded from ${SOURCE_NAME}"
 	mkdir -p "${SESSION_DIR}/source"
 	tar -xzf "${SESSION_DIR}/source.tar.gz" -C "${SESSION_DIR}/source" --strip-components=1 \
-		|| fail_with_tag_guidance "Community tag ${TAG} installation contract could not be extracted"
+		|| fail_with_tag_guidance "Community release package ${TAG} could not be extracted"
 	[[ -x "${SESSION_DIR}/source/deploy/online/install.sh" \
 		&& -f "${SESSION_DIR}/source/deploy/online/prepare.py" ]] \
-		|| fail_with_tag_guidance "Community tag ${TAG} does not provide the online installation contract"
-	printf '[ OK ] Downloaded installation contract from %s\n' "${SOURCE_NAME}"
+		|| fail_with_tag_guidance "Community release package ${TAG} does not provide the online installer"
+	printf '%s[ OK ] %s downloaded · %s in %s · average %s/s\n' \
+		"$(installation_step_indent)" "${label}" "$(format_bytes "${DOWNLOAD_BYTES}")" \
+		"$(format_duration "${DOWNLOAD_ELAPSED_SECONDS}")" \
+		"$(format_bytes "${DOWNLOAD_AVERAGE_BYTES_PER_SECOND}")"
 }
 
 verify_candidate_release() {
@@ -1131,41 +1760,82 @@ if [[ "${DOCKER_RUNTIME_ACTION}" != reuse ]]; then
 fi
 print_target
 confirm_installation
+
+if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+	printf '\n[1/4] Preparing installation\n\n'
+	run_online_install_preflight
+else
+	printf '\n[1/4] Preparing upgrade\n\n'
+fi
 install_host_tools
 if [[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]; then
 	download_source_archive
 fi
 ensure_online_docker_runtime
-
-printf '\n[....] Preparing release images and installation assets\n'
+if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+	printf '  [ OK ] Release package and host requirements are ready\n'
+	printf '\n[2/4] Downloading installation assets\n\n'
+else
+	printf '  [ OK ] Release package and host requirements are ready\n'
+	printf '\n[2/4] Downloading upgrade assets\n\n'
+fi
 
 export HFL_GLOBAL_REGISTRY_PREFIX="${GLOBAL_REGISTRY_PREFIX}"
 export HFL_CN_REGISTRY_PREFIX="${CN_REGISTRY_PREFIX}"
 export HFL_REGISTRY_REGION="${REGION}"
 export HFL_ONLINE_NATIVE_PROGRESS="${ONLINE_INTERACTIVE}"
 candidate="${SESSION_DIR}/hyperfilelens-${RELEASE_VERSION}-online"
-if ! python3 "${SESSION_DIR}/source/deploy/online/prepare.py" \
-	--source-root "${SESSION_DIR}/source" \
-	--version "${TAG}" \
-	--region "${REGION}" \
-	--output "${candidate}"; then
+prepare_args=(
+	--source-root "${SESSION_DIR}/source"
+	--version "${TAG}"
+	--region "${REGION}"
+	--output "${candidate}"
+)
+prepare_args+=(--concise-output)
+prepare_status=0
+python3 "${SESSION_DIR}/source/deploy/online/prepare.py" "${prepare_args[@]}" \
+	|| prepare_status=$?
+if ((prepare_status == 75)); then
+	fail $'Required container images could not be downloaded completely.\n\n       Transient network failures are retried up to 5 times.\n       Run the same installation command again to retry.\n       Downloaded image layers will be reused.\n       See the installation log for image details.'
+fi
+if ((prepare_status == 76)); then
+	fail $'Required container images are unavailable or access was denied.\n\n       See the installation log for image details before retrying.'
+fi
+if ((prepare_status == 77)); then
+	fail $'Required container images could not be prepared or verified locally.\n\n       See the installation log for Docker and image validation details.'
+fi
+if ((prepare_status != 0)); then
 	fail_with_tag_guidance "Community tag ${TAG} is incomplete or unavailable"
 fi
 if ! verify_candidate_release; then
 	fail_with_tag_guidance "Community tag ${TAG} failed release identity validation"
 fi
-printf '[ OK ] Release images and installation assets are ready\n'
+if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+	printf '  [ OK ] All installation assets are ready\n'
+else
+	printf '  [ OK ] All upgrade assets are ready\n'
+fi
 
 if [[ "${INSTALL_ACTION}" == Upgrade ]]; then
-	printf '[....] Upgrading the existing installation to %s\n' "${TAG}"
+	printf '\n[3/4] Applying upgrade\n\n'
+	set +e
 	HFL_REGISTRY_REGION="${REGION}" HFL_ONLINE_CHILD=1 HFL_PARENT_LOGGING=1 \
 		HFL_PARENT_INTERACTIVE="${ONLINE_INTERACTIVE}" HFL_LOG_FILE="${ONLINE_LOG_FILE}" \
-		HFL_NO_BANNER=1 bash "${candidate}/install.sh" \
-		upgrade --from "${candidate}" --yes --with-sourcelens
+		HFL_ONLINE_CONSOLE_MARKER="${ONLINE_CHILD_CONSOLE_MARKER}" HFL_NO_BANNER=1 \
+		bash "${candidate}/install.sh" upgrade --from "${candidate}" --yes --with-sourcelens \
+		2>&1 \
+		| tr '\r' '\n' \
+		| sed $'s/\033\\[[0-9;?]*[ -/]*[@-~]//g' \
+		| capture_child_install_stream "${ONLINE_LOG_FILE}" 3
+	pipeline_status=("${PIPESTATUS[@]}")
+	set -e
+	status=""
+	for status in "${pipeline_status[@]:1}"; do
+		[[ "${status}" -eq 0 ]] \
+			|| fail "could not write the complete upgrade output to ${ONLINE_LOG_FILE}"
+	done
+	[[ "${pipeline_status[0]}" -eq 0 ]] \
+		|| fail "HyperFileLens Community ${TAG} upgrade failed; review the full log: ${ONLINE_LOG_FILE}"
 else
-	printf '[....] Installing HyperFileLens Community %s\n' "${TAG}"
-	HFL_REGISTRY_REGION="${REGION}" HFL_ONLINE_CHILD=1 HFL_PARENT_LOGGING=1 \
-		HFL_PARENT_INTERACTIVE="${ONLINE_INTERACTIVE}" HFL_LOG_FILE="${ONLINE_LOG_FILE}" \
-		HFL_NO_BANNER=1 bash "${candidate}/install.sh" \
-		install --with-sourcelens --yes
+	run_fresh_community_install "${candidate}"
 fi

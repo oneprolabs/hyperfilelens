@@ -95,7 +95,7 @@ func TestLensObservabilityRetriesFailedApply(t *testing.T) {
 		lockPath:    filepath.Join(root, "sidecar.lock"),
 		healthy:     func() bool { return true },
 		ensureImage: func(context.Context, Config) error { return nil },
-		installSidecar: func(context.Context, Config) error {
+		installSidecar: func(context.Context, Config, bool) error {
 			attempts++
 			if attempts == 1 {
 				return errors.New("simulated compose failure")
@@ -142,7 +142,7 @@ func TestHealthyLensSidecarAppliesChangedConfiguration(t *testing.T) {
 		lockPath:    filepath.Join(root, "sidecar.lock"),
 		healthy:     func() bool { return true },
 		ensureImage: func(context.Context, Config) error { return nil },
-		installSidecar: func(context.Context, Config) error {
+		installSidecar: func(context.Context, Config, bool) error {
 			runs++
 			return nil
 		},
@@ -174,6 +174,136 @@ func TestHealthyLensSidecarAppliesChangedConfiguration(t *testing.T) {
 	}
 	if runs != 1 {
 		t.Fatalf("unchanged configuration installer runs = %d, want 1", runs)
+	}
+}
+
+func TestLegacyLensLayoutAuthorizationOnlyBeforeCanonicalEnv(t *testing.T) {
+	root := t.TempDir()
+	legacy := filepath.Join(root, "legacy", "lensnode.env")
+	current := filepath.Join(root, "agent", "config", "lensnode.env")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("old-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(current), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(current, []byte("new-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if legacyLensLayoutPendingAt(current, legacy) {
+		t.Fatal("existing canonical env must not be auto-authorized for legacy adoption")
+	}
+	if err := os.Remove(current); err != nil {
+		t.Fatal(err)
+	}
+	if !legacyLensLayoutPendingAt(current, legacy) {
+		t.Fatal("missing canonical env should authorize the first legacy adoption")
+	}
+	if err := os.Remove(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacyLensLayoutPendingAt(current, legacy) {
+		t.Fatal("legacy layout should no longer be pending after successful cleanup")
+	}
+	legacyCompose := filepath.Join(filepath.Dir(legacy), "lensnode")
+	if err := os.MkdirAll(legacyCompose, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !legacyLensLayoutPresentAt(legacy) {
+		t.Fatal("leftover legacy Compose directory should remain visible to migration")
+	}
+	if !legacyLensLayoutPendingAt(current, legacy) {
+		t.Fatal("leftover legacy Compose directory should trigger convergence when canonical env is absent")
+	}
+	if err := os.RemoveAll(legacyCompose); err != nil {
+		t.Fatal(err)
+	}
+	if legacyLensLayoutPresentAt(legacy) {
+		t.Fatal("legacy layout should be absent after Compose cleanup")
+	}
+}
+
+func TestCustomAgentRootDoesNotObserveGlobalLegacyLensLayout(t *testing.T) {
+	if got := gatewayLegacyLensEnvPath("/srv/custom-hfl-agent"); got != "" {
+		t.Fatalf("custom Agent Root legacy env = %q, want empty", got)
+	}
+	if got := gatewayLegacyLensEnvPath("/opt/hyperfilelens-agent"); got != legacyLensEnvFilePath {
+		t.Fatalf("standard Agent Root legacy env = %q, want %q", got, legacyLensEnvFilePath)
+	}
+}
+
+func TestMarkLegacyLensLayoutAdoptedUsesPrivateRuntimeState(t *testing.T) {
+	root := t.TempDir()
+	appliedPath := filepath.Join(root, "runtime", "lensnode", ".hfl-applied-config.sha256")
+	if err := markLegacyLensLayoutAdopted(appliedPath); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(filepath.Dir(appliedPath), ".hfl-legacy-layout-adopted")
+	info, err := os.Stat(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("migration marker mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestAppliedConfigurationDoesNotSkipPendingLegacyCleanup(t *testing.T) {
+	root := t.TempDir()
+	legacy := filepath.Join(root, "legacy", "lensnode.env")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("legacy\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runs := 0
+	runtime := lensSidecarRuntime{
+		envPath:       filepath.Join(root, "agent", "config", "lensnode.env"),
+		appliedPath:   filepath.Join(root, "agent", "runtime", "lensnode", ".hfl-applied-config.sha256"),
+		legacyEnvPath: legacy,
+		lockPath:      filepath.Join(root, "sidecar.lock"),
+		healthy:       func() bool { return true },
+		ensureImage:   func(context.Context, Config) error { return nil },
+		installSidecar: func(_ context.Context, _ Config, adopted bool) error {
+			if adopted {
+				t.Fatal("existing canonical env must not be marked as an authorized adoption")
+			}
+			runs++
+			return os.Remove(legacy)
+		},
+	}
+	lens := LensSidecarConfig{
+		LensBaseURL:   "https://lens.example.com",
+		LensnodeUUID:  "26d1822b-3ccc-48f8-80f1-f4c0ae99e61e",
+		LensnodeToken: "lens-token",
+		WorkspaceRoot: "/workspace",
+	}
+	_, fingerprint, err := writeLensEnvFileAt(runtime.envPath, lens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := markLensConfigurationApplied(runtime.appliedPath, fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.install(context.Background(), Config{}, lens); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 {
+		t.Fatalf("installer runs = %d, want 1", runs)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(runtime.appliedPath), ".hfl-legacy-layout-adopted")); !os.IsNotExist(err) {
+		t.Fatalf("conflicting pre-existing layout was unexpectedly marked adopted: %v", err)
+	}
+	if err := runtime.install(context.Background(), Config{}, lens); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 {
+		t.Fatalf("cleanup reran after legacy state was removed: runs=%d", runs)
 	}
 }
 

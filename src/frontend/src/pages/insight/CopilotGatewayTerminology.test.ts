@@ -15,6 +15,7 @@ const nodeApi = source('src/lib/nodeApi.ts')
 describe('Copilot Data Gateway product terminology', () => {
   it('uses Gateway scope as the authoritative persisted Chat type', () => {
     expect(copilotGatewayKind('platform', 'manual')).toBe('public')
+    expect(copilotGatewayKind('organization', 'auto')).toBe('private')
     expect(copilotGatewayKind('user', 'auto')).toBe('private')
     expect(copilotGatewayKind(null, 'manual')).toBe('private')
     expect(copilotGatewayKind(null, 'auto')).toBe('public')

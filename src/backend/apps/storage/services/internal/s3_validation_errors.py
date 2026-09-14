@@ -114,7 +114,7 @@ def classify_s3_validation_error(
     if error_code in _BUCKET_NAME_UNAVAILABLE_CODES:
         return S3ValidationFailure(
             "STORAGE.S3_BUCKET_NAME_UNAVAILABLE",
-            "The bucket name is already in use. If the bucket belongs to this account, select Existing Bucket; otherwise choose another name.",
+            "This bucket name is unavailable. It may already be owned by another account or already exist in your account. If you own it, select Existing Bucket; otherwise choose a different name.",
         )
     if error_code in _PERMISSION_CODES:
         if operation == "bucket_access":

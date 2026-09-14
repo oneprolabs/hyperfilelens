@@ -6,7 +6,7 @@ import { createI18n } from 'vue-i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../../../locales/en'
-import type { LensAnalysisType, LensSessionLink } from '../../../lib/lensApi'
+import type { LensSessionLink } from '../../../lib/lensApi'
 import CopilotExecutionSettingsDialog from './CopilotExecutionSettingsDialog.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -19,29 +19,9 @@ vi.mock('../../../lib/lensApi', async (importOriginal) => ({
 }))
 
 const DialogStub = defineComponent({
-  props: { modelValue: Boolean },
+  props: { modelValue: Boolean, width: String },
   emits: ['update:modelValue'],
   template: '<section><slot /><footer><slot name="footer" /></footer></section>',
-})
-
-const SelectStub = defineComponent({
-  props: { modelValue: String },
-  emits: ['update:modelValue'],
-  template: `
-    <select
-      :value="modelValue"
-      @change="$emit('update:modelValue', $event.target.value)"
-    ><slot /></select>
-  `,
-})
-
-const OptionStub = defineComponent({
-  props: {
-    label: String,
-    value: String,
-    disabled: Boolean,
-  },
-  template: '<option :value="value" :disabled="disabled">{{ label }}</option>',
 })
 
 const ButtonStub = defineComponent({
@@ -77,10 +57,7 @@ function session(overrides: Partial<LensSessionLink> = {}): LensSessionLink {
   } as LensSessionLink
 }
 
-function mountDialog(
-  chat: LensSessionLink,
-  supportedAnalysisTypes: LensAnalysisType[] = ['knowledge_qa', 'code_analysis'],
-) {
+function mountDialog(chat: LensSessionLink) {
   const i18n = createI18n({
     legacy: false,
     locale: 'en',
@@ -92,14 +69,11 @@ function mountDialog(
     props: {
       modelValue: true,
       session: chat,
-      supportedAnalysisTypes,
     },
     global: {
       plugins: [i18n],
       stubs: {
         ElDialog: DialogStub,
-        ElSelect: SelectStub,
-        ElOption: OptionStub,
         ElButton: ButtonStub,
       },
     },
@@ -114,7 +88,8 @@ describe('CopilotExecutionSettingsDialog', () => {
   it('treats a legacy Chat as Knowledge Q&A', () => {
     const wrapper = mountDialog(session())
 
-    expect(wrapper.get('select').element.value).toBe('knowledge_qa')
+    expect(wrapper.findComponent(DialogStub).props('width')).toBe('min(680px, calc(100vw - 32px))')
+    expect((wrapper.get('input[value="knowledge_qa"]').element as HTMLInputElement).checked).toBe(true)
     expect(wrapper.text()).not.toContain(en.insight.copilot.analysisModeLabel)
     expect(wrapper.text()).not.toContain(en.insight.copilot.conversationModelLabel)
   })
@@ -124,7 +99,7 @@ describe('CopilotExecutionSettingsDialog', () => {
     mocks.patchExecution.mockResolvedValue(updated)
     const wrapper = mountDialog(session())
 
-    await wrapper.get('select').setValue('code_analysis')
+    await wrapper.get('input[value="code_analysis"]').setValue(true)
     await wrapper.findAll('button').at(-1)!.trigger('click')
     await flushPromises()
 
@@ -134,11 +109,12 @@ describe('CopilotExecutionSettingsDialog', () => {
     expect(wrapper.emitted('saved')?.[0]).toEqual([updated])
   })
 
-  it('disables an analysis type unsupported by the current Data Gateway', () => {
-    const wrapper = mountDialog(session(), ['knowledge_qa'])
+  it('keeps both analysis types available for a legacy Chat', () => {
+    const wrapper = mountDialog(session())
 
-    expect(
-      wrapper.get('option[value="code_analysis"]').attributes('disabled'),
-    ).toBeDefined()
+    expect(wrapper.get('input[value="knowledge_qa"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('input[value="code_analysis"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).toContain(en.insight.copilot.analysisTypeKnowledgeQaHint)
+    expect(wrapper.text()).toContain(en.insight.copilot.analysisTypeCodeAnalysisHint)
   })
 })

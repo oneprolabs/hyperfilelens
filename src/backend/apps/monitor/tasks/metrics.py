@@ -4,6 +4,7 @@ from celery import shared_task
 
 from common.observability.celery_context import logged_celery_task
 
+from apps.monitor.services.events import cleanup_operational_events
 from apps.monitor.services.interface import cleanup_old_metrics, collect_and_persist_sample
 from apps.monitor.services.internal.resource_metrics import (
     cleanup_old_resource_metrics,
@@ -55,6 +56,22 @@ def cleanup_repository_usage_history_task(
     batch_size: int = 2000,
 ):
     deleted = cleanup_repository_usage_history(
+        days_to_keep=days_to_keep,
+        batch_size=batch_size,
+    )
+    return {"deleted": deleted}
+
+
+@shared_task(name="apps.monitor.tasks.metrics.cleanup_operational_events")
+@logged_celery_task(
+    name="apps.monitor.tasks.metrics.cleanup_operational_events",
+    trace_keys=("days_to_keep", "batch_size"),
+)
+def cleanup_operational_events_task(
+    days_to_keep: int = 90,
+    batch_size: int = 2000,
+):
+    deleted = cleanup_operational_events(
         days_to_keep=days_to_keep,
         batch_size=batch_size,
     )

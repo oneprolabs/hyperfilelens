@@ -4,8 +4,12 @@ from unittest.mock import MagicMock, call, patch
 from django.test import SimpleTestCase
 from rest_framework.exceptions import ValidationError
 
+from apps.lens_bridge.models import LensGatewayLink
 from apps.lens_bridge.services import sl_client
-from apps.lens_bridge.services.provisioning import _lensnode_matches_workspace
+from apps.lens_bridge.services.provisioning import (
+    _lensnode_matches_workspace,
+    apply_gateway_lensnode_snapshot,
+)
 
 
 class SlClientErrorFormatTests(SimpleTestCase):
@@ -293,6 +297,26 @@ class SlLensnodeSnapshotTests(SimpleTestCase):
         self.assertEqual(len(snap["sl_tasks"]), 1)
         self.assertEqual(snap["sl_tasks"][0]["title"], "Knowledge Q&A")
 
+    def test_preserves_reported_install_failure_during_snapshot_refresh(self):
+        link = MagicMock(
+            sidecar_status=LensGatewayLink.SidecarStatus.ERROR,
+            config_json={"install_status": "failed"},
+        )
+
+        apply_gateway_lensnode_snapshot(link, {"status": "offline"})
+
+        self.assertEqual(link.sidecar_status, LensGatewayLink.SidecarStatus.ERROR)
+
+    def test_online_snapshot_recovers_a_previous_install_failure(self):
+        link = MagicMock(
+            sidecar_status=LensGatewayLink.SidecarStatus.ERROR,
+            config_json={"install_status": "failed"},
+        )
+
+        apply_gateway_lensnode_snapshot(link, {"status": "online"})
+
+        self.assertEqual(link.sidecar_status, LensGatewayLink.SidecarStatus.ONLINE)
+
 
 class EnsureKsWorkspaceTests(SimpleTestCase):
     @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
@@ -360,29 +384,7 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
             ["knowledge_qa", "code_analysis"],
         )
 
-    def test_gateway_capabilities_reject_an_unavailable_analysis_type(self):
-        from apps.lens_bridge.services import provisioning
-
-        gateway_link = MagicMock(
-            config_json={
-                "sl_lensnode_snapshot": {
-                    "sl_tasks": [
-                        {"name": "knowledge_qa", "title": "Knowledge Q&A"}
-                    ]
-                }
-            },
-            sl_lensnode_uuid=uuid.uuid4(),
-        )
-
-        with self.assertRaises(ValidationError) as raised:
-            provisioning.validate_analysis_type_for_gateway(
-                gateway_link,
-                "code_analysis",
-            )
-
-        self.assertIn("analysis_type", raised.exception.detail)
-
-    def test_legacy_gateway_without_tasks_keeps_knowledge_qa_default(self):
+    def test_legacy_gateway_without_tasks_keeps_diagnostic_default(self):
         from apps.lens_bridge.services import provisioning
 
         gateway_link = MagicMock(
@@ -391,15 +393,11 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
         )
 
         self.assertEqual(
-            provisioning.validate_analysis_type_for_gateway(gateway_link, None),
-            "knowledge_qa",
-        )
-        self.assertEqual(
             provisioning.analysis_types_for_gateway(gateway_link),
             ["knowledge_qa"],
         )
 
-    def test_gateway_with_only_general_chat_does_not_use_legacy_fallback(self):
+    def test_gateway_snapshot_remains_diagnostic_only(self):
         from apps.lens_bridge.services import provisioning
 
         gateway_link = MagicMock(
@@ -413,11 +411,7 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
             sl_lensnode_uuid=uuid.uuid4(),
         )
 
-        with self.assertRaises(ValidationError):
-            provisioning.validate_analysis_type_for_gateway(
-                gateway_link,
-                "knowledge_qa",
-            )
+        self.assertEqual(provisioning.analysis_types_for_gateway(gateway_link), [])
 
     @patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
     def test_requested_analysis_type_is_resolved_instead_of_first_task(self, request_json):

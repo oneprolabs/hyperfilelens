@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   validate-production-promotion:
-    name: Validate · Manual promotion
+    name: Validate · PROD promotion
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

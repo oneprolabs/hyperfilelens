@@ -15,7 +15,7 @@ function mountMenus() {
       en: {
         assetsPage: {
           side: {
-            groupGovernance: 'Organization',
+            groupGovernance: 'Governance',
           },
         },
         settings: {
@@ -45,7 +45,12 @@ function mountMenus() {
 describe('useNodeSideNav', () => {
   it('exposes organization configuration pages without system settings', () => {
     expect(mountMenus().value.map((group) => group.label)).toEqual([
+      'Governance',
+    ])
+    expect(mountMenus().value[0]?.children?.map((item) => item.label)).toEqual([
       'Organization',
+      'Members',
+      'Subscription',
     ])
   })
 })

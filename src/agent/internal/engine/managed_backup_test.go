@@ -1337,6 +1337,44 @@ func TestParseSnapshotBrowseOutputIncludesDirectoriesAndFiles(t *testing.T) {
 	}
 }
 
+func TestParseSnapshotBrowseOutputDisablesSymbolicLinks(t *testing.T) {
+	stdout := `Lrwxrwxrwx 18 2026-06-10 09:58:00 CST object-id bin/python`
+	rows := parseSnapshotBrowseTextOutput(stdout, "")
+	if len(rows) != 1 {
+		t.Fatalf("expected one entry, got %d", len(rows))
+	}
+	if rows[0]["type"] != "symlink" {
+		t.Fatalf("expected symlink type, got %#v", rows[0]["type"])
+	}
+	if rows[0]["downloadable"] != false {
+		t.Fatalf("expected symlink to be non-downloadable, got %#v", rows[0]["downloadable"])
+	}
+	if rows[0]["download_reason"] == "" {
+		t.Fatal("expected a download reason for symlink")
+	}
+}
+
+func TestSnapshotBrowseEntryTypePrefersExplicitSymlinkType(t *testing.T) {
+	typ, downloadable, reason := snapshotBrowseEntryType("-rw-r--r--", "symlink")
+	if typ != "symlink" || downloadable || reason == "" {
+		t.Fatalf("symlink type = %q, downloadable=%v, reason=%q", typ, downloadable, reason)
+	}
+}
+
+func TestParseSnapshotBrowseOutputDisablesJSONSymbolicLinks(t *testing.T) {
+	rows := parseSnapshotBrowseOutput(
+		`[{"name":"python","type":"symlink","mode":"-rw-r--r--"}]`,
+		"bin",
+		"",
+	)
+	if len(rows) != 1 || rows[0]["path"] != "bin/python" || rows[0]["type"] != "symlink" {
+		t.Fatalf("unexpected JSON symlink entry: %#v", rows)
+	}
+	if rows[0]["downloadable"] != false {
+		t.Fatalf("JSON symlink must be non-downloadable: %#v", rows[0])
+	}
+}
+
 func TestParseSnapshotBrowseOutputHandlesKopiaModeAndNestedPath(t *testing.T) {
 	stdout := `[
 		{"name":"images","type":"d","mode":"drwxr-xr-x","size":0},
@@ -1642,6 +1680,52 @@ func TestInsightSnapshotBrowseCollectorBoundsAndNormalizesEntries(t *testing.T) 
 	}
 }
 
+func TestSnapshotBrowsePageCollectorAdvancesWithoutDuplicates(t *testing.T) {
+	lines := []string{
+		"drwx------ 0 2026-08-12 11:15:59 UTC object-dir reports/",
+		"-rw------- 12 2026-08-12 11:15:59 UTC object-one one.pdf",
+		"-rw------- 18 2026-08-12 11:15:59 UTC object-two two.pdf",
+		"-rw------- 24 2026-08-12 11:15:59 UTC object-three three.pdf",
+	}
+
+	first, err := newSnapshotBrowsePageCollector("docs", 2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range lines {
+		if !first.consume(line) {
+			break
+		}
+	}
+	if len(first.entries) != 2 || !first.hasMore || first.nextCursor() != "2" {
+		t.Fatalf("unexpected first page: %#v", first)
+	}
+
+	second, err := newSnapshotBrowsePageCollector("docs", 2, first.nextCursor())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range lines {
+		if !second.consume(line) {
+			break
+		}
+	}
+	if len(second.entries) != 2 || second.hasMore || second.nextCursor() != "" {
+		t.Fatalf("unexpected second page: %#v", second)
+	}
+	if first.entries[1]["path"] != "docs/one.pdf" || second.entries[0]["path"] != "docs/two.pdf" {
+		t.Fatalf("pages overlap or skip entries: first=%#v second=%#v", first.entries, second.entries)
+	}
+}
+
+func TestSnapshotBrowsePageCollectorRejectsInvalidCursor(t *testing.T) {
+	for _, cursor := range []string{"-1", "next"} {
+		if _, err := newSnapshotBrowsePageCollector("", 200, cursor); err == nil {
+			t.Fatalf("expected cursor %q to be rejected", cursor)
+		}
+	}
+}
+
 func TestInsightSnapshotBrowseCollectorRejectsMalformedOutput(t *testing.T) {
 	collector := newInsightSnapshotBrowseCollector("reports", 2)
 	collector.consume("unexpected kopia output")
@@ -1711,6 +1795,269 @@ func TestRestoreTargetPathWithFinalSemanticsUsesTargetPathAsIs(t *testing.T) {
 	if got != want {
 		t.Fatalf("expected final target path %q, got %q", want, got)
 	}
+}
+
+func TestManagedRestoreConflictModeDefaultsToOverwriteAndRejectsUnknown(t *testing.T) {
+	mode, err := managedRestoreConflictMode(Payload{Extra: map[string]any{}})
+	if err != nil || mode != "overwrite" {
+		t.Fatalf("legacy missing mode = %q, %v; want overwrite", mode, err)
+	}
+	mode, err = managedRestoreConflictMode(Payload{Extra: map[string]any{"conflict_mode": " SKIP "}})
+	if err != nil || mode != "skip" {
+		t.Fatalf("normalized mode = %q, %v; want skip", mode, err)
+	}
+	if _, err = managedRestoreConflictMode(Payload{Extra: map[string]any{"conflict_mode": "rename"}}); err == nil {
+		t.Fatal("expected unknown conflict mode to fail")
+	}
+}
+
+func TestManagedRestoreConflictArgsAreExplicit(t *testing.T) {
+	skip := managedRestoreConflictArgs("skip")
+	for _, flag := range []string{"--skip-existing", "--no-overwrite-files", "--no-overwrite-symlinks", "--skip-owners", "--skip-permissions", "--skip-times"} {
+		if !slices.Contains(skip, flag) {
+			t.Fatalf("skip args %v do not contain %q", skip, flag)
+		}
+	}
+	if slices.Contains(skip, "--no-overwrite-directories") {
+		t.Fatalf("skip args must traverse existing container directories without changing their metadata: %v", skip)
+	}
+	overwrite := managedRestoreConflictArgs("overwrite")
+	for _, flag := range []string{"--overwrite-files", "--overwrite-directories", "--overwrite-symlinks"} {
+		if !slices.Contains(overwrite, flag) {
+			t.Fatalf("overwrite args %v do not contain %q", overwrite, flag)
+		}
+	}
+}
+
+func TestRestoreTargetExistsPreservesExistingFileAndDirectory(t *testing.T) {
+	root := t.TempDir()
+	fileTarget := filepath.Join(root, "existing.txt")
+	want := []byte("keep this content")
+	if err := os.WriteFile(fileTarget, want, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(fileTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exists, err := restoreTargetExists(fileTarget)
+	if err != nil || !exists {
+		t.Fatalf("existing file = %v, %v; want true", exists, err)
+	}
+	afterContent, err := os.ReadFile(fileTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(fileTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterContent, want) || after.Mode() != before.Mode() || !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("skip preflight mutated target: content=%q before=%v after=%v", afterContent, before, after)
+	}
+
+	directoryTarget := filepath.Join(root, "existing-directory")
+	if err := os.Mkdir(directoryTarget, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := restoreTargetExists(directoryTarget); err != nil || !exists {
+		t.Fatalf("existing directory = %v, %v; want true", exists, err)
+	}
+	if exists, err := restoreTargetExists(filepath.Join(root, "missing")); err != nil || exists {
+		t.Fatalf("missing target = %v, %v; want false", exists, err)
+	}
+}
+
+func TestClassifyManagedRestoreFailureExplainsTargetPermission(t *testing.T) {
+	code, message, remediation := classifyManagedRestoreFailure(
+		"Restore failed: open /tmp/existing: permission denied",
+		"/tmp/existing",
+		"overwrite",
+	)
+	if code != "RESTORE_TARGET_PERMISSION_DENIED" || !strings.Contains(message, "/tmp/existing") || remediation == "" {
+		t.Fatalf("unexpected permission classification: %q %q %q", code, message, remediation)
+	}
+	code, message, remediation = classifyManagedRestoreFailure("Restore failed: repository disconnected", "/restore", "overwrite")
+	if code != "RESTORE_AGENT_FAILED" || message != "Restore failed: repository disconnected" || remediation != "" {
+		t.Fatalf("unexpected generic classification: %q %q %q", code, message, remediation)
+	}
+}
+
+func TestRunManagedRestoreSkipPreservesExistingFinalTargets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	for _, pathType := range []string{"file", "directory"} {
+		t.Run(pathType, func(t *testing.T) {
+			tempDir := t.TempDir()
+			commandLog := filepath.Join(tempDir, "commands.log")
+			kopiaPath := writeManagedRestoreTestKopia(t, tempDir, commandLog, pathType, "")
+			targetPath := filepath.Join(tempDir, "existing-target")
+			if pathType == "directory" {
+				if err := os.Mkdir(targetPath, 0o750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(targetPath, "keep.txt"), []byte("keep"), 0o640); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(targetPath, []byte("keep"), 0o640); err != nil {
+				t.Fatal(err)
+			}
+
+			engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+				DataDir: filepath.Join(tempDir, "data"), KopiaPath: kopiaPath,
+			}})
+			progress := &recordingProgressSink{}
+			status, result, message := engine.runManagedRestore(
+				context.Background(), ReporterSink{Sink: progress}, "restore-skip-"+pathType,
+				managedRestoreTestPayload(tempDir, targetPath, pathType, "skip"),
+			)
+			if status != "success" || message != "" || result["restore_outcome"] != "skipped" {
+				t.Fatalf("unexpected skip result: status=%q message=%q result=%#v", status, message, result)
+			}
+			if result["skipped_item_count"] != 1 || result["restored_item_count"] != 0 {
+				t.Fatalf("unexpected skip counts: %#v", result)
+			}
+			if len(progress.events) == 0 {
+				t.Fatal("skip did not report terminal progress")
+			}
+			completion := progress.events[len(progress.events)-1]
+			if completion["bytes_done"] != int64(0) || completion["processed_count"] != int64(0) {
+				t.Fatalf("skip reported restored bytes or objects: %#v", completion)
+			}
+			commands, err := os.ReadFile(commandLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(commands), "--progress restore") {
+				t.Fatalf("skip invoked Kopia restore for existing final target: %q", commands)
+			}
+			keptPath := targetPath
+			if pathType == "directory" {
+				keptPath = filepath.Join(targetPath, "keep.txt")
+			}
+			content, err := os.ReadFile(keptPath)
+			if err != nil || string(content) != "keep" {
+				t.Fatalf("existing target was not preserved: content=%q err=%v", content, err)
+			}
+		})
+	}
+}
+
+func TestRunManagedRestoreOverwritePassesExplicitKopiaFlags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tempDir := t.TempDir()
+	commandLog := filepath.Join(tempDir, "commands.log")
+	kopiaPath := writeManagedRestoreTestKopia(t, tempDir, commandLog, "file", "")
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir: filepath.Join(tempDir, "data"), KopiaPath: kopiaPath,
+	}})
+	targetPath := filepath.Join(tempDir, "new-target")
+
+	status, result, message := engine.runManagedRestore(
+		context.Background(), ReporterSink{}, "restore-overwrite",
+		managedRestoreTestPayload(tempDir, targetPath, "file", "overwrite"),
+	)
+	if status != "success" || message != "" || result["restore_outcome"] != "restored" {
+		t.Fatalf("unexpected overwrite result: status=%q message=%q result=%#v", status, message, result)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreCommand := string(commands)
+	for _, flag := range []string{"--overwrite-files", "--overwrite-directories", "--overwrite-symlinks"} {
+		if !strings.Contains(restoreCommand, flag) {
+			t.Fatalf("restore command does not contain %q: %q", flag, restoreCommand)
+		}
+	}
+}
+
+func TestRunManagedRestoreClassifiesKopiaPermissionFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tempDir := t.TempDir()
+	commandLog := filepath.Join(tempDir, "commands.log")
+	kopiaPath := writeManagedRestoreTestKopia(t, tempDir, commandLog, "file", "permission")
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir: filepath.Join(tempDir, "data"), KopiaPath: kopiaPath,
+	}})
+	targetPath := filepath.Join(tempDir, "protected-target")
+
+	status, result, message := engine.runManagedRestore(
+		context.Background(), ReporterSink{}, "restore-permission",
+		managedRestoreTestPayload(tempDir, targetPath, "file", "overwrite"),
+	)
+	if status != "failed" || result["error_code"] != "RESTORE_TARGET_PERMISSION_DENIED" {
+		t.Fatalf("unexpected permission result: status=%q message=%q result=%#v", status, message, result)
+	}
+	if !strings.Contains(message, targetPath) || strings.Contains(message, "error copying") {
+		t.Fatalf("public message is not concise and target-specific: %q", message)
+	}
+	if !strings.Contains(stringValue(result["error_remediation"]), "Use Skip") {
+		t.Fatalf("permission remediation is missing: %#v", result)
+	}
+	if !strings.Contains(stringValue(result["error_diagnostic"]), "error copying") {
+		t.Fatalf("raw bounded diagnostic is missing: %#v", result)
+	}
+}
+
+func managedRestoreTestPayload(tempDir string, targetPath string, pathType string, conflictMode string) Payload {
+	return ParsePayload(map[string]any{
+		"snapshot_id":           "snapshot-1",
+		"target_path":           targetPath,
+		"target_path_semantics": "final",
+		"source_path":           "/source/item",
+		"source_path_type":      pathType,
+		"conflict_mode":         conflictMode,
+		"skip_ownership_check":  true,
+		"repository": map[string]any{
+			"id":             1010,
+			"type":           "proxy_fs",
+			"path":           filepath.Join(tempDir, "repository"),
+			"kopia_password": "repo-pass",
+		},
+	})
+}
+
+func writeManagedRestoreTestKopia(
+	t *testing.T,
+	tempDir string,
+	commandLog string,
+	pathType string,
+	restoreFailure string,
+) string {
+	t.Helper()
+	fileCount := 1
+	directoryCount := 0
+	if pathType == "directory" {
+		fileCount = 0
+		directoryCount = 1
+	}
+	restoreCase := "echo 'Restored 1 files, 0 directories and 0 symbolic links (4 B).' >&2; exit 0"
+	if restoreFailure == "permission" {
+		restoreCase = "echo 'error restoring: restore error: error copying: copy file: error creating file: open protected-target: permission denied' >&2; exit 1"
+	}
+	summary := fmt.Sprintf(
+		`{"version":1,"path_type":%q,"size_bytes":4,"file_count":%d,"directory_count":%d,"symlink_count":0,"summary_available":true,"complete":true}`,
+		pathType,
+		fileCount,
+		directoryCount,
+	)
+	script := fmt.Sprintf(
+		"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\ncase \"$*\" in\n  *\"ls --hfl-summary\"*) printf '%%s\\n' %q; exit 0 ;;\n  *\"--progress restore\"*) %s ;;\nesac\nexit 0\n",
+		commandLog,
+		summary,
+		restoreCase,
+	)
+	kopiaPath := filepath.Join(tempDir, "kopia")
+	if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return kopiaPath
 }
 
 func TestRestorePrepareTargetPathForFinalFileUsesParentDirectory(t *testing.T) {
@@ -2092,6 +2439,228 @@ func TestZipDirectoryContentsToFileDoesNotFollowSymlinks(t *testing.T) {
 	defer archive.Close()
 	if len(archive.File) != 0 {
 		t.Fatalf("symlink target escaped into artifact: %#v", archive.File)
+	}
+}
+
+func TestSnapshotDownloadGroupsParsesCrossSourcePathSelection(t *testing.T) {
+	groups, hasGroups, err := snapshotDownloadGroups(Payload{Extra: map[string]any{
+		"groups": []any{
+			map[string]any{
+				"snapshot_id":     "snapshot-one",
+				"source_path":     "/data/projects",
+				"path_type":       "directory",
+				"root_size_bytes": float64(0),
+				"paths":           []any{"docs", "readme.txt", "readme.txt"},
+			},
+			map[string]any{
+				"snapshot_id":     "snapshot-two",
+				"source_path":     `C:\\logs`,
+				"path_type":       "file",
+				"root_size_bytes": float64(42),
+				"paths":           []any{""},
+			},
+		},
+	}})
+	if err != nil || !hasGroups {
+		t.Fatalf("snapshotDownloadGroups() error=%v hasGroups=%v", err, hasGroups)
+	}
+	if len(groups) != 2 || !slices.Equal(groups[0].paths, []string{"docs", "readme.txt"}) {
+		t.Fatalf("unexpected groups: %#v", groups)
+	}
+	if groups[1].pathType != "file" || groups[1].rootSizeBytes != 42 || !slices.Equal(groups[1].paths, []string{""}) {
+		t.Fatalf("unexpected root file group: %#v", groups[1])
+	}
+}
+
+func TestSnapshotDownloadGroupsParsesDirectoryRootSelection(t *testing.T) {
+	groups, hasGroups, err := snapshotDownloadGroups(Payload{Extra: map[string]any{
+		"groups": []any{map[string]any{
+			"snapshot_id":     "snapshot-one",
+			"source_path":     "/data/projects",
+			"path_type":       "directory",
+			"root_size_bytes": float64(2048),
+			"paths":           []any{""},
+		}},
+	}})
+	if err != nil || !hasGroups || len(groups) != 1 {
+		t.Fatalf("snapshotDownloadGroups() error=%v hasGroups=%v groups=%#v", err, hasGroups, groups)
+	}
+	if groups[0].pathType != "directory" || !slices.Equal(groups[0].paths, []string{""}) {
+		t.Fatalf("unexpected directory root group: %#v", groups[0])
+	}
+	size, err := snapshotDownloadSelectionLogicalSize(
+		context.Background(), "", "", nil, groups[0], "",
+	)
+	if err != nil || size != 2048 {
+		t.Fatalf("snapshotDownloadSelectionLogicalSize() size=%d err=%v", size, err)
+	}
+}
+
+func TestSnapshotDownloadGroupsRejectsRootAndChildSelection(t *testing.T) {
+	_, _, err := snapshotDownloadGroups(Payload{Extra: map[string]any{
+		"groups": []any{map[string]any{
+			"snapshot_id": "snapshot-one",
+			"source_path": "/data/projects",
+			"path_type":   "directory",
+			"paths":       []any{"", "docs"},
+		}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "parent and child") {
+		t.Fatalf("expected root/child conflict, got %v", err)
+	}
+}
+
+func TestRestoreSnapshotDownloadGroupsRestoresDirectoryRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a POSIX shell script")
+	}
+	bin := filepath.Join(t.TempDir(), "fake-kopia.sh")
+	script := "#!/bin/sh\nif [ \"$2\" = \"restore\" ]; then mkdir -p \"$4\"; printf restored > \"$4/restored.txt\"; fi\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	restoreRoot := t.TempDir()
+	err := restoreSnapshotDownloadGroups(
+		context.Background(),
+		bin,
+		"repository.config",
+		nil,
+		restoreRoot,
+		[]snapshotDownloadGroup{{
+			snapshotID: "snapshot-one",
+			sourcePath: "/data/projects",
+			pathType:   "directory",
+			paths:      []string{""},
+		}},
+		map[string]any{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(restoreRoot, snapshotDownloadArchiveRoot, "restored.txt"))
+	if err != nil || string(content) != "restored" {
+		t.Fatalf("directory root was not restored into archive root: content=%q err=%v", content, err)
+	}
+}
+
+func TestSnapshotDownloadGroupsRejectsMoreThanMaximumSelection(t *testing.T) {
+	paths := make([]any, snapshotDownloadMaxSelections+1)
+	for index := range paths {
+		paths[index] = fmt.Sprintf("file-%03d.dat", index)
+	}
+	_, hasGroups, err := snapshotDownloadGroups(Payload{Extra: map[string]any{
+		"groups": []any{map[string]any{
+			"snapshot_id": "snapshot-one",
+			"source_path": "/data",
+			"path_type":   "directory",
+			"paths":       paths,
+		}},
+	}})
+	if !hasGroups || err == nil || !strings.Contains(err.Error(), "at most 100") {
+		t.Fatalf("expected maximum selection error, got hasGroups=%v err=%v", hasGroups, err)
+	}
+}
+
+func TestSnapshotDownloadGroupsRejectsParentChildSelection(t *testing.T) {
+	_, _, err := snapshotDownloadGroups(Payload{Extra: map[string]any{
+		"groups": []any{map[string]any{
+			"snapshot_id": "snapshot-one",
+			"source_path": "/data",
+			"path_type":   "directory",
+			"paths":       []any{"docs", "docs/readme.txt"},
+		}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "parent and child") {
+		t.Fatalf("expected parent/child conflict, got %v", err)
+	}
+}
+
+func TestSnapshotDownloadSourceDirectoryNamesAreSafeAndDistinct(t *testing.T) {
+	longMultibytePath := "/" + strings.Repeat(string(rune(1<<16)), 100)
+	groups := []snapshotDownloadGroup{
+		{sourcePath: "/data/projects"},
+		{sourcePath: `C:\\logs\\app`},
+		{sourcePath: "/DATA/PROJECTS"},
+		{sourcePath: "/invalid/<reports>:2026"},
+		{sourcePath: longMultibytePath},
+		{sourcePath: "/data/projects", snapshotID: "snapshot-duplicate"},
+	}
+	names := snapshotDownloadSourceDirectoryNames(groups)
+	if names[0] != "data__projects--"+snapshotDownloadSourcePathHash(groups[0].sourcePath) {
+		t.Fatalf("unexpected slash replacement/collision name: %q", names[0])
+	}
+	if names[1] != "C_drive__logs__app" {
+		t.Fatalf("unexpected Windows source path name: %q", names[1])
+	}
+	if names[2] == names[0] || !strings.HasPrefix(names[2], "DATA__PROJECTS--") {
+		t.Fatalf("case-insensitive collision was not disambiguated: %#v", names[:3])
+	}
+	if names[3] != "invalid___reports__2026" {
+		t.Fatalf("invalid characters were not sanitized: %q", names[3])
+	}
+	if len(names[4]) > snapshotDownloadSourceDirMaxBytes || !utf8.ValidString(names[4]) {
+		t.Fatalf("long source path name is unsafe: bytes=%d valid=%v", len(names[4]), utf8.ValidString(names[4]))
+	}
+	if strings.EqualFold(names[0], names[5]) || !strings.HasPrefix(names[5], "data__projects--") {
+		t.Fatalf("identical source paths were not disambiguated: %#v", []string{names[0], names[5]})
+	}
+}
+
+func TestSnapshotDownloadZIPAlwaysContainsFixedTopLevelDirectory(t *testing.T) {
+	restoreRoot := t.TempDir()
+	archiveRoot := filepath.Join(restoreRoot, snapshotDownloadArchiveRoot)
+	if err := os.MkdirAll(filepath.Join(archiveRoot, "data__projects", "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveRoot, "data__projects", "docs", "guide.txt"), []byte("guide"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), snapshotDownloadArchiveRoot+".zip")
+	if err := zipDirectoryContentsToFile(restoreRoot, destination, 0); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := zip.OpenReader(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	entries := make([]string, 0, len(archive.File))
+	for _, entry := range archive.File {
+		entries = append(entries, entry.Name)
+	}
+	if !slices.Contains(entries, "snapshot-download/data__projects/docs/guide.txt") {
+		t.Fatalf("unexpected ZIP layout: %#v", archive.File)
+	}
+}
+
+func TestCleanupStaleSnapshotDownloadDirsRemovesOnlyExpiredDirectories(t *testing.T) {
+	tempRoot := t.TempDir()
+	now := time.Now()
+	stale := filepath.Join(tempRoot, "hfl-kopia-download-stale")
+	fresh := filepath.Join(tempRoot, "hfl-kopia-download-fresh")
+	unrelated := filepath.Join(tempRoot, "other-stale")
+	for _, candidate := range []string{stale, fresh, unrelated} {
+		if err := os.Mkdir(candidate, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := now.Add(-snapshotDownloadStaleAge - time.Minute)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(unrelated, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanupStaleSnapshotDownloadDirs(tempRoot, now)
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale snapshot directory was not removed: %v", err)
+	}
+	for _, candidate := range []string{fresh, unrelated} {
+		if _, err := os.Stat(candidate); err != nil {
+			t.Fatalf("non-expired candidate was removed: %s: %v", candidate, err)
+		}
 	}
 }
 

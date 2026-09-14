@@ -30,7 +30,9 @@ describe('Element Plus popper arrows', () => {
     expect(sharedStyles).toMatch(
       /\.el-dropdown-menu,[\s\S]*?\.el-table-filter__content\s*{[^}]*overflow:\s*hidden;/,
     )
-    expect(navigationStyles).toMatch(/\.nav-dropdown-panel\s*{[^}]*overflow:\s*hidden;/s)
+    expect(navigationStyles).toMatch(
+      /\.nav-dropdown-panel\s*{[^}]*border-radius:\s*inherit;[^}]*overflow:\s*hidden;/s,
+    )
   })
 
   it('clips the bordered arrow to its exposed triangular half', () => {

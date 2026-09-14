@@ -7,6 +7,19 @@ import { en } from '../../../locales/en'
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 
 describe('TaskEventFailureDetails', () => {
+  it('renders legacy offline errors once with collapsed original details', () => {
+    const diagnostic = "{'source_ref_id': ['Agent source is offline.']}"
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: { metadata: { error_code: 'BACKUP_PRECHECK_FAILED', error_message: diagnostic } },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    expect(wrapper.findAll('.task-event-failure__remediation')).toHaveLength(1)
+    expect(wrapper.get('.task-event-failure__summary').text()).toContain('was offline')
+    expect(wrapper.get('details').attributes('open')).toBeUndefined()
+    expect(wrapper.get('details code').text()).toBe(diagnostic)
+    expect(wrapper.text()).not.toContain('Showing 0 of')
+  })
+
   it('shows actionable guidance and every structured failed file', async () => {
     const wrapper = mount(TaskEventFailureDetails, {
       props: {
@@ -15,7 +28,7 @@ describe('TaskEventFailureDetails', () => {
           failure_details: {
             category: 'source_file_locked',
             count: 2,
-            remediation: ['exclude_runtime_cache', 'use_vss', 'stop_owning_service'],
+            remediation: ['enable_backup_policy', 'enable_skip_unreadable_files', 'use_vss'],
             items: [
               { path: 'Veeam/PerfCache/cpu/LOCK', error: 'locked' },
               { path: 'Veeam/PerfCache/memory/LOCK', error: 'locked' },
@@ -31,7 +44,12 @@ describe('TaskEventFailureDetails', () => {
     expect(wrapper.text()).toContain('2 files could not be read because another process locked them.')
     expect(wrapper.text()).toContain('How to resolve')
     expect(wrapper.text()).toContain('Use a Windows VSS or application-aware snapshot')
-    expect(wrapper.text()).toContain('View all 2 affected files')
+    expect(wrapper.find('.task-event-failure__remediation-list').exists()).toBe(true)
+    const remediationItems = wrapper.findAll('.task-event-failure__remediation-list > li')
+    expect(remediationItems).toHaveLength(3)
+    expect(remediationItems[0].text()).toContain('First, enable the backup policy')
+    expect(remediationItems[1].text()).toContain('skipped files will not be included in the snapshot')
+    expect(wrapper.text()).toContain('View 2 affected items')
     expect(wrapper.text()).toContain('E:\\ProgramData\\Veeam\\PerfCache\\cpu\\LOCK')
     expect(wrapper.findAll('.task-event-failure__files li')).toHaveLength(2)
   })
@@ -45,6 +63,58 @@ describe('TaskEventFailureDetails', () => {
     })
 
     expect(wrapper.find('.task-event-failure').exists()).toBe(false)
+  })
+
+  it('shows a concise restore permission cause, remediation, and optional diagnostics', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        metadata: {
+          error_code: 'RESTORE_TARGET_PERMISSION_DENIED',
+          error_message: 'Permission denied while writing restore target "/tmp/existing".',
+          target_path: '/tmp/existing',
+          error_remediation: 'Verify target and parent permissions.',
+          error_diagnostic: 'open /tmp/existing: permission denied',
+        },
+      },
+      global: {
+        plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
+      },
+    })
+
+    expect(wrapper.text()).toContain('Permission denied while writing the restore target.')
+    expect(wrapper.text()).toContain('Restore target:')
+    expect(wrapper.text()).toContain('/tmp/existing')
+    expect(wrapper.text()).toContain('How to resolve')
+    expect(wrapper.text()).toContain('Change the restore directory to a location the restore service can write to.')
+    expect(wrapper.text()).toContain('Under File conflict policy, select Skip duplicate files (keep source)')
+    expect(wrapper.text()).toContain('Grant the service account used for restore permission to modify the target')
+    expect(wrapper.findAll('.task-event-failure__remediation-list > li')).toHaveLength(3)
+    expect(wrapper.text()).toContain('Technical details')
+    expect(wrapper.text()).toContain('open /tmp/existing: permission denied')
+  })
+
+  it('does not render an empty affected-items disclosure when only the total is known', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        metadata: {
+          failure_details: {
+            category: 'mixed_source_errors',
+            total_count: 795,
+            reported_count: 0,
+            truncated: true,
+            causes: [{ code: 'snapshot_errors', count: 795 }],
+            items: [],
+            remediation: ['retry_backup'],
+          },
+        },
+      },
+      global: {
+        plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
+      },
+    })
+
+    expect(wrapper.text()).toContain('Showing 0 of 795 affected items.')
+    expect(wrapper.find('.task-event-failure__files').exists()).toBe(false)
   })
 
   it('identifies the snapshot and failed directories for Finalize events', () => {
@@ -92,7 +162,7 @@ describe('TaskEventFailureDetails', () => {
     })
 
     expect(wrapper.find('.task-event-failure--warning').exists()).toBe(true)
-    expect(wrapper.text()).toContain('2 unreadable items were skipped (files: 1; directories: 1).')
+    expect(wrapper.text()).toContain('2 source items were skipped (files: 1; directories: 1; special entries: 0).')
     expect(wrapper.text()).toContain('View 2 skipped items')
     expect(wrapper.text()).toContain('E:\\ProgramData\\Veeam\\PerfCache\\cpu\\LOCK')
     expect(wrapper.text()).toContain('readdir: access denied')
@@ -102,9 +172,10 @@ describe('TaskEventFailureDetails', () => {
     const wrapper = mount(TaskEventFailureDetails, {
       props: {
         metadata: {
-          skipped_item_count: 5,
+          skipped_item_count: 6,
           skipped_file_count: 4,
           skipped_directory_count: 1,
+          skipped_special_count: 1,
         },
       },
       global: {
@@ -112,7 +183,34 @@ describe('TaskEventFailureDetails', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('5 unreadable items were skipped (files: 4; directories: 1).')
+    expect(wrapper.text()).toContain('6 source items were skipped (files: 4; directories: 1; special entries: 1).')
     expect(wrapper.find('details').exists()).toBe(false)
+  })
+
+  it('caps legacy skipped-item payloads at ten visible items', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        metadata: {
+          skipped_details: {
+            count: 20,
+            reported_count: 20,
+            truncated: false,
+            items: Array.from({ length: 20 }, (_, index) => ({
+              path: `cache/item-${index}.tmp`,
+              error: 'sharing violation',
+            })),
+          },
+        },
+      },
+      global: {
+        plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
+      },
+    })
+
+    expect(wrapper.text()).toContain('View 10 skipped items')
+    expect(wrapper.text()).toContain('Showing the first 10 of 20 skipped items.')
+    expect(wrapper.findAll('.task-event-failure__files li')).toHaveLength(10)
+    expect(wrapper.text()).toContain('cache/item-9.tmp')
+    expect(wrapper.text()).not.toContain('cache/item-10.tmp')
   })
 })

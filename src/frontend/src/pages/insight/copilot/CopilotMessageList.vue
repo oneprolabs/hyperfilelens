@@ -27,12 +27,10 @@ const props = defineProps<{
   streamingElapsedSeconds?: number
   streamError?: string
   bubbleTag?: string
-  selectedStarterKey?: string
   starterDisabled?: boolean
 }>()
 
 const emit = defineEmits<{
-  starterChip: [key: string, text: string]
   retryQuestion: [draft: CopilotRetryDraft]
   feedbackUpdated: [update: CopilotFeedbackUpdate]
 }>()
@@ -95,24 +93,6 @@ onMounted(() => {
 onBeforeUnmount(() => contentResizeObserver?.disconnect())
 
 defineExpose({ scrollToBottom })
-
-const starterChips = [
-  { key: 'chipQuerySops', icon: '📖' },
-  { key: 'chipTrackDecisions', icon: '📋' },
-  { key: 'chipRetrieveTemplates', icon: '📂' },
-  { key: 'chipReviewContracts', icon: '📜' },
-  { key: 'chipAnalyzeExpenses', icon: '💵' },
-] as const
-
-type StarterChipKey = (typeof starterChips)[number]['key']
-
-function starterChipTitle(key: StarterChipKey) {
-  return t(`insight.copilot.${key}Title`)
-}
-
-function starterChipPrompt(key: StarterChipKey) {
-  return t(`insight.copilot.${key}Prompt`)
-}
 
 const userInitial = computed(() => {
   const user = currentUser.value
@@ -385,7 +365,7 @@ const showLiveRow = computed(() => props.streaming)
               :class="[
                 msg.role,
                 msg.isError ? 'message-card--error' : '',
-                msg.starterChips ? 'message-card--welcome' : '',
+                msg.isWelcome ? 'message-card--welcome' : '',
               ]"
             >
               <CopilotAttachmentList
@@ -394,7 +374,7 @@ const showLiveRow = computed(() => props.streaming)
                 :attachments="msg.attachments"
               />
               <div
-                v-if="msg.starterChips || msg.isError"
+                v-if="msg.isWelcome || msg.isError"
                 class="message-text"
               >
                 {{ msg.text }}
@@ -417,30 +397,6 @@ const showLiveRow = computed(() => props.streaming)
                 :session-id="sessionId"
                 :files="msg.outputFiles"
               />
-
-              <div
-                v-if="msg.starterChips"
-                class="copilot-chip-grid"
-              >
-                <button
-                  v-for="chip in starterChips"
-                  :key="chip.key"
-                  type="button"
-                  class="copilot-chip-box"
-                  :class="{ 'is-selected': selectedStarterKey === chip.key }"
-                  :aria-pressed="selectedStarterKey === chip.key"
-                  :disabled="starterDisabled"
-                  @click="emit('starterChip', chip.key, starterChipPrompt(chip.key))"
-                >
-                  <span class="copilot-chip-inner">
-                    <span
-                      class="copilot-chip-icon"
-                      aria-hidden="true"
-                    >{{ chip.icon }}</span>
-                    <span class="copilot-chip-label">{{ starterChipTitle(chip.key) }}</span>
-                  </span>
-                </button>
-              </div>
             </div>
 
             <div
@@ -452,7 +408,7 @@ const showLiveRow = computed(() => props.streaming)
             </div>
 
             <div
-              v-if="msg.role === 'assistant' && msg.text && !msg.starterChips && !msg.isError"
+              v-if="msg.role === 'assistant' && msg.text && !msg.isWelcome && !msg.isError"
               class="message-actions"
             >
               <div class="message-actions-group">
@@ -780,8 +736,10 @@ const showLiveRow = computed(() => props.streaming)
   text-align: left;
 }
 
-.message-card--welcome {
-  padding: 16px 18px;
+.message-card.assistant.message-card--welcome {
+  width: fit-content;
+  max-width: 100%;
+  padding: 12px 16px;
   border: 1px solid var(--color-border);
   border-radius: 14px;
   background: var(--color-card-bg);
@@ -931,83 +889,6 @@ const showLiveRow = computed(() => props.streaming)
 .message-action-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
-}
-
-.copilot-chip-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 14px;
-  width: 100%;
-}
-
-.copilot-chip-box {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 44px;
-  margin: 0;
-  padding: 0 10px;
-  border-radius: var(--radius-card);
-  border: 1px solid var(--color-border);
-  background: var(--color-card-bg);
-  font-family: inherit;
-  cursor: pointer;
-  box-sizing: border-box;
-}
-
-.copilot-chip-inner {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  max-width: 100%;
-  min-width: 0;
-}
-
-.copilot-chip-icon {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  font-size: 14px;
-  line-height: 1;
-}
-
-.copilot-chip-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  color: var(--color-text-title);
-}
-
-.copilot-chip-box:hover {
-  border-color: var(--color-primary);
-  box-shadow: 0 1px 4px rgb(69 122 176 / 0.15);
-}
-
-.copilot-chip-box.is-selected {
-  border-color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 9%, var(--color-card-bg));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 12%, transparent);
-}
-
-.copilot-chip-box:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-.copilot-chip-box:disabled {
-  cursor: not-allowed;
-  opacity: 0.62;
-  box-shadow: none;
 }
 
 .thinking-panel {
@@ -1233,15 +1114,5 @@ const showLiveRow = computed(() => props.streaming)
     font-size: 16px;
   }
 
-  .copilot-chip-grid {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    padding-bottom: 2px;
-  }
-
-  .copilot-chip-box {
-    flex: 0 0 148px;
-  }
 }
 </style>

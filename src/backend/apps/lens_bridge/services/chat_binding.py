@@ -18,6 +18,7 @@ from apps.lens_bridge.models import LensChatBinding, LensGatewayLink
 from apps.lens_bridge.services import (
     chat_user_provisioning,
     gateway_readiness,
+    gateway_ownership,
     platform_lens,
     provisioning,
     sl_client,
@@ -179,7 +180,7 @@ def get_active_chat_binding(
 
 
 def list_gateway_options(org: Organization, *, user) -> list[dict[str, Any]]:
-    """List platform and current-user DGs available for explicit Copilot selection."""
+    """List platform and organization DGs available for Copilot selection."""
     rows: list[dict[str, Any]] = []
     seen: set[int] = set()
 
@@ -196,14 +197,18 @@ def list_gateway_options(org: Organization, *, user) -> list[dict[str, Any]]:
         )
         seen.add(link.id)
 
-    for link in platform_lens.user_gateway_links(
-        user=user,
+    for link in gateway_ownership.organization_gateway_links(
         organization=org,
     ).select_related("gateway"):
         if not link.sl_lensnode_uuid or link.id in seen:
             continue
         provisioning.sync_gateway_lensnode_status(link)
-        rows.append(_gateway_option_row(link, scope="user"))
+        rows.append(
+            _gateway_option_row(
+                link,
+                scope=LensGatewayLink.GatewayScope.ORGANIZATION,
+            )
+        )
         seen.add(link.id)
 
     return rows
@@ -242,7 +247,11 @@ def serialize_chat_binding(binding: LensChatBinding) -> dict[str, Any]:
         "source_path": binding.source_path,
         "gateway_link_id": binding.gateway_link_id,
         "gateway_name": gw.name if gw else "",
-        "gateway_scope": binding.gateway_link.scope if binding.gateway_link_id else "",
+        "gateway_scope": (
+            gateway_ownership.external_gateway_scope(binding.gateway_link)
+            if binding.gateway_link_id
+            else ""
+        ),
         "knowledge_source_id": ks.id if ks else None,
         "knowledge_source_status": ks.status if ks else None,
         "sl_assistant_uuid": str(binding.sl_assistant_uuid)

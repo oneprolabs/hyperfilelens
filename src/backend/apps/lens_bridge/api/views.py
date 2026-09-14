@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 
 from django.core import signing
 from django.db import transaction
+from django.db.models import Q
 from django.http import JsonResponse, StreamingHttpResponse
 from django.urls import reverse
 from rest_framework import status, viewsets
@@ -661,8 +662,7 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         ctx["org"] = self.org
-        ctx["gateway_scope"] = LensGatewayLink.GatewayScope.USER
-        ctx["gateway_owner_user_id"] = self.request.user.id
+        ctx["gateway_scope"] = LensGatewayLink.GatewayScope.ORGANIZATION
         return ctx
 
     def list(self, request, *args, **kwargs):
@@ -680,14 +680,13 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         from apps.lens_bridge.services.gateway_execution import (
-            require_user_gateway_link,
+            require_organization_gateway_link,
         )
 
         with transaction.atomic():
-            gateway_link = require_user_gateway_link(
+            gateway_link = require_organization_gateway_link(
                 tenant_organization=self.org,
                 gateway_id=serializer.validated_data["gateway"].id,
-                owner_user_id=self.request.user.id,
                 lock=True,
             )
             ks = serializer.save(
@@ -771,10 +770,15 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
 
     def list(self, request):
         from apps.lens_bridge.services.gateway_insights import (
-            list_user_gateway_insight_rows,
+            list_organization_gateway_insight_rows,
         )
 
-        return Response(list_user_gateway_insight_rows(user=request.user))
+        return Response(
+            list_organization_gateway_insight_rows(
+                organization=self.org,
+                user=request.user,
+            )
+        )
 
     @action(detail=True, methods=["post"], url_path="enable-ai")
     def enable_ai(self, request, pk=None):
@@ -784,8 +788,10 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
         link = LensGatewayLink.objects.filter(
             organization=self.org,
             gateway=gateway,
-            scope=LensGatewayLink.GatewayScope.USER,
-            owner_user=request.user,
+            scope__in=(
+                LensGatewayLink.GatewayScope.ORGANIZATION,
+                LensGatewayLink.GatewayScope.USER,
+            ),
         ).first()
         if link and link.sl_lensnode_uuid:
             provisioning.sync_gateway_lensnode_status(link)
@@ -793,8 +799,8 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
             org=self.org,
             gateway=gateway,
             name=body.validated_data.get("name") or None,
-            owner_user=request.user,
-            scope=LensGatewayLink.GatewayScope.USER,
+            created_by=request.user,
+            scope=LensGatewayLink.GatewayScope.ORGANIZATION,
         )
         payload = provisioning.build_gateway_ai_payload(
             gateway=gateway,
@@ -807,13 +813,12 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
     def ai_status(self, request, pk=None):
         gateway = provisioning.require_gateway_node(self.org, int(pk))
         from apps.lens_bridge.services.gateway_execution import (
-            require_user_gateway_link,
+            require_organization_gateway_link,
         )
 
-        link = require_user_gateway_link(
+        link = require_organization_gateway_link(
             tenant_organization=self.org,
             gateway_id=gateway.id,
-            owner_user_id=request.user.id,
             require_ready=False,
         )
         if link and link.sl_lensnode_uuid:
@@ -830,13 +835,12 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
     def chat_workload(self, request, pk=None):
         gateway = provisioning.require_gateway_node(self.org, int(pk))
         from apps.lens_bridge.services.gateway_execution import (
-            require_user_gateway_link,
+            require_organization_gateway_link,
         )
 
-        link = require_user_gateway_link(
+        link = require_organization_gateway_link(
             tenant_organization=self.org,
             gateway_id=gateway.id,
-            owner_user_id=request.user.id,
             require_ready=False,
         )
         if request.method == "PATCH":
@@ -873,8 +877,7 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
                 org=self.org,
                 gateway_id=int(pk),
                 path=path,
-                expected_scope=LensGatewayLink.GatewayScope.USER,
-                expected_owner_user_id=request.user.id,
+                expected_scope=LensGatewayLink.GatewayScope.ORGANIZATION,
             )
         except ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
@@ -1178,6 +1181,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         if self.action in (
             "create",
             "destroy",
+            "force_delete",
             "create_run",
             "feedback",
             "set_model",
@@ -1201,8 +1205,17 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         return LensSessionLink.objects.filter(
             organization=self.org,
             hfl_user=self.request.user,
-            status=LensSessionLink.Status.ACTIVE,
-        ).select_related("knowledge_source", "gateway_link__gateway")
+        ).filter(
+            Q(status=LensSessionLink.Status.ACTIVE)
+            | Q(
+                lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+                cleanup_intent=LensSessionLink.CleanupIntent.DELETE_SESSION,
+            )
+        ).select_related(
+            "knowledge_source",
+            "knowledge_source__workspace_binding",
+            "gateway_link__gateway",
+        )
 
     def list(self, request):
         rows = list(self._user_sessions().order_by("-created_at", "-id"))
@@ -1420,14 +1433,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         if model_ref is not None:
             org_models.validate_agent_model_ref(self.org, model_ref)
         if analysis_type is not None:
-            if link.gateway_link is None:
-                raise ValidationError(
-                    {"analysis_type": "Chat has no Data Gateway capability context."}
-                )
-            analysis_type = provisioning.validate_analysis_type_for_gateway(
-                link.gateway_link,
-                analysis_type,
-            )
+            analysis_type = provisioning.normalize_analysis_type(analysis_type)
         ks = link.knowledge_source
         if ks is None or link.sl_assistant_uuid is None:
             return Response(
@@ -1529,6 +1535,27 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         link = chat_lifecycle.request_copilot_chat_teardown(link)
         return Response(
             LensSessionLinkSerializer(link).data, status=status.HTTP_202_ACCEPTED
+        )
+
+    @action(detail=True, methods=["post"], url_path="force-delete")
+    def force_delete(self, request, pk=None):
+        link = LensSessionLink.objects.filter(
+            pk=pk,
+            organization=self.org,
+            hfl_user=request.user,
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+        ).select_related("knowledge_source", "gateway_link__gateway").first()
+        if link is None:
+            raise NotFound()
+        from apps.lens_bridge.services import chat_lifecycle
+
+        link = chat_lifecycle.force_delete_private_copilot_chat(
+            link,
+            requested_by=request.user,
+        )
+        return Response(
+            LensSessionLinkSerializer(link).data,
+            status=status.HTTP_202_ACCEPTED,
         )
 
     @action(detail=True, methods=["post"], url_path="retry")

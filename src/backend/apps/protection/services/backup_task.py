@@ -103,6 +103,7 @@ _DIRECTORY_TERMINAL_STATUSES = {
     BackupSourceSnapshotDirectory.Status.FAILED,
     BackupSourceSnapshotDirectory.Status.DELETED,
 }
+_MAX_SKIPPED_EVENT_ITEMS = 10
 
 
 def _is_global_backup_admission_error(exc: Exception) -> bool:
@@ -1352,6 +1353,8 @@ def _optional_nonnegative_int_result_deep(
 
 def _extract_snapshot_metrics(
     result: dict[str, Any],
+    *,
+    include_skipped_items: bool = True,
 ) -> tuple[str, int, int, int, dict[str, Any]]:
     snapshot_id = str(
         result.get("kopia_snapshot_id")
@@ -1388,13 +1391,18 @@ def _extract_snapshot_metrics(
             stats["new_original_content_bytes"] = new_original_content_bytes
         if new_packed_content_bytes is not None:
             stats["new_packed_content_bytes"] = new_packed_content_bytes
-    skipped = kopia_snapshot_skipped_metadata(result).get("skipped_details", {})
+    skipped = (
+        kopia_snapshot_skipped_metadata(result).get("skipped_details", {})
+        if include_skipped_items
+        else {}
+    )
     if skipped:
         stats = {
             **stats,
             "skipped_item_count": int(skipped.get("count") or 0),
             "skipped_file_count": int(skipped.get("file_count") or 0),
             "skipped_directory_count": int(skipped.get("directory_count") or 0),
+            "skipped_special_count": int(skipped.get("special_count") or 0),
         }
     return snapshot_id, size_bytes, file_count, dir_count, stats
 
@@ -1416,6 +1424,13 @@ def extract_kopia_failure_message(
         return (
             f"{count} {noun} could not be read because another process locked "
             f"{pronoun}. Review the failed file list and remediation guidance."
+        )
+    if failure_details:
+        count = max(len(failure_details), _snapshot_failure_count(result))
+        noun = "item" if count == 1 else "items"
+        return (
+            f"Kopia could not process {count} source {noun}. "
+            "Review the affected items and remediation guidance."
         )
 
     chunks: list[str] = []
@@ -1528,16 +1543,20 @@ def extract_kopia_snapshot_failure_details(
     """Return Kopia's structured per-path snapshot errors without log truncation."""
     if not isinstance(result, dict):
         return []
-    snapshot = result.get("snapshot")
-    if not isinstance(snapshot, dict):
-        return []
-    root_entry = snapshot.get("rootEntry")
-    if not isinstance(root_entry, dict):
-        return []
-    summary = root_entry.get("summ")
-    if not isinstance(summary, dict):
-        return []
-    errors = summary.get("errors")
+    summary = result.get("snapshot_failure_summary")
+    if isinstance(summary, dict):
+        errors = summary.get("items")
+    else:
+        snapshot = result.get("snapshot")
+        if not isinstance(snapshot, dict):
+            return []
+        root_entry = snapshot.get("rootEntry")
+        if not isinstance(root_entry, dict):
+            return []
+        snapshot_summary = root_entry.get("summ")
+        if not isinstance(snapshot_summary, dict):
+            return []
+        errors = snapshot_summary.get("errors")
     if not isinstance(errors, list):
         return []
 
@@ -1554,7 +1573,14 @@ def extract_kopia_snapshot_failure_details(
         if key in seen:
             continue
         seen.add(key)
-        details.append({"path": path, "error": error})
+        detail = {"path": path, "error": error}
+        cause = str(item.get("cause") or "").strip()
+        item_type = str(item.get("item_type") or "").strip()
+        if cause:
+            detail["cause"] = cause
+        if item_type:
+            detail["item_type"] = item_type
+        details.append(detail)
     return details
 
 
@@ -1575,15 +1601,106 @@ def _snapshot_error_item_type(message: str) -> str:
     if any(
         marker in lower
         for marker in (
+            "unknown or unsupported entry type",
+            "unsupported entry type",
+            "unsupported filesystem entry",
+            "unix socket",
+            "socket",
+            "named pipe",
+        )
+    ):
+        return "special"
+    if any(
+        marker in lower
+        for marker in (
             "readdir",
             "read directory",
             "open directory",
             "cannot list directory",
             "unable to list directory",
+            "cannot create iterator",
+            "unable to read directory",
         )
     ):
         return "directory"
     return "file"
+
+
+def _snapshot_error_cause(item: dict[str, str]) -> tuple[str, str]:
+    """Return a stable user-facing cause code and item type."""
+    supplied_cause = str(item.get("cause") or "").strip()
+    supplied_type = str(item.get("item_type") or "").strip()
+    if supplied_cause in {
+        "macos_privacy_denied",
+        "permission_denied",
+        "unreadable_directory",
+        "unreadable_file",
+        "unsupported_entry_type",
+    } and supplied_type in {"directory", "file", "special"}:
+        return supplied_cause, supplied_type
+    message = str(item.get("error") or "").lower()
+    item_type = _snapshot_error_item_type(message)
+    if item_type == "special" or "unsupported source" in message:
+        return "unsupported_entry_type", item_type
+    if "operation not permitted" in message:
+        return "macos_privacy_denied", item_type
+    if any(marker in message for marker in ("permission denied", "access denied")):
+        return "permission_denied", item_type
+    return (
+        "unreadable_directory" if item_type == "directory" else "unreadable_file",
+        item_type,
+    )
+
+
+def _snapshot_failure_count(result: dict[str, Any] | None) -> int:
+    """Recover Kopia's total even when its JSON line was truncated."""
+    if not isinstance(result, dict):
+        return 0
+    summary = result.get("snapshot_failure_summary")
+    if isinstance(summary, dict):
+        try:
+            count = int(summary.get("total_count") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        if count > 0:
+            return count
+    chunks: list[str] = []
+    for key in ("stdout", "stdout_tail", "stderr", "stderr_tail"):
+        value = result.get(key)
+        if value:
+            chunks.append(str(value))
+    for nested_key in ("snapshot_create", "snapshot"):
+        nested = result.get(nested_key)
+        if not isinstance(nested, dict):
+            continue
+        for key in ("stdout", "stdout_tail", "stderr", "stderr_tail"):
+            value = nested.get(key)
+            if value:
+                chunks.append(str(value))
+    matches = re.findall(r"found\s+(\d+)\s+fatal\s+error", "\n".join(chunks), re.IGNORECASE)
+    return max((int(value) for value in matches), default=0)
+
+
+def _sample_snapshot_failure_items(
+    details: list[dict[str, str]], *, limit: int = 5
+) -> tuple[list[dict[str, str]], dict[str, list[dict[str, str]]]]:
+    """Keep a small representative sample while retaining exact category counts."""
+    grouped: dict[str, list[dict[str, str]]] = {}
+    for item in details:
+        cause, item_type = _snapshot_error_cause(item)
+        grouped.setdefault(cause, []).append(
+            {**item, "cause": cause, "item_type": item_type}
+        )
+    sample: list[dict[str, str]] = []
+    buckets = list(grouped.values())
+    while len(sample) < limit and any(buckets):
+        for bucket in buckets:
+            if bucket and len(sample) < limit:
+                sample.append(bucket.pop(0))
+    by_cause: dict[str, list[dict[str, str]]] = {}
+    for item in sample:
+        by_cause.setdefault(item["cause"], []).append(item)
+    return sample, by_cause
 
 
 def _effective_backup_advanced_settings(
@@ -1605,46 +1722,143 @@ def kopia_snapshot_failure_metadata(
 ) -> dict[str, Any]:
     """Build actionable task-event metadata from structured Kopia failures."""
     details = extract_kopia_snapshot_failure_details(result)
-    if not details:
+    summary = result.get("snapshot_failure_summary") if isinstance(result, dict) else None
+    summary_counts: dict[str, int] = {}
+    summary_types: dict[str, str] = {}
+    summary_item_type_counts: dict[str, int] = {}
+    if isinstance(summary, dict):
+        raw_counts = summary.get("cause_counts")
+        raw_types = summary.get("item_types")
+        raw_item_type_counts = summary.get("item_type_counts")
+        if isinstance(raw_counts, dict):
+            for cause, raw_count in raw_counts.items():
+                cause = str(cause or "").strip()
+                if cause not in {
+                    "macos_privacy_denied",
+                    "permission_denied",
+                    "unreadable_directory",
+                    "unreadable_file",
+                    "unsupported_entry_type",
+                    "snapshot_errors",
+                }:
+                    continue
+                try:
+                    count = int(raw_count)
+                except (TypeError, ValueError):
+                    continue
+                if count > 0:
+                    summary_counts[cause] = count
+        if isinstance(raw_types, dict):
+            for cause, item_type in raw_types.items():
+                item_type = str(item_type or "").strip()
+                if item_type in {"directory", "file", "special", "unknown"}:
+                    summary_types[str(cause)] = item_type
+        if isinstance(raw_item_type_counts, dict):
+            for item_type, raw_count in raw_item_type_counts.items():
+                item_type = str(item_type or "").strip()
+                if item_type not in {"directory", "file", "special", "unknown"}:
+                    continue
+                try:
+                    count = int(raw_count)
+                except (TypeError, ValueError):
+                    continue
+                if count > 0:
+                    summary_item_type_counts[item_type] = count
+    total_count = max(
+        len(details),
+        _snapshot_failure_count(result),
+        sum(summary_counts.values()),
+    )
+    if not total_count:
         return {}
-    locked = all(_is_windows_file_lock_error(item["error"]) for item in details)
+    locked = bool(details) and all(_is_windows_file_lock_error(item["error"]) for item in details)
     effective, advanced = _effective_backup_advanced_settings(backup_policy)
+    sample_items, sampled_by_cause = _sample_snapshot_failure_items(details)
+    cause_counts: dict[str, int] = dict(summary_counts)
+    item_types: dict[str, str] = dict(summary_types)
+    if not cause_counts:
+        for item in details:
+            cause, item_type = _snapshot_error_cause(item)
+            cause_counts[cause] = cause_counts.get(cause, 0) + 1
+            item_types[cause] = item_type
+    default_item_types = {
+        "macos_privacy_denied": "directory",
+        "permission_denied": "file",
+        "unreadable_directory": "directory",
+        "unreadable_file": "file",
+        "unsupported_entry_type": "special",
+        "snapshot_errors": "unknown",
+    }
+    for cause in cause_counts:
+        item_types.setdefault(cause, default_item_types.get(cause, "unknown"))
+    has_file_error = summary_item_type_counts.get("file", 0) > 0 or any(
+        item_type == "file" for item_type in item_types.values()
+    )
+    has_directory_error = summary_item_type_counts.get("directory", 0) > 0 or any(
+        item_type == "directory" for item_type in item_types.values()
+    )
+    unclassified_count = total_count - sum(cause_counts.values())
+    if unclassified_count > 0:
+        cause_counts["snapshot_errors"] = unclassified_count
+        item_types["snapshot_errors"] = "unknown"
     remediation: list[str]
     if locked:
-        remediation = ["exclude_runtime_cache", "use_vss", "stop_owning_service"]
+        remediation = []
         if not effective:
-            remediation.insert(0, "enable_backup_policy")
+            remediation.append("enable_backup_policy")
         if not effective or not bool(advanced.get("skip_unreadable_files", False)):
-            remediation.insert(
-                1 if remediation[0] == "enable_backup_policy" else 0,
-                "enable_skip_unreadable_files",
-            )
+            remediation.append("enable_skip_unreadable_files")
+        remediation.extend(["exclude_runtime_cache", "use_vss", "stop_owning_service"])
     else:
-        item_types = {_snapshot_error_item_type(item["error"]) for item in details}
-        remediation = ["check_source_access", "retry_backup"]
+        remediation = []
         if not effective:
-            remediation.insert(0, "enable_backup_policy")
-        if "file" in item_types and (
+            remediation.append("enable_backup_policy")
+        if has_file_error and (
             not effective or not bool(advanced.get("skip_unreadable_files", False))
         ):
             remediation.append("enable_skip_unreadable_files")
-        if "directory" in item_types and (
+        if has_directory_error and (
             not effective
             or not bool(advanced.get("skip_unreadable_directories", False))
         ):
             remediation.append("enable_skip_unreadable_directories")
-    lower_errors = "\n".join(item["error"] for item in details).lower()
-    if not locked and ("unsupported source" in lower_errors or "unsupported" in lower_errors):
-        category = "source_unsupported"
-    elif not locked and ("permission denied" in lower_errors or "access denied" in lower_errors):
-        category = "source_permission_denied"
-    else:
-        category = "source_file_locked" if locked else "source_read_failed"
+        if "unsupported_entry_type" in cause_counts and (
+            not effective
+            or not bool(advanced.get("skip_unsupported_filesystem_entries", False))
+        ):
+            remediation.append("enable_skip_unsupported_entries")
+        permission_failure = any(
+            cause in cause_counts
+            for cause in ("permission_denied", "macos_privacy_denied")
+        )
+        if "macos_privacy_denied" in cause_counts:
+            remediation.append("grant_macos_full_disk_access")
+        if permission_failure:
+            remediation.append("check_source_access")
+        if "unsupported_entry_type" in cause_counts:
+            remediation.append("exclude_runtime_cache")
+        remediation.append("retry_backup")
+    causes = [
+        {
+            "code": cause,
+            "item_type": item_types[cause],
+            "count": count,
+            "items": sampled_by_cause.get(cause, []),
+        }
+        for cause, count in cause_counts.items()
+    ]
+    category = "source_file_locked" if locked else (
+        causes[0]["code"] if len(causes) == 1 else "mixed_source_errors"
+    )
     return {
         "failure_details": {
             "category": category,
-            "count": len(details),
-            "items": details,
+            "count": total_count,
+            "total_count": total_count,
+            "items": sample_items,
+            "reported_count": len(sample_items),
+            "truncated": total_count > len(sample_items),
+            "causes": causes,
             "remediation": remediation,
             "backup_policy_active": effective,
         }
@@ -1667,16 +1881,43 @@ def kopia_snapshot_skipped_metadata(
     ]
     file_count = sum(1 for item in items if item["item_type"] == "file")
     directory_count = sum(1 for item in items if item["item_type"] == "directory")
-    max_event_items = 20
+    special_count = sum(1 for item in items if item["item_type"] == "special")
+    total_count = len(items)
+    summary = result.get("snapshot_failure_summary") if isinstance(result, dict) else None
+    if isinstance(summary, dict):
+        try:
+            reported_total = int(summary.get("total_count") or 0)
+        except (TypeError, ValueError):
+            reported_total = 0
+        raw_type_counts = summary.get("item_type_counts")
+        if isinstance(raw_type_counts, dict):
+            parsed_counts: dict[str, int] = {}
+            for item_type in ("file", "directory", "special"):
+                try:
+                    parsed_counts[item_type] = max(
+                        0,
+                        int(raw_type_counts.get(item_type) or 0),
+                    )
+                except (TypeError, ValueError):
+                    parsed_counts[item_type] = 0
+            file_count = parsed_counts["file"]
+            directory_count = parsed_counts["directory"]
+            special_count = parsed_counts["special"]
+        total_count = max(
+            total_count,
+            reported_total,
+            file_count + directory_count + special_count,
+        )
     return {
         "skipped_details": {
             "category": "source_items_skipped",
-            "count": len(items),
+            "count": total_count,
             "file_count": file_count,
             "directory_count": directory_count,
-            "items": items[:max_event_items],
-            "reported_count": min(len(items), max_event_items),
-            "truncated": len(items) > max_event_items,
+            "special_count": special_count,
+            "items": items[:_MAX_SKIPPED_EVENT_ITEMS],
+            "reported_count": min(len(items), _MAX_SKIPPED_EVENT_ITEMS),
+            "truncated": total_count > min(len(items), _MAX_SKIPPED_EVENT_ITEMS),
         }
     }
 
@@ -1718,6 +1959,54 @@ def _is_generic_exit_message(message: str) -> bool:
     return False
 
 
+def classify_kopia_execution_failure(
+    result: dict[str, Any] | None,
+    *,
+    last_error: str = "",
+) -> tuple[str, str]:
+    """Classify a failed Kopia execution from its most specific evidence."""
+    result = result if isinstance(result, dict) else {}
+    message = extract_kopia_failure_message(result, last_error=last_error)
+    if not message:
+        message = str(last_error or "Agent backup command failed.").strip()
+
+    lower = message.lower()
+    last_error_lower = str(last_error or "").lower()
+    if "unable to get policy tree" in lower or "policy not found" in lower:
+        return "KOPIA_POLICY_NOT_FOUND", message[:2000]
+    if any(
+        marker in last_error_lower
+        for marker in ("signal", "sigkill", "exit 137", "exit 9")
+    ):
+        return "KOPIA_SIGNAL_KILLED", message[:2000]
+
+    failure_metadata = kopia_snapshot_failure_metadata(result)
+    failure_details = failure_metadata.get("failure_details")
+    if isinstance(failure_details, dict):
+        if failure_details.get("category") == "source_file_locked":
+            return "SOURCE_FILE_LOCKED", message[:2000]
+        return "SOURCE_ITEMS_UNREADABLE", message[:2000]
+
+    if "fatal error" in lower or "error when processing" in lower:
+        return "KOPIA_SNAPSHOT_FATAL", message[:2000]
+
+    exit_codes: list[int] = []
+    for command_result in (result, result.get("snapshot_create")):
+        if not isinstance(command_result, dict):
+            continue
+        try:
+            exit_codes.append(int(command_result.get("exit_code")))
+        except (TypeError, ValueError):
+            continue
+    if (
+        any(exit_code != 0 for exit_code in exit_codes)
+        or _is_generic_exit_message(last_error)
+        or "exit" in last_error_lower
+    ):
+        return "KOPIA_PROCESS_DIED", message[:2000]
+    return "AGENT_BACKUP_FAILED", message[:2000]
+
+
 def _directory_error(outcome, *, timed_out: bool = False) -> tuple[str, str]:
     if timed_out:
         return (
@@ -1726,24 +2015,10 @@ def _directory_error(outcome, *, timed_out: bool = False) -> tuple[str, str]:
         )
     result = outcome.result if isinstance(outcome.result, dict) else {}
     last_error = str(outcome.task.last_error or "").strip()
-    message = extract_kopia_failure_message(result, last_error=last_error)
-    if not message:
-        message = "Agent backup command failed."
-    lower = message.lower()
-    if str(result.get("error_code") or "") == "KOPIA_POLICY_NOT_FOUND" or (
-        "unable to get policy tree" in lower or "policy not found" in lower
-    ):
+    if str(result.get("error_code") or "") == "KOPIA_POLICY_NOT_FOUND":
+        message = extract_kopia_failure_message(result, last_error=last_error)
         return "KOPIA_POLICY_NOT_FOUND", message
-    failure_details = extract_kopia_snapshot_failure_details(result)
-    if failure_details and all(
-        _is_windows_file_lock_error(item["error"]) for item in failure_details
-    ):
-        return "SOURCE_FILE_LOCKED", message
-    if "fatal error" in lower or "error when processing" in lower:
-        return "KOPIA_SNAPSHOT_FATAL", message
-    if _is_generic_exit_message(last_error) or "exit" in last_error.lower():
-        return "KOPIA_PROCESS_DIED", message
-    return "AGENT_BACKUP_FAILED", message
+    return classify_kopia_execution_failure(result, last_error=last_error)
 
 
 def _directory_snapshot_result(

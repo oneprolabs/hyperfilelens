@@ -13,6 +13,20 @@ function sourceBetween(startMarker: string, endMarker: string) {
 }
 
 describe('backup wizard reset → Backup Configuration list (#362)', () => {
+  it('does not reuse restore history from a reset backup configuration', () => {
+    const records = sourceBetween(
+      'function restoreRecordsForSource(sourceId: string)',
+      'function restoreRecordIsRunning(record: RestoreRecord)',
+    )
+
+    expect(records).toContain('if (!configIds.size) return []')
+    expect(records).toContain('const currentSnapshotIds = new Set(')
+    expect(records).toContain('if (endpointUiId(record.source_type, record.source_ref_id) !== sourceId) return false')
+    expect(records).toContain('if (configId > 0) return configIds.has(configId)')
+    expect(records).toContain('return currentSnapshotIds.has(Number(record.source_snapshot_id))')
+    expect(records).not.toContain('=== sourceId) return true')
+  })
+
   it('shows step=2 API rows on Backup Configuration without filtering by stale step-3 caches', () => {
     const pendingList = sourceBetween(
       'const step2PendingSourceList = computed(() => {',
@@ -47,7 +61,9 @@ describe('backup wizard reset → Backup Configuration list (#362)', () => {
       'function syncStep3AutoRefresh()',
     )
     expect(refreshStep3).toContain('const resetTrackedIds = collectResetTrackedIds()')
-    expect(refreshStep3).toContain('const configsLoaded = await refreshBackupConfigs(signal)')
+    expect(refreshStep3).toContain(
+      'const configsLoaded = await refreshBackupConfigs(signal, { preserveOnError: true })',
+    )
     expect(refreshStep3).toContain('if (!configsLoaded) return')
     expect(refreshStep3).toContain('selectFinishedResetSourceIds(')
     expect(refreshStep3).toContain('selectTerminalFailedResetSourceIds(')

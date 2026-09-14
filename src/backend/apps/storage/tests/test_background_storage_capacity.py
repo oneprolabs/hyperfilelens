@@ -33,6 +33,12 @@ class BackgroundStorageConfigurationTests(SimpleTestCase):
         self.assertEqual(self._configured_capacity(worker="4", background=None), 2)
         self.assertEqual(self._configured_capacity(worker="3", background=None), 1)
 
+    def test_default_worker_configuration_reserves_one_process(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CELERY_WORKER_CONCURRENCY", None)
+            os.environ.pop("CELERY_BACKGROUND_STORAGE_CONCURRENCY", None)
+            self.assertEqual(background_storage_concurrency(), 1)
+
     def test_allows_capacity_above_half_but_below_worker_count(self):
         self.assertEqual(self._configured_capacity(worker="4", background="3"), 3)
 

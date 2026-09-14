@@ -187,6 +187,10 @@ export type BackupSourceSnapshot = {
   error_message?: string
   metadata?: Record<string, unknown>
   directories?: BackupSourceSnapshotDirectory[]
+  download_limits?: {
+    max_selected_items: number
+    max_logical_size_bytes: number
+  }
 }
 
 export type BackupSnapshotBrowserEntry = {
@@ -197,6 +201,7 @@ export type BackupSnapshotBrowserEntry = {
   size_known?: boolean
   modified_at?: string | null
   downloadable: boolean
+  download_reason?: string
   has_children?: boolean | null
 }
 
@@ -224,6 +229,11 @@ export type SnapshotDownloadTaskResult = {
     expires_at?: string
   } | Record<string, unknown> | null
   error_message?: string | null
+}
+
+export type BackupSnapshotDownloadGroup = {
+  directory_id: number
+  paths: string[]
 }
 
 export type BackupSourceSnapshotListParams = {
@@ -431,14 +441,15 @@ export async function deleteBackupSourceSnapshot(id: number) {
 
 export async function browseBackupSnapshotDirectory(
   directoryId: number,
-  params?: { path?: string; limit?: number },
+  params?: { path?: string; limit?: number; cursor?: string },
+  init?: RequestInit,
 ) {
   const qs = query(params as Record<string, string | number | undefined>)
   const path = qs
     ? `${sourceSnapshotDirectoryBase}/${directoryId}/browse/?${qs}`
     : `${sourceSnapshotDirectoryBase}/${directoryId}/browse/`
   return unwrapApiPayload<BackupSnapshotDirectoryBrowseResult>(
-    await api<unknown>(path, { headers: orgHeaders() }),
+    await api<unknown>(path, { ...init, headers: orgHeaders() }),
   )
 }
 
@@ -500,6 +511,19 @@ export async function createBackupSnapshotDirectoryBatchDownloadTask(directoryId
     await api<unknown>(`${sourceSnapshotDirectoryBase}/${directoryId}/batch-download-tasks/`, {
       method: 'POST',
       body: JSON.stringify({ paths }),
+      headers: orgHeaders(),
+    }),
+  )
+}
+
+export async function createBackupSnapshotDownloadTask(
+  snapshotId: number,
+  groups: BackupSnapshotDownloadGroup[],
+) {
+  return unwrapApiPayload<SnapshotDownloadTaskResult>(
+    await api<unknown>(`/api/v1/protection/backup-source-snapshots/${snapshotId}/download-tasks/`, {
+      method: 'POST',
+      body: JSON.stringify({ groups }),
       headers: orgHeaders(),
     }),
   )

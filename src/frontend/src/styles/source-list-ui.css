@@ -2,6 +2,11 @@
    Source / protection list UI
    ============================================ */
 
+.hfl-actions-dropdown .source-host-upgrade-action__trigger {
+  width: 100%;
+  outline: none;
+}
+
 .hfl-list-table .source-version-cell,
 .hfl-list-table .nodes-version-cell {
   display: inline-flex;

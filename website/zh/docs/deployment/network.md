@@ -5,7 +5,7 @@ description: 配置 HyperFileLens 控制平面、Agent、Proxy、Private Data Ga
 
 # 网络与端口
 
-<p class="hfl-doc-lead">请按实际使用方式开放控制台、组件和存储之间的必要连接。官方 SaaS 使用公开 HTTPS 地址；社区版默认使用以下本机端口，也可以通过反向代理统一映射到标准 HTTPS 端口。</p>
+<p class="hfl-doc-lead">请按实际部署和数据访问路径开放控制台、组件与存储之间的必要连接。社区版默认使用以下端口，也可以通过反向代理映射到标准 HTTPS 端口。</p>
 
 ## 社区版默认端口
 
@@ -41,8 +41,8 @@ description: 配置 HyperFileLens 控制平面、Agent、Proxy、Private Data Ga
     <small>控制连接</small>
     <strong>控制平面</strong>
     <dl>
-      <div><dt>浏览器</dt><dd>访问官方 SaaS <code>443/TCP</code>，或社区版 <code>11443/TCP</code> 及其映射端口</dd></div>
-      <div><dt>Agent、Proxy、Private Data Gateway</dt><dd>通过官方 SaaS 的 <code>443/TCP</code> 或社区版的 <code>11443/TCP</code> 建立 HTTPS/WSS 连接，用于注册、状态上报和任务控制</dd></div>
+      <div><dt>浏览器</dt><dd>通过 <code>11443/TCP</code> 或映射后的端口访问租户控制台</dd></div>
+      <div><dt>Agent、Proxy、Private Data Gateway</dt><dd>通过 <code>11443/TCP</code> 或映射后的端口建立 HTTPS/WSS 连接，用于注册、状态上报和任务控制</dd></div>
       <div><dt>社区版部署主机</dt><dd>通过 <code>443/TCP</code> 访问 Gitee、镜像仓库和 Ubuntu 软件源，完成在线安装与升级</dd></div>
     </dl>
   </section>

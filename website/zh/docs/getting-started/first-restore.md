@@ -87,5 +87,3 @@ description: 从首次备份快照恢复 restore-check.txt，并验证恢复结�
 ![恢复前后的源目录和恢复目录中的 restore-check.txt 内容一致](/docs/getting-started/restore-content-verified.png)
 
 完成 Windows 文件内容检查；如果 SHA-256 也与基准值一致，即可确认首次备份具备实际可恢复性。
-
-下一步：[创建洞察会话](/zh/docs/getting-started/first-insight)，继续使用同一份备份快照。

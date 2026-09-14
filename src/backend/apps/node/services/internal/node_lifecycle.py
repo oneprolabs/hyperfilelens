@@ -78,6 +78,7 @@ def _latest_lifecycle_task(*, org: Organization, node: Node, kind: str) -> NodeT
             correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
             correlation_id=_correlation_id(node_id=node.id, kind=kind),
         )
+        .select_related("parent_task")
         .first()
     )
 
@@ -158,6 +159,12 @@ def _target_version_from_task(task: NodeTask) -> str:
     return str(result.get("target_version") or "").strip()
 
 
+def _source_version_from_task(task: NodeTask) -> str:
+    """Return the immutable Agent version recorded when an upgrade started."""
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    return str(payload.get("source_version") or "").strip()
+
+
 def _target_commit_from_task(task: NodeTask) -> str:
     payload = task.payload if isinstance(task.payload, dict) else {}
     target = str(payload.get("target_commit") or "").strip().lower()
@@ -184,6 +191,23 @@ def _node_installed_commit(node: Node) -> str:
     if isinstance(inv, dict):
         return str(inv.get("agent_commit") or "").strip().lower()
     return str(meta.get("agent_commit") or "").strip().lower()
+
+
+def _stale_failed_upgrade_is_current(*, node: Node, task: NodeTask) -> bool:
+    """Return whether a failed projection is superseded by the installed build."""
+    if task.status not in {
+        NodeTask.Status.FAILED,
+        NodeTask.Status.TIMEOUT,
+    } or node.status != Node.Status.ACTIVE:
+        return False
+    target_version = _target_version_from_task(task)
+    target_commit = _target_commit_from_task(task)
+    if not target_version or not target_commit:
+        return False
+    return (
+        _node_installed_version(node) == target_version
+        and _node_installed_commit(node) == target_commit
+    )
 
 
 def _node_capabilities(node: Node) -> set[str]:
@@ -681,6 +705,10 @@ def _advance_upgrade_verify(*, node: Node, task: NodeTask) -> bool:
             "kind": LIFECYCLE_KIND_UPGRADE,
             "role": node.role,
             "task_id": str(task.id),
+            "node_task_id": str(task.id),
+            "task_uuid": (
+                str(task.parent_task.task_uuid) if task.parent_task_id else None
+            ),
             "target_version": _target_version_from_task(task),
             "current_version": _node_installed_version(node),
             "stable_seconds": int(stable_for.total_seconds()),
@@ -808,6 +836,10 @@ def _fail_stale_upgrade_task(*, node: Node, task: NodeTask) -> bool:
             "kind": LIFECYCLE_KIND_UPGRADE,
             "role": node.role,
             "task_id": str(task.id),
+            "node_task_id": str(task.id),
+            "task_uuid": (
+                str(task.parent_task.task_uuid) if task.parent_task_id else None
+            ),
             "target_version": target_version,
             "current_version": _node_installed_version(node),
             "failure_code": failure_code,
@@ -962,6 +994,18 @@ def _upgrade_lifecycle_payload(
     if task is None:
         return None
 
+    # A detached upgrade can finish on the Agent after its final result frame
+    # is lost.  If the node is now Active and reports the exact requested
+    # build, do not keep projecting the obsolete timeout/failure banner.  The
+    # original task and audit record remain unchanged for troubleshooting.
+    if _stale_failed_upgrade_is_current(node=node, task=task):
+        logger.info(
+            "suppressing stale upgrade failure projection node_id=%s task_id=%s",
+            node.id,
+            task.id,
+        )
+        return None
+
     target_version = _target_version_from_task(task)
     if not target_version and task.status in _ACTIVE_TASK_STATUSES:
         try:
@@ -974,6 +1018,11 @@ def _upgrade_lifecycle_payload(
     base: dict[str, Any] = {
         "kind": LIFECYCLE_KIND_UPGRADE,
         "task_id": str(task.id),
+        "node_task_id": str(task.id),
+        "task_uuid": (
+            str(task.parent_task.task_uuid) if task.parent_task_id else None
+        ),
+        "source_version": _source_version_from_task(task) or current_version,
         "target_version": target_version,
         "target_commit": _target_commit_from_task(task) or None,
         "current_version": current_version,
@@ -1328,9 +1377,30 @@ def start_node_upgrade(
         from apps.node.services.internal.task import _update_node_lifecycle_status
 
         _update_node_lifecycle_status(node_id=node.id, status=Node.Status.ACTIVE)
+        write_audit_log(
+            organization=node.organization,
+            user=user,
+            action="node.lifecycle.upgrade.already_current",
+            target_type="node",
+            target_id=str(node.id),
+            resource_type="node",
+            resource_id=str(node.id),
+            resource_name=node.name,
+            result=AuditResult.SUCCESS,
+            metadata={
+                "kind": LIFECYCLE_KIND_UPGRADE,
+                "role": node.role,
+                "outcome": "no_op",
+                "target_version": target_version,
+                "target_commit": target_commit,
+                "current_version": current_version,
+            },
+        )
         return {
             "operation_id": None,
             "task_id": None,
+            "node_task_id": None,
+            "task_uuid": None,
             "node_id": node.id,
             "kind": LIFECYCLE_KIND_UPGRADE,
             "state": "completed",
@@ -1349,9 +1419,12 @@ def start_node_upgrade(
     # must never be inferred from a later reconnect event.
     persisted_payload = {
         **payload,
+        "source_version": current_version,
         "pre_upgrade_session_id": redis_store.get_agent_session(agent_id=node.id)
         or "",
     }
+    if current_commit:
+        persisted_payload["source_commit"] = current_commit
     handle = run_agent_task_async(
         org=org,
         node_id=node.id,
@@ -1362,6 +1435,15 @@ def start_node_upgrade(
         correlation_id=_correlation_id(node_id=node.id, kind=LIFECYCLE_KIND_UPGRADE),
     )
     task = handle.task
+    from apps.node.services.internal.node_lifecycle_task import (
+        create_node_upgrade_operation_task,
+    )
+
+    operation_task = create_node_upgrade_operation_task(
+        node_task=task,
+        target_version=target_version,
+        target_commit=target_commit,
+    )
     logger.info(
         "node lifecycle dispatch kind=%s node_id=%s task_id=%s target_version=%s",
         LIFECYCLE_KIND_UPGRADE,
@@ -1372,6 +1454,8 @@ def start_node_upgrade(
     return {
         "operation_id": str(task.id),
         "task_id": str(task.id),
+        "node_task_id": str(task.id),
+        "task_uuid": str(operation_task.task_uuid),
         "node_id": node.id,
         "kind": LIFECYCLE_KIND_UPGRADE,
         "state": "upgrading",

@@ -89,6 +89,10 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 			Error:  scopeErr.Error(),
 		}
 	}
+	if spec, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr == nil && ok {
+		releaseClientState := e.acquireEphemeralKopiaServerClientState(ctx, spec)
+		defer releaseClientState()
+	}
 	leasePaths := nasLeasePaths(p)
 	if len(leasePaths) > 0 {
 		release, leaseErr := e.nasLeases().acquire(
@@ -182,6 +186,15 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 			break
 		} else if ok {
 			status, result, errMsg = e.runManagedSnapshotDownload(ctx, rep, cmd.ID, p)
+			break
+		}
+		status, result, errMsg = "failed", nil, "repository payload is required"
+	case "snapshot.download.plan":
+		if _, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr != nil {
+			status, result, errMsg = "failed", nil, parseErr.Error()
+			break
+		} else if ok {
+			status, result, errMsg = e.runManagedSnapshotDownloadPlan(ctx, rep, cmd.ID, p)
 			break
 		}
 		status, result, errMsg = "failed", nil, "repository payload is required"
@@ -380,7 +393,7 @@ func (e *Engine) applyUserInstallationScope(kind string, payload Payload) (Paylo
 			return payload, fmt.Errorf("user-level Agent requires an Agent-managed repository")
 		}
 		return payload, nil
-	case "snapshot.browse", "snapshot.download", "snapshot.delete":
+	case "snapshot.browse", "snapshot.download", "snapshot.download.plan", "snapshot.delete":
 		if !managedRepository {
 			return payload, fmt.Errorf("user-level Agent requires an Agent-managed repository")
 		}

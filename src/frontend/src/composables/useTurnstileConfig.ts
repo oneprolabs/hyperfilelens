@@ -22,7 +22,6 @@ const configLoaded = ref(false)
 let configLoadPromise: Promise<void> | null = null
 let configRetryPromise: Promise<void> | null = null
 const authTurnstileMountGeneration = ref(0)
-
 async function loadTurnstileConfig(force = false): Promise<void> {
   if (configLoadPromise) return configLoadPromise
   if (configLoaded.value && !force) return
@@ -32,18 +31,18 @@ async function loadTurnstileConfig(force = false): Promise<void> {
     try {
       const res = await api<TurnstileConfigResponse>('/api/v1/auth/turnstile/config')
       if (res.code !== '0000' || !res.data) {
-        state.value = 'blocked'
-        siteKey.value = ''
-        return
+        throw new Error('Invalid Turnstile configuration response')
       }
       if (!res.data.enabled) {
         state.value = 'disabled'
         siteKey.value = ''
+        configLoaded.value = true
         return
       }
       if (!res.data.configured || !res.data.site_key) {
         state.value = 'blocked'
         siteKey.value = ''
+        configLoaded.value = true
         return
       }
 
@@ -53,11 +52,14 @@ async function loadTurnstileConfig(force = false): Promise<void> {
       // failures are intentionally swallowed here to avoid an unhandled
       // rejection before the lazy authentication page finishes mounting.
       void preloadTurnstileScript().catch(() => undefined)
-    } catch {
-      state.value = 'blocked'
-      siteKey.value = ''
-    } finally {
       configLoaded.value = true
+    } catch {
+      // A failed request does not establish that Turnstile is enabled. Keep
+      // the optional field hidden; auth endpoints remain the security boundary.
+      state.value = 'disabled'
+      siteKey.value = ''
+      configLoaded.value = false
+    } finally {
       configLoadPromise = null
     }
   })()
@@ -72,6 +74,7 @@ async function retryTurnstileConfig(): Promise<void> {
     // Leave the ready state first so any mounted widget is removed before the
     // shared Turnstile API and script tag are discarded.
     state.value = 'pending'
+    configLoaded.value = false
     await nextTick()
     resetTurnstileScriptLoad()
     authTurnstileMountGeneration.value += 1

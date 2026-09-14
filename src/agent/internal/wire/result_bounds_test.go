@@ -37,6 +37,87 @@ func TestBoundTaskResultDropsLargeCommandOutputAndKeepsSnapshotIdentity(t *testi
 	}
 }
 
+func TestBoundTaskResultKeepsCompactSnapshotFailureSummary(t *testing.T) {
+	result := map[string]any{
+		"snapshot_failure_summary": map[string]any{
+			"total_count": int64(795),
+			"items": []any{map[string]any{
+				"path":  "Library/Caches/com.apple.Safari",
+				"error": "operation not permitted",
+			}},
+		},
+		"snapshot": map[string]any{"large": strings.Repeat("x", maxTaskResultBytes)},
+	}
+	bounded, _ := boundTaskResult(result)
+	summary, ok := bounded["snapshot_failure_summary"].(map[string]any)
+	if !ok || summary["total_count"] != int64(795) {
+		t.Fatalf("snapshot failure summary lost: %#v", bounded)
+	}
+	items, ok := summary["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("snapshot failure samples lost: %#v", summary)
+	}
+}
+
+func TestBoundTaskResultCapsSnapshotFailureSamplesAtTen(t *testing.T) {
+	items := make([]any, 0, 20)
+	for i := 0; i < 20; i++ {
+		items = append(items, map[string]any{
+			"path":  "Library/Caches/item-" + string(rune('a'+i)),
+			"error": "operation not permitted",
+		})
+	}
+	bounded, _ := boundTaskResult(map[string]any{
+		"snapshot_failure_summary": map[string]any{
+			"total_count":    int64(20),
+			"reported_count": int64(20),
+			"truncated":      false,
+			"items":          items,
+		},
+		"other": strings.Repeat("x", maxTaskResultBytes),
+	})
+	summary := bounded["snapshot_failure_summary"].(map[string]any)
+	if got := len(summary["items"].([]any)); got != maxSnapshotFailureSamples {
+		t.Fatalf("sample count=%d, want %d", got, maxSnapshotFailureSamples)
+	}
+	if summary["reported_count"] != maxSnapshotFailureSamples || summary["truncated"] != true {
+		t.Fatalf("summary bounds are inconsistent: %#v", summary)
+	}
+}
+
+func TestBoundTaskResultReservesFailureSummaryUnderExtremeEssentialData(t *testing.T) {
+	result := map[string]any{
+		"snapshot_failure_summary": map[string]any{
+			"total_count": int64(1200),
+			"cause_counts": map[string]any{
+				"macos_privacy_denied":   int64(900),
+				"unsupported_entry_type": int64(300),
+			},
+			"items": []any{map[string]any{
+				"path":  strings.Repeat("p", 16*1024),
+				"error": strings.Repeat("e", 32*1024),
+			}},
+		},
+	}
+	for key := range essentialResultKeys {
+		if key != "snapshot_failure_summary" {
+			result[key] = strings.Repeat("x", 32*1024)
+		}
+	}
+	bounded, _ := boundTaskResult(result)
+	encoded, err := json.Marshal(bounded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > maxTaskResultBytes {
+		t.Fatalf("bounded result bytes=%d", len(encoded))
+	}
+	summary, ok := bounded["snapshot_failure_summary"].(map[string]any)
+	if !ok || summary["total_count"] != int64(1200) {
+		t.Fatalf("failure summary lost: %#v", bounded)
+	}
+}
+
 func TestBoundTaskResultFallbackIsDeterministic(t *testing.T) {
 	largeStats := map[string]any{}
 	for i := 0; i < 100; i++ {
@@ -106,6 +187,41 @@ func TestBoundTaskResultKeepsWorkspaceSafetyEvidence(t *testing.T) {
 	} {
 		if bounded[key] != expected {
 			t.Fatalf("safety evidence %q=%#v, want %#v", key, bounded[key], expected)
+		}
+	}
+}
+
+func TestBoundTaskResultKeepsRestoreOutcomeAndPermissionDiagnostics(t *testing.T) {
+	result := map[string]any{
+		"restore_outcome":     "failed",
+		"conflict_mode":       "overwrite",
+		"target_path":         "/tmp/existing",
+		"error_code":          "RESTORE_TARGET_PERMISSION_DENIED",
+		"error_message":       "Permission denied while writing restore target.",
+		"error_remediation":   "Verify target and parent permissions.",
+		"error_diagnostic":    "open /tmp/existing: permission denied",
+		"restored_item_count": 0,
+		"skipped_item_count":  0,
+		"failed_item_count":   1,
+		"other":               strings.Repeat("x", maxTaskResultBytes),
+	}
+
+	bounded, stats := boundTaskResult(result)
+	if !stats.Truncated {
+		t.Fatal("expected oversized restore result to be truncated")
+	}
+	for key, expected := range map[string]any{
+		"restore_outcome":   "failed",
+		"conflict_mode":     "overwrite",
+		"target_path":       "/tmp/existing",
+		"error_code":        "RESTORE_TARGET_PERMISSION_DENIED",
+		"error_message":     "Permission denied while writing restore target.",
+		"error_remediation": "Verify target and parent permissions.",
+		"error_diagnostic":  "open /tmp/existing: permission denied",
+		"failed_item_count": 1,
+	} {
+		if bounded[key] != expected {
+			t.Fatalf("restore field %q=%#v, want %#v", key, bounded[key], expected)
 		}
 	}
 }

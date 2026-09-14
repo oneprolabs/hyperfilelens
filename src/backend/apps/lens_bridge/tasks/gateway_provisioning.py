@@ -35,6 +35,7 @@ def execute_gateway_lensnode_provision_task(*, gateway_link_id: int) -> dict:
         LensGatewayLink.objects.select_related(
             "organization",
             "gateway",
+            "created_by",
             "owner_user",
         )
         .filter(pk=gateway_link_id, is_deleted=False)
@@ -54,11 +55,7 @@ def execute_gateway_lensnode_provision_task(*, gateway_link_id: int) -> dict:
         result = provisioning.ensure_lensnode_for_gateway(
             org=link.organization,
             gateway=link.gateway,
-            owner_user=(
-                link.owner_user
-                if link.scope == LensGatewayLink.GatewayScope.USER
-                else None
-            ),
+            created_by=link.created_by or link.owner_user,
             scope=link.scope,
         )
     return {

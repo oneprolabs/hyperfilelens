@@ -24,12 +24,10 @@ import {
   fetchLensAssistantFormOptions,
   fetchLensHealth,
   listLensAssistants,
-  listLensModels,
   updateLensAssistant,
   type LensAssistant,
   type LensAssistantFormOptions,
   type LensHealth,
-  type LensLlmConfig,
 } from '../../lib/lensApi'
 
 import InsightAssistantDetailDrawer from './InsightAssistantDetailDrawer.vue'
@@ -51,7 +49,6 @@ const TABLE_HEADER_STYLE: Record<string, string> = {
 const loading = ref(false)
 const health = ref<LensHealth | null>(null)
 const rows = ref<LensAssistant[]>([])
-const models = ref<LensLlmConfig[]>([])
 const search = ref('')
 const { appliedSearch, clearSearch } = useListSearch(search)
 const selectedRows = ref<LensAssistant[]>([])
@@ -71,8 +68,6 @@ const bridgeReady = computed(
   () => health.value?.lens?.configured && health.value?.lens?.authenticated,
 )
 
-const modelByUuid = computed(() => new Map(models.value.map((row) => [row.uuid, row])))
-
 const knowledgeSourceById = computed(
   () => new Map((formOptions.value?.knowledge_sources ?? []).map((row) => [row.id, row])),
 )
@@ -84,13 +79,10 @@ const filteredRows = computed(() => {
     const hay = [
       row.name,
       row.slug,
-      agentModelLabel(row),
-      multimodalModelLabel(row),
       knowledgeSourceName(row),
       knowledgeSourceMeta(row),
       scenarioLabel(row),
       row.selected_task,
-      analysisDepthLabel(row),
       row.visibility_scope === 'user'
         ? t('insight.assistants.visibilityOnlyMe')
         : t('insight.assistants.visibilityOrganizationShort'),
@@ -119,23 +111,6 @@ function knowledgeSourceStatusLabel(status: string) {
   if (status === 'error') return t('insight.kb.statusError')
   if (status === 'paused') return t('insight.kb.statusPaused')
   return status
-}
-
-function agentModelLabel(row: LensAssistant) {
-  return modelRefLabel(row.agent_model_ref)
-}
-
-function multimodalModelLabel(row: LensAssistant) {
-  return modelRefLabel(row.multimodal_model_ref)
-}
-
-function modelRefLabel(ref: string | null | undefined) {
-  if (!ref) return '—'
-  const model = modelByUuid.value.get(ref)
-  if (!model) return ref
-  const provider = model.provider || model.name || 'provider'
-  const modelId = model.config?.model || '—'
-  return `${provider} · ${modelId}`
 }
 
 function visibilityLabel(scope: string) {
@@ -176,22 +151,8 @@ function scenarioLabel(row: LensAssistant) {
   return task?.title || taskName
 }
 
-function analysisDepthLabel(row: LensAssistant) {
-  const value = row.agent_rounds || 'balanced'
-  if (value === 'flash') return t('insight.assistants.roundsFlash')
-  if (value === 'fast') return t('insight.assistants.roundsFast')
-  if (value === 'balanced') return t('insight.assistants.roundsBalanced')
-  if (value === 'deep') return t('insight.assistants.roundsDeep')
-  if (value === 'max') return t('insight.assistants.roundsMax')
-  return value
-}
-
 async function loadFormOptions() {
   formOptions.value = await fetchLensAssistantFormOptions()
-}
-
-async function loadModels() {
-  models.value = await listLensModels().catch(() => [] as LensLlmConfig[])
 }
 
 async function load() {
@@ -202,7 +163,6 @@ async function load() {
       const [assistantRows] = await Promise.all([
         listLensAssistants(),
         loadFormOptions().catch(() => null),
-        loadModels().catch(() => null),
       ])
       rows.value = assistantRows
     } else {
@@ -467,28 +427,6 @@ watch(
             </template>
           </el-table-column>
           <el-table-column
-            :label="t('insight.assistants.colAgentModel')"
-            min-width="180"
-          >
-            <template #default="{ row }">
-              <span
-                class="insight-assistants-model"
-                :class="{ 'hfl-empty-mark': agentModelLabel(row) === '—' }"
-              >{{ agentModelLabel(row) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column
-            :label="t('insight.assistants.colMultimodalModel')"
-            min-width="180"
-          >
-            <template #default="{ row }">
-              <span
-                class="insight-assistants-model"
-                :class="{ 'hfl-empty-mark': multimodalModelLabel(row) === '—' }"
-              >{{ multimodalModelLabel(row) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column
             :label="t('insight.assistants.colKnowledgeSource')"
             min-width="220"
           >
@@ -505,14 +443,6 @@ watch(
           >
             <template #default="{ row }">
               {{ scenarioLabel(row) }}
-            </template>
-          </el-table-column>
-          <el-table-column
-            :label="t('insight.assistants.colAnalysisDepth')"
-            width="120"
-          >
-            <template #default="{ row }">
-              <HflTypeLabel :label="analysisDepthLabel(row)" />
             </template>
           </el-table-column>
           <el-table-column
@@ -574,11 +504,6 @@ watch(
   font-size: 11px;
   color: var(--color-text-tertiary);
   text-align: left;
-}
-
-.insight-assistants-model {
-  font-size: 13px;
-  color: var(--color-text-title);
 }
 
 .insight-assistants-identity {

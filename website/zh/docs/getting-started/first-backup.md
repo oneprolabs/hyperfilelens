@@ -48,5 +48,3 @@ description: 分配目标仓库、确认备份配置并运行首次备份。
 ![首次备份完成，Backup Task 显示 Succeeded，账户、主机和仓库信息已经模糊处理](/docs/getting-started/backup-succeeded.png)
 
 运行期间不要关闭 Windows Agent，也不要修改对象存储凭据。只有当 **Backup Task** 显示 **Succeeded** 后，才继续检查任务与快照。
-
-下一步：[检查任务与快照](/zh/docs/getting-started/verify-backup)。

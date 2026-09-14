@@ -26,7 +26,6 @@ import { apiErrorMessage, apiErrorMessageI18n } from '../../lib/api'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import { notifyError, notifySuccess } from '../../lib/notify'
 import { formatLocalDateTime } from '../../lib/dateTime'
-import { formatTaskProgressBarPercent, formatTaskProgressPercent } from '../../lib/kopiaProgress'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { getNode } from '../../lib/nodeApi'
 import { getBackupSourceSnapshot } from '../../lib/protectionBackupConfigApi'
@@ -37,6 +36,7 @@ import {
 } from '../../lib/protectionStopConfirm'
 import { useProtectionStopConfirmDialog } from '../../composables/useProtectionStopConfirmDialog'
 import ProtectionStopConfirmDialog from '../../components/ProtectionStopConfirmDialog.vue'
+import RepositoryMaintenanceSummary from '../../components/RepositoryMaintenanceSummary.vue'
 import { getSourceResource } from '../../lib/sourceApi'
 import {
   cancelStorageRepositoryTask,
@@ -48,6 +48,7 @@ import {
 import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../lib/taskBackupSourceResource'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../lib/taskStepExpansion'
+import { taskStepTimelineTone, taskStepTranslationKey } from '../../lib/taskStepDisplay'
 import {
   taskCleanupFailures,
   taskCleanupWarnings,
@@ -190,7 +191,7 @@ const timeModeOptions = computed(() => [
 ])
 const timeFieldOptions = computed(() => [
   { value: 'created', label: t('ops.task.timeFieldCreated') },
-  { value: 'finished', label: t('ops.task.timeFieldFinished') },
+  { value: 'finished', label: t('ops.task.endTime') },
 ])
 const taskDateTimeRangePresets = computed(() => [
   { value: '24h', label: t('ops.task.time24h'), hours: 24 },
@@ -335,14 +336,6 @@ function valueLabel(scope: 'resourceValue', value?: string | null) {
   return te(key) ? t(key) : t('ops.task.unknownValue')
 }
 
-function progressValue(row: TaskRow) {
-  return formatTaskProgressBarPercent(row.progress)
-}
-
-function progressText(row: TaskRow) {
-  return formatTaskProgressPercent(row.progress)
-}
-
 function formatTime(iso?: string | null) {
   return formatLocalDateTime(iso, t('ops.task.emptyMark'))
 }
@@ -425,12 +418,7 @@ function stepDuration(index: number) {
 }
 
 function timelineIconClass(status?: string) {
-  if (status === 'success') return 'hfl-task-drawer__timeline-icon--success'
-  if (status === 'warning') return 'hfl-task-drawer__timeline-icon--warning'
-  if (status === 'failed' || status === 'timeout') return 'hfl-task-drawer__timeline-icon--danger'
-  if (status === 'running') return 'hfl-task-drawer__timeline-icon--running'
-  if (status === 'cancelled') return 'hfl-task-drawer__timeline-icon--muted'
-  return 'hfl-task-drawer__timeline-icon--pending'
+  return `hfl-task-drawer__timeline-icon--${taskStepTimelineTone(status)}`
 }
 
 function displayTaskStatus(task?: TaskRow | null) {
@@ -456,14 +444,8 @@ function eventMessageClass(event: TaskEventRow) {
 }
 
 function stepDisplayName(stepName?: string | null, taskType?: string | null) {
-  const step = String(stepName || '')
-  if (!step) return t('ops.task.emptyMark')
-  if (taskType === 'snapshot_download') {
-    if (step === 'restore') return t('ops.task.step.snapshot_download_restore')
-    if (step === 'transfer') return t('ops.task.step.snapshot_download_transfer')
-    if (step === 'finalize') return t('ops.task.step.snapshot_download_finalize')
-  }
-  const key = `ops.task.step.${step}`
+  const key = taskStepTranslationKey(stepName, taskType)
+  if (!key) return t('ops.task.emptyMark')
   return te(key) ? t(key) : t('ops.task.unknownValue')
 }
 
@@ -1028,9 +1010,8 @@ watch(
         <OpsStatCard
           :label="t('ops.task.status.running')"
           :value="stats.running"
-          accent="blue"
+          tone="info"
           accent-side="left"
-          value-class="text-blue-600"
           :pulse="stats.running > 0"
         >
           <template #icon>
@@ -1040,7 +1021,7 @@ watch(
         <OpsStatCard
           :label="t('ops.task.status.pending')"
           :value="stats.by_status?.pending ?? 0"
-          accent="gray"
+          tone="warning"
           accent-side="left"
         >
           <template #icon>
@@ -1050,9 +1031,8 @@ watch(
         <OpsStatCard
           :label="t('ops.task.status.success')"
           :value="stats.success"
-          accent="green"
+          tone="success"
           accent-side="left"
-          value-class="text-emerald-600"
         >
           <template #icon>
             <Check :size="17" />
@@ -1061,9 +1041,8 @@ watch(
         <OpsStatCard
           :label="t('ops.task.status.failedTimedOut')"
           :value="stats.failed + stats.timeout"
-          accent="red"
+          tone="danger"
           accent-side="left"
-          value-class="text-red-600"
         >
           <template #icon>
             <AlertTriangle :size="17" />
@@ -1072,7 +1051,7 @@ watch(
         <OpsStatCard
           :label="t('ops.task.status.cancelled')"
           :value="stats.cancelled"
-          accent="gray"
+          tone="neutral"
           accent-side="left"
         >
           <template #icon>
@@ -1257,23 +1236,6 @@ watch(
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('ops.task.colProgress')"
-              min-width="160"
-            >
-              <template #default="{ row }">
-                <div class="hfl-task-list-progress">
-                  <div class="hfl-task-list-progress__track">
-                    <div
-                      class="hfl-task-list-progress__fill"
-                      :class="`hfl-task-list-progress__fill--${displayTaskStatus(row)}`"
-                      :style="{ width: `${progressValue(row)}%` }"
-                    />
-                  </div>
-                  <span class="hfl-task-list-progress__text">{{ progressText(row) }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column
               :label="t('ops.task.colTrigger')"
               width="110"
             >
@@ -1287,7 +1249,7 @@ watch(
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('ops.task.startedAt')"
+              :label="t('ops.task.startTime')"
               width="165"
             >
               <template #default="{ row }">
@@ -1298,7 +1260,7 @@ watch(
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('ops.task.finishedAt')"
+              :label="t('ops.task.endTime')"
               width="165"
             >
               <template #default="{ row }">
@@ -1559,14 +1521,14 @@ watch(
               />
               <div class="hfl-task-drawer__time-grid">
                 <div>
-                  <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startedAt') }}</span>
+                  <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startTime') }}</span>
                   <span
                     class="hfl-task-drawer__time-value"
                     :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }"
                   >{{ formatTime(activeTask.started_at || activeTask.created_at) }}</span>
                 </div>
                 <div>
-                  <span class="hfl-task-drawer__metric-label">{{ t('ops.task.finishedAt') }}</span>
+                  <span class="hfl-task-drawer__metric-label">{{ t('ops.task.endTime') }}</span>
                   <span
                     class="hfl-task-drawer__time-value"
                     :class="{ 'hfl-empty-mark': !activeTask.finished_at }"
@@ -1583,19 +1545,6 @@ watch(
             </div>
           </div>
 
-          <div class="hfl-task-drawer__progress-block">
-            <div class="hfl-task-drawer__progress-head">
-              <span>{{ t('ops.task.progressLabel') }}</span>
-              <span>{{ progressText(activeTask) }}</span>
-            </div>
-            <div class="hfl-task-drawer__progress-track">
-              <div
-                class="hfl-task-drawer__progress-fill"
-                :class="`hfl-task-drawer__progress-fill--${displayTaskStatus(activeTask)}`"
-                :style="{ width: `${progressValue(activeTask)}%` }"
-              />
-            </div>
-          </div>
         </section>
 
         <ElAlert
@@ -1865,6 +1814,7 @@ watch(
                             class="hfl-task-drawer__event-msg"
                             :class="eventMessageClass(event)"
                           >{{ eventDisplayMessage(event) }}</span>
+                          <RepositoryMaintenanceSummary :metadata="event.metadata" />
                           <span
                             v-if="eventObjectText(event)"
                             class="hfl-task-drawer__event-object"
@@ -1926,6 +1876,7 @@ watch(
                             class="hfl-task-drawer__event-msg"
                             :class="eventMessageClass(event)"
                           >{{ eventDisplayMessage(event) }}</span>
+                          <RepositoryMaintenanceSummary :metadata="event.metadata" />
                           <span
                             v-if="eventObjectText(event)"
                             class="hfl-task-drawer__event-object"
@@ -1979,6 +1930,7 @@ watch(
                       class="hfl-task-drawer__event-msg"
                       :class="eventMessageClass(event)"
                     >{{ eventDisplayMessage(event) }}</span>
+                    <RepositoryMaintenanceSummary :metadata="event.metadata" />
                     <span
                       v-if="eventObjectText(event)"
                       class="hfl-task-drawer__event-object"
@@ -2213,8 +2165,8 @@ watch(
 .hfl-task-drawer :deep(.el-drawer__header) {
   margin: 0;
   padding: 10px 24px 8px;
-  border-bottom: 1px solid rgb(241 245 249);
-  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid var(--color-border-light);
+  background: color-mix(in srgb, var(--color-card-bg) 96%, transparent);
   backdrop-filter: blur(8px);
 }
 
@@ -2239,7 +2191,7 @@ watch(
 
 .hfl-task-drawer :deep(.el-drawer__body) {
   padding: 0;
-  background: #fff;
+  background: var(--color-card-bg);
 }
 
 .hfl-task-drawer__header-bar {
@@ -2266,7 +2218,7 @@ watch(
   font-size: 18px;
   font-weight: 700;
   line-height: 1.25;
-  color: rgb(15 23 42);
+  color: var(--color-text-title);
   overflow-wrap: anywhere;
 }
 
@@ -2278,14 +2230,14 @@ watch(
   margin-top: 6px;
   min-width: 0;
   font-size: 12px;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__header-divider {
   align-self: center;
   width: 1px;
   height: 12px;
-  background: rgb(203 213 225);
+  background: var(--color-border);
 }
 
 .hfl-task-drawer__header-actions {
@@ -2316,7 +2268,7 @@ watch(
 .hfl-task-drawer__cancel-button:hover:not(:disabled) {
   border-color: var(--color-error);
   background: var(--color-error);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .hfl-task-drawer__cancel-button:focus-visible {
@@ -2341,9 +2293,9 @@ watch(
 .hfl-task-drawer__loading {
   min-height: 320px;
   padding: 16px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
-  background: rgb(248 250 252);
+  background: var(--color-grey-1);
 }
 
 .hfl-task-drawer__hero {
@@ -2352,10 +2304,10 @@ watch(
   gap: 14px;
   margin: 0;
   padding: 16px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
-  background: rgb(248 250 252);
-  box-shadow: inset 0 1px 1px rgba(15, 23, 42, 0.03);
+  background: var(--color-grey-1);
+  box-shadow: inset 0 1px 1px color-mix(in srgb, var(--color-text-title) 3%, transparent);
 }
 
 .hfl-task-drawer__hero-section-title {
@@ -2363,7 +2315,7 @@ watch(
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__uuid {
@@ -2375,7 +2327,7 @@ watch(
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 11px;
   font-weight: 700;
-  color: rgb(71 85 105);
+  color: var(--color-text-primary);
   overflow-wrap: anywhere;
 }
 
@@ -2384,7 +2336,7 @@ watch(
   width: 20px;
   height: 20px;
   padding: 0;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__hero-grid {
@@ -2405,10 +2357,10 @@ watch(
   gap: 12px;
   min-width: 0;
   padding: 14px;
-  border: 1px solid var(--color-border-light, #f1f5f9);
+  border: 1px solid var(--color-border-light);
   border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  background: var(--color-card-bg);
+  box-shadow: var(--shadow-sm);
 }
 
 .hfl-task-drawer__metric--wide {
@@ -2418,15 +2370,15 @@ watch(
 .hfl-task-drawer__metric-icon {
   flex: 0 0 18px;
   margin-top: 2px;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__metric-icon--blue {
-  color: rgb(14 165 233);
+  color: var(--color-info);
 }
 
 .hfl-task-drawer__metric-icon--indigo {
-  color: rgb(79 70 229);
+  color: var(--color-primary);
 }
 
 .hfl-task-drawer__metric-copy {
@@ -2437,7 +2389,7 @@ watch(
   display: block;
   font-size: 12px;
   font-weight: 600;
-  color: rgb(148 163 184);
+  color: var(--color-text-tertiary);
 }
 
 .hfl-task-drawer__metric-value {
@@ -2445,7 +2397,7 @@ watch(
   margin-top: 4px;
   font-size: 14px;
   font-weight: 800;
-  color: rgb(15 23 42);
+  color: var(--color-text-title);
 }
 
 .hfl-task-drawer__metric-tags {
@@ -2477,7 +2429,7 @@ watch(
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
   font-weight: 600;
-  color: rgb(51 65 85);
+  color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2493,92 +2445,40 @@ watch(
   color: var(--color-info);
 }
 
-.hfl-task-drawer__progress-block {
-  padding-top: 2px;
-}
-
-.hfl-task-drawer__progress-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-  font-size: 12px;
-  font-weight: 700;
-  color: rgb(100 116 139);
-}
-
-.hfl-task-drawer__progress-head span:last-child {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  color: var(--color-info);
-}
-
-.hfl-task-drawer__progress-track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background-color: rgb(226 232 240);
-}
-
-.hfl-task-drawer__progress-fill {
-  height: 100%;
-  min-width: 4px;
-  border-radius: inherit;
-  background-color: var(--color-info);
-  transition: width 0.35s ease;
-}
-
-.hfl-task-drawer__progress-fill--success {
-  background-color: var(--color-success);
-}
-
-.hfl-task-drawer__progress-fill--partial {
-  background-color: var(--color-warning);
-}
-
-.hfl-task-drawer__progress-fill--failed,
-.hfl-task-drawer__progress-fill--timeout {
-  background-color: var(--color-error);
-}
-
-.hfl-task-drawer__progress-fill--pending,
-.hfl-task-drawer__progress-fill--cancelled {
-  background-color: rgb(100 116 139);
-}
-
 .hfl-task-drawer__timeline-icon--success {
   border-color: var(--color-success);
   background-color: var(--color-success);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .hfl-task-drawer__timeline-icon--danger {
   border-color: var(--color-error);
   background-color: var(--color-error);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .hfl-task-drawer__timeline-icon--warning {
   border-color: var(--color-warning);
   background-color: var(--color-warning);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .hfl-task-drawer__timeline-icon--running {
   border-color: var(--color-info);
   background-color: var(--color-info);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .hfl-task-drawer__timeline-icon--muted {
-  border-color: rgb(100 116 139);
-  background-color: rgb(100 116 139);
-  color: #fff;
+  border-color: var(--color-text-secondary);
+  background-color: var(--color-text-secondary);
+  color: var(--color-text-inverse);
 }
 
 .hfl-task-drawer__timeline-icon--pending {
-  background-color: rgb(100 116 139);
-  color: #fff;
+  border-color: var(--color-text-secondary);
+  background-color: transparent;
+  color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__tabs {
@@ -2594,7 +2494,7 @@ watch(
   border: 1px solid var(--color-warning-border);
   border-radius: 12px;
   background: var(--color-warning-light);
-  color: rgb(120 53 15);
+  color: var(--color-warning-text);
 }
 
 .hfl-task-drawer__cleanup-outcome-head {
@@ -2661,7 +2561,7 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 700;
 }
@@ -2687,7 +2587,7 @@ watch(
   top: 34px;
   bottom: -18px;
   width: 0;
-  border-left: 2px dashed rgb(226 232 240);
+  border-left: 2px dashed var(--color-border);
 }
 
 .hfl-task-drawer__step-item--last::before {
@@ -2703,23 +2603,23 @@ watch(
   width: 26px;
   height: 26px;
   margin-top: 1px;
-  border: 2px solid #fff;
+  border: 2px solid var(--color-card-bg);
   border-radius: 999px;
 }
 
 .hfl-task-drawer__step-card {
   min-width: 0;
   padding: 14px 16px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+  background: var(--color-card-bg);
+  box-shadow: var(--shadow-sm);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .hfl-task-drawer__step-card:hover {
-  border-color: rgb(203 213 225);
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
+  border-color: var(--color-border-light);
+  box-shadow: var(--shadow-md);
 }
 
 .hfl-task-drawer__step-card-head {
@@ -2745,7 +2645,7 @@ watch(
   font-size: 14px;
   font-weight: 800;
   line-height: 1.45;
-  color: rgb(15 23 42);
+  color: var(--color-text-title);
   overflow-wrap: anywhere;
 }
 
@@ -2755,7 +2655,7 @@ watch(
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 11px;
   font-weight: 700;
-  color: rgb(71 85 105);
+  color: var(--color-text-primary);
 }
 
 .hfl-task-drawer__step-duration {
@@ -2764,10 +2664,10 @@ watch(
   gap: 4px;
   flex-shrink: 0;
   padding: 2px 7px;
-  border: 1px solid rgb(241 245 249);
+  border: 1px solid var(--color-border-light);
   border-radius: 6px;
-  background: rgb(248 250 252);
-  color: rgb(100 116 139);
+  background: var(--color-grey-1);
+  color: var(--color-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 11px;
   font-weight: 700;
@@ -2776,7 +2676,7 @@ watch(
 .hfl-task-drawer__step-created {
   font-size: 11px;
   font-weight: 700;
-  color: rgb(148 163 184);
+  color: var(--color-text-tertiary);
 }
 
 .hfl-task-drawer__event-list,
@@ -2786,13 +2686,13 @@ watch(
   gap: 10px;
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid rgb(241 245 249);
+  border-top: 1px solid var(--color-border-light);
 }
 
 .hfl-task-drawer__event-only {
   margin-top: 0;
   padding: 14px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
 }
 
@@ -2813,7 +2713,7 @@ watch(
   margin-top: 3px;
   border-radius: 999px;
   background-color: var(--color-success);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .hfl-task-drawer__event-dot--danger {
@@ -2829,7 +2729,7 @@ watch(
 }
 
 .hfl-task-drawer__event-dot--muted {
-  background-color: rgb(100 116 139);
+  background-color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__event-msg {
@@ -2838,7 +2738,7 @@ watch(
   font-size: 12px;
   line-height: 1.55;
   font-weight: 400;
-  color: rgb(51 65 85);
+  color: var(--color-text-primary);
 }
 
 .hfl-task-drawer__event-content {
@@ -2854,11 +2754,11 @@ watch(
   max-width: 100%;
   align-items: flex-start;
   gap: 4px;
-  border: 1px solid rgb(226 232 240);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: rgb(248 250 252);
+  background: var(--color-grey-1);
   padding: 2px 6px;
-  color: rgb(71 85 105);
+  color: var(--color-text-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 11px;
   line-height: 1.45;
@@ -2868,13 +2768,13 @@ watch(
 .hfl-task-drawer__event-object svg {
   margin-top: 2px;
   flex: 0 0 auto;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__event-error {
   display: block;
   max-width: 100%;
-  color: rgb(185 28 28);
+  color: var(--color-error-text);
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -2882,11 +2782,11 @@ watch(
 }
 
 .hfl-task-drawer__event-msg--danger {
-  color: rgb(185 28 28);
+  color: var(--color-error-text);
 }
 
 .hfl-task-drawer__event-msg--muted {
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__event-time {
@@ -2894,7 +2794,7 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 11px;
   font-weight: 600;
@@ -2912,13 +2812,13 @@ watch(
   gap: 12px;
   min-width: 0;
   padding: 16px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
-  background: #fff;
+  background: var(--color-card-bg);
 }
 
 .hfl-task-drawer__panel--code {
-  background: rgb(248 250 252);
+  background: var(--color-grey-1);
 }
 
 .hfl-task-drawer__panel-head {
@@ -2926,12 +2826,12 @@ watch(
   align-items: center;
   gap: 8px;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgb(241 245 249);
-  color: rgb(15 23 42);
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-text-title);
 }
 
 .hfl-task-drawer__panel-icon {
-  color: rgb(43 125 196);
+  color: var(--color-info);
   flex: 0 0 16px;
 }
 
@@ -2964,10 +2864,10 @@ watch(
   align-items: center;
   gap: 7px;
   padding: 7px 11px;
-  border: 1px solid rgb(226 232 240);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #fff;
-  color: rgb(71 85 105);
+  background: var(--color-card-bg);
+  color: var(--color-text-primary);
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
@@ -2988,10 +2888,10 @@ watch(
 
 .hfl-task-drawer__resource-error {
   padding: 10px 12px;
-  border: 1px solid rgb(254 202 202);
+  border: 1px solid var(--color-error-border);
   border-radius: 8px;
-  background: rgb(254 242 242);
-  color: rgb(185 28 28);
+  background: var(--color-error-light);
+  color: var(--color-error-text);
   font-size: 12px;
   font-weight: 600;
 }
@@ -3004,13 +2904,13 @@ watch(
 .hfl-task-drawer__resource-name {
   font-size: 13px;
   font-weight: 700;
-  color: rgb(15 23 42);
+  color: var(--color-text-title);
 }
 
 .hfl-task-drawer__resource-summary {
   margin-top: 2px;
   font-size: 11px;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
 }
 
 .hfl-task-drawer__resource-card {
@@ -3018,14 +2918,14 @@ watch(
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--color-border);
   border-radius: 10px;
-  background: rgb(248 250 252);
+  background: var(--color-grey-1);
   transition: border-color 0.15s ease;
 }
 
 .hfl-task-drawer__resource-card:hover {
-  border-color: rgb(43 125 196);
+  border-color: var(--color-info);
 }
 
 .hfl-task-drawer__resource-type {
@@ -3033,7 +2933,7 @@ watch(
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: rgb(71 85 105);
+  color: var(--color-text-primary);
   font-weight: 600;
 }
 
@@ -3041,13 +2941,13 @@ watch(
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 13px;
   font-weight: 600;
-  color: rgb(15 23 42);
+  color: var(--color-text-title);
 }
 
 .hfl-task-drawer__empty-line {
   padding: 6px 0;
   font-size: 13px;
-  color: rgb(148 163 184);
+  color: var(--color-text-tertiary);
 }
 
 @media (max-width: 760px) {

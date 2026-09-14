@@ -20,6 +20,7 @@ INFRA_PUBLIC_GATEWAY_MANAGE = "platform.infra.public_gateway.manage"
 INFRA_PUBLIC_GATEWAY_CAPACITY_MANAGE = "platform.infra.public_gateway.capacity.manage"
 INFRA_INSTANCE_LICENSE_VIEW = "platform.infra.instance_license.view"
 INFRA_MONITORING_VIEW = "platform.infra.monitoring.view"
+INFRA_RELEASE_PACKAGES_VIEW = "platform.infra.release_packages.view"
 
 COMMERCE_ORG_QUOTA_MANAGE = "platform.commerce.org.quota.manage"
 COMMERCE_ORG_PACKAGE_APPLY = "platform.commerce.org.package.apply"
@@ -38,6 +39,7 @@ ALL_PLATFORM_ACTIONS: tuple[str, ...] = (
     INFRA_PUBLIC_GATEWAY_CAPACITY_MANAGE,
     INFRA_INSTANCE_LICENSE_VIEW,
     INFRA_MONITORING_VIEW,
+    INFRA_RELEASE_PACKAGES_VIEW,
     COMMERCE_ORG_QUOTA_MANAGE,
     COMMERCE_ORG_PACKAGE_APPLY,
     COMMERCE_QUOTA_USAGE_VIEW,
@@ -62,6 +64,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             INFRA_PUBLIC_GATEWAY_CAPACITY_MANAGE,
             INFRA_INSTANCE_LICENSE_VIEW,
             INFRA_MONITORING_VIEW,
+            INFRA_RELEASE_PACKAGES_VIEW,
         }
     ),
     ROLE_BILLING_OPERATOR: frozenset(

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { consumeSessionNotice } from '../lib/sessionNotice'
+import { clearSharedSessionNotice, consumeSessionNotice } from '../lib/sessionNotice'
 
 const mocks = vi.hoisted(() => ({
   currentRoute: {
@@ -52,22 +52,25 @@ describe('session watchdog notice handoff', () => {
   beforeAll(() => {
     vi.useFakeTimers()
     window.sessionStorage.clear()
+    clearSharedSessionNotice()
   })
 
   afterAll(() => {
     vi.clearAllTimers()
     vi.useRealTimers()
     window.sessionStorage.clear()
+    clearSharedSessionNotice()
   })
 
-  it('stores a verified refresh failure without exposing the reason in the URL', async () => {
+  it('redirects on terminal refresh and explicit signed-out probes', async () => {
+    let refreshAvailable = true
     const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
       if (String(input).includes('/api/v1/auth/logout')) {
         return new Response('{}', { status: 200 })
       }
       return new Response(JSON.stringify({
         authenticated: false,
-        refresh_available: true,
+        refresh_available: refreshAvailable,
         user: null,
       }), {
         status: 200,
@@ -95,5 +98,49 @@ describe('session watchdog notice handoff', () => {
     expect(mocks.refreshAuthToken).toHaveBeenCalledOnce()
     expect(consumeSessionNotice()).toBe('TOKEN_REUSED')
     expect(consumeSessionNotice()).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(1_001)
+    fetchMock.mockClear()
+    mocks.refreshAuthToken.mockReset()
+    mocks.refreshAuthToken.mockResolvedValue({
+      ok: false,
+      status: 401,
+      errorCode: 'REFRESH_EXPIRED',
+    })
+    mocks.routerReplace.mockClear()
+    useAuth().setUser({
+      id: 1,
+      email: 'person@example.com',
+      username: 'person',
+    })
+    window.dispatchEvent(new Event('focus'))
+
+    await vi.waitFor(() => expect(mocks.routerReplace).toHaveBeenCalledOnce())
+    expect(mocks.refreshAuthToken).toHaveBeenCalledOnce()
+    expect(consumeSessionNotice()).toBe('REFRESH_EXPIRED')
+
+    await vi.advanceTimersByTimeAsync(1_001)
+    refreshAvailable = false
+    fetchMock.mockClear()
+    mocks.refreshAuthToken.mockClear()
+    mocks.routerReplace.mockClear()
+    useAuth().setUser({
+      id: 1,
+      email: 'person@example.com',
+      username: 'person',
+    })
+    window.dispatchEvent(new Event('focus'))
+
+    await vi.waitFor(() => {
+      expect(mocks.routerReplace).toHaveBeenCalledWith({
+        path: '/login',
+        query: {
+          redirect: '/ops/alerts?status=open',
+        },
+      })
+    })
+    expect(mocks.refreshAuthToken).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(consumeSessionNotice()).toBe('REFRESH_EXPIRED')
   })
 })

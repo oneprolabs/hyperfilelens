@@ -388,11 +388,17 @@ describe('New Chat Public Data Gateway warning', () => {
     wrapper.unmount()
   })
 
-  it('shows both supported analysis types and submits the selected one', async () => {
+  it('keeps both analysis types available regardless of the Gateway task snapshot', async () => {
     mocks.createCopilotSession.mockResolvedValue({ id: 91 })
-    const wrapper = await mountNewChat({ gatewayResponse: [publicGateway] })
+    const gatewayWithNoAdvertisedTasks = {
+      ...publicGateway,
+      analysis_types: [],
+    }
+    const wrapper = await mountNewChat({ gatewayResponse: [gatewayWithNoAdvertisedTasks] })
 
+    const knowledgeOption = wrapper.get('input[value="knowledge_qa"]')
     const codeOption = wrapper.get('input[value="code_analysis"]')
+    expect(knowledgeOption.attributes('disabled')).toBeUndefined()
     expect(codeOption.attributes('disabled')).toBeUndefined()
     await codeOption.setValue(true)
     await startChatButton(wrapper).trigger('click')
@@ -401,6 +407,20 @@ describe('New Chat Public Data Gateway warning', () => {
     expect(mocks.createCopilotSession).toHaveBeenCalledWith(
       expect.objectContaining({ analysis_type: 'code_analysis' }),
     )
+    wrapper.unmount()
+  })
+
+  it('preserves Code Analysis when switching from Public to Private Gateway mode', async () => {
+    const wrapper = await mountNewChat({
+      gatewayResponse: [publicGateway, { ...privateGateway, analysis_types: [] }],
+    })
+
+    const codeOption = wrapper.get('input[value="code_analysis"]')
+    await codeOption.setValue(true)
+    await wrapper.get('input[value="manual"]').setValue(true)
+    await nextTick()
+
+    expect((codeOption.element as HTMLInputElement).checked).toBe(true)
     wrapper.unmount()
   })
 

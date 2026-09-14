@@ -5,6 +5,20 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 temporary="$(mktemp -d)"
 trap 'rm -rf "${temporary}"' EXIT
 repository="${temporary}/source"
+
+# The checked-in contract must keep its source identity, official image tags,
+# regional repositories, and immutable digests internally consistent.
+python3 - "${ROOT}" <<'PY'
+import pathlib
+import runpy
+import sys
+
+root = pathlib.Path(sys.argv[1])
+online = runpy.run_path(str(root / "deploy/online/prepare.py"))
+runtime = online["load_sourcelens_runtime"](root)
+assert set(runtime["images"]) == {"backend", "frontend", "lensnode"}
+PY
+
 git init --quiet "${repository}"
 git -C "${repository}" config user.name "Runtime Contract Test"
 git -C "${repository}" config user.email "runtime-contract@example.invalid"
@@ -35,6 +49,19 @@ annotated_contract="${temporary}/annotated.json"
 	--git-url "${repository}" --output "${annotated_contract}"
 "${ROOT}/tools/sourcelens/update-runtime-contract.sh" --check \
 	--git-url "${repository}" --output "${annotated_contract}"
+
+# A version update must not retain an image lock from another SourceLens
+# release and leave a contract that later packaging stages cannot consume.
+locked_contract="${temporary}/image-locked.json"
+cp "${ROOT}/deploy/online/sourcelens/runtime.json" "${locked_contract}"
+locked_before="$(sha256sum "${locked_contract}" | cut -d' ' -f1)"
+if "${ROOT}/tools/sourcelens/update-runtime-contract.sh" v1.2.4 \
+	--git-url "${repository}" --output "${locked_contract}" >/dev/null 2>&1; then
+	printf 'ERROR: SourceLens identity update retained a mismatched image lock\n' >&2
+	exit 1
+fi
+[[ "$(sha256sum "${locked_contract}" | cut -d' ' -f1)" == "${locked_before}" ]]
+
 python3 - "${lightweight_contract}" "${annotated_contract}" "${commit}" <<'PY'
 import json
 import pathlib

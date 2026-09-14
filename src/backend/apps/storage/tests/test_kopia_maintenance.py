@@ -260,6 +260,7 @@ class KopiaMaintenanceCommandTests(SimpleTestCase):
             ],
         )
         self.assertEqual(commands[3], ["maintenance", "run"])
+        self.assertEqual(commands[4], ["maintenance", "info", "--json"])
         self.assertIn("--region=us-east-1", commands[0])
         self.assertFalse(any("override-username" in arg for command in commands for arg in command))
         config_files = [call.kwargs["config_file"] for call in run_command.call_args_list]
@@ -276,7 +277,15 @@ class KopiaMaintenanceCommandTests(SimpleTestCase):
     ):
         failed = CompletedProcess([], 1, stdout="", stderr="Connection closed by foreign host. Retry again.")
         succeeded = CompletedProcess([], 0, stdout="", stderr="")
-        run_command.side_effect = [failed, failed, succeeded, succeeded, succeeded, succeeded]
+        run_command.side_effect = [
+            failed,
+            failed,
+            succeeded,
+            succeeded,
+            succeeded,
+            succeeded,
+            succeeded,
+        ]
         repository = Repository(
             id=52,
             name="S3 repository",

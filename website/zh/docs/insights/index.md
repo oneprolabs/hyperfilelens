@@ -14,7 +14,7 @@ description: 从 HyperFileLens 备份快照创建和使用 AI Copilot 会话。
 3. 提出可以通过所选文件和引用核对的问题。
 4. 所需模型未就绪时，由平台管理员[配置 AI 模型](/zh/docs/insights/models)。
 5. 公共网关无法访问仓库或数据准备必须留在自管网络时，[使用 Private Data Gateway](/zh/docs/insights/data-gateway)。
-6. 了解当前版本的 [AI 使用量可见范围](/zh/docs/insights/usage)，并管理[会话与数据范围](/zh/docs/insights/privacy)。
+6. 了解并管理[会话与数据范围](/zh/docs/insights/privacy)。
 
 ![AI Copilot 基于合成 CSV 返回答案，账户、主机和 Gateway 标识已经模糊处理，引用结果保持可见](/docs/getting-started/chat-answer.png)
 

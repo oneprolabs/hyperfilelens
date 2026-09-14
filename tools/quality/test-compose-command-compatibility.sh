@@ -48,6 +48,10 @@ run_release_resolver() (
 	[[ "${HFL_COMPOSE_VERSION}" == "$4" ]]
 )
 
+run_release_resolver 5.5.1 '' 'docker compose' 5.5.1
+run_release_resolver v5.5.1 '' 'docker compose' 5.5.1
+run_release_resolver 'Docker Compose version v5.5.1' '' 'docker compose' 5.5.1
+run_release_resolver 'Docker Compose version unknown' V5.0.1 docker-compose 5.0.1
 run_release_resolver v2.24.1 V5.0.1 'docker compose' 2.24.1
 run_release_resolver '' V5.0.1 docker-compose 5.0.1
 run_release_resolver 2.19.9 5.0.1 docker-compose 5.0.1

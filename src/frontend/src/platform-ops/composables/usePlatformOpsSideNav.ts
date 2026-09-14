@@ -1,14 +1,15 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  Container,
   Cpu,
-  Settings,
+  Network,
 } from 'lucide-vue-next'
 import type { MenuItem } from '../../components/ModulePage.vue'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
 
 /**
- * Community side nav: AI Models + optional Runtime only.
+ * Community side nav: AI Models and essential instance administration.
  * Email / Authentication / Data Gateways stay out of the community shell;
  * those pages remain routable so the platform extension can merge them.
  */
@@ -30,9 +31,15 @@ export function usePlatformOpsSideNav() {
       label: t('platformOps.nav.groupPlatform'),
       children: [
         {
+          label: t('platformOps.nav.platformExternalAccess'),
+          to: '/platform-ops/platform/external-access',
+          icon: Network,
+          pageTitle: t('platformOps.settings.externalAccessTitle'),
+        },
+        {
           label: t('platformOps.nav.platformRuntime'),
           to: '/platform-ops/platform/runtime-environment',
-          icon: Settings,
+          icon: Container,
           pageTitle: t('platformOps.settings.environmentTitle'),
         },
       ],

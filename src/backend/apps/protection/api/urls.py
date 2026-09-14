@@ -15,6 +15,7 @@ from apps.protection.api.views import (
     SnapshotDirectoryBrowseView,
     SnapshotDirectoryDownloadView,
     SnapshotDirectoryDownloadTaskView,
+    SnapshotGroupDownloadTaskView,
     SnapshotDownloadArtifactFileView,
     SnapshotDownloadArtifactContentView,
     SnapshotDownloadArtifactDownloadUrlView,
@@ -69,6 +70,11 @@ urlpatterns = [
         "backup-source-snapshot-directories/<int:directory_id>/batch-download-tasks/",
         SnapshotDirectoryBatchDownloadTaskView.as_view(),
         name="protection-backup-source-snapshot-directory-batch-download-task",
+    ),
+    path(
+        "backup-source-snapshots/<int:snapshot_id>/download-tasks/",
+        SnapshotGroupDownloadTaskView.as_view(),
+        name="protection-backup-source-snapshot-group-download-task",
     ),
     path(
         "snapshot-download-artifacts/<int:artifact_id>/content/",

@@ -288,6 +288,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     // Handle 401 - attempt token refresh
     if (res.status === 401) {
       const errorCode = extractErrorCode(data)
+      const headers = (init?.headers ?? {}) as Record<string, string>
 
       // These security/lifecycle errors cannot be repaired by refreshing.
       // A plain missing/expired access token must still try the refresh endpoint.
@@ -296,10 +297,15 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
         throw buildApiError(res, data)
       }
 
+      // A retried request can still be unauthorized for business reasons. Do not
+      // rotate again or turn that response into a global session logout.
+      if (headers['X-Retry'] === 'true') {
+        throw buildApiError(res, data)
+      }
+
       // Try to refresh token
       const refreshed = await refreshAuthToken()
-      const headers = (init?.headers ?? {}) as Record<string, string>
-      if (refreshed.ok && headers['X-Retry'] !== 'true') {
+      if (refreshed.ok) {
         // Retry the original request after cookies are renewed
         return api<T>(path, {
           ...init,
@@ -310,7 +316,19 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
         })
       }
 
-      // Refresh failed or already retried
+      // A concurrent refresh, network loss, or backend outage is not proof that
+      // the session ended. Keep cookies and local auth state so a later request
+      // can recover normally.
+      if (
+        refreshed.retryable
+        || refreshed.networkError
+        || refreshed.status === undefined
+        || refreshed.status >= 500
+      ) {
+        throw networkUnavailableError()
+      }
+
+      // Only an explicit terminal refresh response ends the session.
       void handleSessionExpired(refreshed.errorCode || errorCode || 'REFRESH_EXPIRED')
       throw buildApiError(res, data)
     }

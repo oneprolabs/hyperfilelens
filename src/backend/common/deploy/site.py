@@ -146,7 +146,11 @@ def admin_console_entry_visible(request: HttpRequest) -> bool:
 
 
 def tenant_public_url() -> str:
-    return str(getattr(settings, "FRONTEND_URL", "")).strip().rstrip("/")
+    from apps.instance_settings.services.external_access import (
+        effective_external_access_url,
+    )
+
+    return effective_external_access_url()
 
 
 def enrollment_tls_verify() -> bool:

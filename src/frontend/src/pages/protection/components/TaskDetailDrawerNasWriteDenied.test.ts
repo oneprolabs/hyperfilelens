@@ -15,3 +15,13 @@ describe('TaskDetailDrawer NAS repository write denial', () => {
     expect(source).toContain("event.message === 'Task finished with status failed' && step?.step_name === 'finalize_snapshot'")
   })
 })
+
+describe('TaskDetailDrawer structured detail layout', () => {
+  it('lets failure and skipped-item details use the unused event-time column', () => {
+    expect(source).toContain("['failure_details', 'skipped_details']")
+    expect(source).toContain("'hfl-task-drawer__event-row--detail-panel': hasEventDetailPanel(event)")
+    expect(source).toContain('.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-content')
+    expect(source).toContain('grid-template-columns: 16px minmax(0, 1fr);')
+    expect(source).toContain('.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-time')
+  })
+})

@@ -1,5 +1,7 @@
 """Tests for enrollment bootstrap API."""
 
+from unittest.mock import patch
+
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory
@@ -125,12 +127,69 @@ class BootstrapViewTests(TestCase):
         self.assertIn("[FAIL ]", body)
         self.assertIn("configured HTTPS tenant origin", body)
 
+    @override_settings(
+        HFL_INSECURE_TLS=False,
+        FRONTEND_URL="https://192.168.0.89:11443",
+    )
+    @patch(
+        "apps.node.api.views.bootstrap.product_edition",
+        return_value="community",
+    )
+    def test_community_bootstrap_accepts_the_current_nat_origin(self, _edition):
+        params = {
+            "type": "linux",
+            "org": self.org.key,
+            "role": "agent",
+            "token": self.token_row.token,
+            "api_base": "https://113.44.213.250:11443",
+        }
+        request = self.factory.get(
+            "/api/v1/node/enrollment/bootstrap",
+            params,
+            secure=True,
+            HTTP_HOST="113.44.213.250:11443",
+        )
+
+        response = BootstrapView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "https://113.44.213.250:11443",
+            response.content.decode("utf-8"),
+        )
+
     def test_windows_bootstrap_renders(self):
         response = self._get("windows")
         self.assertEqual(response.status_code, 200)
         body = response.content.decode("utf-8")
         self.assertIn("$bin install", body)
         self.assertIn("bootstrap-token-abc", body)
+
+    def test_windows_bootstrap_reports_security_software_block(self):
+        response = self._get("windows")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("function Test-HflSecuritySoftwareBlock", body)
+        self.assertIn("$exception.NativeErrorCode -eq 225", body)
+        self.assertIn(
+            "([int64]$exception.HResult -band 4294967295) -eq 2147942625",
+            body,
+        )
+        self.assertEqual(
+            body.count("Test-HflSecuritySoftwareBlock -ErrorRecord $_"),
+            2,
+        )
+        self.assertIn(
+            "Windows security software blocked the HyperFileLens enrollment helper.",
+            body,
+        )
+        self.assertIn(
+            "Review the detection in your security software. Once the helper is "
+            "allowed, run the installation command again.",
+            body,
+        )
+        self.assertNotIn("Get-MpThreatDetection", body)
 
     def test_user_continuous_token_rejects_non_linux_bootstrap(self):
         self.token_row.installation_mode = NodeInstallationMode.USER_CONTINUOUS
@@ -174,7 +233,11 @@ class BootstrapViewTests(TestCase):
         body = response.content.decode("utf-8")
         self.assertTrue(body.startswith("#!/usr/bin/env bash"))
         self.assertIn("[FAIL ]", body)
-        self.assertIn("invalid or expired enrollment link", body)
+        self.assertIn("invalid, expired, or revoked", body)
+        self.assertIn(
+            "copy the currently displayed install command",
+            body,
+        )
 
     def test_missing_token_returns_executable_error_script(self):
         response = self._get("linux", token="")

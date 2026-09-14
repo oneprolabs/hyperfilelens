@@ -35,11 +35,72 @@ grep -Fq 'HFL_REGISTRY_REGION: ${{ vars.PROD_REGISTRY_REGION }}' \
 	"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml"
 grep -Fq -- '--registry-region "$HFL_REGISTRY_REGION"' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
-grep -Fq 'registry_login_count > 0' \
+grep -Fq 'read_credential "${registry_region}_host"' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
-grep -Fq 'for prefix in "${registry_region}" "${fallback_region}"' \
+grep -Fq 'registry_pull_attempts=5' \
 	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
-grep -Fq 'platform-gateway ensure' \
+grep -Fq 'pull_registry_image "${immutable_ref}"' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+grep -Fq 'HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS:-15' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+if grep -Fq 'fallback_region' "${ROOT}/.github/scripts/remote-saas-deploy.sh"; then
+	printf 'ERROR: SaaS deployment still contains a cross-region fallback\n' >&2
+	exit 1
+fi
+retry_delay_function="$(awk '
+	/^registry_retry_delay_for_attempt\(\) \{/ { capture = 1 }
+	capture { print }
+	capture && /^}$/ { exit }
+' "${ROOT}/.github/scripts/remote-saas-deploy.sh")"
+registry_pull_retry_delay=15
+eval "${retry_delay_function}"
+[[ "$(registry_retry_delay_for_attempt 1)" -eq 15 ]]
+[[ "$(registry_retry_delay_for_attempt 2)" -eq 30 ]]
+[[ "$(registry_retry_delay_for_attempt 3)" -eq 60 ]]
+[[ "$(registry_retry_delay_for_attempt 4)" -eq 60 ]]
+for function_name in registry_pull_is_transient pull_registry_image; do
+	function_definition="$(awk -v name="${function_name}" '
+		$0 ~ "^" name "\\(\\) \\{" { capture = 1 }
+		capture { print }
+		capture && /^}$/ { exit }
+	' "${ROOT}/.github/scripts/remote-saas-deploy.sh")"
+	eval "${function_definition}"
+done
+registry_pull_retry_delay=0
+registry_pull_attempts=5
+registry_name="Docker Hub"
+stage_dir="${tmp}/saas-pull-retry"
+saas_pull_marker="${tmp}/saas-pull-attempts"
+mkdir -p "${stage_dir}"
+docker() {
+	local count=0
+	[[ ! -f "${saas_pull_marker}" ]] || count="$(cat "${saas_pull_marker}")"
+	count=$((count + 1))
+	printf '%s\n' "${count}" >"${saas_pull_marker}"
+	if ((count < 5)); then
+		printf 'short read: unexpected EOF\n' >&2
+		return 1
+	fi
+	return 0
+}
+pull_registry_image \
+	"docker.io/example/hyperfilelens-agent-assets@${digest}" >/dev/null 2>&1
+unset -f docker
+[[ "$(cat "${saas_pull_marker}")" -eq 5 ]]
+grep -Fq 'Enterprise SaaS deployment action:' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+grep -Fq 'deployment_args+=(--from "${candidate_root}")' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+grep -Fq -- '--expected-tag "$EXPECTED_TAG"' \
+	"${ROOT}/.github/actions/deploy-saas/action.yml"
+grep -Fq 'candidate does not match the requested release tag' \
+	"${ROOT}/.github/scripts/remote-saas-deploy.sh"
+if grep -Fq 'platform-gateway ensure' \
+	"${ROOT}/.github/actions/deploy-saas/action.yml"; then
+	printf 'ERROR: SaaS deployment must not repeat installer-owned Gateway ensure\n' >&2
+	exit 1
+fi
+grep -Fq 'platform-gateway verify --required --timeout 180' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
 grep -Fq 'reconcile-saas-ai-model.sh agent' \
 	"${ROOT}/.github/actions/deploy-saas/action.yml"
@@ -64,6 +125,47 @@ for deploy_job in deploy-test deploy-prod; do
 done
 grep -Fq "format('hyperfilelens-package-{0}', github.event_name == 'push' && github.ref_name || inputs.tag)" \
 	"${ROOT}/.github/workflows/enterprise_saas_upgrade.yml"
+
+deployment_state_function="$(awk '
+	/^resolve_deployment_action\(\) \{/ { capture = 1 }
+	capture { print }
+	capture && /^}$/ { exit }
+' "${ROOT}/.github/scripts/remote-saas-deploy.sh")"
+eval "${deployment_state_function}"
+state_root="${tmp}/deployment-state"
+[[ "$(resolve_deployment_action "${state_root}")" == "install" ]]
+mkdir -p "${state_root}"
+[[ "$(resolve_deployment_action "${state_root}")" == "install" ]]
+touch "${state_root}/unexpected"
+if resolve_deployment_action "${state_root}" >"${tmp}/state.out" 2>"${tmp}/state.err"; then
+	printf 'ERROR: SaaS deployment accepted an installation root with unknown state\n' >&2
+	exit 1
+fi
+grep -Fq 'installation root contains unrecognized state' "${tmp}/state.err"
+rm -f "${state_root}/unexpected"
+touch "${state_root}/.env" "${state_root}/VERSION" "${state_root}/MANIFEST.json"
+[[ "$(resolve_deployment_action "${state_root}")" == "upgrade" ]]
+rm -f "${state_root}/MANIFEST.json"
+if resolve_deployment_action "${state_root}" >"${tmp}/state.out" 2>"${tmp}/state.err"; then
+	printf 'ERROR: SaaS deployment accepted an incomplete installation identity\n' >&2
+	exit 1
+fi
+grep -Fq 'incomplete HyperFileLens installation' "${tmp}/state.err"
+touch "${state_root}/MANIFEST.json"
+rm -f "${state_root}/VERSION"
+ln -s /etc/os-release "${state_root}/VERSION"
+if resolve_deployment_action "${state_root}" >"${tmp}/state.out" 2>"${tmp}/state.err"; then
+	printf 'ERROR: SaaS deployment accepted a symbolic-link installation identity\n' >&2
+	exit 1
+fi
+grep -Fq 'unsafe HyperFileLens installation identity file' "${tmp}/state.err"
+rm -rf "${state_root}"
+ln -s "${tmp}" "${state_root}"
+if resolve_deployment_action "${state_root}" >"${tmp}/state.out" 2>"${tmp}/state.err"; then
+	printf 'ERROR: SaaS deployment accepted a symbolic-link installation root\n' >&2
+	exit 1
+fi
+grep -Fq 'unsafe HyperFileLens installation root' "${tmp}/state.err"
 
 package_root="${tmp}/candidate"
 fake_bin="${tmp}/bin"
@@ -108,9 +210,13 @@ case "${1:-} ${2:-}" in
 		count=$((count + 1))
 		printf '%s\n' "${count}" >"${HFL_TEST_MIRROR_MARKER}"
 		case "${HFL_TEST_MIRROR_MODE:-success}" in
-		flaky429 | always429)
+		flaky429 | always429 | flakyStream)
 			if [[ "${count}" -lt 3 ]]; then
-				printf 'unexpected status from HEAD request: 429 Too Many Requests\n' >&2
+				if [[ "${HFL_TEST_MIRROR_MODE}" == "flakyStream" ]]; then
+					printf 'failed to copy: stream error: stream ID 1; INTERNAL_ERROR; received from peer\n' >&2
+				else
+					printf 'unexpected status from HEAD request: 429 Too Many Requests\n' >&2
+				fi
 				exit 1
 			fi
 			if [[ "${HFL_TEST_MIRROR_MODE}" == always429 ]]; then
@@ -133,6 +239,16 @@ case "${1:-} ${2:-}" in
 		count=$((count + 1))
 		printf '%s\n' "${count}" >"${HFL_TEST_MIRROR_INSPECT_MARKER}"
 		case "${HFL_TEST_MIRROR_INSPECT_MODE:-success}" in
+		missing-once)
+			if [[ "${count}" -eq 1 ]]; then
+				printf 'manifest unknown: manifest unknown\n' >&2
+				exit 1
+			fi
+			;;
+		mismatch)
+			printf '{"digest":"sha256:%s"}\n' "$(printf 'f%.0s' {1..64})"
+			exit 0
+			;;
 		flaky429)
 			if [[ "${count}" -lt 3 ]]; then
 				printf 'unexpected status from HEAD request: 429 Too Many Requests\n' >&2
@@ -154,6 +270,24 @@ case "${1:-} ${2:-}" in
 "pull --platform")
 	ref="${4:-}"
 	printf '%s\n' "${ref}" >>"${HFL_TEST_PULL_MARKER}"
+	transient_match=0
+	case "${HFL_TEST_TRANSIENT_REGION:-}" in
+	cn) [[ "${ref}" == registry.example.cn/* ]] && transient_match=1 ;;
+	global) [[ "${ref}" == docker.io/* ]] && transient_match=1 ;;
+	"") ;;
+	*) exit 2 ;;
+	esac
+	if ((transient_match == 1)); then
+		count=0
+		[[ ! -f "${HFL_TEST_TRANSIENT_MARKER}" ]] \
+			|| count="$(cat "${HFL_TEST_TRANSIENT_MARKER}")"
+		count=$((count + 1))
+		printf '%s\n' "${count}" >"${HFL_TEST_TRANSIENT_MARKER}"
+		if ((count <= ${HFL_TEST_TRANSIENT_FAILURES:-1})); then
+			printf 'short read: unexpected EOF\n' >&2
+			exit 1
+		fi
+	fi
 	case "${HFL_TEST_FAIL_REGION:-}" in
 	cn) [[ "${ref}" == registry.example.cn/* ]] && exit 1 ;;
 	global) [[ "${ref}" == docker.io/* ]] && exit 1 ;;
@@ -230,7 +364,59 @@ HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
 [[ "$(cat "${mirror_inspect_marker}")" -eq 1 ]]
 
 printf '0\n' >"${mirror_marker}"
+printf '0\n' >"${mirror_inspect_marker}"
+HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/library/postgres:17 \
+		"${digest}" \
+		docker.io/example/postgres:17-aaaaaaaaaaaa \
+		--if-missing
+[[ "$(cat "${mirror_marker}")" -eq 0 ]]
+[[ "$(cat "${mirror_inspect_marker}")" -eq 1 ]]
+
+printf '0\n' >"${mirror_marker}"
+printf '0\n' >"${mirror_inspect_marker}"
+HFL_TEST_MIRROR_INSPECT_MODE=missing-once \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/library/postgres:17 \
+		"${digest}" \
+		docker.io/example/postgres:17-aaaaaaaaaaaa \
+		--if-missing
+[[ "$(cat "${mirror_marker}")" -eq 1 ]]
+[[ "$(cat "${mirror_inspect_marker}")" -eq 2 ]]
+
+printf '0\n' >"${mirror_marker}"
+printf '0\n' >"${mirror_inspect_marker}"
+if HFL_TEST_MIRROR_INSPECT_MODE=mismatch \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/library/postgres:17 \
+		"${digest}" \
+		docker.io/example/postgres:17-aaaaaaaaaaaa \
+		--if-missing \
+		>/dev/null 2>&1; then
+	printf 'ERROR: immutable mirror tag accepted a conflicting digest\n' >&2
+	exit 1
+fi
+[[ "$(cat "${mirror_marker}")" -eq 0 ]]
+[[ "$(cat "${mirror_inspect_marker}")" -eq 1 ]]
+
+printf '0\n' >"${mirror_marker}"
 HFL_TEST_MIRROR_MODE=flaky429 \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/example/hyperfilelens-backend:1.0.0-ee \
+		"${digest}" \
+		registry.example.cn/example/hyperfilelens-backend:1.0.0-ee
+[[ "$(cat "${mirror_marker}")" -eq 3 ]]
+
+printf '0\n' >"${mirror_marker}"
+HFL_TEST_MIRROR_MODE=flakyStream \
 	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
 	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
 	"${ROOT}/release/ci/mirror-saas-image.sh" \
@@ -296,14 +482,29 @@ fi
 [[ "$(cat "${mirror_marker}")" -eq 1 ]]
 [[ "$(cat "${mirror_inspect_marker}")" -eq 0 ]]
 source "${ROOT}/deploy/installer/install.sh"
-HFL_TEST_FAIL_REGION=cn HFL_REGISTRY_REGION=cn \
-	load_images_from_manifest 0 "${package_root}"
-[[ -f "${tag_marker}" ]]
-[[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
+if HFL_TEST_FAIL_REGION=cn HFL_REGISTRY_REGION=cn \
+	load_images_from_manifest 0 "${package_root}" >/dev/null 2>&1; then
+	printf 'ERROR: CN registry failure used another registry\n' >&2
+	exit 1
+fi
+[[ ! -e "${tag_marker}" ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 1 ]]
 [[ "$(sed -n '1p' "${pull_marker}")" == registry.example.cn/* ]]
-[[ "$(sed -n '2p' "${pull_marker}")" == docker.io/* ]]
+
+: >"${pull_marker}"
 HFL_REGISTRY_REGION=cn load_images_from_manifest 0 "${package_root}"
-[[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
+[[ -f "${tag_marker}" ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 1 ]]
+online_registry_output="$(
+	HFL_ONLINE_CHILD=1 HFL_REGISTRY_REGION=cn \
+		load_images_from_manifest 0 "${package_root}"
+)"
+grep -F '[....] Verifying prepared runtime image (1/1):' \
+	<<<"${online_registry_output}" >/dev/null
+grep -F '[ OK ] Runtime image 1/1 verified ·' \
+	<<<"${online_registry_output}" >/dev/null
+grep -F '[ OK ] All 1 prepared runtime images are verified' \
+	<<<"${online_registry_output}" >/dev/null
 
 rm -f "${tag_marker}"
 : >"${pull_marker}"
@@ -314,22 +515,47 @@ HFL_REGISTRY_REGION=global load_images_from_manifest 0 "${package_root}"
 
 rm -f "${tag_marker}"
 : >"${pull_marker}"
-HFL_TEST_FAIL_REGION=global HFL_REGISTRY_REGION=global \
+if HFL_TEST_FAIL_REGION=global HFL_REGISTRY_REGION=global \
+	load_images_from_manifest 0 "${package_root}" >/dev/null 2>&1; then
+	printf 'ERROR: Global registry failure used another registry\n' >&2
+	exit 1
+fi
+[[ ! -e "${tag_marker}" ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 1 ]]
+[[ "$(sed -n '1p' "${pull_marker}")" == docker.io/* ]]
+
+transient_marker="${tmp}/transient-pulls"
+rm -f "${tag_marker}" "${transient_marker}"
+: >"${pull_marker}"
+HFL_TEST_TRANSIENT_REGION=cn HFL_TEST_TRANSIENT_MARKER="${transient_marker}" \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 HFL_REGISTRY_REGION=cn \
 	load_images_from_manifest 0 "${package_root}"
 [[ -f "${tag_marker}" ]]
 [[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
-[[ "$(sed -n '1p' "${pull_marker}")" == docker.io/* ]]
+[[ "$(sed -n '1p' "${pull_marker}")" == registry.example.cn/* ]]
 [[ "$(sed -n '2p' "${pull_marker}")" == registry.example.cn/* ]]
+
+rm -f "${tag_marker}" "${transient_marker}"
+: >"${pull_marker}"
+HFL_TEST_TRANSIENT_REGION=cn HFL_TEST_TRANSIENT_FAILURES=2 \
+	HFL_TEST_TRANSIENT_MARKER="${transient_marker}" \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 HFL_REGISTRY_REGION=cn \
+	load_images_from_manifest 0 "${package_root}"
+[[ -f "${tag_marker}" ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 3 ]]
+[[ "$(sed -n '1p' "${pull_marker}")" == registry.example.cn/* ]]
+[[ "$(sed -n '2p' "${pull_marker}")" == registry.example.cn/* ]]
+[[ "$(sed -n '3p' "${pull_marker}")" == registry.example.cn/* ]]
 
 rm -f "${tag_marker}"
 : >"${pull_marker}"
 if HFL_TEST_FAIL_REGION=both HFL_REGISTRY_REGION=cn \
 	load_images_from_manifest 0 "${package_root}" >/dev/null 2>&1; then
-	printf 'ERROR: registry delivery accepted two unavailable sources\n' >&2
+	printf 'ERROR: registry delivery accepted an unavailable selected source\n' >&2
 	exit 1
 fi
 [[ ! -e "${tag_marker}" ]]
-[[ "$(wc -l <"${pull_marker}")" -eq 2 ]]
+[[ "$(wc -l <"${pull_marker}")" -eq 1 ]]
 
 export DEPLOY_SSH_HOST=test.example.com
 export DEPLOY_SSH_PORT=22
@@ -467,6 +693,136 @@ if (validate_package_identity "${identity_root}") >/dev/null 2>&1; then
 	printf 'ERROR: registry identity accepted an incomplete asset set\n' >&2
 	exit 1
 fi
+
+# Assemble the same thin Candidate consumed by the SaaS deployment. This
+# catches drift between upstream metadata, Compose refs, and the installer
+# manifest without pulling or rebuilding any third-party image.
+candidate_metadata="${tmp}/candidate-metadata"
+candidate_archive="${tmp}/candidate.tar.gz"
+candidate_extract="${tmp}/candidate-extract"
+mkdir -p "${candidate_metadata}" "${candidate_extract}"
+python3 - "${candidate_metadata}" "${ROOT}/deploy/online/sourcelens/runtime.json" \
+	"${ROOT}/tools/dependencies/versions/runtime-images.env" "${digest}" "${revision}" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+target = pathlib.Path(sys.argv[1])
+sourcelens = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+runtime_values = {}
+for line in pathlib.Path(sys.argv[3]).read_text(encoding="utf-8").splitlines():
+    match = re.fullmatch(r"([A-Z_]+)=(.+)", line.strip())
+    if match:
+        runtime_values[match.group(1)] = match.group(2)
+hfl_digest = sys.argv[4]
+
+
+def write(name, local_ref, role, digest, global_ref, cn_ref, **extra):
+    payload = {
+        "component": name,
+        "role": role,
+        "local_ref": local_ref,
+        "digest": digest,
+        "platform": "linux/amd64",
+        "sources": [
+            {"region": "cn", "ref": cn_ref},
+            {"region": "global", "ref": global_ref},
+        ],
+        **extra,
+    }
+    (target / f"{name}.json").write_text(
+        json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+for component in ("backend", "frontend"):
+    local_ref = f"hyperfilelens-{component}:1.0.0-ee"
+    write(
+        f"hfl-{component}",
+        local_ref,
+        "hyperfilelens",
+        hfl_digest,
+        f"docker.io/example/{local_ref}",
+        f"registry.example.cn/example/{local_ref}",
+    )
+for component, image in sourcelens["images"].items():
+    write(
+        f"sourcelens-{component}",
+        image["local_ref"],
+        f"sourcelens-{component}",
+        image["digest"],
+        image["sources"]["global"],
+        image["sources"]["cn"],
+        sourcelens_version=sourcelens["version"],
+        sourcelens_git_ref=sourcelens["git_ref"],
+        sourcelens_git_commit=sourcelens["git_commit"],
+    )
+for component, variable, role in (
+    ("postgres", "POSTGRES_IMAGE", "shared"),
+    ("redis", "REDIS_IMAGE", "shared"),
+    ("sourcelens-nginx", "NGINX_IMAGE", "sourcelens-nginx"),
+):
+    local_ref, pinned_digest = runtime_values[variable].split("@", 1)
+    source = f"docker.io/library/{local_ref}"
+    write(component, local_ref, role, pinned_digest, source, source)
+for kind in ("agent", "gateway", "language"):
+    local_ref = f"hyperfilelens-{kind}-assets:1.0.0"
+    write(
+        f"{kind}-assets",
+        local_ref,
+        f"{kind}-assets",
+        hfl_digest,
+        f"docker.io/example/{local_ref}",
+        f"registry.example.cn/example/{local_ref}",
+        asset_kind=kind,
+    )
+PY
+"${ROOT}/release/ci/assemble-saas-candidate.sh" \
+	"${candidate_metadata}" 1.0.0 "${revision}" "$(printf 'c%.0s' {1..40})" \
+	/opt/hfl/extensions/hyperfilelens-ee "${candidate_archive}"
+tar -xzf "${candidate_archive}" -C "${candidate_extract}"
+assembled_root="${candidate_extract}/hyperfilelens-1.0.0-ee-saas"
+grep -Fx 'HFL_POSTGRES_IMAGE=postgres:17' "${assembled_root}/.env.example" >/dev/null
+grep -Fx 'HFL_REDIS_IMAGE=redis:alpine' "${assembled_root}/.env.example" >/dev/null
+grep -F 'image: oneprolabs/sourcelens-backend:0.49.5' \
+	"${assembled_root}/sourcelens/docker-compose.yml" >/dev/null
+grep -F 'image: nginx:stable-alpine' \
+	"${assembled_root}/sourcelens/docker-compose.yml" >/dev/null
+python3 - "${assembled_root}" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads((root / "MANIFEST.json").read_text(encoding="utf-8"))
+registry = manifest["delivery"]["registry_images"]
+refs = {entry["local_ref"] for entry in registry}
+assert refs == {
+    "hyperfilelens-backend:1.0.0-ee",
+    "hyperfilelens-frontend:1.0.0-ee",
+    "oneprolabs/sourcelens-backend:0.49.5",
+    "oneprolabs/sourcelens-frontend:0.49.5",
+    "nginx:stable-alpine",
+    "postgres:17",
+    "redis:alpine",
+}
+assert not any("lensnode" in ref for ref in refs)
+build_info = json.loads(
+    (root / "sourcelens/BUILD_INFO.json").read_text(encoding="utf-8")
+)
+assert build_info["lensnode_image"] == "oneprolabs/sourcelens-lensnode:0.49.5"
+assert {
+    name: build_info["images"][name]["ref"]
+    for name in ("nginx", "postgres", "redis")
+} == {
+    "nginx": "nginx:stable-alpine",
+    "postgres": "postgres:17",
+    "redis": "redis:alpine",
+}
+assert not any((root / "images").iterdir())
+PY
+validate_package_identity "${assembled_root}"
 
 sourcelens_root="${tmp}/sourcelens-candidate"
 mkdir -p \

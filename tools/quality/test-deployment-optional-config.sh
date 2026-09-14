@@ -24,18 +24,22 @@ HFL_ADMIN_PUBLIC_URL=
 HFL_INSECURE_TLS=1
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false
 HFL_GOOGLE_OAUTH_ENABLED=false
-HFL_GA_MEASUREMENT_ID=G-OLD123
+HFL_WEBSITE_GA_MEASUREMENT_ID=G-OLD-WEBSITE
+HFL_TENANT_GA_MEASUREMENT_ID=G-OLD-TENANT
 GOOGLE_CLIENT_ID=123-old.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=old-google-secret
 TURNSTILE_ENABLED=true
 TURNSTILE_SITE_KEY=old-site
 TURNSTILE_SECRET_KEY=old-secret
 ENV
+retired_analytics_key="HFL_$(printf '%s' GA_MEASUREMENT_ID)"
+printf '%s=%s\n' "${retired_analytics_key}" 'G-RETIRED' >>"${env_file}"
 cat >"${runtime_file}" <<'ENV'
 HFL_EMAIL_SIGNUP_ENABLED=true
 HFL_EMAIL_CODE_LOGIN_ENABLED=true
 HFL_GOOGLE_OAUTH_ENABLED=true
-HFL_GA_MEASUREMENT_ID=G-0RX9GZJCWF
+HFL_WEBSITE_GA_MEASUREMENT_ID=G-0RX9GZJCWF
+HFL_TENANT_GA_MEASUREMENT_ID=G-NMVD54BHJ3
 HFL_INSECURE_TLS=0
 TURNSTILE_ENABLED=true
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true
@@ -75,7 +79,29 @@ grep -Fx 'TURNSTILE_SECRET_KEY=new-secret' "${env_file}" >/dev/null
 grep -Fx 'HFL_EMAIL_SIGNUP_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'HFL_EMAIL_CODE_LOGIN_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'HFL_GOOGLE_OAUTH_ENABLED=true' "${env_file}" >/dev/null
-grep -Fx 'HFL_GA_MEASUREMENT_ID=G-0RX9GZJCWF' "${env_file}" >/dev/null
+grep -Fx 'HFL_WEBSITE_GA_MEASUREMENT_ID=G-0RX9GZJCWF' "${env_file}" >/dev/null
+grep -Fx 'HFL_TENANT_GA_MEASUREMENT_ID=G-NMVD54BHJ3' "${env_file}" >/dev/null
+
+community_env="${tmp}/community.env"
+cat >"${community_env}" <<'ENV'
+HFL_EDITION=community
+FRONTEND_URL=https://192.168.0.89:11443
+DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,192.168.0.89
+CSRF_TRUSTED_ORIGINS=https://127.0.0.1:11443
+CORS_ALLOWED_ORIGINS=
+ENV
+python3 "${helper}" \
+	--env-file "${community_env}" \
+	--direct-host "192.168.0.89" \
+	--public-url "https://113.44.213.250:11443" \
+	--admin-public-url "https://admin.community.example:11444" >/dev/null
+grep -Fx 'DJANGO_ALLOWED_HOSTS=*' "${community_env}" >/dev/null
+grep -E '^CSRF_TRUSTED_ORIGINS=.*https://113\.44\.213\.250:11443' "${community_env}" >/dev/null
+grep -E '^CORS_ALLOWED_ORIGINS=.*https://113\.44\.213\.250:11443' "${community_env}" >/dev/null
+if grep -F "${retired_analytics_key}=" "${env_file}" >/dev/null; then
+	printf 'ERROR: the retired single-stream analytics key must be removed\n' >&2
+	exit 1
+fi
 grep -Fx 'GOOGLE_CLIENT_ID=123-new.apps.googleusercontent.com' "${env_file}" >/dev/null
 grep -Fx 'GOOGLE_CLIENT_SECRET="new-google-secret"' "${env_file}" >/dev/null
 grep -Fx 'EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend' "${env_file}" >/dev/null
@@ -105,7 +131,8 @@ HFL_EMAIL_SIGNUP_ENABLED=false
 HFL_INSECURE_TLS=0
 TURNSTILE_ENABLED=true
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=invalid
-HFL_GA_MEASUREMENT_ID=invalid
+HFL_WEBSITE_GA_MEASUREMENT_ID=invalid
+HFL_TENANT_GA_MEASUREMENT_ID=G-NMVD54BHJ3
 TURNSTILE_SITE_KEY=
 TURNSTILE_SECRET_KEY=invalid secret
 ENV
@@ -120,10 +147,11 @@ grep -Fx 'HFL_ADMIN_PUBLIC_URL=https://admin.hyperfilelens.com' "${invalid_env}"
 grep -Fx 'TURNSTILE_SITE_KEY=new-site' "${invalid_env}" >/dev/null
 grep -Fx 'TURNSTILE_SECRET_KEY=new-secret' "${invalid_env}" >/dev/null
 grep -Fx 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true' "${invalid_env}" >/dev/null
-if grep -F 'HFL_GA_MEASUREMENT_ID=' "${invalid_env}" >/dev/null; then
-	printf 'ERROR: invalid analytics configuration must remove the installed ID\n' >&2
+if grep -F 'HFL_WEBSITE_GA_MEASUREMENT_ID=' "${invalid_env}" >/dev/null; then
+	printf 'ERROR: invalid Website analytics configuration must remove only its installed ID\n' >&2
 	exit 1
 fi
+grep -Fx 'HFL_TENANT_GA_MEASUREMENT_ID=G-NMVD54BHJ3' "${invalid_env}" >/dev/null
 
 disabled_analytics_env="${tmp}/disabled-analytics.env"
 disabled_analytics_runtime="${tmp}/disabled-analytics-runtime.env"
@@ -131,12 +159,22 @@ cp "${env_file}" "${disabled_analytics_env}"
 cat >"${disabled_analytics_runtime}" <<'ENV'
 HFL_EMAIL_SIGNUP_ENABLED=false
 HFL_INSECURE_TLS=1
-HFL_GA_MEASUREMENT_ID=
+HFL_WEBSITE_GA_MEASUREMENT_ID=
+HFL_TENANT_GA_MEASUREMENT_ID=
 ENV
 python3 "${helper}" --env-file "${disabled_analytics_env}" \
 	--runtime-env-file "${disabled_analytics_runtime}" >/dev/null
-if grep -F 'HFL_GA_MEASUREMENT_ID=' "${disabled_analytics_env}" >/dev/null; then
-	printf 'ERROR: disabled analytics must remove the installed ID\n' >&2
+if grep -E 'HFL_(WEBSITE|TENANT)_GA_MEASUREMENT_ID=' "${disabled_analytics_env}" >/dev/null; then
+	printf 'ERROR: disabled analytics must remove both installed IDs\n' >&2
+	exit 1
+fi
+
+standalone_env="${tmp}/standalone.env"
+cp "${env_file}" "${standalone_env}"
+printf '%s=%s\n' "${retired_analytics_key}" 'G-RETIRED' >>"${standalone_env}"
+python3 "${helper}" --env-file "${standalone_env}" >/dev/null
+if grep -F "${retired_analytics_key}=" "${standalone_env}" >/dev/null; then
+	printf 'ERROR: standalone configuration must purge the retired analytics key\n' >&2
 	exit 1
 fi
 
@@ -162,7 +200,8 @@ python3 "${helper}" \
 	--runtime-env-file "${empty_smtp_runtime}" >/dev/null
 grep -Fx 'EMAIL_HOST=smtp.example.com' "${preserved_env}" >/dev/null
 grep -F 'EMAIL_HOST_PASSWORD="pa$$$$ word' "${preserved_env}" >/dev/null
-grep -Fx 'HFL_GA_MEASUREMENT_ID=G-0RX9GZJCWF' "${preserved_env}" >/dev/null
+grep -Fx 'HFL_WEBSITE_GA_MEASUREMENT_ID=G-0RX9GZJCWF' "${preserved_env}" >/dev/null
+grep -Fx 'HFL_TENANT_GA_MEASUREMENT_ID=G-NMVD54BHJ3' "${preserved_env}" >/dev/null
 
 partial_env="${tmp}/partial.env"
 partial_runtime="${tmp}/partial-runtime.env"
@@ -211,6 +250,17 @@ python3 "${helper}" --env-file "${insecure_env}" \
 	--runtime-env-file "${insecure_runtime}" >/dev/null
 grep -Fx 'HFL_INSECURE_TLS=1' "${insecure_env}" >/dev/null
 
+missing_tls_env="${tmp}/missing-tls.env"
+missing_tls_runtime="${tmp}/missing-tls-runtime.env"
+cp "${insecure_env}" "${missing_tls_env}"
+cat >"${missing_tls_runtime}" <<'ENV'
+HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true
+ENV
+python3 "${helper}" --env-file "${missing_tls_env}" \
+	--runtime-env-file "${missing_tls_runtime}" >/dev/null
+grep -Fx 'HFL_INSECURE_TLS=1' "${missing_tls_env}" >/dev/null
+grep -Fx 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true' "${missing_tls_env}" >/dev/null
+
 invalid_tls_env="${tmp}/invalid-tls.env"
 invalid_tls_runtime="${tmp}/invalid-tls-runtime.env"
 cp "${env_file}" "${invalid_tls_env}"
@@ -226,6 +276,21 @@ if python3 "${helper}" --env-file "${invalid_tls_env}" \
 fi
 after_invalid_tls="$(sha256sum "${invalid_tls_env}" | awk '{print $1}')"
 [[ "${before_invalid_tls}" == "${after_invalid_tls}" ]]
+
+empty_tls_env="${tmp}/empty-tls.env"
+empty_tls_runtime="${tmp}/empty-tls-runtime.env"
+cp "${env_file}" "${empty_tls_env}"
+cat >"${empty_tls_runtime}" <<'ENV'
+HFL_INSECURE_TLS=
+ENV
+before_empty_tls="$(sha256sum "${empty_tls_env}" | awk '{print $1}')"
+if python3 "${helper}" --env-file "${empty_tls_env}" \
+	--runtime-env-file "${empty_tls_runtime}" >/dev/null 2>&1; then
+	printf 'ERROR: runtime configuration accepted empty HFL_INSECURE_TLS\n' >&2
+	exit 1
+fi
+after_empty_tls="$(sha256sum "${empty_tls_env}" | awk '{print $1}')"
+[[ "${before_empty_tls}" == "${after_empty_tls}" ]]
 
 ln -s "${runtime_file}" "${tmp}/runtime-link.env"
 if python3 "${helper}" --env-file "${invalid_env}" \

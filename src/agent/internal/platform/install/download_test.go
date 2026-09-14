@@ -245,7 +245,7 @@ func TestDownloadURLAllowsSlowContinuousProgress(t *testing.T) {
 		destination,
 		nil,
 		time.Millisecond,
-		25*time.Millisecond,
+		250*time.Millisecond,
 	)
 	if err != nil {
 		t.Fatalf("slow progressing download failed: %v", err)

@@ -15,7 +15,8 @@ RUNTIME_KEYS = {
     "HFL_EMAIL_SIGNUP_ENABLED",
     "HFL_EMAIL_CODE_LOGIN_ENABLED",
     "HFL_GOOGLE_OAUTH_ENABLED",
-    "HFL_GA_MEASUREMENT_ID",
+    "HFL_WEBSITE_GA_MEASUREMENT_ID",
+    "HFL_TENANT_GA_MEASUREMENT_ID",
     "HFL_INSECURE_TLS",
     "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY",
     "HFL_DEPLOY_TARGET",
@@ -48,6 +49,10 @@ SENTRY_ENVIRONMENT_PATTERN = re.compile(
 
 def warn(message: str) -> None:
     print(f"[runtime-config] WARNING: {message}")
+
+
+def info(message: str) -> None:
+    print(f"[runtime-config] INFO: {message}")
 
 
 def require_regular_file(path: pathlib.Path, label: str) -> None:
@@ -203,17 +208,29 @@ def google_runtime_updates(values: Dict[str, str]) -> Dict[str, str]:
     }
 
 
-def analytics_runtime_update(values: Dict[str, str]) -> Tuple[bool, str]:
-    """Return whether SaaS analytics was staged and its validated ID."""
-    if "HFL_GA_MEASUREMENT_ID" not in values:
-        return False, ""
-    measurement_id = values.get("HFL_GA_MEASUREMENT_ID", "").strip()
-    if not measurement_id:
-        return True, ""
-    if not GA4_MEASUREMENT_ID_PATTERN.fullmatch(measurement_id):
-        warn("invalid GA4 measurement ID; analytics is disabled")
-        return True, ""
-    return True, measurement_id
+def analytics_runtime_updates(
+    values: Dict[str, str],
+) -> Tuple[Dict[str, str], Set[str]]:
+    """Validate independently managed Website and Tenant GA4 data streams."""
+    updates: Dict[str, str] = {}
+    removals: Set[str] = set()
+    for surface, name in (
+        ("Website", "HFL_WEBSITE_GA_MEASUREMENT_ID"),
+        ("Tenant", "HFL_TENANT_GA_MEASUREMENT_ID"),
+    ):
+        if name not in values:
+            continue
+        measurement_id = values.get(name, "").strip()
+        if measurement_id and GA4_MEASUREMENT_ID_PATTERN.fullmatch(measurement_id):
+            updates[name] = measurement_id
+        else:
+            removals.add(name)
+            if measurement_id:
+                warn(
+                    f"invalid {surface} GA4 measurement ID; "
+                    f"{surface} analytics is disabled"
+                )
+    return updates, removals
 
 
 def valid_sentry_dsn(value: str) -> bool:
@@ -363,7 +380,9 @@ def apply_configuration(
             current[key] = value
 
     updates: Dict[str, str] = {}
-    removals: Set[str] = set()
+    # Always purge the retired single-stream key. Its value is never read or
+    # migrated, including standalone installs without a staged runtime file.
+    removals: Set[str] = {"HFL_" + "GA_MEASUREMENT_ID"}
     runtime_values = read_runtime_values(runtime_path)
     if runtime_path is not None:
         signup_enabled = runtime_values.get("HFL_EMAIL_SIGNUP_ENABLED", "").lower()
@@ -380,10 +399,11 @@ def apply_configuration(
             warn(
                 "invalid email-code login value; preserving installed email-code login setting"
             )
-        insecure_tls = runtime_values.get("HFL_INSECURE_TLS", "")
-        if insecure_tls not in {"0", "1"}:
-            raise SystemExit("HFL_INSECURE_TLS must be 0 or 1")
-        updates["HFL_INSECURE_TLS"] = insecure_tls
+        if "HFL_INSECURE_TLS" in runtime_values:
+            insecure_tls = runtime_values["HFL_INSECURE_TLS"]
+            if insecure_tls not in {"0", "1"}:
+                raise SystemExit("HFL_INSECURE_TLS must be 0 or 1")
+            updates["HFL_INSECURE_TLS"] = insecure_tls
         updates.update(smtp_runtime_updates(runtime_values))
         updates.update(google_runtime_updates(runtime_values))
         sentry_updates, sentry_removals = sentry_runtime_updates(runtime_values)
@@ -397,13 +417,11 @@ def apply_configuration(
                 "SENTRY_SEND_DEFAULT_PII",
             }
         )
-        analytics_staged, measurement_id = analytics_runtime_update(runtime_values)
-        if analytics_staged:
-            if measurement_id:
-                updates["HFL_GA_MEASUREMENT_ID"] = measurement_id
-            else:
-                removals.add("HFL_GA_MEASUREMENT_ID")
-
+        analytics_updates, analytics_removals = analytics_runtime_updates(
+            runtime_values
+        )
+        updates.update(analytics_updates)
+        removals.update(analytics_removals)
         gateway_enabled = runtime_values.get(
             "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY", ""
         ).lower()
@@ -430,12 +448,18 @@ def apply_configuration(
         direct_host = ""
     direct_allowed_host = direct_host.strip("[]")
     direct_url_host = host_for_url(direct_host)
-    allowed_hosts = comma_values(
-        current.get("DJANGO_ALLOWED_HOSTS", ""), exclude_wildcard=True
+    community_install = current.get("HFL_EDITION", "").strip().lower() == "community"
+    allowed_hosts = (
+        ["*"]
+        if community_install
+        else comma_values(
+            current.get("DJANGO_ALLOWED_HOSTS", ""), exclude_wildcard=True
+        )
     )
     csrf_origins = comma_values(current.get("CSRF_TRUSTED_ORIGINS", ""))
     cors_origins = comma_values(current.get("CORS_ALLOWED_ORIGINS", ""))
-    append_unique(allowed_hosts, "localhost", "127.0.0.1", direct_allowed_host)
+    if not community_install:
+        append_unique(allowed_hosts, "localhost", "127.0.0.1", direct_allowed_host)
     append_unique(
         csrf_origins,
         "https://localhost:11443",
@@ -453,7 +477,8 @@ def apply_configuration(
         parsed = parse_public_origin(public_url)
         if parsed:
             public_origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
-            append_unique(allowed_hosts, parsed.hostname or "")
+            if not community_install:
+                append_unique(allowed_hosts, parsed.hostname or "")
             append_unique(csrf_origins, public_origin)
             append_unique(cors_origins, public_origin)
             updates.update(
@@ -467,14 +492,20 @@ def apply_configuration(
                 f"invalid public URL {public_url!r}; preserving installed URL configuration"
             )
     else:
-        warn("public URL is empty; preserving installed URL configuration")
+        if os.environ.get("HFL_ONLINE_CHILD") == "1":
+            info(
+                "public URL was not specified; existing URL configuration remains unchanged"
+            )
+        else:
+            warn("public URL is empty; preserving installed URL configuration")
 
     admin_public_url = admin_public_url.strip()
     if admin_public_url:
         parsed = parse_public_origin(admin_public_url)
         if parsed:
             admin_origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
-            append_unique(allowed_hosts, parsed.hostname or "")
+            if not community_install:
+                append_unique(allowed_hosts, parsed.hostname or "")
             append_unique(csrf_origins, admin_origin)
             append_unique(cors_origins, admin_origin)
             updates["HFL_ADMIN_PUBLIC_URL"] = admin_origin

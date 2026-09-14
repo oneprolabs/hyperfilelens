@@ -103,12 +103,13 @@ func printGatewayUpgradeSuccess(role, version, service string) {
 	printSummaryValue("Log file", activeInstallLogPath())
 }
 
-// RunGatewayUninstall removes LensNode sidecar then the HFL agent (default purge-all).
-func RunGatewayUninstall(ctx context.Context, purgeAll bool) error {
-	return runGatewayUninstall(ctx, purgeAll, true)
+// RunGatewayUninstall removes the LensNode sidecar and HFL Agent, preserving
+// their managed data only when keepData is true.
+func RunGatewayUninstall(ctx context.Context, keepData bool) error {
+	return runGatewayUninstall(ctx, keepData, true)
 }
 
-func runGatewayUninstall(ctx context.Context, purgeAll, renderLifecycle bool) error {
+func runGatewayUninstall(ctx context.Context, keepData, renderLifecycle bool) error {
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
 		abortInstall("Initialization", err.Error(), 2, "HFL-UNINSTALL-CONFIG")
@@ -122,7 +123,7 @@ func runGatewayUninstall(ctx context.Context, purgeAll, renderLifecycle bool) er
 	gatewayName := roleDisplayName(cfg.NodeRole, cfg.GatewayScope)
 	state := DetectInstallState()
 	if renderLifecycle {
-		printUninstallContext(cfg.APIBase, cfg.OrgKey, cfg.NodeRole, state, purgeAll)
+		printUninstallContext(cfg.APIBase, cfg.OrgKey, cfg.NodeRole, state, keepData)
 		printPhase("Preflight checks")
 		logOK("Gateway role and platform support were verified.")
 		commitInstallLog()
@@ -130,7 +131,7 @@ func runGatewayUninstall(ctx context.Context, purgeAll, renderLifecycle bool) er
 	}
 
 	logStep("Removing AI engine.")
-	if err := runGatewayLifecycleScript(ctx, cfg, "uninstall-sidecar", purgeAll); err != nil {
+	if err := runGatewayLifecycleScript(ctx, cfg, "uninstall-sidecar", keepData); err != nil {
 		return err
 	}
 
@@ -141,15 +142,17 @@ func runGatewayUninstall(ctx context.Context, purgeAll, renderLifecycle bool) er
 		if renderLifecycle {
 			printPhase("Verifying")
 			logOK("Managed AI engine resources were removed.")
-			printUninstallSuccess(state, purgeAll)
+			printUninstallSuccess(state, keepData)
 		}
 		return nil
 	}
 
 	logStep("Removing HyperFileLens agent.")
 	args := []string{installScript, "uninstall", "--quiet-footer"}
-	if purgeAll {
+	if !keepData {
 		args = append(args, "--purge-all")
+	} else {
+		args = append(args, "--keep-data")
 	}
 	cmd := exec.CommandContext(ctx, "/bin/bash", args...)
 	cmd.Env = append(os.Environ(), "HFL_SKIP_GATEWAY_SIDECAR_UNINSTALL=1")
@@ -162,12 +165,12 @@ func runGatewayUninstall(ctx context.Context, purgeAll, renderLifecycle bool) er
 	if renderLifecycle {
 		printPhase("Verifying")
 		logOK("Agent service, installed files, and AI engine resources were removed.")
-		printUninstallSuccess(state, purgeAll)
+		printUninstallSuccess(state, keepData)
 	}
 	return nil
 }
 
-func runGatewayLifecycleScript(ctx context.Context, cfg Config, command string, purgeAll bool) error {
+func runGatewayLifecycleScript(ctx context.Context, cfg Config, command string, keepData bool) error {
 	scriptPath, cleanup, err := downloadGatewayBootstrapScript(ctx, cfg, gatewayLifecycleScript)
 	if err != nil {
 		return err
@@ -175,7 +178,7 @@ func runGatewayLifecycleScript(ctx context.Context, cfg Config, command string, 
 	defer cleanup()
 
 	args := []string{scriptPath, command}
-	if purgeAll {
+	if !keepData {
 		args = append(args, "--purge-all")
 	}
 	cmd := exec.CommandContext(ctx, "/bin/bash", args...)

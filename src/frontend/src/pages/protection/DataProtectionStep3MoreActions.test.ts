@@ -20,6 +20,20 @@ function functionSource(name: string, nextName: string) {
 }
 
 describe('backup wizard step 3 More Actions refresh', () => {
+  it('clears hidden reserved rows when the Step 3 selection changes', () => {
+    const watcher = sourceBetween(
+      'watch(step3SourceSelection, () => {',
+      'watch(backupSelectableRows, (list) => {',
+    )
+    const table = sourceBetween(
+      'ref="step3TableRef"',
+      ':selectable="flowSourceRowSelectable"',
+    )
+
+    expect(table).toContain('reserve-selection')
+    expect(watcher).toContain('nextTick(() => syncStep3TableSelection())')
+  })
+
   it('keeps the global Step 2 pending summary separate from filtered table pagination', () => {
     expect(page).toContain('const step2GlobalPendingCount = computed(() => pipelineStep2Count.value)')
     expect(page).toContain('step2GlobalPendingCount.value === 0 && step3ReadyCount.value > 0')

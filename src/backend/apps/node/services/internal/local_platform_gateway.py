@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 from urllib.parse import urlsplit
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -14,7 +15,7 @@ from apps.lens_bridge.models import LensGatewayLink
 from apps.lens_bridge.services import platform_lens
 from apps.node.models import NodeToken
 from apps.node.models.base import NodeRole
-from common.deploy.site import enrollment_tls_verify, tenant_public_url
+from common.deploy.site import enrollment_tls_verify
 
 LOCAL_PLATFORM_GATEWAY_TOKEN_NOTE = "deploy:local-platform-gateway"
 LOCAL_PLATFORM_GATEWAY_INSTALL_KEY = "local-platform-gateway"
@@ -35,7 +36,9 @@ def platform_gateway_api_base(*, require_remote: bool = False) -> str:
     Raises:
         ValueError: If ``FRONTEND_URL`` is not an absolute HTTP(S) origin.
     """
-    api_base = tenant_public_url()
+    # The installer-managed Gateway is deployment-local and must not follow a
+    # Community runtime override intended for remote Agents and Gateways.
+    api_base = str(getattr(settings, "FRONTEND_URL", "")).strip().rstrip("/")
     parsed = urlsplit(api_base)
     try:
         parsed.port
@@ -309,6 +312,9 @@ def reconcile_local_platform_gateway_links() -> int:
         if link.owner_user_id is not None:
             link.owner_user = None
             update_fields.append("owner_user")
+        if link.created_by_id is not None:
+            link.created_by = None
+            update_fields.append("created_by")
         if update_fields:
             link.save(update_fields=[*update_fields, "updated_at"])
             changed += 1

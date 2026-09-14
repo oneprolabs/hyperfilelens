@@ -141,13 +141,15 @@ function resolveNodeDisplayStatus(node: ApiNode): NodeDisplayStatus {
   }
   // Status is the lifecycle state. Connectivity is rendered separately from availability.
   const status = node.status === 'online' || node.status === 'offline' ? 'active' : node.status
+  const visibleStatus = status === 'verification_pending' ? 'upgrading' : status
   const display = {
-    labelKey: `nodeLifecycle.state.${status}`,
+    labelKey: `nodeLifecycle.state.${visibleStatus}`,
     tagType: status === 'active'
       ? 'success'
       : status === 'failed' || status === 'upgrade_failed' || status === 'deregistration_failed'
         ? 'danger'
         : 'info',
+    spinning: ['upgrading', 'restarting', 'verification_pending', 'verifying'].includes(status),
   }
   return props.useBackupSourceTerminology ? backupSourceLifecycleDisplay(display) : display
 }

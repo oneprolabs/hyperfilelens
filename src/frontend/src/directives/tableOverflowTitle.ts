@@ -21,11 +21,18 @@ type OverflowTitleState = {
 const stateByElement = new WeakMap<HTMLElement, OverflowTitleState>()
 const MIN_TITLE_LENGTH = 2
 const TOOLTIP_ID = 'hfl-table-overflow-tooltip'
-const TOOLTIP_GAP = 8
+// Keep the floating panel adjacent to the cell so the pointer never has to
+// cross a dead zone before it can enter the tooltip.
+const TOOLTIP_GAP = 0
 const TOOLTIP_SHOW_AFTER_MS = 300
-const TOOLTIP_HIDE_AFTER_MS = 150
+// Leave enough time to cross the visual gap between a table cell and its
+// tooltip without making the tooltip feel sticky after the pointer leaves.
+const TOOLTIP_HIDE_AFTER_MS = 700
 const VIEWPORT_PADDING = 8
 const COLUMN_RESIZED_EVENT = 'hfl-table-column-resized'
+const TOOLTIP_TONES = ['danger', 'warning'] as const
+
+type TooltipTone = typeof TOOLTIP_TONES[number]
 
 let autoInstallStarted = false
 let activeState: OverflowTitleState | null = null
@@ -54,6 +61,22 @@ function ensureTooltip() {
   document.body.appendChild(tooltip)
   tooltipElement = tooltip
   return tooltip
+}
+
+function tooltipToneForTarget(target: HTMLElement): TooltipTone | null {
+  const toneTarget = target.hasAttribute('data-table-overflow-tone')
+    ? target
+    : target.querySelector<HTMLElement>('[data-table-overflow-tone]')
+  const tone = toneTarget?.dataset.tableOverflowTone
+  return TOOLTIP_TONES.find((candidate) => candidate === tone) || null
+}
+
+function applyTooltipTone(tooltip: HTMLElement, target: HTMLElement) {
+  const tone = tooltipToneForTarget(target)
+  tooltip.className = [
+    'hfl-table-overflow-tooltip',
+    tone ? `hfl-table-overflow-tooltip--${tone}` : '',
+  ].filter(Boolean).join(' ')
 }
 
 function isCurrentTableElement(el: HTMLElement, node: Element | null) {
@@ -227,6 +250,7 @@ function observeTooltipContent(state: OverflowTitleState, cell: HTMLElement) {
       'data-table-overflow-title',
       'data-table-overflow-title-always',
       'data-table-overflow-explicit-only',
+      'data-table-overflow-tone',
     ],
   })
   state.contentObserver = observer
@@ -241,6 +265,7 @@ function showTooltip(state: OverflowTitleState, cell: HTMLElement, text: string)
   state.active = cell
   activeState = state
   tooltip.textContent = text
+  applyTooltipTone(tooltip, cell)
   tooltip.style.display = 'block'
   cell.setAttribute('aria-describedby', TOOLTIP_ID)
   positionTooltip(cell)
@@ -256,6 +281,7 @@ function applyTooltip(state: OverflowTitleState, cell: HTMLElement) {
 
   if (state.active === cell) {
     if (tooltipElement?.textContent !== text) tooltipElement!.textContent = text
+    if (tooltipElement) applyTooltipTone(tooltipElement, cell)
     positionTooltip(cell)
     return
   }
@@ -314,7 +340,10 @@ function clearTooltip(state: OverflowTitleState) {
   state.tooltipHovered = false
   if (activeState === state) {
     activeState = null
-    if (tooltipElement) tooltipElement.style.display = 'none'
+    if (tooltipElement) {
+      tooltipElement.className = 'hfl-table-overflow-tooltip'
+      tooltipElement.style.display = 'none'
+    }
   }
 }
 
@@ -336,7 +365,12 @@ function installWithResolvers(
     titleForTarget,
     onMouseOver: (event) => {
       const cell = state.resolveTarget(event.target)
-      if (cell) scheduleTooltip(state, cell)
+      if (cell) {
+        scheduleTooltip(state, cell)
+        return
+      }
+      clearPendingTooltip(state)
+      if (state.active) clearTooltip(state)
     },
     onMouseOut: (event) => {
       const relatedTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null
@@ -351,7 +385,12 @@ function installWithResolvers(
     },
     onFocusIn: (event) => {
       const cell = state.resolveTarget(event.target)
-      if (cell) scheduleTooltip(state, cell)
+      if (cell) {
+        scheduleTooltip(state, cell)
+        return
+      }
+      clearPendingTooltip(state)
+      if (state.active) clearTooltip(state)
     },
     onFocusOut: () => {
       clearPendingTooltip(state)
@@ -359,7 +398,10 @@ function installWithResolvers(
     },
     onScroll: () => {
       clearPendingTooltip(state)
-      if (state.active) positionTooltip(state.active)
+      // A table can contain its own scroll viewport. Once the row moves, the
+      // fixed tooltip is no longer anchored to visible content and may cover
+      // unrelated dialog sections, so hide it until the pointer re-enters.
+      if (state.active) clearTooltip(state)
     },
     onResize: () => {
       clearPendingTooltip(state)

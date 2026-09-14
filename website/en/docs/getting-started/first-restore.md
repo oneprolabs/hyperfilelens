@@ -60,7 +60,7 @@ You can also open the backup source details and select **Restore Records**. Conf
 
 ## Verify the file on Windows
 
-A **Succeeded** console status only confirms that the task finished successfully. Verify the actual file on Windows:
+A **Succeeded** status confirms that the restore task completed. Verify the restored file on Windows:
 
 1. Open `C:\HFL-Restore-Test\restore-check.txt`.
 2. Confirm that it contains:
@@ -86,6 +86,4 @@ You can also open the source and restore directories side by side and compare th
 
 ![Matching restore-check.txt content in the source and restore directories](/docs/getting-started/restore-content-verified.png)
 
-The first backup is proven recoverable after the restored content has been checked on Windows; matching the SHA-256 baseline provides the stronger verification.
-
-Next: [Create an Insights session](/en/docs/getting-started/first-insight) from the same backup snapshot.
+Once you have checked the restored content on Windows, the restore test confirms that the first backup is recoverable. Matching the SHA-256 baseline provides additional assurance that the restored file is unchanged.

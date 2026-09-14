@@ -13,6 +13,7 @@ from apps.instance_settings.api.views.settings import (
     PlatformOpsSettingsEmailTestView,
     PlatformOpsSettingsEmailView,
     PlatformOpsSettingsEnvironmentView,
+    PlatformOpsSettingsExternalAccessView,
     PlatformOpsSettingsIdentityView,
 )
 
@@ -33,6 +34,11 @@ urlpatterns = [
         "ai/test",
         PlatformOpsSettingsAiTestView.as_view(),
         name="instance-settings-ai-test",
+    ),
+    path(
+        "external-access",
+        PlatformOpsSettingsExternalAccessView.as_view(),
+        name="instance-settings-external-access",
     ),
     path(
         "environment",

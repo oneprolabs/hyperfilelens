@@ -162,6 +162,52 @@ func TestPrintCommandFailureForUninstall(t *testing.T) {
 	}
 }
 
+func TestIsHostAptUnhealthyFailureUsesInstallerMarker(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		reason string
+		want   bool
+	}{
+		{
+			name:   "package manager busy",
+			reason: "Docker setup failed: docker install script: The host package manager is busy. Stop other apt/dpkg operations and retry the Gateway installation.",
+			want:   false,
+		},
+		{
+			name:   "installer marker",
+			reason: "Docker setup failed: docker install script: [FAIL] Host package manager is not healthy enough for offline Docker install.",
+			want:   true,
+		},
+		{
+			name:   "offline dependency closure",
+			reason: "Docker setup failed: docker install script: E: Unmet dependencies. Try apt --fix-broken install.",
+			want:   false,
+		},
+		{
+			name:   "sidecar readiness",
+			reason: "AI engine install failed: sidecar container failed readiness check",
+			want:   false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isHostAptUnhealthyFailure(test.reason); got != test.want {
+				t.Fatalf("isHostAptUnhealthyFailure(%q)=%v, want %v", test.reason, got, test.want)
+			}
+		})
+	}
+}
+
+func TestIsHostAptBusyFailureUsesRetryMarker(t *testing.T) {
+	if !isHostAptBusyFailure("The host package manager is busy. Stop other apt/dpkg operations and retry the Gateway installation.") {
+		t.Fatal("expected package-manager busy diagnostic")
+	}
+	if isHostAptBusyFailure("Host package manager is not healthy enough for offline Docker install.") {
+		t.Fatal("host corruption diagnostic must not be classified as busy")
+	}
+}
+
 func TestPrintCommandFailureForKeepsJSONResultTypeCompatible(t *testing.T) {
 	t.Setenv("HFL_OUTPUT", "json")
 	previousStderr := os.Stderr

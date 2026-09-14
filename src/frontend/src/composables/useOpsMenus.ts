@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, BellRing, CircleAlert, Radio, FileText, History, ScrollText } from 'lucide-vue-next'
+import { AlertTriangle, BellRing, FileText, History, ListTodo, Logs, Radio } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 import { tenantOpsObserveMenus } from '@ext/platform/ops/menus'
 
@@ -12,8 +12,8 @@ export function useOpsMenus() {
       {
         label: t('ops.nav.groupHealthMonitoring'),
         children: [
-          { label: t('ops.nav.operationalHealth'), to: '/ops/health', icon: CircleAlert },
           ...infrastructureMonitoringItems,
+          { label: t('ops.nav.events'), to: '/ops/events', icon: Logs },
         ],
       },
       {
@@ -22,13 +22,13 @@ export function useOpsMenus() {
           { label: t('ops.nav.alerts'), to: '/ops/alerts', icon: AlertTriangle },
           { label: t('ops.nav.alertRules'), to: '/ops/alerts/rules', icon: BellRing },
           { label: t('ops.nav.notificationChannels'), to: '/ops/channels', icon: Radio },
-          { label: t('ops.nav.deliveryHistory'), to: '/ops/delivery-history', icon: ScrollText },
+          { label: t('ops.nav.deliveryHistory'), to: '/ops/delivery-history', icon: History },
         ],
       },
       {
         label: t('ops.nav.groupActivity'),
         children: [
-          { label: t('ops.task.sideTasks'), to: '/ops/tasks', icon: History },
+          { label: t('ops.task.sideTasks'), to: '/ops/tasks', icon: ListTodo },
           { label: t('ops.task.sideAudit'), to: '/ops/audit-logs', icon: FileText },
         ],
       },

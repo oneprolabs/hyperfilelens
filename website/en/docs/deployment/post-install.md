@@ -1,9 +1,9 @@
 ---
-title: Post-installation Checks
+title: Post-installation checks
 description: Confirm that HyperFileLens Community is running and ready for first use.
 ---
 
-# Post-installation Checks
+# Post-installation checks
 
 After installation, verify the services before signing in and checking the main product areas.
 
@@ -15,12 +15,12 @@ On the Community host, run:
 sudo /opt/hyperfilelens/install.sh status
 ```
 
-Confirm that the services report a normal state and record the installed version. If a service is unhealthy, see [Installation and Nodes](/en/docs/troubleshooting/installation-nodes).
+Confirm that all services are running normally and record the installed version. If a service is unhealthy, see [Installation and nodes](/docs/troubleshooting/installation-nodes).
 
 ## 2. Sign in to the console
 
-1. Find the complete address marked `Tenant` in the installation result and open it in a browser.
-2. Sign in with the initial account shown by the installer.
+1. In the `Access` section of the installation output, find `HyperFileLens` and open its `URL` in your browser.
+2. Sign in with the `Email` and `Password` shown in the same section.
 3. Change the initial password after signing in for the first time.
 
 ## 3. Check the product areas
@@ -33,4 +33,4 @@ Confirm that the top navigation includes the following areas and that each one o
 - **Configuration:** Open organization information, member roles, and system settings.
 - **Operations:** Open operational health, alerts, jobs, and audit information.
 
-If a service or page does not open, record the page message and product version, then see [Installation and Nodes](/en/docs/troubleshooting/installation-nodes).
+If a service or page does not open, record the message shown on the page and the product version, then see [Installation and nodes](/docs/troubleshooting/installation-nodes).

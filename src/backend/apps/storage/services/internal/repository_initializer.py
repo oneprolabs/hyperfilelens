@@ -136,7 +136,7 @@ def initialize_s3_repository(
             use_tls=config.get("use_tls") is not False,
         )
         bucket_created = False
-        if repository.s3_bucket_mode == Repository.S3BucketMode.NEW:
+        if repository.s3_bucket_mode == Repository.S3BucketMode.NEW and not config.get("s3_bucket_prepared"):
             bucket_created = create_s3_bucket(
                 **bucket_args,
                 allow_existing_owned=recovery,

@@ -19,7 +19,12 @@ from apps.instance_settings.permissions import HasPlatformPermission
 from apps.lens_bridge.api.serializers import LensOrgSettingsSerializer
 from apps.lens_bridge.models import LensOrgModelLink
 from apps.lens_bridge.services import org_models, platform_lens, provisioning, sl_client
+from common.errors import AppError
 from common.platform_authz import INFRA_AI_MODELS_MANAGE
+
+
+_CONNECTION_TEST_PROMPT = "Hi"
+_CONNECTION_TEST_MAX_TOKENS = 64
 
 
 def _platform_org() -> Organization:
@@ -41,6 +46,110 @@ def _deployment_managed_model_error() -> Response:
         },
         status=status.HTTP_409_CONFLICT,
     )
+
+
+def _connection_test_succeeded(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if "ok" in payload:
+        return payload["ok"] is True
+    if "success" in payload:
+        return payload["success"] is True
+    return False
+
+
+def _connection_test_detail(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return "SourceLens returned an unexpected connection test result."
+    for field_name in ("message", "detail", "error"):
+        value = payload.get(field_name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "The provider did not accept this model configuration."
+
+
+def _connection_test_error(payload: object) -> AppError:
+    detail = _connection_test_detail(payload)
+    return AppError(
+        code="AI_MODEL.CONNECTION_TEST_FAILED",
+        status=status.HTTP_400_BAD_REQUEST,
+        title="AI model connection test failed.",
+        diagnostic=detail,
+        meta={
+            "reason": detail,
+            "hint": "Check the provider, model, API endpoint, and credentials, then try again.",
+        },
+    )
+
+
+def _activation_test_required_error() -> AppError:
+    return AppError(
+        code="AI_MODEL.CONNECTION_TEST_REQUIRED",
+        status=status.HTTP_400_BAD_REQUEST,
+        title="AI model connection test required.",
+        diagnostic=(
+            "SourceLens cannot test a saved inactive model. Re-enter the "
+            "API key so the configuration can be tested before activation."
+        ),
+        meta={
+            "hint": (
+                "Open the model for editing, re-enter the API key, and "
+                "enable the model again."
+            ),
+        },
+    )
+
+
+def _validate_active_model_connection(body: dict) -> None:
+    """Require a successful provider call before persisting an active model."""
+    if body.get("is_active") is False:
+        return
+    result = sl_client.request_json(
+        "POST",
+        "/api/v1/admin/llm-config/test/",
+        json_body=body,
+    )
+    if _connection_test_succeeded(result):
+        return
+    raise _connection_test_error(result)
+
+
+def _test_saved_model_connection(config_uuid: uuid.UUID) -> object:
+    return sl_client.request_json(
+        "POST",
+        "/api/v1/admin/llm-config/test-call/",
+        json_body={
+            "config_uuid": str(config_uuid),
+            "prompt": _CONNECTION_TEST_PROMPT,
+            "max_tokens": _CONNECTION_TEST_MAX_TOKENS,
+        },
+    )
+
+
+def _validate_model_update_connection(
+    config_uuid: uuid.UUID,
+    body: dict,
+) -> None:
+    target_is_active = body.get("is_active")
+    connection_update = "provider" in body or "config" in body
+    if target_is_active is None and connection_update:
+        current = sl_client.request_json(
+            "GET",
+            f"/api/v1/admin/llm-config/{config_uuid}/",
+        )
+        target_is_active = not (
+            isinstance(current, dict) and current.get("is_active") is False
+        )
+    if target_is_active is False:
+        return
+    if connection_update:
+        if "provider" in body and "config" in body:
+            _validate_active_model_connection(body)
+            return
+        raise _activation_test_required_error()
+    if "is_active" not in body:
+        return
+    raise _activation_test_required_error()
 
 
 def _set_platform_default_model_ref(
@@ -133,15 +242,12 @@ class PlatformOpsLensModelProxyView(APIView):
             return Response(data)
         if url_name == "platform-ops-lens-models-test-call" and config_uuid:
             org_models.require_org_model(org, config_uuid)
-            data = sl_client.request_json(
-                "POST",
-                f"/api/v1/admin/llm-config/{config_uuid}/test-call/",
-                json_body=request.data,
-            )
+            data = _test_saved_model_connection(config_uuid)
             return Response(data)
         body = dict(request.data)
         display_name = body.pop("name", None)
         make_agent_default = body.pop("is_default", None) is True
+        _validate_active_model_connection(body)
         data = sl_client.request_json(
             "POST", "/api/v1/admin/llm-config/", json_body=body
         )
@@ -171,6 +277,7 @@ class PlatformOpsLensModelProxyView(APIView):
         body = dict(request.data)
         display_name = body.pop("name", None)
         make_agent_default = body.pop("is_default", None) is True
+        _validate_model_update_connection(config_uuid, body)
         if body:
             data = sl_client.request_json(
                 "PUT",

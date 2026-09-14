@@ -6,9 +6,25 @@ from django.utils import timezone
 from apps.node import conf as node_conf
 from apps.node.services.internal.task import _initial_watchdog_deadline
 from apps.protection import conf as protection_conf
+from apps.restore import conf as restore_conf
 
 
 class BackupTaskWatchdogTests(SimpleTestCase):
+    def test_restore_uses_restore_activity_lease(self):
+        started_at = timezone.now()
+
+        deadline = _initial_watchdog_deadline(
+            correlation_type="restore.record",
+            kind="restore.run",
+            from_time=started_at,
+        )
+
+        self.assertEqual(
+            deadline,
+            started_at
+            + timezone.timedelta(seconds=restore_conf.ACTIVITY_LEASE_SECONDS),
+        )
+
     def test_prepared_snapshot_uses_backup_watchdog(self):
         started_at = timezone.now()
 

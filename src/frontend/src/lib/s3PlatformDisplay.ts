@@ -8,7 +8,15 @@ export type S3StoragePlatform =
   | 'other'
   | 'custom'
 
-export const DEFAULT_S3_OBJECT_PREFIX = 'hfl/'
+export function generateS3ObjectPrefix(now = new Date()): string {
+  const year = now.getFullYear() % 10
+  const month = 'ABCDEFGHIJKL'[now.getMonth()]
+  const day = String(now.getDate()).padStart(2, '0')
+  const time = [now.getHours(), now.getMinutes(), now.getSeconds()]
+    .map((part) => String(part).padStart(2, '0'))
+    .join('')
+  return `hfl${year}${month}${day}${time}/`
+}
 
 const PLATFORM_LABEL_KEYS: Record<S3StoragePlatform, string> = {
   aliyun: 'addS3Repo.platformAliyun',

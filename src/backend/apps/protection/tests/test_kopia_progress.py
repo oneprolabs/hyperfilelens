@@ -16,6 +16,29 @@ from apps.protection.services.progress.orchestration_label import (
 
 
 class KopiaProgressAggregatorTests(SimpleTestCase):
+    def test_skipped_restore_lane_counts_as_terminal(self):
+        aggregate = aggregate_lanes(
+            [{"id": "skipped", "status": "skipped", "progress": {}}]
+        )
+
+        self.assertEqual(aggregate["lanes_done"], 1)
+        self.assertEqual(aggregate["lanes_running"], 0)
+        self.assertEqual(aggregate["lanes_queued"], 0)
+        self.assertEqual(aggregate["lanes_total"], 1)
+
+    def test_aggregate_counts_running_and_queued_lanes(self):
+        aggregate = aggregate_lanes([
+            {"id": "running", "status": "running", "progress": {}},
+            {"id": "dispatching", "status": "dispatching", "progress": {}},
+            {"id": "queued", "status": "pending", "progress": {}},
+            {"id": "done", "status": "success", "progress": {}},
+        ])
+
+        self.assertEqual(aggregate["lanes_running"], 2)
+        self.assertEqual(aggregate["lanes_queued"], 1)
+        self.assertEqual(aggregate["lanes_done"], 1)
+        self.assertEqual(aggregate["lanes_total"], 4)
+
     def test_aggregate_parallel_lanes(self):
         lanes = [
             {
@@ -133,6 +156,26 @@ class KopiaProgressAggregatorTests(SimpleTestCase):
         self.assertEqual(aggregate["bytes_done"], 649_000_000)
         self.assertIsNone(aggregate["speed_bps"])
         self.assertIsNone(aggregate["eta_seconds"])
+
+    def test_explicit_zero_restore_total_remains_known(self):
+        lane = normalize_lane_progress(
+            progress={
+                "phase": "kopia_transfer",
+                "kopia_phase": "restoring",
+                "bytes_done": 0,
+                "bytes_total": 0,
+                "bytes_total_known": True,
+                "processed_count": 0,
+                "total_count": 1,
+                "kopia_percent": 0,
+            },
+            status="running",
+        )
+
+        self.assertEqual(lane["bytes_total"], 0)
+        self.assertTrue(lane["bytes_total_known"])
+        self.assertEqual(lane["total_count"], 1)
+        self.assertEqual(lane["percent"], 0)
 
     def test_schema_v2_3ec_uses_processed_bytes_for_progress(self):
         processed = 3_478_373_863
@@ -357,6 +400,42 @@ class KopiaProgressDisplayTests(SimpleTestCase):
         self.assertEqual(phase, "estimating")
         self.assertEqual(meta["label_key"], "protection.taskProgress.backup.estimating")
 
+    def test_backup_label_exposes_running_and_queued_directories(self):
+        lanes = [
+            {"id": "running", "status": "running", "progress": {}},
+            {"id": "queued", "status": "pending", "progress": {}},
+        ]
+        meta, phase = backup_orchestration_label_meta(
+            task_status="running",
+            lanes=lanes,
+            aggregate=aggregate_lanes(lanes),
+        )
+
+        self.assertEqual(phase, "estimating")
+        self.assertEqual(meta, {
+            "label_key": "protection.taskProgress.backup.runningQueued",
+            "label_args": {"running": 1, "queued": 1, "done": 0, "total": 2},
+        })
+
+    def test_backup_label_exposes_all_queued_directories(self):
+        lanes = [
+            {"id": "queued-1", "status": "pending", "progress": {}},
+            {"id": "queued-2", "status": "pending", "progress": {}},
+        ]
+        meta, phase = backup_orchestration_label_meta(
+            task_status="running",
+            lanes=lanes,
+            aggregate=aggregate_lanes(lanes),
+        )
+
+        self.assertEqual(phase, "queued")
+        self.assertEqual(meta["label_key"], "protection.taskProgress.backup.queued")
+        self.assertEqual(meta["label_args"], {
+            "queued": 2,
+            "done": 0,
+            "total": 2,
+        })
+
     def test_restore_estimating_uses_placeholder_display(self):
         payload = enrich_kopia_progress_payload(
             {
@@ -455,6 +534,214 @@ class KopiaProgressDisplayTests(SimpleTestCase):
 
 
 class KopiaFailureMessageTests(SimpleTestCase):
+    def test_failure_metadata_groups_causes_and_limits_samples(self):
+        from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
+
+        errors = [
+            {"path": f"Library/Caches/private-{index}", "error": "cannot create iterator: operation not permitted"}
+            for index in range(4)
+        ] + [
+            {"path": f".docker/run/docker-{index}.sock", "error": "unknown or unsupported entry type"}
+            for index in range(3)
+        ]
+        metadata = kopia_snapshot_failure_metadata(
+            {"snapshot": {"rootEntry": {"summ": {"errors": errors}}}},
+        )["failure_details"]
+
+        self.assertEqual(metadata["total_count"], 7)
+        self.assertEqual(metadata["reported_count"], 5)
+        self.assertTrue(metadata["truncated"])
+        self.assertEqual(sum(item["count"] for item in metadata["causes"]), 7)
+        self.assertLessEqual(len(metadata["items"]), 5)
+        self.assertIn("enable_skip_unsupported_entries", metadata["remediation"])
+        self.assertIn("grant_macos_full_disk_access", metadata["remediation"])
+        self.assertEqual(metadata["remediation"][0], "enable_backup_policy")
+        self.assertLess(
+            metadata["remediation"].index("enable_skip_unreadable_directories"),
+            metadata["remediation"].index("grant_macos_full_disk_access"),
+        )
+
+    def test_failure_metadata_recovers_total_from_truncated_kopia_output(self):
+        from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
+
+        metadata = kopia_snapshot_failure_metadata({
+            "snapshot_create": {
+                "stdout": "{\"rootEntry\": {\"summ\": {\"errors\": [",
+                "stderr_tail": "Found 795 fatal error(s) while snapshotting ghw@mini:/Users/ghw.",
+                "stdout_truncated": True,
+            },
+        })["failure_details"]
+
+        self.assertEqual(metadata["total_count"], 795)
+        self.assertEqual(metadata["reported_count"], 0)
+        self.assertEqual(metadata["causes"][0]["code"], "snapshot_errors")
+
+    def test_failure_metadata_uses_compact_agent_summary_after_wire_truncation(self):
+        from apps.protection.services.backup_task import (
+            _directory_error,
+            extract_kopia_failure_message,
+            kopia_snapshot_failure_metadata,
+        )
+
+        result = {
+            "result_truncated": True,
+            "snapshot_failure_summary": {
+                "total_count": 795,
+                "items": [{
+                    "path": "Library/Caches/com.apple.Safari",
+                    "error": "open /Users/ghw/Library/Caches/com.apple.Safari: operation not permitted",
+                }],
+            },
+        }
+        metadata = kopia_snapshot_failure_metadata(result)["failure_details"]
+
+        self.assertEqual(metadata["total_count"], 795)
+        self.assertEqual(metadata["reported_count"], 1)
+        self.assertEqual(metadata["causes"][0]["code"], "macos_privacy_denied")
+        self.assertIn("795 source items", extract_kopia_failure_message(result))
+        outcome = type(
+            "Outcome",
+            (),
+            {
+                "result": result,
+                "task": type("AgentTask", (), {"last_error": "exit 1: exit status 1"})(),
+            },
+        )()
+        self.assertEqual(_directory_error(outcome)[0], "SOURCE_ITEMS_UNREADABLE")
+
+    def test_structured_access_denied_is_not_reported_as_process_death(self):
+        from apps.protection.services.backup_task import classify_kopia_execution_failure
+
+        result = {
+            "snapshot": {
+                "rootEntry": {
+                    "summ": {
+                        "errors": [{
+                            "path": "C:/System Volume Information",
+                            "error": "Access is denied.",
+                        }]
+                    }
+                }
+            },
+            "exit_code": 1,
+        }
+
+        code, _message = classify_kopia_execution_failure(
+            result,
+            last_error="exit 1: exit status 1",
+        )
+
+        self.assertEqual(code, "SOURCE_ITEMS_UNREADABLE")
+
+    def test_file_lock_signal_and_generic_exit_keep_distinct_codes(self):
+        from apps.protection.services.backup_task import classify_kopia_execution_failure
+
+        locked = {
+            "snapshot": {
+                "rootEntry": {
+                    "summ": {
+                        "errors": [{
+                            "path": "C:/data/database.db",
+                            "error": (
+                                "The process cannot access the file because it is "
+                                "being used by another process."
+                            ),
+                        }]
+                    }
+                }
+            }
+        }
+        self.assertEqual(
+            classify_kopia_execution_failure(locked)[0],
+            "SOURCE_FILE_LOCKED",
+        )
+        self.assertEqual(
+            classify_kopia_execution_failure({}, last_error="signal: killed")[0],
+            "KOPIA_SIGNAL_KILLED",
+        )
+        self.assertEqual(
+            classify_kopia_execution_failure(
+                locked,
+                last_error="signal: killed",
+            )[0],
+            "KOPIA_SIGNAL_KILLED",
+        )
+        self.assertEqual(
+            classify_kopia_execution_failure(
+                {}, last_error="exit 1: exit status 1"
+            )[0],
+            "KOPIA_PROCESS_DIED",
+        )
+
+    def test_failure_metadata_uses_exact_agent_cause_counts(self):
+        from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
+
+        metadata = kopia_snapshot_failure_metadata({
+            "snapshot_failure_summary": {
+                "total_count": 955,
+                "cause_counts": {
+                    "macos_privacy_denied": 900,
+                    "unsupported_entry_type": 55,
+                },
+                "item_types": {
+                    "macos_privacy_denied": "directory",
+                    "unsupported_entry_type": "special",
+                },
+                "item_type_counts": {"directory": 900, "special": 55},
+                "items": [
+                    {
+                        "path": "Library/Caches/com.apple.Safari",
+                        "error": "cannot create iterator: operation not permitted",
+                        "cause": "macos_privacy_denied",
+                        "item_type": "directory",
+                    },
+                    {
+                        "path": ".docker/run/docker.sock",
+                        "error": "unknown or unsupported entry type",
+                        "cause": "unsupported_entry_type",
+                        "item_type": "special",
+                    },
+                ],
+            },
+        })["failure_details"]
+
+        self.assertEqual(metadata["total_count"], 955)
+        self.assertEqual(
+            {item["code"]: item["count"] for item in metadata["causes"]},
+            {"macos_privacy_denied": 900, "unsupported_entry_type": 55},
+        )
+        self.assertNotIn(
+            "snapshot_errors", {item["code"] for item in metadata["causes"]}
+        )
+        self.assertEqual(
+            metadata["remediation"][:3],
+            [
+                "enable_backup_policy",
+                "enable_skip_unreadable_directories",
+                "enable_skip_unsupported_entries",
+            ],
+        )
+
+    def test_failure_metadata_uses_reported_total_when_samples_are_incomplete(self):
+        from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
+
+        metadata = kopia_snapshot_failure_metadata({
+            "snapshot": {
+                "rootEntry": {
+                    "summ": {
+                        "errors": [{
+                            "path": "Library/Caches/private",
+                            "error": "cannot create iterator: operation not permitted",
+                        }],
+                    },
+                },
+            },
+            "snapshot_create": {"stderr": "Found 795 fatal error(s)."},
+        })["failure_details"]
+
+        self.assertEqual(metadata["total_count"], 795)
+        self.assertEqual(sum(item["count"] for item in metadata["causes"]), 795)
+
     def test_extracts_actionable_structured_windows_file_lock_failures(self):
         from apps.protection.services.backup_task import (
             _directory_error,
@@ -500,6 +787,10 @@ class KopiaFailureMessageTests(SimpleTestCase):
         self.assertEqual(metadata["category"], "source_file_locked")
         self.assertEqual(metadata["count"], 2)
         self.assertEqual(len(metadata["items"]), 2)
+        self.assertEqual(
+            metadata["remediation"][:2],
+            ["enable_backup_policy", "enable_skip_unreadable_files"],
+        )
         outcome = type(
             "Outcome",
             (),
@@ -546,6 +837,40 @@ class KopiaFailureMessageTests(SimpleTestCase):
         self.assertIn("enable_backup_policy", metadata["remediation"])
         self.assertIn("enable_skip_unreadable_files", metadata["remediation"])
         self.assertIn("enable_skip_unreadable_directories", metadata["remediation"])
+        self.assertEqual(
+            metadata["remediation"][:3],
+            [
+                "enable_backup_policy",
+                "enable_skip_unreadable_files",
+                "enable_skip_unreadable_directories",
+            ],
+        )
+
+    def test_failure_metadata_keeps_generic_directory_permissions_platform_neutral(self):
+        from apps.protection.services.backup_task import (
+            kopia_snapshot_failure_metadata,
+        )
+
+        result = {
+            "snapshot": {
+                "rootEntry": {
+                    "summ": {
+                        "errors": [{
+                            "path": "System Volume Information",
+                            "error": "readdir System Volume Information: access denied",
+                        }],
+                    }
+                }
+            }
+        }
+        remediation = kopia_snapshot_failure_metadata(result)["failure_details"][
+            "remediation"
+        ]
+
+        self.assertIn("check_source_access", remediation)
+        self.assertIn("enable_skip_unreadable_directories", remediation)
+        self.assertNotIn("enable_skip_unreadable_files", remediation)
+        self.assertNotIn("grant_macos_full_disk_access", remediation)
 
     def test_skipped_metadata_preserves_paths_reasons_and_counts(self):
         from apps.protection.services.backup_task import (
@@ -572,10 +897,11 @@ class KopiaFailureMessageTests(SimpleTestCase):
         self.assertEqual(details["count"], 2)
         self.assertEqual(details["file_count"], 1)
         self.assertEqual(details["directory_count"], 1)
+        self.assertEqual(details["special_count"], 0)
         self.assertEqual(details["items"][1]["path"], "private")
         self.assertEqual(details["items"][1]["error"], "readdir private: access denied")
 
-    def test_skipped_metadata_limits_event_details_to_twenty_items(self):
+    def test_skipped_metadata_limits_event_details_to_ten_items(self):
         from apps.protection.services.backup_task import (
             kopia_snapshot_skipped_metadata,
         )
@@ -591,9 +917,72 @@ class KopiaFailureMessageTests(SimpleTestCase):
         details = kopia_snapshot_skipped_metadata(result)["skipped_details"]
 
         self.assertEqual(details["count"], 25)
-        self.assertEqual(details["reported_count"], 20)
-        self.assertEqual(len(details["items"]), 20)
+        self.assertEqual(details["reported_count"], 10)
+        self.assertEqual(len(details["items"]), 10)
         self.assertTrue(details["truncated"])
+
+    def test_skipped_metadata_uses_exact_summary_type_counts(self):
+        from apps.protection.services.backup_task import (
+            kopia_snapshot_skipped_metadata,
+        )
+
+        result = {
+            "snapshot_failure_summary": {
+                "total_count": 955,
+                "reported_count": 2,
+                "item_type_counts": {
+                    "file": 584,
+                    "directory": 329,
+                    "special": 42,
+                },
+                "items": [
+                    {"path": "Desktop", "error": "operation not permitted"},
+                    {
+                        "path": "runtime.sock",
+                        "error": "unknown or unsupported entry type",
+                    },
+                ],
+            }
+        }
+
+        details = kopia_snapshot_skipped_metadata(result)["skipped_details"]
+
+        self.assertEqual(details["count"], 955)
+        self.assertEqual(details["file_count"], 584)
+        self.assertEqual(details["directory_count"], 329)
+        self.assertEqual(details["special_count"], 42)
+        self.assertEqual(details["reported_count"], 2)
+        self.assertTrue(details["truncated"])
+
+    def test_failed_snapshot_metrics_do_not_project_failure_samples_as_skipped(self):
+        from apps.protection.services.backup_task import _extract_snapshot_metrics
+
+        result = {
+            "kopia_snapshot_id": "partial-snapshot",
+            "snapshot_failure_summary": {
+                "total_count": 955,
+                "reported_count": 2,
+                "items": [
+                    {
+                        "path": "Desktop",
+                        "error": "unable to read directory: operation not permitted",
+                    },
+                    {
+                        "path": "runtime.sock",
+                        "error": "unknown or unsupported entry type",
+                    },
+                ],
+            },
+        }
+
+        *_, stats = _extract_snapshot_metrics(
+            result,
+            include_skipped_items=False,
+        )
+
+        self.assertNotIn("skipped_item_count", stats)
+        self.assertNotIn("skipped_file_count", stats)
+        self.assertNotIn("skipped_directory_count", stats)
 
     def test_extract_kopia_failure_message_prefers_failed_policy_over_status(self):
         from apps.protection.services.backup_task import (
@@ -731,9 +1120,9 @@ class SourcePathFailureCategoryTests(SimpleTestCase):
     def test_permission_denied_is_source_permission_category(self):
         from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
         result = {"snapshot": {"rootEntry": {"summ": {"errors": [{"path": "/System Volume Information", "error": "permission denied"}]}}}}
-        self.assertEqual(kopia_snapshot_failure_metadata(result)["failure_details"]["category"], "source_permission_denied")
+        self.assertEqual(kopia_snapshot_failure_metadata(result)["failure_details"]["category"], "permission_denied")
 
     def test_unsupported_source_is_source_unsupported_category(self):
         from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
         result = {"snapshot": {"rootEntry": {"summ": {"errors": [{"path": "/pagefile.sys", "error": "unsupported source"}]}}}}
-        self.assertEqual(kopia_snapshot_failure_metadata(result)["failure_details"]["category"], "source_unsupported")
+        self.assertEqual(kopia_snapshot_failure_metadata(result)["failure_details"]["category"], "unsupported_entry_type")

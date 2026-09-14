@@ -95,8 +95,9 @@ describe('CopilotSessionSidebar pin actions', () => {
     ])
     expect(wrapper.text()).toContain('Share')
     expect(wrapper.text()).toContain('Rename')
-    expect(wrapper.text()).toContain('Pin chat')
-    expect(wrapper.text()).toContain('Delete session')
+    expect(wrapper.text()).toContain('Pin Chat')
+    expect(wrapper.text()).toContain('Delete Chat')
+    expect(wrapper.text()).not.toContain('Delete Session')
   })
 
   it('disables sharing until a completed answer exists', () => {
@@ -116,6 +117,6 @@ describe('CopilotSessionSidebar pin actions', () => {
 
     expect(wrapper.find('.copilot-session-menu__share').exists()).toBe(false)
     expect(wrapper.find('.copilot-session-menu__retry').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Try again')
+    expect(wrapper.text()).toContain('Try Again')
   })
 })

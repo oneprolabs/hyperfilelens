@@ -762,6 +762,40 @@ body .VPLocalSearchBox .search-keyboard-shortcuts kbd {
   scrollbar-width: thin;
 }
 
+.vp-doc:is(._zh_docs_getting-started_install, ._docs_getting-started_install) table th:first-child,
+.vp-doc:is(._zh_docs_getting-started_install, ._docs_getting-started_install) table td:first-child {
+  width: 136px;
+  min-width: 136px;
+}
+
+.vp-doc .custom-block.info {
+  margin: 20px 0 28px;
+  padding: 18px 20px 16px;
+  border: 1px solid color-mix(in srgb, var(--vp-c-brand-1) 24%, var(--vp-c-divider));
+  border-left: 3px solid var(--vp-c-brand-1);
+  border-radius: var(--hfl-doc-card-radius);
+  background: color-mix(in srgb, var(--vp-c-brand-soft) 48%, var(--vp-c-bg));
+}
+
+.vp-doc .custom-block.info .custom-block-title {
+  color: var(--vp-c-text-1);
+  font-size: 15px;
+  font-weight: 720;
+  line-height: 1.5;
+}
+
+.vp-doc .custom-block.info ul {
+  margin: 12px 0 0;
+  padding-left: 20px;
+}
+
+.vp-doc .custom-block.info li {
+  margin: 7px 0;
+  color: var(--vp-c-text-2);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
 .hfl-doc-lead {
   max-width: 720px;
   margin: -8px 0 30px !important;
@@ -981,6 +1015,10 @@ body .VPLocalSearchBox .search-keyboard-shortcuts kbd {
 
   .hfl-doc-card {
     padding: 18px;
+  }
+
+  .vp-doc .custom-block.info {
+    padding: 16px 17px 14px;
   }
 
   .vp-doc [class*='language-'] code {

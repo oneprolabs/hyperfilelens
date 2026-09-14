@@ -1,17 +1,15 @@
 ---
-title: Configure AI Models
+title: Configure AI models
 description: Understand model readiness and the platform administrator's model configuration responsibilities.
 ---
 
-# Configure AI Models
+# Configure AI models
 
-Insights requires a ready default Agent model. A default multimodal model is also required when a Chat must understand images, scanned PDFs, or images embedded in documents.
+Insights requires a default Agent model that is ready to use. A default multimodal model is also required when a session needs to process images, scanned PDFs, or images embedded in documents.
 
 ## Who configures models
 
-Model configuration is a platform-administration capability. Official SaaS tenant users do not manage provider credentials from the tenant **Insights** navigation. Contact the platform administrator when the New Chat page reports that a required model is unavailable.
-
-Community or platform administrators use the platform operations console to manage AI models. The exact access URL depends on the deployment and is intentionally separate from the tenant console.
+AI models are managed by a platform administrator in the platform operations console, which is separate from the organization console. Contact the platform administrator if the **New Chat** page reports that a required model is unavailable.
 
 ## Administrator workflow
 
@@ -21,17 +19,17 @@ Community or platform administrators use the platform operations console to mana
 4. Test connectivity and save the configuration.
 5. Keep the model active and set an appropriate model as the default Agent model.
 6. When visual understanding is required, set a compatible active model as the default multimodal model.
-7. Create a small test Chat and verify both the answer and citations.
+7. Create a small test session and verify both the answer and its citations.
 
-API keys and provider credentials are secrets. Keep them out of screenshots, Issues, terminal history, and documentation. If a screenshot is unavoidable, leave credential fields empty or cover the complete value with fully opaque pixels; never blur a secret.
+API keys and provider credentials are secrets. Keep them out of screenshots, GitHub issues, terminal history, and documentation. If a screenshot is unavoidable, leave credential fields empty or cover each value completely with an opaque block; do not rely on blurring to hide a secret.
 
 ## User-visible readiness
 
-Tenant users validate configuration through product behavior:
+Organization members can confirm that the models are ready from the product interface:
 
 - **New Chat** opens without a missing-model warning;
 - the intended analysis type is available;
 - **Start Chat** becomes available after all required fields are selected;
 - preparation reaches **Ready** and a test question returns an answer.
 
-Before replacing or disabling a default model, configure its replacement and verify a test Chat. Provider location, terms, and log retention remain part of the organization's data-processing decision even when a Private Data Gateway is used.
+Before replacing or disabling a default model, configure its replacement and verify it with a test session. The provider's location, terms, and log-retention policy remain part of the organization's data-processing decision, even when a Private Data Gateway is used.

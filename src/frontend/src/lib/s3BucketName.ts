@@ -1,3 +1,12 @@
+export function generateS3BucketName(now = new Date()): string {
+  const date = [now.getMonth() + 1, now.getDate(), now.getHours(), now.getMinutes(), now.getSeconds()]
+    .map((part) => String(part).padStart(2, '0')).join('')
+  return `hfl-${now.getFullYear()}${date}`
+}
+
+const AWS_RESERVED_PREFIXES = ['xn--', 'sthree-', 'amzn-s3-demo-']
+const AWS_RESERVED_SUFFIXES = ['-s3alias', '--ol-s3', '.mrap', '--x-s3', '--table-s3']
+
 const DNS_STYLE_PLATFORMS = new Set(['aws', 'huaweicloud'])
 const DNS_BUCKET_PATTERN = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/
 const ALIYUN_BUCKET_PATTERN = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/
@@ -11,7 +20,7 @@ function isIpv4Address(value: string): boolean {
   })
 }
 
-export type S3BucketNameError = 'aliyun' | 'dns' | 'dns_label' | 'ip_address' | null
+export type S3BucketNameError = 'aliyun' | 'dns' | 'dns_label' | 'ip_address' | 'aws_reserved' | null
 
 /** Mirror managed-provider naming rules for immediate form feedback.
  *
@@ -21,6 +30,10 @@ export type S3BucketNameError = 'aliyun' | 'dns' | 'dns_label' | 'ip_address' | 
 export function s3BucketNameError(platform: unknown, bucket: unknown): S3BucketNameError {
   const normalizedPlatform = String(platform || '').trim().toLowerCase()
   const name = String(bucket || '').trim()
+  if (normalizedPlatform === 'aws' && (
+    AWS_RESERVED_PREFIXES.some((prefix) => name.startsWith(prefix))
+    || AWS_RESERVED_SUFFIXES.some((suffix) => name.endsWith(suffix))
+  )) return 'aws_reserved'
   if (normalizedPlatform === 'aliyun') {
     return ALIYUN_BUCKET_PATTERN.test(name) ? null : 'aliyun'
   }

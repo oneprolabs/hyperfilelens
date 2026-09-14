@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, type Component } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ChevronLeft, ChevronRight, HelpCircle } from 'lucide-vue-next'
 import { ElTooltip } from 'element-plus'
@@ -37,8 +37,30 @@ const emit = defineEmits<{
 
 const route = useRoute()
 const router = useRouter()
+const sidebarNavRef = ref<HTMLElement | null>(null)
+const shouldPreserveSidebarScroll = route.path.startsWith('/platform-ops')
+const sidebarScrollStorageKey = `hfl-sidebar-scroll:${route.path.startsWith('/platform-ops') ? 'platform-ops' : (route.path.split('/')[1] || 'root')}`
 
 const expandedParentIndices = ref<Set<number>>(new Set())
+
+function restoreSidebarScroll() {
+  if (!shouldPreserveSidebarScroll) return
+  const saved = Number(sessionStorage.getItem(sidebarScrollStorageKey))
+  if (!Number.isFinite(saved) || saved <= 0 || !sidebarNavRef.value) return
+  sidebarNavRef.value.scrollTop = saved
+}
+
+function saveSidebarScroll() {
+  if (!shouldPreserveSidebarScroll) return
+  if (!sidebarNavRef.value) return
+  sessionStorage.setItem(sidebarScrollStorageKey, String(sidebarNavRef.value.scrollTop))
+}
+
+onMounted(() => {
+  void nextTick(restoreSidebarScroll)
+})
+
+onBeforeUnmount(saveSidebarScroll)
 
 function indicesOfParentsWithChildren(): number[] {
   return props.menus
@@ -175,6 +197,7 @@ const collapsedNavItems = computed<FlatNavItem[]>(() => {
 
       <nav
         v-if="collapsed"
+        ref="sidebarNavRef"
         class="sidebar-nav sidebar-nav--collapsed"
       >
         <template
@@ -224,6 +247,7 @@ const collapsedNavItems = computed<FlatNavItem[]>(() => {
 
       <nav
         v-else
+        ref="sidebarNavRef"
         class="sidebar-nav"
       >
         <template

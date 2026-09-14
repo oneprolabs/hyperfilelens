@@ -3,8 +3,8 @@ import { normalizeTaskStatus, taskStatusTone } from './taskStatusDisplay'
 
 describe('taskStatusTone', () => {
   it.each([
-    ['pending', 'neutral'],
-    ['queued', 'neutral'],
+    ['pending', 'warning'],
+    ['queued', 'warning'],
     ['running', 'info'],
     ['in_progress', 'info'],
     ['dispatching', 'info'],

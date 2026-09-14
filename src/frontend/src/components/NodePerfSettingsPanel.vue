@@ -6,6 +6,8 @@ import { updateNode, type NodeApiScope } from '../lib/nodeApi'
 import { nodeCpuCores, nodeMemoryTotalBytes } from '../lib/nodeInventoryDisplay'
 import {
   buildDefaultNodePerfSettings,
+  DEFAULT_KOPIA_CACHE_MB,
+  MAX_KOPIA_CACHE_MB,
   mergeNodeMetadataWithPerfSettings,
   readNodePerfSettings,
   type NodePerfLogLevel,
@@ -31,6 +33,7 @@ const HOST_MEM_MB_FALLBACK = 16 * 1024
 const perfBandwidth = ref(20)
 const perfCpuCapCores = ref(2)
 const perfMemCapMb = ref(2048)
+const kopiaCacheMb = ref(DEFAULT_KOPIA_CACHE_MB)
 const perfLogLevel = ref<NodePerfLogLevel>('info')
 const perfLogRetentionDays = ref(30)
 const perfLogSpaceMb = ref(512)
@@ -47,6 +50,8 @@ const hostMemMb = computed(() => {
   return Math.max(128, Math.round(bytes / (1024 * 1024)))
 })
 
+const supportsKopiaCache = computed(() => props.node?.role === 'agent' || props.node?.role === 'proxy')
+
 type PerfSnapshot = NodePerfSettings
 
 function buildPerfDefaults(): PerfSnapshot {
@@ -58,6 +63,7 @@ function capturePerfSnapshot(): PerfSnapshot {
     bandwidth: perfBandwidth.value,
     cpuCores: perfCpuCapCores.value,
     memCapMb: perfMemCapMb.value,
+    kopiaCacheMb: kopiaCacheMb.value,
     log: perfLogLevel.value,
     logRetention: perfLogRetentionDays.value,
     logSpaceMb: perfLogSpaceMb.value,
@@ -97,12 +103,18 @@ const perfMemDisplay = computed(() =>
 function clampPerfValues() {
   perfCpuCapCores.value = Math.min(Math.max(1, perfCpuCapCores.value), hostCpuCores.value)
   perfMemCapMb.value = Math.min(Math.max(128, perfMemCapMb.value), hostMemMb.value)
+  const rawCacheSize = kopiaCacheMb.value as unknown
+  const parsedCacheSize = rawCacheSize == null ? Number.NaN : Number(rawCacheSize)
+  kopiaCacheMb.value = Number.isFinite(parsedCacheSize)
+    ? Math.min(MAX_KOPIA_CACHE_MB, Math.max(0, Math.round(parsedCacheSize)))
+    : DEFAULT_KOPIA_CACHE_MB
 }
 
 function applyPerfSettings(settings: PerfSnapshot) {
   perfBandwidth.value = settings.bandwidth
   perfCpuCapCores.value = settings.cpuCores
   perfMemCapMb.value = settings.memCapMb
+  kopiaCacheMb.value = settings.kopiaCacheMb
   perfLogLevel.value = settings.log
   perfLogRetentionDays.value = settings.logRetention
   perfLogSpaceMb.value = settings.logSpaceMb
@@ -151,6 +163,7 @@ function perfSnapshotsEqual(a: PerfSnapshot, b: PerfSnapshot): boolean {
     a.bandwidth === b.bandwidth &&
     a.cpuCores === b.cpuCores &&
     a.memCapMb === b.memCapMb &&
+    a.kopiaCacheMb === b.kopiaCacheMb &&
     a.log === b.log &&
     a.logRetention === b.logRetention &&
     a.logSpaceMb === b.logSpaceMb
@@ -251,6 +264,40 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
           </div>
           <p class="hfl-detail-config-cell__hint">
             {{ t('nodesDetail.perfDescBandwidth') }}
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section
+      v-if="supportsKopiaCache"
+      class="hfl-detail-section"
+    >
+      <h4 class="hfl-detail-section__title">
+        {{ t('nodesDetail.perfCacheSection') }}
+      </h4>
+      <div class="hfl-detail-config-grid">
+        <div class="hfl-detail-config-cell">
+          <div class="hfl-detail-config-cell__label">
+            {{ t('nodesDetail.perfKopiaCache') }}
+          </div>
+          <div class="hfl-detail-config-cell__control">
+            <div class="hfl-detail-form-input hfl-detail-form-input--narrow">
+              <ElInputNumber
+                v-model="kopiaCacheMb"
+                :min="0"
+                :max="MAX_KOPIA_CACHE_MB"
+                :step="256"
+                controls-position="right"
+                class="hfl-detail-form-input__num"
+              />
+              <div class="hfl-detail-form-input__suffix">
+                {{ t('nodesDetail.unitMbPlain') }}
+              </div>
+            </div>
+          </div>
+          <p class="hfl-detail-config-cell__hint">
+            {{ t('nodesDetail.perfDescKopiaCache') }}
           </p>
         </div>
       </div>

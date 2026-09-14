@@ -93,6 +93,8 @@ func uninstallCommand(bundleDir string, keepData, keepInstallationIdentity bool)
 			args = append(args, "-PurgeAll")
 		} else if keepInstallationIdentity {
 			args = append(args, "-KeepInstallationIdentity")
+		} else {
+			args = append(args, "-KeepData")
 		}
 		return filepath.Join(bundleDir, "install.ps1"), args
 	}
@@ -101,6 +103,8 @@ func uninstallCommand(bundleDir string, keepData, keepInstallationIdentity bool)
 		args = append(args, "--purge-all")
 	} else if keepInstallationIdentity {
 		args = append(args, "--keep-installation-identity")
+	} else {
+		args = append(args, "--keep-data")
 	}
 	return filepath.Join(bundleDir, "install.sh"), args
 }

@@ -1,4 +1,4 @@
-"""Project Proxy and Data Gateway removals into the unified Operations task list."""
+"""Project authoritative node lifecycle work into the Operations task list."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from apps.task.services.interface import (
     append_task_step_event,
     complete_task,
     create_task,
+    emit_task_terminal_signal,
     start_task,
 )
 
@@ -27,6 +28,31 @@ _REMOVE_STEPS = (
     "cleanup_node_endpoint",
     "finalize_node_remove",
 )
+_UPGRADE_STEP_BY_PHASE = {
+    "dispatching": "dispatch_agent_upgrade",
+    "upgrading": "install_agent_upgrade",
+    "restarting": "restart_agent",
+    "verification_pending": "verify_agent_upgrade",
+    "verifying": "verify_agent_upgrade",
+    "success": "finalize_agent_upgrade",
+    "failed": "finalize_agent_upgrade",
+}
+_UPGRADE_STEPS = tuple(dict.fromkeys(_UPGRADE_STEP_BY_PHASE.values()))
+_UPGRADE_STEP_PROGRESS = {
+    "dispatch_agent_upgrade": 10,
+    "install_agent_upgrade": 35,
+    "restart_agent": 60,
+    "verify_agent_upgrade": 80,
+    "finalize_agent_upgrade": 100,
+}
+_UPGRADE_STATUS_MAP = {
+    NodeTask.Status.PENDING: Task.Status.PENDING,
+    NodeTask.Status.RUNNING: Task.Status.RUNNING,
+    NodeTask.Status.SUCCESS: Task.Status.SUCCESS,
+    NodeTask.Status.FAILED: Task.Status.FAILED,
+    NodeTask.Status.TIMEOUT: Task.Status.TIMEOUT,
+    NodeTask.Status.CANCELED: Task.Status.CANCELLED,
+}
 _TERMINAL_TASK_STATUSES = {
     Task.Status.SUCCESS,
     Task.Status.FAILED,
@@ -140,6 +166,335 @@ def _result_payload(node_task: NodeTask) -> dict[str, Any]:
         if node_task.status == NodeTask.Status.SUCCESS
         else "failed",
     }
+
+
+def _notify_task_after_commit(
+    task: Task,
+    *,
+    emit_update: bool = True,
+    emit_terminal: bool = False,
+) -> None:
+    task_uuid = str(task.task_uuid)
+    organization_id = task.organization_id
+    status = task.status
+    progress = float(task.progress)
+
+    def notify() -> None:
+        if emit_update:
+            task_updated.send(
+                sender=Task,
+                task_uuid=task_uuid,
+                organization_id=organization_id,
+                status=status,
+                progress=progress,
+            )
+        if emit_terminal:
+            emit_task_terminal_signal(task)
+
+    if emit_update or emit_terminal:
+        transaction.on_commit(notify)
+
+
+def _upgrade_timeline(node_task: NodeTask) -> list[dict[str, Any]]:
+    from apps.node.services.internal.node_lifecycle import _build_upgrade_timeline
+
+    return _build_upgrade_timeline(node=node_task.node, task=node_task)
+
+
+def _upgrade_result_payload(
+    *, node_task: NodeTask, timeline: list[dict[str, Any]]
+) -> dict[str, Any]:
+    from apps.node.services.internal.node_lifecycle import (
+        _source_version_from_task,
+        _target_commit_from_task,
+        _target_version_from_task,
+    )
+
+    result = node_task.result if isinstance(node_task.result, dict) else {}
+    payload = {
+        "node_task_id": str(node_task.id),
+        "node_id": int(node_task.node_id),
+        "node": _node_snapshot(node_task.node),
+        "timeline": timeline,
+        "source_version": _source_version_from_task(node_task),
+        "target_version": _target_version_from_task(node_task),
+        "target_commit": _target_commit_from_task(node_task) or None,
+        "failure_code": result.get("failure_code")
+        or result.get("diagnostic_error_code"),
+        "observed_agent_version": result.get("observed_agent_version"),
+        "observed_agent_commit": result.get("observed_agent_commit"),
+    }
+    progress = result.get("last_progress")
+    download = progress.get("download") if isinstance(progress, dict) else None
+    if isinstance(download, dict):
+        allowed = {
+            "state",
+            "downloaded_bytes",
+            "total_bytes",
+            "bytes_per_second",
+            "elapsed_seconds",
+            "idle_seconds",
+            "attempt",
+            "next_attempt",
+            "max_attempts",
+            "retry_after_seconds",
+            "reason",
+        }
+        payload["download"] = {
+            key: download[key] for key in allowed if key in download
+        }
+    return payload
+
+
+def create_node_upgrade_operation_task(
+    *,
+    node_task: NodeTask,
+    target_version: str,
+    target_commit: str = "",
+) -> Task:
+    """Create and bind the display task inside the upgrade transaction."""
+    node = node_task.node
+    if node_task.parent_task_id:
+        linked_task = Task.objects.filter(
+            pk=node_task.parent_task_id,
+            organization_id=node_task.organization_id,
+            task_type=Task.Type.NODE_LIFECYCLE,
+        ).first()
+        if linked_task is not None:
+            return linked_task
+    existing_task = (
+        Task.objects.select_for_update()
+        .filter(
+            organization_id=node_task.organization_id,
+            task_type=Task.Type.NODE_LIFECYCLE,
+            request_payload__node_task_id=str(node_task.id),
+        )
+        .first()
+    )
+    if existing_task is not None:
+        node_task.parent_task = existing_task
+        node_task.save(update_fields=["parent_task", "updated_at"])
+        return existing_task
+    task = create_task(
+        organization_id=node_task.organization_id,
+        task_type=Task.Type.NODE_LIFECYCLE,
+        display_name=f'Upgrade {node.get_role_display()} "{node.name or node.id}"',
+        trigger_type=Task.TriggerType.MANUAL,
+        request_payload={
+            "operation": "upgrade",
+            "node_task_id": str(node_task.id),
+            "target_version": target_version,
+            "target_commit": target_commit or None,
+            "node": _node_snapshot(node),
+        },
+        resources=[
+            {
+                "resource_type": TaskResource.Type.HOST,
+                "resource_subtype": str(node.role or ""),
+                "resource_id": int(node.id),
+                "is_primary": True,
+            }
+        ],
+        steps=list(_UPGRADE_STEPS),
+        notify_on_commit=True,
+    )
+    node_task.parent_task = task
+    node_task.save(update_fields=["parent_task", "updated_at"])
+    return task
+
+
+def _upgrade_step_state(
+    *, node_task: NodeTask
+) -> tuple[str, int, dict[str, str], list[dict[str, Any]]]:
+    timeline = _upgrade_timeline(node_task)
+    step_statuses: dict[str, str] = {}
+    current_step = "dispatch_agent_upgrade"
+    progress = 0
+    for phase in timeline:
+        step_name = _UPGRADE_STEP_BY_PHASE.get(str(phase.get("phase") or ""))
+        if not step_name:
+            continue
+        phase_status = str(phase.get("status") or "pending")
+        if phase_status == "completed":
+            step_statuses[step_name] = TaskStep.Status.SUCCESS
+            progress = max(progress, _UPGRADE_STEP_PROGRESS[step_name])
+        elif phase_status == "active":
+            step_statuses[step_name] = TaskStep.Status.RUNNING
+            current_step = step_name
+            progress = max(progress, _UPGRADE_STEP_PROGRESS[step_name] - 5)
+        elif phase_status == "failed":
+            step_statuses[step_name] = TaskStep.Status.FAILED
+            current_step = step_name
+        elif step_name not in step_statuses:
+            step_statuses[step_name] = TaskStep.Status.PENDING
+
+    if node_task.status in _TERMINAL_NODE_TASK_STATUSES:
+        current_step = "finalize_agent_upgrade"
+        if node_task.status == NodeTask.Status.SUCCESS:
+            step_statuses.update(
+                {step_name: TaskStep.Status.SUCCESS for step_name in _UPGRADE_STEPS}
+            )
+        step_statuses[current_step] = (
+            TaskStep.Status.SUCCESS
+            if node_task.status == NodeTask.Status.SUCCESS
+            else TaskStep.Status.SKIPPED
+            if node_task.status == NodeTask.Status.CANCELED
+            else TaskStep.Status.FAILED
+        )
+        if node_task.status == NodeTask.Status.SUCCESS:
+            progress = 100
+    return current_step, progress, step_statuses, timeline
+
+
+@transaction.atomic
+def sync_node_upgrade_operation_task(*, node_task: NodeTask) -> Task | None:
+    """Project one formal Agent upgrade without changing its authority."""
+    node_task = (
+        NodeTask.objects.select_for_update()
+        .select_related("node")
+        .filter(
+            pk=node_task.pk,
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            kind="agent.upgrade",
+        )
+        .first()
+    )
+    if node_task is None:
+        return None
+    projection_created = False
+    if node_task.parent_task_id is None:
+        from apps.node.services.internal.node_lifecycle import (
+            _target_commit_from_task,
+            _target_version_from_task,
+        )
+
+        create_node_upgrade_operation_task(
+            node_task=node_task,
+            target_version=_target_version_from_task(node_task),
+            target_commit=_target_commit_from_task(node_task),
+        )
+        projection_created = True
+    task = (
+        Task.objects.select_for_update()
+        .filter(
+            pk=node_task.parent_task_id,
+            organization_id=node_task.organization_id,
+            task_type=Task.Type.NODE_LIFECYCLE,
+        )
+        .first()
+    )
+    if task is None or task.status in _TERMINAL_TASK_STATUSES:
+        return task
+
+    desired_status = _UPGRADE_STATUS_MAP[node_task.status]
+    current_step, progress, step_statuses, timeline = _upgrade_step_state(
+        node_task=node_task
+    )
+    now = timezone.now()
+    result = dict(node_task.result or {})
+    result_payload = _upgrade_result_payload(
+        node_task=node_task,
+        timeline=timeline,
+    )
+    error_code = None
+    error_message = None
+    if desired_status in {
+        Task.Status.FAILED,
+        Task.Status.TIMEOUT,
+        Task.Status.CANCELLED,
+    }:
+        error_code = str(
+            result.get("failure_code")
+            or result.get("diagnostic_error_code")
+            or (
+                "NODE_UPGRADE_TIMEOUT"
+                if desired_status == Task.Status.TIMEOUT
+                else "NODE_UPGRADE_CANCELLED"
+                if desired_status == Task.Status.CANCELLED
+                else "NODE_UPGRADE_FAILED"
+            )
+        )
+        error_message = str(node_task.last_error or "Agent upgrade did not complete.")
+
+    changed = any(
+        (
+            task.status != desired_status,
+            task.current_step != current_step,
+            task.progress != Decimal(str(progress)),
+            task.result_payload != result_payload,
+            task.error_code != error_code,
+            task.error_message != error_message,
+        )
+    )
+    step_changed = False
+    for step in task.steps.all():
+        desired_step_status = step_statuses.get(step.step_name, TaskStep.Status.PENDING)
+        desired_step_progress = Decimal(
+            "100.00" if desired_step_status == TaskStep.Status.SUCCESS else "0.00"
+        )
+        if (
+            step.status != desired_step_status
+            or step.progress != desired_step_progress
+        ):
+            step.status = desired_step_status
+            step.progress = desired_step_progress
+            step.save(update_fields=["status", "progress"])
+            step_changed = True
+    if not changed and not step_changed:
+        return task
+
+    previous_status = task.status
+    task.status = desired_status
+    task.current_step = current_step
+    task.progress = Decimal(str(progress))
+    task.result_payload = result_payload
+    task.error_code = error_code
+    task.error_message = error_message
+    if desired_status != Task.Status.PENDING:
+        task.started_at = (
+            task.started_at
+            or node_task.accepted_at
+            or node_task.dispatched_at
+            or now
+        )
+    if desired_status in _TERMINAL_TASK_STATUSES:
+        task.finished_at = node_task.updated_at or now
+    task.save(
+        update_fields=[
+            "status",
+            "current_step",
+            "progress",
+            "result_payload",
+            "error_code",
+            "error_message",
+            "started_at",
+            "finished_at",
+            "updated_at",
+        ]
+    )
+    if previous_status != desired_status:
+        append_task_step_event(
+            task=task,
+            step_name=current_step,
+            level=(
+                "ERROR"
+                if desired_status in {Task.Status.FAILED, Task.Status.TIMEOUT}
+                else "WARN"
+                if desired_status == Task.Status.CANCELLED
+                else "INFO"
+            ),
+            message=f"Agent upgrade is {desired_status}",
+            metadata={"node_task_id": str(node_task.id)},
+        )
+    _notify_task_after_commit(
+        task,
+        emit_update=not projection_created,
+        emit_terminal=(
+            previous_status not in _TERMINAL_TASK_STATUSES
+            and desired_status in _TERMINAL_TASK_STATUSES
+        ),
+    )
+    return task
 
 
 def _reconcile_active_task(*, task: Task, status: str) -> None:
@@ -427,4 +782,9 @@ def record_immediate_node_remove_task(
     )
 
 
-__all__ = ["record_immediate_node_remove_task", "sync_node_remove_operation_task"]
+__all__ = [
+    "create_node_upgrade_operation_task",
+    "record_immediate_node_remove_task",
+    "sync_node_remove_operation_task",
+    "sync_node_upgrade_operation_task",
+]

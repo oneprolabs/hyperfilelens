@@ -138,19 +138,51 @@ def _backup_config_exists(
     ).exists()
 
 
-def _latest_user_restore_task(tasks, *, organization_id: int):
-    """Return the latest Protection restore without projecting Insight work."""
+def _latest_user_restore_task(
+    tasks,
+    *,
+    organization_id: int,
+    source_kind: str,
+    ref_id: int,
+):
+    """Return the latest restore owned by the source's current backup config."""
+    from django.db.models import Q
+
+    from apps.protection.models import BackupConfig, BackupSourceSnapshot
     from apps.restore.models import RestoreRecord
     from apps.task.models import Task
 
-    insight_task_ids = RestoreRecord.objects.filter(
+    source_type = "agent" if source_kind == SelectableSourceKind.AGENT else source_kind
+    current_config_ids = BackupConfig.objects.filter(
         organization_id=organization_id,
-        purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+        source_type=source_type,
+        source_ref_id=ref_id,
+    ).values_list("id", flat=True)
+    current_snapshot_ids = (
+        BackupSourceSnapshot.objects.filter(
+            organization_id=organization_id,
+            source_type=source_type,
+            source_ref_id=ref_id,
+            backup_config_id__in=current_config_ids,
+            deleted_at__isnull=True,
+        )
+        .exclude(status=BackupSourceSnapshot.Status.DELETED)
+        .values_list("id", flat=True)
+    )
+    restore_task_ids = RestoreRecord.objects.filter(
+        organization_id=organization_id,
+        purpose=RestoreRecord.Purpose.USER_DATA,
+        source_type=source_type,
+        source_ref_id=ref_id,
+    ).filter(
+        Q(backup_config_id__in=current_config_ids)
+        | Q(
+            backup_config_id__isnull=True,
+            source_snapshot_id__in=current_snapshot_ids,
+        )
     ).values_list("task_id", flat=True)
     return (
-        tasks.filter(task_type=Task.Type.RESTORE)
-        .exclude(id__in=insight_task_ids)
-        .first()
+        tasks.filter(task_type=Task.Type.RESTORE, id__in=restore_task_ids).first()
     )
 
 
@@ -184,7 +216,12 @@ def _source_and_tasks(*, organization_id: int, source_kind: str, ref_id: int):
     return (
         source,
         tasks.filter(task_type=Task.Type.BACKUP).first(),
-        _latest_user_restore_task(tasks, organization_id=organization_id),
+        _latest_user_restore_task(
+            tasks,
+            organization_id=organization_id,
+            source_kind=source_kind,
+            ref_id=ref_id,
+        ),
     )
 
 
@@ -291,6 +328,8 @@ def sync_pipeline_projection(
             restore_task=_latest_user_restore_task(
                 tasks,
                 organization_id=organization_id,
+                source_kind=source_kind,
+                ref_id=ref_id,
             ),
         )
         current_step = (

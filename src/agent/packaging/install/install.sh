@@ -206,6 +206,7 @@ NODE_ID=""
 DATA_DIR=""
 NODE_ROLE="agent"
 NO_START=0
+KEEP_DATA=0
 PURGE_ALL=0
 KEEP_INSTALLATION_IDENTITY=0
 AGENT_ONLY=0
@@ -257,7 +258,7 @@ Commands:
   status        Show installed version, paths, and service state
   upgrade       In-place upgrade from another release package directory or .tar.gz
   reconcile-legacy  Complete a pending legacy-layout cleanup after an upgrade
-  uninstall     Stop service and remove install dir (keeps data dir by default)
+  uninstall     Stop service and remove the complete Agent installation
 
 Options:
   install:
@@ -277,8 +278,7 @@ Options:
     --yes               Non-interactive: continue when target version equals installed version
 
   uninstall:
-	--purge-all                   Remove Agent Root and config/agent.env (unmounts NAS shares first)
-    --keep-installation-identity  Keep agent.env installation identity (incomplete-install rollback)
+    --keep-data                  Preserve local configuration, data, and logs
 
 Install paths:
   ${INSTALL_DIR}  Binaries and installer scripts
@@ -291,7 +291,8 @@ Examples:
   ${command_prefix}./install.sh start
   ${command_prefix}./install.sh status
   ${command_prefix}./install.sh upgrade --from /path/to/hfl-agent-0.1.0.tar.gz
-  ${command_prefix}./install.sh uninstall --purge-all
+  ${command_prefix}./install.sh uninstall
+  ${command_prefix}./install.sh uninstall --keep-data
 USAGE
 }
 
@@ -367,8 +368,9 @@ parse_reconcile_flags() {
 parse_uninstall_flags() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
+			--keep-data) KEEP_DATA=1; shift ;;
 			--purge-all) PURGE_ALL=1; shift ;;
-			--keep-installation-identity) KEEP_INSTALLATION_IDENTITY=1; shift ;;
+			--keep-installation-identity) KEEP_INSTALLATION_IDENTITY=1; KEEP_DATA=1; shift ;;
 			--quiet-footer) QUIET_FOOTER=1; shift ;;
 			-h|--help) usage; exit 0 ;;
 			*)
@@ -378,8 +380,8 @@ parse_uninstall_flags() {
 				;;
 		esac
 	done
-	if [[ "${PURGE_ALL}" -eq 1 && "${KEEP_INSTALLATION_IDENTITY}" -eq 1 ]]; then
-		echo "ERROR: --purge-all and --keep-installation-identity are mutually exclusive" >&2
+	if [[ "${PURGE_ALL}" -eq 1 && "${KEEP_DATA}" -eq 1 ]]; then
+		echo "ERROR: --purge-all cannot be combined with --keep-data or --keep-installation-identity" >&2
 		exit 2
 	fi
 }
@@ -946,7 +948,8 @@ hfl_role_display_name() {
 	proxy) printf '%s' "Proxy Host" ;;
 	gateway)
 		case "${scope}" in
-		public | platform) printf '%s' "Public Data Gateway" ;;
+		platform) printf '%s' "Platform Data Gateway" ;;
+		public) printf '%s' "Public Data Gateway" ;;
 		*) printf '%s' "Private Data Gateway" ;;
 		esac
 		;;
@@ -2046,6 +2049,67 @@ prepare_cifs_utf8_module() {
 	return 0
 }
 
+select_missing_nas_debs() {
+	local deps_dir="$1"
+	local deb package package_arch status
+	local -a bundled_debs=()
+	NAS_DEB_FILES=()
+
+	mapfile -t bundled_debs < <(find "${deps_dir}" -maxdepth 1 -type f -name '*.deb' -print | sort)
+	for deb in "${bundled_debs[@]}"; do
+		package="$(dpkg-deb --field "${deb}" Package 2>/dev/null || true)"
+		[[ "${package}" =~ ^[a-z0-9][a-z0-9+.-]+$ ]] \
+			|| log_fail "The NAS dependency bundle contains an invalid package: ${deb##*/}." 2
+		package_arch="$(dpkg-deb --field "${deb}" Architecture 2>/dev/null || true)"
+		[[ "${package_arch}" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+			|| log_fail "The NAS dependency bundle contains an invalid package architecture: ${deb##*/}." 2
+		status="$(dpkg-query -W -f='${db:Status-Abbrev}' -- "${package}:${package_arch}" 2>/dev/null || true)"
+		case "${status}" in
+		?i\ ) ;;
+		"" | ?n\  | ?c\ ) NAS_DEB_FILES+=("${deb}") ;;
+		*) log_fail "The installed package ${package} is not in a healthy state (${status}). Repair the host package state before retrying." 2 ;;
+		esac
+	done
+}
+
+validate_offline_nas_plan() {
+	(($# > 0)) || return 0
+	local plan_dir plan_log plan_sources plan_source_parts deb filename normalized
+	local -a plan_debs=()
+	plan_dir="$(mktemp -d /tmp/hfl-nas-plan-XXXXXX)"
+	plan_log="${plan_dir}/apt-plan.log"
+	plan_sources="${plan_dir}/sources.list"
+	plan_source_parts="${plan_dir}/sources.list.d"
+	: >"${plan_sources}"
+	mkdir "${plan_source_parts}"
+	for deb in "$@"; do
+		filename="${deb##*/}"
+		normalized="${plan_dir}/${filename//:/_}"
+		[[ ! -e "${normalized}" ]] \
+			|| { rm -rf "${plan_dir}"; log_fail "The NAS dependency bundle contains conflicting package filenames." 2; }
+		ln -s -- "${deb}" "${normalized}"
+		plan_debs+=("${normalized}")
+	done
+
+	if ! LC_ALL=C apt-get --simulate --no-download --no-install-recommends \
+		-o Dir::Etc::sourcelist="${plan_sources}" \
+		-o Dir::Etc::sourceparts="${plan_source_parts}" \
+		install "${plan_debs[@]}" \
+		>"${plan_log}" 2>&1; then
+		cat "${plan_log}" >&2
+		rm -rf "${plan_dir}"
+		log_fail "NAS dependencies cannot be installed safely from the offline package set." 2
+	fi
+	if grep -Eq \
+		'^The following packages will be (upgraded|REMOVED|DOWNGRADED):|^[1-9][0-9]* upgraded,| [1-9][0-9]* downgraded,| [1-9][0-9]* to remove' \
+		"${plan_log}"; then
+		cat "${plan_log}" >&2
+		rm -rf "${plan_dir}"
+		log_fail "NAS dependencies cannot be installed without changing existing system packages." 2
+	fi
+	rm -rf "${plan_dir}"
+}
+
 install_nas_deps() {
 	local role="${1:-}"
 	local package_root="${2:-${BUNDLE_ROOT}}"
@@ -2097,18 +2161,28 @@ install_nas_deps() {
 		echo "ERROR: dpkg is required to install bundled NAS dependencies" >&2
 		exit 2
 	fi
+	if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v apt-get >/dev/null 2>&1; then
+		echo "ERROR: dpkg-deb and apt-get are required to validate bundled NAS dependencies" >&2
+		exit 2
+	fi
 
 	log_ok "install NAS packages for role=${role} (offline ${ubuntu_flavor}/${arch})"
-	local -a deb_files=()
-	mapfile -t deb_files < <(find "${deps_dir}" -maxdepth 1 -type f -name '*.deb' -print | sort)
+	local -a NAS_DEB_FILES=()
+	select_missing_nas_debs "${deps_dir}"
+	validate_offline_nas_plan "${NAS_DEB_FILES[@]}"
 	local install_ok=0 attempt audit
-	for attempt in 1 2 3; do
-		if DEBIAN_FRONTEND=noninteractive dpkg -i "${deb_files[@]}"; then
-			install_ok=1
-			break
-		fi
-		log_warn "Offline NAS dependency install pass ${attempt}/3 reported unresolved package ordering; retrying..."
-	done
+	if ((${#NAS_DEB_FILES[@]} == 0)); then
+		install_ok=1
+		log_skip "all bundled NAS dependencies are already installed"
+	else
+		for attempt in 1 2 3; do
+			if DEBIAN_FRONTEND=noninteractive dpkg -i "${NAS_DEB_FILES[@]}"; then
+				install_ok=1
+				break
+			fi
+			log_warn "Offline NAS dependency install pass ${attempt}/3 reported unresolved package ordering; retrying..."
+		done
+	fi
 	audit="$(dpkg --audit 2>&1 || true)"
 	if [[ "${install_ok}" -ne 1 || -n "${audit}" ]]; then
 		[[ -z "${audit}" ]] || printf '%s\n' "${audit}" >&2
@@ -2350,7 +2424,7 @@ gateway_resource_preflight() {
 stop_service() {
 	if agent_uses_launchd; then
 		stop_launchd_service
-		return 0
+		return $?
 	fi
 	if ! command -v systemctl >/dev/null 2>&1; then
 		log_skip "stop hyperfilelens-agent.service (systemctl not found)"
@@ -2471,7 +2545,16 @@ start_service_only() {
 	# previous running state. Reload systemd explicitly so start never uses a
 	# stale unit definition from its manager cache.
 	hfl_systemctl daemon-reload
-	hfl_systemctl start hyperfilelens-agent.service
+	local state
+	state="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null || echo inactive)"
+	case "${state}" in
+		active|activating|deactivating)
+			hfl_systemctl restart hyperfilelens-agent.service
+			;;
+		*)
+			hfl_systemctl start hyperfilelens-agent.service
+			;;
+	esac
 	log_ok "started service hyperfilelens-agent.service ($(service_status_line))"
 }
 
@@ -2511,6 +2594,23 @@ cmd_install() {
 		local command_prefix=""
 		[[ "${INSTALLATION_MODE}" == "system" ]] && command_prefix="sudo "
 		log_fail "The agent is already installed. Run ${command_prefix}./install.sh upgrade --from <package.tar.gz> instead." 2
+	fi
+
+	# A stale managed service may survive after an interrupted or manually
+	# removed installation. Stop it before replacing binaries so an old process
+	# cannot remain online while the new package is reported as installed.
+	if agent_manages_service && agent_uses_systemd; then
+		local leftover
+		leftover="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null || echo inactive)"
+		case "${leftover}" in
+			active|activating|deactivating)
+				log_warn "Stopping leftover hyperfilelens-agent.service before installing."
+				stop_service
+				;;
+		esac
+	elif agent_uses_launchd && launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
+		log_warn "Stopping leftover ${LAUNCHD_LABEL} before installing."
+		stop_service
 	fi
 
 	DATA_DIR="${DATA_DIR:-$DEFAULT_DATA}"
@@ -2996,8 +3096,8 @@ retire_installation_identity() {
 	local data_dir="$1" agent_bin="${INSTALL_DIR}/hfl-agent"
 	# Incomplete-install rollback keeps the identity so retries reuse the console record.
 	[[ "${KEEP_INSTALLATION_IDENTITY}" -eq 0 ]] || return 0
-	# --purge-all deletes agent.env entirely, so retirement is unnecessary.
-	[[ "${PURGE_ALL}" -eq 0 ]] || return 0
+	# Complete removal deletes agent.env entirely, so retirement is unnecessary.
+	[[ "${KEEP_DATA}" -eq 1 ]] || return 0
 	[[ -x "${agent_bin}" ]] \
 		|| log_fail "Cannot retire the installation identity because ${agent_bin} is unavailable." 1
 	log_step "Retiring the local installation identity."
@@ -3017,11 +3117,40 @@ uninstall_gateway_sidecar_if_needed() {
 		|| log_fail "Data Gateway AI engine uninstall is supported on Linux only." 2
 	[[ -x "${GATEWAY_LIFECYCLE_SCRIPT}" ]] \
 		|| log_fail "Missing ${GATEWAY_LIFECYCLE_SCRIPT}; upgrade the Agent before uninstalling this Data Gateway." 2
-	[[ "${PURGE_ALL}" -eq 0 ]] || purge_args+=(--purge-all)
+	[[ "${KEEP_DATA}" -eq 1 ]] || purge_args+=(--purge-all)
 	log_step "Removing the Data Gateway AI engine before the Agent."
 	HFL_AGENT_ENV_FILE="${env_file}" \
 		bash "${GATEWAY_LIFECYCLE_SCRIPT}" uninstall-sidecar "${purge_args[@]}"
 	log_ok "Data Gateway AI engine removal completed."
+}
+
+gateway_workspace_mounts_in_agent_root() {
+	local agent_root="${1%/}" workspace_root target canonical_target targets=""
+	workspace_root="$(readlink -m -- "${agent_root}/workspace")" || return 1
+	if command -v findmnt >/dev/null 2>&1; then
+		targets="$(LC_ALL=C findmnt -rn -o TARGET 2>/dev/null)" || targets=""
+	fi
+	if [[ -z "${targets}" && -r /proc/mounts ]]; then
+		targets="$(awk '{ print $2 }' /proc/mounts)" || return 1
+	elif [[ -z "${targets}" ]]; then
+		return 1
+	fi
+	while IFS= read -r target; do
+		[[ -n "${target}" ]] || continue
+		canonical_target="$(readlink -m -- "${target}")" || continue
+		if [[ "${canonical_target}" == "${workspace_root}" || "${canonical_target}" == "${workspace_root}"/* ]]; then
+			printf '%s\n' "${canonical_target}"
+		fi
+	done <<<"${targets}"
+}
+
+assert_gateway_workspace_purge_safe() {
+	local agent_root="$1" mounts
+	mounts="$(gateway_workspace_mounts_in_agent_root "${agent_root}")" \
+		|| log_fail "Could not verify Gateway workspace mounts; refusing complete removal." 2
+	mounts="$(printf '%s\n' "${mounts}" | sort -u)"
+	[[ -z "${mounts}" ]] || log_fail \
+		"Refusing complete removal while Gateway workspace storage is mounted (${mounts//$'\n'/, }); unmount it manually and retry." 2
 }
 
 cmd_uninstall() {
@@ -3031,9 +3160,9 @@ cmd_uninstall() {
 	local resolved_data env_file
 	resolved_data="$(resolve_data_dir)"
 	env_file="$(agent_env_file "${resolved_data}")"
-	if [[ "${PURGE_ALL}" -eq 1 ]] \
+	if [[ "${KEEP_DATA}" -eq 0 ]] \
 		&& ! data_dir_allowed_for_removal "${resolved_data}"; then
-		log_fail "Refusing purge-all for unexpected data directory ${resolved_data}." 2
+		log_fail "Refusing complete removal for unexpected data directory ${resolved_data}." 2
 	fi
 	acquire_lifecycle_lock "${resolved_data}" "uninstall"
 	trap 'release_lifecycle_lock' EXIT
@@ -3046,8 +3175,11 @@ cmd_uninstall() {
 	node_id="$(read_env_value "${env_file}" "HFL_NODE_ID" || true)"
 	installed_version="unknown"
 	[[ -f "${INSTALLED_VERSION_FILE}" ]] && installed_version="$(tr -d ' \t\r\n' <"${INSTALLED_VERSION_FILE}")"
-	data_policy="preserve"
-	[[ "${PURGE_ALL}" -eq 0 ]] || data_policy="remove"
+	data_policy="remove"
+	[[ "${KEEP_DATA}" -eq 0 ]] || data_policy="preserve"
+	if [[ "${KEEP_DATA}" -eq 0 && "$(uname -s)" == "Linux" ]]; then
+		assert_gateway_workspace_purge_safe "${resolved_data}"
+	fi
 	hfl_print_banner "$(hfl_role_display_name "${installed_role}" "${gateway_scope}")" "Uninstaller"
 	hfl_print_section "Target"
 	hfl_print_value "Role" "$(hfl_role_display_name "${installed_role}" "${gateway_scope}")"
@@ -3058,7 +3190,7 @@ cmd_uninstall() {
 	hfl_print_value "Data path" "${resolved_data}"
 	hfl_print_value "Data removal" "${data_policy}"
 	hfl_print_section "Preflight checks"
-	if [[ "${PURGE_ALL}" -eq 0 && "${KEEP_INSTALLATION_IDENTITY}" -eq 0 \
+	if [[ "${KEEP_DATA}" -eq 1 && "${KEEP_INSTALLATION_IDENTITY}" -eq 0 \
 		&& ! -x "${INSTALL_DIR}/hfl-agent" ]]; then
 		log_fail "Cannot retire the installation identity because ${INSTALL_DIR}/hfl-agent is unavailable." 1
 	fi
@@ -3093,21 +3225,21 @@ cmd_uninstall() {
 			log_skip "Install directory ${INSTALL_DIR} was not removed (not empty or not present)."
 		fi
 	fi
-	if [[ $PURGE_ALL -eq 1 && -f "$env_file" ]]; then
+	if [[ $KEEP_DATA -eq 0 && -f "$env_file" ]]; then
 		rm -f "$env_file"
 		log_ok "Removed ${env_file}."
 	elif [[ -f "$env_file" ]]; then
 		if [[ "${KEEP_INSTALLATION_IDENTITY}" -eq 1 ]]; then
 			log_skip "${env_file} and installation identity were preserved for install retry."
 		else
-			log_skip "${env_file} was preserved without installation identity (use --purge-all to remove it)."
+			log_skip "${env_file} was preserved without installation identity."
 		fi
 	else
 		log_skip "${env_file} was not present."
 	fi
 
-	if [[ $PURGE_ALL -eq 0 ]]; then
-		log_skip "Data directory ${resolved_data} was preserved (use --purge-all to remove it)."
+	if [[ $KEEP_DATA -eq 1 ]]; then
+		log_skip "Data directory ${resolved_data} was preserved by --keep-data."
 	elif data_dir_allowed_for_removal "$resolved_data" && [[ -e "$resolved_data" ]]; then
 		if rm -rf "$resolved_data"; then
 			[[ ! -e "$resolved_data" ]] \
@@ -3129,9 +3261,9 @@ cmd_uninstall() {
 	hfl_print_value "Node ID" "${node_id}"
 	hfl_print_value "Service" "removed"
 	hfl_print_value "Install path" "removed"
-	hfl_print_value "Data path" "$([[ "${PURGE_ALL}" -eq 1 ]] && echo removed || echo preserved)"
+	hfl_print_value "Data path" "$([[ "${KEEP_DATA}" -eq 0 ]] && echo removed || echo preserved)"
 	hfl_print_value "Console record" "not changed by local uninstall"
-	if [[ "${PURGE_ALL}" -eq 0 ]]; then
+	if [[ "${KEEP_DATA}" -eq 1 ]]; then
 		hfl_print_value "Log file" "$(agent_logs_dir "${resolved_data}")/uninstall.log"
 	fi
 	finish_uninstall_log 0

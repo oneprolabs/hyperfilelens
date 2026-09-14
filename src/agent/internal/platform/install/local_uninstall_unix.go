@@ -410,6 +410,21 @@ verify_uninstall_artifacts() {
 
 log "detached uninstall script started install_dir=$INSTALL_DIR data_dir=$DATA_DIR keep_data=$KEEP_DATA log_file=$LOG_FILE"
 sleep "$SLEEP_SECONDS"
+if [[ "$KEEP_DATA" == "0" ]]; then
+	if ! gateway_workspace_mounts="$(collect_gateway_workspace_mount_points "$DATA_DIR")"; then
+		log "could not verify Gateway workspace mounts; refusing purge"
+		CLEANUP_FAILED=1
+		AGENT_ARTIFACTS_FAILED=1
+		exit 1
+	fi
+	gateway_workspace_mounts="$(printf '%%s\n' "$gateway_workspace_mounts" | sort -u)"
+  if [[ -n "$gateway_workspace_mounts" ]]; then
+    log "refusing purge while Gateway workspace storage is mounted: ${gateway_workspace_mounts//$'\n'/, }"
+    CLEANUP_FAILED=1
+    AGENT_ARTIFACTS_FAILED=1
+    exit 1
+  fi
+fi
 log "delay elapsed; running gateway sidecar uninstall when applicable"
 %s
 if ! run_gateway_sidecar_uninstall_if_needed; then

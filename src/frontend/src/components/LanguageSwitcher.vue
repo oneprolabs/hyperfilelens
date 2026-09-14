@@ -312,6 +312,9 @@ function handleVisibleChange(visible: boolean) {
 }
 
 .hfl-language-switcher-popper .el-dropdown-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   padding: 0 !important;
   background: transparent !important;
 }
@@ -328,11 +331,21 @@ function handleVisibleChange(visible: boolean) {
   border-radius: 7px;
 }
 
-.hfl-language-switcher-popper .el-dropdown-menu__item:hover,
-.hfl-language-switcher-popper .el-dropdown-menu__item:focus,
+.hfl-language-switcher-popper .el-dropdown-menu__item:not(.is-selected):hover,
+.hfl-language-switcher-popper .el-dropdown-menu__item:not(.is-selected):focus {
+  color: #fff !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
 .hfl-language-switcher-popper .el-dropdown-menu__item.is-selected {
   color: #fff !important;
   background: rgba(109, 94, 246, 0.22) !important;
+}
+
+.hfl-language-switcher-popper .el-dropdown-menu__item.is-selected:hover,
+.hfl-language-switcher-popper .el-dropdown-menu__item.is-selected:focus {
+  color: #fff !important;
+  background: rgba(109, 94, 246, 0.3) !important;
 }
 
 .hfl-language-switcher-popper .el-dropdown-menu__item:focus-visible {

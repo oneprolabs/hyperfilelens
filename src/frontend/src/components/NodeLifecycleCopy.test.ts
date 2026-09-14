@@ -9,6 +9,9 @@ function source(path: string) {
 describe('Node lifecycle copy', () => {
   it('keeps headings and action copy consistent', () => {
     const locale = source('src/locales/en.ts')
+    const chinese = JSON.parse(source('../../language-packs/packs/zh-hans/frontend/messages.json'))
+    const spanish = JSON.parse(source('../../language-packs/packs/es/frontend/messages.json'))
+    const css = source('src/styles/agent-install-wizard.css')
 
     expect(locale).toContain("installCommandStep: 'Run the Install Command'")
     expect(locale).toContain("installationModeSystem: 'Host files · continuous'")
@@ -19,18 +22,57 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain('installationModeUserPermission:')
     expect(locale).toContain('installationModeUserContinuousPermission:')
     expect(wizardSource()).toContain("const isNewAgentInstallation = computed(() => props.role === 'agent' && props.nodeId == null)")
-    expect(wizardSource()).toContain("? 'nodeLifecycle.installLeadAutomaticMacos'")
-    expect(wizardSource()).toContain(": 'nodeLifecycle.installLeadAutomatic'")
+    expect(wizardSource()).toContain("return 'nodeLifecycle.installLeadAutomaticLinux'")
+    expect(wizardSource()).toContain("return 'nodeLifecycle.installLeadAutomaticWindows'")
+    expect(wizardSource()).toContain("return 'nodeLifecycle.installLeadAutomaticMacos'")
     expect(wizardSource()).toContain("...(isNewAgentInstallation.value\n              ? {}")
     expect(wizardSource()).toContain("os === 'linux' ? 'user_continuous' : 'user'")
     expect(wizardSource()).not.toContain('selectedInstallationMode')
     expect(wizardSource()).not.toContain('installationModeOptions')
-    expect(locale).toContain('never changes mode silently')
+    expect(locale).toContain('Run the command below in a shell on the target Linux host.')
+    expect(locale).toContain('Run the commands below in PowerShell on the target Windows host.')
+    expect(locale).toContain('Run the command below in Terminal on the target Mac.')
+    expect(locale).toContain('The installer shows the installation mode before proceeding.')
+    expect(locale).not.toContain('The installer confirms the installation mode before proceeding.')
     expect(locale).toContain('grant HyperFileLens Agent Full Disk Access')
+    expect(chinese.nodeLifecycle.installLeadAutomaticLinux).toContain('Linux')
+    expect(chinese.nodeLifecycle.installLeadAutomaticWindows).toContain('PowerShell')
+    expect(chinese.nodeLifecycle.installLeadAutomaticMacos).toContain('Mac')
+    for (const message of [
+      chinese.nodeLifecycle.installLeadAutomaticLinux,
+      chinese.nodeLifecycle.installLeadAutomaticWindows,
+      chinese.nodeLifecycle.installLeadAutomaticMacos,
+    ]) {
+      expect(message).toContain('\n')
+    }
+    expect(spanish.nodeLifecycle.installLeadAutomaticLinux).toContain('Ejecute el siguiente comando en una terminal del host Linux de destino.\nAcceso:')
+    expect(spanish.nodeLifecycle.installLeadAutomaticWindows).toContain('Ejecute los siguientes comandos en PowerShell en el equipo Windows de destino.')
+    expect(spanish.nodeLifecycle.installLeadAutomaticMacos).toContain('Ejecute el siguiente comando en Terminal en el Mac de destino.\nAcceso:')
+    expect(css).toMatch(/agent-install-wizard__command-lead[\s\S]*?white-space: pre-line/)
     expect(locale).toContain("generateInstallCommand: 'Generate install command'")
     expect(locale).toContain('Copy the command and run it in a shell on the target host')
     expect(locale).toContain("installFlowDownload: 'Downloads the small installer and checks the target host'")
-    expect(locale).toContain("installFlowInstall: 'Downloads the required components and installs the Agent'")
+    expect(locale).toContain("installFlowInstallAgent: 'Downloads the required components and installs the Agent'")
+    expect(locale).toContain("installFlowInstallProxy: 'Downloads the required components and installs the Proxy'")
+    expect(locale).toContain("installFlowInstallGateway: 'Downloads and installs the Data Gateway components'")
+  })
+
+  it('uses the shared two-step Windows enrollment UI from every source-host entry point', () => {
+    const wizard = wizardSource()
+    const hostAddForm = source('src/pages/protection/components/HostAddForm.vue')
+    const dataProtection = source('src/pages/protection/DataProtection.vue')
+    const backupWizard = source('src/pages/protection/BackupCreateWizard.vue')
+
+    expect(wizard).toContain("os === 'windows' && windowsCommands && installOnly")
+    expect(wizard).toContain('windowsCommands.download')
+    expect(wizard).toContain('windowsCommands.execute')
+    expect(wizard).toContain('copiedCommand.value === command')
+    expect(hostAddForm).toContain('<NodeLifecycleWizard')
+    for (const entryPoint of [dataProtection, backupWizard]) {
+      expect(entryPoint).toContain('<HostAddForm')
+      expect(entryPoint).not.toContain('issueEnrollmentInstall')
+      expect(entryPoint).not.toContain('deployScriptCache')
+    }
   })
 
   it('presents operating system and command without a protection-mode picker', () => {
@@ -66,16 +108,32 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain('Ubuntu 20.04, 22.04, or 24.04 LTS')
     expect(locale).toContain('amd64')
     expect(locale).toContain("gatewayReqDiskSub: 'Local runtime and workspace storage'")
-    expect(locale).toContain('Registers a Public Data Gateway with HyperFileLens')
-    expect(locale).toContain('Registers a Private Data Gateway with HyperFileLens')
+    expect(locale).toContain('Registers the Public Data Gateway with HyperFileLens')
+    expect(locale).toContain('Registers the Private Data Gateway with HyperFileLens')
   })
 
-  it('revokes enrollment tokens discarded by command regeneration', () => {
+  it('uses product-role terminology in install and maintenance summaries', () => {
+    const wizard = source('src/components/NodeLifecycleWizard.vue')
+    const locale = source('src/locales/en.ts')
+
+    expect(wizard).toContain("agent: 'nodeLifecycle.installFlowInstallAgent'")
+    expect(wizard).toContain("proxy: 'nodeLifecycle.installFlowInstallProxy'")
+    expect(wizard).toContain("gateway: 'nodeLifecycle.installFlowInstallGateway'")
+    expect(wizard).toContain("agent: 'nodeLifecycle.installedAgentTitle'")
+    expect(wizard).toContain("proxy: 'nodeLifecycle.installedProxyTitle'")
+    expect(wizard).toContain("gateway: 'nodeLifecycle.installedGatewayTitle'")
+    expect(wizard).toContain('{{ installFlowInstallText }}')
+    expect(wizard).toContain('<h3>{{ installedComponentTitle }}</h3>')
+    expect(locale).toContain("installedAgentTitle: 'Installed Agent'")
+    expect(locale).toContain("installedProxyTitle: 'Installed Proxy'")
+    expect(locale).toContain("installedGatewayTitle: 'Installed Data Gateway'")
+  })
+
+  it('revokes only enrollment tokens discarded before their command is displayed', () => {
     const wizard = source('src/components/NodeLifecycleWizard.vue')
 
     expect(wizard).toContain('await revokeIssuedEnrollment(issued.tokenId, platformEnrollment)')
-    expect(wizard).toContain('void revokeIssuedEnrollment(staleTokenId, staleTokenIsPlatform)')
-    expect(wizard).toContain('enrollmentTokenIsPlatform.value')
+    expect(wizard).not.toContain('void revokeIssuedEnrollment(staleTokenId, staleTokenIsPlatform)')
     expect(wizard).toContain('await revokeEnrollmentToken(tokenId).catch(() => undefined)')
     expect(wizard).toContain('fetchNodeMaintenanceRelease')
     expect(wizard).not.toContain('createNodeToken({ role: props.role')

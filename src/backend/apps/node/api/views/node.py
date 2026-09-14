@@ -186,6 +186,8 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         status = (self.request.query_params.get("status") or "").strip()
         if status:
             queryset = queryset.filter(status=status)
+        if role == NodeRole.AGENT:
+            return queryset.order_by("-created_at", "-id")
         return queryset.order_by("name", "id")
 
     def _build_enrichments(self, nodes) -> dict[int, dict]:
@@ -346,6 +348,8 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 "role": node.role,
                 "operation_id": result.get("operation_id"),
                 "task_id": result.get("task_id"),
+                "node_task_id": result.get("node_task_id"),
+                "task_uuid": result.get("task_uuid"),
                 "state": result.get("state"),
             },
         )
@@ -847,7 +851,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
             lens = provisioning.provision_gateway_lens_on_register(
                 org=org,
                 gateway=node,
-                owner_user=token_row.created_by if token_row is not None else None,
+                created_by=token_row.created_by if token_row is not None else None,
                 scope=token_row.gateway_scope if token_row is not None else None,
             )
             if lens:

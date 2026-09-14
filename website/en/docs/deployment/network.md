@@ -1,13 +1,13 @@
 ---
-title: Network and Ports
+title: Network and ports
 description: Plan connectivity between the control plane, Agents, Proxies, Private Data Gateways, and storage.
 ---
 
-# Network and Ports
+# Network and ports
 
-<p class="hfl-doc-lead">Allow only the connections required by your deployment and data path. The official SaaS uses public HTTPS endpoints. Community uses the local ports below by default and can map them to standard HTTPS through a reverse proxy.</p>
+<p class="hfl-doc-lead">Allow only the connections required by your deployment and data flow. HyperFileLens Community uses the ports below by default and can map them to standard HTTPS through a reverse proxy.</p>
 
-## Default Community ports
+## Default ports
 
 <div class="hfl-deployment-grid">
   <section class="hfl-deployment-card">
@@ -17,7 +17,7 @@ description: Plan connectivity between the control plane, Agents, Proxies, Priva
   </section>
   <section class="hfl-deployment-card">
     <small>11443/TCP</small>
-    <strong>Tenant console and component connections</strong>
+    <strong>Product console and component connections</strong>
     <dl><div><dt>Access</dt><dd>User networks and the networks where Agents, Proxies, and Private Data Gateways run</dd></div></dl>
   </section>
   <section class="hfl-deployment-card">
@@ -41,8 +41,8 @@ Ports `11442–11445/TCP` must be free on the Community host during installation
     <small>Control traffic</small>
     <strong>Control plane</strong>
     <dl>
-      <div><dt>Browsers</dt><dd>Connect to the official SaaS on <code>443/TCP</code>, or to Community on <code>11443/TCP</code> or its mapped port</dd></div>
-      <div><dt>Agent, Proxy, and Private Data Gateway</dt><dd>Connect over HTTPS/WSS to SaaS <code>443/TCP</code>, or Community <code>11443/TCP</code>, for registration, status reporting, and job control</dd></div>
+      <div><dt>Browsers</dt><dd>Connect to the product console on <code>11443/TCP</code> or its mapped port</dd></div>
+      <div><dt>Agent, Proxy, and Private Data Gateway</dt><dd>Connect over HTTPS/WSS on <code>11443/TCP</code> or its mapped port for registration, status reporting, and job control</dd></div>
       <div><dt>Community host</dt><dd>Uses <code>443/TCP</code> to reach GitHub, container registries, and Ubuntu package repositories during online installation and upgrades</dd></div>
     </dl>
   </section>
@@ -69,7 +69,7 @@ Agents, Proxies, and Private Data Gateways initiate their own connections to the
 
 ## Configuration guidelines
 
-- Open only the ports used by the actual connection path and restrict their source networks.
+- Open only the ports required for your connection paths and restrict access to the appropriate source networks.
 - Limit `11444/TCP` and `11445/TCP` to management networks. Allow Proxy ports `51515–52014/TCP` only from Agents or Private Data Gateways that require cross-host repository access.
 - Object-storage endpoints must be reachable, but buckets do not need to be public. Use dedicated credentials with the minimum required permissions.
 - Keep TLS verification enabled where possible. Do not solve connectivity problems by permanently disabling verification or opening unrestricted firewall access.

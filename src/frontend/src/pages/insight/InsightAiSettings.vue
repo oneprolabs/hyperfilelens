@@ -7,7 +7,7 @@ import { ChevronDown, CirclePlay, CircleStop, Images, Pencil, Plus, RefreshCw, S
 import { ElMessage, type ElTable } from 'element-plus'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
-import { apiErrorMessage } from '../../lib/api'
+import { apiErrorMessage, apiErrorMessageI18n } from '../../lib/api'
 import {
   deleteLensModel,
   fetchLensHealth,
@@ -20,6 +20,7 @@ import {
 } from '../../lib/lensApi'
 import { defaultAiModelDisplayName } from '../../lib/aiModelDisplay'
 import { aiProviderLabel } from '../../lib/aiProviderDisplay'
+import AiProviderIcon from '../../components/ai-model/AiProviderIcon.vue'
 import InsightAiModelDetailDrawer from './InsightAiModelDetailDrawer.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
@@ -131,9 +132,12 @@ function openDetail(row: LensLlmConfig) {
   detailOpen.value = true
 }
 
-function openEdit(row: LensLlmConfig | string) {
+function openEdit(row: LensLlmConfig | string, enable = false) {
   const uuid = typeof row === 'string' ? row : row.uuid
-  router.push(`${lensModelsPath()}/${uuid}/edit`)
+  router.push({
+    path: `${lensModelsPath()}/${uuid}/edit`,
+    query: enable ? { enable: '1' } : undefined,
+  })
 }
 
 function onSelectionChange(rows: LensLlmConfig[]) {
@@ -148,7 +152,10 @@ async function setActive(row: LensLlmConfig, isActive: boolean) {
     ElMessage.success({ message: t('insight.aiSettings.saveSuccess'), grouping: true })
     await load()
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
+    ElMessage.error({
+      message: apiErrorMessageI18n(err, t, t('errors.generic.requestFailed')),
+      grouping: true,
+    })
   }
 }
 
@@ -203,10 +210,14 @@ async function deleteSelected() {
   await deleteRow(row)
 }
 
-async function enableSelected() {
+function enableSelected() {
   const row = singleSelected.value
-  if (!row || row.deployment_managed) return
-  await setActive(row, true)
+  if (!row || row.deployment_managed || row.is_active !== false) return
+  ElMessage.info({
+    message: t('insight.aiSettings.apiKeyRequiredForActivation'),
+    grouping: true,
+  })
+  openEdit(row, true)
 }
 
 async function disableSelected() {
@@ -459,7 +470,22 @@ onMounted(() => {
             min-width="120"
           >
             <template #default="{ row }">
-              <span :class="{ 'hfl-empty-mark': !row.provider && !row.name }">{{ row.provider || row.name || '—' }}</span>
+              <span
+                v-if="row.provider || row.name"
+                class="insight-ai-models-provider"
+              >
+                <AiProviderIcon
+                  :provider="row.provider || row.name || ''"
+                  size="md"
+                />
+                <span class="insight-ai-models-provider__label">
+                  {{ aiProviderLabel(row.provider || row.name || '') }}
+                </span>
+              </span>
+              <span
+                v-else
+                class="hfl-empty-mark"
+              >—</span>
             </template>
           </el-table-column>
           <el-table-column
@@ -542,5 +568,17 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.insight-ai-models-provider {
+  display: inline-flex !important;
+  min-height: 24px;
+  align-items: center;
+  gap: 8px;
+  vertical-align: middle;
+}
+
+.insight-ai-models-provider__label {
+  line-height: normal;
 }
 </style>

@@ -4,7 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { describe, expect, it, vi } from 'vitest'
 import {
-  DEFAULT_S3_OBJECT_PREFIX,
+  generateS3ObjectPrefix,
   distinctS3EndpointPair,
   normalizeS3ObjectPrefix,
 } from './s3PlatformDisplay'
@@ -102,9 +102,25 @@ describe('S3 object prefix defaults', () => {
     expect(distinctS3EndpointPair('s3.example.com', '')).toBeNull()
   })
 
-  it('uses the stable HyperFileLens namespace by default', () => {
-    expect(DEFAULT_S3_OBJECT_PREFIX).toBe('hfl/')
-    expect(normalizeS3ObjectPrefix(DEFAULT_S3_OBJECT_PREFIX)).toBe('hfl/')
+  it('generates a prefix from the local date and zero-padded time', () => {
+    const prefix = generateS3ObjectPrefix(new Date(2026, 8, 9, 8, 3, 5))
+    expect(prefix).toBe('hfl6I09080305/')
+    expect(normalizeS3ObjectPrefix(prefix)).toBe('hfl6I09080305/')
+    expect(generateS3ObjectPrefix(new Date(2026, 8, 9, 16, 30, 25)))
+      .toBe('hfl6I09163025/')
+  })
+
+  it.each([...'ABCDEFGHIJKL'])('encodes month %s', (month) => {
+    const monthIndex = 'ABCDEFGHIJKL'.indexOf(month)
+    expect(generateS3ObjectPrefix(new Date(2030, monthIndex, 1, 0, 0, 0)))
+      .toBe(`hfl0${month}01000000/`)
+  })
+
+  it('handles the year boundary', () => {
+    expect(generateS3ObjectPrefix(new Date(2029, 11, 31, 23, 59, 59)))
+      .toBe('hfl9L31235959/')
+    expect(generateS3ObjectPrefix(new Date(2030, 0, 1, 0, 0, 0)))
+      .toBe('hfl0A01000000/')
   })
 
   it('pre-fills the Add Object Storage Repository prefix input', async () => {
@@ -119,7 +135,31 @@ describe('S3 object prefix defaults', () => {
     await flushPromises()
 
     expect(wrapper.findAll('input').map((input) => input.element.value))
-      .toContain(DEFAULT_S3_OBJECT_PREFIX)
+      .toEqual(expect.arrayContaining([expect.stringMatching(/^hfl\d[A-L]\d{8}\/$/)]))
+    wrapper.unmount()
+  })
+
+  it('generates a new bucket name, validates edits and preserves the draft across modes', async () => {
+    const wrapper = mount(AddS3Repo, {
+      props: { embedded: true },
+      global: { plugins: [ElementPlus], stubs: { S3PlatformBrandIcon: true } },
+    })
+    await flushPromises()
+    await wrapper.findAll('.add-s3-platform-btn')[0].trigger('click')
+    const mode = (value: string) => wrapper.find(`input[type="radio"][value="${value}"]`)
+    await mode('new').setValue(true)
+    const bucketInput = () => wrapper.find('input[placeholder="addS3Repo.phBucketNew"]')
+    expect((bucketInput().element as HTMLInputElement).value).toMatch(/^hfl-\d{14}$/)
+    await bucketInput().setValue('UPPERCASE')
+    expect(wrapper.find('[data-validation-field="bucket"] [role="status"]').text())
+      .toBe('addS3Repo.bucketNameErrors.dns')
+    await bucketInput().setValue('bucket--x-s3')
+    expect(wrapper.text()).toContain('addS3Repo.bucketNameErrors.aws_reserved')
+    await bucketInput().setValue('my-backup-bucket')
+    expect(wrapper.find('[data-validation-field="bucket"] .el-form-item__error').exists()).toBe(false)
+    await mode('existing').setValue(true)
+    await mode('new').setValue(true)
+    expect((bucketInput().element as HTMLInputElement).value).toBe('my-backup-bucket')
     wrapper.unmount()
   })
 

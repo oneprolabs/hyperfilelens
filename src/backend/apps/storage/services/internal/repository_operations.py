@@ -582,6 +582,11 @@ def finalize_repository_operation(
         state.next_retry_at = now + timedelta(seconds=retry_seconds)
         status = Task.Status.FAILED
     state.save()
+    if status == Task.Status.FAILED and repository_task.operation_type in {
+        RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        RepositoryTask.OperationType.MAINTENANCE_FULL,
+    }:
+        _finalize_failed_maintenance_steps(task)
     repository_task.execution_token = None
     repository_task.execution_heartbeat_at = None
     repository_task.save(
@@ -605,6 +610,27 @@ def finalize_repository_operation(
         error_code=error_code,
         error_message=error_message[:2000],
     )
+
+
+def _finalize_failed_maintenance_steps(task: Task) -> None:
+    """Only maintenance is fail-fast; other workflows own their continuation."""
+    steps = list(task.steps.select_for_update().order_by("step_index", "id"))
+    running = [step for step in steps if step.status == TaskStep.Status.RUNNING]
+    failed = next(
+        (step for step in running if step.step_name == task.current_step),
+        running[0] if running else None,
+    )
+    for step in running:
+        step.status = TaskStep.Status.FAILED
+        step.save(update_fields=["status"])
+        append_task_event(
+            task=task, step=step, level=TaskEvent.Level.ERROR,
+            message=f"Step {step.step_name} failed",
+        )
+    if failed is not None:
+        task.current_step = failed.step_name
+        task.save(update_fields=["current_step", "updated_at"])
+    task.steps.filter(status=TaskStep.Status.PENDING).update(status=TaskStep.Status.SKIPPED)
 
 
 __all__ = [

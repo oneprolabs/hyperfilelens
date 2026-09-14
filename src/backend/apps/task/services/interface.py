@@ -148,6 +148,7 @@ def create_task(
     replaces_task: Task | None = None,
     group_uuid: UUID | str | None = None,
     idempotency_key: str | None = None,
+    notify_on_commit: bool = False,
 ) -> Task:
     if task_type not in {value for value, _label in Task.Type.choices}:
         raise ValidationError({"task_type": "Unsupported task type."})
@@ -258,13 +259,29 @@ def create_task(
         message="Task created",
         metadata={"task_type": task.task_type, "trigger_type": task.trigger_type},
     )
-    task_updated.send(
-        sender=Task,
-        task_uuid=str(task.task_uuid),
-        organization_id=task.organization_id,
-        status=task.status,
-        progress=float(task.progress),
-    )
+
+    def notify_task_created_after_commit() -> None:
+        current = Task.objects.filter(pk=task.pk).first()
+        if current is None:
+            return
+        task_updated.send(
+            sender=Task,
+            task_uuid=str(current.task_uuid),
+            organization_id=current.organization_id,
+            status=current.status,
+            progress=float(current.progress),
+        )
+
+    if notify_on_commit:
+        transaction.on_commit(notify_task_created_after_commit)
+    else:
+        task_updated.send(
+            sender=Task,
+            task_uuid=str(task.task_uuid),
+            organization_id=task.organization_id,
+            status=task.status,
+            progress=float(task.progress),
+        )
     return task
 
 
@@ -417,7 +434,8 @@ def retry_task(
         )
     if task.task_type == Task.Type.NODE_LIFECYCLE:
         raise ValidationError(
-            "Node lifecycle tasks cannot be retried from Operations. Retry the node removal instead."
+            "Node lifecycle tasks cannot be retried from Operations. Retry the node "
+            "operation from its host page."
         )
     if task.status not in {
         Task.Status.FAILED,
@@ -551,6 +569,7 @@ def complete_task(
     error_code: str = "",
     error_message: str = "",
     include_error_details_in_event: bool = True,
+    event_metadata: dict[str, Any] | None = None,
 ) -> Task:
     if status not in TERMINAL_STATUSES:
         raise ValidationError("complete_task requires a terminal status.")
@@ -593,9 +612,12 @@ def complete_task(
         level=level,
         message=f"Task finished with status {status}",
         metadata=(
-            {"error_code": error_code, "error_message": error_message}
-            if include_error_details_in_event
-            else None
+            {
+                **({"error_code": error_code, "error_message": error_message}
+                   if include_error_details_in_event else {}),
+                **(event_metadata or {}),
+            }
+            or None
         ),
     )
     task_updated.send(

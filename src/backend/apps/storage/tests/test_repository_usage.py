@@ -200,6 +200,7 @@ class RepositoryUsageTests(TestCase):
         dispatch_observation.assert_called_once_with(
             repository=repository,
             include_usage=True,
+            recorded_at=None,
         )
         synchronous_probe.assert_not_called()
 
@@ -250,6 +251,7 @@ class RepositoryUsageTests(TestCase):
         dispatch_observation.assert_called_once_with(
             repository=failed_repository,
             include_usage=True,
+            recorded_at=None,
         )
         sync_usage.assert_called_once_with(
             healthy_repository,

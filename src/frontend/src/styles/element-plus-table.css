@@ -145,53 +145,12 @@
     background-color var(--transition-fast, 150ms ease);
 }
 
-.el-dropdown-menu__item:not(.is-disabled):focus,
-.el-dropdown-menu__item:not(.is-disabled):hover {
-  color: #ffffff !important;
-  background-color: var(--color-primary) !important;
-}
-
 .el-dropdown-menu__item-content {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   font-size: 12px;
   color: inherit;
-}
-
-.el-dropdown-menu__item--danger:not(.is-disabled):focus,
-.el-dropdown-menu__item--danger:not(.is-disabled):hover {
-  color: var(--color-error, var(--el-color-danger)) !important;
-  background-color: var(--color-error-light) !important;
-}
-
-.el-dropdown-menu__item--danger:not(.is-disabled):focus svg,
-.el-dropdown-menu__item--danger:not(.is-disabled):hover svg,
-.el-dropdown-menu__item--danger:not(.is-disabled):focus .el-dropdown-menu__item-content,
-.el-dropdown-menu__item--danger:not(.is-disabled):hover .el-dropdown-menu__item-content,
-.el-dropdown-menu__item--danger:not(.is-disabled):focus .hfl-dropdown-item-row--danger,
-.el-dropdown-menu__item--danger:not(.is-disabled):hover .hfl-dropdown-item-row--danger {
-  color: var(--color-error, var(--el-color-danger)) !important;
-}
-
-.el-dropdown-menu__item--danger:not(.is-disabled):focus svg,
-.el-dropdown-menu__item--danger:not(.is-disabled):hover svg,
-.el-dropdown-menu__item--danger:not(.is-disabled):focus .hfl-dropdown-item-row--danger svg,
-.el-dropdown-menu__item--danger:not(.is-disabled):hover .hfl-dropdown-item-row--danger svg {
-  color: currentColor;
-  stroke: currentColor;
-}
-
-.el-dropdown-menu__item--danger:not(.is-disabled):not(:hover):not(:focus),
-.el-dropdown-menu__item--danger:not(.is-disabled):not(:hover):not(:focus) .el-dropdown-menu__item-content,
-.el-dropdown-menu__item:not(.is-disabled):not(:hover):not(:focus) .hfl-dropdown-item-row--danger {
-  color: var(--color-error, var(--el-color-danger)) !important;
-}
-
-.el-dropdown-menu__item--danger:not(.is-disabled):not(:hover):not(:focus) svg,
-.el-dropdown-menu__item:not(.is-disabled):not(:hover):not(:focus) .hfl-dropdown-item-row--danger svg {
-  color: currentColor;
-  stroke: currentColor;
 }
 
 .el-dropdown-menu__item--divided {

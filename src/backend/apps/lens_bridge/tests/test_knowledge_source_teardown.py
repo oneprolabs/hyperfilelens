@@ -179,6 +179,77 @@ class KnowledgeSourceDeleteApiTests(TestCase):
         self.knowledge_source.refresh_from_db()
         self.assertTrue(self.knowledge_source.is_deleted)
 
+    @mock.patch("apps.node.services.internal.agent_task.run_agent_task_sync")
+    @mock.patch(
+        "apps.node.services.internal.node_workload.get_node_workload_blockers",
+        side_effect=AssertionError("forced Chat cleanup must use its workspace owner"),
+    )
+    def test_forced_cleanup_reconciler_restores_workspace_owner_scope(
+        self,
+        _blockers,
+        run_agent_task,
+    ):
+        session = LensSessionLink.objects.create(
+            organization=self.organization,
+            hfl_user=self.user,
+            gateway_link=self.gateway_link,
+            knowledge_source=self.knowledge_source,
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            cleanup_intent=LensSessionLink.CleanupIntent.DELETE_SESSION,
+            cleanup_status=LensSessionLink.CleanupStatus.PENDING,
+        )
+        binding = self.knowledge_source.workspace_binding
+        marker = {
+            "status": "pending",
+            "session_link_id": session.id,
+            "workspace_uid": str(binding.workspace_uid),
+        }
+        session.teardown_state_json = {"forced_remote_cleanup": marker}
+        session.save(update_fields=["teardown_state_json", "updated_at"])
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.teardown_state_json = {
+            "forced_remote_cleanup": marker
+        }
+        self.knowledge_source.save(
+            update_fields=[
+                "lifecycle_status",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+        binding.workspace_kind = LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE
+        binding.relative_path = f"knowledge-sources/{self.knowledge_source.id}"
+        binding.identity_status = LensWorkspaceBinding.IdentityStatus.READY
+        binding.save(
+            update_fields=[
+                "workspace_kind",
+                "relative_path",
+                "identity_status",
+                "updated_at",
+            ]
+        )
+        run_agent_task.return_value = mock.MagicMock(
+            ok=True,
+            timed_out=False,
+            task=mock.MagicMock(id="cleanup-task", last_error=""),
+        )
+
+        result = knowledge_source_teardown.run_knowledge_source_teardown(
+            knowledge_source_id=self.knowledge_source.id
+        )
+
+        self.assertEqual(result["status"], "deleted")
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            self.knowledge_source.teardown_state_json["forced_remote_cleanup"][
+                "status"
+            ],
+            "complete",
+        )
+        _blockers.assert_not_called()
+
     @mock.patch(
         "apps.node.services.internal.node_workload.get_node_workload_blockers",
         return_value=[],

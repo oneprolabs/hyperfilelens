@@ -1,17 +1,14 @@
 msgid ""
 msgstr ""
-"Project-Id-Version: hyperfilelens
-"
-"Report-Msgid-Bugs-To: 
-"
-"Language: en
-"
-"MIME-Version: 1.0
-"
-"Content-Type: text/plain; charset=UTF-8
-"
-"Content-Transfer-Encoding: 8bit
-"
+"Project-Id-Version: hyperfilelens\n"
+"Report-Msgid-Bugs-To: \n"
+"PO-Revision-Date: 2026-09-08 00:00+0000\n"
+"Last-Translator: HyperFileLens\n"
+"Language-Team: English\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
 
 #: accounts/serializers.py:100
 msgid "JWT access token"

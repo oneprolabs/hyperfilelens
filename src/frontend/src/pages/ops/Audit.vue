@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, toRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Download, Filter, RefreshCw, ShieldCheck, AlertCircle, X } from 'lucide-vue-next'
+import { Download, FileJson, FileSpreadsheet, Filter, RefreshCw, ShieldCheck, AlertCircle, X } from 'lucide-vue-next'
 import ModulePage from '../../components/ModulePage.vue'
 import OpsStatCard from '../../components/ops/OpsStatCard.vue'
 import HflTablePanel from '../../components/HflTablePanel.vue'
@@ -32,10 +32,9 @@ const rows = ref<AuditLogRow[]>([])
 const stats = ref({
   total_count: 0,
   today_count: 0,
-  success_rate: 0,
-  failure_count: 0,
 })
 const loading = ref(false)
+const exportMenuOpen = ref(false)
 const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
 
 const filters = reactive({
@@ -267,9 +266,13 @@ function buildParams(): Record<string, string | number> {
 
 async function fetchStats() {
   try {
-    stats.value = await auditStatistics()
+    const data = await auditStatistics()
+    stats.value = {
+      total_count: data.total_count,
+      today_count: data.today_count,
+    }
   } catch {
-    stats.value = { total_count: 0, today_count: 0, success_rate: 0, failure_count: 0 }
+    stats.value = { total_count: 0, today_count: 0 }
   }
 }
 
@@ -417,38 +420,30 @@ watch(
     body-fill
   >
     <div class="hfl-ops-page hfl-ops-page--fill">
-      <div class="hfl-ops-stats-grid hfl-ops-stats-grid--4">
+      <div class="hfl-ops-stats-grid hfl-ops-stats-grid--2">
         <OpsStatCard
           :label="t('ops.audit.statTotal')"
           :value="stats.total_count"
-          accent="indigo"
+          tone="primary"
           accent-side="left"
         />
         <OpsStatCard
           :label="t('ops.audit.statToday')"
           :value="stats.today_count"
-          accent="green"
-          accent-side="left"
-        />
-        <OpsStatCard
-          :label="t('ops.audit.statFailures')"
-          :value="stats.failure_count"
-          accent="red"
-          accent-side="left"
-          value-class="text-red-600"
-        />
-        <OpsStatCard
-          :label="t('ops.audit.statSuccessRate')"
-          :value="`${stats.success_rate}%`"
-          accent="blue"
+          tone="info"
           accent-side="left"
         />
       </div>
 
       <HflTablePanel fill>
         <template #toolbar>
-          <el-dropdown>
+          <el-dropdown
+            trigger="click"
+            popper-class="hfl-actions-dropdown"
+            @visible-change="exportMenuOpen = $event"
+          >
             <el-button
+              :class="{ 'hfl-action-trigger--open': exportMenuOpen }"
               :title="t('ops.audit.export')"
               :aria-label="t('ops.audit.export')"
             >
@@ -457,10 +452,22 @@ watch(
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item @click="exportLogs('json')">
-                  JSON
+                  <span class="el-dropdown-menu__item-content">
+                    <FileJson
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>JSON</span>
+                  </span>
                 </el-dropdown-item>
                 <el-dropdown-item @click="exportLogs('csv')">
-                  CSV
+                  <span class="el-dropdown-menu__item-content">
+                    <FileSpreadsheet
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>CSV</span>
+                  </span>
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -615,7 +622,7 @@ watch(
             >
               <template #default="{ row }">
                 <span class="hfl-ops-user-chip hfl-audit-user-cell">
-                  <span class="hfl-audit-user-cell__name font-medium text-slate-800">
+                  <span class="hfl-audit-user-cell__name font-medium">
                     {{ row.user_display || t('ops.audit.systemUser') }}
                   </span>
                 </span>
@@ -995,7 +1002,7 @@ watch(
                 <span class="hfl-detail-row__label">{{ t('ops.audit.errorMessage') }}</span>
                 <span
                   class="hfl-detail-row__value"
-                  :class="{ 'text-red-600': detailLog.error_message, 'hfl-detail-row__empty': !hasDisplayValue(detailLog.error_message) }"
+                  :class="{ 'hfl-audit-detail-error': detailLog.error_message, 'hfl-detail-row__empty': !hasDisplayValue(detailLog.error_message) }"
                 >
                   {{ displayValue(detailLog.error_message) }}
                 </span>
@@ -1091,6 +1098,11 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--color-text-title);
+}
+
+.hfl-audit-detail-error {
+  color: var(--color-error-text);
 }
 
 .hfl-audit-filter-drawer :deep(.el-drawer__body) {
@@ -1107,10 +1119,10 @@ watch(
   padding: 10px 12px;
   margin: 0;
   overflow: auto;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: rgb(248 250 252);
-  color: rgb(51 65 85);
+  background: var(--color-grey-1);
+  color: var(--color-text-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
   line-height: 1.55;

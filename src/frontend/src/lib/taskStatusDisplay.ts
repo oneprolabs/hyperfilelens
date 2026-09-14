@@ -17,7 +17,7 @@ export function taskStatusTone(status?: string | null): StatusTagTone {
   if (normalized === 'success' || normalized === 'available') return 'success'
   if (normalized === 'running' || normalized === 'dispatching' || normalized === 'creating') return 'info'
   if (normalized === 'failed' || normalized === 'timeout') return 'danger'
-  if (normalized === 'waiting' || normalized === 'blocked' || normalized === 'retrying' || normalized === 'partial' || normalized === 'degraded' || normalized === 'warning') return 'warning'
+  if (normalized === 'pending' || normalized === 'waiting' || normalized === 'blocked' || normalized === 'retrying' || normalized === 'partial' || normalized === 'degraded' || normalized === 'warning') return 'warning'
   return 'neutral'
 }
 

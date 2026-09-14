@@ -7,7 +7,7 @@ import { createI18n } from 'vue-i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../../locales/en'
-import { storeSessionNotice } from '../../lib/sessionNotice'
+import { clearSharedSessionNotice, storeSessionNotice } from '../../lib/sessionNotice'
 import Login from './Login.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -179,13 +179,19 @@ describe('Login Turnstile lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     window.sessionStorage.clear()
+    clearSharedSessionNotice()
     for (const key of Object.keys(mocks.routeQuery)) {
       delete mocks.routeQuery[key]
     }
     mocks.fetchDeployProfile.mockResolvedValue({
+      site_role: 'tenant',
       email_signup_enabled: false,
       email_code_login_available: false,
       password_reset_available: false,
+      platform_ops_access_allowed: false,
+      tenant_public_url: 'https://tenant.example.test',
+      landing_path: '/',
+      admin_console_landing_path: '/platform-ops/overview',
     })
     mocks.turnstileBlocked = false
     mocks.loadTurnstileConfig.mockResolvedValue(undefined)
@@ -193,7 +199,7 @@ describe('Login Turnstile lifecycle', () => {
     mocks.buildTurnstilePayload.mockImplementation((token: string) => (
       token ? { turnstile_token: token } : {}
     ))
-    mocks.confirmCurrentSession.mockResolvedValue({ state: 'unknown' })
+    mocks.confirmCurrentSession.mockResolvedValue({ state: 'unauthenticated' })
     installDefaultApiMock()
   })
 
@@ -207,13 +213,52 @@ describe('Login Turnstile lifecycle', () => {
     wrapper.unmount()
   })
 
+  it('restores an existing cookie session before showing the login form', async () => {
+    mocks.confirmCurrentSession.mockResolvedValue({
+      state: 'authenticated',
+      user: successfulLoginResponse.data.user,
+    })
+    mocks.routerPush.mockResolvedValue(undefined)
+
+    const wrapper = await mountLogin(1440)
+
+    expect(mocks.confirmCurrentSession).toHaveBeenCalledOnce()
+    expect(mocks.routerPush).toHaveBeenCalledWith('/')
+    expect(wrapper.find('#login-method-panel').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('restores an authorized Admin Console session to its ops landing page', async () => {
+    mocks.confirmCurrentSession.mockResolvedValue({
+      state: 'authenticated',
+      user: { ...successfulLoginResponse.data.user, is_staff: true },
+    })
+    mocks.fetchDeployProfile.mockResolvedValue({
+      site_role: 'ops',
+      email_signup_enabled: false,
+      email_code_login_available: false,
+      password_reset_available: false,
+      platform_ops_access_allowed: true,
+      tenant_public_url: 'https://tenant.example.test',
+      landing_path: '/platform-ops/overview',
+      admin_console_landing_path: '/platform-ops/overview',
+    })
+    mocks.routerPush.mockResolvedValue(undefined)
+
+    const wrapper = await mountLogin(1440)
+
+    expect(mocks.routerPush).toHaveBeenCalledWith('/platform-ops/overview')
+    expect(wrapper.find('#login-method-panel').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('shows a backend-produced session notice only once', async () => {
     expect(storeSessionNotice('TOKEN_REUSED')).toBe(true)
 
     const firstMount = await mountLogin(1440)
     const securityNotice = firstMount.get('.session-alert')
     expect(securityNotice.text()).toContain(
-      'Unusual sign-in activity. Sign in again.',
+      'Sign-in no longer valid. Sign in again.',
     )
     expect(securityNotice.classes()).toContain('session-alert--warning')
     expect(firstMount.getComponent({ name: 'ElAlert' }).props('type')).toBe('warning')
@@ -233,6 +278,60 @@ describe('Login Turnstile lifecycle', () => {
     expect(expiryNotice.text()).toContain('Sign-in expired. Sign in again.')
     expect(expiryNotice.classes()).toContain('session-alert--info')
     expect(wrapper.getComponent({ name: 'ElAlert' }).props('type')).toBe('info')
+    wrapper.unmount()
+  })
+
+  it('exposes an accessible password form when no method tabs are available', async () => {
+    const wrapper = await mountLogin(1440)
+    const panel = wrapper.get('#login-method-panel')
+    const form = wrapper.get('form.login-password-form')
+    const email = wrapper.get('#login-email')
+    const password = wrapper.get('#login-password')
+
+    expect(panel.attributes('aria-labelledby')).toBe('login-card-title')
+    expect(form.exists()).toBe(true)
+    expect(wrapper.get('label[for="login-email"]').text()).toBe('Email address')
+    expect(wrapper.get('label[for="login-password"]').text()).toBe('Password')
+    expect(email.attributes('tabindex')).toBeUndefined()
+    expect(password.attributes('tabindex')).toBeUndefined()
+
+    await email.setValue('invalid-email')
+    expect(email.attributes('aria-invalid')).toBe('true')
+    expect(email.attributes('aria-describedby')).toBe('login-email-error')
+    expect(wrapper.get('#login-email-error').attributes('role')).toBe('alert')
+    wrapper.unmount()
+  })
+
+  it('shows account lockout as a form notice without inventing a countdown', async () => {
+    mocks.api.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/auth/google/config') {
+        return { code: '0000', data: { enabled: false } }
+      }
+      if (path === '/api/v1/auth/email-login') {
+        return {
+          code: '1001',
+          data: {},
+          error: {
+            error_code: 'ACCOUNT_LOCKED',
+            fields: { email: ['Backend lockout detail'] },
+          },
+        }
+      }
+      throw new Error(`Unexpected API path: ${path}`)
+    })
+
+    const wrapper = await mountLogin(1440)
+    await fillCredentials(wrapper)
+    wrapper.getComponent(AuthTurnstileFieldStub).vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+
+    const notice = wrapper.get('.login-form-alert')
+    expect(notice.text()).toContain('Account temporarily locked')
+    expect(notice.text()).toContain('Try again in a few minutes')
+    expect(notice.text()).not.toContain('attempts left')
+    expect(notice.text()).not.toMatch(/\d{1,2}:\d{2}/)
     wrapper.unmount()
   })
 
@@ -296,7 +395,7 @@ describe('Login Turnstile lifecycle', () => {
     wrapper.unmount()
   })
 
-  it('requires non-empty credentials after Turnstile succeeds', async () => {
+  it('keeps sign-in clickable so empty credentials receive validation feedback', async () => {
     const wrapper = await mountLogin(1440)
     const inputs = wrapper.findAll('input')
     const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
@@ -304,13 +403,15 @@ describe('Login Turnstile lifecycle', () => {
 
     turnstile.vm.$emit('success', 'verified-token')
     await wrapper.vm.$nextTick()
-    expect(submit.attributes('disabled')).toBeDefined()
+    expect(submit.attributes('disabled')).toBeUndefined()
     await submit.trigger('click')
     await flushPromises()
     expect(emailLoginCalls()).toHaveLength(0)
+    expect(wrapper.findAll('.input-wrapper.has-error')).toHaveLength(2)
+    expect(wrapper.get('form.login-password-form').classes()).toContain('is-validation-shaking')
 
     await inputs[0].setValue('person@example.com')
-    expect(submit.attributes('disabled')).toBeDefined()
+    expect(submit.attributes('disabled')).toBeUndefined()
 
     await inputs[1].setValue('invalid')
     expect(submit.attributes('disabled')).toBeUndefined()
@@ -346,10 +447,12 @@ describe('Login Turnstile lifecycle', () => {
     mocks.routerPush
       .mockResolvedValueOnce(new Error('lazy route failed'))
       .mockResolvedValueOnce(undefined)
-    mocks.confirmCurrentSession.mockResolvedValue({
-      state: 'authenticated',
-      user: successfulLoginResponse.data.user,
-    })
+    mocks.confirmCurrentSession
+      .mockResolvedValueOnce({ state: 'unauthenticated' })
+      .mockResolvedValue({
+        state: 'authenticated',
+        user: successfulLoginResponse.data.user,
+      })
     const wrapper = await mountLogin(1440)
     await fillCredentials(wrapper)
     const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
@@ -365,13 +468,16 @@ describe('Login Turnstile lifecycle', () => {
     await wrapper.get('.login-recovery button').trigger('click')
     await flushPromises()
 
-    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(1)
+    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(2)
     expect(mocks.routerPush).toHaveBeenCalledTimes(2)
     expect(emailLoginCalls()).toHaveLength(1)
     wrapper.unmount()
   })
 
   it('keeps an unknown session locked until it can be confirmed', async () => {
+    mocks.confirmCurrentSession
+      .mockResolvedValueOnce({ state: 'unauthenticated' })
+      .mockResolvedValue({ state: 'unknown' })
     mocks.api.mockImplementation(async (path: string) => {
       if (path === '/api/v1/auth/google/config') {
         return { code: '0000', data: { enabled: false } }
@@ -392,12 +498,12 @@ describe('Login Turnstile lifecycle', () => {
 
     expect(wrapper.get('.login-recovery__title').text()).toBe('Sign-in status unavailable')
     expect(wrapper.find('#login-method-panel').exists()).toBe(false)
-    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(1)
+    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(2)
     expect(emailLoginCalls()).toHaveLength(1)
 
     await wrapper.get('.login-recovery button').trigger('click')
     await flushPromises()
-    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(2)
+    expect(mocks.confirmCurrentSession).toHaveBeenCalledTimes(3)
     expect(emailLoginCalls()).toHaveLength(1)
     wrapper.unmount()
   })
@@ -418,7 +524,7 @@ describe('Login Turnstile lifecycle', () => {
 
     expect(wrapper.find('.login-recovery').exists()).toBe(false)
     expect(wrapper.get('#login-method-panel').exists()).toBe(true)
-    expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -505,7 +611,7 @@ describe('Login Turnstile lifecycle', () => {
     await inputs[1].setValue('ValidPass123')
 
     expect(wrapper.get('.input-wrapper.has-error .error-msg').text()).toBe('Invalid email format')
-    expect(submit.attributes('disabled')).toBeDefined()
+    expect(submit.attributes('disabled')).toBeUndefined()
 
     await inputs[1].trigger('keyup.enter')
     await flushPromises()
@@ -565,7 +671,7 @@ describe('Login Turnstile lifecycle', () => {
     const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
     const submit = wrapper.get('button.submit-btn')
 
-    expect(submit.attributes('disabled')).toBeDefined()
+    expect(submit.attributes('disabled')).toBeUndefined()
 
     turnstile.vm.$emit('success', 'initial-token')
     await wrapper.vm.$nextTick()
@@ -573,7 +679,7 @@ describe('Login Turnstile lifecycle', () => {
 
     turnstile.vm.$emit('invalidate')
     await wrapper.vm.$nextTick()
-    expect(submit.attributes('disabled')).toBeDefined()
+    expect(submit.attributes('disabled')).toBeUndefined()
     expect(turnstile.props('errorMessage')).toBe('')
     expect(credentials.email.value).toBe('person@example.com')
     expect(credentials.password.value).toBe('ValidPass123')
@@ -582,7 +688,7 @@ describe('Login Turnstile lifecycle', () => {
     await wrapper.vm.$nextTick()
     turnstile.vm.$emit('expire')
     await wrapper.vm.$nextTick()
-    expect(submit.attributes('disabled')).toBeDefined()
+    expect(submit.attributes('disabled')).toBeUndefined()
     expect(turnstile.props('errorMessage')).toBe(
       'Human verification expired. Please complete the new challenge.',
     )
@@ -642,7 +748,7 @@ describe('Login Turnstile lifecycle', () => {
     await flushPromises()
 
     expect(mocks.resetWidget).toHaveBeenCalledTimes(1)
-    expect(submit.attributes('disabled')).toBeDefined()
+    expect(submit.attributes('disabled')).toBeUndefined()
     expect(turnstile.props('errorMessage')).toBe('Human verification failed or expired')
 
     turnstile.vm.$emit('success', 'accepted-token')
@@ -673,7 +779,7 @@ describe('Login Turnstile lifecycle', () => {
 
     expect(mocks.retryTurnstileConfig).toHaveBeenCalledTimes(1)
     expect(turnstile.props('verified')).toBe(false)
-    expect(submit.attributes('disabled')).toBeDefined()
+    expect(submit.attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -729,7 +835,7 @@ describe('Login Turnstile lifecycle', () => {
     await flushPromises()
 
     expect(mocks.resetWidget).toHaveBeenCalledTimes(1)
-    expect(submit.attributes('disabled')).toBeDefined()
+    expect(submit.attributes('disabled')).toBeUndefined()
     expect(wrapper.get('.input-wrapper.has-error .error-msg').text()).toBe('Incorrect password')
 
     await wrapper.findAll('input')[1].setValue('CorrectPass123')

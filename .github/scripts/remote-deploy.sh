@@ -2,7 +2,7 @@
 # Download one published HFL release on the target host and install or upgrade it.
 set -euo pipefail
 
-REPOSITORY="HyperBDR/hyperfilelens"
+REPOSITORY="oneprolabs/hyperfilelens"
 TAG=""
 CHANNEL="release"
 INSTALL_DIR="/opt/hyperfilelens"
@@ -17,7 +17,7 @@ usage() {
 	cat <<'USAGE'
 Usage: remote-deploy.sh --tag vX.Y.Z --channel release --direct-host HOST [options]
 
-  --repository OWNER/REPO  Public GitHub repository (default: HyperBDR/hyperfilelens)
+  --repository OWNER/REPO  Public GitHub repository (default: oneprolabs/hyperfilelens)
 	--channel CHANNEL       Artifact channel: release (default: release)
   --install-dir DIR        HFL install directory (default: /opt/hyperfilelens)
   --direct-host HOST       SSH-reachable host used for direct listener URLs

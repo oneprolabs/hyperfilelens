@@ -108,6 +108,27 @@ class LensDeployUrlTest(unittest.TestCase):
         env_str.side_effect = side_effect
         self.assertEqual(deploy.lens_gateway_base_url(), "http://192.168.1.10:20080")
 
+    @patch(
+        "apps.instance_settings.services.external_access.configured_external_access_url",
+        return_value="https://public.example.com:11443",
+    )
+    @patch("apps.lens_bridge.deploy.env_str")
+    def test_runtime_url_precedes_bundled_gateway_override(
+        self,
+        env_str,
+        _configured_url,
+    ):
+        values = {
+            "SOURCELENS_MODE": "bundled",
+            "LENS_GATEWAY_BASE_URL": "https://private.example.com/sourcelens",
+        }
+        env_str.side_effect = lambda key, default="": values.get(key, default)
+
+        self.assertEqual(
+            deploy.lens_gateway_base_url(),
+            "https://public.example.com:11443/sourcelens",
+        )
+
     @patch("apps.lens_bridge.deploy.env_str")
     def test_lens_gateway_base_url_passthrough_localhost(self, env_str):
         def side_effect(key, default=""):

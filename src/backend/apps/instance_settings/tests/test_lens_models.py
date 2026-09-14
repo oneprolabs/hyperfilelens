@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
@@ -117,3 +117,355 @@ class HostPlatformLensModelTests(TestCase):
         test_response = self.client.post(f"{foreign_path}/test-call", {}, format="json")
         self.assertEqual(test_response.status_code, status.HTTP_404_NOT_FOUND)
         request_json.assert_not_called()
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_saved_model_connection_uses_sourcelens_test_call_contract(
+        self,
+        request_json,
+    ):
+        request_json.return_value = {"ok": True}
+
+        response = self.client.post(f"{self.path}/test-call", {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        request_json.assert_called_once_with(
+            "POST",
+            "/api/v1/admin/llm-config/test-call/",
+            json_body={
+                "config_uuid": str(self.model_uuid),
+                "prompt": "Hi",
+                "max_tokens": 64,
+            },
+        )
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_active_model_is_tested_before_it_is_created(self, request_json):
+        created_uuid = uuid.UUID("11111111-2222-3333-4444-555555555555")
+        model_body = {
+            "provider": "openai_compatible",
+            "config": {
+                "model": "example/chat-model",
+                "api_key": "secret-value",
+                "api_base": "https://models.example.test/v1",
+            },
+            "is_active": True,
+        }
+        request_json.side_effect = [
+            {"ok": True, "message": "OK"},
+            {"uuid": str(created_uuid), **model_body},
+        ]
+
+        response = self.client.post(
+            "/api/v1/platform-ops/lens/models",
+            {"name": "Example model", **model_body},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            request_json.call_args_list,
+            [
+                call(
+                    "POST",
+                    "/api/v1/admin/llm-config/test/",
+                    json_body=model_body,
+                ),
+                call(
+                    "POST",
+                    "/api/v1/admin/llm-config/",
+                    json_body=model_body,
+                ),
+            ],
+        )
+        created_link = LensOrgModelLink.objects.get(sl_config_uuid=created_uuid)
+        self.assertEqual(created_link.organization, self.platform_org)
+        self.assertEqual(created_link.display_name, "Example model")
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_active_model_is_not_created_when_connection_test_fails(
+        self,
+        request_json,
+    ):
+        request_json.return_value = {
+            "ok": False,
+            "message": "The API key was rejected.",
+        }
+
+        response = self.client.post(
+            "/api/v1/platform-ops/lens/models",
+            {
+                "name": "Unavailable model",
+                "provider": "openai_compatible",
+                "config": {
+                    "model": "example/chat-model",
+                    "api_key": "invalid-value",
+                },
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["data"]["code"],
+            "AI_MODEL.CONNECTION_TEST_FAILED",
+        )
+        self.assertEqual(request_json.call_count, 1)
+        self.assertFalse(
+            LensOrgModelLink.objects.filter(display_name="Unavailable model").exists()
+        )
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_active_model_rejects_ambiguous_connection_test_result(
+        self,
+        request_json,
+    ):
+        request_json.return_value = {"message": "OK"}
+
+        response = self.client.post(
+            "/api/v1/platform-ops/lens/models",
+            {
+                "name": "Ambiguous model",
+                "provider": "openai_compatible",
+                "config": {
+                    "model": "example/chat-model",
+                    "api_key": "secret-value",
+                },
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(request_json.call_count, 1)
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_inactive_model_can_be_created_without_connection_test(
+        self,
+        request_json,
+    ):
+        created_uuid = uuid.UUID("66666666-7777-8888-9999-aaaaaaaaaaaa")
+        model_body = {
+            "provider": "openai_compatible",
+            "config": {
+                "model": "example/chat-model",
+                "api_key": "secret-value",
+            },
+            "is_active": False,
+        }
+        request_json.return_value = {"uuid": str(created_uuid), **model_body}
+
+        response = self.client.post(
+            "/api/v1/platform-ops/lens/models",
+            {"name": "Inactive model", **model_body},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        request_json.assert_called_once_with(
+            "POST",
+            "/api/v1/admin/llm-config/",
+            json_body=model_body,
+        )
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_inactive_model_requires_credentials_before_it_is_enabled(
+        self,
+        request_json,
+    ):
+        manual_uuid = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
+        LensOrgModelLink.objects.create(
+            organization=self.platform_org,
+            sl_config_uuid=manual_uuid,
+            display_name="Inactive model",
+        )
+        response = self.client.patch(
+            f"/api/v1/platform-ops/lens/models/{manual_uuid}",
+            {"is_active": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["data"]["code"],
+            "AI_MODEL.CONNECTION_TEST_REQUIRED",
+        )
+        request_json.assert_not_called()
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_inactive_model_stays_disabled_when_connection_test_fails(
+        self,
+        request_json,
+    ):
+        manual_uuid = uuid.UUID("cccccccc-dddd-eeee-ffff-000000000000")
+        LensOrgModelLink.objects.create(
+            organization=self.platform_org,
+            sl_config_uuid=manual_uuid,
+            display_name="Unavailable model",
+        )
+        request_json.return_value = {
+            "success": False,
+            "detail": "The provider is unavailable.",
+        }
+        model_body = {
+            "provider": "openai_compatible",
+            "config": {
+                "model": "example/chat-model",
+                "api_key": "invalid-secret-value",
+            },
+            "is_active": True,
+        }
+
+        response = self.client.patch(
+            f"/api/v1/platform-ops/lens/models/{manual_uuid}",
+            model_body,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["data"]["code"],
+            "AI_MODEL.CONNECTION_TEST_FAILED",
+        )
+        request_json.assert_called_once_with(
+            "POST",
+            "/api/v1/admin/llm-config/test/",
+            json_body=model_body,
+        )
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_enabling_with_edited_settings_tests_the_new_configuration(
+        self,
+        request_json,
+    ):
+        manual_uuid = uuid.UUID("dddddddd-eeee-ffff-0000-111111111111")
+        LensOrgModelLink.objects.create(
+            organization=self.platform_org,
+            sl_config_uuid=manual_uuid,
+            display_name="Inactive model",
+        )
+        model_body = {
+            "provider": "openai_compatible",
+            "config": {
+                "model": "example/new-model",
+                "api_key": "new-secret-value",
+            },
+            "is_active": True,
+        }
+        request_json.side_effect = [
+            {"ok": True},
+            {"uuid": str(manual_uuid), **model_body},
+        ]
+
+        response = self.client.patch(
+            f"/api/v1/platform-ops/lens/models/{manual_uuid}",
+            {"name": "Updated model", **model_body},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            request_json.call_args_list,
+            [
+                call(
+                    "POST",
+                    "/api/v1/admin/llm-config/test/",
+                    json_body=model_body,
+                ),
+                call(
+                    "PUT",
+                    f"/api/v1/admin/llm-config/{manual_uuid}/",
+                    json_body=model_body,
+                ),
+            ],
+        )
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_connection_update_without_active_flag_is_still_tested(
+        self,
+        request_json,
+    ):
+        manual_uuid = uuid.UUID("eeeeeeee-ffff-0000-1111-222222222222")
+        LensOrgModelLink.objects.create(
+            organization=self.platform_org,
+            sl_config_uuid=manual_uuid,
+            display_name="Active model",
+        )
+        model_body = {
+            "provider": "openai_compatible",
+            "config": {
+                "model": "example/new-model",
+                "api_key": "new-secret-value",
+            },
+        }
+        request_json.side_effect = [
+            {"uuid": str(manual_uuid), "is_active": True},
+            {
+                "ok": False,
+                "detail": "The provider rejected the credentials.",
+            },
+        ]
+
+        response = self.client.patch(
+            f"/api/v1/platform-ops/lens/models/{manual_uuid}",
+            model_body,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            request_json.call_args_list,
+            [
+                call(
+                    "GET",
+                    f"/api/v1/admin/llm-config/{manual_uuid}/",
+                ),
+                call(
+                    "POST",
+                    "/api/v1/admin/llm-config/test/",
+                    json_body=model_body,
+                ),
+            ],
+        )
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_inactive_connection_update_without_active_flag_skips_testing(
+        self,
+        request_json,
+    ):
+        manual_uuid = uuid.UUID("ffffffff-0000-1111-2222-333333333333")
+        LensOrgModelLink.objects.create(
+            organization=self.platform_org,
+            sl_config_uuid=manual_uuid,
+            display_name="Inactive model",
+        )
+        model_body = {
+            "provider": "openai_compatible",
+            "config": {"model": "example/new-model"},
+        }
+        request_json.side_effect = [
+            {"uuid": str(manual_uuid), "is_active": False},
+            {"uuid": str(manual_uuid), "is_active": False, **model_body},
+        ]
+
+        response = self.client.patch(
+            f"/api/v1/platform-ops/lens/models/{manual_uuid}",
+            model_body,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            request_json.call_args_list,
+            [
+                call(
+                    "GET",
+                    f"/api/v1/admin/llm-config/{manual_uuid}/",
+                ),
+                call(
+                    "PUT",
+                    f"/api/v1/admin/llm-config/{manual_uuid}/",
+                    json_body=model_body,
+                ),
+            ],
+        )

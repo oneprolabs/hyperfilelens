@@ -165,15 +165,9 @@ def _gateway_reader_context(
     )
     if gateway_link is None:
         raise ValidationError({"gateway_link_id": "Data gateway is not available."})
-    expected_owner_user_id = (
-        requesting_user_id
-        if gateway_link.scope == LensGatewayLink.GatewayScope.USER
-        else None
-    )
     context = context_for_gateway_link(
         tenant_organization=tenant_organization,
         gateway_link=gateway_link,
-        expected_owner_user_id=expected_owner_user_id,
         require_ready=False,
     )
     runtime = gateway_readiness.gateway_runtime_state(context.gateway_link)
@@ -441,6 +435,13 @@ def normalized_browse_entries(
             "folder",
             "d",
         }
+        normalized_type = "dir" if is_directory else (
+            "symlink" if entry_type in {"symlink", "symbolic-link", "link"} else "file"
+        )
+        downloadable = False if normalized_type == "symlink" else item.get("downloadable", True) is not False
+        download_reason = str(item.get("download_reason") or "").strip()
+        if normalized_type == "symlink" and not download_reason:
+            download_reason = "Symbolic links cannot be downloaded individually."
         raw_size = item.get("size_bytes", item.get("size"))
         try:
             size_bytes = _exact_result_int(raw_size)
@@ -454,11 +455,12 @@ def normalized_browse_entries(
             {
                 "name": name,
                 "path": path,
-                "type": "dir" if is_directory else "file",
+                "type": normalized_type,
                 "size_bytes": size_bytes,
                 "size_known": size_known,
                 "modified_at": item.get("modified_at") or item.get("mod_time") or None,
-                "downloadable": item.get("downloadable", True) is not False,
+                "downloadable": downloadable,
+                "download_reason": download_reason or None,
                 "has_children": item.get("has_children"),
             }
         )

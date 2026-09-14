@@ -3,6 +3,17 @@ import { en } from '../locales/en'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from './taskEventDisplay'
 
 describe('task event internationalization', () => {
+  it('localizes neutral collected events without exposing the engine name', () => {
+    const messages = [
+      ['Deleting repository engine snapshots for reset', 'deletingKopiaSnapshotsForReset'],
+      ['repository engine snapshot already absent; continuing reset cleanup', 'kopiaSnapshotAlreadyAbsent'],
+      ['Deleting physical repository engine snapshot', 'deletingPhysicalKopiaSnapshot'],
+    ] as const
+    for (const [message, key] of messages) {
+      expect(taskEventMessageKey(message)).toBe(`ops.task.eventMessage.${key}`)
+      expect(en.ops.task.eventMessage[key]).not.toMatch(/kopia/i)
+    }
+  })
   it('covers every repository cleanup step exposed by the backend', () => {
     const cleanupSteps = [
       'cleanup_direct_nas_repositories',
@@ -26,6 +37,11 @@ describe('task event internationalization', () => {
       .toBe('ops.task.eventMessage.directNasRepositoryCleanupCompleted')
   })
 
+  it('maps the repository maintenance summary event to a translation key', () => {
+    expect(taskEventMessageKey('Repository maintenance summary'))
+      .toBe('ops.task.eventMessage.repositoryMaintenanceSummary')
+  })
+
   it('maps current and historical source deregistration events to the same copy', () => {
     const preparedKey = 'ops.task.eventMessage.sourceUnregisterPrepared'
     const finalizedKey = 'ops.task.eventMessage.sourceUnregisterFinalized'
@@ -40,6 +56,7 @@ describe('task event internationalization', () => {
     const messages = [
       ['Restore execution started', 'restoreExecutionStarted'],
       ['Restore item completed', 'restoreItemCompleted'],
+      ['Restore item skipped', 'restoreItemSkipped'],
       ['Restore item failed', 'restoreItemFailed'],
       ['Restore item cancelled', 'restoreItemCancelled'],
     ] as const
@@ -49,6 +66,8 @@ describe('task event internationalization', () => {
       expect(taskEventMessageKey(message)).toBe(`ops.task.eventMessage.${key}`)
       expect(translations[key]).toBe(message)
     }
+    expect(taskEventMessageKey('Restore finished with skipped items'))
+      .toBe('ops.task.eventMessage.restoreFinishedWithSkippedItems')
   })
 
   it('clarifies the prepared snapshot event sequence', () => {
@@ -78,6 +97,12 @@ describe('task event internationalization', () => {
   })
 
   it('parses repository step status events', () => {
+    expect(parseTaskStepStatusEvent('Step REPOSITORY_snapshot running')).toEqual({
+      step: 'kopia_snapshot', status: 'running',
+    })
+    expect(parseTaskStepStatusEvent('Step delete_REPOSITORY_snapshots failed')).toEqual({
+      step: 'delete_kopia_snapshots', status: 'failed',
+    })
     expect(parseTaskStepStatusEvent('Step delete_physical_repository running')).toEqual({
       step: 'delete_physical_repository',
       status: 'running',

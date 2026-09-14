@@ -1,7 +1,7 @@
 import { lazyRoute } from '../router/lazyRoute'
 
 /**
- * Community / OSS Platform Ops routes — AI Models (+ Runtime) shell.
+ * Community / OSS Platform Ops routes - AI Models and instance essentials.
  * Email / identity / environment page components stay here so the platform
  * extension can merge them into the full ops console. Data Gateways live in EE.
  */
@@ -18,6 +18,12 @@ export const platformOpsRoutes = [
     name: 'PlatformOpsAuthentication',
     meta: { analytics: { pageKey: 'platform.authentication', pageGroup: 'platform', pageSurface: 'admin', titleKey: 'platformOps.settings.identityTitle' } },
     component: lazyRoute(() => import('./pages/platform/settings/IdentitySettings.vue')),
+  },
+  {
+    path: 'platform/external-access',
+    name: 'PlatformOpsExternalAccess',
+    meta: { analytics: { pageKey: 'platform.external_access', pageGroup: 'platform', pageSurface: 'admin', titleKey: 'platformOps.settings.externalAccessTitle' } },
+    component: lazyRoute(() => import('./pages/platform/settings/ExternalAccessSettings.vue')),
   },
   {
     path: 'platform/runtime-environment',

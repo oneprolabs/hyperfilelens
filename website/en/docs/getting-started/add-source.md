@@ -7,7 +7,7 @@ description: Register a Windows host as a HyperFileLens backup source.
 
 This step installs the Agent on the Windows host that contains `C:\HFL-Quickstart`, registers the host with HyperFileLens, and confirms that it is online. You will select the directory to protect in the next step.
 
-This guide uses `C:\HFL-Quickstart` and its sample files to demonstrate the complete workflow. In actual use, replace them with the directories and files you want to protect, then adapt the restore verification and Insights questions to the selected content. You do not need to recreate the exact sample dataset used in this guide.
+This guide uses `C:\HFL-Quickstart` and its sample files to demonstrate the complete workflow. For your own backups, select the directories and files you want to protect, then adapt the restore check and Insights questions to that content. You do not need to reproduce the sample dataset exactly.
 
 ## Before you start
 
@@ -35,7 +35,7 @@ The Windows installation command appears under **Run the Install Command**.
 4. Paste the copied command into PowerShell and press **Enter**.
 5. Wait for the installer to report `Installation completed successfully` and `Node is online in HyperFileLens`.
 
-The command may contain short-lived registration information. Do not reuse a command from an old screenshot or publish the complete command in documentation, chat, or a public issue.
+The command may contain short-lived registration information. Do not reuse a command from an old screenshot or publish the full command in documentation, a chat, or a public issue.
 
 ![Windows Agent installation completed with user paths and installation details redacted](/docs/getting-started/windows-agent-installed.png)
 
@@ -55,5 +55,3 @@ Return to **Protection → Backup Wizard** and select the refresh button above t
 - The Windows host appears in the **Backup Sources** table.
 - **Lifecycle Status** is **Registered**.
 - **Connectivity** is **Online**.
-
-Next: [Configure the backup source](/en/docs/getting-started/configure-source) and select `C:\HFL-Quickstart`.

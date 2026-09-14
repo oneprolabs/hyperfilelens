@@ -254,14 +254,14 @@ class SnapshotDeleteTaskTests(TestCase):
         payload = mock_run_agent_task_sync.call_args.kwargs["payload"]
         self.assertEqual(payload["kopia_snapshot_ids"], ["kopia-a", "kopia-b"])
         events = task.events.filter(
-            message="Deleting physical Kopia snapshot"
+            message="Deleting physical repository engine snapshot"
         ).order_by("seq")
         self.assertEqual(events.count(), 2)
         self.assertEqual(
-            events[0].metadata["kopia_snapshot_display"], "kopia-a (/data/a)"
+            events[0].metadata["kopia_snapshot_display"], "repository engine-a (/data/a)"
         )
         self.assertEqual(
-            events[1].metadata["kopia_snapshot_display"], "kopia-b (/data/b)"
+            events[1].metadata["kopia_snapshot_display"], "repository engine-b (/data/b)"
         )
         self.assertEqual(events[0].metadata["object_id"], "kopia-a")
         self.assertEqual(events[0].metadata["object_names"], ["/data/a"])

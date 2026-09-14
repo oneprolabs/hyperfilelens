@@ -11,7 +11,7 @@ import { useDebouncedAction } from '../../composables/useDebouncedAction'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useAlertPolicyLabels } from '../../composables/useAlertPolicyLabels'
 import { formatLocalDateTime } from '../../lib/dateTime'
-import { lifecycleStatusTagAttrs, severityStatusTagAttrs, statusTagAttrs } from '../../lib/statusTag'
+import { alertStatusTagAttrs, lifecycleStatusTagAttrs, severityStatusTagAttrs } from '../../lib/statusTag'
 import { listChannels, listLogs, logStats, type NotificationLog } from '../../lib/notificationApi'
 
 const { t } = useI18n()
@@ -68,7 +68,7 @@ function notificationTypeLabel(type?: string | null) {
 }
 
 function notificationTypeTagAttrs(type?: string | null) {
-  return statusTagAttrs(type === 'resolved' ? 'success' : type === 'firing' ? 'warning' : 'neutral')
+  return alertStatusTagAttrs(type)
 }
 
 function severityLabel(severity?: string | null) {
@@ -200,27 +200,25 @@ watch(
         <OpsStatCard
           :label="t('ops.notification.logsTotal')"
           :value="stats.total"
-          accent="indigo"
+          tone="primary"
           accent-side="left"
         />
         <OpsStatCard
           :label="t('ops.notification.statusSuccess')"
           :value="stats.success"
-          accent="green"
+          tone="success"
           accent-side="left"
-          value-class="text-emerald-600"
         />
         <OpsStatCard
           :label="t('ops.notification.statusFailed')"
           :value="stats.failed"
-          accent="red"
+          tone="danger"
           accent-side="left"
-          value-class="text-red-600"
         />
         <OpsStatCard
           :label="t('ops.notification.successRate')"
           :value="`${stats.success_rate}%`"
-          accent="blue"
+          tone="success"
           accent-side="left"
         />
       </div>

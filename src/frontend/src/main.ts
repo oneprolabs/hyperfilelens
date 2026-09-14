@@ -29,6 +29,8 @@ async function bootstrap() {
   const app = createApp(App)
   await initSentry(app, router)
   initAppAnalytics(router)
+  setupAuthGuard()
+  setupSessionWatchdog()
   app.use(i18n)
   app.use(router)
   setupElementPlus(app)
@@ -37,8 +39,6 @@ async function bootstrap() {
     setLocale(String(i18n.global.locale.value))
   })
 
-  setupAuthGuard()
-  setupSessionWatchdog()
   app.mount('#app')
 
   void loadInstalledLangPacks().then(() => {

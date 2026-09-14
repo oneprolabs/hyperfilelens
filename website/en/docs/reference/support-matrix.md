@@ -1,9 +1,9 @@
 ---
-title: Supported Configurations
+title: Supported configurations
 description: Review platforms, backup sources, target storage, and Insights capabilities supported by HyperFileLens Community.
 ---
 
-# Supported Configurations
+# Supported configurations
 
 This page summarizes the primary platforms and capabilities supported by HyperFileLens Community. Support can vary by release, so also review the release notes for the version you plan to deploy.
 
@@ -18,7 +18,7 @@ This page summarizes the primary platforms and capabilities supported by HyperFi
 | Proxy | Ubuntu 20.04, 22.04, or 24.04 | amd64 |
 | Private Data Gateway | Ubuntu 20.04, 22.04, or 24.04 | amd64 |
 
-See [System Requirements](/en/docs/deployment/requirements) for CPU, memory, and disk requirements.
+See [System Requirements](/docs/deployment/requirements) for CPU, memory, and disk requirements.
 
 ## Backup sources
 
@@ -27,7 +27,7 @@ See [System Requirements](/en/docs/deployment/requirements) for CPU, memory, and
 | Host files | Linux, Windows, and macOS hosts running an Agent |
 | NAS | SMB or NFS shares connected through a Proxy; a supported Linux backup host may connect directly only when the product explicitly offers that option |
 
-HyperFileLens currently provides file-level backup. For a consistent copy of a database, virtual machine, or application, first use the relevant system or application tooling to create data suitable for file-level backup.
+HyperFileLens provides file-level backup. To create a consistent backup of a database, virtual machine, or application, first use the appropriate system or application tools to produce a file-level copy that HyperFileLens can protect.
 
 ## Target storage
 

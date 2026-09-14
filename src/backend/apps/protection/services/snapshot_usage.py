@@ -248,6 +248,8 @@ def reconcile_snapshot_usage_leases(*, limit: int = 500) -> dict[str, int]:
 
         if lease.consumer_type == SnapshotUsageLease.ConsumerType.CHAT:
             with transaction.atomic():
+                from apps.lens_bridge.services import teardown_blocking
+
                 session = (
                     LensSessionLink.all_objects.select_for_update()
                     .filter(pk=consumer_pk)
@@ -256,6 +258,12 @@ def reconcile_snapshot_usage_leases(*, limit: int = 500) -> dict[str, int]:
                 if session is None:
                     lease.delete()
                     released += 1
+                    continue
+                if teardown_blocking.remote_cleanup_pending(
+                    session.teardown_state_json
+                ):
+                    retained += 1
+                    retained_lease_ids.append(lease.id)
                     continue
                 if session.lifecycle_status in {
                     LensSessionLink.LifecycleStatus.READY,

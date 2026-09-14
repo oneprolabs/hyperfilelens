@@ -10,6 +10,19 @@ export PYTHONDONTWRITEBYTECODE=1
 
 bash -n "${online}/install.sh"
 PYTHONPYCACHEPREFIX="${tmp}/pycache" python3 -m py_compile "${online}/prepare.py"
+HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=15 python3 - "${online}/prepare.py" <<'PY'
+import runpy
+import sys
+
+module = runpy.run_path(sys.argv[1], run_name="hfl_prepare_retry_test")
+assert [module["registry_retry_delay"](attempt) for attempt in range(1, 5)] == [
+    15,
+    30,
+    60,
+    60,
+]
+assert module["PULL_ATTEMPTS"] == 5
+PY
 
 help_output="$("${online}/install.sh" --help)"
 grep -Fq -- '--mirror cn|global' <<<"${help_output}"
@@ -28,6 +41,27 @@ grep -Fq 'api.github.com/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1
 grep -Fq 'gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1' \
 	"${online}/install.sh"
 grep -Fq 'recent fallback tags:' "${online}/install.sh"
+grep -Fq 'prepare_status == 75' "${online}/install.sh"
+grep -Fq 'prepare_status == 76' "${online}/install.sh"
+grep -Fq 'INSTALL_RECOVERY=0' "${online}/install.sh"
+grep -Fq 'Previous installation attempt detected · recovery will continue' \
+	"${online}/install.sh"
+grep -Fq 'HFL_INSTALL_RECOVERY="${INSTALL_RECOVERY}"' "${online}/install.sh"
+grep -Fq 'Required container images could not be downloaded completely.' \
+	"${online}/install.sh"
+grep -Fq 'Transient network failures are retried up to 5 times.' \
+	"${online}/install.sh"
+grep -Fq 'Downloaded image layers will be reused.' "${online}/install.sh"
+grep -Fq 'Required container images are unavailable or access was denied.' \
+	"${online}/install.sh"
+grep -Fq 'prepare_status == 77' "${online}/install.sh"
+grep -Fq 'Required container images could not be prepared or verified locally.' \
+	"${online}/install.sh"
+if grep -Eq 'Release contract|installation contract|online installation contract' \
+	"${online}/install.sh"; then
+	printf 'ERROR: online installer exposes retired installation-contract wording\n' >&2
+	exit 1
+fi
 grep -Fq 'prepared Community image revision does not match the published release' \
 	"${online}/install.sh"
 grep -Fq 'run this command through sudo' "${online}/install.sh"
@@ -42,11 +76,21 @@ grep -Fq 'DOCKER_PACKAGE_INSTALL_ATTEMPTED' "${online}/install.sh"
 grep -Fq 'COMPOSE_PACKAGE_INSTALL_ATTEMPTED' "${online}/install.sh"
 grep -Fq 'validate_compose_only_install_plan' "${online}/install.sh"
 grep -Fq 'selected_docker_apt_source_present' "${online}/install.sh"
-grep -Fq 'foreign_docker_runtime_present' "${online}/install.sh"
 grep -Fq 'docker_ce_runtime_present' "${online}/install.sh"
+grep -Fq 'unsupported_docker_runtime_present' "${online}/install.sh"
 grep -Fq 'docker_apt_source_present' "${online}/install.sh"
 grep -Fq 'Acquire::Retries=3' "${online}/install.sh"
+grep -Fq 'Acquire::http::Timeout=60' "${online}/install.sh"
+grep -Fq 'Acquire::https::Timeout=60' "${online}/install.sh"
 grep -Fq 'DPkg::Lock::Timeout=120' "${online}/install.sh"
+grep -Fq 'apt_install_with_network_retry' "${online}/install.sh"
+grep -Fq 'apt_update_quiet' "${online}/install.sh"
+grep -Fq 'apt_failure_is_transient' "${online}/install.sh"
+grep -Fq 'dpkg_state_clean_for_retry' "${online}/install.sh"
+grep -Fq 'preserve_apt_failure_log' "${online}/install.sh"
+grep -Fq 'fail_log_setup' "${online}/install.sh"
+grep -Fq 'The target filesystem is read-only.' "${online}/install.sh"
+grep -Fq 'No HyperFileLens installation or configuration was changed.' "${online}/install.sh"
 grep -Fq -- '--no-upgrade' "${online}/install.sh"
 for package in docker-ce docker-ce-cli containerd.io docker-compose-plugin; do
 	grep -Fq "${package}" "${online}/install.sh"
@@ -56,7 +100,7 @@ if grep -Eq 'def parse\([^)]*\)[[:space:]]*->[[:space:]]*(tuple|list|dict)\[' \
 	printf 'ERROR: online installer uses a Python annotation unsupported by Ubuntu 20.04\n' >&2
 	exit 1
 fi
-grep -Fq -- '--yes                   Non-interactive compatibility flag' \
+grep -Fq -- '--yes                       Non-interactive compatibility option' \
 	"${ROOT}/deploy/installer/install.sh"
 
 grep -Fq 'name: HFL - Publish Images & Upgrade SaaS' "${workflow}"
@@ -69,7 +113,7 @@ grep -Fq 'hyperfilelens-gateway-assets:${{ needs.prepare.outputs.version }}' "${
 grep -Fq 'hyperfilelens-language-assets:${{ needs.prepare.outputs.version }}' "${workflow}"
 
 installer="${ROOT}/deploy/installer/install.sh"
-[[ "$(grep -Fc 'if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then' "${installer}")" -eq 2 ]]
+[[ "$(grep -Fc 'if [[ "${HFL_ONLINE_CHILD:-0}" != "1" ]]; then' "${installer}")" -ge 2 ]]
 for summary_contract in \
 	'print_section "Platform Data Gateway"' \
 	'print_section "Published resources"' \
@@ -81,14 +125,95 @@ for summary_contract in \
 	'print_value "Install log"'; do
 	grep -Fq "${summary_contract}" "${installer}"
 done
+for install_state_contract in \
+	'INSTALL_COMPLETE_MARKER="${INSTALL_DIR}/.install-complete"' \
+	'INSTALL_IN_PROGRESS_MARKER="${INSTALL_DIR}/.install-in-progress"' \
+	'mark_install_in_progress' \
+	'mark_install_complete'; do
+	grep -Fq "${install_state_contract}" "${installer}"
+done
+for online_output_contract in \
+	'[3/4] Starting HyperFileLens' \
+	'[4/4] Verifying installation' \
+	'Verifying prepared runtime image' \
+	'Core data services' \
+	'Database initialization' \
+	'Application services' \
+	'Health checks' \
+	'Identity and email' \
+	'Multimodal model' \
+	'print_online_installation_verification'; do
+	grep -Fq "${online_output_contract}" "${installer}"
+done
+for online_upgrade_contract in \
+	'[3/4] Applying upgrade' \
+	'[4/4] Verifying upgrade' \
+	'Applying configuration, application files, and database migrations' \
+	'Upgrade backup is ready' \
+	'Upgrade verification passed' \
+	'Upgrade completed successfully' \
+	'Upgrade summary'; do
+	grep -Fq "${online_upgrade_contract}" "${installer}" \
+		|| grep -Fq "${online_upgrade_contract}" "${online}/install.sh"
+done
+grep -Fq 'Preparing bundled Insight services' "${installer}"
+grep -Fq 'Using bundled SourceLens files from' \
+	"${ROOT}/deploy/installer/sourcelens/install.sh"
 if grep -Eq 'publish-community-channel|community-channel|git push origin HEAD:main' "${workflow}"; then
 	printf 'ERROR: SaaS workflow must not manage a separate Community channel branch\n' >&2
 	exit 1
 fi
-grep -Fq 'SOURCELENS_DISTRIBUTION_TAG_OVERRIDE="${version}"' \
-	"${ROOT}/release/ci/assemble-saas-candidate.sh"
-grep -Fq 'SOURCELENS_DISTRIBUTION_TAG_OVERRIDE: ${{ needs.prepare.outputs.version }}' \
-	"${workflow}"
+grep -Fq 'write-upstream-image-metadata.sh' "${workflow}"
+grep -Fq 'resolve-upstream-images:' "${workflow}"
+grep -Fq 'Verify · Community image delivery · ${{ matrix.name }}' "${workflow}"
+grep -Fq 'build/saas-metadata ${{ matrix.region }}' "${workflow}"
+grep -Fq 'select(.region == "global")' "${workflow}"
+grep -Fq "'.upstream_ref'" "${workflow}"
+grep -Fq 'Ensure owned delivery mirrors' "${workflow}"
+grep -Fq '"$destination_ref" --if-missing' "${workflow}"
+if grep -Eq '^  (build-sourcelens-images|publish-runtime-images):' "${workflow}"; then
+	printf 'ERROR: SaaS workflow still publishes rebuilt upstream images\n' >&2
+	exit 1
+fi
+python3 - "${workflow}" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+for forbidden in (
+    "hyperfilelens-sourcelens-backend",
+    "hyperfilelens-sourcelens-frontend",
+    "hyperfilelens-sourcelens-lensnode",
+    "hyperfilelens-sourcelens-nginx",
+    "hyperfilelens-postgres",
+    "hyperfilelens-redis",
+    "slcache-",
+):
+    if forbidden in text:
+        raise SystemExit(f"SaaS workflow still publishes legacy image {forbidden}")
+build = text.split("  build-hfl-images:\n", 1)[1].split(
+    "\n  resolve-upstream-images:\n", 1
+)[0]
+expected = {
+    "Community · Backend",
+    "Community · Frontend",
+    "Enterprise · Backend",
+    "Enterprise · Frontend",
+}
+actual = {
+    line.strip()[len("- name: ") :]
+    for line in build.splitlines()
+    if line.startswith("          - name: ")
+}
+if actual != expected:
+    raise SystemExit(f"unexpected HFL publish matrix: {sorted(actual)}")
+# One matrix build publishes four HFL tags; the three asset jobs publish one
+# tag each. Shared runtime mirrors copy verified manifests without rebuilding.
+if text.count("          push: true\n") != 4:
+    raise SystemExit("SaaS workflow must contain exactly seven effective image publishes")
+if 'has("linux/amd64")' not in text:
+    raise SystemExit("upstream image verification does not require linux/amd64")
+PY
 if grep -E 'hyperfilelens-(agent|gateway|language)-assets:.*image_version' "${workflow}"; then
 	printf 'ERROR: OSS asset images must not use the Enterprise image suffix\n' >&2
 	exit 1
@@ -129,16 +254,16 @@ fi
 	# shellcheck source=../../tools/sourcelens/common.sh
 	source "${ROOT}/tools/sourcelens/common.sh"
 	sourcelens_load_config
-	SOURCELENS_GIT_REF=v0.47.9
+	SOURCELENS_GIT_REF=v0.49.5
 	SOURCELENS_HFL_VERSION=1.2.3
 	sourcelens_resolve_version
-	[[ "${SOURCELENS_DISTRIBUTION_TAG}" == 1.2.3-sl0.47.9 ]]
+	[[ "${SOURCELENS_DISTRIBUTION_TAG}" == 1.2.3-sl0.49.5 ]]
 )
 (
 	# shellcheck source=../../tools/sourcelens/common.sh
 	source "${ROOT}/tools/sourcelens/common.sh"
 	sourcelens_load_config
-	SOURCELENS_GIT_REF=v0.47.9
+	SOURCELENS_GIT_REF=v0.49.5
 	SOURCELENS_HFL_VERSION=1.2.3
 	SOURCELENS_DISTRIBUTION_TAG_OVERRIDE=1.2.3
 	sourcelens_resolve_version
@@ -164,6 +289,27 @@ module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
+for message in (
+    "dial tcp [::1]:443: network is unreachable",
+    "short read: unexpected EOF",
+    "unexpected commit digest; expected sha256:test",
+    "received unexpected HTTP status: 503 Service Unavailable",
+):
+    assert module.registry_failure_is_transient(message), message
+for message in (
+    "pull access denied for repository",
+    "denied: requested access to the resource is denied",
+    "manifest unknown: manifest unknown",
+    "no matching manifest for linux/amd64",
+):
+    assert module.registry_failure_is_terminal(message), message
+for message in (
+    "Docker Compose progress output only",
+    "short read: unexpected EOF",
+):
+    assert not module.registry_failure_is_terminal(message), message
+assert hasattr(module, "RegistryPreparationError")
+
 runtime = json.loads(
     (root / "deploy/online/sourcelens/runtime.json").read_text(encoding="utf-8")
 )
@@ -177,11 +323,21 @@ with tempfile.TemporaryDirectory() as temporary:
     module.render_sourcelens_compose(
         root / "deploy/installer/sourcelens/docker-compose.template.yml",
         output,
-        "1.2.3",
+        {
+            "backend": runtime["images"]["backend"]["local_ref"],
+            "frontend": runtime["images"]["frontend"]["local_ref"],
+            "lensnode": runtime["images"]["lensnode"]["local_ref"],
+            "nginx": "nginx:stable-alpine",
+            "postgres": "postgres:17",
+            "redis": "redis:alpine",
+        },
     )
     compose = output.read_text(encoding="utf-8")
     for component in ("backend", "frontend"):
-        expected = f"hyperfilelens-sourcelens-{component}:1.2.3"
+        expected = runtime["images"][component]["local_ref"]
+        if expected not in compose:
+            raise SystemExit(f"rendered SourceLens Compose is missing {expected}")
+    for expected in ("nginx:stable-alpine", "postgres:17", "redis:alpine"):
         if expected not in compose:
             raise SystemExit(f"rendered SourceLens Compose is missing {expected}")
     if "__SOURCELENS_" in compose or "HFL_EMBED_" in compose:
@@ -318,6 +474,17 @@ cat >"${fake_bin}/docker" <<'SH'
 set -euo pipefail
 digest="sha256:$(printf 'b%.0s' {1..64})"
 revision="$(printf 'c%.0s' {1..40})"
+digest_for_ref() {
+	case "$1" in
+	*sourcelens-backend*) printf '%s' sha256:b4fd19ea5bd3fed17e4c22eb44d4f4178181c33c29cc6ed956484642735408b8 ;;
+	*sourcelens-frontend*) printf '%s' sha256:2c183e50bc9e6281ea58ede269b3e7227f6e1bdf649a2c6b066cb5c651ecb802 ;;
+	*sourcelens-lensnode*) printf '%s' sha256:b865673d640ff575883e8321d5bae18ebd7d975d2f9bae3660167fee28e74b69 ;;
+	*postgres*) printf '%s' sha256:0027bef26712baaee437a4ea48fdf3d2d2e2bc5f0d81615374408ca320f3c7e3 ;;
+	*redis*) printf '%s' sha256:09160599abd229764c0fb44cb6be640294e1d360a54b19985ab4843dcf2d90f1 ;;
+	*nginx*) printf '%s' sha256:0d3b80406a13a767339fbe2f41406d6c7da727ab89cf8fae399e81f780f814d1 ;;
+	*) printf '%s' "${digest}" ;;
+	esac
+}
 case "${1:-} ${2:-}" in
 "info ")
 	[[ "${HFL_TEST_DOCKER_INFO_FAIL:-0}" != "1" ]]
@@ -330,10 +497,53 @@ case "${1:-} ${2:-}" in
 	printf '%s\n' "${HFL_TEST_DOCKER_COMPOSE_VERSION:-2.39.1}"
 	exit 0
 	;;
-"pull --platform")
-	printf '\rDocker native pull progress: %s\n' "${4:-unknown}"
+"compose --parallel")
+	[[ "${3:-}" == 5 ]]
+	compose_file=""
+	previous=""
+	for argument in "$@"; do
+		if [[ "${previous}" == -f ]]; then
+			compose_file=${argument}
+			break
+		fi
+		previous=${argument}
+	done
+	[[ -f "${compose_file}" ]]
+	image_count=$(grep -c '^    image: ' "${compose_file}")
+	platform_count=$(grep -c '^    platform: "linux/amd64"$' "${compose_file}")
+	[[ "${platform_count}" == "${image_count}" ]]
+	[[ " $* " == *' pull --ignore-pull-failures '* ]]
+	printf '\rDocker Compose native pull progress: parallel=%s images=%s\n' \
+		"${3}" "${image_count}"
 	if [[ "${HFL_TEST_DOCKER_PULL_FAIL:-0}" == "1" ]]; then
-		printf 'registry rejected test image: access denied\n' >&2
+		if [[ "${HFL_TEST_DOCKER_PULL_ERROR:-denied}" == network ]]; then
+			printf 'short read: unexpected EOF\n' >&2
+		elif [[ "${HFL_TEST_DOCKER_PULL_ERROR:-denied}" == progress ]]; then
+			:
+		else
+			printf 'registry rejected test image: access denied\n' >&2
+		fi
+		exit 23
+	fi
+	if [[ -n "${HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT:-}" ]] \
+		&& grep -Fq "docker.io/oneprolabs/${HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT}:" \
+			"${compose_file}"; then
+		count=0
+		[[ ! -f "${HFL_TEST_DOCKER_PULL_MARKER}" ]] \
+			|| count="$(cat "${HFL_TEST_DOCKER_PULL_MARKER}")"
+		count=$((count + 1))
+		printf '%s\n' "${count}" >"${HFL_TEST_DOCKER_PULL_MARKER}"
+		if ((count <= ${HFL_TEST_DOCKER_TRANSIENT_FAILURES:-1})); then
+			if [[ "${HFL_TEST_DOCKER_TRANSIENT_ERROR:-network}" != progress ]]; then
+				printf 'short read: unexpected EOF\n' >&2
+			fi
+			exit 23
+		fi
+	fi
+	if [[ -n "${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT:-}" ]] \
+		&& grep -Fq "docker.io/oneprolabs/${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT}:" \
+			"${compose_file}"; then
+		printf 'selected registry rejected test image: access denied\n' >&2
 		exit 23
 	fi
 	exit 0
@@ -341,14 +551,35 @@ case "${1:-} ${2:-}" in
 "image inspect")
 	ref=${3:-}
 	format=${5:-}
+	resolved_digest="$(digest_for_ref "${ref}")"
+	if [[ "${HFL_TEST_DOCKER_PULL_FAIL:-0}" == "1" && "${ref}" == */* ]]; then
+		exit 1
+	fi
+	if [[ -n "${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT:-}" \
+		&& "${ref}" == "docker.io/oneprolabs/${HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT}:"* ]]; then
+		exit 1
+	fi
+	if [[ -n "${HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT:-}" \
+		&& "${ref}" == "docker.io/oneprolabs/${HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT}:"* ]]; then
+		count=0
+		[[ ! -f "${HFL_TEST_DOCKER_PULL_MARKER}" ]] \
+			|| count="$(cat "${HFL_TEST_DOCKER_PULL_MARKER}")"
+		if ((count <= ${HFL_TEST_DOCKER_TRANSIENT_FAILURES:-1})); then
+			exit 1
+		fi
+	fi
 	if [[ "${format}" == *RepoDigests* ]]; then
-		printf '["%s@%s"]\n' "${ref%:*}" "${digest}"
+		repository=${ref%%@*}
+		repository=${repository%:*}
+		printf '["%s@%s"]\n' "${repository}" "${resolved_digest}"
+	elif [[ "${format}" == *Architecture* ]]; then
+		printf 'linux/amd64\n'
 	else
 		printf '%s\n' "${revision}"
 	fi
 	;;
 "buildx imagetools")
-	printf '{"digest":"%s"}\n' "${digest}"
+	printf '{"digest":"%s"}\n' "$(digest_for_ref "${4:-}")"
 	;;
 "image rm")
 	printf 'Untagged: %s\n' "${3:-unknown}"
@@ -435,6 +666,371 @@ if source.count(marker) != 1:
     raise SystemExit("online installer entrypoint marker is ambiguous")
 pathlib.Path(sys.argv[2]).write_text(source.split(marker, 1)[0], encoding="utf-8")
 PY
+
+(
+	# The release archive uses the same compact progress contract as the
+	# Source Host installer.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	progress_line="$(download_progress_line 'HyperFileLens v0.2.20 release package' \
+		15938355 31876710 14)"
+	[[ "${progress_line}" == *'[##########----------] | 50% | 15.2 MiB / 30.4 MiB | 1.1 MiB/s | ETA 14s' ]]
+	unknown_size="$(download_progress_line package 0 0 0)"
+	[[ "${unknown_size}" == *'package 0 B downloaded | 0 B/s | elapsed 0s' ]]
+)
+
+identity_candidate="${tmp}/identity-candidate"
+mkdir -p "${identity_candidate}"
+cat >"${identity_candidate}/MANIFEST.json" <<'JSON'
+{"version":"1.2.3","git_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","edition":"community","channel":"release"}
+JSON
+revision_mismatch_log="${tmp}/revision-mismatch.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	candidate="${identity_candidate}"
+	TAG=v1.2.3
+	RELEASE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+	verify_candidate_release
+) >"${revision_mismatch_log}" 2>&1; then
+	printf 'ERROR: mismatched Community image revision was accepted\n' >&2
+	exit 1
+fi
+grep -Fq 'prepared Community image revision does not match the published release' \
+	"${revision_mismatch_log}"
+matching_revision_log="${tmp}/matching-revision.log"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	candidate="${identity_candidate}"
+	TAG=v1.2.3
+	RELEASE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+	verify_candidate_release
+) >"${matching_revision_log}" 2>&1
+if [[ -s "${matching_revision_log}" ]]; then
+	printf 'ERROR: matching Community release validation produced unexpected output\n' >&2
+	cat "${matching_revision_log}" >&2
+	exit 1
+fi
+
+online_agent_fixture_root="${tmp}/online-agent"
+online_agent_fixture_legacy="${tmp}/online-agent-legacy"
+online_agent_fixture_service="${tmp}/hyperfilelens-agent.service"
+mkdir -p "${online_agent_fixture_root}/config"
+cat >"${online_agent_fixture_root}/config/agent.env" <<'EOF'
+HFL_ORG_KEY=tenant-org
+HFL_NODE_ROLE=agent
+EOF
+printf '[Unit]\nDescription=fixture\n' >"${online_agent_fixture_service}"
+agent_conflict_log="${tmp}/online-agent-conflict.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_AGENT_ROOT="${online_agent_fixture_root}"
+	ONLINE_AGENT_INSTALL_DIR="${online_agent_fixture_root}/bin"
+	ONLINE_AGENT_LEGACY_DATA_DIR="${online_agent_fixture_legacy}"
+	ONLINE_AGENT_SYSTEMD_UNIT_FILE="${online_agent_fixture_service}"
+	preflight_online_agent_conflict
+) >"${agent_conflict_log}" 2>&1; then
+	printf 'ERROR: online installer accepted a conflicting Agent\n' >&2
+	exit 1
+fi
+grep -Fq '[FAIL] A conflicting HyperFileLens Agent installation was detected' \
+	"${agent_conflict_log}"
+grep -Fq "Agent root        ${online_agent_fixture_root}" \
+	"${agent_conflict_log}"
+grep -Fq "Service           ${online_agent_fixture_service}" \
+	"${agent_conflict_log}"
+grep -Fq 'Agent installer   not found' "${agent_conflict_log}"
+grep -Fq 'No Agent, Docker service, or configuration was changed.' \
+	"${agent_conflict_log}"
+
+mkdir -p "${online_agent_fixture_root}/bin"
+cat >"${online_agent_fixture_root}/bin/install.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod 755 "${online_agent_fixture_root}/bin/install.sh"
+trusted_agent_conflict_log="${tmp}/online-trusted-agent-conflict.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_AGENT_ROOT="${online_agent_fixture_root}"
+	ONLINE_AGENT_INSTALL_DIR="${online_agent_fixture_root}/bin"
+	ONLINE_AGENT_LEGACY_DATA_DIR="${online_agent_fixture_legacy}"
+	ONLINE_AGENT_SYSTEMD_UNIT_FILE="${online_agent_fixture_service}"
+	preflight_online_agent_conflict
+) >"${trusted_agent_conflict_log}" 2>&1; then
+	printf 'ERROR: online installer accepted an Agent with a trusted uninstaller\n' >&2
+	exit 1
+fi
+grep -Fq "sudo ${online_agent_fixture_root}/bin/install.sh uninstall" \
+	"${trusted_agent_conflict_log}"
+
+cat >"${online_agent_fixture_root}/config/agent.env" <<'EOF'
+HFL_ORG_KEY=__platform_lens__
+HFL_NODE_ROLE=gateway
+EOF
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_AGENT_ROOT="${online_agent_fixture_root}"
+	ONLINE_AGENT_INSTALL_DIR="${online_agent_fixture_root}/bin"
+	ONLINE_AGENT_LEGACY_DATA_DIR="${online_agent_fixture_legacy}"
+	ONLINE_AGENT_SYSTEMD_UNIT_FILE="${online_agent_fixture_service}"
+	preflight_online_agent_conflict
+)
+
+rm -f "${online_agent_fixture_root}/config/agent.env"
+mkdir -p "${online_agent_fixture_legacy}"
+printf 'HFL_ORG_KEY=tenant-org\n' >"${online_agent_fixture_legacy}/agent.env"
+residual_agent_log="${tmp}/online-residual-agent.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_AGENT_ROOT="${online_agent_fixture_root}"
+	ONLINE_AGENT_INSTALL_DIR="${online_agent_fixture_root}/bin-missing"
+	ONLINE_AGENT_LEGACY_DATA_DIR="${online_agent_fixture_legacy}"
+	ONLINE_AGENT_SYSTEMD_UNIT_FILE="${tmp}/missing-agent.service"
+	preflight_online_agent_conflict
+) >"${residual_agent_log}" 2>&1; then
+	printf 'ERROR: online installer accepted residual Agent data\n' >&2
+	exit 1
+fi
+grep -Fq "Legacy data       ${online_agent_fixture_legacy}" "${residual_agent_log}"
+grep -Fq 'Agent installer   not found' "${residual_agent_log}"
+rm -rf "${online_agent_fixture_root}" "${online_agent_fixture_legacy}" \
+	"${online_agent_fixture_service}"
+
+# A fresh online installation keeps child details in the durable log and
+# forwards only explicitly marked lines to the terminal.
+child_success_package="${tmp}/child-success-package"
+child_success_log="${tmp}/child-success.log"
+child_success_terminal="${tmp}/child-success.terminal"
+mkdir -p "${child_success_package}"
+cat >"${child_success_package}/install.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'framework detail retained only in the durable log\n'
+printf '%s%s\n' "${HFL_ONLINE_CONSOLE_MARKER}" '  [ OK ] Concise child result'
+SH
+chmod 755 "${child_success_package}/install.sh"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	REGION=global
+	TAG=v1.2.3
+	ONLINE_LOG_FILE="${child_success_log}"
+	exec 3>"${child_success_terminal}"
+	run_fresh_community_install "${child_success_package}"
+)
+grep -Fq 'framework detail retained only in the durable log' "${child_success_log}"
+grep -Fq '  [ OK ] Concise child result' "${child_success_log}"
+grep -Fxq '  [ OK ] Concise child result' "${child_success_terminal}"
+if grep -Fq 'framework detail retained only in the durable log' \
+	"${child_success_terminal}" \
+	|| grep -Fq '__HFL_ONLINE_CONSOLE__' "${child_success_log}" \
+	|| grep -Fq '__HFL_ONLINE_CONSOLE__' "${child_success_terminal}"; then
+	printf 'ERROR: fresh-install child output filtering contract was violated\n' >&2
+	exit 1
+fi
+
+child_failure_package="${tmp}/child-failure-package"
+child_failure_log="${tmp}/child-failure.log"
+child_failure_terminal="${tmp}/child-failure.terminal"
+mkdir -p "${child_failure_package}"
+cat >"${child_failure_package}/install.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'internal child failure detail\n'
+exit 23
+SH
+chmod 755 "${child_failure_package}/install.sh"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	REGION=global
+	TAG=v1.2.3
+	ONLINE_LOG_FILE="${child_failure_log}"
+	exec 3>&1
+	run_fresh_community_install "${child_failure_package}"
+) >"${child_failure_terminal}" 2>&1; then
+	printf 'ERROR: a failed child installer was reported as successful\n' >&2
+	exit 1
+fi
+grep -Fq 'internal child failure detail' "${child_failure_log}"
+grep -Fq '[FAIL] HyperFileLens Community v1.2.3 installation failed' \
+	"${child_failure_terminal}"
+grep -Fq "review the full log: ${child_failure_log}" "${child_failure_terminal}"
+if grep -Fq 'internal child failure detail' "${child_failure_terminal}"; then
+	printf 'ERROR: child failure details leaked into concise terminal output\n' >&2
+	exit 1
+fi
+
+python3 - "${identity_candidate}/MANIFEST.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+manifest = json.loads(path.read_text(encoding="utf-8"))
+manifest["git_commit"] = "invalid"
+path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+PY
+invalid_revision_log="${tmp}/invalid-revision.log"
+if (
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	candidate="${identity_candidate}"
+	TAG=v1.2.3
+	RELEASE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+	verify_candidate_release
+) >"${invalid_revision_log}" 2>&1; then
+	printf 'ERROR: invalid Community image revision was accepted\n' >&2
+	exit 1
+fi
+grep -Fq 'prepared Community image revision does not match the published release' \
+	"${invalid_revision_log}"
+
+apt_retry_log="${tmp}/apt-retry.log"
+apt_retry_saved="${tmp}/logs/install-test-apt.log"
+mkdir -p "$(dirname "${apt_retry_saved}")"
+(
+	# A transient package download failure retries once after a clean dpkg audit.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_LOG_FILE="${tmp}/logs/install-test.log"
+	attempts=0
+	apt-get() {
+		attempts=$((attempts + 1))
+		if ((attempts == 1)); then
+			printf 'E: Failed to fetch https://mirror.example/docker-ce-cli.deb (Connection timed out)\n'
+			return 100
+		fi
+		return 0
+	}
+	dpkg_state_clean_for_retry() { return 0; }
+	sleep() { :; }
+	apt_install_with_network_retry "${apt_retry_log}" install docker-ce
+	[[ "${attempts}" -eq 2 ]]
+	[[ ! -e "${apt_retry_saved}" ]]
+)
+(
+	# A non-transient package failure does not retry and keeps its full output.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_LOG_FILE="${tmp}/logs/install-test.log"
+	apt-get() { printf 'E: Unable to locate package docker-ce\n'; return 100; }
+	if apt_install_with_network_retry "${apt_retry_log}" install docker-ce; then
+		exit 1
+	fi
+	cmp -s "${apt_retry_log}" "${apt_retry_saved}"
+)
+(
+	# A second transient failure is reported as retryable only when dpkg remains clean.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_LOG_FILE="${tmp}/logs/final.log"
+	final_log="${tmp}/apt-final.log"
+	final_saved="${tmp}/logs/final-apt.log"
+	apt-get() { printf 'E: Failed to fetch https://mirror.example/docker-ce-cli.deb (Connection timed out)\n'; return 100; }
+	dpkg_state_clean_for_retry() { return 0; }
+	sleep() { :; }
+	if apt_install_with_network_retry "${final_log}" install docker-ce; then
+		exit 1
+	fi
+	[[ "${APT_FAILURE_DPKG_CLEAN}" -eq 1 ]]
+	cmp -s "${final_log}" "${final_saved}"
+)
+
+apt_update_terminal="${tmp}/apt-update-terminal.log"
+apt_update_log="${tmp}/apt-update.log"
+apt_update_install_log="${tmp}/logs/apt-update-install.log"
+(
+	# Successful package metadata output is retained in the installation log but
+	# does not obscure the concise terminal progress.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_LOG_FILE="${apt_update_install_log}"
+	apt-get() {
+		printf 'Hit:1 https://mirror.example/ubuntu noble InRelease\n'
+		printf 'Reading package lists...\n'
+	}
+	apt_update_quiet "${apt_update_log}"
+) >"${apt_update_terminal}" 2>&1
+[[ ! -s "${apt_update_terminal}" ]]
+grep -Fq 'Hit:1 https://mirror.example/ubuntu noble InRelease' \
+	"${apt_update_install_log}"
+grep -Fq 'Reading package lists...' "${apt_update_install_log}"
+
+apt_update_failure_terminal="${tmp}/apt-update-failure-terminal.log"
+apt_update_failure_log="${tmp}/apt-update-failure.log"
+apt_update_failure_install_log="${tmp}/logs/apt-update-failure-install.log"
+apt_update_failure_saved="${tmp}/logs/apt-update-failure-install-apt.log"
+if (
+	# Failed metadata refreshes retain their complete diagnostics and surface the
+	# useful tail in the terminal.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	ONLINE_LOG_FILE="${apt_update_failure_install_log}"
+	apt-get() {
+		printf 'E: Failed to fetch https://mirror.example/InRelease (Connection timed out)\n'
+		return 100
+	}
+	apt_update_quiet "${apt_update_failure_log}"
+) >"${apt_update_failure_terminal}" 2>&1; then
+	printf 'ERROR: a failed package metadata refresh was accepted\n' >&2
+	exit 1
+fi
+grep -Fq 'E: Failed to fetch https://mirror.example/InRelease' \
+	"${apt_update_failure_terminal}"
+grep -Fq "Full APT output saved to ${apt_update_failure_saved}" \
+	"${apt_update_failure_terminal}"
+cmp -s "${apt_update_failure_log}" "${apt_update_failure_saved}"
+
+(
+	# Fresh-install and upgrade runtime progress are indented beneath their
+	# numbered stage.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	INSTALL_ACTION=Install
+	[[ "$(installation_step_indent)" == '  ' ]]
+	INSTALL_ACTION=Upgrade
+	[[ "$(installation_step_indent)" == '  ' ]]
+)
+
+(
+	# A completed installation enters upgrade mode; an interrupted first
+	# install remains on the fresh-install recovery path.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	INSTALL_ROOT="${tmp}/state-fresh"
+	mkdir -p "${INSTALL_ROOT}"
+	INSTALL_ACTION=Install
+	INSTALL_RECOVERY=0
+	inspect_existing_installation
+	[[ "${INSTALL_ACTION}" == Install && "${INSTALL_RECOVERY}" -eq 0 ]]
+
+	INSTALL_ROOT="${tmp}/state-recovery"
+	mkdir -p "${INSTALL_ROOT}"
+	: >"${INSTALL_ROOT}/.env"
+	: >"${INSTALL_ROOT}/MANIFEST.json"
+	: >"${INSTALL_ROOT}/.install-in-progress"
+	INSTALL_ACTION=Install
+	INSTALL_RECOVERY=0
+	inspect_existing_installation
+	[[ "${INSTALL_ACTION}" == Install && "${INSTALL_RECOVERY}" -eq 1 ]]
+
+	INSTALL_ROOT="${tmp}/state-complete"
+	mkdir -p "${INSTALL_ROOT}"
+	: >"${INSTALL_ROOT}/.env"
+	printf '%s\n' '{"edition":"community"}' >"${INSTALL_ROOT}/MANIFEST.json"
+	: >"${INSTALL_ROOT}/.install-complete"
+	INSTALL_ACTION=Install
+	INSTALL_RECOVERY=0
+	inspect_existing_installation
+	[[ "${INSTALL_ACTION}" == Upgrade && "${INSTALL_RECOVERY}" -eq 0 ]]
+)
 
 (
 	# shellcheck disable=SC1090
@@ -711,11 +1307,73 @@ if (
 	printf 'ERROR: foreign Docker runtime was accepted for Compose-only bootstrap\n' >&2
 	exit 1
 fi
-grep -Fq 'not a Docker CE installation' "${foreign_runtime_log}"
-foreign_complete_runtime_log="${tmp}/foreign-complete-runtime.log"
+grep -Fq 'existing Docker runtime does not provide Docker Compose V2' \
+	"${foreign_runtime_log}"
+(
+	# A complete compatible runtime is reused based on its capabilities rather
+	# than its package source. Version strings may include distribution suffixes.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	docker() {
+		case "${1:-} ${2:-}" in
+		"info ") return 0 ;;
+		"version --format") printf '29.1.3\n' ;;
+		"compose version") printf '2.40.3+ds1-0ubuntu1~24.04.1\n' ;;
+		esac
+		return 1
+	}
+	dpkg-query() {
+		[[ "${*: -1}" == docker.io ]] || return 1
+		printf 'ii '
+	}
+	inspect_docker_runtime
+	[[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]
+	[[ "${DOCKER_ENGINE_VERSION}" == 29.1.3 ]]
+	[[ "${DOCKER_COMPOSE_VERSION}" == '2.40.3+ds1-0ubuntu1~24.04.1' ]]
+)
+unsupported_complete_runtime_log="${tmp}/unsupported-complete-runtime.log"
 if (
-	# A non-Docker-CE runtime is rejected even when it already exposes Compose;
-	# the online installer only supports Docker CE for its managed contract.
+	# Supporting Ubuntu's Docker Engine package must not implicitly accept other
+	# Docker-compatible runtimes such as Podman.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	docker() {
+		case "${1:-} ${2:-}" in
+		"info ") return 0 ;;
+		"version --format") printf '29.1.3\n' ;;
+		"compose version") printf '2.40.3\n' ;;
+		esac
+		return 1
+	}
+	dpkg-query() {
+		[[ "${*: -1}" == podman-docker ]] || return 1
+		printf 'ii '
+	}
+	inspect_docker_runtime
+) >"${unsupported_complete_runtime_log}" 2>&1; then
+	printf 'ERROR: unsupported Docker-compatible runtime was accepted\n' >&2
+	exit 1
+fi
+grep -Fq 'Docker command is provided by Podman or Snap' \
+	"${unsupported_complete_runtime_log}"
+(
+	# Snap Docker remains unsupported because confinement can block deployment
+	# bind mounts even when its client reports compatible versions.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	dpkg-query() { return 1; }
+	command() {
+		if [[ "${1:-}" == -v && "${2:-}" == docker ]]; then
+			printf '/snap/bin/docker\n'
+			return 0
+		fi
+		builtin command "$@"
+	}
+	unsupported_docker_runtime_present
+)
+(
+	# A complete compatible static or otherwise unrecognized Docker runtime is
+	# reused without relying on package-manager ownership.
 	# shellcheck disable=SC1090
 	source "${online_functions}"
 	docker() {
@@ -726,20 +1384,14 @@ if (
 		esac
 		return 1
 	}
-	dpkg-query() {
-		[[ "${*: -1}" == docker.io ]] || return 1
-		printf 'ii '
-	}
+	dpkg-query() { return 1; }
 	inspect_docker_runtime
-) >"${foreign_complete_runtime_log}" 2>&1; then
-	printf 'ERROR: complete foreign Docker runtime was accepted\n' >&2
-	exit 1
-fi
-grep -Fq 'not a Docker CE installation' "${foreign_complete_runtime_log}"
+	[[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]
+)
 unrecognized_runtime_log="${tmp}/unrecognized-runtime-compose.log"
 if (
-	# A healthy static or otherwise unrecognized Docker binary is not sufficient
-	# evidence that the Docker CE apt plugin can be added safely.
+	# An otherwise compatible runtime without Compose cannot receive a Docker CE
+	# package unless the Engine is itself a complete Docker CE installation.
 	# shellcheck disable=SC1090
 	source "${online_functions}"
 	docker() {
@@ -753,28 +1405,11 @@ if (
 	dpkg-query() { return 1; }
 	inspect_docker_runtime
 ) >"${unrecognized_runtime_log}" 2>&1; then
-	printf 'ERROR: unrecognized Docker runtime was accepted for Compose-only bootstrap\n' >&2
+	printf 'ERROR: unrecognized Docker runtime received Compose-only bootstrap\n' >&2
 	exit 1
 fi
-grep -Fq 'not a Docker CE installation' "${unrecognized_runtime_log}"
-(
-	# A removed docker.io package with residual configuration (dpkg "rc") does
-	# not identify the active Docker Engine as Ubuntu's runtime.
-	# shellcheck disable=SC1090
-	source "${online_functions}"
-	dpkg-query() {
-		[[ "${*: -1}" == docker.io ]] || return 1
-		printf 'rc '
-	}
-	command() {
-		if [[ "${1:-}" == -v && "${2:-}" == docker ]]; then
-			printf '/usr/bin/docker\n'
-			return 0
-		fi
-		builtin command "$@"
-	}
-	! foreign_docker_runtime_present
-)
+grep -Fq 'existing Docker runtime does not provide Docker Compose V2' \
+	"${unrecognized_runtime_log}"
 compose_target_log="${tmp}/compose-target.log"
 (
 	# shellcheck disable=SC1090
@@ -789,10 +1424,33 @@ compose_target_log="${tmp}/compose-target.log"
 	DOCKER_CE_SOURCE_NAME='Docker CE · https://download.docker.com/linux/ubuntu'
 	print_target
 ) >"${compose_target_log}"
-grep -Fq 'Docker Engine  29.2.1 · reuse' "${compose_target_log}"
-grep -Fq 'Docker Compose not installed → install docker-compose-plugin 5.0.2-1~ubuntu.24.04~noble' \
+grep -Fq 'System requirements' "${compose_target_log}"
+grep -Fq 'Docker Engine    Ready · 29.2.1' "${compose_target_log}"
+grep -Fq 'Docker Compose   Will install · 5.0.2-1~ubuntu.24.04~noble' \
 	"${compose_target_log}"
-grep -Fq 'Install scope  Compose V2 plugin only' "${compose_target_log}"
+grep -Fq 'Docker service   Running' "${compose_target_log}"
+grep -Fq 'The required Docker Compose plugin will be installed on this host.' \
+	"${compose_target_log}"
+
+upgrade_target_log="${tmp}/upgrade-target.log"
+(
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	TAG=v1.2.3
+	ONLINE_LOG_FILE=/opt/hyperfilelens/logs/install-test.log
+	INSTALL_ACTION=Upgrade
+	DOCKER_RUNTIME_ACTION=reuse
+	DOCKER_ENGINE_VERSION=29.2.1
+	DOCKER_COMPOSE_VERSION=5.0.2
+	print_target
+) >"${upgrade_target_log}"
+grep -Fx 'Host runtime' "${upgrade_target_log}" >/dev/null
+grep -Fq 'Docker Engine  29.2.1 · reuse' "${upgrade_target_log}"
+grep -Fq 'Docker Compose 5.0.2 · reuse' "${upgrade_target_log}"
+if grep -Fq 'System requirements' "${upgrade_target_log}"; then
+	printf 'ERROR: fresh-install system-requirements output leaked into upgrades\n' >&2
+	exit 1
+fi
 (
 	# shellcheck disable=SC1090
 	source "${online_functions}"
@@ -1116,10 +1774,26 @@ import sys
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 replacements = {
     'INSTALL_ROOT="/opt/hyperfilelens"': f'INSTALL_ROOT="{sys.argv[3]}"',
-    '[[ "${EUID}" -eq 0 ]] || fail "run this command through sudo"': ":",
-    "\nconfirm_installation\ninstall_host_tools\n": (
-        "\nconfirm_installation\n:\n"
+    'ONLINE_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent/bin"': (
+        f'ONLINE_AGENT_INSTALL_DIR="{sys.argv[4]}/agent/bin"'
     ),
+    'ONLINE_AGENT_ROOT="/opt/hyperfilelens-agent"': (
+        f'ONLINE_AGENT_ROOT="{sys.argv[4]}/agent"'
+    ),
+    'ONLINE_AGENT_LEGACY_DATA_DIR="/var/lib/hyperfilelens-agent"': (
+        f'ONLINE_AGENT_LEGACY_DATA_DIR="{sys.argv[4]}/legacy-agent"'
+    ),
+    'ONLINE_AGENT_SYSTEMD_UNIT_FILE="/etc/systemd/system/hyperfilelens-agent.service"': (
+        f'ONLINE_AGENT_SYSTEMD_UNIT_FILE="{sys.argv[4]}/hyperfilelens-agent.service"'
+    ),
+    'ONLINE_REQUIRED_PORTS=(11442 11443 11444 11445)': (
+        'ONLINE_REQUIRED_PORTS=(21442 21443 21444 21445)'
+    ),
+    "\tpreflight_online_ports\n": (
+        "\tprintf '  [ OK ] Required ports are available · 21442, 21443, 21444, 21445\\n'\n"
+    ),
+    '[[ "${EUID}" -eq 0 ]] || fail "run this command through sudo"': ":",
+    "\ninstall_host_tools\n": "\n:\n",
     'SESSION_DIR="$(mktemp -d /var/tmp/hyperfilelens-online.XXXXXX)"': (
         f'SESSION_DIR="$(mktemp -d "{sys.argv[4]}/online-session.XXXXXX")"'
     ),
@@ -1183,13 +1857,42 @@ grep -Fq 'Version        v1.2.12' "${latest_log}" || {
 	cat "${latest_log}" >&2
 	exit 1
 }
-grep -Fq 'Docker Engine  29.6.1 · reuse' "${latest_log}"
-grep -Fq 'Docker Compose 2.39.1 · reuse' "${latest_log}"
+grep -Fq 'System requirements' "${latest_log}"
+grep -Fq 'Docker Engine    Ready · 29.6.1' "${latest_log}"
+grep -Fq 'Docker Compose   Ready · 2.39.1' "${latest_log}"
+for removed_target_field in Action Source Registry; do
+	if grep -Eq "^  ${removed_target_field}[[:space:]]" "${latest_log}"; then
+		printf 'ERROR: online target still displays %s\n' \
+			"${removed_target_field}" >&2
+		exit 1
+	fi
+done
 latest_session_log="$(find "${test_install_root}/logs" -maxdepth 1 -type f \
 	-name 'install-*.log' -print -quit)"
 [[ -n "${latest_session_log}" ]]
 grep -Fq 'HyperFileLens Community Online Installer' "${latest_session_log}"
-grep -Fq 'Resolving Community tags from GitHub' "${latest_session_log}"
+grep -Fq 'Resolving HyperFileLens Community release from GitHub' "${latest_session_log}"
+grep -Fq 'Community release resolved · v1.2.12 · commit cccccccccccc' "${latest_session_log}"
+grep -Fq 'Downloading HyperFileLens v1.2.12 release package from GitHub · commit cccccccccccc' \
+	"${latest_session_log}"
+for preflight_line in \
+	'Running installation preflight checks' \
+	'No conflicting HyperFileLens Agent was detected' \
+	'Disk space is sufficient' \
+	'Required ports are available · 21442, 21443, 21444, 21445' \
+	'Installation preflight checks passed'; do
+	grep -Fq "${preflight_line}" "${latest_session_log}"
+done
+python3 - "${latest_session_log}" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+if text.index("Installation preflight checks passed") > text.index(
+    "Downloading HyperFileLens v1.2.12 release package"
+):
+    raise SystemExit("release package download started before online preflight completed")
+PY
 grep -Fq "Log file       ${latest_session_log}" "${latest_log}"
 grep -Fq 'recent fallback tags: v1.2.11, v1.2.10, v1.2.9, v1.2.8, v1.2.7, v1.2.6, v1.2.5, v1.2.4, v1.2.3, v1.2.2' \
 	"${latest_log}"
@@ -1240,7 +1943,7 @@ if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
 fi
 grep -Fq '[INFO] curl 7.68.0 detected; using Ubuntu-compatible retry options.' \
 	"${compatible_log}"
-grep -Fq '[....] Downloading v1.2.12 installation contract from GitHub' \
+grep -Fq '[....] Downloading HyperFileLens v1.2.12 release package from GitHub · commit cccccccccccc' \
 	"${compatible_log}"
 grep -v -- '--version' "${compatible_curl_log}" \
 	| grep -F -- '--retry-connrefused' >/dev/null
@@ -1290,14 +1993,30 @@ fi
 grep -Fq 'repeated page 2' "${repeated_page_log}"
 
 prepare_log="${tmp}/prepare.log"
-PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+if ! PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 	HFL_ONLINE_NATIVE_PROGRESS=1 \
 	python3 "${online}/prepare.py" \
 		--source-root "${ROOT}" \
 		--version v1.2.3 \
 		--region global \
-		--output "${candidate}" >"${prepare_log}" 2>&1
-grep -F 'Docker native pull progress:' "${prepare_log}" >/dev/null
+		--concise-output \
+		--output "${candidate}" >"${prepare_log}" 2>&1; then
+	cat "${prepare_log}" >&2
+	exit 1
+fi
+grep -F 'Docker Compose native pull progress: parallel=5 images=10' \
+	"${prepare_log}" >/dev/null
+grep -F '[....] Pulling 10 container images · up to 5 concurrent downloads' \
+	"${prepare_log}" >/dev/null
+grep -F '[ OK ] All 10 container images are ready' "${prepare_log}" >/dev/null
+grep -F '[....] Preparing Agent, Data Gateway, and language packages' \
+	"${prepare_log}" >/dev/null
+grep -F '[ OK ] Agent, Data Gateway, and language packages are ready' \
+	"${prepare_log}" >/dev/null
+if grep -F 'Installation image 1/10 ready' "${prepare_log}" >/dev/null; then
+	printf 'ERROR: per-image digest confirmation leaked into concise output\n' >&2
+	exit 1
+fi
 if grep -F 'Untagged:' "${prepare_log}" >/dev/null; then
 	printf 'ERROR: temporary asset image cleanup leaked into online output\n' >&2
 	exit 1
@@ -1306,22 +2025,169 @@ if grep -F 'cid-' "${prepare_log}" >/dev/null; then
 	printf 'ERROR: temporary asset container cleanup leaked into online output\n' >&2
 	exit 1
 fi
-failed_prepare_log="${tmp}/prepare-failed.log"
+
+# Non-concise preparation callers continue to use the existing detailed output.
+upgrade_candidate="${tmp}/upgrade-candidate"
+upgrade_prepare_log="${tmp}/prepare-upgrade.log"
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--output "${upgrade_candidate}" >"${upgrade_prepare_log}" 2>&1
+grep -Fx 'Installation images' "${upgrade_prepare_log}" >/dev/null
+grep -F '[....] Pulling 10 installation images concurrently · maximum 5 active downloads' \
+	"${upgrade_prepare_log}" >/dev/null
+grep -F '[ OK ] Installation image 1/10 ready ·' "${upgrade_prepare_log}" >/dev/null
+grep -Fx 'Release package' "${upgrade_prepare_log}" >/dev/null
+grep -F '[ OK ] Community release package prepared ·' \
+	"${upgrade_prepare_log}" >/dev/null
+
+selected_failure_log="${tmp}/prepare-selected-failure.log"
 if PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 \
+	HFL_TEST_DOCKER_PRIMARY_FAIL_COMPONENT=hyperfilelens-backend \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--concise-output \
+		--output "${tmp}/selected-failure-candidate" \
+		>"${selected_failure_log}" 2>&1; then
+	printf 'ERROR: selected-registry rejection used another registry\n' >&2
+	exit 1
+fi
+grep -F 'selected registry rejected test image: access denied' \
+	"${selected_failure_log}" >/dev/null
+if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${selected_failure_log}"; then
+	printf 'ERROR: Global preparation contacted the CN registry\n' >&2
+	exit 1
+fi
+
+retry_marker="${tmp}/preferred-registry-retries"
+retry_candidate="${tmp}/retry-candidate"
+retry_prepare_log="${tmp}/prepare-retry.log"
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 \
+	HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT=hyperfilelens-backend \
+	HFL_TEST_DOCKER_PULL_MARKER="${retry_marker}" \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--concise-output \
+		--output "${retry_candidate}" >"${retry_prepare_log}" 2>&1
+[[ "$(cat "${retry_marker}")" -eq 2 ]]
+grep -F '1 required container images are not ready locally' \
+	"${retry_prepare_log}" >/dev/null
+grep -F '       Retrying in 0 seconds (2/5)' \
+	"${retry_prepare_log}" >/dev/null
+if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${retry_prepare_log}"; then
+	printf 'ERROR: successful Docker Hub retry contacted the CN registry\n' >&2
+	exit 1
+fi
+
+progress_retry_marker="${tmp}/progress-only-retries"
+progress_retry_log="${tmp}/prepare-progress-only-retry.log"
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 \
+	HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT=hyperfilelens-backend \
+	HFL_TEST_DOCKER_TRANSIENT_ERROR=progress \
+	HFL_TEST_DOCKER_TRANSIENT_FAILURES=1 \
+	HFL_TEST_DOCKER_PULL_MARKER="${progress_retry_marker}" \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--concise-output \
+		--output "${tmp}/progress-only-retry-candidate" \
+		>"${progress_retry_log}" 2>&1
+[[ "$(cat "${progress_retry_marker}")" -eq 2 ]]
+grep -F '1 required container images are not ready locally' \
+	"${progress_retry_log}" >/dev/null
+grep -F '       Retrying in 0 seconds (2/5)' \
+	"${progress_retry_log}" >/dev/null
+
+five_attempt_marker="${tmp}/selected-registry-five-attempts"
+five_attempt_candidate="${tmp}/five-attempt-candidate"
+five_attempt_log="${tmp}/prepare-five-attempt.log"
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 \
+	HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT=hyperfilelens-backend \
+	HFL_TEST_DOCKER_TRANSIENT_FAILURES=4 \
+	HFL_TEST_DOCKER_PULL_MARKER="${five_attempt_marker}" \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--concise-output \
+		--output "${five_attempt_candidate}" >"${five_attempt_log}" 2>&1
+[[ "$(cat "${five_attempt_marker}")" -eq 5 ]]
+grep -F '1 required container images are not ready locally' \
+	"${five_attempt_log}" >/dev/null
+grep -F '       Retrying in 0 seconds (5/5)' \
+	"${five_attempt_log}" >/dev/null
+if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${five_attempt_log}"; then
+	printf 'ERROR: five-attempt Docker Hub retry contacted the CN registry\n' >&2
+	exit 1
+fi
+
+failed_prepare_log="${tmp}/prepare-failed.log"
+set +e
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 	HFL_ONLINE_NATIVE_PROGRESS=1 HFL_TEST_DOCKER_PULL_FAIL=1 \
 	python3 "${online}/prepare.py" \
 		--source-root "${ROOT}" \
 		--version v1.2.3 \
 		--region global \
+		--concise-output \
 		--output "${tmp}/failed-candidate" \
-		>"${failed_prepare_log}" 2>&1; then
+		>"${failed_prepare_log}" 2>&1
+failed_prepare_status=$?
+set -e
+[[ "${failed_prepare_status}" -eq 76 ]]
+if ((failed_prepare_status == 0)); then
 	printf 'ERROR: failed Docker pulls unexpectedly prepared an online package\n' >&2
 	exit 1
 fi
-grep -Fq 'registry rejected test image: access denied' "${failed_prepare_log}"
-grep -Fq 'docker.io/oneprolabs/hyperfilelens-backend:1.2.3' "${failed_prepare_log}"
-grep -Fq 'registry.cn-beijing.aliyuncs.com/oneprolabs/hyperfilelens-backend:1.2.3' \
+grep -Fq '[ERROR] Required container images are unavailable or access was denied.' \
 	"${failed_prepare_log}"
+if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${failed_prepare_log}"; then
+	printf 'ERROR: failed Global preparation contacted the CN registry\n' >&2
+	exit 1
+fi
+
+network_prepare_log="${tmp}/prepare-network-failed.log"
+set +e
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 \
+	HFL_TEST_DOCKER_PULL_FAIL=1 HFL_TEST_DOCKER_PULL_ERROR=network \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--concise-output \
+		--output "${tmp}/network-failed-candidate" \
+		>"${network_prepare_log}" 2>&1
+network_prepare_status=$?
+set -e
+[[ "${network_prepare_status}" -eq 75 ]]
+grep -Fq '[ERROR] Temporary container registry failure:' "${network_prepare_log}"
+grep -Fq 'Required container images could not be downloaded completely after 5 attempt(s).' \
+	"${network_prepare_log}"
+if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${network_prepare_log}"; then
+	printf 'ERROR: failed Docker Hub retries contacted the CN registry\n' >&2
+	exit 1
+fi
+if grep -Eq 'incomplete or unavailable|recommended retry:' \
+	"${network_prepare_log}"; then
+	printf 'ERROR: registry network failure was reported as a release-tag failure\n' >&2
+	exit 1
+fi
 [[ -r "${candidate}/payload/runtime/compose-runtime.sh" ]]
 [[ ! -x "${candidate}/payload/runtime/compose-runtime.sh" ]]
 "${candidate}/install.sh" --help >/dev/null
@@ -1339,6 +2205,25 @@ assert manifest["runtime_images"] == {
     "backend": "hyperfilelens-backend:1.2.3",
     "frontend": "hyperfilelens-frontend:1.2.3",
 }
+registry_images = {
+    entry["component"]: entry for entry in manifest["delivery"]["registry_images"]
+}
+for component, local_ref in {
+    "postgres": "postgres:17",
+    "redis": "redis:alpine",
+    "sourcelens-nginx": "nginx:stable-alpine",
+}.items():
+    digest_short = registry_images[component]["digest"].partition(":")[2][:12]
+    repository, tag = local_ref.rsplit(":", 1)
+    mirror_ref = f"{repository}:{tag}-{digest_short}"
+    sources = {
+        source["region"]: source["ref"]
+        for source in registry_images[component]["sources"]
+    }
+    assert sources == {
+        "cn": f"registry.cn-beijing.aliyuncs.com/oneprolabs/{mirror_ref}",
+        "global": f"docker.io/oneprolabs/{mirror_ref}",
+    }
 assets = manifest["delivery"]["asset_images"]
 assert {entry["local_ref"] for entry in assets} == {
     "hyperfilelens-agent-assets:1.2.3",
@@ -1384,8 +2269,17 @@ for entry in entries:
     (target / f"{component}.json").write_text(
         json.dumps(metadata) + "\n", encoding="utf-8"
     )
+
 PY
-PATH="${fake_bin}:${PATH}" "${online}/verify-public-images.sh" "${metadata}"
+# Recreate upstream metadata through the same helper used by the release
+# workflow. LensNode remains a publication check even though gateway-assets
+# delivers it to the Gateway host.
+for component in sourcelens-lensnode sourcelens-nginx postgres redis; do
+	"${ROOT}/release/ci/write-upstream-image-metadata.sh" \
+		"${component}" "${metadata}/${component}.json"
+done
+PATH="${fake_bin}:${PATH}" "${online}/verify-public-images.sh" "${metadata}" global
+PATH="${fake_bin}:${PATH}" "${online}/verify-public-images.sh" "${metadata}" cn
 
 # Source only defines functions because install.sh guards main with BASH_SOURCE.
 source "${ROOT}/deploy/installer/install.sh"

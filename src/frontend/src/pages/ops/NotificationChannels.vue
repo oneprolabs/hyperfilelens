@@ -1047,26 +1047,25 @@ watch(
         <OpsStatCard
           :label="t('ops.notification.filterActive')"
           :value="stats.enabled"
-          accent="green"
+          tone="success"
           accent-side="left"
-          value-class="text-emerald-600"
         />
         <OpsStatCard
           :label="t('ops.notification.channelsTitle')"
           :value="stats.total"
-          accent="indigo"
+          tone="primary"
           accent-side="left"
         />
         <OpsStatCard
           :label="t('ops.notification.filterInactive')"
           :value="stats.disabled"
-          accent="gray"
+          tone="neutral"
           accent-side="left"
         />
         <OpsStatCard
           :label="t('ops.notification.enabledRate')"
           :value="stats.total ? `${Math.round(stats.enabledRate)}%` : '—'"
-          accent="blue"
+          tone="success"
           accent-side="left"
         />
       </div>
@@ -1435,25 +1434,25 @@ watch(
                   <OpsStatCard
                     :label="t('ops.notification.logsCount')"
                     :value="details.stats.logs_count ?? 0"
-                    accent="indigo"
+                    tone="primary"
                     accent-side="left"
                   />
                   <OpsStatCard
                     :label="t('ops.notification.successRate')"
                     :value="`${details.stats.success_rate ?? 0}%`"
-                    accent="green"
+                    tone="success"
                     accent-side="left"
                   />
                   <OpsStatCard
                     :label="t('ops.notification.policiesCount')"
                     :value="details.stats.policies_count ?? 0"
-                    accent="blue"
+                    tone="info"
                     accent-side="left"
                   />
                   <OpsStatCard
                     :label="t('ops.notification.alertsCount')"
                     :value="details.stats.alerts_count ?? 0"
-                    accent="orange"
+                    tone="warning"
                     accent-side="left"
                   />
                 </div>
@@ -1931,13 +1930,13 @@ watch(
 }
 
 .hfl-ops-channel-detail-drawer__loading {
-  background: rgba(148, 163, 184, 0.12);
-  color: rgb(71 85 105);
+  background: var(--color-grey-2);
+  color: var(--color-text-primary);
 }
 
 .hfl-ops-channel-detail-drawer__error {
-  background: rgba(239, 68, 68, 0.08);
-  color: rgb(185 28 28);
+  background: var(--color-error-light);
+  color: var(--color-error-text);
 }
 
 .hfl-ops-channel-detail-drawer__error-text {
@@ -1946,16 +1945,16 @@ watch(
 
 .notification-batch-impact {
   border-radius: 8px;
-  background: var(--el-fill-color-blank, #fafafa);
+  background: var(--el-fill-color-blank);
   overflow: hidden;
 }
 
 .notification-batch-impact__heading {
   padding: 10px 12px 8px;
-  background: var(--el-fill-color-blank, #fafafa);
+  background: var(--el-fill-color-blank);
   font-size: 12px;
   font-weight: 600;
-  color: var(--el-text-color-secondary, #4b5563);
+  color: var(--el-text-color-secondary);
 }
 
 .notification-batch-impact__table {
@@ -1966,7 +1965,7 @@ watch(
 .notification-batch-impact__hint {
   min-width: 0;
   overflow: hidden;
-  color: var(--el-text-color-secondary, #6b7280);
+  color: var(--el-text-color-secondary);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1976,7 +1975,7 @@ watch(
 
 .hfl-ops-channel-detail-drawer__event-title {
   font-weight: 500;
-  color: rgb(15 23 42);
+  color: var(--color-text-title);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1984,7 +1983,7 @@ watch(
 
 .hfl-ops-channel-detail-drawer__event-meta {
   font-size: 11px;
-  color: rgb(100 116 139);
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1993,7 +1992,7 @@ watch(
 .hfl-ops-channel-detail-drawer__error-msg {
   margin-top: 4px;
   font-size: 11px;
-  color: rgb(185 28 28);
+  color: var(--color-error-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

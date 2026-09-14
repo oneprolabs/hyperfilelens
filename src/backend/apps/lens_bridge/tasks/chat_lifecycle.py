@@ -177,7 +177,8 @@ def reconcile_lens_resource_teardowns_task(*, limit: int = 100) -> dict:
 
     now = timezone.now()
     stale_claim = now - timedelta(seconds=TEARDOWN_CLAIM_TTL_SECONDS)
-    session_ids = list(
+    reconcile_limit = max(1, min(int(limit), 500))
+    candidates = (
         LensSessionLink.objects.filter(
             (
                 (
@@ -216,8 +217,21 @@ def reconcile_lens_resource_teardowns_task(*, limit: int = 100) -> dict:
             | Q(teardown_next_retry_at__lte=now)
         )
         .filter(Q(teardown_claimed_at__isnull=True) | Q(teardown_claimed_at__lte=stale_claim))
+    )
+    # A force-deleted Chat is already terminal in HFL.  Its remote residue is
+    # intentionally not requeued when a Gateway later reconnects.
+    eligible_ids = set(
+        candidates.filter(
+            Q(teardown_state_json__forced_remote_cleanup__status__isnull=True)
+            | ~Q(teardown_state_json__forced_remote_cleanup__status="pending")
+        )
         .order_by("teardown_next_retry_at", "id")
-        .values_list("id", flat=True)[: max(1, min(int(limit), 500))]
+        .values_list("id", flat=True)[:reconcile_limit]
+    )
+    session_ids = list(
+        candidates.filter(pk__in=eligible_ids)
+        .order_by("teardown_next_retry_at", "id")
+        .values_list("id", flat=True)[:reconcile_limit]
     )
     queued_session_ids: list[int] = []
     failures: list[dict[str, str | int]] = []

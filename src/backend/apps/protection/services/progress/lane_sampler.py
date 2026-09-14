@@ -7,7 +7,11 @@ from django.utils import timezone
 
 _MIN_SPEED_BPS = 100
 _MIN_SAMPLE_GAP_SECONDS = 2.0
-_METRIC_FRESHNESS_SECONDS = 6.0
+# Kopia can remain quiet between parsed progress events even while a transfer
+# is healthy. Retain the last measured throughput across a bounded number of
+# nominal three-second reporting intervals so two-second UI polling does not
+# make speed and ETA flicker, while genuinely stale metrics still expire.
+_METRIC_FRESHNESS_SECONDS = 30.0
 _KOPIA_ETA_MIN_REMAINING_RATIO = 0.1
 _KOPIA_ETA_MAX_COMPUTED_RATIO = 3.0
 
@@ -105,6 +109,18 @@ def apply_speed_and_eta(
         processing_speed_bps = None
         upload_speed_bps = None
 
+    # A Kopia snapshot can be valid while omitting throughput fields (for
+    # example, during a phase transition). Keep the last measured values in
+    # the task-scoped sample so read-only runtime refreshes do not turn a
+    # transiently sparse snapshot into an empty speed/ETA display.
+    if metrics_fresh:
+        if processing_speed_bps is None:
+            processing_speed_bps = _optional_int(prev, "processing_speed_bps")
+            processing_speed_source = prev.get("processing_speed_source")
+        if upload_speed_bps is None:
+            upload_speed_bps = _optional_int(prev, "upload_speed_bps")
+            upload_speed_source = prev.get("upload_speed_source")
+
     prev_processing = int(prev.get("processing_counter") or prev.get("counter") or prev.get("bytes_done") or 0)
     prev_uploaded = int(prev.get("uploaded_counter") or 0)
     counter_at = metrics_at or now
@@ -187,6 +203,10 @@ def apply_speed_and_eta(
             "sampled_at": now.isoformat(),
             "counter_sampled_at": counter_at.isoformat(),
             "_max_bytes_total": max_total,
+            "processing_speed_bps": processing_speed_bps,
+            "processing_speed_source": processing_speed_source,
+            "upload_speed_bps": upload_speed_bps,
+            "upload_speed_source": upload_speed_source,
         }
     elif prev:
         result["last_sample"] = dict(prev)
@@ -199,5 +219,9 @@ def apply_speed_and_eta(
             "sampled_at": now.isoformat(),
             "counter_sampled_at": counter_at.isoformat(),
             "_max_bytes_total": max_total,
+            "processing_speed_bps": processing_speed_bps,
+            "processing_speed_source": processing_speed_source,
+            "upload_speed_bps": upload_speed_bps,
+            "upload_speed_source": upload_speed_source,
         }
     return result

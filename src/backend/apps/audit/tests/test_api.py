@@ -85,8 +85,8 @@ class AuditApiTests(TestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(resp.data["total_count"], 2)
-        self.assertIn("success_rate", resp.data)
-        self.assertGreaterEqual(resp.data["failure_count"], 1)
+        self.assertGreaterEqual(resp.data["today_count"], 2)
+        self.assertEqual(set(resp.data), {"total_count", "today_count"})
 
     def test_search_by_ip(self):
         resp = self.client.get(

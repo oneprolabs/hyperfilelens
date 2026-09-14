@@ -34,6 +34,7 @@ import {
   revokeEnrollmentToken,
   revokePlatformGatewayEnrollment,
   type EnrollmentOs,
+  type WindowsEnrollmentCommands,
 } from '../lib/nodeApi'
 import { apiErrorMessage } from '../lib/api'
 import type { NodeInstallationMode, NodeRole } from '../types/node'
@@ -84,15 +85,16 @@ const activeTab = ref<NodeLifecycleTab>(
   props.maintenanceOnly && props.initialTab === 'install' ? 'upgrade' : props.initialTab,
 )
 const installCommand = ref('')
+const windowsCommands = ref<WindowsEnrollmentCommands | null>(null)
 const upgradeCommand = ref('')
 const uninstallCommand = ref('')
 const serviceCommand = ref('')
 const loading = ref(false)
 const releaseVersion = ref('')
 const upgradeError = ref('')
-const copied = ref(false)
+const copiedCommand = ref<string | null>(null)
 const installGenerated = ref(false)
-const purgeAll = ref(false)
+const keepData = ref(false)
 const serviceAction = ref<'status' | 'start' | 'stop' | 'restart'>(props.initialServiceAction)
 const defaultInstallationModeForOs = (os: EnrollmentOs): NodeInstallationMode => (
   os === 'linux' ? 'user_continuous' : 'user'
@@ -103,8 +105,6 @@ const effectiveInstallationMode = computed<NodeInstallationMode>(() => (
     : 'system'
 ))
 const supportOpen = ref(false)
-const enrollmentTokenId = ref<number | null>(null)
-const enrollmentTokenIsPlatform = ref(false)
 const enrollmentExpiresAt = ref<string | null>(null)
 const tokenClock = ref(Date.now())
 let tokenStatusTimer: ReturnType<typeof setInterval> | null = null
@@ -218,6 +218,18 @@ const roleLabel = computed(() => {
   return t('nodesPage.roleAgent')
 })
 
+const installFlowInstallKeyByRole: Record<NodeRole, string> = {
+  agent: 'nodeLifecycle.installFlowInstallAgent',
+  proxy: 'nodeLifecycle.installFlowInstallProxy',
+  gateway: 'nodeLifecycle.installFlowInstallGateway',
+}
+
+const installedTitleKeyByRole: Record<NodeRole, string> = {
+  agent: 'nodeLifecycle.installedAgentTitle',
+  proxy: 'nodeLifecycle.installedProxyTitle',
+  gateway: 'nodeLifecycle.installedGatewayTitle',
+}
+
 const paths = computed(() => installPathsSummary(
   props.os,
   props.role,
@@ -286,9 +298,9 @@ const isNewAgentInstallation = computed(() => props.role === 'agent' && props.no
 
 const installLeadKey = computed(() => {
   if (isNewAgentInstallation.value) {
-    return props.os === 'macos'
-      ? 'nodeLifecycle.installLeadAutomaticMacos'
-      : 'nodeLifecycle.installLeadAutomatic'
+    if (props.os === 'windows') return 'nodeLifecycle.installLeadAutomaticWindows'
+    if (props.os === 'macos') return 'nodeLifecycle.installLeadAutomaticMacos'
+    return 'nodeLifecycle.installLeadAutomaticLinux'
   }
   if (effectiveInstallationMode.value === 'user' || effectiveInstallationMode.value === 'user_continuous') return 'nodeLifecycle.installLeadUser'
   if (props.os === 'windows') return 'nodeLifecycle.installLeadWindows'
@@ -305,6 +317,10 @@ const installFlowRegisterText = computed(() => {
   }
   return t('nodeLifecycle.installFlowRegister')
 })
+
+const installFlowInstallText = computed(() => t(installFlowInstallKeyByRole[props.role]))
+
+const installedComponentTitle = computed(() => t(installedTitleKeyByRole[props.role]))
 
 const consoleBarTitle = computed(() => {
   if (props.maintenanceOnly) return maintenanceExecution.value.title
@@ -372,9 +388,8 @@ async function refreshInstallCommand(gen: number) {
       return
     }
     installCommand.value = issued.command
+    windowsCommands.value = issued.windowsCommands ?? null
     installGenerated.value = true
-    enrollmentTokenId.value = issued.tokenId
-    enrollmentTokenIsPlatform.value = platformEnrollment
     enrollmentExpiresAt.value = issued.expiresAt
     emit('enrollmentIssued', {
       tokenId: issued.tokenId,
@@ -445,7 +460,7 @@ async function refreshUpgradeCommand(gen: number) {
 function refreshStaticCommands() {
   uninstallCommand.value = buildLocalUninstallCommand(
     props.os,
-    purgeAll.value,
+    keepData.value,
     props.role,
     effectiveInstallationMode.value,
   )
@@ -480,12 +495,7 @@ watch(
     if (isLinuxOnlyRole(props.role) && props.os !== 'linux') {
       emit('update:os', 'linux')
     }
-    const staleTokenId = enrollmentTokenId.value
-    const staleTokenIsPlatform = enrollmentTokenIsPlatform.value
     clearInstallCommand()
-    if (staleTokenId) {
-      void revokeIssuedEnrollment(staleTokenId, staleTokenIsPlatform)
-    }
     refreshAll()
   },
   { immediate: true },
@@ -512,7 +522,7 @@ watch(activeTab, (tab) => {
   else if (tab === 'upgrade') void refreshUpgradeCommand(gen)
 })
 
-watch([purgeAll, serviceAction, () => props.os], () => refreshStaticCommands())
+watch([keepData, serviceAction, () => props.os], () => refreshStaticCommands())
 
 watch(
   () => props.os,
@@ -528,15 +538,19 @@ function onOsCardKeydown(event: KeyboardEvent, next: EnrollmentOs) {
   }
 }
 
-function onCopy() {
-  const text = displayCommand.value
+function onCopy(cmd?: string) {
+  const text = cmd ?? displayCommand.value
   if (!text || loading.value) return
   emit('copy', text)
-  copied.value = true
+  copiedCommand.value = text
   if (copiedTimer) clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => {
-    copied.value = false
+    copiedCommand.value = null
   }, 2000)
+}
+
+function isCopied(command: string | undefined): boolean {
+  return Boolean(command) && copiedCommand.value === command
 }
 
 function generateInstallCommand() {
@@ -548,9 +562,8 @@ function clearInstallCommand() {
   generation += 1
   installGenerated.value = false
   installCommand.value = ''
-  copied.value = false
-  enrollmentTokenId.value = null
-  enrollmentTokenIsPlatform.value = false
+  windowsCommands.value = null
+  copiedCommand.value = null
   enrollmentExpiresAt.value = null
 }
 
@@ -561,6 +574,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  generation += 1
   if (tokenStatusTimer) clearInterval(tokenStatusTimer)
 })
 
@@ -905,6 +919,103 @@ defineExpose({ clearInstallCommand })
               </template>
             </I18nT>
 
+            <!-- Windows two-step commands (split to avoid uBlock ClickFix false positives) -->
+            <template v-if="os === 'windows' && windowsCommands && installOnly">
+              <div class="source-script-shell agent-install-wizard__console">
+                <div class="agent-install-wizard__console-bar">
+                  <span>{{ t('nodeLifecycle.windowsInstallStepDownload') }}</span>
+                </div>
+                <div
+                  v-loading="loading"
+                  class="agent-install-wizard__console-body"
+                  element-loading-background="rgba(43, 45, 54, 0.88)"
+                >
+                  <pre class="agent-install-wizard__console-pre">{{ windowsCommands.download }}</pre>
+                </div>
+                <div class="agent-install-wizard__console-foot agent-install-wizard__console-foot--copy-only">
+                  <span
+                    v-if="installGenerated"
+                    class="agent-install-wizard__console-hint"
+                  >
+                    {{ t('nodeLifecycle.installCommandReusable') }}
+                  </span>
+                  <button
+                    v-if="generateOnDemand && !installGenerated"
+                    type="button"
+                    class="btn btn-primary agent-install-wizard__copy-btn"
+                    :disabled="loading"
+                    @click="generateInstallCommand"
+                  >
+                    <RefreshCw :size="12" :class="{ 'is-spinning': loading }" aria-hidden="true" />
+                    <span>{{ t('nodeLifecycle.generateInstallCommand') }}</span>
+                  </button>
+                  <button
+                    v-else-if="installGenerated"
+                    type="button"
+                    class="btn btn-primary agent-install-wizard__copy-btn"
+                    :class="{ 'agent-install-wizard__copy-btn--done': isCopied(windowsCommands.download) }"
+                    :disabled="loading || !tokenIsUsable"
+                    @click="onCopy(windowsCommands.download)"
+                  >
+                    <Check v-if="isCopied(windowsCommands.download)" :size="12" aria-hidden="true" />
+                    <Copy v-else :size="12" aria-hidden="true" />
+                    <span>{{ isCopied(windowsCommands.download) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="source-script-shell agent-install-wizard__console">
+                <div class="agent-install-wizard__console-bar">
+                  <span>{{ t('nodeLifecycle.windowsInstallStepExecute') }}</span>
+                  <span
+                    v-if="installGenerated"
+                    class="agent-install-wizard__token-status"
+                  >
+                    <span>{{ tokenValidityLabel }}</span>
+                  </span>
+                </div>
+                <div
+                  v-loading="loading"
+                  class="agent-install-wizard__console-body"
+                  element-loading-background="rgba(43, 45, 54, 0.88)"
+                >
+                  <pre class="agent-install-wizard__console-pre">{{ windowsCommands.execute }}</pre>
+                </div>
+                <div class="agent-install-wizard__console-foot agent-install-wizard__console-foot--copy-only">
+                  <span
+                    v-if="installGenerated"
+                    class="agent-install-wizard__console-hint"
+                  >
+                    {{ t('nodeLifecycle.installCommandReusable') }}
+                  </span>
+                  <button
+                    v-if="generateOnDemand && !installGenerated"
+                    type="button"
+                    class="btn btn-primary agent-install-wizard__copy-btn"
+                    :disabled="loading"
+                    @click="generateInstallCommand"
+                  >
+                    <RefreshCw :size="12" :class="{ 'is-spinning': loading }" aria-hidden="true" />
+                    <span>{{ t('nodeLifecycle.generateInstallCommand') }}</span>
+                  </button>
+                  <button
+                    v-else-if="installGenerated"
+                    type="button"
+                    class="btn btn-primary agent-install-wizard__copy-btn"
+                    :class="{ 'agent-install-wizard__copy-btn--done': isCopied(windowsCommands.execute) }"
+                    :disabled="loading || !tokenIsUsable"
+                    @click="onCopy(windowsCommands.execute)"
+                  >
+                    <Check v-if="isCopied(windowsCommands.execute)" :size="12" aria-hidden="true" />
+                    <Copy v-else :size="12" aria-hidden="true" />
+                    <span>{{ isCopied(windowsCommands.execute) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                  </button>
+                </div>
+              </div>
+            </template>
+
+            <!-- Single command console (Linux, Mac, non-agent Windows) -->
+            <template v-else>
             <div class="source-script-shell agent-install-wizard__console">
               <div class="agent-install-wizard__console-bar">
                 <span>{{ consoleBarTitle }}</span>
@@ -947,12 +1058,12 @@ defineExpose({ clearInstallCommand })
                   v-else-if="installGenerated"
                   type="button"
                   class="btn btn-primary agent-install-wizard__copy-btn"
-                  :class="{ 'agent-install-wizard__copy-btn--done': copied }"
+                  :class="{ 'agent-install-wizard__copy-btn--done': isCopied(displayCommand) }"
                   :disabled="!displayCommand || loading || !tokenIsUsable"
-                  @click="onCopy"
+                  @click="onCopy()"
                 >
                   <Check
-                    v-if="copied"
+                    v-if="isCopied(displayCommand)"
                     :size="12"
                     aria-hidden="true"
                   />
@@ -961,10 +1072,11 @@ defineExpose({ clearInstallCommand })
                     :size="12"
                     aria-hidden="true"
                   />
-                  <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                  <span>{{ isCopied(displayCommand) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                 </button>
               </div>
             </div>
+            </template>
 
             <div
               v-if="localCommandWarning"
@@ -999,7 +1111,7 @@ defineExpose({ clearInstallCommand })
                 </p>
                 <p class="install-flow-note__step">
                   <strong>{{ t('nodeLifecycle.installFlowStepInstall') }}</strong>
-                  {{ t('nodeLifecycle.installFlowInstall') }}
+                  {{ installFlowInstallText }}
                 </p>
                 <p class="install-flow-note__step">
                   <strong>{{ t('nodeLifecycle.installFlowStepRegister') }}</strong>
@@ -1014,7 +1126,7 @@ defineExpose({ clearInstallCommand })
               <div class="agent-install-wizard__platform">
                 <div class="agent-install-wizard__section-title">
                   <span class="fullscreen-form-section__indicator" />
-                  <h3>{{ t('nodeLifecycle.installedAgentTitle') }}</h3>
+                  <h3>{{ installedComponentTitle }}</h3>
                 </div>
                 <div class="agent-install-wizard__platform-summary">
                   <span class="agent-install-wizard__platform-icon-wrap">
@@ -1103,8 +1215,8 @@ defineExpose({ clearInstallCommand })
                   v-if="activeTab === 'uninstall'"
                   class="node-lifecycle-wizard__options"
                 >
-                  <ElCheckbox v-model="purgeAll">
-                    {{ t('nodeLifecycle.purgeAll') }}
+                  <ElCheckbox v-model="keepData">
+                    {{ t('nodeLifecycle.keepData') }}
                   </ElCheckbox>
                 </div>
                 <div
@@ -1175,12 +1287,12 @@ defineExpose({ clearInstallCommand })
                     <button
                       type="button"
                       class="btn btn-primary agent-install-wizard__copy-btn"
-                      :class="{ 'agent-install-wizard__copy-btn--done': copied }"
+                      :class="{ 'agent-install-wizard__copy-btn--done': isCopied(displayCommand) }"
                       :disabled="!displayCommand || loading || (activeTab === 'install' && !tokenIsUsable)"
-                      @click="onCopy"
+                      @click="onCopy()"
                     >
                       <Check
-                        v-if="copied"
+                        v-if="isCopied(displayCommand)"
                         :size="12"
                         aria-hidden="true"
                       />
@@ -1189,7 +1301,7 @@ defineExpose({ clearInstallCommand })
                         :size="12"
                         aria-hidden="true"
                       />
-                      <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
+                      <span>{{ isCopied(displayCommand) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                     </button>
                   </div>
                 </div>

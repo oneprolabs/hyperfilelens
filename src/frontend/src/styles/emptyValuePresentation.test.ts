@@ -20,7 +20,7 @@ describe('global empty value presentation', () => {
     const tableRule = styles.match(/\.el-table \.hfl-empty-mark\s*\{([\s\S]*?)\}/)?.[1] ?? ''
 
     for (const rule of [detailRule, emptyMarkRule]) {
-      expect(rule).toContain('color: rgb(100 116 139)')
+      expect(rule).toContain('color: var(--color-text-secondary)')
       expect(rule).toContain('font-family: inherit')
       expect(rule).toContain('font-size: 13px')
       expect(rule).toContain('font-weight: 400')

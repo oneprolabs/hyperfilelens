@@ -51,6 +51,9 @@ describe('Spanish language pack', () => {
 
   it('ships reviewed labels for authentication, protection, and Insight', () => {
     expect(spanish.login.welcomeTitle).toBe('Bienvenido a HyperFileLens')
+    expect(spanish.login.emailCodeMethod).toBe('Código de verificación')
+    expect(spanish.login.forgotPwd).toBe('¿Olvidó su contraseña?')
+    expect(spanish.login.noAccount).toBe('¿No tiene una cuenta?')
     expect(spanish.account.menuSignOut).toBe('Cerrar sesión')
     expect(spanish.protection.side.backupPolicies).toBe('Políticas de copia de seguridad')
     expect(spanish.protection.sourceResources.colDiskCount).toBe('Discos')
@@ -90,8 +93,12 @@ describe('Spanish language pack', () => {
       'Las habilidades desactivadas',
     )
     expect(spanish.insight.dataGateway.deleteForceTitle).toBe(
-      'Limpieza forzada del Data Gateway',
+      'Limpieza forzada de la puerta de enlace de datos',
     )
+    expect(spanish.protection.side.sourceAgents).toBe('Hosts proxy')
+    expect(spanish.insight.side.copilot).toBe('Copiloto de IA')
+    expect(spanish.insight.side.dataGateway).toBe('Puertas de enlace de datos')
+    expect(spanish.platformOps.nav.engineGateways).toBe('Puertas de enlace de datos')
     expect(spanish.insight.kb.sourceTypeGatewayLocalDemoHint).toContain(
       'es solo una vista previa',
     )
@@ -99,6 +106,8 @@ describe('Spanish language pack', () => {
       'Esperando la primera comprobación',
     )
     expect(spanish.platformOps.quotaUsage.colRemaining).toBe('Restante')
+    expect(spanish.platformOps.nav.groupMonitoring).toBe('Supervisión')
+    expect(spanish.platformOps.nav.groupAlerting).toBe('Alertas')
     expect(spanish.platformOps.platform.environmentTitle).toBe('Entorno')
     expect(spanish.platformOps.settings.turnstile.intro).toContain(
       'credenciales de Cloudflare Turnstile',
@@ -133,7 +142,8 @@ describe('Spanish language pack', () => {
     })
     expect(serialized).not.toMatch(/HFLPROTECTED|ZXQ|QXZ|[⟦⟧]/)
     expect(containsUnrelatedWritingSystem).toBe(false)
-    expect(allowedEnglish.length).toBeLessThanOrEqual(320)
+    expect(allowedEnglish).toContain('insight.aiSettings.topP')
+    expect(allowedEnglish.length).toBeLessThanOrEqual(322)
     expect(serialized).not.toMatch(
       /Failed to|\bDefault\b|\bRefresh\b|Disfraces|&quot;|&amp;/,
     )

@@ -3,6 +3,18 @@ import type { NodeOperationBatchPreview } from '../types/nodeLifecycle'
 
 type DiskSkipItem = NonNullable<NodeOperationBatchPreview['skipped_disk_full']>[number]
 
+export type UpgradeConfirmSkipGroup = {
+  key: string
+  title: string
+  names: Array<{ id: number; name: string }>
+  guidance?: string
+  details?: string[]
+}
+
+export function upgradePreviewSkippedCount(preview: NodeOperationBatchPreview): number {
+  return Math.max(0, preview.requested - preview.eligible.length)
+}
+
 /** Format capacity using binary units because the upgrade threshold is configured in MiB. */
 export function formatDiskCapacity(value: number | null | undefined): string | null {
   if (value == null) return null
@@ -57,30 +69,80 @@ export function buildUpgradeDiskSkipDetails(
   return (preview.skipped_disk_full || []).map((item) => buildUpgradeDiskSkipDetail(t, item))
 }
 
-export function buildUpgradeConfirmSkipLines(
+export function buildUpgradeConfirmSkipGroups(
   t: ComposerTranslation,
   preview: NodeOperationBatchPreview,
-): string[] {
-  const lines: string[] = []
-  if (preview.skipped_offline.length) {
-    lines.push(t('nodeLifecycle.confirmSkipOffline', { n: preview.skipped_offline.length }))
+): UpgradeConfirmSkipGroup[] {
+  const groups: UpgradeConfirmSkipGroup[] = []
+  const addGroup = (
+    key: string,
+    names: Array<{ id: number; name: string }>,
+    guidanceKey?: string,
+    details?: string[],
+  ) => {
+    if (!names.length) return
+    groups.push({
+      key,
+      title: t(`nodeLifecycle.confirmSkipGroup.${key}`, { n: names.length }),
+      names,
+      ...(guidanceKey ? { guidance: t(guidanceKey) } : {}),
+      ...(details?.length ? { details } : {}),
+    })
   }
-  if (preview.skipped_workload.length) {
-    lines.push(t('nodeLifecycle.confirmSkipWorkload', { n: preview.skipped_workload.length }))
-  }
-  if (preview.skipped_not_upgradeable.length) {
-    lines.push(
-      t('nodeLifecycle.confirmSkipNotUpgradeable', {
-        n: preview.skipped_not_upgradeable.length,
-      }),
+
+  addGroup(
+    'offline',
+    preview.skipped_offline.map((item) => ({ id: item.node_id, name: item.name })),
+    'nodeLifecycle.confirmSkipGuidance.offline',
+  )
+  addGroup(
+    'workload',
+    preview.skipped_workload.map((item) => ({ id: item.node_id, name: item.name })),
+    'nodeLifecycle.confirmSkipGuidance.workload',
+  )
+  addGroup(
+    'inProgress',
+    preview.skipped_in_progress.map((item) => ({ id: item.node_id, name: item.name })),
+    'nodeLifecycle.confirmSkipGuidance.inProgress',
+  )
+
+  for (const [reason, key] of [
+    ['local_admin_required', 'localAdmin'],
+    ['release_unavailable', 'releaseUnavailable'],
+    ['downgrade_not_supported', 'downgrade'],
+  ] as const) {
+    addGroup(
+      key,
+      preview.skipped_not_upgradeable
+        .filter((item) => item.reason === reason)
+        .map((item) => ({ id: item.node_id, name: item.name })),
+      `nodeLifecycle.confirmSkipGuidance.${key}`,
     )
   }
-  if (preview.skipped_proxy_bound.length) {
-    lines.push(t('nodeLifecycle.confirmSkipProxyBound', { n: preview.skipped_proxy_bound.length }))
-  }
-  if (preview.skipped_disk_full?.length) {
-    lines.push(t('nodeLifecycle.confirmSkipDiskFull', { n: preview.skipped_disk_full.length }))
-    lines.push(...buildUpgradeDiskSkipDetails(t, preview))
-  }
-  return lines
+  addGroup(
+    'notUpgradeable',
+    preview.skipped_not_upgradeable
+      .filter((item) => ![
+        'local_admin_required',
+        'release_unavailable',
+        'downgrade_not_supported',
+      ].includes(item.reason))
+      .map((item) => ({ id: item.node_id, name: item.name })),
+  )
+  addGroup(
+    'proxyBound',
+    preview.skipped_proxy_bound.map((item) => ({ id: item.node_id, name: item.name })),
+    'nodeLifecycle.confirmSkipGuidance.proxyBound',
+  )
+  addGroup(
+    'diskFull',
+    (preview.skipped_disk_full || []).map((item) => ({ id: item.node_id, name: item.name })),
+    undefined,
+    buildUpgradeDiskSkipDetails(t, preview),
+  )
+  addGroup(
+    'missing',
+    preview.missing_node_ids.map((id) => ({ id, name: t('nodeLifecycle.confirmSkipMissingNode', { id }) })),
+  )
+  return groups
 }

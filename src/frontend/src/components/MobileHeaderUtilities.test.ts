@@ -8,6 +8,7 @@ function source(path: string) {
 
 const appShell = source('src/app/layout/AppShell.vue')
 const topNav = source('src/app/layout/TopNav.vue')
+const platformOpsShell = source('src/platform-ops/layout/PlatformOpsShell.vue')
 const drawer = source('src/components/MobileNavigationDrawer.vue')
 const languageSwitcher = source('src/components/LanguageSwitcher.vue')
 const userMenu = source('src/components/NavUserMenu.vue')
@@ -26,14 +27,20 @@ describe('mobile header utilities', () => {
     expect(topNav).not.toContain('fetchDeployProfile')
   })
 
-  it('keeps language labels readable and groups the desktop selector with user utilities', () => {
+  it('orders desktop utilities by context, platform, localization, notifications, and user', () => {
+    const organizationIndex = topNav.indexOf('<OrgSwitcher />')
+    const adminConsoleIndex = topNav.indexOf('class="platform-ops-entry desktop-navigation-control"')
+    const timezoneIndex = topNav.indexOf('class="timezone-display desktop-navigation-control"')
     const notificationsIndex = topNav.indexOf('<NavNotificationPopover />')
     const languageIndex = topNav.indexOf('<LanguageSwitcher variant="navigation" />')
     const userIndex = topNav.indexOf('<NavUserMenu />')
 
-    expect(notificationsIndex).toBeGreaterThan(-1)
-    expect(languageIndex).toBeGreaterThan(notificationsIndex)
-    expect(userIndex).toBeGreaterThan(languageIndex)
+    expect(organizationIndex).toBeGreaterThan(-1)
+    expect(adminConsoleIndex).toBeGreaterThan(organizationIndex)
+    expect(timezoneIndex).toBeGreaterThan(adminConsoleIndex)
+    expect(languageIndex).toBeGreaterThan(timezoneIndex)
+    expect(notificationsIndex).toBeGreaterThan(languageIndex)
+    expect(userIndex).toBeGreaterThan(notificationsIndex)
     expect(languageSwitcher).toMatch(
       /\.language-switcher__current\s*{[\s\S]*?line-height:\s*1\.4/,
     )
@@ -49,6 +56,19 @@ describe('mobile header utilities', () => {
     )
   })
 
+  it('keeps time zone and language available in the Admin Console header', () => {
+    const returnIndex = platformOpsShell.indexOf('class="platform-ops-return"')
+    const timezoneIndex = platformOpsShell.indexOf('class="platform-ops-timezone platform-ops-header__desktop-utility"')
+    const languageIndex = platformOpsShell.indexOf('<LanguageSwitcher variant="navigation" />')
+    const userIndex = platformOpsShell.indexOf('<NavUserMenu />')
+
+    expect(returnIndex).toBeGreaterThan(-1)
+    expect(timezoneIndex).toBeGreaterThan(returnIndex)
+    expect(languageIndex).toBeGreaterThan(timezoneIndex)
+    expect(userIndex).toBeGreaterThan(languageIndex)
+    expect(platformOpsShell).toContain(':timezone-offset-display="timezoneOffsetDisplay"')
+  })
+
   it('compacts only the interactive navigation language switcher below 1440px', () => {
     expect(languageSwitcher).toMatch(
       /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.language-switcher--navigation \.language-switcher__trigger\s*\{[\s\S]*?width:\s*32px;[\s\S]*?justify-content:\s*center;[\s\S]*?padding:\s*0;/,
@@ -61,6 +81,12 @@ describe('mobile header utilities', () => {
   it('uses consistent hover and focus feedback for compact utility icons', () => {
     expect(topNav).toContain('<div class="alerts-btn">')
     expect(topNav).not.toContain('<div class="icon-btn alerts-btn">')
+    expect(topNav).toMatch(
+      /@media \(min-width: 1024px\)[\s\S]*?\.right-menu\s*{[\s\S]*?gap:\s*6px/,
+    )
+    expect(topNav).toMatch(
+      /@media \(min-width: 1024px\)[\s\S]*?\.alerts-btn\s*{[\s\S]*?margin-right:\s*-4px;[\s\S]*?margin-left:\s*-4px/,
+    )
     expect(languageSwitcher).toMatch(
       /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.language-switcher--navigation \.language-switcher__trigger:hover,[\s\S]*?background:\s*var\(--icon-btn-hover-bg,[\s\S]*?color:\s*var\(--icon-btn-hover-color/,
     )

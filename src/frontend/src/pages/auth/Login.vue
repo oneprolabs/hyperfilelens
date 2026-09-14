@@ -3,7 +3,7 @@ import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CircleAlert, Eye, EyeOff, Lock, Mail } from 'lucide-vue-next'
+import { CircleAlert, Eye, EyeOff, LoaderCircle, Lock, Mail } from 'lucide-vue-next'
 import { api } from '../../lib/api'
 import {
   confirmCurrentSession,
@@ -26,9 +26,9 @@ import EmailCodeLoginForm from '../../components/auth/EmailCodeLoginForm.vue'
 import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 import type { EmailCodeLoginData } from '../../lib/emailCodeLoginApi'
 import ResetPasswordCard from '../../components/auth/ResetPasswordCard.vue'
-import { fetchDeployProfile, resolvePostLoginPath } from '../../composables/useDeployProfile'
+import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import { appConfig } from '../../lib/appConfig'
-import { resolveSafeLoginRedirect } from '../../lib/loginNavigation'
+import { resolveAuthenticatedLoginTarget } from '../../lib/loginNavigation'
 import { trackAppEvent } from '../../lib/analytics'
 import {
   consumeSessionNotice,
@@ -68,6 +68,15 @@ const turnstileFieldRef = ref<InstanceType<typeof AuthTurnstileField> | null>(nu
 const googleEnabled = ref(false)
 const googleLoginUrl = ref('/accounts/google/login/?process=login')
 const googleLoading = ref(false)
+type LoginNoticeTone = 'error' | 'warning'
+type LoginNotice = {
+  tone: LoginNoticeTone
+  titleKey: string
+  messageKey?: string
+}
+const loginNotice = ref<LoginNotice | null>(null)
+const validationShake = ref(false)
+let validationShakeTimer: ReturnType<typeof setTimeout> | null = null
 
 // Session invalid error codes that should show a dialog
 const SESSION_INVALID_CODES = [
@@ -126,19 +135,32 @@ formItems.email.placeholder = t('login.emailPh')
 formItems.password.placeholder = t('login.passwordPh')
 type LoginTransactionState =
   | 'idle'
+  | 'checking-session'
   | 'submitting'
   | 'recovering-navigation'
   | 'session-unknown'
 
-const loginState = ref<LoginTransactionState>('idle')
+const loginState = ref<LoginTransactionState>(sessionNoticeReason.value ? 'idle' : 'checking-session')
 const loginProgress = ref<'authenticating' | 'navigating'>('authenticating')
 const recoveryBusy = ref(false)
 const recoveryTarget = ref('')
 const navigationFinished = ref(false)
 const submitLoading = computed(() => loginState.value === 'submitting')
 const isRecoveryState = computed(() => (
-  loginState.value === 'recovering-navigation' || loginState.value === 'session-unknown'
+  loginState.value === 'checking-session'
+  || loginState.value === 'recovering-navigation'
+  || loginState.value === 'session-unknown'
 ))
+const recoveryTitle = computed(() => {
+  if (loginState.value === 'checking-session') return t('login.checkingSessionTitle')
+  if (loginState.value === 'recovering-navigation') return t('login.navigationRecoveryTitle')
+  return t('login.sessionUnknownTitle')
+})
+const recoveryMessage = computed(() => {
+  if (loginState.value === 'checking-session') return t('login.checkingSessionMessage')
+  if (loginState.value === 'recovering-navigation') return t('login.navigationRecoveryMessage')
+  return t('login.sessionUnknownMessage')
+})
 const showPassword = ref(false)
 const cardView = ref<'login' | 'reset'>('login')
 type AuthMode = 'password' | 'email-code'
@@ -174,6 +196,7 @@ function setAuthModeTabRef(mode: AuthMode, element: Element | null) {
 async function selectAuthMode(mode: AuthMode, focusTab = false) {
   if (loginState.value !== 'idle') return
   authMode.value = mode
+  loginNotice.value = null
   if (!focusTab) return
   await nextTick()
   authModeTabs.value[mode]?.focus()
@@ -209,6 +232,7 @@ function onAuthModeKeydown(event: KeyboardEvent) {
 
 // Real-time email validation
 function validateEmailOnInput() {
+  loginNotice.value = null
   const error = checkMail(formItems.email.value)
   if (error && formItems.email.value) {
     formItems.email.errorMsg = error
@@ -221,6 +245,7 @@ function validateEmailOnInput() {
 
 // Real-time password presence validation
 function validatePasswordPresenceOnInput() {
+  loginNotice.value = null
   const error = checkPasswordRequired(formItems.password.value)
   if (error && formItems.password.value) {
     formItems.password.errorMsg = error
@@ -229,6 +254,16 @@ function validatePasswordPresenceOnInput() {
     formItems.password.errorMsg = ''
     formItems.password.showError = false
   }
+}
+
+function triggerValidationShake() {
+  validationShake.value = false
+  if (validationShakeTimer) clearTimeout(validationShakeTimer)
+  validationShake.value = true
+  validationShakeTimer = setTimeout(() => {
+    validationShake.value = false
+    validationShakeTimer = null
+  }, 320)
 }
 
 function blockUnavailableTurnstile(errorCode = '') {
@@ -331,22 +366,42 @@ function showSessionErrorDialog(errorCode: string) {
   })
 }
 
-async function resolveLoginTargetPath(): Promise<string> {
-  const redirect = resolveSafeLoginRedirect(route.query.redirect)
-  if (redirect) return redirect
-  return resolvePostLoginPath()
+type LoginTarget =
+  | { kind: 'internal'; path: string }
+  | { kind: 'external' }
+
+async function resolveLoginTargetPath(): Promise<LoginTarget | null> {
+  const profile = await fetchDeployProfile(true)
+  if (!profile) return null
+  const target = resolveAuthenticatedLoginTarget(profile, route.query.redirect)
+  if (target.kind === 'unavailable') return null
+  if (target.kind === 'external') {
+    window.location.replace(target.url)
+    return { kind: 'external' }
+  }
+  return target
 }
 
-async function ensureRecoveryTarget(): Promise<string> {
-  if (!recoveryTarget.value) recoveryTarget.value = await resolveLoginTargetPath()
-  return recoveryTarget.value
+async function ensureRecoveryTarget(): Promise<LoginTarget | null> {
+  if (recoveryTarget.value) return { kind: 'internal', path: recoveryTarget.value }
+  const target = await resolveLoginTargetPath()
+  if (target?.kind === 'internal') recoveryTarget.value = target.path
+  return target
 }
 
 async function navigateAfterLogin() {
   loginProgress.value = 'navigating'
   try {
     const target = await ensureRecoveryTarget()
-    const result = await router.push(target)
+    if (!target) {
+      loginState.value = 'session-unknown'
+      return
+    }
+    if (target.kind === 'external') {
+      navigationFinished.value = true
+      return
+    }
+    const result = await router.push(target.path)
     if (result === undefined) {
       navigationFinished.value = true
       return
@@ -385,6 +440,20 @@ async function recoverUnknownAuthenticationResult() {
   await confirmSessionAndRecover()
 }
 
+async function restoreExistingSession(): Promise<void> {
+  if (sessionNoticeReason.value) {
+    loginState.value = 'idle'
+    return
+  }
+
+  const confirmation = await confirmCurrentSession()
+  if (confirmation.state === 'authenticated') {
+    await navigateAfterLogin()
+    return
+  }
+  loginState.value = confirmation.state === 'unknown' ? 'session-unknown' : 'idle'
+}
+
 function isExplicitAuthenticationFailure(error: unknown): boolean {
   const authError = error as {
     status?: number
@@ -409,9 +478,13 @@ function syncExplicitLoginLocale() {
 async function handleSubmit() {
   if (loginState.value !== 'idle') return
 
-  if (!validateForm()) return
+  if (!validateForm()) {
+    triggerValidationShake()
+    return
+  }
 
   loginState.value = 'submitting'
+  loginNotice.value = null
   loginProgress.value = 'authenticating'
   recoveryTarget.value = ''
   navigationFinished.value = false
@@ -462,10 +535,22 @@ async function handleSubmit() {
 
       // Error can be in either res.error or res.data.error
       const fields = res.error?.fields || res.data?.error?.fields
-      if (fields && Object.keys(fields).length > 0) {
+      if (errorCode === 'ACCOUNT_LOCKED') {
+        loginNotice.value = {
+          tone: 'warning',
+          titleKey: 'login.accountLockedTitle',
+          messageKey: 'login.accountLockedMessage',
+        }
+        resetTurnstile()
+      } else if (fields && Object.keys(fields).length > 0) {
         handleFieldsError(fields)
       } else {
-        ElMessage.error({ message: res.error?.message || res.data?.error?.message || t('login.msgLoginFailed'), grouping: true })
+        loginNotice.value = {
+          tone: 'error',
+          titleKey: 'login.authenticationFailedTitle',
+          messageKey: 'login.msgLoginFailed',
+        }
+        resetTurnstile()
       }
       return
     }
@@ -498,10 +583,21 @@ async function handleSubmit() {
       return
     }
     const fields = errObj.fields
-    if (fields && Object.keys(fields).length > 0) handleFieldsError(fields)
+    if (errObj.errorCode === 'ACCOUNT_LOCKED') {
+      loginNotice.value = {
+        tone: 'warning',
+        titleKey: 'login.accountLockedTitle',
+        messageKey: 'login.accountLockedMessage',
+      }
+      resetTurnstile()
+    } else if (fields && Object.keys(fields).length > 0) handleFieldsError(fields)
     else {
       resetTurnstile()
-      ElMessage.error({ message: errObj.message || t('login.msgLoginFailed'), grouping: true })
+      loginNotice.value = {
+        tone: 'error',
+        titleKey: 'login.authenticationFailedTitle',
+        messageKey: 'login.msgLoginFailed',
+      }
     }
   } finally {
     if (loginState.value === 'submitting' && !navigationFinished.value) {
@@ -639,6 +735,7 @@ function goRegister() {
 function goForgetPwd() {
   if (!passwordResetAvailable.value || loginState.value !== 'idle') return
   cardView.value = 'reset'
+  loginNotice.value = null
   resetStep.value = 'request'
 }
 
@@ -660,25 +757,20 @@ const cardTitle = computed(() => {
   return t('findPwd.welcomeTitle')
 })
 
-const credentialsPresent = computed(() => (
-  checkMail(formItems.email.value) === '' &&
-  checkPasswordRequired(formItems.password.value) === ''
+const submitDisabled = computed(() => (
+  submitLoading.value || isTurnstilePending.value || isTurnstileBlocked.value
 ))
-
-const canSubmitLogin = computed(() => {
-  if (submitLoading.value) return false
-  if (!credentialsPresent.value) return false
-  if (isTurnstilePending.value) return false
-  if (isTurnstileBlocked.value) return false
-  if (isTurnstileReady.value) return Boolean(turnstileToken.value)
-  return true
-})
 
 function handleLocaleChange(locale: string) {
   explicitlySelectedLocale.value = locale
   setLoginLocaleSelection(locale)
   formItems.email.placeholder = t('login.emailPh')
   formItems.password.placeholder = t('login.passwordPh')
+  formItems.email.errorMsg = ''
+  formItems.email.showError = false
+  formItems.password.errorMsg = ''
+  formItems.password.showError = false
+  turnstileError.value = ''
 }
 
 async function loadGoogleConfig() {
@@ -707,12 +799,14 @@ function startGoogleLogin() {
 }
 
 onUnmounted(() => {
+  if (validationShakeTimer) clearTimeout(validationShakeTimer)
   setAuthenticatedLocaleApplicationSuppressed(false)
 })
 
 onMounted(async () => {
   turnstileToken.value = ''
   void loadGoogleConfig()
+  await restoreExistingSession()
   const profile = await fetchDeployProfile()
   emailSignupEnabled.value = !!profile?.email_signup_enabled
   passwordResetAvailable.value = !!profile?.password_reset_available
@@ -738,7 +832,10 @@ onMounted(async () => {
     <!-- Login Form Box -->
     <div class="login-form-box">
       <div class="login-box-title">
-        <span class="login-box-title__copy">
+        <span
+          id="login-card-title"
+          class="login-box-title__copy"
+        >
           {{ cardTitle }}
         </span>
         <LanguageSwitcher
@@ -782,22 +879,26 @@ onMounted(async () => {
             role="status"
             aria-live="polite"
           >
+            <LoaderCircle
+              v-if="loginState === 'checking-session'"
+              class="login-recovery__icon spin-icon"
+              :size="30"
+              aria-hidden="true"
+            />
             <CircleAlert
+              v-else
               class="login-recovery__icon"
               :size="30"
               aria-hidden="true"
             />
             <h2 class="login-recovery__title">
-              {{ loginState === 'recovering-navigation'
-                ? t('login.navigationRecoveryTitle')
-                : t('login.sessionUnknownTitle') }}
+              {{ recoveryTitle }}
             </h2>
             <p class="login-recovery__message">
-              {{ loginState === 'recovering-navigation'
-                ? t('login.navigationRecoveryMessage')
-                : t('login.sessionUnknownMessage') }}
+              {{ recoveryMessage }}
             </p>
             <ElButton
+              v-if="loginState !== 'checking-session'"
               type="primary"
               class="submit-btn"
               :loading="recoveryBusy"
@@ -851,121 +952,151 @@ onMounted(async () => {
             </button>
           </div>
 
+          <ElAlert
+            v-if="loginNotice && !isRecoveryState"
+            class="login-form-alert"
+            :type="loginNotice.tone"
+            :title="t(loginNotice.titleKey)"
+            :description="loginNotice.messageKey ? t(loginNotice.messageKey) : undefined"
+            show-icon
+            closable
+            @close="loginNotice = null"
+          />
+
           <div
             v-if="!isRecoveryState"
             id="login-method-panel"
             class="login-method-panel"
             role="tabpanel"
-            :aria-labelledby="`login-method-tab-${authMode}`"
+            :aria-labelledby="emailCodeLoginAvailable ? `login-method-tab-${authMode}` : 'login-card-title'"
           >
-            <!-- Email -->
-            <div
+            <form
               v-if="authMode === 'password'"
-              class="input-wrapper"
-              :class="{ 'has-error': formItems.email.showError }"
+              class="login-password-form"
+              :class="{ 'is-validation-shaking': validationShake }"
+              novalidate
+              @submit.prevent="handleSubmit"
             >
-              <div class="input-row">
-                <Mail
-                  class="input-icon"
-                  :size="18"
-                />
-                <input
-                  v-model="formItems.email.value"
-                  type="text"
-                  :placeholder="formItems.email.placeholder"
-                  tabindex="1"
-                  autocomplete="email"
-                  @blur="validateEmailOnInput"
-                  @input="validateEmailOnInput"
-                >
-              </div>
-              <p
-                v-if="formItems.email.showError"
-                class="error-msg"
+              <div
+                class="input-wrapper"
+                :class="{ 'has-error': formItems.email.showError }"
               >
-                {{ formItems.email.errorMsg }}
-              </p>
-            </div>
-
-            <!-- Password -->
-            <div
-              v-if="authMode === 'password'"
-              class="input-wrapper"
-              :class="{ 'has-error': formItems.password.showError }"
-            >
-              <div class="input-row">
-                <Lock
-                  class="input-icon"
-                  :size="18"
-                />
-                <input
-                  v-model="formItems.password.value"
-                  :type="showPassword ? 'text' : 'password'"
-                  :placeholder="formItems.password.placeholder"
-                  tabindex="2"
-                  autocomplete="current-password"
-                  @blur="validatePasswordPresenceOnInput"
-                  @input="validatePasswordPresenceOnInput"
-                  @keyup.enter="handleSubmit"
-                >
-                <button
-                  type="button"
-                  class="eye-btn"
-                  :aria-label="showPassword ? t('common.hidePassword') : t('common.showPassword')"
-                  :aria-pressed="showPassword"
-                  @click="showPassword = !showPassword"
-                >
-                  <EyeOff
-                    v-if="showPassword"
-                    class="eye-icon"
-                    :size="16"
+                <label
+                  class="sr-only"
+                  for="login-email"
+                >{{ t('login.emailLabel') }}</label>
+                <div class="input-row">
+                  <Mail
+                    class="input-icon"
+                    :size="18"
+                    aria-hidden="true"
                   />
-                  <Eye
-                    v-else
-                    class="eye-icon"
-                    :size="16"
-                  />
-                </button>
+                  <input
+                    id="login-email"
+                    v-model="formItems.email.value"
+                    type="email"
+                    :placeholder="formItems.email.placeholder"
+                    autocomplete="email"
+                    :aria-invalid="formItems.email.showError"
+                    :aria-describedby="formItems.email.showError ? 'login-email-error' : undefined"
+                    @blur="validateEmailOnInput"
+                    @input="validateEmailOnInput"
+                  >
+                </div>
+                <p
+                  v-if="formItems.email.showError"
+                  id="login-email-error"
+                  class="error-msg"
+                  role="alert"
+                >
+                  {{ formItems.email.errorMsg }}
+                </p>
               </div>
-              <p
-                v-if="formItems.password.showError"
-                class="error-msg"
+
+              <div
+                class="input-wrapper"
+                :class="{ 'has-error': formItems.password.showError }"
               >
-                {{ formItems.password.errorMsg }}
-              </p>
-            </div>
+                <label
+                  class="sr-only"
+                  for="login-password"
+                >{{ t('login.passwordLabel') }}</label>
+                <div class="input-row">
+                  <Lock
+                    class="input-icon"
+                    :size="18"
+                    aria-hidden="true"
+                  />
+                  <input
+                    id="login-password"
+                    v-model="formItems.password.value"
+                    :type="showPassword ? 'text' : 'password'"
+                    :placeholder="formItems.password.placeholder"
+                    autocomplete="current-password"
+                    :aria-invalid="formItems.password.showError"
+                    :aria-describedby="formItems.password.showError ? 'login-password-error' : undefined"
+                    @blur="validatePasswordPresenceOnInput"
+                    @input="validatePasswordPresenceOnInput"
+                    @keyup.enter="handleSubmit"
+                  >
+                  <button
+                    type="button"
+                    class="eye-btn"
+                    :aria-label="showPassword ? t('common.hidePassword') : t('common.showPassword')"
+                    :aria-pressed="showPassword"
+                    @click="showPassword = !showPassword"
+                  >
+                    <EyeOff
+                      v-if="showPassword"
+                      class="eye-icon"
+                      :size="17"
+                      aria-hidden="true"
+                    />
+                    <Eye
+                      v-else
+                      class="eye-icon"
+                      :size="17"
+                      aria-hidden="true"
+                    />
+                  </button>
+                </div>
+                <p
+                  v-if="formItems.password.showError"
+                  id="login-password-error"
+                  class="error-msg"
+                  role="alert"
+                >
+                  {{ formItems.password.errorMsg }}
+                </p>
+              </div>
 
-            <AuthTurnstileField
-              v-if="authMode === 'password'"
-              :key="authTurnstileMountGeneration"
-              ref="turnstileFieldRef"
-              :pending="isTurnstilePending"
-              :ready="isTurnstileReady"
-              :blocked="isTurnstileBlocked"
-              :verified="Boolean(turnstileToken)"
-              :site-key="turnstileSiteKey"
-              action="login"
-              :loading-message="t('login.captchaLoading')"
-              :blocked-message="t('login.captchaUnavailable')"
-              :retry-label="t('login.captchaRetry')"
-              :manual-retry-label="t('login.captchaManualRetry')"
-              :error-code-label="turnstileErrorCode ? t('login.captchaReferenceCode', { code: turnstileErrorCode }) : ''"
-              :error-message="turnstileError"
-              @retry="retryTurnstile"
-              @success="onTurnstileSuccess"
-              @expire="onTurnstileExpire"
-              @invalidate="onTurnstileInvalidate"
-              @error="onTurnstileError"
-              @load-failed="onTurnstileLoadFailed"
-            />
+              <AuthTurnstileField
+                :key="authTurnstileMountGeneration"
+                ref="turnstileFieldRef"
+                :ready="isTurnstileReady"
+                :blocked="isTurnstileBlocked"
+                :verified="Boolean(turnstileToken)"
+                :site-key="turnstileSiteKey"
+                action="login"
+                :blocked-message="t('login.captchaUnavailable')"
+                :retry-label="t('login.captchaRetry')"
+                :manual-retry-label="t('login.captchaManualRetry')"
+                :error-code-label="turnstileErrorCode ? t('login.captchaReferenceCode', { code: turnstileErrorCode }) : ''"
+                :error-message="turnstileError"
+                @retry="retryTurnstile"
+                @success="onTurnstileSuccess"
+                @expire="onTurnstileExpire"
+                @invalidate="onTurnstileInvalidate"
+                @error="onTurnstileError"
+                @load-failed="onTurnstileLoadFailed"
+              />
 
-            <div class="login-actions">
-              <div v-if="authMode === 'password'">
-                <!-- Submit Button -->
+              <div class="login-actions">
                 <ElButton
                   type="primary"
                   class="submit-btn"
-                  :disabled="submitLoading || !canSubmitLogin"
+                  native-type="submit"
+                  :disabled="submitDisabled"
                   :loading="submitLoading"
                   @click="handleSubmit"
                 >
@@ -976,26 +1107,25 @@ onMounted(async () => {
                     : t('login.btnSubmit') }}
                 </ElButton>
               </div>
+            </form>
 
-              <EmailCodeLoginForm
-                v-if="authMode === 'email-code'"
-                v-model:email="formItems.email.value"
-                :disabled="submitLoading"
-                @verified="handleEmailCodeVerified"
-                @verification-unknown="handleEmailCodeVerificationUnknown"
-              />
+            <EmailCodeLoginForm
+              v-else
+              v-model:email="formItems.email.value"
+              :disabled="submitLoading"
+              @verified="handleEmailCodeVerified"
+              @verification-unknown="handleEmailCodeVerificationUnknown"
+            />
 
-              <!-- Forgot Password -->
-              <div
-                v-if="passwordResetAvailable"
-                class="forgot-row"
-              >
-                <a
-                  href="#"
-                  class="forgot-link"
-                  @click.prevent="goForgetPwd"
-                >{{ t('login.forgotPwd') }}</a>
-              </div>
+            <div
+              v-if="passwordResetAvailable"
+              class="forgot-row"
+            >
+              <a
+                href="#"
+                class="forgot-link"
+                @click.prevent="goForgetPwd"
+              >{{ t('login.forgotPwd') }}</a>
             </div>
           </div>
 
@@ -1087,22 +1217,24 @@ onMounted(async () => {
 
 <style scoped>
 .login-container {
-  user-select: none;
+  box-sizing: border-box;
   width: 100%;
   min-height: var(--app-viewport-height);
-  background-color: #08090C;
-  display: flex;
+  padding: 64px max(48px, calc((100vw - 1440px) / 2));
+  background-color: #08090c;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(420px, 2fr);
   align-items: center;
-  justify-content: center;
   overflow-x: hidden;
   overflow-y: auto;
   position: relative;
 }
 
 .left-logo {
-  width: 680px;
-  margin-right: clamp(64px, 7vw, 112px);
-  min-width: 680px;
+  width: min(540px, 100%);
+  min-width: 0;
+  margin: 0;
+  justify-self: center;
   z-index: 10;
   display: flex;
   align-items: center;
@@ -1110,13 +1242,17 @@ onMounted(async () => {
 
 .login-form-box {
   box-sizing: border-box;
-  min-width: 440px;
-  width: 440px;
-  padding: 40px;
-  background-color: hsla(0, 0%, 100%, .1);
-  border-radius: var(--radius-card);
-  box-shadow: 0px 4px 4px 0px rgba(0, 0, 0, .25);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  min-width: 420px;
+  width: 420px;
+  justify-self: center;
+  padding: 30px;
+  background: linear-gradient(180deg, rgba(30, 26, 40, 0.92), rgba(20, 17, 28, 0.94));
+  border-radius: 18px;
+  box-shadow:
+    0 28px 70px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(20px);
   z-index: 10;
 }
 
@@ -1125,27 +1261,59 @@ onMounted(async () => {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  font-weight: 600;
+  font-weight: 700;
   color: #FFF;
 }
 
 .login-box-title__copy {
   min-width: 0;
-  font-size: 17px;
+  font-size: 17.5px;
   line-height: 1.35;
   overflow-wrap: normal;
 }
 
 .login-box-content {
-  margin-top: 24px;
+  margin-top: 22px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
 }
 
+.login-password-form,
 .login-actions {
   display: flex;
   flex-direction: column;
+}
+
+.login-password-form {
+  gap: 12px;
+}
+
+.login-password-form.is-validation-shaking .input-wrapper.has-error {
+  animation: login-validation-shake 320ms ease-out;
+}
+
+@keyframes login-validation-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  20% {
+    transform: translateX(-5px);
+  }
+
+  40% {
+    transform: translateX(5px);
+  }
+
+  60% {
+    transform: translateX(-3px);
+  }
+
+  80% {
+    transform: translateX(3px);
+  }
 }
 
 .login-recovery {
@@ -1183,20 +1351,20 @@ onMounted(async () => {
 .login-method-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-bottom: 1px solid rgba(255, 255, 255, 0.13);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .login-method-tabs__tab {
   position: relative;
   min-height: 44px;
   padding: 0 12px;
-  color: rgba(255, 255, 255, 0.62);
+  color: rgba(228, 223, 242, 0.58);
   background: transparent;
   border: 0;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: color 0.18s ease;
+  transition: color 150ms ease-out;
 }
 
 .login-method-tabs__tab::after {
@@ -1206,11 +1374,11 @@ onMounted(async () => {
   left: 20px;
   height: 2px;
   content: '';
-  background: linear-gradient(90deg, var(--color-primary), var(--color-brand-violet-soft));
+  background: var(--color-brand-violet-soft);
   border-radius: 999px;
   transform: scaleX(0);
   transform-origin: center;
-  transition: transform 0.18s ease;
+  transition: transform 150ms ease-out;
 }
 
 .login-method-tabs__tab:hover {
@@ -1231,14 +1399,44 @@ onMounted(async () => {
 }
 
 .login-method-tabs__tab:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--color-brand-violet-soft);
   outline-offset: 2px;
 }
 
 .login-method-panel {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 12px;
+}
+
+.login-form-alert {
+  --el-alert-padding: 11px 12px;
+  border-radius: 10px;
+}
+
+.login-form-alert.el-alert--warning.is-light {
+  color: #ffd39a;
+  background: rgba(255, 166, 46, 0.09);
+  border: 1px solid rgba(255, 176, 64, 0.3);
+}
+
+.login-form-alert.el-alert--error.is-light {
+  color: #ffb3b3;
+  background: rgba(255, 86, 86, 0.09);
+  border: 1px solid rgba(255, 110, 110, 0.3);
+}
+
+.login-form-alert :deep(.el-alert__title) {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.login-form-alert :deep(.el-alert__description) {
+  color: rgba(228, 223, 242, 0.68);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .session-alert {
@@ -1296,42 +1494,48 @@ onMounted(async () => {
 .input-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 7px;
 }
 
 .input-row {
   display: flex;
   align-items: center;
-  background-color: #313131;
-  border: 1px solid #3A3B40;
-  border-radius: var(--radius-card);
-  height: 42px;
-  padding: 0 14px;
-  transition: border-color 0.2s;
+  height: 46px;
+  padding: 0 13px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    box-shadow 150ms ease-out;
 }
 
 .input-row:focus-within {
-  border-color: var(--color-primary);
+  background: rgba(109, 94, 246, 0.08);
+  border-color: rgba(139, 120, 255, 0.72);
+  box-shadow: 0 0 0 3px rgba(109, 94, 246, 0.22);
 }
 
 .input-icon {
-  color: #888A8F;
+  color: #a19aad;
   flex-shrink: 0;
-  margin-right: 12px;
+  margin-right: 10px;
 }
 
 .input-row input {
-  height: 38px;
+  height: 42px;
   flex: 1;
   background: transparent;
   border: none;
   outline: none;
   font-size: 14px;
-  color: #fff;
+  font-weight: 500;
+  color: #f0eefa;
 }
 
 .input-row input::placeholder {
-  color: #6A6C71;
+  color: #938c9e;
 }
 
 .eye-btn {
@@ -1342,10 +1546,10 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   margin-left: 8px;
-  color: #888A8F;
-  border-radius: 4px;
-  height: 24px;
-  width: 24px;
+  color: #a19aad;
+  border-radius: 7px;
+  height: 36px;
+  width: 36px;
   justify-content: center;
   transition: color 0.2s, background-color 0.2s;
 }
@@ -1355,24 +1559,34 @@ onMounted(async () => {
   background-color: rgba(255, 255, 255, 0.1);
 }
 
+.eye-btn:focus-visible {
+  outline: 2px solid var(--color-brand-violet-soft);
+  outline-offset: 2px;
+}
+
 /* Error state */
 .input-wrapper.has-error .input-row {
-  border-color: #f85149;
+  background: rgba(255, 90, 90, 0.07);
+  border-color: rgba(255, 110, 110, 0.62);
 }
 
 .error-msg {
+  margin: 0;
   font-size: 12px;
-  color: #f85149;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #ff8f8f;
   padding-left: 2px;
 }
 
 /* Submit button */
 .submit-btn {
   width: 100%;
-  height: 42px !important;
-  border-radius: 21px;
-  font-size: 15px;
-  font-weight: 500;
+  min-height: 46px;
+  height: 46px !important;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .btn-content {
@@ -1392,19 +1606,32 @@ onMounted(async () => {
 
 /* Forgot password */
 .forgot-row {
+  margin-top: -8px;
   text-align: right;
-  padding-top: 4px;
+  padding-top: 0;
 }
 
 .forgot-link {
-  font-size: 12px;
-  color: #fff;
+  display: inline-flex;
+  min-height: 24px;
+  padding: 2px 0;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-brand-violet-soft);
   text-decoration: none;
   transition: color 0.2s;
 }
 
 .forgot-link:hover {
   color: #fff;
+}
+
+.forgot-link:focus-visible,
+.footer-link:focus-visible {
+  outline: 2px solid var(--color-brand-violet-soft);
+  outline-offset: 3px;
+  border-radius: 3px;
 }
 
 /* Divider */
@@ -1422,7 +1649,7 @@ onMounted(async () => {
 
 .divider-text {
   font-size: 12px;
-  color: #fff;
+  color: rgba(228, 223, 242, 0.52);
 }
 
 /* Google login */
@@ -1432,24 +1659,34 @@ onMounted(async () => {
 
 .google-btn {
   width: 100%;
-  height: 34px;
-  background: #fff;
-  border: none;
-  border-radius: 21px;
-  color: #333;
-  font-size: 14px;
-  font-weight: 500;
+  min-height: 44px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  color: #ede9f7;
+  font-size: 13.5px;
+  font-weight: 600;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   transition: background 0.2s;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
 }
 
 .google-btn:hover:not(:disabled) {
-  background: #f0f0f0;
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.google-btn:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.google-btn:focus-visible {
+  outline: 2px solid var(--color-brand-violet-soft);
+  outline-offset: 3px;
 }
 
 .google-btn:disabled {
@@ -1490,7 +1727,7 @@ onMounted(async () => {
 
 .footer-text {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.62);
 }
 
 .footer-link {
@@ -1532,9 +1769,10 @@ onMounted(async () => {
   .login-container {
     min-height: var(--app-viewport-height);
     height: auto;
+    display: flex;
     flex-direction: column;
     justify-content: flex-start;
-    gap: 20px;
+    gap: 18px;
     box-sizing: border-box;
     padding: calc(24px + var(--app-safe-top)) max(20px, var(--app-safe-right)) calc(24px + var(--app-safe-bottom)) max(20px, var(--app-safe-left));
   }
@@ -1546,7 +1784,7 @@ onMounted(async () => {
   }
 
   .login-form-box {
-    width: min(440px, 100%);
+    width: min(420px, 100%);
     min-width: 0;
     padding: 32px 28px;
   }
@@ -1559,7 +1797,7 @@ onMounted(async () => {
   }
 
   .login-form-box {
-    padding: 24px 16px;
+    padding: 24px 18px;
   }
 
   .login-box-title__copy {
@@ -1573,13 +1811,46 @@ onMounted(async () => {
 
   .input-row,
   .submit-btn,
-  .google-btn {
+  .google-btn,
+  .eye-btn {
     min-height: 44px;
   }
 
   .eye-btn {
-    min-width: 36px;
-    min-height: 36px;
+    min-width: 40px;
+  }
+
+  .forgot-link {
+    min-height: 40px;
+  }
+
+  .forgot-row {
+    margin-top: 0;
+  }
+}
+
+@media (max-height: 720px) and (min-width: 1280px) {
+  .login-container {
+    align-items: flex-start;
+    padding-top: 40px;
+    padding-bottom: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-password-form.is-validation-shaking .input-wrapper.has-error {
+    animation: none;
+  }
+
+  .card-view-fade-enter-active,
+  .card-view-fade-leave-active {
+    transition: none;
+  }
+
+  .login-method-tabs__tab,
+  .login-method-tabs__tab::after,
+  .input-row {
+    transition: none;
   }
 }
 

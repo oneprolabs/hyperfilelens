@@ -21,6 +21,8 @@ from apps.storage.services.internal.repository_access import repository_uses_bou
 
 DEFAULT_SNAPSHOT_BROWSE_LIMIT = 200
 DEFAULT_SNAPSHOT_BROWSER_TIMEOUT_SECONDS = 120
+SNAPSHOT_MULTI_DOWNLOAD_CAPABILITY = "snapshot_multi_download_v1"
+SNAPSHOT_SOURCE_PATH_DOWNLOAD_CAPABILITY = "snapshot_source_path_download_v1"
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,10 @@ class SnapshotBrowserForbidden(PermissionError):
 
 class SnapshotArtifactUploadUnsupported(SnapshotBrowserError):
     """The selected repository reader predates artifact upload support."""
+
+
+class SnapshotMultiDownloadUnsupported(SnapshotBrowserError):
+    """The selected repository reader predates grouped snapshot downloads."""
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,19 @@ def _parent_path(path: str) -> str:
 
 def _filename(path: str) -> str:
     return posixpath.basename(path.rstrip("/")) or "download"
+
+
+def _cursor_offset(cursor: str) -> int:
+    value = str(cursor or "").strip()
+    if not value:
+        return 0
+    try:
+        offset = int(value)
+    except (TypeError, ValueError) as exc:
+        raise SnapshotBrowserError("Cursor must be a non-negative integer.") from exc
+    if offset < 0:
+        raise SnapshotBrowserError("Cursor must be a non-negative integer.")
+    return offset
 
 
 def _get_directory(*, organization_id: int, directory_id: int) -> BackupSourceSnapshotDirectory:
@@ -136,14 +155,22 @@ def _normalize_entries(raw_entries: Any, *, base_path: str, limit: int) -> list[
         item_type = str(item.get("type") or "").strip().lower()
         mode = str(item.get("mode") or item.get("permissions") or "").strip().lower()
         is_dir = bool(item.get("is_dir")) or item_type in {"dir", "directory", "d", "folder"} or mode.startswith("d")
+        normalized_type = "dir" if is_dir else (
+            "symlink" if item_type in {"symlink", "symbolic-link", "link"} or mode.startswith("l") else "file"
+        )
+        downloadable = False if normalized_type == "symlink" else item.get("downloadable", True) is not False
+        download_reason = str(item.get("download_reason") or "").strip()
+        if normalized_type == "symlink" and not download_reason:
+            download_reason = "Symbolic links cannot be downloaded individually."
         rows.append(
             {
                 "name": name,
                 "path": rel_path,
-                "type": "dir" if is_dir else "file",
+                "type": normalized_type,
                 "size_bytes": int(item.get("size_bytes") or item.get("size") or 0),
                 "modified_at": item.get("modified_at") or item.get("mod_time") or None,
-                "downloadable": item.get("downloadable", True) is not False,
+                "downloadable": downloadable,
+                "download_reason": download_reason or None,
                 "has_children": None if not is_dir else item.get("has_children"),
             }
         )
@@ -157,6 +184,7 @@ def _run_snapshot_agent_task(
     path: str,
     wait_timeout_seconds: int,
     extra_payload: dict[str, Any] | None = None,
+    required_capability: str = "",
 ) -> Any:
     snapshot = row.source_snapshot
     repository = _repository_for_directory(row)
@@ -170,6 +198,25 @@ def _run_snapshot_agent_task(
         source_type=snapshot.source_type,
         source_ref_id=snapshot.source_ref_id,
     )
+    if required_capability:
+        metadata = repository_access.node.metadata if isinstance(repository_access.node.metadata, dict) else {}
+        inventory = metadata.get("inventory") if isinstance(metadata.get("inventory"), dict) else {}
+        capabilities = inventory.get("capabilities", metadata.get("capabilities", []))
+        capabilities = capabilities if isinstance(capabilities, (list, tuple, set)) else []
+        if required_capability not in capabilities:
+            if snapshot.source_type == "nas":
+                message = (
+                    "Cross-Source Path download requires an upgrade to the proxy for this NAS backup source. "
+                    "Select files and directories from a single Source Path, or upgrade the NAS backup source "
+                    "proxy and try again."
+                )
+            else:
+                message = (
+                    "Cross-Source Path download requires an upgrade to this backup source. "
+                    "Select files and directories from a single Source Path, or upgrade the backup source "
+                    "and try again."
+                )
+            raise SnapshotMultiDownloadUnsupported(message)
     ctx = task_log_context(
         node_id=repository_access.node.id,
         kind=kind,
@@ -194,8 +241,14 @@ def _run_snapshot_agent_task(
         "snapshot_id": row.kopia_snapshot_id,
         "path": path,
     }
+    if "limit" in payload:
+        persisted_payload["limit"] = payload["limit"]
+    if payload.get("cursor"):
+        persisted_payload["cursor"] = payload["cursor"]
     if isinstance(payload.get("paths"), list):
         persisted_payload["paths"] = payload["paths"]
+    if isinstance(payload.get("groups"), list):
+        persisted_payload["groups"] = payload["groups"]
     if isinstance(payload.get("artifact_upload"), dict):
         upload = payload["artifact_upload"]
         persisted_payload["artifact_upload"] = {
@@ -231,6 +284,46 @@ def _run_snapshot_agent_task(
     return outcome
 
 
+def plan_snapshot_download_groups(
+    *,
+    organization_id: int,
+    directory_id: int,
+    groups: list[dict[str, Any]],
+    wait_timeout_seconds: int | None = None,
+) -> dict[str, int]:
+    row = _get_directory(organization_id=organization_id, directory_id=directory_id)
+    outcome = _run_snapshot_agent_task(
+        row=row,
+        kind="snapshot.download.plan",
+        path="",
+        wait_timeout_seconds=(
+            _snapshot_browser_timeout_seconds()
+            if wait_timeout_seconds is None
+            else wait_timeout_seconds
+        ),
+        extra_payload={"groups": groups},
+        required_capability=_snapshot_download_groups_capability(groups),
+    )
+    if getattr(outcome, "timed_out", False):
+        raise SnapshotBrowserError("Snapshot download size calculation timed out.")
+    if not getattr(outcome, "ok", False):
+        raise SnapshotBrowserError(
+            _agent_result_error(outcome, "Snapshot download size calculation failed.")
+        )
+    result = outcome.result if isinstance(outcome.result, dict) else {}
+    try:
+        logical_size_bytes = int(result.get("logical_size_bytes"))
+        selected_count = int(result.get("selected_count"))
+    except (TypeError, ValueError) as exc:
+        raise SnapshotBrowserError("Snapshot download size calculation returned invalid totals.") from exc
+    if logical_size_bytes < 0 or selected_count < 1:
+        raise SnapshotBrowserError("Snapshot download size calculation returned invalid totals.")
+    return {
+        "logical_size_bytes": logical_size_bytes,
+        "selected_count": selected_count,
+    }
+
+
 def _snapshot_browser_timeout_seconds(default: int = DEFAULT_SNAPSHOT_BROWSER_TIMEOUT_SECONDS) -> int:
     raw = getattr(settings, "PROTECTION_SNAPSHOT_BROWSER_TIMEOUT_SECONDS", default)
     try:
@@ -245,34 +338,46 @@ def browse_snapshot_directory(
     directory_id: int,
     path: str = "",
     limit: int = DEFAULT_SNAPSHOT_BROWSE_LIMIT,
+    cursor: str = "",
     wait_timeout_seconds: int | None = None,
 ) -> dict[str, Any]:
     clean_path = _clean_relative_path(path)
+    cursor_offset = _cursor_offset(cursor)
     row = _get_directory(organization_id=organization_id, directory_id=directory_id)
     outcome = _run_snapshot_agent_task(
         row=row,
         kind="snapshot.browse",
         path=clean_path,
         wait_timeout_seconds=_snapshot_browser_timeout_seconds() if wait_timeout_seconds is None else wait_timeout_seconds,
+        extra_payload={"limit": limit, "cursor": cursor},
     )
     if getattr(outcome, "timed_out", False):
         raise SnapshotBrowserError("Snapshot browse timed out.")
     if not getattr(outcome, "ok", False):
         raise SnapshotBrowserError(_agent_result_error(outcome, "Snapshot browse failed."))
     result = outcome.result if isinstance(outcome.result, dict) else {}
+    raw_entries = result.get("entries") if isinstance(result.get("entries"), list) else []
+    agent_paged = "next_cursor" in result
+    page_entries = raw_entries if agent_paged else raw_entries[cursor_offset:]
     entries = _normalize_entries(
-        result.get("entries"),
+        page_entries,
         base_path=clean_path,
         limit=limit,
     )
+    if agent_paged:
+        has_more = bool(result.get("has_more"))
+        next_cursor = str(result.get("next_cursor") or "")
+    else:
+        has_more = len(raw_entries) > cursor_offset + limit
+        next_cursor = str(cursor_offset + limit) if has_more else ""
     return {
         "directory_id": row.id,
         "snapshot_id": row.source_snapshot_id,
         "path": clean_path,
         "parent_path": _parent_path(clean_path),
         "entries": entries,
-        "has_more": bool(result.get("has_more")) or len(entries) >= limit,
-        "next_cursor": str(result.get("next_cursor") or ""),
+        "has_more": has_more,
+        "next_cursor": next_cursor,
     }
 
 
@@ -284,11 +389,17 @@ def download_snapshot_file(
     wait_timeout_seconds: int | None = None,
     upload_artifact=None,
     paths: list[str] | None = None,
+    allow_directory_root: bool = False,
 ) -> SnapshotFileDownload:
     clean_path = _clean_relative_path(path)
     row = _get_directory(organization_id=organization_id, directory_id=directory_id)
     clean_paths = [_clean_relative_path(item) for item in paths or []]
-    if not clean_path and not clean_paths and row.path_type != BackupSourceSnapshotDirectory.PathType.FILE:
+    if (
+        not clean_path
+        and not clean_paths
+        and row.path_type != BackupSourceSnapshotDirectory.PathType.FILE
+        and not allow_directory_root
+    ):
         raise SnapshotBrowserForbidden("File path is required.")
     extra_payload: dict[str, Any] = {}
     if clean_paths:
@@ -375,3 +486,84 @@ def download_snapshot_file(
         filename = _filename(clean_path or row.source_path)
     content_type = str(result.get("content_type") or "").strip() or "application/octet-stream"
     return SnapshotFileDownload(filename=filename, content=content, content_type=content_type)
+
+
+def download_snapshot_groups(
+    *,
+    organization_id: int,
+    directory_id: int,
+    groups: list[dict[str, Any]],
+    upload_artifact,
+    wait_timeout_seconds: int | None = None,
+) -> SnapshotFileDownload:
+    from apps.protection.services.snapshot_download import prepare_snapshot_artifact_upload
+
+    row = _get_directory(organization_id=organization_id, directory_id=directory_id)
+    repository = _repository_for_directory(row)
+    fallback_target = None
+    if not repository_uses_bound_proxy(repository):
+        fallback_target = _resolve_execution_target(source_snapshot=row.source_snapshot)
+    repository_access = resolve_snapshot_repository_reader(
+        directory=row,
+        repository=repository,
+        fallback_node=fallback_target.node if fallback_target is not None else None,
+        source_type=row.source_snapshot.source_type,
+        source_ref_id=row.source_snapshot.source_ref_id,
+    )
+    outcome = _run_snapshot_agent_task(
+        row=row,
+        kind="snapshot.download",
+        path="",
+        wait_timeout_seconds=(
+            _snapshot_browser_timeout_seconds()
+            if wait_timeout_seconds is None
+            else wait_timeout_seconds
+        ),
+        extra_payload={
+            "groups": groups,
+            "artifact_upload": prepare_snapshot_artifact_upload(
+                artifact=upload_artifact,
+                node_id=repository_access.node.id,
+            ),
+        },
+        required_capability=_snapshot_download_groups_capability(groups),
+    )
+    upload_artifact.refresh_from_db()
+    if upload_artifact.status == upload_artifact.Status.READY:
+        return SnapshotFileDownload(
+            filename=upload_artifact.filename,
+            content=b"",
+            content_type=upload_artifact.content_type,
+            artifact_id=upload_artifact.id,
+        )
+    if getattr(outcome, "timed_out", False):
+        raise SnapshotBrowserError("Snapshot download timed out.")
+    if not getattr(outcome, "ok", False):
+        raise SnapshotBrowserError(_agent_result_error(outcome, "Snapshot download failed."))
+    result = outcome.result if isinstance(outcome.result, dict) else {}
+    if int(result.get("artifact_id") or 0) != int(upload_artifact.id):
+        raise SnapshotBrowserError("Snapshot download upload did not finalize the artifact.")
+    upload_artifact.refresh_from_db()
+    if upload_artifact.status != upload_artifact.Status.READY:
+        raise SnapshotBrowserError("Snapshot download upload did not finalize the artifact.")
+    return SnapshotFileDownload(
+        filename=upload_artifact.filename,
+        content=b"",
+        content_type=upload_artifact.content_type,
+        artifact_id=upload_artifact.id,
+    )
+
+
+def _snapshot_download_groups_capability(groups: list[dict[str, Any]]) -> str:
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        path_type = str(group.get("path_type") or "").strip().lower()
+        paths = group.get("paths")
+        if (
+            path_type == BackupSourceSnapshotDirectory.PathType.DIRECTORY
+            and isinstance(paths, list)
+            and any(str(item or "").strip() == "" for item in paths)
+        ):
+            return SNAPSHOT_SOURCE_PATH_DOWNLOAD_CAPABILITY
+    return SNAPSHOT_MULTI_DOWNLOAD_CAPABILITY
