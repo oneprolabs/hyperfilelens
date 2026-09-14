@@ -49,10 +49,23 @@ TRANSIENT_REGISTRY_ERROR = re.compile(
     r"[^0-9\n]{0,16}(?:429|5[0-9]{2})",
     re.IGNORECASE,
 )
+PERMANENT_REGISTRY_ERROR = re.compile(
+    r"manifest unknown|pull access denied|requested access to|access denied|unauthorized|forbidden"
+    r"|no matching manifest|invalid reference format|repository does not exist",
+    re.IGNORECASE,
+)
 
 
 class RegistryNetworkError(RuntimeError):
     """Report a registry failure caused by a retryable transport condition."""
+
+
+class RegistryImageError(RuntimeError):
+    """Report a required image that is unavailable or cannot be accessed."""
+
+
+class RegistryPreparationError(RuntimeError):
+    """Report a non-network failure while preparing required images."""
 
 
 @dataclass(frozen=True)
@@ -591,17 +604,17 @@ def registry_failure_is_transient(output: str) -> bool:
     return bool(TRANSIENT_REGISTRY_ERROR.search(output))
 
 
+def registry_failure_is_terminal(output: str) -> bool:
+    """Return whether Docker reported a non-retryable image failure."""
+    return bool(PERMANENT_REGISTRY_ERROR.search(output))
+
+
 def registry_retry_delay(completed_attempt: int) -> int:
     """Return the capped delay before the next same-registry attempt."""
     return min(
         PULL_RETRY_DELAY_SECONDS * (2 ** (completed_attempt - 1)),
         PULL_RETRY_MAX_DELAY_SECONDS,
     )
-
-
-def registry_display_name(region: str) -> str:
-    """Return the user-facing name of one configured registry region."""
-    return "Alibaba Cloud" if region == "cn" else "Docker Hub"
 
 
 def pull_images(
@@ -611,7 +624,6 @@ def pull_images(
     concise_output: bool = False,
 ) -> list[ResolvedImage]:
     """Pull all images concurrently from the selected registry region."""
-    registry_name = registry_display_name(selected_region)
     pull_outputs: list[str] = []
     resolved: dict[str, ResolvedImage] = {}
     unresolved = specs
@@ -627,38 +639,43 @@ def pull_images(
         resolved.update(attempt_resolved)
         if not unresolved:
             break
-        if attempt >= PULL_ATTEMPTS or not registry_failure_is_transient(output):
+        if (
+            attempt >= PULL_ATTEMPTS
+            or registry_failure_is_terminal(output)
+            or not registry_failure_is_transient(output)
+        ):
             break
         delay = registry_retry_delay(attempt)
         prefix = "  " if concise_output else ""
         print(
-            f"{prefix}[WARN] Temporary {registry_name} image download error; "
-            f"retrying {len(unresolved)} image(s) in {delay} seconds "
+            f"{prefix}[WARN] {len(unresolved)} required container images "
+            "are not ready locally",
+            flush=True,
+        )
+        print(
+            f"{prefix}       Retrying in {delay} seconds "
             f"({attempt + 1}/{PULL_ATTEMPTS})",
             flush=True,
         )
         time.sleep(delay)
 
     if unresolved:
-        details = (
-            re.sub(
-                r"\x1b\[[0-9;?]*[ -/]*[@-~]",
-                "",
-                "\n".join(pull_outputs),
+        if registry_failure_is_terminal(pull_outputs[-1]):
+            raise RegistryImageError(
+                "Required container images are unavailable or access was denied."
             )
-            .replace("\r", "\n")
-            .strip()
+        if pull.returncode == 0:
+            raise RegistryPreparationError(
+                "Required container images could not be verified locally."
+            )
+        if not registry_failure_is_transient(pull_outputs[-1]):
+            raise RegistryPreparationError(
+                "Docker could not prepare the required container images."
+            )
+        raise RegistryNetworkError(
+            "Required container images could not be downloaded completely "
+            f"after {attempt} attempt(s)."
         )
-        if details:
-            details = f"; Docker output: {details[-1000:]}"
-        failures = "; ".join(spec.source_ref(selected_region) for spec in unresolved)
-        message = (
-            f"the selected {registry_name} registry could not provide: "
-            f"{failures}{details}"
-        )
-        if registry_failure_is_transient(pull_outputs[-1]):
-            raise RegistryNetworkError(message)
-        raise RuntimeError(message)
 
     result: list[ResolvedImage] = []
     total = len(specs)
@@ -1059,6 +1076,12 @@ if __name__ == "__main__":
     except RegistryNetworkError as error:
         print(f"[ERROR] Temporary container registry failure: {error}", file=sys.stderr)
         raise SystemExit(75) from error
+    except RegistryImageError as error:
+        print(f"[ERROR] {error}", file=sys.stderr)
+        raise SystemExit(76) from error
+    except RegistryPreparationError as error:
+        print(f"[ERROR] {error}", file=sys.stderr)
+        raise SystemExit(77) from error
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         print(f"[FAIL] {error}", file=sys.stderr)
         raise SystemExit(1) from error

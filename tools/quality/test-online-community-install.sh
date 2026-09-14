@@ -42,7 +42,20 @@ grep -Fq 'gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page
 	"${online}/install.sh"
 grep -Fq 'recent fallback tags:' "${online}/install.sh"
 grep -Fq 'prepare_status == 75' "${online}/install.sh"
-grep -Fq 'Container image downloads could not be completed after 5 attempts from the selected registry' \
+grep -Fq 'prepare_status == 76' "${online}/install.sh"
+grep -Fq 'INSTALL_RECOVERY=0' "${online}/install.sh"
+grep -Fq 'Previous installation attempt detected · recovery will continue' \
+	"${online}/install.sh"
+grep -Fq 'HFL_INSTALL_RECOVERY="${INSTALL_RECOVERY}"' "${online}/install.sh"
+grep -Fq 'Required container images could not be downloaded completely.' \
+	"${online}/install.sh"
+grep -Fq 'Transient network failures are retried up to 5 times.' \
+	"${online}/install.sh"
+grep -Fq 'Downloaded image layers will be reused.' "${online}/install.sh"
+grep -Fq 'Required container images are unavailable or access was denied.' \
+	"${online}/install.sh"
+grep -Fq 'prepare_status == 77' "${online}/install.sh"
+grep -Fq 'Required container images could not be prepared or verified locally.' \
 	"${online}/install.sh"
 if grep -Eq 'Release contract|installation contract|online installation contract' \
 	"${online}/install.sh"; then
@@ -112,6 +125,13 @@ for summary_contract in \
 	'print_value "Install log"'; do
 	grep -Fq "${summary_contract}" "${installer}"
 done
+for install_state_contract in \
+	'INSTALL_COMPLETE_MARKER="${INSTALL_DIR}/.install-complete"' \
+	'INSTALL_IN_PROGRESS_MARKER="${INSTALL_DIR}/.install-in-progress"' \
+	'mark_install_in_progress' \
+	'mark_install_complete'; do
+	grep -Fq "${install_state_contract}" "${installer}"
+done
 for online_output_contract in \
 	'[3/4] Starting HyperFileLens' \
 	'[4/4] Verifying installation' \
@@ -124,6 +144,17 @@ for online_output_contract in \
 	'Multimodal model' \
 	'print_online_installation_verification'; do
 	grep -Fq "${online_output_contract}" "${installer}"
+done
+for online_upgrade_contract in \
+	'[3/4] Applying upgrade' \
+	'[4/4] Verifying upgrade' \
+	'Applying configuration, application files, and database migrations' \
+	'Upgrade backup is ready' \
+	'Upgrade verification passed' \
+	'Upgrade completed successfully' \
+	'Upgrade summary'; do
+	grep -Fq "${online_upgrade_contract}" "${installer}" \
+		|| grep -Fq "${online_upgrade_contract}" "${online}/install.sh"
 done
 grep -Fq 'Preparing bundled Insight services' "${installer}"
 grep -Fq 'Using bundled SourceLens files from' \
@@ -266,11 +297,18 @@ for message in (
 ):
     assert module.registry_failure_is_transient(message), message
 for message in (
+    "pull access denied for repository",
+    "denied: requested access to the resource is denied",
     "manifest unknown: manifest unknown",
-    "pull access denied",
     "no matching manifest for linux/amd64",
 ):
-    assert not module.registry_failure_is_transient(message), message
+    assert module.registry_failure_is_terminal(message), message
+for message in (
+    "Docker Compose progress output only",
+    "short read: unexpected EOF",
+):
+    assert not module.registry_failure_is_terminal(message), message
+assert hasattr(module, "RegistryPreparationError")
 
 runtime = json.loads(
     (root / "deploy/online/sourcelens/runtime.json").read_text(encoding="utf-8")
@@ -480,6 +518,8 @@ case "${1:-} ${2:-}" in
 	if [[ "${HFL_TEST_DOCKER_PULL_FAIL:-0}" == "1" ]]; then
 		if [[ "${HFL_TEST_DOCKER_PULL_ERROR:-denied}" == network ]]; then
 			printf 'short read: unexpected EOF\n' >&2
+		elif [[ "${HFL_TEST_DOCKER_PULL_ERROR:-denied}" == progress ]]; then
+			:
 		else
 			printf 'registry rejected test image: access denied\n' >&2
 		fi
@@ -494,7 +534,9 @@ case "${1:-} ${2:-}" in
 		count=$((count + 1))
 		printf '%s\n' "${count}" >"${HFL_TEST_DOCKER_PULL_MARKER}"
 		if ((count <= ${HFL_TEST_DOCKER_TRANSIENT_FAILURES:-1})); then
-			printf 'short read: unexpected EOF\n' >&2
+			if [[ "${HFL_TEST_DOCKER_TRANSIENT_ERROR:-network}" != progress ]]; then
+				printf 'short read: unexpected EOF\n' >&2
+			fi
 			exit 23
 		fi
 	fi
@@ -947,14 +989,47 @@ grep -Fq "Full APT output saved to ${apt_update_failure_saved}" \
 cmp -s "${apt_update_failure_log}" "${apt_update_failure_saved}"
 
 (
-	# Fresh-install runtime progress is indented beneath its numbered stage,
-	# while upgrade progress remains top-level.
+	# Fresh-install and upgrade runtime progress are indented beneath their
+	# numbered stage.
 	# shellcheck disable=SC1090
 	source "${online_functions}"
 	INSTALL_ACTION=Install
 	[[ "$(installation_step_indent)" == '  ' ]]
 	INSTALL_ACTION=Upgrade
-	[[ -z "$(installation_step_indent)" ]]
+	[[ "$(installation_step_indent)" == '  ' ]]
+)
+
+(
+	# A completed installation enters upgrade mode; an interrupted first
+	# install remains on the fresh-install recovery path.
+	# shellcheck disable=SC1090
+	source "${online_functions}"
+	INSTALL_ROOT="${tmp}/state-fresh"
+	mkdir -p "${INSTALL_ROOT}"
+	INSTALL_ACTION=Install
+	INSTALL_RECOVERY=0
+	inspect_existing_installation
+	[[ "${INSTALL_ACTION}" == Install && "${INSTALL_RECOVERY}" -eq 0 ]]
+
+	INSTALL_ROOT="${tmp}/state-recovery"
+	mkdir -p "${INSTALL_ROOT}"
+	: >"${INSTALL_ROOT}/.env"
+	: >"${INSTALL_ROOT}/MANIFEST.json"
+	: >"${INSTALL_ROOT}/.install-in-progress"
+	INSTALL_ACTION=Install
+	INSTALL_RECOVERY=0
+	inspect_existing_installation
+	[[ "${INSTALL_ACTION}" == Install && "${INSTALL_RECOVERY}" -eq 1 ]]
+
+	INSTALL_ROOT="${tmp}/state-complete"
+	mkdir -p "${INSTALL_ROOT}"
+	: >"${INSTALL_ROOT}/.env"
+	printf '%s\n' '{"edition":"community"}' >"${INSTALL_ROOT}/MANIFEST.json"
+	: >"${INSTALL_ROOT}/.install-complete"
+	INSTALL_ACTION=Install
+	INSTALL_RECOVERY=0
+	inspect_existing_installation
+	[[ "${INSTALL_ACTION}" == Upgrade && "${INSTALL_RECOVERY}" -eq 0 ]]
 )
 
 (
@@ -1951,7 +2026,7 @@ if grep -F 'cid-' "${prepare_log}" >/dev/null; then
 	exit 1
 fi
 
-# Online upgrades continue to use the existing detailed preparation output.
+# Non-concise preparation callers continue to use the existing detailed output.
 upgrade_candidate="${tmp}/upgrade-candidate"
 upgrade_prepare_log="${tmp}/prepare-upgrade.log"
 PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
@@ -2004,12 +2079,36 @@ PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--concise-output \
 		--output "${retry_candidate}" >"${retry_prepare_log}" 2>&1
 [[ "$(cat "${retry_marker}")" -eq 2 ]]
-grep -F 'Temporary Docker Hub image download error; retrying 1 image(s) in 0 seconds (2/5)' \
+grep -F '1 required container images are not ready locally' \
+	"${retry_prepare_log}" >/dev/null
+grep -F '       Retrying in 0 seconds (2/5)' \
 	"${retry_prepare_log}" >/dev/null
 if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${retry_prepare_log}"; then
 	printf 'ERROR: successful Docker Hub retry contacted the CN registry\n' >&2
 	exit 1
 fi
+
+progress_retry_marker="${tmp}/progress-only-retries"
+progress_retry_log="${tmp}/prepare-progress-only-retry.log"
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+	HFL_ONLINE_NATIVE_PROGRESS=1 \
+	HFL_REGISTRY_PULL_RETRY_DELAY_SECONDS=0 \
+	HFL_TEST_DOCKER_TRANSIENT_FAIL_COMPONENT=hyperfilelens-backend \
+	HFL_TEST_DOCKER_TRANSIENT_ERROR=progress \
+	HFL_TEST_DOCKER_TRANSIENT_FAILURES=1 \
+	HFL_TEST_DOCKER_PULL_MARKER="${progress_retry_marker}" \
+	python3 "${online}/prepare.py" \
+		--source-root "${ROOT}" \
+		--version v1.2.3 \
+		--region global \
+		--concise-output \
+		--output "${tmp}/progress-only-retry-candidate" \
+		>"${progress_retry_log}" 2>&1
+[[ "$(cat "${progress_retry_marker}")" -eq 2 ]]
+grep -F '1 required container images are not ready locally' \
+	"${progress_retry_log}" >/dev/null
+grep -F '       Retrying in 0 seconds (2/5)' \
+	"${progress_retry_log}" >/dev/null
 
 five_attempt_marker="${tmp}/selected-registry-five-attempts"
 five_attempt_candidate="${tmp}/five-attempt-candidate"
@@ -2027,7 +2126,9 @@ PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--concise-output \
 		--output "${five_attempt_candidate}" >"${five_attempt_log}" 2>&1
 [[ "$(cat "${five_attempt_marker}")" -eq 5 ]]
-grep -F 'Temporary Docker Hub image download error; retrying 1 image(s) in 0 seconds (5/5)' \
+grep -F '1 required container images are not ready locally' \
+	"${five_attempt_log}" >/dev/null
+grep -F '       Retrying in 0 seconds (5/5)' \
 	"${five_attempt_log}" >/dev/null
 if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${five_attempt_log}"; then
 	printf 'ERROR: five-attempt Docker Hub retry contacted the CN registry\n' >&2
@@ -2035,7 +2136,8 @@ if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${five_attempt_log}"; then
 fi
 
 failed_prepare_log="${tmp}/prepare-failed.log"
-if PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
+set +e
+PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 	HFL_ONLINE_NATIVE_PROGRESS=1 HFL_TEST_DOCKER_PULL_FAIL=1 \
 	python3 "${online}/prepare.py" \
 		--source-root "${ROOT}" \
@@ -2043,12 +2145,16 @@ if PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
 		--region global \
 		--concise-output \
 		--output "${tmp}/failed-candidate" \
-		>"${failed_prepare_log}" 2>&1; then
+		>"${failed_prepare_log}" 2>&1
+failed_prepare_status=$?
+set -e
+[[ "${failed_prepare_status}" -eq 76 ]]
+if ((failed_prepare_status == 0)); then
 	printf 'ERROR: failed Docker pulls unexpectedly prepared an online package\n' >&2
 	exit 1
 fi
-grep -Fq 'registry rejected test image: access denied' "${failed_prepare_log}"
-grep -Fq 'docker.io/oneprolabs/hyperfilelens-backend:1.2.3' "${failed_prepare_log}"
+grep -Fq '[ERROR] Required container images are unavailable or access was denied.' \
+	"${failed_prepare_log}"
 if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${failed_prepare_log}"; then
 	printf 'ERROR: failed Global preparation contacted the CN registry\n' >&2
 	exit 1
@@ -2071,7 +2177,7 @@ network_prepare_status=$?
 set -e
 [[ "${network_prepare_status}" -eq 75 ]]
 grep -Fq '[ERROR] Temporary container registry failure:' "${network_prepare_log}"
-grep -Fq 'the selected Docker Hub registry could not provide:' \
+grep -Fq 'Required container images could not be downloaded completely after 5 attempt(s).' \
 	"${network_prepare_log}"
 if grep -Fq 'registry.cn-beijing.aliyuncs.com' "${network_prepare_log}"; then
 	printf 'ERROR: failed Docker Hub retries contacted the CN registry\n' >&2
