@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { backupFailurePresentation } from '../../../lib/backupFailureDisplay'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -12,6 +13,7 @@ type TaskOutcomeSource = {
   finished_at?: string | null
   started_at?: string | null
   created_at?: string | null
+  result_payload?: unknown
   recent_events?: Array<{ metadata?: unknown }>
 }
 
@@ -70,10 +72,11 @@ const outcome = computed(() => {
   const structuredReason = details && Number.isFinite(detailCount) && detailCount > 0 && te(detailKey)
     ? t(detailKey, { count: detailCount })
     : ''
-  const displayReason = structuredReason || reason
+  const friendly = backupFailurePresentation(source) || backupFailurePresentation(diagnosticFallback)
+  const displayReason = friendly?.reason || structuredReason || (/agent|source_ref_id|^\s*(?:\[|\{)/i.test(reason) ? 'The task failed. Open task details for troubleshooting.' : reason)
   const showDiagnostic = diagnosticStatuses.has(status) && Boolean(code || displayReason)
   const diagnostic = showDiagnostic
-    ? [code ? `[${code}]` : '', displayReason].filter(Boolean).join(' ')
+    ? [code && !friendly ? `[${code}]` : '', displayReason].filter(Boolean).join(' ')
     : ''
   const rawTimestamp = source.finished_at
     || source.started_at
@@ -89,7 +92,7 @@ const outcome = computed(() => {
     tone: taskStatusTone(status),
     label: t(`ops.task.status.${status}`),
     timestamp,
-    code,
+    code: friendly ? '' : code,
     reason: displayReason,
     diagnostic,
     showDiagnostic,

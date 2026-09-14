@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { backupFailureMetadata, backupFailurePresentation } from '../../../lib/backupFailureDisplay'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, ChevronRight, Lightbulb, LockKeyhole } from 'lucide-vue-next'
@@ -20,10 +21,8 @@ const MAX_SKIPPED_ITEMS = 10
 
 const { t } = useI18n()
 
-const metadataRecord = computed<Record<string, unknown>>(() => {
-  if (!props.metadata || typeof props.metadata !== 'object' || Array.isArray(props.metadata)) return {}
-  return props.metadata as Record<string, unknown>
-})
+const metadataRecord = computed(() => backupFailureMetadata(props.metadata))
+const backupFailure = computed(() => backupFailurePresentation(metadataRecord.value))
 
 const failureDetails = computed<Record<string, unknown>>(() => {
   const value = metadataRecord.value.failure_details
@@ -56,6 +55,7 @@ const failedDirectories = computed(() => {
 })
 
 const category = computed(() => String(failureDetails.value.category || 'source_read_failed'))
+const backupSourceOffline = computed(() => Boolean(backupFailure.value))
 const sourcePath = computed(() => String(metadataRecord.value.source_path || '').trim())
 const errorCode = computed(() => String(metadataRecord.value.error_code || '').trim())
 const restorePermissionDenied = computed(() => errorCode.value === 'RESTORE_TARGET_PERMISSION_DENIED')
@@ -64,6 +64,7 @@ const restorePermissionRemediation = computed(() => t('ops.task.failureDetails.r
 const restorePermissionRemediationItems = computed(() => restorePermissionRemediation.value.split('\n').map(item => item.replace(/^\d+\.\s*/, '').trim()).filter(Boolean))
 const restoreTargetPath = computed(() => String(metadataRecord.value.target_path || '').trim())
 const errorDiagnostic = computed(() => String(metadataRecord.value.error_diagnostic || '').trim())
+const originalError = computed(() => String(metadataRecord.value.error_message || '').trim())
 const items = computed<FailureItem[]>(() => {
   const value = failureDetails.value.items
   if (!Array.isArray(value)) return []
@@ -176,6 +177,7 @@ const hasDetails = computed(() => (
   || restorePermissionDenied.value
   || Boolean(summarySnapshotId.value && failedDirectories.value.length)
   || Boolean(summaryRestoreRecordId.value && failedDirectories.value.length)
+  || backupSourceOffline.value
 ))
 
 function fullPath(path: string) {
@@ -212,6 +214,31 @@ function remediationText(code: string) {
     class="task-event-failure"
     :class="{ 'task-event-failure--warning': hasSkippedDetails && !items.length }"
   >
+    <template v-if="backupSourceOffline">
+      <div class="task-event-failure__summary">
+        <AlertTriangle :size="15" />
+        <span>{{ backupFailure?.reason }}</span>
+      </div>
+      <div class="task-event-failure__remediation">
+        <div class="task-event-failure__label">
+          <Lightbulb :size="14" />
+          {{ t('ops.task.failureDetails.howToResolve') }}
+        </div>
+        <ol class="task-event-failure__remediation-list">
+          <li v-for="resolution in backupFailure?.resolutions" :key="resolution">{{ resolution }}</li>
+        </ol>
+      </div>
+      <details
+        v-if="originalError"
+        class="task-event-failure__files"
+      >
+        <summary>
+          <ChevronRight :size="14" />
+          {{ t('ops.task.failureDetails.technicalDetails') }}
+        </summary>
+        <code>{{ originalError }}</code>
+      </details>
+    </template>
     <template v-if="(summarySnapshotId || summaryRestoreRecordId) && failedDirectories.length">
       <div class="task-event-failure__summary task-event-failure__summary--neutral">
         <span>{{ t(summaryRestoreRecordId ? 'ops.task.failureDetails.restoreRecordId' : 'ops.task.failureDetails.snapshotId') }}:</span>
@@ -300,7 +327,7 @@ function remediationText(code: string) {
         <code>{{ errorDiagnostic }}</code>
       </details>
     </template>
-    <template v-if="failureCount > 0 || causes.length">
+    <template v-if="!backupSourceOffline && (failureCount > 0 || causes.length)">
       <div class="task-event-failure__summary">
         <LockKeyhole
           v-if="category === 'source_file_locked'"
