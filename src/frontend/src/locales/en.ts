@@ -3390,6 +3390,8 @@ export const en = {
         summary: {
           source_file_locked: '{count} files could not be read because another process locked them.',
           source_read_failed: '{count} files could not be read from the backup source.',
+          source_permission_denied: '{count} source paths could not be accessed due to insufficient permissions.',
+          source_unsupported: '{count} source items are protected or unsupported for backup.',
           source_items_skipped: '{count} unreadable items were skipped (files: {fileCount}; directories: {directoryCount}).',
         },
         howToResolve: 'How to resolve',

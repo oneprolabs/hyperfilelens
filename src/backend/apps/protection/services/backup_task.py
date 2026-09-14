@@ -1633,9 +1633,16 @@ def kopia_snapshot_failure_metadata(
             or not bool(advanced.get("skip_unreadable_directories", False))
         ):
             remediation.append("enable_skip_unreadable_directories")
+    lower_errors = "\n".join(item["error"] for item in details).lower()
+    if not locked and ("unsupported source" in lower_errors or "unsupported" in lower_errors):
+        category = "source_unsupported"
+    elif not locked and ("permission denied" in lower_errors or "access denied" in lower_errors):
+        category = "source_permission_denied"
+    else:
+        category = "source_file_locked" if locked else "source_read_failed"
     return {
         "failure_details": {
-            "category": "source_file_locked" if locked else "source_read_failed",
+            "category": category,
             "count": len(details),
             "items": details,
             "remediation": remediation,
