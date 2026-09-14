@@ -23,6 +23,7 @@ RELEASE_COMMIT=""
 RECENT_TAGS=""
 INSTALL_ROOT="/opt/hyperfilelens"
 INSTALL_ACTION="Install"
+INSTALL_RECOVERY=0
 MAX_TAG_PAGES=100
 ONLINE_LOG_FILE=""
 ONLINE_INTERACTIVE=0
@@ -253,7 +254,7 @@ apt_update_quiet() {
 }
 
 installation_step_indent() {
-	if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+	if [[ "${INSTALL_ACTION}" == "Install" || "${INSTALL_ACTION}" == "Upgrade" ]]; then
 		printf '  '
 	fi
 	return 0
@@ -1078,11 +1079,20 @@ ensure_online_docker_runtime() {
 }
 
 inspect_existing_installation() {
-	local existing_edition
-	if [[ ! -e "${INSTALL_ROOT}/.env" && ! -e "${INSTALL_ROOT}/MANIFEST.json" ]]; then
+	local existing_edition complete_marker progress_marker
+	complete_marker="${INSTALL_ROOT}/.install-complete"
+	progress_marker="${INSTALL_ROOT}/.install-in-progress"
+	if [[ -f "${complete_marker}" ]]; then
+		INSTALL_ACTION="Upgrade"
+	elif [[ -f "${progress_marker}" ]]; then
+		INSTALL_ACTION="Install"
+		INSTALL_RECOVERY=1
 		return 0
+	elif [[ ! -e "${INSTALL_ROOT}/.env" && ! -e "${INSTALL_ROOT}/MANIFEST.json" ]]; then
+		return 0
+	else
+		INSTALL_ACTION="Upgrade"
 	fi
-	INSTALL_ACTION="Upgrade"
 	[[ -f "${INSTALL_ROOT}/.env" && -f "${INSTALL_ROOT}/MANIFEST.json" ]] \
 		|| fail "${INSTALL_ROOT} contains an incomplete installation; recover or remove it before continuing"
 	existing_edition="$(python3 - "${INSTALL_ROOT}/MANIFEST.json" <<'PY'
@@ -1287,7 +1297,11 @@ run_online_install_preflight() {
 	[[ -d "${INSTALL_ROOT}" && ! -L "${INSTALL_ROOT}" && -w "${INSTALL_ROOT}" ]] \
 		|| fail "installation path is not a writable directory: ${INSTALL_ROOT}"
 	printf '  [ OK ] Installation path is ready · %s\n' "${INSTALL_ROOT}"
-	printf '  [ OK ] No existing HyperFileLens installation was found\n'
+	if ((INSTALL_RECOVERY == 1)); then
+		printf '  [ OK ] Previous installation attempt detected · recovery will continue\n'
+	else
+		printf '  [ OK ] No existing HyperFileLens installation was found\n'
+	fi
 	hostname="$(hostname 2>/dev/null || true)"
 	if [[ -z "${hostname}" || "${hostname,,}" == localhost \
 		|| "${hostname,,}" == localhost.localdomain ]]; then
@@ -1625,6 +1639,7 @@ run_fresh_community_install() {
 	local -a pipeline_status=()
 	set +e
 	HFL_REGISTRY_REGION="${REGION}" HFL_ONLINE_CHILD=1 HFL_PARENT_LOGGING=1 \
+		HFL_INSTALL_RECOVERY="${INSTALL_RECOVERY}" \
 		HFL_PARENT_INTERACTIVE="${ONLINE_INTERACTIVE}" HFL_LOG_FILE="${ONLINE_LOG_FILE}" \
 		HFL_ONLINE_CONSOLE_MARKER="${ONLINE_CHILD_CONSOLE_MARKER}" HFL_NO_BANNER=1 \
 		bash "${package}/install.sh" install --with-sourcelens --yes \
@@ -1749,6 +1764,8 @@ confirm_installation
 if [[ "${INSTALL_ACTION}" == "Install" ]]; then
 	printf '\n[1/4] Preparing installation\n\n'
 	run_online_install_preflight
+else
+	printf '\n[1/4] Preparing upgrade\n\n'
 fi
 install_host_tools
 if [[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]; then
@@ -1758,6 +1775,9 @@ ensure_online_docker_runtime
 if [[ "${INSTALL_ACTION}" == "Install" ]]; then
 	printf '  [ OK ] Release package and host requirements are ready\n'
 	printf '\n[2/4] Downloading installation assets\n\n'
+else
+	printf '  [ OK ] Release package and host requirements are ready\n'
+	printf '\n[2/4] Downloading upgrade assets\n\n'
 fi
 
 export HFL_GLOBAL_REGISTRY_PREFIX="${GLOBAL_REGISTRY_PREFIX}"
@@ -1771,14 +1791,18 @@ prepare_args=(
 	--region "${REGION}"
 	--output "${candidate}"
 )
-if [[ "${INSTALL_ACTION}" == "Install" ]]; then
-	prepare_args+=(--concise-output)
-fi
+prepare_args+=(--concise-output)
 prepare_status=0
 python3 "${SESSION_DIR}/source/deploy/online/prepare.py" "${prepare_args[@]}" \
 	|| prepare_status=$?
 if ((prepare_status == 75)); then
-	fail "Container image downloads could not be completed after 5 attempts from the selected registry; check registry connectivity and rerun the same command"
+	fail $'Required container images could not be downloaded completely.\n\n       Transient network failures are retried up to 5 times.\n       Run the same installation command again to retry.\n       Downloaded image layers will be reused.\n       See the installation log for image details.'
+fi
+if ((prepare_status == 76)); then
+	fail $'Required container images are unavailable or access was denied.\n\n       See the installation log for image details before retrying.'
+fi
+if ((prepare_status == 77)); then
+	fail $'Required container images could not be prepared or verified locally.\n\n       See the installation log for Docker and image validation details.'
 fi
 if ((prepare_status != 0)); then
 	fail_with_tag_guidance "Community tag ${TAG} is incomplete or unavailable"
@@ -1789,15 +1813,29 @@ fi
 if [[ "${INSTALL_ACTION}" == "Install" ]]; then
 	printf '  [ OK ] All installation assets are ready\n'
 else
-	printf '[ OK ] Release package and installation assets are ready\n'
+	printf '  [ OK ] All upgrade assets are ready\n'
 fi
 
 if [[ "${INSTALL_ACTION}" == Upgrade ]]; then
-	printf '[....] Upgrading the existing installation to %s\n' "${TAG}"
+	printf '\n[3/4] Applying upgrade\n\n'
+	set +e
 	HFL_REGISTRY_REGION="${REGION}" HFL_ONLINE_CHILD=1 HFL_PARENT_LOGGING=1 \
 		HFL_PARENT_INTERACTIVE="${ONLINE_INTERACTIVE}" HFL_LOG_FILE="${ONLINE_LOG_FILE}" \
-		HFL_NO_BANNER=1 bash "${candidate}/install.sh" \
-		upgrade --from "${candidate}" --yes --with-sourcelens
+		HFL_ONLINE_CONSOLE_MARKER="${ONLINE_CHILD_CONSOLE_MARKER}" HFL_NO_BANNER=1 \
+		bash "${candidate}/install.sh" upgrade --from "${candidate}" --yes --with-sourcelens \
+		2>&1 \
+		| tr '\r' '\n' \
+		| sed $'s/\033\\[[0-9;?]*[ -/]*[@-~]//g' \
+		| capture_child_install_stream "${ONLINE_LOG_FILE}" 3
+	pipeline_status=("${PIPESTATUS[@]}")
+	set -e
+	status=""
+	for status in "${pipeline_status[@]:1}"; do
+		[[ "${status}" -eq 0 ]] \
+			|| fail "could not write the complete upgrade output to ${ONLINE_LOG_FILE}"
+	done
+	[[ "${pipeline_status[0]}" -eq 0 ]] \
+		|| fail "HyperFileLens Community ${TAG} upgrade failed; review the full log: ${ONLINE_LOG_FILE}"
 else
 	run_fresh_community_install "${candidate}"
 fi

@@ -19,6 +19,8 @@ fi
 source "${COMPOSE_RUNTIME_FILE}"
 
 INSTALL_DIR="/opt/hyperfilelens"
+INSTALL_COMPLETE_MARKER="${INSTALL_DIR}/.install-complete"
+INSTALL_IN_PROGRESS_MARKER="${INSTALL_DIR}/.install-in-progress"
 SOURCELENS_INSTALL_DIR="${SOURCELENS_INSTALL_DIR:-${INSTALL_DIR}/sourcelens}"
 HFL_BRIDGE_NETWORK="hyperfilelens-bridge"
 UPGRADE_TMP="${INSTALL_DIR}/upgrade_tmp"
@@ -840,6 +842,8 @@ materialize_to_install_dir() {
 			--exclude 'backup/'
 			--exclude 'logs/'
 			--exclude 'upgrade_tmp/'
+			--exclude '.install-complete*'
+			--exclude '.install-in-progress*'
 		)
 		if [[ "${tls_state}" == "complete" ]]; then
 			rsync_args+=(--exclude 'deploy/nginx/certs/')
@@ -877,6 +881,26 @@ init_existing_install_root() {
 	ROOT="${INSTALL_DIR}"
 	safe_assert_package_root "${ROOT}"
 	acquire_installation_lock
+}
+
+mark_install_in_progress() {
+	local temporary
+	temporary="$(mktemp "${INSTALL_DIR}/.install-in-progress.XXXXXX")"
+	printf 'started_at=%s\n' "$(hfl_now)" >"${temporary}"
+	chmod 600 "${temporary}"
+	mv -f "${temporary}" "${INSTALL_IN_PROGRESS_MARKER}"
+}
+
+mark_install_complete() {
+	local version=$1 temporary
+	temporary="$(mktemp "${INSTALL_DIR}/.install-complete.XXXXXX")"
+	{
+		printf 'version=%s\n' "${version}"
+		printf 'completed_at=%s\n' "$(hfl_now)"
+	} >"${temporary}"
+	chmod 600 "${temporary}"
+	mv -f "${temporary}" "${INSTALL_COMPLETE_MARKER}"
+	safe_rm_file "${INSTALL_IN_PROGRESS_MARKER}"
 }
 
 require_docker() {
@@ -5648,6 +5672,7 @@ repair_existing_multimodal_model() {
 
 cmd_install() {
 	local sourcelens_mode=-1 allow_main_build=0 concise_online=0 summary_output=""
+	local had_install_in_progress=0
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--with-sourcelens) sourcelens_mode=1 ;;
@@ -5698,6 +5723,10 @@ cmd_install() {
 
 	print_section "[1/8] Staging and validating release package"
 	init_install_root
+	if [[ -f "${INSTALL_IN_PROGRESS_MARKER}" ]]; then
+		had_install_in_progress=1
+	fi
+	mark_install_in_progress
 	preflight_package_layout
 	validate_publish_artifacts "${ROOT}"
 	if package_has_sourcelens; then
@@ -5705,7 +5734,10 @@ cmd_install() {
 	fi
 	ok "Release package structure, manifest, and publish artifacts are valid"
 
-	if [[ -f "${ROOT}/.env" ]] && stack_containers_present; then
+	if [[ "${HFL_INSTALL_RECOVERY:-0}" != "1" ]] \
+		&& [[ "${had_install_in_progress}" -eq 0 ]] \
+		&& [[ -f "${ROOT}/.env" ]] && stack_containers_present; then
+		safe_rm_file "${INSTALL_IN_PROGRESS_MARKER}"
 		log "app containers already running under ${ROOT}; skipping duplicate install"
 		log "To upgrade run: sudo ${ROOT}/install.sh upgrade --from <package.tar.gz>"
 		print_console_access_summary "Existing installation"
@@ -5814,6 +5846,8 @@ cmd_install() {
 	else
 		compose_all_profiles ps
 	fi
+	mark_install_complete "${version}" \
+		|| die "could not record the completed installation state"
 	if [[ "${concise_online}" -eq 1 ]]; then
 		online_console_line
 		online_console_line "  HyperFileLens       Ready"
@@ -7432,6 +7466,9 @@ cmd_upgrade() {
 	print_value "Target" "${new_version} ($(display_edition_from_dir "${src_root}"))"
 	print_value "Insight" "$([[ "${remove_sourcelens}" -eq 1 ]] && printf 'remove' || [[ "${upgrade_sourcelens}" -eq 1 ]] && printf 'upgrade' || printf 'retain')"
 	log "Upgrade transaction is ready: ${cur_version} -> ${new_version}"
+	if online_console_enabled; then
+		online_console_line "  [....] Validating the existing installation and target release"
+	fi
 
 	print_section "[1/8] Validating Redis recovery requirements"
 	require_docker
@@ -7452,6 +7489,9 @@ cmd_upgrade() {
 		UPGRADE_BACKUP_DIR="${ROOT}/backup/upgrade-${backup_stamp}"
 	fi
 	record_upgrade_transaction_phase backup_complete "${UPGRADE_BACKUP_DIR}"
+	if online_console_enabled; then
+		online_console_line "  [ OK ] Upgrade backup is ready"
+	fi
 
 	print_section "[3/8] Validating the upgrade package"
 	preflight_blue_green_source "${src_root}"
@@ -7481,6 +7521,9 @@ cmd_upgrade() {
 	step "Preloading verified target images before the maintenance window ..."
 	load_images_from_manifest "$([[ "${upgrade_sourcelens}" -eq 0 ]] && echo 1 || echo 0)" "${src_root}"
 	record_upgrade_transaction_phase images_loaded
+	if online_console_enabled; then
+		online_console_line "  [ OK ] Upgrade package and prepared images are ready"
+	fi
 
 	print_section "[5/8] Preparing the Blue/Green cutover"
 	if compose_in_root ps -q 2>/dev/null | grep -q .; then
@@ -7517,6 +7560,9 @@ cmd_upgrade() {
 	record_upgrade_transaction_phase background_paused
 
 	print_section "[6/8] Applying target files, configuration, and database migration"
+	if online_console_enabled; then
+		online_console_line "  [....] Applying configuration, application files, and database migrations"
+	fi
 	# Existing releases used APP_VERSION for stable Nginx. Pin that currently
 	# running image before the new environment template is merged.
 	pin_gateway_version_if_missing "${cur_version}"
@@ -7548,8 +7594,14 @@ cmd_upgrade() {
 	compose_in_root --profile tools run --rm --no-deps migration
 	record_deployment_phase migrated "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	record_upgrade_transaction_phase migrated
+	if online_console_enabled; then
+		online_console_line "  [ OK ] Configuration and database migration are ready"
+	fi
 
 	print_section "[7/8] Starting ${target_color} and switching application traffic"
+	if online_console_enabled; then
+		online_console_line "  [....] Starting application services and switching traffic"
+	fi
 	compose_color "${target_color}" up -d --no-build --pull never \
 		"api-${target_color}" "web-${target_color}"
 	wait_for_color_health "${target_color}" \
@@ -7571,6 +7623,9 @@ cmd_upgrade() {
 	UPGRADE_HFL_COMMITTED=1
 	record_deployment_phase committed "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	remove_retired_color "${UPGRADE_PREVIOUS_COLOR}"
+	if online_console_enabled; then
+		online_console_line "  [ OK ] Application services are ready"
+	fi
 
 	# SourceLens is a separate lifecycle. An unchanged bundle is never touched;
 	# when it changes, upgrade it only after HFL traffic has safely switched.
@@ -7610,10 +7665,15 @@ cmd_upgrade() {
 	ensure_local_platform_gateway
 	record_upgrade_transaction_phase gateway_verified
 	prune_agent_release_media
+	if online_console_enabled; then
+		online_console_line "  [ OK ] Platform services are ready"
+	fi
 	prune_old_managed_image_refs
 	record_deployment_phase complete "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	write_upgrade_transaction_state complete complete "${UPGRADE_BACKUP_DIR}"
 	UPGRADE_RECOVERY_ARMED=0
+	mark_install_complete "${new_version}" \
+		|| warn "could not record the completed installation state"
 
 	print_section "[8/8] Finalizing the upgrade"
 	cleanup_upgrade_tmp
@@ -7629,6 +7689,33 @@ cmd_upgrade() {
 	print_value "Log file" "${LOG_FILE}"
 	compose_all_profiles ps
 	print_console_access_summary "Access and management" 0
+	if online_console_enabled; then
+		online_console_section "[4/4] Verifying upgrade"
+		online_console_line
+		online_console_line "  HyperFileLens       Ready"
+		online_console_line "  Platform Ops        Ready"
+		if [[ "$(configured_sourcelens_mode)" == "bundled" ]] && sourcelens_installed; then
+			online_console_line "  Insight services    Ready"
+		fi
+		if local_platform_gateway_agent_is_managed \
+			&& [[ "${LOCAL_PLATFORM_GATEWAY_VERIFIED}" -eq 1 ]]; then
+			online_console_line "  Platform Gateway    Online"
+		fi
+		online_console_line
+		online_console_line "  [ OK ] Upgrade verification passed"
+		online_console_line
+		online_console_line "================================================================"
+		online_console_line "Upgrade completed successfully"
+		online_console_line "================================================================"
+		online_console_line
+		online_console_line "Upgrade summary"
+		online_console_line "  Previous       ${cur_version}"
+		online_console_line "  Current        ${new_version}"
+		online_console_line "  Active pool    ${target_color}"
+		online_console_line "  Backup         ${UPGRADE_BACKUP_DIR}"
+		online_console_line "  Rollback data  verified"
+		online_console_line "  Log file       ${LOG_FILE}"
+	fi
 }
 
 main() {
