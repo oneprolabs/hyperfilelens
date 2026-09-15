@@ -5488,6 +5488,12 @@ function clearLocalStateAfterDelete(idSet: Set<string>) {
   step3SourceSelection.value = step3SourceSelection.value.filter((row) => !idSet.has(row.id))
   selectedSourceIds.value = selectedSourceIds.value.filter((id) => !idSet.has(id))
   step1Selection.value = step1Selection.value.filter((id) => !idSet.has(id))
+  // Element Plus keeps reserve-selection keys internally. Reconcile both
+  // tables with the filtered ids so removed rows disappear without clearing
+  // still-valid selections.
+  syncSourceTableSelection()
+  syncStep2TableSelection()
+  syncStep3TableSelection()
 }
 
 function openBackupSourceDeleteDialog(

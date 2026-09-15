@@ -1075,7 +1075,7 @@
       "flowStepSourceMetric": "{n} 个源未配置",
       "flowStepBackupTitle": "备份配置",
       "flowStepBackupDesc": "为备份源创建备份配置，配置策略与调度。",
-      "flowStep2EmptyAllConfigured": "全部备份源已配置完成，请点击上方「立即备份」执行备份",
+      "flowStep2EmptyAllConfigured": "全部备份源已配置完成，请点击上方「开始备份」执行备份",
       "flowStepRestoreTitle": "开始备份",
       "flowStepRestoreDesc": "对已配置源执行备份，查看进度与历史。",
       "flowStepBadgeCurrent": "当前步骤",
