@@ -5,30 +5,30 @@ description: 选择备份源、快照、数据范围和网关，创建 HyperFile
 
 # 创建洞察会话
 
-打开 **Insights → AI Copilot** 并选择 **New Chat**。每个会话都绑定一个受保护快照和明确的文件或目录范围。
+打开 **智能洞察 → AI Copilot** 并选择 **新建会话**。每个会话都绑定一个受保护快照和明确的文件或目录范围。
 
 ## 创建会话
 
-1. 在 **Data Source** 中选择已有备份配置。
-2. 选择 **Latest available snapshot** 或指定快照时间点。
-3. 在 **Files and Folders** 中浏览快照并添加至少一个文件或目录。
+1. 在 **数据源** 中选择已有备份配置。
+2. 选择 **最新可用快照** 或指定快照时间点。
+3. 在 **文件和文件夹** 中浏览快照并添加至少一个文件或目录。
 4. 选择分析类型：
-   - **Knowledge Q&A**：搜索、总结并回答选定文档中的问题；
-   - **Code Analysis**：分析源码结构、依赖关系和实现逻辑。
-5. 在 **Data Privacy** 中保留 **Public Data Gateway** 让平台自动选择，或者手动选择在线 **Private Data Gateway**。
-6. 核对右侧摘要并选择 **Start Chat**。
+   - **知识问答**：搜索、总结并回答选定文档中的问题；
+   - **代码分析**：分析源码结构、依赖关系和实现逻辑。
+5. 在 **数据隐私** 中保留 **公共数据网关** 让平台自动选择，或者手动选择在线 **私有数据网关**。
+6. 核对右侧摘要并选择 **开始会话**。
 
-![New Chat 空白表单显示受保护快照、Knowledge Q&A、Code Analysis 和 Public Data Gateway 区域，账户和 Gateway 标识已经模糊处理](/docs/insights/new-chat.png)
+![New Chat 空白表单显示受保护快照、Knowledge Q&A、Code Analysis 和 Public Data Gateway 区域，账户和 Gateway 标识已经模糊处理](/docs/zh/insights/new-chat.png)
 
-![为 Insights 会话选择合成快照文件，账户、主机和仓库标识已经模糊处理](/docs/getting-started/insights-select-data.png)
+![为 Insights 会话选择合成快照文件，账户、主机和仓库标识已经模糊处理](/docs/zh/getting-started/insights-select-data.png)
 
 在备份源、快照、数据范围、分析类型和网关全部有效前，创建按钮会保持禁用。按页面提示解决条件，不要连续重复提交相同请求。
 
 ## 等待数据准备
 
-Data Gateway 会把所选快照范围恢复到隔离工作区并为会话准备数据。会话可能显示排队、准备中、Ready 或失败。等待状态变为 **Ready** 后再提问。
+数据网关会把所选快照范围恢复到隔离工作区并为会话准备数据。会话可能显示排队、准备中、就绪或失败。等待状态变为 **就绪** 后再提问。
 
-![Knowledge Q&A 已配置 Public Data Gateway，并显示 Private Gateway 可用情况，账户、主机和 Gateway 标识已经模糊处理](/docs/getting-started/insights-gateway-ready.png)
+![新建对话已选择受保护快照、知识问答和公共数据网关，账户、主机和 Gateway 标识已模糊处理](/docs/zh/getting-started/insights-gateway-ready.png)
 
 ## 提问方式
 
