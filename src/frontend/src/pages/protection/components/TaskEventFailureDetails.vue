@@ -178,6 +178,7 @@ const hasDetails = computed(() => (
   || Boolean(summarySnapshotId.value && failedDirectories.value.length)
   || Boolean(summaryRestoreRecordId.value && failedDirectories.value.length)
   || backupSourceOffline.value
+  || category.value === 'BACKUP_TARGET_STORAGE_FULL'
 ))
 
 function fullPath(path: string) {
@@ -327,7 +328,7 @@ function remediationText(code: string) {
         <code>{{ errorDiagnostic }}</code>
       </details>
     </template>
-    <template v-if="!backupSourceOffline && (failureCount > 0 || causes.length)">
+    <template v-if="!backupSourceOffline && (failureCount > 0 || causes.length || category === 'BACKUP_TARGET_STORAGE_FULL')">
       <div class="task-event-failure__summary">
         <LockKeyhole
           v-if="category === 'source_file_locked'"
@@ -382,7 +383,26 @@ function remediationText(code: string) {
       </div>
 
       <details
-        v-if="items.length"
+        v-if="category === 'BACKUP_TARGET_STORAGE_FULL' && (errorDiagnostic || originalError || items.length)"
+        class="task-event-failure__files"
+      >
+        <summary>
+          <ChevronRight :size="14" />
+          {{ t('ops.task.failureDetails.viewOriginalError') }}
+        </summary>
+        <code v-if="errorDiagnostic || originalError">{{ errorDiagnostic || originalError }}</code>
+        <ul v-if="items.length">
+          <li
+            v-for="(item, index) in items"
+            :key="`${item.path}:${index}`"
+          >
+            <code>{{ item.path }}</code>
+            <span>{{ item.error }}</span>
+          </li>
+        </ul>
+      </details>
+      <details
+        v-else-if="items.length"
         class="task-event-failure__files"
       >
         <summary>

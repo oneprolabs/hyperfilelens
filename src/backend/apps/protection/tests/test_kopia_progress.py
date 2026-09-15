@@ -1040,6 +1040,55 @@ class KopiaFailureMessageTests(SimpleTestCase):
                 self.assertIn("underlying storage", public_message)
                 self.assertIn("NAS or object-storage platform", public_message)
 
+    def test_structured_capacity_failure_overrides_agent_source_classification(self):
+        from apps.protection.services.backup_task import (
+            classify_kopia_execution_failure,
+            kopia_snapshot_failure_metadata,
+        )
+
+        for marker in ("ENOSPC", "no space left on device", "quota exceeded", "storage limit reached"):
+            with self.subTest(marker=marker):
+                error = f"unable to write content chunk: error writing pack: {marker}"
+                result = {"snapshot_failure_summary": {
+                    "total_count": 1,
+                    "cause_counts": {"unreadable_file": 1},
+                    "items": [{"path": "p/pack.f", "error": error, "cause": "unreadable_file", "item_type": "file"}],
+                }}
+                self.assertEqual(classify_kopia_execution_failure(result)[0], "BACKUP_TARGET_STORAGE_FULL")
+                metadata = kopia_snapshot_failure_metadata(result)
+                self.assertEqual(metadata["error_diagnostic"], error)
+                self.assertEqual(metadata["failure_details"]["category"], "BACKUP_TARGET_STORAGE_FULL")
+                self.assertEqual(metadata["failure_details"]["remediation"], ["BACKUP_TARGET_STORAGE_FULL"])
+
+    def test_policy_capacity_failure_has_original_diagnostic_without_source_items(self):
+        from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
+
+        error = "unable to write diagnostics blob: Bucket quota exceeded"
+        metadata = kopia_snapshot_failure_metadata({
+            "error_code": "POLICY_APPLY_FAILED",
+            "policy_reset": {"stderr_tail": error, "exit_code": 1},
+        })
+        self.assertEqual(metadata["error_diagnostic"], error)
+        self.assertEqual(metadata["failure_details"]["category"], "BACKUP_TARGET_STORAGE_FULL")
+        self.assertEqual(metadata["failure_details"]["items"], [])
+
+    def test_local_log_capacity_failure_is_not_target_storage_failure(self):
+        from apps.protection.services.backup_task import backup_target_capacity_diagnostic
+
+        self.assertEqual(backup_target_capacity_diagnostic({
+            "stderr_tail": "write error: unable to open log file: ENOSPC",
+        }), "")
+
+    def test_target_capacity_failure_is_not_classified_as_unreadable_source(self):
+        from apps.protection.services.backup_task import classify_kopia_execution_failure
+
+        code, _ = classify_kopia_execution_failure(
+            {"stderr_tail": "sync failed: no space left on device", "exit_code": 1},
+            last_error="exit 1: exit status 1",
+        )
+
+        self.assertEqual(code, "BACKUP_TARGET_STORAGE_FULL")
+
     def test_extract_kopia_failure_message_prefers_fatal_errors(self):
         from apps.protection.services.backup_task import extract_kopia_failure_message
 

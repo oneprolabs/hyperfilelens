@@ -7,6 +7,28 @@ import { en } from '../../../locales/en'
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 
 describe('TaskEventFailureDetails', () => {
+  it('shows capacity guidance and collapsed raw errors even without file items', () => {
+    const diagnostic = 'unable to write pack: no space left on device'
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: { metadata: {
+        error_message: 'Friendly capacity message',
+        error_diagnostic: diagnostic,
+        failure_details: {
+          category: 'BACKUP_TARGET_STORAGE_FULL', count: 0, items: [],
+          remediation: ['BACKUP_TARGET_STORAGE_FULL'],
+        },
+      } },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    expect(wrapper.text()).toContain('Backup target storage is full')
+    expect(wrapper.text()).toContain('Free space, check the repository quota')
+    expect(wrapper.get('details summary').text()).toBe('View original error')
+    expect(wrapper.get('details').attributes('open')).toBeUndefined()
+    expect(wrapper.get('details code').text()).toBe(diagnostic)
+    expect(wrapper.text()).not.toContain('unreadable')
+    expect(wrapper.text()).not.toContain('Correct the listed source errors')
+  })
+
   it('renders legacy offline errors once with collapsed original details', () => {
     const diagnostic = "{'source_ref_id': ['Agent source is offline.']}"
     const wrapper = mount(TaskEventFailureDetails, {

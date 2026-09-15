@@ -3569,6 +3569,7 @@ export const en = {
         summary: {
           source_file_locked: '{count} files could not be read because another process locked them.',
           source_read_failed: '{count} files could not be read from the backup source.',
+          BACKUP_TARGET_STORAGE_FULL: 'Backup target storage is full or its quota has been reached.',
           mixed_source_errors: '{count} source items could not be processed.',
           unreadable_file: '{count} files could not be read.',
           unreadable_directory: '{count} directories could not be read.',
@@ -3588,12 +3589,14 @@ export const en = {
         howToResolve: 'How to resolve',
         viewAffectedFiles: 'View all {count} affected files',
         viewAffectedItems: 'View {count} affected items',
+        viewOriginalError: 'View original error',
         failureItemsTruncated: 'Showing {reportedCount} of {count} affected items.',
         viewSkippedItems: 'View {count} skipped items',
         skippedItemsTruncated: 'Showing the first {reportedCount} of {count} skipped items.',
         fileLockedReason: 'Locked by another process',
         readFailedReason: 'The file could not be read',
         remediation: {
+          BACKUP_TARGET_STORAGE_FULL: 'Free space, check the repository quota, or expand the target storage, then retry the backup.',
           enable_backup_policy: 'First, enable the backup policy and its advanced settings. Skip options take effect only while both are enabled.',
           enable_skip_unreadable_files: 'If these unreadable files may be omitted, enable Skip Unreadable Files. The backup can continue, but skipped files will not be included in the snapshot.',
           enable_skip_unreadable_directories: 'If these unreadable directories may be omitted, enable Skip Unreadable Directories. The backup can continue, but skipped directories will not be included in the snapshot.',

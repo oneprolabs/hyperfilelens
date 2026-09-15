@@ -1715,6 +1715,37 @@ def _effective_backup_advanced_settings(
     return active and bool(advanced.get("enabled", False)), advanced
 
 
+def backup_target_capacity_diagnostic(
+    result: dict[str, Any] | None, *, last_error: str = ""
+) -> str:
+    """Find capacity failures in backup writes before source-error summarization."""
+    result = result if isinstance(result, dict) else {}
+    messages = [item["error"] for item in extract_kopia_snapshot_failure_details(result)]
+    messages.append(last_error)
+    for command in (result, *(result.get(key) for key in (
+        "snapshot_create", "policy_reset", "policy_apply",
+        "repository_create", "repository_connect",
+    ))):
+        if not isinstance(command, dict):
+            continue
+        for key in ("stderr", "stderr_tail", "stdout", "stdout_tail"):
+            messages.extend(str(command.get(key) or "").splitlines())
+    for message in messages:
+        lower = message.lower()
+        if not any(marker in lower for marker in (
+            "enospc", "no space left on device", "quota exceeded",
+            "storage limit reached",
+        )):
+            continue
+        if any(marker in lower for marker in ("unable to open log file", "cli-logs/")):
+            continue
+        if any(marker in lower for marker in (
+            "write", "writing", "sync", "pack", "putblob", "quota", "storage limit",
+        )):
+            return message
+    return ""
+
+
 def kopia_snapshot_failure_metadata(
     result: dict[str, Any] | None,
     *,
@@ -1722,6 +1753,22 @@ def kopia_snapshot_failure_metadata(
 ) -> dict[str, Any]:
     """Build actionable task-event metadata from structured Kopia failures."""
     details = extract_kopia_snapshot_failure_details(result)
+    diagnostic = backup_target_capacity_diagnostic(result)
+    if diagnostic:
+        total = max(len(details), _snapshot_failure_count(result))
+        return {
+            "error_diagnostic": diagnostic,
+            "failure_details": {
+                "category": "BACKUP_TARGET_STORAGE_FULL",
+                "count": total,
+                "total_count": total,
+                "items": details[:5],
+                "reported_count": min(len(details), 5),
+                "truncated": total > min(len(details), 5),
+                "causes": [],
+                "remediation": ["BACKUP_TARGET_STORAGE_FULL"],
+            },
+        }
     summary = result.get("snapshot_failure_summary") if isinstance(result, dict) else None
     summary_counts: dict[str, int] = {}
     summary_types: dict[str, str] = {}
@@ -1972,6 +2019,9 @@ def classify_kopia_execution_failure(
 
     lower = message.lower()
     last_error_lower = str(last_error or "").lower()
+    diagnostic = backup_target_capacity_diagnostic(result, last_error=last_error)
+    if diagnostic:
+        return "BACKUP_TARGET_STORAGE_FULL", public_repository_failure_message(diagnostic)
     if "unable to get policy tree" in lower or "policy not found" in lower:
         return "KOPIA_POLICY_NOT_FOUND", message[:2000]
     if any(

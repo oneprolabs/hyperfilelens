@@ -5846,6 +5846,7 @@
         "summary": {
           "source_file_locked": "No se pudieron leer {count} archivos porque otro proceso los bloqueó.",
           "source_read_failed": "No se pudieron leer {count} archivos del origen de copia de seguridad.",
+          "BACKUP_TARGET_STORAGE_FULL": "El almacenamiento de destino de la copia de seguridad está lleno o ha alcanzado su cuota.",
           "mixed_source_errors": "No se pudieron procesar {count} elementos de origen.",
           "unreadable_file": "No se pudieron leer {count} archivos.",
           "unreadable_directory": "No se pudieron leer {count} directorios.",
@@ -5865,12 +5866,14 @@
         "howToResolve": "Cómo resolverlo",
         "viewAffectedFiles": "Ver los {count} archivos afectados",
         "viewAffectedItems": "Ver {count} elementos afectados",
+        "viewOriginalError": "Ver error original",
         "failureItemsTruncated": "Se muestran los primeros {reportedCount} de {count} elementos afectados.",
         "viewSkippedItems": "Ver {count} elementos omitidos",
         "skippedItemsTruncated": "Se muestran los primeros {reportedCount} de {count} elementos omitidos.",
         "fileLockedReason": "Bloqueado por otro proceso",
         "readFailedReason": "No se pudo leer el archivo",
         "remediation": {
+          "BACKUP_TARGET_STORAGE_FULL": "Libere espacio, compruebe la cuota del repositorio o amplíe el almacenamiento de destino y vuelva a intentar la copia de seguridad.",
           "enable_backup_policy": "Primero, habilite la política de copia de seguridad y su configuración avanzada. Las opciones de omisión solo se aplican cuando ambas están habilitadas.",
           "enable_skip_unreadable_files": "Si se pueden omitir estos archivos ilegibles, habilite Omitir archivos ilegibles. La copia de seguridad podrá continuar, pero los archivos omitidos no se incluirán en la instantánea.",
           "enable_skip_unreadable_directories": "Si se pueden omitir estos directorios ilegibles, habilite Omitir directorios ilegibles. La copia de seguridad podrá continuar, pero los directorios omitidos no se incluirán en la instantánea.",
