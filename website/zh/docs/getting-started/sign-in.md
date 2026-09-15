@@ -5,19 +5,19 @@ description: 登录 HyperFileLens 控制台并完成首次使用前的必要检�
 
 # 登录控制台
 
-社区版安装完成后，使用安装结果中的控制台地址和初始账户登录。本次首次使用流程使用英文产品界面。
+社区版安装完成后，使用安装结果中的控制台地址和初始账户登录。本次首次使用流程使用简体中文产品界面。
 
 ## 登录控制台
 
 1. 在安装结果的 `Access` 区域找到 `HyperFileLens`，并在浏览器中打开其 `URL`。
-2. 将界面语言切换为 **English**。
-3. 选择 **Password**，输入 `HyperFileLens` 下显示的 `Email` 和 `Password`，并完成人机验证。
-4. 选择 **Sign In**。
+2. 将界面语言切换为 **简体中文**。
+3. 选择 **密码登录**，输入 `HyperFileLens` 下显示的 `Email` 和 `Password`，并完成人机验证。
+4. 选择 **登录**。
 5. 首次登录后立即修改初始密码。
 6. 核对当前组织、时区和系统时间。
-7. 确认 **Protection → Backup Wizard** 页面可以正常打开。
+7. 确认 **数据保护 → 备份向导** 页面可以正常打开。
 
-![HyperFileLens 英文密码登录页面，邮箱地址已经遮盖](/docs/getting-started/sign-in-password.png)
+![HyperFileLens 简体中文密码登录页面，邮箱和密码字段为空](/docs/zh/getting-started/sign-in-password.png)
 
 ## 开始前检查
 

@@ -11,25 +11,25 @@ description: 将本次示例使用的 Windows 主机接入 HyperFileLens。
 
 ## 开始前
 
-- 已登录 HyperFileLens，并已将产品界面切换为 **English**。
+- 已登录 HyperFileLens，并已将产品界面切换为 **简体中文**。
 - 当前账户拥有添加备份源的权限。
 - Windows 主机在线并可以运行 PowerShell。
 - 需要保护的目录已经准备完成；本指南中的示例目录为 `C:\HFL-Quickstart`。
 
 ## 接入 Windows 主机
 
-1. 打开 **Protection → Backup Wizard**。
-2. 确认当前处于 **Backup Sources** 步骤，然后选择 **Add Source**。
-3. 选择 **Source Host**。
-4. 在 **Select Target Operating System** 中选择 **Windows**。
+1. 打开 **数据保护 → 备份向导**。
+2. 确认当前处于 **备份源** 步骤，然后选择 **添加备份源**。
+3. 选择 **源端主机**。
+4. 在 **选择目标操作系统** 中选择 **Windows**。
 
-页面会在 **Run the Install Command** 区域显示 Windows 安装命令。
+页面会在 **运行安装命令** 区域显示 Windows 安装命令。
 
-![添加 Windows 备份源，安装命令中的注册信息已经遮盖](/docs/getting-started/add-windows-source.png)
+![添加 Windows 备份源，安装命令中的注册信息已经遮盖](/docs/zh/getting-started/add-windows-source.png)
 
 ## 安装 Windows Agent
 
-1. 在安装命令旁选择 **Click to copy**。
+1. 在安装命令旁选择 **点击复制命令**。
 2. 在 Windows 主机上按 **Win + R**。
 3. 输入 `powershell` 并按回车。
 4. 将复制的安装命令粘贴到 PowerShell，然后按回车运行。
@@ -37,21 +37,21 @@ description: 将本次示例使用的 Windows 主机接入 HyperFileLens。
 
 部署命令可能包含短时有效的注册信息。不要复用旧截图中的命令，也不要在文档、聊天或公开 Issue 中分享完整命令。
 
-![Windows Agent 安装成功，用户路径和安装详情已经遮盖](/docs/getting-started/windows-agent-installed.png)
+![Windows Agent 安装成功，用户路径和安装详情已经遮盖](/docs/zh/getting-started/windows-agent-installed.png)
 
 ## 确认主机在线
 
-返回 **Protection → Backup Wizard**，选择源端表格上方的刷新按钮，然后确认新源端显示：
+返回 **数据保护 → 备份向导**，选择源端表格上方的刷新按钮，然后确认新源端显示：
 
-- 类型为 **Host · Windows**；
-- **Lifecycle Status** 为 **Registered**；
-- **Connectivity** 为 **Online**。
+- 类型为 **主机 · Windows**；
+- **生命周期状态** 为 **已注册**；
+- **连接性** 为 **在线**。
 
-![Windows 备份源已经注册并在线，主机名、IP 地址、账户和注册时间已经遮盖](/docs/getting-started/windows-source-online.png)
+![Windows 备份源已注册并在线](/docs/zh/getting-started/windows-source-online.png)
 
 ## 完成标准
 
 - PowerShell 显示安装成功并且节点已经上线。
-- Windows 主机出现在 **Backup Sources** 表格中。
-- **Lifecycle Status** 为 **Registered**。
-- **Connectivity** 为 **Online**。
+- Windows 主机出现在 **备份源** 表格中。
+- **生命周期状态** 为 **已注册**。
+- **连接性** 为 **在线**。
