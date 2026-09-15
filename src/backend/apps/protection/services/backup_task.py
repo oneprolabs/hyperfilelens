@@ -1640,7 +1640,7 @@ def _snapshot_error_cause(item: dict[str, str]) -> tuple[str, str]:
         return supplied_cause, supplied_type
     message = str(item.get("error") or "").lower()
     item_type = _snapshot_error_item_type(message)
-    if item_type == "special":
+    if item_type == "special" or "unsupported source" in message:
         return "unsupported_entry_type", item_type
     if "operation not permitted" in message:
         return "macos_privacy_denied", item_type

@@ -1164,3 +1164,14 @@ class KopiaFailureMessageTests(SimpleTestCase):
 
         self.assertTrue(_is_generic_exit_message("exit 1: exit status 1"))
         self.assertFalse(_is_generic_exit_message('Error when processing "foo": boom'))
+
+class SourcePathFailureCategoryTests(SimpleTestCase):
+    def test_permission_denied_is_source_permission_category(self):
+        from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
+        result = {"snapshot": {"rootEntry": {"summ": {"errors": [{"path": "/System Volume Information", "error": "permission denied"}]}}}}
+        self.assertEqual(kopia_snapshot_failure_metadata(result)["failure_details"]["category"], "permission_denied")
+
+    def test_unsupported_source_is_source_unsupported_category(self):
+        from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
+        result = {"snapshot": {"rootEntry": {"summ": {"errors": [{"path": "/pagefile.sys", "error": "unsupported source"}]}}}}
+        self.assertEqual(kopia_snapshot_failure_metadata(result)["failure_details"]["category"], "unsupported_entry_type")
