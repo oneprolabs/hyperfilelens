@@ -27,7 +27,7 @@ Return to the snapshot file whenever:
 - the snapshot is older than the live production data;
 - the answer could trigger a production, legal, or financial action.
 
-![Ready AI Copilot Chat bound to a protected snapshot with account, host, and Gateway identifiers blurred while the snapshot time and selected data remain visible](/docs/getting-started/chat.png)
+![Ready AI Copilot Chat bound to a protected snapshot with account, host, and Gateway identifiers blurred while the snapshot time and selected data remain visible](/docs/en/getting-started/chat.png)
 
 ## Manage history safely
 

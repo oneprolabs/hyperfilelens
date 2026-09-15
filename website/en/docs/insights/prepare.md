@@ -17,11 +17,11 @@ Open the backup source details and select **Snapshot Points**. Check:
 - the required files or directories can be browsed;
 - backup policies and filters did not exclude required content.
 
-![Available snapshot in Snapshot Points with host information blurred while snapshot identifiers, times, sizes, and file counts remain visible](/docs/getting-started/snapshot-points-available.png)
+![Available snapshot in Snapshot Points with host information blurred while snapshot identifiers, times, sizes, and file counts remain visible](/docs/en/getting-started/snapshot-points-available.png)
 
 Select **Browse Files** and find a known file before opening Insights. A successful backup task without the required file is not a valid analysis source.
 
-![Synthetic test files in the snapshot browser with host information blurred and documentation-only paths and filenames visible](/docs/getting-started/browse-snapshot-files.png)
+![Synthetic test files in the snapshot browser with host information blurred and documentation-only paths and filenames visible](/docs/en/getting-started/browse-snapshot-files.png)
 
 ## 2. Limit the data scope
 

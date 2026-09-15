@@ -13,7 +13,7 @@ This step selects the registered Windows host in the **Backup Wizard** and adds 
 2. Select **Next** to move to **Backup Configuration**.
 3. Select the Windows host again, then select **Backup Setup**.
 
-![Select the registered Windows source in Backup Configuration with the hostname, IP address, and account blurred while the registration time remains visible](/docs/getting-started/select-source-for-setup.png)
+![Select the registered Windows source in Backup Configuration with the hostname, IP address, and account blurred while the registration time remains visible](/docs/en/getting-started/select-source-for-setup.png)
 
 ## Select the directory to back up
 
@@ -23,7 +23,7 @@ This step selects the registered Windows host in the **Backup Wizard** and adds 
 4. Confirm that `C:\HFL-Quickstart` appears under **Selected Paths**.
 5. Select **Next**.
 
-![C:\HFL-Quickstart added to Selected Paths with the hostname and IP address blurred](/docs/getting-started/select-backup-directory.png)
+![C:\HFL-Quickstart added to Selected Paths with the hostname and IP address blurred](/docs/en/getting-started/select-backup-directory.png)
 
 ## Choose backup policy and file filter settings
 
@@ -31,7 +31,7 @@ This test must back up everything in `C:\HFL-Quickstart`. Leave **Backup Policy*
 
 For recurring backups, use **Backup Policy** to select or create a policy. To exclude content from snapshots, use **Filter Rule** to select or create a file filter. Policies and filters affect subsequent backups, so leave them unassigned during this first-use test.
 
-![Optional Backup Policy and File Filter settings with the Windows hostname and account blurred](/docs/getting-started/optional-backup-policy.png)
+![Optional Backup Policy and File Filter settings with the Windows hostname and account blurred](/docs/en/getting-started/optional-backup-policy.png)
 
 ## Completion criteria
 
@@ -40,4 +40,4 @@ For recurring backups, use **Backup Policy** to select or create a policy. To ex
 - `C:\HFL-Quickstart` appears under **Selected Paths**.
 - No filter rule excludes either test file.
 
-If no repository is available on the **Target** step, continue without leaving the configuration flow: [Add target storage](/docs/getting-started/add-target).
+If no repository is available on the **Target** step, continue without leaving the configuration flow: [Add target storage](/docs/en/getting-started/add-target).

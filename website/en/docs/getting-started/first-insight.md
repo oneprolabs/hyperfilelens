@@ -19,7 +19,7 @@ Insights uses a protected backup snapshot, not the live Windows source. This ste
 1. Open **Insights → AI Copilot**.
 2. Select **New Chat** above the session list. For a first-time account, the main panel may show **Start New Chat** instead.
 
-![Current AI Copilot page with AI Copilot under Applications, Data Gateways under AI Engine, and real account, host, and Gateway identifiers blurred](/docs/getting-started/insights-empty.png)
+![Current AI Copilot page with AI Copilot under Applications, Data Gateways under AI Engine, and real account, host, and Gateway identifiers blurred](/docs/en/getting-started/insights-empty.png)
 
 ## Select the backup data
 
@@ -28,7 +28,7 @@ Insights uses a protected backup snapshot, not the live Windows source. This ste
 3. Under **Files and Folders**, add `C:\HFL-Quickstart\insights\device-inventory.csv`.
 4. Confirm that the summary shows **Protected snapshot** and a scope of one file and 132 B.
 
-![New Chat with the backup source, snapshot, and device-inventory.csv selected; account, host, and Gateway details blurred](/docs/getting-started/insights-select-data.png)
+![New Chat with the backup source, snapshot, and device-inventory.csv selected; account, host, and Gateway details blurred](/docs/en/getting-started/insights-select-data.png)
 
 ## Choose the analysis type and Data Gateway
 
@@ -37,14 +37,14 @@ Insights uses a protected backup snapshot, not the live Windows source. This ste
 3. Confirm the snapshot, file scope, and Public Data Gateway in the summary.
 4. Keep the Public Data Gateway selected for this test. A Private Data Gateway is not required.
 
-![Knowledge Q&A and Public Data Gateway selected with account, host, and Gateway name blurred](/docs/getting-started/insights-gateway-ready.png)
+![Knowledge Q&A and Public Data Gateway selected with account, host, and Gateway name blurred](/docs/en/getting-started/insights-gateway-ready.png)
 
 ## Start the session
 
 1. Select **Start Chat**.
 2. Wait for data preparation to finish before sending a question.
 
-![Insights session created with Ready status; account, host, and Gateway identifiers blurred](/docs/getting-started/chat.png)
+![Insights session created with Ready status; account, host, and Gateway identifiers blurred](/docs/en/getting-started/chat.png)
 
 Start with a question that can be checked directly against the CSV file:
 
@@ -55,7 +55,7 @@ Please list each device name and its status.
 
 The expected answer is three devices: Atlas (Active), Beacon (Active), and Cedar (Inactive). Confirm that the answer includes those names and statuses and provides citations to the selected CSV.
 
-![AI Copilot answer listing three devices and their statuses; account, host, and Gateway identifiers blurred](/docs/getting-started/chat-answer.png)
+![AI Copilot answer listing three devices and their statuses; account, host, and Gateway identifiers blurred](/docs/en/getting-started/chat-answer.png)
 
 If the button is unavailable or preparation fails, check the snapshot, file scope, Public Data Gateway, and default AI model before retrying. Do not repeatedly submit the same request.
 

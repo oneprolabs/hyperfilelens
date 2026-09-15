@@ -16,25 +16,25 @@ This step restores `restore-check.txt` from the verified snapshot to the indepen
    - **Create New Restore Task** lets you select the snapshot, file, and destination manually.
 4. Select **Create New Restore Task** for this single-file verification.
 
-![Two restore modes in Create Restore Task with host and IP information blurred while snapshot time, size, restore path, and policy remain visible](/docs/getting-started/choose-restore-mode.png)
+![Two restore modes in Create Restore Task with host and IP information blurred while snapshot time, size, restore path, and policy remain visible](/docs/en/getting-started/choose-restore-mode.png)
 
 ## Create the single-file restore task
 
 1. Under **Backups & Snapshots**, select the snapshot you verified, then select **Next**.
 
-![Select the snapshot to restore with the host and IP address blurred while the snapshot time and size remain visible](/docs/getting-started/select-restore-snapshot.png)
+![Select the snapshot to restore with the host and IP address blurred while the snapshot time and size remain visible](/docs/en/getting-started/select-restore-snapshot.png)
 
 2. Under **Restore Targets**, select the online Windows destination. This run uses **Restore to Source**, but restores into a separate test directory.
 3. Select **Next**.
 
-![Select the Windows restore target with the host and IP address blurred while the snapshot time and Restore to Source option remain visible](/docs/getting-started/select-restore-target.png)
+![Select the Windows restore target with the host and IP address blurred while the snapshot time and Restore to Source option remain visible](/docs/en/getting-started/select-restore-target.png)
 
 4. Under **Restore Directories**, set **File conflict policy** to **Skip**.
 5. Set **Restore Scope** to `C:\HFL-Quickstart\restore-check.txt`.
 6. Set **Restore Directory** to `C:\HFL-Restore-Test`.
 7. Confirm that **Restored path** is `C:\HFL-Restore-Test\restore-check.txt`, then select **Next**.
 
-![Map restore-check.txt to the independent restore directory using Skip with host and IP details blurred](/docs/getting-started/map-restore-file.png)
+![Map restore-check.txt to the independent restore directory using Skip with host and IP details blurred](/docs/en/getting-started/map-restore-file.png)
 
 ## Review and run the restore
 
@@ -48,15 +48,15 @@ On **Review**, confirm:
 
 Select **Start Restore**.
 
-![Single-file restore task Review with the host and IP address blurred while the snapshot time, restore path, and conflict policy remain visible](/docs/getting-started/review-restore-task.png)
+![Single-file restore task Review with the host and IP address blurred while the snapshot time, restore path, and conflict policy remain visible](/docs/en/getting-started/review-restore-task.png)
 
 After returning to **Start Backup**, monitor **Restore Task** and wait for the status to become **Succeeded**.
 
-![Completed restore with Restore Task showing Succeeded and account, host, and repository details blurred](/docs/getting-started/restore-succeeded.png)
+![Completed restore with Restore Task showing Succeeded and account, host, and repository details blurred](/docs/en/getting-started/restore-succeeded.png)
 
 You can also open the backup source details and select **Restore Records**. Confirm that the record and file item are both **Succeeded** and that one file was restored.
 
-![Successful single-file restore in Restore Records with host and IP information blurred while Record, Task, and Snapshot identifiers and times remain visible](/docs/getting-started/restore-record-succeeded.png)
+![Successful single-file restore in Restore Records with host and IP information blurred while Record, Task, and Snapshot identifiers and times remain visible](/docs/en/getting-started/restore-record-succeeded.png)
 
 ## Verify the file on Windows
 
@@ -84,6 +84,6 @@ A **Succeeded** status confirms that the restore task completed. Verify the rest
 
 You can also open the source and restore directories side by side and compare the file name, size, and content. In this verification, `restore-check.txt` has identical content before and after restore.
 
-![Matching restore-check.txt content in the source and restore directories](/docs/getting-started/restore-content-verified.png)
+![Matching restore-check.txt content in the source and restore directories](/docs/en/getting-started/restore-content-verified.png)
 
 Once you have checked the restored content on Windows, the restore test confirms that the first backup is recoverable. Matching the SHA-256 baseline provides additional assurance that the restored file is unchanged.

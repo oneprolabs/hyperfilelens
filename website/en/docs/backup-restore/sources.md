@@ -18,7 +18,7 @@ The installation command contains one-time registration information. Do not copy
 - the host type and operating system are correct;
 - the intended directory can be browsed during backup configuration.
 
-![Registered and online Windows backup source with hostname, IP address, account, and registration time redacted](/docs/getting-started/windows-source-online.png)
+![Registered and online Windows backup source with hostname, IP address, account, and registration time redacted](/docs/en/getting-started/windows-source-online.png)
 
 Avoid selecting:
 
