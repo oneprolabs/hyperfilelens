@@ -19,7 +19,7 @@ On **Start Backup**, confirm that **Backup Task** shows **Succeeded**, then chec
 4. Confirm that its **Status** is **Available**.
 5. Expand the snapshot and review **Size**, **Restore Size**, and **Files/Dirs**.
 
-![Available snapshot in Snapshot Points with host information blurred while snapshot identifiers, times, sizes, and file counts remain visible](/docs/getting-started/snapshot-points-available.png)
+![Available snapshot in Snapshot Points with host information blurred while snapshot identifiers, times, sizes, and file counts remain visible](/docs/en/getting-started/snapshot-points-available.png)
 
 For this test, the source path should be `C:\HFL-Quickstart` and the snapshot should contain two files: `restore-check.txt` and `insights\device-inventory.csv`.
 
@@ -30,7 +30,7 @@ Expand the source path for the snapshot:
 - Select **Browse** to open **File and Directory Browser** and inspect the directory and file names.
 - Select files in the browser, then select **Download** to download the selected snapshot contents locally.
 
-![Snapshot files in File and Directory Browser with host information blurred while snapshot identifiers, test filenames, sizes, and times remain visible](/docs/getting-started/browse-snapshot-files.png)
+![Snapshot files in File and Directory Browser with host information blurred while snapshot identifiers, test filenames, sizes, and times remain visible](/docs/en/getting-started/browse-snapshot-files.png)
 
 Confirm that both `restore-check.txt` and `insights\device-inventory.csv` are visible before restoring a test file. Downloaded files still come from the snapshot; downloading is not a substitute for restore verification.
 

@@ -17,7 +17,7 @@ After installing HyperFileLens Community, sign in with the console URL and initi
 6. Check the current organization, time zone, and system time.
 7. Confirm that **Protection → Backup Wizard** opens successfully.
 
-![HyperFileLens password sign-in page in English with the email address redacted](/docs/getting-started/sign-in-password.png)
+![HyperFileLens password sign-in page in English with the email address redacted](/docs/en/getting-started/sign-in-password.png)
 
 ## Before continuing
 

@@ -9,20 +9,20 @@ description: 在创建洞察会话前验证备份快照并明确数据范围。
 
 ## 1. 验证快照
 
-打开备份源详情并选择 **Snapshot Points**，确认：
+打开备份源详情并选择 **快照点**，确认：
 
-- 快照状态为 **Available**。
+- 快照状态为 **可用**。
 - 快照属于预期的备份源和仓库。
 - 完成时间符合需要分析的数据版本。
 - 快照包含可浏览的物理目录。
 - 需要分析的文件位于该快照中。
 - 文件类型和大小没有被备份过滤规则排除。
 
-![Snapshot Points 中的可用快照，主机信息已经模糊处理，快照标识、时间、大小和文件数量保持可见](/docs/getting-started/snapshot-points-available.png)
+![Snapshot Points 中的可用快照，主机信息已经模糊处理，快照标识、时间、大小和文件数量保持可见](/docs/zh/getting-started/snapshot-points-available.png)
 
-选择 **Browse Files** 并找到一个已知文件后再进入 Insights。仅备份任务成功、但快照中没有所需文件，不能作为有效分析来源。
+选择 **浏览文件** 并找到一个已知文件后再进入智能洞察。仅备份任务成功、但快照中没有所需文件，不能作为有效分析来源。
 
-![快照浏览器中的合成测试文件，主机信息已经模糊处理，文档专用路径和文件名保持可见](/docs/getting-started/browse-snapshot-files.png)
+![快照浏览器中的合成测试文件，主机信息已经模糊处理，文档专用路径和文件名保持可见](/docs/zh/getting-started/browse-snapshot-files.png)
 
 ## 2. 控制数据范围
 

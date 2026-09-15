@@ -25,7 +25,7 @@ This guide uses `C:\HFL-Quickstart` and its sample files to demonstrate the comp
 
 The Windows installation command appears under **Run the Install Command**.
 
-![Add a Windows backup source with the registration command redacted](/docs/getting-started/add-windows-source.png)
+![Add a Windows backup source with the registration command redacted](/docs/en/getting-started/add-windows-source.png)
 
 ## Install the Windows Agent
 
@@ -37,7 +37,7 @@ The Windows installation command appears under **Run the Install Command**.
 
 The command may contain short-lived registration information. Do not reuse a command from an old screenshot or publish the full command in documentation, a chat, or a public issue.
 
-![Windows Agent installation completed with user paths and installation details redacted](/docs/getting-started/windows-agent-installed.png)
+![Windows Agent installation completed with user paths and installation details redacted](/docs/en/getting-started/windows-agent-installed.png)
 
 ## Confirm that the host is online
 
@@ -47,7 +47,7 @@ Return to **Protection → Backup Wizard** and select the refresh button above t
 - **Registered** under **Lifecycle Status**; and
 - **Online** under **Connectivity**.
 
-![Registered and online Windows backup source with the hostname, IP address, account, and registration time redacted](/docs/getting-started/windows-source-online.png)
+![Registered and online Windows backup source with the hostname, IP address, account, and registration time redacted](/docs/en/getting-started/windows-source-online.png)
 
 ## Completion criteria
 

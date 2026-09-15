@@ -16,7 +16,7 @@ description: 从 HyperFileLens 备份快照创建和使用 AI Copilot 会话。
 5. 公共网关无法访问仓库或数据准备必须留在自管网络时，[使用 Private Data Gateway](/zh/docs/insights/data-gateway)。
 6. 了解并管理[会话与数据范围](/zh/docs/insights/privacy)。
 
-![AI Copilot 基于合成 CSV 返回答案，账户、主机和 Gateway 标识已经模糊处理，引用结果保持可见](/docs/getting-started/chat-answer.png)
+![AI Copilot 基于合成 CSV 返回答案，账户、主机和 Gateway 标识已经模糊处理，引用结果保持可见](/docs/zh/getting-started/chat-answer.png)
 
 适合的任务包括从文档中查找事实、总结制度、比较版本或分析选定的源码目录。应先选择边界清晰的小范围，并提出可以独立核对的问题。
 

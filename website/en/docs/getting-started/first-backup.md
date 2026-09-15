@@ -14,9 +14,9 @@ This walkthrough uses the Huawei Cloud OBS repository created in the previous st
 3. Select **OK**.
 4. Confirm that the target column shows the repository, **Object Storage**, and **Online**.
 
-![Select the created and online Huawei Cloud repository with the account and repository name blurred](/docs/getting-started/select-target-repository.png)
+![Select the created and online Huawei Cloud repository with the account and repository name blurred](/docs/en/getting-started/select-target-repository.png)
 
-![Target repository assigned to the Windows source with the account, host, and repository name blurred while the public Endpoint remains visible](/docs/getting-started/assigned-target-repository.png)
+![Target repository assigned to the Windows source with the account, host, and repository name blurred while the public Endpoint remains visible](/docs/en/getting-started/assigned-target-repository.png)
 
 ## Optional restore plan
 
@@ -24,14 +24,14 @@ Select **Next** to open **Restore Plan**. A restore plan is optional and preconf
 
 Enable a restore plan when the same restore rule will be reused. For temporary restores, historical versions, or changing the destination, use a manual restore instead. For this first backup, leave the plan unconfigured and select **Next**.
 
-![Optional Restore Plan configuration with the restore target host blurred while the restore path and conflict policy remain visible](/docs/getting-started/optional-restore-plan.png)
+![Optional Restore Plan configuration with the restore target host blurred while the restore path and conflict policy remain visible](/docs/en/getting-started/optional-restore-plan.png)
 
 ## Review and create the configuration
 
 1. On **Review**, check the source, `C:\HFL-Quickstart`, target repository, compression, policy, filter, and restore-plan settings.
 2. When the summary is correct, select **Create**.
 
-![Backup configuration summary on Review with the account, host, and repository name blurred while the restore path and configuration labels remain visible](/docs/getting-started/review-backup-configuration.png)
+![Backup configuration summary on Review with the account, host, and repository name blurred while the restore path and configuration labels remain visible](/docs/en/getting-started/review-backup-configuration.png)
 
 After creation, the wizard returns to **Start Backup**. The table lists the backup path, target repository, connectivity, and task status.
 
@@ -43,8 +43,8 @@ After creation, the wizard returns to **Start Backup**. The table lists the back
 4. Monitor the task in the **Backup Task** column.
 5. Wait for the task status to become **Succeeded**.
 
-![Backup configuration ready to run with Connectivity Online and the account and host information blurred](/docs/getting-started/backup-ready-to-run.png)
+![Backup configuration ready to run with Connectivity Online and the account and host information blurred](/docs/en/getting-started/backup-ready-to-run.png)
 
-![First backup completed with Backup Task Succeeded and the account, host, and repository information blurred](/docs/getting-started/backup-succeeded.png)
+![First backup completed with Backup Task Succeeded and the account, host, and repository information blurred](/docs/en/getting-started/backup-succeeded.png)
 
 Do not close the Windows Agent or change the repository credentials while the task is running. Continue to task and snapshot verification only after **Backup Task** shows **Succeeded**.

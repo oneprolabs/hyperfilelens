@@ -11,7 +11,7 @@ description: 管理洞察会话，并理解快照、文件范围、网关和 AI 
 
 会话列表包含历史问题和回答。共享截图前，应同时检查会话名称、用户问题、AI 回答、引用、路径、文件名、账户、主机、仓库和 Gateway 标识。
 
-![Ready 状态的 AI Copilot 会话绑定受保护快照，账户、主机和 Gateway 标识已经模糊处理，快照时间和选定数据保持可见](/docs/getting-started/chat.png)
+![Ready 状态的 AI Copilot 会话绑定受保护快照，账户、主机和 Gateway 标识已经模糊处理，快照时间和选定数据保持可见](/docs/zh/getting-started/chat.png)
 
 ## 引用和依据
 

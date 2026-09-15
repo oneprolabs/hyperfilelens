@@ -6,10 +6,10 @@ search: false
 head:
   - - meta
     - http-equiv: refresh
-      content: "0; url=/docs/getting-started/install"
+      content: "0; url=/docs/en/getting-started/install"
   - - script
     - {}
-    - "window.location.replace('/docs/getting-started/install')"
+    - "window.location.replace('/docs/en/getting-started/install')"
 ---
 
-[Continue to Install HyperFileLens Community](/docs/getting-started/install).
+[Continue to Install HyperFileLens Community](/docs/en/getting-started/install).
