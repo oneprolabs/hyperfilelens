@@ -54,3 +54,7 @@ Confirm that **Restore Task** is **Succeeded** on **Start Backup**, then open **
 ![Successful single-file restore in Restore Records with host and IP information blurred while Record, Task, and Snapshot identifiers and times remain visible](/docs/en/getting-started/restore-record-succeeded.png)
 
 For failures, record the failed path, destination node, error code, and task time, then see [Backup, Storage, and Restore troubleshooting](/docs/troubleshooting/protection).
+
+## Related pages
+
+- [Recover data to a new host after source host failure](/docs/backup-restore/recover-to-new-host) — use when the original source host is permanently damaged or offline and you need to restore snapshots to a replacement host.

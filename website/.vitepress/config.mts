@@ -42,6 +42,7 @@ const enProduct = [
       { text: 'Policies and retention', link: '/docs/backup-restore/policies' },
       { text: 'View tasks and snapshots', link: '/docs/backup-restore/snapshots' },
       { text: 'Restore files and directories', link: '/docs/backup-restore/restore' },
+      { text: 'Recover data to a new host after source host failure', link: '/docs/backup-restore/recover-to-new-host' },
     ],
   },
   {

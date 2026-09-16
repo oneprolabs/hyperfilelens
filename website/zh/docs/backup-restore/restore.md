@@ -54,3 +54,7 @@ description: 从可用快照创建恢复任务并验证恢复结果。
 ![Restore Records 中的单文件恢复成功记录，主机和 IP 已经模糊处理，Record、Task、Snapshot 标识及时间保持可见](/docs/zh/getting-started/restore-record-succeeded.png)
 
 恢复失败时记录失败路径、目标节点、错误编号和任务时间，然后查看[备份、存储与恢复](/zh/docs/troubleshooting/protection)。
+
+## 相关页面
+
+- [源端主机损坏后恢复到新主机](/zh/docs/backup-restore/recover-to-new-host)——当原始源端主机永久损坏或离线时，将快照恢复到替换主机的操作指南。
