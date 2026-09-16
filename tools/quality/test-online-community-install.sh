@@ -308,6 +308,14 @@ for message in (
     "short read: unexpected EOF",
 ):
     assert not module.registry_failure_is_terminal(message), message
+    assert module.registry_failure_is_transient(message), message
+assert module.registry_failure_is_transient("")
+assert module.registry_failure_is_transient(
+    "Docker Compose native pull progress: parallel=5 images=10"
+)
+assert not module.registry_failure_is_transient(
+    "panic: runtime error: invalid memory address"
+)
 assert hasattr(module, "RegistryPreparationError")
 
 runtime = json.loads(

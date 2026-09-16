@@ -599,14 +599,30 @@ def inspect_pulled_images(
     return resolved, unresolved
 
 
-def registry_failure_is_transient(output: str) -> bool:
-    """Return whether Docker reported a retryable registry transport failure."""
-    return bool(TRANSIENT_REGISTRY_ERROR.search(output))
-
-
 def registry_failure_is_terminal(output: str) -> bool:
     """Return whether Docker reported a non-retryable image failure."""
     return bool(PERMANENT_REGISTRY_ERROR.search(output))
+
+
+def registry_failure_is_transient(output: str) -> bool:
+    """Return whether a registry pull failure should be retried in-region.
+
+    Known transport failures match TRANSIENT_REGISTRY_ERROR. Compose may also
+    exit non-zero with only progress output and no denial text; those are
+    treated as retryable unless a permanent image error is present.
+    """
+    if registry_failure_is_terminal(output):
+        return False
+    if TRANSIENT_REGISTRY_ERROR.search(output):
+        return True
+    cleaned = re.sub(
+        r"\x1b\[[0-9;?]*[ -/]*[@-~]",
+        "",
+        output,
+    ).replace("\r", "\n").strip()
+    # Empty or progress-only output: retry instead of treating the attempt as a
+    # permanent prepare failure.
+    return not cleaned or bool(re.search(r"\bprogress\b", cleaned, re.IGNORECASE))
 
 
 def registry_retry_delay(completed_attempt: int) -> int:
