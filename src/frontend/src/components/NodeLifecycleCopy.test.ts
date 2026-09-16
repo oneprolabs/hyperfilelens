@@ -70,8 +70,10 @@ describe('Node lifecycle copy', () => {
     const dataProtection = source('src/pages/protection/DataProtection.vue')
     const backupWizard = source('src/pages/protection/BackupCreateWizard.vue')
 
-    expect(wizard).toContain("os === 'windows'")
+    expect(wizard).toContain("v-if=\"os === 'windows' && installGenerated\"")
     expect(wizard).toContain("t('nodeLifecycle.installClipboardHint')")
+    expect(wizard).toContain('function onCopy()')
+    expect(wizard).not.toContain('function onCopy(cmd')
     expect(wizard).not.toContain('windowsCommands')
     expect(wizard).not.toContain('windowsInstallStepDownload')
     expect(wizard).not.toContain('windowsInstallStepExecute')

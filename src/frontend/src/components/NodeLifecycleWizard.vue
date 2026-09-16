@@ -535,8 +535,8 @@ function onOsCardKeydown(event: KeyboardEvent, next: EnrollmentOs) {
   }
 }
 
-function onCopy(cmd?: string) {
-  const text = cmd ?? displayCommand.value
+function onCopy() {
+  const text = displayCommand.value
   if (!text || loading.value) return
   emit('copy', text)
   copiedCommand.value = text
@@ -915,7 +915,7 @@ defineExpose({ clearInstallCommand })
               </template>
             </I18nT>
             <p
-              v-if="os === 'windows'"
+              v-if="os === 'windows' && installGenerated"
               class="fullscreen-form-field__hint agent-install-wizard__command-lead"
             >
               {{ t('nodeLifecycle.installClipboardHint') }}
