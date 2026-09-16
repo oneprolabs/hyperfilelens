@@ -18,7 +18,7 @@ Inspect **Backup Task** on **Start Backup**, the backup source details, or **Ope
 
 When an Agent is offline, the control plane may need to wait for reconnection before confirming the final state. Resolve connectivity before making further configuration changes.
 
-![Completed first backup with Backup Task showing Succeeded and account, host, and repository details blurred](/docs/getting-started/backup-succeeded.png)
+![Completed first backup with Backup Task showing Succeeded and account, host, and repository details blurred](/docs/en/getting-started/backup-succeeded.png)
 
 ## Verify the snapshot
 
@@ -32,11 +32,11 @@ Open the backup source details, select **Snapshot Points**, and then select a sn
 
 Only a successful or partially successful snapshot that contains browsable files or directories can be restored. A partially successful snapshot may still contain usable data, but review what is missing before relying on it.
 
-![Available snapshot in Snapshot Points with host information blurred while snapshot identifiers, times, sizes, and file counts remain visible](/docs/getting-started/snapshot-points-available.png)
+![Available snapshot in Snapshot Points with host information blurred while snapshot identifiers, times, sizes, and file counts remain visible](/docs/en/getting-started/snapshot-points-available.png)
 
 Select **Browse Files** and expand the directories. File counts and sizes in this view indicate what the snapshot contains. Downloading a snapshot file lets you inspect its contents, but it is not a substitute for testing the restore workflow.
 
-![Synthetic test files in the snapshot browser with host information blurred and documentation-only paths and filenames visible](/docs/getting-started/browse-snapshot-files.png)
+![Synthetic test files in the snapshot browser with host information blurred and documentation-only paths and filenames visible](/docs/en/getting-started/browse-snapshot-files.png)
 
 ## Validate recovery
 

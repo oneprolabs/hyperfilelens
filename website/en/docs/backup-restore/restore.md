@@ -22,7 +22,7 @@ For your first restore test, restore a small set of sample files to a separate t
 1. On **Start Backup**, select the source and choose **Restore**.
 2. Select **Create New Restore Task**. **Run Restore Plan** immediately uses the latest snapshot, scope, destination, and conflict policy saved in the backup configuration.
 
-![Two restore modes in Create Restore Task with host and IP information blurred while snapshot time, size, restore path, and policy remain visible](/docs/getting-started/choose-restore-mode.png)
+![Two restore modes in Create Restore Task with host and IP information blurred while snapshot time, size, restore path, and policy remain visible](/docs/en/getting-started/choose-restore-mode.png)
 
 3. Under **Backups & Snapshots**, select the backup and snapshot point.
 4. Under **Restore Targets**, select an online destination node.
@@ -33,9 +33,9 @@ For your first restore test, restore a small set of sample files to a separate t
    - **Overwrite** replaces an existing destination file with snapshot content.
 8. On **Review**, verify the snapshot, destination node, restore scope, destination paths, and conflict policy, then select **Start Restore**.
 
-![Single test file mapped to an independent restore directory with personal host and path identifiers blurred while synthetic names remain visible](/docs/getting-started/map-restore-file.png)
+![Single test file mapped to an independent restore directory with personal host and path identifiers blurred while synthetic names remain visible](/docs/en/getting-started/map-restore-file.png)
 
-![Single-file restore task on Review with host and IP information blurred while snapshot time, restore path, and conflict policy remain visible](/docs/getting-started/review-restore-task.png)
+![Single-file restore task on Review with host and IP information blurred while snapshot time, restore path, and conflict policy remain visible](/docs/en/getting-started/review-restore-task.png)
 
 **Overwrite** can replace current files. Use it only after independently verifying the destination, path, and current content. Routine validation should use **Skip**.
 
@@ -51,6 +51,6 @@ After the task finishes, inspect the restored files on the destination host inst
 
 Confirm that **Restore Task** is **Succeeded** on **Start Backup**, then open **Restore Records** in the source details. Check the record status, file-item status, restored count, and destination path.
 
-![Successful single-file restore in Restore Records with host and IP information blurred while Record, Task, and Snapshot identifiers and times remain visible](/docs/getting-started/restore-record-succeeded.png)
+![Successful single-file restore in Restore Records with host and IP information blurred while Record, Task, and Snapshot identifiers and times remain visible](/docs/en/getting-started/restore-record-succeeded.png)
 
 For failures, record the failed path, destination node, error code, and task time, then see [Backup, Storage, and Restore troubleshooting](/docs/troubleshooting/protection).

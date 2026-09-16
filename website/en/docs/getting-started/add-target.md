@@ -28,16 +28,16 @@ On **Target**, the Windows source indicates that no target repository is assigne
 
 1. Select **Add Repository**. HyperFileLens opens the target storage page in a new browser tab.
 
-![Target step with no repository assigned and the Windows host information blurred](/docs/getting-started/add-target-repository.png)
+![Target step with no repository assigned and the Windows host information blurred](/docs/en/getting-started/add-target-repository.png)
 
 2. On **Object Storage**, select **Add**.
 
-![Empty Object Storage page with the account blurred](/docs/getting-started/empty-object-storage.png)
+![Empty Object Storage page with the account blurred](/docs/en/getting-started/empty-object-storage.png)
 
 3. On **Add Object Storage Repository**, select **Huawei Cloud**.
 4. Select the **Region** that contains the OBS bucket, then check the automatically populated **Endpoint URL** and **Region**.
 
-![Add a Huawei Cloud object storage repository and select its Region with the account blurred](/docs/getting-started/select-huawei-cloud.png)
+![Add a Huawei Cloud object storage repository and select its Region with the account blurred](/docs/en/getting-started/select-huawei-cloud.png)
 
 5. Enter the IAM user's **Access Key** and **Secret Key**.
 6. Keep **Use TLS (HTTPS)** enabled and confirm that the summary shows **HTTPS**. Do not use HTTP for a public Huawei Cloud OBS connection.
@@ -45,12 +45,12 @@ On **Target**, the Windows source indicates that no target repository is assigne
 8. Enter an **Object Prefix** dedicated to this repository, such as `hfl/`, then review the repository name, bucket, and other settings.
 9. Select **Create and Initialize Repository**.
 
-![Huawei Cloud repository configuration with the Access Key, Bucket, and repository name blurred](/docs/getting-started/configure-huawei-repository.png)
+![Huawei Cloud repository configuration with the Access Key, Bucket, and repository name blurred](/docs/en/getting-started/configure-huawei-repository.png)
 
 If the page reports that the credentials cannot list buckets, do not disable TLS or switch to a primary-account key as a workaround. Grant the test IAM user the required OBS API permissions, verify that the policy applies to the correct account or project, allow time for the change to propagate, and validate the connection again.
 
 After you select **Create and Initialize Repository**, HyperFileLens returns to the **Object Storage** list. Wait for the new repository to show **Status: Created** and **Connectivity: Online**. These states indicate that the target repository is ready to use.
 
-![Huawei Cloud repository created and online with the account, repository name, and Bucket blurred while the Endpoint and registration time remain visible](/docs/getting-started/huawei-repository-created.png)
+![Huawei Cloud repository created and online with the account, repository name, and Bucket blurred while the Endpoint and registration time remain visible](/docs/en/getting-started/huawei-repository-created.png)
 
 After the repository has been created and validated, return to the backup configuration and assign it to the backup source before continuing with the first backup.
