@@ -110,7 +110,6 @@ export const router = createRouter({
         PROTECTION_RETENTION_LEGACY_ROUTE,
         { path: 'insight', redirect: '/insight/copilot' },
         { path: 'insight/copilot', component: InsightPage },
-        ...(import.meta.env.DEV ? [{ path: 'dev/copilot-mock', component: () => import('../pages/insight/copilot/CopilotMock.vue') }] : []),
         {
           path: 'insight/copilot/shared',
           component: lazyRoute(() => import('../pages/insight/SharedCopilotQA.vue')),
