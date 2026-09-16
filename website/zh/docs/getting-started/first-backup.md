@@ -9,42 +9,38 @@ description: 分配目标仓库、确认备份配置并运行首次备份。
 
 ## 分配目标仓库
 
-1. 返回 **Target** 步骤，选择源端行右侧的小铅笔图标。
-2. 在 **Select Target Repository** 中选择刚创建的 Huawei Cloud 仓库。
-3. 选择 **OK**。
-4. 确认目标列显示仓库、**Object Storage** 和 **Online**。
+1. 返回 **目标端** 步骤，选择源端行右侧的小铅笔图标。
+2. 在 **选择目标仓库** 中选择刚创建的 Huawei Cloud 仓库。
+3. 选择 **确定**。
+4. 确认目标列显示仓库、**对象存储** 和 **在线**。
 
-![在 Select Target Repository 中选择已创建且在线的 Huawei Cloud 仓库，账户和仓库名称已经模糊处理](/docs/getting-started/select-target-repository.png)
-
-![目标仓库已分配给 Windows 备份源，账户、主机和仓库名称已经模糊处理，公开 Endpoint 保持可见](/docs/getting-started/assigned-target-repository.png)
+![选择目标仓库对话框，列出在线的 Huawei Cloud 对象存储仓库](/docs/zh/getting-started/assigned-target-repository.png)
 
 ## 可选的恢复计划
 
-选择 **Next** 进入 **Restore Plan**。恢复计划是可选配置，用于预设恢复范围、目标节点、目标目录，以及同名文件的跳过或覆盖策略。
+选择 **下一步** 进入 **恢复计划**。恢复计划是可选配置，用于预设恢复范围、目标节点、目标目录，以及同名文件的跳过或覆盖策略。
 
-需要以后按相同规则重复恢复时，可以启用恢复计划。临时恢复、恢复历史版本或临时改变目标位置时，使用手动恢复更合适。首次备份可以不配置恢复计划，直接选择 **Next**。
+需要以后按相同规则重复恢复时，可以启用恢复计划。临时恢复、恢复历史版本或临时改变目标位置时，使用手动恢复更合适。首次备份可以不配置恢复计划，直接选择 **下一步**。
 
-![可选的 Restore Plan 配置，恢复目标主机已经模糊处理，恢复路径和冲突策略保持可见](/docs/getting-started/optional-restore-plan.png)
+![可选的恢复计划配置，显示恢复目录和恢复开关](/docs/zh/getting-started/optional-restore-plan.png)
 
-## Review 并创建配置
+## 确认并创建配置
 
-1. 在 **Review** 页面核对备份源、`C:\HFL-Quickstart`、目标仓库、压缩设置、策略、过滤器和恢复计划。
-2. 确认信息正确后选择 **Create**。
+1. 在 **确认信息** 页面核对备份源、`C:\HFL-Quickstart`、目标仓库、压缩设置、策略、过滤器和恢复计划。
+2. 确认信息正确后选择 **创建**。
 
-![Review 页面中的备份配置摘要，账户、主机和仓库名称已经模糊处理，恢复路径和配置标签保持可见](/docs/getting-started/review-backup-configuration.png)
+![确认信息页面中的备份配置摘要](/docs/zh/getting-started/review-backup-configuration.png)
 
-创建完成后，页面返回 **Start Backup** 步骤。表格会列出备份路径、目标仓库、连接状态和任务状态。
+创建完成后，页面返回 **开始备份** 步骤。表格会列出备份路径、目标仓库、连接状态和任务状态。
 
 ## 运行首次备份
 
-1. 在 **Start Backup** 页面确认目标仓库的 **Connectivity** 为 **Online**。
+1. 在 **开始备份** 页面确认目标仓库的 **连接性** 为 **在线**。
 2. 勾选当前 Windows 备份源。
-3. 选择 **Backup Now**。
-4. 在 **Backup Task** 列观察任务状态和进度。
-5. 等待状态变为 **Succeeded**。
+3. 选择 **立即备份**。
+4. 在 **备份任务** 列观察任务状态和进度。
+5. 等待状态变为 **成功**。
 
-![备份配置已准备运行，Connectivity 为 Online，账户和主机信息已经模糊处理](/docs/getting-started/backup-ready-to-run.png)
+![首次备份完成，Backup Task 显示 Succeeded，账户、主机和仓库信息已经模糊处理](/docs/zh/getting-started/backup-succeeded.png)
 
-![首次备份完成，Backup Task 显示 Succeeded，账户、主机和仓库信息已经模糊处理](/docs/getting-started/backup-succeeded.png)
-
-运行期间不要关闭 Windows Agent，也不要修改对象存储凭据。只有当 **Backup Task** 显示 **Succeeded** 后，才继续检查任务与快照。
+运行期间不要关闭 Windows Agent，也不要修改对象存储凭据。只有当 **备份任务** 显示 **成功** 后，才继续检查任务与快照。
