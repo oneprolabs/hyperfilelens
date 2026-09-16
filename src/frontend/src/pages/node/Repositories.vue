@@ -835,9 +835,10 @@ function isRepositoryConnectivityUnverified(row: RepositoryRow) {
 }
 
 function repositoryConnectivityHelpKey(row: RepositoryRow) {
-  return isRepositoryBoundToProxy(row)
-    ? 'repositoriesPage.healthBoundUnverifiedHelp'
-    : 'repositoriesPage.healthUnverifiedHelp'
+  if (!isRepositoryBoundToProxy(row)) return 'repositoriesPage.healthUnverifiedHelp'
+  if (row.protocol === 'nfs') return 'repositoriesPage.healthBoundUnverifiedNfsHelp'
+  if (row.protocol === 'smb') return 'repositoriesPage.healthBoundUnverifiedSmbHelp'
+  return 'repositoriesPage.healthBoundUnverifiedGenericHelp'
 }
 
 const deleteRepositoriesTitle = computed(() =>
