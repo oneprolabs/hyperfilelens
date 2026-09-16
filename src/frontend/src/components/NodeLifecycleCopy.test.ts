@@ -41,7 +41,9 @@ describe('Node lifecycle copy', () => {
     expect(chinese.nodeLifecycle.installLeadAutomaticLinux).toContain('Linux')
     expect(chinese.nodeLifecycle.installLeadAutomaticWindows).toContain('PowerShell')
     expect(chinese.nodeLifecycle.installLeadAutomaticMacos).toContain('Mac')
-    expect(chinese.nodeLifecycle.installClipboardHint).toContain('无痕')
+    expect(chinese.nodeLifecycle.installClipboardHint).toContain(
+      String.fromCodePoint(0x65e0, 0x75d5),
+    )
     for (const message of [
       chinese.nodeLifecycle.installLeadAutomaticLinux,
       chinese.nodeLifecycle.installLeadAutomaticWindows,
