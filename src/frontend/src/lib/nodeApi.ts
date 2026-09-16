@@ -478,8 +478,10 @@ export function buildWindowsEnrollmentInstallCommand(
  * enrollments still select sudo bash below.
  * The bootstrap script downloads one slim enroll helper and runs install.
  *
- * Moving to / avoids getcwd noise when the caller is sitting in a deleted install dir.
- * The outer curl stays silent; the installer owns all user-facing progress output.
+ * Do not prefix the copy-paste command with `cd /`; that would change the
+ * caller's interactive working directory. The bootstrap stub already leaves a
+ * deleted install dir. The outer curl stays silent; the installer owns all
+ * user-facing progress output.
  */
 function buildPosixEnrollmentInstallCommand(
   url: string,
@@ -496,7 +498,7 @@ function buildPosixEnrollmentInstallCommand(
   const shell = !installationMode || installationMode === 'user' || installationMode === 'user_continuous'
     ? 'bash -s'
     : 'sudo bash -s'
-  return `cd / && curl ${tlsOptions} --fail --silent --show-error --location '${url}' | ${shell}`
+  return `curl ${tlsOptions} --fail --silent --show-error --location '${url}' | ${shell}`
 }
 
 /** Short copy-paste command for the target host. Shown on deploy pages only. */

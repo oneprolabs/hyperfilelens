@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
 import {
   buildEnrollmentInstallCommand,
+  buildGatewayEnrollmentInstallCommand,
   buildWindowsEnrollmentInstallCommand,
   auditPlatformGatewayEnrollmentCopy,
   fetchLifecycleWatch,
@@ -165,7 +166,8 @@ describe('Data Gateway enrollment', () => {
 
     expect(result.command).toContain("curl --proto '=https' --tlsv1.2")
     expect(result.command).toContain('/api/v1/node/enrollment/bootstrap-gateway?')
-    expect(result.command).toContain('cd / && curl')
+    expect(result.command).toMatch(/^curl /)
+    expect(result.command).not.toContain('cd /')
     expect(result.command).toContain('--silent --show-error')
     expect(result.command).toContain('| sudo bash -s')
     expect(result.command).not.toContain('curl -k')
@@ -221,7 +223,8 @@ describe('Data Gateway enrollment', () => {
 
     const result = await issuePlatformGatewayEnrollmentInstall()
 
-    expect(result.command).toMatch(/^cd \/ && curl -k --fail --silent --show-error --location '/)
+    expect(result.command).toMatch(/^curl -k --fail --silent --show-error --location '/)
+    expect(result.command).not.toContain('cd /')
     expect(result.command).toContain('| sudo bash -s')
     expect(result.command).not.toContain('--progress-bar')
     expect(result.command).not.toContain('WARNING:')
@@ -300,7 +303,8 @@ describe('Data Gateway enrollment', () => {
       tlsVerify: true,
     })
 
-    expect(command).toMatch(/^cd \/ && curl --proto '=https' --tlsv1\.2 --fail --silent --show-error --location '/)
+    expect(command).toMatch(/^curl --proto '=https' --tlsv1\.2 --fail --silent --show-error --location '/)
+    expect(command).not.toContain('cd /')
     expect(command).toContain('/api/v1/node/enrollment/bootstrap?')
     expect(command).toContain('| bash -s')
     expect(command).not.toContain('| sudo bash -s')
@@ -309,6 +313,52 @@ describe('Data Gateway enrollment', () => {
     expect(command).not.toContain('mktemp')
     expect(command).not.toContain('WARNING:')
     expect(command.split('\n')).toHaveLength(1)
+  })
+
+  it('does not change the caller working directory for POSIX enrollments', () => {
+    const linuxAgent = buildEnrollmentInstallCommand({
+      org: 'tenant-a',
+      role: 'agent',
+      token: 'token-a',
+      apiBase: 'https://console.example.com',
+      os: 'linux',
+      tlsVerify: true,
+    })
+    const macosAgent = buildEnrollmentInstallCommand({
+      org: 'tenant-a',
+      role: 'agent',
+      token: 'token-a',
+      apiBase: 'https://console.example.com',
+      os: 'macos',
+      tlsVerify: true,
+    })
+    const proxy = buildEnrollmentInstallCommand({
+      org: 'tenant-a',
+      role: 'proxy',
+      token: 'token-a',
+      apiBase: 'https://console.example.com',
+      os: 'linux',
+      tlsVerify: true,
+    })
+    const gateway = buildGatewayEnrollmentInstallCommand({
+      org: 'tenant-a',
+      token: 'token-a',
+      apiBase: 'https://console.example.com',
+      tlsVerify: true,
+    })
+
+    expect(linuxAgent).toMatch(/^curl --proto '=https' --tlsv1\.2 /)
+    expect(macosAgent).toMatch(/^curl --proto '=https' --tlsv1\.2 /)
+    expect(macosAgent).toContain('type=macos')
+    expect(proxy).toMatch(/^curl --proto '=https' --tlsv1\.2 /)
+    expect(proxy).toContain('role=proxy')
+    expect(proxy).toContain('| sudo bash -s')
+    expect(gateway).toMatch(/^curl --proto '=https' --tlsv1\.2 /)
+    expect(gateway).toContain('/api/v1/node/enrollment/bootstrap-gateway?')
+    expect(gateway).toContain('| sudo bash -s')
+    for (const command of [linuxAgent, macosAgent, proxy, gateway]) {
+      expect(command).not.toContain('cd /')
+    }
   })
 
   it('keeps infrastructure enrollment elevated when no mode is provided', () => {
