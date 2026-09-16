@@ -51,4 +51,4 @@ Back on **Start Backup**, confirm that repository **Connectivity** is **Online**
 
 ![Backup configuration ready to run with Connectivity Online and account and host information blurred](/docs/en/getting-started/backup-ready-to-run.png)
 
-Do not stop the Agent, unmount a NAS, or change storage credentials while the task is running. Continue with [View tasks and snapshots](/docs/en/backup-restore/snapshots) after the task finishes.
+Do not stop the Agent, unmount a NAS, or change storage credentials while the task is running. Continue with [View tasks and snapshots](/docs/backup-restore/snapshots) after the task finishes.

@@ -17,12 +17,12 @@ A snapshot is both the result of a backup and the shared data foundation for res
 
 The data protection lifecycle is straightforward:
 
-1. Add a [backup source](/docs/en/backup-restore/sources) and [target storage](/docs/en/backup-restore/targets), then validate access to both.
-2. [Create and run a backup](/docs/en/backup-restore/create-backup), adding [policies and retention](/docs/en/backup-restore/policies) as needed.
-3. [View tasks and snapshots](/docs/en/backup-restore/snapshots) to confirm that the expected files are present.
-4. [Restore files and directories](/docs/en/backup-restore/restore) to prove that the protected data is usable.
+1. Add a [backup source](/docs/backup-restore/sources) and [target storage](/docs/backup-restore/targets), then validate access to both.
+2. [Create and run a backup](/docs/backup-restore/create-backup), adding [policies and retention](/docs/backup-restore/policies) as needed.
+3. [View tasks and snapshots](/docs/backup-restore/snapshots) to confirm that the expected files are present.
+4. [Restore files and directories](/docs/backup-restore/restore) to prove that the protected data is usable.
 
-See the [backup and restore workflow](/docs/en/backup-restore/) for the complete guide.
+See the [backup and restore workflow](/docs/backup-restore/) for the complete guide.
 
 ## Insights
 
@@ -35,4 +35,4 @@ Insights works with existing backup snapshots and does not read live files from 
 
 ## First-time use
 
-If you are new to HyperFileLens, follow the [Quick start](/docs/en/getting-started/install) to run a backup, restore a test file, and create an Insights session with the same sample data. Once you have completed the workflow, configure schedules, retention, and routine restore tests for the data you need to protect.
+If you are new to HyperFileLens, follow the [Quick start](/docs/getting-started/install) to run a backup, restore a test file, and create an Insights session with the same sample data. Once you have completed the workflow, configure schedules, retention, and routine restore tests for the data you need to protect.

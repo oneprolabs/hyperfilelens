@@ -11,7 +11,7 @@ description: Deploy the HyperFileLens control plane, backup components, and Priv
 
 1. Review the [system requirements](/docs/deployment/requirements).
 2. Plan the required [network connections and ports](/docs/deployment/network).
-3. Follow [Install HyperFileLens Community](/docs/en/getting-started/install).
+3. Follow [Install HyperFileLens Community](/docs/getting-started/install).
 4. Complete the [post-installation checks](/docs/deployment/post-install).
 
 ## Deploy components
