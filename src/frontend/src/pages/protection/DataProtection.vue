@@ -1249,7 +1249,13 @@ function expandedPolicySchedule(value: Record<string, unknown>): BackupPolicySch
 }
 
 function isRepositoryDetailComplete(repo: StorageRepository | undefined) {
-  return Boolean(repo && String(repo.repo_type || '').trim())
+  return Boolean(
+    repo
+      && String(repo.repo_type || '').trim()
+      // repos_preview rows only contain display data; they must not prevent
+      // loading the repository detail required for proxy binding and restore validation.
+      && Number(repo.organization_id || 0) > 0,
+  )
 }
 
 function repositoryDisplayLocation(repo: StorageRepository | undefined) {
