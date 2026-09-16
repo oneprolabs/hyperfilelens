@@ -1165,8 +1165,15 @@ grep -F 'Write-HflDisplayLine' "${agent_windows_installer}" >/dev/null
 grep -F 'Installation failed: $($_.Exception.Message)' "${agent_windows_installer}" >/dev/null
 grep -F 'Upgrade failed: $($_.Exception.Message)' "${agent_windows_installer}" >/dev/null
 grep -F 'Uninstallation failed: $($_.Exception.Message)' "${agent_windows_installer}" >/dev/null
-grep -F "if ((-not \$QuietFooter) -or (\$Level -eq 'FAIL '))" \
+# QuietFooter must only suppress banners/sections/footers/summaries. Lifecycle
+# lines stay visible so long QuietFooter enrollments do not look frozen.
+grep -F 'QuietFooter only suppresses banners/sections/footers/summaries' \
 	"${agent_windows_installer}" >/dev/null
+if grep -F "if ((-not \$QuietFooter) -or (\$Level -eq 'FAIL '))" \
+	"${agent_windows_installer}" >/dev/null; then
+	printf 'ERROR: QuietFooter must not hide Windows Agent lifecycle log lines\n' >&2
+	exit 1
+fi
 grep -F 'printLifecycleBanner(gatewayName, "Upgrade")' \
 	"${agent_gateway_lifecycle}" >/dev/null
 grep -F 'printGatewayUpgradeSuccess(gatewayName, version, service)' \

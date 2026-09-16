@@ -1771,7 +1771,7 @@ export const en = {
     step3LeadWindows: 'Copy the command below and run it in an elevated Windows CMD or PowerShell (Administrator):',
     step3LeadMacos: 'Copy the command below and run it in the macOS Terminal:',
     step3LeadUbuntu: 'Copy the command below and run it on an Ubuntu 20.04, 22.04, or 24.04 LTS amd64 host:',
-    clickCopyCmd: 'Click to copy',
+    clickCopyCmd: 'Click to Copy',
     scriptComment: 'Run on the target host (installer downloads from server; body not shown here)',
     scriptLoading: 'Generating install command…',
     scriptNotReady: 'Install script is not ready yet',
@@ -1992,17 +1992,17 @@ export const en = {
     installLeadLinux: 'Copy the command and run it in a shell on the target host as {root} or with {sudo}.',
     installLeadWindows:
       'Copy and run in a normal {cmd} or {powershell} window. The installer requests administrator authorization when the selected protection mode requires it.',
-    windowsInstallStepDownload: 'Step 1 – Download',
-    windowsInstallStepExecute: 'Step 2 – Execute',
     installLeadMacos:
       'Copy into {terminal} and run with {sudo}. After installation, grant HyperFileLens Agent Full Disk Access in System Settings; otherwise it can protect only readable files.',
     installLeadUser: 'Copy and run the command as the current user. Do not use sudo or an elevated terminal.',
     installLeadAutomaticLinux:
       'Run the command below in a shell on the target Linux host.\nAccess: Running it as a regular user uses that user\'s permissions; running it as root uses host-level permissions. The installer shows the installation mode before proceeding.',
     installLeadAutomaticWindows:
-      'Run the commands below in PowerShell on the target Windows host.\nAccess: Running it in a standard window uses the current user\'s permissions; running it in an elevated window uses host-level permissions. The installer shows the installation mode before proceeding.',
+      'Run the command below in PowerShell on the target Windows host.\nAccess: Running it in a standard window uses the current user\'s permissions; running it in an elevated window uses host-level permissions. The installer shows the installation mode before proceeding.',
     installLeadAutomaticMacos:
       'Run the command below in Terminal on the target Mac.\nAccess: Running it as a regular user uses that user\'s permissions; running it as root uses host-level permissions. After installation, grant HyperFileLens Agent Full Disk Access.',
+    installClipboardHint:
+      'If paste is empty or the browser blocks copying, temporarily disable content blockers or use a private window, or select the command and copy it manually.',
     installLeadAdministrator: 'Administrator',
     installLeadTerminal: 'Terminal',
     installFlowLabel: 'What This Command Does',

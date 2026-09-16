@@ -30,14 +30,20 @@ describe('Node lifecycle copy', () => {
     expect(wizardSource()).not.toContain('selectedInstallationMode')
     expect(wizardSource()).not.toContain('installationModeOptions')
     expect(locale).toContain('Run the command below in a shell on the target Linux host.')
-    expect(locale).toContain('Run the commands below in PowerShell on the target Windows host.')
+    expect(locale).toContain('Run the command below in PowerShell on the target Windows host.')
     expect(locale).toContain('Run the command below in Terminal on the target Mac.')
     expect(locale).toContain('The installer shows the installation mode before proceeding.')
     expect(locale).not.toContain('The installer confirms the installation mode before proceeding.')
     expect(locale).toContain('grant HyperFileLens Agent Full Disk Access')
+    expect(locale).toContain('If paste is empty or the browser blocks copying')
+    expect(locale).not.toContain('windowsInstallStepDownload')
+    expect(locale).not.toContain('windowsInstallStepExecute')
     expect(chinese.nodeLifecycle.installLeadAutomaticLinux).toContain('Linux')
     expect(chinese.nodeLifecycle.installLeadAutomaticWindows).toContain('PowerShell')
     expect(chinese.nodeLifecycle.installLeadAutomaticMacos).toContain('Mac')
+    expect(chinese.nodeLifecycle.installClipboardHint).toContain(
+      String.fromCodePoint(0x65e0, 0x75d5),
+    )
     for (const message of [
       chinese.nodeLifecycle.installLeadAutomaticLinux,
       chinese.nodeLifecycle.installLeadAutomaticWindows,
@@ -46,8 +52,9 @@ describe('Node lifecycle copy', () => {
       expect(message).toContain('\n')
     }
     expect(spanish.nodeLifecycle.installLeadAutomaticLinux).toContain('Ejecute el siguiente comando en una terminal del host Linux de destino.\nAcceso:')
-    expect(spanish.nodeLifecycle.installLeadAutomaticWindows).toContain('Ejecute los siguientes comandos en PowerShell en el equipo Windows de destino.')
+    expect(spanish.nodeLifecycle.installLeadAutomaticWindows).toContain('Ejecute el siguiente comando en PowerShell en el equipo Windows de destino.')
     expect(spanish.nodeLifecycle.installLeadAutomaticMacos).toContain('Ejecute el siguiente comando en Terminal en el Mac de destino.\nAcceso:')
+    expect(spanish.nodeLifecycle.installClipboardHint).toContain('ventana privada')
     expect(css).toMatch(/agent-install-wizard__command-lead[\s\S]*?white-space: pre-line/)
     expect(locale).toContain("generateInstallCommand: 'Generate install command'")
     expect(locale).toContain('Copy the command and run it in a shell on the target host')
@@ -57,16 +64,19 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain("installFlowInstallGateway: 'Downloads and installs the Data Gateway components'")
   })
 
-  it('uses the shared two-step Windows enrollment UI from every source-host entry point', () => {
+  it('keeps a single Windows enrollment command with a clipboard-blocker hint', () => {
     const wizard = wizardSource()
     const hostAddForm = source('src/pages/protection/components/HostAddForm.vue')
     const dataProtection = source('src/pages/protection/DataProtection.vue')
     const backupWizard = source('src/pages/protection/BackupCreateWizard.vue')
 
-    expect(wizard).toContain("os === 'windows' && windowsCommands && installOnly")
-    expect(wizard).toContain('windowsCommands.download')
-    expect(wizard).toContain('windowsCommands.execute')
-    expect(wizard).toContain('copiedCommand.value === command')
+    expect(wizard).toContain("v-if=\"os === 'windows' && installGenerated\"")
+    expect(wizard).toContain("t('nodeLifecycle.installClipboardHint')")
+    expect(wizard).toContain('function onCopy()')
+    expect(wizard).not.toContain('function onCopy(cmd')
+    expect(wizard).not.toContain('windowsCommands')
+    expect(wizard).not.toContain('windowsInstallStepDownload')
+    expect(wizard).not.toContain('windowsInstallStepExecute')
     expect(hostAddForm).toContain('<NodeLifecycleWizard')
     for (const entryPoint of [dataProtection, backupWizard]) {
       expect(entryPoint).toContain('<HostAddForm')
