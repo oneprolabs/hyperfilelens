@@ -74,14 +74,14 @@ host.
 After a backup completes, the snapshot is browsable and restorable:
 
 <p align="center">
-  <img src="website/public/docs/getting-started/backup-succeeded.png" alt="A completed backup in the HyperFileLens console" width="960">
+  <img src="website/public/docs/en/getting-started/backup-succeeded.png" alt="A completed backup in the HyperFileLens console" width="960">
 </p>
 
 Insights answers questions using the snapshot data selected for the session, and shows the related
 sources:
 
 <p align="center">
-  <img src="website/public/docs/getting-started/chat-answer.png" alt="An Insights answer based on selected snapshot data" width="960">
+  <img src="website/public/docs/en/getting-started/chat-answer.png" alt="An Insights answer based on selected snapshot data" width="960">
 </p>
 
 ## Architecture

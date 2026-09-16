@@ -55,13 +55,13 @@ HyperFileLens 把你的文档和代码备份成一份安全、隔离的副本—
 备份完成后，快照可浏览、可恢复：
 
 <p align="center">
-  <img src="website/public/docs/getting-started/backup-succeeded.png" alt="HyperFileLens 中已成功完成的备份" width="960">
+  <img src="website/public/docs/zh/getting-started/backup-succeeded.png" alt="HyperFileLens 中已成功完成的备份" width="960">
 </p>
 
 智能洞察基于会话中选择的快照数据回答问题，并展示相关来源：
 
 <p align="center">
-  <img src="website/public/docs/getting-started/chat-answer.png" alt="HyperFileLens 智能洞察基于快照数据生成回答" width="960">
+  <img src="website/public/docs/zh/getting-started/chat-answer.png" alt="HyperFileLens 智能洞察基于快照数据生成回答" width="960">
 </p>
 
 ## 技术架构
