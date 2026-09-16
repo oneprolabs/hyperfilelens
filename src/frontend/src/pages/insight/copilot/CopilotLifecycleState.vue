@@ -3,12 +3,12 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, Check, ChevronDown, Circle, LoaderCircle, Sparkles, TriangleAlert } from 'lucide-vue-next'
 import {
-  conversionCountsLabel,
   conversionPhase,
   conversionProblemItems,
   conversionWarningsForDisplay,
 } from '../../../lib/conversionSummary'
 import { apiErrorMessageI18n } from '../../../lib/api'
+import { copilotWarningLabel } from '../../../lib/copilotDisplay'
 import type { LensSessionLink } from '../../../lib/lensApi'
 
 const props = defineProps<{
@@ -23,21 +23,35 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const steps = [
-  { label: 'Validating Selected Data', phases: ['queued', 'resolving_scope', 'reserving_capacity'] },
-  { label: 'Preparing Files and Folders', phases: ['restoring'] },
-  { label: 'Extracting Document Content', phases: ['converting'] },
-  { label: 'Indexing Selected Content', phases: ['creating_knowledge_source'] },
-  { label: 'Getting AI Copilot Ready', phases: ['creating_assistant', 'granting_assistant', 'creating_session'] },
-]
+const stepPhases = [
+  { key: 'validatingSelectedData', phases: ['queued', 'resolving_scope', 'reserving_capacity'] },
+  { key: 'preparingFilesAndFolders', phases: ['restoring'] },
+  { key: 'extractingDocumentContent', phases: ['converting'] },
+  { key: 'indexingSelectedContent', phases: ['creating_knowledge_source'] },
+  { key: 'gettingCopilotReady', phases: ['creating_assistant', 'granting_assistant', 'creating_session'] },
+] as const
+
+const steps = computed(() => stepPhases.map((step) => ({
+  ...step,
+  label: t(`insight.copilot.lifecycleSteps.${step.key}`),
+})))
 
 const currentStep = computed(() => {
-  const index = steps.findIndex((step) => step.phases.includes(props.session.provision_phase || ''))
+  const index = steps.value.findIndex((step) => step.phases.includes(props.session.provision_phase || ''))
   return index < 0 ? 0 : index
 })
 
 const conversion = computed(() => props.session.document_conversion ?? null)
-const countsLabel = computed(() => conversionCountsLabel(conversion.value))
+const countsLabel = computed(() => {
+  const counts = conversion.value?.counts
+  if (!counts) return ''
+  const ready = counts.success + counts.unchanged
+  if (!counts.total && !ready && !counts.failed && !counts.unsupported) return ''
+  const parts = [t('insight.copilot.conversionReady', { count: ready })]
+  if (counts.failed > 0) parts.push(t('insight.copilot.conversionFailed', { count: counts.failed }))
+  if (counts.unsupported > 0) parts.push(t('insight.copilot.conversionUnsupported', { count: counts.unsupported }))
+  return parts.join(' · ')
+})
 const allProblemItems = computed(() => conversionProblemItems(conversion.value))
 const problemItems = computed(() => allProblemItems.value.slice(0, 12))
 const phase = computed(() => conversionPhase(conversion.value))
@@ -63,7 +77,14 @@ const showConversionPanel = computed(() => {
 const showFormatHint = computed(() => (
   isConvertingStep.value || phase.value === 'running'
 ))
-const conversionWarnings = computed(() => conversionWarningsForDisplay(conversion.value, 5))
+const conversionWarnings = computed(() => conversionWarningsForDisplay(conversion.value, 5).map((warning) => ({
+  ...warning,
+  label: t(`insight.copilot.conversionWarnings.${warning.code}`, warning.label || warning.code),
+})))
+const problemReasonLabel = (item: { reason: string; reason_label: string }) => t(
+  `insight.copilot.conversionReasons.${item.reason}`,
+  item.reason_label,
+)
 const conversionDetail = computed(() => (
   conversion.value?.progress_message?.trim()
   || props.session.provision_detail?.trim()
@@ -71,16 +92,16 @@ const conversionDetail = computed(() => (
 ))
 const attentionCount = computed(() => allProblemItems.value.length + conversionWarnings.value.length)
 const attentionLabel = computed(() => {
-  if (!attentionCount.value) return 'Supported document formats'
-  return `${attentionCount.value} ${attentionCount.value === 1 ? 'item needs' : 'items need'} attention`
+  if (!attentionCount.value) return t('insight.copilot.supportedDocumentFormats')
+  return t('insight.copilot.itemsNeedAttention', { count: attentionCount.value })
 })
 const showFailedConversionPanel = computed(() => Boolean(
   conversion.value
   && (countsLabel.value || problemItems.value.length || conversion.value.error || conversionWarnings.value.length),
 ))
-const genericLifecycleError = 'Something went wrong while preparing the selected data. Try again, or delete this chat and create a new one.'
+const genericLifecycleError = computed(() => t('insight.copilot.genericLifecycleError'))
 const lifecycleErrorMessage = computed(() => {
-  const message = props.session.lifecycle_error_message?.trim() || genericLifecycleError
+  const message = props.session.lifecycle_error_message?.trim() || genericLifecycleError.value
   const errorCode = props.session.lifecycle_error_code?.trim()
   if (!errorCode) return message
   return apiErrorMessageI18n(
@@ -143,11 +164,11 @@ function stepState(index: number) {
         :size="30"
         class="copilot-lifecycle-spin"
       /></span>
-      <h2>Preparing Chat for Retry</h2>
-      <p>The previous preparation attempt stopped. Temporary resources are being removed safely before you can try again.</p>
+      <h2>{{ t('insight.copilot.preparingChatForRetry') }}</h2>
+      <p>{{ t('insight.copilot.retryPreparationDetail') }}</p>
       <div class="copilot-lifecycle-actions">
         <ElButton @click="emit('delete')">
-          Delete Chat
+          {{ t('insight.copilot.deleteChat') }}
         </ElButton>
       </div>
     </div>
@@ -157,23 +178,23 @@ function stepState(index: number) {
       class="copilot-lifecycle-card is-failed"
     >
       <span class="copilot-lifecycle-icon is-failed"><TriangleAlert :size="30" /></span>
-      <h2>{{ isDeleteCleanupBlocked ? 'Chat Couldn’t Be Deleted' : 'Chat Cleanup Paused' }}</h2>
+      <h2>{{ t(isDeleteCleanupBlocked ? 'insight.copilot.chatCouldNotBeDeleted' : 'insight.copilot.chatCleanupPaused') }}</h2>
       <p v-if="isForceDeleteAvailable">
         {{ t('insight.copilot.forceDeleteConfirmMessage') }}
       </p>
       <p v-else>
-        Cleanup could not finish safely. Retry when the Data Gateway is available.
+        {{ t('insight.copilot.cleanupBlockedDetail') }}
       </p>
       <div class="copilot-lifecycle-actions">
         <ElButton @click="emit('delete')">
-          {{ isDeleteCleanupBlocked ? 'Retry Delete' : 'Delete Chat' }}
+          {{ t(isDeleteCleanupBlocked ? 'insight.copilot.retryDelete' : 'insight.copilot.deleteChat') }}
         </ElButton>
         <ElButton
           v-if="isForceDeleteAvailable"
           type="danger"
           @click="emit('forceDelete')"
         >
-          Force Delete
+          {{ t('insight.copilot.forceDelete') }}
         </ElButton>
       </div>
     </div>
@@ -183,7 +204,7 @@ function stepState(index: number) {
       class="copilot-lifecycle-card is-failed"
     >
       <span class="copilot-lifecycle-icon is-failed"><AlertCircle :size="30" /></span>
-      <h2>We Couldn't Prepare This Chat</h2>
+      <h2>{{ t('insight.copilot.couldNotPrepareChat') }}</h2>
       <p>{{ lifecycleErrorMessage }}</p>
       <div
         v-if="showFailedConversionPanel"
@@ -210,7 +231,7 @@ function stepState(index: number) {
             :key="`${item.name}-${index}`"
           >
             <strong>{{ item.name }}</strong>
-            <span>{{ item.reason_label }}</span>
+            <span>{{ problemReasonLabel(item) }}</span>
           </li>
         </ul>
         <ul
@@ -221,7 +242,7 @@ function stepState(index: number) {
             v-for="(warning, index) in conversionWarnings"
             :key="`${warning.code}-${index}`"
           >
-            <span>{{ warning.label || warning.code }}</span>
+            <span>{{ copilotWarningLabel(t, warning.code, warning.label || warning.code) }}</span>
           </li>
         </ul>
       </div>
@@ -230,14 +251,14 @@ function stepState(index: number) {
           type="danger"
           @click="emit('delete')"
         >
-          Delete Chat
+          {{ t('insight.copilot.deleteChat') }}
         </ElButton>
         <ElButton
           v-if="lifecycleErrorRetryable"
           type="primary"
           @click="emit('retry')"
         >
-          Try Again
+          {{ t('insight.copilot.tryAgain') }}
         </ElButton>
       </div>
     </div>
@@ -250,12 +271,12 @@ function stepState(index: number) {
         :size="30"
         class="copilot-lifecycle-spin"
       /></span>
-      <h2>Deleting Chat</h2>
+      <h2>{{ t('insight.copilot.deletingChat') }}</h2>
       <p v-if="isForceDeleteAvailable">
         {{ t('insight.copilot.forceDeleteConfirmMessage') }}
       </p>
       <p v-else>
-        The chat and its temporary data are being removed.
+        {{ t('insight.copilot.deletingChatDetail') }}
       </p>
       <div
         v-if="isForceDeleteAvailable"
@@ -265,7 +286,7 @@ function stepState(index: number) {
           type="danger"
           @click="emit('forceDelete')"
         >
-          Force Delete
+          {{ t('insight.copilot.forceDelete') }}
         </ElButton>
       </div>
     </div>
@@ -296,19 +317,19 @@ function stepState(index: number) {
       >
         <span class="copilot-lifecycle-icon"><Sparkles :size="25" /></span>
         <div>
-          <h2>Preparing Your Chat</h2>
-          <p>Your selected data is being prepared for AI Copilot.</p>
+          <h2>{{ t('insight.copilot.preparingYourChat') }}</h2>
+          <p>{{ t('insight.copilot.selectedDataPreparing') }}</p>
         </div>
       </div>
 
       <div class="copilot-lifecycle-body">
         <ol
           class="copilot-lifecycle-steps"
-          aria-label="Chat preparation progress"
+          :aria-label="t('insight.copilot.chatPreparationProgress')"
         >
           <li
             v-for="(step, index) in steps"
-            :key="step.label"
+            :key="step.key"
             :class="`is-${stepState(index)}`"
           >
             <span>
@@ -333,9 +354,9 @@ function stepState(index: number) {
         <section
           v-if="showConversionPanel"
           class="copilot-conversion"
-          aria-label="Document preparation details"
+          :aria-label="t('insight.copilot.documentPreparationDetails')"
         >
-          <span class="copilot-conversion__eyebrow">Document preparation</span>
+          <span class="copilot-conversion__eyebrow">{{ t('insight.copilot.documentPreparation') }}</span>
           <p
             v-if="conversionDetail"
             class="copilot-conversion__detail"
@@ -389,14 +410,14 @@ function stepState(index: number) {
                   :key="`${item.name}-${index}`"
                 >
                   <strong>{{ item.name }}</strong>
-                  <span>{{ item.reason_label }}</span>
+            <span>{{ problemReasonLabel(item) }}</span>
                 </li>
               </ul>
               <p
                 v-if="allProblemItems.length > problemItems.length"
                 class="copilot-conversion__more"
               >
-                {{ allProblemItems.length - problemItems.length }} more files are available in Chat Details.
+                {{ t('insight.copilot.moreFilesInChatDetails', { count: allProblemItems.length - problemItems.length }) }}
               </p>
               <ul
                 v-if="conversionWarnings.length"
@@ -406,7 +427,7 @@ function stepState(index: number) {
                   v-for="(warning, index) in conversionWarnings"
                   :key="`${warning.code}-${index}`"
                 >
-                  <span>{{ warning.label || warning.code }}</span>
+                  <span>{{ copilotWarningLabel(t, warning.code, warning.label || warning.code) }}</span>
                 </li>
               </ul>
               <p
@@ -420,7 +441,7 @@ function stepState(index: number) {
         </section>
       </div>
 
-      <small>You can leave this page. Preparation will continue in the background.</small>
+      <small>{{ t('insight.copilot.backgroundPreparationHint') }}</small>
     </div>
   </main>
 </template>

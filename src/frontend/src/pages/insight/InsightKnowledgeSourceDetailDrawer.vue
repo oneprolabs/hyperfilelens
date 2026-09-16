@@ -6,6 +6,7 @@ import { formatLocalDateTime } from '../../lib/dateTime'
 import { formatBytes } from '../../lib/kopiaProgress'
 import { apiErrorMessage } from '../../lib/api'
 import { DETAIL_EMPTY } from '../../lib/nodeInventoryDisplay'
+import { copilotReasonLabel, copilotWarningLabel } from '../../lib/copilotDisplay'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import HflDetailDrawerFooter from '../../components/HflDetailDrawerFooter.vue'
@@ -16,7 +17,6 @@ import {
 } from '../../lib/lensApi'
 import {
   conversionAllOk,
-  conversionCountsLabel,
   conversionEmptyResult,
   conversionPhase,
   conversionProblemItems,
@@ -122,7 +122,16 @@ const syncPhaseLabel = computed(() => {
 })
 
 const documentConversion = computed(() => activeRow.value?.document_conversion ?? null)
-const conversionSummaryLabel = computed(() => conversionCountsLabel(documentConversion.value))
+const conversionSummaryLabel = computed(() => {
+  const counts = documentConversion.value?.counts
+  if (!counts) return ''
+  const ready = counts.success + counts.unchanged
+  if (!counts.total && !ready && !counts.failed && !counts.unsupported) return ''
+  const parts = [t('insight.copilot.conversionReady', { count: ready })]
+  if (counts.failed > 0) parts.push(t('insight.copilot.conversionFailed', { count: counts.failed }))
+  if (counts.unsupported > 0) parts.push(t('insight.copilot.conversionUnsupported', { count: counts.unsupported }))
+  return parts.join(' · ')
+})
 const conversionProblems = computed(() => conversionProblemItems(documentConversion.value).slice(0, 20))
 const conversionOk = computed(() => conversionAllOk(documentConversion.value))
 const conversionEmpty = computed(() => conversionEmptyResult(documentConversion.value))
@@ -382,7 +391,7 @@ onUnmounted(() => {
                         :key="`${item.name}-${index}`"
                       >
                         <strong>{{ item.name }}</strong>
-                        <span>{{ item.reason_label }}</span>
+                        <span>{{ copilotReasonLabel(t, item.reason, item.reason_label) }}</span>
                       </li>
                     </ul>
                   </div>
@@ -396,7 +405,7 @@ onUnmounted(() => {
                         v-for="(warning, index) in conversionWarnings"
                         :key="`${warning.code}-${index}`"
                       >
-                        <span>{{ warning.label || warning.code }}</span>
+                        <span>{{ copilotWarningLabel(t, warning.code, warning.label || warning.code) }}</span>
                       </li>
                     </ul>
                   </div>

@@ -6,9 +6,9 @@ import { MessageSquare, Settings2, TriangleAlert } from 'lucide-vue-next'
 import { formatBytes } from '../../../lib/kopiaProgress'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import { copilotGatewayKind } from '../../../lib/copilotGatewayTerminology'
+import { copilotReasonLabel, copilotWarningLabel } from '../../../lib/copilotDisplay'
 import {
   conversionAllOk,
-  conversionCountsLabel,
   conversionEmptyResult,
   conversionPhase,
   conversionProblemItems,
@@ -26,6 +26,8 @@ const emit = defineEmits<{
 
 const { locale, t } = useI18n()
 const router = useRouter()
+const reasonLabel = (item: { reason: string; reason_label: string }) => copilotReasonLabel(t, item.reason, item.reason_label)
+const warningLabel = (item: { code: string; label: string }) => copilotWarningLabel(t, item.code, item.label)
 const detailsOpen = ref(false)
 const activeRunStatuses = new Set(['queued', 'running', 'streaming'])
 const isRecoveryCleanup = computed(() => (
@@ -97,13 +99,25 @@ const processingLabel = computed(() => {
   return name ? `${location} · ${name}` : location
 })
 const conversion = computed(() => props.session.document_conversion ?? null)
-const conversionLabel = computed(() => conversionCountsLabel(conversion.value))
+const conversionLabel = computed(() => {
+  const counts = conversion.value?.counts
+  if (!counts) return ''
+  const ready = counts.success + counts.unchanged
+  if (!counts.total && !ready && !counts.failed && !counts.unsupported) return ''
+  const parts = [t('insight.copilot.conversionReady', { count: ready })]
+  if (counts.failed > 0) parts.push(t('insight.copilot.conversionFailed', { count: counts.failed }))
+  if (counts.unsupported > 0) parts.push(t('insight.copilot.conversionUnsupported', { count: counts.unsupported }))
+  return parts.join(' · ')
+})
 const problemItems = computed(() => conversionProblemItems(conversion.value).slice(0, 12))
 const conversionOk = computed(() => conversionAllOk(conversion.value))
 const conversionEmpty = computed(() => conversionEmptyResult(conversion.value))
 const conversionFailed = computed(() => conversionPhase(conversion.value) === 'failed')
 const conversionRunning = computed(() => conversionPhase(conversion.value) === 'running')
-const conversionWarnings = computed(() => conversionWarningsForDisplay(conversion.value, 8))
+const conversionWarnings = computed(() => conversionWarningsForDisplay(conversion.value, 8).map((warning) => ({
+  ...warning,
+  label: warningLabel(warning),
+})))
 
 function openRestore() {
   const path = dataContext.value?.restore_path
@@ -267,7 +281,7 @@ function openBackupDetail() {
             :key="`${item.name}-${index}`"
           >
             <strong>{{ item.name }}</strong>
-            <span>{{ item.reason_label }}</span>
+            <span>{{ reasonLabel(item) }}</span>
           </li>
         </ul>
         <ul
@@ -278,7 +292,7 @@ function openBackupDetail() {
             v-for="(warning, index) in conversionWarnings"
             :key="`${warning.code}-${index}`"
           >
-            <span>{{ warning.label || warning.code }}</span>
+            <span>{{ warningLabel(warning) }}</span>
           </li>
         </ul>
         <p

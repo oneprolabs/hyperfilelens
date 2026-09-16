@@ -3460,7 +3460,50 @@
       "agentActivityDuration": "耗时 {ms}毫秒",
       "sessionReady": "就绪",
       "contextNoFilesSelected": "未选择文件",
-      "contextCreatedAt": "创建于 {time}"
+"contextCreatedAt": "创建于 {time}",
+      "preparingYourChat": "正在准备对话",
+      "selectedDataPreparing": "正在为 AI 助手准备所选数据。",
+      "chatPreparationProgress": "对话准备进度",
+      "documentPreparationDetails": "文档准备详情",
+      "documentPreparation": "文档准备",
+      "backgroundPreparationHint": "您可以离开此页面，准备工作将在后台继续。",
+      "supportedDocumentFormats": "支持的文档格式",
+      "itemsNeedAttention": "{count} 项内容需要注意",
+      "moreFilesInChatDetails": "还有 {count} 个文件可在聊天详情中查看。",
+      "lifecycleSteps": {
+        "validatingSelectedData": "正在验证所选数据",
+        "preparingFilesAndFolders": "正在准备文件和文件夹",
+        "extractingDocumentContent": "正在提取文档内容",
+        "indexingSelectedContent": "正在索引所选内容",
+        "gettingCopilotReady": "正在准备 AI 助手"
+      },
+      "preparingChatForRetry": "正在准备聊天以重试",
+      "chatCleanupPaused": "聊天清理已暂停",
+      "chatCouldNotBeDeleted": "无法删除聊天",
+      "retryDelete": "重试删除",
+      "deleteChat": "删除聊天",
+      "couldNotPrepareChat": "无法准备此聊天",
+      "deletingChat": "正在删除聊天",
+      "genericLifecycleError": "准备所选数据时出错。请重试，或删除此聊天后新建聊天。",
+      "retryPreparationDetail": "上次准备已停止。正在安全清理临时资源，然后即可重试。",
+      "cleanupBlockedDetail": "清理未能安全完成。请在数据网关可用后重试。",
+      "deletingChatDetail": "正在删除聊天及其临时数据。",
+      "conversionReady": "{count} 个已就绪",
+      "conversionFailed": "{count} 个失败",
+      "conversionUnsupported": "{count} 个不支持",
+      "conversionReasons": {
+        "PASSWORD_PROTECTED": "受密码保护",
+        "NO_EXTRACTABLE_TEXT": "没有可提取的文本",
+        "FILE_TOO_LARGE": "文件超过大小限制",
+        "PAGE_LIMIT_EXCEEDED": "超过页数限制",
+        "UNSUPPORTED_TYPE": "不支持的文件类型",
+        "CONVERSION_FAILED": "转换失败",
+        "CORRUPT": "文件损坏或无法读取"
+      },
+      "conversionWarnings": {
+        "CONVERSION_PARTIAL_FAILED": "部分文档无法转换",
+        "VISUAL_MODEL_NOT_CONFIGURED": "未配置视觉理解，扫描版 PDF 可能无法读取"
+      }
     },
     "aiSettings": {
       "btnAdd": "添加",
