@@ -41,6 +41,7 @@ const product: DefaultTheme.SidebarItem[] = [
       { text: '策略与保留', link: '/zh/docs/backup-restore/policies' },
       { text: '查看任务与快照', link: '/zh/docs/backup-restore/snapshots' },
       { text: '恢复文件和目录', link: '/zh/docs/backup-restore/restore' },
+      { text: '源端主机损坏后恢复到新主机', link: '/zh/docs/backup-restore/recover-to-new-host' },
     ],
   },
   {

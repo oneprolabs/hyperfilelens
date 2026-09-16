@@ -14,7 +14,8 @@ HyperFileLens 的数据保护流程从可读取的备份源开始，经由备份
 3. [创建并运行备份](/zh/docs/backup-restore/create-backup)，选择范围、仓库和运行选项。
 4. [查看任务与快照](/zh/docs/backup-restore/snapshots)，核对任务结果和实际文件。
 5. [恢复文件和目录](/zh/docs/backup-restore/restore)，先恢复到独立目录并检查内容。
-6. 验证基本链路后，根据恢复点目标设置[策略与保留](/zh/docs/backup-restore/policies)。
+6. [源端主机损坏后恢复到新主机](/zh/docs/backup-restore/recover-to-new-host)，当原始源端主机永久损坏或离线时使用。
+7. 验证基本链路后，根据恢复点目标设置[策略与保留](/zh/docs/backup-restore/policies)。
 
 ## 三个关键判断
 

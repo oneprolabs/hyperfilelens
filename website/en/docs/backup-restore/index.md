@@ -14,7 +14,8 @@ The HyperFileLens data-protection workflow starts with an accessible backup sour
 3. [Create and run a backup](/docs/backup-restore/create-backup), selecting its scope, repository, and run options.
 4. [View tasks and snapshots](/docs/backup-restore/snapshots) to check both the task result and the files in the snapshot.
 5. [Restore files and directories](/docs/backup-restore/restore) to an independent location and inspect the restored content.
-6. After validating the basic path, configure [policies and retention](/docs/backup-restore/policies) to meet the recovery point objective.
+6. [Recover data to a new host after source host failure](/docs/backup-restore/recover-to-new-host) when the original source host is permanently damaged or offline.
+7. After validating the basic path, configure [policies and retention](/docs/backup-restore/policies) to meet the recovery point objective.
 
 ## Three checks that matter
 
