@@ -12,8 +12,7 @@ const route = useRoute()
 const appOrigin = ref('')
 const isDocs = computed(() =>
   route.path.startsWith('/zh/docs')
-  || route.path.startsWith('/docs')
-  || route.path.startsWith('/en/docs'),
+  || route.path.startsWith('/docs'),
 )
 const label = computed(() => route.path.startsWith('/zh/docs') ? siteTrialLabels.zh : siteTrialLabels.en)
 

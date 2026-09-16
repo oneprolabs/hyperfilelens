@@ -231,19 +231,14 @@ function revealActiveSidebarItem(path: string) {
   sidebar.scrollTop = activeTop - (sidebar.clientHeight - activeRect.height) / 2
 }
 
-function publishedPath(path: string) {
-  return path.replace(/^\/en(?=\/docs(?:\/|$))/, '')
-}
-
 function enhanceDocPage(path: string) {
-  const pathForPublication = publishedPath(path)
   window.requestAnimationFrame(() => {
-    localizeDocCopyButtons(pathForPublication)
-    localizeDocLabels(pathForPublication)
-    decorateDocSidebar(pathForPublication)
-    revealActiveSidebarItem(pathForPublication)
-    updateDocLanguageLinks(pathForPublication)
-    window.setTimeout(() => updateDocLanguageLinks(pathForPublication), 80)
+    localizeDocCopyButtons(path)
+    localizeDocLabels(path)
+    decorateDocSidebar(path)
+    revealActiveSidebarItem(path)
+    updateDocLanguageLinks(path)
+    window.setTimeout(() => updateDocLanguageLinks(path), 80)
   })
 }
 
