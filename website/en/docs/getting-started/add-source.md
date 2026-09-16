@@ -29,7 +29,7 @@ The Windows installation command appears under **Run the Install Command**.
 
 ## Install the Windows Agent
 
-1. Select **Click to copy** next to the installation command.
+1. Select **Click to Copy** next to the installation command.
 2. On the Windows host, press **Win + R**.
 3. Enter `powershell`, then press **Enter**.
 4. Paste the copied command into PowerShell and press **Enter**.
