@@ -41,6 +41,9 @@ grep -Fq 'api.github.com/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1
 grep -Fq 'gitee.com/api/v5/repos/oneprolabs/hyperfilelens/tags?per_page=100&page=1' \
 	"${online}/install.sh"
 grep -Fq 'recent fallback tags:' "${online}/install.sh"
+grep -Fq 'images are not published yet' "${online}/install.sh"
+grep -Fq 'No published Community images were found for' "${online}/install.sh"
+grep -Fq 'select_published_release' "${online}/install.sh"
 grep -Fq 'prepare_status == 75' "${online}/install.sh"
 grep -Fq 'prepare_status == 76' "${online}/install.sh"
 grep -Fq 'INSTALL_RECOVERY=0' "${online}/install.sh"
@@ -438,10 +441,27 @@ if [[ "${HFL_TEST_CURL_SUPPORT_RETRY_ALL_ERRORS:-1}" != "1" ]]; then
 		fi
 	done
 fi
+write_out=""
+dump_header=""
+authorization=""
 while (($#)); do
 	case "$1" in
-	-o)
+	-o | --output)
 		output=${2:-}
+		shift 2
+		;;
+	-w | --write-out)
+		write_out=${2:-}
+		shift 2
+		;;
+	-D | --dump-header)
+		dump_header=${2:-}
+		shift 2
+		;;
+	-H | --header)
+		if [[ "${2:-}" == Authorization:* ]]; then
+			authorization=${2:-}
+		fi
 		shift 2
 		;;
 	http://* | https://*)
@@ -451,6 +471,30 @@ while (($#)); do
 	*) shift ;;
 	esac
 done
+emit_http() {
+	local code=$1
+	local body=${2-}
+	if [[ -n "${dump_header}" ]]; then
+		printf 'HTTP/1.1 %s TEST\r\n\r\n' "${code}" >"${dump_header}"
+	fi
+	if [[ -n "${output}" ]]; then
+		printf '%s' "${body}" >"${output}"
+	fi
+	if [[ "${write_out}" == '%{http_code}' ]]; then
+		printf '%s' "${code}"
+	fi
+}
+emit_registry_unauthorized() {
+	if [[ -n "${dump_header}" ]]; then
+		printf '%s\r\n' \
+			'HTTP/1.1 401 Unauthorized' \
+			'www-authenticate: Bearer realm="https://auth.test/token",service="registry.test"' \
+			'' >"${dump_header}"
+	fi
+	if [[ "${write_out}" == '%{http_code}' ]]; then
+		printf '401'
+	fi
+}
 if [[ "${HFL_TEST_CURL_PARTIAL_FAIL:-0}" == "1" && -n "${output}" ]]; then
 	printf 'partial response\n' >"${output}"
 	exit 28
@@ -473,6 +517,64 @@ if [[ "${url}" == *'/tags?'* && -n "${output}" ]]; then
 	else
 		printf '[]\n' >"${output}"
 	fi
+	exit 0
+fi
+if [[ "${HFL_TEST_REGISTRY_NETWORK:-0}" == "1" && "${url}" == *'/v2/'* ]]; then
+	exit 28
+fi
+if [[ "${url}" == *'/token?'* || "${url}" == *'/token&'* || "${url}" == *'/auth?'* ]]; then
+	if [[ "${HFL_TEST_REGISTRY_AUTH:-0}" == "1" \
+		&& "${url}" != *'service=registry.test'* ]]; then
+		emit_http 400 '{"error":"invalid service"}'
+		exit 0
+	fi
+	emit_http 200 '{"token":"test-token"}'
+	exit 0
+fi
+if [[ "${url}" == */v2 || "${url}" == */v2/ ]]; then
+	if [[ "${HFL_TEST_REGISTRY_AUTH:-0}" == "1" ]]; then
+		emit_registry_unauthorized
+		exit 0
+	fi
+	emit_http 200 '{}'
+	exit 0
+fi
+if [[ "${url}" == *'/v2/'*'/manifests/'* ]]; then
+	if [[ "${HFL_TEST_REGISTRY_AUTH:-0}" == "1" \
+		&& "${authorization}" != 'Authorization: Bearer test-token' ]]; then
+		emit_registry_unauthorized
+		exit 0
+	fi
+	tag=${url##*/}
+	repository=${url#*'/v2/'}
+	repository=${repository%'/manifests/'*}
+	image_name=${repository##*/}
+	missing=0
+	if [[ -n "${HFL_TEST_MISSING_IMAGE_VERSIONS:-}" ]]; then
+		IFS=',' read -r -a missing_versions <<<"${HFL_TEST_MISSING_IMAGE_VERSIONS}"
+		for version in "${missing_versions[@]}"; do
+			if [[ "${tag}" == "${version}" ]]; then
+				missing=1
+				break
+			fi
+		done
+	fi
+	if ((missing)) && [[ -n "${HFL_TEST_MISSING_IMAGE_REPOSITORIES:-}" ]]; then
+		repo_missing=0
+		IFS=',' read -r -a missing_repos <<<"${HFL_TEST_MISSING_IMAGE_REPOSITORIES}"
+		for name in "${missing_repos[@]}"; do
+			if [[ "${image_name}" == "${name}" ]]; then
+				repo_missing=1
+				break
+			fi
+		done
+		missing=${repo_missing}
+	fi
+	if ((missing)); then
+		emit_http 404
+		exit 0
+	fi
+	emit_http 200 '{"schemaVersion":2}'
 	exit 0
 fi
 exit 22
@@ -1999,6 +2101,192 @@ if PATH="${fake_bin}:${PATH}" \
 	exit 1
 fi
 grep -Fq 'repeated page 2' "${repeated_page_log}"
+
+unpublished_latest_log="${tmp}/unpublished-latest.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	HFL_TEST_MISSING_IMAGE_VERSIONS=1.2.12 \
+	"${test_installer}" --mirror global --yes \
+	>"${unpublished_latest_log}" 2>&1; then
+	printf 'ERROR: unpublished latest tag unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'v1.2.12 images are not published yet; using v1.2.11' \
+	"${unpublished_latest_log}" || {
+	cat "${unpublished_latest_log}" >&2
+	exit 1
+}
+grep -Fq 'Version        v1.2.11' "${unpublished_latest_log}"
+grep -Fq 'Downloading HyperFileLens v1.2.11 release package from GitHub' \
+	"${unpublished_latest_log}"
+if grep -Fq 'Version        v1.2.12' "${unpublished_latest_log}"; then
+	printf 'ERROR: unpublished latest tag was still offered as the install target\n' >&2
+	exit 1
+fi
+
+unpublished_two_log="${tmp}/unpublished-two.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	HFL_TEST_MISSING_IMAGE_VERSIONS=1.2.12,1.2.11 \
+	"${test_installer}" --mirror global --yes \
+	>"${unpublished_two_log}" 2>&1; then
+	printf 'ERROR: two unpublished tags unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'v1.2.12, v1.2.11 images are not published yet; using v1.2.10' \
+	"${unpublished_two_log}" || {
+	cat "${unpublished_two_log}" >&2
+	exit 1
+}
+grep -Fq 'Version        v1.2.10' "${unpublished_two_log}"
+
+unpublished_all_log="${tmp}/unpublished-all.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	HFL_TEST_MISSING_IMAGE_VERSIONS=1.2.12,1.2.11,1.2.10 \
+	"${test_installer}" --mirror global --yes \
+	>"${unpublished_all_log}" 2>&1; then
+	printf 'ERROR: three unpublished tags unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'No published Community images were found for v1.2.12, v1.2.11, v1.2.10' \
+	"${unpublished_all_log}" || {
+	cat "${unpublished_all_log}" >&2
+	exit 1
+}
+if grep -Eq 'Version        v1\.2\.|using v1\.2\.' "${unpublished_all_log}"; then
+	printf 'ERROR: installer continued after no published images were found\n' >&2
+	exit 1
+fi
+
+partial_latest_log="${tmp}/unpublished-partial-latest.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	HFL_TEST_MISSING_IMAGE_VERSIONS=1.2.12 \
+	HFL_TEST_MISSING_IMAGE_REPOSITORIES=hyperfilelens-language-assets \
+	"${test_installer}" --mirror global --yes \
+	>"${partial_latest_log}" 2>&1; then
+	printf 'ERROR: partially published latest tag unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'v1.2.12 images are not published yet; using v1.2.11' \
+	"${partial_latest_log}" || {
+	cat "${partial_latest_log}" >&2
+	exit 1
+}
+grep -Fq 'Version        v1.2.11' "${partial_latest_log}"
+
+pinned_unpublished_log="${tmp}/pinned-unpublished.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	HFL_TEST_MISSING_IMAGE_VERSIONS=1.2.12 \
+	"${test_installer}" --mirror global --tag v1.2.12 --yes \
+	>"${pinned_unpublished_log}" 2>&1; then
+	printf 'ERROR: pinned unpublished tag unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'Community tag v1.2.12 exists on GitHub, but its published images were not found' \
+	"${pinned_unpublished_log}" || {
+	cat "${pinned_unpublished_log}" >&2
+	exit 1
+}
+if grep -Fq 'using v1.2.11' "${pinned_unpublished_log}"; then
+	printf 'ERROR: pinned tag fell back to another release\n' >&2
+	exit 1
+fi
+
+registry_network_log="${tmp}/registry-network.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	HFL_TEST_REGISTRY_NETWORK=1 \
+	"${test_installer}" --mirror global --yes \
+	>"${registry_network_log}" 2>&1; then
+	printf 'ERROR: registry network failure unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'could not verify published Community images for v1.2.12' \
+	"${registry_network_log}" || {
+	cat "${registry_network_log}" >&2
+	exit 1
+}
+if grep -Fq 'using v1.2.11' "${registry_network_log}"; then
+	printf 'ERROR: registry network failure fell back to an older tag\n' >&2
+	exit 1
+fi
+
+registry_auth_log="${tmp}/registry-auth.log"
+registry_auth_curl_log="${tmp}/registry-auth-curl.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	HFL_TEST_REGISTRY_AUTH=1 HFL_TEST_CURL_LOG="${registry_auth_curl_log}" \
+	"${test_installer}" --mirror global --yes \
+	>"${registry_auth_log}" 2>&1; then
+	printf 'ERROR: fake registry-authenticated install unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'Version        v1.2.12' "${registry_auth_log}" || {
+	cat "${registry_auth_log}" >&2
+	exit 1
+}
+if ! grep -Fq 'Authorization:' "${registry_auth_curl_log}" \
+	|| ! grep -Fq 'test-token' "${registry_auth_curl_log}"; then
+	cat "${registry_auth_curl_log}" >&2
+	printf 'ERROR: registry token was not used for the manifest request\n' >&2
+	exit 1
+fi
+
+upgrade_root="${tmp}/existing-community-install"
+mkdir -p "${upgrade_root}"
+printf 'HFL_EDITION=community\n' >"${upgrade_root}/.env"
+printf '{"edition":"community","version":"1.2.11","channel":"release"}\n' \
+	>"${upgrade_root}/MANIFEST.json"
+touch "${upgrade_root}/.install-complete"
+upgrade_installer="${tmp}/online-upgrade-install.sh"
+python3 - "${test_installer}" "${upgrade_installer}" "${upgrade_root}" <<'PY'
+import pathlib
+import re
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+source, count = re.subn(
+    r'^INSTALL_ROOT="[^"]+"$',
+    f'INSTALL_ROOT="{sys.argv[3]}"',
+    source,
+    count=1,
+    flags=re.MULTILINE,
+)
+if count != 1:
+    raise SystemExit("could not replace the online upgrade test root")
+pathlib.Path(sys.argv[2]).write_text(source, encoding="utf-8")
+PY
+chmod 755 "${upgrade_installer}"
+upgrade_log="${tmp}/online-upgrade.log"
+upgrade_curl_log="${tmp}/online-upgrade-curl.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	HFL_TEST_CURL_LOG="${upgrade_curl_log}" \
+	"${upgrade_installer}" --mirror global --yes >"${upgrade_log}" 2>&1; then
+	printf 'ERROR: fake online upgrade unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq '[ OK ] Community release resolved · v1.2.12 · commit cccccccccccc' \
+	"${upgrade_log}" || {
+	cat "${upgrade_log}" >&2
+	exit 1
+}
+if grep -Fq '/v2/' "${upgrade_curl_log}"; then
+	printf 'ERROR: online upgrade probed registry release tags\n' >&2
+	exit 1
+fi
+
+cn_fallback_curl_log="${tmp}/cn-fallback-curl.log"
+cn_fallback_log="${tmp}/cn-fallback.log"
+if PATH="${fake_bin}:${PATH}" HFL_TEST_TAG_FIXTURE="${tag_fixture}" \
+	HFL_TEST_MISSING_IMAGE_VERSIONS=1.2.12 \
+	HFL_TEST_CURL_LOG="${cn_fallback_curl_log}" \
+	"${test_installer}" --mirror cn --yes >"${cn_fallback_log}" 2>&1; then
+	printf 'ERROR: CN unpublished latest tag unexpectedly succeeded\n' >&2
+	exit 1
+fi
+grep -Fq 'v1.2.12 images are not published yet; using v1.2.11' "${cn_fallback_log}"
+grep -F 'registry.cn-beijing.aliyuncs.com/v2/oneprolabs/hyperfilelens-backend/manifests/1.2.12' \
+	"${cn_fallback_curl_log}" >/dev/null
+if grep -Fq 'registry-1.docker.io' "${cn_fallback_curl_log}"; then
+	printf 'ERROR: CN image probe contacted Docker Hub\n' >&2
+	exit 1
+fi
 
 prepare_log="${tmp}/prepare.log"
 if ! PATH="${fake_bin}:${PATH}" HFL_TEST_VERSION=1.2.3 \
