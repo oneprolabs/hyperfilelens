@@ -793,7 +793,6 @@ def start_backup_tasks(
                 )
                 continue
 
-            quota_admitted = False
             try:
                 with transaction.atomic():
                     from apps.source.services.internal.source_operation_fence import (
@@ -824,9 +823,11 @@ def start_backup_tasks(
                         ensure_direct_nas_repository_for_backup,
                     )
 
-                    # Direct NAS initialization changes remote storage. Admit
-                    # the write first and retain the quota lock until durable
-                    # ownership facts commit.
+                    # Fail-fast quota checks only. Do not wait on the Agent
+                    # inside this transaction: run_agent_task_sync must commit
+                    # the NodeTask before uplink can persist accept/result.
+                    # Task/snapshot creation re-checks the license quota in
+                    # its consuming transaction after initialization returns.
                     with transaction.atomic():
                         locked_repository = Repository.objects.select_for_update().get(
                             organization_id=organization_id,
@@ -838,13 +839,12 @@ def start_backup_tasks(
                             "max_storage_gb",
                             additional=0,
                         )
-                        ensure_direct_nas_repository_for_backup(
-                            organization_id=organization_id,
-                            source_type=source.source_type,
-                            source_ref_id=source.source_ref_id,
-                            repository_id=repository.id,
-                        )
-                    quota_admitted = True
+                    ensure_direct_nas_repository_for_backup(
+                        organization_id=organization_id,
+                        source_type=source.source_type,
+                        source_ref_id=source.source_ref_id,
+                        repository_id=repository.id,
+                    )
                 # Directory size is refreshed asynchronously for every new
                 # backup because configured path contents can change without a
                 # config edit. Never block the Backup Now request on path.size.
@@ -944,12 +944,11 @@ def start_backup_tasks(
                         # consuming task/snapshot write. Replays and active-task
                         # conflicts return their existing result without being
                         # mistaken for new consumption after a quota downgrade.
-                        if not quota_admitted:
-                            enforce_license_quota(
-                                organization,
-                                "max_storage_gb",
-                                additional=0,
-                            )
+                        enforce_license_quota(
+                            organization,
+                            "max_storage_gb",
+                            additional=0,
+                        )
                         locked_repository = Repository.objects.select_for_update().get(
                             organization_id=organization_id,
                             id=locked_config.repository_id,
