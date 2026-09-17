@@ -66,7 +66,7 @@ usage() {
 	cat <<'USAGE'
 Usage: install.sh --mirror cn|global [--tag vX.Y.Z] [--yes]
 
-Installs the latest HyperFileLens Community tag on a new host.
+Installs the latest published HyperFileLens Community release on a new host.
 Running the command again upgrades an existing Community installation through
 the normal managed backup and blue/green lifecycle.
 
@@ -1518,7 +1518,8 @@ PY
 		page=$((page + 1))
 	done
 
-	if ! parsed="$(python3 - "${SESSION_DIR}/tags.json" "${requested_tag}" <<'PY'
+	if ! parsed="$(python3 - "${SESSION_DIR}/tags.json" "${requested_tag}" \
+		"${SESSION_DIR}/tag-catalog.json" <<'PY'
 import json
 import pathlib
 import re
@@ -1526,6 +1527,7 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 requested = sys.argv[2]
+catalog_path = pathlib.Path(sys.argv[3])
 try:
     payload = json.loads(path.read_text(encoding="utf-8"))
 except (OSError, json.JSONDecodeError) as exc:
@@ -1567,6 +1569,10 @@ if selected:
 else:
     fallback = ordered[:10]
 
+catalog_path.write_text(
+    json.dumps({"ordered": ordered, "commits": tags}, separators=(",", ":")),
+    encoding="utf-8",
+)
 print(selected or "-")
 print(selected[1:] if selected else "-")
 print(tags.get(selected, "-") if selected else "-")
@@ -1585,6 +1591,291 @@ PY
 	TAG="${values[0]}"
 	RELEASE_VERSION="${values[1]}"
 	RELEASE_COMMIT="${values[2]}"
+}
+
+select_published_release() {
+	local requested_tag=$1 prefix parsed skipped tried
+	local -a values=()
+	if [[ "${REGION}" == cn ]]; then
+		prefix="${CN_REGISTRY_PREFIX}"
+	else
+		prefix="${GLOBAL_REGISTRY_PREFIX}"
+	fi
+	if ! parsed="$(
+		python3 - "${SESSION_DIR}/tag-catalog.json" "${requested_tag}" \
+			"${prefix}" "${SESSION_DIR}/image-probe" "${CURL_RETRY_ARGS[@]}" <<'PY'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+catalog = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+requested = sys.argv[2]
+prefix = sys.argv[3].rstrip("/")
+work_dir = pathlib.Path(sys.argv[4])
+retry_args = sys.argv[5:]
+ordered = catalog.get("ordered") or []
+commits = catalog.get("commits") or {}
+if requested:
+    candidates = [requested]
+else:
+    candidates = list(ordered[:3])
+if not candidates:
+    raise SystemExit("no Community release candidates are available")
+
+image_names = (
+    "hyperfilelens-backend",
+    "hyperfilelens-frontend",
+    "hyperfilelens-agent-assets",
+    "hyperfilelens-gateway-assets",
+    "hyperfilelens-language-assets",
+)
+accept = (
+    "application/vnd.docker.distribution.manifest.v2+json,"
+    "application/vnd.oci.image.manifest.v1+json,"
+    "application/vnd.docker.distribution.manifest.list.v2+json,"
+    "application/vnd.oci.image.index.v1+json"
+)
+if prefix.startswith("docker.io/"):
+    registry_host = "registry-1.docker.io"
+    namespace = prefix[len("docker.io/") :]
+else:
+    registry_host, slash, namespace = prefix.partition("/")
+    if not slash:
+        raise SystemExit("registry prefix is invalid")
+
+work_dir.mkdir(parents=True, exist_ok=True)
+counter = {"value": 0}
+counter_lock = threading.Lock()
+token_lock = threading.Lock()
+tokens = {}
+
+
+def next_path(suffix):
+    with counter_lock:
+        counter["value"] += 1
+        index = counter["value"]
+    return work_dir / ("%04d%s" % (index, suffix))
+
+
+def parse_www_authenticate(header_text):
+    match = re.search(r"(?im)^www-authenticate:\s*bearer\s+(.+)$", header_text)
+    if match is None:
+        return {}
+    return {
+        key.lower(): value
+        for key, value in re.findall(r'([^=,\s]+)="([^"]*)"', match.group(1))
+    }
+
+
+def curl_http(url, extra_headers):
+    header_path = next_path(".hdr")
+    body_path = next_path(".body")
+    command = [
+        "curl",
+        "--silent",
+        "--show-error",
+        "--location",
+        "--connect-timeout",
+        "15",
+        "--max-time",
+        "30",
+        "-H",
+        "Cache-Control: no-cache",
+        "-D",
+        str(header_path),
+        "-o",
+        str(body_path),
+        "-w",
+        "%{http_code}",
+    ]
+    command.extend(retry_args)
+    for header in extra_headers:
+        command.extend(["-H", header])
+    command.append(url)
+    completed = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    header_text = ""
+    if header_path.is_file():
+        header_text = header_path.read_text(encoding="utf-8", errors="replace")
+    body_text = ""
+    if body_path.is_file():
+        body_text = body_path.read_text(encoding="utf-8", errors="replace")
+    if completed.returncode != 0 or not stdout.isdigit():
+        return {"kind": "network", "code": stdout, "error": stderr}
+    code = int(stdout)
+    if code == 0:
+        return {"kind": "network", "code": stdout, "error": stderr}
+    return {
+        "kind": "http",
+        "code": code,
+        "headers": header_text,
+        "body": body_text,
+    }
+
+
+def registry_token(repository):
+    with token_lock:
+        if repository in tokens:
+            return tokens[repository]
+    probe = curl_http(
+        "https://%s/v2/" % registry_host,
+        [],
+    )
+    if probe["kind"] != "http":
+        return None
+    if probe["code"] in (200, 404):
+        with token_lock:
+            tokens[repository] = ""
+        return ""
+    if probe["code"] != 401:
+        return None
+    fields = parse_www_authenticate(probe["headers"])
+    realm = fields.get("realm")
+    service = fields.get("service") or registry_host
+    if not realm:
+        return None
+    scope = "repository:%s:pull" % repository
+    separator = "&" if "?" in realm else "?"
+    token_url = "%s%sservice=%s&scope=%s" % (realm, separator, service, scope)
+    token_response = curl_http(token_url, [])
+    if token_response["kind"] != "http" or token_response["code"] != 200:
+        return None
+    try:
+        payload = json.loads(token_response["body"] or "{}")
+    except ValueError:
+        return None
+    token = str(payload.get("token") or payload.get("access_token") or "")
+    with token_lock:
+        tokens[repository] = token
+    return token
+
+
+def classify_manifest(result):
+    if result["kind"] != "http":
+        return "network"
+    code = result["code"]
+    if code in (200, 201):
+        return "ready"
+    # Only not-found means "unpublished". Auth failures and rate limits must
+    # not trigger fallback to an older Community tag.
+    if code == 404:
+        return "missing"
+    return "network"
+
+
+def probe_one_image(image_name, version):
+    repository = "%s/%s" % (namespace, image_name)
+    url = "https://%s/v2/%s/manifests/%s" % (registry_host, repository, version)
+    headers = ["Accept: %s" % accept]
+    result = curl_http(url, headers)
+    if result["kind"] == "http" and result["code"] == 401:
+        token = registry_token(repository)
+        if token is None:
+            return "network"
+        if token:
+            headers.append("Authorization: Bearer %s" % token)
+        result = curl_http(url, headers)
+    return classify_manifest(result)
+
+
+def probe_version(version):
+    statuses = []
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = [
+            pool.submit(probe_one_image, image_name, version)
+            for image_name in image_names
+        ]
+        for future in as_completed(futures):
+            statuses.append(future.result())
+    if "network" in statuses:
+        return "network"
+    if "missing" in statuses:
+        return "missing"
+    return "ready"
+
+
+skipped = []
+tried = []
+selected = ""
+status = "missing"
+for tag in candidates:
+    version = tag[1:]
+    tried.append(tag)
+    status = probe_version(version)
+    if status == "network":
+        print("network")
+        print(tag)
+        print(version)
+        print(commits.get(tag, "-"))
+        print("-")
+        print("-")
+        print(", ".join(tried) or "-")
+        raise SystemExit(0)
+    if status == "ready":
+        selected = tag
+        break
+    skipped.append(tag)
+
+if selected:
+    selected_version = tuple(int(part) for part in selected[1:].split("."))
+    recent = [
+        tag
+        for tag in ordered
+        if tuple(int(part) for part in tag[1:].split(".")) < selected_version
+    ][:10]
+    print("ready")
+    print(selected)
+    print(selected[1:])
+    print(commits.get(selected, "-"))
+    print(", ".join(recent) or "-")
+    print(", ".join(skipped) or "-")
+    print(", ".join(tried) or "-")
+    raise SystemExit(0)
+
+print("missing")
+print("-")
+print("-")
+print("-")
+print("-")
+print(", ".join(skipped) or "-")
+print(", ".join(tried) or "-")
+PY
+	)"; then
+		fail "could not verify published Community images; retry later"
+	fi
+	mapfile -t values <<<"${parsed}"
+	[[ "${#values[@]}" -eq 7 ]] \
+		|| fail "could not verify published Community images; retry later"
+	if [[ "${values[0]}" == network ]]; then
+		fail "could not verify published Community images for ${values[6]}; retry later"
+	fi
+	if [[ "${values[0]}" != ready ]]; then
+		tried="${values[6]}"
+		if [[ -n "${requested_tag}" ]]; then
+			fail "Community tag ${requested_tag} exists on ${SOURCE_NAME}, but its published images were not found"
+		fi
+		fail "No published Community images were found for ${tried}"
+	fi
+	TAG="${values[1]}"
+	RELEASE_VERSION="${values[2]}"
+	RELEASE_COMMIT="${values[3]}"
+	RECENT_TAGS="${values[4]}"
+	[[ "${RECENT_TAGS}" != - ]] || RECENT_TAGS=""
+	skipped="${values[5]}"
+	if [[ "${skipped}" != - ]]; then
+		printf '%s[WARN] %s images are not published yet; using %s\n' \
+			"$(installation_step_indent)" "${skipped}" "${TAG}"
+	fi
 	if [[ "${INSTALL_ACTION}" == "Install" ]]; then
 		printf '  [ OK ] Community release resolved · %s · commit %s\n' \
 			"${TAG}" "${RELEASE_COMMIT:0:12}"
@@ -1749,7 +2040,14 @@ trap 'exit 143' TERM
 
 inspect_existing_installation
 configure_curl_retry_options
+requested_online_tag="${TAG}"
 resolve_tag
+if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+	select_published_release "${requested_online_tag}"
+else
+	printf '[ OK ] Community release resolved · %s · commit %s\n' \
+		"${TAG}" "${RELEASE_COMMIT:0:12}"
+fi
 inspect_docker_runtime
 if [[ "${DOCKER_RUNTIME_ACTION}" == install ]]; then
 	assert_docker_service_manager
