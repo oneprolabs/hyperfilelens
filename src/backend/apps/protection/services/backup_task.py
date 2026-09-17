@@ -793,7 +793,6 @@ def start_backup_tasks(
                 )
                 continue
 
-            quota_admitted = False
             try:
                 with transaction.atomic():
                     from apps.source.services.internal.source_operation_fence import (
@@ -827,8 +826,8 @@ def start_backup_tasks(
                     # Fail-fast quota checks only. Do not wait on the Agent
                     # inside this transaction: run_agent_task_sync must commit
                     # the NodeTask before uplink can persist accept/result.
-                    # Leave quota_admitted False so task/snapshot creation
-                    # re-checks license quota in the consuming transaction.
+                    # Task/snapshot creation re-checks the license quota in
+                    # its consuming transaction after initialization returns.
                     with transaction.atomic():
                         locked_repository = Repository.objects.select_for_update().get(
                             organization_id=organization_id,
@@ -945,12 +944,11 @@ def start_backup_tasks(
                         # consuming task/snapshot write. Replays and active-task
                         # conflicts return their existing result without being
                         # mistaken for new consumption after a quota downgrade.
-                        if not quota_admitted:
-                            enforce_license_quota(
-                                organization,
-                                "max_storage_gb",
-                                additional=0,
-                            )
+                        enforce_license_quota(
+                            organization,
+                            "max_storage_gb",
+                            additional=0,
+                        )
                         locked_repository = Repository.objects.select_for_update().get(
                             organization_id=organization_id,
                             id=locked_config.repository_id,

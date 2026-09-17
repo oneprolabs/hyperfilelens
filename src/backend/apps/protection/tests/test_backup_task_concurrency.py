@@ -88,6 +88,69 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
             step=3,
         )
 
+    def test_direct_nas_initialization_runs_outside_quota_transaction(self):
+        direct_agent = Node.objects.create(
+            organization=self.org,
+            name="backup-concurrency-direct-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            ip_address="10.0.0.73",
+            os_name="linux",
+        )
+        direct_repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="backup-concurrency-direct-nas",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            nas_protocol=Repository.NasProtocol.NFS,
+            config={
+                "server_address": "10.0.0.72",
+                "share_path": "/srv/backup",
+            },
+        )
+        direct_config = BackupConfig.objects.create(
+            organization_id=self.org.id,
+            name="Concurrent Direct NAS config",
+            source_type="agent",
+            source_ref_id=direct_agent.id,
+            repository_id=direct_repository.id,
+        )
+        SourceBackupPipelineEntry.objects.create(
+            organization=self.org,
+            source_kind="agent",
+            ref_id=direct_agent.id,
+            step=3,
+        )
+        observed_atomic_states: list[bool] = []
+
+        def ensure_direct_nas(**_kwargs) -> None:
+            observed_atomic_states.append(connection.in_atomic_block)
+
+        with (
+            patch(
+                "apps.protection.services.backup_config."
+                "ensure_direct_nas_repository_for_backup",
+                side_effect=ensure_direct_nas,
+            ),
+            patch("apps.protection.services.backup_task._queue_backup_execution"),
+            patch(
+                "apps.protection.tasks.directory_size_estimate."
+                "refresh_backup_config_directory_estimates_task.delay"
+            ),
+        ):
+            result = start_backup_tasks(
+                organization_id=self.org.id,
+                source_ids=[f"agent:{direct_agent.id}"],
+                backup_config_ids=[direct_config.id],
+                trigger_type="manual",
+                idempotency_key="direct-nas-transaction-boundary",
+            )
+
+        self.assertEqual(result["created_count"], 1)
+        self.assertEqual(observed_atomic_states, [False])
+
     def test_simultaneous_starts_create_one_active_backup(self):
         barrier = threading.Barrier(2)
         outcomes: queue.Queue[dict] = queue.Queue()
