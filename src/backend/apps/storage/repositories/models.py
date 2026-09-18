@@ -134,6 +134,8 @@ class Repository(models.Model):
         db_index=True,
     )
     health_failures = models.PositiveSmallIntegerField(default=0)
+    health_error_code = models.CharField(max_length=64, blank=True, default="")
+    health_error_message = models.CharField(max_length=1000, blank=True, default="")
     config = models.JSONField(default=dict, blank=True)
     credential_id = models.BigIntegerField(blank=True, null=True)
     capacity_bytes = models.BigIntegerField(default=0)

@@ -99,6 +99,8 @@ export type RepositoryRow = {
   storage_pool_key?: string
   storage_mount_point?: string
   last_checked_at?: string | null
+  health_error_code?: string
+  health_error_message?: string
   usage_probe_status?: string
   capacity_probe_status?: string
   usage_last_success_at?: string | null
@@ -195,6 +197,8 @@ type ApiRepository = {
   storage_pool_key?: string
   storage_mount_point?: string
   last_checked_at?: string | null
+  health_error_code?: string
+  health_error_message?: string
   usage_probe_status?: string
   capacity_probe_status?: string
   usage_last_success_at?: string | null
@@ -472,6 +476,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       storage_pool_key: r.storage_pool_key || '',
       storage_mount_point: r.storage_mount_point || '',
       last_checked_at: r.last_checked_at ?? null,
+      health_error_code: r.health_error_code || '',
+      health_error_message: r.health_error_message || '',
       usage_probe_status: normalizeRepositoryUsageProbeStatus(r, kind),
       capacity_probe_status: r.capacity_probe_status || 'pending',
       usage_last_success_at: r.usage_last_success_at ?? null,
@@ -524,6 +530,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       storage_pool_key: r.storage_pool_key || '',
       storage_mount_point: r.storage_mount_point || '',
       last_checked_at: r.last_checked_at ?? null,
+      health_error_code: r.health_error_code || '',
+      health_error_message: r.health_error_message || '',
       usage_probe_status: r.usage_probe_status || 'pending',
       capacity_probe_status: r.capacity_probe_status || 'pending',
       usage_last_success_at: r.usage_last_success_at ?? null,
@@ -570,6 +578,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
     storage_pool_key: r.storage_pool_key || '',
     storage_mount_point: r.storage_mount_point || '',
     last_checked_at: r.last_checked_at ?? null,
+    health_error_code: r.health_error_code || '',
+    health_error_message: r.health_error_message || '',
     usage_probe_status: r.usage_probe_status || 'pending',
     capacity_probe_status: r.capacity_probe_status || 'pending',
     usage_last_success_at: r.usage_last_success_at ?? null,
@@ -832,6 +842,14 @@ function isRepositoryBoundToProxy(row: RepositoryRow) {
 
 function isRepositoryConnectivityUnverified(row: RepositoryRow) {
   return normalizeHealth(String(row.health), row.status) === 'unverified'
+}
+
+function repositoryHealthError(row: RepositoryRow) {
+  if (normalizeHealth(String(row.health), row.status) !== 'offline') return ''
+  const code = String(row.health_error_code || '').trim()
+  const message = String(row.health_error_message || '').trim()
+  if (!code && !message) return ''
+  return message || code
 }
 
 function repositoryConnectivityHelpKey(row: RepositoryRow) {
@@ -2993,6 +3011,17 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                           class="repository-connectivity-help"
                         />
                       </ElTooltip>
+                      <ElTooltip
+                        v-else-if="repositoryHealthError(row)"
+                        :content="repositoryHealthError(row)"
+                        placement="top"
+                      >
+                        <Info
+                          :size="13"
+                          aria-hidden="true"
+                          class="repository-connectivity-help"
+                        />
+                      </ElTooltip>
                     </span>
                   </ElTag>
                 </div>
@@ -3139,6 +3168,17 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                         <ElTooltip
                           v-if="isRepositoryConnectivityUnverified(detailRow)"
                           :content="t(repositoryConnectivityHelpKey(detailRow))"
+                          placement="top"
+                        >
+                          <Info
+                            :size="13"
+                            aria-hidden="true"
+                            class="repository-connectivity-help"
+                          />
+                        </ElTooltip>
+                        <ElTooltip
+                          v-else-if="repositoryHealthError(detailRow)"
+                          :content="repositoryHealthError(detailRow)"
                           placement="top"
                         >
                           <Info
@@ -3393,6 +3433,17 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                         <ElTooltip
                           v-if="isRepositoryConnectivityUnverified(detailRow)"
                           :content="t(repositoryConnectivityHelpKey(detailRow))"
+                          placement="top"
+                        >
+                          <Info
+                            :size="13"
+                            aria-hidden="true"
+                            class="repository-connectivity-help"
+                          />
+                        </ElTooltip>
+                        <ElTooltip
+                          v-else-if="repositoryHealthError(detailRow)"
+                          :content="repositoryHealthError(detailRow)"
                           placement="top"
                         >
                           <Info
@@ -3664,6 +3715,17 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                         <ElTooltip
                           v-if="isRepositoryConnectivityUnverified(detailRow)"
                           :content="t(repositoryConnectivityHelpKey(detailRow))"
+                          placement="top"
+                        >
+                          <Info
+                            :size="13"
+                            aria-hidden="true"
+                            class="repository-connectivity-help"
+                          />
+                        </ElTooltip>
+                        <ElTooltip
+                          v-else-if="repositoryHealthError(detailRow)"
+                          :content="repositoryHealthError(detailRow)"
                           placement="top"
                         >
                           <Info

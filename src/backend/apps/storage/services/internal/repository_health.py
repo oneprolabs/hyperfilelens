@@ -192,6 +192,8 @@ def project_repository_health_from_agent_result(
         current_scope.update(
             health=Repository.Health.ONLINE,
             health_failures=0,
+            health_error_code="",
+            health_error_message="",
         )
     )
 
@@ -292,6 +294,8 @@ def _dispatch_automatic_repository_observation_locked(
             Repository.objects.filter(pk=repository.id).update(
                 health=Repository.Health.UNVERIFIED,
                 health_failures=0,
+                health_error_code="",
+                health_error_message="",
             )
             return []
         if repository.repo_type == Repository.Type.NAS:
@@ -356,6 +360,8 @@ def _dispatch_automatic_repository_observation_locked(
         Repository.objects.filter(pk=repository.id).update(
             health=Repository.Health.UNVERIFIED,
             health_failures=0,
+            health_error_code="",
+            health_error_message="",
         )
         return []
 
@@ -677,6 +683,8 @@ def _project_repository_observation_success(
             Repository.objects.filter(pk=repository.id).update(
                 health=Repository.Health.ONLINE,
                 health_failures=0,
+                health_error_code="",
+                health_error_message="",
             )
         )
     result = node_task.result if isinstance(node_task.result, dict) else {}
@@ -727,6 +735,8 @@ def _project_repository_observation_success(
             Repository.objects.filter(pk=repository.id).update(
                 health=Repository.Health.ONLINE,
                 health_failures=0,
+                health_error_code="",
+                health_error_message="",
             )
     else:
         with transaction.atomic():
@@ -750,6 +760,8 @@ def _project_repository_observation_success(
             Repository.objects.filter(pk=locked.id).update(
                 health=Repository.Health.ONLINE,
                 health_failures=0,
+                health_error_code="",
+                health_error_message="",
             )
     return True
 
@@ -922,6 +934,8 @@ def _aggregate_direct_nas_observation(
     Repository.objects.filter(pk=repository.id).update(
         health=Repository.Health.ONLINE,
         health_failures=0,
+        health_error_code="",
+        health_error_message="",
     )
 
 
@@ -977,6 +991,8 @@ def _finalize_direct_nas_health_group(
             Repository.objects.filter(pk=repository.id).update(
                 health=Repository.Health.ONLINE,
                 health_failures=0,
+                health_error_code="",
+                health_error_message="",
             )
             _mark_health_group_projected(leader, leader_payload)
             return True

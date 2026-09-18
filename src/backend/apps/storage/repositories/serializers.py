@@ -162,6 +162,8 @@ class RepositorySerializer(serializers.ModelSerializer):
             "status",
             "health",
             "health_failures",
+            "health_error_code",
+            "health_error_message",
             "config",
             "credential_id",
             "credential_hint",
