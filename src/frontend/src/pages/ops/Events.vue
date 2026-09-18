@@ -46,7 +46,7 @@ type EventResponse = {
 const { t } = useI18n()
 const router = useRouter()
 const opsMenus = useOpsMenus()
-const { drawerSize: detailDrawerSize } = useResponsiveDrawerWidth(3)
+const { drawerSize: detailDrawerSize } = useResponsiveDrawerWidth()
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 const events = ref<OperationalEvent[]>([])
@@ -82,8 +82,11 @@ const periodOptions = computed(() => [
   { value: 'all', label: t('ops.events.periods.allTime') },
 ])
 
-function categoryLabel(category: EventCategory) {
-  return t(`ops.events.categories.${category}`)
+function categoryLabel(category?: string) {
+  if (category === 'protection' || category === 'infrastructure' || category === 'system') {
+    return t(`ops.events.categories.${category}`)
+  }
+  return '—'
 }
 
 function severityLabel(severity: EventSeverity) {
@@ -391,53 +394,78 @@ watch(
 
     <el-drawer
       v-model="detailOpen"
-      :title="t('ops.events.detailTitle')"
       :size="detailDrawerSize"
       destroy-on-close
+      class="hfl-detail-drawer hfl-event-detail-drawer"
     >
-      <el-descriptions
-        v-if="selectedEvent"
-        :column="1"
-        border
-      >
-        <el-descriptions-item :label="t('ops.events.columns.event')">
-          {{ selectedEvent.title }}
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('ops.events.columns.time')">
-          {{ formatLocalDateTime(selectedEvent.occurred_at, '—') }}
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('ops.events.columns.category')">
-          {{ categoryLabel(selectedEvent.category) }}
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('ops.events.columns.severity')">
-          {{ severityLabel(selectedEvent.severity) }}
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('ops.events.columns.resource')">
-          {{ selectedEvent.resource_name || '—' }}
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('ops.events.columns.details')">
-          {{ selectedEvent.details || '—' }}
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('ops.events.correlationId')">
-          {{ selectedEvent.correlation_id || '—' }}
-        </el-descriptions-item>
-      </el-descriptions>
-      <template
-        v-if="selectedEvent?.target_path"
-        #footer
-      >
-        <el-button
-          type="primary"
-          @click="openResource(selectedEvent)"
-        >
-          {{ t('ops.events.openResource') }}
-        </el-button>
+      <template #header>
+        <span class="hfl-detail-drawer__title">{{ selectedEvent?.title || t('ops.events.detailTitle') }}</span>
+      </template>
+
+      <div v-if="selectedEvent" class="hfl-detail-drawer__body">
+        <div class="hfl-detail-sections">
+          <section class="hfl-detail-section">
+            <h4 class="hfl-detail-section__title">{{ t('ops.alertsCenter.common.basicInfo') }}</h4>
+            <div class="hfl-detail-grid">
+              <div class="hfl-detail-row hfl-detail-row--full">
+                <span class="hfl-detail-row__label">{{ t('ops.events.columns.event') }}</span>
+                <span class="hfl-detail-row__value">{{ selectedEvent.title }}</span>
+              </div>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('ops.events.columns.time') }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !selectedEvent.occurred_at }">{{ formatLocalDateTime(selectedEvent.occurred_at, '—') }}</span>
+              </div>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('ops.events.columns.category') }}</span>
+                <span class="hfl-detail-row__value">{{ categoryLabel(selectedEvent.category) }}</span>
+              </div>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('ops.events.columns.severity') }}</span>
+                <span class="hfl-detail-row__value">
+                  <el-tag :type="severityTagType(selectedEvent.severity)" size="small">
+                    {{ severityLabel(selectedEvent.severity) }}
+                  </el-tag>
+                </span>
+              </div>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('ops.events.columns.resource') }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !selectedEvent.resource_name }">{{ selectedEvent.resource_name || '—' }}</span>
+              </div>
+              <div class="hfl-detail-row hfl-detail-row--full">
+                <span class="hfl-detail-row__label">{{ t('ops.events.correlationId') }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !selectedEvent.correlation_id }">{{ selectedEvent.correlation_id || '—' }}</span>
+              </div>
+              <div class="hfl-detail-row hfl-detail-row--full">
+                <span class="hfl-detail-row__label">{{ t('ops.events.columns.details') }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !selectedEvent.details }">{{ selectedEvent.details || '—' }}</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <template v-if="selectedEvent?.target_path" #footer>
+        <div class="el-drawer__footer-actions">
+          <el-button type="primary" @click="openResource(selectedEvent)">{{ t('ops.events.openResource') }}</el-button>
+        </div>
       </template>
     </el-drawer>
   </ModulePage>
 </template>
 
 <style scoped>
+.hfl-event-detail-drawer :deep(.hfl-detail-row) {
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.hfl-event-detail-drawer :deep(.hfl-detail-row--full) {
+  border-left: 0;
+}
+
+.hfl-event-detail-drawer :deep(.hfl-detail-row:last-child) {
+  border-bottom: 0;
+}
+
 .events-page__error {
   margin: 0;
   color: var(--el-color-danger);
