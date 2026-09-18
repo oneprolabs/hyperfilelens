@@ -129,6 +129,94 @@ func TestFailureOperationLabels(t *testing.T) {
 	}
 }
 
+func TestFailurePresentationUsesFormalContext(t *testing.T) {
+	t.Setenv("HFL_NODE_ROLE", "gateway")
+	t.Setenv("HFL_GATEWAY_SCOPE", "private")
+	failure := InstallFailure{
+		Stage:  "Preflight checks",
+		Reason: `This agent belongs to organization "org-a", but this enrollment link is for "org-b"`,
+	}
+	if got := failureComponent("install", failure.Component); got != "Private Data Gateway Agent" {
+		t.Fatalf("component = %q", got)
+	}
+	if got := failureSummary("install", failure); got != "The requested operation did not pass the required preflight checks" {
+		t.Fatalf("summary = %q", got)
+	}
+	if got := failureChanges("install", failure); got != "No changes were applied." {
+		t.Fatalf("changes = %q", got)
+	}
+	if actions := failureActions("install", failure); len(actions) != 3 {
+		t.Fatalf("organization actions = %#v", actions)
+	}
+}
+
+func TestFailureComponentUsesSourceProxyLabel(t *testing.T) {
+	if got := agentComponentName(model.RoleProxy, ""); got != "Source Proxy Agent" {
+		t.Fatalf("component = %q", got)
+	}
+}
+
+func TestFailureComponentUsesInstalledGatewayScope(t *testing.T) {
+	if got := agentComponentName(model.RoleGateway, "public"); got != "Public Data Gateway Agent" {
+		t.Fatalf("component = %q", got)
+	}
+}
+
+func TestFailureSummaryDistinguishesInitialization(t *testing.T) {
+	if got := failureSummary("install", InstallFailure{Stage: "Initialization"}); got != "The installer could not initialize the requested operation" {
+		t.Fatalf("summary = %q", got)
+	}
+}
+
+func TestPrintCommandFailureHidesInternalCodeFromTerminal(t *testing.T) {
+	t.Setenv("HFL_OUTPUT", "plain")
+	t.Setenv("HFL_NODE_ROLE", "gateway")
+	t.Setenv("HFL_GATEWAY_SCOPE", "private")
+	previousStderr := os.Stderr
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = writePipe
+	t.Cleanup(func() {
+		os.Stderr = previousStderr
+		_ = readPipe.Close()
+		_ = writePipe.Close()
+	})
+	PrintCommandFailureFor("install", InstallFailure{
+		Stage:     "Preflight checks",
+		Reason:    `The installed Private Data Gateway Agent belongs to organization "org-a", while this enrollment link belongs to organization "org-b"`,
+		CodeKey:   "HFL-INSTALL-001",
+		Component: "Private Data Gateway Agent",
+		Summary:   "The existing Private Data Gateway Agent cannot be enrolled using this enrollment link.",
+	})
+	if err := writePipe.Close(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := io.ReadAll(readPipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(content)
+	for _, expected := range []string{
+		"Installation was not started",
+		"Failure details",
+		"Component        Private Data Gateway Agent",
+		"Stage            Preflight checks",
+		"Summary",
+		"Cause",
+		"Changes applied  No changes were applied.",
+		"Recommended actions",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("formal failure output does not contain %q: %s", expected, output)
+		}
+	}
+	if strings.Contains(output, "Error code:") || strings.Contains(output, "HFL-INSTALL-001") {
+		t.Fatalf("internal error code leaked into terminal output: %s", output)
+	}
+}
+
 func TestPrintCommandFailureForUninstall(t *testing.T) {
 	t.Setenv("HFL_OUTPUT", "plain")
 	previousStderr := os.Stderr
@@ -152,7 +240,7 @@ func TestPrintCommandFailureForUninstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := string(content)
-	for _, expected := range []string{"Uninstallation failed", "Stage         Uninstalling", "cleanup failed"} {
+	for _, expected := range []string{"Uninstallation failed", "Stage            Uninstalling", "Cause            cleanup failed", "Changes applied"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("failure output does not contain %q: %s", expected, output)
 		}
