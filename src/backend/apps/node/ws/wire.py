@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
@@ -42,6 +43,7 @@ class ParsedUplink:
     result: dict[str, Any] | None = None
     error: str = ""
     heartbeat_payload: dict[str, Any] | None = None
+    received_at: datetime | None = None
 
 
 def _coerce_dict(value: Any, *, field: str) -> dict[str, Any]:

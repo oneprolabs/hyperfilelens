@@ -12,8 +12,10 @@ import logging
 import os
 import time
 import uuid
+from datetime import datetime
 from typing import Any
 
+from django.utils import timezone
 from redis.exceptions import RedisError, ResponseError
 
 from apps.node import conf as node_conf
@@ -85,6 +87,7 @@ def _serialize_uplink(
         payload["session_id"] = str(session_id)
     if message.msg_type == WireType.HEARTBEAT:
         payload["heartbeat_payload"] = message.heartbeat_payload
+        payload["received_at"] = timezone.now().isoformat()
     else:
         payload["marker_token"] = marker_token
         payload["task_id"] = message.task_id
@@ -164,9 +167,22 @@ def payload_to_parsed(
     if msg_type == WireType.HEARTBEAT:
         hb = data.get("heartbeat_payload")
         heartbeat_payload = hb if isinstance(hb, dict) else None
+        received_at = None
+        received_at_raw = data.get("received_at")
+        if received_at_raw:
+            try:
+                received_at = datetime.fromisoformat(str(received_at_raw))
+                if timezone.is_naive(received_at):
+                    received_at = timezone.make_aware(received_at)
+            except ValueError:
+                pass
         return (
             node_id,
-            ParsedUplink(msg_type=msg_type, heartbeat_payload=heartbeat_payload),
+            ParsedUplink(
+                msg_type=msg_type,
+                heartbeat_payload=heartbeat_payload,
+                received_at=received_at,
+            ),
             str(data.get("session_id") or "") or None,
         )
 

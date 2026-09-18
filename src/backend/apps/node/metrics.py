@@ -30,6 +30,11 @@ AGENT_WS_DISCONNECTS = Counter(
     "Agent WebSocket disconnects by normalized close code.",
     ("code",),
 )
+AGENT_WS_DISCONNECT_CLEANUP = Histogram(
+    "hfl_agent_websocket_disconnect_cleanup_seconds",
+    "Time spent completing Agent WebSocket disconnect cleanup.",
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
+)
 AGENT_UPLINK_REJECTED = Counter(
     "hfl_agent_uplink_rejected_total",
     "Agent uplink frames rejected before persistence.",

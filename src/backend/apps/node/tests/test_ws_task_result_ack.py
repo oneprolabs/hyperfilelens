@@ -35,6 +35,143 @@ def _immediate_database_sync_to_async(func):
 
 class NodeAgentTaskResultAckTests(SimpleTestCase):
 
+    async def test_heartbeat_acks_before_liveness_and_deferred_inventory(self):
+        events: list[str] = []
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.session_id = "session-1"
+
+        async def send(*, text_data=None, bytes_data=None, close=False):
+            del bytes_data, close
+            events.append("ack")
+            self.assertEqual(json.loads(text_data), {"type": "heartbeat.ack"})
+
+        def liveness(**kwargs):
+            del kwargs
+            events.append("liveness")
+
+        def enqueue(**kwargs):
+            del kwargs
+            events.append("enqueue")
+
+        consumer.send = send
+        with (
+            patch("apps.node.ws.node_agent.touch_heartbeat_fast", return_value=True),
+            patch(
+                "apps.node.ws.node_agent.persist_heartbeat_liveness",
+                side_effect=liveness,
+            ),
+            patch("apps.node.ws.node_agent.enqueue_uplink", side_effect=enqueue),
+            patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
+            ),
+        ):
+            await consumer.receive(
+                text_data=json.dumps(
+                    {
+                        "type": "heartbeat",
+                        "payload": {"agent_version": "1.0.0"},
+                    }
+                )
+            )
+
+        self.assertEqual(events, ["ack", "liveness", "enqueue"])
+
+    async def test_heartbeat_liveness_failure_does_not_block_inventory_enqueue(self):
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.session_id = "session-1"
+        consumer.send = AsyncMock()
+        with (
+            patch("apps.node.ws.node_agent.touch_heartbeat_fast", return_value=True),
+            patch(
+                "apps.node.ws.node_agent.persist_heartbeat_liveness",
+                side_effect=RuntimeError("database unavailable"),
+            ),
+            patch("apps.node.ws.node_agent.enqueue_uplink") as enqueue,
+            patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
+            ),
+        ):
+            await consumer.receive(
+                text_data=json.dumps(
+                    {
+                        "type": "heartbeat",
+                        "payload": {"agent_version": "1.0.0"},
+                    }
+                )
+            )
+
+        consumer.send.assert_awaited_once()
+        enqueue.assert_called_once()
+
+    async def test_disconnect_releases_route_before_independent_group_cleanup(self):
+        events: list[str] = []
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.session_id = "session-1"
+        consumer.channel_name = "channel-1"
+        consumer.agent_group = "agent-group"
+        consumer.ws_instance_group = "ws-group"
+
+        async def discard(group, channel):
+            self.assertEqual(channel, "channel-1")
+            events.append(group)
+
+        consumer.channel_layer = SimpleNamespace(group_discard=discard)
+
+        def disconnect_state(**kwargs):
+            del kwargs
+            events.append("route")
+
+        with (
+            patch(
+                "apps.node.ws.node_agent.on_agent_disconnected",
+                side_effect=disconnect_state,
+            ),
+            patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
+            ),
+            patch("apps.node.ws.node_agent.AGENT_WS_DISCONNECT_CLEANUP") as metric,
+        ):
+            await consumer.disconnect(1000)
+
+        self.assertEqual(events, ["route", "agent-group", "ws-group"])
+        metric.observe.assert_called_once()
+
+    async def test_disconnect_attempts_both_groups_when_one_cleanup_fails(self):
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.session_id = "session-1"
+        consumer.channel_name = "channel-1"
+        consumer.agent_group = "agent-group"
+        consumer.ws_instance_group = "ws-group"
+        consumer.channel_layer = SimpleNamespace(
+            group_discard=AsyncMock(
+                side_effect=[RuntimeError("group unavailable"), None]
+            )
+        )
+
+        with (
+            patch("apps.node.ws.node_agent.on_agent_disconnected"),
+            patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
+            ),
+        ):
+            await consumer.disconnect(1006)
+
+        self.assertEqual(
+            consumer.channel_layer.group_discard.await_args_list,
+            [
+                (("agent-group", "channel-1"), {}),
+                (("ws-group", "channel-1"), {}),
+            ],
+        )
+
     async def test_oversized_uplink_is_closed_without_parsing(self):
         consumer = NodeAgentConsumer()
         consumer.node_id = 7

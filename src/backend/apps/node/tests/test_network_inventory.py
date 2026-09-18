@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from django.apps import apps as django_apps
 from django.test import SimpleTestCase, TestCase
+from django.utils import timezone
 
 from apps.iam.models import Organization
 from apps.node.models import Node
@@ -307,9 +308,12 @@ class NodeNetworkInventoryHeartbeatTests(TestCase):
             }
         }
         self.node.save(update_fields=["metadata"])
+        self.node.last_seen_at = timezone.now()
+        self.node.save(update_fields=["last_seen_at", "updated_at"])
 
         _process_heartbeat_followup(
             node_id=self.node.id,
+            observed_at=timezone.now() - timezone.timedelta(seconds=30),
             inventory={
                 "capabilities": ["storage_inventory_v1"],
                 "storage_inventory_status": "ready",
@@ -317,11 +321,12 @@ class NodeNetworkInventoryHeartbeatTests(TestCase):
                 "disk_total_bytes": 50,
             },
         )
-
         self.node.refresh_from_db()
         inventory = self.node.metadata["inventory"]
         self.assertEqual(inventory["local_storage_pools"], [{"key": "local:new"}])
         self.assertEqual(inventory["disk_total_bytes"], 100)
+        _mock_should_process.assert_not_called()
+        _mock_record_available.assert_not_called()
 
 
 class NodeNetworkInventoryMigrationTests(TestCase):

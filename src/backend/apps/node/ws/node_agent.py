@@ -16,6 +16,7 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from apps.node import conf as node_conf
 from apps.node.metrics import (
     AGENT_UPLINK_REJECTED,
+    AGENT_WS_DISCONNECT_CLEANUP,
     AGENT_WS_DISCONNECTS,
     TASK_RESULT_ACK_LATENCY,
     TASK_RESULT_BYTES,
@@ -26,10 +27,10 @@ from apps.node.services.internal.client_ip import resolve_agent_client_ip_from_s
 from apps.node.ws.groups import agent_group_name, ws_instance_group_name
 from apps.node.ws.uplink import (
     TaskResultHandling,
-    apply_heartbeat_inventory_snapshot,
     handle_uplink,
     on_agent_connected,
     on_agent_disconnected,
+    persist_heartbeat_liveness,
     project_identical_task_result_recovery,
     trigger_task_result_followup,
 )
@@ -122,23 +123,46 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
         )
 
     async def disconnect(self, close_code: int) -> None:
+        cleanup_started = time.monotonic()
         normalized_code = str(close_code) if close_code in {1000, 1001, 1006, 1009, 1012} else "other"
         AGENT_WS_DISCONNECTS.labels(code=normalized_code).inc()
-        if getattr(self, "agent_group", ""):
-            await self.channel_layer.group_discard(
-                self.agent_group,
-                self.channel_name,
-            )
-        if getattr(self, "ws_instance_group", ""):
-            await self.channel_layer.group_discard(
-                self.ws_instance_group,
-                self.channel_name,
-            )
         if getattr(self, "node_id", None) and getattr(self, "session_id", ""):
-            await database_sync_to_async(on_agent_disconnected)(
-                node_id=self.node_id,
-                session_id=self.session_id,
-            )
+            try:
+                # Release the authoritative route before best-effort channel
+                # group cleanup. A slow group discard must not leave a
+                # disconnected Agent routable.
+                await database_sync_to_async(on_agent_disconnected)(
+                    node_id=self.node_id,
+                    session_id=self.session_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Agent WebSocket disconnect state cleanup failed "
+                    "node_id=%s session=%s",
+                    self.node_id,
+                    self.session_id,
+                    exc_info=True,
+                )
+        for group_name in (
+            getattr(self, "agent_group", ""),
+            getattr(self, "ws_instance_group", ""),
+        ):
+            if not group_name:
+                continue
+            try:
+                await self.channel_layer.group_discard(
+                    group_name,
+                    self.channel_name,
+                )
+            except Exception:
+                logger.warning(
+                    "Agent WebSocket group cleanup failed node_id=%s "
+                    "group=%s",
+                    getattr(self, "node_id", "-"),
+                    group_name,
+                    exc_info=True,
+                )
+        AGENT_WS_DISCONNECT_CLEANUP.observe(time.monotonic() - cleanup_started)
 
     async def receive(
         self,
@@ -216,11 +240,20 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
                 )
                 return
             await self.send(text_data=dumps_wire(heartbeat_ack_wire()))
-            await database_sync_to_async(apply_heartbeat_inventory_snapshot)(
-                node_id=self.node_id,
-                inventory=message.heartbeat_payload,
-                session_id=self.session_id,
-            )
+            try:
+                await database_sync_to_async(persist_heartbeat_liveness)(
+                    node_id=self.node_id,
+                )
+            except Exception:
+                # Liveness is a best-effort projection after the protocol ACK.
+                # A transient database failure must not make a healthy socket
+                # miss its next heartbeat or its deferred inventory update.
+                logger.warning(
+                    "Agent heartbeat liveness persistence failed node_id=%s session=%s",
+                    self.node_id,
+                    self.session_id,
+                    exc_info=True,
+                )
             try:
                 await database_sync_to_async(enqueue_uplink)(
                     node_id=self.node_id,
@@ -228,10 +261,9 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
                     session_id=self.session_id,
                 )
             except Exception:
-                # The hot path already ACKed the heartbeat and persisted
-                # liveness. Redis stream ingestion is a deferred projection;
-                # a transient broker failure must not tear down this healthy
-                # WebSocket or turn the Agent offline.
+                # The route lease and heartbeat ACK are already complete.
+                # Stream ingestion is a deferred projection; a transient
+                # broker failure must not tear down this healthy WebSocket.
                 logger.warning(
                     "Agent heartbeat follow-up enqueue failed node_id=%s session=%s",
                     self.node_id,

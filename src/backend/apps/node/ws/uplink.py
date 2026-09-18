@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 import redis
 from django.db import DatabaseError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.node import conf as node_conf
@@ -87,10 +88,6 @@ def on_agent_connected(*, node_id: int, session_id: str, client_ip: str | None =
             session_id=session_id,
             redis_client=redis_client,
         )
-    try:
-        sync_agent_source_host_by_id(node_id=node_id)
-    except Exception:
-        logger.debug("agent source-host sync failed node_id=%s", node_id, exc_info=True)
     logger.info(
         "agent ws connected node_id=%s session=%s client_ip=%s",
         node_id,
@@ -101,6 +98,28 @@ def on_agent_connected(*, node_id: int, session_id: str, client_ip: str | None =
         node_id=node_id,
         redis_client=redis_client if route_recorded else None,
     )
+
+
+def persist_heartbeat_liveness(*, node_id: int, observed_at=None) -> None:
+    """Persist only liveness without the full inventory projection."""
+    observed_at = observed_at or timezone.now()
+    updated = Node.objects.filter(
+        pk=node_id,
+        is_deleted=False,
+        availability=Node.Availability.ONLINE,
+    ).filter(
+        Q(last_seen_at__isnull=True) | Q(last_seen_at__lte=observed_at)
+    ).update(last_seen_at=observed_at)
+    if updated:
+        return
+    state = (
+        Node.objects.filter(pk=node_id, is_deleted=False)
+        .values("availability")
+        .first()
+    )
+    if state is None or state["availability"] == Node.Availability.ONLINE:
+        return
+    record_node_available(node_id=node_id, observed_at=observed_at)
 
 
 def on_agent_disconnected(*, node_id: int, session_id: str) -> None:
@@ -117,10 +136,6 @@ def on_agent_disconnected(*, node_id: int, session_id: str) -> None:
         )
         return
 
-    try:
-        sync_agent_source_host_by_id(node_id=node_id)
-    except Exception:
-        logger.debug("agent source-host sync failed node_id=%s", node_id, exc_info=True)
     logger.info(
         "agent ws disconnected node_id=%s session=%s",
         node_id,
@@ -242,6 +257,7 @@ def handle_uplink(
             node_id=node_id,
             inventory=message.heartbeat_payload,
             session_id=session_id,
+            observed_at=message.received_at,
         )
         return None
 
@@ -333,18 +349,25 @@ def _persist_heartbeat_snapshot(
     inventory: dict | None,
     observed_at,
     merge_inventory: bool,
-) -> Node | None:
+) -> tuple[Node | None, bool]:
     """Serialize Node metadata updates shared by heartbeat and monitor ingest."""
-    node = Node.objects.select_for_update().filter(pk=node_id).first()
+    node = (
+        Node.objects.select_for_update()
+        .filter(pk=node_id, is_deleted=False)
+        .first()
+    )
     if node is None:
-        return None
+        return None, False
+    event_is_current = not node.last_seen_at or node.last_seen_at <= observed_at
+    if not event_is_current:
+        return node, False
     updates: dict = {"last_seen_at": observed_at}
     if merge_inventory and inventory:
         updates.update(
             _merge_heartbeat_inventory_updates(node=node, inventory=inventory)
         )
     Node.objects.filter(pk=node_id).update(**updates)
-    return node
+    return node, True
 
 
 def apply_heartbeat_inventory_snapshot(
@@ -376,22 +399,22 @@ def apply_heartbeat_inventory_snapshot(
         # Redis outage is not evidence that this socket is stale. Preserve
         # liveness, but do not persist session-sensitive inventory until route
         # ownership can be checked again.
-        node = _persist_heartbeat_snapshot(
+        node, applied = _persist_heartbeat_snapshot(
             node_id=node_id,
             inventory=None,
             observed_at=observed_at,
             merge_inventory=False,
         )
-        if node is not None:
+        if node is not None and applied:
             record_node_available(node_id=node_id, observed_at=observed_at)
         return
-    node = _persist_heartbeat_snapshot(
+    node, applied = _persist_heartbeat_snapshot(
         node_id=node_id,
         inventory=inventory,
         observed_at=observed_at,
         merge_inventory=True,
     )
-    if node is None:
+    if node is None or not applied:
         return
     record_node_available(node_id=node_id, observed_at=observed_at)
     if session_id:
@@ -428,7 +451,11 @@ def _should_process_full_inventory(*, node_id: int) -> bool:
 
 
 def _process_heartbeat_followup(
-    *, node_id: int, inventory: dict | None = None, session_id: str | None = None
+    *,
+    node_id: int,
+    inventory: dict | None = None,
+    session_id: str | None = None,
+    observed_at=None,
 ) -> None:
     # The WebSocket hot path renews the route with its authenticated session.
     # A delayed queue item must not refresh a superseded session's lease.
@@ -448,19 +475,29 @@ def _process_heartbeat_followup(
             session_id,
         )
         return
-    full_inventory = inventory and _should_process_full_inventory(node_id=node_id)
-    observed_at = timezone.now()
-    node = _persist_heartbeat_snapshot(
+    observed_at = observed_at or timezone.now()
+    node, applied = _persist_heartbeat_snapshot(
         node_id=node_id,
-        inventory=inventory,
+        inventory=None,
         observed_at=observed_at,
-        # The WebSocket hot path already persisted this snapshot before it
-        # entered the queue. Reapplying a delayed payload could overwrite a
-        # newer inventory that arrived while the queue was backlogged.
         merge_inventory=False,
     )
-    if node is None:
+    if node is None or not applied:
         return
+    full_inventory = bool(
+        inventory
+        and ownership is True
+        and _should_process_full_inventory(node_id=node_id)
+    )
+    if full_inventory:
+        node, applied = _persist_heartbeat_snapshot(
+            node_id=node_id,
+            inventory=inventory,
+            observed_at=observed_at,
+            merge_inventory=True,
+        )
+        if node is None or not applied:
+            return
     record_node_available(node_id=node_id, observed_at=observed_at)
 
     if (
