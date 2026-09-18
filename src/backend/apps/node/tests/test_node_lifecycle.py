@@ -703,6 +703,43 @@ class NodeLifecycleTests(TestCase):
         )
         self.assertFalse(NodeTask.objects.filter(node=gateway).exists())
 
+    def test_preview_gateway_remove_preserves_dependency_blocker_details(self):
+        from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
+
+        gateway = Node.objects.create(
+            organization=self.org,
+            name="gateway-with-knowledge-source",
+            role=NodeRole.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.org,
+            gateway=gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+        )
+        LensKnowledgeSource.objects.create(
+            organization=self.org,
+            gateway=gateway,
+            gateway_link=gateway_link,
+            name="Bound knowledge source",
+            source_path="/protected/source",
+        )
+
+        preview = preview_batch_operations(
+            org=self.org,
+            node_ids=[gateway.id],
+            kind="remove",
+        )
+
+        self.assertEqual(preview["eligible"], [])
+        self.assertEqual(len(preview["skipped_workload"]), 1)
+        self.assertEqual(
+            preview["skipped_workload"][0]["blockers"][0]["code"],
+            "knowledge_source_bound",
+        )
+
     @patch("apps.node.services.internal.node_lifecycle.validate_agent_upgrade", return_value="1.2.0")
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
     def test_preview_batch_upgrade(self, _routable, _validate):

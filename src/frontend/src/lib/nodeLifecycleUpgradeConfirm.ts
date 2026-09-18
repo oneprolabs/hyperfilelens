@@ -1,5 +1,5 @@
 import type { ComposerTranslation } from 'vue-i18n'
-import type { NodeOperationBatchPreview } from '../types/nodeLifecycle'
+import type { NodeOperationBatchPreview, NodeWorkloadReason } from '../types/nodeLifecycle'
 
 type DiskSkipItem = NonNullable<NodeOperationBatchPreview['skipped_disk_full']>[number]
 
@@ -9,6 +9,49 @@ export type UpgradeConfirmSkipGroup = {
   names: Array<{ id: number; name: string }>
   guidance?: string
   details?: string[]
+}
+
+export type WorkloadBlockerCategory =
+  | 'backup_restore'
+  | 'knowledge_source'
+  | 'workspace'
+  | 'node_task'
+  | 'mixed'
+
+const BACKUP_RESTORE_BLOCKER_CODES = new Set(['backup_running', 'restore_running'])
+
+/**
+ * Classify the detailed workload blockers returned by the lifecycle preview.
+ * A null result deliberately preserves the legacy generic copy for older APIs
+ * that did not return the optional blockers array.
+ */
+export function classifyWorkloadBlockers(
+  blockers?: NodeWorkloadReason[],
+): WorkloadBlockerCategory | null {
+  if (!blockers?.length) return null
+  const codes = new Set(blockers.map((item) => String(item.code || '')))
+  if (codes.size > 0 && [...codes].every((code) => BACKUP_RESTORE_BLOCKER_CODES.has(code))) {
+    return 'backup_restore'
+  }
+  if (codes.size === 1 && codes.has('knowledge_source_bound')) return 'knowledge_source'
+  if (codes.size === 1 && codes.has('workspace_cleanup_pending')) return 'workspace'
+  if (codes.size === 1 && codes.has('node_task_running')) return 'node_task'
+  return 'mixed'
+}
+
+export function workloadBlockedMessageKey(blockers?: NodeWorkloadReason[]): string {
+  switch (classifyWorkloadBlockers(blockers)) {
+    case 'backup_restore':
+      return 'nodeLifecycle.workloadBlockedBackupRestore'
+    case 'knowledge_source':
+      return 'nodeLifecycle.workloadBlockedKnowledgeSource'
+    case 'workspace':
+      return 'nodeLifecycle.workloadBlockedWorkspace'
+    case 'node_task':
+      return 'nodeLifecycle.workloadBlockedNodeTask'
+    default:
+      return 'nodeLifecycle.workloadBlocked'
+  }
 }
 
 export function upgradePreviewSkippedCount(preview: NodeOperationBatchPreview): number {
@@ -95,11 +138,25 @@ export function buildUpgradeConfirmSkipGroups(
     preview.skipped_offline.map((item) => ({ id: item.node_id, name: item.name })),
     'nodeLifecycle.confirmSkipGuidance.offline',
   )
-  addGroup(
-    'workload',
-    preview.skipped_workload.map((item) => ({ id: item.node_id, name: item.name })),
-    'nodeLifecycle.confirmSkipGuidance.workload',
-  )
+  const workloadGroups = new Map<string, Array<{ id: number; name: string }>>()
+  for (const item of preview.skipped_workload) {
+    const category = classifyWorkloadBlockers(item.blockers)
+    const key = category === 'backup_restore' || category === null
+      ? 'workload'
+      : category === 'node_task'
+        ? 'nodeTask'
+        : 'mixed'
+    const names = workloadGroups.get(key) || []
+    names.push({ id: item.node_id, name: item.name })
+    workloadGroups.set(key, names)
+  }
+  for (const [key, names] of workloadGroups) {
+    addGroup(
+      key,
+      names,
+      `nodeLifecycle.confirmSkipGuidance.${key}`,
+    )
+  }
   addGroup(
     'inProgress',
     preview.skipped_in_progress.map((item) => ({ id: item.node_id, name: item.name })),
