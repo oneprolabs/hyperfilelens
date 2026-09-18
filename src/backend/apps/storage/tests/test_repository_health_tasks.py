@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest import mock
 from uuid import uuid4
 
+from botocore.exceptions import ConnectionClosedError
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
@@ -345,6 +346,8 @@ class RepositoryHealthTaskTests(TestCase):
             Repository.Type.PROXY_FS,
             health=Repository.Health.ONLINE,
             health_failures=1,
+            health_error_code="STORAGE.REPOSITORY_CHECK_FAILED",
+            health_error_message="stale error",
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
         )
@@ -356,6 +359,8 @@ class RepositoryHealthTaskTests(TestCase):
         self.assertEqual(result["probe_status"], "bound_node_offline")
         self.assertEqual(repository.health, Repository.Health.OFFLINE)
         self.assertEqual(repository.health_failures, 0)
+        self.assertEqual(repository.health_error_code, "")
+        self.assertEqual(repository.health_error_message, "")
         dispatch_observation.assert_not_called()
 
     @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
@@ -390,6 +395,11 @@ class RepositoryHealthTaskTests(TestCase):
         self.assertTrue(result["retry_scheduled"])
         self.assertEqual(repository.health, Repository.Health.ONLINE)
         self.assertEqual(repository.health_failures, 1)
+        self.assertEqual(
+            repository.health_error_code,
+            "STORAGE.S3_VALIDATION_FAILED",
+        )
+        self.assertTrue(repository.health_error_message)
         self.assertEqual(repository.last_checked_at, checked_at)
         self.assertEqual(repository.updated_at, original_updated_at)
         self.assertEqual(repository.capacity_bytes, 1000)
@@ -399,6 +409,36 @@ class RepositoryHealthTaskTests(TestCase):
             kwargs={"repository_id": repository.id, "retry_attempt": 1},
             countdown=30,
         )
+
+    @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
+    @mock.patch("apps.storage.tasks.cache.delete")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=True)
+    @mock.patch("apps.storage.tasks.probe_repository_health")
+    def test_s3_connection_closed_is_persisted_as_safe_network_error(
+        self,
+        probe,
+        _cache_add,
+        _cache_delete,
+        _apply_async,
+    ):
+        repository = self._repository(
+            "s3-connection-closed",
+            Repository.Type.S3,
+            s3_bucket="bucket",
+        )
+        wrapped = RepositoryInitializationError("connection closed")
+        wrapped.__cause__ = ConnectionClosedError(endpoint_url="http://s3.example.test")
+        probe.side_effect = wrapped
+
+        check_storage_repository_health.run(repository_id=repository.id)
+
+        repository.refresh_from_db()
+        self.assertEqual(
+            repository.health_error_code,
+            "STORAGE.S3_NETWORK_UNAVAILABLE",
+        )
+        self.assertIn("endpoint", repository.health_error_message.lower())
+        self.assertNotIn("s3.example.test", repository.health_error_message)
 
     @mock.patch("apps.storage.tasks.cache.delete")
     @mock.patch("apps.storage.tasks.cache.add", return_value=True)
@@ -426,6 +466,10 @@ class RepositoryHealthTaskTests(TestCase):
         self.assertEqual(result["status"], Repository.Health.OFFLINE)
         self.assertEqual(repository.health, Repository.Health.OFFLINE)
         self.assertEqual(repository.health_failures, 2)
+        self.assertEqual(
+            repository.health_error_code,
+            "STORAGE.S3_VALIDATION_FAILED",
+        )
 
     @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
     @mock.patch("apps.storage.tasks.cache.delete")
@@ -516,6 +560,8 @@ class RepositoryHealthTaskTests(TestCase):
             last_checked_at=checked_at,
             capacity_bytes=1000,
             estimated_usage_bytes=250,
+            health_error_code="STORAGE.S3_NETWORK_UNAVAILABLE",
+            health_error_message="old error",
         )
         original_updated_at = repository.updated_at
         original_config = dict(repository.config)
@@ -526,6 +572,8 @@ class RepositoryHealthTaskTests(TestCase):
         self.assertEqual(result["status"], Repository.Health.ONLINE)
         self.assertEqual(repository.health, Repository.Health.ONLINE)
         self.assertEqual(repository.health_failures, 0)
+        self.assertEqual(repository.health_error_code, "")
+        self.assertEqual(repository.health_error_message, "")
         self.assertEqual(repository.last_checked_at, checked_at)
         self.assertEqual(repository.updated_at, original_updated_at)
         self.assertEqual(repository.config, original_config)

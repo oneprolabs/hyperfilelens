@@ -21,17 +21,9 @@ from apps.storage.services.internal.repository_health import (
 from apps.storage.services.internal.repository_execution_lock import (
     repository_execution_lock,
 )
-from apps.storage.services.internal.repository_initializer import (
-    RepositoryInitializationError,
-)
 from apps.storage.services.internal.kopia_cli import KopiaRepositoryBusyError
 from apps.storage.services.internal.repository_location import (
     invalidate_repository_location_ownership,
-)
-from apps.storage.services.internal.repository_secrets import (
-    resolve_repository_secrets,
-    scrub_secrets,
-    secret_values_for_scrub,
 )
 from apps.storage.services.internal.repository_usage import sync_repository_usage
 from apps.storage.services.internal.s3_validation_errors import (
@@ -174,11 +166,15 @@ def _run_repository_check_task_locked(*, repository_task_id: int) -> dict[str, A
         previous_health = repository.health
         repository.health = health
         repository.health_failures = 0
+        repository.health_error_code = ""
+        repository.health_error_message = ""
         repository.last_checked_at = timezone.now()
         repository.save(
             update_fields=[
                 "health",
                 "health_failures",
+                "health_error_code",
+                "health_error_message",
                 "last_checked_at",
                 "updated_at",
             ]
@@ -229,6 +225,7 @@ def _run_repository_check_task_locked(*, repository_task_id: int) -> dict[str, A
             KopiaRepositoryBusyError,
         )
         if not health_persisted and not repository_busy:
+            error_code, message = _health_error_details(repository, exc)
             if is_repository_ownership_failure(exc):
                 invalidate_repository_location_ownership(repository)
             checked_at = timezone.now()
@@ -237,6 +234,8 @@ def _run_repository_check_task_locked(*, repository_task_id: int) -> dict[str, A
                 .exclude(health=Repository.Health.OFFLINE)
                 .update(
                     health=Repository.Health.OFFLINE,
+                    health_error_code=error_code,
+                    health_error_message=message,
                     last_checked_at=checked_at,
                 )
             )
@@ -251,22 +250,18 @@ def _run_repository_check_task_locked(*, repository_task_id: int) -> dict[str, A
                 )
             else:
                 Repository.objects.filter(pk=repository.id).update(
+                    health_error_code=error_code,
+                    health_error_message=message,
                     last_checked_at=checked_at,
                 )
         current_step = task.current_step or CHECK_STEPS[0]
         _set_step(task, current_step, TaskStep.Status.FAILED, int(task.progress or 0))
-        error_code = "REPOSITORY_CHECK_FAILED"
-        message = _safe_error_message(repository, exc)
+        error_code, message = _health_error_details(repository, exc)
         if repository_busy:
-            error_code = "STORAGE.REPOSITORY_BUSY"
-            message = (
-                "The repository is busy with another operation. "
-                "Try again after it finishes."
+            error_code, message = (
+                "STORAGE.REPOSITORY_BUSY",
+                "The repository is busy with another operation. Try again after it finishes.",
             )
-        elif isinstance(exc, RepositoryInitializationError):
-            failure = classify_s3_validation_error(exc, operation="bucket_access")
-            error_code = failure.code
-            message = failure.message
         complete_task(
             task_uuid=task.task_uuid,
             organization_id=task.organization_id,
@@ -297,16 +292,18 @@ def _dispatch_repository_operation(repository_task_id: int) -> None:
     )
 
 
-def _safe_error_message(repository: Repository, exc: Exception) -> str:
-    try:
-        secrets_payload = resolve_repository_secrets(repository)
-    except Exception:
-        secrets_payload = {}
-    return str(
-        scrub_secrets(
-            str(exc),
-            extra_values=secret_values_for_scrub(repository, secrets_payload),
+def _health_error_details(repository: Repository, exc: Exception) -> tuple[str, str]:
+    if is_repository_ownership_failure(exc):
+        return (
+            "STORAGE.OWNERSHIP_MISMATCH",
+            "The repository ownership marker could not be verified. Check that the configured storage location belongs to this repository.",
         )
+    if repository.repo_type == Repository.Type.S3:
+        failure = classify_s3_validation_error(exc, operation="bucket_access")
+        return failure.code, failure.message
+    return (
+        "STORAGE.REPOSITORY_CHECK_FAILED",
+        "The repository health check failed. Try again or review the storage connection settings.",
     )
 
 

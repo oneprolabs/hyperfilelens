@@ -30,6 +30,13 @@ describe('repository residual status UI', () => {
     expect(helper).not.toContain('healthNotInitialized')
   })
 
+  it('exposes a persisted health error without changing the health state model', () => {
+    expect(page).toContain('health_error_code?: string')
+    expect(page).toContain('health_error_message?: string')
+    expect(page).toContain('repositoryHealthError(row)')
+    expect(page).toContain('repositoryHealthError(detailRow)')
+  })
+
   it('labels unused connectivity clearly and provides a hover explanation', () => {
     expect(en.repositoriesPage.healthUnverified).toBe('Not Yet Used')
     expect(en.repositoriesPage.healthUnverifiedHelp).toContain('has not been used yet')

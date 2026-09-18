@@ -41,6 +41,9 @@ from apps.storage.services.internal.repository_health import (
 from apps.storage.services.internal.repository_errors import (
     is_repository_health_transport_unconfirmed,
 )
+from apps.storage.services.internal.s3_validation_errors import (
+    classify_s3_validation_error,
+)
 from apps.storage.services.internal.repository_usage import (
     sync_all_repositories,
     sync_organization_repositories,
@@ -131,6 +134,8 @@ def _project_bound_node_unavailability(repository: Repository) -> bool:
         current_scope.update(
             health=Repository.Health.OFFLINE,
             health_failures=0,
+            health_error_code="",
+            health_error_message="",
         )
     )
     if projected:
@@ -402,12 +407,15 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                 retry_attempt,
                 type(exc).__name__,
             )
+            error_code, error_message = _repository_health_error(repository, exc)
             if is_repository_ownership_failure(exc):
                 invalidate_repository_location_ownership(repository)
                 return _record_repository_health_failure(
                     repository=repository,
                     retry_attempt=retry_attempt,
                     fail_immediately=True,
+                    error_code=error_code,
+                    error_message=error_message,
                 )
             if is_repository_health_transport_unconfirmed(exc):
                 return {
@@ -419,6 +427,8 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
             return _record_repository_health_failure(
                 repository=repository,
                 retry_attempt=retry_attempt,
+                error_code=error_code,
+                error_message=error_message,
             )
         current_scope = Repository.objects.filter(
             pk=repository_id,
@@ -428,8 +438,13 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
             bind_node_id=repository.bind_node_id,
             updated_at=repository.updated_at,
         )
-        if repository.health != health or repository.health_failures:
-            if not current_scope.update(health=health, health_failures=0):
+        if repository.health != health or repository.health_failures or repository.health_error_code:
+            if not current_scope.update(
+                health=health,
+                health_failures=0,
+                health_error_code="",
+                health_error_message="",
+            ):
                 return {
                     "repository_id": repository_id,
                     "status": "skipped",
@@ -489,11 +504,29 @@ def _exception_chain_contains(exc: Exception, expected_type: type[Exception]) ->
     return False
 
 
+def _repository_health_error(repository: Repository, exc: Exception) -> tuple[str, str]:
+    """Return a stable, safe user-facing error for a failed health probe."""
+    if is_repository_ownership_failure(exc):
+        return (
+            "STORAGE.OWNERSHIP_MISMATCH",
+            "The repository ownership marker could not be verified. Check that the configured storage location belongs to this repository.",
+        )
+    if repository.repo_type == Repository.Type.S3:
+        failure = classify_s3_validation_error(exc, operation="bucket_access")
+        return failure.code, failure.message
+    return (
+        "STORAGE.REPOSITORY_CHECK_FAILED",
+        "The repository health check failed. Try again or review the storage connection settings.",
+    )
+
+
 def _record_repository_health_failure(
     *,
     repository: Repository,
     retry_attempt: int,
     fail_immediately: bool = False,
+    error_code: str = "STORAGE.REPOSITORY_CHECK_FAILED",
+    error_message: str = "Repository health check failed. Try again or review the storage connection settings.",
 ) -> dict:
     """Persist a failed probe and retry it once before declaring the target offline."""
     failure_count = (
@@ -508,7 +541,12 @@ def _record_repository_health_failure(
         bind_node_id=repository.bind_node_id,
         updated_at=repository.updated_at,
     )
-    if not current_scope.update(health=health, health_failures=failure_count):
+    if not current_scope.update(
+        health=health,
+        health_failures=failure_count,
+        health_error_code=error_code,
+        health_error_message=error_message[:1000],
+    ):
         return {"repository_id": repository.id, "status": "skipped", "stale": True}
     schedule_repository_health_event(
         organization_id=repository.organization_id,
