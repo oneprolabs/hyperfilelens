@@ -55,6 +55,7 @@ _PHASE_LABELS = {
 
 _RESTORE_POLL_SECONDS = 5
 SYNC_CLAIM_TTL_SECONDS = int(getattr(settings, "LENS_KS_SYNC_TIME_LIMIT", 7200)) + 300
+ASSISTANT_DATASOURCE_BINDINGS_VERSION = 1
 _TERMINAL_TASK_STATUSES = frozenset(
     {
         Task.Status.SUCCESS,
@@ -708,21 +709,25 @@ def _run_sync_pipeline(
         ks.sync_state_json = sync_state
         ks.save(update_fields=["sync_state_json", "updated_at"])
 
+    # SourceLens 0.57 Assistants bind runtime datasources instead of using
+    # selected_dirs. Ensure the durable datasource exists for every KS before
+    # conversion or Assistant provisioning, including gateway-local sources.
+    if not ks.sl_datasource_uuid or "ensure_managed_datasource" not in completed:
+        _notify_progress(progress_callback, "ensure_managed_datasource")
+        _run_phase_ensure_managed_datasource(
+            ks=ks,
+            sync_state=sync_state,
+        )
+        completed.add("ensure_managed_datasource")
+        sync_state["completed_phases"] = list(completed)
+        ks.sync_state_json = sync_state
+        ks.save(update_fields=["sync_state_json", "updated_at"])
+
     if (
         not is_gateway_local_ks(ks)
         and ks.scan_enabled
         and managed_conversion_enabled(org=org, ks=ks)
     ):
-        if "ensure_managed_datasource" not in completed:
-            _notify_progress(progress_callback, "ensure_managed_datasource")
-            _run_phase_ensure_managed_datasource(
-                ks=ks,
-                sync_state=sync_state,
-            )
-            completed.add("ensure_managed_datasource")
-            sync_state["completed_phases"] = list(completed)
-            ks.sync_state_json = sync_state
-            ks.save(update_fields=["sync_state_json", "updated_at"])
 
         _require_active_lifecycle(ks)
         if "convert_documents" not in completed:
@@ -744,10 +749,18 @@ def _run_sync_pipeline(
         ks.save(update_fields=["sync_state_json", "updated_at"])
 
     _require_active_lifecycle(ks)
-    if "push_assistant" not in completed:
+    assistant_binding_upgrade_needed = (
+        provisioning.assistant_uuid_for_ks(ks) is not None
+        and int(sync_state.get("assistant_datasource_bindings_version") or 0)
+        < ASSISTANT_DATASOURCE_BINDINGS_VERSION
+    )
+    if "push_assistant" not in completed or assistant_binding_upgrade_needed:
         _notify_progress(progress_callback, "push_assistant")
         _run_phase_push_assistant(org=org, ks=ks, sync_state=sync_state)
         completed.add("push_assistant")
+        sync_state[
+            "assistant_datasource_bindings_version"
+        ] = ASSISTANT_DATASOURCE_BINDINGS_VERSION
         sync_state["completed_phases"] = list(completed)
         ks.sync_state_json = sync_state
         ks.save(update_fields=["sync_state_json", "updated_at"])

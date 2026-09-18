@@ -878,6 +878,18 @@ class LensRunFeedbackSerializer(serializers.Serializer):
     )
 
 
+class LensRunClarificationSerializer(serializers.Serializer):
+    request_id = serializers.CharField(max_length=128)
+    answer = serializers.CharField(max_length=4_000)
+    enqueue = serializers.BooleanField(required=False, default=True)
+
+    def validate_answer(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Answer cannot be empty.")
+        return value
+
+
 class LensOrgSettingsSerializer(serializers.Serializer):
     default_agent_model_ref = serializers.UUIDField(required=False, allow_null=True)
     default_multimodal_model_ref = serializers.UUIDField(

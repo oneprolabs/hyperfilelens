@@ -48,6 +48,29 @@ describe('Copilot local submission feedback', () => {
     expect(state.runStatus).toBe('queued')
   })
 
+  it('restores structured runtime events from an active-run snapshot', () => {
+    applySessionActiveRun(sessionId, 'run-structured', 'running', '', [
+      {
+        event_type: 'stage.updated',
+        payload: { summary: 'Indexing documents' },
+      },
+    ])
+
+    const state = getSessionRunStream(sessionId)
+    expect(state.thinkingSteps).toHaveLength(1)
+    expect(state.thinkingSteps[0].message).toBe('Indexing documents')
+    expect(state.thinkingSteps[0].eventType).toBe('stage.updated')
+  })
+
+  it('retains a clarification snapshot without treating it as streaming', () => {
+    applySessionActiveRun(sessionId, 'run-clarification', 'awaiting_user_input', '', [])
+
+    const state = getSessionRunStream(sessionId)
+    expect(state.runUuid).toBe('run-clarification')
+    expect(state.runStatus).toBe('awaiting_user_input')
+    expect(state.isStreaming).toBe(false)
+  })
+
   it('clears provisional feedback when run creation fails', () => {
     beginSessionRunSubmission(sessionId)
     clearSessionRunSubmission(sessionId)

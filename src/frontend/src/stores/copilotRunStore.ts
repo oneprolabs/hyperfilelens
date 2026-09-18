@@ -63,7 +63,13 @@ export function useCopilotRunStore() {
       payload.response_state,
     )
     handlers.onSessionMeta?.(sessionId, payload.active_run)
-    if (payload.active_run && isActiveRunStatus(payload.active_run.status)) {
+    if (
+      payload.active_run
+      && (
+        isActiveRunStatus(payload.active_run.status)
+        || payload.active_run.status === 'awaiting_user_input'
+      )
+    ) {
       applySessionActiveRun(
         sessionId,
         payload.active_run.uuid,
@@ -72,7 +78,11 @@ export function useCopilotRunStore() {
         payload.active_run.thinking || [],
         payload.active_run.elapsed_anchor_at,
       )
-      if (opts?.attachStream && sessionId === activeSessionId) {
+      if (
+        opts?.attachStream
+        && sessionId === activeSessionId
+        && isActiveRunStatus(payload.active_run.status)
+      ) {
         void attachStream(sessionId, payload.active_run.uuid, handlers, activeSessionId)
       }
     } else if (payload.response_state?.status === 'submitting') {

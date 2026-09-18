@@ -231,30 +231,31 @@ async function loadDetail() {
     const lensnodeUuid = String(
       (row.lensnode as { uuid?: string })?.uuid || row.lensnode_uuid || row.lensnode || '',
     )
+    const bindings = row.datasource_bindings as
+      | { datasource_uuid?: string }[]
+      | undefined
+    const datasourceUuid = String(bindings?.[0]?.datasource_uuid || '')
     const dirs = row.selected_dirs as { path?: string }[] | undefined
     const firstDir = dirs?.[0]?.path ? String(dirs[0].path) : ''
     const fallbackKs = knowledgeSources.value.find(
-      (ks) => ks.lensnode_uuid === lensnodeUuid && ks.indexed_paths.includes(firstDir),
+      (ks) =>
+        (datasourceUuid && ks.sl_datasource_uuid === datasourceUuid) ||
+        (ks.lensnode_uuid === lensnodeUuid && ks.indexed_paths.includes(firstDir)),
     )
     knowledgeSourceId.value = fallbackKs?.id ?? null
   }
   applyKnowledgeSourceDefaults(!selectedTask.value)
 
-  const dirs = row.selected_dirs as
-    | { path?: string; retrieval_scope?: { include_paths?: string[] } }[]
-    | undefined
   const includePaths = new Set<string>()
-  for (const dir of dirs ?? []) {
-    for (const path of dir.retrieval_scope?.include_paths ?? []) {
-      const normalized = String(path || '').trim()
-      if (normalized) includePaths.add(normalized)
-    }
+  const settings = (row.settings || {}) as {
+    retrieval_policy?: { exclude_extensions?: string[]; exclude_dirs?: string[]; include_paths?: string[] }
+  }
+  for (const path of settings.retrieval_policy?.include_paths ?? []) {
+    const normalized = String(path || '').trim()
+    if (normalized) includePaths.add(normalized)
   }
   retrievalScopeText.value = [...includePaths].join('\n')
 
-  const settings = (row.settings || {}) as {
-    retrieval_policy?: { exclude_extensions?: string[]; exclude_dirs?: string[] }
-  }
   excludeExtensionsText.value = listToText(settings.retrieval_policy?.exclude_extensions) || DEFAULT_EXCLUDE_EXTENSIONS
   excludeDirsText.value = listToText(settings.retrieval_policy?.exclude_dirs) || DEFAULT_EXCLUDE_DIRS
 

@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from rest_framework.test import APIClient
 from apps.iam.services.registration_service import provision_registered_user_tenant
 from apps.lens_bridge.api.serializers import (
     LensRunCreateSerializer,
+    LensRunClarificationSerializer,
     LensRunFeedbackSerializer,
     LensSessionCreateSerializer,
     LensSessionLinkSerializer,
@@ -21,8 +23,10 @@ from apps.lens_bridge.api.serializers import (
 )
 from apps.lens_bridge.api.views import (
     _attachment_proxy_url,
+    _article_media_proxy_url,
     _output_file_proxy_url,
     _require_attachment_proxy_token,
+    _rewrite_run_stream,
     _rewrite_attachment_urls,
     _source_lens_session_meta,
 )
@@ -231,6 +235,22 @@ class LensSessionCreateSerializerTests(SimpleTestCase):
 
         self.assertFalse(serializer.is_valid())
         self.assertIn("feedback", serializer.errors)
+
+    def test_run_clarification_requires_a_non_empty_answer(self):
+        serializer = LensRunClarificationSerializer(
+            data={"request_id": "clarification-1", "answer": "   "}
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("answer", serializer.errors)
+
+    def test_run_clarification_normalizes_the_answer(self):
+        serializer = LensRunClarificationSerializer(
+            data={"request_id": "clarification-1", "answer": "  More context  "}
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(serializer.validated_data["answer"], "More context")
 
     @patch("apps.lens_bridge.api.views.sl_client.request_json")
     def test_session_metadata_follows_sourcelens_pagination(
@@ -907,6 +927,71 @@ class CopilotSessionApiTests(TestCase):
         self.assertIn("output-files/", output_file["url"])
         self.assertNotIn("sourcelens", output_file["url"])
 
+    def test_rewrite_attachment_urls_rewrites_only_sourcelens_article_media(self):
+        messages = [{
+            "content": (
+                "![diagram](https://lens.example/media/articles/article-42/diagram.png) "
+                "![external](https://cdn.example/diagram.png)"
+            )
+        }]
+
+        rewritten = _rewrite_attachment_urls(messages, session_id=17)
+
+        content = rewritten[0]["content"]
+        self.assertIn("article-media/article-42/diagram.png", content)
+        self.assertIn("token=", content)
+        self.assertIn("https://cdn.example/diagram.png", content)
+
+    def test_article_media_proxy_streams_through_sourcelens(self):
+        self._mark_session_ready()
+        article_id = "article-42"
+        signed_url = _article_media_proxy_url(self.session.pk, article_id, "diagram.png")
+        with patch("apps.lens_bridge.api.views.sl_client.stream_binary") as stream_binary:
+            stream_binary.return_value = sl_client.BinaryStreamResponse(
+                body=iter([b"png"]),
+                content_type="image/png",
+                content_length="3",
+                content_disposition="",
+                cache_control="private",
+            )
+            response = self.client.get(signed_url, HTTP_X_ORG_KEY=self.org.key)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"png")
+        stream_binary.assert_called_once_with(
+            "/media/articles/article-42/diagram.png",
+            hfl_user=self.user,
+        )
+
+    def test_run_stream_rewrites_article_media_without_breaking_sse(self):
+        payload = (
+            'data: {"type":"token","content":"![diagram]('
+            'https://lens.example/media/articles/article-42/diagram.png)"}\n\n'
+        ).encode()
+
+        rewritten = b"".join(_rewrite_run_stream([payload[:17], payload[17:]], session_id=17))
+
+        self.assertIn(b"article-media/article-42/diagram.png", rewritten)
+        self.assertIn(b"data:", rewritten)
+
+    def test_run_stream_rewrites_final_sse_line_and_closes_upstream(self):
+        class Stream:
+            closed = False
+
+            def __iter__(self):
+                return iter([
+                    b'data: {"content":"/media/articles/article-42/diagram.png"}'
+                ])
+
+            def close(self):
+                self.closed = True
+
+        stream = Stream()
+        rewritten = b"".join(_rewrite_run_stream(stream, session_id=17))
+
+        self.assertIn(b"article-media/article-42/diagram.png", rewritten)
+        self.assertTrue(stream.closed)
+
     @patch("apps.lens_bridge.api.views.sl_client.request_json")
     def test_feedback_persists_through_the_sourcelens_run(self, request_json):
         self._mark_session_ready()
@@ -1000,6 +1085,140 @@ class CopilotSessionApiTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         request_json.assert_not_called()
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_citation_source_is_proxied_for_a_run_in_the_session(self, request_json):
+        self._mark_session_ready()
+        run_uuid = uuid.uuid4()
+        citation = {
+            "id": "module.py:source-1",
+            "path": "src/example.py",
+            "start_line": 4,
+            "end_line": 6,
+        }
+        request_json.side_effect = [
+            [
+                {
+                    "role": "assistant",
+                    "run": str(run_uuid),
+                    "content": "Answer",
+                    "citations": [citation],
+                }
+            ],
+            {**citation, "lines": [{"number": 4, "content": "answer = 42"}]},
+        ]
+
+        response = self.client.get(
+            reverse(
+                "lens-copilot-session-citation",
+                kwargs={
+                    "pk": self.session.pk,
+                    "run_uuid": run_uuid,
+                    "citation_id": citation["id"],
+                },
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json().get("data", response.json())
+        self.assertEqual(payload["lines"][0]["content"], "answer = 42")
+        self.assertEqual(
+            request_json.call_args_list[1].args,
+            ("GET", f"/api/lens/runs/{run_uuid}/citations/module.py:source-1/"),
+        )
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_citation_source_quotes_special_id_characters(self, request_json):
+        self._mark_session_ready()
+        run_uuid = uuid.uuid4()
+        citation_id = "module name.py?line=4"
+        request_json.side_effect = [
+            [
+                {
+                    "role": "assistant",
+                    "run": str(run_uuid),
+                    "citations": [{"id": citation_id}],
+                }
+            ],
+            {"id": citation_id, "lines": []},
+        ]
+
+        response = self.client.get(
+            reverse(
+                "lens-copilot-session-citation",
+                kwargs={
+                    "pk": self.session.pk,
+                    "run_uuid": run_uuid,
+                    "citation_id": citation_id,
+                },
+            ),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            request_json.call_args_list[1].args,
+            (
+                "GET",
+                f"/api/lens/runs/{run_uuid}/citations/"
+                "module%20name.py%3Fline%3D4/",
+            ),
+        )
+
+    @patch("apps.lens_bridge.services.usage.register_usage_run")
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_clarification_binds_the_continuation_run(self, request_json, register_usage):
+        self._mark_session_ready()
+        parent_uuid = uuid.uuid4()
+        continuation_uuid = uuid.uuid4()
+        self.session.active_run_uuid = parent_uuid
+        self.session.active_run_status = "awaiting_user_input"
+        self.session.save(
+            update_fields=["active_run_uuid", "active_run_status", "updated_at"]
+        )
+        request_json.side_effect = [
+            {"uuid": str(parent_uuid), "status": "awaiting_user_input"},
+            {"uuid": str(continuation_uuid), "status": "queued"},
+        ]
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-clarification",
+                kwargs={"pk": self.session.pk, "run_uuid": parent_uuid},
+            ),
+            {"request_id": "clarification-1", "answer": "Use the API service."},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.active_run_uuid, continuation_uuid)
+        self.assertEqual(self.session.active_run_status, "queued")
+        submission = LensRunSubmission.objects.get(sl_run_uuid=continuation_uuid)
+        self.assertEqual(submission.retry_of_run_uuid, parent_uuid)
+        self.assertEqual(
+            submission.idempotency_key,
+            f"clarification:{parent_uuid}:{hashlib.sha256(b'clarification-1').hexdigest()}",
+        )
+        register_usage.assert_called_once()
+
+        duplicate = self.client.post(
+            reverse(
+                "lens-copilot-session-clarification",
+                kwargs={"pk": self.session.pk, "run_uuid": parent_uuid},
+            ),
+            {"request_id": "clarification-1", "answer": "Use the API service."},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(duplicate.status_code, 201)
+        duplicate_payload = duplicate.json().get("data", duplicate.json())
+        self.assertEqual(duplicate_payload["uuid"], str(continuation_uuid))
+        self.assertEqual(request_json.call_count, 2)
+        register_usage.assert_called_once()
 
     @patch("apps.lens_bridge.api.views.sl_client.stream_binary")
     @patch("apps.lens_bridge.api.views.sl_client.request_json")

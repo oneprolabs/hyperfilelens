@@ -4,6 +4,10 @@ import { streamCopilotRun } from '../lib/lensApi'
 import { formatThinkingStepLabel } from '../lib/copilotStreamLabels'
 
 export type ThinkingStep = {
+  type?: string
+  visibility?: string
+  status?: string
+  outcome?: string
   message: string
   agentEvent?: string
   activity?: string
@@ -18,6 +22,16 @@ export type ThinkingStep = {
   durationMs?: number
   toolName?: string
   error?: string
+  eventType?: string
+  payload?: Record<string, unknown>
+  assistantName?: string
+  delegatedTask?: string
+  parentId?: string
+  terminationDetail?: Record<string, unknown>
+  id?: string
+  kind?: string
+  stageKind?: string
+  structured?: boolean
 }
 
 export type SessionRunStreamState = {
@@ -155,12 +169,22 @@ class SessionRunStreamController {
     if (thinking.length) {
       this.state.thinkingSteps = thinking
         .map((item) => {
+          const payload = item.payload as Record<string, unknown> | undefined
           const message =
             (item.message as string) ||
+            (item.summary as string) ||
             (item.agent_event as string) ||
-            (item.activity as string)
+            (item.activity as string) ||
+            (payload?.summary as string) ||
+            (payload?.message as string) ||
+            (payload?.description as string) ||
+            (item.event_type as string)
           if (!message) return null
           const step: ThinkingStep = {
+            type: item.type as string,
+            visibility: item.visibility as string,
+            status: item.status as string,
+            outcome: item.outcome as string,
             message,
             agentEvent: item.agent_event as string,
             activity: item.activity as string,
@@ -174,6 +198,16 @@ class SessionRunStreamController {
             durationMs: item.duration_ms as number,
             toolName: item.tool_name as string,
             error: item.error as string,
+            eventType: item.event_type as string,
+            payload: item.payload as Record<string, unknown>,
+            assistantName: item.assistant_name as string,
+            delegatedTask: item.delegated_task as string,
+            parentId: (item.parent_id || item.parentId) as string,
+            terminationDetail: item.termination_detail as Record<string, unknown>,
+            id: item.id as string,
+            kind: item.kind as string,
+            stageKind: item.stage_kind as string,
+            structured: item.structured as boolean,
           }
           step.displayMessage = formatThinkingStepLabel(step)
           return step
@@ -197,16 +231,25 @@ class SessionRunStreamController {
   }
 
   private pushThinkingStep(item: Record<string, unknown>) {
+    const payload = item.payload as Record<string, unknown> | undefined
     const message =
       (item.message as string) ||
       (item.summary as string) ||
       (item.agent_event as string) ||
-      (item.activity as string)
+      (item.activity as string) ||
+      (payload?.summary as string) ||
+      (payload?.message as string) ||
+      (payload?.description as string) ||
+      (item.event_type as string)
     if (!message) return
-    const key = `${(item.agent_event as string) || ''}|${message}`
+    const key = `${(item.event_type as string) || ''}|${(item.id as string) || (item.payload as Record<string, unknown> | undefined)?.id || ''}|${(item.agent_event as string) || ''}|${message}`
     if (this.seenActivityKeys.has(key)) return
     this.seenActivityKeys.add(key)
     const step: ThinkingStep = {
+      type: item.type as string,
+      visibility: item.visibility as string,
+      status: item.status as string,
+      outcome: item.outcome as string,
       message,
       agentEvent: item.agent_event as string,
       activity: item.activity as string,
@@ -220,6 +263,16 @@ class SessionRunStreamController {
       durationMs: item.duration_ms as number,
       toolName: item.tool_name as string,
       error: item.error as string,
+      eventType: item.event_type as string,
+      payload: item.payload as Record<string, unknown>,
+      assistantName: item.assistant_name as string,
+      delegatedTask: item.delegated_task as string,
+      parentId: (item.parent_id || item.parentId) as string,
+      terminationDetail: item.termination_detail as Record<string, unknown>,
+      id: item.id as string,
+      kind: item.kind as string,
+      stageKind: item.stage_kind as string,
+      structured: item.structured as boolean,
     }
     step.displayMessage = formatThinkingStepLabel(step)
     this.state.thinkingSteps = [...this.state.thinkingSteps, step]
@@ -237,6 +290,10 @@ class SessionRunStreamController {
     }
     const events =
       (event.detail as { events?: Array<Record<string, unknown>> } | undefined)?.events || []
+    if (!events.length && event.event_type) {
+      this.pushThinkingStep(event)
+      return
+    }
     const stepKey = String(event.sequence ?? event.step ?? 'step')
     const seenCount = this.seenStepEventCounts.get(stepKey) || 0
     const newEvents = events.slice(seenCount)
@@ -288,6 +345,9 @@ class SessionRunStreamController {
       if (type === 'status' && event.status === 'done') {
         this.markStreamFinished()
       }
+    }
+    if (event.event_type) {
+      this.pushThinkingStep(event)
     }
     if (type === 'queue_position') {
       const position = Number(event.position ?? 0)

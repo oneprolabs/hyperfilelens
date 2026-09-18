@@ -1,6 +1,8 @@
 import type {
   LensChatAttachment,
   LensChatMessage,
+  LensCitation,
+  LensPlannedEvidence,
   LensRunFeedback,
   LensRunOutputFile,
 } from '../../../lib/lensApi'
@@ -21,6 +23,9 @@ export type CopilotDisplayMessage = {
   completedAt?: string | null
   runId?: string
   thinking?: LensChatMessage['thinking']
+  citations?: LensCitation[]
+  plannedEvidence?: LensPlannedEvidence
+  clarificationRequest?: { requestId: string; question: string }
   attachments?: LensChatMessage['attachments']
   outputFiles?: LensRunOutputFile[]
   feedback?: LensRunFeedback | null

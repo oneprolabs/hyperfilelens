@@ -293,6 +293,11 @@ export type LensAssistant = {
   lensnode_uuid?: string | null
   selected_task?: string
   selected_dir?: string
+  datasource_bindings?: Array<{
+    datasource_uuid?: string
+    mount_name?: string
+    required?: boolean
+  }>
   agent_model_ref?: string | null
   multimodal_model_ref?: string | null
   supports_document_attachments?: boolean
@@ -368,13 +373,18 @@ export type LensCopilotActiveRun = {
   status: string
   partial_content?: string
   thinking?: LensChatThinkingStep[]
+  thinking_detail?: LensChatMessage['thinking']
+  citations?: LensCitation[]
+  planned_evidence?: LensPlannedEvidence
+  outcome?: string | null
+  termination_detail?: Record<string, unknown>
   error?: string
   started_at?: string | null
   elapsed_anchor_at?: string | null
 }
 
 export type LensCopilotResponseState = {
-  status: 'idle' | 'submitting' | 'running'
+  status: 'idle' | 'submitting' | 'queued' | 'running' | 'streaming' | 'awaiting_user_input' | string
   started_at?: string | null
   question?: string
 }
@@ -410,6 +420,15 @@ export type LensRun = {
 }
 
 export type LensChatThinkingStep = {
+  id?: string
+  type?: string
+  kind?: string
+  stage_kind?: string
+  structured?: boolean
+  visibility?: string
+  status?: string
+  outcome?: string
+  termination_detail?: Record<string, unknown>
   agent_event?: string
   activity?: string
   message?: string
@@ -424,6 +443,11 @@ export type LensChatThinkingStep = {
   duration_ms?: number
   tool_name?: string
   error?: string
+  event_type?: string
+  payload?: Record<string, unknown>
+  assistant_name?: string
+  delegated_task?: string
+  parent_id?: string
 }
 
 export type LensChatAttachment = {
@@ -452,6 +476,28 @@ export type LensRunFeedback = 'positive' | 'negative'
 export type LensRunFeedbackResponse = {
   feedback: LensRunFeedback | ''
   feedback_updated_at: string | null
+}
+
+export type LensCitation = {
+  id: string
+  project?: string
+  repository?: string
+  revision?: string
+  path?: string
+  symbol?: string
+  supports?: string
+  start_line?: number
+  end_line?: number
+  highlight_start_line?: number
+  highlight_end_line?: number
+  [key: string]: unknown
+}
+
+export type LensPlannedEvidence = {
+  sufficient?: boolean
+  planner_rejection_reason?: string
+  gap_categories?: string[]
+  [key: string]: unknown
 }
 
 export type LensSharedQAFile = {
@@ -498,7 +544,13 @@ export type LensChatMessage = {
   thinking?: {
     duration_seconds?: number | null
     steps?: LensChatThinkingStep[]
+    outcome?: string | null
+    status?: string
+    clarification_answered_at?: string | null
+    termination_detail?: Record<string, unknown>
   }
+  citations?: LensCitation[]
+  planned_evidence?: LensPlannedEvidence
   attachments?: LensChatAttachment[]
   output_files?: LensRunOutputFile[]
   feedback?: LensRunFeedback | null
@@ -819,6 +871,7 @@ export type LensAssistantKnowledgeSourceOption = {
   scope_paths: string[]
   indexed_paths: string[]
   sl_assistant_uuid: string | null
+  sl_datasource_uuid: string | null
 }
 
 export type LensAssistantFormOptions = {
@@ -1532,6 +1585,37 @@ export async function updateCopilotRunFeedback(
     },
   )
   return lensPayload<LensRunFeedbackResponse>(raw)
+}
+
+export async function fetchCopilotCitation(
+  sessionId: number,
+  runUuid: string,
+  citationId: string,
+): Promise<LensCitation & { lines?: Array<{ number: number; content: string }> }> {
+  const raw = await api(
+    lensUrl(
+      `copilot/sessions/${sessionId}/runs/${runUuid}/citations/${encodeURIComponent(citationId)}/`,
+    ),
+    { headers: lensHeaders() },
+  )
+  return lensPayload(raw)
+}
+
+export async function submitCopilotClarification(
+  sessionId: number,
+  runUuid: string,
+  requestId: string,
+  answer: string,
+): Promise<LensRun> {
+  const raw = await api(
+    lensUrl(`copilot/sessions/${sessionId}/runs/${runUuid}/clarification/`),
+    {
+      method: 'POST',
+      headers: lensHeaders(),
+      body: JSON.stringify({ request_id: requestId, answer, enqueue: true }),
+    },
+  )
+  return lensPayload<LensRun>(raw)
 }
 
 export async function syncCopilotSession(sessionId: number): Promise<LensCopilotSyncResponse> {

@@ -19,6 +19,11 @@ function stepLabel(step: TimelineStep): string {
   if ('displayMessage' in step && step.displayMessage) {
     return step.displayMessage
   }
+  const eventType = 'event_type' in step ? step.event_type : ('eventType' in step ? step.eventType : '')
+  if (eventType) {
+    const event = eventType.replace(/[._-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
+    return step.message || step.summary || event
+  }
   return formatThinkingStepLabel({
     message: step.message || '',
     agentEvent: 'agent_event' in step ? step.agent_event : step.agentEvent,
@@ -36,7 +41,9 @@ function extractTimestamp(message?: string): { date?: string; time?: string } {
 }
 
 function eventCategory(step: TimelineStep): string {
-  const event = ('agent_event' in step ? step.agent_event : step.agentEvent) || step.activity || ''
+  const event = ('event_type' in step ? step.event_type : ('eventType' in step ? step.eventType : ''))
+    || ('agent_event' in step ? step.agent_event : step.agentEvent)
+    || step.activity || ''
   return String(event).toLowerCase()
 }
 
@@ -77,15 +84,29 @@ function detailLines(step: TimelineStep): string[] {
   if (step.query) lines.push(t('insight.copilot.agentActivityQuery', { query: step.query }))
   if (step.path) lines.push(t('insight.copilot.agentActivityPath', { path: step.path }))
   if (step.toolName) lines.push(t('insight.copilot.agentActivityTool', { tool: step.toolName }))
-  if (step.tokens || step.inputTokens || step.outputTokens) {
+  const inputTokens = 'input_tokens' in step ? step.input_tokens : step.inputTokens
+  const outputTokens = 'output_tokens' in step ? step.output_tokens : step.outputTokens
+  const tokens = 'tokens' in step ? step.tokens : undefined
+  if (tokens || inputTokens || outputTokens) {
     const parts: string[] = []
-    if (step.inputTokens != null) parts.push(`${step.inputTokens} in`)
-    if (step.outputTokens != null) parts.push(`${step.outputTokens} out`)
-    if (step.tokens != null && parts.length === 0) parts.push(`${step.tokens}`)
+    if (inputTokens != null) parts.push(`${inputTokens} in`)
+    if (outputTokens != null) parts.push(`${outputTokens} out`)
+    if (tokens != null && parts.length === 0) parts.push(`${tokens}`)
     lines.push(t('insight.copilot.agentActivityTokens', { tokens: parts.join(' / ') }))
   }
-  if (step.durationMs != null && step.durationMs > 0) {
-    lines.push(t('insight.copilot.agentActivityDuration', { ms: step.durationMs }))
+  const durationMs = 'duration_ms' in step ? step.duration_ms : step.durationMs
+  if (durationMs != null && durationMs > 0) {
+    lines.push(t('insight.copilot.agentActivityDuration', { ms: durationMs }))
+  }
+  const assistantName = 'assistant_name' in step ? step.assistant_name : ('assistantName' in step ? step.assistantName : '')
+  const delegatedTask = 'delegated_task' in step ? step.delegated_task : ('delegatedTask' in step ? step.delegatedTask : '')
+  if (assistantName) {
+    lines.push(`${assistantName}${delegatedTask ? `: ${delegatedTask}` : ''}`)
+  }
+  const payload = 'payload' in step ? step.payload : undefined
+  if (payload) {
+    const summary = payload.summary || payload.message || payload.description
+    if (typeof summary === 'string' && summary.trim()) lines.push(summary)
   }
   return lines
 }
@@ -103,10 +124,270 @@ const items = computed(() =>
     }
   }),
 )
+
+type RuntimeStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped'
+type RuntimeCardItem = { id: string; title: string; detail: string; status: RuntimeStatus; parentId?: string }
+type RuntimeCardRow = RuntimeCardItem & { depth: number }
+
+function payloadId(payload: Record<string, unknown>, fallback: string) {
+  return String(payload.id || payload.uuid || payload.step_id || payload.task_id || fallback)
+}
+
+function payloadParentId(payload: Record<string, unknown>) {
+  const parent = payload.parent_id ?? payload.parentId ?? payload.parent_uuid ?? payload.parentUuid
+  return parent == null || parent === '' ? undefined : String(parent)
+}
+
+function runtimeRows(items: RuntimeCardItem[]): RuntimeCardRow[] {
+  const byParent = new Map<string | undefined, RuntimeCardItem[]>()
+  for (const item of items) {
+    const parent = item.parentId && items.some((candidate) => candidate.id === item.parentId)
+      ? item.parentId
+      : undefined
+    const bucket = byParent.get(parent) || []
+    bucket.push(item)
+    byParent.set(parent, bucket)
+  }
+  const rows: RuntimeCardRow[] = []
+  const visit = (item: RuntimeCardItem, depth: number, path: Set<string>) => {
+    if (path.has(item.id)) return
+    rows.push({ ...item, depth })
+    const nextPath = new Set(path).add(item.id)
+    for (const child of byParent.get(item.id) || []) visit(child, depth + 1, nextPath)
+  }
+  for (const item of byParent.get(undefined) || []) visit(item, 0, new Set())
+  return rows
+}
+
+const runtimeCard = computed(() => {
+  const plan: RuntimeCardItem[] = []
+  const stages: RuntimeCardItem[] = []
+  const activities: RuntimeCardItem[] = []
+  const delegated: RuntimeCardItem[] = []
+  const outcomes: string[] = []
+  const upsert = (target: RuntimeCardItem[], item: RuntimeCardItem) => {
+    const index = target.findIndex((existing) => existing.id === item.id)
+    if (index < 0) target.push(item)
+    else target[index] = { ...target[index], ...item }
+  }
+  for (const item of items.value) {
+    const category = eventCategory(item.step)
+    const detail = item.details[0] || ''
+    const status = normalizeRuntimeStatus(item.step.status) || (item.step.error
+      ? 'failed'
+      : /start|running|progress|plan/i.test(category) ? 'in_progress' : 'completed')
+    const payload = item.step.payload || {}
+    const stepParentId = 'parent_id' in item.step
+      ? item.step.parent_id
+      : ('parentId' in item.step ? item.step.parentId : undefined)
+    const isEvent = (name: string) => category === name || category.endsWith(`.${name}`)
+    const planItems = payload.steps || payload.items || payload.tasks
+    if (isEvent('plan.updated') && Array.isArray(planItems)) {
+      for (const [index, raw] of planItems.entries()) {
+        if (!raw || typeof raw !== 'object') continue
+        const step = raw as Record<string, unknown>
+        const title = String(step.title || '').trim()
+        if (!title) continue
+        upsert(plan, {
+          id: payloadId(step, `plan-${index + 1}`),
+          parentId: payloadParentId(step),
+          title,
+          detail: String(step.summary || step.description || ''),
+          status: normalizeRuntimeStatus(step.status) || 'pending',
+        })
+      }
+    } else if (isEvent('stage.updated') || isEvent('stage.started') || isEvent('stage.completed')) {
+      const title = String(payload.title || payload.name || item.title).trim()
+      if (title) upsert(stages, {
+        id: payloadId(payload, title),
+        parentId: payloadParentId(payload),
+        title,
+        detail: String(payload.summary || payload.message || payload.description || ''),
+        status: normalizeRuntimeStatus(payload.status) || status,
+      })
+    } else if (isEvent('activity.recorded') || isEvent('activity.started') || isEvent('activity.completed')) {
+      const title = String(payload.kind || payload.title || payload.name || item.title).trim()
+      if (title) upsert(activities, {
+        id: payloadId(payload, `${title}-${item.time || items.value.indexOf(item)}`),
+        parentId: payloadParentId(payload),
+        title,
+        detail: String(payload.summary || payload.message || payload.description || detail),
+        status: normalizeRuntimeStatus(payload.status) || status,
+      })
+    } else if (item.step.plan || /plan|workflow|task/i.test(category)) {
+      upsert(plan, {
+        id: `${item.title}-${item.time || items.value.indexOf(item)}`,
+        parentId: stepParentId || payloadParentId(payload),
+        title: item.title,
+        detail,
+        status,
+      })
+    }
+    const assistantName = 'assistant_name' in item.step
+      ? item.step.assistant_name
+      : item.step.assistantName
+    const delegatedTask = 'delegated_task' in item.step
+      ? item.step.delegated_task
+      : item.step.delegatedTask || String(payload.task || payload.description || '')
+    if (assistantName || delegatedTask) {
+      upsert(delegated, {
+        id: String(item.step.id || payload.id || `${assistantName}-${delegatedTask}`),
+        parentId: stepParentId || payloadParentId(payload),
+        title: assistantName || t('insight.copilot.agentActivitiesLive'),
+        detail: delegatedTask || detail,
+        status,
+      })
+    }
+    if (item.step.error || item.step.outcome || payload.outcome || /outcome|answer|complete|failed/i.test(category)) {
+      const outcome = item.step.error || item.step.outcome || String(payload.outcome || '') || detail || item.title
+      if (outcome && !outcomes.includes(outcome)) outcomes.push(outcome)
+    }
+  }
+  return {
+    plan,
+    stages,
+    activities,
+    delegated,
+    outcomes,
+    rows: {
+      plan: runtimeRows(plan),
+      stages: runtimeRows(stages),
+      activities: runtimeRows(activities),
+      delegated: runtimeRows(delegated),
+    },
+    visible: Boolean(plan.length || stages.length || activities.length || delegated.length || outcomes.length),
+  }
+})
+
+function normalizeRuntimeStatus(value: unknown): RuntimeStatus | null {
+  const status = String(value || '').toLowerCase().replace(/[-\s]+/g, '_')
+  if (['pending', 'queued', 'waiting'].includes(status)) return 'pending'
+  if (['in_progress', 'inprogress', 'running', 'started', 'active'].includes(status)) return 'in_progress'
+  if (['completed', 'complete', 'success', 'succeeded', 'done'].includes(status)) return 'completed'
+  if (['failed', 'failure', 'error'].includes(status)) return 'failed'
+  if (['skipped', 'cancelled', 'canceled'].includes(status)) return 'skipped'
+  return null
+}
+
+function runtimeStatusGlyph(status: RuntimeStatus): string {
+  if (status === 'failed') return '!'
+  if (status === 'in_progress') return '…'
+  if (status === 'pending') return '·'
+  if (status === 'skipped') return '–'
+  return '✓'
+}
 </script>
 
 <template>
   <div class="copilot-timeline">
+    <section
+      v-if="runtimeCard.visible"
+      class="copilot-runtime-card"
+      :aria-label="t('insight.copilot.runtimeCard')"
+    >
+      <div class="copilot-runtime-card__header">
+        <span class="copilot-runtime-card__title">{{ t('insight.copilot.runtimeCard') }}</span>
+        <span class="copilot-runtime-card__hint">{{ t('insight.copilot.runtimeCardHint') }}</span>
+      </div>
+      <div
+        v-if="runtimeCard.plan.length"
+        class="copilot-runtime-card__section"
+      >
+        <div class="copilot-runtime-card__section-title">
+          {{ t('insight.copilot.runtimePlan') }}
+        </div>
+        <div
+          v-for="item in runtimeCard.rows.plan"
+          :key="`plan-${item.id}`"
+          class="copilot-runtime-card__row"
+          :style="{ '--runtime-depth': item.depth }"
+        >
+          <span
+            class="copilot-runtime-card__status"
+            :class="`is-${item.status}`"
+            aria-hidden="true"
+          >{{ runtimeStatusGlyph(item.status) }}</span>
+          <span class="copilot-runtime-card__content"><strong>{{ item.title }}</strong><small v-if="item.detail">{{ item.detail }}</small></span>
+        </div>
+      </div>
+      <div
+        v-if="runtimeCard.stages.length"
+        class="copilot-runtime-card__section"
+      >
+        <div class="copilot-runtime-card__section-title">
+          {{ t('insight.copilot.runtimeStages') }}
+        </div>
+        <div
+          v-for="item in runtimeCard.rows.stages"
+          :key="`stage-${item.id}`"
+          class="copilot-runtime-card__row"
+          :style="{ '--runtime-depth': item.depth }"
+        >
+          <span
+            class="copilot-runtime-card__status"
+            :class="`is-${item.status}`"
+            aria-hidden="true"
+          >{{ runtimeStatusGlyph(item.status) }}</span>
+          <span class="copilot-runtime-card__content"><strong>{{ item.title }}</strong><small v-if="item.detail">{{ item.detail }}</small></span>
+        </div>
+      </div>
+      <div
+        v-if="runtimeCard.activities.length"
+        class="copilot-runtime-card__section"
+      >
+        <div class="copilot-runtime-card__section-title">
+          {{ t('insight.copilot.runtimeActivities') }}
+        </div>
+        <div
+          v-for="item in runtimeCard.rows.activities"
+          :key="`activity-${item.id}`"
+          class="copilot-runtime-card__row"
+          :style="{ '--runtime-depth': item.depth }"
+        >
+          <span
+            class="copilot-runtime-card__status"
+            :class="`is-${item.status}`"
+            aria-hidden="true"
+          >{{ runtimeStatusGlyph(item.status) }}</span>
+          <span class="copilot-runtime-card__content"><strong>{{ item.title }}</strong><small v-if="item.detail">{{ item.detail }}</small></span>
+        </div>
+      </div>
+      <div
+        v-if="runtimeCard.delegated.length"
+        class="copilot-runtime-card__section"
+      >
+        <div class="copilot-runtime-card__section-title">
+          {{ t('insight.copilot.runtimeDelegatedTasks') }}
+        </div>
+        <div
+          v-for="item in runtimeCard.rows.delegated"
+          :key="`task-${item.id}`"
+          class="copilot-runtime-card__row"
+          :style="{ '--runtime-depth': item.depth }"
+        >
+          <span
+            class="copilot-runtime-card__status"
+            :class="`is-${item.status}`"
+            aria-hidden="true"
+          >{{ runtimeStatusGlyph(item.status) }}</span>
+          <span class="copilot-runtime-card__content"><strong>{{ item.title }}</strong><small v-if="item.detail">{{ item.detail }}</small></span>
+        </div>
+      </div>
+      <div
+        v-if="runtimeCard.outcomes.length"
+        class="copilot-runtime-card__section copilot-runtime-card__outcome"
+      >
+        <div class="copilot-runtime-card__section-title">
+          {{ t('insight.copilot.runtimeOutcome') }}
+        </div>
+        <p
+          v-for="outcome in runtimeCard.outcomes"
+          :key="outcome"
+        >
+          {{ outcome }}
+        </p>
+      </div>
+    </section>
     <div
       v-for="(item, idx) in items"
       :key="idx"
@@ -157,6 +438,23 @@ const items = computed(() =>
 .copilot-timeline {
   padding: 8px 0;
 }
+
+.copilot-runtime-card { margin-bottom: 12px; overflow: hidden; border: 1px solid var(--el-border-color-lighter); border-radius: 10px; background: var(--el-bg-color); }
+.copilot-runtime-card__header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--el-border-color-lighter); }
+.copilot-runtime-card__title { color: var(--el-text-color-primary); font-size: 13px; font-weight: 600; }
+.copilot-runtime-card__hint { color: var(--el-text-color-secondary); font-size: 11px; }
+.copilot-runtime-card__section { padding: 10px 12px; }
+.copilot-runtime-card__section + .copilot-runtime-card__section { border-top: 1px solid var(--el-border-color-lighter); }
+.copilot-runtime-card__section-title { margin-bottom: 7px; color: var(--el-text-color-secondary); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.copilot-runtime-card__row { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; padding-left: calc(var(--runtime-depth, 0) * 18px); }
+.copilot-runtime-card__status { display: grid; width: 18px; height: 18px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: var(--el-color-success); color: #fff; font-size: 11px; font-weight: 700; }
+.copilot-runtime-card__status.is-pending, .copilot-runtime-card__status.is-skipped { background: var(--el-text-color-placeholder); }
+.copilot-runtime-card__status.is-in_progress { background: var(--el-color-primary); }
+.copilot-runtime-card__status.is-failed { background: var(--el-color-danger); }
+.copilot-runtime-card__content { min-width: 0; display: flex; flex-direction: column; gap: 2px; color: var(--el-text-color-primary); font-size: 12px; }
+.copilot-runtime-card__content small { color: var(--el-text-color-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.copilot-runtime-card__outcome p { margin: 0; color: var(--el-text-color-regular); font-size: 12px; line-height: 1.5; }
+.copilot-runtime-card__outcome p + p { margin-top: 4px; }
 
 .copilot-timeline-item {
   display: flex;
