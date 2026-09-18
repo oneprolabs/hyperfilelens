@@ -1,8 +1,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  Atom,
   Container,
-  Cpu,
   Network,
 } from 'lucide-vue-next'
 import type { MenuItem } from '../../components/ModulePage.vue'
@@ -23,7 +23,7 @@ export function usePlatformOpsSideNav() {
         {
           label: t('platformOps.nav.engineModels'),
           to: '/platform-ops/engine/ai-settings',
-          icon: Cpu,
+          icon: Atom,
         },
       ],
     },

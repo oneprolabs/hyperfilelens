@@ -52,8 +52,9 @@ class License(models.Model):
 
     max_organizations = models.IntegerField(default=1)
     max_users = models.IntegerField(default=50)
-    max_nodes = models.IntegerField(default=20)
-    max_storage_gb = models.IntegerField(default=500)
+    max_source_hosts = models.IntegerField(default=DEFAULT_LIMITS["max_source_hosts"])
+    max_proxies = models.IntegerField(default=DEFAULT_LIMITS["max_proxies"])
+    max_storage_bytes = models.BigIntegerField(default=DEFAULT_LIMITS["max_storage_bytes"])
     max_gateways = models.IntegerField(default=5)
     # Instance count of Public (platform) Gateways — not org-split.
     max_public_gateways = models.IntegerField(
@@ -126,8 +127,9 @@ class License(models.Model):
             **DEFAULT_LIMITS,
             "max_organizations": self.max_organizations,
             "max_users": self.max_users,
-            "max_nodes": self.max_nodes,
-            "max_storage_gb": self.max_storage_gb,
+            "max_source_hosts": self.max_source_hosts,
+            "max_proxies": self.max_proxies,
+            "max_storage_bytes": self.max_storage_bytes,
             "max_gateways": self.max_gateways,
             "max_public_gateways": self.max_public_gateways,
             "max_public_gateway_capacity_bytes": self.max_public_gateway_capacity_bytes,
@@ -152,8 +154,9 @@ class License(models.Model):
             changed_by=changed_by,
             max_organizations=self.max_organizations,
             max_users=self.max_users,
-            max_nodes=self.max_nodes,
-            max_storage_gb=self.max_storage_gb,
+            max_source_hosts=self.max_source_hosts,
+            max_proxies=self.max_proxies,
+            max_storage_bytes=self.max_storage_bytes,
             max_gateways=self.max_gateways,
             max_public_gateways=self.max_public_gateways,
             max_public_gateway_capacity_bytes=self.max_public_gateway_capacity_bytes,
@@ -204,8 +207,9 @@ class LicenseHistory(models.Model):
     )
     max_organizations = models.IntegerField()
     max_users = models.IntegerField()
-    max_nodes = models.IntegerField()
-    max_storage_gb = models.IntegerField()
+    max_source_hosts = models.IntegerField(default=DEFAULT_LIMITS["max_source_hosts"])
+    max_proxies = models.IntegerField(default=DEFAULT_LIMITS["max_proxies"])
+    max_storage_bytes = models.BigIntegerField()
     max_gateways = models.IntegerField()
     max_public_gateways = models.IntegerField(default=DEFAULT_LIMITS["max_public_gateways"])
     max_public_gateway_capacity_bytes = models.BigIntegerField(

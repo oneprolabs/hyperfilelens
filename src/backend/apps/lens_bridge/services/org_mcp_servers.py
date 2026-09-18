@@ -114,3 +114,29 @@ def validate_org_mcp_uuids(org: Organization, uuids: list[uuid_lib.UUID]) -> Non
     missing = [str(value) for value in uuids if str(value) not in linked]
     if missing:
         raise ValidationError({"mcp_bindings": "One or more MCP servers do not belong to this organization."})
+
+
+def sync_assistant_mcp_links(
+    *,
+    org: Organization,
+    assistant_uuid: uuid_lib.UUID,
+    created_by: User | None = None,
+) -> None:
+    data = sl_client.request_json("GET", f"/api/lens/assistants/{assistant_uuid}/")
+    if not isinstance(data, dict):
+        return
+    bindings = data.get("mcp_bindings") or []
+    if not isinstance(bindings, list):
+        return
+    for binding in bindings:
+        if not isinstance(binding, dict):
+            continue
+        mcp = binding.get("mcp_server") if isinstance(binding.get("mcp_server"), dict) else {}
+        uuid_str = mcp.get("uuid") or binding.get("mcp_uuid")
+        if not uuid_str:
+            continue
+        register_org_mcp(
+            org=org,
+            sl_mcp_uuid=uuid_lib.UUID(str(uuid_str)),
+            created_by=created_by,
+        )

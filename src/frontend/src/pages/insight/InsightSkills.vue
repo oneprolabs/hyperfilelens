@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensSkillsPath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
@@ -28,18 +28,17 @@ import {
 } from '../../lib/lensApi'
 import {
   isWorkspaceGuideSkill,
-  skillContentPreview,
   skillDescription,
 } from '../../lib/lensSkillHelpers'
 
 import InsightSkillDetailDrawer from './InsightSkillDetailDrawer.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
+import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const isPlatformEngine = computed(() => route.path.startsWith('/platform-ops/engine'))
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -52,7 +51,10 @@ const loading = ref(false)
 const health = ref<LensHealth | null>(null)
 const rows = ref<LensSkill[]>([])
 const search = ref('')
-const { appliedSearch, clearSearch } = useListSearch(search)
+const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
+const { appliedSearch, clearSearch } = useListSearch(search, () => {
+  pagination.page = 1
+})
 const selectedRows = ref<LensSkill[]>([])
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
@@ -75,8 +77,8 @@ const filteredRows = computed(() => {
   return rows.value.filter((row) => {
     const hay = [
       row.name,
+      row.slug,
       skillDescription(row),
-      skillContentPreview(row, 200),
       isWorkspaceGuideSkill(row) ? t('insight.skills.typeWorkspaceGuide') : '',
       row.enabled ? t('insight.skills.statusActive') : t('insight.skills.statusDisabled'),
     ]
@@ -86,6 +88,30 @@ const filteredRows = computed(() => {
     return hay.includes(q)
   })
 })
+
+const visibleRows = computed(() => {
+  const start = (pagination.page - 1) * pagination.pageSize
+  return filteredRows.value.slice(start, start + pagination.pageSize)
+})
+
+watch(
+  filteredRows,
+  (list) => {
+    pagination.count = list.length
+    const maxPage = Math.max(1, Math.ceil(list.length / pagination.pageSize) || 1)
+    if (pagination.page > maxPage) pagination.page = maxPage
+  },
+  { immediate: true },
+)
+
+function onPaginationPageChange() {
+  layoutTable()
+}
+
+function onPaginationSizeChange() {
+  pagination.page = 1
+  layoutTable()
+}
 
 const batchDisabled = computed(() => selectedRows.value.length === 0)
 const singleSelected = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0]! : null))
@@ -136,37 +162,8 @@ async function setEnabled(row: LensSkill, enabled: boolean) {
     ElMessage.success(t('insight.skills.saveSuccess'))
     await load()
   } catch (err) {
-    ElMessage.error(apiErrorMessage(err, t('errors.generic.requestFailed')))
+    ElMessage.error(apiErrorMessage(err, t('insight.skills.saveFailed')))
   }
-}
-
-function deleteRow(row: LensSkill) {
-  deleteTarget.value = row
-  deleteOpen.value = true
-}
-
-async function confirmDelete() {
-  const row = deleteTarget.value
-  if (!row) return
-  deleteLoading.value = true
-  try {
-    await deleteLensSkill(row.uuid)
-    ElMessage.success(t('insight.skills.deleteSuccess'))
-    selectedRows.value = []
-    await load()
-    deleteOpen.value = false
-    deleteTarget.value = null
-  } catch (err) {
-    ElMessage.error(apiErrorMessage(err, t('errors.generic.requestFailed')))
-  } finally {
-    deleteLoading.value = false
-  }
-}
-
-async function deleteSelected() {
-  const row = singleSelected.value
-  if (!row) return
-  await deleteRow(row)
 }
 
 function editSelected() {
@@ -185,6 +182,29 @@ async function disableSelected() {
   const row = singleSelected.value
   if (!row) return
   await setEnabled(row, false)
+}
+
+function deleteSelected() {
+  const row = singleSelected.value
+  if (!row) return
+  deleteTarget.value = row
+  deleteOpen.value = true
+}
+
+async function confirmDelete() {
+  if (!deleteTarget.value) return
+  deleteLoading.value = true
+  try {
+    await deleteLensSkill(deleteTarget.value.uuid)
+    ElMessage.success(t('insight.skills.deleteSuccess'))
+    deleteOpen.value = false
+    deleteTarget.value = null
+    await load()
+  } catch (err) {
+    ElMessage.error(apiErrorMessage(err, t('errors.generic.requestFailed')))
+  } finally {
+    deleteLoading.value = false
+  }
 }
 
 onMounted(() => {
@@ -215,7 +235,7 @@ watch(
           @click="openCreate"
         >
           <Plus :size="16" />
-          {{ isPlatformEngine ? t('platformOps.engineActions.addSkill') : t('insight.skills.btnAdd') }}
+          {{ t('platformOps.engineActions.addSkill') }}
         </ElButton>
 
         <ElDropdown
@@ -224,7 +244,7 @@ watch(
           @visible-change="moreActionsOpen = $event"
         >
           <ElButton :disabled="!bridgeReady">
-            {{ isPlatformEngine ? t('platformOps.engineActions.skillActions') : t('insight.skills.btnMoreActions') }}
+            {{ t('platformOps.engineActions.skillActions') }}
             <ChevronDown
               :size="16"
               class="hfl-list-more__chev"
@@ -329,7 +349,7 @@ watch(
           v-table-overflow-title
           v-loading="loading"
           row-key="uuid"
-          :data="filteredRows"
+          :data="visibleRows"
           stripe
           class="hfl-list-table"
           :max-height="tableMaxHeight"
@@ -344,7 +364,7 @@ watch(
           />
           <el-table-column
             :label="t('insight.skills.colName')"
-            min-width="220"
+            min-width="280"
             fixed="left"
             class-name="hfl-table-name-col"
           >
@@ -377,23 +397,6 @@ watch(
             </template>
           </el-table-column>
           <el-table-column
-            :label="t('insight.skills.colContent')"
-            min-width="280"
-          >
-            <template #default="{ row }">
-              <span
-                v-if="skillContentPreview(row)"
-                class="insight-skills-content-preview"
-              >
-                {{ skillContentPreview(row) }}
-              </span>
-              <span
-                v-else
-                class="hfl-empty-mark"
-              >—</span>
-            </template>
-          </el-table-column>
-          <el-table-column
             :label="t('insight.skills.colEnabled')"
             width="110"
           >
@@ -406,11 +409,27 @@ watch(
           </el-table-column>
           <template #empty>
             <el-empty
-              :description="bridgeReady ? t('insight.skills.empty') : t('insight.shared.bridgeNotReady')"
+              :description="bridgeReady ? t('insight.skills.emptyPlatform') : t('insight.shared.bridgeNotReady')"
               :image-size="80"
             />
           </template>
         </el-table>
+      </div>
+
+      <div class="hfl-list-footer">
+        <span
+          v-if="selectedRows.length > 0"
+          class="hfl-list-footer__selected"
+        >
+          {{ t('nodesPage.selectedCount', { n: selectedRows.length }) }}
+        </span>
+        <PlatformOpsPagination
+          v-model:current-page="pagination.page"
+          v-model:page-size="pagination.pageSize"
+          :total="pagination.count"
+          @current-change="onPaginationPageChange"
+          @size-change="onPaginationSizeChange"
+        />
       </div>
     </div>
 
@@ -422,7 +441,7 @@ watch(
     <DangerConfirmDialog
       v-model="deleteOpen"
       :title="t('insight.skills.deleteTitle')"
-      :message="deleteTarget ? t('insight.skills.deleteConfirm', { name: deleteTarget.name }) : ''"
+      :message="deleteTarget ? t('insight.skills.deleteConfirmPlatform', { name: deleteTarget.name }) : ''"
       :items="deleteTarget ? [{ key: deleteTarget.uuid, name: deleteTarget.name }] : []"
       :cancel-text="t('common.cancel')"
       :confirm-text="t('common.delete')"
@@ -464,15 +483,5 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.insight-skills-content-preview {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
-
-.insight-skills-muted {
-  color: rgb(148 163 184);
 }
 </style>

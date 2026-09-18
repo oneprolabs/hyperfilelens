@@ -9,6 +9,10 @@ from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.iam.org_context import require_org
+from apps.iam.resource_access import (
+    assert_resource_access,
+    filter_queryset_by_resource_field,
+)
 from apps.iam.permissions_org import IsOrgOperator, IsOrgReader
 from apps.protection.models import BackupSourceSnapshot
 from apps.protection.services.progress.restore_runtime import (
@@ -100,7 +104,7 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         source_mode = params.get("source_mode") or None
         if source_mode and source_mode not in RestoreRecord.SourceMode.values:
             raise ValidationError({"source_mode": "Unsupported restore configuration."})
-        return filter_restore_records(
+        queryset = filter_restore_records(
             restore_records_queryset(organization_id=org.id),
             organization_id=org.id,
             source_type=params.get("source_type") or None,
@@ -115,12 +119,32 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
             ),
             created_to=_datetime_query_param(params.get("created_to"), "created_to"),
         )
+        return filter_queryset_by_resource_field(
+            self.request,
+            queryset,
+            "backup_config",
+            "backup_config_id",
+        )
 
     def get_object(self):
         org = require_org(self.request)
-        record = get_restore_record(organization_id=org.id, record_id=int(self.kwargs["pk"]))
+        record = get_restore_record(
+            organization_id=org.id,
+            record_id=int(self.kwargs["pk"]),
+        )
         if record is None:
             raise NotFound("restore record not found")
+        if record.backup_config_id:
+            assert_resource_access(
+                self.request,
+                "backup_config",
+                record.backup_config_id,
+                action=(
+                    "resources.manage"
+                    if self.request.method not in SAFE_METHODS
+                    else "resources.view"
+                ),
+            )
         return record
 
     @staticmethod
@@ -203,6 +227,31 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         org = require_org(request)
         serializer = RestoreRecordCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        source_type = data["source_type"]
+        target_type = data["target_type"]
+        assert_resource_access(
+            request,
+            "node" if source_type == RestoreRecord.EndpointType.AGENT else "source_resource",
+            data["source_ref_id"],
+            action="resources.manage",
+        )
+        assert_resource_access(
+            request,
+            "node" if target_type == RestoreRecord.EndpointType.AGENT else "source_resource",
+            data["target_ref_id"],
+            action="resources.manage",
+        )
+        snapshot_config_id = BackupSourceSnapshot.objects.filter(
+            pk=data["source_snapshot_id"],
+        ).values_list("backup_config_id", flat=True).first()
+        if snapshot_config_id:
+            assert_resource_access(
+                request,
+                "backup_config",
+                snapshot_config_id,
+                action="resources.manage",
+            )
         try:
             record = restore_services.create_manual_restore_record(
                 organization_id=org.id,

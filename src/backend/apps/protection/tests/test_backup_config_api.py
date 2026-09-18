@@ -427,7 +427,7 @@ class ProtectionBackupConfigApiTests(TestCase):
             quota_checks,
             [
                 ("max_protected_sources", 1),
-                ("max_storage_gb", 0),
+                ("max_storage_bytes", 0),
             ],
         )
 

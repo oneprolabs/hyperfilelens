@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 
 from apps.iam.org_context import require_org
+from apps.iam.resource_access import assert_resource_access
 from apps.iam.permissions_org import IsOrgOperator, IsOrgReader
 from apps.protection.services.snapshot_browser import (
     SnapshotBrowserError,
@@ -34,7 +35,11 @@ from apps.protection.services.snapshot_download import (
     SnapshotDownloadSizeLimitExceeded,
     validate_snapshot_artifact_file_token,
 )
-from apps.protection.models import SnapshotDownloadArtifact
+from apps.protection.models import (
+    BackupSourceSnapshot,
+    BackupSourceSnapshotDirectory,
+    SnapshotDownloadArtifact,
+)
 from apps.task.api.serializers import TaskSerializer
 
 
@@ -61,11 +66,44 @@ def _cursor_query(value: str | None) -> str:
     return str(offset)
 
 
+def _assert_directory_access(request, directory_id: int, *, action: str) -> None:
+    directory = (
+        BackupSourceSnapshotDirectory.objects.filter(pk=directory_id)
+        .values("organization_id", "source_snapshot_id")
+        .first()
+    )
+    if directory is None:
+        raise NotFound("snapshot directory not found")
+    snapshot = BackupSourceSnapshot.objects.filter(
+        pk=directory["source_snapshot_id"],
+        organization_id=directory["organization_id"],
+    ).values("backup_config_id")
+    backup_config_id = snapshot.values_list("backup_config_id", flat=True).first()
+    if backup_config_id:
+        assert_resource_access(request, "backup_config", backup_config_id, action=action)
+
+
+def _assert_snapshot_access(request, snapshot_id: int, *, action: str) -> None:
+    backup_config_id = BackupSourceSnapshot.objects.filter(
+        pk=snapshot_id,
+    ).values_list("backup_config_id", flat=True).first()
+    if backup_config_id:
+        assert_resource_access(request, "backup_config", backup_config_id, action=action)
+
+
+def _assert_artifact_access(request, artifact_id: int) -> None:
+    artifact = SnapshotDownloadArtifact.objects.filter(pk=artifact_id).first()
+    if artifact is None:
+        raise NotFound("snapshot download artifact not found")
+    _assert_directory_access(request, artifact.source_snapshot_directory_id, action="resources.view")
+
+
 class SnapshotDirectoryBrowseView(APIView):
     permission_classes = [IsAuthenticated, IsOrgReader]
 
     def get(self, request, directory_id: int):
         org = require_org(request)
+        _assert_directory_access(request, int(directory_id), action="resources.view")
         try:
             data = browse_snapshot_directory(
                 organization_id=org.id,
@@ -94,6 +132,7 @@ class SnapshotDirectoryDownloadView(APIView):
 
     def get(self, request, directory_id: int):
         org = require_org(request)
+        _assert_directory_access(request, int(directory_id), action="resources.view")
         try:
             download = download_snapshot_file(
                 organization_id=org.id,
@@ -120,6 +159,7 @@ class SnapshotDirectoryDownloadTaskView(APIView):
 
     def post(self, request, directory_id: int):
         org = require_org(request)
+        _assert_directory_access(request, int(directory_id), action="resources.manage")
         try:
             task = create_snapshot_download_task(
                 organization_id=org.id,
@@ -143,6 +183,7 @@ class SnapshotDirectoryBatchDownloadTaskView(APIView):
 
     def post(self, request, directory_id: int):
         org = require_org(request)
+        _assert_directory_access(request, int(directory_id), action="resources.manage")
         paths = request.data.get("paths")
         if not isinstance(paths, list):
             raise ValidationError({"paths": "Must be a list."})
@@ -169,6 +210,7 @@ class SnapshotGroupDownloadTaskView(APIView):
 
     def post(self, request, snapshot_id: int):
         org = require_org(request)
+        _assert_snapshot_access(request, int(snapshot_id), action="resources.manage")
         groups = request.data.get("groups")
         if not isinstance(groups, list):
             raise ValidationError({"groups": "Must be a list."})
@@ -214,6 +256,7 @@ class SnapshotDownloadArtifactFileView(APIView):
 
     def get(self, request, artifact_id: int):
         org = require_org(request)
+        _assert_artifact_access(request, int(artifact_id))
         token = str(request.query_params.get("token") or "").strip()
         if token:
             try:
@@ -257,6 +300,7 @@ class SnapshotDownloadArtifactDownloadUrlView(APIView):
 
     def get(self, request, artifact_id: int):
         org = require_org(request)
+        _assert_artifact_access(request, int(artifact_id))
         artifact = get_snapshot_download_artifact(
             organization_id=org.id,
             artifact_id=int(artifact_id),

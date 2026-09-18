@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensAssistantsPath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
@@ -21,23 +21,20 @@ import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRou
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import {
   deleteLensAssistant,
-  fetchLensAssistantFormOptions,
   fetchLensHealth,
   listLensAssistants,
   updateLensAssistant,
   type LensAssistant,
-  type LensAssistantFormOptions,
   type LensHealth,
 } from '../../lib/lensApi'
 
 import InsightAssistantDetailDrawer from './InsightAssistantDetailDrawer.vue'
-import HflTypeLabel from '../../components/HflTypeLabel.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
+import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const isPlatformEngine = computed(() => route.path.startsWith('/platform-ops/engine'))
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -50,10 +47,12 @@ const loading = ref(false)
 const health = ref<LensHealth | null>(null)
 const rows = ref<LensAssistant[]>([])
 const search = ref('')
-const { appliedSearch, clearSearch } = useListSearch(search)
+const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
+const { appliedSearch, clearSearch } = useListSearch(search, () => {
+  pagination.page = 1
+})
 const selectedRows = ref<LensAssistant[]>([])
 const moreActionsOpen = ref(false)
-const formOptions = ref<LensAssistantFormOptions | null>(null)
 const detailOpen = ref(false)
 const detailRow = ref<LensAssistant | null>(null)
 const deleteOpen = ref(false)
@@ -68,10 +67,6 @@ const bridgeReady = computed(
   () => health.value?.lens?.configured && health.value?.lens?.authenticated,
 )
 
-const knowledgeSourceById = computed(
-  () => new Map((formOptions.value?.knowledge_sources ?? []).map((row) => [row.id, row])),
-)
-
 const filteredRows = computed(() => {
   const q = appliedSearch.value.trim().toLowerCase()
   if (!q) return rows.value
@@ -79,13 +74,11 @@ const filteredRows = computed(() => {
     const hay = [
       row.name,
       row.slug,
+      organizationLabel(row),
       knowledgeSourceName(row),
       knowledgeSourceMeta(row),
       scenarioLabel(row),
       row.selected_task,
-      row.visibility_scope === 'user'
-        ? t('insight.assistants.visibilityOnlyMe')
-        : t('insight.assistants.visibilityOrganizationShort'),
       row.status,
     ]
       .filter(Boolean)
@@ -94,6 +87,30 @@ const filteredRows = computed(() => {
     return hay.includes(q)
   })
 })
+
+const visibleRows = computed(() => {
+  const start = (pagination.page - 1) * pagination.pageSize
+  return filteredRows.value.slice(start, start + pagination.pageSize)
+})
+
+watch(
+  filteredRows,
+  (list) => {
+    pagination.count = list.length
+    const maxPage = Math.max(1, Math.ceil(list.length / pagination.pageSize) || 1)
+    if (pagination.page > maxPage) pagination.page = maxPage
+  },
+  { immediate: true },
+)
+
+function onPaginationPageChange() {
+  layoutTable()
+}
+
+function onPaginationSizeChange() {
+  pagination.page = 1
+  layoutTable()
+}
 
 const batchDisabled = computed(() => selectedRows.value.length === 0)
 const singleSelected = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0]! : null))
@@ -113,29 +130,17 @@ function knowledgeSourceStatusLabel(status: string) {
   return status
 }
 
-function visibilityLabel(scope: string) {
-  if (scope === 'user') return t('insight.assistants.visibilityOnlyMe')
-  return t('insight.assistants.visibilityOrganizationShort')
+function organizationLabel(row: LensAssistant) {
+  return row.organization_name || row.organization_key || '—'
 }
 
 function knowledgeSourceName(row: LensAssistant) {
-  if (row.knowledge_source_name) return row.knowledge_source_name
-  const ks = row.knowledge_source_id ? knowledgeSourceById.value.get(row.knowledge_source_id) : null
-  return ks?.name || '—'
+  return row.knowledge_source_name || '—'
 }
 
 function knowledgeSourceMeta(row: LensAssistant) {
-  const gateway =
-    row.gateway_name ||
-    (row.knowledge_source_id
-      ? knowledgeSourceById.value.get(row.knowledge_source_id)?.gateway_name
-      : null) ||
-    ''
-  const status = row.knowledge_source_status ||
-    (row.knowledge_source_id
-      ? knowledgeSourceById.value.get(row.knowledge_source_id)?.status
-      : null) ||
-    ''
+  const gateway = row.gateway_name || ''
+  const status = row.knowledge_source_status || ''
   if (!gateway && !status) return ''
   if (gateway && status) {
     return `${gateway} · ${knowledgeSourceStatusLabel(status)}`
@@ -144,15 +149,9 @@ function knowledgeSourceMeta(row: LensAssistant) {
 }
 
 function scenarioLabel(row: LensAssistant) {
-  const taskName = row.selected_task
-  if (!taskName) return '—'
-  const gateway = formOptions.value?.gateways.find((gw) => gw.lensnode_uuid === row.lensnode_uuid)
-  const task = gateway?.tasks.find((item) => item.name === taskName)
-  return task?.title || taskName
-}
-
-async function loadFormOptions() {
-  formOptions.value = await fetchLensAssistantFormOptions()
+  const title = row.selected_task_title?.trim()
+  if (title) return title
+  return row.selected_task || '—'
 }
 
 async function load() {
@@ -160,11 +159,7 @@ async function load() {
   try {
     health.value = await fetchLensHealth()
     if (health.value.lens?.configured && health.value.lens?.authenticated) {
-      const [assistantRows] = await Promise.all([
-        listLensAssistants(),
-        loadFormOptions().catch(() => null),
-      ])
-      rows.value = assistantRows
+      rows.value = await listLensAssistants()
     } else {
       rows.value = []
     }
@@ -280,7 +275,7 @@ watch(
           @click="openCreate"
         >
           <Plus :size="16" />
-          {{ isPlatformEngine ? t('platformOps.engineActions.addAssistant') : t('insight.assistants.btnAdd') }}
+          {{ t('platformOps.engineActions.addAssistant') }}
         </ElButton>
 
         <ElDropdown
@@ -289,7 +284,7 @@ watch(
           @visible-change="moreActionsOpen = $event"
         >
           <ElButton :disabled="!bridgeReady">
-            {{ isPlatformEngine ? t('platformOps.engineActions.assistantActions') : t('insight.assistants.btnMoreActions') }}
+            {{ t('platformOps.engineActions.assistantActions') }}
             <ChevronDown
               :size="16"
               class="hfl-list-more__chev"
@@ -394,7 +389,7 @@ watch(
           v-table-overflow-title
           v-loading="loading"
           row-key="uuid"
-          :data="filteredRows"
+          :data="visibleRows"
           stripe
           class="hfl-list-table"
           :max-height="tableMaxHeight"
@@ -427,6 +422,14 @@ watch(
             </template>
           </el-table-column>
           <el-table-column
+            :label="t('insight.assistants.colOrganization')"
+            min-width="160"
+          >
+            <template #default="{ row }">
+              <span :class="{ 'hfl-empty-mark': organizationLabel(row) === '—' }">{{ organizationLabel(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column
             :label="t('insight.assistants.colKnowledgeSource')"
             min-width="220"
           >
@@ -446,16 +449,6 @@ watch(
             </template>
           </el-table-column>
           <el-table-column
-            :label="t('insight.assistants.colVisibility')"
-            min-width="120"
-          >
-            <template #default="{ row }">
-              <div class="insight-assistants-visibility">
-                <HflTypeLabel :label="visibilityLabel(row.visibility_scope)" />
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column
             :label="t('insight.assistants.colStatus')"
             width="110"
           >
@@ -470,11 +463,31 @@ watch(
           </el-table-column>
           <template #empty>
             <el-empty
-              :description="bridgeReady ? t('insight.assistants.empty') : t('insight.shared.bridgeNotReady')"
+              :description="bridgeReady
+                ? t('insight.assistants.emptyPlatform')
+                : t('insight.shared.bridgeNotReady')"
               :image-size="80"
             />
           </template>
         </el-table>
+      </div>
+
+      <div
+        class="hfl-list-footer"
+      >
+        <span
+          v-if="selectedRows.length > 0"
+          class="hfl-list-footer__selected"
+        >
+          {{ t('nodesPage.selectedCount', { n: selectedRows.length }) }}
+        </span>
+        <PlatformOpsPagination
+          v-model:current-page="pagination.page"
+          v-model:page-size="pagination.pageSize"
+          :total="pagination.count"
+          @current-change="onPaginationPageChange"
+          @size-change="onPaginationSizeChange"
+        />
       </div>
     </div>
 
@@ -486,7 +499,14 @@ watch(
     <DangerConfirmDialog
       v-model="deleteOpen"
       :title="t('insight.assistants.deleteTitle')"
-      :message="deleteTarget ? t('insight.assistants.deleteConfirm', { name: deleteTarget.name }) : ''"
+      :message="deleteTarget
+        ? (deleteTarget.organization_key
+          ? t('insight.assistants.deleteConfirmPlatform', {
+            name: deleteTarget.name,
+            org: organizationLabel(deleteTarget),
+          })
+          : t('insight.assistants.deleteConfirm', { name: deleteTarget.name }))
+        : ''"
       :items="deleteTarget ? [{ key: deleteTarget.uuid, name: deleteTarget.name }] : []"
       :cancel-text="t('common.cancel')"
       :confirm-text="t('common.delete')"

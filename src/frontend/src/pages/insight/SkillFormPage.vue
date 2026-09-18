@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../styles/fullscreen-form-styles'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensSkillsPath } from '../../lib/lensEngineRoutes'
@@ -181,12 +182,21 @@ watch(
         <div class="fullscreen-form-main">
           <div class="fullscreen-form-step-stack">
             <section class="fullscreen-form-card fullscreen-form-section">
+              <h3 class="fullscreen-form-section__title">
+                <span class="fullscreen-form-section__indicator" />
+                {{ t('insight.skills.sectionBasics') }}
+              </h3>
+              <p class="skill-section-desc">
+                {{ t('insight.skills.sectionBasicsDesc') }}
+              </p>
+
               <ElForm
                 label-position="top"
-                class="fullscreen-form-el-form"
+                class="fullscreen-form-el-form fullscreen-form-el-form--strong-label"
               >
                 <ElFormItem
                   data-validation-field="name"
+                  class="fullscreen-form-item--in-card"
                   :error="errors.name"
                   :label="t('insight.skills.fieldName')"
                   required
@@ -201,7 +211,10 @@ watch(
                   </p>
                 </ElFormItem>
 
-                <ElFormItem :label="t('insight.skills.fieldDescription')">
+                <ElFormItem
+                  class="fullscreen-form-item--in-card"
+                  :label="t('insight.skills.fieldDescription')"
+                >
                   <ElInput
                     v-model="description"
                     :placeholder="t('insight.skills.fieldDescriptionPh')"
@@ -212,44 +225,62 @@ watch(
                 </ElFormItem>
 
                 <ElFormItem
-                  data-validation-field="content"
-                  :error="errors.content"
-                  required
+                  class="fullscreen-form-item--in-card fullscreen-form-status-item"
+                  :label="t('insight.skills.fieldEnabled')"
                 >
-                  <template #label>
-                    <span class="skill-content-label">
-                      <span>{{ t('insight.skills.fieldContent') }}</span>
-                      <ElButton
-                        size="small"
-                        :loading="beautifying"
-                        :disabled="beautifying"
-                        @click="handleBeautify"
-                      >
-                        <Sparkles :size="14" />
-                        {{ t('insight.skills.beautify') }}
-                      </ElButton>
+                  <div class="skill-enabled-row">
+                    <ElSwitch v-model="enabled" />
+                    <span class="skill-field-hint skill-field-hint--inline">
+                      {{ t('insight.skills.fieldEnabledHint') }}
                     </span>
-                  </template>
-                  <p class="skill-beautify-hint">
+                  </div>
+                </ElFormItem>
+              </ElForm>
+            </section>
+
+            <section class="fullscreen-form-card fullscreen-form-section">
+              <div class="skill-content-header">
+                <div class="skill-content-header__copy">
+                  <h3 class="fullscreen-form-section__title">
+                    <span class="fullscreen-form-section__indicator" />
+                    {{ t('insight.skills.sectionContent') }}
+                  </h3>
+                  <p class="skill-section-desc skill-section-desc--tight">
                     {{ t('insight.skills.beautifyHint') }}
                   </p>
+                </div>
+                <ElButton
+                  size="small"
+                  :loading="beautifying"
+                  :disabled="beautifying || loading"
+                  @click="handleBeautify"
+                >
+                  <Sparkles :size="14" />
+                  {{ t('insight.skills.beautify') }}
+                </ElButton>
+              </div>
+
+              <ElForm
+                label-position="top"
+                class="fullscreen-form-el-form fullscreen-form-el-form--strong-label"
+              >
+                <ElFormItem
+                  data-validation-field="content"
+                  class="fullscreen-form-item--in-card"
+                  :error="errors.content"
+                  :label="t('insight.skills.fieldContent')"
+                  required
+                >
                   <ElInput
                     v-model="content"
                     type="textarea"
-                    :rows="11"
+                    :rows="12"
                     :placeholder="t('insight.skills.fieldContentPh')"
                     class="skill-content-textarea"
                     @input="clearFieldError('content')"
                   />
                   <p class="skill-field-hint">
                     {{ t('insight.skills.fieldContentHint') }}
-                  </p>
-                </ElFormItem>
-
-                <ElFormItem :label="t('insight.skills.fieldEnabled')">
-                  <ElSwitch v-model="enabled" />
-                  <p class="skill-field-hint">
-                    {{ t('insight.skills.fieldEnabledHint') }}
                   </p>
                 </ElFormItem>
               </ElForm>
@@ -259,7 +290,10 @@ watch(
       </div>
 
       <footer class="fullscreen-form-footer">
-        <ElButton @click="handleBack">
+        <ElButton
+          :disabled="saving"
+          @click="handleBack"
+        >
           {{ t('common.cancel') }}
         </ElButton>
         <ElButton
@@ -276,11 +310,23 @@ watch(
 </template>
 
 <style scoped>
-.skill-form-fullscreen :deep(.el-form-item) {
-  margin-bottom: 14px;
+.skill-form-fullscreen .fullscreen-form-page {
+  min-height: calc(var(--app-viewport-height) - var(--app-header-height));
 }
 
-.skill-form-fullscreen :deep(.el-form-item:last-child) {
+.skill-form-fullscreen .fullscreen-form-card,
+.skill-form-fullscreen .fullscreen-form-step-stack {
+  overflow: visible;
+}
+
+.skill-section-desc {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+
+.skill-section-desc--tight {
   margin-bottom: 0;
 }
 
@@ -291,40 +337,48 @@ watch(
   color: var(--color-text-secondary);
 }
 
-.skill-content-label {
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  padding-right: 2px;
+.skill-field-hint--inline {
+  margin: 0;
 }
 
-.fullscreen-form-section :deep(.el-form-item__label) {
-  color: var(--color-text-title);
-  font-weight: 600;
-}
-
-.fullscreen-form-section :deep(.el-form-item:has(.skill-content-label) .el-form-item__label) {
+.skill-enabled-row {
   display: flex;
-  width: 100%;
-  padding-right: 0;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
-.skill-beautify-hint {
-  margin: 0 0 6px;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--color-text-tertiary);
+.skill-content-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.skill-content-header__copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.skill-content-header .fullscreen-form-section__title {
+  margin-bottom: 6px;
 }
 
 .skill-content-textarea :deep(textarea) {
-  min-height: 210px;
-  max-height: 280px;
+  min-height: 240px;
+  max-height: 420px;
   resize: vertical;
   overflow-y: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .skill-content-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 </style>

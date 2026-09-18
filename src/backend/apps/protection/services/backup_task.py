@@ -887,7 +887,7 @@ def start_backup_tasks(
                         assert_repository_quota_available(locked_repository)
                         enforce_license_quota(
                             organization,
-                            "max_storage_gb",
+                            "max_storage_bytes",
                             additional=0,
                         )
                     ensure_direct_nas_repository_for_backup(
@@ -1019,7 +1019,7 @@ def start_backup_tasks(
                         # mistaken for new consumption after a quota downgrade.
                         enforce_license_quota(
                             organization,
-                            "max_storage_gb",
+                            "max_storage_bytes",
                             additional=0,
                         )
                         locked_repository = Repository.objects.select_for_update().get(

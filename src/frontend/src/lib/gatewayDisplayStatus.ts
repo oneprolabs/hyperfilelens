@@ -24,16 +24,8 @@ const AGENT_READY_KEYS = new Set([
   'protection.sourceResources.nodeStatusOnline',
 ])
 
-export function resolveGatewayDisplayStatus(
-  node: GatewayStatusNode,
-  aiPhase: GatewayAiPhase,
-  resolveDisplayStatus: (node: ApiNode) => GatewayDisplayStatus,
-): GatewayDisplayStatus {
-  const agentDisplay = resolveDisplayStatus(node)
-  if (node.managed_by_hfl === false || !AGENT_READY_KEYS.has(agentDisplay.labelKey)) {
-    return agentDisplay
-  }
-
+/** List/detail status for the AI Engine column (LensNode sidecar), independent of Agent lifecycle. */
+export function resolveAiEngineListStatus(aiPhase: GatewayAiPhase): GatewayDisplayStatus {
   switch (aiPhase) {
     case 'online':
       return { labelKey: 'insight.dataGateway.gatewayPhase.online', tagType: 'success' }
@@ -46,12 +38,44 @@ export function resolveGatewayDisplayStatus(
         spinning: true,
       }
     case 'agent_offline':
-      return { labelKey: 'protection.sourceResources.nodeStatusOffline', tagType: 'danger' }
+      // Agent is down — do not claim the AI Engine itself failed; Connectivity covers Agent reachability.
+      return { labelKey: 'insight.dataGateway.gatewayPhase.unavailable', tagType: 'info' }
     case 'offline':
       return { labelKey: 'insight.dataGateway.gatewayPhase.degraded', tagType: 'danger' }
     case 'error':
       return { labelKey: 'insight.dataGateway.gatewayPhase.error', tagType: 'danger' }
     default:
-      return agentDisplay
+      return { labelKey: 'insight.dataGateway.gatewayPhase.setup_incomplete', tagType: 'info' }
   }
+}
+
+/** Host connectivity for gateway list rows (handles SL-only rows that omit availability). */
+export function isGatewayConnectivityOnline(row: {
+  availability?: string | null
+  routable?: boolean | null
+  sl_status?: string | null
+  lensnode_status?: string | null
+  sl_runtime_status?: string | null
+}): boolean {
+  if (row.availability === 'online') return true
+  if (row.availability === 'offline') return false
+  if (row.routable === true) return true
+  const slStatus = row.sl_runtime_status || row.sl_status || row.lensnode_status
+  return slStatus === 'online'
+}
+
+export function resolveGatewayDisplayStatus(
+  node: GatewayStatusNode,
+  aiPhase: GatewayAiPhase,
+  resolveDisplayStatus: (node: ApiNode) => GatewayDisplayStatus,
+): GatewayDisplayStatus {
+  const agentDisplay = resolveDisplayStatus(node)
+  if (node.managed_by_hfl === false || !AGENT_READY_KEYS.has(agentDisplay.labelKey)) {
+    return agentDisplay
+  }
+
+  if (aiPhase === 'agent_offline') {
+    return { labelKey: 'protection.sourceResources.nodeStatusOffline', tagType: 'danger' }
+  }
+  return resolveAiEngineListStatus(aiPhase)
 }

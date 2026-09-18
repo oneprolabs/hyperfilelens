@@ -113,6 +113,8 @@ export type RecoverySummary = {
 export type DashboardOverview = {
   orgName: string
   licenseValid: boolean
+  /** Whether the quota source responded; false is shown as an inline card error. */
+  quotaAvailable: boolean
   licenseKey?: string
   licenseExpiresLabel?: string
   quotaRows: QuotaUsageRow[]
@@ -491,6 +493,8 @@ export async function loadDashboardOverview(
     by_task_type: {},
   }
 
+  let quotaAvailable = true
+
   const [
     license,
     taskStats,
@@ -511,13 +515,16 @@ export async function loadDashboardOverview(
     restoreTasksPage,
     eventsPage,
   ] = await Promise.all([
-    fetchCurrentLicense().catch(() => ({
-      is_valid: false,
-      organization_name: '',
-      license: undefined,
-      limits: {},
-      usage: {},
-    })),
+    fetchCurrentLicense().catch(() => {
+      quotaAvailable = false
+      return {
+        is_valid: false,
+        organization_name: '',
+        license: undefined,
+        limits: {},
+        usage: {},
+      }
+    }),
     taskStatistics().catch(() => emptyTaskStatistics),
     taskStatistics({
       task_type: 'restore',
@@ -629,13 +636,16 @@ export async function loadDashboardOverview(
   return {
     orgName,
     licenseValid: Boolean(license.is_valid),
+    quotaAvailable,
     licenseKey: license.instance_shared ? undefined : license.license?.license_key,
     licenseExpiresLabel,
-    quotaRows: buildQuotaRows(
-      license.usage || {},
-      license.limits || {},
-      license.instance_shared ? undefined : (lic as Record<string, unknown> | undefined),
-    ),
+    quotaRows: quotaAvailable
+      ? buildQuotaRows(
+        license.usage || {},
+        license.limits || {},
+        license.instance_shared ? undefined : (lic as Record<string, unknown> | undefined),
+      )
+      : [],
     taskStats: {
       total: taskStats.total,
       running: taskStats.running,

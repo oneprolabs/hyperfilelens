@@ -15,6 +15,7 @@ from apps.instance_settings.api.views.settings import (
     PlatformOpsSettingsEnvironmentView,
     PlatformOpsSettingsExternalAccessView,
     PlatformOpsSettingsIdentityView,
+    PlatformOpsSettingsIntegrationsView,
 )
 
 urlpatterns = [
@@ -44,6 +45,11 @@ urlpatterns = [
         "environment",
         PlatformOpsSettingsEnvironmentView.as_view(),
         name="instance-settings-environment",
+    ),
+    path(
+        "integrations",
+        PlatformOpsSettingsIntegrationsView.as_view(),
+        name="instance-settings-integrations",
     ),
     path(
         "defaults",

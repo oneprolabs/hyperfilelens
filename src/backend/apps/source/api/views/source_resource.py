@@ -9,6 +9,7 @@ from rest_framework.response import Response
 
 from apps.iam.org_context import require_org
 from apps.iam.permissions_org import IsOrgOperator, IsOrgStaffReader
+from apps.iam.resource_access import assert_resource_access, filter_resource_queryset
 from apps.source.api.pagination import SourcePagination
 from apps.source.api.serializers import (
     SourceResourceListSerializer,
@@ -59,7 +60,7 @@ class SourceResourceViewSet(viewsets.ModelViewSet):
         params = self.request.query_params
         node_raw = (params.get("bound_node") or params.get("bound_node_id") or "").strip()
         node_id = int(node_raw) if node_raw.isdigit() else None
-        return source_resources_queryset(
+        queryset = source_resources_queryset(
             organization_id=org.id,
             resource_type=(params.get("resource_type") or "").strip() or None,
             status=(params.get("status") or "").strip() or None,
@@ -67,6 +68,12 @@ class SourceResourceViewSet(viewsets.ModelViewSet):
             bound_node_id=node_id,
             search=(params.get("search") or "").strip() or None,
             search_field=(params.get("search_field") or "").strip() or None,
+        )
+        return filter_resource_queryset(
+            self.request,
+            queryset,
+            "source_resource",
+            action="resources.view",
         )
 
     def get_object(self):
@@ -76,6 +83,16 @@ class SourceResourceViewSet(viewsets.ModelViewSet):
             from rest_framework.exceptions import NotFound
 
             raise NotFound()
+        assert_resource_access(
+            self.request,
+            "source_resource",
+            obj.id,
+            action=(
+                "resources.view"
+                if self.request.method in ("GET", "HEAD", "OPTIONS")
+                else "resources.manage"
+            ),
+        )
         return obj
 
     def create(self, request, *args, **kwargs):

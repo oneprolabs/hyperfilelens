@@ -66,6 +66,7 @@ class Membership(models.Model):
     class Role(models.TextChoices):
         OWNER = "owner", "Owner"
         ADMIN = "admin", "Admin"
+        MANAGER = "manager", "Manager"
         OPERATOR = "operator", "Operator"
         AUDITOR = "auditor", "Auditor"
 

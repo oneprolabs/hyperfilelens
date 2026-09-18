@@ -26,6 +26,8 @@ from apps.protection.services.source_identity import resolve_source_display_name
 logger = logging.getLogger(__name__)
 
 TERMINAL_RUN_STATUSES = frozenset({"done", "failed", "cancelled"})
+SUCCESS_RUN_STATUSES = frozenset({"done", "success", "completed"})
+SOURCE_METERING_EMPTY = "SOURCE_METERING_EMPTY"
 RECONCILIATION_INTERVAL_SECONDS = 30
 RECONCILIATION_CLAIM_TTL_SECONDS = 300
 RECONCILIATION_MAX_BACKOFF_SECONDS = 900
@@ -199,6 +201,77 @@ def _publish_ai_token_usage(row: LensUsageLedger) -> None:
     )
 
 
+_USAGE_FIELD_KEYS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "cached_tokens",
+    "reasoning_tokens",
+    "total_tokens",
+    "cost",
+    "total_cost",
+)
+
+
+def _payload_has_usage_fields(payload: dict[str, Any]) -> bool:
+    """Return whether a step/event payload carries metering fields.
+
+    Tenant run timelines often emit bare ``llm.response`` activity markers
+    without tokens. Those must not block the admin/summary fallbacks.
+    """
+
+    return any(key in payload for key in _USAGE_FIELD_KEYS)
+
+
+def _model_call_count(run: dict[str, Any], *, fallback: int = 0) -> int:
+    raw_calls = run.get("model_calls")
+    if isinstance(raw_calls, list):
+        return len(raw_calls)
+    if raw_calls is not None:
+        try:
+            return int(raw_calls)
+        except (TypeError, ValueError):
+            pass
+    try:
+        return int(run.get("llm_calls") or fallback or 0)
+    except (TypeError, ValueError):
+        return int(fallback or 0)
+
+
+def _apply_run_level_totals(
+    totals: dict[str, Any],
+    run: dict[str, Any],
+    *,
+    default_cost: Decimal | None,
+) -> None:
+    prompt = int(run.get("prompt_tokens") or totals["prompt_tokens"] or 0)
+    completion = int(run.get("completion_tokens") or totals["completion_tokens"] or 0)
+    totals["prompt_tokens"] = prompt
+    totals["completion_tokens"] = completion
+    totals["cached_tokens"] = int(
+        run.get("cached_tokens")
+        if "cached_tokens" in run
+        else totals["cached_tokens"] or 0
+    )
+    totals["reasoning_tokens"] = int(
+        run.get("reasoning_tokens")
+        if "reasoning_tokens" in run
+        else totals["reasoning_tokens"] or 0
+    )
+    totals["total_tokens"] = int(
+        run.get("total_tokens")
+        if "total_tokens" in run
+        else totals["total_tokens"] or (prompt + completion)
+    )
+    if "total_cost" in run:
+        totals["estimated_cost"] = _decimal(run.get("total_cost"))
+    else:
+        totals["estimated_cost"] = default_cost
+    totals["model_calls"] = _model_call_count(
+        run, fallback=int(totals["model_calls"] or 0)
+    )
+    totals["available"] = True
+
+
 def _run_call_details(
     run: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -216,7 +289,7 @@ def _run_call_details(
     total_cost = Decimal("0")
     has_missing_cost = False
 
-    def add_call(payload: dict[str, Any]) -> None:
+    def add_call(payload: dict[str, Any], *, accumulate_totals: bool = True) -> None:
         nonlocal total_cost, has_missing_cost
         prompt = int(payload.get("prompt_tokens") or 0)
         completion = int(payload.get("completion_tokens") or 0)
@@ -239,21 +312,42 @@ def _run_call_details(
                 "estimated_cost": float(cost) if cost is not None else None,
             }
         )
-        totals["prompt_tokens"] += prompt
-        totals["completion_tokens"] += completion
-        totals["cached_tokens"] += cached
-        totals["reasoning_tokens"] += reasoning
-        totals["total_tokens"] += total
-        totals["model_calls"] += 1
-        totals["available"] = True
+        if accumulate_totals:
+            totals["prompt_tokens"] += prompt
+            totals["completion_tokens"] += completion
+            totals["cached_tokens"] += cached
+            totals["reasoning_tokens"] += reasoning
+            totals["total_tokens"] += total
+            totals["model_calls"] += 1
+            totals["available"] = True
+
+    # Prefer SourceLens admin run metering when present.
+    raw_model_calls = run.get("model_calls")
+    if (
+        isinstance(raw_model_calls, list)
+        and raw_model_calls
+        and all(isinstance(item, dict) for item in raw_model_calls)
+    ):
+        for payload in raw_model_calls:
+            add_call(payload, accumulate_totals=False)
+        default_cost = total_cost if calls and not has_missing_cost else None
+        _apply_run_level_totals(totals, run, default_cost=default_cost)
+        totals["model_calls"] = len(raw_model_calls)
+        return calls, totals
 
     for step in run.get("steps") or []:
         detail = step.get("detail") if isinstance(step.get("detail"), dict) else step
+        if not isinstance(detail, dict):
+            continue
         for event in detail.get("events") or []:
-            if event.get("agent_event") == "llm.response":
+            if not isinstance(event, dict):
+                continue
+            if event.get("agent_event") == "llm.response" and _payload_has_usage_fields(
+                event
+            ):
                 add_call(event)
         usage = detail.get("usage")
-        if isinstance(usage, dict) and usage:
+        if isinstance(usage, dict) and usage and _payload_has_usage_fields(usage):
             add_call(usage)
     if calls:
         totals["estimated_cost"] = total_cost if not has_missing_cost else None
@@ -269,22 +363,7 @@ def _run_call_details(
             "total_cost",
         }
         if summary_keys.intersection(run):
-            prompt = int(run.get("prompt_tokens") or 0)
-            completion = int(run.get("completion_tokens") or 0)
-            totals.update(
-                {
-                    "prompt_tokens": prompt,
-                    "completion_tokens": completion,
-                    "cached_tokens": int(run.get("cached_tokens") or 0),
-                    "reasoning_tokens": int(run.get("reasoning_tokens") or 0),
-                    "total_tokens": int(run.get("total_tokens") or prompt + completion),
-                    "model_calls": int(
-                        run.get("llm_calls") or run.get("model_calls") or 0
-                    ),
-                    "estimated_cost": _decimal(run.get("total_cost")),
-                    "available": True,
-                }
-            )
+            _apply_run_level_totals(totals, run, default_cost=_decimal(run.get("total_cost")))
     return calls, totals
 
 
@@ -510,6 +589,12 @@ def claim_due_usage_ledgers(
             .filter(
                 Q(source_synced_at__isnull=True)
                 | ~Q(run_status__in=TERMINAL_RUN_STATUSES)
+                | (
+                    Q(run_status__in=SUCCESS_RUN_STATUSES)
+                    & Q(total_tokens=0)
+                    & Q(model_calls__gt=0)
+                    & Q(reconciliation_error="")
+                )
             )
             .filter(
                 Q(reconciliation_next_at__isnull=True)
@@ -658,10 +743,10 @@ def reconcile_claimed_usage_ledger(
         )
         return {"status": "failed", "ledger_id": ledger_id, "error": message}
     try:
+        # Admin run detail exposes token totals; tenant run detail often does not.
         run = sl_client.request_json(
             "GET",
-            f"/api/lens/runs/{row.sl_run_uuid}/",
-            hfl_user=row.hfl_user,
+            f"/api/lens/admin/runs/{row.sl_run_uuid}/",
             timeout=30,
         )
         if not isinstance(run, dict):
@@ -728,6 +813,19 @@ def reconcile_claimed_usage_ledger(
     if row is None:
         return {"status": "skipped", "ledger_id": ledger_id}
     row = capture_ledger_usage(row, run)
+    if (
+        row.run_status in SUCCESS_RUN_STATUSES
+        and int(row.total_tokens or 0) == 0
+        and int(row.model_calls or 0) > 0
+    ):
+        # Admin metering was reachable but still empty — stop reclaim loops.
+        LensUsageLedger.objects.filter(pk=row.pk).update(
+            reconciliation_error=SOURCE_METERING_EMPTY,
+        )
+        row.reconciliation_error = SOURCE_METERING_EMPTY
+    elif row.reconciliation_error == SOURCE_METERING_EMPTY and int(row.total_tokens or 0) > 0:
+        LensUsageLedger.objects.filter(pk=row.pk).update(reconciliation_error="")
+        row.reconciliation_error = ""
     if row.run_status in TERMINAL_RUN_STATUSES:
         LensSessionLink.objects.filter(
             id=row.session_link_id,

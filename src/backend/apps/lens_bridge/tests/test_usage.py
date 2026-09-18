@@ -146,6 +146,93 @@ class UsageCaptureTests(TestCase):
         self.assertEqual(row.model_calls, 2)
         self.assertEqual(row.estimated_cost, Decimal("0.004"))
 
+    def test_captures_admin_model_calls_list_and_run_level_totals(self):
+        run_uuid = uuid.uuid4()
+        usage.register_usage_run(
+            self.session,
+            run_uuid=run_uuid,
+            question="Admin metered run",
+            status="running",
+        )
+
+        row = usage.capture_run_usage(
+            self.session,
+            {
+                "uuid": str(run_uuid),
+                "status": "done",
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "cached_tokens": 40,
+                "reasoning_tokens": 5,
+                "total_tokens": 125,
+                "llm_calls": 2,
+                "total_cost": None,
+                "model_calls": [
+                    {
+                        "prompt_tokens": 80,
+                        "completion_tokens": 10,
+                        "total_tokens": 90,
+                        "cached_tokens": 40,
+                        "reasoning_tokens": 2,
+                        "cost": None,
+                    },
+                    {
+                        "prompt_tokens": 20,
+                        "completion_tokens": 10,
+                        "total_tokens": 35,
+                        "cached_tokens": 0,
+                        "reasoning_tokens": 3,
+                        "cost": None,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(row.total_tokens, 125)
+        self.assertEqual(row.prompt_tokens, 100)
+        self.assertEqual(row.cached_tokens, 40)
+        self.assertEqual(row.model_calls, 2)
+        self.assertIsNone(row.estimated_cost)
+        self.assertEqual(len(row.call_details_json), 2)
+
+    def test_bare_llm_response_markers_do_not_block_run_level_totals(self):
+        run_uuid = uuid.uuid4()
+        usage.register_usage_run(
+            self.session,
+            run_uuid=run_uuid,
+            question="Tenant timeline without metering",
+            status="running",
+        )
+
+        row = usage.capture_run_usage(
+            self.session,
+            {
+                "uuid": str(run_uuid),
+                "status": "done",
+                "prompt_tokens": 50,
+                "completion_tokens": 10,
+                "total_tokens": 60,
+                "llm_calls": 1,
+                "total_cost": "0.002",
+                "steps": [
+                    {
+                        "detail": {
+                            "events": [
+                                {
+                                    "agent_event": "llm.response",
+                                    "activity": "running",
+                                }
+                            ],
+                        }
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(row.total_tokens, 60)
+        self.assertEqual(row.model_calls, 1)
+        self.assertEqual(row.estimated_cost, Decimal("0.002"))
+
     def test_stale_capture_cannot_reduce_lifetime_token_usage(self):
         run_uuid = uuid.uuid4()
         usage.register_usage_run(
@@ -499,8 +586,51 @@ class UsageReconciliationTests(TestCase):
         self.assertIsNone(self.session.active_run_uuid)
         request_json.assert_called_once_with(
             "GET",
-            f"/api/lens/runs/{run_uuid}/",
-            hfl_user=self.user,
+            f"/api/lens/admin/runs/{run_uuid}/",
+            timeout=30,
+        )
+
+    @patch("apps.lens_bridge.services.usage.sl_client.request_json")
+    def test_incomplete_metering_terminal_rows_are_reclaimed(self, request_json):
+        run_uuid = uuid.uuid4()
+        row = usage.register_usage_run(
+            self.session,
+            run_uuid=run_uuid,
+            question="Needs admin metering backfill",
+            status="done",
+        )
+        LensUsageLedger.objects.filter(id=row.id).update(
+            run_status="done",
+            model_calls=2,
+            total_tokens=0,
+            source_synced_at=timezone.now(),
+            reconciliation_next_at=None,
+            reconciliation_error="",
+        )
+        request_json.return_value = {
+            "uuid": str(run_uuid),
+            "status": "done",
+            "prompt_tokens": 80,
+            "completion_tokens": 20,
+            "total_tokens": 100,
+            "llm_calls": 2,
+            "model_calls": [
+                {"prompt_tokens": 50, "completion_tokens": 10, "total_tokens": 60},
+                {"prompt_tokens": 30, "completion_tokens": 10, "total_tokens": 40},
+            ],
+            "total_cost": None,
+        }
+
+        result = usage.reconcile_usage_ledgers(limit=10)
+
+        self.assertEqual(result["reconciled"], 1)
+        row.refresh_from_db()
+        self.assertEqual(row.total_tokens, 100)
+        self.assertEqual(row.model_calls, 2)
+        self.assertEqual(row.reconciliation_error, "")
+        request_json.assert_called_once_with(
+            "GET",
+            f"/api/lens/admin/runs/{run_uuid}/",
             timeout=30,
         )
 

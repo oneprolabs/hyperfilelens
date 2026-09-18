@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../styles/fullscreen-form-styles'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensMcpPath } from '../../lib/lensEngineRoutes'
@@ -165,7 +166,7 @@ watch(
 <template>
   <div
     ref="pageRef"
-    class="fullscreen-form-fullscreen resource-add-fullscreen"
+    class="fullscreen-form-fullscreen resource-add-fullscreen mcp-form-fullscreen"
   >
     <div class="fullscreen-form-page">
       <header class="fullscreen-form-header">
@@ -196,12 +197,21 @@ watch(
         <div class="fullscreen-form-main">
           <div class="fullscreen-form-step-stack">
             <section class="fullscreen-form-card fullscreen-form-section">
+              <h3 class="fullscreen-form-section__title">
+                <span class="fullscreen-form-section__indicator" />
+                {{ t('insight.mcpServers.sectionBasics') }}
+              </h3>
+              <p class="mcp-section-desc">
+                {{ t('insight.mcpServers.sectionBasicsDesc') }}
+              </p>
+
               <ElForm
                 label-position="top"
-                class="fullscreen-form-el-form"
+                class="fullscreen-form-el-form fullscreen-form-el-form--strong-label"
               >
                 <ElFormItem
                   data-validation-field="name"
+                  class="fullscreen-form-item--in-card"
                   :error="errors.name"
                   :label="t('insight.mcpServers.fieldName')"
                   required
@@ -218,6 +228,7 @@ watch(
 
                 <div class="fullscreen-form-grid mcp-connection-grid">
                   <ElFormItem
+                    class="fullscreen-form-item--in-card"
                     :label="t('insight.mcpServers.fieldTransport')"
                     required
                   >
@@ -240,6 +251,7 @@ watch(
                   </ElFormItem>
                   <ElFormItem
                     data-validation-field="endpoint"
+                    class="fullscreen-form-item--in-card"
                     :error="errors.endpoint"
                     :label="t('insight.mcpServers.fieldEndpoint')"
                     required
@@ -255,57 +267,74 @@ watch(
                   </ElFormItem>
                 </div>
 
-                <ElFormItem :label="t('insight.mcpServers.fieldConfig')">
-                  <div class="mcp-config-panel">
-                    <div
-                      v-for="(row, index) in configRows"
-                      :key="index"
-                      class="mcp-config-row"
-                    >
-                      <ElInput
-                        v-model="row.key"
-                        :placeholder="t('insight.mcpServers.fieldConfigKey')"
-                      />
-                      <ElInput
-                        v-model="row.value"
-                        :placeholder="t('insight.mcpServers.fieldConfigValue')"
-                      />
-                      <button
-                        type="button"
-                        class="mcp-config-row__remove"
-                        :aria-label="t('common.delete')"
-                        @click="removeConfigRow(index)"
-                      >
-                        <Trash2 :size="16" />
-                      </button>
-                    </div>
-                    <ElButton
-                      size="small"
-                      @click="addConfigRow"
-                    >
-                      <Plus :size="14" />
-                      {{ t('insight.mcpServers.addConfigRow') }}
-                    </ElButton>
+                <ElFormItem
+                  class="fullscreen-form-item--in-card fullscreen-form-status-item"
+                  :label="t('insight.mcpServers.fieldEnabled')"
+                >
+                  <div class="mcp-enabled-row">
+                    <ElSwitch v-model="enabled" />
+                    <span class="mcp-field-hint mcp-field-hint--inline">
+                      {{ t('insight.mcpServers.fieldEnabledHint') }}
+                    </span>
                   </div>
-                  <p class="mcp-field-hint">
-                    {{ t('insight.mcpServers.fieldConfigHint') }}
-                  </p>
-                </ElFormItem>
-
-                <ElFormItem :label="t('insight.mcpServers.fieldEnabled')">
-                  <ElSwitch v-model="enabled" />
-                  <p class="mcp-field-hint">
-                    {{ t('insight.mcpServers.fieldEnabledHint') }}
-                  </p>
                 </ElFormItem>
               </ElForm>
+            </section>
+
+            <section class="fullscreen-form-card fullscreen-form-section">
+              <h3 class="fullscreen-form-section__title">
+                <span class="fullscreen-form-section__indicator" />
+                {{ t('insight.mcpServers.sectionConfig') }}
+              </h3>
+              <p class="mcp-section-desc">
+                {{ t('insight.mcpServers.sectionConfigDesc') }}
+              </p>
+
+              <div class="mcp-config-panel">
+                <div
+                  v-for="(row, index) in configRows"
+                  :key="index"
+                  class="mcp-config-row"
+                >
+                  <ElInput
+                    v-model="row.key"
+                    :placeholder="t('insight.mcpServers.fieldConfigKey')"
+                  />
+                  <ElInput
+                    v-model="row.value"
+                    :placeholder="t('insight.mcpServers.fieldConfigValue')"
+                  />
+                  <button
+                    type="button"
+                    class="mcp-config-row__remove"
+                    :aria-label="t('common.delete')"
+                    @click="removeConfigRow(index)"
+                  >
+                    <Trash2 :size="16" />
+                  </button>
+                </div>
+                <ElButton
+                  size="small"
+                  class="mcp-config-add"
+                  @click="addConfigRow"
+                >
+                  <Plus :size="14" />
+                  {{ t('insight.mcpServers.addConfigRow') }}
+                </ElButton>
+              </div>
+              <p class="mcp-field-hint">
+                {{ t('insight.mcpServers.fieldConfigHint') }}
+              </p>
             </section>
           </div>
         </div>
       </div>
 
       <footer class="fullscreen-form-footer">
-        <ElButton @click="handleBack">
+        <ElButton
+          :disabled="saving"
+          @click="handleBack"
+        >
           {{ t('common.cancel') }}
         </ElButton>
         <ElButton
@@ -322,9 +351,20 @@ watch(
 </template>
 
 <style scoped>
-.fullscreen-form-section :deep(.el-form-item__label) {
-  color: var(--color-text-title);
-  font-weight: 600;
+.mcp-form-fullscreen .fullscreen-form-page {
+  min-height: calc(var(--app-viewport-height) - var(--app-header-height));
+}
+
+.mcp-form-fullscreen .fullscreen-form-card,
+.mcp-form-fullscreen .fullscreen-form-step-stack {
+  overflow: visible;
+}
+
+.mcp-section-desc {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
 }
 
 .mcp-field-hint {
@@ -334,25 +374,35 @@ watch(
   color: var(--color-text-secondary);
 }
 
-.mcp-connection-grid :deep(.el-form-item) {
-  margin-bottom: 0;
+.mcp-field-hint--inline {
+  margin: 0;
 }
 
-.fullscreen-form-el-form > .el-form-item + .mcp-connection-grid,
-.mcp-connection-grid + .el-form-item {
-  margin-top: 14px;
+.mcp-enabled-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mcp-connection-grid {
+  margin-bottom: 14px;
 }
 
 .mcp-config-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
+  padding: 12px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 12px;
+  background: var(--color-bg-muted, #f8fafc);
 }
 
 .mcp-config-row {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
 }
@@ -365,7 +415,7 @@ watch(
   height: 36px;
   border: 1px solid var(--color-border, #e2e8f0);
   border-radius: 8px;
-  background: transparent;
+  background: #fff;
   color: var(--color-text-secondary);
   cursor: pointer;
 }
@@ -373,5 +423,19 @@ watch(
 .mcp-config-row__remove:hover {
   color: var(--color-danger, #dc2626);
   border-color: var(--color-danger, #dc2626);
+}
+
+.mcp-config-add {
+  align-self: flex-start;
+}
+
+@media (max-width: 720px) {
+  .mcp-config-row {
+    grid-template-columns: 1fr;
+  }
+
+  .mcp-config-row__remove {
+    width: 100%;
+  }
 }
 </style>

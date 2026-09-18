@@ -21,7 +21,6 @@ function mountMenus() {
         settings: {
           nav: {
             organizationHub: 'Organization',
-            members: 'Members',
             subscription: 'Subscription',
           },
         },
@@ -43,13 +42,11 @@ function mountMenus() {
 }
 
 describe('useNodeSideNav', () => {
-  it('exposes organization configuration pages without system settings', () => {
+  it('exposes the Community governance page without enterprise settings', () => {
     expect(mountMenus().value.map((group) => group.label)).toEqual([
       'Governance',
     ])
     expect(mountMenus().value[0]?.children?.map((item) => item.label)).toEqual([
-      'Organization',
-      'Members',
       'Subscription',
     ])
   })

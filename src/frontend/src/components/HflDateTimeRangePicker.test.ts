@@ -96,4 +96,65 @@ describe('HflDateTimeRangePicker accessibility', () => {
     expect(wrapper.emitted('apply')).toBeUndefined()
     wrapper.unmount()
   })
+
+  it('fills the range inputs when the bound value omits seconds', async () => {
+    const wrapper = mount(HflDateTimeRangePicker, {
+      props: {
+        label: '2026-09-17 12:00:00 ~ 2026-09-18 12:00:00',
+        clearText: 'Clear',
+        applyText: 'Apply',
+        start: '2026-09-17T12:00',
+        end: '2026-09-18T12:00',
+        selectedPreset: '24h',
+      },
+      global: { plugins: [ElementPlus] },
+    })
+    await nextTick()
+
+    const inputs = wrapper.findAll('input.el-range-input')
+    expect(inputs.map((input) => (input.element as HTMLInputElement).value)).toEqual([
+      '2026-09-17 12:00:00',
+      '2026-09-18 12:00:00',
+    ])
+    wrapper.unmount()
+  })
+
+  it('rejects custom ranges longer than maxSpanHours', async () => {
+    const ElDatePickerHarness = defineComponent({
+      props: {
+        modelValue: { type: [Array, String], default: '' },
+        shortcuts: { type: Array, default: () => [] },
+        disabledDate: { type: Function, default: undefined },
+      },
+      emits: ['update:modelValue', 'change', 'clear', 'calendar-change'],
+      template: '<button type="button" class="emit-long-range" @click="emitLongRange">pick</button>',
+      methods: {
+        emitLongRange() {
+          const range = ['2026-09-08T00:00:00', '2026-09-19T23:59:59'] as [string, string]
+          this.$emit('update:modelValue', range)
+          this.$emit('change', range)
+        },
+      },
+    })
+
+    const wrapper = mount(HflDateTimeRangePicker, {
+      props: {
+        label: 'Last 1 hour',
+        clearText: 'Clear',
+        applyText: 'Apply',
+        selectedPreset: '1h',
+        presets: [{ value: '1h', label: 'Last 1 hour', hours: 1 }],
+        maxSpanHours: 24,
+      },
+      global: {
+        stubs: { ElDatePicker: ElDatePickerHarness },
+      },
+    })
+
+    await wrapper.get('.emit-long-range').trigger('click')
+    await nextTick()
+
+    expect(wrapper.emitted('apply')).toBeUndefined()
+    expect(wrapper.emitted('invalid-span')).toEqual([[]])
+  })
 })

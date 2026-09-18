@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.iam.org_context import require_org
+from apps.iam.resource_access import assert_resource_access, visible_resource_refs
 from apps.iam.permissions_org import IsOrgOperator, IsOrgReader
 from apps.node.models import Node
 from apps.protection.api.pagination import ProtectionPagination
@@ -136,7 +137,7 @@ class BackupSourceSnapshotViewSet(
         started_from = _datetime_query_param(params.get("started_from"), "started_from")
         started_to = _datetime_query_param(params.get("started_to"), "started_to")
         exclude_statuses = _csv_query_param(params.get("exclude_status"))
-        return filter_backup_source_snapshots(
+        queryset = filter_backup_source_snapshots(
             backup_source_snapshots_queryset(
                 organization_id=org.id,
                 include_deleted=bool(
@@ -164,6 +165,19 @@ class BackupSourceSnapshotViewSet(
             search=params.get("search") or None,
             ordering=params.get("ordering") or None,
         )
+        config_ids = list(queryset.values_list("backup_config_id", flat=True))
+        visible = visible_resource_refs(
+            self.request,
+            [("backup_config", int(config_id)) for config_id in config_ids],
+        )
+        if visible is not None:
+            allowed_config_ids = {
+                resource_id
+                for resource_type, resource_id in visible
+                if resource_type == "backup_config"
+            }
+            queryset = queryset.filter(backup_config_id__in=allowed_config_ids)
+        return queryset
 
     def get_object(self):
         org = require_org(self.request)
@@ -173,6 +187,12 @@ class BackupSourceSnapshotViewSet(
         )
         if snapshot is None:
             raise NotFound("backup source snapshot not found")
+        assert_resource_access(
+            self.request,
+            "backup_config",
+            snapshot.backup_config_id,
+            action=("resources.manage" if self.action == "destroy" else "resources.view"),
+        )
         return snapshot
 
     def list(self, request, *args, **kwargs):

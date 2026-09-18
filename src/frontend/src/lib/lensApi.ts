@@ -207,6 +207,9 @@ export type LensIngestPolicy = {
 export type LensKnowledgeSource = {
   id: number
   name: string
+  organization_id?: number
+  organization_key?: string
+  organization_name?: string
   gateway: number
   gateway_name: string
   backup_source_snapshot_id: number | null
@@ -292,6 +295,7 @@ export type LensAssistant = {
   visibility_scope?: 'user' | 'organization'
   lensnode_uuid?: string | null
   selected_task?: string
+  selected_task_title?: string
   selected_dir?: string
   datasource_bindings?: Array<{
     datasource_uuid?: string
@@ -306,6 +310,9 @@ export type LensAssistant = {
   knowledge_source_name?: string | null
   knowledge_source_status?: string | null
   gateway_name?: string | null
+  organization_id?: number
+  organization_key?: string
+  organization_name?: string
 }
 
 export type LensCopilotAssistant = LensAssistant & {
@@ -673,6 +680,40 @@ export async function listKnowledgeSources(): Promise<LensKnowledgeSource[]> {
   return lensList<LensKnowledgeSource>(raw)
 }
 
+export async function listLensBackupSourceSnapshots(params: {
+  organization_key: string
+  page?: number
+  page_size?: number
+  status?: string
+  ordering?: string
+}): Promise<{ count: number; results: import('./protectionBackupConfigApi').BackupSourceSnapshot[] }> {
+  const qs = new URLSearchParams()
+  qs.set('organization_key', params.organization_key.trim())
+  if (params.page) qs.set('page', String(params.page))
+  if (params.page_size) qs.set('page_size', String(params.page_size))
+  if (params.status) qs.set('status', params.status)
+  if (params.ordering) qs.set('ordering', params.ordering)
+  const raw = await api(lensUrl(`backup-source-snapshots?${qs.toString()}`), {
+    headers: lensHeaders(),
+  })
+  const data = unwrapApiPayload<Record<string, unknown>>(raw)
+  const results = asList<import('./protectionBackupConfigApi').BackupSourceSnapshot>(data)
+  const count = typeof data.count === 'number' ? data.count : results.length
+  return { count, results }
+}
+
+export async function getLensBackupSourceSnapshot(
+  id: number,
+  organizationKey: string,
+): Promise<import('./protectionBackupConfigApi').BackupSourceSnapshot> {
+  const qs = new URLSearchParams()
+  qs.set('organization_key', organizationKey.trim())
+  const raw = await api(lensUrl(`backup-source-snapshots/${id}?${qs.toString()}`), {
+    headers: lensHeaders(),
+  })
+  return lensPayload(raw)
+}
+
 export type KnowledgeSourceScope = {
   source_path: string
   backup_snapshot_directory_id: number
@@ -699,6 +740,7 @@ export async function createKnowledgeSource(body: {
   pinned_snapshot_id?: number | null
   scan_enabled?: boolean
   ingest_policy?: LensIngestPolicy
+  organization_key?: string
 }): Promise<LensKnowledgeSource> {
   const raw = await api(lensUrl('knowledge-sources/'), {
     method: 'POST',
@@ -746,8 +788,13 @@ export async function deleteKnowledgeSource(id: number): Promise<void> {
   })
 }
 
-export async function listLensGateways(): Promise<LensGatewayInsight[]> {
-  const raw = await api(lensUrl('gateways/'), { headers: lensHeaders() })
+export async function listLensGateways(params?: {
+  organization_key?: string
+}): Promise<LensGatewayInsight[]> {
+  const qs = new URLSearchParams()
+  if (params?.organization_key?.trim()) qs.set('organization_key', params.organization_key.trim())
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const raw = await api(lensUrl(`gateways${suffix}`), { headers: lensHeaders() })
   return lensList<LensGatewayInsight>(raw)
 }
 
@@ -841,11 +888,12 @@ export type GatewayDirectoryBrowseResult = {
 
 export async function browseGatewayDirectory(
   gatewayId: number,
-  params?: { path?: string; limit?: number },
+  params?: { path?: string; limit?: number; organization_key?: string },
 ): Promise<GatewayDirectoryBrowseResult> {
   const qs = new URLSearchParams()
   if (params?.path) qs.set('path', params.path)
   if (params?.limit != null) qs.set('limit', String(params.limit))
+  if (params?.organization_key?.trim()) qs.set('organization_key', params.organization_key.trim())
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   const raw = await api(lensUrl(`gateways/${gatewayId}/browse/${suffix}`), { headers: lensHeaders() })
   return lensPayload<GatewayDirectoryBrowseResult>(raw)
@@ -888,8 +936,18 @@ export type LensAssistantFormOptions = {
   mcps: { uuid: string; name: string; transport: string; endpoint: string; enabled: boolean }[]
 }
 
-export async function fetchLensAssistantFormOptions(): Promise<LensAssistantFormOptions> {
-  const raw = await api(lensUrl('assistants/form-options/'), { headers: lensHeaders() })
+export async function fetchLensAssistantFormOptions(
+  assistantUuid?: string | null,
+  options?: { organization_key?: string },
+): Promise<LensAssistantFormOptions> {
+  const qs = new URLSearchParams()
+  if (assistantUuid) qs.set('assistant_uuid', assistantUuid)
+  if (options?.organization_key?.trim()) qs.set('organization_key', options.organization_key.trim())
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const path = assistantUuid || options?.organization_key
+    ? `assistants/form-options${suffix}`
+    : 'assistants/form-options/'
+  const raw = await api(lensUrl(path), { headers: lensHeaders() })
   return lensPayload<LensAssistantFormOptions>(raw)
 }
 
@@ -1106,20 +1164,25 @@ export async function startCopilotSnapshotBrowse(
     gatewayLinkId: number
     path?: string
     limit?: number
+    organization_key?: string
   },
   signal?: AbortSignal,
 ): Promise<LensSnapshotBrowseTask> {
+  const body: Record<string, unknown> = {
+    directory_id: directoryId,
+    backup_source_snapshot_id: params.backupSourceSnapshotId,
+    gateway_link_id: params.gatewayLinkId,
+    path: params?.path || '',
+    limit: Math.max(1, Math.min(params?.limit || 500, 500)),
+  }
+  if (params.organization_key?.trim()) {
+    body.organization_key = params.organization_key.trim()
+  }
   const raw = await api(lensUrl('copilot/snapshot-browse/'), {
     method: 'POST',
     headers: lensHeaders(),
     signal,
-    body: JSON.stringify({
-      directory_id: directoryId,
-      backup_source_snapshot_id: params.backupSourceSnapshotId,
-      gateway_link_id: params.gatewayLinkId,
-      path: params?.path || '',
-      limit: Math.max(1, Math.min(params?.limit || 500, 500)),
-    }),
+    body: JSON.stringify(body),
   })
   return lensPayload<LensSnapshotBrowseTask>(raw)
 }
@@ -1127,8 +1190,12 @@ export async function startCopilotSnapshotBrowse(
 export async function fetchCopilotSnapshotBrowse(
   taskId: string,
   signal?: AbortSignal,
+  organizationKey?: string,
 ): Promise<LensSnapshotBrowseTask> {
-  const raw = await api(lensUrl(`copilot/snapshot-browse/${taskId}/`), {
+  const qs = new URLSearchParams()
+  if (organizationKey?.trim()) qs.set('organization_key', organizationKey.trim())
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const raw = await api(lensUrl(`copilot/snapshot-browse/${taskId}${suffix}`), {
     headers: lensHeaders(),
     signal,
   })
@@ -1142,6 +1209,7 @@ export async function browseCopilotSnapshotDirectory(
     gatewayLinkId: number
     path?: string
     limit?: number
+    organization_key?: string
   },
   signal?: AbortSignal,
 ): Promise<{
@@ -1186,7 +1254,7 @@ export async function browseCopilotSnapshotDirectory(
     if (signal?.aborted) {
       throw new DOMException('Aborted', 'AbortError')
     }
-    task = await fetchCopilotSnapshotBrowse(task.task_id, signal)
+    task = await fetchCopilotSnapshotBrowse(task.task_id, signal, params.organization_key)
   }
   if (task.status !== 'success') {
     const errorCode = task.error_code || 'INSIGHT.SNAPSHOT_BROWSE_FAILED'

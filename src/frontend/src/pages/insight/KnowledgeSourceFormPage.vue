@@ -19,12 +19,15 @@ import {
   gatewaySelectLine,
 } from '../../lib/gatewayPickerDisplay'
 import type { LensGatewayInsight } from '../../lib/lensApi'
+import { api } from '../../lib/api'
+import { asList, unwrapApiPayload } from '../../lib/parse'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 
 const GATEWAY_DEPLOY_ROUTE = { path: '/node/nodes/deploy', query: { role: 'gateway' } } as const
+const PLATFORM_ORG_KEY = '__platform_lens__'
 
 const sourceType = ref<KnowledgeSourceType>('backup_source')
 
@@ -34,6 +37,13 @@ const editingId = computed(() => {
   const id = Number.parseInt(raw, 10)
   return Number.isFinite(id) ? id : null
 })
+
+const isPlatformEngine = computed(() => route.path.startsWith('/platform-ops/engine'))
+
+type OrgOption = { key: string; name: string }
+
+const organizationOptions = ref<OrgOption[]>([])
+const organizationsLoading = ref(false)
 
 const {
   loading,
@@ -61,6 +71,10 @@ const {
   canSubmit,
   isBackupSource,
   isGatewayLocal,
+  requiresTargetOrganization,
+  targetOrganizationKey,
+  targetOrganizationName,
+  setTargetOrganization,
   gatewayBrowseLoading,
   gatewaySelectedPath,
   gatewayBrowseRoot,
@@ -85,6 +99,35 @@ const {
   validateGatewayDirectoryPath,
   pickGatewayDirectory,
 } = useKnowledgeSourceForm(editingId, sourceType)
+
+const sourceBindingEnabled = computed(
+  () => !requiresTargetOrganization.value || Boolean(targetOrganizationKey.value?.trim()),
+)
+
+async function loadOrganizationOptions() {
+  if (!isPlatformEngine.value || isEditing.value) return
+  organizationsLoading.value = true
+  try {
+    const raw = await api<unknown>('/api/v1/platform-ops/orgs?page_size=200&status=active')
+    const data = unwrapApiPayload<Record<string, unknown>>(raw)
+    organizationOptions.value = asList<{ key?: string; name?: string }>(data)
+      .map((row) => ({
+        key: String(row.key || '').trim(),
+        name: String(row.name || row.key || '').trim(),
+      }))
+      .filter((row) => row.key && row.key !== PLATFORM_ORG_KEY)
+      .sort((a, b) => a.name.localeCompare(b.name))
+  } catch {
+    organizationOptions.value = []
+  } finally {
+    organizationsLoading.value = false
+  }
+}
+
+async function onTargetOrganizationChange(key: string | null) {
+  const option = organizationOptions.value.find((row) => row.key === key)
+  await setTargetOrganization(key, option?.name)
+}
 
 const gatewayDirInputRef = ref<HTMLElement | null>(null)
 const gatewayDirPickerWidth = ref(360)
@@ -153,6 +196,7 @@ function snapshotOptionLabel(row: BackupSourceSnapshot) {
 }
 
 onMounted(() => {
+  void loadOrganizationOptions()
   void init()
 })
 </script>
@@ -197,6 +241,43 @@ onMounted(() => {
                 class="fullscreen-form-el-form"
               >
                 <ElFormItem
+                  v-if="isPlatformEngine && isEditing"
+                  :label="t('insight.kb.colOrganization')"
+                >
+                  <ElInput
+                    :model-value="targetOrganizationName || targetOrganizationKey || '—'"
+                    disabled
+                  />
+                </ElFormItem>
+                <ElFormItem
+                  v-if="requiresTargetOrganization"
+                  :label="t('insight.kb.fieldTargetOrganization')"
+                  required
+                >
+                  <ElSelect
+                    :model-value="targetOrganizationKey"
+                    filterable
+                    fit-input-width
+                    style="width: 100%"
+                    :loading="organizationsLoading"
+                    :placeholder="t('insight.kb.phSelectTargetOrganization')"
+                    @update:model-value="onTargetOrganizationChange"
+                  >
+                    <ElOption
+                      v-for="org in organizationOptions"
+                      :key="org.key"
+                      :label="org.name"
+                      :value="org.key"
+                    >
+                      <span>{{ org.name }}</span>
+                      <span class="ks-org-option-key">{{ org.key }}</span>
+                    </ElOption>
+                  </ElSelect>
+                  <p class="ks-field-hint">
+                    {{ t('insight.kb.fieldTargetOrganizationHint') }}
+                  </p>
+                </ElFormItem>
+                <ElFormItem
                   :label="t('insight.kb.fieldName')"
                   required
                 >
@@ -218,7 +299,7 @@ onMounted(() => {
                     fit-input-width
                     popper-class="ks-source-type-select-popper"
                     style="width: 100%"
-                    :disabled="isEditing"
+                    :disabled="isEditing || !sourceBindingEnabled"
                   >
                     <ElOption
                       :label="t('insight.kb.sourceTypeBackup')"
@@ -236,6 +317,12 @@ onMounted(() => {
                   <p class="ks-field-hint">
                     {{ t('insight.kb.fieldSourceTypeHint') }}
                   </p>
+                  <p
+                    v-if="requiresTargetOrganization && !sourceBindingEnabled"
+                    class="ks-field-hint ks-field-hint--warn"
+                  >
+                    {{ t('insight.kb.targetOrganizationRequired') }}
+                  </p>
                 </ElFormItem>
               </ElForm>
             </section>
@@ -243,6 +330,7 @@ onMounted(() => {
             <section
               v-if="isGatewayLocal"
               class="fullscreen-form-card fullscreen-form-section"
+              :class="{ 'ks-section--awaiting-org': !sourceBindingEnabled }"
             >
               <h3 class="fullscreen-form-section__title">
                 <span class="fullscreen-form-section__indicator" />
@@ -437,6 +525,7 @@ onMounted(() => {
             <section
               v-if="isBackupSource"
               class="fullscreen-form-card fullscreen-form-section"
+              :class="{ 'ks-section--awaiting-org': !sourceBindingEnabled }"
             >
               <h3 class="fullscreen-form-section__title">
                 <span class="fullscreen-form-section__indicator" />
@@ -873,6 +962,17 @@ onMounted(() => {
 
 .ks-field-hint--spaced {
   margin-bottom: 8px;
+}
+
+.ks-org-option-key {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.ks-section--awaiting-org {
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 .ks-type-option {

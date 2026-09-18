@@ -178,10 +178,8 @@ def sync_assistant_skill_links(
         uuid_str = skill.get("uuid") or binding.get("skill_uuid")
         if not uuid_str:
             continue
-        slug = str(skill.get("slug") or "")
-        if slug.startswith(f"{_org_prefix(org)}-"):
-            register_org_skill(
-                org=org,
-                sl_skill_uuid=uuid_lib.UUID(str(uuid_str)),
-                created_by=created_by,
-            )
+        register_org_skill(
+            org=org,
+            sl_skill_uuid=uuid_lib.UUID(str(uuid_str)),
+            created_by=created_by,
+        )

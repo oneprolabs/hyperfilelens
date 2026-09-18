@@ -11,7 +11,11 @@ from django.db import transaction
 from django.utils import timezone as django_timezone
 
 from apps.iam.models import Organization
-from apps.subscription.constants import DEFAULT_LIMITS, UNLIMITED
+from apps.subscription.constants import (
+    COMMUNITY_DEFAULT_LIMITS,
+    DEFAULT_LIMITS,
+    UNLIMITED,
+)
 from apps.subscription.models import License, MachineCode
 from apps.subscription.services.internal.crypto import verify_activation_code
 from apps.subscription.services.internal.machine_code import generate_machine_code
@@ -21,7 +25,9 @@ from apps.subscription.services.internal.usage import collect_usage_stats
 _MAX_LICENSE_LIMIT = 2**31 - 1
 _MAX_LICENSE_BIGINT_LIMIT = 2**63 - 1
 _MIB = 1024**2
-_BIGINT_LICENSE_LIMIT_FIELDS = frozenset({"max_public_gateway_capacity_bytes"})
+_BIGINT_LICENSE_LIMIT_FIELDS = frozenset(
+    {"max_storage_bytes", "max_public_gateway_capacity_bytes"}
+)
 
 
 def _normalize_license_limit(*, field: str, value) -> int:
@@ -44,14 +50,9 @@ def _normalize_license_limit(*, field: str, value) -> int:
     )
     if limit > max_supported:
         raise ValueError(f"License limit {field} exceeds the supported range")
-    if (
-        field == "max_public_gateway_capacity_bytes"
-        and limit >= 0
-        and limit % _MIB != 0
-    ):
+    if field in _BIGINT_LICENSE_LIMIT_FIELDS and limit >= 0 and limit % _MIB != 0:
         raise ValueError(
-            "License limit max_public_gateway_capacity_bytes must use "
-            "whole MiB increments"
+            f"License limit {field} must use whole MiB increments"
         )
     return limit
 
@@ -65,8 +66,17 @@ def _map_limits(raw: dict) -> dict:
             "max_organizations", raw.get("max_tenants", DEFAULT_LIMITS["max_organizations"])
         ),
         "max_users": raw.get("max_users", DEFAULT_LIMITS["max_users"]),
-        "max_nodes": raw.get("max_nodes", raw.get("max_proxies", DEFAULT_LIMITS["max_nodes"])),
-        "max_storage_gb": raw.get("max_storage_gb", DEFAULT_LIMITS["max_storage_gb"]),
+        # Source Hosts and Proxy Hosts are independent instance pools. A
+        # legacy max_nodes payload seeds both values during the transition.
+        "max_source_hosts": raw.get(
+            "max_source_hosts",
+            raw.get("max_nodes", DEFAULT_LIMITS["max_source_hosts"]),
+        ),
+        "max_proxies": raw.get(
+            "max_proxies",
+            raw.get("max_nodes", DEFAULT_LIMITS["max_proxies"]),
+        ),
+        "max_storage_bytes": raw.get("max_storage_bytes", DEFAULT_LIMITS["max_storage_bytes"]),
         "max_gateways": raw.get("max_gateways", DEFAULT_LIMITS["max_gateways"]),
         "max_public_gateways": raw.get(
             "max_public_gateways", DEFAULT_LIMITS["max_public_gateways"]
@@ -224,16 +234,34 @@ def build_current_payload(
         if include_machine_code
         else None
     )
-    license_obj = get_active_license(organization=organization)
     usage = collect_usage_stats(organization_id=organization.id)
     from common.extension_spi import get_quota_provider
 
+    provider = get_quota_provider()
+
+    # Community has a built-in entitlement rather than an Enterprise license.
+    # Return it before looking at License rows so a database left behind by a
+    # previous EE installation cannot change the current Host-only product.
+    if provider is None:
+        return {
+            "is_valid": True,
+            "message": "Using built-in Community entitlement",
+            "license": None,
+            "entitlement_source": "builtin_community",
+            "limits": dict(COMMUNITY_DEFAULT_LIMITS),
+            "days_until_expiry": None,
+            "usage": usage,
+            "machine_code": machine_code,
+            "organization_name": organization.name,
+            "enforcement_enabled": True,
+        }
+
     # EE QuotaProvider enforces the built-in or licensed instance entitlement
-    # plus the organization plan/override ceiling. Community stays informational.
+    # plus the organization plan/override ceiling.
+    license_obj = get_active_license(organization=organization)
     instance_lic = get_instance_active_license()
     instance_record = get_instance_license_record()
-    provider = get_quota_provider()
-    enforcement_enabled = provider is not None
+    enforcement_enabled = True
 
     def _limits_for(org: Organization, fallback_lic: License | None) -> dict:
         # When a provider is registered, UI must match the organization plan
@@ -242,7 +270,7 @@ def build_current_payload(
             return dict(provider.get_limits(org) or {})
         if fallback_lic is not None:
             return fallback_lic.get_limits()
-        return dict(DEFAULT_LIMITS)
+        return dict(COMMUNITY_DEFAULT_LIMITS)
 
     if license_obj is not None:
         return {

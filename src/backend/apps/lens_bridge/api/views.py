@@ -839,7 +839,7 @@ class LensCopilotReadinessView(OrgScopedMixin, APIView):
 
 
 class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
-    queryset = LensKnowledgeSource.objects.select_related("gateway").all()
+    queryset = LensKnowledgeSource.objects.select_related("gateway", "organization").all()
     permission_classes = [IsAuthenticated, IsOrgWriter]
 
     def get_permissions(self):

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensModelsPath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
@@ -24,6 +24,7 @@ import AiProviderIcon from '../../components/ai-model/AiProviderIcon.vue'
 import InsightAiModelDetailDrawer from './InsightAiModelDetailDrawer.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
+import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -41,7 +42,10 @@ const loading = ref(false)
 const health = ref<LensHealth | null>(null)
 const models = ref<LensLlmConfig[]>([])
 const search = ref('')
-const { appliedSearch, clearSearch } = useListSearch(search)
+const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
+const { appliedSearch, clearSearch } = useListSearch(search, () => {
+  pagination.page = 1
+})
 const selectedRows = ref<LensLlmConfig[]>([])
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
@@ -76,6 +80,31 @@ const filteredModels = computed(() => {
     return hay.includes(q)
   })
 })
+
+const visibleModels = computed(() => {
+  if (!isPlatformEngine.value) return filteredModels.value
+  const start = (pagination.page - 1) * pagination.pageSize
+  return filteredModels.value.slice(start, start + pagination.pageSize)
+})
+
+watch(
+  filteredModels,
+  (list) => {
+    pagination.count = list.length
+    const maxPage = Math.max(1, Math.ceil(list.length / pagination.pageSize) || 1)
+    if (pagination.page > maxPage) pagination.page = maxPage
+  },
+  { immediate: true },
+)
+
+function onPaginationPageChange() {
+  layoutTable()
+}
+
+function onPaginationSizeChange() {
+  pagination.page = 1
+  layoutTable()
+}
 
 const batchDisabled = computed(() => selectedRows.value.length === 0)
 const singleSelected = computed(() => selectedRows.value.length === 1 ? selectedRows.value[0]! : null)
@@ -397,7 +426,7 @@ onMounted(() => {
           v-table-overflow-title
           v-loading="loading"
           row-key="uuid"
-          :data="filteredModels"
+          :data="visibleModels"
           stripe
           class="hfl-list-table"
           :max-height="tableMaxHeight"
@@ -527,6 +556,25 @@ onMounted(() => {
             />
           </template>
         </el-table>
+      </div>
+
+      <div
+        v-if="isPlatformEngine"
+        class="hfl-list-footer"
+      >
+        <span
+          v-if="selectedRows.length > 0"
+          class="hfl-list-footer__selected"
+        >
+          {{ t('nodesPage.selectedCount', { n: selectedRows.length }) }}
+        </span>
+        <PlatformOpsPagination
+          v-model:current-page="pagination.page"
+          v-model:page-size="pagination.pageSize"
+          :total="pagination.count"
+          @current-change="onPaginationPageChange"
+          @size-change="onPaginationSizeChange"
+        />
       </div>
     </div>
 

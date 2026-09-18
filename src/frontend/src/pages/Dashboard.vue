@@ -129,7 +129,7 @@ function formatQuotaLimit(limit: number) {
 
 function quotaPct(used: number, limit: number) {
   if (limit < 0) return 0
-  if (!limit) return 0
+  if (!limit) return used > 0 ? 100 : 0
   return Math.min(100, Math.round((used / limit) * 100))
 }
 
@@ -352,14 +352,22 @@ const slaRibbonBadgeVisible = computed(() => Boolean(slaRibbonBadge.value))
 
 const slaRibbonBadgeClass = computed(() => 'ribbon-card__badge--amber')
 
-const quotaItems = computed(() =>
-  (overview.value?.quotaRows ?? []).map((row) => ({
-    key: row.key,
-    label: t(row.labelKey),
-    used: row.used,
-    limit: row.limit,
-    suffix: row.suffix,
-  })),
+const quotaItems = computed(() => (overview.value?.quotaRows ?? [])
+  .filter((row) => row.limit >= 0)
+  .map((row) => {
+    const percentage = quotaPct(row.used, row.limit)
+    return {
+      key: row.key,
+      label: t(row.labelKey),
+      used: row.used,
+      limit: row.limit,
+      usedDisplay: row.usedDisplay,
+      limitDisplay: row.limitDisplay,
+      suffix: row.suffix,
+      percentage,
+      overLimit: row.used > row.limit,
+    }
+  })
 )
 
 const chartBuckets = computed(() => overview.value?.tasks7dBuckets ?? [])
@@ -425,11 +433,13 @@ function daySuccessRate(day: TaskDayBucket) {
   return `${((day.success / total) * 100).toFixed(1)}%`
 }
 
-function quotaBarClass(pct: number) {
+function quotaBarClass(pct: number, overLimit: boolean) {
+  if (overLimit) return 'quota-bar--over'
   return pct >= 80 ? 'quota-bar--warning' : 'quota-bar--normal'
 }
 
-function quotaPctClass(pct: number) {
+function quotaPctClass(pct: number, overLimit: boolean) {
+  if (overLimit) return 'quota-pct--over'
   return pct >= 80 ? 'quota-pct--warning' : 'quota-pct--normal'
 }
 
@@ -1145,10 +1155,7 @@ onMounted(refresh)
             </div>
           </section>
 
-          <section
-            v-if="quotaItems.length"
-            class="panel panel--fixed panel--quota cockpit-quota"
-          >
+          <section class="panel panel--fixed panel--quota cockpit-quota">
             <div class="panel-head panel-head--border">
               <div class="panel-head__left">
                 <span
@@ -1169,7 +1176,10 @@ onMounted(refresh)
                 <ArrowUpRight class="panel-link__arrow" />
               </RouterLink>
             </div>
-            <div class="quota-grid scrollbar">
+            <div
+              v-if="quotaItems.length"
+              class="quota-grid scrollbar"
+            >
               <div
                 v-for="q in quotaItems"
                 :key="q.key"
@@ -1185,27 +1195,52 @@ onMounted(refresh)
                     <span class="quota-item__label">{{ q.label }}</span>
                   </ElTooltip>
                   <span class="quota-item__nums">
-                    {{ q.used }} <span class="quota-item__limit">/ {{ formatQuotaLimit(q.limit) }}</span>
+                    {{ q.usedDisplay ?? q.used }}
+                    <span class="quota-item__limit">
+                      / {{ q.limitDisplay ?? formatQuotaLimit(q.limit) }}
+                    </span>
                     <span
                       v-if="q.suffix"
                       class="quota-item__unit"
                     >{{ q.suffix }}</span>
                     <span
                       class="quota-pct"
-                      :class="quotaPctClass(quotaPct(q.used, q.limit))"
+                      :class="quotaPctClass(q.percentage, q.overLimit)"
                     >
-                      {{ quotaPct(q.used, q.limit) }}%
+                      {{ q.overLimit ? t('dashboard.quotaOverLimit') : `${q.percentage}%` }}
                     </span>
                   </span>
                 </div>
                 <div class="quota-track">
                   <div
                     class="quota-bar"
-                    :class="quotaBarClass(quotaPct(q.used, q.limit))"
-                    :style="{ width: `${quotaPct(q.used, q.limit)}%` }"
+                    :class="quotaBarClass(q.percentage, q.overLimit)"
+                    :style="{ width: `${q.percentage}%` }"
                   />
                 </div>
               </div>
+            </div>
+            <el-empty
+              v-else-if="overview?.quotaAvailable !== false"
+              :description="t('dashboard.quotaAllUnlimited')"
+              :image-size="48"
+              class="dashboard-panel-empty dashboard-panel-empty--quota"
+            />
+            <div
+              v-else
+              class="quota-empty-state"
+              role="status"
+              aria-live="polite"
+            >
+              <span>{{ t('dashboard.quotaUnavailable') }}</span>
+              <ElButton
+                text
+                size="small"
+                :disabled="loading"
+                @click="refresh"
+              >
+                {{ t('common.retry') }}
+              </ElButton>
             </div>
           </section>
         </div>
@@ -3151,8 +3186,20 @@ onMounted(refresh)
   grid-template-columns: 1fr;
   gap: 1.25rem 2rem;
   flex: 1;
-  align-content: center;
+  align-content: start;
   overflow-y: auto;
+}
+
+.quota-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  min-height: 7rem;
+  padding: 1rem;
+  color: #86909c;
+  font-size: 13px;
+  text-align: center;
 }
 
 @media (min-width: 480px) {
@@ -3216,7 +3263,13 @@ onMounted(refresh)
 
 .quota-pct--warning {
   background: color-mix(in srgb, var(--dashboard-warning-soft) 78%, transparent);
-  color: var(--dashboard-warning-strong);
+  color: var(--dashboard-warning);
+  font-weight: 600;
+}
+
+.quota-pct--over {
+  background: color-mix(in srgb, var(--dashboard-warning-soft) 78%, transparent);
+  color: var(--dashboard-warning);
   font-weight: 600;
 }
 
@@ -3238,6 +3291,10 @@ onMounted(refresh)
 }
 
 .quota-bar--warning {
+  background: linear-gradient(to right, var(--dashboard-warning), var(--dashboard-warning-mid));
+}
+
+.quota-bar--over {
   background: linear-gradient(to right, var(--dashboard-warning), var(--dashboard-warning-mid));
 }
 

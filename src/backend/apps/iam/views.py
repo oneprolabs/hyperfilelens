@@ -29,6 +29,10 @@ def health(_request):
 class OrganizationViewSet(viewsets.ModelViewSet):
     serializer_class = OrganizationSerializer
     permission_classes = [IsAuthenticated]
+    # Organization is currently a read-only governance surface. Creation and
+    # mutation must go through the registration/organization services so quota,
+    # owner membership, and EE initialization cannot be bypassed.
+    http_method_names = ["get", "head", "options"]
 
     def get_queryset(self):
         qs = (

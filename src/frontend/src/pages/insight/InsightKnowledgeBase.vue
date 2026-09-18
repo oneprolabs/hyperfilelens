@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensKnowledgePath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
@@ -20,11 +20,11 @@ import {
 import InsightKnowledgeSourceDetailDrawer from './InsightKnowledgeSourceDetailDrawer.vue'
 import HflTypeLabel from '../../components/HflTypeLabel.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
+import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const isPlatformEngine = computed(() => route.path.startsWith('/platform-ops/engine'))
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -37,7 +37,10 @@ const loading = ref(false)
 const bridgeReady = ref(false)
 const rows = ref<LensKnowledgeSource[]>([])
 const search = ref('')
-const { appliedSearch, clearSearch } = useListSearch(search)
+const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
+const { appliedSearch, clearSearch } = useListSearch(search, () => {
+  pagination.page = 1
+})
 const statusFilter = ref<string>('')
 const detailOpen = ref(false)
 const detailRow = ref<LensKnowledgeSource | null>(null)
@@ -60,6 +63,8 @@ const filteredRows = computed(() => {
       row.name,
       row.source_path,
       row.gateway_name,
+      row.organization_key,
+      row.organization_name,
       row.ingest_summary,
       row.status_detail,
       sourceTypeLabel(row),
@@ -70,6 +75,41 @@ const filteredRows = computed(() => {
     return hay.includes(q)
   })
 })
+
+const visibleRows = computed(() => {
+  const start = (pagination.page - 1) * pagination.pageSize
+  return filteredRows.value.slice(start, start + pagination.pageSize)
+})
+
+watch(
+  filteredRows,
+  (list) => {
+    pagination.count = list.length
+    const maxPage = Math.max(1, Math.ceil(list.length / pagination.pageSize) || 1)
+    if (pagination.page > maxPage) pagination.page = maxPage
+  },
+  { immediate: true },
+)
+
+watch(statusFilter, () => {
+  pagination.page = 1
+})
+
+function onPaginationPageChange() {
+  layoutTable()
+}
+
+function onPaginationSizeChange() {
+  pagination.page = 1
+  layoutTable()
+}
+
+function organizationLabel(row: LensKnowledgeSource) {
+  const name = row.organization_name?.trim()
+  const key = row.organization_key?.trim()
+  if (name && key && name !== key) return `${name} (${key})`
+  return name || key || '—'
+}
 
 const batchDisabled = computed(() => selectedRows.value.length === 0)
 const singleSelected = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0]! : null))
@@ -268,7 +308,7 @@ watch(hasSyncingRows, (syncing) => {
           @click="openCreate"
         >
           <Plus :size="16" />
-          {{ isPlatformEngine ? t('platformOps.engineActions.addKnowledgeSource') : t('insight.kb.btnAdd') }}
+          {{ t('platformOps.engineActions.addKnowledgeSource') }}
         </ElButton>
 
         <ElDropdown
@@ -277,7 +317,7 @@ watch(hasSyncingRows, (syncing) => {
           @visible-change="moreActionsOpen = $event"
         >
           <ElButton :disabled="!bridgeReady">
-            {{ isPlatformEngine ? t('platformOps.engineActions.knowledgeSourceActions') : t('insight.kb.btnMoreActions') }}
+            {{ t('platformOps.engineActions.knowledgeSourceActions') }}
             <ChevronDown
               :size="16"
               class="hfl-list-more__chev"
@@ -390,7 +430,7 @@ watch(hasSyncingRows, (syncing) => {
           ref="tableRef"
           v-table-overflow-title
           v-loading="loading"
-          :data="filteredRows"
+          :data="visibleRows"
           :max-height="tableMaxHeight"
           :header-cell-style="TABLE_HEADER_STYLE"
           row-key="id"
@@ -421,6 +461,14 @@ watch(hasSyncingRows, (syncing) => {
                   <span>{{ row.source_path }}</span>
                 </div>
               </button>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn
+            :label="t('insight.kb.colOrganization')"
+            min-width="160"
+          >
+            <template #default="{ row }">
+              <span :class="{ 'hfl-empty-mark': organizationLabel(row) === '—' }">{{ organizationLabel(row) }}</span>
             </template>
           </ElTableColumn>
           <ElTableColumn
@@ -468,11 +516,27 @@ watch(hasSyncingRows, (syncing) => {
           </ElTableColumn>
           <template #empty>
             <ElEmpty
-              :description="bridgeReady ? t('insight.kb.emptyList') : t('insight.shared.bridgeNotReady')"
+              :description="bridgeReady ? t('insight.kb.emptyPlatform') : t('insight.shared.bridgeNotReady')"
               :image-size="80"
             />
           </template>
         </ElTable>
+      </div>
+
+      <div class="hfl-list-footer">
+        <span
+          v-if="selectedRows.length > 0"
+          class="hfl-list-footer__selected"
+        >
+          {{ t('nodesPage.selectedCount', { n: selectedRows.length }) }}
+        </span>
+        <PlatformOpsPagination
+          v-model:current-page="pagination.page"
+          v-model:page-size="pagination.pageSize"
+          :total="pagination.count"
+          @current-change="onPaginationPageChange"
+          @size-change="onPaginationSizeChange"
+        />
       </div>
     </div>
 
@@ -485,7 +549,12 @@ watch(hasSyncingRows, (syncing) => {
     <DangerConfirmDialog
       v-model="deleteOpen"
       :title="t('insight.kb.deleteTitle')"
-      :message="deleteTarget ? t('insight.kb.deleteConfirm', { name: deleteTarget.name }) : ''"
+      :message="deleteTarget ? (deleteTarget.organization_key
+        ? t('insight.kb.deleteConfirmPlatform', {
+          name: deleteTarget.name,
+          org: organizationLabel(deleteTarget),
+        })
+        : t('insight.kb.deleteConfirm', { name: deleteTarget.name })) : ''"
       :items="deleteTarget ? [{ key: deleteTarget.id, name: deleteTarget.name }] : []"
       :cancel-text="t('common.cancel')"
       :confirm-text="t('common.delete')"

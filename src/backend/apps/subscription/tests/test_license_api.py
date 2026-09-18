@@ -85,16 +85,68 @@ class LicenseApiTests(TestCase):
         self.assertIn("usage", resp.data)
         provider = get_quota_provider()
         if provider is None:
-            self.assertFalse(resp.data["is_valid"])
-            # Community: informational DEFAULT_LIMITS, no hard enforcement.
-            self.assertEqual(resp.data["limits"]["max_users"], 500)
-            self.assertFalse(resp.data.get("enforcement_enabled", True))
+            self.assertTrue(resp.data["is_valid"])
+            self.assertEqual(resp.data.get("entitlement_source"), "builtin_community")
+            # Community: one organization, one member, 100 backup
+            # configurations, and 1 TiB; other resource and Chat limits are
+            # unlimited.
+            self.assertEqual(resp.data["limits"]["max_organizations"], 1)
+            self.assertEqual(resp.data["limits"]["max_users"], 1)
+            self.assertEqual(resp.data["limits"]["max_protected_sources"], 100)
+            self.assertEqual(
+                resp.data["limits"]["max_storage_bytes"],
+                1024 * 1024**3,
+            )
+            self.assertEqual(resp.data["limits"]["max_source_hosts"], -1)
+            self.assertTrue(resp.data.get("enforcement_enabled"))
         else:
             # EE: built-in entitlement + default organization plan are unlimited.
             self.assertTrue(resp.data["is_valid"])
             self.assertEqual(resp.data.get("entitlement_source"), "builtin_unlimited")
             self.assertEqual(resp.data["limits"]["max_users"], -1)
             self.assertTrue(resp.data.get("enforcement_enabled"))
+
+    def test_community_ignores_legacy_enterprise_license_row(self):
+        from common.extension_spi import get_quota_provider
+
+        if get_quota_provider() is not None:
+            self.skipTest("Only applies to a Host-only Community deployment")
+        License.objects.create(
+            license_key="LEGACY-EE-ROW",
+            machine_code="legacy-machine-code",
+            organization=self.org,
+            issued_at=datetime.now(timezone.utc),
+            max_users=200,
+            max_protected_sources=500,
+            max_storage_bytes=5000 * 1024**3,
+        )
+
+        response = self.client.get(
+            "/api/v1/subscription/licenses/current/",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["entitlement_source"], "builtin_community")
+        self.assertTrue(response.data["is_valid"])
+        self.assertEqual(response.data["limits"]["max_organizations"], 1)
+        self.assertEqual(response.data["limits"]["max_users"], 1)
+        self.assertEqual(response.data["limits"]["max_protected_sources"], 100)
+        self.assertEqual(
+            response.data["limits"]["max_storage_bytes"],
+            1024 * 1024**3,
+        )
+        self.assertNotIn("license", response.data)
+
+        from apps.subscription.services.internal.organization_count import (
+            resolve_max_organizations,
+        )
+        from apps.subscription.services.internal.public_gateway_count import (
+            resolve_max_public_gateways,
+        )
+
+        self.assertEqual(resolve_max_organizations(), 1)
+        self.assertEqual(resolve_max_public_gateways(), -1)
 
     def test_change_type_treats_unlimited_as_highest_limit(self):
         existing = License(max_users=100)
@@ -225,12 +277,20 @@ class LicenseApiTests(TestCase):
             **headers2,
         )
         self.assertEqual(current.status_code, status.HTTP_200_OK)
-        self.assertTrue(current.data["is_valid"])
-        self.assertEqual(current.data.get("entitlement_source"), "license")
-        self.assertTrue(current.data.get("instance_shared"))
-        self.assertIn("license", current.data)
-        self.assertNotIn("license_key", current.data["license"] or {})
-        self.assertNotIn("organization_key", current.data["license"] or {})
+        from common.extension_spi import get_quota_provider
+
+        if get_quota_provider() is None:
+            self.assertTrue(current.data["is_valid"])
+            self.assertEqual(current.data.get("entitlement_source"), "builtin_community")
+            self.assertFalse(current.data.get("instance_shared"))
+            self.assertNotIn("license", current.data)
+        else:
+            self.assertTrue(current.data["is_valid"])
+            self.assertEqual(current.data.get("entitlement_source"), "license")
+            self.assertTrue(current.data.get("instance_shared"))
+            self.assertIn("license", current.data)
+            self.assertNotIn("license_key", current.data["license"] or {})
+            self.assertNotIn("organization_key", current.data["license"] or {})
         self.assertEqual(current.data.get("organization_name"), org2.name)
 
         blocked = self.client.post(
@@ -258,8 +318,9 @@ class LicenseApiTests(TestCase):
             machine_code=machine_code,
             limits={
                 "max_users": 100,
-                "max_nodes": 10,
-                "max_storage_gb": 200,
+                "max_source_hosts": 10,
+                "max_proxies": 4,
+                "max_storage_bytes": 200 * 1024**3,
                 "max_public_gateway_capacity_bytes": 500 * 1024**2,
                 "max_source_nas": 11,
                 "max_object_storage": 12,
@@ -278,6 +339,8 @@ class LicenseApiTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         lic = License.objects.get(organization=self.org)
         self.assertEqual(lic.max_users, 100)
+        self.assertEqual(lic.max_source_hosts, 10)
+        self.assertEqual(lic.max_proxies, 4)
         self.assertEqual(
             lic.max_public_gateway_capacity_bytes,
             500 * 1024**2,

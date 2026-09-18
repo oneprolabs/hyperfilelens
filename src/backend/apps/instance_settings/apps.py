@@ -1,4 +1,4 @@
-"""OSS instance-level settings (email, identity, AI models, environment).
+"""OSS instance-level settings and Admin Console essentials.
 
 These stay in Community builds. Full Platform Ops console lives in EE.
 API surface is stable under ``/api/v1/instance-settings/``; implementations

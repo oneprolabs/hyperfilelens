@@ -21,6 +21,9 @@ from apps.protection.services.source_identity import resolve_source_display_name
 
 class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
     gateway_name = serializers.CharField(source="gateway.name", read_only=True)
+    organization_id = serializers.IntegerField(read_only=True)
+    organization_key = serializers.CharField(source="organization.key", read_only=True)
+    organization_name = serializers.CharField(source="organization.name", read_only=True)
     ingest_policy = serializers.SerializerMethodField()
     ingest_summary = serializers.SerializerMethodField()
     sync_phase = serializers.SerializerMethodField()
@@ -31,6 +34,9 @@ class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "organization_id",
+            "organization_key",
+            "organization_name",
             "gateway",
             "gateway_name",
             "backup_source_snapshot_id",
@@ -59,6 +65,9 @@ class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "organization_id",
+            "organization_key",
+            "organization_name",
             "gateway_name",
             "mount_path_on_gateway",
             "workspace_path_on_lensnode",

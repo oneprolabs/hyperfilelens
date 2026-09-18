@@ -41,7 +41,9 @@ describe('fullscreen form style ownership', () => {
     expect(consumers).toEqual([
       'pages/insight/AiModelFormPage.vue',
       'pages/insight/KnowledgeSourceFormPage.vue',
+      'pages/insight/McpServerFormPage.vue',
       'pages/insight/NewCopilotChat.vue',
+      'pages/insight/SkillFormPage.vue',
       'pages/node/AddNasRepository.vue',
       'pages/node/AddProxyFsRepository.vue',
       'pages/node/AddS3Repo.vue',

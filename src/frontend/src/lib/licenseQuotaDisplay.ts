@@ -5,6 +5,8 @@ export type QuotaUsageRow = {
   labelKey: string
   used: number
   limit: number
+  usedDisplay?: string
+  limitDisplay?: string
   suffix?: string
 }
 
@@ -25,8 +27,7 @@ type QuotaDisplayDef = {
 export const QUOTA_METER_LABEL_KEY: Record<string, string> = {
   max_organizations: 'licenseQuota.organizations',
   max_users: 'licenseQuota.users',
-  max_storage_gb: 'licenseQuota.storageGb',
-  max_nodes: 'licenseQuota.nodes',
+  max_storage_bytes: 'licenseQuota.storageGb',
   max_gateways: 'licenseQuota.privateGateways',
   max_public_gateways: 'licenseQuota.publicGateways',
   max_public_gateway_capacity_bytes: 'licenseQuota.publicGatewayCapacity',
@@ -46,6 +47,17 @@ export const QUOTA_METER_LABEL_KEY: Record<string, string> = {
   gateway_select_max_bytes: 'licenseQuota.gatewaySelectBytes',
 }
 
+/** Quota meters whose API values are persisted as bytes. */
+export const QUOTA_BYTE_METER_KEYS = new Set([
+  'max_storage_bytes',
+  'max_public_gateway_capacity_bytes',
+  'gateway_select_max_bytes',
+])
+
+export function isQuotaByteMeter(meterKey: string): boolean {
+  return QUOTA_BYTE_METER_KEYS.has(meterKey)
+}
+
 /** Resolve i18n key for a quota/pool meter; empty string if unknown. */
 export function quotaMeterLabelKey(meterKey: string): string {
   return QUOTA_METER_LABEL_KEY[meterKey] || ''
@@ -54,48 +66,22 @@ export function quotaMeterLabelKey(meterKey: string): string {
 /** Org-facing meters on Subscription (limits + live usage). */
 export const SUBSCRIPTION_QUOTA_DEFS: QuotaDisplayDef[] = [
   {
-    key: 'users',
-    labelKey: 'licenseQuota.users',
-    usageKey: 'users_count',
-    limitKey: 'max_users',
-  },
-  {
-    key: 'storage',
-    labelKey: 'licenseQuota.storageGb',
-    usageKey: 'storage_used_gb',
-    limitKey: 'max_storage_gb',
-    suffix: 'GiB',
-  },
-  {
-    key: 'privateGateways',
-    labelKey: 'licenseQuota.privateGateways',
-    usageKey: 'gateways_count',
-    limitKey: 'max_gateways',
-  },
-  {
-    key: 'publicGatewayCapacity',
-    labelKey: 'licenseQuota.publicGatewayCapacity',
-    usageKey: 'public_gateway_capacity_used_bytes',
-    limitKey: 'max_public_gateway_capacity_bytes',
-    formatBytes: true,
-  },
-  {
     key: 'agents',
     labelKey: 'licenseQuota.sourceHosts',
     usageKey: 'agents_count',
     limitKey: 'max_source_hosts',
   },
   {
-    key: 'proxies',
-    labelKey: 'licenseQuota.sourceAgents',
-    usageKey: 'proxies_count',
-    limitKey: 'max_proxies',
-  },
-  {
     key: 'sourceNas',
     labelKey: 'licenseQuota.sourceNas',
     usageKey: 'source_nas_count',
     limitKey: 'max_source_nas',
+  },
+  {
+    key: 'proxies',
+    labelKey: 'licenseQuota.sourceAgents',
+    usageKey: 'proxies_count',
+    limitKey: 'max_proxies',
   },
   {
     key: 'objectStorage',
@@ -122,6 +108,26 @@ export const SUBSCRIPTION_QUOTA_DEFS: QuotaDisplayDef[] = [
     limitKey: 'max_protected_sources',
   },
   {
+    key: 'storage',
+    labelKey: 'licenseQuota.storageGb',
+    usageKey: 'storage_used_bytes',
+    limitKey: 'max_storage_bytes',
+    formatBytes: true,
+  },
+  {
+    key: 'privateGateways',
+    labelKey: 'licenseQuota.privateGateways',
+    usageKey: 'gateways_count',
+    limitKey: 'max_gateways',
+  },
+  {
+    key: 'publicGatewayCapacity',
+    labelKey: 'licenseQuota.publicGatewayCapacity',
+    usageKey: 'public_gateway_capacity_used_bytes',
+    limitKey: 'max_public_gateway_capacity_bytes',
+    formatBytes: true,
+  },
+  {
     key: 'aiTokens',
     labelKey: 'licenseQuota.aiTokens',
     usageKey: 'ai_tokens_used',
@@ -134,64 +140,35 @@ export const SUBSCRIPTION_QUOTA_DEFS: QuotaDisplayDef[] = [
     usageKey: 'alert_policies_count',
     limitKey: 'max_alert_policies',
   },
+  {
+    key: 'users',
+    labelKey: 'licenseQuota.users',
+    usageKey: 'users_count',
+    limitKey: 'max_users',
+  },
 ]
 
-/** Compact source-focused strip for the tenant dashboard. */
-export const DASHBOARD_QUOTA_DEFS: QuotaDisplayDef[] = [
-  {
-    key: 'agents',
-    labelKey: 'licenseQuota.sourceHosts',
-    usageKey: 'agents_count',
-    limitKey: 'max_source_hosts',
-  },
-  {
-    key: 'sourceNas',
-    labelKey: 'licenseQuota.sourceNas',
-    usageKey: 'source_nas_count',
-    limitKey: 'max_source_nas',
-  },
-  {
-    key: 'proxies',
-    labelKey: 'licenseQuota.sourceAgents',
-    usageKey: 'proxies_count',
-    limitKey: 'max_proxies',
-  },
-  {
-    key: 'objectStorage',
-    labelKey: 'licenseQuota.objectStorage',
-    usageKey: 'object_storage_count',
-    limitKey: 'max_object_storage',
-  },
-  {
-    key: 'targetNas',
-    labelKey: 'licenseQuota.targetNas',
-    usageKey: 'target_nas_count',
-    limitKey: 'max_target_nas',
-  },
-  {
-    key: 'standaloneDisk',
-    labelKey: 'licenseQuota.standaloneDisk',
-    usageKey: 'standalone_disk_count',
-    limitKey: 'max_standalone_disk',
-  },
-]
+/** Dashboard uses the same meters as Subscription, then keeps only finite limits. */
+export const DASHBOARD_QUOTA_DEFS: QuotaDisplayDef[] = [...SUBSCRIPTION_QUOTA_DEFS]
 
 export const SUBSCRIPTION_QUOTA_FALLBACK_LIMITS: Record<string, number> = {
-  max_users: 500,
-  max_storage_gb: 5000,
-  max_gateways: 50,
-  max_public_gateway_capacity_bytes: 5000 * 1024 ** 3,
-  max_source_hosts: 200,
-  max_proxies: 200,
-  max_source_proxies: 200,
-  max_source_nas: 200,
-  max_object_storage: 200,
-  max_target_nas: 200,
-  max_standalone_disk: 200,
-  max_protected_sources: 500,
-  ai_tokens: 50_000_000,
-  ai_requests: 50_000_000,
-  max_alert_policies: 500,
+  max_organizations: 1,
+  max_users: 1,
+  max_storage_bytes: 1024 * 1024 ** 3,
+  max_gateways: -1,
+  max_public_gateway_capacity_bytes: -1,
+  max_public_gateways: -1,
+  max_source_hosts: -1,
+  max_proxies: -1,
+  max_source_proxies: -1,
+  max_source_nas: -1,
+  max_object_storage: -1,
+  max_target_nas: -1,
+  max_standalone_disk: -1,
+  max_protected_sources: 100,
+  ai_tokens: -1,
+  ai_requests: -1,
+  max_alert_policies: -1,
 }
 
 export function quotaDefsForDashboard(): QuotaDisplayDef[] {
@@ -209,9 +186,15 @@ export function quotaDisplayValue(value: number, divisor = 1): number {
 
 export function formatQuotaBytes(value: number, unlimitedLabel = 'Unlimited'): string {
   if (value < 0) return unlimitedLabel
+  if (!Number.isFinite(value)) return '—'
   if (value > 0 && value < 1024 ** 2) return '< 1 MB'
-  const unit = value >= 1024 ** 3 ? 'GB' : 'MB'
-  const amount = value / (unit === 'GB' ? 1024 ** 3 : 1024 ** 2)
+  const units: Array<[number, string]> = [
+    [1024 ** 4, 'TB'],
+    [1024 ** 3, 'GB'],
+    [1024 ** 2, 'MB'],
+  ]
+  const [divisor, unit] = units.find(([threshold]) => value >= threshold) || units[2]
+  const amount = value / divisor
   return `${Number(amount.toFixed(2)).toLocaleString()} ${unit}`
 }
 
@@ -241,24 +224,26 @@ export function buildQuotaRows(
   return defs.map((definition) => {
     const rawUsed = Number(usage[definition.usageKey]) || 0
     const rawLimit = Number(mergedLimits[definition.limitKey]) || 0
-    const byteDivisor = Math.max(rawUsed, rawLimit) >= 1024 ** 3
-      ? 1024 ** 3
-      : 1024 ** 2
-    const divisor = definition.formatBytes ? byteDivisor : definition.divisor
+    const byteFormatted = definition.formatBytes
+      ? {
+          usedDisplay: formatQuotaBytes(rawUsed),
+          limitDisplay: formatQuotaBytes(rawLimit),
+        }
+      : undefined
+    const divisor = definition.formatBytes ? undefined : definition.divisor
     return {
       key: definition.key,
       labelKey: definition.labelKey,
       used: quotaDisplayValue(rawUsed, divisor),
       limit: quotaDisplayValue(rawLimit, divisor),
-      suffix: definition.formatBytes
-        ? (byteDivisor === 1024 ** 3 ? 'GB' : 'MB')
-        : definition.suffix,
+      ...byteFormatted,
+      suffix: definition.formatBytes ? undefined : definition.suffix,
     }
   })
 }
 
 export function quotaUsagePercent(used: number, limit: number): number {
   if (limit < 0) return 0
-  if (!limit) return 0
+  if (!limit) return used > 0 ? 100 : 0
   return Math.min(100, Math.round((used / limit) * 100))
 }

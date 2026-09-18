@@ -2,9 +2,18 @@ import { nextTick } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { resolvePlatformOpsRoutes } from '../platform-ops/resolveRoutes'
 import { resolveTenantOpsRoutes } from '../ops/resolveRoutes'
+import { resolveGovernanceRoutes } from '../governance/resolveRoutes'
 
 const platformOpsRoutes = resolvePlatformOpsRoutes()
 const tenantOpsRoutes = resolveTenantOpsRoutes()
+const governanceRoutes = resolveGovernanceRoutes()
+// Configuration opens the first governance page available in the current build.
+// Enterprise contributes Organization; Community keeps Subscription as its
+// only governance page.  Avoid routing Community through the EE-only page,
+// which would fall back to the dashboard when the route is not registered.
+const nodeEntryPath = governanceRoutes.some((route) => route.path === 'node/organization')
+  ? '/node/organization'
+  : '/node/subscription'
 const tenantOpsEntryPath = tenantOpsRoutes.some((route) => route.path === 'ops/host-monitor')
   ? '/ops/host-monitor'
   : '/ops/events'
@@ -59,9 +68,6 @@ const OpsNotificationChannelsPage = lazyRoute(() => import('../pages/ops/Notific
 const OpsNotificationChannelEditorPage = lazyRoute(() => import('../pages/ops/NotificationChannelEditorPage.vue'))
 const OpsNotificationRecordsPage = lazyRoute(() => import('../pages/ops/NotificationRecords.vue'))
 const OpsAuditPage = lazyRoute(() => import('../pages/ops/Audit.vue'))
-const SettingsMembersPage = lazyRoute(() => import('../pages/settings/Members.vue'))
-const OrganizationHubPage = lazyRoute(() => import('../pages/settings/OrganizationHub.vue'))
-const SubscriptionPage = lazyRoute(() => import('../pages/settings/Subscription.vue'))
 const AccountSettingsLayout = lazyRoute(() => import('../pages/account/AccountSettingsLayout.vue'))
 const AccountProfilePage = lazyRoute(() => import('../pages/account/AccountProfile.vue'))
 const InsightPage = lazyRoute(() => import('../pages/insight/Insight.vue'))
@@ -127,7 +133,7 @@ export const router = createRouter({
           component: lazyRoute(() => import('../pages/insight/InsightGateways.vue')),
         },
         { path: 'insight/:section', redirect: '/insight/copilot' },
-        { path: 'node', redirect: '/node/organization' },
+        { path: 'node', redirect: nodeEntryPath },
         { path: 'node/agents', component: AssetsNodesPage },
         { path: 'node/gateways', redirect: '/insight/gateways' },
         { path: 'node/nodes/deploy', component: NodesDeployPage, meta: fullscreenRouteMeta },
@@ -153,9 +159,7 @@ export const router = createRouter({
         { path: 'node/ai-settings', redirect: '/platform-ops/engine/ai-settings' },
         { path: 'node/ai-settings/add', redirect: '/platform-ops/engine/ai-settings/add' },
         { path: 'node/ai-settings/:uuid/edit', redirect: (to) => `/platform-ops/engine/ai-settings/${to.params.uuid}/edit` },
-        { path: 'node/organization', component: OrganizationHubPage },
-        { path: 'node/members', component: SettingsMembersPage },
-        { path: 'node/subscription', component: SubscriptionPage },
+        ...governanceRoutes,
         { path: 'node/snapshots', component: AssetsSnapshotsPage },
         { path: 'ops', redirect: tenantOpsEntryPath },
         ...tenantOpsRoutes,

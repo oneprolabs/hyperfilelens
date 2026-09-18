@@ -2,11 +2,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Link2, Network } from 'lucide-vue-next'
 import ModulePage from '../../../../components/ModulePage.vue'
 import { clearDeployProfileCache, fetchDeployProfile } from '../../../../composables/useDeployProfile'
 import { apiErrorMessage } from '../../../../lib/api'
 import PlatformOpsDetailSection from '../../../components/PlatformOpsDetailSection.vue'
+import PlatformOpsRefreshButton from '../../../components/PlatformOpsRefreshButton.vue'
 import { useResolvedPlatformOpsSideNav } from '../../../composables/useResolvedPlatformOpsSideNav'
 import {
   fetchPlatformExternalAccess,
@@ -84,140 +84,137 @@ onMounted(load)
       v-loading="busy"
       class="external-access"
     >
+      <div class="external-access__toolbar">
+        <PlatformOpsRefreshButton
+          :loading="busy"
+          :disabled="saving"
+          @click="load"
+        />
+      </div>
+
       <div
         v-if="meta"
-        class="external-access__layout"
+        class="hfl-detail-sections"
       >
-        <PlatformOpsDetailSection
-          :title="t('platformOps.settings.externalAccess.configurationTitle')"
-          class="external-access__configuration"
-        >
-          <div class="external-access__section-body">
-            <p class="external-access__intro">
-              {{ t('platformOps.settings.externalAccess.intro') }}
-            </p>
-
+        <PlatformOpsDetailSection :title="t('platformOps.settings.externalAccess.configurationTitle')">
+          <div class="external-access__lead">
+            <p>{{ t('platformOps.settings.externalAccess.intro') }}</p>
             <el-alert
               type="warning"
               show-icon
               :closable="false"
               :title="t('platformOps.settings.externalAccess.networkNotice')"
-              class="external-access__notice"
             />
-
             <el-alert
               v-if="!meta.editable"
               type="info"
               show-icon
               :closable="false"
               :title="t('platformOps.settings.externalAccess.managed')"
-              class="external-access__managed"
             />
-
-            <el-form
-              label-position="top"
-              class="external-access__form"
-              @submit.prevent="update(externalAccessUrl)"
-            >
-              <el-form-item
-                :label="t('platformOps.settings.externalAccess.urlLabel')"
-                :error="validationError"
-              >
-                <el-input
-                  v-model="externalAccessUrl"
-                  type="url"
-                  autocomplete="url"
-                  maxlength="2048"
-                  :disabled="!meta.editable || saving"
-                  :placeholder="t('platformOps.settings.externalAccess.urlPlaceholder')"
-                  @input="validationError = ''"
-                />
-                <div class="external-access__hint">
-                  {{ t('platformOps.settings.externalAccess.urlHint') }}
-                </div>
-              </el-form-item>
-
-              <div
-                v-if="meta.suggested_url && meta.editable"
-                class="external-access__suggestion"
-              >
-                <span
-                  class="external-access__suggestion-icon"
-                  aria-hidden="true"
-                >
-                  <Link2 :size="16" />
-                </span>
-                <span class="external-access__suggestion-copy">
-                  <span>{{ t('platformOps.settings.externalAccess.suggested') }}</span>
-                  <code>{{ meta.suggested_url }}</code>
-                </span>
-                <el-button
-                  link
-                  type="primary"
-                  :disabled="saving"
-                  @click="useSuggestion"
-                >
-                  {{ t('platformOps.settings.externalAccess.useSuggested') }}
-                </el-button>
-              </div>
-
-              <div
-                v-if="meta.editable"
-                class="external-access__actions"
-              >
-                <el-button
-                  type="primary"
-                  native-type="submit"
-                  :loading="saving"
-                >
-                  {{ t('platformOps.settings.saveChanges') }}
-                </el-button>
-                <el-button
-                  :disabled="saving || !hasOverride"
-                  @click="update('')"
-                >
-                  {{ t('platformOps.settings.externalAccess.restoreAutomatic') }}
-                </el-button>
-              </div>
-            </el-form>
           </div>
+
+          <el-form @submit.prevent="update(externalAccessUrl)">
+            <table class="external-access__table">
+              <tbody>
+                <tr>
+                  <th scope="row">{{ t('platformOps.settings.externalAccess.urlLabel') }}</th>
+                  <td>
+                    <div class="external-access__field">
+                      <el-input
+                        v-model="externalAccessUrl"
+                        type="url"
+                        autocomplete="url"
+                        maxlength="2048"
+                        :disabled="!meta.editable || saving"
+                        :placeholder="t('platformOps.settings.externalAccess.urlPlaceholder')"
+                        @input="validationError = ''"
+                      />
+                      <p class="external-access__hint">
+                        {{ t('platformOps.settings.externalAccess.urlHint') }}
+                      </p>
+                      <p
+                        v-if="validationError"
+                        class="external-access__error"
+                      >
+                        {{ validationError }}
+                      </p>
+                      <div
+                        v-if="meta.suggested_url && meta.editable"
+                        class="external-access__suggestion"
+                      >
+                        <span>{{ t('platformOps.settings.externalAccess.suggested') }}</span>
+                        <code>{{ meta.suggested_url }}</code>
+                        <el-button
+                          link
+                          type="primary"
+                          :disabled="saving"
+                          @click="useSuggestion"
+                        >
+                          {{ t('platformOps.settings.externalAccess.useSuggested') }}
+                        </el-button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="meta.editable">
+                  <th scope="row" />
+                  <td>
+                    <div class="external-access__actions">
+                      <el-button
+                        type="primary"
+                        native-type="submit"
+                        :loading="saving"
+                      >
+                        {{ t('platformOps.settings.saveChanges') }}
+                      </el-button>
+                      <el-button
+                        :disabled="saving || !hasOverride"
+                        @click="update('')"
+                      >
+                        {{ t('platformOps.settings.externalAccess.restoreAutomatic') }}
+                      </el-button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </el-form>
         </PlatformOpsDetailSection>
 
-        <aside class="external-access__aside">
-          <PlatformOpsDetailSection :title="t('platformOps.settings.externalAccess.effectiveTitle')">
-            <div class="external-access__summary">
-              <div class="external-access__summary-item">
-                <span class="external-access__summary-label">
-                  {{ t('platformOps.settings.externalAccess.effectiveUrl') }}
-                </span>
-                <code class="external-access__effective-url">{{ meta.effective_url }}</code>
-              </div>
-              <div class="external-access__summary-item external-access__summary-item--inline">
-                <span class="external-access__summary-label">
-                  {{ t('platformOps.settings.externalAccess.source') }}
-                </span>
-                <el-tag
-                  type="info"
-                  effect="plain"
-                >
-                  {{ t(`platformOps.settings.externalAccess.sourceValue.${meta.source}`) }}
-                </el-tag>
-              </div>
-            </div>
-          </PlatformOpsDetailSection>
+        <PlatformOpsDetailSection :title="t('platformOps.settings.externalAccess.effectiveTitle')">
+          <table class="external-access__table">
+            <tbody>
+              <tr>
+                <th scope="row">{{ t('platformOps.settings.externalAccess.effectiveUrl') }}</th>
+                <td>
+                  <span
+                    class="external-access__mono"
+                    :class="{ 'hfl-empty-mark': !meta.effective_url }"
+                  >{{ meta.effective_url || '—' }}</span>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">{{ t('platformOps.settings.externalAccess.source') }}</th>
+                <td>
+                  <el-tag
+                    size="small"
+                    type="info"
+                    effect="plain"
+                  >
+                    {{ t(`platformOps.settings.externalAccess.sourceValue.${meta.source}`) }}
+                  </el-tag>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </PlatformOpsDetailSection>
 
-          <PlatformOpsDetailSection :title="t('platformOps.settings.externalAccess.impactTitle')">
-            <div class="external-access__impact">
-              <span
-                class="external-access__impact-icon"
-                aria-hidden="true"
-              >
-                <Network :size="18" />
-              </span>
-              <p>{{ t('platformOps.settings.externalAccess.impact') }}</p>
-            </div>
-          </PlatformOpsDetailSection>
-        </aside>
+        <PlatformOpsDetailSection :title="t('platformOps.settings.externalAccess.impactTitle')">
+          <div class="external-access__lead external-access__lead--last">
+            <p>{{ t('platformOps.settings.externalAccess.impact') }}</p>
+          </div>
+        </PlatformOpsDetailSection>
       </div>
     </div>
   </ModulePage>
@@ -225,194 +222,146 @@ onMounted(load)
 
 <style scoped>
 .external-access {
+  --ea-label-width: 168px;
   width: 100%;
   min-height: 100%;
   overflow-y: auto;
 }
 
-.external-access__layout {
+.external-access__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.external-access__lead {
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(300px, 0.9fr);
-  gap: 16px;
-  align-items: start;
-  width: min(100%, 1160px);
-  margin: 0 auto;
-  padding-bottom: 24px;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
-.external-access__section-body {
-  padding: 20px;
+.external-access__lead--last {
+  border-bottom: 0;
 }
 
-.external-access__intro {
+.external-access__lead p {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
-.external-access__form {
-  margin-top: 24px;
-}
-
-.external-access__form :deep(.el-form-item__label) {
-  color: var(--el-text-color-primary);
-  font-weight: 600;
-}
-
-.external-access__notice {
-  margin-top: 16px;
-}
-
-.external-access__managed {
-  margin-top: 12px;
-}
-
-.external-access__notice :deep(.el-alert__content),
-.external-access__managed :deep(.el-alert__content) {
+.external-access__lead :deep(.el-alert__content) {
   min-width: 0;
 }
 
-.external-access__hint {
-  margin-top: 6px;
-  color: var(--color-text-secondary);
+.external-access__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.external-access__table th,
+.external-access__table td {
+  padding: 12px 16px;
+  vertical-align: top;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.45;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.external-access__table tr:last-child th,
+.external-access__table tr:last-child td {
+  border-bottom: 0;
+}
+
+.external-access__table th {
+  width: var(--ea-label-width);
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-secondary);
+  font-weight: 400;
+  border-right: 1px solid var(--el-border-color-lighter);
+}
+
+.external-access__table td {
+  color: var(--el-text-color-primary);
+}
+
+.external-access__field {
+  display: grid;
+  gap: 8px;
+  max-width: 640px;
+}
+
+.external-access__hint,
+.external-access__error {
+  margin: 0;
   font-size: 12px;
   line-height: 1.5;
 }
 
+.external-access__hint {
+  color: var(--color-text-secondary);
+}
+
+.external-access__error {
+  color: var(--el-color-danger);
+}
+
 .external-access__suggestion {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 10px;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  margin: -2px 0 20px;
-  padding: 11px 12px;
+  gap: 6px 10px;
+  padding: 8px 10px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   background: var(--el-fill-color-extra-light);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: 12px;
 }
 
-.external-access__suggestion-icon,
-.external-access__impact-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 auto;
-  border-radius: 8px;
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
-}
-
-.external-access__suggestion-copy {
-  display: grid;
-  gap: 2px;
+.external-access__suggestion code {
   min-width: 0;
-}
-
-.external-access__suggestion-copy code {
   overflow-wrap: anywhere;
   color: var(--color-text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
 }
 
 .external-access__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  padding-top: 18px;
-  border-top: 1px solid var(--el-border-color-lighter);
 }
 
-.external-access__aside {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-}
-
-.external-access__summary {
-  display: grid;
-}
-
-.external-access__summary-item {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  padding: 16px;
-}
-
-.external-access__summary-item + .external-access__summary-item {
-  border-top: 1px solid var(--el-border-color-lighter);
-}
-
-.external-access__summary-item--inline {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-}
-
-.external-access__summary-label {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.external-access__effective-url {
-  display: block;
-  min-width: 0;
-  padding: 9px 10px;
+.external-access__mono {
+  display: inline-block;
+  max-width: 100%;
   overflow-wrap: anywhere;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 7px;
-  background: var(--el-fill-color-extra-light);
-  color: var(--el-text-color-primary);
-  font-size: 12px;
-  line-height: 1.5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
 }
 
-.external-access__impact {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  padding: 16px;
-}
-
-.external-access__impact p {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 1.65;
-}
-
-.external-access__impact-icon {
-  width: 36px;
-  height: 36px;
-}
-
-@media (max-width: 960px) {
-  .external-access__layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 640px) {
-  .external-access__section-body {
-    padding: 16px;
+@media (max-width: 720px) {
+  .external-access__table,
+  .external-access__table tbody,
+  .external-access__table tr,
+  .external-access__table th,
+  .external-access__table td {
+    display: block;
+    width: 100%;
   }
 
-  .external-access__suggestion {
-    grid-template-columns: auto minmax(0, 1fr);
+  .external-access__table th {
+    border-right: 0;
+    border-bottom: 0;
+    padding-bottom: 6px;
   }
 
-  .external-access__suggestion :deep(.el-button) {
-    grid-column: 2;
-    justify-self: start;
-    margin-left: 0;
-  }
-
-  .external-access__actions {
-    flex-direction: column;
+  .external-access__table td {
+    padding-top: 0;
   }
 
   .external-access__actions :deep(.el-button) {

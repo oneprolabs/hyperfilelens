@@ -280,6 +280,7 @@ run_api_dev() {
   echo "[entrypoint] supervise backend HTTP/WebSocket API with hot reload"
   exec python /dev-process-supervisor.py \
     --watch /opt/backend \
+    --watch /opt/hfl/extensions \
     --ignore /opt/backend/media \
     --ignore /opt/backend/staticfiles \
     --ignore /opt/backend/lang-packs \
