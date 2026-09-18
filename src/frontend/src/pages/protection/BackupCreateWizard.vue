@@ -31,6 +31,7 @@ import {
   ShieldAlert,
   CircleOff,
   Scale,
+  Trash2,
 } from 'lucide-vue-next'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { ElTable, ElTree } from 'element-plus'
