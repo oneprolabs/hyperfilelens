@@ -357,19 +357,19 @@ test_lensnode_resolution_ignores_unrelated_newer_image() (
 			;;
 		"image ls oneprolabs/sourcelens-lensnode --format {{.Repository}}:{{.Tag}}")
 			printf '%s\n' \
-				oneprolabs/sourcelens-lensnode:0.50.0 \
-				oneprolabs/sourcelens-lensnode:0.49.5
+				oneprolabs/sourcelens-lensnode:0.58.0 \
+				oneprolabs/sourcelens-lensnode:0.57.0
 			;;
-		"image inspect oneprolabs/sourcelens-lensnode:0.50.0 --format {{.Id}}")
+		"image inspect oneprolabs/sourcelens-lensnode:0.58.0 --format {{.Id}}")
 			printf '%s\n' sha256:unrelated
 			;;
-		"image inspect oneprolabs/sourcelens-lensnode:0.49.5 --format {{.Id}}")
+		"image inspect oneprolabs/sourcelens-lensnode:0.57.0 --format {{.Id}}")
 			printf '%s\n' sha256:selected
 			;;
 		*) printf 'unexpected fake Docker invocation: %s\n' "$*" >&2; return 90 ;;
 		esac
 	}
-	[[ "$(resolve_lensnode_image)" == "oneprolabs/sourcelens-lensnode:0.49.5" ]]
+	[[ "$(resolve_lensnode_image)" == "oneprolabs/sourcelens-lensnode:0.57.0" ]]
 )
 
 test_lifecycle_passes_exact_loaded_lensnode_image() (
@@ -387,21 +387,21 @@ test_lifecycle_passes_exact_loaded_lensnode_image() (
 			;;
 		"image ls oneprolabs/sourcelens-lensnode --format {{.Repository}}:{{.Tag}}")
 			printf '%s\n' \
-				oneprolabs/sourcelens-lensnode:0.50.0 \
-				oneprolabs/sourcelens-lensnode:0.49.5
+				oneprolabs/sourcelens-lensnode:0.58.0 \
+				oneprolabs/sourcelens-lensnode:0.57.0
 			;;
-		"image inspect oneprolabs/sourcelens-lensnode:0.50.0 --format {{.Id}}")
+		"image inspect oneprolabs/sourcelens-lensnode:0.58.0 --format {{.Id}}")
 			printf '%s\n' sha256:unrelated
 			;;
-		"image inspect oneprolabs/sourcelens-lensnode:0.49.5 --format {{.Id}}")
+		"image inspect oneprolabs/sourcelens-lensnode:0.57.0 --format {{.Id}}")
 			printf '%s\n' sha256:selected
 			;;
-		"image inspect oneprolabs/sourcelens-lensnode:0.49.5") ;;
+		"image inspect oneprolabs/sourcelens-lensnode:0.57.0") ;;
 		*) printf 'unexpected fake Docker invocation: %s\n' "$*" >&2; return 90 ;;
 		esac
 	}
 	load_lensnode_image "${work_dir}"
-	[[ "${RESOLVED_LENSNODE_IMAGE}" == "oneprolabs/sourcelens-lensnode:0.49.5" ]]
+	[[ "${RESOLVED_LENSNODE_IMAGE}" == "oneprolabs/sourcelens-lensnode:0.57.0" ]]
 )
 
 test_lifecycle_accepts_persisted_node_credential() (

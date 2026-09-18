@@ -2,6 +2,19 @@
 
 declare const __HFL_EXTENSIONS_FRONTEND__: boolean
 
+declare module 'docx-preview' {
+  export function renderAsync(...args: unknown[]): Promise<void>
+}
+
+declare module 'pptx-preview' {
+  export function init(...args: unknown[]): {
+    preview: (buffer: ArrayBuffer) => Promise<void>
+    destroy?: () => void
+    renderNextSlide?: () => void
+    renderPreSlide?: () => void
+  }
+}
+
 declare module '@ext/platform/platform-ops/routes' {
   export const platformOpsRoutes: Array<Record<string, unknown>>
 }

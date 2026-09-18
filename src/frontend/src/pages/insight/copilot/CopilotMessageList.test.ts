@@ -11,12 +11,14 @@ import CopilotMessageList from './CopilotMessageList.vue'
 
 const mocks = vi.hoisted(() => ({
   fetchCopilotRunPdf: vi.fn(),
+  fetchCopilotCitation: vi.fn(),
   updateCopilotRunFeedback: vi.fn(),
 }))
 
 vi.mock('../../../lib/lensApi', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../lib/lensApi')>(),
   fetchCopilotRunPdf: mocks.fetchCopilotRunPdf,
+  fetchCopilotCitation: mocks.fetchCopilotCitation,
   updateCopilotRunFeedback: mocks.updateCopilotRunFeedback,
 }))
 
@@ -58,6 +60,7 @@ describe('CopilotMessageList welcome message and live feedback', () => {
   beforeEach(() => {
     resizeCallback = null
     mocks.fetchCopilotRunPdf.mockReset()
+    mocks.fetchCopilotCitation.mockReset()
     mocks.updateCopilotRunFeedback.mockReset()
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
   })
@@ -80,6 +83,77 @@ describe('CopilotMessageList welcome message and live feedback', () => {
     expect(wrapper.get('.message-card--welcome').text()).toBe(en.insight.copilot.welcome)
     expect(wrapper.find('.copilot-chip-grid').exists()).toBe(false)
     expect(wrapper.find('.copilot-chip-box').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('opens SourceLens citations in a right-side drawer and closes with Escape', async () => {
+    mocks.fetchCopilotCitation.mockResolvedValue({
+      id: 'citation-1',
+      path: 'src/example.ts',
+      start_line: 4,
+      end_line: 5,
+      lines: [
+        { number: 4, content: 'const answer = true' },
+        { number: 5, content: 'export default answer' },
+      ],
+    })
+    const wrapper = mountList({
+      sessionId: 17,
+      messages: [{
+        id: 'assistant-1',
+        role: 'assistant',
+        runId: 'run-1',
+        completedAt: '2026-08-20T01:59:00Z',
+        text: 'Answer',
+        citations: [{ id: 'citation-1', path: 'src/example.ts' }],
+      }],
+    })
+
+    await wrapper.get('.message-citation').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.citation-drawer').exists()).toBe(true)
+    expect(wrapper.find('.citation-code-line--highlighted').exists()).toBe(true)
+    expect(mocks.fetchCopilotCitation).toHaveBeenCalledWith(17, 'run-1', 'citation-1')
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+    expect(wrapper.find('.citation-drawer').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('re-enables clarification after the parent reports a failed submission', async () => {
+    const wrapper = mountList({
+      messages: [{
+        id: 'clarification-1',
+        role: 'assistant',
+        runId: 'run-1',
+        text: '',
+        thinking: {
+          termination_detail: {
+            request: {
+              request_id: 'request-1',
+              question: 'Which service should be inspected?',
+            },
+          },
+        },
+        clarificationRequest: {
+          requestId: 'request-1',
+          question: 'Which service should be inspected?',
+        },
+      }],
+      clarificationResetToken: 0,
+    })
+
+    const input = wrapper.get('.clarification-input')
+    await input.setValue('API service')
+    const submit = wrapper.get('.clarification-submit')
+    await submit.trigger('click')
+    await nextTick()
+    expect(submit.attributes('disabled')).toBeDefined()
+
+    await wrapper.setProps({ clarificationResetToken: 1 })
+    expect(wrapper.get('.clarification-submit').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 

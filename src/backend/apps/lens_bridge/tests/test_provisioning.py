@@ -370,6 +370,15 @@ class EnsureKsWorkspaceTests(SimpleTestCase):
 
 
 class CreateAssistantModelBindingTests(SimpleTestCase):
+    def test_datasource_binding_requires_provisioned_source(self):
+        from apps.lens_bridge.services import provisioning
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Knowledge source has no SourceLens datasource",
+        ):
+            provisioning.datasource_bindings_for_ks(MagicMock(sl_datasource_uuid=None))
+
     def test_analysis_types_are_derived_from_sourcelens_tasks(self):
         from apps.lens_bridge.services import provisioning
 
@@ -457,6 +466,7 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
             backup_source_snapshot_id=11,
             backup_snapshot_directory_id=12,
             workspace_path_on_lensnode="/workspace/org-1/ks-42",
+            sl_datasource_uuid="50b5d33c-7028-4c0b-a3bb-b907db06dfc4",
             ingest_policy_json={
                 "document": True,
                 "image": True,
@@ -482,6 +492,17 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
         payload = request_json.call_args.kwargs["json_body"]
         self.assertEqual(payload["agent_model_ref"], agent_ref)
         self.assertEqual(payload["agent_rounds"], "balanced")
+        self.assertEqual(
+            payload["datasource_bindings"],
+            [
+                {
+                    "datasource_uuid": assistant_uuid,
+                    "mount_name": "workspace",
+                    "required": True,
+                }
+            ],
+        )
+        self.assertNotIn("selected_dirs", payload)
         self.assertEqual(
             payload["multimodal_model_ref"],
             multimodal_ref,
@@ -537,18 +558,15 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
 
 class UpdateAssistantRetrievalPolicyTests(SimpleTestCase):
     @patch("apps.lens_bridge.services.provisioning._assistant_is_chat_managed")
-    @patch("apps.lens_bridge.services.provisioning.indexed_dirs_for_ks")
     @patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
     def test_chat_sync_forces_include_hidden_without_excludes(
         self,
         request_json,
-        indexed_dirs,
         is_chat_managed,
     ):
         from apps.lens_bridge.services import provisioning
 
         is_chat_managed.return_value = True
-        indexed_dirs.return_value = [{"path": "/workspace/org-1/ks-42"}]
         request_json.side_effect = [
             {
                 "settings": {
@@ -563,6 +581,7 @@ class UpdateAssistantRetrievalPolicyTests(SimpleTestCase):
         ]
         knowledge_source = MagicMock(
             sl_assistant_uuid="50b5d33c-7028-4c0b-a3bb-b907db06dfc4",
+            sl_datasource_uuid="37941d34-a8bf-49d7-bfab-f8e61a350645",
             ingest_policy_json={"document": True},
         )
         gateway_link = MagicMock(
@@ -577,6 +596,17 @@ class UpdateAssistantRetrievalPolicyTests(SimpleTestCase):
 
         patch_body = request_json.call_args_list[1].kwargs["json_body"]
         self.assertEqual(
+            patch_body["datasource_bindings"],
+            [
+                {
+                    "datasource_uuid": "37941d34-a8bf-49d7-bfab-f8e61a350645",
+                    "mount_name": "workspace",
+                    "required": True,
+                }
+            ],
+        )
+        self.assertNotIn("selected_dirs", patch_body)
+        self.assertEqual(
             patch_body["settings"]["retrieval_policy"],
             {
                 "include_hidden": True,
@@ -586,18 +616,15 @@ class UpdateAssistantRetrievalPolicyTests(SimpleTestCase):
         )
 
     @patch("apps.lens_bridge.services.provisioning._assistant_is_chat_managed")
-    @patch("apps.lens_bridge.services.provisioning.indexed_dirs_for_ks")
     @patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
     def test_manual_sync_preserves_operator_retrieval_policy(
         self,
         request_json,
-        indexed_dirs,
         is_chat_managed,
     ):
         from apps.lens_bridge.services import provisioning
 
         is_chat_managed.return_value = False
-        indexed_dirs.return_value = [{"path": "/workspace/org-1/ks-42"}]
         existing_policy = {
             "include_hidden": False,
             "exclude_dirs": [".git", "node_modules"],
@@ -609,6 +636,7 @@ class UpdateAssistantRetrievalPolicyTests(SimpleTestCase):
         ]
         knowledge_source = MagicMock(
             sl_assistant_uuid="50b5d33c-7028-4c0b-a3bb-b907db06dfc4",
+            sl_datasource_uuid="37941d34-a8bf-49d7-bfab-f8e61a350645",
             ingest_policy_json={"document": True},
         )
         gateway_link = MagicMock(

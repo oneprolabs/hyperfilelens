@@ -8,6 +8,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.iam.services.registration_service import provision_registered_user_tenant
+from apps.lens_bridge.api.views import _shared_article_media_proxy_url
 from apps.lens_bridge.models import LensSessionLink
 from apps.lens_bridge.services import copilot_sharing, sl_client
 
@@ -781,6 +782,76 @@ class CopilotSharingApiTests(TestCase):
         self.assertNotIn("future_secret", response.data)
         self.assertNotIn("upstream_url", response.data["input_attachments"][0])
         self.assertNotIn("future_secret", response.data["output_files"][0])
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_shared_qa_rewrites_article_media_through_hfl(self, request_json):
+        self.session.share_state_json = {
+            "version": 1,
+            "shares": [self.share],
+        }
+        self.session.save(update_fields=["share_state_json", "updated_at"])
+        access = copilot_sharing.make_share_access_token(self.session, self.share)
+        request_json.return_value = {
+            **self.share,
+            "question": "Question",
+            "answer": "![diagram](https://lens.example/media/articles/article-42/diagram.png)",
+        }
+
+        response = self.client.get(
+            reverse("lens-copilot-shared-qa"),
+            {"access": access},
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("shared-qa/article-media/article-42/diagram.png", response.data["answer"])
+        self.assertIn("token=", response.data["answer"])
+        self.assertIn("access=", response.data["answer"])
+
+    @patch("apps.lens_bridge.api.views.sl_client.stream_binary")
+    def test_shared_article_media_is_streamed_through_hfl(self, stream_binary):
+        self.session.share_state_json = {
+            "version": 1,
+            "shares": [self.share],
+        }
+        self.session.save(update_fields=["share_state_json", "updated_at"])
+        access = copilot_sharing.make_share_access_token(self.session, self.share)
+        signed_url = _shared_article_media_proxy_url(access, "article-42", "diagram.png")
+        stream_binary.return_value = SimpleNamespace(
+            body=iter([b"png"]),
+            content_type="image/png",
+            content_length="3",
+            content_disposition="",
+        )
+
+        response = self.client.get(
+            signed_url,
+            {"access": access},
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"png")
+        stream_binary.assert_called_once_with("/media/articles/article-42/diagram.png")
+
+    @patch("apps.lens_bridge.api.views.sl_client.stream_binary")
+    def test_shared_article_media_rejects_a_different_access_token(self, stream_binary):
+        self.session.share_state_json = {
+            "version": 1,
+            "shares": [self.share],
+        }
+        self.session.save(update_fields=["share_state_json", "updated_at"])
+        access = copilot_sharing.make_share_access_token(self.session, self.share)
+        signed_url = _shared_article_media_proxy_url(access, "article-42", "diagram.png")
+
+        response = self.client.get(
+            signed_url,
+            {"access": "not-the-signed-share"},
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 404)
+        stream_binary.assert_not_called()
 
     @patch("apps.lens_bridge.api.views.sl_client.stream_binary")
     def test_shared_file_bytes_are_streamed_through_the_hfl_proxy(

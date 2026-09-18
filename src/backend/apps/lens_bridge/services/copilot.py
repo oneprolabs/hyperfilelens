@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid as uuid_lib
 from typing import Any
+from urllib.parse import quote
 
 from django.contrib.auth.models import AbstractBaseUser
+from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import NotFound, ValidationError
@@ -315,6 +318,108 @@ def update_run_feedback(
     }
 
 
+def get_copilot_citation_source(
+    link: LensSessionLink,
+    run_uuid: uuid_lib.UUID,
+    citation_id: str,
+) -> dict[str, Any]:
+    """Return one sanitized SourceLens citation owned by this HFL Chat."""
+
+    message = require_assistant_run(link, run_uuid)
+    citations = message.get("citations") or []
+    if not any(str(item.get("id")) == citation_id for item in citations if isinstance(item, dict)):
+        raise NotFound("Citation not found.")
+    encoded_citation_id = quote(citation_id, safe=".:_-~")
+    data = sl_client.request_json(
+        "GET",
+        f"/api/lens/runs/{run_uuid}/citations/{encoded_citation_id}/",
+        hfl_user=link.hfl_user,
+    )
+    if not isinstance(data, dict):
+        raise sl_client.LensBridgeError("SourceLens returned invalid citation data.")
+    return data
+
+
+def answer_copilot_clarification(
+    link: LensSessionLink,
+    run_uuid: uuid_lib.UUID,
+    *,
+    request_id: str,
+    answer: str,
+    enqueue: bool = True,
+) -> dict[str, Any]:
+    """Submit a SourceLens clarification and bind its continuation Run."""
+
+    request_fingerprint = hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+    idempotency_key = f"clarification:{run_uuid}:{request_fingerprint}"
+    with transaction.atomic():
+        # Serialize clarification submissions for one Chat. The upstream call
+        # stays inside this short critical section so a second browser tab
+        # cannot create another continuation Run before the first is bound.
+        locked_link = LensSessionLink.objects.select_for_update().get(pk=link.pk)
+        existing = LensRunSubmission.objects.filter(
+            session_link=locked_link,
+            idempotency_key=idempotency_key,
+            status=LensRunSubmission.Status.BOUND,
+        ).first()
+        if existing is not None and existing.sl_run_uuid is not None:
+            return {
+                "uuid": str(existing.sl_run_uuid),
+                "status": existing.run_status or "queued",
+            }
+
+        if locked_link.active_run_uuid != run_uuid:
+            raise ValidationError(
+                {"run_uuid": "Run does not match the active session run."}
+            )
+        run = _fetch_sl_run(run_uuid, user=locked_link.hfl_user)
+        if str(run.get("status") or "") != "awaiting_user_input":
+            raise ValidationError({"run_uuid": "Run is not awaiting user input."})
+        data = sl_client.request_json(
+            "POST",
+            f"/api/lens/runs/{run_uuid}/clarification/",
+            json_body={
+                "request_id": request_id,
+                "answer": answer,
+                "enqueue": enqueue,
+            },
+            hfl_user=locked_link.hfl_user,
+        )
+        if not isinstance(data, dict) or not data.get("uuid"):
+            raise sl_client.LensBridgeError(
+                "SourceLens returned invalid clarification data."
+            )
+        continuation_uuid = uuid_lib.UUID(str(data["uuid"]))
+        LensRunSubmission.objects.update_or_create(
+            session_link=locked_link,
+            idempotency_key=idempotency_key,
+            defaults={
+                "organization": locked_link.organization,
+                "hfl_user": locked_link.hfl_user,
+                "question": answer,
+                "retry_of_run_uuid": run_uuid,
+                "attachment_uuids": [],
+                "status": LensRunSubmission.Status.BOUND,
+                "sl_run_uuid": continuation_uuid,
+                "run_status": str(data.get("status") or "queued"),
+            },
+        )
+        set_active_run(
+            locked_link,
+            run_uuid=continuation_uuid,
+            status=str(data.get("status") or "queued"),
+        )
+    from apps.lens_bridge.services import usage
+
+    usage.register_usage_run(
+        link,
+        run_uuid=continuation_uuid,
+        question=answer,
+        status=str(data.get("status") or "queued"),
+    )
+    return data
+
+
 def _build_active_run_payload(
     run: dict[str, Any],
     messages: list[dict[str, Any]],
@@ -336,6 +441,23 @@ def _build_active_run_payload(
         "status": run.get("status") or "",
         "partial_content": (assistant_msg or {}).get("content") or "",
         "thinking": thinking.get("steps") or [],
+        "thinking_detail": thinking,
+        "citations": (
+            (assistant_msg or {}).get("citations")
+            or run.get("citations")
+            or []
+        ),
+        "planned_evidence": (
+            (assistant_msg or {}).get("planned_evidence")
+            or run.get("planned_evidence")
+            or {}
+        ),
+        "outcome": (assistant_msg or {}).get("outcome") or run.get("outcome"),
+        "termination_detail": (
+            (assistant_msg or {}).get("termination_detail")
+            or run.get("termination_detail")
+            or {}
+        ),
         "error": run.get("error") or "",
         "started_at": run.get("started_at"),
         "elapsed_anchor_at": (
@@ -420,8 +542,29 @@ def sync_copilot_session(link: LensSessionLink) -> dict[str, Any]:
             messages,
             bound_run_uuid=link.active_run_uuid,
         )
+        if (
+            active_run["status"] == "awaiting_user_input"
+            and assistant_message_for_run(messages, active_run["uuid"]) is None
+        ):
+            # Older SourceLens responses may not materialize an output message
+            # for a clarification run. Keep the request visible in HFL while
+            # preserving the same message contract used by normal answers.
+            messages.append(
+                {
+                    "role": "assistant",
+                    "run": active_run["uuid"],
+                    "content": "",
+                    "thinking": active_run.get("thinking_detail") or {
+                        "steps": active_run.get("thinking") or [],
+                        "termination_detail": active_run.get("termination_detail") or {},
+                        "status": active_run["status"],
+                    },
+                    "citations": active_run.get("citations") or [],
+                    "planned_evidence": active_run.get("planned_evidence") or {},
+                }
+            )
         response_state = {
-            "status": "running",
+            "status": str(active_run.get("status") or "running"),
             "started_at": active_run["elapsed_anchor_at"],
         }
     else:

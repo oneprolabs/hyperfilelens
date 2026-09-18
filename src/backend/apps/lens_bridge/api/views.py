@@ -1,6 +1,8 @@
+import json
+import re
 import uuid
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, unquote, urlencode
 
 from django.core import signing
 from django.db import transaction
@@ -34,6 +36,7 @@ from apps.lens_bridge.api.serializers import (
     LensKnowledgeSourceUpdateSerializer,
     LensOrgSettingsSerializer,
     LensRunCreateSerializer,
+    LensRunClarificationSerializer,
     LensRunFeedbackSerializer,
     LensShareTitleSerializer,
     LensSessionCreateSerializer,
@@ -93,6 +96,12 @@ from common.drf.renderers import ServerSentEventsRenderer
 
 _ATTACHMENT_PROXY_SIGNING_SALT = "lens_bridge.copilot_attachment"
 _OUTPUT_FILE_PROXY_SIGNING_SALT = "lens_bridge.copilot_output_file"
+_ARTICLE_MEDIA_PROXY_SIGNING_SALT = "lens_bridge.copilot_article_media"
+_SHARED_ARTICLE_MEDIA_PROXY_SIGNING_SALT = "lens_bridge.copilot_shared_article_media"
+_ARTICLE_MEDIA_PATTERN = re.compile(
+    r"(?:https?://[^/\s)\"']+)?(?:/admin/articles|/media/articles)/"
+    r"(?P<article>[^/\s)\"']+)(?P<separator>/images/|/)(?P<filename>[^\s)\"'?#]+)"
+)
 
 
 class SourceLensMaintenanceUnavailable(APIException):
@@ -410,6 +419,97 @@ def _require_output_file_proxy_token(
         raise NotFound()
 
 
+def _article_media_proxy_url(session_id: int, article_uuid: str, filename: str) -> str:
+    """Build a signed HFL URL for SourceLens article images."""
+
+    article_uuid = str(article_uuid).strip()
+    if (
+        not article_uuid
+        or article_uuid in {".", ".."}
+        or any(char in article_uuid for char in "/\\?#\x00\r\n")
+    ):
+        raise _source_lens_contract_error("article media")
+    filename = unquote(str(filename).strip())
+    if (
+        not filename
+        or filename in {".", ".."}
+        or any(char in filename for char in "/\\?#\x00\r\n")
+    ):
+        raise _source_lens_contract_error("article media")
+    path = reverse(
+        "lens-copilot-session-article-media-content",
+        kwargs={
+            "pk": session_id,
+            "article_uuid": article_uuid,
+            "filename": filename,
+        },
+    )
+    token = signing.dumps(
+        {"session_id": session_id, "article_uuid": article_uuid, "filename": filename},
+        salt=_ARTICLE_MEDIA_PROXY_SIGNING_SALT,
+        compress=True,
+    )
+    return f"{path}?{urlencode({'token': token})}"
+
+
+def _require_article_media_proxy_token(
+    request, *, session_id: int, article_uuid: str, filename: str
+) -> None:
+    token = request.query_params.get("token", "")
+    try:
+        payload = signing.loads(token, salt=_ARTICLE_MEDIA_PROXY_SIGNING_SALT)
+    except signing.BadSignature as exc:
+        raise NotFound() from exc
+    if payload != {
+        "session_id": session_id,
+        "article_uuid": str(article_uuid),
+        "filename": filename,
+    }:
+        raise NotFound()
+
+
+def _shared_article_media_proxy_url(access: str, article_uuid: str, filename: str) -> str:
+    """Build a signed media URL for an organization-authorized shared answer."""
+
+    article_uuid = str(article_uuid).strip()
+    filename = unquote(str(filename).strip())
+    if (
+        not article_uuid
+        or article_uuid in {".", ".."}
+        or any(char in article_uuid for char in "/\\?#\x00\r\n")
+        or not filename
+        or filename in {".", ".."}
+        or any(char in filename for char in "/\\?#\x00\r\n")
+    ):
+        raise _source_lens_contract_error("shared article media")
+    path = reverse(
+        "lens-copilot-shared-qa-article-media",
+        kwargs={"article_uuid": article_uuid, "filename": filename},
+    )
+    token = signing.dumps(
+        {"access": access, "article_uuid": article_uuid, "filename": filename},
+        salt=_SHARED_ARTICLE_MEDIA_PROXY_SIGNING_SALT,
+        compress=True,
+    )
+    return f"{path}?{urlencode({'token': token, 'access': access})}"
+
+
+def _require_shared_article_media_proxy_token(
+    request, *, article_uuid: str, filename: str
+) -> str:
+    token = request.query_params.get("token", "")
+    try:
+        payload = signing.loads(token, salt=_SHARED_ARTICLE_MEDIA_PROXY_SIGNING_SALT)
+    except signing.BadSignature as exc:
+        raise NotFound() from exc
+    if payload.get("article_uuid") != str(article_uuid) or payload.get("filename") != filename:
+        raise NotFound()
+    access = str(payload.get("access") or "")
+    if not access:
+        raise NotFound()
+    return access
+
+
 def _rewrite_attachment_urls(messages, *, session_id: int):
     if not isinstance(messages, list):
         return messages
@@ -434,7 +534,102 @@ def _rewrite_attachment_urls(messages, *, session_id: int):
                     session_id,
                     str(output_file["uuid"]),
                 )
+        content = message.get("content")
+        if isinstance(content, str):
+            # SourceLens article images are the only non-attachment media URLs
+            # HFL rewrites. External images remain subject to the normal
+            # Markdown sanitizer and are never fetched by the backend proxy.
+            def replace(match):
+                try:
+                    proxy = _article_media_proxy_url(
+                        session_id, match.group("article"), match.group("filename")
+                    )
+                except (ValueError, TypeError, APIException):
+                    return match.group(0)
+                return proxy
+
+            message["content"] = _ARTICLE_MEDIA_PATTERN.sub(replace, content)
     return messages
+
+
+def _rewrite_article_media_value(value, *, session_id: int):
+    """Rewrite recognized SourceLens media URLs in a JSON/SSE payload."""
+
+    if isinstance(value, dict):
+        return {
+            key: _rewrite_article_media_value(child, session_id=session_id)
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_rewrite_article_media_value(child, session_id=session_id) for child in value]
+    if not isinstance(value, str):
+        return value
+
+    def replace(match):
+        try:
+            return _article_media_proxy_url(
+                session_id, match.group("article"), match.group("filename")
+            )
+        except (ValueError, TypeError, APIException):
+            return match.group(0)
+
+    return _ARTICLE_MEDIA_PATTERN.sub(replace, value)
+
+
+def _rewrite_shared_article_media_value(value, *, access: str):
+    if isinstance(value, dict):
+        return {
+            key: _rewrite_shared_article_media_value(child, access=access)
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_rewrite_shared_article_media_value(child, access=access) for child in value]
+    if not isinstance(value, str):
+        return value
+
+    def replace(match):
+        try:
+            return _shared_article_media_proxy_url(
+                access, match.group("article"), match.group("filename")
+            )
+        except (ValueError, TypeError, APIException):
+            return match.group(0)
+
+    return _ARTICLE_MEDIA_PATTERN.sub(replace, value)
+
+
+def _rewrite_run_stream(stream, *, session_id: int):
+    """Keep article images usable while a response is still streaming."""
+
+    def rewrite_line(line: bytes) -> bytes:
+        if not line.startswith(b"data:"):
+            return line
+        raw = line[5:].strip()
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+            return line
+        return b"data: " + json.dumps(
+            _rewrite_article_media_value(payload, session_id=session_id),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+    pending = b""
+    try:
+        for chunk in stream:
+            if isinstance(chunk, str):
+                chunk = chunk.encode("utf-8")
+            pending += chunk
+            while b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                yield rewrite_line(line) + b"\n"
+        if pending:
+            yield rewrite_line(pending)
+    finally:
+        close_stream = getattr(stream, "close", None)
+        if callable(close_stream):
+            close_stream()
 
 
 def _tenant_model_payload(data) -> tuple[dict, str | None]:
@@ -1699,6 +1894,54 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             upstream.body.close()
             raise
 
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"article-media/(?P<article_uuid>[^/]+)/(?P<filename>[^/]+)",
+    )
+    def article_media_content(
+        self, request, pk=None, article_uuid=None, filename=None
+    ):
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        article_id = str(article_uuid or "").strip()
+        if (
+            not article_id
+            or article_id in {".", ".."}
+            or any(char in article_id for char in "/\\?#\x00\r\n")
+        ):
+            raise NotFound()
+        filename = unquote(str(filename or ""))
+        if (
+            not filename
+            or filename in {".", ".."}
+            or any(char in filename for char in "/\\?#\x00\r\n")
+        ):
+            raise NotFound()
+        _require_article_media_proxy_token(
+            request,
+            session_id=link.id,
+            article_uuid=article_id,
+            filename=filename,
+        )
+        upstream = sl_client.stream_binary(
+            f"/media/articles/{quote(article_id, safe='')}/{quote(filename, safe='')}",
+            hfl_user=request.user,
+        )
+        try:
+            response = StreamingHttpResponse(
+                upstream.body,
+                content_type=upstream.content_type or "application/octet-stream",
+            )
+            if upstream.content_length:
+                response["Content-Length"] = upstream.content_length
+            response["Cache-Control"] = upstream.cache_control
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+        except Exception:
+            upstream.body.close()
+            raise
+
     @action(detail=True, methods=["post"], url_path="runs")
     def create_run(self, request, pk=None):
         from apps.lens_bridge.services.maintenance import (
@@ -1836,6 +2079,52 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             return _lens_error_response(exc)
         return Response(data)
 
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"runs/(?P<run_uuid>[0-9a-fA-F-]+)/clarification",
+    )
+    def clarification(self, request, pk=None, run_uuid=None):
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        body = LensRunClarificationSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        try:
+            data = copilot_service.answer_copilot_clarification(
+                link,
+                uuid.UUID(str(run_uuid)),
+                request_id=body.validated_data["request_id"],
+                answer=body.validated_data["answer"],
+                enqueue=body.validated_data["enqueue"],
+            )
+        except (TypeError, ValueError) as exc:
+            raise NotFound() from exc
+        except sl_client.LensBridgeError as exc:
+            return _lens_error_response(exc)
+        return Response(data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=["get"],
+        # SourceLens citation IDs allow dots; do not use DRF's usual
+        # ``[^/.]+`` pattern here or valid IDs such as ``module.py:12`` 404.
+        url_path=r"runs/(?P<run_uuid>[0-9a-fA-F-]+)/citations/(?P<citation_id>[^/]+)",
+    )
+    def citation(self, request, pk=None, run_uuid=None, citation_id=None):
+        link = self._get_user_link(pk)
+        self._require_ready_session(link)
+        try:
+            data = copilot_service.get_copilot_citation_source(
+                link,
+                uuid.UUID(str(run_uuid)),
+                str(citation_id),
+            )
+        except (TypeError, ValueError) as exc:
+            raise NotFound() from exc
+        except sl_client.LensBridgeError as exc:
+            return _lens_error_response(exc)
+        return Response(data)
+
     @action(detail=True, methods=["get"], url_path="sync")
     def sync(self, request, pk=None):
         link = self._get_user_link(pk)
@@ -1901,6 +2190,10 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             )
         )
         _rewrite_attachment_urls(data.get("messages"), session_id=link.id)
+        if isinstance(data.get("active_run"), dict):
+            data["active_run"] = _rewrite_article_media_value(
+                data["active_run"], session_id=link.id
+            )
         return Response(data)
 
     @action(detail=True, methods=["get"], url_path="active-run")
@@ -1910,7 +2203,15 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             payload = copilot_service.get_active_run_payload(link)
         except sl_client.LensBridgeError as exc:
             return _lens_error_response(exc)
-        return Response({"active_run": payload})
+        return Response(
+            {
+                "active_run": _rewrite_article_media_value(
+                    payload, session_id=link.id
+                )
+                if isinstance(payload, dict)
+                else payload
+            }
+        )
 
     @action(
         detail=True,
@@ -1996,6 +2297,9 @@ class LensCopilotSharedQAView(OrgScopedMixin, APIView):
             )
             if field in payload
         }
+        result["answer"] = _rewrite_shared_article_media_value(
+            result.get("answer", ""), access=raw_access
+        )
         for field in ("input_attachments", "output_files"):
             files = payload.get(field)
             if not isinstance(files, list):
@@ -2086,6 +2390,47 @@ class LensCopilotSharedQAFileView(_LensCopilotSharedQABinaryView):
         )
 
 
+class LensCopilotSharedQAArticleMediaView(OrgScopedMixin, APIView):
+    permission_classes = [IsAuthenticated, IsOrgReader]
+
+    def get(self, request, article_uuid=None, filename=None):
+        from apps.lens_bridge.services import copilot_sharing
+
+        raw_access = str(request.query_params.get("access") or "")
+        try:
+            _link, access = copilot_sharing.require_active_share_access(
+                organization_id=self.org.id,
+                raw_token=raw_access,
+            )
+            signed_access = _require_shared_article_media_proxy_token(
+                request,
+                article_uuid=str(article_uuid or ""),
+                filename=unquote(str(filename or "")),
+            )
+            if signed_access != raw_access:
+                raise NotFound()
+            upstream = sl_client.stream_binary(
+                f"/media/articles/{quote(str(article_uuid), safe='')}/{quote(unquote(str(filename)), safe='')}",
+            )
+        except copilot_sharing.CopilotShareNotFoundError as exc:
+            raise NotFound() from exc
+        except sl_client.LensBridgeError as exc:
+            return _lens_error_response(exc)
+        try:
+            response = StreamingHttpResponse(
+                upstream.body,
+                content_type=upstream.content_type or "application/octet-stream",
+            )
+            if upstream.content_length:
+                response["Content-Length"] = upstream.content_length
+            response["Cache-Control"] = "private, max-age=0, no-store"
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+        except Exception:
+            upstream.body.close()
+            raise
+
+
 class LensCopilotSharedQAPdfView(_LensCopilotSharedQABinaryView):
     upstream_suffix = "pdf/"
 
@@ -2133,7 +2478,8 @@ class LensCopilotRunStreamView(APIView):
             hfl_user=request.user,
         )
         response = StreamingHttpResponse(
-            stream, content_type="text/event-stream; charset=utf-8"
+            _rewrite_run_stream(stream, session_id=link.id),
+            content_type="text/event-stream; charset=utf-8",
         )
         response["Cache-Control"] = "no-cache, no-transform"
         response["X-Accel-Buffering"] = "no"

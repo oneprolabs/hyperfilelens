@@ -798,7 +798,7 @@ class LensSessionLink(OrganizationScopedModel):
     last_assistant_message_at = models.DateTimeField(null=True, blank=True)
     last_viewed_at = models.DateTimeField(null=True, blank=True)
     active_run_uuid = models.UUIDField(null=True, blank=True, db_index=True)
-    active_run_status = models.CharField(max_length=16, blank=True, default="")
+    active_run_status = models.CharField(max_length=32, blank=True, default="")
     chat_binding = models.ForeignKey(
         LensChatBinding,
         on_delete=models.SET_NULL,

@@ -107,15 +107,13 @@ const knowledgeSourceStatusDisplay = computed(() => {
 const knowledgeSourceStatusTagAttrs = computed(() => lifecycleStatusTagAttrs(knowledgeSourceStatusRaw.value))
 
 const retrievalScopeLines = computed(() => {
-  const dirs = activeRow.value?.selected_dirs as
-    | { retrieval_scope?: { include_paths?: string[] } }[]
-    | undefined
+  const settings = (activeRow.value?.settings || {}) as {
+    retrieval_policy?: { include_paths?: string[] }
+  }
   const paths = new Set<string>()
-  for (const dir of dirs ?? []) {
-    for (const path of dir.retrieval_scope?.include_paths ?? []) {
-      const normalized = String(path || '').trim()
-      if (normalized) paths.add(normalized)
-    }
+  for (const path of settings.retrieval_policy?.include_paths ?? []) {
+    const normalized = String(path || '').trim()
+    if (normalized) paths.add(normalized)
   }
   return [...paths]
 })

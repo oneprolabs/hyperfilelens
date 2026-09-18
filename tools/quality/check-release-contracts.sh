@@ -322,9 +322,9 @@ grep -F 'no_cache=1' <<<"${config}" >/dev/null
 grep -F -- '--prebuilt' "${ROOT}/release/build-sourcelens.sh" >/dev/null
 grep -F 'ln "${source_archive}" "${temporary}"' \
 	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
-grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.49.5}"' \
+grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.57.0}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
-grep -F 'SOURCELENS_GIT_REF=v0.49.5' \
+grep -F 'SOURCELENS_GIT_REF=v0.57.0' \
 	"${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
@@ -486,7 +486,7 @@ grep -Fx '      context: .' \
 grep -Fx '      dockerfile: lensnode/Dockerfile' \
 	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 
-grep -F '# SourceLens v0.49.5 requires no HFL functional patches.' \
+grep -F '# SourceLens v0.57.0 requires no HFL functional patches.' \
 	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
 [[ -x "${ROOT}/tools/sourcelens/update-runtime-contract.sh" ]]
 [[ -x "${ROOT}/tools/quality/test-sourcelens-runtime-contract.sh" ]]

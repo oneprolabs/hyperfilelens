@@ -496,6 +496,39 @@ def indexed_dirs_for_ks(ks: LensKnowledgeSource) -> list[dict[str, str]]:
     return [{"path": path} for path in indexed_dir_paths(ks)]
 
 
+def datasource_bindings_for_ks(
+    ks: LensKnowledgeSource,
+    *,
+    required: bool = True,
+) -> list[dict[str, Any]]:
+    """Build the SourceLens 0.57 runtime datasource binding for a KS.
+
+    SourceLens no longer treats Assistant ``selected_dirs`` as an execution
+    datasource.  HFL's managed datasource UUID is the durable identity shared
+    by conversion, retrieval, and Chat provisioning, so fail explicitly when
+    it has not been provisioned instead of creating an Assistant with an empty
+    runtime workspace.
+    """
+
+    datasource_uuid = str(ks.sl_datasource_uuid or "").strip()
+    if not datasource_uuid:
+        raise ValidationError(
+            {
+                "knowledge_source": (
+                    "Knowledge source has no SourceLens datasource. "
+                    "Sync it before creating or updating the Assistant."
+                )
+            }
+        )
+    return [
+        {
+            "datasource_uuid": datasource_uuid,
+            "mount_name": "workspace",
+            "required": bool(required),
+        }
+    ]
+
+
 def assistant_uuid_for_ks(ks: LensKnowledgeSource) -> uuid.UUID | None:
     """Return the user-linked Assistant for this knowledge source, if any."""
     if ks.sl_assistant_uuid:
@@ -559,7 +592,6 @@ def update_sl_assistant_for_ks(
     if not lensnode_uuid:
         raise ValidationError({"gateway_id": "LensNode is not linked to this gateway."})
 
-    selected_dirs = indexed_dirs_for_ks(ks)
     policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json)
     data = sl_client.request_json("GET", f"/api/lens/assistants/{ks.sl_assistant_uuid}/")
     settings = dict(data.get("settings") or {})
@@ -574,7 +606,7 @@ def update_sl_assistant_for_ks(
         "PATCH",
         f"/api/lens/assistants/{ks.sl_assistant_uuid}/",
         json_body={
-            "selected_dirs": selected_dirs,
+            "datasource_bindings": datasource_bindings_for_ks(ks),
             "settings": settings,
         },
     )
@@ -611,16 +643,12 @@ def create_sl_assistant_for_ks(
     )
     resolved_slug = (slug or "").strip() or _slugify_assistant(ks.name, org)
 
-    selected_dirs = indexed_dirs_for_ks(ks)
-    if not selected_dirs:
-        selected_dirs = [{"path": workspace_path}]
-
     payload: dict[str, Any] = {
         "name": ks.name,
         "slug": resolved_slug,
         "lensnode_uuid": str(lensnode_uuid),
         "selected_task": selected_task,
-        "selected_dirs": selected_dirs,
+        "datasource_bindings": datasource_bindings_for_ks(ks),
         "agent_model_ref": model_ref,
         "agent_rounds": agent_rounds_for_analysis_mode(analysis_mode),
         "visibility": "private",

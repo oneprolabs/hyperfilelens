@@ -16,6 +16,7 @@ import {
 import { useCopilotRunStore } from '../../stores/copilotRunStore'
 import {
   createCopilotRun,
+  submitCopilotClarification,
   deleteCopilotAttachment,
   deleteCopilotSession,
   forceDeleteCopilotSession,
@@ -70,6 +71,7 @@ const router = useRouter()
 const copilotStore = useCopilotRunStore()
 const { isPhone } = useResponsiveLayout()
 const mobileSessionsOpen = ref(false)
+const clarificationResetToken = ref(0)
 
 const bridgeReady = ref(false)
 const loading = ref(false)
@@ -141,7 +143,16 @@ function withWelcomeMessage(
 function mapApiMessage(row: LensChatMessage): CopilotDisplayMessage | null {
   if (row.role === 'system') return null
   const text = row.content || ''
-  if (row.role !== 'user' && !text.trim()) return null
+  const hasPlannedEvidence = Boolean(
+    row.planned_evidence && Object.keys(row.planned_evidence).length,
+  )
+  const hasRuntimePayload = Boolean(
+    row.citations?.length
+    || hasPlannedEvidence
+    || row.thinking?.steps?.length
+    || row.thinking?.termination_detail?.request,
+  )
+  if (row.role !== 'user' && !text.trim() && !hasRuntimePayload) return null
   return {
     id: row.uuid || uid('m'),
     role: row.role === 'user' ? 'user' : 'assistant',
@@ -150,6 +161,13 @@ function mapApiMessage(row: LensChatMessage): CopilotDisplayMessage | null {
     completedAt: row.completed_at,
     runId: row.run,
     thinking: row.thinking,
+    citations: row.citations,
+    plannedEvidence: row.planned_evidence,
+    clarificationRequest: (() => {
+      const request = row.thinking?.termination_detail?.request as Record<string, unknown> | undefined
+      if (row.thinking?.clarification_answered_at || !request || typeof request.request_id !== 'string' || typeof request.question !== 'string') return undefined
+      return { requestId: request.request_id, question: request.question }
+    })(),
     attachments: row.attachments,
     outputFiles: row.output_files,
     feedback: row.feedback ?? null,
@@ -260,6 +278,7 @@ function refreshPollerSessions() {
   const ids = sessions.value
     .filter(
       (row) => isActiveRunStatus(row.active_run_status)
+        || row.active_run_status === 'awaiting_user_input'
         || getSessionRunStream(row.id).isSubmitting,
     )
     .map((row) => row.id)
@@ -323,6 +342,11 @@ const runInProgress = computed(() => {
   )
 })
 
+const clarificationPending = computed(() =>
+  activeSession.value?.active_run_status === 'awaiting_user_input'
+  || activeStream.value?.runStatus === 'awaiting_user_input',
+)
+
 const showLiveStream = computed(
   () => runInProgress.value || Boolean(activeStream.value?.streamError),
 )
@@ -339,7 +363,7 @@ const composerUnavailable = computed(() => {
 })
 
 const submissionBlocked = computed(
-  () => composerUnavailable.value || runInProgress.value,
+  () => composerUnavailable.value || runInProgress.value || clarificationPending.value,
 )
 
 const bubbleTag = computed(() => activeAssistant.value?.name ?? '')
@@ -739,6 +763,26 @@ function retryQuestion(draft: CopilotRetryDraft) {
   if (draft.sessionId !== activeSessionId.value) return
   retryDraft.value = draft
   input.value = draft.question
+}
+
+async function submitClarification(runUuid: string, requestId: string, answer: string) {
+  const sessionId = activeSessionId.value
+  if (sessionId == null) return
+  try {
+    const run = await submitCopilotClarification(sessionId, runUuid, requestId, answer)
+    applySessionActiveMeta(sessionId, { uuid: run.uuid, status: run.status || 'queued' })
+    await copilotStore.syncSession(sessionId, syncHandlers, sessionId, { attachStream: false })
+    await copilotStore.startRunStream(
+      sessionId,
+      run.uuid,
+      run.status || 'queued',
+      syncHandlers,
+      activeSessionId.value,
+    )
+  } catch (error) {
+    clarificationResetToken.value += 1
+    ElMessage.error({ message: apiErrorMessage(error, t('insight.copilot.clarificationFailed')), grouping: true })
+  }
 }
 
 function attachmentErrorMessage(error: unknown) {
@@ -1226,8 +1270,10 @@ onUnmounted(() => {
             :stream-error="activeStream?.streamError ?? ''"
             :bubble-tag="bubbleTag"
             :starter-disabled="submissionBlocked"
+            :clarification-reset-token="clarificationResetToken"
             @retry-question="retryQuestion"
             @feedback-updated="applyFeedbackUpdate"
+            @clarification-submitted="submitClarification"
           />
 
           <CopilotComposer

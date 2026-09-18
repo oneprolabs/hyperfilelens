@@ -60,7 +60,7 @@ describe('CopilotOutputFileList', () => {
     const wrapper = mountList()
 
     expect(wrapper.get('.copilot-output-file__name').text()).toBe('analysis.md · 1.5 KB')
-    await wrapper.get('.copilot-output-file').trigger('click')
+    await wrapper.get('.copilot-output-file__action').trigger('click')
     await flushPromises()
 
     expect(mocks.fetchCopilotAttachmentBlob).toHaveBeenCalledWith(

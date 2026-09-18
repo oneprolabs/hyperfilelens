@@ -164,12 +164,22 @@ def _serialize_list_row(
         first = selected_dirs[0]
         if isinstance(first, dict):
             first_dir = str(first.get("path") or "")
+    if not first_dir and ks is not None:
+        try:
+            from apps.lens_bridge.services.knowledge_source_sync import indexed_dir_paths
+
+            first_dir = next(iter(indexed_dir_paths(ks)), "")
+        except Exception:
+            # Listing must remain available when a legacy/partially deleted KS
+            # can no longer resolve its local workspace path.
+            first_dir = ""
     row = {
         "uuid": uuid_str,
         "name": item.get("name") or item.get("slug") or "",
         "slug": item.get("slug") or "",
         "status": item.get("status") or "unknown",
         "lensnode_uuid": item.get("lensnode") or item.get("lensnode_uuid"),
+        "datasource_bindings": item.get("datasource_bindings") or [],
         "selected_task": item.get("selected_task") or item.get("capability") or "",
         "selected_dir": first_dir,
         "agent_model_ref": item.get("agent_model_ref"),
@@ -311,22 +321,20 @@ def get_org_assistant(
     return merged
 
 
-def _apply_retrieval_include_paths(
-    selected_dirs: list[dict[str, Any]],
+def _apply_retrieval_include_paths_to_settings(
+    payload: dict[str, Any],
     include_paths: list[str] | None,
-) -> list[dict[str, Any]]:
+) -> None:
+    """Carry the HFL path filter in the v0.57 retrieval policy envelope."""
+
     if include_paths is None:
-        return selected_dirs
+        return
     cleaned = [str(path).strip() for path in include_paths if str(path).strip()]
-    result: list[dict[str, Any]] = []
-    for item in selected_dirs:
-        if not isinstance(item, dict):
-            continue
-        entry = {key: value for key, value in item.items() if key != "retrieval_scope"}
-        if cleaned:
-            entry["retrieval_scope"] = {"include_paths": cleaned}
-        result.append(entry)
-    return result
+    settings = dict(payload.get("settings") or {})
+    retrieval = dict(settings.get("retrieval_policy") or {})
+    retrieval["include_paths"] = cleaned
+    settings["retrieval_policy"] = retrieval
+    payload["settings"] = settings
 
 
 def _knowledge_source_execution(org: Organization, ks: LensKnowledgeSource) -> dict[str, Any]:
@@ -341,23 +349,17 @@ def _knowledge_source_execution(org: Organization, ks: LensKnowledgeSource) -> d
         raise ValidationError(
             {"knowledge_source_id": "Knowledge source gateway is not linked to a LensNode."}
         )
-    from apps.lens_bridge.services.knowledge_source_sync import indexed_dir_paths
+    from apps.lens_bridge.services.provisioning import datasource_bindings_for_ks
 
-    try:
-        indexed_paths = [path for path in indexed_dir_paths(ks) if path]
-    except Exception as exc:
-        raise ValidationError({"knowledge_source_id": str(exc)}) from exc
-    if not indexed_paths:
-        raise ValidationError(
-            {"knowledge_source_id": "Knowledge source has no indexed paths yet. Wait for sync to finish."}
-        )
     return {
         "lensnode_uuid": str(lensnode_uuid),
-        "selected_dirs": [{"path": path} for path in indexed_paths],
+        "datasource_bindings": datasource_bindings_for_ks(ks),
     }
 
 
-_TENANT_EXECUTION_FIELDS = frozenset({"lensnode", "lensnode_uuid", "selected_dirs"})
+_TENANT_EXECUTION_FIELDS = frozenset(
+    {"lensnode", "lensnode_uuid", "selected_dirs", "datasource_bindings"}
+)
 
 
 def _apply_knowledge_source_payload(
@@ -392,11 +394,7 @@ def _apply_knowledge_source_payload(
             raise ValidationError(
                 {"knowledge_source_id": "Knowledge source is required."}
             )
-        if include_paths is not None and payload.get("selected_dirs"):
-            payload["selected_dirs"] = _apply_retrieval_include_paths(
-                payload["selected_dirs"],
-                include_paths,
-            )
+        _apply_retrieval_include_paths_to_settings(payload, include_paths)
         return payload
 
     ks = (
@@ -432,10 +430,8 @@ def _apply_knowledge_source_payload(
         )
     execution = _knowledge_source_execution(org, ks)
     payload["lensnode_uuid"] = execution["lensnode_uuid"]
-    payload["selected_dirs"] = _apply_retrieval_include_paths(
-        execution["selected_dirs"],
-        include_paths,
-    )
+    payload["datasource_bindings"] = execution["datasource_bindings"]
+    _apply_retrieval_include_paths_to_settings(payload, include_paths)
     return payload
 
 
@@ -464,6 +460,9 @@ def _serialize_knowledge_source_option(org: Organization, ks: LensKnowledgeSourc
         "scope_paths": scope_paths,
         "indexed_paths": indexed_paths,
         "sl_assistant_uuid": str(ks.sl_assistant_uuid) if ks.sl_assistant_uuid else None,
+        "sl_datasource_uuid": (
+            str(ks.sl_datasource_uuid) if ks.sl_datasource_uuid else None
+        ),
     }
 
 
@@ -497,8 +496,10 @@ def create_org_assistant(
         raise ValidationError({"lensnode_uuid": "LensNode is required."})
     if not payload.get("selected_task"):
         raise ValidationError({"selected_task": "Task is required."})
-    if not payload.get("selected_dirs"):
-        raise ValidationError({"selected_dirs": "At least one directory is required."})
+    if not payload.get("datasource_bindings"):
+        raise ValidationError(
+            {"datasource_bindings": "At least one datasource binding is required."}
+        )
     _validate_assistant_tool_bindings(org, payload)
     data = sl_client.request_json("POST", "/api/lens/assistants/", json_body=payload)
     if not isinstance(data, dict):

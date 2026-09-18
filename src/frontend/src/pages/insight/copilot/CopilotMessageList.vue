@@ -10,6 +10,7 @@ import CopilotStreamingMarkdown from '../../../components/copilot/CopilotStreami
 import CopilotAttachmentList from './CopilotAttachmentList.vue'
 import CopilotOutputFileList from './CopilotOutputFileList.vue'
 import CopilotThinkingTimeline from './CopilotThinkingTimeline.vue'
+import CopilotMessageCitations from './CopilotMessageCitations.vue'
 import type { CopilotDisplayMessage, CopilotFeedbackUpdate, CopilotRetryDraft } from './types'
 import type { ThinkingStep } from '../../../composables/useLensRunStream'
 import {
@@ -28,11 +29,13 @@ const props = defineProps<{
   streamError?: string
   bubbleTag?: string
   starterDisabled?: boolean
+  clarificationResetToken?: number
 }>()
 
 const emit = defineEmits<{
   retryQuestion: [draft: CopilotRetryDraft]
   feedbackUpdated: [update: CopilotFeedbackUpdate]
+  clarificationSubmitted: [runUuid: string, requestId: string, answer: string]
 }>()
 
 const { t } = useI18n()
@@ -40,10 +43,19 @@ const expandedThinking = ref<Set<string>>(new Set())
 const liveThinkingOpen = ref(true)
 const feedbackUpdating = ref<Set<string>>(new Set())
 const pdfDownloading = ref<Set<string>>(new Set())
+const clarificationAnswers = ref<Record<string, string>>({})
+const clarificationSubmitting = ref<Set<string>>(new Set())
 const chatScrollRef = ref<HTMLElement | null>(null)
 const copilotThreadRef = ref<HTMLElement | null>(null)
 const followsLatest = ref(true)
 let contentResizeObserver: ResizeObserver | null = null
+
+watch(
+  () => props.clarificationResetToken,
+  () => {
+    clarificationSubmitting.value = new Set()
+  },
+)
 
 const BOTTOM_FOLLOW_THRESHOLD = 48
 
@@ -239,6 +251,15 @@ function feedbackIsUpdating(message: CopilotDisplayMessage) {
   return Boolean(message.runId && feedbackUpdating.value.has(message.runId))
 }
 
+function submitClarification(message: CopilotDisplayMessage) {
+  const request = message.clarificationRequest
+  const runId = message.runId
+  const answer = runId ? (clarificationAnswers.value[runId] || '').trim() : ''
+  if (!request || !runId || !answer || clarificationSubmitting.value.has(runId)) return
+  clarificationSubmitting.value = new Set(clarificationSubmitting.value).add(runId)
+  emit('clarificationSubmitted', runId, request.requestId, answer)
+}
+
 async function setMessageFeedback(
   message: CopilotDisplayMessage,
   requested: LensRunFeedback,
@@ -357,6 +378,12 @@ const showLiveRow = computed(() => props.streaming)
                 class="thinking-panel-body"
               >
                 <CopilotThinkingTimeline :steps="thinkingStepsFor(msg)" />
+                <div
+                  v-if="msg.thinking?.outcome"
+                  class="thinking-outcome"
+                >
+                  {{ msg.thinking.outcome }}
+                </div>
               </div>
             </div>
 
@@ -392,11 +419,47 @@ const showLiveRow = computed(() => props.streaming)
                 {{ msg.text }}
               </div>
 
+              <div
+                v-if="msg.role === 'assistant' && msg.plannedEvidence?.sufficient === false"
+                class="evidence-warning"
+                role="status"
+              >
+                {{ msg.plannedEvidence.planner_rejection_reason || t('insight.copilot.evidenceMayBeInsufficient') }}
+              </div>
+
               <CopilotOutputFileList
                 v-if="msg.role === 'assistant' && msg.outputFiles?.length"
                 :session-id="sessionId"
                 :files="msg.outputFiles"
               />
+              <CopilotMessageCitations
+                v-if="msg.role === 'assistant' && msg.citations?.length"
+                :session-id="sessionId"
+                :run-id="msg.runId"
+                :citations="msg.citations"
+              />
+              <div
+                v-if="msg.role === 'assistant' && msg.clarificationRequest && msg.runId"
+                class="clarification-card"
+              >
+                <strong>{{ t('insight.copilot.clarificationTitle') }}</strong>
+                <p>{{ msg.clarificationRequest.question }}</p>
+                <textarea
+                  v-model="clarificationAnswers[msg.runId]"
+                  class="clarification-input"
+                  :disabled="clarificationSubmitting.has(msg.runId)"
+                  :placeholder="t('insight.copilot.clarificationPlaceholder')"
+                  rows="3"
+                />
+                <button
+                  type="button"
+                  class="clarification-submit"
+                  :disabled="clarificationSubmitting.has(msg.runId) || !(clarificationAnswers[msg.runId] || '').trim()"
+                  @click="submitClarification(msg)"
+                >
+                  {{ clarificationSubmitting.has(msg.runId) ? t('insight.copilot.clarificationSubmitting') : t('insight.copilot.clarificationSubmit') }}
+                </button>
+              </div>
             </div>
 
             <div
@@ -698,6 +761,21 @@ const showLiveRow = computed(() => props.streaming)
 .message-body {
   min-width: 0;
 }
+
+.clarification-card {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-card-bg));
+}
+.clarification-card strong { color: var(--color-text-title); font-size: 13px; }
+.clarification-card p { margin: 6px 0 10px; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
+.clarification-input { width: 100%; min-height: 72px; resize: vertical; padding: 9px 10px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-card-bg); color: var(--color-text-primary); font: inherit; font-size: 13px; }
+.clarification-submit { margin-top: 9px; min-height: 32px; padding: 6px 12px; border: 0; border-radius: 6px; background: var(--color-primary); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+.clarification-submit:disabled { cursor: not-allowed; opacity: 0.55; }
+.evidence-warning { margin-top: 12px; padding: 9px 11px; border-left: 3px solid var(--color-warning, #d97706); background: color-mix(in srgb, var(--color-warning, #d97706) 8%, transparent); color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
+.thinking-outcome { margin-top: 8px; padding: 8px 10px; border-top: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 
 .message-row-assistant .message-body {
   flex: 1;

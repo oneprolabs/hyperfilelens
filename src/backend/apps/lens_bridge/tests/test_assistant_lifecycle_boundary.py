@@ -191,7 +191,13 @@ class AssistantLifecycleBoundaryTests(TestCase):
         "apps.lens_bridge.services.assistants._knowledge_source_execution",
         return_value={
             "lensnode_uuid": "37941d34-a8bf-49d7-bfab-f8e61a350645",
-            "selected_dirs": [{"path": "/workspace/manual-source"}],
+            "datasource_bindings": [
+                {
+                    "datasource_uuid": "37941d34-a8bf-49d7-bfab-f8e61a350645",
+                    "mount_name": "workspace",
+                    "required": True,
+                }
+            ],
         },
     )
     @mock.patch(
@@ -332,7 +338,13 @@ class AssistantLifecycleBoundaryTests(TestCase):
         "apps.lens_bridge.services.assistants._knowledge_source_execution",
         return_value={
             "lensnode_uuid": "37941d34-a8bf-49d7-bfab-f8e61a350645",
-            "selected_dirs": [{"path": "/workspace/manual-source"}],
+            "datasource_bindings": [
+                {
+                    "datasource_uuid": "37941d34-a8bf-49d7-bfab-f8e61a350645",
+                    "mount_name": "workspace",
+                    "required": True,
+                }
+            ],
         },
     )
     @mock.patch("apps.lens_bridge.services.assistants.sl_client.request_json")

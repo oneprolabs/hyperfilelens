@@ -257,16 +257,16 @@ fi
 	# shellcheck source=../../tools/sourcelens/common.sh
 	source "${ROOT}/tools/sourcelens/common.sh"
 	sourcelens_load_config
-	SOURCELENS_GIT_REF=v0.49.5
+	SOURCELENS_GIT_REF=v0.57.0
 	SOURCELENS_HFL_VERSION=1.2.3
 	sourcelens_resolve_version
-	[[ "${SOURCELENS_DISTRIBUTION_TAG}" == 1.2.3-sl0.49.5 ]]
+	[[ "${SOURCELENS_DISTRIBUTION_TAG}" == 1.2.3-sl0.57.0 ]]
 )
 (
 	# shellcheck source=../../tools/sourcelens/common.sh
 	source "${ROOT}/tools/sourcelens/common.sh"
 	sourcelens_load_config
-	SOURCELENS_GIT_REF=v0.49.5
+	SOURCELENS_GIT_REF=v0.57.0
 	SOURCELENS_HFL_VERSION=1.2.3
 	SOURCELENS_DISTRIBUTION_TAG_OVERRIDE=1.2.3
 	sourcelens_resolve_version
@@ -586,9 +586,9 @@ digest="sha256:$(printf 'b%.0s' {1..64})"
 revision="$(printf 'c%.0s' {1..40})"
 digest_for_ref() {
 	case "$1" in
-	*sourcelens-backend*) printf '%s' sha256:b4fd19ea5bd3fed17e4c22eb44d4f4178181c33c29cc6ed956484642735408b8 ;;
-	*sourcelens-frontend*) printf '%s' sha256:2c183e50bc9e6281ea58ede269b3e7227f6e1bdf649a2c6b066cb5c651ecb802 ;;
-	*sourcelens-lensnode*) printf '%s' sha256:b865673d640ff575883e8321d5bae18ebd7d975d2f9bae3660167fee28e74b69 ;;
+	*sourcelens-backend*) printf '%s' sha256:931d539ce9430b3759ef3164ff7b4f47d9cf1f875f6683fe3173d0e791386af3 ;;
+	*sourcelens-frontend*) printf '%s' sha256:4e4dc9dfd58f74fb03235330c78860777f1d622aac4b45c9ac901c1c91018810 ;;
+	*sourcelens-lensnode*) printf '%s' sha256:bd7d822147fa1e40f3adccc3e1c4128a002631a7874e5e688fa6e10aa76d8d1a ;;
 	*postgres*) printf '%s' sha256:0027bef26712baaee437a4ea48fdf3d2d2e2bc5f0d81615374408ca320f3c7e3 ;;
 	*redis*) printf '%s' sha256:09160599abd229764c0fb44cb6be640294e1d360a54b19985ab4843dcf2d90f1 ;;
 	*nginx*) printf '%s' sha256:0d3b80406a13a767339fbe2f41406d6c7da727ab89cf8fae399e81f780f814d1 ;;

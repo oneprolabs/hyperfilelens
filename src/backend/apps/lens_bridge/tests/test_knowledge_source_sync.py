@@ -577,7 +577,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
             list(knowledge_source_sync.SYNC_PHASES),
         )
 
-    def test_explicitly_disabled_conversion_skips_datasource_phases(self):
+    def test_explicitly_disabled_conversion_keeps_runtime_datasource(self):
         self.knowledge_source.ingest_policy_json = {
             "document": False,
             "image": False,
@@ -608,6 +608,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
             patch.object(
                 knowledge_source_sync,
                 "_run_phase_ensure_managed_datasource",
+                side_effect=record("ensure_managed_datasource"),
             ) as ensure_datasource,
             patch.object(
                 knowledge_source_sync,
@@ -629,13 +630,14 @@ class ManagedRestorePipelineOrderTests(TestCase):
                 ks=self.knowledge_source,
             )
 
-        ensure_datasource.assert_not_called()
+        ensure_datasource.assert_called_once()
         convert_documents.assert_not_called()
         self.assertEqual(
             phase_calls,
             [
                 "prepare_workspace",
                 "restore_snapshot",
+                "ensure_managed_datasource",
                 "push_assistant",
                 "finalize",
             ],

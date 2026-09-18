@@ -11,6 +11,7 @@ from apps.lens_bridge.api.views import (
     LensCopilotReadinessView,
     LensCopilotRunStreamView,
     LensCopilotSharedQAFileView,
+    LensCopilotSharedQAArticleMediaView,
     LensCopilotSharedQAPdfView,
     LensCopilotSharedQAView,
     LensCopilotSessionViewSet,
@@ -94,6 +95,11 @@ urlpatterns = [
         "copilot/shared-qa/files/<uuid:file_uuid>/",
         LensCopilotSharedQAFileView.as_view(),
         name="lens-copilot-shared-qa-file",
+    ),
+    path(
+        "copilot/shared-qa/article-media/<str:article_uuid>/<str:filename>/",
+        LensCopilotSharedQAArticleMediaView.as_view(),
+        name="lens-copilot-shared-qa-article-media",
     ),
     path(
         "copilot/usage/<uuid:run_uuid>/",
