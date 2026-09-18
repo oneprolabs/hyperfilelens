@@ -32,10 +32,15 @@ var bannerPrinted bool
 
 // InstallFailure is a typed installer failure rendered at the command boundary.
 type InstallFailure struct {
-	Stage   string
-	Reason  string
-	Code    int
-	CodeKey string
+	Stage              string
+	Reason             string
+	Code               int
+	CodeKey            string
+	Component          string
+	Summary            string
+	Cause              string
+	ChangesApplied     string
+	RecommendedActions []string
 }
 
 func (failure InstallFailure) Error() string { return failure.Reason }
@@ -135,14 +140,27 @@ func logFail(message string, code int) {
 }
 
 func abortInstall(stage, message string, code int, codeKey string) {
-	message = strings.TrimSpace(message)
-	emitLine("FAIL", message, os.Stderr)
-	panic(InstallFailure{
+	abortInstallFailure(InstallFailure{
 		Stage:   stage,
 		Reason:  message,
 		Code:    code,
 		CodeKey: codeKey,
 	})
+}
+
+func abortInstallFailure(failure InstallFailure) {
+	failure.Reason = strings.TrimSpace(failure.Reason)
+	failure.Summary = strings.TrimSpace(failure.Summary)
+	failure.Cause = strings.TrimSpace(failure.Cause)
+	message := failure.Reason
+	if failure.Summary != "" {
+		message = failure.Summary
+	}
+	if message == "" {
+		message = failure.Cause
+	}
+	emitLine("FAIL", message, os.Stderr)
+	panic(failure)
 }
 
 // RecoverInstallFailure converts the internal abort boundary into a normal error.
@@ -182,57 +200,199 @@ func PrintCommandFailureFor(operation string, err error) {
 		failure.Reason = "Another HyperFileLens installation is already running."
 		failure.CodeKey = codePrefix + "-LOCKED"
 	}
+	if failure.CodeKey != "" {
+		writeCommandLogOnly("Diagnostic reference: " + failure.CodeKey + "\n")
+	}
 	if jsonOutput() {
+		component := failureComponent(operation, failure.Component)
+		summary := failureSummary(operation, failure)
+		cause := failureCause(failure)
+		changes := failureChanges(operation, failure)
 		emitJSON(os.Stderr, map[string]any{
-			"type":          "install_result",
-			"operation":     operation,
-			"result":        "failed",
-			"stage":         failure.Stage,
-			"reason":        ensureSentence(failure.Reason),
-			"error_code":    failure.CodeKey,
-			"system_change": failure.Stage != "Preflight checks" && failure.Stage != "Initialization",
+			"type":                "install_result",
+			"operation":           operation,
+			"result":              "failed",
+			"component":           component,
+			"stage":               failure.Stage,
+			"summary":             ensureSentence(summary),
+			"cause":               ensureSentence(cause),
+			"reason":              ensureSentence(failure.Reason),
+			"changes_applied":     changes,
+			"recommended_actions": failureActions(operation, failure),
+			"error_code":          failure.CodeKey,
+			"system_change":       failure.Stage != "Preflight checks" && failure.Stage != "Initialization",
 		})
 		return
 	}
 	title := noun + " failed"
-	systemChange := "See the cleanup status above"
+	changes := failureChanges(operation, failure)
 	if failure.Stage == "Preflight checks" || failure.Stage == "Initialization" {
 		title = noun + " was not started"
-		systemChange = "None"
 	}
 	if operation == "install" && failure.Stage == "Post-install verification" {
 		title = "Installation completed, but verification failed"
-		systemChange = "Agent installed; verification requires attention"
-	}
-	if operation == "install" && failure.CodeKey == "HFL-INSTALL-007" &&
-		failure.Stage != "Preflight checks" && failure.Stage != "Initialization" {
-		systemChange = "Agent installed; Docker / AI engine were not completed"
 	}
 	printResultRule(os.Stderr, title, ansiRed)
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Failure")
-	fmt.Fprintf(os.Stderr, "  %-13s %s\n", "Stage", failure.Stage)
-	fmt.Fprintf(os.Stderr, "  %-13s %s\n", "Reason", ensureSentence(failure.Reason))
-	fmt.Fprintf(os.Stderr, "  %-13s %s\n", "System change", systemChange)
+	fmt.Fprintln(os.Stderr, "Failure details")
+	fmt.Fprintf(os.Stderr, "  %-16s %s\n", "Component", failureComponent(operation, failure.Component))
+	fmt.Fprintf(os.Stderr, "  %-16s %s\n", "Stage", failure.Stage)
+	fmt.Fprintf(os.Stderr, "  %-16s %s\n", "Summary", ensureSentence(failureSummary(operation, failure)))
+	fmt.Fprintf(os.Stderr, "  %-16s %s\n", "Cause", ensureSentence(failureCause(failure)))
+	printWrappedFailureValue("Changes applied", changes)
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Error code:")
-	fmt.Fprintf(os.Stderr, "  %s\n", failure.CodeKey)
+	actions := failureActions(operation, failure)
+	if len(actions) > 0 {
+		fmt.Fprintln(os.Stderr, "Recommended actions")
+		for index, action := range actions {
+			printRecommendedAction(index+1, action)
+		}
+	}
+	if logPath := activeInstallLogPath(); logPath != "" {
+		fmt.Fprintf(os.Stderr, "\n%-18s %s\n", "Log file", logPath)
+	}
+	if failure.CodeKey != "" && os.Getenv("HFL_VERBOSE") != "" {
+		fmt.Fprintf(os.Stderr, "Diagnostic reference %s\n", failure.CodeKey)
+	}
+}
+
+func failureComponent(operation, component string) string {
+	if strings.TrimSpace(component) != "" {
+		return strings.TrimSpace(component)
+	}
+	if operation != "install" && operation != "registration" {
+		noun, _, _ := failureOperationLabels(operation)
+		return noun
+	}
+	role := model.Role(strings.TrimSpace(os.Getenv("HFL_NODE_ROLE")))
+	if role == "" {
+		role = model.RoleAgent
+	}
+	if role == model.RoleAgent {
+		return agentComponentName(role, "")
+	}
+	return agentComponentName(role, os.Getenv("HFL_GATEWAY_SCOPE"))
+}
+
+func agentComponentName(role model.Role, gatewayScope string) string {
+	switch role {
+	case model.RoleProxy:
+		return "Source Proxy Agent"
+	case model.RoleGateway:
+		return roleDisplayName(role, gatewayScope) + " Agent"
+	default:
+		return "Source Host Agent"
+	}
+}
+
+func failureSummary(operation string, failure InstallFailure) string {
+	if strings.TrimSpace(failure.Summary) != "" {
+		return strings.TrimSpace(failure.Summary)
+	}
+	if failure.Stage == "Preflight checks" {
+		return "The requested operation did not pass the required preflight checks"
+	}
+	if failure.Stage == "Initialization" {
+		return "The installer could not initialize the requested operation"
+	}
+	noun, _, _ := failureOperationLabels(operation)
+	return "The requested " + strings.ToLower(noun) + " operation could not be completed"
+}
+
+func failureCause(failure InstallFailure) string {
+	if strings.TrimSpace(failure.Cause) != "" {
+		return strings.TrimSpace(failure.Cause)
+	}
+	if strings.TrimSpace(failure.Reason) != "" {
+		return strings.TrimSpace(failure.Reason)
+	}
+	return "No additional cause was provided"
+}
+
+func failureChanges(operation string, failure InstallFailure) string {
+	if strings.TrimSpace(failure.ChangesApplied) != "" {
+		return strings.TrimSpace(failure.ChangesApplied)
+	}
+	if failure.Stage == "Preflight checks" || failure.Stage == "Initialization" {
+		return "No changes were applied."
+	}
 	if operation == "install" && failure.Stage == "Post-install verification" {
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Suggested actions:")
-		fmt.Fprintln(os.Stderr, "  1. Check outbound network access to the control plane.")
-		fmt.Fprintln(os.Stderr, "  2. Confirm that any proxy supports WebSocket connections.")
-		fmt.Fprintln(os.Stderr, "  3. Review the Agent service log and run hfl-enroll status.")
+		return "The Agent was installed and started; post-install verification requires attention."
+	}
+	if operation == "install" && failure.CodeKey == "HFL-INSTALL-007" {
+		return "The Agent installation was applied; Docker or the AI engine was not completed."
+	}
+	return "The operation may have applied partial changes; review the installation log before retrying."
+}
+
+func failureActions(operation string, failure InstallFailure) []string {
+	if len(failure.RecommendedActions) > 0 {
+		return failure.RecommendedActions
+	}
+	reason := strings.ToLower(failure.Reason)
+	if strings.Contains(reason, "belongs to organization") && strings.Contains(reason, "enrollment link") {
+		return []string{
+			"Use an enrollment link issued by the installed organization.",
+			"Uninstall the existing Agent, then run the enrollment command again.",
+			"Alternatively, use another host without an existing Agent.",
+		}
+	}
+	if operation == "install" && failure.Stage == "Post-install verification" {
+		return []string{
+			"Check outbound network access to the control plane.",
+			"Confirm that any proxy supports WebSocket connections.",
+			"Review the Agent service log and run hfl-enroll status.",
+		}
 	}
 	if operation == "install" && failure.CodeKey == "HFL-INSTALL-007" &&
 		failure.Stage != "Preflight checks" && failure.Stage != "Initialization" {
 		if isHostAptBusyFailure(failure.Reason) {
-			printHostAptBusySuggestedActions()
-		} else if isHostAptUnhealthyFailure(failure.Reason) {
-			printHostAptUnhealthySuggestedActions()
-		} else {
-			printDockerOrAIEngineSuggestedActions()
+			return hostAptBusyActions()
 		}
+		if isHostAptUnhealthyFailure(failure.Reason) {
+			return hostAptUnhealthyActions()
+		}
+		return dockerOrAIEngineActions()
+	}
+	return []string{defaultFailureAction(operation)}
+}
+
+func defaultFailureAction(operation string) string {
+	switch operation {
+	case "upgrade":
+		return "Review the upgrade log for the underlying error, correct the reported condition, and run the upgrade again."
+	case "uninstall":
+		return "Review the uninstall output for the underlying error, correct the reported condition, and run the uninstall command again."
+	case "registration":
+		return "Review the Agent service log for the underlying error, correct the reported condition, and run registration again."
+	case "status":
+		return "Review the Agent service state and log for the underlying error, then run the status command again."
+	default:
+		return "Review the installation log for the underlying error, correct the reported condition, and run the command again."
+	}
+}
+
+func printWrappedFailureValue(label, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	lines := strings.Split(value, "\n")
+	fmt.Fprintf(os.Stderr, "  %-16s %s\n", label, lines[0])
+	for _, line := range lines[1:] {
+		fmt.Fprintf(os.Stderr, "                   %s\n", line)
+	}
+}
+
+func printRecommendedAction(number int, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	lines := strings.Split(value, "\n")
+	fmt.Fprintf(os.Stderr, "  %d. %s\n", number, lines[0])
+	for _, line := range lines[1:] {
+		fmt.Fprintf(os.Stderr, "     %s\n", line)
 	}
 }
 
@@ -256,47 +416,31 @@ func isHostAptUnhealthyFailure(reason string) bool {
 	)
 }
 
-func printHostAptBusySuggestedActions() {
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Suggested actions:")
-	fmt.Fprintln(os.Stderr, "  1. Wait for the active apt/dpkg operation, such as unattended-upgrades, to finish.")
-	fmt.Fprintln(os.Stderr, "  2. Confirm that no apt or dpkg process is still running, then retry the Gateway installation.")
-	fmt.Fprintln(os.Stderr, "  3. Do not delete package-manager lock files while apt or dpkg is active.")
+func hostAptBusyActions() []string {
+	return []string{
+		"Wait for the active apt/dpkg operation, such as unattended-upgrades, to finish.",
+		"Confirm that no apt or dpkg process is still running, then retry the Gateway installation.",
+		"Do not delete package-manager lock files while apt or dpkg is active.",
+	}
 }
 
-func printHostAptUnhealthySuggestedActions() {
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Suggested actions:")
-	fmt.Fprintln(os.Stderr, "  1. This is usually a broken or inconsistent host apt state, not a")
-	fmt.Fprintln(os.Stderr, "     HyperFileLens download failure. HyperFileLens will not repair apt")
-	fmt.Fprintln(os.Stderr, "     automatically.")
-	fmt.Fprintln(os.Stderr, "  2. Inspect only:")
-	fmt.Fprintln(os.Stderr, "       apt-get check")
-	fmt.Fprintln(os.Stderr, "       dpkg --audit")
-	fmt.Fprintln(os.Stderr, "       dpkg -l 'libpython3*'")
-	fmt.Fprintln(os.Stderr, "       apt-get --simulate --no-download --fix-broken install")
-	fmt.Fprintln(os.Stderr, "  3. DANGER: do not run apt-get --fix-broken install (or apt upgrade)")
-	fmt.Fprintln(os.Stderr, "     unless you understand and accept the package changes. That command")
-	fmt.Fprintln(os.Stderr, "     can remove, downgrade, or replace critical host packages (python3,")
-	fmt.Fprintln(os.Stderr, "     cloud-init, networking tools, and others) and may break this machine")
-	fmt.Fprintln(os.Stderr, "     or remote access. Always review --simulate output first.")
-	fmt.Fprintln(os.Stderr, "  4. Safer options: install Docker yourself (engine >= 24.0, Compose v2")
-	fmt.Fprintln(os.Stderr, "     >= 2.20) and re-run the Gateway command, or use a clean Ubuntu")
-	fmt.Fprintln(os.Stderr, "     20.04 / 22.04 / 24.04 amd64 host.")
-	fmt.Fprintln(os.Stderr, "  5. The Agent may already be registered; repair or rebuild carefully")
-	fmt.Fprintln(os.Stderr, "     before retrying enrollment.")
+func hostAptUnhealthyActions() []string {
+	return []string{
+		"This is usually a broken or inconsistent host apt state, not a HyperFileLens download failure. HyperFileLens will not repair apt automatically.",
+		"Inspect the package state with: apt-get check; dpkg --audit; dpkg -l 'libpython3*'; apt-get --simulate --no-download --fix-broken install.",
+		"Do not run apt-get --fix-broken install or apt upgrade unless you understand and accept the package changes. Review the --simulate output first.",
+		"Install Docker yourself (engine >= 24.0, Compose v2 >= 2.20) and re-run the Gateway command, or use a clean Ubuntu 20.04 / 22.04 / 24.04 amd64 host.",
+		"The Agent may already be registered; repair or rebuild it carefully before retrying enrollment.",
+	}
 }
 
-func printDockerOrAIEngineSuggestedActions() {
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Suggested actions:")
-	fmt.Fprintln(os.Stderr, "  1. Review the Docker / AI engine messages above for the concrete failure.")
-	fmt.Fprintln(os.Stderr, "  2. If Docker is already installed, confirm engine >= 24.0, Compose v2")
-	fmt.Fprintln(os.Stderr, "     >= 2.20, and that the daemon is reachable (`docker info`).")
-	fmt.Fprintln(os.Stderr, "  3. Safer options: install or repair Docker yourself and re-run the")
-	fmt.Fprintln(os.Stderr, "     Gateway command, or use a clean Ubuntu 20.04 / 22.04 / 24.04 amd64 host.")
-	fmt.Fprintln(os.Stderr, "  4. The Agent may already be registered; repair or rebuild carefully")
-	fmt.Fprintln(os.Stderr, "     before retrying enrollment.")
+func dockerOrAIEngineActions() []string {
+	return []string{
+		"Review the Docker or AI engine messages above for the concrete failure.",
+		"If Docker is already installed, confirm engine >= 24.0, Compose v2 >= 2.20, and that the daemon is reachable with docker info.",
+		"Install or repair Docker yourself and re-run the Gateway command, or use a clean Ubuntu 20.04 / 22.04 / 24.04 amd64 host.",
+		"The Agent may already be registered; repair or rebuild it carefully before retrying enrollment.",
+	}
 }
 
 func normalizeFailureOperation(operation string) string {

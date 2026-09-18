@@ -44,18 +44,49 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 	if state.Installed {
 		plan, err = PlanInstall(ctx, cfg, state, opts.Mode)
 		if err != nil {
-			logFail(err.Error(), 3)
+			abortInstall("Preflight checks", err.Error(), 3, "HFL-INSTALL-003")
 		}
 	} else if opts.Mode != InstallModeAuto {
-		logFail(fmt.Sprintf("--%s requires an existing HyperFileLens Agent installation", opts.Mode), 2)
+		abortInstall(
+			"Preflight checks",
+			fmt.Sprintf("--%s requires an existing HyperFileLens Agent installation", opts.Mode),
+			2,
+			"HFL-INSTALL-002",
+		)
 	}
 
 	switch plan.Action {
 	case ActionCrossOrg:
-		logFail(fmt.Sprintf(
-			"This agent belongs to organization %q, but this enrollment link is for %q. Uninstall the agent first, then try again.",
-			state.OrgKey, cfg.OrgKey,
-		), 1)
+		installedRole := model.Role(state.Role)
+		if installedRole == "" {
+			installedRole = cfg.NodeRole
+		}
+		installedGatewayScope := state.GatewayScope
+		if installedGatewayScope == "" {
+			installedGatewayScope = cfg.GatewayScope
+		}
+		component := agentComponentName(installedRole, installedGatewayScope)
+		cause := fmt.Sprintf(
+			"The installed %s belongs to organization %q, while this enrollment link belongs to organization %q.",
+			component,
+			state.OrgKey,
+			cfg.OrgKey,
+		)
+		abortInstallFailure(InstallFailure{
+			Stage:          "Preflight checks",
+			Reason:         cause,
+			Code:           1,
+			CodeKey:        "HFL-INSTALL-001",
+			Component:      component,
+			Summary:        fmt.Sprintf("The existing %s cannot be enrolled using this enrollment link.", component),
+			Cause:          cause,
+			ChangesApplied: "No changes were applied.",
+			RecommendedActions: []string{
+				"Use an enrollment link issued by the installed organization.",
+				"Uninstall the existing Agent, then run the enrollment command again.",
+				"Alternatively, use another host without an existing Agent.",
+			},
+		})
 	case ActionAlreadyEnrolled:
 		if ver, verErr := InstalledAgentVersion(ctx); verErr == nil && ver != "" {
 			agentVer = ver

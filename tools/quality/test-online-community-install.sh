@@ -93,7 +93,7 @@ grep -Fq 'dpkg_state_clean_for_retry' "${online}/install.sh"
 grep -Fq 'preserve_apt_failure_log' "${online}/install.sh"
 grep -Fq 'fail_log_setup' "${online}/install.sh"
 grep -Fq 'The target filesystem is read-only.' "${online}/install.sh"
-grep -Fq 'No HyperFileLens installation or configuration was changed.' "${online}/install.sh"
+grep -Fq 'No changes were applied.' "${online}/install.sh"
 grep -Fq -- '--no-upgrade' "${online}/install.sh"
 for package in docker-ce docker-ce-cli containerd.io docker-compose-plugin; do
 	grep -Fq "${package}" "${online}/install.sh"
@@ -847,12 +847,13 @@ if (
 fi
 grep -Fq '[FAIL] A conflicting HyperFileLens Agent installation was detected' \
 	"${agent_conflict_log}"
-grep -Fq "Agent root        ${online_agent_fixture_root}" \
+grep -Fq "Agent root: ${online_agent_fixture_root}" \
 	"${agent_conflict_log}"
-grep -Fq "Service           ${online_agent_fixture_service}" \
+grep -Fq "Service: ${online_agent_fixture_service}" \
 	"${agent_conflict_log}"
-grep -Fq 'Agent installer   not found' "${agent_conflict_log}"
-grep -Fq 'No Agent, Docker service, or configuration was changed.' \
+grep -Fq 'Restore the matching Agent installer and run its uninstall command' \
+	"${agent_conflict_log}"
+grep -Fq 'Changes applied  No changes were applied.' \
 	"${agent_conflict_log}"
 
 mkdir -p "${online_agent_fixture_root}/bin"
@@ -907,8 +908,9 @@ if (
 	printf 'ERROR: online installer accepted residual Agent data\n' >&2
 	exit 1
 fi
-grep -Fq "Legacy data       ${online_agent_fixture_legacy}" "${residual_agent_log}"
-grep -Fq 'Agent installer   not found' "${residual_agent_log}"
+grep -Fq "Legacy data: ${online_agent_fixture_legacy}" "${residual_agent_log}"
+grep -Fq 'Restore the matching Agent installer and run its uninstall command' \
+	"${residual_agent_log}"
 rm -rf "${online_agent_fixture_root}" "${online_agent_fixture_legacy}" \
 	"${online_agent_fixture_service}"
 

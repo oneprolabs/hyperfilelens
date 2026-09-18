@@ -25,6 +25,7 @@ type InstallState struct {
 	NodeID           string
 	OrgKey           string
 	Role             string
+	GatewayScope     string
 	InstallationMode string
 	Service          string
 }
@@ -61,6 +62,7 @@ func DetectInstallState() InstallState {
 	state.NodeID = ReadNodeID(envPath)
 	state.OrgKey = readEnvKey(envPath, "HFL_ORG_KEY")
 	state.Role = readEnvKey(envPath, "HFL_NODE_ROLE")
+	state.GatewayScope = readEnvKey(envPath, "HFL_GATEWAY_SCOPE")
 	state.InstallationMode = readEnvKey(envPath, "HFL_INSTALLATION_MODE")
 	state.Service = serviceState(context.Background())
 	return state

@@ -54,6 +54,11 @@ ONLINE_AGENT_ROOT="/opt/hyperfilelens-agent"
 ONLINE_AGENT_LEGACY_DATA_DIR="/var/lib/hyperfilelens-agent"
 ONLINE_AGENT_SYSTEMD_UNIT_FILE="/etc/systemd/system/hyperfilelens-agent.service"
 ONLINE_REQUIRED_PORTS=(11442 11443 11444 11445)
+ONLINE_FAILURE_STAGE="Initialization"
+ONLINE_FAILURE_COMPONENT="HyperFileLens Community"
+ONLINE_CHANGES_APPLIED="No changes were applied."
+ONLINE_LOG_READY=0
+ONLINE_FAILURE_ACTIONS=()
 CURL_RETRY_ARGS=()
 APT_RETRY_ARGS=(
 	-o Acquire::Retries=3
@@ -77,8 +82,86 @@ USAGE
 }
 
 fail() {
-	printf '[FAIL] %s\n' "$*" >&2
+	print_online_failure "$*"
 	exit 1
+}
+
+print_online_failure() {
+	local cause="$1"
+	local operation_noun="Installation"
+	local operation_word="installation"
+	[[ "${INSTALL_ACTION:-Install}" == "Upgrade" ]] && operation_noun="Upgrade" && operation_word="upgrade"
+	local title="${operation_noun} failed"
+	local summary="The requested ${operation_word} operation could not be completed."
+	local changes_applied="${ONLINE_CHANGES_APPLIED}"
+	local actions=()
+	if ((${#ONLINE_FAILURE_ACTIONS[@]} > 0)); then
+		actions=("${ONLINE_FAILURE_ACTIONS[@]}")
+	fi
+	if [[ "${changes_applied}" == "No changes were applied." \
+		&& ("${DOCKER_PACKAGE_INSTALL_ATTEMPTED}" == 1 || "${COMPOSE_PACKAGE_INSTALL_ATTEMPTED}" == 1) ]]; then
+		changes_applied="Docker package installation was attempted; HyperFileLens services were not started."
+	fi
+	if [[ "${ONLINE_FAILURE_STAGE}" == "Preflight checks" || "${ONLINE_FAILURE_STAGE}" == "Initialization" ]]; then
+		title="${operation_noun} was not started"
+		if [[ "${ONLINE_FAILURE_STAGE}" == "Preflight checks" ]]; then
+			summary="The requested operation did not pass the required preflight checks."
+		else
+			summary="The installer could not initialize the requested operation."
+		fi
+	fi
+	if [[ "${ONLINE_FAILURE_STAGE}" == "Post-install verification" ]]; then
+		title="Installation completed, but verification failed"
+		summary="One or more installed services did not pass post-install verification."
+	fi
+	if ((${#actions[@]} == 0)); then
+		case "${ONLINE_FAILURE_STAGE}" in
+		"Preflight checks")
+			actions+=("Correct the reported preflight condition, then run the same command again.")
+			;;
+		"Initialization")
+			actions+=("Correct the reported prerequisite or command option, then run the same command again.")
+			;;
+		"Downloading installation assets" | "Downloading upgrade assets")
+			actions+=("Verify network access to the selected container registry and run the same command again.")
+			actions+=("Transient network failures are retried up to 5 times. Downloaded image layers will be reused.")
+			actions+=("Review the installation log for the affected image names and the original Docker error.")
+			;;
+		"Downloading release package")
+			actions+=("Verify network access to ${SOURCE_NAME:-the selected release source}, then run the same command again.")
+			actions+=("Review the installation log for the original download or archive error.")
+			;;
+		"Extracting release package" | "Verifying release")
+			actions+=("Review the installation log for the release package validation error.")
+			actions+=("Retry the same release after confirming that the selected source provides a complete package.")
+			;;
+		"Installing" | "Applying upgrade" | "Starting services" | "Post-install verification")
+			actions+=("Review the installation log and Docker Compose service logs for the underlying error.")
+			actions+=("Correct the reported condition, then restart or re-run the operation as appropriate.")
+			;;
+		*)
+			actions+=("Review the installation log for the underlying error, correct the reported condition, and run the command again.")
+			;;
+		esac
+	fi
+	printf '[FAIL] %s\n\n' "${cause}" >&2
+	printf '%s\n' "${title}" >&2
+	printf '%s\n\n' '===================================' >&2
+	printf '%s\n' 'Failure details' >&2
+	printf '  %-16s %s\n' 'Component' "${ONLINE_FAILURE_COMPONENT}" >&2
+	printf '  %-16s %s\n' 'Stage' "${ONLINE_FAILURE_STAGE}" >&2
+	printf '  %-16s %s\n' 'Summary' "${summary}" >&2
+	printf '  %-16s %s\n' 'Cause' "${cause}" >&2
+	printf '  %-16s %s\n' 'Changes applied' "${changes_applied}" >&2
+	printf '\n%s\n' 'Recommended actions' >&2
+	local index=1 action
+	for action in "${actions[@]}"; do
+		printf '  %d. %s\n' "${index}" "${action}" >&2
+		((index += 1))
+	done
+	if ((ONLINE_LOG_READY == 1)); then
+		printf '\n%-18s %s\n' 'Log file' "${ONLINE_LOG_FILE}" >&2
+	fi
 }
 
 fail_log_setup() {
@@ -87,12 +170,13 @@ fail_log_setup() {
 	if [[ "${normalized}" == *"read-only file system"* \
 		|| "${normalized}" == *"read-only filesystem"* \
 		|| "${normalized}" == *"erofs"* ]]; then
-		printf '[FAIL] The target filesystem is read-only.\n\n' >&2
-		printf 'The installer cannot write its log under:\n%s\n\n' \
-			"${INSTALL_ROOT}/logs" >&2
-		printf 'Remount the filesystem as read-write or repair the filesystem,\n' >&2
-		printf 'then run the installer again.\n\n' >&2
-		printf 'No HyperFileLens installation or configuration was changed.\n' >&2
+		ONLINE_FAILURE_STAGE="Initialization"
+		ONLINE_CHANGES_APPLIED="No changes were applied."
+		ONLINE_FAILURE_ACTIONS=(
+			"Remount the target filesystem as read-write or repair the filesystem."
+			"Run the installer again after ${INSTALL_ROOT}/logs is writable."
+		)
+		print_online_failure "The target filesystem is read-only. The installer could not create its log under ${INSTALL_ROOT}/logs."
 		exit 1
 	fi
 	fail "could not ${operation}"
@@ -213,6 +297,7 @@ configure_logging() {
 	if ! diagnostic="$(LC_ALL=C chmod 600 "${ONLINE_LOG_FILE}" 2>&1)"; then
 		fail_log_setup "secure the online installation log" "${diagnostic}"
 	fi
+	ONLINE_LOG_READY=1
 	exec 3>&1
 	exec 4>&2
 	exec > >(capture_log_stream "${ONLINE_LOG_FILE}" 3) \
@@ -465,6 +550,7 @@ install_host_tools() {
 		esac
 	done
 	if ((${#missing[@]})); then
+		ONLINE_CHANGES_APPLIED="Host package preparation was attempted; HyperFileLens services were not started."
 		printf '%s[....] Installing required host tools: %s\n' \
 			"$(installation_step_indent)" "${missing[*]}"
 		apt_update_quiet "${update_log}" \
@@ -481,6 +567,7 @@ install_host_tools() {
 			--no-upgrade --no-install-recommends "${missing[@]}"; then
 			fail "required host tools could not be installed"
 		fi
+		ONLINE_CHANGES_APPLIED="Required host tools were installed; HyperFileLens services were not started."
 	fi
 }
 
@@ -1188,28 +1275,32 @@ online_agent_trusted_uninstaller() {
 }
 
 fail_online_agent_conflict() {
-	local uninstaller=""
+	local uninstaller="" resource cause
+	local -a resources=()
 	uninstaller="$(online_agent_trusted_uninstaller || true)"
-	printf '  [FAIL] A conflicting HyperFileLens Agent installation was detected\n\n' >&2
+	ONLINE_FAILURE_STAGE="Preflight checks"
+	ONLINE_CHANGES_APPLIED="No changes were applied."
 	if online_agent_canonical_artifacts_detected; then
-		printf '         %-17s %s\n' 'Agent root' "${ONLINE_AGENT_ROOT}" >&2
+		resources+=("Agent root: ${ONLINE_AGENT_ROOT}")
 	fi
 	if online_agent_legacy_data_detected; then
-		printf '         %-17s %s\n' 'Legacy data' "${ONLINE_AGENT_LEGACY_DATA_DIR}" >&2
+		resources+=("Legacy data: ${ONLINE_AGENT_LEGACY_DATA_DIR}")
 	fi
 	if online_agent_service_detected; then
-		printf '         %-17s %s\n' 'Service' "${ONLINE_AGENT_SYSTEMD_UNIT_FILE}" >&2
+		resources+=("Service: ${ONLINE_AGENT_SYSTEMD_UNIT_FILE}")
 	fi
+	cause="A conflicting HyperFileLens Agent installation was detected on this host."
+	if ((${#resources[@]} > 0)); then
+		cause+=" Detected resources: ${resources[*]}."
+	fi
+	ONLINE_FAILURE_ACTIONS=()
 	if [[ -n "${uninstaller}" ]]; then
-		printf '\n         Uninstall the existing Agent, then run this installer again:\n\n' >&2
-		printf '           sudo %s uninstall\n' "${uninstaller}" >&2
+		ONLINE_FAILURE_ACTIONS+=("Uninstall the existing Agent with: sudo ${uninstaller} uninstall. Then run this installer again.")
 	else
-		printf '         %-17s %s\n' 'Agent installer' 'not found' >&2
-		printf '\n         Restore the matching Agent installer and run its uninstall command,\n' >&2
-		printf '         or remove the listed residual resources manually before retrying.\n' >&2
+		ONLINE_FAILURE_ACTIONS+=("Restore the matching Agent installer and run its uninstall command, or remove the listed residual resources manually before retrying.")
 	fi
-	printf '\n         Alternatively, install HyperFileLens on another host.\n' >&2
-	printf '         No Agent, Docker service, or configuration was changed.\n' >&2
+	ONLINE_FAILURE_ACTIONS+=("Alternatively, install HyperFileLens on another host.")
+	print_online_failure "${cause}"
 	exit 1
 }
 
@@ -1289,6 +1380,7 @@ PY
 
 run_online_install_preflight() {
 	local hostname
+	ONLINE_FAILURE_STAGE="Preflight checks"
 	printf '  [....] Running installation preflight checks\n'
 	printf '  [ OK ] Running with administrator privileges · root\n'
 	printf '  [ OK ] Operating system is supported · %s · linux/amd64\n' \
@@ -1928,6 +2020,8 @@ confirm_installation() {
 run_fresh_community_install() {
 	local package=$1 rc status
 	local -a pipeline_status=()
+	ONLINE_FAILURE_STAGE="Installing"
+	ONLINE_CHANGES_APPLIED="The HyperFileLens installation was started; service state may be partial."
 	set +e
 	HFL_REGISTRY_REGION="${REGION}" HFL_ONLINE_CHILD=1 HFL_PARENT_LOGGING=1 \
 		HFL_INSTALL_RECOVERY="${INSTALL_RECOVERY}" \
@@ -1963,9 +2057,11 @@ download_source_archive() {
 	download_file_with_progress \
 		"${url}" "${SESSION_DIR}/source.tar.gz" 300 "${label}" \
 		|| fail_with_tag_guidance "Community release ${TAG} cannot be downloaded from ${SOURCE_NAME}"
+	ONLINE_FAILURE_STAGE="Extracting release package"
 	mkdir -p "${SESSION_DIR}/source"
 	tar -xzf "${SESSION_DIR}/source.tar.gz" -C "${SESSION_DIR}/source" --strip-components=1 \
 		|| fail_with_tag_guidance "Community release package ${TAG} could not be extracted"
+	ONLINE_FAILURE_STAGE="Verifying release"
 	[[ -x "${SESSION_DIR}/source/deploy/online/install.sh" \
 		&& -f "${SESSION_DIR}/source/deploy/online/prepare.py" ]] \
 		|| fail_with_tag_guidance "Community release package ${TAG} does not provide the online installer"
@@ -2040,6 +2136,7 @@ trap 'exit 143' TERM
 
 inspect_existing_installation
 configure_curl_retry_options
+ONLINE_FAILURE_STAGE="Resolving release"
 requested_online_tag="${TAG}"
 resolve_tag
 if [[ "${INSTALL_ACTION}" == "Install" ]]; then
@@ -2048,12 +2145,15 @@ else
 	printf '[ OK ] Community release resolved · %s · commit %s\n' \
 		"${TAG}" "${RELEASE_COMMIT:0:12}"
 fi
+ONLINE_FAILURE_STAGE="Preflight checks"
 inspect_docker_runtime
 if [[ "${DOCKER_RUNTIME_ACTION}" == install ]]; then
 	assert_docker_service_manager
 fi
 if [[ "${DOCKER_RUNTIME_ACTION}" != reuse ]]; then
+	ONLINE_FAILURE_STAGE="Downloading release package"
 	download_source_archive
+	ONLINE_FAILURE_STAGE="Preparing runtime"
 	load_docker_runtime_contract
 fi
 print_target
@@ -2065,11 +2165,17 @@ if [[ "${INSTALL_ACTION}" == "Install" ]]; then
 else
 	printf '\n[1/4] Preparing upgrade\n\n'
 fi
+ONLINE_FAILURE_STAGE="Preparing runtime"
 install_host_tools
 if [[ "${DOCKER_RUNTIME_ACTION}" == reuse ]]; then
+	ONLINE_FAILURE_STAGE="Downloading release package"
 	download_source_archive
+	ONLINE_FAILURE_STAGE="Preparing runtime"
 fi
 ensure_online_docker_runtime
+if [[ "${DOCKER_BOOTSTRAPPED}" == 1 || "${COMPOSE_BOOTSTRAPPED}" == 1 ]]; then
+	ONLINE_CHANGES_APPLIED="Docker Engine or Compose was installed or updated; HyperFileLens services were not started."
+fi
 if [[ "${INSTALL_ACTION}" == "Install" ]]; then
 	printf '  [ OK ] Release package and host requirements are ready\n'
 	printf '\n[2/4] Downloading installation assets\n\n'
@@ -2083,6 +2189,11 @@ export HFL_CN_REGISTRY_PREFIX="${CN_REGISTRY_PREFIX}"
 export HFL_REGISTRY_REGION="${REGION}"
 export HFL_ONLINE_NATIVE_PROGRESS="${ONLINE_INTERACTIVE}"
 candidate="${SESSION_DIR}/hyperfilelens-${RELEASE_VERSION}-online"
+if [[ "${INSTALL_ACTION}" == "Install" ]]; then
+	ONLINE_FAILURE_STAGE="Downloading installation assets"
+else
+	ONLINE_FAILURE_STAGE="Downloading upgrade assets"
+fi
 prepare_args=(
 	--source-root "${SESSION_DIR}/source"
 	--version "${TAG}"
@@ -2094,17 +2205,31 @@ prepare_status=0
 python3 "${SESSION_DIR}/source/deploy/online/prepare.py" "${prepare_args[@]}" \
 	|| prepare_status=$?
 if ((prepare_status == 75)); then
-	fail $'Required container images could not be downloaded completely.\n\n       Transient network failures are retried up to 5 times.\n       Run the same installation command again to retry.\n       Downloaded image layers will be reused.\n       See the installation log for image details.'
+	ONLINE_FAILURE_ACTIONS=(
+		"Verify network access to the selected container registry and run the same command again."
+		"Transient network failures are retried up to 5 times. Downloaded image layers will be reused."
+		"Review the installation log for the affected image names and the original Docker error."
+	)
+	fail "Required container images could not be downloaded completely."
 fi
 if ((prepare_status == 76)); then
-	fail $'Required container images are unavailable or access was denied.\n\n       See the installation log for image details before retrying.'
+	ONLINE_FAILURE_ACTIONS=(
+		"Review the installation log for the unavailable image or access-denied response."
+		"Run the same command again after the required image is available from the selected registry."
+	)
+	fail "Required container images are unavailable or access was denied."
 fi
 if ((prepare_status == 77)); then
-	fail $'Required container images could not be prepared or verified locally.\n\n       See the installation log for Docker and image validation details.'
+	ONLINE_FAILURE_ACTIONS=(
+		"Review the installation log for the Docker or image validation error."
+		"Correct the reported local Docker or storage condition, then run the same command again."
+	)
+	fail "Required container images could not be prepared or verified locally."
 fi
 if ((prepare_status != 0)); then
 	fail_with_tag_guidance "Community tag ${TAG} is incomplete or unavailable"
 fi
+ONLINE_FAILURE_STAGE="Verifying release"
 if ! verify_candidate_release; then
 	fail_with_tag_guidance "Community tag ${TAG} failed release identity validation"
 fi
@@ -2115,6 +2240,8 @@ else
 fi
 
 if [[ "${INSTALL_ACTION}" == Upgrade ]]; then
+	ONLINE_FAILURE_STAGE="Applying upgrade"
+	ONLINE_CHANGES_APPLIED="The HyperFileLens upgrade was started; the existing installation may require recovery."
 	printf '\n[3/4] Applying upgrade\n\n'
 	set +e
 	HFL_REGISTRY_REGION="${REGION}" HFL_ONLINE_CHILD=1 HFL_PARENT_LOGGING=1 \
@@ -2135,5 +2262,7 @@ if [[ "${INSTALL_ACTION}" == Upgrade ]]; then
 	[[ "${pipeline_status[0]}" -eq 0 ]] \
 		|| fail "HyperFileLens Community ${TAG} upgrade failed; review the full log: ${ONLINE_LOG_FILE}"
 else
+	ONLINE_FAILURE_STAGE="Installing"
+	ONLINE_CHANGES_APPLIED="The HyperFileLens installation was started; service state may be partial."
 	run_fresh_community_install "${candidate}"
 fi
