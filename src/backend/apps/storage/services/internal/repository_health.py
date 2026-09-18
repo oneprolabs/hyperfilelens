@@ -59,6 +59,7 @@ from apps.storage.services.internal.repository_execution_lock import (
 from apps.storage.services.internal.repository_location import (
     invalidate_repository_location_ownership,
     mark_repository_location_ownership_verified,
+    recover_repository_location_ownership,
     repository_has_legacy_location,
 )
 from apps.storage.services.internal.repository_ownership import (
@@ -290,6 +291,14 @@ def _dispatch_automatic_repository_observation_locked(
             repository=repository,
             scope=RepositoryLocationClaim.Scope.REPOSITORY,
         ).exists()
+        residual_recovery = False
+        if claim is None and has_claims:
+            claim = RepositoryLocationClaim.objects.filter(
+                repository=repository,
+                scope=RepositoryLocationClaim.Scope.REPOSITORY,
+                state=RepositoryLocationClaim.State.RESIDUAL,
+            ).order_by("-id").first()
+            residual_recovery = claim is not None
         if claim is None and has_claims:
             Repository.objects.filter(pk=repository.id).update(
                 health=Repository.Health.UNVERIFIED,
@@ -345,6 +354,9 @@ def _dispatch_automatic_repository_observation_locked(
                 transport_unknown=False,
                 include_usage=include_usage,
                 recorded_at=recorded_at,
+                residual_recovery=residual_recovery,
+                claim_id=claim.id if residual_recovery else None,
+                claim_updated_at=claim.updated_at if residual_recovery else None,
             )
         ]
 
@@ -354,7 +366,8 @@ def _dispatch_automatic_repository_observation_locked(
         raise ValidationError("NAS repository proxy binding is incomplete.")
 
     has_associations, has_claimed_locations, nodes = _unbound_nas_execution_nodes(
-        repository
+        repository,
+        include_residual=True,
     )
     if not has_associations or not has_claimed_locations:
         Repository.objects.filter(pk=repository.id).update(
@@ -443,12 +456,16 @@ def _dispatch_automatic_repository_observation_locked(
         claim = RepositoryLocationClaim.objects.filter(
             repository=repository,
             scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
-            state=RepositoryLocationClaim.State.OWNED,
+            state__in=[
+                RepositoryLocationClaim.State.OWNED,
+                RepositoryLocationClaim.State.RESIDUAL,
+            ],
             owner_node_id=node.id,
             root_path=repository_subdir,
         ).order_by("-id").first()
         if claim is None:
             continue
+        residual_recovery = claim.state == RepositoryLocationClaim.State.RESIDUAL
         legacy_adoption = (
             claim.state == RepositoryLocationClaim.State.OWNED
             and claim.ownership_verified_at is None
@@ -488,6 +505,9 @@ def _dispatch_automatic_repository_observation_locked(
                     include_usage
                     and claim.state == RepositoryLocationClaim.State.OWNED
                 ),
+                residual_recovery=residual_recovery,
+                claim_id=claim.id if residual_recovery else None,
+                claim_updated_at=claim.updated_at if residual_recovery else None,
             )
         )
     return tasks
@@ -523,6 +543,9 @@ def _dispatch_repository_observation_task(
     include_usage: bool,
     recorded_at,
     usage_active: bool = True,
+    residual_recovery: bool = False,
+    claim_id: int | None = None,
+    claim_updated_at=None,
 ) -> NodeTask:
     handle = run_agent_task_async(
         organization_id=repository.organization_id,
@@ -548,6 +571,11 @@ def _dispatch_repository_observation_task(
             ),
             "failure_affects_health": not include_usage,
             "usage_active": usage_active,
+            "residual_recovery": residual_recovery,
+            "claim_id": claim_id,
+            "claim_updated_at": (
+                claim_updated_at.isoformat() if claim_updated_at else ""
+            ),
             "observation_group_id": group_id,
             "expected_node_ids": expected_node_ids,
         },
@@ -589,7 +617,10 @@ def _project_automatic_repository_health(
             return False
     if persisted.get("direct_nas") is True:
         _has_associations, _has_claimed_locations, current_nodes = (
-            _unbound_nas_execution_nodes(repository)
+            _unbound_nas_execution_nodes(
+                repository,
+                include_residual=persisted.get("residual_recovery") is True,
+            )
         )
         if node_task.node_id not in {node.id for node in current_nodes}:
             return False
@@ -625,7 +656,24 @@ def _project_automatic_repository_health(
                 fail_immediately=True,
             )
         if ownership_verified:
-            if persisted.get("direct_nas") is True:
+            if persisted.get("residual_recovery") is True:
+                recovered = recover_repository_location_ownership(
+                    repository,
+                    claim_id=int(persisted.get("claim_id") or 0),
+                    expected_updated_at=parse_datetime(
+                        str(persisted.get("claim_updated_at") or "")
+                    ),
+                    owner_node_id=(
+                        node_task.node_id
+                        if persisted.get("direct_nas") is True
+                        or repository.repo_type == Repository.Type.NAS
+                        else None
+                    ),
+                    repository_subdir=str(persisted.get("repository_subdir") or ""),
+                )
+                if not recovered:
+                    return False
+            elif persisted.get("direct_nas") is True:
                 mark_repository_location_ownership_verified(
                     repository,
                     owner_node_id=node_task.node_id,
@@ -774,10 +822,25 @@ def _observation_claim_is_current(
 ) -> bool:
     """Return whether an automatic observation still owns its target claim."""
 
-    claims = RepositoryLocationClaim.objects.filter(
-        repository=repository,
-        state=RepositoryLocationClaim.State.OWNED,
-    )
+    # A residual claim is eligible only for an explicitly dispatched recovery
+    # probe carrying the exact claim timestamp. Ordinary or late probes remain
+    # fail-closed and cannot reclaim the location.
+    residual_recovery = persisted.get("residual_recovery") is True
+    claims = RepositoryLocationClaim.objects.filter(repository=repository)
+    if residual_recovery:
+        expected_claim_id = int(persisted.get("claim_id") or 0)
+        expected_updated_at = parse_datetime(
+            str(persisted.get("claim_updated_at") or "")
+        )
+        if not expected_claim_id or expected_updated_at is None:
+            return False
+        claims = claims.filter(
+            id=expected_claim_id,
+            state=RepositoryLocationClaim.State.RESIDUAL,
+            updated_at=expected_updated_at,
+        )
+    else:
+        claims = claims.filter(state=RepositoryLocationClaim.State.OWNED)
     if persisted.get("direct_nas") is True:
         claims = claims.filter(
             scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
@@ -808,6 +871,8 @@ def _observation_claim_is_current(
                 else RepositoryLocationClaim.Scope.REPOSITORY
             ),
         ).exists()
+    if residual_recovery:
+        return claims.exists()
     return claims.filter(
         Q(ownership_verified_at__isnull=False)
         | Q(
@@ -1144,6 +1209,8 @@ def probe_unbound_nas_repository_health(
 
 def _unbound_nas_execution_nodes(
     repository: Repository,
+    *,
+    include_residual: bool = False,
 ) -> tuple[bool, bool, list[Node]]:
     backup_config_model = apps.get_model("protection", "BackupConfig")
     rows = list(
@@ -1201,12 +1268,15 @@ def _unbound_nas_execution_nodes(
             }
         )
     execution_node_ids = agent_ids | proxy_ids if nas_source_ids else agent_ids
+    claimed_states = [RepositoryLocationClaim.State.OWNED]
+    if include_residual:
+        claimed_states.append(RepositoryLocationClaim.State.RESIDUAL)
     claimed_node_ids = {
         int(node_id)
         for node_id, root_path in RepositoryLocationClaim.objects.filter(
             repository=repository,
             scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
-            state=RepositoryLocationClaim.State.OWNED,
+            state__in=claimed_states,
             owner_node_id__in=execution_node_ids,
         ).values_list("owner_node_id", "root_path")
         if str(root_path) == nas_agent_repository_subdir(int(node_id))

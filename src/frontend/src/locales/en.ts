@@ -3642,6 +3642,7 @@ export const en = {
         skippedItems: 'Skipped source items',
         summary: {
           source_file_locked: '{count} files could not be read because another process locked them.',
+          source_resource_busy: '{count} source items could not be read because the source reported Device or resource busy.',
           source_read_failed: '{count} files could not be read from the backup source.',
           BACKUP_TARGET_STORAGE_FULL: 'Backup target storage is full or its quota has been reached.',
           mixed_source_errors: '{count} source items could not be processed.',
@@ -3659,6 +3660,7 @@ export const en = {
           macos_privacy_denied: '{count} items blocked by macOS privacy permissions',
           permission_denied: '{count} items blocked by permissions',
           snapshot_errors: '{count} snapshot errors',
+          source_resource_busy: '{count} source items reported Device or resource busy',
         },
         howToResolve: 'How to resolve',
         viewAffectedFiles: 'View all {count} affected files',
@@ -3678,6 +3680,7 @@ export const en = {
           exclude_runtime_cache: 'Exclude runtime or cache directories when they do not need protection.',
           use_vss: 'Use a Windows VSS or application-aware snapshot when these files must be protected.',
           stop_owning_service: 'Alternatively, stop the owning service during a maintenance window, then retry. Do not delete active lock files.',
+          exclude_unreadable_source_items: 'Add the listed source paths to the file filtering rules when they do not need to be protected.',
           check_source_access: 'Check that the source path exists and that the Agent has permission to read it.',
           grant_macos_full_disk_access: 'On macOS, grant the HyperFileLens Agent Full Disk Access when protected folders must be included.',
           retry_backup: 'Correct the listed source errors, then retry the backup.',
@@ -3686,6 +3689,7 @@ export const en = {
         macosPrivacyReason: 'Blocked by macOS privacy permissions',
         permissionDeniedReason: 'Permission denied',
         unreadableDirectoryReason: 'The directory could not be read',
+        sourceResourceBusyReason: 'Device or resource busy',
       },
       resourceValue: {
         s3: 'Object Storage',

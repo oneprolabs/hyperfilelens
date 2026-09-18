@@ -191,6 +191,7 @@ function fullPath(path: string) {
 
 function failureReason(item: FailureItem) {
   if (category.value === 'source_file_locked') return t('ops.task.failureDetails.fileLockedReason')
+  if (item.cause === 'source_resource_busy') return t('ops.task.failureDetails.sourceResourceBusyReason')
   if (item.cause === 'unsupported_entry_type') return t('ops.task.failureDetails.unsupportedEntryReason')
   if (item.cause === 'macos_privacy_denied') return t('ops.task.failureDetails.macosPrivacyReason')
   if (item.cause === 'permission_denied') return t('ops.task.failureDetails.permissionDeniedReason')

@@ -1488,6 +1488,15 @@ def extract_kopia_failure_message(
 
     failure_details = extract_kopia_snapshot_failure_details(result)
     if failure_details and all(
+        _is_source_resource_busy_error(item["error"]) for item in failure_details
+    ):
+        count = max(len(failure_details), _snapshot_failure_count(result))
+        noun = "source item" if count == 1 else "source items"
+        return (
+            f"The backup could not read {count} {noun} because the source reported "
+            "Device or resource busy. Review the affected paths and remediation guidance."
+        )
+    if failure_details and all(
         _is_windows_file_lock_error(item["error"]) for item in failure_details
     ):
         count = len(failure_details)
@@ -1501,7 +1510,7 @@ def extract_kopia_failure_message(
         count = max(len(failure_details), _snapshot_failure_count(result))
         noun = "item" if count == 1 else "items"
         return (
-            f"Kopia could not process {count} source {noun}. "
+            f"The backup could not process {count} source {noun}. "
             "Review the affected items and remediation guidance."
         )
 
@@ -1545,6 +1554,11 @@ def extract_kopia_failure_message(
                 chunks.append(text)
 
     combined = "\n".join(chunks)
+    if "device or resource busy" in combined.lower():
+        return (
+            "Backup processing failed: Device or resource busy. "
+            "The affected path could not be determined from the available diagnostics."
+        )
     interesting: list[str] = []
     for line in combined.splitlines():
         stripped = line.strip().lstrip("!").strip()
@@ -1668,6 +1682,10 @@ def _is_windows_file_lock_error(message: str) -> bool:
     )
 
 
+def _is_source_resource_busy_error(message: str) -> bool:
+    return "device or resource busy" in str(message or "").lower()
+
+
 def _snapshot_error_item_type(message: str) -> str:
     lower = str(message or "").lower()
     if any(
@@ -1708,12 +1726,15 @@ def _snapshot_error_cause(item: dict[str, str]) -> tuple[str, str]:
         "unreadable_directory",
         "unreadable_file",
         "unsupported_entry_type",
+        "source_resource_busy",
     } and supplied_type in {"directory", "file", "special"}:
         return supplied_cause, supplied_type
     message = str(item.get("error") or "").lower()
     item_type = _snapshot_error_item_type(message)
     if item_type == "special" or "unsupported source" in message:
         return "unsupported_entry_type", item_type
+    if "device or resource busy" in message:
+        return "source_resource_busy", item_type
     if "operation not permitted" in message:
         return "macos_privacy_denied", item_type
     if any(marker in message for marker in ("permission denied", "access denied")):
@@ -1859,6 +1880,7 @@ def kopia_snapshot_failure_metadata(
                     "unreadable_file",
                     "unsupported_entry_type",
                     "snapshot_errors",
+                    "source_resource_busy",
                 }:
                     continue
                 try:
@@ -1890,7 +1912,15 @@ def kopia_snapshot_failure_metadata(
     )
     if not total_count:
         return {}
-    locked = bool(details) and all(_is_windows_file_lock_error(item["error"]) for item in details)
+    busy = bool(details) and all(
+        _is_source_resource_busy_error(item["error"]) for item in details
+    )
+    if not busy and total_count > 0:
+        busy_count = summary_counts.get("source_resource_busy", 0)
+        busy = busy_count == total_count and busy_count > 0
+    locked = bool(details) and all(
+        _is_windows_file_lock_error(item["error"]) for item in details
+    )
     effective, advanced = _effective_backup_advanced_settings(backup_policy)
     sample_items, sampled_by_cause = _sample_snapshot_failure_items(details)
     cause_counts: dict[str, int] = dict(summary_counts)
@@ -1907,6 +1937,7 @@ def kopia_snapshot_failure_metadata(
         "unreadable_file": "file",
         "unsupported_entry_type": "special",
         "snapshot_errors": "unknown",
+        "source_resource_busy": "file",
     }
     for cause in cause_counts:
         item_types.setdefault(cause, default_item_types.get(cause, "unknown"))
@@ -1921,7 +1952,14 @@ def kopia_snapshot_failure_metadata(
         cause_counts["snapshot_errors"] = unclassified_count
         item_types["snapshot_errors"] = "unknown"
     remediation: list[str]
-    if locked:
+    if busy:
+        remediation = []
+        if not effective:
+            remediation.append("enable_backup_policy")
+        if not effective or not bool(advanced.get("skip_unreadable_files", False)):
+            remediation.append("enable_skip_unreadable_files")
+        remediation.extend(["exclude_unreadable_source_items", "use_vss", "retry_backup"])
+    elif locked:
         remediation = []
         if not effective:
             remediation.append("enable_backup_policy")
@@ -1966,8 +2004,10 @@ def kopia_snapshot_failure_metadata(
         }
         for cause, count in cause_counts.items()
     ]
-    category = "source_file_locked" if locked else (
-        causes[0]["code"] if len(causes) == 1 else "mixed_source_errors"
+    category = "source_resource_busy" if busy else (
+        "source_file_locked" if locked else (
+            causes[0]["code"] if len(causes) == 1 else "mixed_source_errors"
+        )
     )
     return {
         "failure_details": {
@@ -2105,6 +2145,8 @@ def classify_kopia_execution_failure(
     failure_metadata = kopia_snapshot_failure_metadata(result)
     failure_details = failure_metadata.get("failure_details")
     if isinstance(failure_details, dict):
+        if failure_details.get("category") == "source_resource_busy":
+            return "SOURCE_ITEMS_UNREADABLE", message[:2000]
         if failure_details.get("category") == "source_file_locked":
             return "SOURCE_FILE_LOCKED", message[:2000]
         return "SOURCE_ITEMS_UNREADABLE", message[:2000]

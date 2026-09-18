@@ -5940,7 +5940,8 @@
           "unsupported_entry_type": "Se encontraron {count} entradas del sistema de archivos no compatibles.",
           "macos_privacy_denied": "{count} elementos fueron bloqueados por los permisos de privacidad de macOS.",
           "permission_denied": "No se pudo acceder a {count} elementos porque se denegó el permiso.",
-          "source_items_skipped": "Se omitieron {count} elementos de origen (archivos: {fileCount}; directorios: {directoryCount}; entradas especiales: {specialCount})."
+          "source_items_skipped": "Se omitieron {count} elementos de origen (archivos: {fileCount}; directorios: {directoryCount}; entradas especiales: {specialCount}).",
+          "source_resource_busy": "No se pudieron leer {count} elementos de origen porque el origen informó que el dispositivo o recurso está ocupado"
         },
         "causes": {
           "unreadable_file": "{count} archivos ilegibles",
@@ -5948,7 +5949,8 @@
           "unsupported_entry_type": "{count} entradas del sistema de archivos no compatibles",
           "macos_privacy_denied": "{count} elementos bloqueados por la privacidad de macOS",
           "permission_denied": "{count} elementos bloqueados por permisos",
-          "snapshot_errors": "{count} errores de instantánea"
+          "snapshot_errors": "{count} errores de instantánea",
+          "source_resource_busy": "{count} elementos de origen no se pudieron leer porque el origen informó que el dispositivo o recurso está ocupado"
         },
         "howToResolve": "Cómo resolverlo",
         "viewAffectedFiles": "Ver los {count} archivos afectados",
@@ -5959,6 +5961,7 @@
         "skippedItemsTruncated": "Se muestran los primeros {reportedCount} de {count} elementos omitidos.",
         "fileLockedReason": "Bloqueado por otro proceso",
         "readFailedReason": "No se pudo leer el archivo",
+        "sourceResourceBusyReason": "Dispositivo o recurso ocupado",
         "remediation": {
           "BACKUP_TARGET_STORAGE_FULL": "Libere espacio, compruebe la cuota del repositorio o amplíe el almacenamiento de destino y vuelva a intentar la copia de seguridad.",
           "enable_backup_policy": "Primero, habilite la política de copia de seguridad y su configuración avanzada. Las opciones de omisión solo se aplican cuando ambas están habilitadas.",
@@ -5968,6 +5971,7 @@
           "exclude_runtime_cache": "Excluya los directorios de tiempo de ejecución o caché cuando no necesiten protección.",
           "use_vss": "Use una instantánea VSS de Windows o compatible con aplicaciones cuando deba proteger estos archivos.",
           "stop_owning_service": "Como alternativa, detenga el servicio propietario durante una ventana de mantenimiento y vuelva a intentarlo. No elimine archivos de bloqueo activos.",
+          "exclude_unreadable_source_items": "Añada las rutas de origen indicadas a las reglas de filtrado cuando no necesite protegerlas.",
           "check_source_access": "Compruebe que la ruta de origen existe y que Agent tiene permiso para leerla.",
           "grant_macos_full_disk_access": "En macOS, conceda Acceso total al disco a HyperFileLens Agent cuando sea necesario incluir carpetas protegidas.",
           "retry_backup": "Corrija los errores de origen indicados y vuelva a intentar la copia de seguridad."

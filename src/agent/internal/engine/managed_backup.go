@@ -5260,6 +5260,19 @@ func parseSnapshotFailureLine(line string) (string, string, bool) {
 
 func snapshotFailureCause(failure string) (string, string) {
 	lower := strings.ToLower(failure)
+	if strings.Contains(lower, "device or resource busy") {
+		itemType := "file"
+		for _, marker := range []string{
+			"readdir", "read directory", "open directory", "cannot list directory",
+			"unable to list directory", "cannot create iterator", "unable to read directory",
+		} {
+			if strings.Contains(lower, marker) {
+				itemType = "directory"
+				break
+			}
+		}
+		return "source_resource_busy", itemType
+	}
 	if strings.Contains(lower, "unknown or unsupported entry type") ||
 		strings.Contains(lower, "unsupported entry type") ||
 		strings.Contains(lower, "unsupported filesystem entry") ||

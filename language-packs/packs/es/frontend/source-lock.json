@@ -7465,5 +7465,9 @@
   "repositoriesPage.healthOfflineHelp": "7f32b907d1e2226887382a05951c7471c84835144702d1f389c8a19f183c8079",
   "protection.backupsPage.backupRepositoryUnreachable": "7cbed082dd6e302c89c12bd0f6e49a2c5109a6a71beba8d65b3f8e35f46ebf08",
   "protection.backupsPage.backupRepositoryCheckTimeout": "ce0b96ca3ddfdb4ecc560b60261f9440fd3f94aefeba33cad644bce992b6907c",
-  "protection.backupsPage.backupRepositoryCheckUnavailable": "f49df267022d201088ca04cca198fb1a10f10c51956989beb9eb879cd811ce24"
+  "protection.backupsPage.backupRepositoryCheckUnavailable": "f49df267022d201088ca04cca198fb1a10f10c51956989beb9eb879cd811ce24",
+  "ops.task.failureDetails.summary.source_resource_busy": "66b86d0eb9d05c62fa647f1b7cdc48b0f6817c674617d31811f78c7bd534221b",
+  "ops.task.failureDetails.causes.source_resource_busy": "63d020ed8672c713cf2b53389627f38c334ff41ff987745c1f07737a733ee606",
+  "ops.task.failureDetails.remediation.exclude_unreadable_source_items": "a69ab204970787083bc8de9f7ce6fb9d931c9421505297d41066d45121d94750",
+  "ops.task.failureDetails.sourceResourceBusyReason": "e272335f1be54c0c3518165f6b8bb05a7b08d7f2cde00e8754c6df3ff265ce72"
 }

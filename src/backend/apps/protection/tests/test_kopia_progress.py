@@ -534,6 +534,48 @@ class KopiaProgressDisplayTests(SimpleTestCase):
 
 
 class KopiaFailureMessageTests(SimpleTestCase):
+    def test_resource_busy_failure_keeps_paths_and_uses_source_guidance(self):
+        from apps.protection.services.backup_task import (
+            classify_kopia_execution_failure,
+            extract_kopia_failure_message,
+            kopia_snapshot_failure_metadata,
+        )
+
+        result = {
+            "snapshot_failure_summary": {
+                "total_count": 1,
+                "items": [{
+                    "path": "pagefile.sys",
+                    "error": "stat: device or resource busy",
+                    "cause": "source_resource_busy",
+                    "item_type": "file",
+                }],
+                "cause_counts": {"source_resource_busy": 1},
+                "item_types": {"source_resource_busy": "file"},
+                "item_type_counts": {"file": 1},
+            },
+        }
+
+        metadata = kopia_snapshot_failure_metadata(result)["failure_details"]
+        self.assertEqual(metadata["category"], "source_resource_busy")
+        self.assertEqual(metadata["items"][0]["path"], "pagefile.sys")
+        self.assertIn("exclude_unreadable_source_items", metadata["remediation"])
+        self.assertNotIn("Kopia", extract_kopia_failure_message(result))
+        self.assertEqual(classify_kopia_execution_failure(result)[0], "SOURCE_ITEMS_UNREADABLE")
+
+    def test_generic_resource_busy_message_does_not_expose_upload_stage(self):
+        from apps.protection.services.backup_task import extract_kopia_failure_message
+
+        message = extract_kopia_failure_message({
+            "snapshot_create": {
+                "stderr_tail": "upload error: device or resource busy",
+            },
+        })
+
+        self.assertNotIn("upload error", message.lower())
+        self.assertIn("Device or resource busy", message)
+        self.assertIn("path could not be determined", message)
+
     def test_failure_metadata_groups_causes_and_limits_samples(self):
         from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
 

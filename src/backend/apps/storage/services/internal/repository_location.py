@@ -378,6 +378,7 @@ def mark_repository_location_owned(
         initialized_at=now,
         last_verified_at=now,
         released_at=None,
+        updated_at=now,
     )
 
 
@@ -399,7 +400,38 @@ def mark_repository_location_ownership_verified(
         ownership_verified_at=now,
         legacy_adoption_required=False,
         released_at=None,
+        updated_at=now,
     )
+
+
+def recover_repository_location_ownership(
+    repository: Repository,
+    *,
+    claim_id: int,
+    expected_updated_at,
+    owner_node_id: int | None = None,
+    repository_subdir: str | None = None,
+) -> bool:
+    """Recover one residual claim only if it is unchanged since verification began."""
+    now = timezone.now()
+    query = repository.location_claims.filter(
+        id=claim_id,
+        state=RepositoryLocationClaim.State.RESIDUAL,
+        updated_at=expected_updated_at,
+    )
+    if owner_node_id is not None:
+        query = query.filter(owner_node_id=owner_node_id)
+    if repository_subdir is not None:
+        query = query.filter(root_path=_normalize_root(repository_subdir))
+    return query.update(
+        state=RepositoryLocationClaim.State.OWNED,
+        initialized_at=now,
+        last_verified_at=now,
+        ownership_verified_at=now,
+        legacy_adoption_required=False,
+        released_at=None,
+        updated_at=now,
+    ) == 1
 
 
 def invalidate_repository_location_ownership(
@@ -417,6 +449,7 @@ def invalidate_repository_location_ownership(
     query.update(
         state=RepositoryLocationClaim.State.RESIDUAL,
         released_at=None,
+        updated_at=timezone.now(),
     )
 
 
@@ -441,6 +474,7 @@ def mark_repository_location_initializing(
     query.update(
         state=RepositoryLocationClaim.State.INITIALIZING,
         released_at=None,
+        updated_at=timezone.now(),
     )
 
 
@@ -455,7 +489,11 @@ def mark_repository_location_residual(
         query = query.filter(owner_node_id=owner_node_id)
     if repository_subdir is not None:
         query = query.filter(root_path=_normalize_root(repository_subdir))
-    query.update(state=RepositoryLocationClaim.State.RESIDUAL, released_at=None)
+    query.update(
+        state=RepositoryLocationClaim.State.RESIDUAL,
+        released_at=None,
+        updated_at=timezone.now(),
+    )
 
 
 def mark_repository_location_initialization_failed(
@@ -476,7 +514,11 @@ def mark_repository_location_initialization_failed(
         query = query.filter(owner_node_id=owner_node_id)
     if repository_subdir is not None:
         query = query.filter(root_path=_normalize_root(repository_subdir))
-    query.update(state=RepositoryLocationClaim.State.RESIDUAL, released_at=None)
+    query.update(
+        state=RepositoryLocationClaim.State.RESIDUAL,
+        released_at=None,
+        updated_at=timezone.now(),
+    )
 
 
 def release_repository_location(
@@ -490,8 +532,11 @@ def release_repository_location(
         query = query.filter(owner_node_id=owner_node_id)
     if repository_subdir is not None:
         query = query.filter(root_path=_normalize_root(repository_subdir))
+    now = timezone.now()
     query.update(
-        state=RepositoryLocationClaim.State.RELEASED, released_at=timezone.now()
+        state=RepositoryLocationClaim.State.RELEASED,
+        released_at=now,
+        updated_at=now,
     )
 
 
