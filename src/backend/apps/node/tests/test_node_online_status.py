@@ -21,7 +21,11 @@ from apps.node.services.internal.node_registry import (
     reconcile_node_availability,
     reconcile_stale_online_nodes,
 )
-from apps.node.ws.uplink import on_agent_connected, on_agent_disconnected
+from apps.node.ws.uplink import (
+    on_agent_connected,
+    on_agent_disconnected,
+    persist_heartbeat_liveness,
+)
 from apps.storage.repositories.models import Repository
 
 
@@ -178,6 +182,51 @@ class AgentNodeOnlineStatusTests(TestCase):
             effective_agent_node_status(self.node),
             Node.Availability.ONLINE,
         )
+
+    def test_heartbeat_liveness_updates_online_node_without_availability_projection(self):
+        self.node.availability = Node.Availability.ONLINE
+        self.node.last_seen_at = timezone.now() - timezone.timedelta(minutes=5)
+        self.node.save(update_fields=["availability", "last_seen_at", "updated_at"])
+        observed_at = timezone.now()
+
+        with mock.patch(
+            "apps.node.ws.uplink.record_node_available"
+        ) as record_available:
+            persist_heartbeat_liveness(
+                node_id=self.node.id,
+                observed_at=observed_at,
+            )
+
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.last_seen_at, observed_at)
+        record_available.assert_not_called()
+
+    def test_heartbeat_liveness_recovers_offline_node(self):
+        observed_at = timezone.now()
+
+        with mock.patch(
+            "apps.node.ws.uplink.record_node_available"
+        ) as record_available:
+            persist_heartbeat_liveness(
+                node_id=self.node.id,
+                observed_at=observed_at,
+            )
+
+        record_available.assert_called_once_with(
+            node_id=self.node.id,
+            observed_at=observed_at,
+        )
+
+    def test_heartbeat_liveness_ignores_deleted_node(self):
+        self.node.is_deleted = True
+        self.node.save(update_fields=["is_deleted", "updated_at"])
+
+        with mock.patch(
+            "apps.node.ws.uplink.record_node_available"
+        ) as record_available:
+            persist_heartbeat_liveness(node_id=self.node.id)
+
+        record_available.assert_not_called()
 
     @mock.patch("apps.source.services.internal.availability.project_node_availability")
     @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")

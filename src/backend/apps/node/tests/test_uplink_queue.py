@@ -255,6 +255,9 @@ class UplinkQueueTests(TestCase):
         self.assertEqual(processed, 1)
         mock_handle.assert_called_once()
         self.assertEqual(mock_handle.call_args.kwargs["node_id"], self.node.id)
+        self.assertIsNotNone(
+            mock_handle.call_args.kwargs["message"].received_at
+        )
         self.assertEqual(self.redis.deleted, {"1-0"})
 
     @patch("apps.node.ws.uplink.handle_uplink")
