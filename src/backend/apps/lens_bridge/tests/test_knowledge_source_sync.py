@@ -433,6 +433,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,
             sidecar_status=LensGatewayLink.SidecarStatus.ONLINE,
+            sl_lensnode_uuid="de240f46-eccd-4e4b-868f-b1f504fbe67b",
         )
         self.gateway = gateway
         self.gateway_link = gateway_link
@@ -446,6 +447,8 @@ class ManagedRestorePipelineOrderTests(TestCase):
             source_path="/source/documents",
             ingest_policy_json={"document": True},
             scan_enabled=True,
+            sl_lensnode_uuid=gateway_link.sl_lensnode_uuid,
+            sl_datasource_uuid="37941d34-a8bf-49d7-bfab-f8e61a350645",
         )
         self.workspace_binding = LensWorkspaceBinding.objects.create(
             organization=self.organization,

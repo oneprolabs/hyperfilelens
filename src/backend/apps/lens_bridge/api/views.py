@@ -1378,6 +1378,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             "destroy",
             "force_delete",
             "create_run",
+            "clarification",
             "feedback",
             "set_model",
             "set_execution",

@@ -826,7 +826,6 @@ class CopilotSharingApiTests(TestCase):
 
         response = self.client.get(
             signed_url,
-            {"access": access},
             HTTP_X_ORG_KEY=self.org.key,
         )
 
@@ -845,8 +844,7 @@ class CopilotSharingApiTests(TestCase):
         signed_url = _shared_article_media_proxy_url(access, "article-42", "diagram.png")
 
         response = self.client.get(
-            signed_url,
-            {"access": "not-the-signed-share"},
+            f"{signed_url}&access=not-the-signed-share",
             HTTP_X_ORG_KEY=self.org.key,
         )
 
