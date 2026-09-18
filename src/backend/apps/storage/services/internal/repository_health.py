@@ -669,7 +669,11 @@ def _project_automatic_repository_health(
                         or repository.repo_type == Repository.Type.NAS
                         else None
                     ),
-                    repository_subdir=str(persisted.get("repository_subdir") or ""),
+                    repository_subdir=(
+                        str(persisted["repository_subdir"])
+                        if persisted.get("repository_subdir")
+                        else None
+                    ),
                 )
                 if not recovered:
                     return False

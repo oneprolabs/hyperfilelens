@@ -38,7 +38,11 @@ from apps.storage.services.internal.s3_url_style import S3_URL_STYLE_PATH
 class RepositoryLocationClaimTests(TestCase):
     def test_residual_recovery_requires_unchanged_claim_timestamp(self):
         repository = self._direct_nas_repository(name="Residual recovery")
-        claim = reserve_repository_location(repository)
+        claim = reserve_direct_nas_location(
+            repository=repository,
+            node_id=1,
+            repository_subdir="agent-1",
+        )
         mark_repository_location_owned(repository)
         mark_repository_location_residual(repository)
         claim.refresh_from_db()

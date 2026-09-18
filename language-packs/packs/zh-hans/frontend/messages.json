@@ -5824,6 +5824,7 @@
         "skippedItems": "已跳过的源项目",
         "summary": {
           "source_file_locked": "有 {count} 个文件因被其他进程锁定而无法读取。",
+          "source_resource_busy": "有 {count} 个源项目无法读取，源端报告设备或资源忙",
           "source_read_failed": "备份源中有 {count} 个文件无法读取。",
           "BACKUP_TARGET_STORAGE_FULL": "备份目标存储空间已满或已达到配额上限。",
           "mixed_source_errors": "有 {count} 个源项目无法处理。",
@@ -5832,8 +5833,7 @@
           "unsupported_entry_type": "发现 {count} 个不支持的文件系统条目。",
           "macos_privacy_denied": "有 {count} 个项目受到 macOS 隐私权限限制。",
           "permission_denied": "有 {count} 个项目因权限不足而无法访问。",
-          "source_items_skipped": "有 {count} 个源项目被跳过（文件：{fileCount}；目录：{directoryCount}；特殊条目：{specialCount}）。",
-          "source_resource_busy": "有 {count} 个源项目无法读取，源端报告设备或资源忙"
+          "source_items_skipped": "有 {count} 个源项目被跳过（文件：{fileCount}；目录：{directoryCount}；特殊条目：{specialCount}）。"
         },
         "causes": {
           "unreadable_file": "{count} 个不可读取的文件",
@@ -5853,7 +5853,6 @@
         "skippedItemsTruncated": "显示前 {reportedCount} 个，共 {count} 个已跳过项目。",
         "fileLockedReason": "被其他进程锁定",
         "readFailedReason": "文件无法读取",
-        "sourceResourceBusyReason": "设备或资源忙",
         "remediation": {
           "BACKUP_TARGET_STORAGE_FULL": "请释放空间、检查仓库配额或扩容目标存储，然后重试备份。",
           "enable_backup_policy": "请先启用备份策略并开启高级设置。只有两者均启用后，“跳过不可读取文件/目录”等跳过选项才会生效。",
@@ -5871,7 +5870,8 @@
         "unsupportedEntryReason": "Socket 或其他特殊文件系统条目，不是普通备份文件",
         "macosPrivacyReason": "受到 macOS 隐私权限限制",
         "permissionDeniedReason": "权限不足",
-        "unreadableDirectoryReason": "目录无法读取"
+        "unreadableDirectoryReason": "目录无法读取",
+        "sourceResourceBusyReason": "设备或资源忙"
       },
       "resourceValue": {
         "s3": "对象存储",

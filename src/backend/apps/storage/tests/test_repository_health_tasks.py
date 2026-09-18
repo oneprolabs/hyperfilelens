@@ -1455,7 +1455,7 @@ class AutomaticDirectNASObservationTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_health.run_agent_task_async"
     )
-    def test_residual_claim_is_not_observed(self, run_async):
+    def test_residual_claim_dispatches_explicit_recovery_probe(self, run_async):
         node = self._node("residual-agent")
         RepositoryLocationClaim.objects.filter(
             repository=self.repository,
@@ -1467,8 +1467,11 @@ class AutomaticDirectNASObservationTests(TestCase):
             include_usage=True,
         )
 
-        self.assertEqual(tasks, [])
-        run_async.assert_not_called()
+        self.assertEqual(len(tasks), 1)
+        run_async.assert_called_once()
+        self.assertTrue(
+            run_async.call_args.kwargs["persisted_payload"]["residual_recovery"]
+        )
 
     def test_direct_nas_results_project_per_shard_and_aggregate(self):
         node_a = self._node("agent-a")
