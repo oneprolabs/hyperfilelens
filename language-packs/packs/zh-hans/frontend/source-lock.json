@@ -4308,6 +4308,8 @@
   "repositoriesPage.healthOffline": "cff17bc0d0c9823ceedf84ea0ab2896bd05d57906c8f6139778ebdc4bd8c1cd7",
   "repositoriesPage.healthUnverified": "8cf3f4f3e21d9160842d68a9acd02c9dcbb6acb1c932074e6d53015c51ddfcea",
   "repositoriesPage.healthUnverifiedHelp": "e862b25c525a878f1cb17e8800d264e35ad806848c8511ea788d64a1f56a6f17",
+  "repositoriesPage.healthUnableToCheck": "62da46e8e0882183cbbb3ac486802c4e92b4b92daf52e14431187d95de04f52f",
+  "repositoriesPage.healthUnableToCheckHelp": "0f96c87ca2753c8ef5f5ed26966acef28ac3977caa05dc1b07904c0d4cd1dbb8",
   "repositoriesPage.healthBoundUnverified": "b777dd36296f6bb4562d0952e48560fbf03357c586140e899cfa5f545bcb0076",
   "repositoriesPage.healthNotInitialized": "50fb878963bf1bcc98958d2a646b536c34e4b3434c8f3bc444db27d957b3ac95",
   "repositoriesPage.healthAttentionRequired": "f98f532ad04f9c380d1b339f57deb1cd97f4a8d3b4c25c659b9d0aaa703769ea",
@@ -7459,5 +7461,9 @@
   "insight.copilot.deletingChatDetail": "7f9bfec2f43c734a994103b40ca3e2e957f0f2e871881a7251a10b8d78cbff81",
   "repositoriesPage.healthBoundUnverifiedSmbHelp": "e4ba39b363bd3ecd11dec60d7459bb6c8a23f5ab15256a2cf2281b17e6196997",
   "repositoriesPage.healthBoundUnverifiedNfsHelp": "f2108c5e47a9a2483a506ab53e32ae8b9963f3b59b3ddcf35c933714c6feffc6",
-  "repositoriesPage.healthBoundUnverifiedGenericHelp": "506b49d75c4b5f31a0dc9feeb004c0319c8ccc9c9f872149d0b411242932dc3c"
+  "repositoriesPage.healthBoundUnverifiedGenericHelp": "506b49d75c4b5f31a0dc9feeb004c0319c8ccc9c9f872149d0b411242932dc3c",
+  "repositoriesPage.healthOfflineHelp": "7f32b907d1e2226887382a05951c7471c84835144702d1f389c8a19f183c8079",
+  "protection.backupsPage.backupRepositoryUnreachable": "7cbed082dd6e302c89c12bd0f6e49a2c5109a6a71beba8d65b3f8e35f46ebf08",
+  "protection.backupsPage.backupRepositoryCheckTimeout": "ce0b96ca3ddfdb4ecc560b60261f9440fd3f94aefeba33cad644bce992b6907c",
+  "protection.backupsPage.backupRepositoryCheckUnavailable": "f49df267022d201088ca04cca198fb1a10f10c51956989beb9eb879cd811ce24"
 }

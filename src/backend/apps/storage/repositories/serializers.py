@@ -6,6 +6,10 @@ from common.errors import AppError, FieldError
 
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
+from apps.node.services.internal.node_registry import agent_connection_status
+from apps.protection.models import BackupConfig
+from apps.source.constants import ResourceType
+from apps.source.models import SourceResource
 from apps.protection import conf as protection_conf
 from apps.storage.repositories.models import (
     Repository,
@@ -150,6 +154,7 @@ class RepositorySerializer(serializers.ModelSerializer):
     initialized_target_count = serializers.SerializerMethodField()
     quota_alert = serializers.SerializerMethodField()
     associated_source_count = serializers.IntegerField(read_only=True, default=0)
+    associated_source_online_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Repository
@@ -202,8 +207,40 @@ class RepositorySerializer(serializers.ModelSerializer):
             "initialized_target_count",
             "quota_alert",
             "associated_source_count",
+            "associated_source_online_count",
         ]
         read_only_fields = fields
+
+    def get_associated_source_online_count(self, obj: Repository) -> int:
+        configs = BackupConfig.objects.filter(
+            organization_id=obj.organization_id,
+            repository_id=obj.id,
+            status=BackupConfig.Status.ACTIVE,
+        ).values("source_type", "source_ref_id")
+        online = 0
+        for config in configs:
+            if config["source_type"] == "agent":
+                node = Node.objects.filter(
+                    organization_id=obj.organization_id,
+                    id=config["source_ref_id"],
+                    role=NodeRole.AGENT,
+                    is_deleted=False,
+                ).first()
+                if node is not None and agent_connection_status(node) in {"online", "reconnecting"}:
+                    online += 1
+                continue
+            resource = SourceResource.objects.filter(
+                organization_id=obj.organization_id,
+                id=config["source_ref_id"],
+                resource_type=ResourceType.NAS,
+                is_deleted=False,
+            ).select_related("bound_node").first()
+            if resource is not None and resource.bound_node is not None:
+                if agent_connection_status(resource.bound_node) in {"online", "reconnecting"}:
+                    online += 1
+            elif resource is not None and resource.status == "active":
+                online += 1
+        return online
 
     def get_quota_alert(self, obj):
         alert = getattr(obj, "_list_quota_alert", None)

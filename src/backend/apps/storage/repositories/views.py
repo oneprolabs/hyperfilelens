@@ -392,6 +392,33 @@ def _associated_sources_payload(
     }
     location = _repository_nas_location(repository)
     rows: list[dict] = []
+
+    def direct_nas_source_health(*, source: dict, shard: RepositoryUsageShard | None) -> str:
+        """Project source connectivity without resurrecting stale shard success.
+
+        Health-only repository probes update Repository.health, while usage
+        shards are refreshed on a separate cadence.  A failed/unverified
+        repository must therefore override an old shard success for an online
+        source; otherwise the detail view can keep showing Reachable after the
+        NAS has disappeared.
+        """
+        source_online = str(source.get("status") or "").lower() in {
+            "online",
+            "reconnecting",
+        }
+        if shard is not None and shard.status == RepositoryUsageShard.Status.SUCCESS:
+            # Legacy/API fixtures may not carry a check timestamp. Treat those
+            # explicit successful probes as authoritative; timestamped shard
+            # successes are overridden by a newer repository failure state.
+            if repository.health == Repository.Health.ONLINE or shard.last_checked_at is None:
+                return Repository.Health.ONLINE
+            return Repository.Health.OFFLINE
+        if not source_online:
+            return Repository.Health.UNVERIFIED
+        if repository.health == Repository.Health.ONLINE:
+            return Repository.Health.OFFLINE
+        return Repository.Health.OFFLINE
+
     for config in configs:
         if config.source_type == "agent":
             source = _agent_source_payload(
@@ -401,15 +428,20 @@ def _associated_sources_payload(
             shard = shards.get((int(config.source_ref_id), subdir))
             probe_status = shard.status if shard else ""
             health = (
-                Repository.Health.ONLINE
-                if probe_status == RepositoryUsageShard.Status.SUCCESS
-                else Repository.Health.OFFLINE
-                if probe_status
-                in {
-                    RepositoryUsageShard.Status.FAILED,
-                    RepositoryUsageShard.Status.SKIPPED,
-                }
-                else Repository.Health.UNVERIFIED
+                direct_nas_source_health(source=source, shard=shard)
+                if repository.repo_type == Repository.Type.NAS
+                and not repository.bind_node_id
+                else (
+                    Repository.Health.ONLINE
+                    if probe_status == RepositoryUsageShard.Status.SUCCESS
+                    else Repository.Health.OFFLINE
+                    if probe_status
+                    in {
+                        RepositoryUsageShard.Status.FAILED,
+                        RepositoryUsageShard.Status.SKIPPED,
+                    }
+                    else Repository.Health.UNVERIFIED
+                )
             )
         else:
             source = _nas_source_payload(
@@ -422,15 +454,20 @@ def _associated_sources_payload(
             shard = shards.get((node_id, subdir)) if subdir else None
             probe_status = shard.status if shard else ""
             health = (
-                Repository.Health.ONLINE
-                if probe_status == RepositoryUsageShard.Status.SUCCESS
-                else Repository.Health.OFFLINE
-                if probe_status
-                in {
-                    RepositoryUsageShard.Status.FAILED,
-                    RepositoryUsageShard.Status.SKIPPED,
-                }
-                else repository.health
+                direct_nas_source_health(source=source, shard=shard)
+                if repository.repo_type == Repository.Type.NAS
+                and not repository.bind_node_id
+                else (
+                    Repository.Health.ONLINE
+                    if probe_status == RepositoryUsageShard.Status.SUCCESS
+                    else Repository.Health.OFFLINE
+                    if probe_status
+                    in {
+                        RepositoryUsageShard.Status.FAILED,
+                        RepositoryUsageShard.Status.SKIPPED,
+                    }
+                    else repository.health
+                )
             )
         rows.append(
             {

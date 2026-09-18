@@ -76,6 +76,12 @@ func validateMountedShare(spec Spec) error {
 		if !sameMountSource(spec.Protocol, actual, expected) {
 			return &MountSourceMismatchError{Expected: expected, Actual: actual}
 		}
+		// A stale CIFS/NFS mount can remain in /proc/mounts while the mount
+		// point itself can no longer be resolved.  Treat that as unavailable
+		// instead of accepting the metadata-only mount as healthy.
+		if _, statErr := os.Stat(target); statErr != nil {
+			return fmt.Errorf("mount point is not accessible: %w", statErr)
+		}
 		for _, option := range strings.Split(fields[3], ",") {
 			if option == "ro" {
 				return &MountReadOnlyError{Source: actual}
