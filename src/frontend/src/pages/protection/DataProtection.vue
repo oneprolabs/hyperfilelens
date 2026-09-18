@@ -5050,8 +5050,6 @@ function onBackupTaskSelection(rows: FlowSourceRow[]) {
   onStep3SelectionChange(rows)
 }
 
-
-
 async function startSelectedBackupTasks() {
   const sources = step3SourceSelection.value
   if (!sources.length) {
@@ -5103,6 +5101,10 @@ async function startSelectedBackupTasks() {
         message: t('protection.backupsPage.msgStartBackupIncrementalHint'),
         grouping: true,
       })
+      const failed = result.results.find((item) => item.status === 'failed' || item.status === 'skipped')
+      if (failed?.message) {
+        ElMessage.warning({ message: backupStartResultMessage(failed, t), grouping: true })
+      }
       return
     }
     if (result.results.some((item) => item.status === 'conflict')) {

@@ -800,6 +800,12 @@ export const enProtectionPages = {
     msgStartBackupHostOffline: 'Source host "{names}" is offline. Cannot start backup.',
     msgStartBackupNasOffline:
       'Source NAS "{names}" is unavailable: proxy host "{node}" is offline. Cannot start backup.',
+    backupRepositoryUnreachable:
+      'Cannot start backup: the NAS repository is currently unreachable.\nCheck that the NAS is online, the shared path is correct, and the mount is present, then retry.',
+    backupRepositoryCheckTimeout:
+      'NAS repository check timed out.\nConfirm the NAS is accessible, the shared path is valid, and the mount is healthy, then retry.',
+    backupRepositoryCheckUnavailable:
+      'Cannot verify the NAS repository right now.\nCheck the source Agent and NAS mount status, then retry.',
     msgCreateBackupNasOffline:
       'Source NAS "{names}" is unavailable: proxy host "{node}" is offline. Cannot create a backup configuration.',
     flowToolbarPlaceholder: 'Search name or IP',

@@ -90,6 +90,7 @@ export type RepositoryRow = {
   initialization_state: RepositoryInitializationState
   initialized_target_count: number
   associated_source_count: number
+  associated_source_online_count: number
   capacity_bytes: number
   estimated_usage_bytes: number
   physical_usage_bytes?: number | null
@@ -182,6 +183,7 @@ type ApiRepository = {
   initialization_state?: RepositoryInitializationState
   initialized_target_count?: number
   associated_source_count?: number
+  associated_source_online_count?: number
   credential_id?: number | null
   s3_platform?: string | null
   s3_bucket?: string | null
@@ -405,6 +407,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
   const initializationState = r.initialization_state || 'unverified'
   const initializedTargetCount = Number(r.initialized_target_count || 0)
   const associatedSourceCount = Number(r.associated_source_count || 0)
+  const associatedSourceOnlineCount = Number(r.associated_source_online_count || 0)
   const bucket = r.s3_bucket || configString(config, 'bucket') || r.name
   const prefix = configString(config, 'prefix')
   const mountPath = configString(config, 'mount_path') || r.mount_path || ''
@@ -463,6 +466,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       initialization_state: initializationState,
       initialized_target_count: initializedTargetCount,
       associated_source_count: associatedSourceCount,
+      associated_source_online_count: associatedSourceOnlineCount,
       capacity_bytes: r.capacity_bytes,
       estimated_usage_bytes: r.estimated_usage_bytes,
       physical_usage_bytes: r.physical_usage_bytes ?? null,
@@ -515,6 +519,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       initialization_state: initializationState,
       initialized_target_count: initializedTargetCount,
       associated_source_count: associatedSourceCount,
+      associated_source_online_count: associatedSourceOnlineCount,
       capacity_bytes: r.capacity_bytes,
       estimated_usage_bytes: r.estimated_usage_bytes,
       physical_usage_bytes: r.physical_usage_bytes ?? null,
@@ -561,6 +566,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
     initialization_state: initializationState,
     initialized_target_count: initializedTargetCount,
     associated_source_count: associatedSourceCount,
+    associated_source_online_count: associatedSourceOnlineCount,
     capacity_bytes: r.capacity_bytes,
     estimated_usage_bytes: r.estimated_usage_bytes,
     physical_usage_bytes: r.physical_usage_bytes ?? null,
@@ -821,6 +827,11 @@ function repoHealthLabel(row: RepositoryRow) {
   // connectivity value.
   const k = normalizeHealth(String(row.health), row.status)
   if (k === 'unverified') {
+    if (row.kind === 'nas' && !isRepositoryBoundToProxy(row) && row.associated_source_count > 0) {
+      return row.associated_source_online_count > 0
+        ? t('repositoriesPage.healthOffline')
+        : t('repositoriesPage.healthUnableToCheck')
+    }
     return t(isRepositoryBoundToProxy(row) ? 'repositoriesPage.healthBoundUnverified' : 'repositoriesPage.healthUnverified')
   }
   return k === 'online' ? t('repositoriesPage.healthOnline') : t('repositoriesPage.healthOffline')
@@ -835,6 +846,11 @@ function isRepositoryConnectivityUnverified(row: RepositoryRow) {
 }
 
 function repositoryConnectivityHelpKey(row: RepositoryRow) {
+  if (row.kind === 'nas' && !isRepositoryBoundToProxy(row) && row.associated_source_count > 0) {
+    return row.associated_source_online_count > 0
+      ? 'repositoriesPage.healthOfflineHelp'
+      : 'repositoriesPage.healthUnableToCheckHelp'
+  }
   if (!isRepositoryBoundToProxy(row)) return 'repositoriesPage.healthUnverifiedHelp'
   if (row.protocol === 'nfs') return 'repositoriesPage.healthBoundUnverifiedNfsHelp'
   if (row.protocol === 'smb') return 'repositoriesPage.healthBoundUnverifiedSmbHelp'
@@ -2711,7 +2727,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             </el-table-column>
             <el-table-column
               :label="t('repositoriesPage.colStatus')"
-              :min-width="activeTab === 'nas' ? 152 : activeTab === 's3' ? 137 : 190"
+              :min-width="activeTab === 'nas' ? 137 : activeTab === 's3' ? 137 : 190"
             >
               <template #default="{ row }">
                 <RepositoryLifecycleStatus
@@ -2971,7 +2987,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             </el-table-column>
             <el-table-column
               :label="t('repositoriesPage.colAvailability')"
-              :width="activeTab === 'nas' ? 142 : activeTab === 's3' ? 110 : 116"
+              :width="activeTab === 'nas' ? 165 : activeTab === 's3' ? 110 : 116"
             >
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip">
@@ -3001,7 +3017,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <el-table-column
               prop="created_at"
               :label="activeTab === 's3' || activeTab === 'nas' || activeTab === 'proxy_fs' ? t('repositoriesPage.colRegistered') : t('repositoriesPage.colCreated')"
-              :min-width="activeTab === 'nas' || activeTab === 's3' ? 154 : activeTab === 'proxy_fs' ? 170 : createdAtColumnMinWidth"
+              :min-width="activeTab === 'nas' ? 146 : activeTab === 's3' ? 154 : activeTab === 'proxy_fs' ? 170 : createdAtColumnMinWidth"
             >
               <template #default="{ row }">
                 <span
@@ -3132,6 +3148,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colAvailability') }}</span>
                     <span class="hfl-detail-row__value">
                       <ElTag
+                        class="repository-connectivity-tag"
                         :type="healthTagType(detailRow)"
                         size="small"
                       >
@@ -3386,6 +3403,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colAvailability') }}</span>
                     <span class="hfl-detail-row__value">
                       <ElTag
+                        class="repository-connectivity-tag"
                         :type="healthTagType(detailRow)"
                         size="small"
                       >
@@ -3657,6 +3675,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colAvailability') }}</span>
                     <span class="hfl-detail-row__value">
                       <ElTag
+                        class="repository-connectivity-tag"
                         :type="healthTagType(detailRow)"
                         size="small"
                       >
@@ -4554,6 +4573,9 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
 }
 
 .repository-connectivity-tag :deep(.el-tag__content) {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
   white-space: nowrap;
 }
 

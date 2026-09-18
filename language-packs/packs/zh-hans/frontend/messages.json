@@ -1857,7 +1857,10 @@
       "backupTaskRetryDirectory": "重试目录",
       "backupTaskRetryDirectorySuccess": "目录重试开始",
       "backupTaskDirectoryStatus": "目录状态",
-      "backupTaskDirectoryProgress": "进行中"
+      "backupTaskDirectoryProgress": "进行中",
+      "backupRepositoryUnreachable": "无法开始备份：NAS 仓库当前不可达。\n请检查 NAS 是否在线、共享路径和挂载状态，然后重试。",
+      "backupRepositoryCheckTimeout": "NAS 仓库检查超时，暂时无法开始备份。\n请确认 NAS 可访问、共享路径和挂载状态正常后重试。",
+      "backupRepositoryCheckUnavailable": "暂时无法检查 NAS 仓库。\n请检查备份源 Agent 和 NAS 挂载状态，然后重试。"
     },
     "backupDetail": {
       "backToList": "返回备份列表",
@@ -4549,8 +4552,11 @@
     "statusRepositoryRecordRemoved": "平台记录已移除",
     "healthOnline": "在线",
     "healthOffline": "离线",
+    "healthOfflineHelp": "有一个关联的备份源处于在线状态，但无法验证 NAS 仓库。",
     "healthUnverified": "尚未使用",
     "healthUnverifiedHelp": "该仓库尚未使用。首次使用时，系统将确定其连接状态。",
+    "healthUnableToCheck": "无法检查",
+    "healthUnableToCheckHelp": "由于所有关联的备份源均处于离线状态或未返回可用结果，因此无法检查连接状态。",
     "healthBoundUnverified": "未验证",
     "healthBoundUnverifiedSmbHelp": "Proxy 在线，但该 SMB 仓库的连接状态尚未验证。",
     "healthBoundUnverifiedNfsHelp": "Proxy 在线，但该 NFS 仓库的连接状态尚未验证。",

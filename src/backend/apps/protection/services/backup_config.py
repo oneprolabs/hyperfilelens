@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import ntpath
 import posixpath
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -731,6 +732,7 @@ def _initialize_direct_nas_repository(
     verify_existing: bool = True,
     parent_task=None,
     require_ownership_capability: bool = False,
+    check_deadline: float | None = None,
 ) -> tuple[Repository, int, str] | None:
     """Initialize Direct NAS and identify claims to retain on caller rollback.
 
@@ -800,6 +802,18 @@ def _initialize_direct_nas_repository(
     location_requires_verification = False
     may_recover_existing_location = False
     allow_ownership_adoption = False
+    def remaining_check_seconds():
+        if check_deadline is None:
+            return 180
+        remaining = int(check_deadline - time.monotonic())
+        if remaining < 1:
+            raise AppError(
+                code="BACKUP_REPOSITORY_CHECK_TIMEOUT", status=409,
+                retryable=True, title="NAS repository check timed out",
+                diagnostic="The synchronous repository check budget was exhausted.",
+            )
+        return remaining
+
     try:
         with transaction.atomic():
             repository = (
@@ -997,12 +1011,13 @@ def _initialize_direct_nas_repository(
                 correlation_type="protection.backup_config",
                 correlation_id=correlation_id,
                 parent_task=parent_task,
-                wait_timeout_seconds=180,
+                wait_timeout_seconds=remaining_check_seconds(),
             )
     except Exception as exc:
         if isinstance(exc, AppError) and exc.code in {
             "AGENT_TASK_PENDING",
             "REMOTE_RESULT_UNKNOWN",
+            "BACKUP_REPOSITORY_CHECK_TIMEOUT",
         }:
             raise
         if not previously_initialized or location_requires_verification:
@@ -1021,6 +1036,12 @@ def _initialize_direct_nas_repository(
         correlation_id=correlation_id,
         repository_id=repository_id,
     )
+    if check_deadline is not None and outcome.timed_out:
+        raise AppError(
+            code="BACKUP_REPOSITORY_CHECK_TIMEOUT", status=409,
+            retryable=True, title="NAS repository check timed out",
+            diagnostic="The Agent did not return a repository check result in time.",
+        )
     if outcome.task.status != "success":
         if agent_result_has_repository_conflict(outcome.result):
             if not previously_initialized and may_recover_existing_location:
@@ -1046,7 +1067,7 @@ def _initialize_direct_nas_repository(
                         correlation_type="protection.backup_config",
                         correlation_id=correlation_id,
                         parent_task=parent_task,
-                        wait_timeout_seconds=180,
+                        wait_timeout_seconds=remaining_check_seconds(),
                     )
                 except Exception as exc:
                     mark_repository_location_initialization_failed(
@@ -1244,6 +1265,7 @@ def ensure_direct_nas_repository_for_backup(
     source_type: str,
     source_ref_id: int,
     repository_id: int,
+    check_deadline: float | None = None,
 ) -> None:
     """Initialize a legacy direct-NAS backup config on its execution node."""
     _initialize_direct_nas_repository(
@@ -1252,6 +1274,7 @@ def ensure_direct_nas_repository_for_backup(
         source_ref_id=source_ref_id,
         repository_id=repository_id,
         verify_existing=False,
+        check_deadline=check_deadline,
     )
 
 

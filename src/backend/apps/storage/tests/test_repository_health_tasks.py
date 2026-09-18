@@ -1514,7 +1514,7 @@ class AutomaticDirectNASObservationTests(TestCase):
         apply_async.assert_called_once()
 
     @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
-    def test_offline_peer_keeps_all_failure_result_transport_unknown(
+    def test_online_probe_failure_is_offline_even_when_peer_transport_is_unknown(
         self,
         apply_async,
     ):
@@ -1552,7 +1552,7 @@ class AutomaticDirectNASObservationTests(TestCase):
         self.assertTrue(project_repository_health_from_agent_result(node_task=task))
 
         self.repository.refresh_from_db()
-        self.assertEqual(self.repository.health, Repository.Health.UNVERIFIED)
+        self.assertEqual(self.repository.health, Repository.Health.OFFLINE)
         self.assertEqual(self.repository.health_failures, 0)
         apply_async.assert_not_called()
 

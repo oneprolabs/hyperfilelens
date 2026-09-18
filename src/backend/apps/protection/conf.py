@@ -118,6 +118,13 @@ PROTECTION_BACKUP_DISPATCH_PENDING_SECONDS = env_int(
     120,
 )
 
+# Direct NAS admission performs a synchronous repository probe. Keep this
+# bounded so the batch endpoint returns before the reverse proxy timeout.
+PROTECTION_BACKUP_REPOSITORY_CHECK_TIMEOUT_SECONDS = env_int(
+    "PROTECTION_BACKUP_REPOSITORY_CHECK_TIMEOUT_SECONDS",
+    15,
+)
+
 PROTECTION_BACKUP_NODE_TASK_WATCHDOG_SECONDS = env_int(
     "PROTECTION_BACKUP_NODE_TASK_WATCHDOG_SECONDS",
     7200,

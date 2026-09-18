@@ -994,6 +994,13 @@ def _finalize_direct_nas_health_group(
             )
             for task in tasks
         ):
+            # At least one execution node was online for this generation. A
+            # failed/timeout/unknown probe therefore means the repository could
+            # not be reached; do not retain a stale Online/Unverified value.
+            Repository.objects.filter(pk=repository.id).update(
+                health=Repository.Health.OFFLINE,
+                health_failures=0,
+            )
             _mark_health_group_projected(leader, leader_payload)
             return True
         projected = _record_automatic_repository_health_failure(

@@ -16,13 +16,13 @@ describe('Target NAS repository columns', () => {
   })
 
   it('balances Target NAS widths without hiding stacked values', () => {
-    expect(page).toContain(":min-width=\"activeTab === 'nas' ? 152 : activeTab === 's3' ? 137 : 190\"")
+    expect(page).toContain(":min-width=\"activeTab === 'nas' ? 137 : activeTab === 's3' ? 137 : 190\"")
     expect(page).toContain('width="119"')
     expect(page).toContain('min-width="247"')
     expect(page).toContain(":min-width=\"activeTab === 'proxy_fs' ? 144 : 158\"")
     expect(page).toContain(":min-width=\"activeTab === 's3' ? 189 : activeTab === 'nas' ? 194 : 228\"")
-    expect(page).toContain(":width=\"activeTab === 'nas' ? 142 : activeTab === 's3' ? 110 : 116\"")
-    expect(page).toContain(":min-width=\"activeTab === 'nas' || activeTab === 's3' ? 154 : activeTab === 'proxy_fs' ? 170 : createdAtColumnMinWidth\"")
+    expect(page).toContain(":width=\"activeTab === 'nas' ? 165 : activeTab === 's3' ? 110 : 116\"")
+    expect(page).toContain(":min-width=\"activeTab === 'nas' ? 146 : activeTab === 's3' ? 154 : activeTab === 'proxy_fs' ? 170 : createdAtColumnMinWidth\"")
     expect(page).toContain('class="table-stack-cell"')
     expect(page).toContain('class="table-stack-cell__secondary"')
   })

@@ -33,4 +33,16 @@ describe('backup start result presentation', () => {
       ),
     ).toBe('translated:protection.backupsPage.provisionStatusOwnershipConflict')
   })
+
+  it('localizes direct NAS admission guidance', () => {
+    expect(
+      backupStartResultMessage(
+        {
+          error_code: 'BACKUP_REPOSITORY_CHECK_TIMEOUT',
+          message: 'internal timeout',
+        },
+        t,
+      ),
+    ).toBe('translated:protection.backupsPage.backupRepositoryCheckTimeout')
+  })
 })

@@ -1885,7 +1885,10 @@
       "backupTaskDrawerFieldTaskId": "ID de tarea",
       "backupTaskDrawerFieldCurrentPhase": "Fase actual",
       "backupTaskDrawerFieldBackupDetail": "Copia de seguridad",
-      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada."
+      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada.",
+      "backupRepositoryUnreachable": "No se puede iniciar la copia de seguridad: el repositorio NAS no está disponible.\nCompruebe que el NAS esté en línea, que la ruta compartida sea correcta y que el montaje esté presente; después, vuelva a intentarlo.",
+      "backupRepositoryCheckTimeout": "La comprobación del repositorio NAS agotó el tiempo.\nConfirme que el NAS sea accesible, que la ruta compartida sea válida y que el montaje funcione; después, vuelva a intentarlo.",
+      "backupRepositoryCheckUnavailable": "No se puede verificar el repositorio NAS ahora.\nCompruebe el estado del agente de origen y del montaje NAS; después, vuelva a intentarlo."
     },
     "backupDetail": {
       "backToList": "Volver a copias de seguridad",
@@ -4598,8 +4601,11 @@
     "statusRepositoryRecordRemoved": "Registro del repositorio eliminado",
     "healthOnline": "En línea",
     "healthOffline": "Sin conexión",
+    "healthOfflineHelp": "Un origen de copia de seguridad asociado está en línea, pero no se pudo verificar el repositorio NAS.",
     "healthUnverified": "Aún no se utiliza.",
     "healthUnverifiedHelp": "Este repositorio no se ha utilizado todavía. La conectividad se determinará en el primer uso.",
+    "healthUnableToCheck": "No se puede comprobar",
+    "healthUnableToCheckHelp": "No se puede comprobar la conectividad porque las fuentes de copia de seguridad asociadas están sin conexión o no han devuelto un resultado utilizable.",
     "healthBoundUnverified": "No verificado",
     "healthBoundUnverifiedSmbHelp": "El Proxy está en línea, pero esta conectividad de repositorio SMB no ha sido verificada todavía.",
     "healthBoundUnverifiedNfsHelp": "El Proxy está en línea, pero esta conectividad de repositorio NFS no ha sido verificada todavía.",

@@ -9,6 +9,9 @@ const validationErrorLocaleKeys: Record<string, string> = {
   NAS_MOUNT_SOURCE_MISMATCH: 'protection.backupsPage.provisionStatusMountMismatch',
   REPOSITORY_OWNERSHIP_INVALID: 'protection.backupsPage.provisionStatusOwnershipConflict',
   AGENT_PROTOCOL_INVALID: 'protection.backupsPage.provisionStatusOwnershipConflict',
+  BACKUP_REPOSITORY_UNREACHABLE: 'protection.backupsPage.backupRepositoryUnreachable',
+  BACKUP_REPOSITORY_CHECK_TIMEOUT: 'protection.backupsPage.backupRepositoryCheckTimeout',
+  BACKUP_REPOSITORY_CHECK_UNAVAILABLE: 'protection.backupsPage.backupRepositoryCheckUnavailable',
 }
 
 export function backupStartResultMessage(

@@ -216,7 +216,7 @@ onUnmounted(() => {
 
 .hfl-toast__content { min-width: 0; }
 .hfl-toast__title { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 700; line-height: 20px; }
-.hfl-toast__message { margin: 0; color: var(--color-text-primary, #5a6b80); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; user-select: text; }
+.hfl-toast__message { margin: 0; color: var(--color-text-primary, #5a6b80); font-size: 12.5px; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; user-select: text; }
 .hfl-toast__title + .hfl-toast__message { margin-top: 2px; }
 .hfl-toast__repeat { display: inline-flex; flex: none; padding: 1px 6px; color: var(--toast-accent); background: var(--toast-accent-soft); border-radius: 999px; font-size: 10px; font-weight: 700; }
 .hfl-toast__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 7px; }

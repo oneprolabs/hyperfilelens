@@ -5,6 +5,7 @@ import posixpath
 import logging
 import re
 import threading
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -24,6 +25,7 @@ from apps.node.services.interface import (
     run_agent_task_sync,
     wait_for_agent_task,
 )
+from apps.node.services.internal.node_registry import agent_connection_status
 from apps.protection import conf as protection_conf
 from apps.protection.models import (
     BackupConfig,
@@ -50,6 +52,7 @@ from apps.protection.services.source_execution import (
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
+from apps.storage.repositories.models import RepositoryUsageShard
 from apps.source.services.internal.selectable_ids import parse_selectable_id
 from apps.storage.services.internal.repository_secrets import (
     build_repository_runtime_payload,
@@ -61,6 +64,7 @@ from apps.storage.services.internal.repository_workload import (
 from apps.storage.services.internal.repository_usage import (
     assert_repository_quota_available,
 )
+from apps.storage.services.internal.nas_repository import nas_agent_repository_subdir
 from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import (
     append_task_step_event,
@@ -98,6 +102,51 @@ _NODE_TASK_TERMINAL_STATUSES = {
     NodeTask.Status.TIMEOUT,
     NodeTask.Status.CANCELED,
 }
+_DIRECT_NAS_CHECK_TIMEOUT_CODES = {
+    "BACKUP_REPOSITORY_CHECK_TIMEOUT",
+    "AGENT_TASK_PENDING",
+    "REMOTE_RESULT_UNKNOWN",
+    "AGENT_ACK_TIMEOUT",
+}
+
+
+def _direct_nas_source_connectivity(
+    *, organization_id: int, source_type: str, source_ref_id: int, repository_id: int
+) -> str:
+    """Return connectivity for the exact source being admitted for backup."""
+    node_id = int(source_ref_id) if source_type == "agent" else None
+    if source_type == "nas":
+        resource = SourceResource.objects.filter(
+            organization_id=organization_id,
+            id=source_ref_id,
+            resource_type=ResourceType.NAS,
+            is_deleted=False,
+        ).select_related("bound_node").first()
+        node_id = int(resource.bound_node_id) if resource and resource.bound_node_id else None
+    if not node_id:
+        return "unknown"
+    node = Node.objects.filter(
+        organization_id=organization_id, id=node_id, is_deleted=False
+    ).first()
+    if node is None or agent_connection_status(node) not in {"online", "reconnecting"}:
+        return "unknown"
+    shard = RepositoryUsageShard.objects.filter(
+        organization_id=organization_id,
+        repository_id=repository_id,
+        usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
+        node_id=node_id,
+        repository_subdir=nas_agent_repository_subdir(node_id),
+        is_active=True,
+    ).first()
+    if shard is not None:
+        if shard.status == RepositoryUsageShard.Status.SUCCESS:
+            return "reachable"
+        if shard.status in {
+            RepositoryUsageShard.Status.FAILED,
+            RepositoryUsageShard.Status.SKIPPED,
+        }:
+            return "unreachable"
+    return "unknown"
 _DIRECTORY_TERMINAL_STATUSES = {
     BackupSourceSnapshotDirectory.Status.AVAILABLE,
     BackupSourceSnapshotDirectory.Status.FAILED,
@@ -673,6 +722,7 @@ def start_backup_tasks(
     trigger_type: str = BackupSourceSnapshot.TriggerType.MANUAL,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
+    check_deadline = time.monotonic() + min(15, max(1, protection_conf.PROTECTION_BACKUP_REPOSITORY_CHECK_TIMEOUT_SECONDS))
     from apps.iam.models import Organization
     from apps.subscription.services.interface import enforce_license_quota
 
@@ -793,6 +843,7 @@ def start_backup_tasks(
                 )
                 continue
 
+            repository = None
             try:
                 with transaction.atomic():
                     from apps.source.services.internal.source_operation_fence import (
@@ -844,6 +895,7 @@ def start_backup_tasks(
                         source_type=source.source_type,
                         source_ref_id=source.source_ref_id,
                         repository_id=repository.id,
+                        check_deadline=check_deadline,
                     )
                 # Directory size is refreshed asynchronously for every new
                 # backup because configured path contents can change without a
@@ -855,6 +907,36 @@ def start_backup_tasks(
                 ):
                     raise
                 skipped_count += 1
+                diagnostic = (
+                    _validation_message(exc)
+                    if isinstance(exc, ValidationError)
+                    else str(getattr(exc, "diagnostic", "") or exc)
+                )
+                connectivity = _direct_nas_source_connectivity(
+                    organization_id=organization_id,
+                    source_type=source.source_type,
+                    source_ref_id=source.source_ref_id,
+                    repository_id=config.repository_id,
+                ) if repository is not None and repository.repo_type == Repository.Type.NAS and not repository.bind_node_id and not repository.bind_node_type else "unknown"
+                error_code = None
+                if repository is not None and repository.repo_type == Repository.Type.NAS and not repository.bind_node_id and not repository.bind_node_type:
+                    lower_diagnostic = diagnostic.lower()
+                    if (isinstance(exc, AppError) and exc.code in _DIRECT_NAS_CHECK_TIMEOUT_CODES) or "timed out" in lower_diagnostic or "timeout" in lower_diagnostic:
+                        error_code = (
+                            "BACKUP_REPOSITORY_CHECK_TIMEOUT"
+                            if connectivity == "reachable"
+                            else "BACKUP_REPOSITORY_UNREACHABLE"
+                            if connectivity == "unreachable"
+                            else "BACKUP_REPOSITORY_CHECK_UNAVAILABLE"
+                        )
+                    elif any(marker in lower_diagnostic for marker in ("mount point", "not accessible", "stale file handle", "no such file or directory")):
+                        error_code = "BACKUP_REPOSITORY_UNREACHABLE"
+                    if error_code == "BACKUP_REPOSITORY_CHECK_TIMEOUT":
+                        diagnostic = "NAS repository check timed out. Confirm the NAS is accessible, the shared path is valid, and the mount is healthy, then retry."
+                    elif error_code == "BACKUP_REPOSITORY_UNREACHABLE":
+                        diagnostic = "Cannot start backup: the NAS repository is currently unreachable. Check that the NAS is online, the shared path is correct, and the mount is present, then retry."
+                    elif error_code == "BACKUP_REPOSITORY_CHECK_UNAVAILABLE":
+                        diagnostic = "Cannot verify the NAS repository right now. Check the source Agent and NAS mount status, then retry."
                 results.append(
                     {
                         "source_type": source.source_type,
@@ -870,17 +952,8 @@ def start_backup_tasks(
                             and exc.code == "RESTORE.ALREADY_RUNNING"
                             else "failed"
                         ),
-                        **(
-                            {"error_code": exc.code}
-                            if isinstance(exc, AppError)
-                            and exc.code == _REPOSITORY_QUOTA_EXCEEDED_ERROR_CODE
-                            else {}
-                        ),
-                        "message": (
-                            _validation_message(exc)
-                            if isinstance(exc, ValidationError)
-                            else str(exc)
-                        ),
+                        **({"error_code": error_code or exc.code} if error_code or isinstance(exc, AppError) and exc.code == _REPOSITORY_QUOTA_EXCEEDED_ERROR_CODE else {}),
+                        "message": diagnostic if error_code else (_validation_message(exc) if isinstance(exc, ValidationError) else str(exc)),
                     }
                 )
                 continue
