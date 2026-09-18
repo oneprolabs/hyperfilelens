@@ -25,6 +25,11 @@ from apps.storage.services.internal.kopia_cli import KopiaRepositoryBusyError
 from apps.storage.services.internal.repository_location import (
     invalidate_repository_location_ownership,
 )
+from apps.storage.services.internal.repository_secrets import (
+    resolve_repository_secrets,
+    scrub_secrets,
+    secret_values_for_scrub,
+)
 from apps.storage.services.internal.repository_usage import sync_repository_usage
 from apps.storage.services.internal.s3_validation_errors import (
     classify_s3_validation_error,
@@ -262,6 +267,11 @@ def _run_repository_check_task_locked(*, repository_task_id: int) -> dict[str, A
                 "STORAGE.REPOSITORY_BUSY",
                 "The repository is busy with another operation. Try again after it finishes.",
             )
+        elif error_code in {
+            "STORAGE.REPOSITORY_CHECK_FAILED",
+            "STORAGE.S3_VALIDATION_FAILED",
+        }:
+            message = _safe_error_message(repository, exc)
         complete_task(
             task_uuid=task.task_uuid,
             organization_id=task.organization_id,
@@ -304,6 +314,19 @@ def _health_error_details(repository: Repository, exc: Exception) -> tuple[str, 
     return (
         "STORAGE.REPOSITORY_CHECK_FAILED",
         "The repository health check failed. Try again or review the storage connection settings.",
+    )
+
+
+def _safe_error_message(repository: Repository, exc: Exception) -> str:
+    try:
+        secrets_payload = resolve_repository_secrets(repository)
+    except Exception:
+        secrets_payload = {}
+    return str(
+        scrub_secrets(
+            str(exc),
+            extra_values=secret_values_for_scrub(repository, secrets_payload),
+        )
     )
 
 
