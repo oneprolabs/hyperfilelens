@@ -39,6 +39,19 @@ class ChatLifecycleErrorTests(SimpleTestCase):
         self.assertEqual(failure.code, "INSIGHT.CHAT_ASSISTANT_CREATE_UNKNOWN")
         self.assertTrue(failure.retryable)
 
+    def test_orphaned_conversion_failure_is_actionable_and_retryable(self):
+        failure = classify_chat_lifecycle_error(
+            "SourceLens conversion failed: DATASOURCE_CONVERSION_ORPHANED"
+        )
+
+        self.assertEqual(
+            failure.code,
+            "INSIGHT.DATASOURCE_CONVERSION_INTERRUPTED",
+        )
+        self.assertTrue(failure.retryable)
+        self.assertIn("Retry", failure.message)
+        self.assertNotIn("DATASOURCE_CONVERSION_ORPHANED", failure.message)
+
     def test_empty_error_keeps_legacy_generic_behavior(self):
         failure = classify_chat_lifecycle_error("")
 

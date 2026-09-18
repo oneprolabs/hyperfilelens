@@ -147,6 +147,16 @@ def classify_chat_lifecycle_error(
             retryable=False,
             meta={},
         )
+    if "DATASOURCE_CONVERSION_ORPHANED" in normalized:
+        return ChatLifecycleError(
+            code="INSIGHT.DATASOURCE_CONVERSION_INTERRUPTED",
+            message=(
+                "Document conversion was interrupted while the Data Gateway "
+                "connection was recovering. Retry to prepare the Chat again."
+            ),
+            retryable=True,
+            meta={},
+        )
     if (
         "INVALID INSIGHT SCOPE SUMMARY" in normalized
         or "INVALID INSIGHT SCOPE TYPE" in normalized
