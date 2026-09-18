@@ -406,8 +406,6 @@ def _associated_sources_payload(
             "online",
             "reconnecting",
         }
-        if not source_online:
-            return Repository.Health.UNVERIFIED
         if shard is not None and shard.status == RepositoryUsageShard.Status.SUCCESS:
             # Legacy/API fixtures may not carry a check timestamp. Treat those
             # explicit successful probes as authoritative; timestamped shard
@@ -415,6 +413,8 @@ def _associated_sources_payload(
             if repository.health == Repository.Health.ONLINE or shard.last_checked_at is None:
                 return Repository.Health.ONLINE
             return Repository.Health.OFFLINE
+        if not source_online:
+            return Repository.Health.UNVERIFIED
         if repository.health == Repository.Health.ONLINE:
             return Repository.Health.OFFLINE
         return Repository.Health.OFFLINE
