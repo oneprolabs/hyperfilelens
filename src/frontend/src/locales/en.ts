@@ -1893,7 +1893,7 @@ export const en = {
     nothingEligibleOffline:
       'Remote upgrade requires selected nodes to be online. Restore their connection, or select one node and use Maintenance for a local upgrade command.',
     nothingEligibleProxyBound: '{n} proxy node(s) still have bound resources and cannot be removed.',
-    nothingEligibleWorkload: '{n} node(s) are blocked by running backup or restore tasks.',
+    nothingEligibleWorkload: '{n} node(s) still have active tasks or resource dependencies.',
     nothingEligibleInProgress: '{n} node(s) already have a lifecycle operation in progress.',
     nothingEligibleDiskFull: '{n} node(s) do not have enough disk space for upgrade.',
     confirmEligibleUpgrade: 'Upgrade {n} selected node(s)?',
@@ -1905,6 +1905,8 @@ export const en = {
     confirmSkipGroup: {
       offline: 'Offline or unreachable ({n})',
       workload: 'Backup or restore running ({n})',
+      nodeTask: 'Operation in progress ({n})',
+      mixed: 'Active tasks or dependencies ({n})',
       inProgress: 'Operation already in progress ({n})',
       localAdmin: 'Remote upgrade unavailable ({n})',
       releaseUnavailable: 'No compatible Agent release ({n})',
@@ -1917,6 +1919,8 @@ export const en = {
     confirmSkipGuidance: {
       offline: 'Check the Agent service and network connection, then retry after it is online.',
       workload: 'Stop or wait for the backup or restore task to finish, then retry.',
+      nodeTask: 'Wait for the current operation to finish, then retry.',
+      mixed: 'Resolve the active task or dependency, then retry.',
       inProgress: 'Wait for the current operation to finish, then retry.',
       localAdmin: 'Open Maintenance, copy the local upgrade command, and run it as an administrator on each host.',
       releaseUnavailable: 'Publish a compatible Agent release, then retry.',
@@ -1926,7 +1930,11 @@ export const en = {
     confirmImpactUpgrade: 'Nodes may be briefly unavailable during upgrade; related tasks may pause.',
     confirmImpactRemove: 'Online agents will be uninstalled. Console records will be removed. This cannot be undone.',
     cancelQueued: 'Cancel Queued',
-    workloadBlocked: 'Backup or restore is running on this node. Stop the task first.',
+    workloadBlocked: 'This node still has active tasks or resource dependencies. Resolve them and try again.',
+    workloadBlockedBackupRestore: 'This node has running backup or restore tasks. Wait for them to finish and try again.',
+    workloadBlockedKnowledgeSource: 'This Data Gateway is still used by a Chat or knowledge source. Remove the dependent resource before removing the gateway.',
+    workloadBlockedWorkspace: 'This Data Gateway still has a managed Chat workspace. Remove the related Chat or wait for its cleanup to finish, then try again.',
+    workloadBlockedNodeTask: 'This node has an operation in progress. Wait for it to finish and try again.',
     bannerUpgrade:
       'Batch upgrade · Running {running} · Queued {queued} · Done {done}/{total} · Failed {failed}',
     bannerRemove:

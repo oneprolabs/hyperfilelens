@@ -3,6 +3,7 @@ import type { ComposerTranslation } from 'vue-i18n'
 import {
   buildUpgradeConfirmSkipGroups,
   buildUpgradeDiskSkipDetail,
+  classifyWorkloadBlockers,
   formatDiskCapacity,
   upgradePreviewSkippedCount,
 } from './nodeLifecycleUpgradeConfirm'
@@ -111,6 +112,57 @@ describe('node lifecycle upgrade disk guidance', () => {
         names: [{ id: 5, name: 'Node 5' }],
       },
     ])
+  })
+
+  it('separates detailed workload blockers in the upgrade confirmation', () => {
+    const value = preview([])
+    value.requested = 3
+    value.skipped_workload = [
+      {
+        node_id: 1,
+        name: 'backup-host',
+        reason: 'node_workload_active',
+        blockers: [{ code: 'backup_running', task_uuid: 'b1', task_type: 'backup', label: 'backup' }],
+      },
+      {
+        node_id: 2,
+        name: 'task-host',
+        reason: 'node_workload_active',
+        blockers: [{ code: 'node_task_running', task_uuid: 't1', task_type: 'maintenance', label: 'maintenance' }],
+      },
+      {
+        node_id: 3,
+        name: 'mixed-host',
+        reason: 'node_workload_active',
+        blockers: [{ code: 'backup_running', task_uuid: 'b2', task_type: 'backup', label: 'backup' }, { code: 'node_task_running', task_uuid: 't2', task_type: 'maintenance', label: 'maintenance' }],
+      },
+    ]
+
+    expect(buildUpgradeConfirmSkipGroups(t, value)).toEqual([
+      {
+        key: 'workload',
+        title: 'workload (1)',
+        names: [{ id: 1, name: 'backup-host' }],
+        guidance: 'workload guidance',
+      },
+      {
+        key: 'nodeTask',
+        title: 'nodeTask (1)',
+        names: [{ id: 2, name: 'task-host' }],
+        guidance: 'nodeTask guidance',
+      },
+      {
+        key: 'mixed',
+        title: 'mixed (1)',
+        names: [{ id: 3, name: 'mixed-host' }],
+        guidance: 'mixed guidance',
+      },
+    ])
+  })
+
+  it('keeps legacy workload previews on the generic category', () => {
+    expect(classifyWorkloadBlockers()).toBeNull()
+    expect(classifyWorkloadBlockers([{ code: 'unknown', task_uuid: 'x', task_type: 'x', label: 'x' }])).toBe('mixed')
   })
 
   it('explains a usage limit and keeps a generic fallback for old previews', () => {

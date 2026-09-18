@@ -14,7 +14,10 @@ import type { NodeLifecycleScope } from '../lib/nodeApi'
 import { apiErrorMessage } from '../lib/api'
 import { parseSemver, semverCompare } from '../lib/agentVersion'
 import { logger } from '../lib/logger'
-import { buildUpgradeDiskSkipDetails } from '../lib/nodeLifecycleUpgradeConfirm'
+import {
+  buildUpgradeDiskSkipDetails,
+  workloadBlockedMessageKey,
+} from '../lib/nodeLifecycleUpgradeConfirm'
 import type { ApiNode, NodeRole } from '../types/node'
 import type {
   LifecycleQueueItem,
@@ -515,9 +518,19 @@ export function useNodeLifecycleOps(options: {
       error: item.message || item.reason || fallbackCode,
     }))
 
+    const workloadErrors = (preview.skipped_workload || []).map((item) => ({
+      node_id: item.node_id,
+      name: item.name,
+      code: item.reason || 'node_workload_active',
+      error: item.blockers?.length
+        ? t(workloadBlockedMessageKey(item.blockers))
+        : item.reason || 'node_workload_active',
+      ...(item.blockers?.length ? { blockers: item.blockers } : {}),
+    }))
+
     return [
       ...fromRows(preview.skipped_offline || [], 'node_offline'),
-      ...fromRows(preview.skipped_workload || [], 'node_workload_active'),
+      ...workloadErrors,
       ...fromRows(preview.skipped_in_progress || [], 'lifecycle_in_progress'),
       ...fromRows(preview.skipped_not_upgradeable || [], 'not_upgradeable'),
       ...fromRows(preview.skipped_proxy_bound || [], 'proxy_has_bindings'),
@@ -959,5 +972,5 @@ export function formatWorkloadBlockedMessage(
   node: ApiNode,
 ): string | undefined {
   if (!node.workload?.blocked) return undefined
-  return t('nodeLifecycle.workloadBlocked')
+  return t(workloadBlockedMessageKey(node.workload.reasons))
 }

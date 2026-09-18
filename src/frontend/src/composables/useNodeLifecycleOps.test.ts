@@ -6,7 +6,7 @@ import { mount } from '@vue/test-utils'
 import { ElMessage } from 'element-plus'
 import { fetchLifecycleWatch, previewNodeOperationsBatch, startNodeOperationsBatch } from '../lib/nodeApi'
 import type { ApiNode } from '../types/node'
-import { useNodeLifecycleOps } from './useNodeLifecycleOps'
+import { formatWorkloadBlockedMessage, useNodeLifecycleOps } from './useNodeLifecycleOps'
 
 vi.mock('../lib/nodeApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/nodeApi')>()
@@ -240,6 +240,37 @@ describe('useNodeLifecycleOps batch start', () => {
       expect(lifecycle.skipped.value).toEqual([expect.objectContaining({ nodeId: node.id, reason: 'offline' })])
       expect(warning).toHaveBeenCalledWith(expect.objectContaining({ message: 'nodeLifecycle.nothingEligibleOffline' }))
     } finally { warning.mockRestore(); wrapper.unmount() }
+  })
+
+  it('formats workload blockers according to their detailed dependency', () => {
+    const translate = ((key: string) => key) as never
+    const base = {
+      id: 45,
+      name: 'gateway',
+      workload: { blocked: true, reasons: [] },
+    } as ApiNode
+
+    expect(formatWorkloadBlockedMessage(translate, {
+      ...base,
+      workload: {
+        blocked: true,
+        reasons: [{ code: 'knowledge_source_bound', task_uuid: 'knowledge_source:1', task_type: 'lens_knowledge_source', label: 'source' }],
+      },
+    })).toBe('nodeLifecycle.workloadBlockedKnowledgeSource')
+    expect(formatWorkloadBlockedMessage(translate, {
+      ...base,
+      workload: {
+        blocked: true,
+        reasons: [{ code: 'workspace_cleanup_pending', task_uuid: 'workspace_binding:1', task_type: 'lens_workspace_binding', label: 'workspace' }],
+      },
+    })).toBe('nodeLifecycle.workloadBlockedWorkspace')
+    expect(formatWorkloadBlockedMessage(translate, {
+      ...base,
+      workload: {
+        blocked: true,
+        reasons: [{ code: 'node_task_running', task_uuid: 'task:1', task_type: 'maintenance', label: 'maintenance' }],
+      },
+    })).toBe('nodeLifecycle.workloadBlockedNodeTask')
   })
 })
 
