@@ -1169,6 +1169,60 @@ class RepositoryHealthResultProjectionTests(TestCase):
         self.repository.refresh_from_db()
         self.assertEqual(self.repository.health, Repository.Health.OFFLINE)
 
+    def test_residual_recovery_success_reclaims_unchanged_claim(self):
+        claim = RepositoryLocationClaim.objects.get(repository=self.repository)
+        claim.state = RepositoryLocationClaim.State.RESIDUAL
+        claim.released_at = None
+        claim.save(update_fields=["state", "released_at", "updated_at"])
+        claim.refresh_from_db()
+        task = self._repo_status_task()
+        task.result = {"ownership_verified": True}
+        task.payload = {
+            "automatic_health_probe": True,
+            "repository_id": self.repository.id,
+            "repository_revision": repository_observation_revision(self.repository),
+            "repository_subdir": "",
+            "legacy_compatibility_allowed": False,
+            "direct_nas": False,
+            "residual_recovery": True,
+            "claim_id": claim.id,
+            "claim_updated_at": claim.updated_at.isoformat(),
+        }
+        task.correlation_type = REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE
+        task.save(update_fields=["payload", "result", "correlation_type", "updated_at"])
+
+        self.assertTrue(project_repository_health_from_agent_result(node_task=task))
+        claim.refresh_from_db()
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.OWNED)
+
+    def test_residual_recovery_rejects_claim_changed_after_dispatch(self):
+        claim = RepositoryLocationClaim.objects.get(repository=self.repository)
+        claim.state = RepositoryLocationClaim.State.RESIDUAL
+        claim.released_at = None
+        claim.save(update_fields=["state", "released_at", "updated_at"])
+        claim.refresh_from_db()
+        expected_updated_at = claim.updated_at.isoformat()
+        claim.save(update_fields=["updated_at"])
+        task = self._repo_status_task()
+        task.result = {"ownership_verified": True}
+        task.payload = {
+            "automatic_health_probe": True,
+            "repository_id": self.repository.id,
+            "repository_revision": repository_observation_revision(self.repository),
+            "repository_subdir": "",
+            "legacy_compatibility_allowed": False,
+            "direct_nas": False,
+            "residual_recovery": True,
+            "claim_id": claim.id,
+            "claim_updated_at": expected_updated_at,
+        }
+        task.correlation_type = REPOSITORY_HEALTH_PROBE_CORRELATION_TYPE
+        task.save(update_fields=["payload", "result", "correlation_type", "updated_at"])
+
+        self.assertFalse(project_repository_health_from_agent_result(node_task=task))
+        claim.refresh_from_db()
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+
     @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
     def test_automatic_probe_failure_schedules_one_durable_retry(self, apply_async):
         self.repository.health = Repository.Health.ONLINE
@@ -1401,7 +1455,7 @@ class AutomaticDirectNASObservationTests(TestCase):
     @mock.patch(
         "apps.storage.services.internal.repository_health.run_agent_task_async"
     )
-    def test_residual_claim_is_not_observed(self, run_async):
+    def test_residual_claim_dispatches_explicit_recovery_probe(self, run_async):
         node = self._node("residual-agent")
         RepositoryLocationClaim.objects.filter(
             repository=self.repository,
@@ -1413,8 +1467,11 @@ class AutomaticDirectNASObservationTests(TestCase):
             include_usage=True,
         )
 
-        self.assertEqual(tasks, [])
-        run_async.assert_not_called()
+        self.assertEqual(len(tasks), 1)
+        run_async.assert_called_once()
+        self.assertTrue(
+            run_async.call_args.kwargs["persisted_payload"]["residual_recovery"]
+        )
 
     def test_direct_nas_results_project_per_shard_and_aggregate(self):
         node_a = self._node("agent-a")

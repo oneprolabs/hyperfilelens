@@ -5824,6 +5824,7 @@
         "skippedItems": "已跳过的源项目",
         "summary": {
           "source_file_locked": "有 {count} 个文件因被其他进程锁定而无法读取。",
+          "source_resource_busy": "有 {count} 个源项目无法读取，源端报告设备或资源忙",
           "source_read_failed": "备份源中有 {count} 个文件无法读取。",
           "BACKUP_TARGET_STORAGE_FULL": "备份目标存储空间已满或已达到配额上限。",
           "mixed_source_errors": "有 {count} 个源项目无法处理。",
@@ -5840,7 +5841,8 @@
           "unsupported_entry_type": "{count} 个不支持的文件系统条目",
           "macos_privacy_denied": "{count} 个受 macOS 隐私权限限制的项目",
           "permission_denied": "{count} 个权限不足的项目",
-          "snapshot_errors": "{count} 个快照错误"
+          "snapshot_errors": "{count} 个快照错误",
+          "source_resource_busy": "{count} 个源项目无法读取，源端报告设备或资源忙"
         },
         "howToResolve": "解决方法",
         "viewAffectedFiles": "查看全部 {count} 个受影响文件",
@@ -5860,6 +5862,7 @@
           "exclude_runtime_cache": "不需要保护时，请排除运行时或缓存目录。",
           "use_vss": "如果必须保护这些文件，请使用 Windows VSS 或应用感知快照。",
           "stop_owning_service": "或者在维护窗口期间停止所属服务，然后重试。不要删除活动锁定文件。",
+          "exclude_unreadable_source_items": "如果这些源路径不需要保护，请将列出的路径加入文件过滤规则。",
           "check_source_access": "检查源路径是否存在，以及 Agent 是否有读取权限。",
           "grant_macos_full_disk_access": "在 macOS 上，如果必须包含受保护文件夹，请为 HyperFileLens Agent 授予“完全磁盘访问权限”。",
           "retry_backup": "修正列出的源端错误，然后重试备份。"
@@ -5867,7 +5870,8 @@
         "unsupportedEntryReason": "Socket 或其他特殊文件系统条目，不是普通备份文件",
         "macosPrivacyReason": "受到 macOS 隐私权限限制",
         "permissionDeniedReason": "权限不足",
-        "unreadableDirectoryReason": "目录无法读取"
+        "unreadableDirectoryReason": "目录无法读取",
+        "sourceResourceBusyReason": "设备或资源忙"
       },
       "resourceValue": {
         "s3": "对象存储",

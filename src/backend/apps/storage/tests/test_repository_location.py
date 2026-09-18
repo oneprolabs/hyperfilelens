@@ -13,6 +13,7 @@ from apps.storage.services.internal.repository_location import (
     mark_repository_location_initializing,
     mark_repository_location_owned,
     mark_repository_location_residual,
+    recover_repository_location_ownership,
     release_repository_location,
     repository_location_spec,
     resolve_s3_repository_namespace,
@@ -35,6 +36,38 @@ from apps.storage.services.internal.s3_url_style import S3_URL_STYLE_PATH
 
 
 class RepositoryLocationClaimTests(TestCase):
+    def test_residual_recovery_requires_unchanged_claim_timestamp(self):
+        repository = self._direct_nas_repository(name="Residual recovery")
+        claim = reserve_direct_nas_location(
+            repository=repository,
+            node_id=1,
+            repository_subdir="agent-1",
+        )
+        mark_repository_location_owned(repository)
+        mark_repository_location_residual(repository)
+        claim.refresh_from_db()
+        expected = claim.updated_at
+
+        self.assertTrue(
+            recover_repository_location_ownership(
+                repository,
+                claim_id=claim.id,
+                expected_updated_at=expected,
+            )
+        )
+        claim.refresh_from_db()
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.OWNED)
+
+        mark_repository_location_residual(repository)
+        claim.refresh_from_db()
+        self.assertFalse(
+            recover_repository_location_ownership(
+                repository,
+                claim_id=claim.id,
+                expected_updated_at=expected,
+            )
+        )
+
     def _s3_repository(
         self,
         *,

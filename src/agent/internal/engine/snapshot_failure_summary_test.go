@@ -57,6 +57,19 @@ func TestSnapshotFailureCollectorSurvivesTruncatedSnapshotJSON(t *testing.T) {
 	}
 }
 
+func TestSnapshotFailureCollectorClassifiesDeviceOrResourceBusyWithPath(t *testing.T) {
+	collector := newSnapshotFailureCollector()
+	collector.observe(`Error when processing "pagefile.sys": stat: device or resource busy`)
+	summary := collector.summary()
+	if summary["cause_counts"].(map[string]int)["source_resource_busy"] != 1 {
+		t.Fatalf("unexpected causes: %#v", summary)
+	}
+	item := summary["items"].([]any)[0].(map[string]any)
+	if item["path"] != "pagefile.sys" || item["cause"] != "source_resource_busy" {
+		t.Fatalf("unexpected item: %#v", item)
+	}
+}
+
 func TestPreparedSnapshotSendsCompactSummaryWhenStdoutCannotBeParsed(t *testing.T) {
 	originalRunner := runManagedSnapshotCommand
 	t.Cleanup(func() { runManagedSnapshotCommand = originalRunner })
