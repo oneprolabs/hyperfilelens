@@ -6,10 +6,10 @@ const page = readFileSync(resolve(process.cwd(), 'src/pages/node/Repositories.vu
 
 describe('Object Storage repository columns', () => {
   it('uses the compact Object Storage width allocation', () => {
-    expect(page).toContain(":min-width=\"activeTab === 'nas' ? 152 : activeTab === 's3' ? 137 : 190\"")
+    expect(page).toContain(":min-width=\"activeTab === 'nas' ? 137 : activeTab === 's3' ? 137 : 190\"")
     expect(page).toMatch(/colS3ObjectPrefix[\s\S]*?min-width="113"/)
     expect(page).toContain(":min-width=\"activeTab === 's3' ? 189 : activeTab === 'nas' ? 194 : 228\"")
-    expect(page).toContain(":width=\"activeTab === 'nas' ? 142 : activeTab === 's3' ? 110 : 116\"")
-    expect(page).toContain(":min-width=\"activeTab === 'nas' || activeTab === 's3' ? 154 : activeTab === 'proxy_fs' ? 170 : createdAtColumnMinWidth\"")
+    expect(page).toContain(":width=\"activeTab === 'nas' ? 165 : activeTab === 's3' ? 110 : 116\"")
+    expect(page).toContain(":min-width=\"activeTab === 'nas' ? 146 : activeTab === 's3' ? 154 : activeTab === 'proxy_fs' ? 170 : createdAtColumnMinWidth\"")
   })
 })

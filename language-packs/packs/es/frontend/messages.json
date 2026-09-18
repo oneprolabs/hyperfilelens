@@ -1270,6 +1270,9 @@
       "msgCreateBackupHostOffline": "El host de origen \"{names}\" está sin conexión. No se puede crear una configuración de copia de seguridad.",
       "msgStartBackupHostOffline": "El host de origen \"{names}\" está sin conexión. No se puede iniciar la copia de seguridad.",
       "msgStartBackupNasOffline": "El origen NAS \"{names}\" no está disponible: el host proxy \"{node}\" está sin conexión.",
+      "backupRepositoryUnreachable": "No se puede iniciar la copia de seguridad: el repositorio NAS no está disponible.\nCompruebe que el NAS esté en línea, que la ubicación compartida sea correcta y que el montaje esté presente; después, vuelva a intentarlo.",
+      "backupRepositoryCheckTimeout": "La comprobación del repositorio NAS agotó el tiempo.\nConfirme que el NAS sea accesible, que la ubicación compartida sea válida y que el montaje funcione; después, vuelva a intentarlo.",
+      "backupRepositoryCheckUnavailable": "No se puede verificar el repositorio NAS ahora.\nCompruebe el estado del agente de origen y del montaje NAS; después, vuelva a intentarlo.",
       "msgCreateBackupNasOffline": "El origen NAS \"{names}\" no está disponible: el host proxy \"{node}\" está sin conexión.",
       "flowToolbarPlaceholder": "Nombre de la búsqueda o IP",
       "flowFilterAdvanced": "Filtros avanzados",
@@ -1885,10 +1888,7 @@
       "backupTaskDrawerFieldTaskId": "ID de tarea",
       "backupTaskDrawerFieldCurrentPhase": "Fase actual",
       "backupTaskDrawerFieldBackupDetail": "Copia de seguridad",
-      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada.",
-      "backupRepositoryUnreachable": "No se puede iniciar la copia de seguridad: el repositorio NAS no está disponible.\nCompruebe que el NAS esté en línea, que la ruta compartida sea correcta y que el montaje esté presente; después, vuelva a intentarlo.",
-      "backupRepositoryCheckTimeout": "La comprobación del repositorio NAS agotó el tiempo.\nConfirme que el NAS sea accesible, que la ruta compartida sea válida y que el montaje funcione; después, vuelva a intentarlo.",
-      "backupRepositoryCheckUnavailable": "No se puede verificar el repositorio NAS ahora.\nCompruebe el estado del agente de origen y del montaje NAS; después, vuelva a intentarlo."
+      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada."
     },
     "backupDetail": {
       "backToList": "Volver a copias de seguridad",

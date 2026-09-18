@@ -1102,6 +1102,9 @@
       "msgCreateBackupHostOffline": "源端主机「{names}」已离线，无法创建备份配置",
       "msgStartBackupHostOffline": "源端主机「{names}」已离线，无法开始备份",
       "msgStartBackupNasOffline": "源端 NAS「{names}」不可用：代理主机「{node}」已离线，无法开始备份",
+      "backupRepositoryUnreachable": "无法开始备份：NAS 仓库当前不可达。\n请检查 NAS 是否在线、共享路径和挂载状态，然后重试。",
+      "backupRepositoryCheckTimeout": "NAS 仓库检查超时，暂时无法开始备份。\n请确认 NAS 可访问、共享路径和挂载状态正常后重试。",
+      "backupRepositoryCheckUnavailable": "暂时无法检查 NAS 仓库。\n请检查备份源 Agent 和 NAS 挂载状态，然后重试。",
       "msgCreateBackupNasOffline": "源端 NAS「{names}」不可用：代理主机「{node}」已离线，无法创建备份配置",
       "flowToolbarPlaceholder": "搜索名称或 IP…",
       "flowFilterAdvanced": "高级筛选",
@@ -1857,10 +1860,7 @@
       "backupTaskRetryDirectory": "重试目录",
       "backupTaskRetryDirectorySuccess": "目录重试开始",
       "backupTaskDirectoryStatus": "目录状态",
-      "backupTaskDirectoryProgress": "进行中",
-      "backupRepositoryUnreachable": "无法开始备份：NAS 仓库当前不可达。\n请检查 NAS 是否在线、共享路径和挂载状态，然后重试。",
-      "backupRepositoryCheckTimeout": "NAS 仓库检查超时，暂时无法开始备份。\n请确认 NAS 可访问、共享路径和挂载状态正常后重试。",
-      "backupRepositoryCheckUnavailable": "暂时无法检查 NAS 仓库。\n请检查备份源 Agent 和 NAS 挂载状态，然后重试。"
+      "backupTaskDirectoryProgress": "进行中"
     },
     "backupDetail": {
       "backToList": "返回备份列表",
