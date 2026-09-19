@@ -38,6 +38,7 @@ declare module '@ext/platform/governance/menu' {
     labelKey: string
     to: string
     icon: 'organization' | 'members' | 'roles' | 'resources'
+    requiredRoles?: readonly string[]
   }>
 }
 

@@ -109,6 +109,22 @@ class IsOrgReader(_RoleMixin, permissions.BasePermission):
         return False
 
 
+class IsOrgMemberReader(_RoleMixin, permissions.BasePermission):
+    """Read organization membership for governance roles, including auditors."""
+
+    allowed_roles = (
+        Membership.Role.OWNER,
+        Membership.Role.ADMIN,
+        Membership.Role.MANAGER,
+        Membership.Role.AUDITOR,
+    )
+
+    def has_permission(self, request, view) -> bool:  # type: ignore[override]
+        if request.method in permissions.SAFE_METHODS:
+            return super().has_permission(request, view)
+        return False
+
+
 class IsOrgStaffReader(_RoleMixin, permissions.BasePermission):
     """Read-only for operational/config data (excludes auditor)."""
 
