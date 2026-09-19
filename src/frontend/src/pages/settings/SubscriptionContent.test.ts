@@ -74,7 +74,7 @@ describe('SubscriptionContent effective quotas', () => {
     expect(mocks.fetchEffectiveQuotaUsage).not.toHaveBeenCalled()
     expect(wrapper.text()).toMatch(/0\s+\/ 1/)
     expect(wrapper.text()).toMatch(/0\s+\/ 100/)
-    expect(wrapper.text()).toContain('0 MB / 1 TB')
+    expect(wrapper.text()).toContain('0 MB / 100 TB')
     expect(wrapper.text()).toContain('Unlimited')
     wrapper.unmount()
   })
@@ -194,7 +194,7 @@ describe('SubscriptionContent effective quotas', () => {
       message: 'Unable to load license information. Refresh the page and try again.',
     }))
     expect(wrapper.text()).toContain('Quota information is temporarily unavailable.')
-    expect(wrapper.text()).not.toContain('0 MB / 1 TB')
+    expect(wrapper.text()).not.toContain('0 MB / 100 TB')
     wrapper.unmount()
   })
 

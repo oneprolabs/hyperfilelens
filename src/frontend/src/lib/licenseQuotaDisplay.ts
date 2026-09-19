@@ -154,7 +154,7 @@ export const DASHBOARD_QUOTA_DEFS: QuotaDisplayDef[] = [...SUBSCRIPTION_QUOTA_DE
 export const SUBSCRIPTION_QUOTA_FALLBACK_LIMITS: Record<string, number> = {
   max_organizations: 1,
   max_users: 1,
-  max_storage_bytes: 1024 * 1024 ** 3,
+  max_storage_bytes: 100 * 1024 ** 4,
   max_gateways: -1,
   max_public_gateway_capacity_bytes: -1,
   max_public_gateways: -1,

@@ -88,14 +88,14 @@ class LicenseApiTests(TestCase):
             self.assertTrue(resp.data["is_valid"])
             self.assertEqual(resp.data.get("entitlement_source"), "builtin_community")
             # Community: one organization, one member, 100 backup
-            # configurations, and 1 TiB; other resource and Chat limits are
+            # configurations, and 100 TiB; other resource and Chat limits are
             # unlimited.
             self.assertEqual(resp.data["limits"]["max_organizations"], 1)
             self.assertEqual(resp.data["limits"]["max_users"], 1)
             self.assertEqual(resp.data["limits"]["max_protected_sources"], 100)
             self.assertEqual(
                 resp.data["limits"]["max_storage_bytes"],
-                1024 * 1024**3,
+                100 * 1024**4,
             )
             self.assertEqual(resp.data["limits"]["max_source_hosts"], -1)
             self.assertTrue(resp.data.get("enforcement_enabled"))
@@ -134,7 +134,7 @@ class LicenseApiTests(TestCase):
         self.assertEqual(response.data["limits"]["max_protected_sources"], 100)
         self.assertEqual(
             response.data["limits"]["max_storage_bytes"],
-            1024 * 1024**3,
+            100 * 1024**4,
         )
         self.assertNotIn("license", response.data)
 
