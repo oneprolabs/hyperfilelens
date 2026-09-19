@@ -247,7 +247,7 @@ def create_backup_config(
         # and organization quota locks remain held until commit.
         if org is not None:
             enforce_license_quota(org, "max_protected_sources", additional=1)
-            enforce_license_quota(org, "max_storage_gb", additional=0)
+            enforce_license_quota(org, "max_storage_bytes", additional=0)
         direct_nas = (
             repository.repo_type == Repository.Type.NAS
             and repository.bind_node_id is None

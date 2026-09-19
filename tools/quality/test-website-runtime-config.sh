@@ -59,5 +59,14 @@ if grep -R -F '/en/docs' --exclude-dir=dist --exclude-dir=cache \
 	printf 'ERROR: English Website links must use the default /docs route\n' >&2
 	exit 1
 fi
+# Allow /docs/en/*.png screenshots; reject /docs/en/... page links.
+if bad_links="$(
+	grep -R -n --include='*.md' -Eo '/docs/en/[A-Za-z0-9_./-]+' "${ROOT}/website/en" \
+		| grep -Ev '\.(png|webp|jpg|jpeg|gif|svg|ico)$' || true
+)" && [[ -n "${bad_links}" ]]; then
+	printf 'ERROR: English Website page links must use /docs/... not /docs/en/...\n' >&2
+	printf '%s\n' "${bad_links}" >&2
+	exit 1
+fi
 
 printf 'Website runtime URL configuration checks passed.\n'

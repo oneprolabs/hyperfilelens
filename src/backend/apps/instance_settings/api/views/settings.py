@@ -1,4 +1,4 @@
-"""Instance-level settings APIs (OSS essentials: email / identity / AI / environment)."""
+"""Instance-level settings APIs for the OSS Admin Console essentials."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from django.core.mail import EmailMessage, get_connection
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.utils import timezone
 
 from apps.configuration.models import GlobalConfig
 from apps.configuration.selectors.interface import get_config, invalidate_config_cache
@@ -33,6 +34,8 @@ from apps.instance_settings.services.external_access import (
 )
 from common.platform_audit import write_platform_audit_log
 from common.platform_authz import ADMIN_USERS_MANAGE, INFRA_AI_MODELS_MANAGE
+from apps.lens_bridge import deploy as lens_deploy
+from apps.lens_bridge.services import sl_client
 from apps.configuration.services import runtime_settings as runtime_settings_svc
 from apps.configuration.services.runtime_settings import (
     KEY_AI_AZURE_BASE,
@@ -612,6 +615,51 @@ class PlatformOpsSettingsEnvironmentView(APIView):
 
         cfg = email_connection_kwargs()
         identity_enabled = runtime_settings_svc.enterprise_identity_enabled()
+        health = system_health_payload()
+        lens = sl_client.ping(timeout=2)
+        lens_status = (
+            "ok"
+            if lens.get("business_ready")
+            else "error"
+            if lens.get("configured") and not lens.get("reachable")
+            else "unknown"
+            if not lens.get("configured")
+            else "degraded"
+        )
+        health["sourcelens"] = {
+            "status": lens_status,
+            "configured": bool(lens.get("configured")),
+            "reachable": bool(lens.get("reachable")),
+            "authenticated": bool(lens.get("authenticated")),
+            "business_ready": bool(lens.get("business_ready")),
+            "warning": lens.get("warning") or "",
+            "base_url": lens.get("base_url") or lens_deploy.lens_base_url(),
+        }
+        gateway_url = (lens_deploy.lens_gateway_base_url() or "").strip()
+        gateway = {
+            "status": "unknown",
+            "configured": bool(gateway_url),
+            "reachable": False,
+            "base_url": gateway_url,
+            "warning": "",
+        }
+        if gateway_url:
+            try:
+                import requests
+                from urllib.parse import urljoin
+
+                response = requests.get(
+                    urljoin(gateway_url.rstrip("/") + "/", "health"),
+                    timeout=2,
+                )
+                gateway["reachable"] = response.status_code == 200
+                gateway["status"] = "ok" if gateway["reachable"] else "degraded"
+                if not gateway["reachable"]:
+                    gateway["warning"] = "Hosted data gateway health check failed."
+            except Exception as exc:  # noqa: BLE001 - surface probe failure
+                gateway["status"] = "degraded"
+                gateway["warning"] = f"Hosted data gateway unreachable ({type(exc).__name__})."
+        health["gateway"] = gateway
         return Response(
             {
                 "app_version": deploy_profile_staff_payload().get("app_version"),
@@ -640,7 +688,41 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                     "turnstile_enabled": "env" if identity_enabled else "extension",
                     "email_host": cfg["source"],
                 },
-                "health": system_health_payload(),
+                "health": health,
+            }
+        )
+
+
+class PlatformOpsSettingsIntegrationsView(APIView):
+    """Show deployment-managed service connections in Runtime Environment."""
+
+    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
+
+    def get(self, request):
+        health = sl_client.ping(timeout=3)
+        checked_at = timezone.now().isoformat()
+        return Response(
+            {
+                "integrations": [
+                    {
+                        "key": "sourcelens",
+                        "name": "SourceLens",
+                        "category": "AI and data services",
+                        "mode": lens_deploy.sourcelens_mode(),
+                        "version": lens_deploy.sourcelens_version(),
+                        "base_url": lens_deploy.lens_base_url(),
+                        "gateway_base_url": lens_deploy.lens_gateway_base_url(),
+                        "console_url": lens_deploy.sourcelens_console_url(),
+                        "configured": bool(health.get("configured")),
+                        "reachable": bool(health.get("reachable")),
+                        "authenticated": bool(health.get("authenticated")),
+                        "business_ready": bool(health.get("business_ready")),
+                        "status": health.get("status", "degraded"),
+                        "warning": health.get("warning", ""),
+                        "managed_by": "deployment",
+                        "checked_at": checked_at,
+                    }
+                ]
             }
         )
 

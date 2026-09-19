@@ -1,7 +1,8 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Building2, Users, CreditCard } from 'lucide-vue-next'
+import { CreditCard } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
+import { resolveGovernanceMenu } from '../governance/resolveMenu'
 
 /** Configuration management sidebar for organization-level pages. */
 export function useNodeSideNav() {
@@ -10,8 +11,7 @@ export function useNodeSideNav() {
     {
       label: t('assetsPage.side.groupGovernance'),
       children: [
-        { label: t('settings.nav.organizationHub'), to: '/node/organization', icon: Building2 },
-        { label: t('settings.nav.members'), to: '/node/members', icon: Users },
+        ...resolveGovernanceMenu(t),
         { label: t('settings.nav.subscription'), to: '/node/subscription', icon: CreditCard },
       ],
     },

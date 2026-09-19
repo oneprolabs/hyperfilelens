@@ -26,7 +26,7 @@ _INSTANCE_USAGE_KEYS = (
     "target_nas_count",
     "standalone_disk_count",
     "protected_sources_count",
-    "storage_used_gb",
+    "storage_used_bytes",
     "public_gateway_capacity_used_bytes",
     "ai_tokens_used",
     "alert_policies_count",
@@ -161,9 +161,9 @@ def collect_usage_stats(*, organization_id: int) -> dict:
             )
             .get("total")
         )
-        storage_used_gb = float(total_bytes or 0) / float(1024**3)
+        storage_used_bytes = int(total_bytes or 0)
     except Exception:
-        storage_used_gb = 0.0
+        storage_used_bytes = 0
 
     return {
         "organizations_count": Organization.objects.filter(is_active=True).count(),
@@ -177,7 +177,7 @@ def collect_usage_stats(*, organization_id: int) -> dict:
         "target_nas_count": target_nas_count,
         "standalone_disk_count": standalone_disk_count,
         "protected_sources_count": protected_sources_count,
-        "storage_used_gb": storage_used_gb,
+        "storage_used_bytes": storage_used_bytes,
         "public_gateway_capacity_used_bytes": _org_public_gateway_capacity_used_bytes(
             organization_id
         ),
@@ -202,7 +202,7 @@ def _empty_usage() -> dict:
         "target_nas_count": 0,
         "standalone_disk_count": 0,
         "protected_sources_count": 0,
-        "storage_used_gb": 0.0,
+        "storage_used_bytes": 0,
         "public_gateway_capacity_used_bytes": 0,
         "ai_tokens_used": 0,
         "ai_insights_used": 0,
@@ -218,7 +218,7 @@ def check_quota_available(*, limit: int, current: int, additional: int = 1) -> b
     return (current + additional) <= limit
 
 
-def _storage_usage_gb(repositories) -> float:
+def _storage_usage_bytes(repositories) -> int:
     """Return measured storage usage or raise when any active probe is unknown."""
     from django.db.models import Sum, Value
     from django.db.models.functions import Coalesce
@@ -232,13 +232,13 @@ def _storage_usage_gb(repositories) -> float:
             )
         ),
     )
-    measured_gb = float(facts.get("total") or 0) / float(1024**3)
+    measured_bytes = int(facts.get("total") or 0)
     if _storage_usage_unknown_repositories(repositories).exists():
         raise IncompleteUsageMeasurementError(
             "Storage usage cannot be measured completely",
-            measured_value=measured_gb,
+            measured_value=measured_bytes,
         )
-    return measured_gb
+    return measured_bytes
 
 
 def _storage_usage_unknown_repositories(repositories):
@@ -349,13 +349,13 @@ def collect_meter_usage(*, organization_id: int, usage_key: str) -> int | float:
         from apps.protection.models.backup_config import BackupConfig
 
         return BackupConfig.objects.filter(organization_id=org_id).count()
-    if usage_key == "storage_used_gb":
+    if usage_key == "storage_used_bytes":
         from apps.storage.repositories.models import Repository
 
         repositories = Repository.objects.filter(organization_id=org_id).exclude(
             status=Repository.Status.REMOVED
         )
-        return _storage_usage_gb(repositories)
+        return _storage_usage_bytes(repositories)
     if usage_key == "public_gateway_capacity_used_bytes":
         from apps.lens_bridge.services.public_gateway_capacity import (
             org_public_gateway_used_bytes,
@@ -419,7 +419,7 @@ def _exclude_platform_organization(queryset, *, platform_org_key: str):
     return queryset.exclude(organization_id__in=platform_org_ids)
 
 
-def collect_instance_meter_usage(*, usage_key: str) -> float:
+def collect_instance_meter_usage(*, usage_key: str) -> int | float:
     """
     Sum a usage meter across all customer organizations (excludes platform org).
 
@@ -513,14 +513,14 @@ def collect_instance_meter_usage(*, usage_key: str) -> float:
                 platform_org_key=PLATFORM_ORG_KEY,
             ).count()
         )
-    if usage_key == "storage_used_gb":
+    if usage_key == "storage_used_bytes":
         from apps.storage.repositories.models import Repository
 
         repositories = _exclude_platform_organization(
             Repository.objects.all(),
             platform_org_key=PLATFORM_ORG_KEY,
         ).exclude(status=Repository.Status.REMOVED)
-        return _storage_usage_gb(repositories)
+        return _storage_usage_bytes(repositories)
     if usage_key == "public_gateway_capacity_used_bytes":
         from apps.lens_bridge.services.public_gateway_capacity import (
             bulk_public_gateway_used_bytes,
@@ -558,22 +558,6 @@ def collect_instance_meter_usage(*, usage_key: str) -> float:
             ).count()
         )
     raise ValueError(f"Unsupported instance quota usage meter: {usage_key}")
-
-
-def collect_instance_node_pool_usage() -> int:
-    """Sum agents + proxies across customer orgs (shared max_nodes pool)."""
-    from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
-    from apps.node.models import Node
-    from apps.node.models.base import NodeRole
-
-    return int(
-        _exclude_platform_organization(
-            Node.objects.all(),
-            platform_org_key=PLATFORM_ORG_KEY,
-        )
-        .filter(role__in=(NodeRole.AGENT, NodeRole.PROXY))
-        .count()
-    )
 
 
 def collect_usage_stats_by_organization(
@@ -661,16 +645,14 @@ def collect_usage_stats_by_organization(
             "standalone_disk_count",
         ):
             organization_usage[key] = int(row[key] or 0)
-        organization_usage["storage_used_gb"] = float(
-            row["storage_bytes"] or 0
-        ) / float(1024**3)
+        organization_usage["storage_used_bytes"] = int(row["storage_bytes"] or 0)
     incomplete_storage_org_ids = set(
         _storage_usage_unknown_repositories(active_repositories)
         .values_list("organization_id", flat=True)
         .distinct()
     )
     for organization_id in incomplete_storage_org_ids:
-        incomplete_by_org[int(organization_id)].add("storage_used_gb")
+        incomplete_by_org[int(organization_id)].add("storage_used_bytes")
 
     from apps.protection.models.backup_config import BackupConfig
 

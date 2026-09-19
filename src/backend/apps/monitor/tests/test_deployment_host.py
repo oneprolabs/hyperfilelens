@@ -20,6 +20,7 @@ from apps.monitor.services.interface import (
 )
 from apps.monitor.services.internal.deployment_host import (
     _consolidate_duplicate_hosts,
+    deployment_host_key,
     touch_local_deployment_host,
 )
 from common.extension_loader import extensions_enabled
@@ -31,6 +32,31 @@ class DeploymentHostServiceTests(TestCase):
         self.assertIsNotNone(host.id)
         self.assertTrue(host.hostname)
         self.assertIsNotNone(host.last_seen_at)
+        self.assertRegex(host.hostname, r"^(?!host-\d+$).+")
+
+    def test_deployment_host_key_ignores_boot_time_drift(self):
+        from unittest.mock import patch
+
+        with (
+            patch(
+                "apps.monitor.services.internal.deployment_host._read_machine_id",
+                return_value=None,
+            ),
+            patch(
+                "apps.monitor.services.internal.deployment_host._env_deployment_host_key",
+                return_value=None,
+            ),
+            patch(
+                "apps.monitor.services.internal.deployment_host._persisted_deployment_host_key",
+                return_value="stable-host-id",
+            ),
+            patch(
+                "apps.monitor.services.internal.deployment_host.system_boot_time",
+                side_effect=[1_700_000_001.0, 1_700_000_050.0],
+            ),
+        ):
+            self.assertEqual(deployment_host_key(), "stable-host-id")
+            self.assertEqual(deployment_host_key(), "stable-host-id")
 
     def test_build_system_monitor_payload_without_host_id_uses_local(self):
         local = touch_local_deployment_host()
@@ -78,6 +104,50 @@ class DeploymentHostServiceTests(TestCase):
         metric.refresh_from_db()
         self.assertEqual(metric.host_id, primary.id)
         self.assertEqual(DeploymentHost.objects.filter(boot_time=boot).count(), 1)
+
+    def test_consolidates_boot_derived_hosts_with_same_display_name(self):
+        primary = DeploymentHost.objects.create(
+            hostname="stable-machine-id",
+            name="760a024e2dd3",
+            ip_address="172.20.0.4",
+            boot_time=1_700_000_100.0,
+            last_seen_at=timezone.now(),
+        )
+        duplicate = DeploymentHost.objects.create(
+            hostname="host-1700000001",
+            name="760a024e2dd3",
+            ip_address="172.18.0.3",
+            boot_time=1_700_000_001.0,
+            last_seen_at=timezone.now() - timezone.timedelta(hours=1),
+        )
+        metric = SystemMetric.objects.create(host=duplicate, cpu={"usage_percent": 8})
+
+        _consolidate_duplicate_hosts(primary)
+
+        self.assertFalse(DeploymentHost.objects.filter(pk=duplicate.pk).exists())
+        metric.refresh_from_db()
+        self.assertEqual(metric.host_id, primary.id)
+
+    def test_list_deployment_hosts_collapses_boot_derived_rows_with_same_name(self):
+        now = timezone.now()
+        DeploymentHost.objects.create(
+            hostname="host-1700000100",
+            name="760a024e2dd3",
+            ip_address="172.20.0.4",
+            boot_time=1_700_000_100.0,
+            last_seen_at=now,
+        )
+        DeploymentHost.objects.create(
+            hostname="host-1700000010",
+            name="760a024e2dd3",
+            ip_address="172.20.0.4",
+            boot_time=1_700_000_010.0,
+            last_seen_at=now - timezone.timedelta(minutes=30),
+        )
+        items = list_deployment_hosts()
+        matching = [item for item in items if item["name"] == "760a024e2dd3"]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["hostname"], "host-1700000100")
 
     def test_list_deployment_hosts_hides_long_offline_stale_rows(self):
         DeploymentHost.objects.create(

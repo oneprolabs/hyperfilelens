@@ -45,6 +45,7 @@ const props = defineProps<{
   showRepositoryServerAddress?: boolean
   nodeScope?: NodeApiScope
   useBackupSourceTerminology?: boolean
+  readOnly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -165,6 +166,7 @@ async function copyText(value: string) {
 }
 
 function beginNameEdit() {
+  if (props.readOnly) return
   nameDraft.value = props.node.name
   editingName.value = true
 }
@@ -256,6 +258,7 @@ function detailValueClass(text: string, monoWhenPresent = false) {
             <template v-else>
               <span class="hfl-detail-row__text">{{ node.name }}</span>
               <ElButton
+                v-if="!readOnly"
                 text
                 circle
                 size="small"

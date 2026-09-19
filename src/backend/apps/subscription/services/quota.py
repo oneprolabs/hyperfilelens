@@ -1,13 +1,22 @@
 """
 Host quota facade.
 
-Create-path helpers live here; hard checks run through QuotaProvider (plugin).
-Community (empty socket): no-op unless a future community hard-limit is enabled.
+Create-path helpers live here. Enterprise delegates hard checks to its
+QuotaProvider; a Host-only Community deployment uses the built-in Community
+entitlement for its finite product limits.
 """
 
 from __future__ import annotations
 
-from apps.subscription.constants import QUOTA_ENFORCEMENT_ENABLED, UNLIMITED
+from decimal import Decimal, InvalidOperation
+
+from apps.subscription.constants import (
+    COMMUNITY_DEFAULT_LIMITS,
+    QUOTA_ENFORCEMENT_ENABLED,
+    QUOTA_UNITS,
+    UNLIMITED,
+    USAGE_KEY_BY_QUOTA,
+)
 from common.errors import AppError
 from common.extension_spi import get_quota_provider
 
@@ -41,8 +50,8 @@ def hard_quota_enforcement_active() -> bool:
     """
     True when create paths should hard-deny over quota.
 
-    EE QuotaProvider present → always hard. Community → only if the
-    explicit enforcement flag is enabled (default off / informational).
+    EE QuotaProvider present → always hard. Community → uses the Host
+    enforcement setting (enabled by default in product deployments).
     """
     if get_quota_provider() is not None:
         return True
@@ -72,14 +81,97 @@ def _quota_exceeded_error(
     )
 
 
+def _quota_amount(quota_key: str, value: int | float) -> int | float:
+    """Normalize a quota increment without losing byte precision."""
+    try:
+        numeric = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError("Quota consumption must be numeric") from None
+    if not numeric.is_finite() or numeric < 0:
+        raise ValueError("Quota consumption cannot be negative")
+    if QUOTA_UNITS.get(quota_key) == "bytes":
+        if numeric != numeric.to_integral_value():
+            raise ValueError("Byte quota consumption must be an integer")
+        return int(numeric)
+    return float(numeric)
+
+
 def enforce_license_quota(organization, resource_type: str, additional: int | float = 1):
-    """Deny path for new consumption when over quota (hard limit)."""
+    """Deny new consumption when it exceeds the effective quota.
+
+    Enterprise delegates to the extension so instance pools and organization
+    overrides are checked together.  Host-only Community uses the built-in
+    entitlement for the same quota keys; unlimited Community resources remain
+    a no-op.  This fallback deliberately never reads a persisted License row.
+    """
     provider = get_quota_provider()
     if provider is not None:
         return provider.check_quota(organization, resource_type, additional)
     if not _enforcement_flag_enabled():
         return None
+    if organization is None:
+        return None
+    quota_key = str(resource_type or "").strip()
+    needed = _quota_amount(quota_key, additional)
+    limit = int(COMMUNITY_DEFAULT_LIMITS.get(quota_key, UNLIMITED))
+    if limit == UNLIMITED or limit < 0:
+        return None
+    usage_key = USAGE_KEY_BY_QUOTA.get(quota_key)
+    if usage_key is None:
+        return None
+    from apps.subscription.services.internal.usage import collect_meter_usage
+
+    from apps.subscription.services.internal.usage import (
+        IncompleteUsageMeasurementError,
+    )
+
+    try:
+        measured = collect_meter_usage(
+            organization_id=organization.id,
+            usage_key=usage_key,
+        )
+        current: int | float = (
+            int(measured) if QUOTA_UNITS.get(quota_key) == "bytes" else float(measured)
+        )
+    except IncompleteUsageMeasurementError as exc:
+        # Storage probes can be incomplete.  Do not silently admit a write
+        # against a finite Community capacity when its usage is unknown.
+        raise _quota_usage_unavailable_error(
+            quota_type=quota_key,
+            used=exc.measured_value,
+        ) from exc
+
+    if _would_exceed(limit=limit, current=current, needed=needed):
+        raise _quota_exceeded_error(
+            quota_type=quota_key,
+            limit=limit,
+            used=current,
+            requested=needed,
+        )
     return None
+
+
+def _would_exceed(*, limit: int | float, current: int | float, needed: int | float) -> bool:
+    """Match EE's boundary semantics, including zero-increment checks."""
+    if limit == UNLIMITED or limit < 0:
+        return False
+    return current + needed > limit or (needed == 0 and current >= limit)
+
+
+def _quota_usage_unavailable_error(*, quota_type: str, used: int | float) -> AppError:
+    message = "Quota usage cannot be measured completely. Retry after usage is available."
+    return AppError(
+        code="SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE",
+        status=503,
+        retryable=True,
+        title=message,
+        diagnostic=message,
+        meta={
+            "quota_type": quota_type,
+            "used": used,
+            "scope": "organization",
+        },
+    )
 
 
 def record_usage_event(organization, **event):
@@ -241,8 +333,9 @@ def assert_gateway_select_within_limits(
     """
     Gateway/copilot selection caps.
 
-    When a plugin provides get_limits, finite caps always apply (not gated on
-    create-path enforcement). Without a provider, this is a no-op.
+    When a plugin provides get_limits, finite caps always apply. Community's
+    built-in operation limits are currently unlimited, so the Host fallback is
+    intentionally a no-op.
     """
     provider = get_quota_provider()
     if provider is None:
@@ -279,14 +372,72 @@ def validate_quota(organization, quota_type: str, amount: int = 1) -> dict:
     provider = get_quota_provider()
     if provider is not None:
         return provider.validate_quota(organization, quota_type, amount)
-    # Host alone never hard-enforces; do not claim enforcement_enabled=True.
+    if not _enforcement_flag_enabled():
+        # Test/development fixtures may intentionally disable admission checks;
+        # keep the preview honest about that mode.
+        return {
+            "is_valid": True,
+            "quota_type": quota_type,
+            "message": "Quota enforcement disabled",
+            "enforcement_enabled": False,
+        }
+    quota_key = str(quota_type or "").strip()
+    needed = _quota_amount(quota_key, amount)
+    limit = int(COMMUNITY_DEFAULT_LIMITS.get(quota_key, UNLIMITED))
+    usage_key = USAGE_KEY_BY_QUOTA.get(quota_key)
+    if limit == UNLIMITED or limit < 0:
+        return {
+            "is_valid": True,
+            "quota_type": quota_key,
+            "limit": UNLIMITED,
+            "used": 0,
+            "message": None,
+            "enforcement_enabled": _enforcement_flag_enabled(),
+            "limit_source": "builtin_community",
+        }
+    if usage_key is None or organization is None:
+        ok = needed <= limit
+        return {
+            "is_valid": ok,
+            "quota_type": quota_key,
+            "limit": limit,
+            "used": 0,
+            "message": None if ok else _QUOTA_FULL_MESSAGE,
+            "enforcement_enabled": _enforcement_flag_enabled(),
+            "limit_source": "builtin_community",
+        }
+    from apps.subscription.services.internal.usage import collect_meter_usage
+
+    try:
+        current = collect_meter_usage(
+            organization_id=organization.id,
+            usage_key=usage_key,
+        )
+    except Exception as exc:
+        from apps.subscription.services.internal.usage import (
+            IncompleteUsageMeasurementError,
+        )
+
+        if isinstance(exc, IncompleteUsageMeasurementError):
+            return {
+                "is_valid": False,
+                "quota_type": quota_key,
+                "limit": limit,
+                "used": exc.measured_value,
+                "message": "Quota usage cannot be measured completely.",
+                "enforcement_enabled": _enforcement_flag_enabled(),
+                "limit_source": "builtin_community",
+                "usage_status": "unknown",
+            }
+        raise
+    ok = not _would_exceed(limit=limit, current=current, needed=needed)
     return {
-        "is_valid": True,
-        "quota_type": quota_type,
-        "message": (
-            "Quota enforcement disabled"
-            if not _enforcement_flag_enabled()
-            else "No QuotaProvider; Host create-path enforcement is a no-op"
-        ),
-        "enforcement_enabled": False,
+        "is_valid": ok,
+        "quota_type": quota_key,
+        "limit": limit,
+        "used": current,
+        "remaining": max(0, limit - current),
+        "message": None if ok else _QUOTA_FULL_MESSAGE,
+        "enforcement_enabled": _enforcement_flag_enabled(),
+        "limit_source": "builtin_community",
     }

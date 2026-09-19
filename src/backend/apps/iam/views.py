@@ -6,12 +6,17 @@ from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 from django.http import JsonResponse
 
-from rest_framework import viewsets
+from rest_framework import permissions, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.iam.models import Membership, Organization, PersonalApiKey
-from apps.iam.permissions_org import IsOrgAdmin, get_membership, resolve_org_key
+from apps.iam.permissions_org import (
+    IsOrgAdmin,
+    IsOrgMemberReader,
+    get_membership,
+    resolve_org_key,
+)
 from apps.iam.serializers import (
     MembershipSerializer,
     OrganizationSerializer,
@@ -29,6 +34,10 @@ def health(_request):
 class OrganizationViewSet(viewsets.ModelViewSet):
     serializer_class = OrganizationSerializer
     permission_classes = [IsAuthenticated]
+    # Organization is currently a read-only governance surface. Creation and
+    # mutation must go through the registration/organization services so quota,
+    # owner membership, and EE initialization cannot be bypassed.
+    http_method_names = ["get", "head", "options"]
 
     def get_queryset(self):
         qs = (
@@ -49,7 +58,14 @@ class OrganizationViewSet(viewsets.ModelViewSet):
 
 class MembershipViewSet(viewsets.ModelViewSet):
     serializer_class = MembershipSerializer
-    permission_classes = [IsAuthenticated, IsOrgAdmin]
+
+    def get_permissions(self):
+        permission_class = (
+            IsOrgMemberReader
+            if self.request.method in permissions.SAFE_METHODS
+            else IsOrgAdmin
+        )
+        return [IsAuthenticated(), permission_class()]
 
     def get_queryset(self):
         membership = get_membership(self.request)

@@ -13,8 +13,9 @@ export type LicenseRecord = {
   organization_key?: string
   max_organizations?: number
   max_users?: number
-  max_nodes?: number
-  max_storage_gb?: number
+  max_source_hosts?: number
+  max_proxies?: number
+  max_storage_bytes?: number
   max_gateways?: number
   ai_insights_quota?: number
   max_tasks?: number
@@ -39,8 +40,9 @@ export type LicenseHistoryRow = {
   is_perpetual?: boolean
   status?: string
   max_users?: number
-  max_nodes?: number
-  max_storage_gb?: number
+  max_source_hosts?: number
+  max_proxies?: number
+  max_storage_bytes?: number
   limits?: Record<string, number>
 }
 
@@ -91,7 +93,7 @@ export async function fetchCurrentLicense() {
     organization_name?: string
     days_until_expiry?: number
     enforcement_enabled?: boolean
-    entitlement_source?: 'builtin_unlimited' | 'license' | 'license_inactive'
+    entitlement_source?: 'builtin_community' | 'builtin_unlimited' | 'license' | 'license_inactive'
     instance_shared?: boolean
     can_manage_instance_license?: boolean
   }>(await api<unknown>(`${base}/current/`, { headers: orgHeaders() }))

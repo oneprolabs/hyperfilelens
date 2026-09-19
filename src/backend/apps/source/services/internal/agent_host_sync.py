@@ -8,6 +8,10 @@ from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_release import latest_published_agent_version
 from apps.node.services.internal.node_naming import is_auto_assigned_node_name
+from apps.iam.resource_access import (
+    get_resource_owner_id,
+    record_resource_owner,
+)
 from apps.source.constants import ResourceStatus, ResourceType, SelectableSourceKind
 from apps.source.models import SourceResource
 from apps.source.services.internal.source_pipeline import ensure_pipeline_entry
@@ -120,6 +124,16 @@ def sync_agent_source_host(*, node: Node) -> SourceResource | None:
             total_size=total,
             used_size=used,
             free_size=free,
+        )
+        record_resource_owner(
+            organization_id=node.organization_id,
+            resource_type="source_resource",
+            resource_id=resource.id,
+            owner_id=get_resource_owner_id(
+                organization_id=node.organization_id,
+                resource_type="node",
+                resource_id=node.id,
+            ),
         )
         ensure_pipeline_entry(
             organization_id=node.organization_id,

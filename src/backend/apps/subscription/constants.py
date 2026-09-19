@@ -1,8 +1,9 @@
 """Subscription / license domain constants."""
 
-# Community default: do not hard-block create paths without a QuotaProvider.
-# Plugin builds enforce via SPI regardless; tests may override settings.
-QUOTA_ENFORCEMENT_ENABLED = False
+# Community owns a small set of product limits.  The active Enterprise
+# QuotaProvider takes over when EE is loaded; otherwise these limits are
+# enforced by the Host fallback.
+QUOTA_ENFORCEMENT_ENABLED = True
 
 LICENSE_STATUS_ACTIVE = "active"
 LICENSE_STATUS_EXPIRED = "expired"
@@ -33,7 +34,7 @@ QUOTA_KEYS = (
     "max_object_storage",
     "max_target_nas",
     "max_standalone_disk",
-    "max_storage_gb",
+    "max_storage_bytes",
     "max_users",
     "ai_tokens",  # Lifetime Copilot/LLM total_tokens (LensUsageLedger; no period reset)
     "max_public_gateway_capacity_bytes",
@@ -44,7 +45,7 @@ QUOTA_KEYS = (
 # Intentionally NOT quota keys: user/backup Tasks (License.max_tasks is legacy only).
 
 QUOTA_UNITS: dict[str, str] = {
-    "max_storage_gb": "gb",
+    "max_storage_bytes": "bytes",
     "max_public_gateway_capacity_bytes": "bytes",
     "gateway_select_max_bytes": "bytes",
     "ai_tokens": "tokens",
@@ -60,7 +61,7 @@ USAGE_KEY_BY_QUOTA: dict[str, str | None] = {
     "max_object_storage": "object_storage_count",
     "max_target_nas": "target_nas_count",
     "max_standalone_disk": "standalone_disk_count",
-    "max_storage_gb": "storage_used_gb",
+    "max_storage_bytes": "storage_used_bytes",
     "max_users": "users_count",
     "ai_tokens": "ai_tokens_used",
     "max_public_gateway_capacity_bytes": "public_gateway_capacity_used_bytes",
@@ -75,8 +76,7 @@ USAGE_KEY_BY_QUOTA: dict[str, str | None] = {
 DEFAULT_LIMITS = {
     "max_organizations": 50,
     "max_users": 500,
-    "max_nodes": 200,
-    "max_storage_gb": 5000,
+    "max_storage_bytes": 5000 * 1024**3,
     "max_gateways": 50,
     # Platform Public Gateway count (instance license; not org-split).
     "max_public_gateways": 20,
@@ -88,12 +88,35 @@ DEFAULT_LIMITS = {
     # max_tasks intentionally omitted — Tasks are not a quota meter.
     "max_alert_policies": 500,
     "max_source_hosts": 200,
+    "max_proxies": 200,
     "max_source_nas": 200,
     "max_source_proxies": 200,
     "max_object_storage": 200,
     "max_target_nas": 200,
     "max_standalone_disk": 200,
     "max_protected_sources": 500,
+    "gateway_select_max_files": UNLIMITED,
+    "gateway_select_max_bytes": UNLIMITED,
+}
+
+# Community edition entitlement. Community is a single-organization product:
+# resource types are not capped, while the number of members, backup
+# configurations, and retained backup data have explicit product limits.
+# Storage is stored as bytes and formatted as MB/GB/TB at the UI boundary.
+COMMUNITY_DEFAULT_LIMITS = {
+    # Community product rights are independent of persisted Enterprise
+    # license defaults.  Start from the complete quota vocabulary (including
+    # policy-only operation caps and the platform Public Gateway count), so a
+    # newly added Enterprise meter cannot accidentally inherit a finite
+    # license template in Host-only mode.
+    **{
+        key: UNLIMITED
+        for key in (*QUOTA_KEYS, "max_organizations", "max_public_gateways")
+    },
+    "max_organizations": 1,
+    "max_users": 1,
+    "max_storage_bytes": 1024 * 1024**3,
+    "max_protected_sources": 100,
     "gateway_select_max_files": UNLIMITED,
     "gateway_select_max_bytes": UNLIMITED,
 }

@@ -11,7 +11,8 @@ import {
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Plus, RefreshCw } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
-import { apiErrorMessage } from '../../lib/api'
+import { api, apiErrorMessage } from '../../lib/api'
+import { asList, unwrapApiPayload } from '../../lib/parse'
 import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 import { routeLocationWithListRefresh } from '../../lib/listRouteRefresh'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
@@ -19,6 +20,7 @@ import {
   createLensAssistant,
   fetchLensAssistant,
   fetchLensAssistantFormOptions,
+  getLensApiScope,
   listLensModels,
   updateLensAssistant,
   type LensAssistantFormOptions,
@@ -32,6 +34,7 @@ const router = useRouter()
 
 const DEFAULT_EXCLUDE_EXTENSIONS = '.lock,.pyc,.sqlite3'
 const DEFAULT_EXCLUDE_DIRS = '.git,.venv,__pycache__,node_modules,dist,build'
+const PLATFORM_ORG_KEY = '__platform_lens__'
 
 const editingUuid = computed(() => {
   const raw = route.params.uuid
@@ -39,6 +42,19 @@ const editingUuid = computed(() => {
 })
 
 const isEditing = computed(() => Boolean(editingUuid.value))
+const isPlatformScope = computed(() => getLensApiScope() === 'platform')
+const requiresTargetOrganization = computed(
+  () => isPlatformScope.value && !isEditing.value,
+)
+
+type OrgOption = { key: string; name: string }
+const organizationOptions = ref<OrgOption[]>([])
+const organizationsLoading = ref(false)
+const targetOrganizationKey = ref<string | null>(null)
+const targetOrganizationName = ref('')
+const sourceBindingEnabled = computed(
+  () => !requiresTargetOrganization.value || Boolean(targetOrganizationKey.value?.trim()),
+)
 
 const loading = ref(false)
 const saving = ref(false)
@@ -205,13 +221,68 @@ function resetForm() {
   workspaceGuideOverview.value = ''
   skillUuids.value = []
   mcpUuids.value = []
-  visibilityScope.value = 'user'
+  visibilityScope.value = isPlatformScope.value ? 'organization' : 'user'
   applyDefaults()
+}
+
+async function loadOrganizationOptions() {
+  if (!requiresTargetOrganization.value) return
+  organizationsLoading.value = true
+  try {
+    const raw = await api<unknown>('/api/v1/platform-ops/orgs?page_size=200&status=active')
+    const data = unwrapApiPayload<Record<string, unknown>>(raw)
+    organizationOptions.value = asList<{ key?: string; name?: string }>(data)
+      .map((row) => ({
+        key: String(row.key || '').trim(),
+        name: String(row.name || row.key || '').trim(),
+      }))
+      .filter((row) => row.key && row.key !== PLATFORM_ORG_KEY)
+      .sort((a, b) => a.name.localeCompare(b.name))
+  } catch {
+    organizationOptions.value = []
+  } finally {
+    organizationsLoading.value = false
+  }
+}
+
+async function loadFormOptionsForContext() {
+  if (isEditing.value) {
+    return fetchLensAssistantFormOptions(editingUuid.value)
+  }
+  if (requiresTargetOrganization.value) {
+    const key = targetOrganizationKey.value?.trim()
+    if (!key) return null
+    return fetchLensAssistantFormOptions(null, { organization_key: key })
+  }
+  return fetchLensAssistantFormOptions(null)
+}
+
+async function onTargetOrganizationChange(key: string | null) {
+  const next = key?.trim() || null
+  targetOrganizationKey.value = next
+  const option = organizationOptions.value.find((row) => row.key === next)
+  targetOrganizationName.value = option?.name || next || ''
+  knowledgeSourceId.value = null
+  selectedTask.value = ''
+  retrievalScopeText.value = ''
+  if (!next) {
+    formOptions.value = null
+    return
+  }
+  try {
+    formOptions.value = await loadFormOptionsForContext()
+    applyDefaults()
+  } catch (err) {
+    formOptions.value = null
+    ElMessage.error(apiErrorMessage(err, t('errors.generic.loadFailed')))
+  }
 }
 
 async function loadDetail() {
   if (!editingUuid.value) return
   const row = await fetchLensAssistant(editingUuid.value)
+  targetOrganizationKey.value = String(row.organization_key || '').trim() || null
+  targetOrganizationName.value = String(row.organization_name || row.organization_key || '').trim()
   name.value = String(row.name || '')
   agentModelRef.value = String(row.agent_model_ref || '')
   multimodalModelRef.value = String(row.multimodal_model_ref || '')
@@ -273,21 +344,32 @@ async function loadDetail() {
     .map((binding) => binding.mcp_server?.uuid || binding.mcp_uuid)
     .filter((uuid): uuid is string => Boolean(uuid))
 
-  visibilityScope.value = row.visibility_scope === 'organization' ? 'organization' : 'user'
+  visibilityScope.value = isPlatformScope.value
+    ? 'organization'
+    : (row.visibility_scope === 'organization' ? 'organization' : 'user')
 }
 
 async function init() {
   loading.value = true
   try {
-    const [modelRows, options] = await Promise.all([
-      listLensModels().catch(() => [] as LensLlmConfig[]),
-      fetchLensAssistantFormOptions(),
-    ])
-    models.value = modelRows
-    formOptions.value = options
+    await loadOrganizationOptions()
+    models.value = await listLensModels().catch(() => [] as LensLlmConfig[])
     if (isEditing.value) {
-      await loadDetail()
+      try {
+        formOptions.value = await fetchLensAssistantFormOptions(editingUuid.value)
+      } catch {
+        formOptions.value = null
+      }
+      try {
+        await loadDetail()
+      } catch (err) {
+        ElMessage.warning({
+          message: apiErrorMessage(err, t('insight.assistants.editLoadPartial')),
+          grouping: true,
+        })
+      }
     } else {
+      formOptions.value = await loadFormOptionsForContext()
       resetForm()
     }
   } catch (err) {
@@ -336,9 +418,10 @@ async function refreshModels() {
 
 async function refreshFormOptions() {
   if (formOptionsRefreshing.value) return
+  if (requiresTargetOrganization.value && !targetOrganizationKey.value?.trim()) return
   formOptionsRefreshing.value = true
   try {
-    formOptions.value = await fetchLensAssistantFormOptions()
+    formOptions.value = await loadFormOptionsForContext()
   } catch (err) {
     ElMessage.error(apiErrorMessage(err, t('errors.generic.loadFailed')))
   } finally {
@@ -371,13 +454,17 @@ function buildPayload() {
     },
     skill_bindings: skillUuids.value.map((uuid) => ({ skill_uuid: uuid })),
     mcp_bindings: mcpUuids.value.map((uuid) => ({ mcp_uuid: uuid })),
-    visibility_scope: visibilityScope.value,
+    visibility_scope: isPlatformScope.value ? 'organization' : visibilityScope.value,
     status: 'active',
   }
 }
 
 async function handleSubmit() {
   if (saving.value) return
+  if (requiresTargetOrganization.value && !targetOrganizationKey.value?.trim()) {
+    ElMessage.warning(t('insight.assistants.targetOrganizationRequired'))
+    return
+  }
   if (!validateInline([
     { field: 'name', message: t('insight.assistants.fieldName'), valid: !!name.value.trim() },
     { field: 'agentModel', message: t('insight.assistants.fieldAgentModel'), valid: !!agentModelRef.value },
@@ -387,11 +474,14 @@ async function handleSubmit() {
   ])) return
   saving.value = true
   try {
-    const payload = buildPayload()
+    const payload: Record<string, unknown> = buildPayload()
     if (isEditing.value && editingUuid.value) {
       await updateLensAssistant(editingUuid.value, payload)
       ElMessage.success(t('insight.assistants.saveSuccess'))
     } else {
+      if (targetOrganizationKey.value?.trim()) {
+        payload.organization_key = targetOrganizationKey.value.trim()
+      }
       await createLensAssistant(payload)
       ElMessage.success(t('insight.assistants.createSuccess'))
     }
@@ -459,6 +549,43 @@ watch(
                 label-position="top"
                 class="fullscreen-form-el-form"
               >
+                <ElFormItem
+                  v-if="isPlatformScope && isEditing"
+                  :label="t('insight.assistants.colOrganization')"
+                >
+                  <ElInput
+                    :model-value="targetOrganizationName || targetOrganizationKey || '—'"
+                    disabled
+                  />
+                </ElFormItem>
+                <ElFormItem
+                  v-if="requiresTargetOrganization"
+                  :label="t('insight.assistants.fieldTargetOrganization')"
+                  required
+                >
+                  <ElSelect
+                    :model-value="targetOrganizationKey"
+                    filterable
+                    fit-input-width
+                    style="width: 100%"
+                    :loading="organizationsLoading"
+                    :placeholder="t('insight.assistants.phSelectTargetOrganization')"
+                    @update:model-value="onTargetOrganizationChange"
+                  >
+                    <ElOption
+                      v-for="org in organizationOptions"
+                      :key="org.key"
+                      :label="org.name"
+                      :value="org.key"
+                    >
+                      <span>{{ org.name }}</span>
+                      <span class="assistant-org-option-key">{{ org.key }}</span>
+                    </ElOption>
+                  </ElSelect>
+                  <p class="assistant-field-hint">
+                    {{ t('insight.assistants.fieldTargetOrganizationHint') }}
+                  </p>
+                </ElFormItem>
                 <ElFormItem
                   data-validation-field="name"
                   :error="errors.name"
@@ -619,7 +746,10 @@ watch(
             </section>
 
             <!-- 2. Knowledge Source -->
-            <section class="fullscreen-form-card fullscreen-form-section">
+            <section
+              class="fullscreen-form-card fullscreen-form-section"
+              :class="{ 'assistant-section--awaiting-org': !sourceBindingEnabled }"
+            >
               <h3 class="fullscreen-form-section__title">
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.assistants.sectionKnowledgeSource') }}
@@ -771,7 +901,10 @@ watch(
             </section>
 
             <!-- 3. Skills & Workspace -->
-            <section class="fullscreen-form-card fullscreen-form-section assistant-section--tools">
+            <section
+              class="fullscreen-form-card fullscreen-form-section assistant-section--tools"
+              :class="{ 'assistant-section--awaiting-org': !sourceBindingEnabled }"
+            >
               <h3 class="fullscreen-form-section__title">
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.assistants.sectionTools') }}
@@ -958,7 +1091,11 @@ watch(
             </section>
 
             <!-- 4. Visibility -->
-            <section class="fullscreen-form-card fullscreen-form-section">
+            <section
+              v-if="!isPlatformScope"
+              class="fullscreen-form-card fullscreen-form-section"
+              :class="{ 'assistant-section--awaiting-org': !sourceBindingEnabled }"
+            >
               <h3 class="fullscreen-form-section__title">
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.assistants.sectionVisibility') }}
@@ -997,6 +1134,19 @@ watch(
                 </ElRadio>
               </ElRadioGroup>
             </section>
+            <section
+              v-else
+              class="fullscreen-form-card fullscreen-form-section"
+              :class="{ 'assistant-section--awaiting-org': !sourceBindingEnabled }"
+            >
+              <h3 class="fullscreen-form-section__title">
+                <span class="fullscreen-form-section__indicator" />
+                {{ t('insight.assistants.sectionVisibility') }}
+              </h3>
+              <p class="assistant-field-hint">
+                {{ t('insight.assistants.visibilityOrganizationForcedHint') }}
+              </p>
+            </section>
           </div>
         </div>
       </div>
@@ -1008,7 +1158,7 @@ watch(
         <ElButton
           type="primary"
           :loading="saving"
-          :disabled="saving || loading"
+          :disabled="saving || loading || !sourceBindingEnabled"
           @click="handleSubmit"
         >
           {{ isEditing ? t('common.save') : t('insight.assistants.btnCreate') }}
@@ -1052,6 +1202,17 @@ watch(
 
 .assistant-field-hint--warn {
   color: var(--color-warning, #e6a23c);
+}
+
+.assistant-org-option-key {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.assistant-section--awaiting-org {
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 .assistant-select-row {

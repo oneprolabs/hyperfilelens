@@ -117,10 +117,12 @@ const extResolveAlias = [
     ? [
         { find: '@ext/platform/platform-ops', replacement: resolve(platformFrontendSrc, 'platform-ops') },
         { find: '@ext/platform/ops', replacement: resolve(platformFrontendSrc, 'ops') },
+        { find: '@ext/platform/governance', replacement: resolve(platformFrontendSrc, 'governance') },
       ]
     : [
         { find: '@ext/platform/platform-ops', replacement: resolve(frontendSrc, 'platform-ops/ext-empty') },
         { find: '@ext/platform/ops', replacement: resolve(frontendSrc, 'ops/ext-empty') },
+        { find: '@ext/platform/governance', replacement: resolve(frontendSrc, 'governance/ext-empty') },
       ]),
   ...extensionFrontendSrcs.map((e) => ({
     find: `@ext/${e.id}`,

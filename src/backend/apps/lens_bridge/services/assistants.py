@@ -34,17 +34,45 @@ def _extract_binding_uuids(payload: dict[str, Any], binding_key: str, uuid_key: 
     return uuids
 
 
-def _validate_assistant_tool_bindings(org: Organization, payload: dict[str, Any]) -> None:
-    from apps.lens_bridge.services import org_mcp_servers, org_skills
+def _validate_assistant_tool_bindings(
+    org: Organization,
+    payload: dict[str, Any],
+    *,
+    platform_passthrough: bool = False,
+    created_by: AbstractBaseUser | None = None,
+) -> None:
+    """Ensure Skill/MCP bindings are allowed for this organization.
 
-    org_skills.validate_org_skill_uuids(
-        org,
-        _extract_binding_uuids(payload, "skill_bindings", "skill_uuid"),
-    )
-    org_mcp_servers.validate_org_mcp_uuids(
-        org,
-        _extract_binding_uuids(payload, "mcp_bindings", "mcp_uuid"),
-    )
+    Tenant saves require existing org links. Admin (platform_passthrough) may
+    attach platform catalog Skills/MCP and auto-registers org links so the
+    binding sticks for that tenant Assistant.
+    """
+
+    from apps.lens_bridge.services import org_mcp_servers, org_skills
+    from apps.lens_bridge.services import mcp_servers as sl_mcp_servers
+    from apps.lens_bridge.services import skills as sl_skills
+
+    skill_uuids = _extract_binding_uuids(payload, "skill_bindings", "skill_uuid")
+    mcp_uuids = _extract_binding_uuids(payload, "mcp_bindings", "mcp_uuid")
+    if not platform_passthrough:
+        org_skills.validate_org_skill_uuids(org, skill_uuids)
+        org_mcp_servers.validate_org_mcp_uuids(org, mcp_uuids)
+        return
+
+    for skill_uuid in skill_uuids:
+        sl_skills.get_skill(skill_uuid)
+        org_skills.register_org_skill(
+            org=org,
+            sl_skill_uuid=skill_uuid,
+            created_by=created_by,
+        )
+    for mcp_uuid in mcp_uuids:
+        sl_mcp_servers.get_mcp_server(mcp_uuid)
+        org_mcp_servers.register_org_mcp(
+            org=org,
+            sl_mcp_uuid=mcp_uuid,
+            created_by=created_by,
+        )
 
 
 def _unwrap_list(raw: Any) -> list[dict[str, Any]]:
@@ -173,6 +201,7 @@ def _serialize_list_row(
             # Listing must remain available when a legacy/partially deleted KS
             # can no longer resolve its local workspace path.
             first_dir = ""
+    selected_task = str(item.get("selected_task") or item.get("capability") or "")
     row = {
         "uuid": uuid_str,
         "name": item.get("name") or item.get("slug") or "",
@@ -180,7 +209,8 @@ def _serialize_list_row(
         "status": item.get("status") or "unknown",
         "lensnode_uuid": item.get("lensnode") or item.get("lensnode_uuid"),
         "datasource_bindings": item.get("datasource_bindings") or [],
-        "selected_task": item.get("selected_task") or item.get("capability") or "",
+        "selected_task": selected_task,
+        "selected_task_title": _selected_task_title(selected_task, ks=ks),
         "selected_dir": first_dir,
         "agent_model_ref": item.get("agent_model_ref"),
         "multimodal_model_ref": item.get("multimodal_model_ref"),
@@ -194,6 +224,28 @@ def _serialize_list_row(
         "gateway_name": ks.gateway.name if ks and ks.gateway_id else None,
     }
     return assistant_access.merge_link_fields(row, link)
+
+
+def _selected_task_title(
+    task_name: str,
+    *,
+    ks: LensKnowledgeSource | None,
+) -> str:
+    """Resolve a human Scenario title from the owning gateway's SL task catalog."""
+    name = str(task_name or "").strip()
+    if not name:
+        return ""
+    link = getattr(ks, "gateway_link", None) if ks is not None else None
+    if link is None:
+        return name
+    from apps.lens_bridge.services import provisioning
+
+    snap = provisioning.sl_lensnode_snapshot_from_link(link)
+    for task in snap.get("sl_tasks") or []:
+        if isinstance(task, dict) and str(task.get("name") or "") == name:
+            title = str(task.get("title") or "").strip()
+            return title or name
+    return name
 
 
 def _strip_hfl_visibility(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None, int | None]:
@@ -288,6 +340,82 @@ def list_org_assistants(
         rows.append(row)
 
     rows.sort(key=lambda row: (row.get("name") or "").lower())
+    return rows
+
+
+def attach_organization_fields(row: dict[str, Any], org: Organization) -> dict[str, Any]:
+    row["organization_id"] = org.id
+    row["organization_key"] = org.key
+    row["organization_name"] = org.name
+    return row
+
+
+def resolve_assistant_organization(assistant_uuid: uuid_lib.UUID) -> Organization:
+    """Locate the owning organization for a platform-scoped assistant lookup."""
+
+    link = (
+        LensAssistantLink.objects.filter(sl_assistant_uuid=assistant_uuid)
+        .select_related("organization")
+        .first()
+    )
+    if link is None:
+        raise NotFound("Assistant not found.")
+    return link.organization
+
+
+def list_platform_assistants() -> list[dict[str, Any]]:
+    """Cross-organization Assistant inventory for Admin Console."""
+
+    remote_by_uuid = {
+        str(item.get("uuid") or ""): item
+        for item in _list_remote_assistants()
+        if item.get("uuid")
+    }
+    ks_by_uuid = {
+        str(ks.sl_assistant_uuid): ks
+        for ks in LensKnowledgeSource.objects.filter(sl_assistant_uuid__isnull=False)
+        .exclude(lifecycle_status=LensKnowledgeSource.LifecycleStatus.DELETED)
+        .select_related("gateway", "gateway_link")
+    }
+    links = LensAssistantLink.objects.select_related(
+        "organization",
+        "knowledge_source",
+        "knowledge_source__gateway",
+        "knowledge_source__gateway_link",
+        "owner_user",
+        "created_by",
+    )
+
+    rows: list[dict[str, Any]] = []
+    for link in links:
+        uuid_str = str(link.sl_assistant_uuid)
+        item = remote_by_uuid.get(uuid_str)
+        if item is None:
+            ks = link.knowledge_source or ks_by_uuid.get(uuid_str)
+            item = {
+                "uuid": uuid_str,
+                "name": (ks.name if ks is not None else "") or uuid_str,
+                "slug": "",
+                "status": "unknown",
+                "selected_task": "",
+            }
+        org = link.organization
+        row = _serialize_list_row(
+            org,
+            item,
+            ks_by_uuid=ks_by_uuid,
+            link_by_uuid={uuid_str: link},
+        )
+        if row is None:
+            continue
+        rows.append(attach_organization_fields(row, org))
+
+    rows.sort(
+        key=lambda row: (
+            (row.get("organization_key") or "").lower(),
+            (row.get("name") or "").lower(),
+        )
+    )
     return rows
 
 
@@ -500,7 +628,12 @@ def create_org_assistant(
         raise ValidationError(
             {"datasource_bindings": "At least one datasource binding is required."}
         )
-    _validate_assistant_tool_bindings(org, payload)
+    _validate_assistant_tool_bindings(
+        org,
+        payload,
+        platform_passthrough=platform_passthrough,
+        created_by=user,
+    )
     data = sl_client.request_json("POST", "/api/lens/assistants/", json_body=payload)
     if not isinstance(data, dict):
         raise sl_client.LensBridgeError("SourceLens assistant create returned invalid payload.")
@@ -512,9 +645,14 @@ def create_org_assistant(
         user=user,
         knowledge_source_id=ks_id if ks_id not in (None, "") else None,
     )
-    from apps.lens_bridge.services import org_skills
+    from apps.lens_bridge.services import org_mcp_servers, org_skills
 
     org_skills.sync_assistant_skill_links(
+        org=org,
+        assistant_uuid=assistant_uuid,
+        created_by=user,
+    )
+    org_mcp_servers.sync_assistant_mcp_links(
         org=org,
         assistant_uuid=assistant_uuid,
         created_by=user,
@@ -551,7 +689,12 @@ def update_org_assistant(
         user=user,
         platform_passthrough=platform_passthrough,
     )
-    _validate_assistant_tool_bindings(org, payload)
+    _validate_assistant_tool_bindings(
+        org,
+        payload,
+        platform_passthrough=platform_passthrough,
+        created_by=user,
+    )
     data = sl_client.request_json(
         "PATCH",
         f"/api/lens/assistants/{assistant_uuid}/",
@@ -559,9 +702,14 @@ def update_org_assistant(
     )
     if not isinstance(data, dict):
         raise sl_client.LensBridgeError("SourceLens assistant update returned invalid payload.")
-    from apps.lens_bridge.services import org_skills
+    from apps.lens_bridge.services import org_mcp_servers, org_skills
 
     org_skills.sync_assistant_skill_links(
+        org=org,
+        assistant_uuid=assistant_uuid,
+        created_by=user,
+    )
+    org_mcp_servers.sync_assistant_mcp_links(
         org=org,
         assistant_uuid=assistant_uuid,
         created_by=user,
@@ -732,11 +880,20 @@ def assistant_form_options(
     *,
     user: AbstractBaseUser | None = None,
     platform_passthrough: bool = False,
+    inventory_org_scope: bool = False,
 ) -> dict[str, Any]:
     from apps.lens_bridge.services import provisioning
 
     gateway_rows = []
-    if platform_passthrough:
+    if inventory_org_scope:
+        from apps.lens_bridge.services.gateway_ownership import (
+            organization_gateway_links,
+        )
+
+        links = organization_gateway_links(organization=org).filter(
+            sl_lensnode_uuid__isnull=False,
+        )
+    elif platform_passthrough:
         from apps.lens_bridge.services import platform_lens
 
         links = platform_lens.platform_gateway_links().filter(sl_lensnode_uuid__isnull=False)
@@ -792,21 +949,26 @@ def assistant_form_options(
         mcps = []
 
     ks_org = org
-    ks_qs = LensKnowledgeSource.objects.filter(
-        organization=org,
-        created_by=user,
-    )
-    if platform_passthrough:
+    if inventory_org_scope:
+        ks_qs = LensKnowledgeSource.objects.filter(organization=org).exclude(
+            lifecycle_status=LensKnowledgeSource.LifecycleStatus.DELETED,
+        )
+    elif platform_passthrough:
         from apps.lens_bridge.services import platform_lens as pl
 
         platform_org = pl.get_or_create_platform_org()
         ks_org = platform_org
         ks_qs = LensKnowledgeSource.objects.filter(organization=platform_org)
+    else:
+        ks_qs = LensKnowledgeSource.objects.filter(
+            organization=org,
+            created_by=user,
+        )
 
     return {
         "lensnodes": list_org_lensnodes(
             ks_org,
-            platform_passthrough=platform_passthrough,
+            platform_passthrough=platform_passthrough and not inventory_org_scope,
         ),
         "gateways": gateway_rows,
         "knowledge_sources": [

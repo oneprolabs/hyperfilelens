@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.iam.org_context import require_org
+from apps.iam.resource_access import visible_resource_refs
 from apps.iam.permissions_org import IsOrgOperator, IsOrgStaffReader
 from apps.source.constants import PipelineStep
 from common.errors import AppError
@@ -34,6 +35,7 @@ from apps.source.services.internal.backup_source_revert import (
 from apps.source.services.internal.source_pipeline import (
     set_pipeline_steps,
 )
+from apps.source.services.internal.selectable_ids import parse_selectable_id
 
 
 def _query_bool(value: object) -> bool:
@@ -99,6 +101,47 @@ def _optional_text(params, name: str, *, max_length: int = 255) -> str | None:
     return value
 
 
+def _selectable_refs(ids: list[str]) -> list[tuple[str, int]]:
+    refs = []
+    for value in ids:
+        parsed = parse_selectable_id(value)
+        if parsed is None:
+            continue
+        kind, resource_id = parsed
+        if kind in {"agent", "proxy"}:
+            refs.append(("node", resource_id))
+        elif kind == "nas":
+            refs.append(("source_resource", resource_id))
+    return refs
+
+
+def _assert_selectable_access(request, ids: list[str], *, action: str) -> None:
+    refs = _selectable_refs(ids)
+    allowed = visible_resource_refs(request, refs, action=action)
+    if allowed is None:
+        return
+    if set(refs) != allowed:
+        from rest_framework.exceptions import PermissionDenied
+
+        raise PermissionDenied(
+            "You do not have access to one or more selected resources."
+        )
+
+
+def _filter_selectable_results(request, results: list[dict]) -> list[dict]:
+    ids = [str(row.get("id") or "") for row in results]
+    refs = _selectable_refs(ids)
+    allowed = visible_resource_refs(request, refs)
+    if allowed is None:
+        return results
+    allowed_ids = {
+        f"agent:{resource_id}" if resource_type == "node" else f"nas:{resource_id}"
+        for resource_type, resource_id in allowed
+        if resource_type in {"node", "source_resource"}
+    }
+    return [row for row in results if str(row.get("id") or "") in allowed_ids]
+
+
 class BackupSelectableListView(APIView):
     """Unified paginated Agent/NAS catalog for Backup Wizard source steps."""
 
@@ -113,6 +156,7 @@ class BackupSelectableListView(APIView):
             results = fetch_backup_selectable_by_ids(
                 organization_id=org.id, ids=ids, expand=expand
             )
+            results = _filter_selectable_results(request, results)
             return Response({"count": len(results), "results": results})
 
         page_raw = (request.query_params.get("page") or "1").strip()
@@ -216,6 +260,7 @@ class BackupSelectableListView(APIView):
             repository_id=repository_id,
             expand=expand,
         )
+        results = _filter_selectable_results(request, results)
         return Response(
             {"page": page, "page_size": page_size, "count": total, "results": results}
         )
@@ -240,6 +285,7 @@ class BackupSelectablePipelineView(APIView):
             return Response(
                 {"detail": "ids must not be empty."}, status=status.HTTP_400_BAD_REQUEST
             )
+        _assert_selectable_access(request, ids, action="resources.manage")
 
         try:
             step = int(request.data.get("step"))
@@ -281,6 +327,7 @@ class BackupSelectablePipelineRevertView(APIView):
             return Response(
                 {"detail": "ids must not be empty."}, status=status.HTTP_400_BAD_REQUEST
             )
+        _assert_selectable_access(request, ids, action="resources.manage")
 
         try:
             target_step = int(request.data.get("target_step"))
@@ -330,6 +377,7 @@ class BackupSelectableDeletePreflightView(APIView):
                 {"detail": "ids must be a list of agent:/nas: keys."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        _assert_selectable_access(request, ids, action="resources.manage")
         return Response(
             preflight_delete_backup_sources(
                 organization_id=org.id,
@@ -350,6 +398,7 @@ class BackupSelectableBulkDeleteView(APIView):
                 {"detail": "ids must be a list of agent:/nas: keys."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        _assert_selectable_access(request, ids, action="resources.manage")
         force = _query_bool(request.data.get("force"))
         confirmation_keyword = "FORCE DEREGISTER" if force else "DEREGISTER"
         if request.data.get("confirmation") != confirmation_keyword:
@@ -396,6 +445,7 @@ class BackupSelectableRevertPreflightView(APIView):
                 {"detail": "ids must be a list of agent:/nas: keys."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        _assert_selectable_access(request, ids, action="resources.manage")
         try:
             target_step = int(request.data.get("target_step"))
         except (TypeError, ValueError):
@@ -440,6 +490,7 @@ class BackupSelectableDirectoryView(APIView):
             return Response(
                 {"detail": "source_id is required."}, status=status.HTTP_400_BAD_REQUEST
             )
+        _assert_selectable_access(request, [source_id], action="resources.view")
 
         path = (request.query_params.get("path") or "").strip()
         try:
@@ -536,6 +587,7 @@ class BackupSelectablePathInfoView(APIView):
             return Response(
                 {"detail": "source_id is required."}, status=status.HTTP_400_BAD_REQUEST
             )
+        _assert_selectable_access(request, [source_id], action="resources.view")
 
         path = (request.query_params.get("path") or "").strip()
         if not path:

@@ -14,7 +14,11 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.iam.models import Membership, Organization
-from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests
+from common.extension_spi import (
+    clear_providers_for_tests,
+    register_authz_provider,
+    restore_providers_for_tests,
+)
 
 
 class _CommunitySpiMixin:
@@ -41,6 +45,11 @@ class MembershipApiPermissionTests(_CommunitySpiMixin, APITestCase):
             email="peer@test.com",
             password="Pass1234",
         )
+        self.auditor = User.objects.create_user(
+            username="auditor@test.com",
+            email="auditor@test.com",
+            password="Pass1234",
+        )
         self.target = User.objects.create_user(
             username="member@test.com",
             email="member@test.com",
@@ -59,6 +68,12 @@ class MembershipApiPermissionTests(_CommunitySpiMixin, APITestCase):
             role=Membership.Role.OPERATOR,
             is_active=True,
         )
+        Membership.objects.create(
+            user=self.auditor,
+            organization=self.org,
+            role=Membership.Role.AUDITOR,
+            is_active=True,
+        )
 
     def test_any_active_member_can_list_memberships(self):
         """Community: affiliation ⇒ full tenant power (no role column)."""
@@ -70,6 +85,33 @@ class MembershipApiPermissionTests(_CommunitySpiMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         payload = response.data["data"]
         self.assertGreaterEqual(payload["pagination"]["total"], 2)
+
+    def test_enterprise_auditor_can_read_but_operator_cannot(self):
+        role_by_user = {
+            self.owner.pk: Membership.Role.OWNER,
+            self.peer.pk: Membership.Role.OPERATOR,
+            self.auditor.pk: Membership.Role.AUDITOR,
+        }
+
+        class _RoleProvider:
+            def get_org_role(self, user, _org_key):
+                return role_by_user.get(user.pk)
+
+        register_authz_provider(_RoleProvider())
+
+        self.client.force_authenticate(user=self.auditor)
+        auditor_response = self.client.get(
+            reverse("membership-list"),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(auditor_response.status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(user=self.peer)
+        operator_response = self.client.get(
+            reverse("membership-list"),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(operator_response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_cannot_assign_owner_role_via_api(self):
         self.client.force_authenticate(user=self.owner)

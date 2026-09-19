@@ -24,13 +24,22 @@ declare module '@ext/platform/platform-ops/composables/usePlatformOpsSideNav' {
   export function usePlatformOpsSideNav(): ComputedRef<unknown[]> | null
 }
 
-declare module '@ext/platform/platform-ops/runtimeServiceConnections' {
-  import type { Component } from 'vue'
-  export const RuntimeServiceConnections: Component
-}
-
 declare module '@ext/platform/ops/routes' {
   export const tenantOpsRoutes: Array<Record<string, unknown>>
+}
+
+declare module '@ext/platform/governance/routes' {
+  export const governanceRoutes: Array<Record<string, unknown>>
+}
+
+declare module '@ext/platform/governance/menu' {
+  export const governanceMenuItems: Array<{
+    id: string
+    labelKey: string
+    to: string
+    icon: 'organization' | 'members' | 'roles' | 'resources'
+    requiredRoles?: readonly string[]
+  }>
 }
 
 declare module '@ext/platform/ops/menus' {

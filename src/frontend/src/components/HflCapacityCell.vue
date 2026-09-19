@@ -66,6 +66,12 @@ const percent = computed(() => {
         v-if="showPercent"
         class="repo-usage-cell__percent"
       >{{ percent }}%</span>
+      <span
+        v-if="$slots.trailing"
+        class="repo-usage-cell__trailing"
+      >
+        <slot name="trailing" />
+      </span>
     </div>
     <div
       v-if="showBar"
@@ -84,6 +90,12 @@ const percent = computed(() => {
   >
     <div class="repo-usage-cell__numbers">
       <span class="repo-usage-cell__used">{{ formatBytes(usedBytes) }}</span>
+      <span
+        v-if="$slots.trailing"
+        class="repo-usage-cell__trailing"
+      >
+        <slot name="trailing" />
+      </span>
     </div>
     <div
       v-if="showBar"
@@ -103,6 +115,12 @@ const percent = computed(() => {
     <div class="repo-usage-cell__numbers">
       <span class="repo-usage-cell__used">{{ formatBytes(usedBytes) }}</span>
       <span class="repo-usage-cell__capacity">/ {{ unlimitedTotalLabel }}</span>
+      <span
+        v-if="$slots.trailing"
+        class="repo-usage-cell__trailing"
+      >
+        <slot name="trailing" />
+      </span>
     </div>
   </div>
   <span

@@ -127,4 +127,37 @@ describe('login route authentication guard', () => {
     expect(next).toHaveBeenCalledWith()
     expect(mocks.fetchDeployProfile).not.toHaveBeenCalled()
   })
+
+  it('redirects an authenticated role away from restricted governance routes', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      data: {
+        user: {
+          id: 9,
+          email: 'operator@example.com',
+          username: 'operator',
+          access_profile: {
+            org_key: 'acme',
+            role: 'operator',
+            visible_features: ['dashboard'],
+            available_platforms: [],
+            landing_path: '/',
+          },
+        },
+        refresh_available: false,
+      },
+    })))
+    const next = vi.fn()
+
+    await mocks.guard?.(
+      {
+        path: '/node/roles',
+        query: {},
+        meta: { requiredRoles: ['owner', 'admin', 'manager', 'auditor'] },
+      },
+      { path: '/' },
+      next,
+    )
+
+    expect(next).toHaveBeenCalledWith('/node')
+  })
 })

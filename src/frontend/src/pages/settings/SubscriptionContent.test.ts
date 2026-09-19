@@ -72,6 +72,10 @@ describe('SubscriptionContent effective quotas', () => {
     const wrapper = await mountSubscription()
 
     expect(mocks.fetchEffectiveQuotaUsage).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(/0\s+\/ 1/)
+    expect(wrapper.text()).toMatch(/0\s+\/ 100/)
+    expect(wrapper.text()).toContain('0 MB / 1 TB')
+    expect(wrapper.text()).toContain('Unlimited')
     wrapper.unmount()
   })
 
@@ -114,12 +118,41 @@ describe('SubscriptionContent effective quotas', () => {
     const wrapper = await mountSubscription()
 
     expect(mocks.fetchEffectiveQuotaUsage).toHaveBeenCalledOnce()
-    expect(wrapper.text()).toContain('Manual override')
+    expect(wrapper.text()).toContain('Members')
     expect(wrapper.text()).toMatch(/4\s+\/ 10/)
     wrapper.unmount()
   })
 
-  it('hides instance activation from tenant users without platform permission', async () => {
+  it('uses a warning state and explicit text when a quota is exceeded', async () => {
+    mocks.fetchCurrentLicense.mockResolvedValue({
+      is_valid: true,
+      enforcement_enabled: true,
+      instance_shared: true,
+      limits: { max_users: 1 },
+      usage: { users_count: 11 },
+    })
+    mocks.fetchEffectiveQuotaUsage.mockResolvedValue({
+      organization_id: 7,
+      organization_key: 'tenant-seven',
+      quota_usage: [{
+        key: 'max_users',
+        limit: 1,
+        unit: 'count',
+        used: 11,
+        usage_percent: 110,
+        usage_status: 'exceeded',
+      }],
+    })
+
+    const wrapper = await mountSubscription()
+
+    expect(wrapper.text()).toContain('Over Limit')
+    expect(wrapper.find('.subscription-quota-item__progress.is-over-limit').exists()).toBe(true)
+    expect(wrapper.find('.el-progress--exception').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps license activation and history out of the shared tenant page', async () => {
     mocks.fetchCurrentLicense.mockResolvedValue({
       is_valid: true,
       enforcement_enabled: true,
@@ -133,31 +166,9 @@ describe('SubscriptionContent effective quotas', () => {
 
     expect(mocks.fetchMachineCode).not.toHaveBeenCalled()
     expect(wrapper.text()).not.toContain('Activate License')
-    expect(wrapper.text()).toContain('deployment instance license')
-    wrapper.unmount()
-  })
-
-  it('shows an installed inactive Enterprise license as inactive', async () => {
-    mocks.fetchCurrentLicense.mockResolvedValue({
-      is_valid: false,
-      enforcement_enabled: true,
-      entitlement_source: 'license_inactive',
-      instance_shared: false,
-      can_manage_instance_license: false,
-      limits: { max_users: -1 },
-      usage: { users_count: 1 },
-      license: {
-        id: 'inactive-license',
-        license_key: 'inactive-key',
-        is_valid: false,
-        status: 'revoked',
-      },
-    })
-
-    const wrapper = await mountSubscription()
-
-    expect(wrapper.text()).toContain('Enterprise')
-    expect(wrapper.text()).toContain('Inactive')
+    expect(wrapper.text()).not.toContain('License Activation')
+    expect(wrapper.text()).not.toContain('License History')
+    expect(wrapper.text()).toContain('Resource Usage')
     wrapper.unmount()
   })
 
@@ -182,106 +193,9 @@ describe('SubscriptionContent effective quotas', () => {
     expect(errorMessage).toHaveBeenCalledWith(expect.objectContaining({
       message: 'Unable to load license information. Refresh the page and try again.',
     }))
+    expect(wrapper.text()).toContain('Quota information is temporarily unavailable.')
+    expect(wrapper.text()).not.toContain('0 MB / 1 TB')
     wrapper.unmount()
   })
 
-  it('keeps the license overview when license history is unavailable', async () => {
-    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
-    mocks.fetchCurrentLicense.mockResolvedValue({
-      is_valid: true,
-      enforcement_enabled: true,
-      instance_shared: true,
-      limits: { max_users: 10 },
-      usage: { users_count: 1 },
-    })
-    mocks.fetchLicenseHistory.mockRejectedValue(new Error('history unavailable'))
-
-    const wrapper = await mountSubscription()
-
-    expect(wrapper.text()).toContain('Enterprise')
-    expect(wrapper.text()).toContain('License history is temporarily unavailable.')
-    expect(errorMessage).not.toHaveBeenCalled()
-    wrapper.unmount()
-  })
-
-  it('keeps the license overview and disables activation when identification loading fails', async () => {
-    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
-    mocks.fetchCurrentLicense.mockResolvedValue({
-      is_valid: true,
-      enforcement_enabled: true,
-      instance_shared: false,
-      can_manage_instance_license: true,
-      limits: { max_users: 10 },
-      usage: { users_count: 1 },
-    })
-    mocks.fetchMachineCode.mockRejectedValue(new Error('machine code unavailable'))
-
-    const wrapper = await mountSubscription()
-
-    expect(wrapper.text()).toContain('Enterprise')
-    expect(wrapper.text()).toContain(
-      'Unable to load the identification code. Refresh the page and try again.',
-    )
-    const activateButton = wrapper.findAll('button').find((button) => (
-      button.text().includes('Activate License')
-    ))
-    expect(activateButton?.attributes('disabled')).toBeDefined()
-    expect(errorMessage).not.toHaveBeenCalled()
-    wrapper.unmount()
-  })
-
-  it('keeps activation failures separate from license-loading failures', async () => {
-    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
-    mocks.fetchCurrentLicense.mockResolvedValue({
-      is_valid: true,
-      enforcement_enabled: true,
-      instance_shared: false,
-      can_manage_instance_license: true,
-      machine_code: 'machine-code',
-      limits: { max_users: 10 },
-      usage: { users_count: 1 },
-    })
-    mocks.activateLicense.mockRejectedValue(new Error('Activation code expired'))
-
-    const wrapper = await mountSubscription()
-    await wrapper.get('textarea').setValue('HFL-ACT-test')
-    const activateButton = wrapper.findAll('button').find((button) => (
-      button.text().includes('Activate License')
-    ))
-    expect(activateButton).toBeDefined()
-    await activateButton!.trigger('click')
-    await flushPromises()
-
-    expect(errorMessage).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Activation code expired',
-    }))
-    wrapper.unmount()
-  })
-
-  it('uses the activation fallback only for an activation request without a server message', async () => {
-    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
-    mocks.fetchCurrentLicense.mockResolvedValue({
-      is_valid: true,
-      enforcement_enabled: true,
-      instance_shared: false,
-      can_manage_instance_license: true,
-      machine_code: 'machine-code',
-      limits: { max_users: 10 },
-      usage: { users_count: 1 },
-    })
-    mocks.activateLicense.mockRejectedValue({})
-
-    const wrapper = await mountSubscription()
-    await wrapper.get('textarea').setValue('HFL-ACT-test')
-    const activateButton = wrapper.findAll('button').find((button) => (
-      button.text().includes('Activate License')
-    ))
-    await activateButton!.trigger('click')
-    await flushPromises()
-
-    expect(errorMessage).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Activation failed',
-    }))
-    wrapper.unmount()
-  })
 })

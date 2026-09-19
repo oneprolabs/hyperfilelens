@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ApiNode } from '../types/node'
 import {
+  isGatewayConnectivityOnline,
+  resolveAiEngineListStatus,
   resolveGatewayDisplayStatus,
   type GatewayAiPhase,
   type GatewayDisplayStatus,
@@ -17,6 +19,41 @@ function resolveFor(
 ) {
   return resolveGatewayDisplayStatus(node, aiPhase, vi.fn(() => agentDisplay))
 }
+
+describe('resolveAiEngineListStatus', () => {
+  it.each([
+    ['online', 'insight.dataGateway.gatewayPhase.online', 'success', undefined],
+    ['not_provisioned', 'insight.dataGateway.gatewayPhase.setup_incomplete', 'info', undefined],
+    ['pending_install', 'insight.dataGateway.gatewayPhase.installing', 'info', true],
+    ['agent_offline', 'insight.dataGateway.gatewayPhase.unavailable', 'info', undefined],
+    ['offline', 'insight.dataGateway.gatewayPhase.degraded', 'danger', undefined],
+    ['error', 'insight.dataGateway.gatewayPhase.error', 'danger', undefined],
+  ] as const)(
+    'maps %s to the AI Engine list label',
+    (aiPhase, labelKey, tagType, spinning) => {
+      expect(resolveAiEngineListStatus(aiPhase)).toEqual({
+        labelKey,
+        tagType,
+        ...(spinning ? { spinning } : {}),
+      })
+    },
+  )
+})
+
+describe('isGatewayConnectivityOnline', () => {
+  it('prefers explicit availability when present', () => {
+    expect(isGatewayConnectivityOnline({ availability: 'online', routable: false })).toBe(true)
+    expect(isGatewayConnectivityOnline({ availability: 'offline', routable: true, sl_status: 'online' })).toBe(false)
+  })
+
+  it('falls back to routable then SL status when availability is omitted', () => {
+    expect(isGatewayConnectivityOnline({ routable: true })).toBe(true)
+    expect(isGatewayConnectivityOnline({ sl_status: 'online' })).toBe(true)
+    expect(isGatewayConnectivityOnline({ lensnode_status: 'online' })).toBe(true)
+    expect(isGatewayConnectivityOnline({ sl_runtime_status: 'online' })).toBe(true)
+    expect(isGatewayConnectivityOnline({ routable: false, sl_status: 'offline' })).toBe(false)
+  })
+})
 
 describe('resolveGatewayDisplayStatus', () => {
   it.each([

@@ -35,6 +35,9 @@ vi.mock('../lib/lensApi', () => ({
   browseGatewayDirectory: vi.fn(),
   createKnowledgeSource: mocks.createKnowledgeSource,
   fetchKnowledgeSource: vi.fn(),
+  getLensApiScope: vi.fn(() => 'tenant'),
+  getLensBackupSourceSnapshot: vi.fn(),
+  listLensBackupSourceSnapshots: vi.fn().mockResolvedValue({ results: [] }),
   listLensGateways: vi.fn().mockResolvedValue([]),
   patchKnowledgeSource: vi.fn(),
 }))

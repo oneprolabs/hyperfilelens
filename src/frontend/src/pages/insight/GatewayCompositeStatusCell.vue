@@ -2,27 +2,41 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { LoaderCircle } from 'lucide-vue-next'
-import { resolveGatewayDisplayStatus, type GatewayAiPhase } from '../../lib/gatewayDisplayStatus'
+import {
+  resolveAiEngineListStatus,
+  resolveGatewayDisplayStatus,
+  type GatewayAiPhase,
+} from '../../lib/gatewayDisplayStatus'
 import type { ApiNode } from '../../types/node'
 
 export type { GatewayAiPhase }
 
-const props = defineProps<{
-  node: ApiNode
-  aiPhase: GatewayAiPhase
-  resolveDisplayStatus: (node: ApiNode) => {
-    labelKey: string
-    tagType: 'success' | 'warning' | 'danger' | 'info'
-    tagClass?: string
-    spinning?: boolean
-  }
-}>()
+const props = withDefaults(
+  defineProps<{
+    node?: ApiNode
+    aiPhase: GatewayAiPhase
+    mode?: 'composite' | 'ai-engine'
+    resolveDisplayStatus?: (node: ApiNode) => {
+      labelKey: string
+      tagType: 'success' | 'warning' | 'danger' | 'info'
+      tagClass?: string
+      spinning?: boolean
+    }
+  }>(),
+  { mode: 'composite' },
+)
 
 const { t, te } = useI18n()
 
-const display = computed(() =>
-  resolveGatewayDisplayStatus(props.node, props.aiPhase, props.resolveDisplayStatus),
-)
+const display = computed(() => {
+  if (props.mode === 'ai-engine') {
+    return resolveAiEngineListStatus(props.aiPhase)
+  }
+  if (!props.node || !props.resolveDisplayStatus) {
+    return resolveAiEngineListStatus(props.aiPhase)
+  }
+  return resolveGatewayDisplayStatus(props.node, props.aiPhase, props.resolveDisplayStatus)
+})
 
 const label = computed(() => {
   const key = display.value.labelKey

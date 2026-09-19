@@ -10,6 +10,8 @@ from rest_framework.response import Response
 
 from apps.iam.org_context import require_org
 from apps.iam.permissions_org import IsOrgOperator, IsOrgReader
+from apps.iam.resource_access import assert_resource_access, filter_resource_queryset
+from apps.iam.resource_access import record_resource_owner
 from apps.protection.api.pagination import ProtectionPagination
 from apps.protection.api.serializers import (
     BackupConfigDetailSerializer,
@@ -87,12 +89,18 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
         org = require_org(self.request)
         params = self.request.query_params
         repo_id = params.get("repository_id")
-        return filter_backup_configs(
+        queryset = filter_backup_configs(
             backup_configs_queryset(organization_id=org.id),
             search=params.get("search") or None,
             source_type=params.get("source_type") or None,
             repository_id=int(repo_id) if repo_id else None,
             ordering=params.get("ordering") or None,
+        )
+        return filter_resource_queryset(
+            self.request,
+            queryset,
+            "backup_config",
+            action="resources.view",
         )
 
     def get_object(self):
@@ -100,6 +108,16 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
         config = get_backup_config(organization_id=org.id, config_id=int(self.kwargs["pk"]))
         if config is None:
             raise NotFound("backup config not found")
+        assert_resource_access(
+            self.request,
+            "backup_config",
+            config.id,
+            action=(
+                "resources.view"
+                if self.request.method in ("GET", "HEAD", "OPTIONS")
+                else "resources.manage"
+            ),
+        )
         return config
 
     def list(self, request, *args, **kwargs):
@@ -125,6 +143,12 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
                 )
             except DjangoValidationError as exc:
                 raise _validation_error(exc) from exc
+            record_resource_owner(
+                organization_id=org.id,
+                resource_type="backup_config",
+                resource_id=config.id,
+                owner_id=request.user.id,
+            )
             if config.status == BackupConfig.Status.ACTIVE:
                 transaction.on_commit(
                     lambda config_id=config.id: sync_backup_config_repository_policy_task.delay(

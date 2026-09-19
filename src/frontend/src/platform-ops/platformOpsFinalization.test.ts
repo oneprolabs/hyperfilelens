@@ -56,11 +56,14 @@ describe('Admin Console finalization contracts', () => {
     expect(models).toContain("isPlatformEngine ? t('platformOps.engineActions.modelActions') : t('insight.aiSettings.btnMoreActions')")
   })
 
-  it('presents deployment environment source aliases consistently', () => {
+  it('shows runtime environment summary, infrastructure health, and service connections', () => {
     const environment = source('src/platform-ops/pages/platform/settings/EnvironmentSettings.vue')
 
-    expect(environment).toContain("source === 'deployment' || source === 'environment' || source === 'env'")
-    expect(environment).toContain("return 'Deployment environment'")
+    expect(environment).toContain("t('platformOps.settings.environment.summaryTitle')")
+    expect(environment).toContain("t('platformOps.settings.environment.healthTitle')")
+    expect(environment).toContain('<RuntimeServiceConnections />')
+    expect(environment).not.toContain('effectiveEntries')
+    expect(environment).not.toContain('sourceEntries')
   })
 
   it('requires the DISABLE keyword before saving an Admin Console lockout', () => {

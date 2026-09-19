@@ -378,7 +378,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             status=403,
             title="Instance storage quota is full",
             diagnostic="Instance storage quota is full",
-            meta={"quota_type": "max_storage_gb", "scope": "instance"},
+            meta={"quota_type": "max_storage_bytes", "scope": "instance"},
         ),
     )
     def test_start_backup_task_api_stops_new_write_when_storage_is_exhausted(
@@ -399,7 +399,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertFalse(Task.objects.filter(task_type=Task.Type.BACKUP).exists())
         quota_check.assert_called_once_with(
             self.org,
-            "max_storage_gb",
+            "max_storage_bytes",
             additional=0,
         )
 
@@ -834,7 +834,7 @@ class ProtectionBackupTaskApiTests(TestCase):
                 status=403,
                 title="Instance storage quota is full",
                 diagnostic="Instance storage quota is full",
-                meta={"quota_type": "max_storage_gb", "scope": "instance"},
+                meta={"quota_type": "max_storage_bytes", "scope": "instance"},
             ),
         ) as quota_check:
             with self.captureOnCommitCallbacks(execute=True):

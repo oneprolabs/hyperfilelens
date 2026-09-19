@@ -13,6 +13,8 @@ from rest_framework.response import Response
 
 from apps.audit.services.interface import write_audit_log
 from apps.iam.models import Organization
+from apps.iam.resource_access import filter_resource_queryset
+from apps.iam.resource_access import record_resource_owner
 from apps.node.api import permissions as node_permissions
 from apps.node.api.serializers import (
     NodeHeartbeatSerializer,
@@ -186,6 +188,12 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         status = (self.request.query_params.get("status") or "").strip()
         if status:
             queryset = queryset.filter(status=status)
+        queryset = filter_resource_queryset(
+            self.request,
+            queryset,
+            "node",
+            action="resources.view",
+        )
         if role == NodeRole.AGENT:
             return queryset.order_by("-created_at", "-id")
         return queryset.order_by("name", "id")
@@ -663,6 +671,17 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                         if unique_name != node.name:
                             node.name = unique_name
                             node.save(update_fields=["name", "updated_at"])
+                    if created_node:
+                        record_resource_owner(
+                            organization_id=org.id,
+                            resource_type="node",
+                            resource_id=node.id,
+                            owner_id=(
+                                token_row.created_by_id
+                                if token_row is not None
+                                else None
+                            ),
+                        )
                 if host_fingerprint and not node.host_fingerprint:
                     node.host_fingerprint = host_fingerprint
                     node.save(update_fields=["host_fingerprint", "updated_at"])

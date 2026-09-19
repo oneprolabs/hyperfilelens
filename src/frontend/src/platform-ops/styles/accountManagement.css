@@ -15,6 +15,14 @@
   gap: 16px;
 }
 
+.platform-account-page__list-actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .platform-account-page__lead p {
   max-width: 720px;
   margin: 0;
@@ -41,8 +49,8 @@
 .platform-account-page__filters {
   display: flex;
   min-width: 0;
-  flex: 1;
-  flex-wrap: wrap;
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
 }
@@ -396,6 +404,15 @@
   .platform-account-page__filter,
   .platform-account-page__filter--wide {
     width: 100%;
+  }
+
+  .platform-account-page__filters {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+
+  .platform-account-page__list-actions {
+    flex-wrap: wrap;
   }
 
   .platform-account-detail__organization-head,

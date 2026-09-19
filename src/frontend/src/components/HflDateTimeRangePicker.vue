@@ -21,6 +21,8 @@ const props = withDefaults(
     applyText: string
     constrainToTrigger?: boolean
     disabled?: boolean
+    /** When set, custom ranges longer than this many hours are blocked. */
+    maxSpanHours?: number
   }>(),
   {
     presets: () => [],
@@ -29,6 +31,7 @@ const props = withDefaults(
     end: '',
     constrainToTrigger: false,
     disabled: false,
+    maxSpanHours: undefined,
   },
 )
 
@@ -36,11 +39,13 @@ const emit = defineEmits<{
   preset: [value: string, hours?: number]
   apply: [start: string, end: string]
   clear: []
+  'invalid-span': []
 }>()
 
 const pickerValue = ref<RangeValue>('')
 const suppressNextChange = ref(false)
 const suppressNextClearChange = ref(false)
+const selectingAnchor = ref<Date | null>(null)
 const rangeInputId = useId()
 const rangeInputIds: [string, string] = [
   `${rangeInputId}-start`,
@@ -52,6 +57,11 @@ const rangeInputNames: [string, string] = [
 ]
 
 const displayPlaceholder = computed(() => props.label || '')
+const maxSpanMs = computed(() => (
+  props.maxSpanHours && props.maxSpanHours > 0
+    ? props.maxSpanHours * 60 * 60 * 1000
+    : null
+))
 const popperClass = computed(() => [
   'hfl-date-time-range-picker__popper',
   props.constrainToTrigger ? 'hfl-date-time-range-picker__popper--constrained' : '',
@@ -60,11 +70,13 @@ const popperClass = computed(() => [
 const shortcuts = computed(() => props.presets.flatMap((preset) => {
   const hours = preset.hours
   if (!hours) return []
+  if (maxSpanMs.value != null && hours * 60 * 60 * 1000 > maxSpanMs.value) return []
   return [{
     text: preset.label,
     value: () => {
       const range = rangeForHours(hours)
       suppressNextChange.value = true
+      selectingAnchor.value = null
       emit('preset', preset.value, hours)
       void nextTick(() => {
         pickerValue.value = displayRangeFromProps()
@@ -84,7 +96,17 @@ function formatLocalDateTime(date: Date) {
 
 function rangeFromProps(): RangeValue {
   if (!props.start || !props.end) return ''
-  return [props.start.slice(0, 19), props.end.slice(0, 19)]
+  const start = normalizeDateTime(props.start)
+  const end = normalizeDateTime(props.end)
+  if (!start || !end) return ''
+  return [start, end]
+}
+
+function normalizeDateTime(value: string) {
+  const trimmed = value.trim()
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(trimmed)) return `${trimmed}:00`
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(trimmed)) return trimmed.slice(0, 19)
+  return ''
 }
 
 function displayRangeFromProps(): RangeValue {
@@ -121,6 +143,29 @@ function onUpdate(value: unknown) {
   pickerValue.value = normalizeRange(value)
 }
 
+function rangeExceedsMaxSpan(start: string, end: string) {
+  if (maxSpanMs.value == null) return false
+  const from = new Date(start).getTime()
+  const to = new Date(end).getTime()
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return true
+  return to - from > maxSpanMs.value
+}
+
+function disabledDate(date: Date) {
+  if (maxSpanMs.value == null || !selectingAnchor.value) return false
+  const anchor = selectingAnchor.value.getTime()
+  const time = date.getTime()
+  return time < anchor - maxSpanMs.value || time > anchor + maxSpanMs.value
+}
+
+function onCalendarChange(value: [Date, Date] | null) {
+  if (!value?.[0] || value[1]) {
+    selectingAnchor.value = null
+    return
+  }
+  selectingAnchor.value = value[0]
+}
+
 function onChange(value: unknown) {
   let range = normalizeRange(value)
   if (range && isTodayEndOfDay(range[1])) {
@@ -139,9 +184,17 @@ function onChange(value: unknown) {
     return
   }
   if (!range) {
+    selectingAnchor.value = null
     emit('clear')
     return
   }
+  if (rangeExceedsMaxSpan(range[0], range[1])) {
+    selectingAnchor.value = null
+    pickerValue.value = displayRangeFromProps()
+    emit('invalid-span')
+    return
+  }
+  selectingAnchor.value = null
   emit('apply', range[0], range[1])
 }
 
@@ -159,6 +212,7 @@ function isTodayEndOfDay(value: string) {
 
 function onClear() {
   suppressNextClearChange.value = true
+  selectingAnchor.value = null
   pickerValue.value = ''
   emit('clear')
 }
@@ -189,6 +243,7 @@ watch(
       :name="rangeInputNames"
       :aria-label="label"
       :shortcuts="shortcuts"
+      :disabled-date="disabledDate"
       :start-placeholder="displayPlaceholder"
       :end-placeholder="displayPlaceholder"
       :range-separator="'~'"
@@ -196,6 +251,7 @@ watch(
       :disabled="disabled"
       clearable
       @update:model-value="onUpdate"
+      @calendar-change="onCalendarChange"
       @change="onChange"
       @clear="onClear"
     />

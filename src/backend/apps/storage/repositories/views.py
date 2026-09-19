@@ -40,6 +40,8 @@ from apps.storage.repositories.serializers import (
 from apps.audit.constants import AuditAction, AuditResourceType
 from apps.audit.services.interface import write_audit_log_from_request
 from apps.iam.models import Organization
+from apps.iam.resource_access import filter_resource_queryset
+from apps.iam.resource_access import record_resource_owner
 from apps.storage.selectors.interface import (
     get_effective_storage_provider,
     list_repositories,
@@ -512,7 +514,8 @@ class RepositoryViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         organization_id = self._membership().organization_id
         if self.action != "list":
-            return list_repositories(organization_id=organization_id)
+            queryset = list_repositories(organization_id=organization_id)
+            return filter_resource_queryset(self.request, queryset, "repository")
         queryset = list_repositories(
             organization_id=organization_id,
             repo_type=self.request.query_params.get("repo_type") or None,
@@ -540,7 +543,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
                 ~Q(status=Repository.Status.REMOVED)
                 | Q(location_claims__state="residual")
             ).distinct()
-        return queryset
+        return filter_resource_queryset(self.request, queryset, "repository")
 
     def get_serializer_class(self):
         if self.action in {"create", "update", "partial_update"}:
@@ -558,6 +561,12 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         repository = serializer.save()
+        record_resource_owner(
+            organization_id=repository.organization_id,
+            resource_type="repository",
+            resource_id=repository.id,
+            owner_id=request.user.id,
+        )
         out = RepositorySerializer(repository, context=self.get_serializer_context())
         if repository.status == Repository.Status.CREATING:
             return Response(out.data, status=status.HTTP_202_ACCEPTED)

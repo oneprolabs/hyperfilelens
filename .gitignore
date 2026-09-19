@@ -55,6 +55,11 @@ src/backend/staticfiles/
 # --- Logs ---
 *.log
 
+# --- Runtime state ---
+# Generated deployment identity shared by API/worker containers. Each
+# installation must keep its own value out of source control.
+src/backend/media/.hfl_deployment_host_id
+
 # --- Other ---
 *.mo
 .installer.lock

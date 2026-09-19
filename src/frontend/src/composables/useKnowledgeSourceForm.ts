@@ -7,6 +7,9 @@ import {
   browseCopilotSnapshotDirectory,
   createKnowledgeSource,
   fetchKnowledgeSource,
+  getLensApiScope,
+  getLensBackupSourceSnapshot,
+  listLensBackupSourceSnapshots,
   listLensGateways,
   patchKnowledgeSource,
   type LensGatewayInsight,
@@ -131,6 +134,10 @@ export function useKnowledgeSourceForm(
 
   const readOnlyGatewayName = ref('')
   const readOnlySourcePath = ref('')
+  const targetOrganizationKey = ref<string | null>(null)
+  const targetOrganizationName = ref('')
+
+  const isPlatformScope = computed(() => getLensApiScope() === 'platform')
 
   async function browseInsightSnapshotDirectory(
     directoryId: number,
@@ -142,7 +149,8 @@ export function useKnowledgeSourceForm(
     if (!gatewayLinkId) throw new Error('Select an available Data Gateway before browsing files.')
     const path = params.path || ''
     const limit = Math.max(1, Math.min(params.limit || 500, 500))
-    const cacheKey = [snapshotId, gatewayLinkId, directoryId, path, limit].join(':')
+    const orgKey = targetOrganizationKey.value?.trim() || ''
+    const cacheKey = [snapshotId, gatewayLinkId, directoryId, path, limit, orgKey].join(':')
     const cached = snapshotBrowseCache.get(cacheKey)
     if (cached) return cached
     const controller = new AbortController()
@@ -156,6 +164,7 @@ export function useKnowledgeSourceForm(
           limit,
           backupSourceSnapshotId: snapshotId,
           gatewayLinkId,
+          ...(orgKey && isPlatformScope.value ? { organization_key: orgKey } : {}),
         },
         controller.signal,
       )
@@ -188,6 +197,9 @@ export function useKnowledgeSourceForm(
   const isEditing = computed(() => editingId.value != null)
   const isBackupSource = computed(() => sourceType.value === 'backup_source')
   const isGatewayLocal = computed(() => sourceType.value === 'gateway_local')
+  const requiresTargetOrganization = computed(
+    () => isPlatformScope.value && !isEditing.value,
+  )
 
   const aiReadyGateways = computed(() =>
     gateways.value.filter(
@@ -307,6 +319,7 @@ export function useKnowledgeSourceForm(
 
   const canSubmit = computed(() => {
     if (isEditing.value) return Boolean(name.value.trim())
+    if (requiresTargetOrganization.value && !targetOrganizationKey.value?.trim()) return false
     if (!name.value.trim() || !gatewayId.value) return false
     if (isGatewayLocal.value) return gatewayDirectoryValid.value
     return Boolean(
@@ -356,10 +369,23 @@ export function useKnowledgeSourceForm(
     ingestPolicy.value = defaultIngestPolicy()
     readOnlyGatewayName.value = ''
     readOnlySourcePath.value = ''
+    if (!isEditing.value) {
+      // Keep selected org across soft resets while creating; clear only when leaving.
+    }
+  }
+
+  function platformOrgParams(): { organization_key: string } | Record<string, never> {
+    const key = targetOrganizationKey.value?.trim()
+    if (isPlatformScope.value && key) return { organization_key: key }
+    return {}
   }
 
   async function loadGateways() {
-    gateways.value = await listLensGateways()
+    if (isPlatformScope.value && !targetOrganizationKey.value?.trim()) {
+      gateways.value = []
+      return
+    }
+    gateways.value = await listLensGateways(platformOrgParams())
   }
 
   async function refreshGateways() {
@@ -372,14 +398,26 @@ export function useKnowledgeSourceForm(
   }
 
   async function loadSnapshots() {
+    if (isPlatformScope.value && !targetOrganizationKey.value?.trim()) {
+      snapshots.value = []
+      return
+    }
     snapshotLoading.value = true
     try {
-      const page = await listBackupSourceSnapshots({
-        page: 1,
-        page_size: 50,
-        status: 'available',
-        ordering: '-created_at',
-      })
+      const page = isPlatformScope.value
+        ? await listLensBackupSourceSnapshots({
+            organization_key: targetOrganizationKey.value!.trim(),
+            page: 1,
+            page_size: 50,
+            status: 'available',
+            ordering: '-created_at',
+          })
+        : await listBackupSourceSnapshots({
+            page: 1,
+            page_size: 50,
+            status: 'available',
+            ordering: '-created_at',
+          })
       snapshots.value = page.results
     } finally {
       snapshotLoading.value = false
@@ -387,8 +425,34 @@ export function useKnowledgeSourceForm(
   }
 
   async function loadSnapshotDetail(id: number) {
-    snapshotDetail.value = await getBackupSourceSnapshot(id)
+    if (isPlatformScope.value) {
+      const key = targetOrganizationKey.value?.trim()
+      if (!key) return
+      snapshotDetail.value = await getLensBackupSourceSnapshot(id, key)
+    } else {
+      snapshotDetail.value = await getBackupSourceSnapshot(id)
+    }
     resetBackupScopeState()
+  }
+
+  async function setTargetOrganization(key: string | null, displayName?: string) {
+    const next = key?.trim() || null
+    if (targetOrganizationKey.value === next) return
+    targetOrganizationKey.value = next
+    targetOrganizationName.value = displayName?.trim() || next || ''
+    gatewayId.value = null
+    resetBackupBrowseState()
+    resetGatewayBrowseState()
+    if (!next) {
+      gateways.value = []
+      snapshots.value = []
+      return
+    }
+    try {
+      await Promise.all([loadGateways(), loadSnapshots()])
+    } catch (err) {
+      ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.loadFailed')), grouping: true })
+    }
   }
 
   function isWindowsPath(path: string) {
@@ -716,7 +780,11 @@ export function useKnowledgeSourceForm(
     if (!gatewayId.value) return
     gatewayBrowseLoading.value = true
     try {
-      const result = await browseGatewayDirectory(gatewayId.value, { path, limit: 200 })
+      const result = await browseGatewayDirectory(gatewayId.value, {
+        path,
+        limit: 200,
+        ...platformOrgParams(),
+      })
       gatewayBrowsePath.value = result.path
       gatewayBrowseRoot.value = result.root_path
       if (!gatewaySelectedPath.value) {
@@ -740,7 +808,11 @@ export function useKnowledgeSourceForm(
     const parentPath = treeNode.level === 0 ? '' : (treeNode.data?.path || '')
     gatewayBrowseLoading.value = true
     try {
-      const result = await browseGatewayDirectory(gatewayId.value, { path: parentPath || undefined, limit: 200 })
+      const result = await browseGatewayDirectory(gatewayId.value, {
+        path: parentPath || undefined,
+        limit: 200,
+        ...platformOrgParams(),
+      })
       gatewayBrowseRoot.value = result.root_path
       const childDirs = result.entries
         .filter((entry) => entry.type === 'dir' && isPathUnderGatewayWorkspace(entry.path))
@@ -822,21 +894,17 @@ export function useKnowledgeSourceForm(
     gatewayId.value = row.gateway
     readOnlyGatewayName.value = row.gateway_name
     readOnlySourcePath.value = row.source_path
+    targetOrganizationKey.value = row.organization_key?.trim() || null
+    targetOrganizationName.value = row.organization_name?.trim()
+      || row.organization_key?.trim()
+      || ''
 
+    // Edit keeps source binding read-only: hydrate display from the row only so
+    // cross-org Admin edits never depend on tenant Protection/browse APIs.
     if (row.backup_source_snapshot_id) {
       sourceType.value = 'backup_source'
-      await Promise.all([loadGateways(), loadSnapshots()])
-      try {
-        const snap = await getBackupSourceSnapshot(row.backup_source_snapshot_id)
-        snapshotDetail.value = snap
-        if (!snapshots.value.some((item) => item.id === snap.id)) {
-          snapshots.value = [snap, ...snapshots.value]
-        }
-        selectedBackupConfigId.value = snap.backup_config_id
-        snapshotPickerValue.value = snap.id
-      } catch {
-        snapshotPickerValue.value = row.backup_source_snapshot_id
-      }
+      snapshotPickerValue.value = row.backup_source_snapshot_id
+      selectedBackupConfigId.value = null
 
       const scopes = row.source_scopes_json?.length
         ? row.source_scopes_json
@@ -862,11 +930,7 @@ export function useKnowledgeSourceForm(
     }
 
     sourceType.value = 'gateway_local'
-    await loadGateways()
     gatewaySelectedPath.value = row.source_path
-    if (row.gateway) {
-      await loadGatewayBrowse('')
-    }
   }
 
   async function init() {
@@ -876,9 +940,10 @@ export function useKnowledgeSourceForm(
       if (isEditing.value && editingId.value != null) {
         const row = await fetchKnowledgeSource(editingId.value)
         await hydrateEditForm(row)
-      } else {
+      } else if (!isPlatformScope.value) {
         await Promise.all([loadGateways(), loadSnapshots()])
       }
+      // Platform Add waits for setTargetOrganization before loading gateways/snapshots.
     } catch (err) {
       ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.loadFailed')), grouping: true })
     } finally {
@@ -897,7 +962,12 @@ export function useKnowledgeSourceForm(
         })
         ElMessage.success({ message: t('insight.kb.saveSuccess'), grouping: true })
       } else {
+        if (requiresTargetOrganization.value && !targetOrganizationKey.value?.trim()) {
+          ElMessage.warning({ message: t('insight.kb.targetOrganizationRequired'), grouping: true })
+          return false
+        }
         if (!gatewayId.value) return false
+        const orgPayload = platformOrgParams()
         if (isGatewayLocal.value) {
           if (!validateGatewayDirectoryPath(false)) return false
           await createKnowledgeSource({
@@ -906,6 +976,7 @@ export function useKnowledgeSourceForm(
             source_path: gatewaySelectedPath.value.trim(),
             scan_enabled: scanEnabled.value,
             ingest_policy: normalizeLensIngestPolicy(ingestPolicy.value),
+            ...orgPayload,
           })
         } else {
           if (!selectedBackupConfigId.value || !effectiveSnapshotId.value) {
@@ -934,6 +1005,7 @@ export function useKnowledgeSourceForm(
               : effectiveSnapshotId.value,
             scan_enabled: scanEnabled.value,
             ingest_policy: normalizeLensIngestPolicy(ingestPolicy.value),
+            ...orgPayload,
           })
         }
         ElMessage.success({ message: t('insight.kb.createSuccess'), grouping: true })
@@ -964,7 +1036,12 @@ export function useKnowledgeSourceForm(
     if (next === 'backup_source') {
       resetGatewayBrowseState()
       resetBackupSelectionState()
-      if (snapshots.value.length === 0) void loadSnapshots()
+      if (
+        snapshots.value.length === 0
+        && (!isPlatformScope.value || targetOrganizationKey.value?.trim())
+      ) {
+        void loadSnapshots()
+      }
     } else {
       resetBackupSelectionState()
       resetGatewayBrowseState()
@@ -974,6 +1051,7 @@ export function useKnowledgeSourceForm(
   watch(gatewayId, (id, prev) => {
     if (isEditing.value || id === prev) return
     if (!isGatewayLocal.value) return
+    if (isPlatformScope.value && !targetOrganizationKey.value?.trim()) return
     resetGatewayBrowseState()
     if (id) void loadGatewayBrowse('')
   })
@@ -992,6 +1070,11 @@ export function useKnowledgeSourceForm(
     isEditing,
     isBackupSource,
     isGatewayLocal,
+    isPlatformScope,
+    requiresTargetOrganization,
+    targetOrganizationKey,
+    targetOrganizationName,
+    setTargetOrganization,
     name,
     gatewayId,
     gateways,

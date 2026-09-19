@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.iam.models import Membership, Organization
 from apps.subscription.services.interface import (
@@ -78,6 +78,29 @@ class HostQuotaFacadeTests(TestCase):
         self.assertIsNone(enforce_license_quota(self.org, "max_users", additional=1))
         self.assertIsNone(enforce_node_role_quota(organization=self.org, role="agent"))
         self.assertIsNone(enforce_repository_type_quota(organization=self.org, repo_type="s3"))
+
+    @override_settings(HFL_QUOTA_ENFORCEMENT_ENABLED=True)
+    def test_community_enforces_finite_builtin_limits(self):
+        from common.errors import AppError
+
+        with self.assertRaises(AppError) as ctx:
+            enforce_license_quota(self.org, "max_users", additional=1)
+        self.assertEqual(ctx.exception.code, "SUBSCRIPTION.QUOTA_EXCEEDED")
+        self.assertEqual(ctx.exception.meta["limit"], 1)
+
+        # Resource types without a Community product cap remain available.
+        self.assertIsNone(
+            enforce_license_quota(self.org, "max_source_hosts", additional=1)
+        )
+
+    @override_settings(HFL_QUOTA_ENFORCEMENT_ENABLED=True)
+    def test_community_validate_reports_builtin_limits(self):
+        result = validate_quota(self.org, "max_users", amount=1)
+        self.assertFalse(result["is_valid"])
+        self.assertEqual(result["limit"], 1)
+        self.assertEqual(result["used"], 1)
+        self.assertEqual(result["limit_source"], "builtin_community")
+        self.assertTrue(result["enforcement_enabled"])
 
     def test_validate_quota_informational_without_provider(self):
         result = validate_quota(self.org, "max_users", amount=1)

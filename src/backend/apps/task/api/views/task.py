@@ -10,6 +10,7 @@ from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.iam.permissions_org import IsOrgOperator, IsOrgReader, get_membership
+from apps.iam.resource_access import filter_task_queryset
 from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.api.serializers import (
     TaskCancelSerializer,
@@ -71,7 +72,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"resource_id": "resource_id must be an integer."}
             ) from exc
-        return list_tasks(
+        queryset = list_tasks(
             organization_id=self._organization_id(),
             status=params.get("status") or None,
             task_type=params.get("task_type") or None,
@@ -91,6 +92,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             finished_before=parse_datetime(params.get("finished_before") or ""),
             terminal_only=(params.get("terminal_only") or "").strip().lower() == "true",
         )
+        return filter_task_queryset(self.request, queryset)
 
     def get_object(self):
         task = get_task(
@@ -98,6 +100,12 @@ class TaskViewSet(viewsets.ModelViewSet):
             task_uuid=self.kwargs[self.lookup_field],
         )
         if task is None:
+            raise NotFound("task not found")
+        visible = filter_task_queryset(
+            self.request,
+            Task.objects.filter(pk=task.pk),
+        ).exists()
+        if not visible:
             raise NotFound("task not found")
         return task
 

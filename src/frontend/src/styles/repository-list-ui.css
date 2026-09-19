@@ -190,6 +190,14 @@
   min-width: 0;
 }
 
+.repo-usage-cell__trailing {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 6px;
+  align-self: center;
+}
+
 .repo-usage-cell__used {
   font-size: 13px;
   font-weight: 400;

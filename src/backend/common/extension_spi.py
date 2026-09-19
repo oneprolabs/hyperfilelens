@@ -22,6 +22,46 @@ class AuthzProvider(Protocol):
         """True when user's org role is one of ``roles``."""
         ...
 
+    def has_org_action(self, user: Any, org_key: str, action: str) -> bool:
+        """True when the user's organization role grants ``action``."""
+        ...
+
+    def resource_scope_for_role(self, user: Any, org_key: str) -> str | None:
+        """Return the effective resource scope: ``own`` or ``organization``."""
+        ...
+
+    def visible_resource_refs(
+        self,
+        user: Any,
+        org_key: str,
+        refs: Sequence[tuple[str, int]],
+        *,
+        action: str = "resources.view",
+    ) -> set[tuple[str, int]]:
+        """Filter resource references the user may access."""
+        ...
+
+    def record_resource_owner(
+        self,
+        *,
+        organization_id: int,
+        resource_type: str,
+        resource_id: int,
+        owner_id: int | None,
+    ) -> None:
+        """Record the EE owner of a Host-created resource."""
+        ...
+
+    def get_resource_owner_id(
+        self,
+        *,
+        organization_id: int,
+        resource_type: str,
+        resource_id: int,
+    ) -> int | None:
+        """Return the recorded owner for a resource, when one exists."""
+        ...
+
     def sync_member_role(
         self, *, user_id: int, organization_id: int, role: str | None
     ) -> None:

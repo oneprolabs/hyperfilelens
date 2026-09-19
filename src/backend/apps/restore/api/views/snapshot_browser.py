@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.iam.org_context import require_org
+from apps.iam.resource_access import assert_resource_access
 from apps.iam.permissions_org import IsOrgReader
 from apps.protection.services.snapshot_browser import (
     SnapshotBrowserError,
@@ -16,6 +17,7 @@ from apps.restore.services.snapshot_browser import (
     browse_snapshot_directory_from_target,
     get_snapshot_path_info_from_target,
 )
+from apps.protection.models import BackupSourceSnapshot, BackupSourceSnapshotDirectory
 
 
 def _int_query(value: str | None, default: int, *, min_value: int, max_value: int) -> int:
@@ -40,11 +42,25 @@ def _required_int_query(value: str | None, field_name: str) -> int:
     return parsed
 
 
+def _assert_directory_access(request, directory_id: int) -> None:
+    directory = BackupSourceSnapshotDirectory.objects.filter(
+        pk=directory_id,
+    ).values("source_snapshot_id").first()
+    if directory is None:
+        raise NotFound("snapshot directory not found")
+    config_id = BackupSourceSnapshot.objects.filter(
+        pk=directory["source_snapshot_id"],
+    ).values_list("backup_config_id", flat=True).first()
+    if config_id:
+        assert_resource_access(request, "backup_config", config_id)
+
+
 class RestoreSnapshotDirectoryBrowseView(APIView):
     permission_classes = [IsAuthenticated, IsOrgReader]
 
     def get(self, request, directory_id: int):
         org = require_org(request)
+        _assert_directory_access(request, int(directory_id))
         try:
             data = browse_snapshot_directory_from_target(
                 organization_id=org.id,
@@ -80,6 +96,7 @@ class RestoreSnapshotDirectoryPathInfoView(APIView):
 
     def get(self, request, directory_id: int):
         org = require_org(request)
+        _assert_directory_access(request, int(directory_id))
         try:
             data = get_snapshot_path_info_from_target(
                 organization_id=org.id,

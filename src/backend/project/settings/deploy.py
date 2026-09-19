@@ -14,14 +14,16 @@ HFL_ADMIN_PORT = env_int("HFL_ADMIN_PORT", 11444)
 HFL_ADMIN_PUBLIC_URL = env_str("HFL_ADMIN_PUBLIC_URL")
 HFL_INSECURE_TLS = env_bool("HFL_INSECURE_TLS", default=True)
 
-# Org EffectiveQuota create-path enforcement flag (Host). Plugin Provider performs checks.
-# Intentionally NOT read from env (no customer bypass). manage.py test → False.
+# Community limits are enforced by Host.  Enterprise's QuotaProvider performs
+# the same checks against the effective instance and organization profile.
+# Tests keep the setting disabled by default so existing fixtures can create
+# their own unrestricted data; enforcement tests opt in explicitly.
 def resolve_quota_enforcement_enabled() -> bool:
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "test":
         return False
-    return False  # community / Host default; plugin still enforces when registered
+    return True
 
 
 HFL_QUOTA_ENFORCEMENT_ENABLED = resolve_quota_enforcement_enabled()

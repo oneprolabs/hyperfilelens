@@ -93,12 +93,29 @@ class _RoleMixin:
 
 
 class IsOrgReader(_RoleMixin, permissions.BasePermission):
-    """Read-only: auditor + operator + admin + owner."""
+    """Read-only access for every supported organization role."""
 
     allowed_roles = (
         Membership.Role.OWNER,
         Membership.Role.ADMIN,
+        Membership.Role.MANAGER,
         Membership.Role.OPERATOR,
+        Membership.Role.AUDITOR,
+    )
+
+    def has_permission(self, request, view) -> bool:  # type: ignore[override]
+        if request.method in permissions.SAFE_METHODS:
+            return super().has_permission(request, view)
+        return False
+
+
+class IsOrgMemberReader(_RoleMixin, permissions.BasePermission):
+    """Read organization membership for governance roles, including auditors."""
+
+    allowed_roles = (
+        Membership.Role.OWNER,
+        Membership.Role.ADMIN,
+        Membership.Role.MANAGER,
         Membership.Role.AUDITOR,
     )
 
@@ -114,6 +131,7 @@ class IsOrgStaffReader(_RoleMixin, permissions.BasePermission):
     allowed_roles = (
         Membership.Role.OWNER,
         Membership.Role.ADMIN,
+        Membership.Role.MANAGER,
         Membership.Role.OPERATOR,
     )
 
@@ -124,9 +142,13 @@ class IsOrgStaffReader(_RoleMixin, permissions.BasePermission):
 
 
 class IsOrgAdmin(_RoleMixin, permissions.BasePermission):
-    """Organization admin: owner + admin (member management, settings)."""
+    """Organization governance: owner, administrator, or manager."""
 
-    allowed_roles = (Membership.Role.OWNER, Membership.Role.ADMIN)
+    allowed_roles = (
+        Membership.Role.OWNER,
+        Membership.Role.ADMIN,
+        Membership.Role.MANAGER,
+    )
 
 
 class IsOrgWriter(_RoleMixin, permissions.BasePermission):

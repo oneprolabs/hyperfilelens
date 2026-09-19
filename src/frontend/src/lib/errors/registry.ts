@@ -121,7 +121,7 @@ export const QUOTA_TYPE_METER_FALLBACK_EN: Record<string, string> = {
   max_users: 'Users',
   users: 'Users',
   max_organizations: 'Organizations',
-  max_storage_gb: 'Storage',
+  max_storage_bytes: 'Storage',
   storage: 'Storage',
   max_gateways: 'Private Data Gateways',
   gateways: 'Private Data Gateways',
@@ -131,7 +131,6 @@ export const QUOTA_TYPE_METER_FALLBACK_EN: Record<string, string> = {
   max_public_gateway_capacity_bytes: 'Public Gateway Capacity',
   public_gateway_capacity: 'Public Gateway Capacity',
   'gateway.public_capacity_bytes': 'Public Gateway workspace',
-  max_nodes: 'Nodes',
   max_source_hosts: 'Source Hosts',
   hosts: 'Source Hosts',
   agents: 'Source Hosts',
@@ -160,7 +159,7 @@ export const QUOTA_TYPE_METER_FALLBACK_EN: Record<string, string> = {
 /** Caller aliases → canonical quota / pool keys used in APIs and licenseQuota.* */
 const QUOTA_TYPE_ALIASES: Record<string, string> = {
   users: 'max_users',
-  storage: 'max_storage_gb',
+  storage: 'max_storage_bytes',
   gateways: 'max_gateways',
   public_gateway_capacity: 'max_public_gateway_capacity_bytes',
   'gateway.public_capacity_bytes': 'max_public_gateway_capacity_bytes',

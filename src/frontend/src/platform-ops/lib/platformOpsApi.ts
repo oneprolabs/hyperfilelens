@@ -69,6 +69,26 @@ export interface PlatformExternalAccessSettings {
   editable: boolean
 }
 
+/** Deployment-managed services shown in Runtime Environment. */
+export interface PlatformIntegration {
+  key: string
+  name: string
+  category: string
+  mode: string
+  version: string
+  base_url: string
+  gateway_base_url: string
+  console_url: string
+  configured: boolean
+  reachable: boolean
+  authenticated: boolean
+  business_ready?: boolean
+  status?: string
+  warning?: string
+  managed_by: string
+  checked_at: string
+}
+
 /** Legacy Admin Console paths; OSS also serves `/api/v1/instance-settings/*`. */
 export async function fetchPlatformEmailSettings() {
   return get<PlatformEmailSettings>('/api/v1/platform-ops/platform/settings/email')
@@ -117,6 +137,10 @@ export async function patchPlatformExternalAccess(externalAccessUrl: string) {
       body: JSON.stringify({ external_access_url: externalAccessUrl }),
     },
   )
+}
+
+export async function fetchPlatformIntegrations() {
+  return get<{ integrations: PlatformIntegration[] }>('/api/v1/instance-settings/integrations')
 }
 
 /** Per–Public Gateway infrastructure capacity (EE Platform Ops). */

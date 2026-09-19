@@ -35,6 +35,15 @@ ROLE_FEATURES: dict[str, list[str]] = {
         "audit",
         "settings",
     ],
+    Membership.Role.MANAGER: [
+        "dashboard",
+        "task",
+        "storage",
+        "backup",
+        "alerts",
+        "audit",
+        "settings",
+    ],
     Membership.Role.OPERATOR: [
         "dashboard",
         "node",

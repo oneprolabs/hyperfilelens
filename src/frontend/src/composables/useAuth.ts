@@ -418,6 +418,13 @@ export function useAuth() {
   }
 }
 
+function hasRequiredRouteRole(to: { meta: Record<string, unknown> }): boolean {
+  const requiredRoles = to.meta.requiredRoles
+  if (!Array.isArray(requiredRoles) || requiredRoles.length === 0) return true
+  const role = currentUser.value?.access_profile?.role?.trim() || ''
+  return requiredRoles.includes(role)
+}
+
 // Watch for router changes to check auth state
 export function setupAuthGuard() {
   router.beforeEach(async (to, from, next) => {
@@ -466,6 +473,10 @@ export function setupAuthGuard() {
       if (isLoggedIn.value && !isPlatformOpsPath && !hasCompleteAccessProfile(currentUser.value)) {
         const refreshed = await fetchCurrentUser()
         if (refreshed) {
+          if (!hasRequiredRouteRole(to)) {
+            next('/node')
+            return
+          }
           next()
           return
         }
@@ -492,6 +503,10 @@ export function setupAuthGuard() {
             return
           }
         }
+        if (!hasRequiredRouteRole(to)) {
+          next('/node')
+          return
+        }
         next()
         return
       }
@@ -515,6 +530,10 @@ export function setupAuthGuard() {
               next('/login')
               return
             }
+          }
+          if (!hasRequiredRouteRole(to)) {
+            next('/node')
+            return
           }
           next()
           return

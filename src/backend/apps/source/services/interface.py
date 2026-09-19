@@ -10,6 +10,7 @@ from django.utils import timezone
 from apps.audit.constants import AuditAction, AuditResult
 from apps.audit.services.interface import write_audit_log
 from apps.iam.models import Organization
+from apps.iam.resource_access import record_resource_owner
 from apps.node import agent_paths
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
@@ -204,6 +205,12 @@ def create_source_resource(
         )
     except IntegrityError as exc:
         raise ValueError("A source resource with this name already exists.") from exc
+    record_resource_owner(
+        organization_id=organization.id,
+        resource_type="source_resource",
+        resource_id=resource.id,
+        owner_id=getattr(user, "id", None),
+    )
     if resource_type == ResourceType.NAS:
         mount_path = str((config or {}).get("path") or "").strip()
         if mount_path:

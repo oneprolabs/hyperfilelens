@@ -146,7 +146,7 @@ class UsageStatsTests(TestCase):
         self.assertEqual(usage["users_count"], 2)
         self.assertEqual(usage["agents_count"], 1)
         self.assertEqual(usage["object_storage_count"], 1)
-        self.assertEqual(usage["storage_used_gb"], 2)
+        self.assertEqual(usage["storage_used_bytes"], 2 * 1024**3)
 
     def test_user_meter_uses_one_direct_query_at_org_and_instance_scope(self):
         second_org = Organization.objects.create(

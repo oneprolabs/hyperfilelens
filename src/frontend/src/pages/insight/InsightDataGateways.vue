@@ -14,6 +14,7 @@ import {
 } from 'lucide-vue-next'
 import { ElCheckbox, ElInputNumber, ElMessage, type ElTable } from 'element-plus'
 import NodeVersionCell from '../../components/node-lifecycle/NodeVersionCell.vue'
+import NodeLifecycleStatusCell from '../../components/node-lifecycle/NodeLifecycleStatusCell.vue'
 import NodeLifecycleBanner from '../../components/node-lifecycle/NodeLifecycleBanner.vue'
 import NodeLifecycleUpgradeConfirmDialog from '../../components/NodeLifecycleUpgradeConfirmDialog.vue'
 import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformBrandIcon.vue'
@@ -33,13 +34,15 @@ import {
   setLensApiScope,
   type LensGatewayInsight,
 } from '../../lib/lensApi'
-import { lensKnowledgePath } from '../../lib/lensEngineRoutes'
 import {
   fetchLatestAgentVersion,
   updateNode,
 } from '../../lib/nodeApi'
 import { canRemoteAgentUpgrade } from '../../lib/agentVersion'
-import type { GatewayAiPhase } from '../../lib/gatewayDisplayStatus'
+import {
+  isGatewayConnectivityOnline,
+  type GatewayAiPhase,
+} from '../../lib/gatewayDisplayStatus'
 import {
   formatNodeBytes,
   formatNodeDate,
@@ -222,6 +225,16 @@ function ipLine(row: ApiNode) {
   return row.ip_address?.trim() || '—'
 }
 
+function availabilityLabel(row: InsightGatewayRow) {
+  return isGatewayConnectivityOnline(row)
+    ? t('protection.sourceResources.nodeStatusOnline')
+    : t('protection.sourceResources.nodeStatusOffline')
+}
+
+function availabilityTagType(row: InsightGatewayRow): 'success' | 'danger' {
+  return isGatewayConnectivityOnline(row) ? 'success' : 'danger'
+}
+
 function aiPhase(row: InsightGatewayRow): GatewayAiPhase {
   if (!bridgeReady.value) return 'not_provisioned'
   if (row.managed_by_hfl === false) return 'not_provisioned'
@@ -236,14 +249,6 @@ function aiPhase(row: InsightGatewayRow): GatewayAiPhase {
   if (row.sidecar_status === 'offline') return 'offline'
   if (row.sidecar_status === 'not_deployed') return 'error'
   return 'pending_install'
-}
-
-function openKnowledgeSources() {
-  if (isPlatformEngine.value) {
-    void router.push({ path: lensKnowledgePath() })
-    return
-  }
-  void router.push({ path: '/insight/copilot' })
 }
 
 function mergeLensIntoNode(node: ApiNode, lens?: LensGatewayInsight): InsightGatewayRow {
@@ -409,6 +414,7 @@ async function load() {
           name: lens.name,
           role: (lens.role as ApiNode['role']) || 'gateway',
           status: (lens.status as ApiNode['status']) || 'offline',
+          availability: base.availability,
           routable: base.routable,
           version: base.version ?? null,
           os_name: base.os_name,
@@ -493,12 +499,22 @@ function clearSelection() {
   tableRef.value?.clearSelection()
 }
 
-type MoreAction = 'rename' | 'upgrade' | 'maintenance' | 'remove'
+type MoreAction = 'rename' | 'upgrade' | 'maintenance' | 'setDefault' | 'remove'
+
+const batchSetDefaultDisabled = computed(() => {
+  const row = singleSelected.value
+  if (!row || !isPlatformEngine.value) return true
+  return !(row.origin === 'platform' && canManageGateway(row) && row.hfl_usable && !row.is_platform_default)
+})
 
 async function handleMoreAction(command: MoreAction) {
   if (command === 'rename') openRenameDialog()
   else if (command === 'upgrade') await onUpgradeSelected()
   else if (command === 'maintenance') openSelectedMaintenance()
+  else if (command === 'setDefault') {
+    const row = singleSelected.value
+    if (row) await setPlatformDefault(row)
+  }
   else if (command === 'remove') await deleteSelected()
 }
 
@@ -727,6 +743,15 @@ onUnmounted(() => {
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
+                  v-if="isPlatformEngine"
+                  command="setDefault"
+                  :disabled="batchSetDefaultDisabled"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <span>{{ t('insight.dataGateway.defaultSet') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
                   command="remove"
                   divided
                   class="el-dropdown-menu__item--danger"
@@ -836,12 +861,18 @@ onUnmounted(() => {
             </template>
           </el-table-column>
           <el-table-column
-            v-if="isPlatformEngine"
-            label="HFL Readiness"
-            min-width="190"
+            :label="t('protection.sourceResources.colLifecycleStatus')"
+            min-width="155"
+            align="center"
+            header-align="center"
           >
             <template #default="{ row }">
-              <span>{{ readinessLabel(row) }}</span>
+              <div class="hfl-table-no-tooltip">
+                <NodeLifecycleStatusCell
+                  :node="row"
+                  :resolve-display-status="lifecycleOps.resolveDisplayStatus"
+                />
+              </div>
             </template>
           </el-table-column>
           <el-table-column
@@ -850,48 +881,6 @@ onUnmounted(() => {
           >
             <template #default="{ row }">
               {{ ipLine(row) }}
-            </template>
-          </el-table-column>
-          <el-table-column
-            v-if="isPlatformEngine"
-            :label="t('platformOps.engineGateway.colCapacity')"
-            min-width="220"
-          >
-            <template #default="{ row }">
-              <div class="dg-capacity-cell">
-                <HflCapacityCell
-                  v-if="capacityFor(row)"
-                  :used-bytes="capacityFor(row)!.used_bytes"
-                  :total-bytes="capacityTotalBytes(capacityFor(row))"
-                  :known-total="capacityHasKnownTotal(capacityFor(row))"
-                  variant="compact"
-                  :format-bytes="formatNodeBytes"
-                  :unlimited-total-label="
-                    capacityFor(row)!.unlimited || capacityFor(row)!.capacity_bytes < 0
-                      ? t('platformOps.engineGateway.capacityUnlimited')
-                      : undefined
-                  "
-                />
-                <span
-                  v-else
-                  class="hfl-empty-mark"
-                >—</span>
-                <span
-                  v-if="capacityFor(row)?.used_incomplete"
-                  class="dg-capacity-cell__incomplete"
-                >
-                  {{ t('platformOps.engineGateway.capacityUsedIncomplete') }}
-                </span>
-                <ElButton
-                  v-if="canManageGateway(row)"
-                  link
-                  type="primary"
-                  class="dg-capacity-cell__edit"
-                  @click="openCapacityDialog(row)"
-                >
-                  {{ t('platformOps.engineGateway.editCapacity') }}
-                </ElButton>
-              </div>
             </template>
           </el-table-column>
           <el-table-column
@@ -950,36 +939,82 @@ onUnmounted(() => {
             </template>
           </el-table-column>
           <el-table-column
-            v-if="!isPlatformEngine"
-            :label="t('insight.dataGateway.colKnowledgeSources')"
-            min-width="168"
-            align="center"
+            v-if="isPlatformEngine"
+            :label="t('platformOps.engineGateway.colCapacity')"
+            min-width="250"
           >
             <template #default="{ row }">
-              <button
-                v-if="row.knowledge_source_count > 0"
-                type="button"
-                class="dg-ks-link"
-                @click="openKnowledgeSources(row)"
-              >
-                {{ row.knowledge_source_count }}
-              </button>
-              <span
-                v-else
-                class="dg-muted"
-              >0</span>
+              <div class="dg-capacity-cell">
+                <HflCapacityCell
+                  v-if="capacityFor(row)"
+                  :used-bytes="capacityFor(row)!.used_bytes"
+                  :total-bytes="capacityTotalBytes(capacityFor(row))"
+                  :known-total="capacityHasKnownTotal(capacityFor(row))"
+                  variant="compact"
+                  :format-bytes="formatNodeBytes"
+                  :unlimited-total-label="
+                    capacityFor(row)!.unlimited || capacityFor(row)!.capacity_bytes < 0
+                      ? t('platformOps.engineGateway.capacityUnlimited')
+                      : undefined
+                  "
+                >
+                  <template
+                    v-if="canManageGateway(row)"
+                    #trailing
+                  >
+                    <ElButton
+                      link
+                      type="primary"
+                      class="dg-capacity-cell__edit"
+                      @click="openCapacityDialog(row)"
+                    >
+                      {{ t('platformOps.engineGateway.editCapacity') }}
+                    </ElButton>
+                  </template>
+                </HflCapacityCell>
+                <span
+                  v-else
+                  class="hfl-empty-mark"
+                >—</span>
+                <span
+                  v-if="capacityFor(row)?.used_incomplete"
+                  class="dg-capacity-cell__incomplete"
+                >
+                  {{ t('platformOps.engineGateway.capacityUsedIncomplete') }}
+                </span>
+              </div>
             </template>
           </el-table-column>
           <el-table-column
-            :label="t('protection.sourceResources.colStatus')"
-            min-width="120"
+            :label="t('protection.sourceResources.colConnectivity')"
+            min-width="110"
+            align="center"
+            header-align="center"
           >
             <template #default="{ row }">
-              <GatewayCompositeStatusCell
-                :node="row"
-                :ai-phase="aiPhase(row)"
-                :resolve-display-status="lifecycleOps.resolveDisplayStatus"
-              />
+              <div class="hfl-table-no-tooltip">
+                <ElTag
+                  :type="availabilityTagType(row)"
+                  size="small"
+                >
+                  {{ availabilityLabel(row) }}
+                </ElTag>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('insight.dataGateway.colAiEngine')"
+            min-width="150"
+            align="center"
+            header-align="center"
+          >
+            <template #default="{ row }">
+              <div class="hfl-table-no-tooltip">
+                <GatewayCompositeStatusCell
+                  mode="ai-engine"
+                  :ai-phase="aiPhase(row)"
+                />
+              </div>
             </template>
           </el-table-column>
           <el-table-column
@@ -998,7 +1033,7 @@ onUnmounted(() => {
             </template>
           </el-table-column>
           <el-table-column
-            :label="t('protection.sourceResources.colRegistered')"
+            :label="t('protection.sourceResources.colRegisteredAt')"
             min-width="170"
           >
             <template #default="{ row }">
@@ -1120,7 +1155,7 @@ onUnmounted(() => {
       align-center
       destroy-on-close
     >
-      <p class="dg-capacity-dialog__hint">
+      <p class="source-action-dialog__hint">
         {{ t('platformOps.engineGateway.capacityDialogHint') }}
       </p>
       <p
@@ -1131,16 +1166,10 @@ onUnmounted(() => {
       </p>
       <ElForm
         label-position="top"
-        class="source-action-dialog__form"
+        class="source-action-dialog__form dg-capacity-dialog__form"
         @submit.prevent="submitCapacity"
       >
-        <ElFormItem>
-          <ElCheckbox v-model="capacityUnlimited">
-            {{ t('platformOps.engineGateway.capacityUnlimited') }}
-          </ElCheckbox>
-        </ElFormItem>
         <ElFormItem
-          v-if="!capacityUnlimited"
           :label="t('platformOps.engineGateway.capacityLabel')"
           required
         >
@@ -1151,10 +1180,12 @@ onUnmounted(() => {
               :min="0"
               :step="1"
               :precision="0"
+              :disabled="capacityUnlimited"
             />
             <el-select
               v-model="capacityUnit"
               class="dg-capacity-dialog__unit"
+              :disabled="capacityUnlimited"
             >
               <el-option
                 label="MB"
@@ -1166,6 +1197,11 @@ onUnmounted(() => {
               />
             </el-select>
           </div>
+        </ElFormItem>
+        <ElFormItem>
+          <ElCheckbox v-model="capacityUnlimited">
+            {{ t('platformOps.engineGateway.capacityUnlimited') }}
+          </ElCheckbox>
         </ElFormItem>
       </ElForm>
       <template #footer>
@@ -1222,15 +1258,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.dg-ks-link {
-  border: none;
-  background: none;
-  padding: 0;
-  color: var(--color-primary, #2563eb);
-  cursor: pointer;
-  font-size: 13px;
-}
-
 .gateway-delete-force-option {
   margin-top: 16px;
   padding: 12px 14px;
@@ -1245,10 +1272,6 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-.dg-muted {
-  color: var(--color-text-tertiary, #999);
-}
-
 .dg-capacity-cell {
   display: flex;
   flex-direction: column;
@@ -1261,6 +1284,7 @@ onUnmounted(() => {
   padding: 0;
   height: auto;
   font-size: 12px;
+  line-height: 1;
 }
 
 .dg-capacity-cell__incomplete {
@@ -1269,18 +1293,19 @@ onUnmounted(() => {
   line-height: 1.3;
 }
 
-.dg-capacity-dialog__hint {
-  margin: 0 0 12px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
 .dg-capacity-dialog__warn {
   margin: 0 0 12px;
   color: var(--el-color-warning);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.dg-capacity-dialog__form :deep(.el-form-item) {
+  margin-bottom: 16px;
+}
+
+.dg-capacity-dialog__form :deep(.el-form-item:last-child) {
+  margin-bottom: 0;
 }
 
 .dg-capacity-dialog__input {
