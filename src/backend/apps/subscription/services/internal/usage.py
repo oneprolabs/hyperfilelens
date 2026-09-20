@@ -99,8 +99,9 @@ def collect_usage_stats(*, organization_id: int) -> dict:
     try:
         from apps.storage.repositories.models import Repository
 
-        repo_qs = Repository.objects.filter(organization_id=organization_id).exclude(
-            status=Repository.Status.REMOVED
+        repo_qs = Repository.objects.filter(
+            organization_id=organization_id,
+            status=Repository.Status.CREATED,
         )
         object_storage_count = repo_qs.filter(repo_type=Repository.Type.S3).count()
         target_nas_count = repo_qs.filter(repo_type=Repository.Type.NAS).count()
@@ -146,10 +147,12 @@ def collect_usage_stats(*, organization_id: int) -> dict:
         from apps.storage.repositories.models import Repository
 
         # Prefer physical probe when present; else estimated usage (Host domain facts).
-        # Exclude REMOVED tombstones so deleted repos do not inflate quota.
+        # Only completed repositories consume the storage meter.  In-progress or
+        # failed repository records must not make an organization-wide quota
+        # check depend on an unfinished/legacy storage probe.
         total_bytes = (
             Repository.objects.filter(organization_id=organization_id)
-            .exclude(status=Repository.Status.REMOVED)
+            .filter(status=Repository.Status.CREATED)
             .aggregate(
                 total=Sum(
                     Coalesce(
@@ -219,7 +222,16 @@ def check_quota_available(*, limit: int, current: int, additional: int = 1) -> b
 
 
 def _storage_usage_bytes(repositories) -> int:
-    """Return measured storage usage or raise when any active probe is unknown."""
+    """Return measured usage for completed repositories.
+
+    Repository rows are created before their asynchronous provisioning and
+    usage probes finish.  Those rows are not usable storage yet and must not
+    block an organization's storage quota check.  A completed repository with
+    an unknown probe remains fail-closed below.
+    """
+    from apps.storage.repositories.models import Repository
+
+    repositories = repositories.filter(status=Repository.Status.CREATED)
     from django.db.models import Sum, Value
     from django.db.models.functions import Coalesce
 
@@ -341,8 +353,8 @@ def collect_meter_usage(*, organization_id: int, usage_key: str) -> int | float:
             Repository.objects.filter(
                 organization_id=org_id,
                 repo_type=repository_types[usage_key],
+                status=Repository.Status.CREATED,
             )
-            .exclude(status=Repository.Status.REMOVED)
             .count()
         )
     if usage_key == "protected_sources_count":
@@ -352,8 +364,9 @@ def collect_meter_usage(*, organization_id: int, usage_key: str) -> int | float:
     if usage_key == "storage_used_bytes":
         from apps.storage.repositories.models import Repository
 
-        repositories = Repository.objects.filter(organization_id=org_id).exclude(
-            status=Repository.Status.REMOVED
+        repositories = Repository.objects.filter(
+            organization_id=org_id,
+            status=Repository.Status.CREATED,
         )
         return _storage_usage_bytes(repositories)
     if usage_key == "public_gateway_capacity_used_bytes":
@@ -500,8 +513,10 @@ def collect_instance_meter_usage(*, usage_key: str) -> int | float:
                 Repository.objects.all(),
                 platform_org_key=PLATFORM_ORG_KEY,
             )
-            .filter(repo_type=repository_types[usage_key])
-            .exclude(status=Repository.Status.REMOVED)
+            .filter(
+                repo_type=repository_types[usage_key],
+                status=Repository.Status.CREATED,
+            )
             .count()
         )
     if usage_key == "protected_sources_count":
@@ -519,7 +534,7 @@ def collect_instance_meter_usage(*, usage_key: str) -> int | float:
         repositories = _exclude_platform_organization(
             Repository.objects.all(),
             platform_org_key=PLATFORM_ORG_KEY,
-        ).exclude(status=Repository.Status.REMOVED)
+        ).filter(status=Repository.Status.CREATED)
         return _storage_usage_bytes(repositories)
     if usage_key == "public_gateway_capacity_used_bytes":
         from apps.lens_bridge.services.public_gateway_capacity import (
@@ -622,7 +637,8 @@ def collect_usage_stats_by_organization(
 
     active_repositories = Repository.objects.filter(
         organization_id__in=org_ids,
-    ).exclude(status=Repository.Status.REMOVED)
+        status=Repository.Status.CREATED,
+    )
     for row in active_repositories.values("organization_id").annotate(
         object_storage_count=Count("id", filter=Q(repo_type=Repository.Type.S3)),
         target_nas_count=Count("id", filter=Q(repo_type=Repository.Type.NAS)),
