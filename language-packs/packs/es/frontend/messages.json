@@ -5516,8 +5516,7 @@
         "downgrade": "Reducción",
         "revoked": "Revocado",
         "machine_code": "Identificación obtenida (solicitud de prueba)"
-      },
-      "aiTokensLifetimeHint": "Los tokens de IA son un total acumulado de todas las ejecuciones de Copiloto de IA; no se restablecen cada mes."
+      }
     }
   },
   "ops": {
@@ -6881,8 +6880,7 @@
         "policy": "Política",
         "organization": "Organización",
         "user": "Usuario",
-        "system": "Sistema",
-        "node": "Nodo"
+        "system": "Sistema"
       }
     }
   },
@@ -7143,8 +7141,7 @@
       "platformReleasePackages": "Paquetes de versión",
       "platformInstanceLicense": "Licencia de instancia",
       "platformQuotaUsage": "Gestión de cuotas",
-      "platformNotificationChannels": "Canales de notificación",
-      "monitoringNodes": "Nodos"
+      "platformNotificationChannels": "Canales de notificación"
     },
     "overview": {
       "title": "Resumen",
@@ -7259,8 +7256,7 @@
       "domainEmailOff": "Correo no configurado",
       "domainSetupComplete": "Configuración completa",
       "domainAgentsBehind": "{count} agents desactualizados",
-      "openDomain": "Ver",
-      "subtitle": "Operaciones de plataforma y estado de los servicios."
+      "openDomain": "Ver"
     },
     "monitoring": {
       "monitorTitle": "Supervisión del sistema",
@@ -7398,24 +7394,7 @@
       "roleProxyHost": "Host proxy",
       "emptyNotifications": "No se han encontrado notificaciones fallidas",
       "emptyDeliveries": "No se han encontrado entregas de notificación",
-      "platformLevel": "Plataforma",
-      "logsSubtitle": "Buscar y correlacionar los registros operativos HyperFileLens y SourceLens.",
-      "hostSubtitle": "Servicios de plataforma, hosts de despliegue, CPU, memoria, disco, red y I/O.",
-      "nodesTitle": "Nodos",
-      "incidentsSubtitle": "Supervise, investigue y resuelva alertas en toda la plataforma.",
-      "nodesSubtitle": "Supervisar los nodos conectados, la salud de agente, las versiones y la actividad de tiempo de ejecución.",
-      "deliveriesSubtitle": "Seguimiento de la notificación de la plataforma, fallos, registros y eventos relacionados.",
-      "totalNodes": "Total de nodos",
-      "onlineNodes": "Nodos en línea",
-      "offlineNodes": "Nodos fuera de línea",
-      "outdatedAgents": "Agentes anticuados",
-      "latestAgent": "Último Agent: {version}",
-      "searchNodes": "Números de búsqueda",
-      "filterRole": "Rol",
-      "agentDetails": "Agent",
-      "colRole": "Rol",
-      "colAgentVersion": "Versión del agente",
-      "emptyNodes": "No hay nodos encontrados"
+      "platformLevel": "Plataforma"
     },
     "alertCenter": {
       "policiesTitle": "Reglas de alerta",
@@ -7433,9 +7412,7 @@
       "relatedChannels": "Canales de notificación",
       "relatedPolicies": "Políticas de alerta",
       "relatedDeliveries": "Historial de entregas",
-      "sensitiveConfigHint": "Las credenciales, las URL de webhook, las direcciones de destinatarios y los tokens se ocultan en la Consola de administración. Abra la cuenta del cliente en modo de soporte para revisar la configuración del inquilino.",
-      "policiesSubtitle": "Definir las condiciones de toda la plataforma que crean incidentes operacionales.",
-      "channelsSubtitle": "Configurar los destinos utilizados por reglas de alerta y notificaciones de plataformas."
+      "sensitiveConfigHint": "Las credenciales, las URL de webhook, las direcciones de destinatarios y los tokens se ocultan en la Consola de administración. Abra la cuenta del cliente en modo de soporte para revisar la configuración del inquilino."
     },
     "engineGateway": {
       "addTitle": "Añadir puerta de enlace de datos",
@@ -7683,10 +7660,7 @@
       "poolCap": "Límite",
       "poolUsed": "Usado",
       "poolRemaining": "Restante",
-      "openQuotaUsage": "Ver el uso de la organización",
-      "grantTitle": "Asignación de despliegue",
-      "poolTitle": "Grupo de capacidad de la instancia",
-      "poolSourceDefault": "Se utiliza la capacidad integrada de la edición Community hasta activar una licencia firmada."
+      "openQuotaUsage": "Ver el uso de la organización"
     },
     "quotaUsage": {
       "title": "Gestión de cuotas",
@@ -7957,11 +7931,7 @@
         "statusUnavailable": "No disponible",
         "statusUnknown": "Desconocido",
         "emptyHealth": "No hay datos de salud",
-        "notConfigured": "No configurado",
-        "effectiveTitle": "Configuración efectiva",
-        "sourcesTitle": "Fuentes de configuración",
-        "emptyEffective": "No hay datos de configuración efectiva",
-        "emptySources": "No hay metadatos de origen"
+        "notConfigured": "No configurado"
       }
     },
     "account": {
@@ -8047,8 +8017,7 @@
       "linkAlerts": "Ver alertas",
       "linkTasks": "Ver tareas",
       "linkNodes": "Ver nodos",
-      "linkNotifications": "Ver notificaciones",
-      "subtitle": "Consulte las organizaciones de clientes, el estado de sus recursos y su situación operativa."
+      "linkNotifications": "Ver notificaciones"
     },
     "users": {
       "pageTitle": "Usuarios",

@@ -5515,8 +5515,7 @@
         "downgrade": "降级",
         "revoked": "吊销",
         "machine_code": "提取识别码 (申请试用)"
-      },
-      "aiTokensLifetimeHint": "AI Token 按 AI 助手运行消耗累计，不按月重置。"
+      }
     }
   },
   "ops": {
@@ -6880,8 +6879,7 @@
         "policy": "策略",
         "organization": "组织",
         "user": "用户",
-        "system": "系统",
-        "node": "节点"
+        "system": "系统"
       }
     }
   },
@@ -7142,8 +7140,7 @@
       "platformReleasePackages": "发行包",
       "platformInstanceLicense": "实例许可证",
       "platformQuotaUsage": "配额管理",
-      "platformNotificationChannels": "通知通道",
-      "monitoringNodes": "节点"
+      "platformNotificationChannels": "通知通道"
     },
     "overview": {
       "title": "概览",
@@ -7258,8 +7255,7 @@
       "domainEmailOff": "邮件未配置",
       "domainSetupComplete": "配置完整",
       "domainAgentsBehind": "{count} 个 Agent 落后",
-      "openDomain": "查看",
-      "subtitle": "平台运维与服务运行状况。"
+      "openDomain": "查看"
     },
     "monitoring": {
       "monitorTitle": "系统监控",
@@ -7397,24 +7393,7 @@
       "roleProxyHost": "代理主机",
       "emptyNotifications": "暂无失败通知",
       "emptyDeliveries": "暂无通知投递记录",
-      "platformLevel": "平台",
-      "colRole": "角色",
-      "colAgentVersion": "Agent 版本",
-      "emptyNodes": "暂无节点",
-      "logsSubtitle": "检索并关联 HyperFileLens 与 SourceLens 的运维日志。",
-      "hostSubtitle": "平台服务、部署主机、CPU、内存、磁盘、网络和 I/O。",
-      "nodesTitle": "节点",
-      "incidentsSubtitle": "监控、调查和处理平台范围的告警。",
-      "nodesSubtitle": "监控连接的节点、代理运行状况、版本和运行时活动。",
-      "deliveriesSubtitle": "跟踪平台通知传递、失败、重试和相关事件。",
-      "totalNodes": "节点总数",
-      "onlineNodes": "在线节点",
-      "offlineNodes": "离线节点",
-      "outdatedAgents": "待升级 Agent",
-      "latestAgent": "最新 Agent：{version}",
-      "searchNodes": "搜索节点",
-      "filterRole": "角色",
-      "agentDetails": "Agent"
+      "platformLevel": "平台"
     },
     "alertCenter": {
       "policiesTitle": "告警规则",
@@ -7432,9 +7411,7 @@
       "relatedChannels": "通知渠道",
       "relatedPolicies": "告警规则",
       "relatedDeliveries": "投递历史",
-      "sensitiveConfigHint": "凭证、Webhook URL、收件人地址和令牌在管理控制台中已脱敏。请在支持模式下打开客户账户以查看租户侧配置。",
-      "policiesSubtitle": "定义造成操作事件的平台范围条件。",
-      "channelsSubtitle": "配置告警规则和平台通知使用的目标。"
+      "sensitiveConfigHint": "凭证、Webhook URL、收件人地址和令牌在管理控制台中已脱敏。请在支持模式下打开客户账户以查看租户侧配置。"
     },
     "engineGateway": {
       "addTitle": "添加数据网关",
@@ -7682,10 +7659,7 @@
       "poolCap": "上限",
       "poolUsed": "已使用",
       "poolRemaining": "剩余",
-      "openQuotaUsage": "查看组织使用情况",
-      "grantTitle": "部署授权",
-      "poolTitle": "实例池",
-      "poolSourceDefault": "使用内置社区额度。"
+      "openQuotaUsage": "查看组织使用情况"
     },
     "quotaUsage": {
       "title": "配额管理",
@@ -7956,11 +7930,7 @@
         "statusUnavailable": "不可用",
         "statusUnknown": "未知",
         "emptyHealth": "暂无健康数据",
-        "notConfigured": "未配置",
-        "effectiveTitle": "生效配置",
-        "sourcesTitle": "配置来源",
-        "emptyEffective": "暂无生效配置",
-        "emptySources": "暂无来源信息"
+        "notConfigured": "未配置"
       }
     },
     "account": {
@@ -8046,8 +8016,7 @@
       "linkAlerts": "查看告警",
       "linkTasks": "查看任务",
       "linkNodes": "查看节点",
-      "linkNotifications": "查看通知",
-      "subtitle": "查看客户组织、资源运行状况和运维状态。"
+      "linkNotifications": "查看通知"
     },
     "users": {
       "pageTitle": "用户管理",
