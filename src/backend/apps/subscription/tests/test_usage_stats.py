@@ -10,10 +10,12 @@ from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.storage.repositories.models import Repository
 from apps.subscription.services.internal.usage import (
+    IncompleteUsageMeasurementError,
     collect_instance_meter_usage,
     collect_instance_usage_stats,
     collect_meter_usage,
     collect_usage_stats,
+    collect_usage_stats_by_organization,
 )
 
 
@@ -86,6 +88,76 @@ class UsageStatsTests(TestCase):
         usage = collect_usage_stats(organization_id=self.org.id)
         self.assertEqual(usage["ai_tokens_used"], 2000)
         self.assertEqual(usage["ai_requests_used"], 2000)
+
+    def test_storage_meter_ignores_incomplete_repository_records(self):
+        Repository.objects.create(
+            organization_id=self.org.id,
+            name="ready-storage",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            estimated_usage_bytes=4096,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+        )
+        # ``pending`` is a legacy status found in older deployments.  It has no
+        # usable storage yet and its failed probe must not block quota checks.
+        Repository.objects.create(
+            organization_id=self.org.id,
+            name="unfinished-storage",
+            repo_type=Repository.Type.S3,
+            status="pending",
+            estimated_usage_bytes=8192,
+            usage_probe_status=Repository.MetricProbeStatus.FAILED,
+        )
+
+        self.assertEqual(
+            collect_meter_usage(
+                organization_id=self.org.id,
+                usage_key="storage_used_bytes",
+            ),
+            4096,
+        )
+        self.assertEqual(
+            collect_meter_usage(
+                organization_id=self.org.id,
+                usage_key="object_storage_count",
+            ),
+            1,
+        )
+        usage = collect_usage_stats(organization_id=self.org.id)
+        self.assertEqual(usage["storage_used_bytes"], 4096)
+        self.assertEqual(usage["object_storage_count"], 1)
+
+        batch_usage, incomplete = collect_usage_stats_by_organization(
+            organization_ids=[self.org.id],
+        )
+        self.assertEqual(batch_usage[self.org.id]["storage_used_bytes"], 4096)
+        self.assertEqual(batch_usage[self.org.id]["object_storage_count"], 1)
+        self.assertNotIn("storage_used_bytes", incomplete[self.org.id])
+
+        self.assertEqual(
+            collect_instance_meter_usage(usage_key="storage_used_bytes"),
+            4096,
+        )
+        self.assertEqual(
+            collect_instance_meter_usage(usage_key="object_storage_count"),
+            1,
+        )
+
+    def test_storage_meter_fails_closed_for_completed_repository(self):
+        Repository.objects.create(
+            organization_id=self.org.id,
+            name="unmeasurable-storage",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            estimated_usage_bytes=4096,
+            usage_probe_status=Repository.MetricProbeStatus.FAILED,
+        )
+
+        with self.assertRaises(IncompleteUsageMeasurementError):
+            collect_meter_usage(
+                organization_id=self.org.id,
+                usage_key="storage_used_bytes",
+            )
 
     def test_collect_instance_usage_excludes_internal_platform_org(self):
         customer_org = Organization.objects.create(
