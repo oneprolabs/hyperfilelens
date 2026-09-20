@@ -2419,7 +2419,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', onAttentionResize))
 @media (min-width: 1024px) {
   .cockpit-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-rows: minmax(300px, auto) 300px;
+    grid-template-rows: minmax(300px, auto) minmax(300px, auto);
   }
 
   .cockpit-stack {
@@ -2499,8 +2499,16 @@ onBeforeUnmount(() => window.removeEventListener('resize', onAttentionResize))
 
   .cockpit-events,
   .cockpit-alerts {
+    height: auto;
+    min-height: 300px;
+    max-height: min(480px, calc(100vh - 180px));
+    align-self: start;
+  }
+
+  .cockpit-quota,
+  .cockpit-chart {
     height: 100%;
-    min-height: 100%;
+    min-height: 300px;
   }
 
   .cockpit-running {
