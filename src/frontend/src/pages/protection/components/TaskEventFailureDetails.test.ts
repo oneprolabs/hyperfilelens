@@ -7,6 +7,21 @@ import { en } from '../../../locales/en'
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 
 describe('TaskEventFailureDetails', () => {
+  it.each(['AGENT_ACK_TIMEOUT', 'RESULT_ACK_TIMEOUT'])('renders localized communication guidance for %s', (code) => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: { metadata: {
+        error_code: code,
+        error_message: 'Original timeout diagnostic',
+        failure_details: { count: 0, items: [] },
+      } },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    expect(wrapper.get('.task-event-failure__summary').text()).toContain(en.ops.task.failureDetails.communicationTimeoutReason)
+    expect(wrapper.get('.task-event-failure__remediation-list').text()).toContain(en.ops.task.failureDetails.communicationTimeoutResolution)
+    expect(wrapper.get('details code').text()).toBe('Original timeout diagnostic')
+    expect(wrapper.get('details').attributes('open')).toBeUndefined()
+  })
+
   it('shows capacity guidance and collapsed raw errors even without file items', () => {
     const diagnostic = 'unable to write pack: no space left on device'
     const wrapper = mount(TaskEventFailureDetails, {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { backupFailureMetadata, backupFailurePresentation } from '../../../lib/backupFailureDisplay'
+import { backupFailureCategory, backupFailureMetadata, backupFailurePresentation } from '../../../lib/backupFailureDisplay'
 import {
   extractFailureDetails,
   extractSkippedDetails,
@@ -23,6 +23,13 @@ const { t } = useI18n()
 
 const metadataRecord = computed(() => backupFailureMetadata(props.metadata))
 const backupFailure = computed(() => backupFailurePresentation(metadataRecord.value))
+const backupFailureCategoryValue = computed(() => backupFailureCategory(metadataRecord.value))
+const backupFailureReason = computed(() => backupFailureCategoryValue.value === 'backup_communication_timeout'
+  ? t('ops.task.failureDetails.communicationTimeoutReason')
+  : backupFailure.value?.reason)
+const backupFailureResolutions = computed(() => backupFailureCategoryValue.value === 'backup_communication_timeout'
+  ? [t('ops.task.failureDetails.communicationTimeoutResolution')]
+  : backupFailure.value?.resolutions || [])
 
 // Use shared extraction functions (pure data, no Vue reactivity in them)
 const structuredFailure = computed(() => extractFailureDetails(metadataRecord.value))
@@ -30,7 +37,7 @@ const structuredSkipped = computed(() => extractSkippedDetails(metadataRecord.va
 const structuredSummary = computed(() => extractBackupSummary(metadataRecord.value))
 
 const category = computed(() => structuredFailure.value?.category || 'source_read_failed')
-const backupSourceOffline = computed(() => ['backup_source_offline', 'backup_source_busy', 'backup_precheck_failed'].includes(category.value))
+const backupSourceOffline = computed(() => ['backup_communication_timeout', 'backup_source_offline', 'backup_source_busy', 'backup_precheck_failed'].includes(category.value))
 const sourcePath = computed(() => String(metadataRecord.value.source_path || '').trim())
 const errorCode = computed(() => String(metadataRecord.value.error_code || '').trim())
 const restorePermissionDenied = computed(() => errorCode.value === 'RESTORE_TARGET_PERMISSION_DENIED')
@@ -54,7 +61,6 @@ const skippedFileCount = computed(() => structuredSkipped.value?.file_count || 0
 const skippedDirectoryCount = computed(() => structuredSkipped.value?.directory_count || 0)
 const skippedSpecialCount = computed(() => structuredSkipped.value?.special_count || 0)
 const skippedReportedCount = computed(() => Math.min(MAX_SKIPPED_ITEMS, structuredSkipped.value?.reported_count || 0))
-const skippedTruncated = computed(() => Boolean(structuredSkipped.value?.truncated) || (structuredSkipped.value?.count ?? 0) > (structuredSkipped.value?.items?.length ?? 0))
 const hasSkippedDetails = computed(() => skippedCount.value > 0)
 
 const summarySnapshotId = computed(() => structuredSummary.value?.snapshot_id || '')
@@ -82,6 +88,7 @@ function fullPath(path: string) {
 }
 
 function failureReason(item: FailureItem) {
+  if (item.cause === 'source_resource_busy') return t('ops.task.failureDetails.sourceResourceBusyReason')
   if (category.value === 'source_file_locked') return t('ops.task.failureDetails.fileLockedReason')
   if (item.cause === 'unsupported_entry_type') return t('ops.task.failureDetails.unsupportedEntryReason')
   if (item.cause === 'macos_privacy_denied') return t('ops.task.failureDetails.macosPrivacyReason')
@@ -110,7 +117,7 @@ function remediationText(code: string) {
     <template v-if="backupSourceOffline">
       <div class="task-event-failure__summary">
         <AlertTriangle :size="15" />
-        <span>{{ backupFailure?.reason }}</span>
+        <span>{{ backupFailureReason }}</span>
       </div>
       <div class="task-event-failure__remediation">
         <div class="task-event-failure__label">
@@ -119,7 +126,7 @@ function remediationText(code: string) {
         </div>
         <ol class="task-event-failure__remediation-list">
           <li
-            v-for="resolution in backupFailure?.resolutions"
+            v-for="resolution in backupFailureResolutions"
             :key="resolution"
           >
             {{ resolution }}
