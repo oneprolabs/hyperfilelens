@@ -115,7 +115,7 @@ COMMUNITY_DEFAULT_LIMITS = {
     },
     "max_organizations": 1,
     "max_users": 1,
-    "max_storage_bytes": 1024 * 1024**3,
+    "max_storage_bytes": 100 * 1024**4,
     "max_protected_sources": 100,
     "gateway_select_max_files": UNLIMITED,
     "gateway_select_max_bytes": UNLIMITED,
