@@ -24,14 +24,17 @@ describe('backup configuration fast transition', () => {
     const normalLoad = vi.fn().mockResolvedValue(undefined)
     const activeStep = { value: 2 }
     const initialLoad = { value: true }
+    const entryLoadingPrimed = true
+    const setLoading = vi.fn()
     const source = sourceBetween(page, 'let createdBackupRefresh:', 'async function finishCreateAndGoToStep3')
     const createHarness = new Function(
       'refreshStep3AfterMoreAction', 'refreshFlowStepData', 'flowMainStep',
-      'step3InitialLoadPending', 'pageRequests', 'showApiError',
+      'step3InitialLoadPending', 'step3EntryLoadingPrimed', 'setFlowStepDataLoading',
+      'pageRequests', 'showApiError',
       transpile(source) + '\nreturn { reconcileCreatedBackupConfigs, refreshEnteredFlowStep };',
     )
     const harness = createHarness(refresh, normalLoad, activeStep, initialLoad,
-      { isAbortError: () => false }, vi.fn())
+      entryLoadingPrimed, setLoading, { isAbortError: () => false }, vi.fn())
     harness.reconcileCreatedBackupConfigs(['agent:1'])
     const entry = harness.refreshEnteredFlowStep(2)
     expect(refresh).toHaveBeenCalledOnce()
@@ -42,6 +45,10 @@ describe('backup configuration fast transition', () => {
     else settle()
     await entry
     expect(normalLoad).toHaveBeenCalledTimes(outcome === 'failure' ? 1 : 0)
+    expect(setLoading).toHaveBeenCalledTimes(outcome === 'success' || outcome === 'leave' ? 1 : 0)
+    if (outcome === 'success' || outcome === 'leave') {
+      expect(setLoading).toHaveBeenCalledWith(2, false)
+    }
     activeStep.value = 2
     await harness.refreshEnteredFlowStep(2)
     expect(normalLoad).toHaveBeenCalledTimes(outcome === 'failure' ? 2 : 1)
@@ -89,6 +96,16 @@ describe('backup configuration fast transition', () => {
     expect(firstRequest).toBeLessThan(listRequest)
     expect(listRequest).toBeLessThan(loadingOff)
     expect(page).toContain('v-loading="flowStepDataLoading[2]"')
+  })
+
+  it('releases the synchronous Step 3 loading prime after reconciliation', () => {
+    const refreshEntered = sourceBetween(page, 'async function refreshEnteredFlowStep', 'function reconcileCreatedBackupConfigs')
+
+    expect(refreshEntered).toContain('if (!step3InitialLoadPending.value)')
+    expect(refreshEntered).toContain('if (step3EntryLoadingPrimed)')
+    expect(refreshEntered).toContain('step3EntryLoadingPrimed = false')
+    expect(refreshEntered).toContain('setFlowStepDataLoading(2, false)')
+    expect(refreshEntered).toContain('if (flowMainStep.value !== step)')
   })
 
   it('primes Step 3 loading synchronously when the start-backup card is clicked', () => {
