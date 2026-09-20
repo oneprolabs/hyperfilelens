@@ -3676,6 +3676,8 @@ export const en = {
         restorePermissionDenied: 'Permission denied while writing the restore target.',
         restorePermissionRemediation: '1. Change the restore directory to a location the restore service can write to.\n2. Under File conflict policy, select Skip duplicate files (keep source) to preserve an existing target.\n3. Grant the service account used for restore permission to modify the target and write to its parent directory.',
         technicalDetails: 'Technical details',
+        communicationTimeoutReason: 'The backup result could not be confirmed in time because the connection to the execution host was temporarily interrupted or delayed.',
+        communicationTimeoutResolution: 'Wait until the connection is stable, then retry the failed directory.',
         skippedItems: 'Skipped source items',
         summary: {
           source_file_locked: '{count} files could not be read because another process locked them.',

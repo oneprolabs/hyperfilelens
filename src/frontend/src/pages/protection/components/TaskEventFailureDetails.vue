@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { backupFailureMetadata, backupFailurePresentation } from '../../../lib/backupFailureDisplay'
+import { backupFailureCategory, backupFailureMetadata, backupFailurePresentation } from '../../../lib/backupFailureDisplay'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, ChevronRight, Lightbulb, LockKeyhole } from 'lucide-vue-next'
@@ -23,6 +23,13 @@ const { t } = useI18n()
 
 const metadataRecord = computed(() => backupFailureMetadata(props.metadata))
 const backupFailure = computed(() => backupFailurePresentation(metadataRecord.value))
+const backupFailureCategoryValue = computed(() => backupFailureCategory(metadataRecord.value))
+const backupFailureReason = computed(() => backupFailureCategoryValue.value === 'backup_communication_timeout'
+  ? t('ops.task.failureDetails.communicationTimeoutReason')
+  : backupFailure.value?.reason)
+const backupFailureResolutions = computed(() => backupFailureCategoryValue.value === 'backup_communication_timeout'
+  ? [t('ops.task.failureDetails.communicationTimeoutResolution')]
+  : backupFailure.value?.resolutions || [])
 
 const failureDetails = computed<Record<string, unknown>>(() => {
   const value = metadataRecord.value.failure_details
@@ -219,7 +226,7 @@ function remediationText(code: string) {
     <template v-if="backupSourceOffline">
       <div class="task-event-failure__summary">
         <AlertTriangle :size="15" />
-        <span>{{ backupFailure?.reason }}</span>
+        <span>{{ backupFailureReason }}</span>
       </div>
       <div class="task-event-failure__remediation">
         <div class="task-event-failure__label">
@@ -227,7 +234,7 @@ function remediationText(code: string) {
           {{ t('ops.task.failureDetails.howToResolve') }}
         </div>
         <ol class="task-event-failure__remediation-list">
-          <li v-for="resolution in backupFailure?.resolutions" :key="resolution">{{ resolution }}</li>
+          <li v-for="resolution in backupFailureResolutions" :key="resolution">{{ resolution }}</li>
         </ol>
       </div>
       <details

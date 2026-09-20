@@ -26,6 +26,7 @@ const i18n = createI18n({
             summary: {
               mixed_source_errors: '{count} source items could not be processed.',
             },
+            communicationTimeoutReason: 'The backup result could not be confirmed in time.',
           },
         },
       },
@@ -89,6 +90,19 @@ describe('TaskTerminalOutcomeCell', () => {
     expect(wrapper.get('.task-terminal-outcome__time').text()).toBe('2026-07-31 10:24')
     expect(wrapper.find('.task-terminal-outcome__code').exists()).toBe(false)
     expect(wrapper.get('.task-terminal-outcome__reason').text()).toBe('Operation exceeded its deadline')
+  })
+
+  it('uses the friendly communication timeout text without exposing the diagnostic code', () => {
+    const wrapper = mountCell({
+      status: 'failed',
+      error_code: 'AGENT_ACK_TIMEOUT',
+      error_message: 'The Agent did not acknowledge the backup command.',
+    })
+
+    expect(wrapper.get('.task-terminal-outcome__reason').text()).toBe('The backup result could not be confirmed in time.')
+    expect(wrapper.find('.task-terminal-outcome__code').exists()).toBe(false)
+    expect(wrapper.get('.task-terminal-outcome__diagnostic').attributes('aria-label'))
+      .toBe('The backup result could not be confirmed in time.')
   })
 
   it('uses a terminal fallback when the primary task is not terminal', () => {
