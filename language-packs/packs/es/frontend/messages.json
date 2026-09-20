@@ -5963,6 +5963,8 @@
         "restorePermissionDenied": "Permiso denegado al escribir en el destino de restauración.",
         "restorePermissionRemediation": "1. Cambie el directorio de restauración a una ubicación en la que el servicio de restauración pueda escribir.\n2. En File conflict policy, seleccione Skip duplicate files (keep source) para conservar el destino existente.\n3. Conceda a la cuenta de servicio de restauración permisos para modificar el destino y escribir en su directorio principal.",
         "technicalDetails": "Detalles técnicos",
+        "communicationTimeoutReason": "El resultado de la copia de seguridad no pudo confirmarse a tiempo porque la conexión con el host de ejecución se interrumpió temporalmente o respondió con retraso.",
+        "communicationTimeoutResolution": "Espere a que la conexión se estabilice y vuelva a intentar el directorio fallido.",
         "skippedItems": "Elementos de origen omitidos",
         "summary": {
           "source_file_locked": "No se pudieron leer {count} archivos porque otro proceso los bloqueó.",

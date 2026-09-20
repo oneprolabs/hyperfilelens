@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { backupFailureMetadata } from '../../../lib/backupFailureDisplay'
+import { backupFailureCategory, backupFailureMetadata } from '../../../lib/backupFailureDisplay'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -349,6 +349,9 @@ function eventErrorText(event: TaskEventRow) {
   if (taskEventMetadata(event).failure_details) return ''
   const message = taskEventMetadataText(event, ['error_message'])
   const code = taskEventMetadataText(event, ['error_code'])
+  if (backupFailureCategory(taskEventMetadata(event)) === 'backup_communication_timeout') {
+    return t('ops.task.failureDetails.communicationTimeoutReason')
+  }
   const display = nasRepositoryFailureMessage(code, message, t)
   if (!display) return ''
   return code && display === message ? `[${code}] ${display}` : display

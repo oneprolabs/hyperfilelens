@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { backupFailureMetadata, backupFailurePresentation } from './backupFailureDisplay'
+import { backupFailureCategory, backupFailureMetadata, backupFailurePresentation } from './backupFailureDisplay'
 
 describe('backup failure compatibility', () => {
   it('recognizes legacy dictionaries without metadata and preserves the diagnostic', () => {
@@ -15,5 +15,11 @@ describe('backup failure compatibility', () => {
   })
   it('preserves existing structured errors ahead of legacy text', () => {
     expect(backupFailureMetadata({ failure_details: { category: 'permission_denied' }, error_message: 'Agent source is offline.' }).failure_details).toEqual({ category: 'permission_denied' })
+  })
+  it('classifies acknowledgement timeouts without changing the stored error', () => {
+    const input = { error_code: 'AGENT_ACK_TIMEOUT', error_message: 'The Agent did not acknowledge the backup command.' }
+    expect(backupFailureCategory(input)).toBe('backup_communication_timeout')
+    expect(backupFailurePresentation(input)?.reason).toContain('could not be confirmed')
+    expect(backupFailureMetadata(input).error_code).toBe(input.error_code)
   })
 })

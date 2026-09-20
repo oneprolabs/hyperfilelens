@@ -7641,5 +7641,7 @@
   "platformOps.license.historyExpires": "65f1a099301335afa775b61c6734b49cd486f28ff67b52721a6b6e01b2dac677",
   "platformOps.license.historyArchived": "8541102da5d25ddd0f39f05c975618421519547c67475c4a73cfafac24accec1",
   "platformOps.license.licenseKey": "9eca915adcfbca2cd80f934d7d663cab3ee76da21640fb9c01dc17f3bb7eca96",
-  "platformOps.license.activatedAt": "60a7b879d02b645bf29f30aac8dc0b0e72ba58efdeb57ec92c58a83d71dc656a"
+  "platformOps.license.activatedAt": "60a7b879d02b645bf29f30aac8dc0b0e72ba58efdeb57ec92c58a83d71dc656a",
+  "ops.task.failureDetails.communicationTimeoutReason": "7be4f088128e59bcc4e8a1552bcacb0f7576a6f15dcefb986403e2dbd12e0bcf",
+  "ops.task.failureDetails.communicationTimeoutResolution": "6519f89cd83ebd780f45e35aae09dd76d6d59f47ec772cca5783286097691a5a"
 }

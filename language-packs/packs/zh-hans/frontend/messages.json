@@ -5963,6 +5963,8 @@
         "restorePermissionDenied": "写入恢复目标时权限被拒绝。",
         "restorePermissionRemediation": "1. 将恢复目录修改为恢复服务可以写入的位置。\n2. 在 File conflict policy 中选择 Skip duplicate files (keep source)，以保留现有目标。\n3. 授予恢复服务账号修改目标并写入其父目录的权限。",
         "technicalDetails": "技术详情",
+        "communicationTimeoutReason": "由于与执行主机的连接暂时中断或响应延迟，备份结果未能及时确认。",
+        "communicationTimeoutResolution": "请等待连接恢复稳定后，重试失败的目录。",
         "skippedItems": "已跳过的源项目",
         "summary": {
           "source_file_locked": "有 {count} 个文件因被其他进程锁定而无法读取。",
