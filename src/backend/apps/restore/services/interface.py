@@ -17,7 +17,10 @@ from django.utils import timezone
 from common.errors import AppError
 from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
-from apps.node.services.capabilities import missing_node_capabilities
+from apps.node.services.capabilities import (
+    INSIGHT_SAFE_RESTORE_CAPABILITY,
+    missing_node_capabilities,
+)
 from apps.node.services.internal.node_registry import node_is_available_for_work
 from apps.node.services.internal.repository_server import (
     repository_server_diagnostic_code,
@@ -91,7 +94,6 @@ ACTIVE_RESTORE_TASK_STATUSES = (
     Task.Status.BLOCKED,
     Task.Status.RUNNING,
 )
-INSIGHT_SAFE_RESTORE_CAPABILITY = "insight_safe_restore_v1"
 INSIGHT_SAFE_CONTENT_POLICY = "regular_files_only_v1"
 
 logger = logging.getLogger(__name__)

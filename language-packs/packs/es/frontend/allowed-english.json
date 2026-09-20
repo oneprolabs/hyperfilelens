@@ -169,6 +169,7 @@
   "platformOps.nav.platformGoogleOAuth",
   "platformOps.nav.platformTurnstile",
   "platformOps.orgs.plan",
+  "platformOps.orgs.sectionPlan",
   "platformOps.orgs.quotaFromPlan",
   "platformOps.overview.healthEngineDetail",
   "platformOps.overview.healthRedisDetail",

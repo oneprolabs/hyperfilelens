@@ -17,6 +17,7 @@ from apps.node.services.internal.node_lifecycle import (
     _source_version_from_task,
     _target_commit_from_task,
     _target_version_from_task,
+    _upgrade_verify_ready,
     _upgrade_lifecycle_payload,
     _upgrade_timeout_failure,
     _version_matches_target,
@@ -1212,13 +1213,50 @@ class NodeLifecycleTests(TestCase):
             inventory={
                 "agent_version": "1.2.0",
                 "agent_commit": "A" * 40,
+                "capabilities": ["insight_safe_restore_v1"],
             },
         )
         task.refresh_from_db()
         self.assertEqual(task.result["inventory_session_id"], "new")
         self.assertEqual(task.result["observed_agent_version"], "1.2.0")
         self.assertEqual(task.result["observed_agent_commit"], "a" * 40)
+        self.assertEqual(task.result["observed_capabilities"], ["insight_safe_restore_v1"])
         self.assertNotIn("verify_started_at", task.result)
+
+    @patch("apps.node.services.internal.node_lifecycle._current_agent_session", return_value="new")
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
+    def test_gateway_upgrade_requires_safe_restore_capability(
+        self, _routable, _session
+    ):
+        self.node.role = NodeRole.GATEWAY
+        self.node.save(update_fields=["role", "updated_at"])
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"target_version": "1.0.0", "target_commit": "a" * 40},
+            result={
+                "mode": "local_detached",
+                "host_upgrade_status": "success",
+                "detached_session_id": "old",
+                "reconnect_session_id": "new",
+                "inventory_session_id": "new",
+                "observed_agent_version": "1.0.0",
+                "observed_agent_commit": "a" * 40,
+                "observed_capabilities": [],
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        self.assertFalse(_upgrade_verify_ready(node=self.node, task=task))
+        failure_code, _message = _upgrade_timeout_failure(node=self.node, task=task)
+        self.assertEqual(failure_code, "POST_UPGRADE_CAPABILITY_TIMEOUT")
+        task.result["observed_capabilities"] = ["insight_safe_restore_v1"]
+        task.save(update_fields=["result", "updated_at"])
+        self.assertTrue(_upgrade_verify_ready(node=self.node, task=task))
 
     def test_repeated_upgrade_session_observation_repairs_stale_node_status(self):
         NodeTask.objects.create(

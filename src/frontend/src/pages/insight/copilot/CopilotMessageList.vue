@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, ChevronDown, ChevronUp, Copy, Download, RefreshCw, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
+import { ArrowDown, ChevronDown, ChevronUp, Copy, Download, RefreshCw, Share2, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -11,6 +11,7 @@ import CopilotAttachmentList from './CopilotAttachmentList.vue'
 import CopilotOutputFileList from './CopilotOutputFileList.vue'
 import CopilotThinkingTimeline from './CopilotThinkingTimeline.vue'
 import CopilotMessageCitations from './CopilotMessageCitations.vue'
+import { hasStructuredRuntimeContent, thinkingActivityCount } from './copilotThinkingActivities'
 import type { CopilotDisplayMessage, CopilotFeedbackUpdate, CopilotRetryDraft } from './types'
 import type { ThinkingStep } from '../../../composables/useLensRunStream'
 import {
@@ -36,11 +37,11 @@ const emit = defineEmits<{
   retryQuestion: [draft: CopilotRetryDraft]
   feedbackUpdated: [update: CopilotFeedbackUpdate]
   clarificationSubmitted: [runUuid: string, requestId: string, answer: string]
+  shareAnswer: [message: CopilotDisplayMessage]
 }>()
 
 const { t } = useI18n()
 const expandedThinking = ref<Set<string>>(new Set())
-const liveThinkingOpen = ref(true)
 const feedbackUpdating = ref<Set<string>>(new Set())
 const pdfDownloading = ref<Set<string>>(new Set())
 const clarificationAnswers = ref<Record<string, string>>({})
@@ -125,31 +126,63 @@ function toggleThinking(id: string) {
   if (followsLatest.value) scrollToBottom()
 }
 
-function toggleLiveThinking() {
-  liveThinkingOpen.value = !liveThinkingOpen.value
-  if (followsLatest.value) scrollToBottom()
-}
-
 function thinkingStepsFor(message: CopilotDisplayMessage) {
   return message.thinking?.steps ?? []
 }
 
-function liveThinkingStatus() {
+function thinkingCountFor(message: CopilotDisplayMessage) {
+  return thinkingActivityCount(thinkingStepsFor(message))
+}
+
+function thinkingStatusFor(message: CopilotDisplayMessage) {
+  const count = thinkingCountFor(message)
+  if (!count) return t('insight.copilot.runtimeCardHint')
+  const duration = thinkingDuration(message)
+  return duration != null
+    ? t('insight.copilot.agentActivitiesDone', { seconds: duration, count })
+    : t('insight.copilot.agentActivitiesDoneSteps', { count })
+}
+
+function hasThinkingContent(message: CopilotDisplayMessage) {
+  const steps = thinkingStepsFor(message)
+  return thinkingActivityCount(steps) > 0 || hasStructuredRuntimeContent(steps)
+}
+
+function isLatestShareableAnswer(message: CopilotDisplayMessage) {
+  const latest = [...props.messages]
+    .reverse()
+    .find((row) => (
+      row.role === 'assistant'
+      && !row.isWelcome
+      && !row.isError
+      && Boolean(row.runId)
+      && Boolean(row.completedAt)
+      && Boolean(row.text?.trim())
+    ))
+  return latest?.id === message.id
+}
+
+function thinkingOutcomeFor(message: CopilotDisplayMessage) {
+  const outcome = String(message.thinking?.outcome || '').trim()
+  if (!outcome || /^(completed|complete|done|success|succeeded)$/i.test(outcome)) return ''
+  return outcome
+}
+
+function liveThinkingFooter() {
   const seconds = props.streamingElapsedSeconds ?? 0
-  const count = props.streamingThinking?.length ?? 0
-  if (seconds > 0 && count > 0) {
+  const count = thinkingActivityCount(props.streamingThinking ?? [])
+  if (count > 0) {
     return t('insight.copilot.agentActivitiesLiveProgress', { seconds, count })
   }
-  if (seconds > 0) {
-    return t('insight.copilot.agentActivitiesLiveElapsed', { seconds })
-  }
-  return t('insight.copilot.agentActivitiesLive')
+  return seconds > 0
+    ? t('insight.copilot.agentActivitiesLiveElapsed', { seconds })
+    : ''
 }
 
 const showRetrievalHint = computed(
   () =>
     Boolean(props.streaming) &&
-    (props.streamingThinking?.length ?? 0) > 0 &&
+    thinkingActivityCount(props.streamingThinking ?? []) > 0 &&
     !(props.streamingContent || '').trim() &&
     !props.streamError,
 )
@@ -342,7 +375,7 @@ const showLiveRow = computed(() => props.streaming)
 
           <div class="message-body">
             <div
-              v-if="msg.role === 'assistant' && thinkingStepsFor(msg).length"
+              v-if="msg.role === 'assistant' && hasThinkingContent(msg)"
               class="thinking-panel thinking-panel-done"
             >
               <button
@@ -350,17 +383,9 @@ const showLiveRow = computed(() => props.streaming)
                 class="thinking-panel-header"
                 @click="toggleThinking(msg.id)"
               >
+                <span class="thinking-panel-title">{{ t('insight.copilot.agentActivitiesLive') }}</span>
                 <span class="thinking-panel-status">
-                  {{
-                    thinkingDuration(msg) != null
-                      ? t('insight.copilot.agentActivitiesDone', {
-                        seconds: thinkingDuration(msg),
-                        count: thinkingStepsFor(msg).length,
-                      })
-                      : t('insight.copilot.agentActivitiesDoneSteps', {
-                        count: thinkingStepsFor(msg).length,
-                      })
-                  }}
+                  {{ thinkingStatusFor(msg) }}
                 </span>
                 <ChevronUp
                   v-if="expandedThinking.has(msg.id)"
@@ -379,10 +404,10 @@ const showLiveRow = computed(() => props.streaming)
               >
                 <CopilotThinkingTimeline :steps="thinkingStepsFor(msg)" />
                 <div
-                  v-if="msg.thinking?.outcome"
+                  v-if="thinkingOutcomeFor(msg)"
                   class="thinking-outcome"
                 >
-                  {{ msg.thinking.outcome }}
+                  {{ thinkingOutcomeFor(msg) }}
                 </div>
               </div>
             </div>
@@ -522,6 +547,16 @@ const showLiveRow = computed(() => props.streaming)
                   <ThumbsDown :size="16" />
                 </button>
                 <button
+                  v-if="msg.runId && msg.completedAt && isLatestShareableAnswer(msg)"
+                  type="button"
+                  class="message-action-btn"
+                  :title="t('insight.copilot.share')"
+                  :aria-label="t('insight.copilot.share')"
+                  @click="emit('shareAnswer', msg)"
+                >
+                  <Share2 :size="16" />
+                </button>
+                <button
                   v-if="msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
@@ -555,50 +590,28 @@ const showLiveRow = computed(() => props.streaming)
               v-if="!streamError"
               class="thinking-panel thinking-panel-live"
             >
-              <button
-                v-if="streamingThinking?.length"
-                type="button"
-                class="thinking-panel-header"
-                :aria-expanded="liveThinkingOpen"
-                @click="toggleLiveThinking"
-              >
-                <span class="live-progress-dot" />
-                <span class="thinking-panel-status">
-                  <span class="thinking-panel-status-text">{{ liveThinkingStatus() }}</span>
-                </span>
-                <span
-                  v-if="streamingThinking.length"
-                  class="thinking-step-count"
-                >
-                  {{ streamingThinking.length }}
-                </span>
-                <ChevronUp
-                  v-if="liveThinkingOpen"
-                  :size="13"
-                  class="thinking-panel-chevron"
-                />
-                <ChevronDown
-                  v-else
-                  :size="13"
-                  class="thinking-panel-chevron"
-                />
-              </button>
               <div
-                v-else
                 class="thinking-panel-header thinking-panel-header--static"
                 role="status"
                 aria-live="polite"
               >
                 <span class="live-progress-dot" />
-                <span class="thinking-panel-status">
-                  <span class="thinking-panel-status-text">{{ liveThinkingStatus() }}</span>
-                </span>
+                <span class="thinking-panel-title">{{ t('insight.copilot.agentActivitiesLive') }}</span>
               </div>
               <div
-                v-if="liveThinkingOpen && streamingThinking?.length"
+                v-if="thinkingActivityCount(streamingThinking ?? []) || hasStructuredRuntimeContent(streamingThinking ?? [])"
                 class="thinking-panel-body"
               >
-                <CopilotThinkingTimeline :steps="streamingThinking" />
+                <CopilotThinkingTimeline
+                  :steps="streamingThinking"
+                  live
+                />
+              </div>
+              <div
+                v-if="liveThinkingFooter()"
+                class="thinking-panel-footer"
+              >
+                {{ liveThinkingFooter() }}
               </div>
             </div>
 
@@ -1013,6 +1026,13 @@ const showLiveRow = computed(() => props.streaming)
   color: var(--color-text-secondary);
 }
 
+.thinking-panel-title {
+  flex: 0 0 auto;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .thinking-panel-status-text {
   min-width: 0;
   overflow: hidden;
@@ -1039,6 +1059,14 @@ const showLiveRow = computed(() => props.streaming)
   overflow-y: auto;
   padding: 4px 12px 10px;
   border-top: 1px solid var(--color-border-light);
+}
+
+.thinking-panel-footer {
+  padding: 7px 12px 9px;
+  border-top: 1px dashed var(--color-border-light);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .thinking-step-item {

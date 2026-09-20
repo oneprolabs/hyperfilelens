@@ -6,6 +6,7 @@ import {
   quotaDefsForDashboard,
   quotaDefsForSubscription,
   quotaUsagePercent,
+  sortBySubscriptionQuotaMeterOrder,
 } from './licenseQuotaDisplay'
 
 describe('Byte quota display', () => {
@@ -73,5 +74,25 @@ describe('Byte quota display', () => {
   it('treats non-zero usage against a zero limit as fully used', () => {
     expect(quotaUsagePercent(1, 0)).toBe(100)
     expect(quotaUsagePercent(0, 0)).toBe(0)
+  })
+
+  it('sorts license pool meters like tenant Subscription quota rows', () => {
+    const sorted = sortBySubscriptionQuotaMeterOrder([
+      { key: 'max_organizations' },
+      { key: 'max_users' },
+      { key: 'max_source_nas' },
+      { key: 'max_source_hosts' },
+      { key: 'max_public_gateways' },
+      { key: 'ai_tokens' },
+    ])
+
+    expect(sorted.map((row) => row.key)).toEqual([
+      'max_source_hosts',
+      'max_source_nas',
+      'ai_tokens',
+      'max_users',
+      'max_organizations',
+      'max_public_gateways',
+    ])
   })
 })

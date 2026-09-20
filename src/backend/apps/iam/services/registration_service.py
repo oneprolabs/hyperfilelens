@@ -38,6 +38,19 @@ def unique_org_key_for_email(email: str) -> str:
     return candidate
 
 
+def unique_org_key_for_name(name: str) -> str:
+    """Derive a unique organization key from a display name."""
+    base = slugify(str(name or "").strip()) or "org"
+    base = base[:48]
+    candidate = base
+    counter = 1
+    while Organization.objects.filter(key=candidate).exists():
+        suffix = f"-{counter}"
+        candidate = f"{base[: 64 - len(suffix)]}{suffix}"
+        counter += 1
+    return candidate[:64]
+
+
 @transaction.atomic
 def provision_registered_user_tenant(user: User) -> tuple[Organization, Membership]:
     """

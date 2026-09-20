@@ -33,6 +33,7 @@ from apps.node.services.internal.agent_upgrade import (
     node_platform_arch,
     validate_agent_upgrade,
 )
+from apps.node.services.capabilities import INSIGHT_SAFE_RESTORE_CAPABILITY
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.node_registry import agent_ws_routable
 from apps.node.services.internal.node_workload import (
@@ -207,6 +208,9 @@ def _stale_failed_upgrade_is_current(*, node: Node, task: NodeTask) -> bool:
     return (
         _node_installed_version(node) == target_version
         and _node_installed_commit(node) == target_commit
+        and _required_upgrade_capabilities(node=node).issubset(
+            _node_capabilities(node)
+        )
     )
 
 
@@ -315,6 +319,26 @@ def _task_build_matches_target(
     return not expected_commit or current_commit == expected_commit
 
 
+def _task_observed_capabilities(task: NodeTask) -> set[str]:
+    """Return capabilities observed in the post-upgrade inventory session."""
+    result = task.result if isinstance(task.result, dict) else {}
+    raw = result.get("observed_capabilities", [])
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return set()
+    return {
+        value
+        for raw_value in raw
+        if (value := str(raw_value or "").strip())
+    }
+
+
+def _required_upgrade_capabilities(*, node: Node) -> frozenset[str]:
+    """Return capabilities required before a Data Gateway upgrade is complete."""
+    if node.role == NodeRole.GATEWAY:
+        return frozenset({INSIGHT_SAFE_RESTORE_CAPABILITY})
+    return frozenset()
+
+
 def _current_agent_session(*, node_id: int) -> str | None:
     return redis_store.get_agent_session(agent_id=node_id)
 
@@ -398,11 +422,28 @@ def record_upgrade_session_observation(
                 or str(result.get("observed_agent_commit") or "").strip().lower()
                 != observed_commit
             )
+            incoming_capabilities = inventory.get("capabilities")
+            capabilities_present = isinstance(
+                incoming_capabilities, (list, tuple, set, frozenset)
+            )
+            observed_capabilities = {
+                value
+                for raw_value in (incoming_capabilities or [])
+                if (value := str(raw_value or "").strip())
+            }
+            if (
+                result.get("inventory_session_id") == session_id
+                and not capabilities_present
+            ):
+                observed_capabilities = _task_observed_capabilities(task)
+            if observed_capabilities != _task_observed_capabilities(task):
+                identity_changed = True
             if identity_changed:
                 result["inventory_session_id"] = session_id
                 result["inventory_observed_at"] = now
                 result["observed_agent_version"] = observed_version
                 result["observed_agent_commit"] = observed_commit
+                result["observed_capabilities"] = sorted(observed_capabilities)
                 result.pop("verify_started_at", None)
                 changed = True
     if changed:
@@ -600,11 +641,14 @@ def _upgrade_verify_ready(*, node: Node, task: NodeTask) -> bool:
     target_version = _target_version_from_task(task)
     if not target_version:
         return False
-    return _task_build_matches_target(
+    if not _task_build_matches_target(
         task=task,
         target_version=target_version,
         target_commit=_target_commit_from_task(task),
-    )
+    ):
+        return False
+    required_capabilities = _required_upgrade_capabilities(node=node)
+    return required_capabilities.issubset(_task_observed_capabilities(task))
 
 
 def record_upgrade_disconnect(*, node_id: int) -> bool:
@@ -775,6 +819,14 @@ def _upgrade_timeout_failure(*, node: Node, task: NodeTask) -> tuple[str, str]:
         target_commit=target_commit,
     ):
         return "TARGET_BUILD_MISMATCH", "Agent version or build does not match the upgrade target."
+    required_capabilities = _required_upgrade_capabilities(node=node)
+    missing_capabilities = required_capabilities - _task_observed_capabilities(task)
+    if missing_capabilities:
+        capability_list = ", ".join(sorted(missing_capabilities))
+        return (
+            "POST_UPGRADE_CAPABILITY_TIMEOUT",
+            f"Agent reconnected, but required capabilities were not reported: {capability_list}.",
+        )
     return "UPGRADE_VERIFICATION_TIMEOUT", "Upgrade verification timed out."
 
 

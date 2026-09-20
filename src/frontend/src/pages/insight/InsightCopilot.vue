@@ -704,6 +704,10 @@ function shareSession(row: SessionRow) {
   mobileSessionsOpen.value = false
 }
 
+function shareActiveAnswer() {
+  if (activeSession.value) shareSession(activeSession.value)
+}
+
 async function confirmDeleteSession() {
   const row = deleteTarget.value
   if (!row) return
@@ -1274,6 +1278,7 @@ onUnmounted(() => {
             @retry-question="retryQuestion"
             @feedback-updated="applyFeedbackUpdate"
             @clarification-submitted="submitClarification"
+            @share-answer="shareActiveAnswer"
           />
 
           <CopilotComposer

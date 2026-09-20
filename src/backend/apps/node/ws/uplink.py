@@ -307,15 +307,53 @@ def handle_uplink(
     return None
 
 
-def _inventory_throttle_key(*, node_id: int) -> str:
+def _inventory_throttle_key(*, node_id: int, session_id: str | None = None) -> str:
+    """Return the inventory throttle key for one Agent connection.
+
+    Full inventory is intentionally throttled during a stable WebSocket
+    session, but the first inventory from a new session must not be hidden by
+    the previous session's throttle window.  Capabilities and build identity
+    are session-sensitive evidence during Agent upgrades.
+    """
+    session = str(session_id or "").strip()
+    if session:
+        return f"heartbeat_inv_throttle:{node_id}:{session}"
     return f"heartbeat_inv_throttle:{node_id}"
 
 
-def _merge_heartbeat_inventory_updates(*, node: Node, inventory: dict) -> dict:
+def _merge_heartbeat_inventory_updates(
+    *, node: Node, inventory: dict, session_id: str | None = None
+) -> dict:
     """Build ``Node.objects.update`` kwargs for inventory snapshot fields (not metrics)."""
     updates: dict = {}
     state = normalize_agent_network_state(inventory)
     inv_only = {k: v for k, v in state.metadata_inventory.items() if k != "metrics"}
+    session_id = str(session_id or "").strip()
+    metadata = dict(node.metadata or {})
+    if session_id:
+        previous_session_id = str(metadata.get("inventory_session_id") or "").strip()
+        # A capability snapshot is only valid for the WebSocket session that
+        # delivered it. A heartbeat in the same session may omit the optional
+        # capability field, so preserve the last complete snapshot in that
+        # case. A new session must not inherit evidence from its predecessor.
+        raw_capabilities = inventory.get("capabilities")
+        capability_session_id = str(
+            metadata.get("inventory_capabilities_session_id") or ""
+        ).strip()
+        if isinstance(raw_capabilities, (list, tuple, set, frozenset)):
+            inv_only["capabilities"] = [
+                str(value).strip()
+                for value in raw_capabilities
+                if str(value or "").strip()
+            ]
+            metadata["inventory_capabilities_session_id"] = session_id
+        elif (
+            previous_session_id != session_id
+            or capability_session_id != session_id
+        ):
+            inv_only["capabilities"] = []
+            metadata["inventory_capabilities_session_id"] = ""
+        metadata["inventory_session_id"] = session_id
     if ver := str(inventory.get("agent_version") or "").strip():
         updates["version"] = ver
     if (
@@ -329,8 +367,10 @@ def _merge_heartbeat_inventory_updates(*, node: Node, inventory: dict) -> dict:
     ):
         updates["network_inventory"] = state.inventory
     if inv_only:
-        meta = dict(node.metadata or {})
-        meta["inventory"] = {**dict(meta.get("inventory") or {}), **inv_only}
+        metadata["inventory"] = {
+            **dict(metadata.get("inventory") or {}),
+            **inv_only,
+        }
         suggested = resolve_inventory_node_name(node=node, inventory=inv_only)
         if suggested:
             updates["name"] = uniquify_node_name(
@@ -338,7 +378,9 @@ def _merge_heartbeat_inventory_updates(*, node: Node, inventory: dict) -> dict:
                 name=suggested,
                 exclude_node_id=node.id,
             )
-        updates["metadata"] = meta
+        updates["metadata"] = metadata
+    elif session_id:
+        updates["metadata"] = metadata
     return updates
 
 
@@ -349,6 +391,7 @@ def _persist_heartbeat_snapshot(
     inventory: dict | None,
     observed_at,
     merge_inventory: bool,
+    session_id: str | None = None,
 ) -> tuple[Node | None, bool]:
     """Serialize Node metadata updates shared by heartbeat and monitor ingest."""
     node = (
@@ -364,7 +407,11 @@ def _persist_heartbeat_snapshot(
     updates: dict = {"last_seen_at": observed_at}
     if merge_inventory and inventory:
         updates.update(
-            _merge_heartbeat_inventory_updates(node=node, inventory=inventory)
+            _merge_heartbeat_inventory_updates(
+                node=node,
+                inventory=inventory,
+                session_id=session_id,
+            )
         )
     Node.objects.filter(pk=node_id).update(**updates)
     return node, True
@@ -413,6 +460,7 @@ def apply_heartbeat_inventory_snapshot(
         inventory=inventory,
         observed_at=observed_at,
         merge_inventory=True,
+        session_id=session_id,
     )
     if node is None or not applied:
         return
@@ -429,11 +477,13 @@ def apply_heartbeat_inventory_snapshot(
         )
 
 
-def _should_process_full_inventory(*, node_id: int) -> bool:
+def _should_process_full_inventory(
+    *, node_id: int, session_id: str | None = None
+) -> bool:
     r = redis_store.get_redis()
     if r is None:
         return True
-    key = _inventory_throttle_key(node_id=node_id)
+    key = _inventory_throttle_key(node_id=node_id, session_id=session_id)
     try:
         if r.exists(key):
             return False
@@ -487,7 +537,10 @@ def _process_heartbeat_followup(
     full_inventory = bool(
         inventory
         and ownership is True
-        and _should_process_full_inventory(node_id=node_id)
+        and _should_process_full_inventory(
+            node_id=node_id,
+            session_id=session_id,
+        )
     )
     if full_inventory:
         node, applied = _persist_heartbeat_snapshot(
@@ -495,6 +548,7 @@ def _process_heartbeat_followup(
             inventory=inventory,
             observed_at=observed_at,
             merge_inventory=True,
+            session_id=session_id,
         )
         if node is None or not applied:
             return
@@ -512,6 +566,16 @@ def _process_heartbeat_followup(
         ingest_node_monitor_sample(node=node, sample=inventory["metrics"])
 
     if full_inventory and ownership is True:
+        if session_id:
+            _record_upgrade_session(
+                node_id=node_id,
+                session_id=session_id,
+                inventory=inventory,
+            )
+            _schedule_lifecycle_advance(
+                node_id=node_id,
+                redis_client=redis_store.get_redis(),
+            )
         try:
             sync_agent_source_host_by_id(node_id=node_id)
         except Exception:
