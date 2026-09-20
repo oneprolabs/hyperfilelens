@@ -22,7 +22,7 @@ type QuotaDisplayDef = {
 
 /**
  * API meter / pool keys → vue-i18n paths under `licenseQuota.*`.
- * Used by tenant Subscription, Dashboard, Instance License, and Org quotas.
+ * Used by tenant Subscription, Dashboard, License, and Org quotas.
  */
 export const QUOTA_METER_LABEL_KEY: Record<string, string> = {
   max_organizations: 'licenseQuota.organizations',
@@ -177,6 +177,29 @@ export function quotaDefsForDashboard(): QuotaDisplayDef[] {
 
 export function quotaDefsForSubscription(): QuotaDisplayDef[] {
   return SUBSCRIPTION_QUOTA_DEFS
+}
+
+/** Stable display order matching tenant Subscription quota rows. */
+export function sortBySubscriptionQuotaMeterOrder<T extends { key: string }>(rows: T[]): T[] {
+  const order = new Map(
+    SUBSCRIPTION_QUOTA_DEFS.map((definition, index) => [definition.limitKey, index]),
+  )
+  const proxiesOrder = order.get('max_proxies')
+  const aiTokensOrder = order.get('ai_tokens')
+  if (proxiesOrder != null) order.set('max_source_proxies', proxiesOrder)
+  if (aiTokensOrder != null) {
+    order.set('ai_insights_quota', aiTokensOrder)
+    order.set('ai_requests', aiTokensOrder)
+  }
+
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const leftOrder = order.get(left.row.key) ?? (SUBSCRIPTION_QUOTA_DEFS.length + left.index)
+      const rightOrder = order.get(right.row.key) ?? (SUBSCRIPTION_QUOTA_DEFS.length + right.index)
+      return leftOrder - rightOrder || left.index - right.index
+    })
+    .map(({ row }) => row)
 }
 
 export function quotaDisplayValue(value: number, divisor = 1): number {

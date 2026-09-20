@@ -8,6 +8,7 @@ from apps.node.models import Node
 
 REPOSITORY_OWNERSHIP_CAPABILITY = "repository_ownership_v1"
 NAS_MOUNT_LIFECYCLE_CAPABILITY = "nas_mount_lifecycle_v1"
+INSIGHT_SAFE_RESTORE_CAPABILITY = "insight_safe_restore_v1"
 
 
 def node_capabilities(node: Node) -> frozenset[str]:
@@ -47,6 +48,7 @@ def node_supports_capability(node: Node, capability: str) -> bool:
 
 
 __all__ = [
+    "INSIGHT_SAFE_RESTORE_CAPABILITY",
     "NAS_MOUNT_LIFECYCLE_CAPABILITY",
     "REPOSITORY_OWNERSHIP_CAPABILITY",
     "missing_node_capabilities",

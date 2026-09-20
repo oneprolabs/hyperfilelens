@@ -116,7 +116,7 @@
 }
 
 .platform-account-form__section {
-  padding: 18px;
+  padding: 20px 24px;
   border: 1px solid var(--color-border, #e9e9ef);
   border-radius: 10px;
   background: var(--color-card-bg, #fff);
@@ -163,10 +163,14 @@
 }
 
 .platform-account-form__hint {
-  margin: -8px 0 16px;
+  margin: 6px 0 0;
   color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.platform-account-form__hint--block {
+  margin: -4px 0 16px;
 }
 
 .platform-account-form__footer {
@@ -327,10 +331,71 @@
   text-underline-offset: 3px;
 }
 
+.platform-account-detail__quota-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 16px 8px;
+}
+
+.platform-account-detail__quota-hint {
+  margin: 0 16px 8px;
+  color: var(--color-text-secondary, #6b6b78);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.platform-account-detail__quota-label {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.platform-account-detail__quota-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-grey-2, #f0f0f4);
+  color: var(--color-text-secondary, #6b6b78);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.platform-account-detail__quota-badge.is-override {
+  background: color-mix(in srgb, var(--color-primary, #6d5ef6) 12%, transparent);
+  color: var(--color-primary, #6d5ef6);
+}
+
+.platform-account-detail__quota-edit {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.platform-account-detail__quota-edit .el-input-number {
+  width: 120px;
+}
+
+.platform-account-detail__quota-unit {
+  width: 82px;
+}
+
+.platform-account-detail__quota-plan-value {
+  color: var(--color-text-secondary, #6b6b78);
+  font-weight: 500;
+}
+
 .platform-account-detail__quotas {
   display: grid;
   padding: 4px 16px 16px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -368,6 +433,12 @@
 
 @media (max-width: 1100px) {
   .platform-account-page .hfl-ops-stats-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 960px) {
+  .platform-account-detail__quotas {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

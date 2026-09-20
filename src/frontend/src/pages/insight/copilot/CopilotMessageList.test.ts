@@ -86,6 +86,28 @@ describe('CopilotMessageList welcome message and live feedback', () => {
     wrapper.unmount()
   })
 
+  it('keeps the thinking panel visible for structured runtime-only events', async () => {
+    const wrapper = mountList({
+      messages: [{
+        id: 'assistant-runtime',
+        role: 'assistant',
+        text: 'Answer',
+        thinking: {
+          steps: [{
+            eventType: 'plan.updated',
+            message: 'plan.updated',
+            payload: { steps: [{ id: 'step-1', title: 'Inspect sources' }] },
+          }],
+        },
+      }],
+    })
+
+    expect(wrapper.find('.thinking-panel-done').exists()).toBe(true)
+    await wrapper.get('.thinking-panel-header').trigger('click')
+    expect(wrapper.find('.copilot-runtime-card').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('opens SourceLens citations in a right-side drawer and closes with Escape', async () => {
     mocks.fetchCopilotCitation.mockResolvedValue({
       id: 'citation-1',
@@ -310,6 +332,62 @@ describe('CopilotMessageList welcome message and live feedback', () => {
     wrapper.unmount()
   })
 
+  it('offers Chat sharing for the latest completed answer', async () => {
+    const wrapper = mountList({
+      messages: [
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          runId: 'run-1',
+          completedAt: '2026-08-20T01:59:00Z',
+          text: 'Earlier answer',
+        },
+        {
+          id: 'assistant-2',
+          role: 'assistant',
+          runId: 'run-2',
+          completedAt: '2026-08-20T02:00:00Z',
+          text: 'Latest answer',
+        },
+      ],
+    })
+
+    expect(wrapper.findAll('button[aria-label="Share"]')).toHaveLength(1)
+    await wrapper.get('button[aria-label="Share"]').trigger('click')
+
+    expect(wrapper.emitted('shareAnswer')?.[0]).toEqual([expect.objectContaining({
+      id: 'assistant-2',
+      runId: 'run-2',
+    })])
+    wrapper.unmount()
+  })
+
+  it('keeps sharing on the latest completed answer while a newer answer is incomplete', () => {
+    const wrapper = mountList({
+      messages: [
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          runId: 'run-1',
+          completedAt: '2026-08-20T01:59:00Z',
+          text: 'Earlier answer',
+        },
+        {
+          id: 'assistant-2',
+          role: 'assistant',
+          runId: 'run-2',
+          completedAt: null,
+          text: 'Streaming answer',
+        },
+      ],
+    })
+
+    const shareButton = wrapper.get('button[aria-label="Share"]')
+    expect(wrapper.findAll('button[aria-label="Share"]')).toHaveLength(1)
+    expect(shareButton.element.closest('.message-body')?.textContent).toContain('Earlier answer')
+    wrapper.unmount()
+  })
+
   it('emits the SourceLens Run reference when regenerating an answer', async () => {
     const runId = 'c42dfb76-3afd-4ad7-b896-472f71f38586'
     const wrapper = mountList({
@@ -347,9 +425,56 @@ describe('CopilotMessageList welcome message and live feedback', () => {
     const livePanel = wrapper.get('.thinking-panel-live')
     const status = livePanel.get('[role="status"]')
     expect(status.attributes('aria-live')).toBe('polite')
-    expect(status.text()).toContain('Agent activity · 2s')
+    expect(status.text()).toContain('Agent activity')
+    expect(status.text()).not.toContain('Running')
     expect(livePanel.find('.thinking-panel-body').exists()).toBe(false)
     expect(wrapper.find('.message-card--typing').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('matches SourceLens activity grouping while a run is live', () => {
+    const wrapper = mountList({
+      messages: [{ id: 'user-1', role: 'user', text: 'What is backed up?' }],
+      streaming: true,
+      streamingThinking: [
+        { message: 'tool.find_files.start', agentEvent: 'tool.find_files.start' },
+        { message: 'tool.find_files.done', agentEvent: 'tool.find_files.done' },
+      ],
+      streamingElapsedSeconds: 13,
+    })
+
+    expect(wrapper.get('.copilot-activity-group').text()).toContain('Running')
+    expect(wrapper.get('.copilot-activity-group').text()).toContain('Searching relevant sources')
+    expect(wrapper.get('.thinking-panel-footer').text()).toContain('Recorded 1 activities · 13s')
+    wrapper.unmount()
+  })
+
+  it('matches SourceLens activity grouping after a run completes', async () => {
+    const wrapper = mountList({
+      messages: [{
+        id: 'assistant-1',
+        role: 'assistant',
+        runId: 'run-1',
+        completedAt: '2026-08-20T02:00:00Z',
+        text: 'Answer',
+        thinking: {
+          duration_seconds: 16,
+          outcome: 'Completed',
+          steps: [
+            { message: 'tool.find_files.start', agentEvent: 'tool.find_files.start' },
+            { message: 'tool.find_files.done', agentEvent: 'tool.find_files.done' },
+          ],
+        },
+      }],
+    })
+
+    const panel = wrapper.get('.thinking-panel-done')
+    expect(panel.text()).toContain('Agent activity')
+    expect(panel.text()).toContain('Completed 1 activities · 16s')
+    await panel.get('.thinking-panel-header').trigger('click')
+    expect(panel.get('.copilot-activity-group').text()).toContain('Completed')
+    expect(panel.get('.copilot-activity-group').text()).toContain('Searching relevant sources')
+    expect(panel.find('.thinking-outcome').exists()).toBe(false)
     wrapper.unmount()
   })
 

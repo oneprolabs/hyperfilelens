@@ -1,5 +1,5 @@
 from importlib import import_module
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.apps import apps as django_apps
 from django.test import SimpleTestCase, TestCase
@@ -17,6 +17,7 @@ from apps.node.services.internal.network_inventory import (
 )
 from apps.node.ws.uplink import (
     _process_heartbeat_followup,
+    _should_process_full_inventory,
     apply_heartbeat_inventory_snapshot,
 )
 
@@ -48,6 +49,20 @@ def network_payload(primary: str = "10.20.1.15") -> dict:
 
 
 class NetworkInventoryNormalizationTests(SimpleTestCase):
+    @patch("apps.node.ws.uplink.redis_store.get_redis")
+    def test_inventory_throttle_is_scoped_to_websocket_session(self, get_redis):
+        redis_client = Mock()
+        redis_client.exists.return_value = False
+        get_redis.return_value = redis_client
+
+        self.assertTrue(
+            _should_process_full_inventory(node_id=17, session_id="session-new")
+        )
+
+        redis_client.exists.assert_called_once_with(
+            "heartbeat_inv_throttle:17:session-new"
+        )
+
     def test_normalizes_primary_ip_and_matching_mac(self):
         state = normalize_agent_network_state(
             {
@@ -151,6 +166,88 @@ class NodeNetworkInventoryHeartbeatTests(TestCase):
         self.assertEqual(
             self.node.metadata["inventory"]["primary_mac_address"],
             "00:11:22:33:44:55",
+        )
+
+    @patch(
+        "apps.node.ws.uplink.redis_store.is_agent_session_current",
+        return_value=True,
+    )
+    def test_inventory_records_the_session_that_advertised_capabilities(
+        self, _current_session
+    ):
+        apply_heartbeat_inventory_snapshot(
+            node_id=self.node.id,
+            session_id="session-new",
+            inventory={"capabilities": ["insight_safe_restore_v1"]},
+        )
+
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.metadata["inventory_session_id"], "session-new")
+        self.assertEqual(
+            self.node.metadata["inventory_capabilities_session_id"],
+            "session-new",
+        )
+        self.assertEqual(
+            self.node.metadata["inventory"]["capabilities"],
+            ["insight_safe_restore_v1"],
+        )
+
+    @patch(
+        "apps.node.ws.uplink.redis_store.is_agent_session_current",
+        return_value=True,
+    )
+    def test_new_session_without_capabilities_clears_previous_capability_evidence(
+        self, _current_session
+    ):
+        self.node.metadata = {
+            "inventory": {"capabilities": ["insight_safe_restore_v1"]},
+            "inventory_session_id": "session-old",
+            "inventory_capabilities_session_id": "session-old",
+        }
+        self.node.save(update_fields=["metadata", "updated_at"])
+
+        apply_heartbeat_inventory_snapshot(
+            node_id=self.node.id,
+            session_id="session-new",
+            inventory={"agent_version": "2.0.0"},
+        )
+
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.metadata["inventory_session_id"], "session-new")
+        self.assertEqual(
+            self.node.metadata["inventory_capabilities_session_id"],
+            "",
+        )
+        self.assertEqual(self.node.metadata["inventory"]["capabilities"], [])
+
+    @patch(
+        "apps.node.ws.uplink.redis_store.is_agent_session_current",
+        return_value=True,
+    )
+    def test_same_session_without_capabilities_preserves_capability_evidence(
+        self, _current_session
+    ):
+        self.node.metadata = {
+            "inventory": {"capabilities": ["insight_safe_restore_v1"]},
+            "inventory_session_id": "session-current",
+            "inventory_capabilities_session_id": "session-current",
+        }
+        self.node.save(update_fields=["metadata", "updated_at"])
+
+        apply_heartbeat_inventory_snapshot(
+            node_id=self.node.id,
+            session_id="session-current",
+            inventory={"agent_version": "2.0.0"},
+        )
+
+        self.node.refresh_from_db()
+        self.assertEqual(
+            self.node.metadata["inventory_capabilities_session_id"],
+            "session-current",
+        )
+        self.assertEqual(
+            self.node.metadata["inventory"]["capabilities"],
+            ["insight_safe_restore_v1"],
         )
 
     def test_invalid_inventory_does_not_overwrite_valid_host_ip(self):
@@ -285,6 +382,41 @@ class NodeNetworkInventoryHeartbeatTests(TestCase):
         )
         self.assertEqual(self.node.metadata["inventory"]["cpu_cores"], 4)
         self.assertEqual(self.node.metadata["inventory"]["local_storage_pools"], [])
+
+    @patch("apps.node.ws.uplink.sync_agent_source_host_by_id")
+    @patch("apps.node.ws.uplink._schedule_lifecycle_advance")
+    @patch("apps.node.ws.uplink._record_upgrade_session")
+    @patch(
+        "apps.node.ws.uplink.redis_store.is_agent_session_current",
+        return_value=True,
+    )
+    @patch("apps.node.ws.uplink._should_process_full_inventory", return_value=True)
+    def test_new_session_inventory_is_upgrade_evidence(
+        self,
+        _mock_should_process,
+        _mock_session_current,
+        record_upgrade_session,
+        schedule_lifecycle_advance,
+        _mock_sync_source,
+    ):
+        inventory = {
+            "agent_version": "1.2.3",
+            "agent_commit": "a" * 40,
+            "capabilities": ["insight_safe_restore_v1"],
+        }
+
+        _process_heartbeat_followup(
+            node_id=self.node.id,
+            session_id="session-new",
+            inventory=inventory,
+        )
+
+        record_upgrade_session.assert_called_once_with(
+            node_id=self.node.id,
+            session_id="session-new",
+            inventory=inventory,
+        )
+        schedule_lifecycle_advance.assert_called_once()
 
     @patch("apps.node.ws.uplink.sync_agent_source_host_by_id")
     @patch("apps.node.ws.uplink.record_node_available")

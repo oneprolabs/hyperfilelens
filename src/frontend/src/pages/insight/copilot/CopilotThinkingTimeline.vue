@@ -6,11 +6,13 @@ import { CheckCircle, Circle, Clock, Loader2, Search, Sparkles, Wrench, XCircle 
 import { formatThinkingStepLabel } from '../../../lib/copilotStreamLabels'
 import type { ThinkingStep } from '../../../composables/useLensRunStream'
 import type { LensChatThinkingStep } from '../../../lib/lensApi'
+import { summarizeThinkingSteps } from './copilotThinkingActivities'
 
 export type TimelineStep = ThinkingStep | LensChatThinkingStep
 
 const props = defineProps<{
   steps: TimelineStep[]
+  live?: boolean
 }>()
 
 const { t } = useI18n()
@@ -259,6 +261,10 @@ const runtimeCard = computed(() => {
   }
 })
 
+const activityItems = computed(() =>
+  summarizeThinkingSteps(props.steps),
+)
+
 function normalizeRuntimeStatus(value: unknown): RuntimeStatus | null {
   const status = String(value || '').toLowerCase().replace(/[-\s]+/g, '_')
   if (['pending', 'queued', 'waiting'].includes(status)) return 'pending'
@@ -388,49 +394,59 @@ function runtimeStatusGlyph(status: RuntimeStatus): string {
         </p>
       </div>
     </section>
-    <div
-      v-for="(item, idx) in items"
-      :key="idx"
-      class="copilot-timeline-item"
+    <details
+      v-if="activityItems.length"
+      open
+      class="copilot-activity-group"
     >
-      <div class="copilot-timeline-track">
-        <div
-          class="copilot-timeline-dot"
-          :class="item.style.dotClass"
+      <summary class="copilot-activity-group-header">
+        <span
+          class="copilot-activity-group-status"
+          :class="{ 'is-live': props.live }"
+          aria-hidden="true"
         >
-          <component
-            :is="item.style.icon"
+          <Loader2
+            v-if="props.live"
             :size="12"
-            :stroke-width="2.5"
+            class="copilot-activity-spinner"
           />
-        </div>
+          <span v-else>✓</span>
+        </span>
+        <span>{{ props.live ? t('dashboard.ribbon.running') : t('nodeUpgradeProgress.completed') }}</span>
+        <span
+          class="copilot-activity-group-chevron"
+          aria-hidden="true"
+        >⌃</span>
+      </summary>
+      <div class="copilot-activity-list">
         <div
-          v-if="idx < items.length - 1"
-          class="copilot-timeline-line"
-        />
-      </div>
-      <div class="copilot-timeline-content">
-        <div class="copilot-timeline-header">
-          <span class="copilot-timeline-title">{{ item.title }}</span>
-          <span
-            v-if="item.time"
-            class="copilot-timeline-time"
-          >{{ item.time }}</span>
-        </div>
-        <div
-          v-if="item.details.length"
-          class="copilot-timeline-details"
+          v-for="activity in activityItems"
+          :key="activity.id"
+          class="copilot-activity-item"
         >
-          <div
-            v-for="(line, dIdx) in item.details"
-            :key="dIdx"
-            class="copilot-timeline-detail-line"
-          >
-            {{ line }}
+          <span
+            class="copilot-activity-status"
+            :class="`is-${activity.status}`"
+            aria-hidden="true"
+          >{{ activity.status === 'failed' ? '!' : activity.status === 'in_progress' ? '…' : '✓' }}</span>
+          <div class="copilot-activity-content">
+            <div class="copilot-activity-title">
+              <span>{{ activity.titleKey ? t(activity.titleKey) : activity.title }}</span>
+              <span
+                v-if="activity.count > 1"
+                class="copilot-activity-count"
+              >×{{ activity.count }}</span>
+            </div>
+            <div
+              v-if="activity.details.length"
+              class="copilot-activity-details"
+            >
+              {{ activity.details[0] }}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </details>
   </div>
 </template>
 
@@ -455,6 +471,28 @@ function runtimeStatusGlyph(status: RuntimeStatus): string {
 .copilot-runtime-card__content small { color: var(--el-text-color-secondary); font-size: 11px; overflow-wrap: anywhere; }
 .copilot-runtime-card__outcome p { margin: 0; color: var(--el-text-color-regular); font-size: 12px; line-height: 1.5; }
 .copilot-runtime-card__outcome p + p { margin-top: 4px; }
+
+.copilot-activity-group { overflow: hidden; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; background: var(--el-bg-color); }
+.copilot-activity-group-header { cursor: pointer; list-style: none; }
+.copilot-activity-group-header::-webkit-details-marker { display: none; }
+.copilot-activity-group-header { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 7px 9px; color: var(--el-text-color-secondary); font-size: 12px; }
+.copilot-activity-group-status { display: grid; width: 16px; height: 16px; flex: 0 0 auto; place-items: center; color: var(--el-color-success); font-size: 12px; font-weight: 700; }
+.copilot-activity-group-status.is-live { color: var(--el-color-primary); }
+.copilot-activity-spinner { animation: copilot-activity-spin 1s linear infinite; }
+.copilot-activity-group-chevron { margin-left: auto; color: var(--el-text-color-placeholder); font-size: 14px; }
+.copilot-activity-list { padding: 4px 9px 7px; border-top: 1px solid var(--el-border-color-lighter); }
+.copilot-activity-item { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; }
+.copilot-activity-status { display: grid; width: 16px; height: 16px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: var(--el-color-success); font-size: 12px; font-weight: 700; }
+.copilot-activity-status.is-in_progress { color: var(--el-color-primary); }
+.copilot-activity-status.is-failed { color: var(--el-color-danger); }
+.copilot-activity-content { min-width: 0; color: var(--el-text-color-primary); font-size: 12px; line-height: 1.45; }
+.copilot-activity-title { display: flex; align-items: baseline; gap: 6px; }
+.copilot-activity-count { color: var(--el-text-color-secondary); font-size: 11px; }
+.copilot-activity-details { margin-top: 2px; color: var(--el-text-color-secondary); font-size: 11px; overflow-wrap: anywhere; }
+
+@keyframes copilot-activity-spin {
+  to { transform: rotate(360deg); }
+}
 
 .copilot-timeline-item {
   display: flex;
