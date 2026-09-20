@@ -105,6 +105,26 @@ class OperationalEventApiTests(TestCase):
             {event["title"] for event in response.data["results"]},
         )
 
+    def test_legacy_agent_event_target_path_is_resolved_to_source_host_detail(self):
+        self.create_event(
+            source="node",
+            resource_type="agent",
+            resource_id="42",
+            target_path="/node/agents",
+        )
+
+        response = self.client.get(
+            "/api/v1/monitors/events/",
+            HTTP_X_ORG_KEY=self.org.key,
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data["results"][0]["target_path"],
+            "/protection/backup-sources?tab=host&openNode=42",
+        )
+
     def test_events_support_period_search_category_and_severity_filters(self):
         self.create_event(details="Connection timed out")
         self.create_event(

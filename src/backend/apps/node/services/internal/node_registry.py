@@ -252,11 +252,7 @@ def record_node_availability(
                 resource_type=node.role,
                 resource_id=str(node.id),
                 resource_name=node.name,
-                target_path=(
-                    "/insight/gateways"
-                    if node.role == NodeRole.GATEWAY
-                    else "/node/agents"
-                ),
+                target_path=_availability_event_target_path(node),
                 metadata={"role": node.role},
             )
         return True
@@ -268,6 +264,15 @@ def record_node_available(*, node_id: int, observed_at=None) -> bool:
         availability=Node.Availability.ONLINE,
         observed_at=observed_at,
     )
+
+
+def _availability_event_target_path(node: Node) -> str:
+    """Return the console resource route for a node availability event."""
+    if node.role == NodeRole.AGENT:
+        return f"/protection/backup-sources?tab=host&openNode={node.id}"
+    if node.role == NodeRole.PROXY:
+        return f"/node/agents?openNode={node.id}"
+    return "/insight/gateways"
 
 
 def reconcile_node_availability(*, limit: int = 200) -> dict[str, int | bool | str]:
