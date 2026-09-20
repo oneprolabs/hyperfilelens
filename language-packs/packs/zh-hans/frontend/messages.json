@@ -1486,6 +1486,7 @@
       "sourcePendingDeleteWaiting": "等待注销",
       "sourcePendingDeleteBlocked": "注销需注意",
       "sourcePendingDeleteFailed": "注销失败",
+      "sourceRemoved": "已移除",
       "sourcePendingRemoving": "卸载 Agent 中…",
       "sourcePendingRevertStep3": "回退备份中…",
       "sourcePendingRevertStep2": "回退至步骤 1…",
@@ -1898,8 +1899,7 @@
       "backupTaskDrawerFieldTaskId": "任务 ID",
       "backupTaskDrawerFieldCurrentPhase": "当前阶段",
       "backupTaskDrawerFieldBackupDetail": "备份详情",
-      "backupTaskDrawerDemoHint": "这里展示所选备份任务的执行阶段与详情。",
-      "sourceRemoved": "已移除"
+      "backupTaskDrawerDemoHint": "这里展示所选备份任务的执行阶段与详情。"
     },
     "backupDetail": {
       "backToList": "返回备份列表",
@@ -5711,15 +5711,34 @@
       "cleanupIncompleteTitle": "清理工作未完成",
       "cleanupIncompleteDescription": "在重试或手动完成清理之前，请检查失败的清理步骤和保留的资源。",
       "cleanupFailures": "清理失败",
+      "cleanupFailuresCount": "{count} 个清理失败",
       "cleanupWarnings": "警告",
       "retainedResources": "保留资源",
+      "retainedResourcesCount": "{count} 个保留资源",
       "failedCleanupTasks": "清理任务失败",
       "manualCleanupRequired": "需要手动清理存储仓库",
+      "cleanupSuggestions": "处理建议",
+      "cleanupSuggestionsCount": "{count} 条处理建议",
+      "cleanupViewDetails": "查看详情",
+      "cleanupCollapseDetails": "收起详情",
+      "cleanupSuggestionCode": {
+        "review_cleanup": "检查清理",
+        "force_cleanup": "强制清理",
+        "retry": "重试",
+        "check_agent": "检查 Agent 连接"
+      },
+      "cleanupSuggestion": {
+        "review_cleanup": "请检查保留的资源，并在重试前完成剩余清理。",
+        "force_cleanup": "确认 Agent 在线后，从源工作流执行强制清理。",
+        "retry": "解决清理问题后重试此操作。",
+        "check_agent": "检查 Agent 连接后重试清理操作。"
+      },
       "manualCleanupDescription": "源端点已被删除，因此无法通过原始源重试保留的存储仓库数据。完成和审核手动清理时，请使用上面的清理记录 ID。",
       "emptySteps": "暂无步骤",
       "emptyEvents": "此步骤没有可用事件。",
       "msgDisplayNameRequired": "请输入任务名称",
       "msgCopied": "已复制 UUID",
+      "technicalDetailCopied": "技术详情已复制",
       "msgCopyFailed": "复制失败",
       "cancelReason": "从控制台取消",
       "repositoryCancelConfirmTitle": "取消本次维护运行吗？",
@@ -5964,6 +5983,7 @@
         "packCountValue": "{count} 个"
       },
       "failureDetails": {
+        "errorCode": "错误代码",
         "snapshotId": "快照 ID",
         "restoreRecordId": "恢复记录 ID",
         "failedDirectories": "失败目录",
@@ -5988,18 +6008,20 @@
           "source_items_skipped": "有 {count} 个源项目被跳过（文件：{fileCount}；目录：{directoryCount}；特殊条目：{specialCount}）。"
         },
         "causes": {
+          "file_locked": "{count} 个被其他进程锁定的文件",
           "unreadable_file": "{count} 个不可读取的文件",
           "unreadable_directory": "{count} 个不可读取的目录",
           "unsupported_entry_type": "{count} 个不支持的文件系统条目",
           "macos_privacy_denied": "{count} 个受 macOS 隐私权限限制的项目",
           "permission_denied": "{count} 个权限不足的项目",
           "snapshot_errors": "{count} 个快照错误",
-          "source_resource_busy": "{count} 个源项目无法读取，源端报告设备或资源忙",
-          "file_locked": "{count} 个被其他进程锁定的文件"
+          "source_resource_busy": "{count} 个源项目无法读取，源端报告设备或资源忙"
         },
         "howToResolve": "解决方法",
         "viewAffectedFiles": "查看全部 {count} 个受影响文件",
         "viewAffectedItems": "查看 {reportedCount} 个受影响项目",
+        "collapseAffectedItems": "收起受影响项目",
+        "collapseSkippedItems": "收起已跳过项目",
         "viewOriginalError": "查看原始错误",
         "failureItemsTruncated": "已显示 {reportedCount} 个项目，共 {count} 个；另有 {omittedCount} 个项目未提供详细信息。",
         "viewSkippedItems": "查看 {reportedCount} 个已跳过项目",
@@ -6025,9 +6047,6 @@
         "permissionDeniedReason": "权限不足",
         "unreadableDirectoryReason": "目录无法读取",
         "sourceResourceBusyReason": "设备或资源忙",
-        "errorCode": "错误代码",
-        "collapseAffectedItems": "收起受影响项目",
-        "collapseSkippedItems": "收起已跳过项目",
         "failureTitle": "任务失败",
         "warningTitle": "任务已完成，但有警告",
         "taskFailed": "任务“{name}”失败。",
@@ -6078,25 +6097,6 @@
         "proxy": "Proxy",
         "gateway": "Gateway",
         "source": "Agent"
-      },
-      "technicalDetailCopied": "技术详情已复制",
-      "cleanupFailuresCount": "{count} 个清理失败",
-      "retainedResourcesCount": "{count} 个保留资源",
-      "cleanupSuggestions": "处理建议",
-      "cleanupSuggestionsCount": "{count} 条处理建议",
-      "cleanupViewDetails": "查看详情",
-      "cleanupCollapseDetails": "收起详情",
-      "cleanupSuggestionCode": {
-        "review_cleanup": "检查清理",
-        "force_cleanup": "强制清理",
-        "retry": "重试",
-        "check_agent": "检查 Agent 连接"
-      },
-      "cleanupSuggestion": {
-        "review_cleanup": "请检查保留的资源，并在重试前完成剩余清理。",
-        "force_cleanup": "确认 Agent 在线后，从源工作流执行强制清理。",
-        "retry": "解决清理问题后重试此操作。",
-        "check_agent": "检查 Agent 连接后重试清理操作。"
       }
     },
     "alertsCenter": {

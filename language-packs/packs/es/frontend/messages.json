@@ -1486,6 +1486,7 @@
       "sourcePendingDeleteWaiting": "Esperando a anular el registro",
       "sourcePendingDeleteBlocked": "La baja requiere atención",
       "sourcePendingDeleteFailed": "Error al dar de baja",
+      "sourceRemoved": "Eliminado",
       "sourcePendingRemoving": "Eliminando el Agent...",
       "sourcePendingRevertStep3": "Revirtiendo la configuración...",
       "sourcePendingRevertStep2": "Revertir al Paso 1...",
@@ -1898,8 +1899,7 @@
       "backupTaskDrawerFieldTaskId": "ID de tarea",
       "backupTaskDrawerFieldCurrentPhase": "Fase actual",
       "backupTaskDrawerFieldBackupDetail": "Copia de seguridad",
-      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada.",
-      "sourceRemoved": "Eliminado"
+      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada."
     },
     "backupDetail": {
       "backToList": "Volver a copias de seguridad",
@@ -5711,15 +5711,34 @@
       "cleanupIncompleteTitle": "La limpieza no terminó",
       "cleanupIncompleteDescription": "Revisar los pasos de limpieza fallidos y los recursos retenidos antes de reintentar o completar la limpieza manualmente.",
       "cleanupFailures": "Fallos de limpieza",
+      "cleanupFailuresCount": "{count} fallos de limpieza",
       "cleanupWarnings": "Advertencias",
       "retainedResources": "Recursos retenidos",
+      "retainedResourcesCount": "{count} recursos retenidos",
       "failedCleanupTasks": "Tareas de limpieza fallidas",
       "manualCleanupRequired": "Repositorio manual de limpieza requerido",
+      "cleanupSuggestions": "Acciones recomendadas",
+      "cleanupSuggestionsCount": "{count} acciones recomendadas",
+      "cleanupViewDetails": "Ver detalles",
+      "cleanupCollapseDetails": "Ocultar detalles",
+      "cleanupSuggestionCode": {
+        "review_cleanup": "Revisar limpieza",
+        "force_cleanup": "Limpieza forzada",
+        "retry": "Reintentar",
+        "check_agent": "Comprobar conexión del Agent"
+      },
+      "cleanupSuggestion": {
+        "review_cleanup": "Revise los recursos retenidos y complete la limpieza restante antes de reintentar.",
+        "force_cleanup": "Verifique que el Agent esté conectado y ejecute la limpieza forzada desde el flujo del origen.",
+        "retry": "Resuelva el problema de limpieza indicado y vuelva a intentarlo.",
+        "check_agent": "Compruebe la conexión del Agent y vuelva a intentar la limpieza."
+      },
       "manualCleanupDescription": "El endpoint de origen ya se eliminó, por lo que los datos retenidos del repositorio no se pueden volver a procesar mediante el origen original. Use el ID del registro de limpieza anterior al completar y auditar la limpieza manual.",
       "emptySteps": "No hay pasos",
       "emptyEvents": "No hay eventos disponibles para este paso.",
       "msgDisplayNameRequired": "Introduzca un nombre de tarea",
       "msgCopied": "UUID copiado",
+      "technicalDetailCopied": "Detalles técnicos copiados",
       "msgCopyFailed": "No se pudo copiar",
       "cancelReason": "Cancelado de la consola",
       "repositoryCancelConfirmTitle": "Cancelar esta operación de mantenimiento?",
@@ -5964,6 +5983,7 @@
         "packCountValue": "{count} paquetes"
       },
       "failureDetails": {
+        "errorCode": "Código de error",
         "snapshotId": "ID de instantánea",
         "restoreRecordId": "ID del registro de restauración",
         "failedDirectories": "Directorios con errores",
@@ -5988,18 +6008,20 @@
           "source_items_skipped": "Se omitieron {count} elementos de origen (archivos: {fileCount}; directorios: {directoryCount}; entradas especiales: {specialCount})."
         },
         "causes": {
+          "file_locked": "{count} archivos bloqueados por otro proceso",
           "unreadable_file": "{count} archivos ilegibles",
           "unreadable_directory": "{count} directorios ilegibles",
           "unsupported_entry_type": "{count} entradas del sistema de archivos no compatibles",
           "macos_privacy_denied": "{count} elementos bloqueados por la privacidad de macOS",
           "permission_denied": "{count} elementos bloqueados por permisos",
           "snapshot_errors": "{count} errores de instantánea",
-          "source_resource_busy": "{count} elementos de origen no se pudieron leer porque el origen informó que el dispositivo o recurso está ocupado",
-          "file_locked": "{count} archivos bloqueados por otro proceso"
+          "source_resource_busy": "{count} elementos de origen no se pudieron leer porque el origen informó que el dispositivo o recurso está ocupado"
         },
         "howToResolve": "Cómo resolverlo",
         "viewAffectedFiles": "Ver los {count} archivos afectados",
         "viewAffectedItems": "Ver {reportedCount} elementos afectados",
+        "collapseAffectedItems": "Ocultar elementos afectados",
+        "collapseSkippedItems": "Ocultar elementos omitidos",
         "viewOriginalError": "Ver error original",
         "failureItemsTruncated": "Se muestran {reportedCount} elementos informados de {count}; {omittedCount} no tienen detalles.",
         "viewSkippedItems": "Ver {reportedCount} elementos omitidos",
@@ -6025,9 +6047,6 @@
         "permissionDeniedReason": "Permiso denegado",
         "unreadableDirectoryReason": "No se pudo leer el directorio",
         "sourceResourceBusyReason": "Dispositivo o recurso ocupado",
-        "errorCode": "Código de error",
-        "collapseAffectedItems": "Ocultar elementos afectados",
-        "collapseSkippedItems": "Ocultar elementos omitidos",
         "failureTitle": "La tarea falló",
         "warningTitle": "Tarea completada con advertencias",
         "taskFailed": "La tarea «{name}» falló.",
@@ -6078,26 +6097,7 @@
         "proxy": "Proxy",
         "gateway": "Gateway",
         "source": "Agent"
-      },
-      "cleanupFailuresCount": "{count} fallos de limpieza",
-      "retainedResourcesCount": "{count} recursos retenidos",
-      "cleanupSuggestions": "Acciones recomendadas",
-      "cleanupSuggestionsCount": "{count} acciones recomendadas",
-      "cleanupViewDetails": "Ver detalles",
-      "cleanupCollapseDetails": "Ocultar detalles",
-      "cleanupSuggestionCode": {
-        "review_cleanup": "Revisar limpieza",
-        "force_cleanup": "Limpieza forzada",
-        "retry": "Reintentar",
-        "check_agent": "Comprobar conexión del Agent"
-      },
-      "cleanupSuggestion": {
-        "review_cleanup": "Revise los recursos retenidos y complete la limpieza restante antes de reintentar.",
-        "force_cleanup": "Verifique que el Agent esté conectado y ejecute la limpieza forzada desde el flujo del origen.",
-        "retry": "Resuelva el problema de limpieza indicado y vuelva a intentarlo.",
-        "check_agent": "Compruebe la conexión del Agent y vuelva a intentar la limpieza."
-      },
-      "technicalDetailCopied": "Detalles técnicos copiados"
+      }
     },
     "alertsCenter": {
       "common": {

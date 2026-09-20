@@ -2523,7 +2523,7 @@ watch(
 .hfl-task-drawer__cleanup-outcome--final {
   margin-top: 18px;
   border-color: var(--color-warning-border);
-  box-shadow: 0 1px 2px rgb(15 23 42 / 6%);
+  box-shadow: var(--shadow-sm);
 }
 
 .hfl-task-drawer__cleanup-summary {
@@ -2609,8 +2609,8 @@ watch(
   border: 1px solid color-mix(in srgb, var(--color-warning-border) 65%, var(--color-border));
   border-radius: 9px;
   /* Keep the expanded content readable while retaining the warning context around it. */
-  background: color-mix(in srgb, #fff 88%, var(--color-warning-light));
-  box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+  background: color-mix(in srgb, var(--color-text-inverse) 88%, var(--color-warning-light));
+  box-shadow: var(--shadow-sm);
 }
 
 .hfl-task-drawer__cleanup-details > .hfl-task-drawer__cleanup-group:first-child {
