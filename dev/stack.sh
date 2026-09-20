@@ -45,6 +45,7 @@ configure_macos_dev_shell "$@"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+INVOCATION_DIR="$(pwd -P)"
 # shellcheck source=../tools/lib/logging.sh
 source "${ROOT}/tools/lib/logging.sh"
 # shellcheck source=../tools/lib/env-file.sh
@@ -56,6 +57,10 @@ source "${ROOT}/tools/kopia/common.sh"
 
 COMPOSE=()
 EXTENSION_COMPOSE_MATERIALIZED=0
+OSS_WORKTREE_DIR="${ROOT}"
+WORKTREE_DIR="${ROOT}"
+WORKTREE_DIR_EXPLICIT=0
+export WORKTREE_DIR
 
 MIRROR_GITHUB_DOWNLOAD=""
 MIRROR_GITHUB_TOKEN=""
@@ -159,6 +164,14 @@ Extensions (optional overlay; Open Source default: no extensions):
                               HFL_EXTENSIONS paths; API and Web never clone
                               extension repositories at runtime.
 
+Open Source worktree (optional):
+  --worktree-dir PATH         Bind-mount an OSS worktree's src/backend and
+                              src/frontend into the running containers.
+                              Relative paths are resolved from the directory
+                              where stack.sh is invoked. Compose files, data,
+                              build output, and extensions remain in this repo.
+                              up/restart recreate containers automatically.
+
 Deployment identity (optional for source deployments reached from another host):
   --public-url URL            Canonical tenant origin used by remote Agents
                               and generated links
@@ -204,6 +217,12 @@ Output options:
 
 Examples:
   ./dev/stack.sh up
+
+  ./dev/stack.sh up --worktree-dir ../hyperfilelens-feature
+
+  ./dev/stack.sh up \
+    --worktree-dir ../hyperfilelens-feature \
+    --extension-source ../hyperfilelens-ee-feature
 
   ./dev/stack.sh up --public-url https://192.168.8.66:11443 \
     --admin-public-url https://192.168.8.66:11444
@@ -257,6 +276,26 @@ require_value() {
 	if [[ $# -lt 2 || -z "${2:-}" || "${2:0:1}" == "-" ]]; then
 		die "${1} requires a value" 2
 	fi
+}
+
+resolve_worktree_dir() {
+	local requested="${1:-}" resolved
+	[[ -n "${requested}" ]] || die "--worktree-dir requires a path" 2
+	if [[ "${requested}" == /* ]]; then
+		resolved="${requested}"
+	else
+		resolved="${INVOCATION_DIR}/${requested}"
+	fi
+	[[ -d "${resolved}" ]] \
+		|| die "--worktree-dir does not exist: ${requested}" 2
+	resolved="$(cd "${resolved}" && pwd -P)" \
+		|| die "could not resolve --worktree-dir: ${requested}" 2
+	[[ -d "${resolved}/src/backend" && -d "${resolved}/src/frontend" ]] \
+		|| die "--worktree-dir must contain src/backend and src/frontend: ${resolved}" 2
+	OSS_WORKTREE_DIR="${resolved}"
+	WORKTREE_DIR="${resolved}"
+	WORKTREE_DIR_EXPLICIT=1
+	export WORKTREE_DIR
 }
 
 load_repo_env_defaults() {
@@ -315,8 +354,10 @@ docker_platform=${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
 compose_file=${ROOT}/docker-compose.yml
 data_dir=${ROOT}/data
 source_check=${ROOT}/tools/quality/check-english-source.py
-backend_source_mount=${ROOT}/src/backend:/opt/backend
-frontend_source_mount=${ROOT}/src/frontend:/app
+oss_source=${ROOT}
+oss_worktree=${OSS_WORKTREE_DIR}
+backend_source_mount=${WORKTREE_DIR}/src/backend:/opt/backend
+frontend_source_mount=${WORKTREE_DIR}/src/frontend:/app
 frontend_modules_volume=frontend-node-modules
 website_source=${ROOT}/website
 website_artifact=${WEBSITE_OUTPUT}
@@ -1101,12 +1142,13 @@ extension_revision() {
 }
 
 print_dev_target() {
-	local edition="Community" branch commit source display ext_label ext_rev
+	local edition="Community" branch commit worktree_revision source display ext_label ext_rev
 	local command="${CMD:-unknown}" sourcelens_mode sourcelens_ref
 	local host_platform runtime_platform
 	[[ ${#EXTENSION_SOURCES[@]} -eq 0 ]] || edition="Enterprise"
 	branch="$(git -C "${ROOT}" branch --show-current 2>/dev/null || true)"
 	commit="$(git -C "${ROOT}" rev-parse --short=12 HEAD 2>/dev/null || true)"
+	worktree_revision="$(extension_revision "${OSS_WORKTREE_DIR}")"
 	if [[ "${command}" == "restart" && "${restart_force:-0}" == "1" ]]; then
 		command="restart --force"
 	fi
@@ -1116,7 +1158,14 @@ print_dev_target() {
 	hfl_print_value "Command" "${command}"
 	hfl_print_value "Edition" "${edition}"
 	hfl_print_value "OSS source" "${ROOT}"
-	hfl_print_value "OSS revision" "${branch:-detached} (${commit:-unknown})"
+	hfl_print_value "OSS worktree" "${OSS_WORKTREE_DIR}"
+	hfl_print_value "Backend mount" "${WORKTREE_DIR}/src/backend:/opt/backend"
+	hfl_print_value "Frontend mount" "${WORKTREE_DIR}/src/frontend:/app"
+	if [[ "${OSS_WORKTREE_DIR}" == "${ROOT}" ]]; then
+		hfl_print_value "OSS revision" "${branch:-detached} (${commit:-unknown})"
+	else
+		hfl_print_value "OSS revision" "${worktree_revision}"
+	fi
 	if [[ ${#EXTENSION_SOURCES[@]} -eq 0 ]]; then
 		hfl_print_value "Extension" "none"
 	else
@@ -1827,6 +1876,10 @@ run_dev_migration_gate() {
 }
 
 cmd_up() {
+	local -a worktree_recreate_args=()
+	if [[ "${WORKTREE_DIR_EXPLICIT}" -eq 1 ]]; then
+		worktree_recreate_args+=(--force-recreate)
+	fi
 	hfl_log_step "[1/8] Checking development environment"
 	apply_mirror_env_defaults
 	require_dev_build_tools
@@ -1852,7 +1905,7 @@ cmd_up() {
 	hfl_log_ok "Database migrations and singleton initialization completed"
 	hfl_log_step "[5/8] Starting development services"
 	log "Starting hot-reload HFL stack from explicitly prepared images"
-	compose_logged up -d --no-build --pull never --remove-orphans
+	compose_logged up -d --no-build --pull never "${worktree_recreate_args[@]}" --remove-orphans
 	refresh_website_web_mount
 	hfl_log_ok "Hot-reload HyperFileLens services started"
 	hfl_log_step "[6/8] Applying identity and email configuration"
@@ -1875,6 +1928,10 @@ cmd_down() {
 
 cmd_restart() {
 	local force=$1
+	local -a worktree_recreate_args=()
+	if [[ "${WORKTREE_DIR_EXPLICIT}" -eq 1 ]]; then
+		worktree_recreate_args+=(--force-recreate)
+	fi
 
 	hfl_log_step "[1/8] Checking development environment"
 	apply_mirror_env_defaults
@@ -1905,8 +1962,12 @@ cmd_restart() {
 		log "Force restart: recreating services from freshly rebuilt images"
 		compose_logged up -d --no-build --pull never --force-recreate --remove-orphans
 	else
-		log "Restarting only services whose image or configuration changed"
-		compose_logged up -d --no-build --pull never --remove-orphans
+		if [[ "${WORKTREE_DIR_EXPLICIT}" -eq 1 ]]; then
+			log "Recreating services to apply the selected OSS worktree mounts"
+		else
+			log "Restarting only services whose image or configuration changed"
+		fi
+		compose_logged up -d --no-build --pull never "${worktree_recreate_args[@]}" --remove-orphans
 		refresh_website_web_mount
 	fi
 	hfl_log_ok "HyperFileLens development services restarted"
@@ -1924,6 +1985,7 @@ cmd_status() {
 	require_docker
 	log "HyperFileLens services"
 	compose ps
+	print_runtime_source_mounts
 	if [[ -f "${ROOT}/build/sourcelens/dev/docker-compose.yml" ]]; then
 		log "SourceLens services"
 		# SourceLens helper resolves the generated Compose project without changing it.
@@ -1939,6 +2001,36 @@ cmd_status() {
 		printf 'ok      Website static artifact %s\n' "${WEBSITE_OUTPUT}"
 	else
 		printf 'pending Website static artifact (created by up)\n'
+	fi
+}
+
+print_runtime_source_mounts() {
+	local api_id web_id backend_mount frontend_mount backend_revision
+	api_id="$(compose ps -q api 2>/dev/null || true)"
+	web_id="$(compose ps -q web 2>/dev/null || true)"
+	backend_mount=""
+	frontend_mount=""
+	if [[ -n "${api_id}" ]]; then
+		backend_mount="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/opt/backend\"}}{{.Source}}{{end}}{{end}}' "${api_id}" 2>/dev/null || true)"
+	fi
+	if [[ -n "${web_id}" ]]; then
+		frontend_mount="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/app\"}}{{.Source}}{{end}}{{end}}' "${web_id}" 2>/dev/null || true)"
+	fi
+	hfl_print_section "Source mounts"
+	hfl_print_value "OSS source" "${ROOT}"
+	if [[ -n "${backend_mount}" ]]; then
+		hfl_print_value "OSS worktree" "${backend_mount%/src/backend}"
+		hfl_print_value "Backend mount" "${backend_mount}:/opt/backend"
+		backend_revision="$(extension_revision "${backend_mount%/src/backend}")"
+		hfl_print_value "OSS revision" "${backend_revision}"
+	else
+		hfl_print_value "OSS worktree" "not running"
+		hfl_print_value "Backend mount" "not running"
+	fi
+	if [[ -n "${frontend_mount}" ]]; then
+		hfl_print_value "Frontend mount" "${frontend_mount}:/app"
+	else
+		hfl_print_value "Frontend mount" "not running"
 	fi
 }
 
@@ -2219,6 +2311,11 @@ main() {
 		--extension-source)
 			require_value "$1" "${2:-}"
 			EXTENSION_SOURCES+=("$2")
+			shift 2
+			;;
+		--worktree-dir)
+			require_value "$1" "${2:-}"
+			resolve_worktree_dir "$2"
 			shift 2
 			;;
 		--public-url)

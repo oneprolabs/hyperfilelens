@@ -11,7 +11,7 @@ x-backend-environment: &backend-environment
   WATCHFILES_FORCE_POLLING: ${WATCHFILES_FORCE_POLLING:-true}
 
 x-backend-volumes: &backend-volumes
-  - ./src/backend:/opt/backend
+  - ${WORKTREE_DIR:-.}/src/backend:/opt/backend
   - ./deploy/bootstrap:/opt/bootstrap:ro
   # Language packs follow the product version synchronized by dev/stack.sh.
   - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/backend/lang-packs:ro
@@ -215,7 +215,7 @@ services:
       api:
         condition: service_healthy
     volumes:
-      - ./src/frontend:/app
+      - ${WORKTREE_DIR:-.}/src/frontend:/app
       - frontend-node-modules:/app/node_modules
       - ./build/website/public:/usr/share/nginx/website:ro
     healthcheck:
