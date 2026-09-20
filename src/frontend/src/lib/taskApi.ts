@@ -52,6 +52,26 @@ export type TaskActions = {
   can_force: boolean
 }
 
+export type TaskErrorContract = {
+  version: number
+  severity: 'error' | 'warning'
+  outcome: 'failed' | 'timeout' | 'partial' | 'warning'
+  summary: string
+  reasons: Array<{ code: string; detail: string; count?: number }>
+  suggestions: Array<{ code: string; detail: string }>
+  failed_step?: string | null
+  entities?: Array<{ id: string | number; name: string; type: string; error?: string }>
+  cleanup_complete?: boolean | null
+  cleanup_failures?: unknown[]
+  retained_resources?: string[]
+  skipped_items?: unknown
+  task_uuid: string
+  correlation_id?: string
+  error_code?: string | null
+  limited?: boolean
+  technical_detail?: unknown
+}
+
 export type TaskRow = {
   id: number
   organization_id: number | null
@@ -84,6 +104,7 @@ export type TaskRow = {
   } | null
   error_code?: string | null
   error_message?: string | null
+  error_details?: TaskErrorContract | null
   started_at?: string | null
   finished_at?: string | null
   created_at?: string

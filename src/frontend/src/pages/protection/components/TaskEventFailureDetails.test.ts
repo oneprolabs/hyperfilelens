@@ -135,7 +135,7 @@ describe('TaskEventFailureDetails', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('Showing 0 of 795 affected items.')
+    expect(wrapper.text()).toContain('Showing 0 reported items of 795; 795 items have no detailed record.')
     expect(wrapper.find('.task-event-failure__files').exists()).toBe(false)
   })
 
@@ -230,7 +230,7 @@ describe('TaskEventFailureDetails', () => {
     })
 
     expect(wrapper.text()).toContain('View 10 skipped items')
-    expect(wrapper.text()).toContain('Showing the first 10 of 20 skipped items.')
+    expect(wrapper.text()).toContain('Showing 10 reported skipped items of 20; 10 items have no detailed record.')
     expect(wrapper.findAll('.task-event-failure__files li')).toHaveLength(10)
     expect(wrapper.text()).toContain('cache/item-9.tmp')
     expect(wrapper.text()).not.toContain('cache/item-10.tmp')

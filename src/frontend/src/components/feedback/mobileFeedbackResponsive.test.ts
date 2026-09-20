@@ -24,10 +24,9 @@ describe('mobile feedback presentation', () => {
   it('turns error details into a mobile sheet with collapsed technical data', () => {
     expect(errorDetails).toContain('width="min(600px, calc(100vw - 32px))"')
     expect(errorDetails).toContain('modal-class="hfl-error-details-overlay"')
-    expect(errorDetails).toContain('class="hfl-error-details__section hfl-error-details__technical-mobile"')
+    expect(errorDetails).toContain('class="hfl-error-details__section hfl-error-details__technical-disclosure"')
     expect(errorDetails).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.hfl-error-details-overlay \.el-overlay-dialog\s*{[^}]*align-items:\s*flex-end;/)
     expect(errorDetails).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.hfl-error-details\.el-dialog\s*{[^}]*width:\s*100% !important;[^}]*border-radius:\s*18px 18px 0 0;/)
-    expect(errorDetails).toMatch(/\.hfl-error-details__technical-mobile\s*{[^}]*display:\s*none;/s)
-    expect(errorDetails).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.hfl-error-details__technical-mobile\s*{[^}]*display:\s*block;/)
+    expect(errorDetails).toMatch(/\.hfl-error-details__technical-disclosure\s*{/s)
   })
 })

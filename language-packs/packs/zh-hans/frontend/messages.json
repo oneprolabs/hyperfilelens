@@ -135,7 +135,14 @@
       "reasons": "可能的原因",
       "resolutions": "如何解决",
       "technical": "技术细节",
-      "copy": "复制错误详细信息"
+      "copy": "复制错误详细信息",
+      "openTask": "打开任务",
+      "monitorUnavailable": "无法确认任务状态",
+      "monitorReason": "暂时无法监控任务，任务可能仍在运行。",
+      "monitorSuggestion": "请检查连接并重新打开任务以获取最新状态，再决定是否重试操作。",
+      "limited": "此任务没有详细诊断信息。",
+      "affectedEntities": "受影响的对象",
+      "cleanup": "清理与跳过的对象"
     }
   },
   "account": {
@@ -254,22 +261,22 @@
   },
   "licenseQuota": {
     "organizations": "组织数",
-    "users": "成员",
-    "storageGb": "备份存储",
+    "users": "用户",
+    "storageGb": "存储空间（GiB）",
     "nodes": "节点（主机+代理）",
     "privateGateways": "私有数据网关",
     "publicGateways": "公共数据网关",
     "publicGatewayCapacity": "公共网关容量",
-    "aiRequests": "AI 用量",
-    "aiTokens": "AI 用量",
+    "aiRequests": "AI Token（累计）",
+    "aiTokens": "AI Token（累计）",
     "aiTokensHint": "所有 AI 助手运行消耗的累计总量，不按月重置。",
     "sourceHosts": "源端主机",
     "sourceNas": "源端 NAS",
     "sourceAgents": "代理主机",
     "objectStorage": "对象存储",
-    "targetNas": "目标 NAS",
+    "targetNas": "目标NAS",
     "standaloneDisk": "本地磁盘",
-    "protectedSources": "备份配置",
+    "protectedSources": "受保护的来源",
     "alertPolicies": "告警规则",
     "gatewaySelectFiles": "网关选择最大文件数",
     "gatewaySelectBytes": "网关选择最大字节数"
@@ -336,7 +343,7 @@
     "noRunningTasks": "当前无运行中任务",
     "storageTitle": "存储仓库占用",
     "noRepos": "暂无存储仓库",
-    "quotaTitle": "资源限制",
+    "quotaTitle": "授权配额与用量",
     "quotaAllUnlimited": "当前资源均不设上限。",
     "quotaUnavailable": "暂时无法获取额度信息。",
     "quotaOverLimit": "已超出上限",
@@ -1891,7 +1898,8 @@
       "backupTaskDrawerFieldTaskId": "任务 ID",
       "backupTaskDrawerFieldCurrentPhase": "当前阶段",
       "backupTaskDrawerFieldBackupDetail": "备份详情",
-      "backupTaskDrawerDemoHint": "这里展示所选备份任务的执行阶段与详情。"
+      "backupTaskDrawerDemoHint": "这里展示所选备份任务的执行阶段与详情。",
+      "sourceRemoved": "已移除"
     },
     "backupDetail": {
       "backToList": "返回备份列表",
@@ -3058,7 +3066,7 @@
       "addPageDesc": "定义可复用的 Skill，编写供 Agent 使用的 SKILL.md 指令。",
       "editTitle": "编辑 Skill",
       "editPageDesc": "更新 Skill 元数据与 SKILL.md 内容。",
-      "searchPlaceholder": "搜索技能名称或描述…",
+      "searchPlaceholder": "搜索 Skill、描述或内容…",
       "empty": "暂无 Skill，点击「添加」开始创建。",
       "emptyPlatform": "暂无平台 Skill。点击「添加 Skill」创建。",
       "colName": "名称",
@@ -3082,7 +3090,7 @@
       "saveFailed": "保存 Skill 失败。",
       "detailSectionBasics": "Skill 详情",
       "sectionBasics": "基础信息",
-      "sectionBasicsDesc": "设置此 Skill 的名称、描述与启停。",
+      "sectionBasicsDesc": "Skill 的名称、slug 与启用状态。",
       "sectionContent": "内容",
       "sectionContentDesc": "绑定到助手时使用的 SKILL.md 正文。",
       "fieldName": "名称",
@@ -3697,7 +3705,7 @@
       "connectionTestReady": "配置已在 {duration} 内验证完成，可以保存。"
     },
     "dataGateway": {
-      "colOrigin": "来源",
+      "colOrigin": "起源",
       "colOwner": "HFL 所有者",
       "colDefault": "公共违约",
       "defaultActive": "公共违约",
@@ -3838,7 +3846,7 @@
       "colIdentity": "知识源名称 / 路径",
       "colGateway": "Gateway",
       "colLinkedVersion": "快照",
-      "colRetrieval": "索引内容",
+      "colRetrieval": "检索增强",
       "versionLatest": "最新快照",
       "versionPinned": "固定 {id}",
       "colLearnStatus": "状态",
@@ -3984,7 +3992,7 @@
     "actionDelete": "删除",
     "publicIpHint": "(公网)",
     "emptyNodes": "暂无节点",
-    "emptyGateway": "暂无数据网关。点击“添加”进行部署。",
+    "emptyGateway": "暂无数据网关节点，请点击上方按钮进行部署。",
     "emptyProxyNodes": "暂无代理主机，请点击「添加」完成安装",
     "deleteConfirm": "确定要从控制台移除节点「{name}」吗？此操作不可撤销。",
     "deleteTitle": "移除节点",
@@ -4231,7 +4239,7 @@
     "nothingEligible": "所选节点均不符合操作条件。",
     "nothingEligibleOffline": "远程升级要求所选节点在线。请恢复连接，或选择一个节点并通过“维护”获取本地升级命令。",
     "nothingEligibleProxyBound": "有 {n} 个 Proxy 仍绑定资源，无法删除。",
-    "nothingEligibleWorkload": "有 {n} 个节点仍存在进行中的任务或资源依赖。",
+    "nothingEligibleWorkload": "有 {n} 个节点正在执行备份/恢复任务，无法操作。",
     "nothingEligibleInProgress": "有 {n} 个节点已有进行中的生命周期操作。",
     "nothingEligibleDiskFull": "{n} 节点没有足够的可用磁盘空间用于升级。",
     "confirmEligibleUpgrade": "即将升级 {n} 台节点吗？",
@@ -4268,7 +4276,7 @@
     "confirmImpactUpgrade": "升级过程中节点可能短暂不可用，相关任务可能暂停。",
     "confirmImpactRemove": "在线 Agent 将卸载，控制台记录将被移除。此操作不可撤销。",
     "cancelQueued": "取消排队",
-    "workloadBlocked": "该节点仍存在进行中的任务或资源依赖，请解决后重试。",
+    "workloadBlocked": "该节点正在执行备份或恢复，请先停止任务。",
     "workloadBlockedBackupRestore": "该节点正在执行备份或恢复任务，请等待任务完成后重试。",
     "workloadBlockedKnowledgeSource": "该 Data Gateway 仍被 Chat 或知识源使用，请先移除依赖资源再删除网关。",
     "workloadBlockedWorkspace": "该 Data Gateway 仍有受管 Chat 工作区，请移除相关 Chat 或等待清理完成后重试。",
@@ -5473,7 +5481,7 @@
       "unlimited": "无限制",
       "daysRemaining": "剩余 {n} 天",
       "machineCode": "机器码",
-      "limitsAndUsage": "资源用量",
+      "limitsAndUsage": "配额与用量",
       "overLimit": "已超出上限",
       "planLimit": "方案额度",
       "manualOverride": "手动覆盖",
@@ -5507,7 +5515,8 @@
         "downgrade": "降级",
         "revoked": "吊销",
         "machine_code": "提取识别码 (申请试用)"
-      }
+      },
+      "aiTokensLifetimeHint": "AI Token 按 AI 助手运行消耗累计，不按月重置。"
     }
   },
   "ops": {
@@ -5986,15 +5995,16 @@
           "macos_privacy_denied": "{count} 个受 macOS 隐私权限限制的项目",
           "permission_denied": "{count} 个权限不足的项目",
           "snapshot_errors": "{count} 个快照错误",
-          "source_resource_busy": "{count} 个源项目无法读取，源端报告设备或资源忙"
+          "source_resource_busy": "{count} 个源项目无法读取，源端报告设备或资源忙",
+          "file_locked": "{count} 个被其他进程锁定的文件"
         },
         "howToResolve": "解决方法",
         "viewAffectedFiles": "查看全部 {count} 个受影响文件",
-        "viewAffectedItems": "查看 {count} 个受影响项目",
+        "viewAffectedItems": "查看 {reportedCount} 个受影响项目",
         "viewOriginalError": "查看原始错误",
-        "failureItemsTruncated": "显示前 {reportedCount} 个，共 {count} 个受影响项目。",
-        "viewSkippedItems": "查看 {count} 个已跳过的项目",
-        "skippedItemsTruncated": "显示前 {reportedCount} 个，共 {count} 个已跳过项目。",
+        "failureItemsTruncated": "已显示 {reportedCount} 个项目，共 {count} 个；另有 {omittedCount} 个项目未提供详细信息。",
+        "viewSkippedItems": "查看 {reportedCount} 个已跳过项目",
+        "skippedItemsTruncated": "已显示 {reportedCount} 个已跳过项目，共 {count} 个；另有 {omittedCount} 个项目未提供详细信息。",
         "fileLockedReason": "被其他进程锁定",
         "readFailedReason": "文件无法读取",
         "remediation": {
@@ -6015,7 +6025,26 @@
         "macosPrivacyReason": "受到 macOS 隐私权限限制",
         "permissionDeniedReason": "权限不足",
         "unreadableDirectoryReason": "目录无法读取",
-        "sourceResourceBusyReason": "设备或资源忙"
+        "sourceResourceBusyReason": "设备或资源忙",
+        "errorCode": "错误代码",
+        "collapseAffectedItems": "收起受影响项目",
+        "collapseSkippedItems": "收起已跳过项目",
+        "failureTitle": "任务失败",
+        "warningTitle": "任务已完成，但有警告",
+        "taskFailed": "任务“{name}”失败。",
+        "taskCancelled": "任务“{name}”已取消。",
+        "failedDirectoriesReason": "{count} 个目录失败。",
+        "snapshotFailedTitle": "快照失败",
+        "snapshotPartialTitle": "快照部分完成",
+        "snapshotFailedForSource": "保护源“{source}”的快照失败。",
+        "snapshotSummary": "快照 {id} 失败。",
+        "snapshotFailedDirs": "{total} 个目录中有 {failed} 个遇到错误。",
+        "snapshotPartialForSource": "保护源“{source}”的快照部分完成。",
+        "snapshotPartialSummary": "快照 {id} 部分完成。",
+        "provisionFailedTitle": "配置下发失败",
+        "provisionFailedSummary": "“{name}”的配置下发失败。",
+        "provisionUpgradeAgent": "请升级源主机上的 Agent 后重试。",
+        "provisionConfigDiscarded": "多次失败后，备份配置已被丢弃。"
       },
       "resourceValue": {
         "s3": "对象存储",
@@ -6050,6 +6079,25 @@
         "proxy": "Proxy",
         "gateway": "Gateway",
         "source": "Agent"
+      },
+      "technicalDetailCopied": "技术详情已复制",
+      "cleanupFailuresCount": "{count} 个清理失败",
+      "retainedResourcesCount": "{count} 个保留资源",
+      "cleanupSuggestions": "处理建议",
+      "cleanupSuggestionsCount": "{count} 条处理建议",
+      "cleanupViewDetails": "查看详情",
+      "cleanupCollapseDetails": "收起详情",
+      "cleanupSuggestionCode": {
+        "review_cleanup": "检查清理",
+        "force_cleanup": "强制清理",
+        "retry": "重试",
+        "check_agent": "检查 Agent 连接"
+      },
+      "cleanupSuggestion": {
+        "review_cleanup": "请检查保留的资源，并在重试前完成剩余清理。",
+        "force_cleanup": "确认 Agent 在线后，从源工作流执行强制清理。",
+        "retry": "解决清理问题后重试此操作。",
+        "check_agent": "检查 Agent 连接后重试清理操作。"
       }
     },
     "alertsCenter": {
@@ -6832,7 +6880,8 @@
         "policy": "策略",
         "organization": "组织",
         "user": "用户",
-        "system": "系统"
+        "system": "系统",
+        "node": "节点"
       }
     }
   },
@@ -7068,7 +7117,7 @@
       "roles": "角色",
       "resources": "资源",
       "monitoringMonitor": "系统监控",
-      "monitoringLogs": "服务端日志",
+      "monitoringLogs": "日志",
       "monitoringAlerts": "事件",
       "monitoringIncidents": "事件",
       "monitoringHost": "系统健康状况",
@@ -7093,7 +7142,8 @@
       "platformReleasePackages": "发行包",
       "platformInstanceLicense": "实例许可证",
       "platformQuotaUsage": "配额管理",
-      "platformNotificationChannels": "通知通道"
+      "platformNotificationChannels": "通知通道",
+      "monitoringNodes": "节点"
     },
     "overview": {
       "title": "概览",
@@ -7208,12 +7258,13 @@
       "domainEmailOff": "邮件未配置",
       "domainSetupComplete": "配置完整",
       "domainAgentsBehind": "{count} 个 Agent 落后",
-      "openDomain": "查看"
+      "openDomain": "查看",
+      "subtitle": "平台运维与服务运行状况。"
     },
     "monitoring": {
       "monitorTitle": "系统监控",
       "monitorSubtitle": "监控 HyperFileLens 和 SourceLens 服务、主机、队列、存储和网络活动。",
-      "logsTitle": "服务端日志",
+      "logsTitle": "日志",
       "hostTitle": "系统运行状况",
       "systemHealthTitle": "系统运行状况",
       "scopeDeployment": "部署主机",
@@ -7346,7 +7397,24 @@
       "roleProxyHost": "代理主机",
       "emptyNotifications": "暂无失败通知",
       "emptyDeliveries": "暂无通知投递记录",
-      "platformLevel": "平台"
+      "platformLevel": "平台",
+      "colRole": "角色",
+      "colAgentVersion": "Agent 版本",
+      "emptyNodes": "暂无节点",
+      "logsSubtitle": "检索并关联 HyperFileLens 与 SourceLens 的运维日志。",
+      "hostSubtitle": "平台服务、部署主机、CPU、内存、磁盘、网络和 I/O。",
+      "nodesTitle": "节点",
+      "incidentsSubtitle": "监控、调查和处理平台范围的告警。",
+      "nodesSubtitle": "监控连接的节点、代理运行状况、版本和运行时活动。",
+      "deliveriesSubtitle": "跟踪平台通知传递、失败、重试和相关事件。",
+      "totalNodes": "节点总数",
+      "onlineNodes": "在线节点",
+      "offlineNodes": "离线节点",
+      "outdatedAgents": "待升级 Agent",
+      "latestAgent": "最新 Agent：{version}",
+      "searchNodes": "搜索节点",
+      "filterRole": "角色",
+      "agentDetails": "Agent"
     },
     "alertCenter": {
       "policiesTitle": "告警规则",
@@ -7364,24 +7432,26 @@
       "relatedChannels": "通知渠道",
       "relatedPolicies": "告警规则",
       "relatedDeliveries": "投递历史",
-      "sensitiveConfigHint": "凭证、Webhook URL、收件人地址和令牌在管理控制台中已脱敏。请在支持模式下打开客户账户以查看租户侧配置。"
+      "sensitiveConfigHint": "凭证、Webhook URL、收件人地址和令牌在管理控制台中已脱敏。请在支持模式下打开客户账户以查看租户侧配置。",
+      "policiesSubtitle": "定义造成操作事件的平台范围条件。",
+      "channelsSubtitle": "配置告警规则和平台通知使用的目标。"
     },
     "engineGateway": {
-      "addTitle": "添加公共数据网关",
+      "addTitle": "添加数据网关",
       "addSubtitle": "为平台提供的公共数据网关发出短期注册命令。",
-      "addAction": "添加公共数据网关",
-      "actions": "更多操作",
+      "addAction": "添加数据网关",
+      "actions": "数据网关操作",
       "columnActions": "操作",
       "viewDetails": "查看详情",
-      "colCapacity": "工作区配额",
-      "editCapacity": "编辑配额",
-      "capacityDialogTitle": "编辑工作区配额",
-      "capacityDialogHint": "此公共数据网关的基础配额。组织配额仍会限制每个组织可使用的量。",
-      "capacityLabel": "配额",
+      "colCapacity": "工作区容量",
+      "editCapacity": "编辑容量",
+      "capacityDialogTitle": "编辑网关容量",
+      "capacityDialogHint": "此公共数据网关的基础设施容量；各组织的可用容量仍受组织配额限制。",
+      "capacityLabel": "容量",
       "capacityUnlimited": "无限",
       "capacityUsedIncomplete": "某些会话的使用可能不完整。",
-      "capacitySaved": "工作区配额已更新。",
-      "capacitySaveFailed": "更新工作区配额失败。",
+      "capacitySaved": "网关容量已更新。",
+      "capacitySaveFailed": "更新网关容量失败。",
       "tokenActive": "注册命令激活",
       "tokenExpired": "注册命令已过期",
       "tokenExpires": "{time} 后过期",
@@ -7399,13 +7469,13 @@
       "addModel": "添加 AI 模型",
       "modelActions": "更多操作",
       "addKnowledgeSource": "添加知识源",
-      "knowledgeSourceActions": "更多操作",
+      "knowledgeSourceActions": "知识源操作",
       "addAssistant": "添加助手",
-      "assistantActions": "更多操作",
+      "assistantActions": "助手操作",
       "addSkill": "添加技能",
-      "skillActions": "更多操作",
+      "skillActions": "技能操作",
       "addMcpServer": "添加 MCP 服务器",
-      "mcpServerActions": "更多操作"
+      "mcpServerActions": "MCP 服务器操作"
     },
     "integrations": {
       "title": "服务连接",
@@ -7577,7 +7647,7 @@
       "title": "实例许可证",
       "subtitle": "激活部署授权并查看实例级资源上限。",
       "currentTitle": "当前许可证",
-      "activateTitle": "激活许可证",
+      "activateTitle": "激活",
       "historyTitle": "许可证历史",
       "historyEmpty": "暂无许可证历史记录。",
       "historyLicenseKey": "许可证密钥",
@@ -7590,7 +7660,7 @@
       "poolSourceLicense": "使用激活的实例许可证。",
       "poolSourceInactive": "当前安装的许可证未生效。企业功能已停用；社区版工作流仍可使用。",
       "poolKindPlatformCount": "平台数量",
-      "poolKindOrgPool": "共享资源池",
+      "poolKindOrgPool": "共享用量",
       "poolKind": "类型",
       "poolExceeded": "一个或多个计量项已超过当前实例授权。请释放容量或提高许可证额度后再创建资源。",
       "status": "状态",
@@ -7612,7 +7682,10 @@
       "poolCap": "上限",
       "poolUsed": "已使用",
       "poolRemaining": "剩余",
-      "openQuotaUsage": "查看组织使用情况"
+      "openQuotaUsage": "查看组织使用情况",
+      "grantTitle": "部署授权",
+      "poolTitle": "实例池",
+      "poolSourceDefault": "使用内置社区额度。"
     },
     "quotaUsage": {
       "title": "配额管理",
@@ -7859,7 +7932,7 @@
         "debugOn": "开启",
         "debugOff": "关闭",
         "instanceHealth": "实例健康",
-        "healthTitle": "基础设施健康",
+        "healthTitle": "服务健康",
         "probeApi": "API",
         "probeDatabase": "数据库",
         "probeRedis": "Redis",
@@ -7883,7 +7956,11 @@
         "statusUnavailable": "不可用",
         "statusUnknown": "未知",
         "emptyHealth": "暂无健康数据",
-        "notConfigured": "未配置"
+        "notConfigured": "未配置",
+        "effectiveTitle": "生效配置",
+        "sourcesTitle": "配置来源",
+        "emptyEffective": "暂无生效配置",
+        "emptySources": "暂无来源信息"
       }
     },
     "account": {
@@ -7969,7 +8046,8 @@
       "linkAlerts": "查看告警",
       "linkTasks": "查看任务",
       "linkNodes": "查看节点",
-      "linkNotifications": "查看通知"
+      "linkNotifications": "查看通知",
+      "subtitle": "查看客户组织、资源运行状况和运维状态。"
     },
     "users": {
       "pageTitle": "用户管理",

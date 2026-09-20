@@ -9,6 +9,15 @@ import {
 import { useBackupWizardSourcePendingOps } from './useBackupWizardSourcePendingOps'
 
 describe('backup wizard pending source storage', () => {
+  it('redacts diagnostics before persisting while retaining task correlation', () => {
+    markWizardPendingBySourceIds(['agent:9'], {
+      kind: 'delete_failed', taskUuid: 'task-9',
+      errorMessage: 'password=private-value',
+      failureDetails: { title: 'Failed', summary: 'token=private-token', rawDetail: { password: 'raw-private' } },
+    })
+    expect(sessionStorage.getItem(WIZARD_PENDING_STORAGE_KEY)).not.toMatch(/private-value|private-token|raw-private/)
+    expect(readWizardPendingSourceOps().get('agent:9')?.taskUuid).toBe('task-9')
+  })
   beforeEach(() => {
     window.sessionStorage.clear()
   })
@@ -60,6 +69,10 @@ describe('backup wizard pending source storage', () => {
     const op = readWizardPendingSourceOps().get('agent:9')
     expect(op?.failureDetails?.rawDetail).toEqual({ task_uuid: 'task-uuid-9' })
     expect(op?.failureDetails?.reasons).toEqual(['Agent uninstall callback failed'])
+    const pending = useBackupWizardSourcePendingOps({ t: ((key: string) => key) as never })
+    expect(pending.pendingDeleteTasks()).toEqual([
+      { sourceId: 'agent:9', taskUuid: 'task-uuid-9', startedAt: undefined },
+    ])
   })
 
   it('reconciles a failed task whose terminal details were not persisted', () => {

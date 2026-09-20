@@ -20,6 +20,9 @@ export type FlowSourceDisplayLabels = {
   online: string
   offline: string
   registered: string
+  removing?: string
+  removeFailed?: string
+  removed?: string
   localAgent: string
 }
 
@@ -82,14 +85,21 @@ export function flowSourceNasAccessTitle(row: FlowSourceRow) {
 
 export function flowSourceReadyStatus(
   row: FlowSourceRow,
-  labels: Pick<FlowSourceDisplayLabels, 'registered'>,
+  labels: Pick<FlowSourceDisplayLabels, 'registered' | 'removing' | 'removeFailed' | 'removed'>,
 ): FlowReadyStatus {
+  const translatedStatus = row.status === 'removing'
+    ? labels.removing
+    : row.status === 'remove_failed'
+      ? labels.removeFailed
+      : row.status === 'removed'
+        ? labels.removed
+        : undefined
   const label = row.status
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
   return {
-    label: row.status === 'active' ? labels.registered : label,
+    label: row.status === 'active' ? labels.registered : translatedStatus || label,
     tag: row.status === 'active'
       ? 'success'
       : row.status === 'failed' || row.status === 'upgrade_failed' || row.status === 'deregistration_failed' || row.status === 'error'

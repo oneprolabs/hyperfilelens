@@ -11,6 +11,7 @@ export type ToastOptions = {
   duration?: number
   copyText?: string
   details?: ErrorDetailsPayload
+  action?: { label: string; onClick: () => void | Promise<void> }
   onClose?: () => void
 }
 
@@ -91,6 +92,7 @@ export function pushToast(options: ToastOptions) {
     existing.message = options.message
     existing.copyText = options.copyText
     existing.details = options.details
+    existing.action = options.action
     existing.duration = duration
     existing.remainingMs = duration
     existing.repeatCount += 1

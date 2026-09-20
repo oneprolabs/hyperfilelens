@@ -135,7 +135,14 @@
       "reasons": "Posibles razones",
       "resolutions": "Cómo resolver",
       "technical": "Detalles técnicos",
-      "copy": "Copiar los detalles del error"
+      "copy": "Copiar los detalles del error",
+      "openTask": "Abrir tarea",
+      "monitorUnavailable": "No se puede confirmar el estado de la tarea",
+      "monitorReason": "La supervisión no está disponible. La tarea podría seguir ejecutándose.",
+      "monitorSuggestion": "Compruebe la conexión y vuelva a abrir la tarea para consultar su estado antes de repetir la operación.",
+      "limited": "No hay información de diagnóstico detallada para esta tarea.",
+      "affectedEntities": "Entidades afectadas",
+      "cleanup": "Limpieza y elementos omitidos"
     }
   },
   "account": {
@@ -254,22 +261,22 @@
   },
   "licenseQuota": {
     "organizations": "Organizaciones",
-    "users": "Miembros",
-    "storageGb": "Almacenamiento de copias",
+    "users": "Usuarios",
+    "storageGb": "Almacenamiento (GiB)",
     "nodes": "Nodos (hosts + agentes)",
     "privateGateways": "Puertas de enlace de datos privadas",
     "publicGateways": "Puertas de enlace de datos públicas",
     "publicGatewayCapacity": "Capacidad de acceso público",
-    "aiRequests": "Uso de IA",
-    "aiTokens": "Uso de IA",
+    "aiRequests": "Tokens de IA (acumulados)",
+    "aiTokens": "Tokens de IA (acumulados)",
     "aiTokensHint": "Total acumulado de tokens de todas las ejecuciones de Copiloto de IA (no se restablece cada mes).",
     "sourceHosts": "Hosts de origen",
     "sourceNas": "Orígenes NAS",
-    "sourceAgents": "Hosts proxy",
+    "sourceAgents": "Agents de origen",
     "objectStorage": "Almacenamiento de objetos",
     "targetNas": "Destino NAS",
-    "standaloneDisk": "Discos locales",
-    "protectedSources": "Configuraciones de copia",
+    "standaloneDisk": "Disco local",
+    "protectedSources": "Orígenes protegidos",
     "alertPolicies": "Reglas de alerta",
     "gatewaySelectFiles": "Máximo de archivos seleccionables por Gateway",
     "gatewaySelectBytes": "Tamaño máximo seleccionable por Gateway"
@@ -336,7 +343,7 @@
     "noRunningTasks": "No hay tareas en ejecución",
     "storageTitle": "Uso del repositorio",
     "noRepos": "No hay repositorios configurados.",
-    "quotaTitle": "Límites de recursos",
+    "quotaTitle": "Cuota y uso de la licencia",
     "quotaAllUnlimited": "Todos los límites actuales de recursos son ilimitados.",
     "quotaUnavailable": "La información de cuotas no está disponible temporalmente.",
     "quotaOverLimit": "Límite excedido",
@@ -1891,7 +1898,8 @@
       "backupTaskDrawerFieldTaskId": "ID de tarea",
       "backupTaskDrawerFieldCurrentPhase": "Fase actual",
       "backupTaskDrawerFieldBackupDetail": "Copia de seguridad",
-      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada."
+      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada.",
+      "sourceRemoved": "Eliminado"
     },
     "backupDetail": {
       "backToList": "Volver a copias de seguridad",
@@ -3058,7 +3066,7 @@
       "addPageDesc": "Defina una Habilidad reutilizable con instrucciones SKILL.md para agentes auxiliares.",
       "editTitle": "Editar Habilidad",
       "editPageDesc": "Actualizar Metadatos de Habilidad y contenido de SKILL.md.",
-      "searchPlaceholder": "Buscar nombre o descripción de la habilidad…",
+      "searchPlaceholder": "Buscar habilidad, descripción o contenido...",
       "empty": "Todavía sin habilidades. Haga clic en Añadir para crear uno.",
       "emptyPlatform": "Aún no hay Skills de plataforma. Haga clic en Añadir Skill para crear uno.",
       "colName": "Nombre",
@@ -3082,7 +3090,7 @@
       "saveFailed": "No se pudo guardar la habilidad.",
       "detailSectionBasics": "Detalles de la habilidad",
       "sectionBasics": "Conceptos básicos",
-      "sectionBasicsDesc": "Nombre, descripción y habilitación de este Skill.",
+      "sectionBasicsDesc": "Nombre, identificador y estado de activación de esta habilidad.",
       "sectionContent": "Contenido",
       "sectionContentDesc": "SKILL.md cuerpo utilizado cuando la habilidad está ligada a un asistente.",
       "fieldName": "Nombre",
@@ -3697,7 +3705,7 @@
       "connectionTestReady": "Configuración verificada en {duration} y lista para guardar."
     },
     "dataGateway": {
-      "colOrigin": "Fuente",
+      "colOrigin": "Origen",
       "colOwner": "Propietario de HFL",
       "colDefault": "Predeterminado público",
       "defaultActive": "Predeterminado público",
@@ -3838,7 +3846,7 @@
       "colIdentity": "Fuente de conocimiento / ruta",
       "colGateway": "Gateway",
       "colLinkedVersion": "Instantánea",
-      "colRetrieval": "Contenido indexado",
+      "colRetrieval": "Recuperación",
       "versionLatest": "Últimas",
       "versionPinned": "Fijada: {id}",
       "colLearnStatus": "Estado",
@@ -3955,7 +3963,8 @@
       "groupGovernance": "Gobernanza",
       "nodes": "Nodos",
       "repositories": "Destinos de recuperación ante desastres"
-    }
+    },
+    "nodes": {}
   },
   "nodesPage": {
     "deployNew": "Despliegue nuevo nodo",
@@ -3984,7 +3993,7 @@
     "actionDelete": "Eliminar",
     "publicIpHint": "(pública)",
     "emptyNodes": "Todavía no hay nodos.",
-    "emptyGateway": "Aún no hay puertas de enlace de datos. Haga clic en Agregar para desplegar una.",
+    "emptyGateway": "Aún no hay nodos de puerta de enlace de datos. Utilice el botón de arriba para desplegar una puerta de enlace de datos.",
     "emptyProxyNodes": "Aún no hay hosts proxy. Haga clic en Añadir para instalar uno.",
     "deleteConfirm": "Quitar el nodo \"{name}\" de la consola? Esto no se puede deshacer.",
     "deleteTitle": "Quitar Nodo",
@@ -4231,7 +4240,7 @@
     "nothingEligible": "No hay nodos seleccionados son elegibles para esta operación.",
     "nothingEligibleOffline": "La actualización remota requiere que los nodos seleccionados estén en línea. Restablezca la conexión o seleccione un nodo y use Mantenimiento para obtener un comando de actualización local.",
     "nothingEligibleProxyBound": "{n} proxy node(s) todavía tiene recursos consolidados y no se puede eliminar.",
-    "nothingEligibleWorkload": "{n} nodo(s) todavía tienen tareas activas o dependencias de recursos.",
+    "nothingEligibleWorkload": "{n} node(s) están bloqueados por ejecutar tareas de copia de seguridad o restauración.",
     "nothingEligibleInProgress": "{n} node(s) ya tiene una operación de ciclo de vida en curso.",
     "nothingEligibleDiskFull": "{n} node(s) no tienen suficiente espacio de disco para la actualización.",
     "confirmEligibleUpgrade": "Actualizar {n} seleccionado nodo(s)?",
@@ -4268,7 +4277,7 @@
     "confirmImpactUpgrade": "Los nodos pueden no estar disponibles brevemente durante la actualización; las tareas relacionadas pueden detenerse.",
     "confirmImpactRemove": "Los agentes en línea se desinstalarán. Se eliminarán los registros de la consola. Esto no se puede deshacer.",
     "cancelQueued": "Cancelar en cola",
-    "workloadBlocked": "Este nodo todavía tiene tareas activas o dependencias de recursos. Resuélvalas y vuelva a intentarlo.",
+    "workloadBlocked": "Hay una copia de seguridad o restauración en curso en este nodo. Detenga primero la tarea.",
     "workloadBlockedBackupRestore": "Este nodo tiene tareas de copia de seguridad o restauración en curso. Espere a que finalicen y vuelva a intentarlo.",
     "workloadBlockedKnowledgeSource": "Este Data Gateway todavía lo usa un Chat o una fuente de conocimiento. Elimine el recurso dependiente antes de quitar el gateway.",
     "workloadBlockedWorkspace": "Este Data Gateway todavía tiene un espacio de trabajo de Chat administrado. Elimine el Chat relacionado o espere a que termine la limpieza y vuelva a intentarlo.",
@@ -5473,7 +5482,7 @@
       "unlimited": "Ilimitado",
       "daysRemaining": "Quedan {n} días",
       "machineCode": "Código de máquina",
-      "limitsAndUsage": "Uso de recursos",
+      "limitsAndUsage": "Límites y uso",
       "overLimit": "Límite excedido",
       "planLimit": "Plan",
       "manualOverride": "Anulación manual",
@@ -5507,7 +5516,8 @@
         "downgrade": "Reducción",
         "revoked": "Revocado",
         "machine_code": "Identificación obtenida (solicitud de prueba)"
-      }
+      },
+      "aiTokensLifetimeHint": "Los tokens de IA son un total acumulado de todas las ejecuciones de Copiloto de IA; no se restablecen cada mes."
     }
   },
   "ops": {
@@ -5986,15 +5996,16 @@
           "macos_privacy_denied": "{count} elementos bloqueados por la privacidad de macOS",
           "permission_denied": "{count} elementos bloqueados por permisos",
           "snapshot_errors": "{count} errores de instantánea",
-          "source_resource_busy": "{count} elementos de origen no se pudieron leer porque el origen informó que el dispositivo o recurso está ocupado"
+          "source_resource_busy": "{count} elementos de origen no se pudieron leer porque el origen informó que el dispositivo o recurso está ocupado",
+          "file_locked": "{count} archivos bloqueados por otro proceso"
         },
         "howToResolve": "Cómo resolverlo",
         "viewAffectedFiles": "Ver los {count} archivos afectados",
-        "viewAffectedItems": "Ver {count} elementos afectados",
+        "viewAffectedItems": "Ver {reportedCount} elementos afectados",
         "viewOriginalError": "Ver error original",
-        "failureItemsTruncated": "Se muestran los primeros {reportedCount} de {count} elementos afectados.",
-        "viewSkippedItems": "Ver {count} elementos omitidos",
-        "skippedItemsTruncated": "Se muestran los primeros {reportedCount} de {count} elementos omitidos.",
+        "failureItemsTruncated": "Se muestran {reportedCount} elementos informados de {count}; {omittedCount} no tienen detalles.",
+        "viewSkippedItems": "Ver {reportedCount} elementos omitidos",
+        "skippedItemsTruncated": "Se muestran {reportedCount} elementos omitidos informados de {count}; {omittedCount} no tienen detalles.",
         "fileLockedReason": "Bloqueado por otro proceso",
         "readFailedReason": "No se pudo leer el archivo",
         "remediation": {
@@ -6015,7 +6026,26 @@
         "macosPrivacyReason": "Bloqueado por los permisos de privacidad de macOS",
         "permissionDeniedReason": "Permiso denegado",
         "unreadableDirectoryReason": "No se pudo leer el directorio",
-        "sourceResourceBusyReason": "Dispositivo o recurso ocupado"
+        "sourceResourceBusyReason": "Dispositivo o recurso ocupado",
+        "errorCode": "Código de error",
+        "collapseAffectedItems": "Ocultar elementos afectados",
+        "collapseSkippedItems": "Ocultar elementos omitidos",
+        "failureTitle": "La tarea falló",
+        "warningTitle": "Tarea completada con advertencias",
+        "taskFailed": "La tarea «{name}» falló.",
+        "taskCancelled": "La tarea «{name}» se canceló.",
+        "failedDirectoriesReason": "Fallaron {count} directorios.",
+        "snapshotFailedTitle": "La instantánea falló",
+        "snapshotPartialTitle": "Instantánea completada parcialmente",
+        "snapshotFailedForSource": "La instantánea del origen «{source}» falló.",
+        "snapshotSummary": "La instantánea {id} falló.",
+        "snapshotFailedDirs": "Se produjeron errores en {failed} de {total} directorios.",
+        "snapshotPartialForSource": "La instantánea del origen «{source}» se completó parcialmente.",
+        "snapshotPartialSummary": "La instantánea {id} se completó parcialmente.",
+        "provisionFailedTitle": "El aprovisionamiento falló",
+        "provisionFailedSummary": "El aprovisionamiento de «{name}» falló.",
+        "provisionUpgradeAgent": "Actualice el agente en el host de origen y vuelva a intentarlo.",
+        "provisionConfigDiscarded": "La configuración de copia de seguridad se descartó tras varios fallos."
       },
       "resourceValue": {
         "s3": "Almacenamiento de objetos",
@@ -6050,7 +6080,26 @@
         "proxy": "Proxy",
         "gateway": "Gateway",
         "source": "Agent"
-      }
+      },
+      "cleanupFailuresCount": "{count} fallos de limpieza",
+      "retainedResourcesCount": "{count} recursos retenidos",
+      "cleanupSuggestions": "Acciones recomendadas",
+      "cleanupSuggestionsCount": "{count} acciones recomendadas",
+      "cleanupViewDetails": "Ver detalles",
+      "cleanupCollapseDetails": "Ocultar detalles",
+      "cleanupSuggestionCode": {
+        "review_cleanup": "Revisar limpieza",
+        "force_cleanup": "Limpieza forzada",
+        "retry": "Reintentar",
+        "check_agent": "Comprobar conexión del Agent"
+      },
+      "cleanupSuggestion": {
+        "review_cleanup": "Revise los recursos retenidos y complete la limpieza restante antes de reintentar.",
+        "force_cleanup": "Verifique que el Agent esté conectado y ejecute la limpieza forzada desde el flujo del origen.",
+        "retry": "Resuelva el problema de limpieza indicado y vuelva a intentarlo.",
+        "check_agent": "Compruebe la conexión del Agent y vuelva a intentar la limpieza."
+      },
+      "technicalDetailCopied": "Detalles técnicos copiados"
     },
     "alertsCenter": {
       "common": {
@@ -6832,7 +6881,8 @@
         "policy": "Política",
         "organization": "Organización",
         "user": "Usuario",
-        "system": "Sistema"
+        "system": "Sistema",
+        "node": "Nodo"
       }
     }
   },
@@ -7068,7 +7118,7 @@
       "roles": "Roles",
       "resources": "Recursos",
       "monitoringMonitor": "Supervisión del sistema",
-      "monitoringLogs": "Registros del servidor",
+      "monitoringLogs": "Registros",
       "monitoringAlerts": "Incidentes",
       "monitoringIncidents": "Incidentes",
       "monitoringHost": "Estado del sistema",
@@ -7093,7 +7143,8 @@
       "platformReleasePackages": "Paquetes de versión",
       "platformInstanceLicense": "Licencia de instancia",
       "platformQuotaUsage": "Gestión de cuotas",
-      "platformNotificationChannels": "Canales de notificación"
+      "platformNotificationChannels": "Canales de notificación",
+      "monitoringNodes": "Nodos"
     },
     "overview": {
       "title": "Resumen",
@@ -7208,12 +7259,13 @@
       "domainEmailOff": "Correo no configurado",
       "domainSetupComplete": "Configuración completa",
       "domainAgentsBehind": "{count} agents desactualizados",
-      "openDomain": "Ver"
+      "openDomain": "Ver",
+      "subtitle": "Operaciones de plataforma y estado de los servicios."
     },
     "monitoring": {
       "monitorTitle": "Supervisión del sistema",
       "monitorSubtitle": "Supervise los servicios de HyperFileLens y SourceLens, los hosts, las colas, el almacenamiento y la actividad de red.",
-      "logsTitle": "Registros del servidor",
+      "logsTitle": "Registros",
       "hostTitle": "Estado del sistema",
       "systemHealthTitle": "Estado del sistema",
       "scopeDeployment": "Hosts de despliegue",
@@ -7265,12 +7317,12 @@
       "searchDeliveries": "Entregas de búsqueda",
       "filterStatus": "Estado",
       "filterSeverity": "Severidad",
-      "filterAccount": "Organización",
+      "filterAccount": "Cuenta",
       "filterTaskType": "Tipo de tarea",
       "filterChannel": "Canal",
       "filterEventType": "Tipo de evento",
       "resetFilters": "Restablecer",
-      "account": "Organización",
+      "account": "Cuenta",
       "incident": "Incidente",
       "node": "Nodo",
       "notification": "Notificación",
@@ -7346,7 +7398,24 @@
       "roleProxyHost": "Host proxy",
       "emptyNotifications": "No se han encontrado notificaciones fallidas",
       "emptyDeliveries": "No se han encontrado entregas de notificación",
-      "platformLevel": "Plataforma"
+      "platformLevel": "Plataforma",
+      "logsSubtitle": "Buscar y correlacionar los registros operativos HyperFileLens y SourceLens.",
+      "hostSubtitle": "Servicios de plataforma, hosts de despliegue, CPU, memoria, disco, red y I/O.",
+      "nodesTitle": "Nodos",
+      "incidentsSubtitle": "Supervise, investigue y resuelva alertas en toda la plataforma.",
+      "nodesSubtitle": "Supervisar los nodos conectados, la salud de agente, las versiones y la actividad de tiempo de ejecución.",
+      "deliveriesSubtitle": "Seguimiento de la notificación de la plataforma, fallos, registros y eventos relacionados.",
+      "totalNodes": "Total de nodos",
+      "onlineNodes": "Nodos en línea",
+      "offlineNodes": "Nodos fuera de línea",
+      "outdatedAgents": "Agentes anticuados",
+      "latestAgent": "Último Agent: {version}",
+      "searchNodes": "Números de búsqueda",
+      "filterRole": "Rol",
+      "agentDetails": "Agent",
+      "colRole": "Rol",
+      "colAgentVersion": "Versión del agente",
+      "emptyNodes": "No hay nodos encontrados"
     },
     "alertCenter": {
       "policiesTitle": "Reglas de alerta",
@@ -7364,24 +7433,26 @@
       "relatedChannels": "Canales de notificación",
       "relatedPolicies": "Políticas de alerta",
       "relatedDeliveries": "Historial de entregas",
-      "sensitiveConfigHint": "Las credenciales, las URL de webhook, las direcciones de destinatarios y los tokens se ocultan en la Consola de administración. Abra la cuenta del cliente en modo de soporte para revisar la configuración del inquilino."
+      "sensitiveConfigHint": "Las credenciales, las URL de webhook, las direcciones de destinatarios y los tokens se ocultan en la Consola de administración. Abra la cuenta del cliente en modo de soporte para revisar la configuración del inquilino.",
+      "policiesSubtitle": "Definir las condiciones de toda la plataforma que crean incidentes operacionales.",
+      "channelsSubtitle": "Configurar los destinos utilizados por reglas de alerta y notificaciones de plataformas."
     },
     "engineGateway": {
-      "addTitle": "Añadir puerta de enlace de datos pública",
+      "addTitle": "Añadir puerta de enlace de datos",
       "addSubtitle": "Emita un comando de registro temporal para una puerta de enlace de datos pública proporcionada por la plataforma.",
-      "addAction": "Añadir puerta de enlace de datos pública",
-      "actions": "Más acciones",
+      "addAction": "Añadir puerta de enlace de datos",
+      "actions": "Acciones de la puerta de enlace de datos",
       "columnActions": "Acciones",
       "viewDetails": "Ver detalles",
-      "colCapacity": "Cuota del espacio de trabajo",
-      "editCapacity": "Editar cuota",
-      "capacityDialogTitle": "Editar cuota del espacio de trabajo",
-      "capacityDialogHint": "Cuota de infraestructura para esta puerta de enlace de datos pública. Las cuotas de organización siguen limitando cuánto puede consumir cada organización.",
-      "capacityLabel": "Cuota",
+      "colCapacity": "Capacidad en el espacio de trabajo",
+      "editCapacity": "Editar capacidad",
+      "capacityDialogTitle": "Editar capacidad de acceso",
+      "capacityDialogHint": "Capacidad de infraestructura para esta puerta de enlace de datos pública. Las cuotas de org todavía limitan cuánto puede consumir cada organización.",
+      "capacityLabel": "Capacidad",
       "capacityUnlimited": "Ilimitado",
       "capacityUsedIncomplete": "El uso puede ser incompleto para algunas sesiones.",
-      "capacitySaved": "Cuota del espacio de trabajo actualizada.",
-      "capacitySaveFailed": "No se pudo actualizar la cuota del espacio de trabajo.",
+      "capacitySaved": "Capacidad de entrada actualizada.",
+      "capacitySaveFailed": "No se pudo actualizar la capacidad del gateway.",
       "tokenActive": "Comando de inscripción activo",
       "tokenExpired": "Comando de inscripción expirado",
       "tokenExpires": "Caduca: {time}",
@@ -7399,13 +7470,13 @@
       "addModel": "Añadir modelo IA",
       "modelActions": "Más acciones",
       "addKnowledgeSource": "Añadir fuente de conocimiento",
-      "knowledgeSourceActions": "Más acciones",
+      "knowledgeSourceActions": "Acciones de fuentes de conocimiento",
       "addAssistant": "Añadir asistente",
-      "assistantActions": "Más acciones",
+      "assistantActions": "Acciones del asistente",
       "addSkill": "Añadir Habilidad",
-      "skillActions": "Más acciones",
+      "skillActions": "Acciones de Habilidad",
       "addMcpServer": "Añadir MCP Server",
-      "mcpServerActions": "Más acciones"
+      "mcpServerActions": "Acciones del servidor MCP"
     },
     "integrations": {
       "title": "Conexiones de servicio",
@@ -7577,7 +7648,7 @@
       "title": "Licencia de instancia",
       "subtitle": "Active la asignación de despliegue y revise los límites de recursos de toda la instancia.",
       "currentTitle": "Licencia actual",
-      "activateTitle": "Activar licencia",
+      "activateTitle": "Activar",
       "historyTitle": "Historial de licencias",
       "historyEmpty": "No hay historial de licencias.",
       "historyLicenseKey": "Clave de licencia",
@@ -7590,7 +7661,7 @@
       "poolSourceLicense": "Se utiliza la licencia de instancia activa.",
       "poolSourceInactive": "La licencia instalada es inactiva. Las características empresariales están desactivadas; los flujos de trabajo de la comunidad siguen disponibles.",
       "poolKindPlatformCount": "Recuento de la plataforma",
-      "poolKindOrgPool": "Grupo de recursos compartido",
+      "poolKindOrgPool": "Uso compartido",
       "poolKind": "Tipo",
       "poolExceeded": "Uno o más medidores superan el derecho de la instancia activa. Libere capacidad o aumente el límite de la licencia antes de crear más recursos.",
       "status": "Estado",
@@ -7612,7 +7683,10 @@
       "poolCap": "Límite",
       "poolUsed": "Usado",
       "poolRemaining": "Restante",
-      "openQuotaUsage": "Ver el uso de la organización"
+      "openQuotaUsage": "Ver el uso de la organización",
+      "grantTitle": "Asignación de despliegue",
+      "poolTitle": "Grupo de capacidad de la instancia",
+      "poolSourceDefault": "Se utiliza la capacidad integrada de la edición Community hasta activar una licencia firmada."
     },
     "quotaUsage": {
       "title": "Gestión de cuotas",
@@ -7859,7 +7933,7 @@
         "debugOn": "Activado",
         "debugOff": "Desactivado",
         "instanceHealth": "Estado de la instancia",
-        "healthTitle": "Estado de la infraestructura",
+        "healthTitle": "Estado de los servicios",
         "probeApi": "API",
         "probeDatabase": "Base de datos",
         "probeRedis": "Redis",
@@ -7883,7 +7957,11 @@
         "statusUnavailable": "No disponible",
         "statusUnknown": "Desconocido",
         "emptyHealth": "No hay datos de salud",
-        "notConfigured": "No configurado"
+        "notConfigured": "No configurado",
+        "effectiveTitle": "Configuración efectiva",
+        "sourcesTitle": "Fuentes de configuración",
+        "emptyEffective": "No hay datos de configuración efectiva",
+        "emptySources": "No hay metadatos de origen"
       }
     },
     "account": {
@@ -7969,7 +8047,8 @@
       "linkAlerts": "Ver alertas",
       "linkTasks": "Ver tareas",
       "linkNodes": "Ver nodos",
-      "linkNotifications": "Ver notificaciones"
+      "linkNotifications": "Ver notificaciones",
+      "subtitle": "Consulte las organizaciones de clientes, el estado de sus recursos y su situación operativa."
     },
     "users": {
       "pageTitle": "Usuarios",

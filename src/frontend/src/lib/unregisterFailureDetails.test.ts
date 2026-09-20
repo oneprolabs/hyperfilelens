@@ -23,6 +23,36 @@ const i18n = createI18n({
 const t = i18n.global.t
 
 describe('unregisterFailureToErrorDetails', () => {
+  it('uses the persisted task contract across toast, retry and task detail entry points', () => {
+    const details = unregisterFailureToErrorDetails({
+      t, sourceId: 'agent:1', sourceName: 'host-a',
+      task: {
+        task_uuid: 'task-1', task_type: 'source_unregister', status: 'success',
+        error_details: {
+          version: 1, severity: 'warning', outcome: 'warning', summary: 'Cleanup remains',
+          task_uuid: 'task-1', correlation_id: 'correlation-1', reasons: [{ code: 'cleanup', detail: 'Unmount failed' }],
+          suggestions: [{ code: 'retry_cleanup', detail: 'Retry cleanup' }], cleanup_complete: false,
+          retained_resources: ['mount-1'], entities: [{ id: 'agent:1', name: 'host-a', type: 'source' }],
+          cleanup_failures: [{ detail: 'Unmount failed' }],
+        },
+      } as never,
+    })
+    expect(details).toMatchObject({ severity: 'warning', taskUuid: 'task-1', traceId: 'correlation-1' })
+    expect(details.reasons).toContain('Unmount failed')
+    expect(details.resolutions).toContain('Retry cleanup')
+    expect(details.cleanupResidue).toMatchObject({ retainedResources: ['mount-1'], failures: ['Unmount failed'] })
+  })
+  it('reports lost visibility as a warning notice with task correlation', () => {
+    resetToastStoreForTests()
+    notifyUnregisterFailure({ t, details: {
+      title: 'Unable to confirm task status', summary: 'Unable to confirm task status',
+      severity: 'warning', errorCode: 'TASK_MONITOR_UNAVAILABLE', taskUuid: 'pending-task',
+    } })
+    expect(toastState.items[0]?.details?.errorCode).toBe('TASK_MONITOR_UNAVAILABLE')
+    expect(toastState.items[0]?.details?.severity).toBe('warning')
+    expect(toastState.items[0]?.details?.taskUuid).toBe('pending-task')
+    resetToastStoreForTests()
+  })
   it('maps sync API reasons and hint into the shared details payload', () => {
     const details = unregisterFailureToErrorDetails({
       t,

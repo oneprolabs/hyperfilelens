@@ -6,6 +6,7 @@ import type { ErrorDetailsPayload } from './errors/details'
 import { openErrorDetails } from './errors/details'
 import { toApiError } from './errors/normalizer'
 import { notifyError, notifyWarning } from './notify'
+import { retryTask } from './taskApi'
 import {
   parseBackupSourceDeleteError,
   type BackupSourceDeleteReason,
@@ -143,6 +144,9 @@ export function unregisterFailureToErrorDetails(input: {
     return {
       title: t('protection.backupsPage.unregisterFailureTitle'),
       summary,
+      severity: 'error',
+      taskUuid: String(meta.task_uuid || '').trim() || undefined,
+      taskType: String(meta.task_type || '').trim() || undefined,
       issue: summary,
       errorCode: structuredErrorCode,
       reasons: reasons.length ? reasons : [displayMessage || fallback],
@@ -163,9 +167,10 @@ export function unregisterFailureToErrorDetails(input: {
   }
 
   const task = input.task || null
+  const contract = task?.error_details
   const outcome = input.outcome || (task ? sourceUnregisterTaskOutcome(task) : null)
   const payload = record(task?.result_payload)
-  const structuredReasons = reasonObjects(payload.reasons)
+  const structuredReasons = reasonObjects(contract?.reasons?.length ? contract.reasons : payload.reasons)
   const eventHints = (task?.recent_events || []).flatMap((event) => {
     const meta = record(event.metadata)
     const hints = [
@@ -178,12 +183,15 @@ export function unregisterFailureToErrorDetails(input: {
   const cleanupFailures = outcome?.cleanupFailures ?? (task ? taskCleanupFailures(task) : [])
   const cleanupWarnings = outcome?.cleanupWarnings ?? (task ? taskCleanupWarnings(task) : [])
   const retained = uniqueStrings([
+    ...(contract?.retained_resources || []),
     ...(outcome?.retainedResources ?? (task ? taskRetainedResources(task) : [])),
     ...syncRetained,
   ])
   const failedChildren = outcome?.failedChildren ?? (task ? taskFailedCleanupChildren(task) : [])
   const taskSucceeded = String(task?.status || '').trim().toLowerCase() === 'success'
   const failedStep = String(
+    contract?.failed_step
+    ||
     outcome?.failedStep
     || payload.failed_step
     || (taskSucceeded ? '' : task?.current_step)
@@ -193,11 +201,13 @@ export function unregisterFailureToErrorDetails(input: {
   const errorMessage = String(
     outcome?.errorMessage || task?.error_message || task?.error_code || '',
   ).trim()
-  const errorCode = String(outcome?.errorCode || task?.error_code || '').trim() || undefined
-  const taskUuid = String(outcome?.taskUuid || task?.task_uuid || '').trim()
+  const errorCode = String(contract?.error_code || outcome?.errorCode || task?.error_code || '').trim() || undefined
+  const taskUuid = String(contract?.task_uuid || outcome?.taskUuid || task?.task_uuid || '').trim()
 
   const isResidue = Boolean(
     input.partialSuccess
+    || contract?.severity === 'warning'
+    || contract?.cleanup_complete === false
     || outcome?.partialSuccess
     || (outcome?.success && !outcome.cleanupComplete)
     || syncWarnings.length
@@ -235,6 +245,7 @@ export function unregisterFailureToErrorDetails(input: {
   ])
 
   const resolutions = uniqueStrings([
+    ...(contract?.suggestions || []).map((item) => item.detail),
     hint,
     residueLines.length || isResidue
       ? t('protection.backupsPage.unregisterFailureResidueHint')
@@ -259,6 +270,29 @@ export function unregisterFailureToErrorDetails(input: {
       ? t('protection.backupsPage.unregisterCleanupWarningTitle')
       : t('protection.backupsPage.unregisterFailureTitle'),
     summary,
+    severity: contract?.severity || (isResidue ? 'warning' : 'error'),
+    traceId: contract?.correlation_id || undefined,
+    taskUuid: taskUuid || undefined,
+    taskType: task?.task_type || undefined,
+    failedStep: failedStep || undefined,
+    entities: contract?.entities?.length
+      ? contract.entities.map((entity) => ({
+        id: entity.id,
+        name: entity.name,
+        type: (['source', 'repository', 'node', 'child_task'].includes(entity.type) ? entity.type : 'source') as 'source' | 'repository' | 'node' | 'child_task',
+        error: entity.error,
+      }))
+      : source ? [{ id: input.sourceId || source, name: source, type: 'source' as const }] : undefined,
+    cleanupResidue: isResidue
+      ? {
+        hasResidue: true,
+        retainedResources: retained,
+        failures: contract?.cleanup_failures?.map((item) => {
+          const value = record(item)
+          return String(value.detail || value.message || value.code || item)
+        }).filter(Boolean),
+      }
+      : undefined,
     issue: summary,
     errorCode,
     reasons: combinedReasons.length
@@ -273,7 +307,7 @@ export function unregisterFailureToErrorDetails(input: {
       hint: hint || undefined,
       error_code: errorCode,
       error_message: errorMessage || undefined,
-      cleanup_complete: outcome?.cleanupComplete,
+      cleanup_complete: contract?.cleanup_complete ?? outcome?.cleanupComplete,
       cleanup_failures: cleanupFailures,
       cleanup_warnings: cleanupWarnings,
       retained_resources: retained,
@@ -316,13 +350,22 @@ export function notifyUnregisterFailure(input: {
   dedupeKey?: string
 }) {
   const details = input.details || unregisterFailureToErrorDetails(input)
-  return notifyError({
+  const notify = details.severity === 'warning' ? notifyWarning : notifyError
+  return notify({
     title: details.title,
     message: details.summary,
     duration: 12000,
     dedupeKey: input.dedupeKey || `unregister-failure:${input.sourceId || details.summary}`,
     showDetails: true,
     details,
+    action: details.taskUuid
+      ? {
+          label: input.t('common.retry'),
+          onClick: async () => {
+            await retryTask(details.taskUuid!, 'Retry cleanup from deregistration notification')
+          },
+        }
+      : undefined,
   })
 }
 
@@ -347,6 +390,14 @@ export function notifyUnregisterCleanupWarning(input: {
     dedupeKey: input.dedupeKey || `unregister-cleanup-warning:${input.sourceId || details.summary}`,
     showDetails: true,
     details,
+    action: details.taskUuid
+      ? {
+          label: input.t('common.retry'),
+          onClick: async () => {
+            await retryTask(details.taskUuid!, 'Retry cleanup from deregistration notification')
+          },
+        }
+      : undefined,
   })
 }
 
@@ -403,6 +454,12 @@ export function mergeUnregisterDetails(
     summary,
     issue: summary,
     reasons: uniqueDetailList(items.flatMap((item) => item.reasons || [])),
+    severity: isWarning ? 'warning' : 'error',
+    entities: items.flatMap((item) => item.entities || []),
+    cleanupResidue: isWarning ? {
+      hasResidue: true,
+      retainedResources: uniqueDetailList(items.flatMap((item) => item.cleanupResidue?.retainedResources || [])),
+    } : undefined,
     resolutions: uniqueDetailList(items.flatMap((item) => item.resolutions || [])),
     rawDetail: {
       count: items.length,

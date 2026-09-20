@@ -14,6 +14,7 @@ type TaskOutcomeSource = {
   started_at?: string | null
   created_at?: string | null
   result_payload?: unknown
+  error_details?: { technical_detail?: unknown } | null
   recent_events?: Array<{ metadata?: unknown }>
 }
 
@@ -46,6 +47,22 @@ function terminalStatus(source?: TaskOutcomeSource | null): TerminalTaskStatus |
 }
 
 function structuredFailureDetails(source?: TaskOutcomeSource | null) {
+  const payload = source?.result_payload
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const details = (payload as Record<string, unknown>).failure_details
+    if (details && typeof details === 'object' && !Array.isArray(details)) {
+      return details as Record<string, unknown>
+    }
+  }
+
+  const technical = source?.error_details?.technical_detail
+  if (technical && typeof technical === 'object' && !Array.isArray(technical)) {
+    const details = (technical as Record<string, unknown>).failure_details
+    if (details && typeof details === 'object' && !Array.isArray(details)) {
+      return details as Record<string, unknown>
+    }
+  }
+
   for (const event of source?.recent_events || []) {
     const metadata = event?.metadata
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) continue
@@ -68,9 +85,13 @@ const outcome = computed(() => {
   const details = structuredFailureDetails(source) || structuredFailureDetails(diagnosticFallback)
   const detailCount = Number(details?.total_count ?? details?.count)
   const detailCategory = String(details?.category || '').trim()
-  const detailKey = detailCategory ? `ops.task.failureDetails.summary.${detailCategory}` : ''
-  const structuredReason = details && Number.isFinite(detailCount) && detailCount > 0 && te(detailKey)
-    ? t(detailKey, { count: detailCount })
+  const inferredReadFailure = !detailCategory && /files? could not be read from the backup source/i.test(reason)
+  const resolvedCategory = detailCategory || (inferredReadFailure ? 'source_read_failed' : '')
+  const inferredCount = inferredReadFailure ? Number(reason.match(/(\d+)\s+files?/i)?.[1]) : 0
+  const resolvedCount = Number.isFinite(detailCount) && detailCount > 0 ? detailCount : inferredCount
+  const detailKey = resolvedCategory ? `ops.task.failureDetails.summary.${resolvedCategory}` : ''
+  const structuredReason = resolvedCount > 0 && te(detailKey)
+    ? t(detailKey, { count: resolvedCount })
     : ''
   const friendly = backupFailurePresentation(source) || backupFailurePresentation(diagnosticFallback)
   const friendlyCategory = backupFailureCategory(source) || backupFailureCategory(diagnosticFallback)
