@@ -162,8 +162,19 @@ function closeDetail() {
   }
 }
 
+function resourceTargetPath(event: OperationalEvent): string {
+  if (event.resource_type === 'agent' && event.resource_id) {
+    return `/protection/backup-sources?tab=host&openNode=${encodeURIComponent(event.resource_id)}`
+  }
+  if (event.resource_type === 'proxy' && event.resource_id) {
+    return `/node/agents?openNode=${encodeURIComponent(event.resource_id)}`
+  }
+  return event.target_path
+}
+
 function openResource(event: OperationalEvent) {
-  if (event.target_path) void router.push(event.target_path)
+  const targetPath = resourceTargetPath(event)
+  if (targetPath) void router.push(targetPath)
 }
 
 onMounted(loadEvents)
@@ -357,7 +368,7 @@ watch(
             >
               <template #default="{ row }">
                 <button
-                  v-if="row.resource_name && row.target_path"
+                  v-if="row.resource_name && resourceTargetPath(row)"
                   type="button"
                   class="hfl-table-name-link hfl-table-name-link--single"
                   @click="openResource(row)"
@@ -458,7 +469,7 @@ watch(
         </div>
       </div>
 
-      <template v-if="selectedEvent?.target_path" #footer>
+      <template v-if="selectedEvent && resourceTargetPath(selectedEvent)" #footer>
         <div class="el-drawer__footer-actions">
           <el-button type="primary" @click="openResource(selectedEvent)">{{ t('ops.events.openResource') }}</el-button>
         </div>

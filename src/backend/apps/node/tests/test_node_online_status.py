@@ -17,6 +17,7 @@ from apps.node.services.internal.node_registry import (
     CONNECTION_RECONNECTING,
     agent_connection_status,
     effective_agent_node_status,
+    _availability_event_target_path,
     record_node_availability,
     reconcile_node_availability,
     reconcile_stale_online_nodes,
@@ -169,6 +170,53 @@ class AgentNodeOnlineStatusTests(TestCase):
     def _mark_ws_alive(self) -> None:
         ws_id = node_conf.WS_INSTANCE_ID
         self.redis.set(redis_store.ws_alive_key(ws_id), "1")
+
+    def test_availability_event_target_path_matches_node_role(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="proxy-1",
+            role=NodeRole.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+        gateway = Node.objects.create(
+            organization=self.org,
+            name="gateway-1",
+            role=NodeRole.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+
+        self.assertEqual(
+            _availability_event_target_path(self.node),
+            f"/protection/backup-sources?tab=host&openNode={self.node.id}",
+        )
+        self.assertEqual(
+            _availability_event_target_path(proxy),
+            f"/node/agents?openNode={proxy.id}",
+        )
+        self.assertEqual(_availability_event_target_path(gateway), "/insight/gateways")
+
+    @mock.patch("apps.monitor.services.events.schedule_availability_event")
+    def test_record_node_availability_links_agent_event_to_source_host_detail(
+        self,
+        schedule_event,
+    ):
+        observed_at = timezone.now()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            changed = record_node_availability(
+                node_id=self.node.id,
+                availability=Node.Availability.ONLINE,
+                observed_at=observed_at,
+            )
+
+        self.assertTrue(changed)
+        schedule_event.assert_called_once()
+        self.assertEqual(
+            schedule_event.call_args.kwargs["target_path"],
+            f"/protection/backup-sources?tab=host&openNode={self.node.id}",
+        )
 
     def test_ws_connect_marks_online(self):
         self._mark_ws_alive()

@@ -24,6 +24,20 @@ PERIODS = {
 
 
 def _serialize_event(event: OperationalEvent) -> dict[str, object]:
+    target_path = event.target_path
+    # Availability events written before the node-route split still point all
+    # non-gateway nodes at the Proxy Hosts page. Resolve those legacy links at
+    # read time so existing events remain actionable after the route fix.
+    if event.source == "node" and event.resource_id:
+        if event.resource_type == "agent" and (
+            not target_path or target_path.startswith("/node/agents")
+        ):
+            target_path = (
+                "/protection/backup-sources?tab=host&openNode="
+                f"{event.resource_id}"
+            )
+        elif event.resource_type == "proxy" and target_path == "/node/agents":
+            target_path = f"/node/agents?openNode={event.resource_id}"
     return {
         "id": str(event.id),
         "event_type": event.event_type,
@@ -36,7 +50,7 @@ def _serialize_event(event: OperationalEvent) -> dict[str, object]:
         "resource_id": event.resource_id,
         "resource_name": event.resource_name,
         "source": event.source,
-        "target_path": event.target_path,
+        "target_path": target_path,
         "correlation_id": event.correlation_id,
     }
 
