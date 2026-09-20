@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, ArrowRight, Check, Circle, Clock3, Download, RefreshCw, X } from 'lucide-vue-next'
-import type { NodeLifecycleInfo } from '../../types/nodeLifecycle'
+import { PACKAGE_DOWNLOAD_FAILURE_CODES, type NodeLifecycleInfo } from '../../types/nodeLifecycle'
 import { formatBytes, formatSpeedBps } from '../../lib/kopiaProgress'
 
 const props = defineProps<{
@@ -22,6 +22,20 @@ const hasLifecycle = computed(() => {
 
 const timeline = computed(() => props.lifecycle?.timeline ?? [])
 const download = computed(() => props.lifecycle?.download ?? null)
+
+const userVisibleError = computed(() => {
+  if (PACKAGE_DOWNLOAD_FAILURE_CODES.includes(
+    props.lifecycle?.failure_code as (typeof PACKAGE_DOWNLOAD_FAILURE_CODES)[number],
+  )) {
+    return t('nodeUpgradeProgress.packageDownloadInterrupted')
+  }
+  return props.lifecycle?.error || ''
+})
+
+function phaseError(error: string | null | undefined) {
+  if (!error) return ''
+  return userVisibleError.value || error
+}
 
 const downloadStateLabel = computed(() => {
   switch (download.value?.state) {
@@ -195,21 +209,21 @@ function formatPhaseTime(at: string | null) {
               :size="13"
               aria-hidden="true"
             />
-            <span>{{ phase.error }}</span>
+            <span>{{ phaseError(phase.error) }}</span>
           </div>
         </article>
       </div>
     </div>
 
     <div
-      v-if="lifecycle?.error"
+      v-if="userVisibleError"
       class="node-upgrade-progress__error"
     >
       <AlertTriangle
         :size="15"
         aria-hidden="true"
       />
-      <span>{{ lifecycle.error }}</span>
+      <span>{{ userVisibleError }}</span>
     </div>
   </div>
   <div

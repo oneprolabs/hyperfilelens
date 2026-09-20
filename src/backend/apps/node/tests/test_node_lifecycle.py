@@ -609,6 +609,56 @@ class NodeLifecycleTests(TestCase):
         )
         self.assertEqual(lifecycle["state"], "failed")
 
+    def test_legacy_download_error_gets_stable_failure_code(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.FAILED,
+            payload={"target_version": "1.2.0"},
+            last_error="download stream failed: unexpected EOF",
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        lifecycle = _upgrade_lifecycle_payload(
+            org=self.org,
+            node=self.node,
+            task=task,
+        )
+
+        self.assertEqual(
+            lifecycle["failure_code"],
+            "AGENT_PACKAGE_DOWNLOAD_INTERRUPTED",
+        )
+        self.assertEqual(task.last_error, "download stream failed: unexpected EOF")
+
+    def test_structured_upgrade_failure_code_takes_precedence(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.FAILED,
+            payload={"target_version": "1.2.0"},
+            last_error="download stream failed: unexpected EOF",
+            result={"diagnostic_error_code": "AGENT_PACKAGE_DOWNLOAD_PROGRESS_TIMEOUT"},
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        lifecycle = _upgrade_lifecycle_payload(
+            org=self.org,
+            node=self.node,
+            task=task,
+        )
+
+        self.assertEqual(
+            lifecycle["failure_code"],
+            "AGENT_PACKAGE_DOWNLOAD_PROGRESS_TIMEOUT",
+        )
+
     @patch(
         "apps.node.services.internal.node_lifecycle.agent_release_commit",
         return_value="a" * 40,

@@ -2,6 +2,11 @@ import type { NodeRole } from './node'
 
 export type NodeLifecycleKind = 'upgrade' | 'remove'
 
+export const PACKAGE_DOWNLOAD_FAILURE_CODES = [
+  'AGENT_PACKAGE_DOWNLOAD_INTERRUPTED',
+  'AGENT_PACKAGE_DOWNLOAD_PROGRESS_TIMEOUT',
+] as const
+
 export type NodeLifecycleState =
   | 'queued'
   | 'upgrading'
@@ -62,6 +67,7 @@ export type NodeLifecycleInfo = {
   timeline?: UpgradeTimelinePhase[] | null
   download?: UpgradeDownloadProgress | null
   error?: string | null
+  failure_code?: string | null
 }
 
 export type NodeWorkloadReason = {
@@ -139,6 +145,7 @@ export type LifecycleQueueItem = {
   state: NodeLifecycleState
   taskId?: string | null
   error?: string
+  failureCode?: string | null
   notified?: boolean
   /** Transient failed polls from lifecycle-watch before marking batch item failed. */
   failedConfirmPolls?: number

@@ -2193,6 +2193,7 @@ export const en = {
     waitingForData: 'Waiting for download data',
     retryingDownload: 'Download interrupted. Retrying…',
     downloadCompleted: 'Agent package downloaded',
+    packageDownloadInterrupted: 'The Agent package download was interrupted. Check the host\'s network connection to the HyperFileLens console and retry.',
     downloadedAmount: '{amount} downloaded',
     elapsed: 'Elapsed {duration}',
     attempt: 'Attempt {attempt} of {max}',
