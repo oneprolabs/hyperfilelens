@@ -10,6 +10,35 @@ source "${ROOT_REPO}/dev/stack.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
+# An OSS worktree changes only the runtime source bind mounts; the current
+# repository remains the Compose/configuration and data root.
+grep -F '${WORKTREE_DIR:-.}/src/backend:/opt/backend' \
+	"${ROOT_REPO}/docker-compose.yml" >/dev/null
+grep -F '${WORKTREE_DIR:-.}/src/frontend:/app' \
+	"${ROOT_REPO}/docker-compose.yml" >/dev/null
+grep -F -- '--worktree-dir PATH' "${ROOT_REPO}/dev/stack.sh" >/dev/null
+grep -F 'worktree_recreate_args+=(--force-recreate)' "${ROOT_REPO}/dev/stack.sh" >/dev/null
+
+worktree_root="${tmp}/oss-worktree"
+mkdir -p "${worktree_root}/src/backend" "${worktree_root}/src/frontend"
+original_invocation_dir="${INVOCATION_DIR}"
+original_worktree_dir="${WORKTREE_DIR}"
+original_oss_worktree_dir="${OSS_WORKTREE_DIR}"
+original_worktree_explicit="${WORKTREE_DIR_EXPLICIT}"
+INVOCATION_DIR="${tmp}"
+OSS_WORKTREE_DIR="${ROOT_REPO}"
+WORKTREE_DIR="${ROOT_REPO}"
+WORKTREE_DIR_EXPLICIT=0
+resolve_worktree_dir oss-worktree
+[[ "${WORKTREE_DIR}" == "${worktree_root}" ]]
+[[ "${OSS_WORKTREE_DIR}" == "${worktree_root}" ]]
+[[ "${WORKTREE_DIR_EXPLICIT}" -eq 1 ]]
+INVOCATION_DIR="${original_invocation_dir}"
+WORKTREE_DIR="${original_worktree_dir}"
+OSS_WORKTREE_DIR="${original_oss_worktree_dir}"
+WORKTREE_DIR_EXPLICIT="${original_worktree_explicit}"
+export WORKTREE_DIR
+
 # A stale runtime metadata value must not pin bundled development or release builds.
 mkdir -p "${tmp}/repo"
 printf '%s\n' 'SOURCELENS_GIT_REF=v0.4.0' >"${tmp}/repo/.env"
