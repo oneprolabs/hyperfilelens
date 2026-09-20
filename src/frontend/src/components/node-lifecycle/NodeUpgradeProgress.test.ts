@@ -23,6 +23,7 @@ const i18n = createI18n({
         waitingForData: 'Waiting for download data',
         retryingDownload: 'Download interrupted. Retrying…',
         downloadCompleted: 'Agent package downloaded',
+        packageDownloadInterrupted: 'The Agent package download was interrupted. Check the host\'s network connection to the HyperFileLens console and retry.',
         downloadedAmount: '{amount} downloaded',
         elapsed: 'Elapsed {duration}',
         attempt: 'Attempt {attempt} of {max}',
@@ -100,5 +101,29 @@ describe('NodeUpgradeProgress download details', () => {
 
     expect(wrapper.text()).toContain('Download interrupted. Retrying…')
     expect(wrapper.text()).toContain('Attempt 2 of 3')
+  })
+
+  it('shows actionable guidance instead of the raw download error', () => {
+    const wrapper = mount(NodeUpgradeProgress, {
+      props: {
+        lifecycle: {
+          ...lifecycle(null),
+          state: 'failed',
+          failure_code: 'AGENT_PACKAGE_DOWNLOAD_INTERRUPTED',
+          error: 'download stream failed: unexpected EOF',
+          timeline: [{
+            phase: 'failed',
+            label: 'Failed',
+            at: null,
+            status: 'failed',
+            error: 'download stream failed: unexpected EOF',
+          }],
+        },
+      },
+      global: { plugins: [i18n] },
+    })
+
+    expect(wrapper.text()).toContain('The Agent package download was interrupted.')
+    expect(wrapper.text()).not.toContain('unexpected EOF')
   })
 })

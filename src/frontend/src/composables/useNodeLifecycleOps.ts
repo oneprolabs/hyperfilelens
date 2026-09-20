@@ -18,6 +18,7 @@ import {
   buildUpgradeDiskSkipDetails,
   workloadBlockedMessageKey,
 } from '../lib/nodeLifecycleUpgradeConfirm'
+import { PACKAGE_DOWNLOAD_FAILURE_CODES } from '../types/nodeLifecycle'
 import type { ApiNode, NodeRole } from '../types/node'
 import type {
   LifecycleQueueItem,
@@ -198,7 +199,11 @@ export function useNodeLifecycleOps(options: {
     const name = item.name
     const ip = String(item.ipAddress || '').trim()
     const hasIp = ip.length > 0
-    const error = item.error || 'failed'
+    const error = PACKAGE_DOWNLOAD_FAILURE_CODES.includes(
+      item.failureCode as (typeof PACKAGE_DOWNLOAD_FAILURE_CODES)[number],
+    )
+      ? t('nodeUpgradeProgress.packageDownloadInterrupted')
+      : item.error || 'failed'
 
     if (item.kind === 'remove') {
       if (outcome === 'success') {
@@ -319,6 +324,7 @@ export function useNodeLifecycleOps(options: {
           }
           item.state = 'failed'
           item.error = lc.error || 'failed'
+          item.failureCode = lc.failure_code || null
           markLifecycleFailed(item)
           return false
         }

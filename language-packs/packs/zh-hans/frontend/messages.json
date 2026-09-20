@@ -4498,6 +4498,7 @@
     "waitingForData": "正在等待下载数据",
     "retryingDownload": "下载中断，正在重试…",
     "downloadCompleted": "Agent 包已下载",
+    "packageDownloadInterrupted": "Agent 升级包下载中断。请检查主机与 HyperFileLens 控制台之间的网络连接，然后重试。",
     "downloadedAmount": "已下载 {amount}",
     "elapsed": "已用时 {duration}",
     "attempt": "第 {attempt} 次，共 {max} 次",

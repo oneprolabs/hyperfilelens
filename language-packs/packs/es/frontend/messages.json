@@ -4497,6 +4497,7 @@
     "waitingForData": "Esperando datos de descarga",
     "retryingDownload": "La descarga se interrumpió. Reintentando…",
     "downloadCompleted": "Paquete del Agent descargado",
+    "packageDownloadInterrupted": "La descarga del paquete del Agent se interrumpió. Compruebe la conexión de red del host con la consola de HyperFileLens y vuelva a intentarlo.",
     "downloadedAmount": "{amount} descargados",
     "elapsed": "Transcurrido {duration}",
     "attempt": "Intento {attempt} de {max}",

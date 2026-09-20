@@ -7685,5 +7685,6 @@
   "ops.task.cleanupSuggestion.check_agent": "177ea3498dbef320877417370536320e52218771fa043ade8af1dc7ea96ba90e",
   "ops.task.failureDetails.errorCode": "82050e2b4db40e0a181f7fe15f596ee3b05081e9b602551382cf9c4edcf886b8",
   "ops.task.failureDetails.collapseAffectedItems": "de532fe9c23026799e4da413221fbc0e489844168c0b391759457ff23436e76c",
-  "ops.task.failureDetails.collapseSkippedItems": "a9119ea289222c5741c9370963ffbdc86e0dec7bcf3edc8e17dc1f7e7723506a"
+  "ops.task.failureDetails.collapseSkippedItems": "a9119ea289222c5741c9370963ffbdc86e0dec7bcf3edc8e17dc1f7e7723506a",
+  "nodeUpgradeProgress.packageDownloadInterrupted": "812e939d9f2d8f11306186ed3b20b19cfa877add4b8b21a5121671d3d1bf7f84"
 }

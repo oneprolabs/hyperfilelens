@@ -1058,7 +1058,7 @@ def _upgrade_lifecycle_payload(
             "state": "failed",
             "phase": "failed",
             "error": task.last_error or task.status,
-            "failure_code": result.get("failure_code") or None,
+            "failure_code": _upgrade_failure_code(task=task, result=result),
         }
 
     if task.status != NodeTask.Status.SUCCESS:
@@ -1068,6 +1068,37 @@ def _upgrade_lifecycle_payload(
     # The version was already verified by _advance_upgrade_verify before
     # marking the task SUCCESS; a redundant check here risks false
     # negatives that leave the lifecycle stuck at "verifying" (#639).
+    return None
+
+
+def _upgrade_failure_code(
+    *,
+    task: NodeTask,
+    result: dict[str, Any],
+) -> str | None:
+    """Return a stable user-facing category for an upgrade failure.
+
+    Older Agents reported interrupted package downloads only as a free-form
+    error string. Keep that original error for audit/debugging, but expose a
+    stable code to the lifecycle UI so it can provide actionable guidance.
+    Newer structured failure diagnostics always take precedence.
+    """
+    code = result.get("failure_code") or result.get("diagnostic_error_code")
+    if code:
+        return str(code)
+
+    error = str(task.last_error or "").lower()
+    if any(
+        marker in error
+        for marker in (
+            "download stream failed",
+            "unexpected eof",
+            "download size mismatch",
+            "download interrupted",
+        )
+    ):
+        return "AGENT_PACKAGE_DOWNLOAD_INTERRUPTED"
+
     return None
 
 
