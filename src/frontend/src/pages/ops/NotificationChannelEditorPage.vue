@@ -327,7 +327,7 @@ watch(() => form.type, () => {
                   >
                     <el-input
                       v-model="form.name"
-                      :placeholder="t('ops.notification.phChannelNameEmail')"
+                      :placeholder="t('ops.notification.phChannelName')"
                     />
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.notification.tipChannelName') }}
