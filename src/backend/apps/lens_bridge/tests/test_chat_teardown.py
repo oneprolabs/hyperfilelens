@@ -1921,6 +1921,10 @@ class CopilotChatTeardownTests(TestCase):
         "apps.lens_bridge.services.gateway_readiness.agent_ws_routable",
         return_value=True,
     )
+    @mock.patch(
+        "apps.lens_bridge.services.gateway_readiness.get_agent_session",
+        return_value="test-agent-session",
+    )
     @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")
     @mock.patch("apps.lens_bridge.services.chat_lifecycle._find_remote_uuid")
     @mock.patch(
@@ -1939,6 +1943,7 @@ class CopilotChatTeardownTests(TestCase):
         ensure_sl_user,
         find_remote_uuid,
         request_json,
+        _get_agent_session,
         _agent_ws_routable,
         _ensure_assistant_link,
         _grant_assistant,
@@ -1959,6 +1964,12 @@ class CopilotChatTeardownTests(TestCase):
         self.gateway_link.save(
             update_fields=["sl_lensnode_uuid", "sidecar_status", "updated_at"]
         )
+        self.gateway.metadata = {
+            "inventory_session_id": "test-agent-session",
+            "inventory_capabilities_session_id": "test-agent-session",
+            "inventory": {"capabilities": ["insight_safe_restore_v1"]},
+        }
+        self.gateway.save(update_fields=["metadata", "updated_at"])
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
         self.session.provision_claim_token = claim_token
         self.session.provision_claimed_at = timezone.now()
