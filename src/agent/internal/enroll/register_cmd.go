@@ -3,10 +3,12 @@ package enroll
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"hyperfilelens/agent/internal/enrollmentclient"
+	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/install"
 )
 
@@ -36,31 +38,15 @@ func RunRegister(ctx context.Context, opts InstallOptions) error {
 		logFail("The agent is not installed. Run hfl-enroll install first.", 2)
 	}
 
-	if state.OrgKey != "" && !strings.EqualFold(state.OrgKey, cfg.OrgKey) {
-		logFail("This agent belongs to a different organization. Uninstall it first, then try again.", 1)
-	}
-
-	if state.NodeID != "" && state.ServiceHealthy() {
-		agentVer := state.Version
-		if ver, verErr := InstalledAgentVersion(ctx); verErr == nil && ver != "" {
-			agentVer = ver
-		}
-		info := summaryFromState(cfg.APIBase, state.NodeID, agentVer, state.Service)
-		printAlreadyEnrolled(info)
-		return nil
-	}
-
-	plan, err := PlanReinstall(ctx, cfg, state)
+	identityAction, err := validateExistingInstallIdentity(cfg, state)
 	if err != nil {
 		logFail(err.Error(), 3)
 	}
-	if plan.Action == ActionAlreadyEnrolled {
-		info := summaryFromState(cfg.APIBase, state.NodeID, state.Version, state.Service)
-		printAlreadyEnrolled(info)
-		return nil
+	if identityAction == ActionCrossOrg {
+		logFail("This agent belongs to a different organization. Uninstall it first, then try again.", 1)
 	}
-	if plan.NeedsConfirm {
-		if err := confirmAction(plan.ConfirmMessage, opts.AutoYes); err != nil {
+	if confirmMessage := registerConfirmationMessage(state); confirmMessage != "" {
+		if err := confirmAction(confirmMessage, opts.AutoYes); err != nil {
 			logFail(err.Error(), 1)
 		}
 	}
@@ -92,6 +78,20 @@ func RunRegister(ctx context.Context, opts InstallOptions) error {
 			logWarn("Installation session release failed: " + releaseErr.Error())
 		}
 	}()
+	if session.GatewayScope != "" {
+		if cfg.NodeRole == model.RoleGateway && gatewayScopeMismatch(state.GatewayScope, session.GatewayScope) {
+			logFail(
+				fmt.Sprintf(
+					"this Gateway is configured for scope %q, but this enrollment command targets scope %q; uninstall the existing Gateway before changing its scope",
+					state.GatewayScope,
+					session.GatewayScope,
+				),
+				3,
+			)
+		}
+		cfg.GatewayScope = session.GatewayScope
+		_ = os.Setenv("HFL_GATEWAY_SCOPE", session.GatewayScope)
+	}
 
 	snapshot, err := captureEnrollmentEnv()
 	if err != nil {
@@ -138,6 +138,20 @@ func RunRegister(ctx context.Context, opts InstallOptions) error {
 			sessionCompleted = true
 		},
 	)
+}
+
+func registerConfirmationMessage(state InstallState) string {
+	if strings.TrimSpace(state.NodeID) == "" {
+		return "The agent is installed but not registered with the console. Bind this host now?"
+	}
+	if !state.ServiceHealthy() {
+		return fmt.Sprintf(
+			"Node %s is enrolled, but the service is %s. Restart the agent service and reconnect to the console?",
+			state.NodeID,
+			state.Service,
+		)
+	}
+	return ""
 }
 
 // RunStatus prints installed agent enrollment status.

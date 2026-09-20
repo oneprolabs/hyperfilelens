@@ -88,13 +88,9 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			},
 		})
 	case ActionAlreadyEnrolled:
-		if ver, verErr := InstalledAgentVersion(ctx); verErr == nil && ver != "" {
-			agentVer = ver
-		}
-		info := summaryFromState(cfg.APIBase, state.NodeID, agentVer, state.Service)
-		info.Role = roleDisplayName(cfg.NodeRole, cfg.GatewayScope)
-		printAlreadyEnrolled(info)
-		return nil
+		// Keep compatibility with an older planner while ensuring the existing
+		// installation still goes through enrollment reconciliation.
+		plan.Action = ActionReconcile
 	}
 	if plan.NeedsConfirm {
 		if err := confirmAction(plan.ConfirmMessage, opts.AutoYes); err != nil {
@@ -181,6 +177,18 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 		logOK("Incomplete Agent installation was removed; installation identity and Agent data were preserved.")
 	}()
 	if session.GatewayScope != "" {
+		if cfg.NodeRole == model.RoleGateway && gatewayScopeMismatch(state.GatewayScope, session.GatewayScope) {
+			abortInstall(
+				"Preflight checks",
+				fmt.Sprintf(
+					"this Gateway is configured for scope %q, but this enrollment command targets scope %q; uninstall the existing Gateway before changing its scope",
+					state.GatewayScope,
+					session.GatewayScope,
+				),
+				3,
+				"HFL-INSTALL-003",
+			)
+		}
 		cfg.GatewayScope = session.GatewayScope
 		_ = os.Setenv("HFL_GATEWAY_SCOPE", session.GatewayScope)
 	}
@@ -289,7 +297,7 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 		}
 		return nil
 
-	case ActionRebind:
+	case ActionRebind, ActionReconcile:
 		stageExistingConfig()
 		if ver, verErr := InstalledAgentVersion(ctx); verErr == nil && ver != "" {
 			agentVer = ver
@@ -499,6 +507,8 @@ func installActionPhase(action ReinstallAction) string {
 		return "Reinstalling Agent"
 	case ActionRebind:
 		return "Registering Agent"
+	case ActionReconcile:
+		return "Re-registering Agent"
 	default:
 		return "Installing Agent"
 	}

@@ -23,6 +23,8 @@ type InstallState struct {
 	LegacyLayout     bool
 	Version          string
 	NodeID           string
+	APIBase          string
+	WSSURL           string
 	OrgKey           string
 	Role             string
 	GatewayScope     string
@@ -60,6 +62,8 @@ func DetectInstallState() InstallState {
 
 	envPath := installedEnvPath()
 	state.NodeID = ReadNodeID(envPath)
+	state.APIBase = readEnvKey(envPath, "HFL_API_BASE")
+	state.WSSURL = readEnvKey(envPath, "HFL_WSS_URL")
 	state.OrgKey = readEnvKey(envPath, "HFL_ORG_KEY")
 	state.Role = readEnvKey(envPath, "HFL_NODE_ROLE")
 	state.GatewayScope = readEnvKey(envPath, "HFL_GATEWAY_SCOPE")
