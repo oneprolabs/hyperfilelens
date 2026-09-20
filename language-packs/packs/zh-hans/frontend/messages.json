@@ -6573,7 +6573,6 @@
       "tipMergeNotification": "相同合并键在时间窗口内的多条通知合并为一条发送（分钟）。",
       "tipSilenceNotification": "设置相同告警在此时间内不重复发送，仅发一次；0 表示不静默（分钟）。",
       "phChannelName": "例如：生产告警 Webhook",
-      "phChannelNameEmail": "运维邮件",
       "phSmtpHost": "smtp.example.com",
       "phSmtpPort": "587",
       "phSmtpUsername": "username（选填）",

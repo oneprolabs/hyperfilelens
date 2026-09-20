@@ -6572,7 +6572,6 @@
       "tipMergeNotification": "Múltiples notificaciones con la misma clave dentro de la ventana del tiempo se fusionarán en uno (minutos).",
       "tipSilenceNotification": "Las mismas alertas no se repetirán dentro de este tiempo, solo se envían una vez; 0 significa que no hay silencio (minutos).",
       "phChannelName": "p. ej., webhook de alertas de producción",
-      "phChannelNameEmail": "Correo de operaciones",
       "phSmtpHost": "smtp.example.com",
       "phSmtpPort": "587",
       "phSmtpUsername": "nombre de usuario (opcional)",

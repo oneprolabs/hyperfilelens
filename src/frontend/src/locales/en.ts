@@ -4284,7 +4284,6 @@ export const en = {
       tipMergeNotification: 'Multiple notifications with the same key within the time window will be merged into one (minutes).',
       tipSilenceNotification: 'Same alerts will not be repeated within this time, only sent once; 0 means no silence (minutes).',
       phChannelName: 'e.g. Production Alert Webhook',
-      phChannelNameEmail: 'Ops Email',
       phSmtpHost: 'smtp.example.com',
       phSmtpPort: '587',
       phSmtpUsername: 'username (optional)',
