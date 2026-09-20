@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Check, ChevronDown, RefreshCw, Search, X } from 'lucide-vue-next'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -22,6 +23,8 @@ import {
 } from '../../lib/alertApi'
 
 const { t, te } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const opsMenus = useOpsMenus()
 const { drawerSize: detailDrawerSize } = useResponsiveDrawerWidth()
 const { schedule: scheduleFilterSearch, runNow: runFilterSearch } = useDebouncedAction(() => applyFilters())
@@ -141,6 +144,9 @@ async function fetchAlerts() {
       firing: statRes.firing,
       acknowledged: statRes.acknowledged,
     }
+    const alertId = String(route.query.alertId || '').trim()
+    const target = alertId ? alerts.value.find((alert) => String(alert.id) === alertId) : null
+    if (target) openDetail(target)
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err), grouping: true })
   } finally {
@@ -260,6 +266,11 @@ function openDetail(alert: AlertRecord) {
 
 function closeDetail() {
   selected.value = null
+  if (route.query.alertId) {
+    const query = { ...route.query }
+    delete query.alertId
+    void router.replace({ query })
+  }
 }
 
 function applyFilters() {

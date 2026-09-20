@@ -193,7 +193,7 @@ function dashboardAlertItem(record: AlertRecord): DashboardAlertItem {
     severity: record.severity || 'info',
     status: record.status || 'firing',
     at: record.lastTriggeredAt || record.last_triggered_at || record.createdAt || record.created_at,
-    to: '/ops/alerts',
+    to: `/ops/alerts?alertId=${encodeURIComponent(String(record.id))}`,
   }
 }
 
@@ -630,7 +630,7 @@ export async function loadDashboardOverview(
     detail: event.details || '',
     severity: event.severity || 'information',
     at: event.occurred_at,
-    to: event.target_path || '/ops/events',
+    to: event.target_path || `/ops/events?eventId=${encodeURIComponent(String(event.id ?? ''))}`,
   }))
 
   return {
