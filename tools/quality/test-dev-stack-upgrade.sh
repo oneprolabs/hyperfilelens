@@ -210,13 +210,22 @@ compose() {
 }
 repair_existing_multimodal_model >/dev/null
 backend_stop_line="$(grep -nE 'compose(_logged)? stop api worker scheduler' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
-data_services_line="$(grep -nE 'compose(_logged)? up -d --wait --no-build --pull never postgres redis' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
+data_services_line="$(grep -nE 'compose(_logged)? up -d --no-build --pull never postgres redis' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
+data_services_wait_line="$(grep -nF 'wait_for_data_services_healthy' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
 migration_line="$(grep -nF 'compose --profile tools run --rm --no-deps migration' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
 [[ -n "${backend_stop_line}" ]]
 [[ -n "${data_services_line}" ]]
+[[ -n "${data_services_wait_line}" ]]
 [[ -n "${migration_line}" ]]
 ((backend_stop_line < data_services_line))
-((data_services_line < migration_line))
+((data_services_line < data_services_wait_line))
+((data_services_wait_line < migration_line))
+grep -F 'HFL_DATA_SERVICES_HEALTH_TIMEOUT_SECONDS="${HFL_DATA_SERVICES_HEALTH_TIMEOUT_SECONDS:-300}"' \
+	"${ROOT_REPO}/dev/stack.sh" >/dev/null
+if grep -F 'up -d --wait --no-build --pull never postgres redis' <<<"${run_dev_migration_gate_body}" >/dev/null; then
+	printf 'ERROR: migration gate must not rely on Docker Compose --wait for data services\n' >&2
+	exit 1
+fi
 
 # The singleton migration must load the same backend extensions as runtime services.
 grep -F 'for svc in ("migration", "api", "worker", "scheduler"):' \

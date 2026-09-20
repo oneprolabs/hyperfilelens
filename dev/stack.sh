@@ -267,6 +267,7 @@ load_repo_env_defaults() {
 		APT_MIRROR GOPROXY GOSUMDB PIP_INDEX_URL PIP_TRUSTED_HOST \
 		NPM_REGISTRY BUILD_SOURCELENS SOURCELENS_GIT_URL \
 		DOCKER_PULL_TIMEOUT_SECONDS DOCKER_PULL_RETRIES DEV_OFFLINE \
+		HFL_DATA_SERVICES_HEALTH_TIMEOUT_SECONDS \
 		DEV_SMOKE_PLAYWRIGHT_VERSION SOURCELENS_GIT_TIMEOUT_SECONDS \
 		SOURCELENS_GIT_RETRIES SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS \
 		KOPIA_ARTIFACT_MODE KOPIA_GIT_URL KOPIA_GIT_REF; do
@@ -275,6 +276,7 @@ load_repo_env_defaults() {
 	DOCKER_PULL_TIMEOUT="${DOCKER_PULL_TIMEOUT:-${DOCKER_PULL_TIMEOUT_SECONDS:-180}}"
 	DOCKER_PULL_RETRIES="${DOCKER_PULL_RETRIES:-2}"
 	DEV_OFFLINE="${DEV_OFFLINE:-0}"
+	HFL_DATA_SERVICES_HEALTH_TIMEOUT_SECONDS="${HFL_DATA_SERVICES_HEALTH_TIMEOUT_SECONDS:-300}"
 }
 
 apply_mirror_env_defaults() {
@@ -446,7 +448,11 @@ compose() {
 	prepare_compose_files
 	(
 		cd "${ROOT}"
-		"${COMPOSE[@]}" --env-file "${ROOT}/.env" "${COMPOSE_FILES[@]}" "$@"
+		local -a command=("${COMPOSE[@]}" --env-file "${ROOT}/.env" "${COMPOSE_FILES[@]}")
+		if [[ -n "${HFL_COMPOSE_TIMEOUT_SECONDS:-}" ]]; then
+			command=(timeout --foreground --kill-after=10s "${HFL_COMPOSE_TIMEOUT_SECONDS}s" "${command[@]}")
+		fi
+		"${command[@]}" "$@"
 	)
 }
 
@@ -459,11 +465,15 @@ compose_logged() {
 		prepare_compose_files
 		(
 			cd "${ROOT}"
-			hfl_run_native_command env \
+			local -a command=(env \
 				DOCKER_BUILDKIT=1 \
 				BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-auto}" \
 				"${COMPOSE[@]}" --env-file "${ROOT}/.env" \
-				"${COMPOSE_FILES[@]}" "$@"
+				"${COMPOSE_FILES[@]}")
+			if [[ -n "${HFL_COMPOSE_TIMEOUT_SECONDS:-}" ]]; then
+				command=(timeout --foreground --kill-after=10s "${HFL_COMPOSE_TIMEOUT_SECONDS}s" "${command[@]}")
+			fi
+			hfl_run_native_command "${command[@]}" "$@"
 		)
 		return $?
 	fi
@@ -1412,6 +1422,52 @@ wait_for_api_healthy() {
 	return 1
 }
 
+wait_for_data_services_healthy() {
+	local timeout_seconds="${HFL_DATA_SERVICES_HEALTH_TIMEOUT_SECONDS:-300}"
+	local deadline service cid health ready now last_report=0
+	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]] \
+		|| die "HFL_DATA_SERVICES_HEALTH_TIMEOUT_SECONDS must be a positive integer" 2
+	hfl_log_info "Waiting for PostgreSQL and Redis health (timeout ${timeout_seconds}s)"
+	deadline=$((SECONDS + timeout_seconds))
+	while ((SECONDS < deadline)); do
+		ready=1
+		for service in postgres redis; do
+			cid="$(compose ps -q "${service}" 2>/dev/null | head -n 1 || true)"
+			health=""
+			if [[ -n "${cid}" ]]; then
+				health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}" 2>/dev/null || true)"
+			fi
+			if [[ "${health}" != "healthy" ]]; then
+				ready=0
+			fi
+		done
+		if [[ "${ready}" -eq 1 ]]; then
+			hfl_log_ok "PostgreSQL and Redis are healthy"
+			return 0
+		fi
+		now=${SECONDS}
+		if ((now - last_report >= 15)); then
+			hfl_log_info "Still waiting for PostgreSQL and Redis health"
+			last_report=${now}
+		fi
+		sleep 2
+	done
+
+	hfl_log_fail "PostgreSQL and Redis did not become healthy within ${timeout_seconds}s"
+	for service in postgres redis; do
+		cid="$(compose ps -q "${service}" 2>/dev/null | head -n 1 || true)"
+		if [[ -n "${cid}" ]]; then
+			health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}" 2>/dev/null || true)"
+			hfl_log_emit_with_component 'OUT ' docker "${service}: container=${cid} health=${health:-unknown}"
+			docker inspect --format '{{json .State.Health}}' "${cid}" 2>/dev/null \
+				| hfl_log_output_block docker || true
+		else
+			hfl_log_emit_with_component 'OUT ' docker "${service}: container not found"
+		fi
+	done
+	return 1
+}
+
 platform_gateway_auto_deploy_enabled() {
 	local raw
 	raw="$(read_env_value_or HFL_PLATFORM_GATEWAY_AUTO_DEPLOY true "${ROOT}/.env" | tr '[:upper:]' '[:lower:]')"
@@ -1755,7 +1811,9 @@ run_dev_migration_gate() {
 	log "Stopping backend services before database migration"
 	compose_logged stop api worker scheduler
 	log "Starting development data services"
-	compose_logged up -d --wait --no-build --pull never postgres redis
+	HFL_COMPOSE_TIMEOUT_SECONDS="${HFL_DATA_SERVICES_HEALTH_TIMEOUT_SECONDS}" \
+		compose_logged up -d --no-build --pull never postgres redis
+	wait_for_data_services_healthy
 	hfl_log_step "Applying database migrations"
 	HFL_MIGRATION_OUTPUT=compact
 	export HFL_MIGRATION_OUTPUT
