@@ -266,7 +266,7 @@ class Command(BaseCommand):
         self.stdout.write(f'Backup Config ID: {backup_config.id}')
         self.stdout.write(f'Node ID: {node.id}')
         self.stdout.write(f'Repository ID: {repo.id}')
-        self.stdout.write(f'\nVisit: protection/backups?step=start-backup')
+        self.stdout.write('\nVisit: protection/backups?step=start-backup')
 
     def create_source_unregister_batch(self, org):
         """Create a mixed batch for testing consolidated unregister details."""
