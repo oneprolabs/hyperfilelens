@@ -11,6 +11,37 @@ import {
 describe('error details', () => {
   afterEach(closeErrorDetails)
 
+  it('keeps task view context separate from diagnostic data and resets it on reopen', () => {
+    const payload = { title: 'Failed', summary: 'Read failed', taskUuid: 'task-1' }
+    openErrorDetails(payload, { currentTaskUuid: 'task-1' })
+    expect(errorDetailsState.currentTaskUuid).toBe('task-1')
+    expect(errorDetailsState.current).not.toHaveProperty('currentTaskUuid')
+    openErrorDetails(payload)
+    expect(errorDetailsState.currentTaskUuid).toBeUndefined()
+    openErrorDetails(payload, { currentTaskUuid: 'task-1' })
+    closeErrorDetails()
+    expect(errorDetailsState.currentTaskUuid).toBeUndefined()
+  })
+
+  it('preserves async overrides and redacts the stored and copied bundle', () => {
+    const payload = toErrorDetails(new Error('Failed'), {
+      title: 'Warning', summary: 'Some files were skipped', severity: 'warning',
+      taskUuid: 'task-1', taskType: 'backup', failedStep: 'snapshot',
+      entities: [{ id: 'source-1', name: 'Source', type: 'source', error: 'password=secret-value' }],
+      cleanupResidue: { hasResidue: true, retainedResources: ['token=secret-token'] },
+      rawDetail: { password: 'raw-secret' },
+    })
+    openErrorDetails(payload)
+    expect(errorDetailsState.current?.severity).toBe('warning')
+    expect(errorDetailsState.current?.taskUuid).toBe('task-1')
+    expect(JSON.stringify(errorDetailsState.current)).not.toMatch(/secret-value|secret-token|raw-secret/)
+    const copied = errorDetailsCopyText(payload)
+    expect(copied).toContain('Some files were skipped')
+    expect(copied).toContain('source-1')
+    expect(copied).toContain('task-1')
+    expect(copied).not.toMatch(/secret-value|secret-token|raw-secret/)
+  })
+
   it('maps structured application errors', () => {
     const details = toErrorDetails({
       status: 504,
@@ -31,6 +62,7 @@ describe('error details', () => {
       secret_access_key: 'super-secret',
       nested: { authorization: 'Bearer abc.def.ghi' },
       raw: 'password=hunter2 token: abc123',
+      endpointWithQuery: 'https://storage.example.test/upload?access_key=query-secret&retry=1',
     })
 
     expect(text).toContain('https://example.invalid')
@@ -38,6 +70,7 @@ describe('error details', () => {
     expect(text).not.toContain('abc.def.ghi')
     expect(text).not.toContain('hunter2')
     expect(text).not.toContain('abc123')
+    expect(text).not.toContain('query-secret')
     expect(text).toContain('[REDACTED]')
   })
 

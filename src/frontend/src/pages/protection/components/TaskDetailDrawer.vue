@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { backupFailureCategory, backupFailureMetadata } from '../../../lib/backupFailureDisplay'
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { safeErrorDetailText } from '../../../lib/errors/details'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
@@ -19,7 +20,7 @@ import {
   RotateCcw,
   X,
 } from 'lucide-vue-next'
-import { apiErrorMessage, apiErrorMessageI18n } from '../../../lib/api'
+import { apiErrorMessageI18n } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import { getNode } from '../../../lib/nodeApi'
@@ -85,6 +86,7 @@ const { drawerScrollAnchorRef, resetDrawerScroll } = useDrawerScrollReset()
 const activeTask = ref<TaskRow | null>(null)
 const detailEvents = ref<TaskEventRow[]>([])
 const detailRefreshing = ref(false)
+const detailLoadError = ref('')
 const actionBusy = ref(false)
 const taskOwner = ref('')
 const activeDetailTab = ref<'steps' | 'resources'>('steps')
@@ -121,6 +123,20 @@ const drawerOpen = computed({
 })
 
 const cleanupMetadata = computed(() => activeTask.value?.repository_cleanup || null)
+const taskErrorDetails = computed(() => activeTask.value?.error_details || null)
+const technicalDetailText = computed(() => safeErrorDetailText(taskErrorDetails.value?.technical_detail))
+const hasCleanupOutcome = computed(() => Boolean(
+  taskErrorDetails.value?.cleanup_failures?.length
+  || taskErrorDetails.value?.retained_resources?.length
+))
+const showTaskOutcome = computed(() => Boolean(
+  taskErrorDetails.value && (
+    taskErrorDetails.value.error_code
+    || technicalDetailText.value
+    || hasCleanupOutcome.value
+  ),
+))
+const taskOutcomeExpanded = ref(false)
 const activeDependencies = computed(() =>
   (activeTask.value?.dependencies || []).filter((dependency) => dependency.is_active),
 )
@@ -132,6 +148,16 @@ function openTriggeredCleanupTask() {
 
 function openBlockingTask(taskUuid?: string | null) {
   if (taskUuid) emit('open-task', taskUuid)
+}
+
+function toggleTaskOutcome() {
+  taskOutcomeExpanded.value = !taskOutcomeExpanded.value
+  if (taskOutcomeExpanded.value) {
+    void nextTick(() => {
+      const drawerBody = drawerScrollAnchorRef.value?.closest<HTMLElement>('.el-drawer__body')
+      if (drawerBody) drawerBody.scrollTop = drawerBody.scrollHeight
+    })
+  }
 }
 
 const stepsWithEvents = computed(() => {
@@ -205,6 +231,7 @@ const {
 } = useRepositoryTaskCancellation(activeTask, {
   onUpdate: async (task) => {
     activeTask.value = task
+    taskOutcomeExpanded.value = false
     emit('task-updated', task)
   },
   onTerminal: async (task) => {
@@ -579,11 +606,23 @@ async function copyTaskUuid() {
   }
 }
 
+async function copyTechnicalDetail() {
+  const detail = technicalDetailText.value
+  if (!detail) return
+  try {
+    await copyTextToClipboard(detail)
+    ElMessage.success(t('ops.task.technicalDetailCopied'))
+  } catch {
+    ElMessage.error(t('ops.task.msgCopyFailed'))
+  }
+}
+
 async function loadTaskDetail(taskUuid: string) {
   const uuid = String(taskUuid || '').trim()
   if (!uuid) return
   stopRepositoryCancellation()
   detailRefreshing.value = true
+  detailLoadError.value = ''
   try {
     const task = await getTask(uuid)
     activeTask.value = task
@@ -600,7 +639,8 @@ async function loadTaskDetail(taskUuid: string) {
     detailEvents.value = events.results
     syncRepositoryCancellation(task)
   } catch (err) {
-    ElMessage.error(apiErrorMessage(err))
+    activeTask.value = null
+    detailLoadError.value = apiErrorMessageI18n(err, t)
   } finally {
     detailRefreshing.value = false
   }
@@ -663,6 +703,8 @@ function refreshActiveTask() {
 function closeDetail() {
   stopRepositoryCancellation()
   activeTask.value = null
+  taskOutcomeExpanded.value = false
+  detailLoadError.value = ''
   taskOwner.value = ''
   detailEvents.value = []
   activeDetailTab.value = 'steps'
@@ -1118,12 +1160,60 @@ watch(
                 </div>
               </div>
             </div>
-            <el-empty
-              v-else
-              :description="t('ops.task.emptySteps')"
-              :image-size="52"
-            />
-          </section>
+              <el-empty
+                v-else
+                :description="t('ops.task.emptySteps')"
+                :image-size="52"
+              />
+
+              <section
+                v-if="showTaskOutcome"
+                class="hfl-task-drawer__cleanup-outcome hfl-task-drawer__cleanup-outcome--final"
+                :class="{ 'hfl-task-drawer__cleanup-outcome--technical': !hasCleanupOutcome }"
+              >
+                <button
+                  type="button"
+                  class="hfl-task-drawer__cleanup-summary"
+                  :aria-expanded="taskOutcomeExpanded"
+                  @click="toggleTaskOutcome"
+                >
+                  <AlertTriangle :size="17" aria-hidden="true" />
+                  <div class="hfl-task-drawer__cleanup-summary-copy">
+                    <strong>{{ hasCleanupOutcome ? t('ops.task.cleanupIncompleteTitle') : t('ops.task.failureDetails.technicalDetails') }}</strong>
+                    <p v-if="hasCleanupOutcome">{{ t('ops.task.cleanupIncompleteDescription') }}</p>
+                    <span class="hfl-task-drawer__cleanup-view-details">
+                      {{ t(taskOutcomeExpanded ? 'ops.task.cleanupCollapseDetails' : 'ops.task.cleanupViewDetails') }}
+                    </span>
+                  </div>
+                  <ChevronDown
+                    :size="16"
+                    class="hfl-task-drawer__cleanup-toggle"
+                    :class="{ 'is-expanded': taskOutcomeExpanded }"
+                  />
+                </button>
+                <div v-if="taskOutcomeExpanded" class="hfl-task-drawer__cleanup-details">
+                  <div v-if="taskErrorDetails?.error_code" class="hfl-task-drawer__cleanup-group">
+                    <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.failureDetails.errorCode') }}</span>
+                    <code class="hfl-task-drawer__error-code">{{ taskErrorDetails.error_code }}</code>
+                  </div>
+                  <div v-if="technicalDetailText" class="hfl-task-drawer__cleanup-group">
+                    <div class="hfl-task-drawer__technical-log-shell">
+                      <div class="hfl-task-drawer__technical-log-head">
+                        <span class="hfl-task-drawer__technical-log-title">
+                          <span class="hfl-task-drawer__technical-log-dot" aria-hidden="true" />
+                          {{ t('ops.task.failureDetails.technicalDetails') }}
+                        </span>
+                        <ElButton link size="small" class="hfl-btn-with-icon" @click="copyTechnicalDetail">
+                          <Copy :size="13" />
+                          {{ t('feedback.toast.copy') }}
+                        </ElButton>
+                      </div>
+                      <pre class="hfl-task-drawer__technical-log">{{ technicalDetailText }}</pre>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </section>
         </ElTabPane>
 
         <ElTabPane name="resources">
@@ -1350,6 +1440,34 @@ watch(
       </ElTabs>
     </div>
     <div
+      v-else-if="detailLoadError"
+      ref="drawerScrollAnchorRef"
+      class="hfl-task-drawer__body"
+    >
+      <div class="hfl-task-drawer__load-error">
+        <div class="hfl-task-drawer__load-error-icon">
+          <AlertTriangle :size="22" />
+        </div>
+        <h3>{{ t('feedback.errorDetails.monitorUnavailable') }}</h3>
+        <p>{{ t('feedback.errorDetails.monitorReason') }}</p>
+        <p class="hfl-task-drawer__load-error-detail">
+          {{ detailLoadError }}
+        </p>
+        <div class="hfl-task-drawer__load-error-actions">
+          <ElButton
+            type="primary"
+            :loading="detailRefreshing"
+            @click="taskUuid && loadTaskDetail(taskUuid)"
+          >
+            {{ t('common.retry') }}
+          </ElButton>
+          <ElButton @click="drawerOpen = false">
+            {{ t('common.close') }}
+          </ElButton>
+        </div>
+      </div>
+    </div>
+    <div
       v-else
       ref="drawerScrollAnchorRef"
       class="hfl-task-drawer__body"
@@ -1397,6 +1515,55 @@ watch(
   gap: 16px;
   padding: 14px 0;
   width: 100%;
+}
+
+.hfl-task-drawer__load-error {
+  display: flex;
+  max-width: 520px;
+  min-height: 280px;
+  box-sizing: border-box;
+  margin: 48px auto;
+  padding: 32px 28px;
+  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+.hfl-task-drawer__load-error-icon {
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-warning-text);
+  background: var(--color-warning-light);
+  border-radius: 14px;
+}
+
+.hfl-task-drawer__load-error h3 {
+  margin: 16px 0 6px;
+  color: var(--color-text-title);
+  font-size: 18px;
+}
+
+.hfl-task-drawer__load-error p {
+  max-width: 440px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.hfl-task-drawer__load-error-detail {
+  margin-top: 10px !important;
+  color: var(--color-warning-text) !important;
+}
+
+.hfl-task-drawer__load-error-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
 }
 
 .hfl-task-drawer__header-summary {
@@ -2309,4 +2476,113 @@ watch(
   border-radius: 0;
   background: transparent;
 }
+
+.hfl-task-drawer__cleanup-outcome {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-warning-border);
+  border-radius: 12px;
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 6%);
+}
+
+.hfl-task-drawer__cleanup-outcome--technical {
+  margin-top: 20px;
+  padding: 0 16px 14px;
+  border: 1px solid rgb(148 163 184 / 34%);
+  border-radius: 12px;
+  background: var(--color-surface-subtle, #f8fafc);
+  color: var(--color-text-primary);
+  box-shadow: 0 2px 6px rgb(15 23 42 / 5%);
+}
+
+.hfl-task-drawer__cleanup-outcome--technical .hfl-task-drawer__cleanup-summary {
+  position: relative;
+  min-height: 44px;
+  padding: 15px 0 12px;
+  border-top: 0;
+  align-items: center;
+}
+
+.hfl-task-drawer__cleanup-outcome--technical .hfl-task-drawer__cleanup-summary-copy strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.hfl-task-drawer__cleanup-outcome--technical .hfl-task-drawer__cleanup-view-details {
+  color: var(--color-primary);
+}
+
+.hfl-task-drawer__cleanup-summary {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hfl-task-drawer__cleanup-summary > svg { flex: 0 0 auto; margin-top: 0; }
+.hfl-task-drawer__cleanup-summary-copy { flex: 1; min-width: 0; }
+.hfl-task-drawer__cleanup-summary-copy strong { font-size: 13px; }
+.hfl-task-drawer__cleanup-summary-copy p { margin: 3px 0 0; font-size: 12px; line-height: 1.5; }
+.hfl-task-drawer__cleanup-view-details {
+  display: block;
+  width: fit-content;
+  margin-top: 7px;
+  color: var(--color-warning-text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-decoration: none;
+  transition: color 160ms ease, text-decoration-color 160ms ease;
+}
+
+.hfl-task-drawer__cleanup-summary:hover .hfl-task-drawer__cleanup-view-details,
+.hfl-task-drawer__cleanup-summary:focus-visible .hfl-task-drawer__cleanup-view-details {
+  color: var(--color-text-primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.hfl-task-drawer__cleanup-toggle {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  transition: transform 160ms ease;
+}
+
+.hfl-task-drawer__cleanup-toggle.is-expanded { transform: rotate(180deg); }
+
+.hfl-task-drawer__cleanup-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 10px 12px 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-warning-border) 65%, var(--color-border));
+  border-radius: 9px;
+  background: color-mix(in srgb, #fff 88%, var(--color-warning-light));
+}
+
+.hfl-task-drawer__cleanup-group {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--color-warning-border) 48%, transparent);
+}
+
+.hfl-task-drawer__cleanup-group:first-child { padding-top: 0; border-top: 0; }
+.hfl-task-drawer__cleanup-label { display: block; margin-bottom: 5px; font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.hfl-task-drawer__error-code { display: inline-block; padding: 4px 7px; border-radius: 5px; background: rgb(15 23 42 / 7%); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace; font-size: 12px; }
+.hfl-task-drawer__technical-log-shell { overflow: hidden; border: 1px solid rgb(15 23 42 / 18%); border-radius: 8px; background: #0f172a; color: #e2e8f0; }
+.hfl-task-drawer__technical-log-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; background: #1e293b; color: #cbd5e1; font-size: 11px; }
+.hfl-task-drawer__technical-log-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.hfl-task-drawer__technical-log-dot { width: 7px; height: 7px; border-radius: 50%; background: #f87171; box-shadow: 11px 0 #fbbf24, 22px 0 #34d399; margin-right: 22px; }
+.hfl-task-drawer__technical-log-head .el-button { color: #cbd5e1; }
+.hfl-task-drawer__cleanup-group pre.hfl-task-drawer__technical-log { max-height: 220px; overflow: auto; margin: 0; padding: 11px 12px; border: 0; background: transparent; color: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace; font-size: 12px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

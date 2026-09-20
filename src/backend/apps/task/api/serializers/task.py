@@ -6,6 +6,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
 from apps.task.constants import RESTORE_TASK_TYPES
+from apps.task.error_contract import sanitize_task_detail, task_error_contract
 from apps.task.models import Task, TaskDependency, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import create_task
 
@@ -25,6 +26,9 @@ class TaskStepSerializer(serializers.ModelSerializer):
 
 class TaskEventSerializer(serializers.ModelSerializer):
     step_id = serializers.IntegerField(read_only=True)
+
+    def to_representation(self, instance):
+        return sanitize_task_detail(super().to_representation(instance))
 
     class Meta:
         model = TaskEvent
@@ -64,6 +68,14 @@ class TaskDependencySerializer(serializers.ModelSerializer):
 
 
 class TaskSerializer(serializers.ModelSerializer):
+    error_details = serializers.SerializerMethodField()
+
+    def get_error_details(self, obj):
+        return task_error_contract(obj, obj.resources.all())
+
+    def to_representation(self, instance):
+        return sanitize_task_detail(super().to_representation(instance))
+
     resources = TaskResourceSerializer(many=True, read_only=True)
     steps = TaskStepSerializer(many=True, read_only=True)
     recent_events = serializers.SerializerMethodField()
@@ -106,6 +118,7 @@ class TaskSerializer(serializers.ModelSerializer):
             "repository_cancellation",
             "error_code",
             "error_message",
+            "error_details",
             "started_at",
             "finished_at",
             "created_at",

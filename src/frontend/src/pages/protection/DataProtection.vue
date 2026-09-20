@@ -5201,6 +5201,9 @@ function resolveFlowSourceDisplayStatus(row: FlowSourceRow): FlowSourceDisplaySt
 
   const ready = flowSourceReadyStatus(row, {
     registered: t('protection.sourceResources.lifecycleRegistered'),
+    removing: t('protection.backupsPage.sourcePendingDeleting'),
+    removeFailed: t('protection.backupsPage.sourcePendingDeleteFailed'),
+    removed: t('protection.backupsPage.sourceRemoved'),
   })
   return { label: ready.label, tag: ready.tag }
 }
@@ -5315,18 +5318,23 @@ function monitorPendingUnregister(
       }
       const timeoutNotices = sourceIds.map((sourceId) => {
         const sourceName = flowRowsForSourceIds([sourceId])[0]?.name || sourceId
-        const details = unregisterFailureToErrorDetails({
-          t,
-          sourceId,
-          sourceName,
-          fallbackMessage: t('protection.backupsPage.msgDeleteSourceFailed'),
-        })
+        const details: ErrorDetailsPayload = {
+          title: t('feedback.errorDetails.monitorUnavailable'),
+          summary: t('feedback.errorDetails.monitorUnavailable'),
+          severity: 'warning',
+          errorCode: 'TASK_MONITOR_UNAVAILABLE',
+          taskUuid: pairs.find((pair) => pair.sourceId === sourceId)?.taskUuid,
+          reasons: [t('feedback.errorDetails.monitorReason')],
+          resolutions: [t('feedback.errorDetails.monitorSuggestion')],
+          entities: [{ id: sourceId, name: sourceName, type: 'source' }],
+        }
         sourcePendingOps.mark(
           [sourceId],
           {
             kind: 'delete_failed',
             errorMessage: unregisterFailureSummaryLine(details),
             failureDetails: details,
+            taskUuid: pairs.find((pair) => pair.sourceId === sourceId)?.taskUuid,
           },
           flowRowsForSourceIds([sourceId]),
         )
@@ -5430,6 +5438,7 @@ function monitorPendingUnregister(
             kind: 'delete_failed',
             errorMessage: unregisterFailureSummaryLine(details),
             failureDetails: details,
+            taskUuid: task.task_uuid,
           },
           flowRowsForSourceIds([sourceId]),
         )

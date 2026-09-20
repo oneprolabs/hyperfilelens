@@ -10,7 +10,7 @@ from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
 from apps.restore.models import RestoreRecord
-from apps.task.api.serializers.task import TaskStepInputSerializer
+from apps.task.api.serializers.task import TaskSerializer, TaskStepInputSerializer
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import (
     cancel_task,
@@ -65,6 +65,39 @@ class TaskApiTests(TestCase):
 
     def _headers(self, org: Organization | None = None):
         return {"HTTP_X_ORG_KEY": (org or self.org).key}
+
+    def test_serializer_exposes_sanitized_terminal_error_contract(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Failed backup",
+            status=Task.Status.FAILED,
+            error_code="BACKUP_SOURCE_READ_FAILED",
+            error_message="password=secret-value",
+            result_payload={
+                "failure_details": {"category": "source_read_failed", "count": 1},
+                "suggestions": [{"code": "retry", "detail": "Retry after password=secret-value"}],
+                "authorization": "Bearer secret-token",
+                "endpoint": "https://storage.example.test/upload?access_key=query-secret&retry=1",
+            },
+        )
+        data = TaskSerializer(task).data
+        contract = data["error_details"]
+        self.assertEqual(contract["severity"], "error")
+        self.assertEqual(contract["task_uuid"], str(task.task_uuid))
+        self.assertNotIn("secret-value", str(contract))
+        self.assertNotIn("secret-token", str(data))
+        self.assertNotIn("query-secret", str(data))
+
+    def test_serializer_omits_clean_success_contract(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Clean backup",
+            status=Task.Status.SUCCESS,
+            result_payload={"outcome": "success"},
+        )
+        self.assertIsNone(TaskSerializer(task).data["error_details"])
 
     def test_statistics_honors_task_type_and_created_range(self):
         now = timezone.now()

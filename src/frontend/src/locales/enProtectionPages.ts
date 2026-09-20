@@ -1030,6 +1030,7 @@ export const enProtectionPages = {
     sourcePendingDeleteWaiting: 'Waiting to Deregister',
     sourcePendingDeleteBlocked: 'Deregistration Needs Attention',
     sourcePendingDeleteFailed: 'Deregistration Failed',
+    sourceRemoved: 'Removed',
     sourcePendingRemoving: 'Removing Agent…',
     sourcePendingRevertStep3: 'Reverting Backup…',
     sourcePendingRevertStep2: 'Reverting to Step 1…',

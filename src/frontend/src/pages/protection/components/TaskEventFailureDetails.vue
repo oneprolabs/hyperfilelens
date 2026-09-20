@@ -1,23 +1,23 @@
 <script setup lang="ts">
 import { backupFailureCategory, backupFailureMetadata, backupFailurePresentation } from '../../../lib/backupFailureDisplay'
-import { computed } from 'vue'
+import {
+  extractFailureDetails,
+  extractSkippedDetails,
+  extractBackupSummary,
+  type FailureItem,
+  type SkippedItem,
+} from '../../../lib/backupTaskFailureLogic'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, ChevronRight, Lightbulb, LockKeyhole } from 'lucide-vue-next'
-
-type FailureItem = {
-  path: string
-  error: string
-  cause?: string
-  item_type?: string
-}
-
-type SkippedItem = FailureItem
 
 const props = defineProps<{
   metadata?: unknown
 }>()
 
 const MAX_SKIPPED_ITEMS = 10
+const skippedDetailsOpen = ref(false)
+const failureDetailsOpen = ref(false)
 
 const { t } = useI18n()
 
@@ -31,38 +31,13 @@ const backupFailureResolutions = computed(() => backupFailureCategoryValue.value
   ? [t('ops.task.failureDetails.communicationTimeoutResolution')]
   : backupFailure.value?.resolutions || [])
 
-const failureDetails = computed<Record<string, unknown>>(() => {
-  const value = metadataRecord.value.failure_details
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return value as Record<string, unknown>
-})
+// Use shared extraction functions (pure data, no Vue reactivity in them)
+const structuredFailure = computed(() => extractFailureDetails(metadataRecord.value))
+const structuredSkipped = computed(() => extractSkippedDetails(metadataRecord.value))
+const structuredSummary = computed(() => extractBackupSummary(metadataRecord.value))
 
-const skippedDetails = computed<Record<string, unknown>>(() => {
-  const value = metadataRecord.value.skipped_details
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return value as Record<string, unknown>
-})
-
-const backupSummary = computed<Record<string, unknown>>(() => {
-  const value = metadataRecord.value.backup_summary
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return value as Record<string, unknown>
-})
-const summarySnapshotId = computed(() => String(backupSummary.value.snapshot_id || '').trim())
-const summaryRestoreRecordId = computed(() => String(backupSummary.value.restore_record_id || '').trim())
-const failedDirectories = computed(() => {
-  const value = backupSummary.value.failed_directories
-  if (!Array.isArray(value)) return []
-  return value.flatMap((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
-    const record = item as Record<string, unknown>
-    const path = String(record.path || '').trim()
-    return path ? [{ path }] : []
-  })
-})
-
-const category = computed(() => String(failureDetails.value.category || 'source_read_failed'))
-const backupSourceOffline = computed(() => Boolean(backupFailure.value))
+const category = computed(() => structuredFailure.value?.category || 'source_read_failed')
+const backupSourceOffline = computed(() => ['backup_communication_timeout', 'backup_source_offline', 'backup_source_busy', 'backup_precheck_failed'].includes(category.value))
 const sourcePath = computed(() => String(metadataRecord.value.source_path || '').trim())
 const errorCode = computed(() => String(metadataRecord.value.error_code || '').trim())
 const restorePermissionDenied = computed(() => errorCode.value === 'RESTORE_TARGET_PERMISSION_DENIED')
@@ -72,110 +47,26 @@ const restorePermissionRemediationItems = computed(() => restorePermissionRemedi
 const restoreTargetPath = computed(() => String(metadataRecord.value.target_path || '').trim())
 const errorDiagnostic = computed(() => String(metadataRecord.value.error_diagnostic || '').trim())
 const originalError = computed(() => String(metadataRecord.value.error_message || '').trim())
-const items = computed<FailureItem[]>(() => {
-  const value = failureDetails.value.items
-  if (!Array.isArray(value)) return []
-  return value.flatMap((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
-    const record = item as Record<string, unknown>
-    const path = String(record.path || '').trim()
-    const error = String(record.error || '').trim()
-    const cause = String(record.cause || '').trim()
-    const itemType = String(record.item_type || '').trim()
-    return path || error ? [{ path, error, cause, item_type: itemType }] : []
-  })
-})
-const causes = computed<Array<{ code: string; item_type: string; count: number; items: FailureItem[] }>>(() => {
-  const value = failureDetails.value.causes
-  if (!Array.isArray(value)) return []
-  return value.flatMap((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
-    const record = item as Record<string, unknown>
-    const code = String(record.code || '').trim()
-    const itemType = String(record.item_type || '').trim()
-    const count = Number(record.count)
-    const sampledItems = Array.isArray(record.items)
-      ? record.items.flatMap((sample) => {
-        if (!sample || typeof sample !== 'object' || Array.isArray(sample)) return []
-        const sampleRecord = sample as Record<string, unknown>
-        const path = String(sampleRecord.path || '').trim()
-        const error = String(sampleRecord.error || '').trim()
-        return path || error
-          ? [{
-            path,
-            error,
-            cause: String(sampleRecord.cause || code).trim(),
-            item_type: String(sampleRecord.item_type || itemType).trim(),
-          }]
-          : []
-      })
-      : []
-    return code && Number.isFinite(count) && count > 0
-      ? [{ code, item_type: itemType, count, items: sampledItems }]
-      : []
-  })
-})
-const remediation = computed(() => {
-  const value = failureDetails.value.remediation
-  if (!Array.isArray(value)) return []
-  return value.map(item => String(item || '').trim()).filter(Boolean)
-})
-const failureCount = computed(() => {
-  const value = Number(failureDetails.value.total_count ?? failureDetails.value.count)
-  return Number.isFinite(value) && value > 0 ? value : items.value.length
-})
-const reportedFailureCount = computed(() => {
-  const value = Number(failureDetails.value.reported_count)
-  return Number.isFinite(value) && value >= 0 ? value : items.value.length
-})
-const failureTruncated = computed(() => Boolean(failureDetails.value.truncated) || failureCount.value > reportedFailureCount.value)
-const skippedItems = computed<SkippedItem[]>(() => {
-  const value = skippedDetails.value.items
-  if (!Array.isArray(value)) return []
-  return value.flatMap((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
-    const record = item as Record<string, unknown>
-    const path = String(record.path || '').trim()
-    const error = String(record.error || '').trim()
-    return path || error ? [{ path, error }] : []
-  }).slice(0, MAX_SKIPPED_ITEMS)
-})
-const skippedItemPayloadCount = computed(() => {
-  const value = skippedDetails.value.items
-  return Array.isArray(value) ? value.length : 0
-})
 
-function positiveCount(value: unknown) {
-  const number = Number(value)
-  return Number.isFinite(number) && number > 0 ? number : 0
-}
+const items = computed<FailureItem[]>(() => structuredFailure.value?.items || [])
+const causes = computed(() => structuredFailure.value?.causes || [])
+const remediation = computed(() => structuredFailure.value?.remediation || [])
+const failureCount = computed(() => structuredFailure.value?.total_count || 0)
+const reportedFailureCount = computed(() => structuredFailure.value?.reported_count || 0)
+const failureTruncated = computed(() => Boolean(structuredFailure.value?.truncated) || (structuredFailure.value?.total_count ?? 0) > (structuredFailure.value?.reported_count ?? 0))
 
-const skippedFileCount = computed(() => (
-  positiveCount(skippedDetails.value.file_count ?? metadataRecord.value.skipped_file_count)
-))
-const skippedDirectoryCount = computed(() => (
-  positiveCount(skippedDetails.value.directory_count ?? metadataRecord.value.skipped_directory_count)
-))
-const skippedSpecialCount = computed(() => (
-  positiveCount(skippedDetails.value.special_count ?? metadataRecord.value.skipped_special_count)
-))
-const skippedCount = computed(() => (
-  positiveCount(skippedDetails.value.count ?? metadataRecord.value.skipped_item_count)
-  || skippedFileCount.value + skippedDirectoryCount.value + skippedSpecialCount.value
-  || skippedItems.value.length
-))
-const skippedReportedCount = computed(() => (
-  Math.min(
-    MAX_SKIPPED_ITEMS,
-    positiveCount(skippedDetails.value.reported_count) || skippedItems.value.length,
-  )
-))
-const skippedTruncated = computed(() => (
-  Boolean(skippedDetails.value.truncated)
-  || skippedCount.value > skippedItems.value.length
-  || skippedItemPayloadCount.value > MAX_SKIPPED_ITEMS
-))
+const skippedItems = computed<SkippedItem[]>(() => structuredSkipped.value?.items || [])
+const skippedCount = computed(() => structuredSkipped.value?.count || 0)
+const skippedFileCount = computed(() => structuredSkipped.value?.file_count || 0)
+const skippedDirectoryCount = computed(() => structuredSkipped.value?.directory_count || 0)
+const skippedSpecialCount = computed(() => structuredSkipped.value?.special_count || 0)
+const skippedReportedCount = computed(() => Math.min(MAX_SKIPPED_ITEMS, structuredSkipped.value?.reported_count || 0))
 const hasSkippedDetails = computed(() => skippedCount.value > 0)
+
+const summarySnapshotId = computed(() => structuredSummary.value?.snapshot_id || '')
+const summaryRestoreRecordId = computed(() => structuredSummary.value?.restore_record_id || '')
+const failedDirectories = computed(() => structuredSummary.value?.failed_directories || [])
+
 const hasDetails = computed(() => (
   items.value.length > 0
   || causes.value.length > 0
@@ -197,8 +88,8 @@ function fullPath(path: string) {
 }
 
 function failureReason(item: FailureItem) {
-  if (category.value === 'source_file_locked') return t('ops.task.failureDetails.fileLockedReason')
   if (item.cause === 'source_resource_busy') return t('ops.task.failureDetails.sourceResourceBusyReason')
+  if (category.value === 'source_file_locked') return t('ops.task.failureDetails.fileLockedReason')
   if (item.cause === 'unsupported_entry_type') return t('ops.task.failureDetails.unsupportedEntryReason')
   if (item.cause === 'macos_privacy_denied') return t('ops.task.failureDetails.macosPrivacyReason')
   if (item.cause === 'permission_denied') return t('ops.task.failureDetails.permissionDeniedReason')
@@ -234,7 +125,12 @@ function remediationText(code: string) {
           {{ t('ops.task.failureDetails.howToResolve') }}
         </div>
         <ol class="task-event-failure__remediation-list">
-          <li v-for="resolution in backupFailureResolutions" :key="resolution">{{ resolution }}</li>
+          <li
+            v-for="resolution in backupFailureResolutions"
+            :key="resolution"
+          >
+            {{ resolution }}
+          </li>
         </ol>
       </div>
       <details
@@ -279,19 +175,14 @@ function remediationText(code: string) {
       <details
         v-if="skippedItems.length"
         class="task-event-failure__files"
+        @toggle="skippedDetailsOpen = ($event.currentTarget as HTMLDetailsElement).open"
       >
         <summary>
           <ChevronRight :size="14" />
-          {{ t('ops.task.failureDetails.viewSkippedItems', { count: skippedReportedCount }) }}
+          {{ t(skippedDetailsOpen ? 'ops.task.failureDetails.collapseSkippedItems' : 'ops.task.failureDetails.viewSkippedItems', { reportedCount: skippedReportedCount }) }}
         </summary>
-        <p
-          v-if="skippedTruncated"
-          class="task-event-failure__truncated"
-        >
-          {{ t('ops.task.failureDetails.skippedItemsTruncated', {
-            reportedCount: skippedReportedCount,
-            count: skippedCount,
-          }) }}
+        <p class="task-event-failure__coverage">
+          {{ t('ops.task.failureDetails.skippedItemsTruncated', { reportedCount: skippedReportedCount, count: skippedCount, omittedCount: Math.max(0, skippedCount - skippedReportedCount) }) }}
         </p>
         <ul>
           <li
@@ -322,7 +213,12 @@ function remediationText(code: string) {
           {{ t('ops.task.failureDetails.howToResolve') }}
         </div>
         <ol class="task-event-failure__remediation-list">
-          <li v-for="item in restorePermissionRemediationItems" :key="item">{{ item }}</li>
+          <li
+            v-for="item in restorePermissionRemediationItems"
+            :key="item"
+          >
+            {{ item }}
+          </li>
         </ol>
       </div>
       <details
@@ -363,17 +259,18 @@ function remediationText(code: string) {
       </div>
 
       <p
-        v-if="failureTruncated"
+        v-if="failureTruncated && !items.length"
         class="task-event-failure__truncated"
       >
         {{ t('ops.task.failureDetails.failureItemsTruncated', {
           reportedCount: reportedFailureCount,
           count: failureCount,
+          omittedCount: Math.max(0, failureCount - reportedFailureCount),
         }) }}
       </p>
 
       <div
-        v-if="remediation.length"
+        v-if="remediation.length && category === 'BACKUP_TARGET_STORAGE_FULL'"
         class="task-event-failure__remediation"
       >
         <div class="task-event-failure__label">
@@ -412,11 +309,15 @@ function remediationText(code: string) {
       <details
         v-else-if="items.length"
         class="task-event-failure__files"
+        @toggle="failureDetailsOpen = ($event.currentTarget as HTMLDetailsElement).open"
       >
         <summary>
           <ChevronRight :size="14" />
-          {{ t('ops.task.failureDetails.viewAffectedItems', { count: reportedFailureCount }) }}
+          {{ t(failureDetailsOpen ? 'ops.task.failureDetails.collapseAffectedItems' : 'ops.task.failureDetails.viewAffectedItems', { reportedCount: reportedFailureCount }) }}
         </summary>
+        <p class="task-event-failure__coverage">
+          {{ t('ops.task.failureDetails.failureItemsTruncated', { reportedCount: reportedFailureCount, count: failureCount, omittedCount: Math.max(0, failureCount - reportedFailureCount) }) }}
+        </p>
         <ul>
           <li
             v-for="(item, index) in items"
@@ -427,6 +328,23 @@ function remediationText(code: string) {
           </li>
         </ul>
       </details>
+      <div
+        v-if="remediation.length && category !== 'BACKUP_TARGET_STORAGE_FULL'"
+        class="task-event-failure__remediation"
+      >
+        <div class="task-event-failure__label">
+          <Lightbulb :size="14" />
+          {{ t('ops.task.failureDetails.howToResolve') }}
+        </div>
+        <ol class="task-event-failure__remediation-list">
+          <li
+            v-for="code in remediation"
+            :key="code"
+          >
+            {{ remediationText(code) }}
+          </li>
+        </ol>
+      </div>
     </template>
   </section>
 </template>
@@ -476,9 +394,29 @@ function remediationText(code: string) {
   border-top-color: rgb(253 230 138);
 }
 
+.task-event-failure__files {
+  margin-top: 2px;
+  padding: 9px 10px;
+  border: 1px solid rgb(254 202 202);
+  border-radius: 7px;
+  background: rgb(255 255 255 / 72%);
+}
+
+.task-event-failure--warning .task-event-failure__files {
+  border-color: rgb(253 230 138);
+  background: rgb(255 255 255 / 60%);
+}
+
 .task-event-failure__truncated {
   margin: 8px 0 0;
   font-size: 12px;
+}
+
+.task-event-failure__coverage {
+  margin: 8px 0 0;
+  color: rgb(120 53 15);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .task-event-failure__summary--neutral code,

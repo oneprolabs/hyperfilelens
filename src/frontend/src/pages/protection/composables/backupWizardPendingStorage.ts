@@ -1,4 +1,5 @@
 import type { ErrorDetailsPayload } from '../../../lib/errors/details'
+import { safeErrorDetailText } from '../../../lib/errors/details'
 import type { FlowSourceRow } from './useFlowSourceAggregate'
 
 export type SourcePendingKind =
@@ -48,7 +49,7 @@ export function writeWizardPendingStorage(
   }
   sessionStorage.setItem(
     WIZARD_PENDING_STORAGE_KEY,
-    JSON.stringify({
+    safeErrorDetailText({
       ops: [...ops.entries()],
       snapshots: [...snapshots.entries()],
     }),

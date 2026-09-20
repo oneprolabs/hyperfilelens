@@ -25,6 +25,7 @@ const i18n = createI18n({
           failureDetails: {
             summary: {
               mixed_source_errors: '{count} source items could not be processed.',
+              source_read_failed: '{count} files could not be read from the backup source.',
             },
             communicationTimeoutReason: 'The backup result could not be confirmed in time.',
           },
@@ -149,6 +150,22 @@ describe('TaskTerminalOutcomeCell', () => {
     expect(wrapper.get('.task-terminal-outcome__reason').text()).toBe('795 source items could not be processed.')
     expect(wrapper.get('.task-terminal-outcome__diagnostic').attributes('aria-label'))
       .toBe('[KOPIA_SNAPSHOT_FATAL] 795 source items could not be processed.')
+  })
+
+  it('uses a structured failure summary from the task result payload', () => {
+    const wrapper = mountCell({
+      status: 'failed',
+      error_message: '5 files could not be read from the backup source.',
+      result_payload: {
+        failure_details: {
+          category: 'source_read_failed',
+          count: 5,
+        },
+      },
+    })
+
+    expect(wrapper.get('.task-terminal-outcome__reason').text())
+      .toBe('5 files could not be read from the backup source.')
   })
 
   it('uses the approved semantic tokens and font weights', () => {

@@ -2882,7 +2882,7 @@ function onClosed() {
                       type="primary"
                       plain
                       size="small"
-                      class="mt-3"
+                      class="mt-3 mr-2"
                       :loading="provisionRetrying"
                       @click="retryCurrentConfigProvision"
                     >

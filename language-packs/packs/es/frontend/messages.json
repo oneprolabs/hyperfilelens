@@ -135,7 +135,14 @@
       "reasons": "Posibles razones",
       "resolutions": "Cómo resolver",
       "technical": "Detalles técnicos",
-      "copy": "Copiar los detalles del error"
+      "copy": "Copiar los detalles del error",
+      "openTask": "Abrir tarea",
+      "monitorUnavailable": "No se puede confirmar el estado de la tarea",
+      "monitorReason": "La supervisión no está disponible. La tarea podría seguir ejecutándose.",
+      "monitorSuggestion": "Compruebe la conexión y vuelva a abrir la tarea para consultar su estado antes de repetir la operación.",
+      "limited": "No hay información de diagnóstico detallada para esta tarea.",
+      "affectedEntities": "Entidades afectadas",
+      "cleanup": "Limpieza y elementos omitidos"
     }
   },
   "account": {
@@ -1479,6 +1486,7 @@
       "sourcePendingDeleteWaiting": "Esperando a anular el registro",
       "sourcePendingDeleteBlocked": "La baja requiere atención",
       "sourcePendingDeleteFailed": "Error al dar de baja",
+      "sourceRemoved": "Eliminado",
       "sourcePendingRemoving": "Eliminando el Agent...",
       "sourcePendingRevertStep3": "Revirtiendo la configuración...",
       "sourcePendingRevertStep2": "Revertir al Paso 1...",
@@ -5703,15 +5711,34 @@
       "cleanupIncompleteTitle": "La limpieza no terminó",
       "cleanupIncompleteDescription": "Revisar los pasos de limpieza fallidos y los recursos retenidos antes de reintentar o completar la limpieza manualmente.",
       "cleanupFailures": "Fallos de limpieza",
+      "cleanupFailuresCount": "{count} fallos de limpieza",
       "cleanupWarnings": "Advertencias",
       "retainedResources": "Recursos retenidos",
+      "retainedResourcesCount": "{count} recursos retenidos",
       "failedCleanupTasks": "Tareas de limpieza fallidas",
       "manualCleanupRequired": "Repositorio manual de limpieza requerido",
+      "cleanupSuggestions": "Acciones recomendadas",
+      "cleanupSuggestionsCount": "{count} acciones recomendadas",
+      "cleanupViewDetails": "Ver detalles",
+      "cleanupCollapseDetails": "Ocultar detalles",
+      "cleanupSuggestionCode": {
+        "review_cleanup": "Revisar limpieza",
+        "force_cleanup": "Limpieza forzada",
+        "retry": "Reintentar",
+        "check_agent": "Comprobar conexión del Agent"
+      },
+      "cleanupSuggestion": {
+        "review_cleanup": "Revise los recursos retenidos y complete la limpieza restante antes de reintentar.",
+        "force_cleanup": "Verifique que el Agent esté conectado y ejecute la limpieza forzada desde el flujo del origen.",
+        "retry": "Resuelva el problema de limpieza indicado y vuelva a intentarlo.",
+        "check_agent": "Compruebe la conexión del Agent y vuelva a intentar la limpieza."
+      },
       "manualCleanupDescription": "El endpoint de origen ya se eliminó, por lo que los datos retenidos del repositorio no se pueden volver a procesar mediante el origen original. Use el ID del registro de limpieza anterior al completar y auditar la limpieza manual.",
       "emptySteps": "No hay pasos",
       "emptyEvents": "No hay eventos disponibles para este paso.",
       "msgDisplayNameRequired": "Introduzca un nombre de tarea",
       "msgCopied": "UUID copiado",
+      "technicalDetailCopied": "Detalles técnicos copiados",
       "msgCopyFailed": "No se pudo copiar",
       "cancelReason": "Cancelado de la consola",
       "repositoryCancelConfirmTitle": "Cancelar esta operación de mantenimiento?",
@@ -5956,6 +5983,7 @@
         "packCountValue": "{count} paquetes"
       },
       "failureDetails": {
+        "errorCode": "Código de error",
         "snapshotId": "ID de instantánea",
         "restoreRecordId": "ID del registro de restauración",
         "failedDirectories": "Directorios con errores",
@@ -5980,6 +6008,7 @@
           "source_items_skipped": "Se omitieron {count} elementos de origen (archivos: {fileCount}; directorios: {directoryCount}; entradas especiales: {specialCount})."
         },
         "causes": {
+          "file_locked": "{count} archivos bloqueados por otro proceso",
           "unreadable_file": "{count} archivos ilegibles",
           "unreadable_directory": "{count} directorios ilegibles",
           "unsupported_entry_type": "{count} entradas del sistema de archivos no compatibles",
@@ -5990,11 +6019,13 @@
         },
         "howToResolve": "Cómo resolverlo",
         "viewAffectedFiles": "Ver los {count} archivos afectados",
-        "viewAffectedItems": "Ver {count} elementos afectados",
+        "viewAffectedItems": "Ver {reportedCount} elementos afectados",
+        "collapseAffectedItems": "Ocultar elementos afectados",
+        "collapseSkippedItems": "Ocultar elementos omitidos",
         "viewOriginalError": "Ver error original",
-        "failureItemsTruncated": "Se muestran los primeros {reportedCount} de {count} elementos afectados.",
-        "viewSkippedItems": "Ver {count} elementos omitidos",
-        "skippedItemsTruncated": "Se muestran los primeros {reportedCount} de {count} elementos omitidos.",
+        "failureItemsTruncated": "Se muestran {reportedCount} elementos informados de {count}; {omittedCount} no tienen detalles.",
+        "viewSkippedItems": "Ver {reportedCount} elementos omitidos",
+        "skippedItemsTruncated": "Se muestran {reportedCount} elementos omitidos informados de {count}; {omittedCount} no tienen detalles.",
         "fileLockedReason": "Bloqueado por otro proceso",
         "readFailedReason": "No se pudo leer el archivo",
         "remediation": {
@@ -6015,7 +6046,23 @@
         "macosPrivacyReason": "Bloqueado por los permisos de privacidad de macOS",
         "permissionDeniedReason": "Permiso denegado",
         "unreadableDirectoryReason": "No se pudo leer el directorio",
-        "sourceResourceBusyReason": "Dispositivo o recurso ocupado"
+        "sourceResourceBusyReason": "Dispositivo o recurso ocupado",
+        "failureTitle": "La tarea falló",
+        "warningTitle": "Tarea completada con advertencias",
+        "taskFailed": "La tarea «{name}» falló.",
+        "taskCancelled": "La tarea «{name}» se canceló.",
+        "failedDirectoriesReason": "Fallaron {count} directorios.",
+        "snapshotFailedTitle": "La instantánea falló",
+        "snapshotPartialTitle": "Instantánea completada parcialmente",
+        "snapshotFailedForSource": "La instantánea del origen «{source}» falló.",
+        "snapshotSummary": "La instantánea {id} falló.",
+        "snapshotFailedDirs": "Se produjeron errores en {failed} de {total} directorios.",
+        "snapshotPartialForSource": "La instantánea del origen «{source}» se completó parcialmente.",
+        "snapshotPartialSummary": "La instantánea {id} se completó parcialmente.",
+        "provisionFailedTitle": "El aprovisionamiento falló",
+        "provisionFailedSummary": "El aprovisionamiento de «{name}» falló.",
+        "provisionUpgradeAgent": "Actualice el agente en el host de origen y vuelva a intentarlo.",
+        "provisionConfigDiscarded": "La configuración de copia de seguridad se descartó tras varios fallos."
       },
       "resourceValue": {
         "s3": "Almacenamiento de objetos",

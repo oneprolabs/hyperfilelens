@@ -24,7 +24,7 @@ const progress = computed(() => {
   return Math.max(0, Math.min(100, (props.toast.remainingMs / props.toast.duration) * 100))
 })
 
-const isCompact = computed(() => !props.toast.title && !props.toast.copyText && !props.toast.details)
+const isCompact = computed(() => !props.toast.title && !props.toast.copyText && !props.toast.details && !props.toast.action)
 const detailsActionLabel = computed(() => (
   props.toast.details?.resolutions?.length
     ? t('feedback.toast.howToFix')
@@ -151,6 +151,13 @@ onUnmounted(() => {
             :size="13"
           />
           {{ copied ? t('feedback.toast.copied') : t('feedback.toast.copy') }}
+        </button>
+        <button
+          v-if="toast.action"
+          type="button"
+          @click="toast.action.onClick()"
+        >
+          {{ toast.action.label }}
         </button>
         <button
           v-if="toast.details"

@@ -57,6 +57,9 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
       case 'delete_blocked':
         return t('protection.backupsPage.sourcePendingDeleteBlocked')
       case 'delete_failed':
+        if (op.failureDetails?.errorCode === 'TASK_MONITOR_UNAVAILABLE') {
+          return t('feedback.errorDetails.monitorUnavailable')
+        }
         return t('protection.backupsPage.sourcePendingDeleteFailed')
       case 'reverting':
         return op.targetStep === 2
@@ -80,7 +83,7 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
       op.taskUuid
         && (
           ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind)
-          || (op.kind === 'delete_failed' && !op.failureDetails)
+          || op.kind === 'delete_failed'
         )
         ? [{ sourceId, taskUuid: op.taskUuid, startedAt: op.startedAt }]
         : [],

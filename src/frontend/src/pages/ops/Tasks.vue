@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, toRef, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, toRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -136,6 +136,7 @@ const stats = ref<TaskStatistics>({
 
 const detailOpen = ref(false)
 const activeTask = ref<TaskRow | null>(null)
+const cleanupDetailsExpanded = ref(false)
 const detailEvents = ref<TaskEventRow[]>([])
 const detailRefreshing = ref(false)
 const activeDetailTab = ref<'steps' | 'resources'>('steps')
@@ -149,6 +150,15 @@ const activeCleanupWarnings = computed(() => taskCleanupWarnings(activeTask.valu
 const activeRetainedResources = computed(() => taskRetainedResources(activeTask.value))
 const activeFailedCleanupChildren = computed(() => taskFailedCleanupChildren(activeTask.value))
 const activeNeedsManualCleanup = computed(() => taskNeedsManualCleanup(activeTask.value))
+const activeCleanupSuggestions = computed(() => activeTask.value?.error_details?.suggestions || [])
+const cleanupSuggestionText = (suggestion: { code: string; detail: string }) => {
+  const key = `ops.task.cleanupSuggestion.${suggestion.code}`
+  return te(key) ? t(key) : suggestion.detail
+}
+const cleanupSuggestionCode = (suggestion: { code: string; detail: string }) => {
+  const key = `ops.task.cleanupSuggestionCode.${suggestion.code}`
+  return te(key) ? t(key) : ''
+}
 const cleanupOutcomeSucceeded = computed(() => activeTask.value?.status === 'success')
 const showCleanupOutcome = computed(() => (
   taskDisplayStatus(activeTask.value) === 'partial'
@@ -875,6 +885,7 @@ async function openTaskDetail(row: TaskRow | string) {
   stopRepositoryCancellation()
   const signal = pageRequests.nextSignal('task-detail')
   detailOpen.value = true
+  cleanupDetailsExpanded.value = false
   detailRefreshing.value = true
   detailEvents.value = []
   try {
@@ -892,11 +903,22 @@ async function openTaskDetail(row: TaskRow | string) {
     router.replace({ query: { ...route.query, taskUuid } })
   } catch (err) {
     if (pageRequests.isAbortError(err)) return
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+    activeTask.value = null
+    detailEvents.value = []
   } finally {
     const isCurrent = pageRequests.isCurrentSignal('task-detail', signal)
     pageRequests.releaseSignal('task-detail', signal)
     if (isCurrent) detailRefreshing.value = false
+  }
+}
+
+function toggleCleanupDetails() {
+  cleanupDetailsExpanded.value = !cleanupDetailsExpanded.value
+  if (cleanupDetailsExpanded.value) {
+    void nextTick(() => {
+      const drawerBody = drawerScrollAnchorRef.value?.closest<HTMLElement>('.el-drawer__body')
+      if (drawerBody) drawerBody.scrollTop = drawerBody.scrollHeight
+    })
   }
 }
 
@@ -907,6 +929,7 @@ function closeDetail() {
   detailOpen.value = false
   detailRefreshing.value = false
   activeTask.value = null
+  cleanupDetailsExpanded.value = false
   taskOwner.value = ''
   detailEvents.value = []
   activeDetailTab.value = 'steps'
@@ -1573,95 +1596,7 @@ watch(
           </ul>
         </ElAlert>
 
-        <section
-          v-if="showCleanupOutcome"
-          class="hfl-task-drawer__cleanup-outcome"
-          aria-live="polite"
-        >
-          <div class="hfl-task-drawer__cleanup-outcome-head">
-            <AlertTriangle
-              :size="17"
-              aria-hidden="true"
-            />
-            <div>
-              <strong>{{ cleanupOutcomeSucceeded ? t('ops.task.cleanupWarningTitle') : t('ops.task.cleanupIncompleteTitle') }}</strong>
-              <p>{{ cleanupOutcomeSucceeded ? t('ops.task.cleanupWarningDescription') : t('ops.task.cleanupIncompleteDescription') }}</p>
-            </div>
-          </div>
-          <div
-            v-if="activeCleanupFailures.length"
-            class="hfl-task-drawer__cleanup-group"
-          >
-            <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.cleanupFailures') }}</span>
-            <ul>
-              <li
-                v-for="failure in activeCleanupFailures"
-                :key="`${failure.sourceId || ''}:${failure.code}:${failure.detail}`"
-              >
-                <strong>{{ failure.sourceName || failure.code }}</strong>
-                <span>{{ failure.detail }}</span>
-              </li>
-            </ul>
-          </div>
-          <div
-            v-if="activeCleanupWarnings.length"
-            class="hfl-task-drawer__cleanup-group"
-          >
-            <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.cleanupWarnings') }}</span>
-            <ul>
-              <li
-                v-for="warning in activeCleanupWarnings"
-                :key="`${warning.sourceId || ''}:${warning.code}:${warning.detail}`"
-              >
-                <strong>{{ warning.sourceName || warning.code }}</strong>
-                <span>{{ warning.detail }}</span>
-              </li>
-            </ul>
-          </div>
-          <div
-            v-if="activeRetainedResources.length"
-            class="hfl-task-drawer__cleanup-group"
-          >
-            <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.retainedResources') }}</span>
-            <ul>
-              <li
-                v-for="resource in activeRetainedResources"
-                :key="resource"
-              >
-                <code>{{ resource }}</code>
-              </li>
-            </ul>
-          </div>
-          <div
-            v-if="activeFailedCleanupChildren.length"
-            class="hfl-task-drawer__cleanup-group"
-          >
-            <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.failedCleanupTasks') }}</span>
-            <ul>
-              <li
-                v-for="child in activeFailedCleanupChildren"
-                :key="child.taskUuid"
-              >
-                <button
-                  type="button"
-                  class="hfl-table-name-link"
-                  @click="openTaskDetail(child.taskUuid)"
-                >
-                  {{ child.taskUuid }}
-                </button>
-                <span>{{ child.error }}</span>
-              </li>
-            </ul>
-          </div>
-          <ElAlert
-            v-if="activeNeedsManualCleanup"
-            type="warning"
-            :closable="false"
-            :title="t('ops.task.manualCleanupRequired')"
-            :description="t('ops.task.manualCleanupDescription')"
-            show-icon
-          />
-        </section>
+
 
         <ElTabs
           v-model="activeDetailTab"
@@ -1952,6 +1887,97 @@ watch(
                 :description="t('ops.task.emptySteps')"
                 :image-size="52"
               />
+
+              <section
+                v-if="showCleanupOutcome"
+                class="hfl-task-drawer__cleanup-outcome hfl-task-drawer__cleanup-outcome--final"
+                aria-live="polite"
+              >
+          <button
+            type="button"
+            class="hfl-task-drawer__cleanup-summary"
+            :aria-expanded="cleanupDetailsExpanded"
+            @click="toggleCleanupDetails"
+          >
+            <AlertTriangle
+              :size="17"
+              aria-hidden="true"
+            />
+            <div class="hfl-task-drawer__cleanup-summary-copy">
+              <strong>{{ cleanupOutcomeSucceeded ? t('ops.task.cleanupWarningTitle') : t('ops.task.cleanupIncompleteTitle') }}</strong>
+              <p>{{ cleanupOutcomeSucceeded ? t('ops.task.cleanupWarningDescription') : t('ops.task.cleanupIncompleteDescription') }}</p>
+              <span class="hfl-task-drawer__cleanup-counts">
+                {{ t('ops.task.cleanupFailuresCount', { count: activeCleanupFailures.length }) }} ·
+                {{ t('ops.task.retainedResourcesCount', { count: activeRetainedResources.length }) }} ·
+                {{ t('ops.task.cleanupSuggestionsCount', { count: activeCleanupSuggestions.length }) }}
+              </span>
+              <span class="hfl-task-drawer__cleanup-view-details">
+                {{ t(cleanupDetailsExpanded ? 'ops.task.cleanupCollapseDetails' : 'ops.task.cleanupViewDetails') }}
+              </span>
+            </div>
+            <ChevronDown
+              :size="16"
+              class="hfl-task-drawer__cleanup-toggle"
+              :class="{ 'is-expanded': cleanupDetailsExpanded }"
+              aria-hidden="true"
+            />
+          </button>
+          <div
+            v-if="cleanupDetailsExpanded"
+            class="hfl-task-drawer__cleanup-details"
+          >
+            <div v-if="activeCleanupFailures.length" class="hfl-task-drawer__cleanup-group">
+              <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.cleanupFailures') }}</span>
+              <ul>
+                <li v-for="failure in activeCleanupFailures" :key="`${failure.code}-${failure.detail}-${failure.sourceId || ''}`">
+                  <strong v-if="failure.sourceName">{{ failure.sourceName }}: </strong>
+                  <span>{{ failure.detail }}</span>
+                  <code v-if="failure.code">{{ failure.code }}</code>
+                </li>
+              </ul>
+            </div>
+            <div v-if="activeCleanupWarnings.length" class="hfl-task-drawer__cleanup-group">
+              <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.cleanupWarnings') }}</span>
+              <ul>
+                <li v-for="warning in activeCleanupWarnings" :key="`${warning.code}-${warning.detail}-${warning.sourceId || ''}`">
+                  <strong v-if="warning.sourceName">{{ warning.sourceName }}: </strong>
+                  <span>{{ warning.detail }}</span>
+                  <code v-if="warning.code">{{ warning.code }}</code>
+                </li>
+              </ul>
+            </div>
+            <div v-if="activeRetainedResources.length" class="hfl-task-drawer__cleanup-group">
+              <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.retainedResources') }}</span>
+              <ul><li v-for="resource in activeRetainedResources" :key="resource"><code>{{ resource }}</code></li></ul>
+            </div>
+            <div v-if="activeFailedCleanupChildren.length" class="hfl-task-drawer__cleanup-group">
+              <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.failedCleanupTasks') }}</span>
+              <ul>
+                <li v-for="child in activeFailedCleanupChildren" :key="child.taskUuid">
+                  <button type="button" class="hfl-table-name-link" @click="openTaskDetail(child.taskUuid)">{{ child.taskUuid }}</button>
+                  <span>{{ child.error }}</span>
+                </li>
+              </ul>
+            </div>
+            <div v-if="activeCleanupSuggestions.length" class="hfl-task-drawer__cleanup-group">
+              <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.cleanupSuggestions') }}</span>
+              <ul>
+                <li v-for="suggestion in activeCleanupSuggestions" :key="`${suggestion.code}-${suggestion.detail}`">
+                  <strong v-if="cleanupSuggestionCode(suggestion)">{{ cleanupSuggestionCode(suggestion) }}: </strong>
+                  <span>{{ cleanupSuggestionText(suggestion) }}</span>
+                </li>
+              </ul>
+            </div>
+            <ElAlert
+              v-if="activeNeedsManualCleanup"
+              :title="t('ops.task.manualCleanupRequired')"
+              :description="t('ops.task.manualCleanupDescription')"
+              type="warning"
+              :closable="false"
+              show-icon
+            />
+          </div>
+        </section>
             </section>
           </ElTabPane>
 
@@ -2487,9 +2513,6 @@ watch(
 }
 
 .hfl-task-drawer__cleanup-outcome {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
   padding: 14px 16px;
   border: 1px solid var(--color-warning-border);
   border-radius: 12px;
@@ -2497,30 +2520,107 @@ watch(
   color: var(--color-warning-text);
 }
 
-.hfl-task-drawer__cleanup-outcome-head {
+.hfl-task-drawer__cleanup-outcome--final {
+  margin-top: 18px;
+  border-color: var(--color-warning-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.hfl-task-drawer__cleanup-summary {
+  width: 100%;
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
 
-.hfl-task-drawer__cleanup-outcome-head > svg {
+.hfl-task-drawer__cleanup-summary:focus-visible {
+  outline: 2px solid var(--color-warning-text);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+.hfl-task-drawer__cleanup-summary > svg {
   flex: 0 0 auto;
   margin-top: 2px;
 }
 
-.hfl-task-drawer__cleanup-outcome-head strong {
+.hfl-task-drawer__cleanup-summary-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.hfl-task-drawer__cleanup-summary-copy strong {
   font-size: 13px;
 }
 
-.hfl-task-drawer__cleanup-outcome-head p {
+.hfl-task-drawer__cleanup-summary-copy p {
   margin: 3px 0 0;
   font-size: 12px;
   line-height: 1.5;
 }
 
+.hfl-task-drawer__cleanup-counts {
+  display: block;
+  margin-top: 7px;
+  font-size: 11px;
+  opacity: 0.82;
+}
+
+.hfl-task-drawer__cleanup-view-details {
+  display: block;
+  margin-top: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-warning-text);
+  text-decoration: none;
+  transition: color 160ms ease, text-decoration-color 160ms ease;
+}
+
+.hfl-task-drawer__cleanup-summary:hover .hfl-task-drawer__cleanup-view-details,
+.hfl-task-drawer__cleanup-summary:focus-visible .hfl-task-drawer__cleanup-view-details {
+  color: var(--color-text-primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.hfl-task-drawer__cleanup-toggle {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  transition: transform 160ms ease;
+}
+
+.hfl-task-drawer__cleanup-toggle.is-expanded {
+  transform: rotate(180deg);
+}
+
+.hfl-task-drawer__cleanup-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 10px 12px 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-warning-border) 65%, var(--color-border));
+  border-radius: 9px;
+  /* Keep the expanded content readable while retaining the warning context around it. */
+  background: color-mix(in srgb, var(--color-text-inverse) 88%, var(--color-warning-light));
+  box-shadow: var(--shadow-sm);
+}
+
+.hfl-task-drawer__cleanup-details > .hfl-task-drawer__cleanup-group:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
 .hfl-task-drawer__cleanup-group {
   padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--color-warning-border) 75%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--color-warning-border) 48%, transparent);
 }
 
 .hfl-task-drawer__cleanup-label {
