@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -40,6 +40,29 @@ const capacityPlanUnit = ref<'GB' | 'TB'>('TB')
 const capacityPlanFactor = ref(1)
 const capacityPlanRepositoryId = ref<number>()
 const capacityPlanSafePct = 80
+const attentionTextRefs = new Map<string, HTMLElement>()
+const attentionTextOverflow = reactive<Record<string, boolean>>({})
+
+function setAttentionTextRef(key: string, element: Element | null) {
+  if (element instanceof HTMLElement) attentionTextRefs.set(key, element)
+  else attentionTextRefs.delete(key)
+}
+
+function hasAttentionTextOverflow(key: string) {
+  return Boolean(attentionTextOverflow[key])
+}
+
+function measureAttentionTextOverflow() {
+  void nextTick(() => {
+    for (const [key, element] of attentionTextRefs) {
+      attentionTextOverflow[key] = element.scrollHeight > element.clientHeight + 1
+    }
+  })
+}
+
+function onAttentionResize() {
+  measureAttentionTextOverflow()
+}
 
 const routes = {
   sources: '/protection/backup-sources?tab=host',
@@ -457,6 +480,9 @@ async function refresh() {
 }
 
 onMounted(refresh)
+onMounted(() => window.addEventListener('resize', onAttentionResize))
+onUpdated(measureAttentionTextOverflow)
+onBeforeUnmount(() => window.removeEventListener('resize', onAttentionResize))
 </script>
 
 <template>
@@ -804,13 +830,25 @@ onMounted(refresh)
                   <div class="attention-item__content">
                     <Activity class="attention-item__icon" />
                     <div>
-                      <p class="attention-item__title">
-                        {{ item.title }}
-                      </p>
-                      <span
+                      <ElTooltip
+                        :content="item.title"
+                        placement="top-start"
+                        :show-after="300"
+                        :disabled="!hasAttentionTextOverflow(`event-title:${item.id}`)"
+                        popper-class="dashboard-attention-tooltip"
+                      >
+                        <p :ref="(element) => setAttentionTextRef(`event-title:${item.id}`, element)" class="attention-item__title">{{ item.title }}</p>
+                      </ElTooltip>
+                      <ElTooltip
                         v-if="item.detail"
-                        class="attention-item__detail"
-                      >{{ item.detail }}</span>
+                        :content="item.detail"
+                        placement="top-start"
+                        :show-after="300"
+                        :disabled="!hasAttentionTextOverflow(`event-detail:${item.id}`)"
+                        popper-class="dashboard-attention-tooltip"
+                      >
+                        <span :ref="(element) => setAttentionTextRef(`event-detail:${item.id}`, element)" class="attention-item__detail">{{ item.detail }}</span>
+                      </ElTooltip>
                       <span
                         v-if="item.at"
                         class="attention-item__time"
@@ -880,13 +918,25 @@ onMounted(refresh)
                   <div class="attention-item__content">
                     <AlertCircle class="attention-item__icon" />
                     <div>
-                      <p class="attention-item__title">
-                        {{ item.title }}
-                      </p>
-                      <span
+                      <ElTooltip
+                        :content="item.title"
+                        placement="top-start"
+                        :show-after="300"
+                        :disabled="!hasAttentionTextOverflow(`alert-title:${item.id}`)"
+                        popper-class="dashboard-attention-tooltip"
+                      >
+                        <p :ref="(element) => setAttentionTextRef(`alert-title:${item.id}`, element)" class="attention-item__title">{{ item.title }}</p>
+                      </ElTooltip>
+                      <ElTooltip
                         v-if="item.detail"
-                        class="attention-item__detail"
-                      >{{ item.detail }}</span>
+                        :content="item.detail"
+                        placement="top-start"
+                        :show-after="300"
+                        :disabled="!hasAttentionTextOverflow(`alert-detail:${item.id}`)"
+                        popper-class="dashboard-attention-tooltip"
+                      >
+                        <span :ref="(element) => setAttentionTextRef(`alert-detail:${item.id}`, element)" class="attention-item__detail">{{ item.detail }}</span>
+                      </ElTooltip>
                       <span class="attention-item__time">
                         {{ alertStatusLabel(item.status) }}<template v-if="item.at"> · {{ formatTime(item.at) }}</template>
                       </span>
@@ -2635,6 +2685,7 @@ onMounted(refresh)
   display: flex;
   gap: 0.625rem;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .attention-item__icon {
@@ -2655,6 +2706,11 @@ onMounted(refresh)
 .attention-item__title {
   margin: 0;
   font-weight: 600;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
 }
 
 .attention-item__detail,
@@ -2663,6 +2719,22 @@ onMounted(refresh)
   margin-top: 0.125rem;
   font-size: 12px;
   color: #86909c;
+}
+
+.attention-item__detail {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+:global(.dashboard-attention-tooltip) {
+  max-width: min(420px, calc(100vw - 32px));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 
 .attention-item__actions {

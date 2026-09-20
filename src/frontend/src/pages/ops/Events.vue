@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw, Search } from 'lucide-vue-next'
 import ModulePage from '../../components/ModulePage.vue'
@@ -44,6 +44,7 @@ type EventResponse = {
 }
 
 const { t } = useI18n()
+const route = useRoute()
 const router = useRouter()
 const opsMenus = useOpsMenus()
 const { drawerSize: detailDrawerSize } = useResponsiveDrawerWidth()
@@ -122,6 +123,9 @@ async function loadEvents() {
     stats.critical = Number(data.stats?.critical) || 0
     stats.warning = Number(data.stats?.warning) || 0
     stats.information = Number(data.stats?.information) || 0
+    const eventId = String(route.query.eventId || '').trim()
+    const target = eventId ? events.value.find((event) => String(event.id) === eventId) : null
+    if (target) openDetail(target)
   } catch (error) {
     if (requestId !== loadRequestSequence) return
     loadError.value = apiErrorMessage(error)
@@ -147,6 +151,15 @@ function reloadFromFirstPage() {
 function openDetail(event: OperationalEvent) {
   selectedEvent.value = event
   detailOpen.value = true
+}
+
+function closeDetail() {
+  selectedEvent.value = null
+  if (route.query.eventId) {
+    const query = { ...route.query }
+    delete query.eventId
+    void router.replace({ query })
+  }
 }
 
 function openResource(event: OperationalEvent) {
@@ -397,6 +410,7 @@ watch(
       :size="detailDrawerSize"
       destroy-on-close
       class="hfl-detail-drawer hfl-event-detail-drawer"
+      @closed="closeDetail"
     >
       <template #header>
         <span class="hfl-detail-drawer__title">{{ selectedEvent?.title || t('ops.events.detailTitle') }}</span>
