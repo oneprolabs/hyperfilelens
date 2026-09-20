@@ -2361,7 +2361,25 @@ async function refreshEnteredFlowStep(step: 0 | 1 | 2) {
   if (step === 2 && createdBackupRefresh) {
     await createdBackupRefresh
     // A failed or interrupted reconciliation must not suppress the initial load.
-    if (!step3InitialLoadPending.value) return
+    if (!step3InitialLoadPending.value) {
+      // The reconciliation owns the first Step 3 request. Release the
+      // synchronous loading prime that would otherwise wait for a watcher
+      // request which has already been skipped.
+      if (step3EntryLoadingPrimed) {
+        step3EntryLoadingPrimed = false
+        setFlowStepDataLoading(2, false)
+      }
+      return
+    }
+    if (flowMainStep.value !== step) {
+      // If navigation moved away while reconciliation was in flight, no
+      // watcher request remains to consume the entry prime.
+      if (step3EntryLoadingPrimed) {
+        step3EntryLoadingPrimed = false
+        setFlowStepDataLoading(2, false)
+      }
+      return
+    }
   }
   if (flowMainStep.value === step) await refreshFlowStepData(step)
 }
