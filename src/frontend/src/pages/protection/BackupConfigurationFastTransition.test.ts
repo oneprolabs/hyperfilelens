@@ -91,6 +91,16 @@ describe('backup configuration fast transition', () => {
     expect(page).toContain('v-loading="flowStepDataLoading[2]"')
   })
 
+  it('primes Step 3 loading synchronously when the start-backup card is clicked', () => {
+    const enter = sourceBetween(page, 'function enterStartBackupStep', 'const setupDrCreateOpen')
+    expect(enter).toContain('step3EntryLoadingPrimed = true')
+    expect(enter).toContain('setFlowStepDataLoading(2, true)')
+    expect(enter.indexOf('setFlowStepDataLoading(2, true)')).toBeLessThan(enter.indexOf('syncFlowStepRoute(2)'))
+    const refresh = sourceBetween(page, 'async function refreshFlowStepData(', 'function flowRowFromSourceId')
+    expect(refresh).toContain('consumePrimedStep3Loading')
+    expect(refresh).toContain('if (showLoading || consumePrimedStep3Loading) setFlowStepDataLoading(step, false)')
+  })
+
   it('preserves successful state when background reconciliation fails', () => {
     const refresh = sourceBetween(page, 'async function refreshBackupConfigs(', 'function displayNameForSource')
     const reconcile = sourceBetween(page, 'function reconcileCreatedBackupConfigs', 'function finishCreateAndGoToStep3')

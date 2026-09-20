@@ -1149,6 +1149,9 @@ const flowStepDataLoading = reactive({
   1: initialFlowMainStep === 1,
   2: initialFlowMainStep === 2,
 })
+// Step 3 can be entered from a card click before the post-flush watcher starts
+// its request. Prime the table loading state synchronously for that gap.
+let step3EntryLoadingPrimed = false
 const backupSelectableById = ref(new Map<string, FlowSourceRow>())
 
 function mapBackupSelectableToFlowRow(item: BackupSelectableSource): FlowSourceRow {
@@ -1770,7 +1773,9 @@ async function refreshFlowStepData(
   const scope = flowStepScope(step)
   if (step === 1) clearFlowStepLoadRetry(1)
   const signal = pageRequests.nextSignal(scope)
-  if (showLoading) setFlowStepDataLoading(step, true)
+  const consumePrimedStep3Loading = step === 2 && step3EntryLoadingPrimed
+  if (consumePrimedStep3Loading) step3EntryLoadingPrimed = false
+  if (showLoading && !consumePrimedStep3Loading) setFlowStepDataLoading(step, true)
   try {
     if (step === 1) {
       if (step2ServerFiltersActive()) await refreshPipelineStep2Count(signal)
@@ -1788,7 +1793,7 @@ async function refreshFlowStepData(
     if (step === 2) syncStep3AutoRefresh()
   } finally {
     pageRequests.releaseSignal(scope, signal)
-    if (showLoading) setFlowStepDataLoading(step, false)
+    if (showLoading || consumePrimedStep3Loading) setFlowStepDataLoading(step, false)
   }
 }
 
@@ -2212,7 +2217,11 @@ function enterStartBackupStep(opts?: { requireReady?: boolean; focusIds?: string
 
   const alreadyOnStep3 = flowMainStep.value === 2
   flowMainStep.value = 2
-  if (!alreadyOnStep3) step3InitialLoadPending.value = true
+  if (!alreadyOnStep3) {
+    step3InitialLoadPending.value = true
+    step3EntryLoadingPrimed = true
+    setFlowStepDataLoading(2, true)
+  }
   if (opts?.syncRoute !== false) syncFlowStepRoute(2)
   if (alreadyOnStep3 && !flowBootstrapping.value && opts?.refresh !== false) {
     void refreshFlowStepData(2)
