@@ -808,15 +808,44 @@ def _require_manual_assistant_management(
     return link
 
 
+def _clear_sl_assistant_datasource_bindings(
+    assistant_uuid: uuid_lib.UUID,
+) -> None:
+    """Drop SourceLens datasource bindings before retiring an Assistant.
+
+    Chat-managed Assistants keep ``AssistantDataSourceBinding`` rows that
+    ``PROTECT`` the managed datasource. Archive alone leaves those bindings
+    intact, so later DELETE datasource calls fail with ProtectedError. Clear
+    bindings first (active, then archived for durable retries).
+    """
+
+    path = f"/api/lens/assistants/{assistant_uuid}/"
+    for params in (None, {"archived": "true"}):
+        try:
+            sl_client.request_json(
+                "PATCH",
+                path,
+                params=params,
+                json_body={"datasource_bindings": []},
+            )
+            return
+        except sl_client.LensBridgeError as exc:
+            status = getattr(exc, "status_code", None)
+            if status == 404 or "404" in str(exc):
+                continue
+            raise
+
+
 def _delete_sl_assistant(assistant_uuid: uuid_lib.UUID) -> None:
     """Retire an Assistant through SourceLens' supported archive contract.
 
     SourceLens versions 0.20.0 and later remove DELETE from Assistant CRUD and
-    expose a POST archive action instead. HFL treats an already archived or
-    missing 404 as idempotent success but preserves every other error for
-    durable retry.
+    expose a POST archive action instead. HFL clears datasource bindings first,
+    then archives. An already archived or missing 404 is idempotent success;
+    every other error is preserved for durable retry.
     """
 
+    _clear_sl_assistant_datasource_bindings(assistant_uuid)
     try:
         sl_client.request_json(
             "POST",

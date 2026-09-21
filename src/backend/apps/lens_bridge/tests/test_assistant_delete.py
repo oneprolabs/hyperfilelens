@@ -73,6 +73,55 @@ class DeleteOrgAssistantKsReassignTests(SimpleTestCase):
 
 class SourceLensAssistantRetirementTests(SimpleTestCase):
     @patch("apps.lens_bridge.services.assistants.sl_client.request_json")
+    def test_clears_datasource_bindings_before_archive(self, request_json):
+        assistant_uuid = UUID("55555555-5555-5555-5555-555555555555")
+
+        assistants._delete_sl_assistant(assistant_uuid)
+
+        self.assertEqual(
+            request_json.call_args_list[0].args[:2],
+            ("PATCH", f"/api/lens/assistants/{assistant_uuid}/"),
+        )
+        self.assertEqual(
+            request_json.call_args_list[0].kwargs["json_body"],
+            {"datasource_bindings": []},
+        )
+        self.assertIsNone(request_json.call_args_list[0].kwargs.get("params"))
+        request_json.assert_any_call(
+            "POST",
+            f"/api/lens/assistants/{assistant_uuid}/archive/",
+        )
+
+    @patch("apps.lens_bridge.services.assistants.sl_client.request_json")
+    def test_clears_archived_assistant_bindings_on_retry(self, request_json):
+        assistant_uuid = UUID("66666666-6666-6666-6666-666666666666")
+        missing = sl_client.LensBridgeError("not found")
+        missing.status_code = 404
+
+        def _side_effect(method, path, **kwargs):
+            if method == "PATCH" and kwargs.get("params") is None:
+                raise missing
+            return None
+
+        request_json.side_effect = _side_effect
+
+        assistants._delete_sl_assistant(assistant_uuid)
+
+        self.assertEqual(request_json.call_args_list[0].kwargs.get("params"), None)
+        self.assertEqual(
+            request_json.call_args_list[1].kwargs.get("params"),
+            {"archived": "true"},
+        )
+        self.assertEqual(
+            request_json.call_args_list[1].kwargs["json_body"],
+            {"datasource_bindings": []},
+        )
+        request_json.assert_any_call(
+            "POST",
+            f"/api/lens/assistants/{assistant_uuid}/archive/",
+        )
+
+    @patch("apps.lens_bridge.services.assistants.sl_client.request_json")
     def test_missing_remote_assistant_is_idempotent_success(self, request_json):
         error = sl_client.LensBridgeError("not found")
         error.status_code = 404
@@ -81,7 +130,8 @@ class SourceLensAssistantRetirementTests(SimpleTestCase):
 
         assistants._delete_sl_assistant(assistant_uuid)
 
-        request_json.assert_called_once_with(
+        self.assertGreaterEqual(request_json.call_count, 3)
+        request_json.assert_any_call(
             "POST",
             f"/api/lens/assistants/{assistant_uuid}/archive/",
         )
@@ -97,6 +147,8 @@ class SourceLensAssistantRetirementTests(SimpleTestCase):
             assistants._delete_sl_assistant(assistant_uuid)
 
         request_json.assert_called_once_with(
-            "POST",
-            f"/api/lens/assistants/{assistant_uuid}/archive/",
+            "PATCH",
+            f"/api/lens/assistants/{assistant_uuid}/",
+            params=None,
+            json_body={"datasource_bindings": []},
         )

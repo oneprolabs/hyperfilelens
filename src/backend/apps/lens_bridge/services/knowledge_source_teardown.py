@@ -14,6 +14,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.lens_bridge.models import (
+    LensAssistantLink,
     LensKnowledgeSource,
     LensSessionLink,
     LensWorkspaceBinding,
@@ -284,12 +285,26 @@ def assess_chat_restore_stop(
         target_execution_node_id=binding.execution_node_id,
     )
     restore_record_id = knowledge_source.last_restore_record_id
-    if restore_record_id is not None:
-        if not binding_records.filter(pk=restore_record_id).exists():
+    if restore_record_id is not None and not binding_records.filter(
+        pk=restore_record_id
+    ).exists():
+        # Fail closed only when the pointed RestoreRecord still exists but is
+        # outside this binding's writer set (true identity mismatch). A missing
+        # row is a stale convenience pointer left after the record was removed;
+        # clear it and continue with whatever writers remain on the binding.
+        if RestoreRecord.objects.filter(pk=restore_record_id).exists():
             return ChatRestoreStopAssessment(
                 confirmed=False,
                 reason="canonical_restore_mismatch",
             )
+        LensKnowledgeSource.objects.filter(
+            pk=knowledge_source.pk,
+            last_restore_record_id=restore_record_id,
+        ).update(
+            last_restore_record_id=None,
+            updated_at=timezone.now(),
+        )
+        knowledge_source.last_restore_record_id = None
     # Every restore bound to this Workspace UID is a potential writer. A stale
     # older Agent command must not become invisible merely because a newer
     # record replaced the Knowledge Source's convenience pointer.
@@ -297,7 +312,11 @@ def assess_chat_restore_stop(
     if not records:
         return ChatRestoreStopAssessment(
             confirmed=True,
-            reason="not_dispatched",
+            reason=(
+                "stale_restore_pointer"
+                if restore_record_id is not None
+                else "not_dispatched"
+            ),
         )
     teardown_state = knowledge_source.teardown_state_json or {}
     legacy_manual_confirmation = teardown_state.get("manual_restore_stop_confirmation")
@@ -590,6 +609,31 @@ def cleanup_knowledge_source_workspace(
     )
 
 
+def _assistant_uuids_for_knowledge_source(
+    knowledge_source: LensKnowledgeSource,
+) -> set:
+    """Return every Assistant UUID ever linked to this KS, including tombstones.
+
+    SourceLens archive leaves ``AssistantDataSourceBinding`` rows that PROTECT
+    the managed datasource. After the first teardown attempt soft-deletes the
+    HFL assistant link, later retries must still be able to clear those remote
+    bindings before DELETE datasource.
+    """
+
+    assistant_uuids = {
+        link.sl_assistant_uuid
+        for link in LensAssistantLink.all_objects.filter(
+            organization_id=knowledge_source.organization_id,
+            knowledge_source_id=knowledge_source.id,
+        )
+        .exclude(sl_assistant_uuid=None)
+        .only("sl_assistant_uuid")
+    }
+    if knowledge_source.sl_assistant_uuid:
+        assistant_uuids.add(knowledge_source.sl_assistant_uuid)
+    return assistant_uuids
+
+
 def run_knowledge_source_teardown(
     *,
     knowledge_source_id: int,
@@ -714,14 +758,10 @@ def run_knowledge_source_teardown(
         from apps.lens_bridge.services.assistants import _delete_sl_assistant
 
         blocking_step = "delete_assistants"
-        assistant_uuids = {
-            link.sl_assistant_uuid
-            for link in knowledge_source.assistant_links.filter(is_deleted=False).only(
-                "sl_assistant_uuid"
-            )
-        }
-        if knowledge_source.sl_assistant_uuid:
-            assistant_uuids.add(knowledge_source.sl_assistant_uuid)
+        # Include soft-deleted HFL links so retries can still clear SourceLens
+        # 0.57 AssistantDataSourceBinding rows left behind by archive-only
+        # attempts before DELETE datasource.
+        assistant_uuids = _assistant_uuids_for_knowledge_source(knowledge_source)
         for assistant_uuid in sorted(assistant_uuids, key=str):
             _renew(knowledge_source.id, claim_token)
             _delete_sl_assistant(assistant_uuid)

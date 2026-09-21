@@ -347,3 +347,35 @@ class ChatRestoreStopAssessmentTests(TestCase):
 
         self.assertFalse(assessment.confirmed)
         self.assertEqual(assessment.reason, "canonical_restore_mismatch")
+
+    def test_missing_restore_record_pointer_with_empty_bindings_is_cleared(self):
+        self.knowledge_source.last_restore_record_id = 9_999_999
+        self.knowledge_source.save(
+            update_fields=["last_restore_record_id", "updated_at"]
+        )
+
+        assessment = assess_chat_restore_stop(self.knowledge_source)
+
+        self.knowledge_source.refresh_from_db()
+        self.assertTrue(assessment.confirmed)
+        self.assertEqual(assessment.reason, "stale_restore_pointer")
+        self.assertIsNone(self.knowledge_source.last_restore_record_id)
+
+    def test_missing_restore_record_pointer_still_checks_remaining_writers(self):
+        remaining_record, node_task = self._create_restore(
+            node_status=NodeTask.Status.CANCELED,
+            node_result={"cancel_finalized_by": "grace_timeout"},
+        )
+        self.knowledge_source.last_restore_record_id = remaining_record.id + 10_000
+        self.knowledge_source.save(
+            update_fields=["last_restore_record_id", "updated_at"]
+        )
+
+        assessment = assess_chat_restore_stop(self.knowledge_source)
+
+        self.knowledge_source.refresh_from_db()
+        self.assertFalse(assessment.confirmed)
+        self.assertEqual(assessment.reason, "restore_executor_still_stopping")
+        self.assertEqual(assessment.task_id, str(remaining_record.task_uuid))
+        self.assertEqual(assessment.node_task_ids, (str(node_task.id),))
+        self.assertIsNone(self.knowledge_source.last_restore_record_id)
