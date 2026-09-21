@@ -44,6 +44,28 @@ grep -Fq 'recent fallback tags:' "${online}/install.sh"
 grep -Fq 'images are not published yet' "${online}/install.sh"
 grep -Fq 'No published Community images were found for' "${online}/install.sh"
 grep -Fq 'select_published_release' "${online}/install.sh"
+grep -Fq 'flush_online_logging' "${online}/install.sh"
+grep -Fq 'tee "/dev/fd/${console_fd}"' "${online}/install.sh"
+python3 - "${online}/install.sh" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+start = text.index("capture_log_stream() {")
+end = text.index("\n}\n\nflush_online_logging", start)
+body = text[start:end]
+if '[[ -t "${console_fd}" ]]' not in body:
+    raise SystemExit("online capture_log_stream must detect a live TTY console fd")
+if 'tee "/dev/fd/${console_fd}"' not in body:
+    raise SystemExit("online capture_log_stream must tee the live console stream")
+if "tr '\\r' '\\n'" not in body:
+    raise SystemExit("online capture_log_stream must normalize CR for the session log")
+tty_branch = body.split('if [[ -t "${console_fd}" ]]; then', 1)[1].split("fi", 1)[0]
+if tty_branch.index("tee") > tty_branch.index("tr '\\r'"):
+    raise SystemExit("TTY capture path must tee before converting CR")
+if 'printf \'%s\\n\' "${line}" >&' not in body:
+    raise SystemExit("redirected capture path must reprint stable lines to the console")
+PY
 grep -Fq 'prepare_status == 75' "${online}/install.sh"
 grep -Fq 'prepare_status == 76' "${online}/install.sh"
 grep -Fq 'INSTALL_RECOVERY=0' "${online}/install.sh"
