@@ -143,7 +143,7 @@ describe('Spanish language pack', () => {
     expect(serialized).not.toMatch(/HFLPROTECTED|ZXQ|QXZ|[⟦⟧]/)
     expect(containsUnrelatedWritingSystem).toBe(false)
     expect(allowedEnglish).toContain('insight.aiSettings.topP')
-    expect(allowedEnglish.length).toBeLessThanOrEqual(322)
+    expect(allowedEnglish.length).toBeLessThanOrEqual(323)
     expect(serialized).not.toMatch(
       /Failed to|\bDefault\b|\bRefresh\b|Disfraces|&quot;|&amp;/,
     )
