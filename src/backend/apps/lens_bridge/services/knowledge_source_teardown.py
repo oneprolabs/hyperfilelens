@@ -284,12 +284,26 @@ def assess_chat_restore_stop(
         target_execution_node_id=binding.execution_node_id,
     )
     restore_record_id = knowledge_source.last_restore_record_id
-    if restore_record_id is not None:
-        if not binding_records.filter(pk=restore_record_id).exists():
+    if restore_record_id is not None and not binding_records.filter(
+        pk=restore_record_id
+    ).exists():
+        # Fail closed only when the pointed RestoreRecord still exists but is
+        # outside this binding's writer set (true identity mismatch). A missing
+        # row is a stale convenience pointer left after the record was removed;
+        # clear it and continue with whatever writers remain on the binding.
+        if RestoreRecord.objects.filter(pk=restore_record_id).exists():
             return ChatRestoreStopAssessment(
                 confirmed=False,
                 reason="canonical_restore_mismatch",
             )
+        LensKnowledgeSource.objects.filter(
+            pk=knowledge_source.pk,
+            last_restore_record_id=restore_record_id,
+        ).update(
+            last_restore_record_id=None,
+            updated_at=timezone.now(),
+        )
+        knowledge_source.last_restore_record_id = None
     # Every restore bound to this Workspace UID is a potential writer. A stale
     # older Agent command must not become invisible merely because a newer
     # record replaced the Knowledge Source's convenience pointer.
@@ -297,7 +311,11 @@ def assess_chat_restore_stop(
     if not records:
         return ChatRestoreStopAssessment(
             confirmed=True,
-            reason="not_dispatched",
+            reason=(
+                "stale_restore_pointer"
+                if restore_record_id is not None
+                else "not_dispatched"
+            ),
         )
     teardown_state = knowledge_source.teardown_state_json or {}
     legacy_manual_confirmation = teardown_state.get("manual_restore_stop_confirmation")

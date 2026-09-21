@@ -47,6 +47,28 @@ class SourceLensClientReadinessTests(SimpleTestCase):
 
         self.assertNotIn("must-not-leak", str(raised.exception))
 
+    def test_protected_delete_conflict_is_not_retryable_outage(self) -> None:
+        response = Mock(
+            status_code=500,
+            content=(
+                b"ProtectedError: Cannot delete some instances of model "
+                b"'DataSource' because they are referenced through protected "
+                b"foreign keys: 'AssistantDataSourceBinding.datasource'."
+            ),
+            text=(
+                "ProtectedError: Cannot delete some instances of model "
+                "'DataSource' because they are referenced through protected "
+                "foreign keys: 'AssistantDataSourceBinding.datasource'."
+            ),
+        )
+
+        with self.assertRaises(sl_client.LensBridgeError) as raised:
+            sl_client._raise_for_response(response)
+
+        self.assertNotIsInstance(raised.exception, sl_client.LensBridgeUnavailable)
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("protected references", str(raised.exception))
+
     def test_remote_rate_limit_is_retryable(self) -> None:
         response = Mock(status_code=429, content=b"rate limited")
 

@@ -326,6 +326,32 @@ def _format_sl_error(body: Any) -> str:
     return str(body)
 
 
+_PROTECTED_DELETE_MARKERS = (
+    "ProtectedError",
+    "protected foreign keys",
+    "Cannot delete some instances of model",
+)
+
+
+def _is_protected_delete_conflict(detail: str) -> bool:
+    """Return True when SourceLens refused a delete due to protected refs."""
+
+    text = str(detail or "")
+    return any(marker in text for marker in _PROTECTED_DELETE_MARKERS)
+
+
+def _response_detail_text(response: requests.Response) -> str:
+    """Return a short upstream body snippet without assuming Response.text."""
+
+    text = getattr(response, "text", None)
+    if isinstance(text, str):
+        return text[:2000]
+    content = getattr(response, "content", b"") or b""
+    if isinstance(content, (bytes, bytearray)):
+        return bytes(content)[:2000].decode("utf-8", errors="replace")
+    return ""
+
+
 def _raise_for_response(response: requests.Response) -> Any:
     if response.status_code < 400:
         if not response.content:
@@ -335,10 +361,27 @@ def _raise_for_response(response: requests.Response) -> Any:
         except ValueError:
             return response.text
         return _unwrap_sl_body(body)
+    raw_detail = _response_detail_text(response)
     if response.status_code == 429 or response.status_code >= 500:
+        # Application integrity conflicts (e.g. ProtectedError on datasource
+        # delete) are durable HFL/SL contract failures, not transport outages.
+        # Misclassifying them as Unavailable makes Chat teardown retry forever.
+        if response.status_code >= 500 and _is_protected_delete_conflict(raw_detail):
+            logger.warning(
+                "SourceLens refused delete due to protected references status=%s",
+                response.status_code,
+            )
+            exc = LensBridgeError(
+                detail=(
+                    "SourceLens refused the delete because protected references "
+                    "remain."
+                )
+            )
+            exc.status_code = 409
+            raise exc
         logger.warning("SourceLens upstream returned status=%s", response.status_code)
         raise LensBridgeUnavailable()
-    detail = response.text[:2000]
+    detail = raw_detail
     try:
         body = response.json()
         detail = _format_sl_error(body) or detail
