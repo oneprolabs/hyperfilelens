@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   trackWebsiteOpenApp,
   type WebsiteOpenAppPlacement,
@@ -7,6 +7,27 @@ import {
 import LanguageSwitcher from './LanguageSwitcher.vue'
 
 const appOrigin = ref('')
+const mobileNavOpen = ref(false)
+
+function toggleMobileNav() {
+  mobileNavOpen.value = !mobileNavOpen.value
+}
+
+function closeMobileNav() {
+  mobileNavOpen.value = false
+}
+
+watch(mobileNavOpen, (open) => {
+  document.body.classList.toggle('hfl-nav-open', open)
+})
+
+function onMobileNavKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') closeMobileNav()
+}
+
+onBeforeUnmount(() => {
+  document.body.classList.remove('hfl-nav-open')
+})
 
 function validOrigin(value: string): string {
   try {
@@ -132,6 +153,15 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           <a href="#contact">Contact</a>
         </nav>
         <div class="header-actions">
+          <button
+            class="mobile-menu-toggle"
+            type="button"
+            :aria-label="mobileNavOpen ? 'Close menu' : 'Open menu'"
+            :aria-expanded="mobileNavOpen"
+            @click="toggleMobileNav"
+          >
+            <span class="hamburger-bars"></span>
+          </button>
           <LanguageSwitcher current="en" />
           <a class="github-link" :href="githubUrl" target="_blank" rel="noopener noreferrer" aria-label="HyperFileLens on GitHub">
             <svg aria-hidden="true"><use href="#icon-github" /></svg>
@@ -141,6 +171,32 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         </div>
       </div>
     </header>
+
+    <div
+      class="mobile-nav"
+      :class="{ open: mobileNavOpen }"
+      aria-label="Mobile navigation"
+      @keydown="onMobileNavKeydown"
+    >
+      <nav>
+        <a href="#use-cases" @click="closeMobileNav">Use Cases</a>
+        <a href="#how-it-works" @click="closeMobileNav">How It Works</a>
+        <a href="#open-source" @click="closeMobileNav">Open Source</a>
+        <a href="#contact" @click="closeMobileNav">Contact</a>
+      </nav>
+      <div class="mobile-nav-external">
+        <a href="/docs/getting-started/install" target="_blank" rel="noopener noreferrer" @click="closeMobileNav">
+          Documentation
+          <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
+        </a>
+        <a :href="githubUrl" target="_blank" rel="noopener noreferrer">
+          <svg aria-hidden="true"><use href="#icon-github" /></svg>
+          GitHub
+          <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
+        </a>
+      </div>
+      <a class="mobile-nav-cta" :href="loginUrl" target="_blank" rel="noopener noreferrer" @click="openApp($event, 'header')">Try free</a>
+    </div>
 
     <main>
       <section class="hero" aria-labelledby="hero-title">
