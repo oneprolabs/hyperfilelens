@@ -1813,9 +1813,14 @@ func TestManagedRestoreConflictModeDefaultsToOverwriteAndRejectsUnknown(t *testi
 
 func TestManagedRestoreConflictArgsAreExplicit(t *testing.T) {
 	skip := managedRestoreConflictArgs("skip")
-	for _, flag := range []string{"--skip-existing", "--no-overwrite-files", "--no-overwrite-symlinks", "--skip-owners", "--skip-permissions", "--skip-times"} {
+	for _, flag := range []string{"--skip-existing", "--no-overwrite-files", "--no-overwrite-symlinks"} {
 		if !slices.Contains(skip, flag) {
 			t.Fatalf("skip args %v do not contain %q", skip, flag)
+		}
+	}
+	for _, flag := range []string{"--skip-owners", "--skip-permissions", "--skip-times"} {
+		if slices.Contains(skip, flag) {
+			t.Fatalf("skip args must not suppress directory metadata with %q: %v", flag, skip)
 		}
 	}
 	if slices.Contains(skip, "--no-overwrite-directories") {
