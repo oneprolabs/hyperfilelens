@@ -5353,11 +5353,41 @@ verify_local_platform_gateway_agent() {
 }
 
 converge_local_platform_gateway_lensnode() {
-	local desired_id current_id container_id running script layout_migration=0 legacy_layout_adopted=0
+	local desired_id current_id container_id running script image_ref archive
+	local loaded_id versioned_ref versioned_id
+	local layout_migration=0 legacy_layout_adopted=0
+	image_ref="${LOCAL_PLATFORM_LENSNODE_IMAGE}"
+	archive="${ROOT}/data/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz"
+	# Load the archive shipped with this release before comparing. A pre-existing
+	# local :latest tag is not this release. The versioned upstream tag in the
+	# same archive is the desired name; :latest stays only as a compatibility alias.
+	if [[ -f "${archive}" && ! -L "${archive}" ]]; then
+		log "Loading the release Platform Data Gateway AI engine image"
+		docker load -i "${archive}" \
+			|| die "failed to load Platform Data Gateway AI engine image"
+		loaded_id="$(docker image inspect --format '{{.Id}}' \
+			"${LOCAL_PLATFORM_LENSNODE_IMAGE}" 2>/dev/null || true)"
+		if [[ -n "${loaded_id}" ]]; then
+			while IFS= read -r versioned_ref; do
+				[[ -n "${versioned_ref}" ]] || continue
+				versioned_id="$(docker image inspect --format '{{.Id}}' \
+					"${versioned_ref}" 2>/dev/null || true)"
+				if [[ "${versioned_id}" == "${loaded_id}" ]]; then
+					image_ref="${versioned_ref}"
+					break
+				fi
+			done < <(
+				docker image ls oneprolabs/sourcelens-lensnode \
+					--format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+					| grep -E '^oneprolabs/sourcelens-lensnode:[0-9]+\.[0-9]+\.[0-9]+$' \
+					| sort -Vr || true
+			)
+		fi
+	fi
 	desired_id="$(docker image inspect --format '{{.Id}}' \
-		"${LOCAL_PLATFORM_LENSNODE_IMAGE}" 2>/dev/null || true)"
+		"${image_ref}" 2>/dev/null || true)"
 	[[ -n "${desired_id}" ]] \
-		|| die "Platform Data Gateway AI engine image is unavailable: ${LOCAL_PLATFORM_LENSNODE_IMAGE}"
+		|| die "Platform Data Gateway AI engine image is unavailable: ${image_ref}"
 	container_id="$(docker ps -aq --no-trunc \
 		--filter 'label=com.hyperfilelens.managed=true' \
 		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
@@ -5414,7 +5444,7 @@ converge_local_platform_gateway_lensnode() {
 			HFL_AGENT_ROOT="${LOCAL_PLATFORM_AGENT_DATA_DIR}" \
 			HFL_LEGACY_LAYOUT_ADOPTED="${legacy_layout_adopted}" \
 			HFL_INSECURE_TLS=1 \
-			LENSNODE_IMAGE="${LOCAL_PLATFORM_LENSNODE_IMAGE}" \
+			LENSNODE_IMAGE="${image_ref}" \
 			/bin/bash "${script}"
 		container_id="$(docker ps -aq --no-trunc \
 			--filter 'label=com.hyperfilelens.managed=true' \

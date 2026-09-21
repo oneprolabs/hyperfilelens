@@ -382,6 +382,72 @@ converge_local_platform_gateway_lensnode
 [[ "${SIDECAR_RECREATED}" == "1" ]]
 [[ "${CURRENT_LENSNODE_IMAGE_ID}" == "${DESIRED_LENSNODE_IMAGE_ID}" ]]
 
+# A release archive must replace a stale local :latest tag with the versioned image.
+log() { :; }
+archive="${ROOT}/data/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz"
+printf 'lensnode-archive\n' >"${archive}"
+LOADED_LENSNODE_ARCHIVE=0
+LIST_VERSIONED_LENSNODE=1
+SIDECAR_LENSNODE_IMAGE=""
+docker() {
+	case "$*" in
+	"load -i ${archive}")
+		LOADED_LENSNODE_ARCHIVE=$((LOADED_LENSNODE_ARCHIVE + 1))
+		;;
+	"image inspect --format {{.Id}} hyperfilelens-sourcelens-lensnode:latest"|"image inspect --format {{.Id}} oneprolabs/sourcelens-lensnode:0.57.0")
+		printf '%s\n' "${DESIRED_LENSNODE_IMAGE_ID}"
+		;;
+	"image ls oneprolabs/sourcelens-lensnode --format {{.Repository}}:{{.Tag}}")
+		if [[ "${LIST_VERSIONED_LENSNODE}" == "1" ]]; then
+			printf '%s\n' "oneprolabs/sourcelens-lensnode:0.57.0"
+		fi
+		;;
+	"ps -aq --no-trunc --filter label=com.hyperfilelens.managed=true --filter label=com.hyperfilelens.component=gateway-lensnode --filter label=com.docker.compose.project=hyperfilelens-gateway --filter label=com.docker.compose.service=lensnode")
+		printf 'lensnode-container\n'
+		;;
+	"inspect --format {{.Image}} lensnode-container")
+		printf '%s\n' "${CURRENT_LENSNODE_IMAGE_ID}"
+		;;
+	"inspect --format {{.State.Running}} lensnode-container")
+		printf '%s\n' "${LENSNODE_RUNNING}"
+		;;
+	*) printf 'unexpected fake Docker invocation: %s\n' "$*" >&2; return 1 ;;
+	esac
+}
+run_as_root() {
+	if [[ "$1" == "env" ]]; then
+		SIDECAR_RECREATED=$((SIDECAR_RECREATED + 1))
+		SIDECAR_LENSNODE_IMAGE="$(printf '%s\n' "$@" | sed -n 's/^LENSNODE_IMAGE=//p')"
+		CURRENT_LENSNODE_IMAGE_ID="${DESIRED_LENSNODE_IMAGE_ID}"
+		return 0
+	fi
+	"$@"
+}
+CURRENT_LENSNODE_IMAGE_ID=sha256:stale-latest
+DESIRED_LENSNODE_IMAGE_ID=sha256:release-0-57-0
+SIDECAR_RECREATED=0
+converge_local_platform_gateway_lensnode
+[[ "${LOADED_LENSNODE_ARCHIVE}" == "1" ]]
+[[ "${SIDECAR_RECREATED}" == "1" ]]
+[[ "${SIDECAR_LENSNODE_IMAGE}" == "oneprolabs/sourcelens-lensnode:0.57.0" ]]
+[[ "${CURRENT_LENSNODE_IMAGE_ID}" == "${DESIRED_LENSNODE_IMAGE_ID}" ]]
+
+# The same archive must not recreate a container that already runs it.
+SIDECAR_RECREATED=0
+converge_local_platform_gateway_lensnode
+[[ "${LOADED_LENSNODE_ARCHIVE}" == "2" ]]
+[[ "${SIDECAR_RECREATED}" == "0" ]]
+
+# An archive without a versioned upstream tag still upgrades through :latest.
+LIST_VERSIONED_LENSNODE=0
+CURRENT_LENSNODE_IMAGE_ID=sha256:stale-latest
+DESIRED_LENSNODE_IMAGE_ID=sha256:release-latest-only
+SIDECAR_RECREATED=0
+SIDECAR_LENSNODE_IMAGE=""
+converge_local_platform_gateway_lensnode
+[[ "${SIDECAR_RECREATED}" == "1" ]]
+[[ "${SIDECAR_LENSNODE_IMAGE}" == "hyperfilelens-sourcelens-lensnode:latest" ]]
+
 # Restore the production readiness implementation after the deterministic
 # ensure fixture above exercised its failure contract.
 # shellcheck disable=SC1090
