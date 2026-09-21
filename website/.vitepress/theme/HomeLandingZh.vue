@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   trackWebsiteOpenApp,
   type WebsiteOpenAppPlacement,
@@ -7,6 +7,27 @@ import {
 import LanguageSwitcher from './LanguageSwitcher.vue'
 
 const appOrigin = ref('')
+const mobileNavOpen = ref(false)
+
+function toggleMobileNav() {
+  mobileNavOpen.value = !mobileNavOpen.value
+}
+
+function closeMobileNav() {
+  mobileNavOpen.value = false
+}
+
+watch(mobileNavOpen, (open) => {
+  document.body.classList.toggle('hfl-nav-open', open)
+})
+
+function onMobileNavKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') closeMobileNav()
+}
+
+onBeforeUnmount(() => {
+  document.body.classList.remove('hfl-nav-open')
+})
 
 function validOrigin(value: string): string {
   try {
@@ -132,6 +153,15 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
           <a href="#contact">联系我们</a>
         </nav>
         <div class="header-actions">
+          <button
+            class="mobile-menu-toggle"
+            type="button"
+            :aria-label="mobileNavOpen ? '关闭菜单' : '打开菜单'"
+            :aria-expanded="mobileNavOpen"
+            @click="toggleMobileNav"
+          >
+            <span class="hamburger-bars"></span>
+          </button>
           <LanguageSwitcher current="zh" />
           <a class="github-link" :href="githubUrl" target="_blank" rel="noopener noreferrer" aria-label="HyperFileLens GitHub 仓库">
             <svg aria-hidden="true"><use href="#icon-github" /></svg>
@@ -141,6 +171,32 @@ function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
         </div>
       </div>
     </header>
+
+    <div
+      class="mobile-nav"
+      :class="{ open: mobileNavOpen }"
+      aria-label="移动端导航"
+      @keydown="onMobileNavKeydown"
+    >
+      <nav>
+        <a href="#use-cases" @click="closeMobileNav">使用场景</a>
+        <a href="#how-it-works" @click="closeMobileNav">工作原理</a>
+        <a href="#open-source" @click="closeMobileNav">开源</a>
+        <a href="#contact" @click="closeMobileNav">联系我们</a>
+      </nav>
+      <div class="mobile-nav-external">
+        <a href="/zh/docs/getting-started/install" target="_blank" rel="noopener noreferrer" @click="closeMobileNav">
+          文档
+          <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
+        </a>
+        <a :href="githubUrl" target="_blank" rel="noopener noreferrer">
+          <svg aria-hidden="true"><use href="#icon-github" /></svg>
+          GitHub
+          <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
+        </a>
+      </div>
+      <a class="mobile-nav-cta" :href="loginUrl" target="_blank" rel="noopener noreferrer" @click="openApp($event, 'header')">免费试用</a>
+    </div>
 
     <main>
       <section class="hero" aria-labelledby="hero-title">
