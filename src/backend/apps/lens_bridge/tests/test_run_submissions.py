@@ -133,6 +133,36 @@ class RunSubmissionRecoveryTests(TestCase):
         )
 
     @patch("apps.lens_bridge.services.run_submissions.sl_client.request_json")
+    def test_recovery_replays_the_selected_reasoning_depth(self, request_json):
+        run_uuid = uuid.uuid4()
+        submission = LensRunSubmission.objects.create(
+            organization=self.org,
+            hfl_user=self.user,
+            session_link=self.session,
+            idempotency_key="recover-rounds",
+            question="Think this through",
+            agent_rounds="deep",
+        )
+        request_json.return_value = {
+            "uuid": str(run_uuid),
+            "status": "queued",
+            "idempotency_key": "recover-rounds",
+        }
+
+        run_submissions.execute_submission(submission.id)
+
+        request_json.assert_called_once_with(
+            "POST",
+            f"/api/lens/sessions/{self.session.sl_session_uuid}/runs/",
+            json_body={
+                "question": "Think this through",
+                "idempotency_key": "recover-rounds",
+                "agent_rounds": "deep",
+            },
+            hfl_user=self.user,
+        )
+
+    @patch("apps.lens_bridge.services.run_submissions.sl_client.request_json")
     def test_recovery_accepts_a_legacy_null_attachment_list(self, request_json):
         run_uuid = uuid.uuid4()
         submission = LensRunSubmission.objects.create(

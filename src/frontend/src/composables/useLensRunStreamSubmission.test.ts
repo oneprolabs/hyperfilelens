@@ -183,4 +183,60 @@ describe('Copilot local submission feedback', () => {
     expect(getSessionRunStream(sessionId).streamAttached).toBe(false)
     expect(secondFinished).toHaveBeenCalledTimes(1)
   })
+
+  it('keeps distinct phase.changed steps and promotes queued → running / streaming', async () => {
+    let onData: ((payload: unknown) => void) | undefined
+    let finishStream!: () => void
+    mocks.streamCopilotRun.mockImplementation(
+      (_sessionId: number, _runUuid: string, handler: (payload: unknown) => void) => {
+        onData = handler
+        return new Promise<void>((resolve) => {
+          finishStream = resolve
+        })
+      },
+    )
+
+    applySessionActiveRun(sessionId, 'run-phases', 'queued', '', [])
+    const stream = consumeSessionStream(sessionId, 'run-phases')
+    await Promise.resolve()
+
+    onData?.({
+      type: 'step',
+      sequence: 1,
+      detail: {
+        events: [
+          {
+            event_type: 'phase.changed',
+            agent_event: 'workflow.phase.changed',
+            visibility: 'user',
+            payload: { phase: 'analyzing' },
+          },
+          {
+            event_type: 'phase.changed',
+            agent_event: 'workflow.phase.changed',
+            visibility: 'user',
+            payload: { phase: 'answering' },
+          },
+        ],
+      },
+    })
+
+    const afterPhases = getSessionRunStream(sessionId)
+    expect(afterPhases.runStatus).toBe('running')
+    expect(afterPhases.thinkingSteps.map((step) => step.payload?.phase)).toEqual([
+      'analyzing',
+      'answering',
+    ])
+
+    onData?.({ type: 'token', content: 'Hello' })
+    expect(getSessionRunStream(sessionId).runStatus).toBe('streaming')
+    expect(getSessionRunStream(sessionId).partialAnswer).toBe('Hello')
+
+    // A stale queued snapshot must not wipe the advanced live status.
+    onData?.({ type: 'sync', status: 'queued', steps: [] })
+    expect(getSessionRunStream(sessionId).runStatus).toBe('streaming')
+
+    finishStream()
+    await stream
+  })
 })

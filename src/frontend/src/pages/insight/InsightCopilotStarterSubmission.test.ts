@@ -410,7 +410,8 @@ describe('InsightCopilot question submission', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Recover my pending question')
-    expect(wrapper.find('.thinking-panel-live').exists()).toBe(true)
+    expect(wrapper.find('.live-status-card').exists()).toBe(true)
+    expect(wrapper.find('.thinking-panel-live').exists()).toBe(false)
     expect(wrapper.get('.copilot-input-field').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('.copilot-send-btn--stop').exists()).toBe(true)
     wrapper.unmount()
@@ -486,6 +487,7 @@ describe('InsightCopilot question submission', () => {
       expect.stringMatching(/^copilot-444-/),
       [],
       originalRunUuid,
+      'balanced',
     )
     wrapper.unmount()
   })
@@ -549,6 +551,7 @@ describe('InsightCopilot question submission', () => {
       expect.stringMatching(/^copilot-445-/),
       [],
       undefined,
+      'balanced',
     )
     wrapper.unmount()
   })
@@ -602,6 +605,7 @@ describe('InsightCopilot question submission', () => {
       expect.stringMatching(/^copilot-444-/),
       ['00000000-0000-4000-8000-000000000001'],
       undefined,
+      'balanced',
     )
     wrapper.unmount()
   })
@@ -667,6 +671,7 @@ describe('InsightCopilot question submission', () => {
       expect.stringMatching(/^copilot-444-/),
       ['00000000-0000-4000-8000-000000000001'],
       undefined,
+      'balanced',
     )
     expect(wrapper.get('.copilot-input-field').element).toHaveProperty(
       'value',

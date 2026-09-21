@@ -44,6 +44,8 @@ export type SessionRunStreamState = {
   thinkingPanelOpen: boolean
   runStatus: string | null
   runUuid: string | null
+  queuePosition: number | null
+  resumeBy: string | null
   thinkingElapsedSeconds: number
 }
 
@@ -66,6 +68,8 @@ function createEmptyState(): SessionRunStreamState {
     thinkingPanelOpen: true,
     runStatus: null,
     runUuid: null,
+    queuePosition: null,
+    resumeBy: null,
     thinkingElapsedSeconds: 0,
   })
 }
@@ -142,6 +146,8 @@ class SessionRunStreamController {
     this.state.isSubmitting = false
     this.state.runStatus = null
     this.state.runUuid = null
+    this.state.queuePosition = null
+    this.state.resumeBy = null
     this.state.thinkingSteps = []
     this.state.thinkingPanelOpen = true
     this.state.thinkingElapsedSeconds = 0
@@ -230,6 +236,67 @@ class SessionRunStreamController {
     this.ensureElapsedTimer(elapsedAnchorAt)
   }
 
+  private thinkingStepDedupeKey(item: Record<string, unknown>, message: string) {
+    const payload = item.payload as Record<string, unknown> | undefined
+    const eventType = String(item.event_type || '')
+    // phase.changed / document.progress reuse the same agent_event + message;
+    // keep each distinct phase/stage so the live line can advance like SourceLens.
+    const progressIdentity = [
+      payload?.phase,
+      payload?.stage,
+      payload?.revision,
+      payload?.id,
+    ]
+      .filter((value) => value != null && value !== '')
+      .join(':')
+    return [
+      eventType,
+      item.id || payload?.id || '',
+      item.agent_event || '',
+      message,
+      progressIdentity,
+    ].join('|')
+  }
+
+  private applyRunStatus(next: string | null | undefined) {
+    if (typeof next !== 'string' || !next) return
+    const current = this.state.runStatus
+    // Never regress to queued once the live UI has already advanced — SourceLens
+    // can still emit a stale queued snapshot while retrieval events are flowing.
+    if (
+      next === 'queued'
+      && (current === 'running' || current === 'streaming')
+    ) {
+      return
+    }
+    this.state.runStatus = next
+    if (next !== 'queued') this.state.queuePosition = null
+  }
+
+  /** SourceLens may keep run.status=queued briefly after runtime events start. */
+  private promoteRunStatusFromProgress(item: Record<string, unknown>) {
+    const current = this.state.runStatus
+    if (current && current !== 'queued') return
+    const eventType = String(item.event_type || '')
+    const agentEvent = String(item.agent_event || '')
+    const payload = item.payload as Record<string, unknown> | undefined
+    const indicatesExecution = (
+      eventType === 'phase.changed'
+      || eventType === 'document.progress'
+      || eventType.startsWith('plan.')
+      || eventType.startsWith('stage.')
+      || eventType === 'activity.recorded'
+      || eventType === 'route.selected'
+      || agentEvent.startsWith('tool.')
+      || agentEvent.startsWith('deepagents.agent.')
+      || agentEvent.startsWith('deepagents.runtime.')
+      || agentEvent.startsWith('llm.')
+      || Boolean(payload?.phase || payload?.stage || payload?.steps)
+    )
+    if (!indicatesExecution) return
+    this.applyRunStatus('running')
+  }
+
   private pushThinkingStep(item: Record<string, unknown>) {
     const payload = item.payload as Record<string, unknown> | undefined
     const message =
@@ -242,9 +309,10 @@ class SessionRunStreamController {
       (payload?.description as string) ||
       (item.event_type as string)
     if (!message) return
-    const key = `${(item.event_type as string) || ''}|${(item.id as string) || (item.payload as Record<string, unknown> | undefined)?.id || ''}|${(item.agent_event as string) || ''}|${message}`
+    const key = this.thinkingStepDedupeKey(item, message)
     if (this.seenActivityKeys.has(key)) return
     this.seenActivityKeys.add(key)
+    this.promoteRunStatusFromProgress(item)
     const step: ThinkingStep = {
       type: item.type as string,
       visibility: item.visibility as string,
@@ -335,7 +403,12 @@ class SessionRunStreamController {
   private handleEvent(event: StreamPayload) {
     const type = String(event.type || '')
     if (type === 'sync' || type === 'status') {
-      if (typeof event.status === 'string') this.state.runStatus = event.status
+      if (typeof event.status === 'string') {
+        this.applyRunStatus(event.status)
+      }
+      this.state.resumeBy = typeof event.resume_by === 'string' && event.resume_by
+        ? event.resume_by
+        : null
       if (type === 'sync' && Array.isArray(event.steps)) {
         for (const step of event.steps as StreamPayload[]) this.handleStepEvent(step)
       }
@@ -350,22 +423,23 @@ class SessionRunStreamController {
       this.pushThinkingStep(event)
     }
     if (type === 'queue_position') {
-      const position = Number(event.position ?? 0)
-      this.pushThinkingStep({
-        message: position > 0 ? `Queued (position ${position + 1})` : 'Queued',
-        activity: 'queue',
-      })
+      const position = Number(event.position)
+      if (Number.isFinite(position)) this.state.queuePosition = position
     }
     if (type === 'step') this.handleStepEvent(event)
     if (type === 'token' && typeof event.content === 'string') {
       this.receivedStreamTokens = true
       this.state.partialAnswer += event.content
+      // SourceLens flips the live line to Generating once answer tokens start.
+      if (!this.state.runStatus || this.state.runStatus === 'queued' || this.state.runStatus === 'running') {
+        this.applyRunStatus('streaming')
+      }
     }
     if (type === 'token_reset') {
       if (this.state.partialAnswer) this.state.partialAnswer += '\n'
     }
     if (type === 'done') {
-      this.state.runStatus = 'done'
+      this.applyRunStatus('done')
       this.markStreamFinished()
     }
     if (type === 'error') {

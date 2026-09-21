@@ -21,6 +21,7 @@ import {
   deleteCopilotSession,
   forceDeleteCopilotSession,
   fetchCopilotReadiness,
+  fetchCopilotShareCandidate,
   fetchLensHealth,
   listCopilotAssistants,
   listCopilotGatewayOptions,
@@ -89,9 +90,20 @@ const deleteTarget = ref<SessionRow | null>(null)
 const deleteMode = ref<'normal' | 'force'>('normal')
 const shareOpen = ref(false)
 const shareTarget = ref<SessionRow | null>(null)
+const sharedRunBySession = ref<Record<number, string | null>>({})
 const executionSettingsOpen = ref(false)
 const messagesBySession = ref<Record<number, CopilotDisplayMessage[]>>({})
 const input = ref('')
+const AGENT_ROUNDS_STORAGE_KEY = 'hfl.copilot.agentRounds'
+const AGENT_ROUND_VALUES = new Set(['flash', 'fast', 'balanced', 'deep', 'max'])
+
+function readStoredAgentRounds() {
+  if (typeof window === 'undefined') return 'balanced'
+  const stored = window.localStorage.getItem(AGENT_ROUNDS_STORAGE_KEY) || ''
+  return AGENT_ROUND_VALUES.has(stored) ? stored : 'balanced'
+}
+
+const agentRounds = ref(readStoredAgentRounds())
 const composerAttachments = ref<CopilotComposerAttachment[]>([])
 const retryDraft = ref<CopilotRetryDraft | null>(null)
 const composerHeight = ref(176)
@@ -423,6 +435,25 @@ async function markSessionViewed(sessionId: number) {
   }
 }
 
+async function loadOpenChatAssistants() {
+  assistants.value = await listCopilotAssistants().catch(() => [] as LensCopilotAssistant[])
+}
+
+async function loadEmptyChatCatalog() {
+  const [assistantRows, readiness, gatewayRows, copilotGatewayRows, ksRows] = await Promise.all([
+    listCopilotAssistants().catch(() => [] as LensCopilotAssistant[]),
+    fetchCopilotReadiness().catch(() => null),
+    listLensGateways().catch(() => [] as LensGatewayInsight[]),
+    listCopilotGatewayOptions().catch(() => [] as LensCopilotGatewayOption[]),
+    listKnowledgeSources().catch(() => [] as LensKnowledgeSource[]),
+  ])
+  assistants.value = assistantRows
+  gateways.value = gatewayRows
+  copilotGatewayOptions.value = copilotGatewayRows
+  knowledgeSources.value = ksRows
+  modelReadiness.value = readiness
+}
+
 async function bootstrap() {
   loading.value = true
   bootstrapError.value = null
@@ -457,19 +488,7 @@ async function bootstrap() {
       return
     }
 
-    const [assistantRows, sessionRows, readiness, gatewayRows, copilotGatewayRows, ksRows] = await Promise.all([
-      listCopilotAssistants().catch(() => [] as LensCopilotAssistant[]),
-      listCopilotSessions().catch(() => [] as LensSessionLink[]),
-      fetchCopilotReadiness().catch(() => null),
-      listLensGateways().catch(() => [] as LensGatewayInsight[]),
-      listCopilotGatewayOptions().catch(() => [] as LensCopilotGatewayOption[]),
-      listKnowledgeSources().catch(() => [] as LensKnowledgeSource[]),
-    ])
-    assistants.value = assistantRows
-    gateways.value = gatewayRows
-    copilotGatewayOptions.value = copilotGatewayRows
-    knowledgeSources.value = ksRows
-    modelReadiness.value = readiness
+    const sessionRows = await listCopilotSessions().catch(() => [] as LensSessionLink[])
     sessions.value = toSessionRows(sessionRows)
     refreshPollerSessions()
     for (const session of sessions.value) {
@@ -495,9 +514,12 @@ async function bootstrap() {
       } else if (next?.lifecycle_status !== 'failed') {
         await copilotStore.syncSession(nextId, syncHandlers, nextId, { attachStream: true })
       }
+      // Document attachments need the assistant catalog, but the open thread does not.
+      void loadOpenChatAssistants()
     } else {
       clearComposerAttachments({ deleteDocuments: true })
       activeSessionId.value = null
+      await loadEmptyChatCatalog()
     }
 
     copilotStore.startBackgroundPoller(syncHandlers, () => activeSessionId.value)
@@ -993,6 +1015,7 @@ async function submitQuestion(
   const sessionId = activeSessionId.value
   const readyAttachments = attachments.filter((item) => item.status === 'ready')
   if ((!text && !readyAttachments.length) || sessionId == null || submissionBlocked.value) return
+  const agentRoundsAtSubmit = agentRounds.value
 
   const submissionComposerGeneration = composerLifecycleGeneration
   const submissionRetryDraft = retryDraft.value
@@ -1030,6 +1053,7 @@ async function submitQuestion(
       idempotencyKey,
       attachmentUuids,
       retryOfRunUuid,
+      agentRoundsAtSubmit,
     )
     runAccepted = true
     revokeComposerAttachments(readyAttachments)
@@ -1150,8 +1174,40 @@ watch(
   },
 )
 
-watch(activeSessionId, () => {
+const sharedRunId = computed(() => {
+  const id = activeSessionId.value
+  if (id == null) return null
+  return sharedRunBySession.value[id] ?? null
+})
+
+function applyShareState(state: { sessionId: number; runUuid: string | null }) {
+  sharedRunBySession.value = {
+    ...sharedRunBySession.value,
+    [state.sessionId]: state.runUuid,
+  }
+}
+
+async function refreshSharedRun(sessionId: number) {
+  try {
+    const candidate = await fetchCopilotShareCandidate(sessionId)
+    if (!candidate || activeSessionId.value !== sessionId) return
+    applyShareState({
+      sessionId,
+      runUuid: candidate.share?.run_uuid || null,
+    })
+  } catch {
+    // Sharing state is decorative; the thread stays usable if SourceLens is unavailable.
+  }
+}
+
+watch(activeSessionId, (sessionId) => {
   retryDraft.value = null
+  if (sessionId != null) void refreshSharedRun(sessionId)
+})
+
+watch(agentRounds, (value) => {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(AGENT_ROUNDS_STORAGE_KEY, value || '')
 })
 
 onActivated(() => {
@@ -1271,10 +1327,14 @@ onUnmounted(() => {
             :streaming-content="activeStream?.partialAnswer ?? ''"
             :streaming-thinking="activeStream?.thinkingSteps ?? []"
             :streaming-elapsed-seconds="activeStream?.thinkingElapsedSeconds ?? 0"
+            :streaming-run-status="activeStream?.runStatus ?? null"
+            :streaming-queue-position="activeStream?.queuePosition ?? null"
+            :streaming-resume-by="activeStream?.resumeBy ?? null"
             :stream-error="activeStream?.streamError ?? ''"
             :bubble-tag="bubbleTag"
             :starter-disabled="submissionBlocked"
             :clarification-reset-token="clarificationResetToken"
+            :shared-run-id="sharedRunId"
             @retry-question="retryQuestion"
             @feedback-updated="applyFeedbackUpdate"
             @clarification-submitted="submitClarification"
@@ -1289,6 +1349,8 @@ onUnmounted(() => {
             :disabled="composerUnavailable"
             :supports-images="supportsImageAttachments"
             :supports-documents="supportsDocumentAttachments"
+            :agent-rounds="agentRounds"
+            @update:agent-rounds="agentRounds = $event"
             @send="sendMessage"
             @stop="stopStreaming"
             @attach="addComposerAttachments"
@@ -1328,6 +1390,7 @@ onUnmounted(() => {
     <CopilotShareDialog
       v-model="shareOpen"
       :session="shareTarget"
+      @share-state="applyShareState"
       @closed="shareTarget = null"
     />
     <CopilotExecutionSettingsDialog

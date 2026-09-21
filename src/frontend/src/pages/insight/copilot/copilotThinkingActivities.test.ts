@@ -71,6 +71,17 @@ describe('copilot thinking activity aggregation', () => {
     expect(hasStructuredRuntimeContent(steps)).toBe(true)
   })
 
+  it('does not treat bare activity.* events as Agent-activity content', () => {
+    const steps = [{
+      eventType: 'activity.recorded',
+      message: 'activity.recorded',
+      payload: { id: 'act-1', kind: 'searching_sources', status: 'in_progress' },
+    }]
+
+    expect(thinkingActivityCount(steps)).toBe(0)
+    expect(hasStructuredRuntimeContent(steps)).toBe(false)
+  })
+
   it('keeps tool activities when structured runtime events are also present', () => {
     const activities = summarizeThinkingSteps([
       {

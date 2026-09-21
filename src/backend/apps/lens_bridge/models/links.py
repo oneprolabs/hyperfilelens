@@ -950,6 +950,9 @@ class LensRunSubmission(OrganizationScopedModel):
     # Keep this nullable so the previous blue/green API can still insert
     # no-attachment submissions after this migration and before traffic cutover.
     attachment_uuids = models.JSONField(default=list, blank=True, null=True)
+    # Blank means SourceLens should use the assistant's own reasoning depth.
+    # A database default lets the previous API insert submissions that omit it.
+    agent_rounds = models.CharField(max_length=16, blank=True, default="")
     status = models.CharField(
         max_length=16,
         choices=Status.choices,

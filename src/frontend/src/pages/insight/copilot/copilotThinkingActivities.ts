@@ -80,6 +80,8 @@ function activityTitle(step: TimelineStep, category: string): string | null {
     || category.startsWith('plan.')
     || category.startsWith('stage.')
     || category.startsWith('activity.')
+    || category === 'queue'
+    || category.startsWith('document.')
   ) return null
   if (step.error) return 'Activity failed'
   const assistantName = 'assistant_name' in step ? step.assistant_name : step.assistantName
@@ -167,7 +169,7 @@ export function thinkingActivityCount(steps: TimelineStep[]): number {
   )
 }
 
-/** Return true when SourceLens supplied structured runtime content. */
+/** Return true when SourceLens supplied structured plan/stage/workflow content. */
 export function hasStructuredRuntimeContent(steps: TimelineStep[]): boolean {
   return steps.some((step) => {
     const category = eventCategory(step)
@@ -177,13 +179,16 @@ export function hasStructuredRuntimeContent(steps: TimelineStep[]): boolean {
     const payload = 'payload' in step && step.payload && typeof step.payload === 'object'
       ? step.payload as Record<string, unknown>
       : {}
+    // activity.* alone is not enough: knowledge-QA tools become user activities via
+    // tool.* events, and bare activity.recorded without a summarized title must not
+    // flip the live line from Analyzing/Queued straight to an empty Agent activity card.
     return (
-      /^plan\.|^stage\.|^activity\./.test(category)
+      /^plan\.|^stage\./.test(category)
       || Boolean(step.plan || step.outcome || assistantName)
       || Boolean(delegatedTask)
       || (/plan|workflow|task/i.test(category)
         && Boolean(title || step.summary || payload.steps || payload.tasks))
-      || Boolean(payload.outcome)
+      || Boolean(payload.steps || payload.tasks)
     )
   })
 }

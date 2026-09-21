@@ -396,7 +396,7 @@ function runtimeStatusGlyph(status: RuntimeStatus): string {
     </section>
     <details
       v-if="activityItems.length"
-      open
+      :open="props.live"
       class="copilot-activity-group"
     >
       <summary class="copilot-activity-group-header">
@@ -412,11 +412,11 @@ function runtimeStatusGlyph(status: RuntimeStatus): string {
           />
           <span v-else>✓</span>
         </span>
-        <span>{{ props.live ? t('dashboard.ribbon.running') : t('nodeUpgradeProgress.completed') }}</span>
+        <span>{{ props.live ? t('insight.copilot.agentActivityStatusRunning') : t('insight.copilot.agentActivityStatusCompleted') }}</span>
         <span
           class="copilot-activity-group-chevron"
           aria-hidden="true"
-        >⌃</span>
+        >⌄</span>
       </summary>
       <div class="copilot-activity-list">
         <div
@@ -479,13 +479,14 @@ function runtimeStatusGlyph(status: RuntimeStatus): string {
 .copilot-activity-group-status { display: grid; width: 16px; height: 16px; flex: 0 0 auto; place-items: center; color: var(--el-color-success); font-size: 12px; font-weight: 700; }
 .copilot-activity-group-status.is-live { color: var(--el-color-primary); }
 .copilot-activity-spinner { animation: copilot-activity-spin 1s linear infinite; }
-.copilot-activity-group-chevron { margin-left: auto; color: var(--el-text-color-placeholder); font-size: 14px; }
-.copilot-activity-list { padding: 4px 9px 7px; border-top: 1px solid var(--el-border-color-lighter); }
-.copilot-activity-item { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; }
-.copilot-activity-status { display: grid; width: 16px; height: 16px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: var(--el-color-success); font-size: 12px; font-weight: 700; }
+.copilot-activity-group-chevron { margin-left: auto; color: var(--el-text-color-placeholder); font-size: 14px; transition: transform 0.16s ease; }
+.copilot-activity-group[open] > .copilot-activity-group-header .copilot-activity-group-chevron { transform: rotate(180deg); }
+.copilot-activity-list { display: grid; gap: 2px; padding: 0 9px 8px 33px; }
+.copilot-activity-item { display: flex; align-items: flex-start; gap: 6px; padding: 1px 0; }
+.copilot-activity-status { display: grid; width: 14px; height: 14px; flex: 0 0 auto; place-items: center; color: var(--el-text-color-secondary); font-size: 11px; font-weight: 700; }
 .copilot-activity-status.is-in_progress { color: var(--el-color-primary); }
 .copilot-activity-status.is-failed { color: var(--el-color-danger); }
-.copilot-activity-content { min-width: 0; color: var(--el-text-color-primary); font-size: 12px; line-height: 1.45; }
+.copilot-activity-content { min-width: 0; color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.35; }
 .copilot-activity-title { display: flex; align-items: baseline; gap: 6px; }
 .copilot-activity-count { color: var(--el-text-color-secondary); font-size: 11px; }
 .copilot-activity-details { margin-top: 2px; color: var(--el-text-color-secondary); font-size: 11px; overflow-wrap: anywhere; }

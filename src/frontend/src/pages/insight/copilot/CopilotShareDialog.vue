@@ -25,6 +25,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   closed: []
+  shareState: [state: { sessionId: number; runUuid: string | null }]
 }>()
 
 const { t } = useI18n()
@@ -43,6 +44,10 @@ const open = computed({
   get: () => props.modelValue,
   set: (value: boolean) => emit('update:modelValue', value),
 })
+
+function publishShareState(sessionId: number, runUuid: string | null) {
+  emit('shareState', { sessionId, runUuid })
+}
 
 function defaultTitle(question?: string) {
   return (question || '').replace(/\s+/g, ' ').trim().slice(0, 80)
@@ -85,6 +90,7 @@ async function loadCandidate() {
     candidate.value = result
     share.value = result.share || null
     title.value = share.value?.title || defaultTitle(result.question)
+    publishShareState(sessionId, share.value?.run_uuid || null)
   } catch (error) {
     if (generation !== candidateLoadGeneration || !props.modelValue) return
     ElMessage.error({
@@ -134,6 +140,7 @@ async function primaryAction() {
     ) return
     share.value = result
     title.value = result.title || ''
+    publishShareState(sessionId, result.run_uuid || null)
     ElMessage.success({
       message: t(
         updating
@@ -197,6 +204,7 @@ async function stopSharing() {
   saving.value = true
   try {
     await revokeCopilotShare(sessionId, shareUuid)
+    publishShareState(sessionId, null)
     if (
       generation !== dialogGeneration
       || props.session?.id !== sessionId

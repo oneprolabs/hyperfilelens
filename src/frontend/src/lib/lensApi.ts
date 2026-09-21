@@ -1600,6 +1600,7 @@ export async function createCopilotRun(
   idempotencyKey?: string,
   attachmentUuids: string[] = [],
   retryOfRunUuid?: string,
+  agentRounds?: string,
 ): Promise<LensRun> {
   const raw = await api(lensUrl(`copilot/sessions/${sessionId}/runs/`), {
     method: 'POST',
@@ -1609,6 +1610,7 @@ export async function createCopilotRun(
       ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
       ...(attachmentUuids.length ? { attachment_uuids: attachmentUuids } : {}),
       ...(retryOfRunUuid ? { retry_of_run_uuid: retryOfRunUuid } : {}),
+      ...(agentRounds ? { agent_rounds: agentRounds } : {}),
     }),
   })
   return lensPayload<LensRun>(raw)

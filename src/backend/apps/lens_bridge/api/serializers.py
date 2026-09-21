@@ -864,6 +864,11 @@ class LensRunCreateSerializer(serializers.Serializer):
         default=list,
         max_length=4,
     )
+    agent_rounds = serializers.ChoiceField(
+        choices=("", "flash", "fast", "balanced", "deep", "max"),
+        required=False,
+        default="",
+    )
 
     def validate(self, attrs):
         attachment_uuids = attrs.get("attachment_uuids") or []

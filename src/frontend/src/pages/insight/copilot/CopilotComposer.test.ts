@@ -159,4 +159,24 @@ describe('CopilotComposer attachments', () => {
     wrapper.unmount()
     expect(disconnect).toHaveBeenCalledOnce()
   })
+
+  it('offers SourceLens reasoning depths and emits the selected tier', async () => {
+    const wrapper = mountComposer()
+
+    expect(wrapper.get('.reasoning-depth-trigger').text()).toContain('Balanced')
+    await wrapper.get('.reasoning-depth-trigger').trigger('click')
+    const options = wrapper.findAll('.reasoning-depth-option')
+    expect(options.map((option) => option.get('.reasoning-depth-option-label').text())).toEqual([
+      'Flash',
+      'Fast',
+      'Balanced',
+      'Deep',
+      'Max',
+    ])
+
+    await options[1].trigger('click')
+
+    expect(wrapper.emitted('update:agentRounds')?.at(-1)).toEqual(['fast'])
+    expect(wrapper.find('.reasoning-depth-menu').exists()).toBe(false)
+  })
 })
