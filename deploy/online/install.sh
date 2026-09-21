@@ -58,6 +58,8 @@ ONLINE_FAILURE_STAGE="Initialization"
 ONLINE_FAILURE_COMPONENT="HyperFileLens Community"
 ONLINE_CHANGES_APPLIED="No changes were applied."
 ONLINE_LOG_READY=0
+ONLINE_STDOUT_CAPTURE_PID=""
+ONLINE_STDERR_CAPTURE_PID=""
 ONLINE_FAILURE_ACTIONS=()
 CURL_RETRY_ARGS=()
 APT_RETRY_ARGS=(
@@ -200,7 +202,7 @@ timestamp_log_stream() {
 	export TZ
 	# Strip all CSI terminal controls (colour, cursor movement, erase-line)
 	# before persisting output; the live terminal still receives the original
-	# stream through tee.
+	# stream from capture_log_stream.
 	sed $'s/\033\[[0-9;?]*[ -/]*[@-~]//g' | while IFS= read -r line || [[ -n "${line}" ]]; do
 		printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
 		printf '[%s] %s\n' "${timestamp}" "${line}" >>"${log_file}"
@@ -208,10 +210,34 @@ timestamp_log_stream() {
 }
 
 capture_log_stream() {
-	local log_file=$1 console_fd=$2
-	tee "/dev/fd/${console_fd}" \
-		| tr '\r' '\n' \
-		| timestamp_log_stream "${log_file}"
+	local log_file=$1 console_fd=$2 line
+	# Write each line to the console immediately, then feed the session log.
+	# Avoid tee(1) here: when stdout/stderr are pipes (CI redirects), tee can
+	# block-buffer and drop trailing console output if the installer exits
+	# before the buffer flushes.
+	# Use >&${console_fd} (not >/dev/fd/N): reopening /dev/fd/N with >
+	# truncates a redirected log file on every line.
+	tr '\r' '\n' | while IFS= read -r line || [[ -n "${line}" ]]; do
+		printf '%s\n' "${line}" >&"${console_fd}"
+		printf '%s\n' "${line}"
+	done | timestamp_log_stream "${log_file}"
+}
+
+flush_online_logging() {
+	# Process-substitution capture can still be draining when the installer
+	# exits. Restore the original descriptors and wait so callers (and CI
+	# redirects) observe the complete stream.
+	((ONLINE_LOG_READY == 1)) || return 0
+	ONLINE_LOG_READY=0
+	exec >&3 2>&4
+	if [[ -n "${ONLINE_STDOUT_CAPTURE_PID}" ]]; then
+		wait "${ONLINE_STDOUT_CAPTURE_PID}" 2>/dev/null || true
+		ONLINE_STDOUT_CAPTURE_PID=""
+	fi
+	if [[ -n "${ONLINE_STDERR_CAPTURE_PID}" ]]; then
+		wait "${ONLINE_STDERR_CAPTURE_PID}" 2>/dev/null || true
+		ONLINE_STDERR_CAPTURE_PID=""
+	fi
 }
 
 capture_child_install_stream() {
@@ -222,7 +248,7 @@ capture_child_install_stream() {
 		rendered="${line}"
 		if [[ "${line}" == "${ONLINE_CHILD_CONSOLE_MARKER}"* ]]; then
 			rendered="${line#"${ONLINE_CHILD_CONSOLE_MARKER}"}"
-			printf '%s\n' "${rendered}" >"/dev/fd/${console_fd}"
+			printf '%s\n' "${rendered}" >&"${console_fd}"
 		fi
 		printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
 		printf '[%s] %s\n' "${timestamp}" "${rendered}" >>"${log_file}"
@@ -300,8 +326,12 @@ configure_logging() {
 	ONLINE_LOG_READY=1
 	exec 3>&1
 	exec 4>&2
-	exec > >(capture_log_stream "${ONLINE_LOG_FILE}" 3) \
-		2> >(capture_log_stream "${ONLINE_LOG_FILE}" 4)
+	# Capture stdout and stderr separately so each process-substitution PID can
+	# be waited on during flush_online_logging before the installer exits.
+	exec > >(capture_log_stream "${ONLINE_LOG_FILE}" 3)
+	ONLINE_STDOUT_CAPTURE_PID=$!
+	exec 2> >(capture_log_stream "${ONLINE_LOG_FILE}" 4)
+	ONLINE_STDERR_CAPTURE_PID=$!
 }
 
 preserve_apt_failure_log() {
@@ -511,6 +541,7 @@ cleanup() {
 	if [[ -n "${SESSION_DIR}" && -d "${SESSION_DIR}" ]]; then
 		rm -rf -- "${SESSION_DIR}"
 	fi
+	flush_online_logging
 	exit "${rc}"
 }
 
