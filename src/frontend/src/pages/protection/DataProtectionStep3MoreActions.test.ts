@@ -356,7 +356,7 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(repositories).not.toContain("repo_type: ''")
   })
 
-  it('keeps deregister available after a failed cleanup so Force Deregister can retry', () => {
+  it('keeps deregister and edit actions available after a failed cleanup so Force Deregister and Reset Config can retry', () => {
     const gating = sourceBetween(
       'const startBackupSubmitting',
       'const step3CanStopBackup',
@@ -366,11 +366,15 @@ describe('backup wizard step 3 More Actions refresh', () => {
       'const step3CanStopBackup',
     )
 
-    expect(gating).toContain('sourcePendingOps.isPending(row.id)')
+    expect(gating).toContain('!sourcePendingOps.isRowSelectable(row.id)')
     expect(gating).toContain('step3LifecycleActionsEnabled.value')
     expect(unregister).not.toContain('if (!step3SelectionEditable.value)')
     expect(unregister).toContain('sourcePendingOps.isRowSelectable(row.id)')
     expect(unregister).toContain('lifecycleOps.isNodeBusy(node)')
     expect(page).toContain(':disabled="!step3UnregisterEnabled"')
+    // Edit actions are gated by step3SelectionEditable (which delegates to
+    // step3LifecycleActionsEnabled using isRowSelectable), so they remain
+    // available after a delete_failed/delete_blocked pending op.
+    expect(page).toContain(':disabled="!step3SelectionEditable"')
   })
 })

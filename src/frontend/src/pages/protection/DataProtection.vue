@@ -4859,7 +4859,9 @@ const step3StartBackupEnabled = computed(() =>
 const step3LifecycleActionsEnabled = computed(() => {
   if (!step3SourceSelection.value.length) return false
   if (step3SourceSelection.value.some((row) => sourceResetRunning(row.id))) return false
-  if (step3SourceSelection.value.some((row) => sourcePendingOps.isPending(row.id))) return false
+  // Failed / blocked deregistration stays actionable so Force Deregister and
+  // Reset Config can retry, matching step3UnregisterEnabled semantics.
+  if (step3SourceSelection.value.some((row) => !sourcePendingOps.isRowSelectable(row.id))) return false
   if (step3SourceSelection.value.some((row) => {
     const node = flowRowToApiNode(row)
     return node != null && lifecycleOps.isNodeBusy(node)
