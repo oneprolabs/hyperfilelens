@@ -4895,7 +4895,15 @@ const step2UnregisterEnabled = computed(() => {
 })
 
 const step3UnregisterEnabled = computed(() => {
-  if (!step3SelectionEditable.value) return false
+  if (!step3SourceSelection.value.length) return false
+  if (step3SourceSelection.value.some((row) => sourceResetRunning(row.id))) return false
+  // Failed / blocked deregistration stays selectable so Force Deregister can retry.
+  // Edit and reset remain locked by step3SelectionEditable.
+  if (step3SourceSelection.value.some((row) => !sourcePendingOps.isRowSelectable(row.id))) return false
+  if (step3SourceSelection.value.some((row) => {
+    const node = flowRowToApiNode(row)
+    return node != null && lifecycleOps.isNodeBusy(node)
+  })) return false
   return !step3SourceSelection.value.some((row) => sourceHasRunningBackupOrRestore(row.id))
 })
 const step3CanStopBackup = computed(() =>
