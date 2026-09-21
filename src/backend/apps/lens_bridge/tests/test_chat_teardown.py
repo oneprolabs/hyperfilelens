@@ -2779,6 +2779,62 @@ class CopilotChatTeardownTests(TestCase):
     )
     @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
     @mock.patch("apps.node.services.internal.agent_task.run_agent_task_sync")
+    def test_teardown_retries_clear_bindings_via_tombstoned_assistant_links(
+        self,
+        run_agent_task,
+        delete_assistant,
+        cancel_conversion,
+        delete_datasource,
+    ):
+        """Archive-only first attempts must still unbind on later retries.
+
+        SourceLens 0.57 keeps AssistantDataSourceBinding after archive. HFL soft
+        deletes the assistant link when delete_assistants succeeds, so retries
+        have to rediscover that UUID from tombstones before DELETE datasource.
+        """
+
+        datasource_uuid = uuid.uuid4()
+        assistant_uuid = self.knowledge_source.sl_assistant_uuid
+        self.knowledge_source.sl_datasource_uuid = datasource_uuid
+        self.knowledge_source.sl_assistant_uuid = None
+        self.knowledge_source.save(
+            update_fields=["sl_datasource_uuid", "sl_assistant_uuid", "updated_at"]
+        )
+        link = LensAssistantLink.objects.create(
+            organization=self.tenant,
+            sl_assistant_uuid=assistant_uuid,
+            knowledge_source=self.knowledge_source,
+            owner_user=self.user,
+            created_by=self.user,
+            visibility_scope=LensAssistantLink.VisibilityScope.USER,
+        )
+        link.soft_delete()
+        run_agent_task.return_value = mock.MagicMock(
+            ok=True,
+            timed_out=False,
+            task=mock.MagicMock(id=uuid.uuid4(), last_error=""),
+        )
+
+        result = knowledge_source_teardown.run_knowledge_source_teardown(
+            knowledge_source_id=self.knowledge_source.id,
+            owner_session_link_id=self.session.id,
+        )
+
+        self.assertEqual(result["status"], "deleted")
+        delete_assistant.assert_called_once_with(assistant_uuid)
+        delete_datasource.assert_called_once_with(str(datasource_uuid))
+        cancel_conversion.assert_called_once_with(str(datasource_uuid))
+
+    @mock.patch(
+        "apps.lens_bridge.services.knowledge_source_teardown."
+        "sl_client.delete_managed_datasource"
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.knowledge_source_teardown."
+        "sl_client.cancel_managed_datasource_conversion"
+    )
+    @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
+    @mock.patch("apps.node.services.internal.agent_task.run_agent_task_sync")
     def test_teardown_cancels_conversion_before_deleting_remote_resources(
         self,
         run_agent_task,
