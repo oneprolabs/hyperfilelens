@@ -13,6 +13,7 @@ import HflDateTimeRangePicker from '../../components/HflDateTimeRangePicker.vue'
 import ResourceNameSummaryCell from '../../components/ResourceNameSummaryCell.vue'
 import TaskStatusTag from '../../components/TaskStatusTag.vue'
 import TaskTypeLabel from '../../components/TaskTypeLabel.vue'
+import TaskDetailDrawer from '../protection/components/TaskDetailDrawer.vue'
 import FlowSourceSummaryCell from '../protection/components/FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from '../protection/components/FlowSourceConnectionCell.vue'
 import { useOpsMenus } from '../../composables/useOpsMenus'
@@ -135,6 +136,7 @@ const stats = ref<TaskStatistics>({
 })
 
 const detailOpen = ref(false)
+const detailTaskUuid = ref('')
 const activeTask = ref<TaskRow | null>(null)
 const cleanupDetailsExpanded = ref(false)
 const detailEvents = ref<TaskEventRow[]>([])
@@ -151,6 +153,7 @@ const activeRetainedResources = computed(() => taskRetainedResources(activeTask.
 const activeFailedCleanupChildren = computed(() => taskFailedCleanupChildren(activeTask.value))
 const activeNeedsManualCleanup = computed(() => taskNeedsManualCleanup(activeTask.value))
 const activeCleanupSuggestions = computed(() => activeTask.value?.error_details?.suggestions || [])
+const activeFailureReasons = computed(() => activeTask.value?.error_details?.reasons || [])
 const cleanupSuggestionText = (suggestion: { code: string; detail: string }) => {
   const key = `ops.task.cleanupSuggestion.${suggestion.code}`
   return te(key) ? t(key) : suggestion.detail
@@ -162,6 +165,7 @@ const cleanupSuggestionCode = (suggestion: { code: string; detail: string }) => 
 const cleanupOutcomeSucceeded = computed(() => activeTask.value?.status === 'success')
 const showCleanupOutcome = computed(() => (
   taskDisplayStatus(activeTask.value) === 'partial'
+  || ['failed', 'timeout'].includes(String(activeTask.value?.status || ''))
   || activeCleanupFailures.value.length > 0
   || activeCleanupWarnings.value.length > 0
   || activeRetainedResources.value.length > 0
@@ -649,36 +653,6 @@ async function fetchResourceDetail(resource: TaskResourceRow, signal?: AbortSign
   return { id, resource_type: type, resource_subtype: subtype }
 }
 
-async function loadTaskOwner(task: TaskRow, signal?: AbortSignal) {
-  const resource = task.primary_resource
-  if (!resource) {
-    taskOwner.value = t('ops.task.emptyMark')
-    return
-  }
-  // For source_unregister tasks, resolve the owner from immutable task payload
-  // data first, since the live resource has already been removed.
-  if (task.task_type === 'source_unregister' && resource.resource_type === 'backup_source') {
-    const fromPayload = resolveTaskBackupSourceResourceFromPayload(resource, task)
-    if (activeTask.value?.task_uuid === task.task_uuid) {
-      taskOwner.value = fromPayload?.backupSource || t('ops.task.emptyMark')
-    }
-    return
-  }
-  try {
-    const detail = await fetchResourceDetail(resource, signal)
-    if (activeTask.value?.task_uuid === task.task_uuid) {
-      taskOwner.value = normalizeResourceDetail(resource.resource_type, resource.resource_id, detail).name
-    }
-  } catch {
-    const snapshot = taskResourceSnapshot(task, resource)
-    if (activeTask.value?.task_uuid === task.task_uuid) {
-      taskOwner.value = snapshot
-        ? normalizeResourceDetail(resource.resource_type, resource.resource_id, snapshot).name
-        : t('ops.task.emptyMark')
-    }
-  }
-}
-
 async function loadResourceType(type: string) {
   if (!type) return
   selectedResourceType.value = type
@@ -882,34 +856,12 @@ function onAdvancedFilterClosed() {
 async function openTaskDetail(row: TaskRow | string) {
   const taskUuid = typeof row === 'string' ? row : row.task_uuid
   if (!taskUuid) return
-  stopRepositoryCancellation()
-  const signal = pageRequests.nextSignal('task-detail')
+  // The shared drawer owns detail loading. Avoid the legacy page-level request
+  // racing it during the first open.
+  detailTaskUuid.value = taskUuid
   detailOpen.value = true
   cleanupDetailsExpanded.value = false
-  detailRefreshing.value = true
-  detailEvents.value = []
-  try {
-    activeTask.value = await getTask(taskUuid, { signal })
-    resetDrawerScroll()
-    taskOwner.value = t('ops.task.emptyMark')
-    await loadTaskOwner(activeTask.value, signal)
-    const eventPage = await listTaskEvents(taskUuid, { page_size: 50 }, { signal })
-    detailEvents.value = eventPage.results
-    activeDetailTab.value = 'steps'
-    initExpandedSteps(activeTask.value)
-    resetResourceDetails()
-    syncTask(activeTask.value)
-    syncRepositoryCancellation(activeTask.value)
-    router.replace({ query: { ...route.query, taskUuid } })
-  } catch (err) {
-    if (pageRequests.isAbortError(err)) return
-    activeTask.value = null
-    detailEvents.value = []
-  } finally {
-    const isCurrent = pageRequests.isCurrentSignal('task-detail', signal)
-    pageRequests.releaseSignal('task-detail', signal)
-    if (isCurrent) detailRefreshing.value = false
-  }
+  return
 }
 
 function toggleCleanupDetails() {
@@ -927,6 +879,7 @@ function closeDetail() {
   pageRequests.abortScope('task-detail')
   unbindDrawerResize()
   detailOpen.value = false
+  detailTaskUuid.value = ''
   detailRefreshing.value = false
   activeTask.value = null
   cleanupDetailsExpanded.value = false
@@ -940,6 +893,14 @@ function closeDetail() {
   delete nextQuery.taskId
   router.replace({ query: nextQuery })
 }
+
+watch(detailOpen, (open) => {
+  if (open || (!route.query.taskUuid && !route.query.taskId)) return
+  const nextQuery = { ...route.query }
+  delete nextQuery.taskUuid
+  delete nextQuery.taskId
+  void router.replace({ query: nextQuery })
+})
 
 function onDetailOpened() {
   bindDrawerResize()
@@ -1000,14 +961,6 @@ onMounted(async () => {
   const taskUuid = textQueryValue(route.query.taskUuid || route.query.taskId)
   if (taskUuid) openTaskDetail(taskUuid)
 })
-
-watch(
-  () => route.query.taskUuid || route.query.taskId,
-  (value) => {
-    const taskUuid = textQueryValue(value)
-    if (taskUuid && taskUuid !== activeTask.value?.task_uuid) openTaskDetail(taskUuid)
-  },
-)
 
 watch(
   () => [filters.status, filters.task_type, filters.trigger_type],
@@ -1420,6 +1373,7 @@ watch(
 
     <ElDrawer
       v-model="detailOpen"
+      v-if="false"
       class="hfl-task-drawer"
       :size="drawerSize"
       @opened="onDetailOpened"
@@ -1904,8 +1858,8 @@ watch(
               aria-hidden="true"
             />
             <div class="hfl-task-drawer__cleanup-summary-copy">
-              <strong>{{ cleanupOutcomeSucceeded ? t('ops.task.cleanupWarningTitle') : t('ops.task.cleanupIncompleteTitle') }}</strong>
-              <p>{{ cleanupOutcomeSucceeded ? t('ops.task.cleanupWarningDescription') : t('ops.task.cleanupIncompleteDescription') }}</p>
+              <strong>{{ cleanupOutcomeSucceeded ? t('ops.task.cleanupWarningTitle') : (activeTask?.error_details?.summary || t('ops.task.cleanupIncompleteTitle')) }}</strong>
+              <p>{{ cleanupOutcomeSucceeded ? t('ops.task.cleanupWarningDescription') : (activeTask?.error_details?.summary || t('ops.task.cleanupIncompleteDescription')) }}</p>
               <span class="hfl-task-drawer__cleanup-counts">
                 {{ t('ops.task.cleanupFailuresCount', { count: activeCleanupFailures.length }) }} ·
                 {{ t('ops.task.retainedResourcesCount', { count: activeRetainedResources.length }) }} ·
@@ -1926,6 +1880,10 @@ watch(
             v-if="cleanupDetailsExpanded"
             class="hfl-task-drawer__cleanup-details"
           >
+            <div v-if="activeFailureReasons.length" class="hfl-task-drawer__cleanup-group">
+              <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.failureDetails.reasons') }}</span>
+              <ul><li v-for="reason in activeFailureReasons" :key="`${reason.code}-${reason.detail}`">{{ reason.detail }}</li></ul>
+            </div>
             <div v-if="activeCleanupFailures.length" class="hfl-task-drawer__cleanup-group">
               <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.cleanupFailures') }}</span>
               <ul>
@@ -2167,6 +2125,14 @@ watch(
         </div>
       </div>
     </ElDrawer>
+
+    <TaskDetailDrawer
+      v-model="detailOpen"
+      :task-uuid="detailTaskUuid"
+      :drawer-size="drawerSize"
+      @open-task="openTaskDetail"
+      @task-updated="load"
+    />
     <ProtectionStopConfirmDialog
       v-if="stopConfirmOpen"
       v-model="stopConfirmOpen"

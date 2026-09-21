@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, nextTick } 
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus, RefreshCw, Search, Filter, ChevronDown, Pencil, Trash2, Copy, HardDrive, Folder, Unlink, Info } from 'lucide-vue-next'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElPopover } from 'element-plus'
 import type { ElTable } from 'element-plus'
 import { api, apiErrorMessage } from '../../lib/api'
 import { copyTextToClipboard } from '../../lib/clipboard'
