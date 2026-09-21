@@ -99,6 +99,49 @@ class TaskApiTests(TestCase):
         )
         self.assertIsNone(TaskSerializer(task).data["error_details"])
 
+    def test_serializer_produces_error_details_for_failed_repository_operation(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.REPOSITORY_OPERATION,
+            display_name="Create repository: test-repo",
+            status=Task.Status.FAILED,
+            error_code="STORAGE.S3_VALIDATION_FAILED",
+            error_message="Object storage validation failed.",
+            result_payload={
+                "summary": "Repository creation failed",
+                "reasons": [
+                    "Object storage validation failed. Check the connection settings and IAM permissions, then try again."
+                ],
+                "resolutions": [
+                    "Open the repository form and verify the S3 connection settings, IAM permissions, and bucket access, then retry."
+                ],
+                "technical_detail": {
+                    "repo_type": "s3",
+                    "provider": "aws",
+                    "endpoint": "s3.amazonaws.com",
+                    "bucket": "test-bucket",
+                },
+            },
+        )
+        TaskResource.objects.create(
+            task=task,
+            resource_type=TaskResource.Type.REPOSITORY,
+            resource_id=1,
+            is_primary=True,
+        )
+        data = TaskSerializer(task).data
+        contract = data["error_details"]
+        self.assertIsNotNone(contract)
+        self.assertEqual(contract["severity"], "error")
+        self.assertEqual(contract["outcome"], "failed")
+        self.assertEqual(contract["task_uuid"], str(task.task_uuid))
+        self.assertIsNotNone(contract["summary"])
+        self.assertNotEqual(contract["summary"], "")
+        self.assertGreater(len(contract["reasons"]), 0)
+        self.assertGreater(len(contract["suggestions"]), 0)
+        self.assertIsNotNone(contract["technical_detail"])
+        self.assertNotEqual(contract["technical_detail"], {})
+
     def test_statistics_honors_task_type_and_created_range(self):
         now = timezone.now()
         recent_restore = Task.objects.create(

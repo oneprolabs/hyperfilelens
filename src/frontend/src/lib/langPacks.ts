@@ -63,7 +63,7 @@ export async function loadInstalledLangPacks(): Promise<void> {
   }
   installedLangPacks.value = []
   try {
-    const res = await fetch('/locales/installed.json', { cache: 'no-cache' })
+    const res = await fetch('/locales/installed.json', { cache: 'reload' })
     if (!res.ok) return
     const data = (await res.json()) as { app_version?: unknown, packs?: InstalledLangPack[] }
     const appVersion = typeof data.app_version === 'string' ? data.app_version : ''
@@ -76,7 +76,7 @@ export async function loadInstalledLangPacks(): Promise<void> {
       try {
         const messagesResponse = await fetch(
           `/locales/${encodeURIComponent(pack.id)}/frontend/messages.json`,
-          { cache: 'no-cache' },
+          { cache: 'reload' },
         )
         if (!messagesResponse.ok) continue
         const messages: unknown = await messagesResponse.json()

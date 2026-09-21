@@ -3,6 +3,7 @@ import { backupFailureCategory, backupFailureMetadata } from '../../../lib/backu
 import { safeErrorDetailText } from '../../../lib/errors/details'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { i18n } from '../../../i18n'
 import { ElMessage } from 'element-plus'
 import {
   AlertTriangle,
@@ -78,7 +79,7 @@ const emit = defineEmits<{
   'task-updated': [task: TaskRow]
 }>()
 
-const { t, te, locale } = useI18n()
+const { t, te } = useI18n()
 const { tableMaxHeight: resourceTableMaxHeight, containerRef: resourceTableRef } = useDrawerTableMaxHeight()
 const stopConfirmDialog = useProtectionStopConfirmDialog()
 const stopConfirmOpen = stopConfirmDialog.open
@@ -129,20 +130,26 @@ const taskErrorDetails = computed(() => {
   const task = activeTask.value
   if (!task) return null
   if (task.error_details) return task.error_details
-  if (!['failed', 'timeout'].includes(String(task.status))) return null
+  if (!['failed', 'timeout', 'cancelled'].includes(String(task.status))) return null
   const payload = task.result_payload && typeof task.result_payload === 'object'
     ? task.result_payload as Record<string, unknown>
     : {}
   const reasons = Array.isArray(payload.reasons)
     ? payload.reasons.map((detail) => ({ code: task.error_code || 'TASK_FAILED', detail: String(detail) }))
     : []
-  const resolutions = Array.isArray(payload.resolutions)
-    ? payload.resolutions.map((detail) => ({ code: 'review_task', detail: String(detail) }))
-    : []
+  const resolutions = Array.isArray(payload.suggestions)
+    ? payload.suggestions.map((detail) => ({ code: 'review_task', detail: String(detail) }))
+    : Array.isArray(payload.resolutions)
+      ? payload.resolutions.map((detail) => ({ code: 'review_task', detail: String(detail) }))
+      : []
   return {
     version: 1,
     severity: 'error' as const,
-    outcome: String(task.status) === 'timeout' ? 'timeout' as const : 'failed' as const,
+    outcome: String(task.status) === 'timeout'
+      ? 'timeout' as const
+      : String(task.status) === 'cancelled'
+        ? 'cancelled' as const
+        : 'failed' as const,
     summary: String(payload.summary || task.error_message || t('ops.task.failureDetails.failureTitle')),
     reasons,
     suggestions: resolutions,
@@ -196,21 +203,60 @@ const technicalDetailText = computed(() => {
 })
 const taskFailureSummary = computed(() => {
   const summary = String(taskErrorDetails.value?.summary || '').trim()
-  if (!summary || /^task failed\.?$/i.test(summary) || /^任务失败[。.]?$/.test(summary)) {
+  if (!summary || /^task failed\.?$/i.test(summary) || /^task cancelled\.?$/i.test(summary) || /^task cancelled by user\.?$/i.test(summary) || /^task timed out\.?$/i.test(summary) || /^task partially completed\.?$/i.test(summary)) {
     return ''
   }
   return summary
 })
+/**
+ * Translate a dot-separated i18n key without triggering intlify missing-key warnings.
+ * Directly traverses the messages object for the current locale and English fallback.
+ */
+function silentTranslate(key: string): string | undefined {
+  const locale = String(i18n.global.locale.value)
+  const messages = (i18n.global.messages.value as Record<string, unknown>)[locale]
+  const enMessages = (i18n.global.messages.value as Record<string, unknown>)['en']
+  for (const source of [messages, enMessages]) {
+    if (!source || typeof source !== 'object') continue
+    let current: unknown = source
+    for (const segment of key.split('.')) {
+      if (!current || typeof current !== 'object') { current = undefined; break }
+      current = (current as Record<string, unknown>)[segment]
+    }
+    if (typeof current === 'string') return current
+  }
+  return undefined
+}
+
 function localizedFailureText(item: { code?: string; detail: string }, kind: 'reason' | 'suggestion') {
   const key = `ops.task.failureDetails.${kind}.${item.code || ''}`
-  return te(key, locale.value) ? t(key) : item.detail
+  const translated = silentTranslate(key)
+  if (translated) return translated
+  // Try known backend message strings as i18n keys (strip trailing dot-sentinel)
+  const slug = item.detail.replace(/\.+$/, '')
+  const messageKey = `ops.task.failureDetails.${kind}_message.${slug}`
+  const msgTranslated = silentTranslate(messageKey)
+  if (msgTranslated) return msgTranslated
+  return item.detail
 }
-const hasCleanupOutcome = computed(() => Boolean(
+const effectiveReasons = computed(() => {
+    const seen = new Set<string>()
+    return (taskErrorDetails.value?.reasons || []).filter(
+      (r) => {
+        if (r.code === 'TASK_FAILED') return false
+        const dedupe = r.code || r.detail || ''
+        if (!dedupe || seen.has(dedupe)) return false
+        seen.add(dedupe)
+        return true
+      }
+    )
+  })
+  const hasCleanupOutcome = computed(() => Boolean(
   taskErrorDetails.value?.cleanup_failures?.length
   || taskErrorDetails.value?.retained_resources?.length
 ))
 const showTaskOutcome = computed(() => Boolean(
-  activeTask.value && ['failed', 'timeout'].includes(String(activeTask.value.status)),
+  activeTask.value && ['failed', 'timeout', 'cancelled'].includes(String(activeTask.value.status)),
 ))
 const taskOutcomeExpanded = ref(false)
 const activeDependencies = computed(() =>
@@ -248,6 +294,22 @@ const stepsWithEvents = computed(() => {
     events: grouped[step.id] || [],
   }))
 })
+function shouldShowStepErrorDetails(step: { id: number; status: string; step_name: string; events: TaskEventRow[] }, index: number) {
+  if (!taskErrorDetails.value) return false
+  const failedStep = String(taskErrorDetails.value.failed_step || '').trim()
+  if (failedStep) return step.step_name === failedStep
+
+  const currentStep = String(activeTask.value?.current_step || '').trim()
+  if (currentStep) return step.step_name === currentStep
+
+  const failedSteps = stepsWithEvents.value.filter(item => item.status === 'failed' || item.status === 'timeout')
+  const firstFailedStepWithEvents = failedSteps.find(item => item.events.length > 0)
+  if (firstFailedStepWithEvents) return step.id === firstFailedStepWithEvents.id
+
+  return failedSteps.length > 0
+    ? step.id === failedSteps[0].id
+    : activeTask.value?.status === 'cancelled' && index === stepsWithEvents.value.length - 1
+}
 const hasExpandableSteps = computed(() => hasExpandableTaskStep(stepsWithEvents.value))
 const hasAnyExpandedStep = computed(() => hasExpandedTaskStep(stepsWithEvents.value, isStepExpanded))
 
@@ -1144,33 +1206,6 @@ watch(
                     />
                 </button>
                 <div
-                  v-if="(step.status === 'failed' || step.status === 'timeout') && step.events.length === 0 && taskErrorDetails"
-                  class="hfl-task-drawer__step-failure-fallback"
-                >
-                  <div class="hfl-task-drawer__failure-panel-head">
-                    <span class="hfl-task-drawer__failure-panel-icon"><X :size="11" aria-hidden="true" /></span>
-                    <div class="hfl-task-drawer__failure-panel-copy">
-                      <strong>{{ t('ops.task.failureDetails.failureTitle') }}</strong>
-                      <span v-if="step.created_at || activeTask.created_at" class="hfl-task-drawer__failure-panel-time">{{ formatTime(step.created_at || activeTask.created_at) }}</span>
-                    </div>
-                  </div>
-                  <div v-if="taskFailureSummary" class="hfl-task-drawer__failure-panel-summary">
-                    {{ taskFailureSummary }}
-                  </div>
-                  <div v-if="taskErrorDetails.reasons?.length" class="hfl-task-drawer__failure-panel-section">
-                    <span class="hfl-task-drawer__failure-panel-label">{{ t('ops.task.failureDetails.reasons') }}</span>
-                    <ul class="hfl-task-drawer__failure-list hfl-task-drawer__failure-panel-list">
-                      <li v-for="reason in taskErrorDetails.reasons" :key="`${reason.code}-${reason.detail}`">{{ localizedFailureText(reason, 'reason') }}</li>
-                    </ul>
-                  </div>
-                  <div v-if="taskErrorDetails.suggestions?.length" class="hfl-task-drawer__failure-panel-section hfl-task-drawer__failure-panel-section--suggestions">
-                    <span class="hfl-task-drawer__failure-panel-label">{{ t('ops.task.failureDetails.suggestions') }}</span>
-                    <ol class="hfl-task-drawer__failure-list hfl-task-drawer__failure-panel-list">
-                      <li v-for="suggestion in taskErrorDetails.suggestions" :key="`${suggestion.code}-${suggestion.detail}`">{{ localizedFailureText(suggestion, 'suggestion') }}</li>
-                    </ol>
-                  </div>
-                </div>
-                <div
                     v-if="isStepExpanded(step.id) && step.events.length > 0"
                     class="hfl-task-drawer__event-list"
                   >
@@ -1208,10 +1243,12 @@ watch(
                           class="hfl-task-drawer__event-object"
                         ><Link2 :size="11" /><span>{{ eventObjectText(event) }}</span></span>
                         <div v-if="eventErrorText(event)" class="hfl-task-drawer__event-failure-panel">
-                          <span class="hfl-task-drawer__failure-panel-icon"><X :size="10" aria-hidden="true" /></span>
-                          <div class="hfl-task-drawer__event-failure-copy">
-                            <strong>{{ t('ops.task.failureDetails.failureTitle') }}</strong>
-                            <span>{{ eventErrorText(event) }}</span>
+                          <div class="hfl-task-drawer__failure-panel-head">
+                            <span class="hfl-task-drawer__failure-panel-icon"><X :size="10" aria-hidden="true" /></span>
+                            <div class="hfl-task-drawer__event-failure-copy">
+                              <strong>{{ t('ops.task.failureDetails.failureTitle') }}</strong>
+                              <span v-if="eventErrorText(event)">{{ eventErrorText(event) }}</span>
+                            </div>
                           </div>
                         </div>
                         <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
@@ -1222,6 +1259,33 @@ watch(
                       >{{ formatTime(event.created_at) }}</span>
                     </div>
                   </div>
+                <div
+                  v-if="shouldShowStepErrorDetails(step, index)"
+                  class="hfl-task-drawer__event-failure-panel hfl-task-drawer__event-failure-panel--stacked"
+                >
+                  <div class="hfl-task-drawer__failure-panel-head">
+                    <span class="hfl-task-drawer__failure-panel-icon"><X :size="11" aria-hidden="true" /></span>
+                    <div class="hfl-task-drawer__failure-panel-copy">
+                      <strong>{{ activeTask?.status === 'cancelled' ? t('ops.task.failureDetails.cancelledTitle') : t('ops.task.failureDetails.failureTitle') }}</strong>
+                      <span v-if="step.created_at || activeTask.created_at" class="hfl-task-drawer__failure-panel-time">{{ formatTime(step.created_at || activeTask.created_at) }}</span>
+                    </div>
+                  </div>
+                  <div v-if="taskFailureSummary" class="hfl-task-drawer__failure-panel-summary">
+                    {{ taskFailureSummary }}
+                  </div>
+                  <div v-if="effectiveReasons.length" class="hfl-task-drawer__failure-panel-section">
+                    <span class="hfl-task-drawer__failure-panel-label">{{ t('ops.task.failureDetails.reasons') }}</span>
+                    <ul class="hfl-task-drawer__failure-list hfl-task-drawer__failure-panel-list">
+                      <li v-for="reason in effectiveReasons" :key="`${reason.code}-${reason.detail}`">{{ localizedFailureText(reason, 'reason') }}</li>
+                    </ul>
+                  </div>
+                  <div v-if="taskErrorDetails.suggestions?.length" class="hfl-task-drawer__failure-panel-section hfl-task-drawer__failure-panel-section--suggestions">
+                    <span class="hfl-task-drawer__failure-panel-label">{{ t('ops.task.failureDetails.suggestions') }}</span>
+                    <ol class="hfl-task-drawer__failure-list hfl-task-drawer__failure-panel-list">
+                      <li v-for="suggestion in taskErrorDetails.suggestions" :key="`${suggestion.code}-${suggestion.detail}`">{{ localizedFailureText(suggestion, 'suggestion') }}</li>
+                    </ol>
+                  </div>
+                </div>
                 </article>
               </div>
               <div
@@ -1258,12 +1322,14 @@ watch(
                     >{{ eventDisplayMessage(event) }}</span>
                     <RepositoryMaintenanceSummary :metadata="taskEventMetadata(event)" />
                     <div v-if="eventErrorText(event)" class="hfl-task-drawer__event-failure-panel">
-                      <span class="hfl-task-drawer__failure-panel-icon"><X :size="10" aria-hidden="true" /></span>
-                      <div class="hfl-task-drawer__event-failure-copy">
-                        <strong>{{ t('ops.task.failureDetails.failureTitle') }}</strong>
-                        <span>{{ eventErrorText(event) }}</span>
+                        <div class="hfl-task-drawer__failure-panel-head">
+                          <span class="hfl-task-drawer__failure-panel-icon"><X :size="10" aria-hidden="true" /></span>
+                          <div class="hfl-task-drawer__event-failure-copy">
+                            <strong>{{ t('ops.task.failureDetails.failureTitle') }}</strong>
+                            <span v-if="eventErrorText(event)">{{ eventErrorText(event) }}</span>
+                          </div>
+                        </div>
                       </div>
-                    </div>
                     <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
                   </div>
                   <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
@@ -2357,20 +2423,11 @@ watch(
   white-space: pre-wrap;
 }
 
-.hfl-task-drawer__step-failure-fallback,
 .hfl-task-drawer__event-failure-panel {
   border: 1px solid rgb(252 165 165 / 72%);
   border-radius: 9px;
   background: rgb(254 242 242);
   color: rgb(127 29 29);
-}
-
-.hfl-task-drawer__step-failure-fallback {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  margin: 10px 12px 12px;
-  padding: 11px 12px;
 }
 
 .hfl-task-drawer__failure-panel-head,
@@ -2429,8 +2486,10 @@ watch(
 }
 
 .hfl-task-drawer__failure-panel-section--suggestions {
+  width: 100%;
   margin-top: 2px;
   padding: 9px 10px;
+  border-radius: 6px;
   border-left: 3px solid rgb(245 158 11);
   background: rgb(255 251 235 / 92%);
   color: rgb(146 64 14);
@@ -2462,6 +2521,15 @@ watch(
   align-items: flex-start;
   width: 100%;
   padding: 8px 9px;
+}
+
+/* Stacked variant for when failure panel includes reasons / suggestions */
+.hfl-task-drawer__event-failure-panel--stacked {
+  width: auto;
+  flex-direction: column;
+  gap: 7px;
+  margin: 10px 12px 12px;
+  padding: 11px 12px;
 }
 
 .hfl-task-drawer__event-failure-copy span {

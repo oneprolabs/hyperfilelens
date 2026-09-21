@@ -59,7 +59,7 @@ class Command(BaseCommand):
             error_message="The storage service rejected the configured credentials.",
             result_payload={
                 "summary": "Repository creation failed",
-                "reasons": ["The test credentials are intentionally invalid."],
+                "reasons": [],
                 "resolutions": ["Open the repository form and update credentials, then retry."],
                 "technical_detail": {"provider": "s3", "endpoint": "https://invalid.test"},
             },
