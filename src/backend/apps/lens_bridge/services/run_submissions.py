@@ -47,6 +47,14 @@ def _normalized_retry_run_uuid(value) -> str:
     return str(value or "")
 
 
+_AGENT_ROUNDS = {"flash", "fast", "balanced", "deep", "max"}
+
+
+def _normalized_agent_rounds(value) -> str:
+    text = str(value or "").strip()
+    return text if text in _AGENT_ROUNDS else ""
+
+
 def _submission_for_active_run(
     link: LensSessionLink,
 ) -> LensRunSubmission | None:
@@ -78,6 +86,7 @@ def prepare_submission(
     idempotency_key: str,
     attachment_uuids: list[str] | None = None,
     retry_of_run_uuid: uuid.UUID | None = None,
+    agent_rounds: str = "",
 ) -> tuple[LensRunSubmission, dict[str, Any] | None]:
     """Persist one submission before SourceLens receives the request.
 
@@ -86,6 +95,7 @@ def prepare_submission(
     """
 
     normalized_attachments = _normalized_attachment_uuids(attachment_uuids)
+    normalized_rounds = _normalized_agent_rounds(agent_rounds)
     link = (
         LensSessionLink.objects.select_for_update()
         .select_related("organization", "hfl_user")
@@ -108,6 +118,8 @@ def prepare_submission(
                     active_submission.attachment_uuids
                 )
                 != normalized_attachments
+                or _normalized_agent_rounds(active_submission.agent_rounds)
+                != normalized_rounds
             ):
                 raise RunSubmissionConflictError(
                     "The idempotency key is already associated with another request."
@@ -121,6 +133,7 @@ def prepare_submission(
                     question=question,
                     retry_of_run_uuid=retry_of_run_uuid,
                     attachment_uuids=normalized_attachments,
+                    agent_rounds=normalized_rounds,
                     status=LensRunSubmission.Status.BOUND,
                     sl_run_uuid=link.active_run_uuid,
                     run_status=str(active_run.get("status") or link.active_run_status),
@@ -139,6 +152,7 @@ def prepare_submission(
             != _normalized_retry_run_uuid(retry_of_run_uuid)
             or _normalized_attachment_uuids(existing.attachment_uuids)
             != normalized_attachments
+            or _normalized_agent_rounds(existing.agent_rounds) != normalized_rounds
         ):
             raise RunSubmissionConflictError(
                 "The idempotency key is already associated with another request."
@@ -172,6 +186,7 @@ def prepare_submission(
         question=question,
         retry_of_run_uuid=retry_of_run_uuid,
         attachment_uuids=normalized_attachments,
+        agent_rounds=normalized_rounds,
         recovery_next_at=timezone.now(),
     )
     return submission, None
@@ -236,6 +251,9 @@ def execute_submission(
     )
     if attachment_uuids:
         run_body["attachment_uuids"] = attachment_uuids
+    agent_rounds = _normalized_agent_rounds(submission.agent_rounds)
+    if agent_rounds:
+        run_body["agent_rounds"] = agent_rounds
     data = sl_client.request_json(
         "POST",
         f"/api/lens/sessions/{link.sl_session_uuid}/runs/",

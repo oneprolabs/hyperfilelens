@@ -1415,22 +1415,6 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
 
     def list(self, request):
         rows = list(self._user_sessions().order_by("-created_at", "-id"))
-        membership = get_membership(request)
-        assistant_meta: dict[str, dict[str, str]] = {}
-        try:
-            for row in copilot_service.list_copilot_assistants(
-                self.org,
-                user=request.user,
-                membership=membership,
-            ):
-                uuid_str = str(row.get("uuid") or "")
-                if uuid_str:
-                    assistant_meta[uuid_str] = {
-                        "name": str(row.get("name") or ""),
-                        "task": str(row.get("selected_task") or ""),
-                    }
-        except sl_client.LensBridgeError:
-            assistant_meta = {}
         sl_session_meta: dict[str, dict] = {}
         try:
             sl_session_meta = _source_lens_session_meta(
@@ -1441,10 +1425,21 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             )
         except sl_client.LensBridgeError:
             sl_session_meta = {}
-        context = {
-            "assistant_names": {k: v["name"] for k, v in assistant_meta.items()},
-            "assistant_tasks": {k: v["task"] for k, v in assistant_meta.items()},
-        }
+        # Name comes from the same SourceLens session list as pin and shareable.
+        # Do not load the assistant catalog here; selected_task falls back to the
+        # HFL analysis type until a caller asks for that assistant directly.
+        assistant_names: dict[str, str] = {}
+        for row in rows:
+            source_row = sl_session_meta.get(str(row.sl_session_uuid or ""))
+            if not isinstance(source_row, dict):
+                continue
+            assistant_uuid = str(
+                row.sl_assistant_uuid or source_row.get("assistant") or ""
+            )
+            assistant_name = str(source_row.get("assistant_name") or "").strip()
+            if assistant_uuid and assistant_name:
+                assistant_names[assistant_uuid] = assistant_name
+        context = {"assistant_names": assistant_names}
         payload = list(LensSessionLinkSerializer(rows, many=True, context=context).data)
         for row in payload:
             session_uuid = str(row.get("sl_session_uuid") or "")
@@ -1960,6 +1955,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             str(value) for value in body.validated_data.get("attachment_uuids", [])
         ]
         idempotency_key = body.validated_data.get("idempotency_key") or uuid.uuid4().hex
+        agent_rounds = body.validated_data.get("agent_rounds") or ""
         from apps.lens_bridge.services import run_submissions
 
         if retry_of_run_uuid is not None:
@@ -1975,6 +1971,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                     idempotency_key=idempotency_key,
                     attachment_uuids=attachment_uuids,
                     retry_of_run_uuid=retry_of_run_uuid,
+                    agent_rounds=agent_rounds,
                 )
             except run_submissions.RunSubmissionConflictError as exc:
                 raise CopilotRunConflict() from exc

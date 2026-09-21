@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from 'lucide-vue-next'
 import type { CopilotComposerAttachment } from './types'
+import CopilotReasoningSelect from './CopilotReasoningSelect.vue'
 
 const SOURCE_LENS_MAX_ATTACHMENTS = 4
 const SOURCE_LENS_IMAGE_ATTACHMENTS = [
@@ -26,10 +27,12 @@ const props = defineProps<{
   disabled?: boolean
   supportsImages?: boolean
   supportsDocuments?: boolean
+  agentRounds?: string
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  'update:agentRounds': [value: string]
   send: []
   stop: []
   attach: [files: File[]]
@@ -231,6 +234,12 @@ onBeforeUnmount(() => {
           @keydown.enter.exact.prevent="submit"
         />
 
+        <CopilotReasoningSelect
+          :model-value="agentRounds || 'balanced'"
+          :disabled="disabled"
+          @update:model-value="emit('update:agentRounds', $event)"
+        />
+
         <button
           v-if="sending"
           type="button"
@@ -273,7 +282,8 @@ onBeforeUnmount(() => {
   right: 0;
   bottom: 0;
   left: 0;
-  padding: 24px 28px 14px;
+  /* Match thread: keep right inset, nudge the input away from the left divider. */
+  padding: 24px 28px 14px 48px;
   pointer-events: none;
   background: transparent;
 }
@@ -295,8 +305,8 @@ onBeforeUnmount(() => {
 }
 
 .copilot-input-shell:focus-within:not(.is-disabled) {
-  border-color: var(--color-border-strong, #cbd5e1);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #6366f1) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border, #e2e8f0));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 14%, transparent);
 }
 
 .copilot-input-shell.is-disabled {

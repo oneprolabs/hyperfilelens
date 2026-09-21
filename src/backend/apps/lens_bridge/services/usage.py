@@ -486,6 +486,14 @@ def _public_run_failure(status: str, raw_error: str) -> tuple[str, str]:
         )
     if any(
         marker in normalized_error
+        for marker in ("STREAM", "409", "CONFLICT", "GATEWAY")
+    ):
+        return (
+            "MODEL_STREAM_ERROR",
+            "The model stream was interrupted mid-response and couldn't be resumed. Please try again.",
+        )
+    if any(
+        marker in normalized_error
         for marker in ("MODEL", "PROVIDER", "QUOTA", "BALANCE", "PAYMENT")
     ):
         return (
@@ -494,7 +502,7 @@ def _public_run_failure(status: str, raw_error: str) -> tuple[str, str]:
         )
     return (
         "AI_RUN_FAILED",
-        "The AI response failed. Try again or contact your administrator.",
+        "No answer was generated for this question. Please try again.",
     )
 
 

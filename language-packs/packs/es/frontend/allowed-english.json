@@ -54,6 +54,7 @@
   "insight.copilot.gatewayNameLabel",
   "insight.copilot.gatewaySummaryWithName",
   "insight.copilot.linkedMetaLine",
+  "insight.copilot.reasoningFlash",
   "insight.kb.colGateway",
   "insight.kb.statusError",
   "insight.kb.wizardStepGateway",

@@ -354,16 +354,17 @@ function handleMindmapWheel(event: WheelEvent) {
 
 <style scoped>
 .copilot-markdown {
-  font-family: var(--font-sans); font-size: 15px; line-height: 1.65; font-weight: 400;
-  letter-spacing: normal; color: var(--color-text-primary); overflow-wrap: anywhere;
+  font-family: var(--font-sans); font-size: 15px; line-height: 24px; font-weight: 400;
+  letter-spacing: normal; color: #171512; overflow-wrap: anywhere;
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
 }
-.copilot-markdown :deep(p) { margin: 0 0 0.75em; }
+.copilot-markdown :deep(p) { margin: 0 0 10px; color: #171512; }
 .copilot-markdown :deep(p:last-child) { margin-bottom: 0; }
-.copilot-markdown :deep(a) { color: var(--color-primary); font-weight: 500; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
-.copilot-markdown :deep(strong), .copilot-markdown :deep(b) { color: var(--color-text-title); font-weight: 600; }
-.copilot-markdown :deep(del) { color: var(--color-text-secondary); }
-.copilot-markdown :deep(.copilot-md-code), .copilot-markdown :deep(:not(pre) > code) { padding: 0.08em 0.32em; border: 1px solid color-mix(in srgb, var(--color-primary) 12%, var(--color-border)); border-radius: 4px; background: color-mix(in srgb, var(--color-primary) 5%, var(--color-grey-1)); color: var(--color-text-primary); font-family: var(--font-mono); font-size: 0.9em; font-weight: 500; }
+.copilot-markdown :deep(a) { color: #2563eb; font-weight: 400; text-decoration: underline; }
+.copilot-markdown :deep(a:hover) { color: #1d4ed8; }
+.copilot-markdown :deep(strong), .copilot-markdown :deep(b) { color: #171512; font-weight: 600; }
+.copilot-markdown :deep(del) { color: #4b5563; }
+.copilot-markdown :deep(.copilot-md-code), .copilot-markdown :deep(:not(pre) > code) { padding: 2px 4px; border: none; border-radius: 12px; background: #eef4fe; color: #0e278c; font-family: var(--font-mono); font-size: 14px; font-weight: 400; }
 .copilot-markdown :deep(.copilot-md-code-block) { position: relative; margin: 16px 0; overflow: hidden; border: 1px solid #263244; border-radius: 12px; background: #111827; }
 .copilot-markdown :deep(.copilot-md-code-header) { display: flex; align-items: center; justify-content: space-between; min-height: 32px; padding: 4px 8px 0 14px; }
 .copilot-markdown :deep(.copilot-md-code-language) { display: block; padding: 4px 0 0; color: #94a3b8; font-family: var(--font-mono); font-size: 11px; font-weight: 600; line-height: 1.4; text-transform: lowercase; }
@@ -377,12 +378,14 @@ function handleMindmapWheel(event: WheelEvent) {
 .copilot-markdown :deep(h1), .copilot-markdown :deep(h2), .copilot-markdown :deep(h3), .copilot-markdown :deep(h4), .copilot-markdown :deep(h5), .copilot-markdown :deep(h6) { margin: 1em 0 0.5em; color: var(--color-text-title); font-weight: 650; line-height: 1.35; }
 .copilot-markdown :deep(> h1:first-child), .copilot-markdown :deep(> h2:first-child), .copilot-markdown :deep(> h3:first-child), .copilot-markdown :deep(> h4:first-child), .copilot-markdown :deep(> h5:first-child), .copilot-markdown :deep(> h6:first-child) { margin-top: 0; }
 .copilot-markdown :deep(h1) { font-size: 1.5em; } .copilot-markdown :deep(h2) { font-size: 1.25em; } .copilot-markdown :deep(h3) { font-size: 1.1em; } .copilot-markdown :deep(h4) { font-size: 1em; } .copilot-markdown :deep(h5), .copilot-markdown :deep(h6) { font-size: 0.95em; }
-.copilot-markdown :deep(ul), .copilot-markdown :deep(ol) { margin: 0 0 0.75em; padding-left: 1.5em; }
-.copilot-markdown :deep(li) { margin: 0.35em 0; } .copilot-markdown :deep(li::marker) { color: var(--color-text-secondary); }
+.copilot-markdown :deep(ul), .copilot-markdown :deep(ol) { margin: 0 0 12px; padding-left: 20px; }
+.copilot-markdown :deep(li) { margin: 0 0 6px; color: #171512; font-size: 15px; line-height: 24px; } .copilot-markdown :deep(li::marker) { color: #4b5563; }
 .copilot-markdown :deep(input[type='checkbox']) { margin-right: 0.45em; accent-color: var(--color-primary); }
-.copilot-markdown :deep(table) { width: 100%; min-width: 520px; margin: 16px 0; border-collapse: collapse; font-size: 13px; line-height: 1.5; }
-.copilot-markdown :deep(th), .copilot-markdown :deep(td) { padding: 9px 12px; border: 1px solid var(--color-border); text-align: left; vertical-align: top; }
-.copilot-markdown :deep(th) { background: var(--color-grey-1); color: var(--color-text-title); font-weight: 650; } .copilot-markdown :deep(tr:hover) { background: var(--color-grey-1); }
+.copilot-markdown :deep(.copilot-md-table-wrap) { width: 100%; max-width: 100%; margin: 16px 0; overflow-x: auto; }
+.copilot-markdown :deep(table) { width: 100%; margin: 0; border-collapse: collapse; border: 1px solid #d1d5db; font-size: 15px; line-height: 24px; }
+.copilot-markdown :deep(th), .copilot-markdown :deep(td) { padding: 8px 12px; border: 1px solid #d1d5db; text-align: left; vertical-align: middle; }
+.copilot-markdown :deep(th) { background: #f9fafb; color: #171512; font-weight: 500; }
+.copilot-markdown :deep(td) { color: #4b5563; }
 .copilot-markdown :deep(hr) { margin: 1em 0; border: 0; border-top: 1px solid var(--color-border); }
 .copilot-markdown :deep(blockquote) { margin: 14px 0; padding: 2px 0 2px 14px; border-left: 3px solid color-mix(in srgb, var(--color-primary) 42%, var(--color-border)); color: var(--color-text-secondary); }
 .copilot-markdown :deep(img) { display: block; max-width: 100%; height: auto; margin: 12px 0; border: 1px solid var(--color-border); border-radius: 8px; }

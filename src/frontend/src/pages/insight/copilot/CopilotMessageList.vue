@@ -1,17 +1,22 @@
 <script setup lang="ts">
-import { ArrowDown, ChevronDown, ChevronUp, Copy, Download, RefreshCw, Share2, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
+import { ArrowDown, ChevronDown, ChevronUp, Copy, Download, RefreshCw, Share2, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { copyTextToClipboard } from '../../../lib/clipboard'
-import { currentUser } from '../../../composables/useAuth'
 import CopilotMarkdown from '../../../components/copilot/CopilotMarkdown.vue'
 import CopilotStreamingMarkdown from '../../../components/copilot/CopilotStreamingMarkdown.vue'
 import CopilotAttachmentList from './CopilotAttachmentList.vue'
 import CopilotOutputFileList from './CopilotOutputFileList.vue'
 import CopilotThinkingTimeline from './CopilotThinkingTimeline.vue'
 import CopilotMessageCitations from './CopilotMessageCitations.vue'
+import { messagesForLiveHandoff } from './copilotLiveHandoff'
+import {
+  formatAgentActivityDuration,
+  withAgentActivityDuration,
+} from './copilotAgentActivityText'
 import { hasStructuredRuntimeContent, thinkingActivityCount } from './copilotThinkingActivities'
+import { selectCopilotLiveInterim } from './copilotLiveStatus'
 import type { CopilotDisplayMessage, CopilotFeedbackUpdate, CopilotRetryDraft } from './types'
 import type { ThinkingStep } from '../../../composables/useLensRunStream'
 import {
@@ -27,10 +32,14 @@ const props = defineProps<{
   streamingThinking?: ThinkingStep[]
   streaming?: boolean
   streamingElapsedSeconds?: number
+  streamingRunStatus?: string | null
+  streamingQueuePosition?: number | null
+  streamingResumeBy?: string | null
   streamError?: string
   bubbleTag?: string
   starterDisabled?: boolean
   clarificationResetToken?: number
+  sharedRunId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -107,17 +116,6 @@ onBeforeUnmount(() => contentResizeObserver?.disconnect())
 
 defineExpose({ scrollToBottom })
 
-const userInitial = computed(() => {
-  const user = currentUser.value
-  const source =
-    [user?.first_name, user?.last_name].filter(Boolean).join(' ').trim() ||
-    user?.username?.trim() ||
-    user?.email?.trim() ||
-    ''
-  const first = source.charAt(0)
-  return first ? first.toUpperCase() : 'U'
-})
-
 function toggleThinking(id: string) {
   const next = new Set(expandedThinking.value)
   if (next.has(id)) next.delete(id)
@@ -137,15 +135,17 @@ function thinkingCountFor(message: CopilotDisplayMessage) {
 function thinkingStatusFor(message: CopilotDisplayMessage) {
   const count = thinkingCountFor(message)
   if (!count) return t('insight.copilot.runtimeCardHint')
-  const duration = thinkingDuration(message)
-  return duration != null
-    ? t('insight.copilot.agentActivitiesDone', { seconds: duration, count })
-    : t('insight.copilot.agentActivitiesDoneSteps', { count })
+  const base = t('insight.copilot.agentActivitiesDone', { count })
+  return withAgentActivityDuration(base, thinkingDuration(message))
 }
 
 function hasThinkingContent(message: CopilotDisplayMessage) {
   const steps = thinkingStepsFor(message)
   return thinkingActivityCount(steps) > 0 || hasStructuredRuntimeContent(steps)
+}
+
+function showAssistantActions(message: CopilotDisplayMessage) {
+  return message.role === 'assistant' && Boolean(message.text) && !message.isWelcome && !message.isError
 }
 
 function isLatestShareableAnswer(message: CopilotDisplayMessage) {
@@ -168,16 +168,38 @@ function thinkingOutcomeFor(message: CopilotDisplayMessage) {
   return outcome
 }
 
-function liveThinkingFooter() {
+/** SourceLens puts Recorded/Completed + duration in the card header summary. */
+const liveThinkingStatus = computed(() => {
   const seconds = props.streamingElapsedSeconds ?? 0
   const count = thinkingActivityCount(props.streamingThinking ?? [])
   if (count > 0) {
-    return t('insight.copilot.agentActivitiesLiveProgress', { seconds, count })
+    return withAgentActivityDuration(
+      t('insight.copilot.agentActivitiesLiveProgress', { count }),
+      seconds,
+    )
   }
-  return seconds > 0
-    ? t('insight.copilot.agentActivitiesLiveElapsed', { seconds })
-    : ''
-}
+  return seconds > 0 ? formatAgentActivityDuration(seconds) : ''
+})
+
+const showLiveActivityCard = computed(() => (
+  thinkingActivityCount(props.streamingThinking ?? []) > 0
+  || hasStructuredRuntimeContent(props.streamingThinking ?? [])
+))
+
+const liveInterimStatusText = computed(() => {
+  const interim = selectCopilotLiveInterim({
+    steps: props.streamingThinking ?? [],
+    runStatus: props.streamingRunStatus,
+    queuePosition: props.streamingQueuePosition,
+    resumeBy: props.streamingResumeBy,
+  })
+  return t(interim.key, interim.params ?? {})
+})
+
+const liveElapsedText = computed(() => {
+  const seconds = props.streamingElapsedSeconds ?? 0
+  return seconds > 0 ? formatAgentActivityDuration(seconds) : ''
+})
 
 const showRetrievalHint = computed(
   () =>
@@ -332,6 +354,12 @@ async function setMessageFeedback(
 }
 
 const showLiveRow = computed(() => props.streaming)
+
+// Mirror SourceLens: while the live row owns progress + partial answer, do not
+// also render the trailing in-progress assistant placeholder from sync.
+const displayMessages = computed(() =>
+  messagesForLiveHandoff(props.messages, Boolean(props.streaming)),
+)
 </script>
 
 <template>
@@ -346,33 +374,11 @@ const showLiveRow = computed(() => props.streaming)
         class="copilot-thread"
       >
         <div
-          v-for="msg in messages"
+          v-for="msg in displayMessages"
           :key="msg.id"
           class="message-row"
           :class="msg.role === 'user' ? 'message-row-user' : 'message-row-assistant'"
         >
-          <div
-            class="message-avatar message-avatar-icon"
-            :class="
-              msg.role === 'user'
-                ? 'message-avatar-icon--user'
-                : 'message-avatar-icon--assistant'
-            "
-            :aria-label="
-              msg.role === 'user' ? t('insight.copilot.roleUser') : t('insight.copilot.roleAi')
-            "
-          >
-            <span
-              v-if="msg.role === 'user'"
-              class="message-avatar-initial"
-            >{{ userInitial }}</span>
-            <Sparkles
-              v-else
-              :size="16"
-              :stroke-width="2"
-            />
-          </div>
-
           <div class="message-body">
             <div
               v-if="msg.role === 'assistant' && hasThinkingContent(msg)"
@@ -488,7 +494,7 @@ const showLiveRow = computed(() => props.streaming)
             </div>
 
             <div
-              v-if="msg.createdAt"
+              v-if="msg.createdAt && !showAssistantActions(msg)"
               class="message-time"
               :class="msg.role"
             >
@@ -496,7 +502,7 @@ const showLiveRow = computed(() => props.streaming)
             </div>
 
             <div
-              v-if="msg.role === 'assistant' && msg.text && !msg.isWelcome && !msg.isError"
+              v-if="showAssistantActions(msg)"
               class="message-actions"
             >
               <div class="message-actions-group">
@@ -524,7 +530,7 @@ const showLiveRow = computed(() => props.streaming)
                   v-if="msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
-                  :class="{ 'is-active': feedbackForMessage(msg) === 'positive' }"
+                  :class="{ 'is-positive': feedbackForMessage(msg) === 'positive' }"
                   :title="t('insight.copilot.likeAnswer')"
                   :aria-label="t('insight.copilot.likeAnswer')"
                   :aria-pressed="feedbackForMessage(msg) === 'positive'"
@@ -537,7 +543,7 @@ const showLiveRow = computed(() => props.streaming)
                   v-if="msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
-                  :class="{ 'is-active': feedbackForMessage(msg) === 'negative' }"
+                  :class="{ 'is-negative': feedbackForMessage(msg) === 'negative' }"
                   :title="t('insight.copilot.dislikeAnswer')"
                   :aria-label="t('insight.copilot.dislikeAnswer')"
                   :aria-pressed="feedbackForMessage(msg) === 'negative'"
@@ -550,6 +556,7 @@ const showLiveRow = computed(() => props.streaming)
                   v-if="msg.runId && msg.completedAt && isLatestShareableAnswer(msg)"
                   type="button"
                   class="message-action-btn"
+                  :class="{ 'is-shared': Boolean(msg.runId && sharedRunId && msg.runId === sharedRunId) }"
                   :title="t('insight.copilot.share')"
                   :aria-label="t('insight.copilot.share')"
                   @click="emit('shareAnswer', msg)"
@@ -568,6 +575,12 @@ const showLiveRow = computed(() => props.streaming)
                   <RefreshCw :size="16" />
                 </button>
               </div>
+              <span
+                v-if="msg.createdAt"
+                class="message-time message-time-inline"
+              >
+                {{ formatMessageTime(msg.createdAt) }}
+              </span>
             </div>
           </div>
         </div>
@@ -576,18 +589,9 @@ const showLiveRow = computed(() => props.streaming)
           v-if="showLiveRow"
           class="message-row message-row-assistant live-progress-row"
         >
-          <div
-            class="message-avatar message-avatar-icon message-avatar-icon--assistant"
-            :aria-label="t('insight.copilot.roleAi')"
-          >
-            <Sparkles
-              :size="16"
-              :stroke-width="2"
-            />
-          </div>
           <div class="message-body">
             <div
-              v-if="!streamError"
+              v-if="!streamError && showLiveActivityCard"
               class="thinking-panel thinking-panel-live"
             >
               <div
@@ -597,6 +601,12 @@ const showLiveRow = computed(() => props.streaming)
               >
                 <span class="live-progress-dot" />
                 <span class="thinking-panel-title">{{ t('insight.copilot.agentActivitiesLive') }}</span>
+                <span
+                  v-if="liveThinkingStatus"
+                  class="thinking-panel-status"
+                >
+                  {{ liveThinkingStatus }}
+                </span>
               </div>
               <div
                 v-if="thinkingActivityCount(streamingThinking ?? []) || hasStructuredRuntimeContent(streamingThinking ?? [])"
@@ -607,12 +617,22 @@ const showLiveRow = computed(() => props.streaming)
                   live
                 />
               </div>
-              <div
-                v-if="liveThinkingFooter()"
-                class="thinking-panel-footer"
+            </div>
+
+            <div
+              v-else-if="!streamError"
+              class="live-status-card"
+              role="status"
+              aria-live="polite"
+            >
+              <span class="live-progress-dot" />
+              <span class="live-status-text">{{ liveInterimStatusText }}</span>
+              <span
+                v-if="liveElapsedText"
+                class="thinking-elapsed"
               >
-                {{ liveThinkingFooter() }}
-              </div>
+                {{ liveElapsedText }}
+              </span>
             </div>
 
             <p
@@ -713,7 +733,8 @@ const showLiveRow = computed(() => props.streaming)
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: 20px 28px 32px;
+  /* Keep right padding; nudge content away from the session-list divider. */
+  padding: 20px 28px 32px 48px;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -735,40 +756,6 @@ const showLiveRow = computed(() => props.streaming)
 .message-row-assistant {
   flex-direction: row;
   justify-content: flex-start;
-}
-
-.message-avatar {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.message-avatar-icon {
-  border-radius: 9px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 16%, var(--color-border));
-  background: var(--color-primary-light);
-}
-
-.message-avatar-icon--user,
-.message-avatar-icon--assistant {
-  color: var(--color-primary);
-}
-
-.message-avatar-initial {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: 0;
 }
 
 .message-body {
@@ -828,13 +815,17 @@ const showLiveRow = computed(() => props.streaming)
 }
 
 .message-card.assistant.message-card--welcome {
+  box-sizing: border-box;
   width: fit-content;
   max-width: 100%;
-  padding: 12px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  background: var(--color-card-bg);
+  padding: 9px 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(17 24 39 / 0.06);
   text-align: left;
+  font-size: 15px;
+  line-height: 24px;
 }
 
 .message-card--typing {
@@ -855,24 +846,30 @@ const showLiveRow = computed(() => props.streaming)
   word-break: break-word;
   font-family: inherit;
   font-size: 15px;
-  line-height: 1.65;
+  line-height: 24px;
   font-weight: 400;
   letter-spacing: normal;
   color: var(--color-text-primary);
 }
 
 .message-row-user .message-card {
+  box-sizing: border-box;
   display: inline-block;
-  padding: 12px 16px;
-  border-radius: 18px 18px 4px 18px;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 12px;
   background: #f3f4f6;
-  border: 1px solid #e5e7eb;
+  box-shadow: none;
   text-align: left;
+  font-size: 15px;
+  line-height: 24px;
 }
 
 .message-row-user .message-text {
   text-align: left;
   color: #111827;
+  font-size: 15px;
+  line-height: 24px;
 }
 
 .message-row-user .message-markdown {
@@ -898,10 +895,10 @@ const showLiveRow = computed(() => props.streaming)
 .message-card :deep(.copilot-markdown) {
   font-family: inherit;
   font-size: 15px;
-  line-height: 1.65;
+  line-height: 24px;
   font-weight: 400;
   letter-spacing: normal;
-  color: var(--color-text-primary);
+  color: #171512;
 }
 
 .message-card :deep(.copilot-markdown p) {
@@ -925,6 +922,11 @@ const showLiveRow = computed(() => props.streaming)
 
 .message-time.assistant {
   text-align: left;
+}
+
+.message-time-inline {
+  margin-top: 0;
+  margin-left: 4px;
 }
 
 .message-actions {
@@ -967,9 +969,34 @@ const showLiveRow = computed(() => props.streaming)
   color: #374151;
 }
 
-.message-action-btn.is-active {
-  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-  color: var(--color-primary);
+.message-action-btn.is-positive {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.message-action-btn.is-positive:hover:not(:disabled) {
+  background: #bbf7d0;
+  color: #166534;
+}
+
+.message-action-btn.is-negative {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.message-action-btn.is-negative:hover:not(:disabled) {
+  background: #fecaca;
+  color: #991b1b;
+}
+
+.message-action-btn.is-shared {
+  background: rgb(34 197 94 / 10%);
+  color: #15803d;
+}
+
+.message-action-btn.is-shared:hover:not(:disabled) {
+  background: rgb(34 197 94 / 16%);
+  color: #166534;
 }
 
 .message-action-btn:focus-visible {
@@ -984,12 +1011,15 @@ const showLiveRow = computed(() => props.streaming)
 
 .thinking-panel {
   width: 100%;
-  margin-bottom: 8px;
+  margin-bottom: 20px;
   overflow: hidden;
-  border: 1px solid var(--color-border);
+  border: 1px solid #e2e8f0;
   border-radius: 10px;
-  background: var(--color-grey-1);
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(17 24 39 / 0.06);
   text-align: left;
+  font-size: 12.5px;
+  line-height: 1.45;
 }
 
 .thinking-panel-header {
@@ -997,15 +1027,17 @@ const showLiveRow = computed(() => props.streaming)
   width: 100%;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border: none;
   background: transparent;
   cursor: pointer;
   text-align: left;
+  font-size: 12.5px;
+  line-height: 1.45;
 }
 
 .thinking-panel-header:hover {
-  background: var(--color-grey-2);
+  background: #f3f4f6;
 }
 
 .thinking-panel-header--static {
@@ -1022,14 +1054,16 @@ const showLiveRow = computed(() => props.streaming)
   flex: 1;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
+  font-size: 11.5px;
+  line-height: 1.45;
   color: var(--color-text-secondary);
 }
 
 .thinking-panel-title {
   flex: 0 0 auto;
-  color: var(--color-text-primary);
-  font-size: 13px;
+  color: #4b5563;
+  font-size: 12.5px;
+  line-height: 1.45;
   font-weight: 600;
 }
 
@@ -1059,14 +1093,6 @@ const showLiveRow = computed(() => props.streaming)
   overflow-y: auto;
   padding: 4px 12px 10px;
   border-top: 1px solid var(--color-border-light);
-}
-
-.thinking-panel-footer {
-  padding: 7px 12px 9px;
-  border-top: 1px dashed var(--color-border-light);
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  line-height: 1.4;
 }
 
 .thinking-step-item {
@@ -1099,6 +1125,34 @@ const showLiveRow = computed(() => props.streaming)
 
 .live-progress-row {
   margin-bottom: 8px;
+}
+
+.live-status-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #f9fafb;
+  color: #4b5563;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.live-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thinking-elapsed {
+  flex-shrink: 0;
+  color: #9ca3af;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .live-progress-dot {
@@ -1196,7 +1250,7 @@ const showLiveRow = computed(() => props.streaming)
   }
 
   .copilot-thread {
-    padding: 16px 16px 28px;
+    padding: 16px 16px 28px 24px;
   }
 
   .message-row {

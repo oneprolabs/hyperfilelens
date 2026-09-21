@@ -208,6 +208,22 @@ class LensSessionCreateSerializerTests(SimpleTestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("attachment_uuids", serializer.errors)
 
+    def test_run_accepts_source_lens_reasoning_depths(self):
+        serializer = LensRunCreateSerializer(
+            data={"question": "Question", "agent_rounds": "fast"}
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(serializer.validated_data["agent_rounds"], "fast")
+
+    def test_run_rejects_an_unknown_reasoning_depth(self):
+        serializer = LensRunCreateSerializer(
+            data={"question": "Question", "agent_rounds": "turbo"}
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("agent_rounds", serializer.errors)
+
     def test_run_accepts_a_retry_reference(self):
         retry_run_uuid = uuid.uuid4()
         serializer = LensRunCreateSerializer(
@@ -449,17 +465,12 @@ class CopilotSessionApiTests(TestCase):
         self.assertIn("Chat preparation failed", str(response.json()))
 
     @patch(
-        "apps.lens_bridge.api.views.copilot_service.list_copilot_assistants",
-        return_value=[],
-    )
-    @patch(
         "apps.lens_bridge.api.views._source_lens_session_meta",
         side_effect=sl_client.LensBridgeUnavailable(),
     )
     def test_list_omits_pinned_state_when_sourcelens_is_unavailable(
         self,
         _session_meta,
-        _assistants,
     ):
         response = self.client.get(
             reverse("lens-copilot-session-list"),
@@ -472,17 +483,12 @@ class CopilotSessionApiTests(TestCase):
         self.assertNotIn("pinned_at", payload[0])
 
     @patch(
-        "apps.lens_bridge.api.views.copilot_service.list_copilot_assistants",
-        return_value=[],
-    )
-    @patch(
         "apps.lens_bridge.api.views._source_lens_session_meta",
         return_value={},
     )
     def test_list_keeps_legacy_force_delete_chat_recoverable(
         self,
         _session_meta,
-        _assistants,
     ):
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
         self.session.status = LensSessionLink.Status.ARCHIVED
@@ -579,17 +585,12 @@ class CopilotSessionApiTests(TestCase):
         force_delete.assert_not_called()
 
     @patch(
-        "apps.lens_bridge.api.views.copilot_service.list_copilot_assistants",
-        return_value=[],
-    )
-    @patch(
         "apps.lens_bridge.api.views._source_lens_session_meta",
         return_value={},
     )
     def test_list_stays_ordered_by_creation_when_an_older_chat_gets_an_answer(
         self,
         _session_meta,
-        _assistants,
     ):
         newer = LensSessionLink.objects.create(
             organization=self.org,
@@ -621,15 +622,10 @@ class CopilotSessionApiTests(TestCase):
             [newer.id, self.session.id],
         )
 
-    @patch(
-        "apps.lens_bridge.api.views.copilot_service.list_copilot_assistants",
-        return_value=[],
-    )
     @patch("apps.lens_bridge.api.views._source_lens_session_meta")
     def test_list_places_explicitly_pinned_chats_before_creation_order(
         self,
         session_meta,
-        _assistants,
     ):
         self._mark_session_ready()
         newer = LensSessionLink.objects.create(
@@ -659,6 +655,44 @@ class CopilotSessionApiTests(TestCase):
         payload = response.json().get("data", response.json())
         self.assertEqual(payload[0]["id"], self.session.id)
         self.assertEqual(payload[0]["pinned_at"], "2026-08-20T10:00:00Z")
+
+    @patch(
+        "apps.lens_bridge.api.views.copilot_service.list_copilot_assistants",
+    )
+    @patch("apps.lens_bridge.api.views._source_lens_session_meta")
+    def test_list_uses_sourcelens_session_assistant_name_without_the_catalog(
+        self,
+        session_meta,
+        list_assistants,
+    ):
+        self._mark_session_ready()
+        assistant_uuid = uuid.uuid4()
+        self.session.sl_assistant_uuid = assistant_uuid
+        self.session.analysis_type = LensSessionLink.AnalysisType.KNOWLEDGE_QA
+        self.session.save(
+            update_fields=["sl_assistant_uuid", "analysis_type", "updated_at"]
+        )
+        session_meta.return_value = {
+            str(self.session.sl_session_uuid): {
+                "uuid": str(self.session.sl_session_uuid),
+                "assistant": str(assistant_uuid),
+                "assistant_name": "Backup Analyst",
+                "pinned_at": None,
+                "has_shareable_answer": True,
+            }
+        }
+
+        response = self.client.get(
+            reverse("lens-copilot-session-list"),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json().get("data", response.json())
+        self.assertEqual(payload[0]["assistant_name"], "Backup Analyst")
+        self.assertEqual(payload[0]["selected_task"], "knowledge_qa")
+        self.assertTrue(payload[0]["has_shareable_answer"])
+        list_assistants.assert_not_called()
 
     @patch("apps.lens_bridge.api.views.sl_client.request_json")
     def test_pin_uses_sourcelens_as_the_authoritative_state(self, request_json):
@@ -1461,6 +1495,41 @@ class CopilotSessionApiTests(TestCase):
         )
 
     @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_create_run_forwards_the_selected_reasoning_depth(self, request_json):
+        self._mark_session_ready()
+        new_run_uuid = uuid.uuid4()
+        request_json.return_value = {
+            "uuid": str(new_run_uuid),
+            "status": "queued",
+            "idempotency_key": "fast-request",
+        }
+
+        response = self.client.post(
+            reverse(
+                "lens-copilot-session-create-run",
+                kwargs={"pk": self.session.pk},
+            ),
+            {
+                "question": "Look at this quickly",
+                "idempotency_key": "fast-request",
+                "agent_rounds": "fast",
+            },
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 201)
+        submission = LensRunSubmission.objects.get(
+            session_link=self.session,
+            idempotency_key="fast-request",
+        )
+        self.assertEqual(submission.agent_rounds, "fast")
+        self.assertEqual(
+            request_json.call_args.kwargs["json_body"]["agent_rounds"],
+            "fast",
+        )
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
     def test_create_run_rejects_a_retry_outside_the_session(self, request_json):
         self._mark_session_ready()
         request_json.return_value = []
@@ -1834,8 +1903,9 @@ class CopilotSessionApiTests(TestCase):
         outcome = payload["run_outcomes"][0]
         self.assertEqual(outcome["run_uuid"], str(run_uuid))
         self.assertEqual(outcome["status"], "failed")
-        self.assertEqual(outcome["error_code"], "MODEL_PROVIDER_ERROR")
-        self.assertIn("quota", outcome["message"])
+        self.assertEqual(outcome["error_code"], "MODEL_STREAM_ERROR")
+        self.assertIn("model stream was interrupted", outcome["message"].lower())
+        self.assertIn("please try again", outcome["message"].lower())
         self.assertNotIn("must-not-leak", str(payload))
         self.session.refresh_from_db()
         self.assertIsNone(self.session.active_run_uuid)

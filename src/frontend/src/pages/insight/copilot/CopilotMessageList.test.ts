@@ -362,6 +362,27 @@ describe('CopilotMessageList welcome message and live feedback', () => {
     wrapper.unmount()
   })
 
+  it('colors like, dislike, and shared actions like SourceLens', () => {
+    const wrapper = mountList({
+      sharedRunId: 'run-2',
+      messages: [
+        {
+          id: 'assistant-2',
+          role: 'assistant',
+          runId: 'run-2',
+          completedAt: '2026-08-20T02:00:00Z',
+          text: 'Latest answer',
+          feedback: 'negative',
+        },
+      ],
+    })
+
+    expect(wrapper.get('button[aria-label="Like"]').classes()).not.toContain('is-positive')
+    expect(wrapper.get('button[aria-label="Dislike"]').classes()).toContain('is-negative')
+    expect(wrapper.get('button[aria-label="Share"]').classes()).toContain('is-shared')
+    wrapper.unmount()
+  })
+
   it('keeps sharing on the latest completed answer while a newer answer is incomplete', () => {
     const wrapper = mountList({
       messages: [
@@ -418,18 +439,77 @@ describe('CopilotMessageList welcome message and live feedback', () => {
     const wrapper = mountList({
       messages: [{ id: 'user-1', role: 'user', text: 'What is backed up?' }],
       streaming: true,
+      streamingRunStatus: 'running',
       streamingThinking: [],
       streamingElapsedSeconds: 2,
     })
 
-    const livePanel = wrapper.get('.thinking-panel-live')
-    const status = livePanel.get('[role="status"]')
+    const status = wrapper.get('.live-status-card')
     expect(status.attributes('aria-live')).toBe('polite')
-    expect(status.text()).toContain('Agent activity')
+    expect(status.text()).toContain('Analyzing')
+    expect(status.text()).toContain('2s')
+    expect(status.text()).not.toContain('Agent activity')
     expect(status.text()).not.toContain('Running')
-    expect(livePanel.find('.thinking-panel-body').exists()).toBe(false)
+    expect(wrapper.find('.thinking-panel-live').exists()).toBe(false)
     expect(wrapper.find('.message-card--typing').exists()).toBe(false)
     wrapper.unmount()
+  })
+
+  it('switches the live line to Generating, then to the Agent activity card', () => {
+    const generating = mountList({
+      messages: [{ id: 'user-1', role: 'user', text: 'What is backed up?' }],
+      streaming: true,
+      streamingRunStatus: 'streaming',
+      streamingThinking: [],
+      streamingElapsedSeconds: 4,
+    })
+    expect(generating.get('.live-status-card').text()).toContain('Generating')
+    expect(generating.get('.live-status-card').text()).toContain('4s')
+    generating.unmount()
+
+    const answering = mountList({
+      messages: [{ id: 'user-1', role: 'user', text: 'What is backed up?' }],
+      streaming: true,
+      streamingRunStatus: 'queued',
+      streamingThinking: [
+        { message: 'phase.changed', eventType: 'phase.changed', payload: { phase: 'answering' } },
+      ],
+    })
+    expect(answering.get('.live-status-card').text()).toContain('Preparing the answer')
+    expect(answering.find('.thinking-panel-live').exists()).toBe(false)
+    answering.unmount()
+  })
+
+  it('keeps Queued / Analyzing until a real tool activity arrives', () => {
+    const queued = mountList({
+      messages: [{ id: 'user-1', role: 'user', text: 'What is backed up?' }],
+      streaming: true,
+      streamingRunStatus: 'queued',
+      streamingThinking: [
+        {
+          message: 'workflow.phase.changed',
+          eventType: 'phase.changed',
+          agentEvent: 'workflow.phase.changed',
+          payload: { phase: 'analyzing' },
+        },
+      ],
+      streamingElapsedSeconds: 3,
+    })
+    expect(queued.get('.live-status-card').text()).toContain('Analyzing the question')
+    expect(queued.find('.thinking-panel-live').exists()).toBe(false)
+    queued.unmount()
+
+    const activityOnly = mountList({
+      messages: [{ id: 'user-1', role: 'user', text: 'What is backed up?' }],
+      streaming: true,
+      streamingRunStatus: 'running',
+      streamingThinking: [
+        { message: 'activity.recorded', eventType: 'activity.recorded', payload: { id: 'a1' } },
+      ],
+    })
+    expect(activityOnly.get('.live-status-card').text()).toContain('Analyzing')
+    expect(activityOnly.find('.thinking-panel-live').exists()).toBe(false)
+    activityOnly.unmount()
   })
 
   it('matches SourceLens activity grouping while a run is live', () => {
@@ -443,9 +523,67 @@ describe('CopilotMessageList welcome message and live feedback', () => {
       streamingElapsedSeconds: 13,
     })
 
+    expect(wrapper.get('.copilot-activity-group').attributes('open')).toBeDefined()
     expect(wrapper.get('.copilot-activity-group').text()).toContain('Running')
     expect(wrapper.get('.copilot-activity-group').text()).toContain('Searching relevant sources')
-    expect(wrapper.get('.thinking-panel-footer').text()).toContain('Recorded 1 activities · 13s')
+    expect(wrapper.get('.thinking-panel-live .thinking-panel-status').text()).toContain(
+      'Recorded 1 activities · 13s',
+    )
+    wrapper.unmount()
+  })
+
+  it('hands the sync in-progress assistant to the live row like SourceLens', () => {
+    const wrapper = mountList({
+      messages: [
+        { id: 'user-1', role: 'user', text: 'What is backed up?' },
+        {
+          id: 'assistant-live',
+          role: 'assistant',
+          runId: 'run-1',
+          text: '',
+          thinking: {
+            steps: [
+              { message: 'tool.find_files.start', agentEvent: 'tool.find_files.start' },
+              { message: 'tool.find_files.done', agentEvent: 'tool.find_files.done' },
+            ],
+          },
+        },
+      ],
+      streaming: true,
+      streamingThinking: [
+        { message: 'tool.find_files.start', agentEvent: 'tool.find_files.start' },
+        { message: 'tool.find_files.done', agentEvent: 'tool.find_files.done' },
+      ],
+      streamingElapsedSeconds: 8,
+    })
+
+    expect(wrapper.findAll('.thinking-panel-done')).toHaveLength(0)
+    expect(wrapper.findAll('.thinking-panel-live')).toHaveLength(1)
+    expect(wrapper.get('.thinking-panel-live').text()).toContain('Searching relevant sources')
+    wrapper.unmount()
+  })
+
+  it('formats completed activity duration like SourceLens (including minutes)', () => {
+    const wrapper = mountList({
+      messages: [{
+        id: 'assistant-1',
+        role: 'assistant',
+        runId: 'run-1',
+        completedAt: '2026-08-20T02:00:00Z',
+        text: 'Answer',
+        thinking: {
+          duration_seconds: 65,
+          steps: [
+            { message: 'tool.find_files.start', agentEvent: 'tool.find_files.start' },
+            { message: 'tool.find_files.done', agentEvent: 'tool.find_files.done' },
+          ],
+        },
+      }],
+    })
+
+    expect(wrapper.get('.thinking-panel-done .thinking-panel-status').text()).toContain(
+      'Completed 1 activities · 1m 5s',
+    )
     wrapper.unmount()
   })
 
@@ -472,6 +610,7 @@ describe('CopilotMessageList welcome message and live feedback', () => {
     expect(panel.text()).toContain('Agent activity')
     expect(panel.text()).toContain('Completed 1 activities · 16s')
     await panel.get('.thinking-panel-header').trigger('click')
+    expect(panel.get('.copilot-activity-group').attributes('open')).toBeUndefined()
     expect(panel.get('.copilot-activity-group').text()).toContain('Completed')
     expect(panel.get('.copilot-activity-group').text()).toContain('Searching relevant sources')
     expect(panel.find('.thinking-outcome').exists()).toBe(false)
