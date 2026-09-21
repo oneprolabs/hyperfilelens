@@ -202,7 +202,7 @@ timestamp_log_stream() {
 	export TZ
 	# Strip all CSI terminal controls (colour, cursor movement, erase-line)
 	# before persisting output; the live terminal still receives the original
-	# stream from capture_log_stream.
+	# stream through tee when the console fd is a TTY.
 	sed $'s/\033\[[0-9;?]*[ -/]*[@-~]//g' | while IFS= read -r line || [[ -n "${line}" ]]; do
 		printf -v timestamp '%(%Y-%m-%dT%H:%M:%S.000Z)T' -1
 		printf '[%s] %s\n' "${timestamp}" "${line}" >>"${log_file}"
@@ -211,12 +211,17 @@ timestamp_log_stream() {
 
 capture_log_stream() {
 	local log_file=$1 console_fd=$2 line
-	# Write each line to the console immediately, then feed the session log.
-	# Avoid tee(1) here: when stdout/stderr are pipes (CI redirects), tee can
-	# block-buffer and drop trailing console output if the installer exits
-	# before the buffer flushes.
-	# Use >&${console_fd} (not >/dev/fd/N): reopening /dev/fd/N with >
-	# truncates a redirected log file on every line.
+	# Interactive TTY: tee the original stream so Compose/curl can redraw with
+	# carriage returns in place (v0.2.24 behavior). Session logs still normalize
+	# CR to newlines. Redirected CI captures cannot tee to the shared file
+	# safely (reopening /dev/fd/N truncates), so convert to stable lines and
+	# write with >&${console_fd}; flush_online_logging waits before exit.
+	if [[ -t "${console_fd}" ]]; then
+		tee "/dev/fd/${console_fd}" \
+			| tr '\r' '\n' \
+			| timestamp_log_stream "${log_file}"
+		return 0
+	fi
 	tr '\r' '\n' | while IFS= read -r line || [[ -n "${line}" ]]; do
 		printf '%s\n' "${line}" >&"${console_fd}"
 		printf '%s\n' "${line}"
