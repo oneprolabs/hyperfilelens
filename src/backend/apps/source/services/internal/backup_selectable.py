@@ -240,10 +240,10 @@ def _attach_agent_lifecycle_status(
             continue
 
         # Pick the most recently created task overall
-        latest: NodeTask
+        latest: NodeTask | None = None
         latest_kind: str = ""
         for kind, task in bucket.items():
-            if not latest_kind or task.created_at > latest.created_at:
+            if latest is None or task.created_at > latest.created_at:
                 latest = task
                 latest_kind = kind
 
