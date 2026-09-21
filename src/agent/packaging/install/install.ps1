@@ -1715,7 +1715,7 @@ function Schedule-InstallRootRemoval {
   )
   $target = try { [System.IO.Path]::GetFullPath($InstallRoot) } catch { $InstallRoot.TrimEnd('\') }
   if (-not (Test-Path -LiteralPath $target)) {
-    Write-HflSkip "remove install directory $target (not present)"
+    Write-HflSkip "remove directory $target (not present)"
     return
   }
 
@@ -1732,9 +1732,13 @@ function Write-Trace([string]`$msg) {
   `$ts = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
   Add-Content -LiteralPath `$logFile -Value "[`$ts] [DETAIL] `$msg" -Encoding UTF8 -ErrorAction SilentlyContinue
 }
-Write-Trace "deferred install dir removal started target=`$target"
+Write-Trace "deferred directory removal started target=`$target"
 Start-Sleep -Seconds 8
 `$installCmd = Join-Path `$target 'install.cmd'
+if (-not (Test-Path -LiteralPath `$installCmd)) {
+  `$nestedInstallCmd = Join-Path `$target 'bin\install.cmd'
+  if (Test-Path -LiteralPath `$nestedInstallCmd) { `$installCmd = `$nestedInstallCmd }
+}
 if (Test-Path -LiteralPath `$installCmd) {
   Remove-Item -Force -LiteralPath `$installCmd -ErrorAction SilentlyContinue
   if (Test-Path -LiteralPath `$installCmd) {
@@ -1747,23 +1751,23 @@ if (Test-Path -LiteralPath `$installCmd) {
   }
 }
 if (-not (Test-Path -LiteralPath `$target)) {
-  Write-Trace "install directory already removed"
+  Write-Trace "directory already removed"
   exit 0
 }
 for (`$attempt = 1; `$attempt -le 5; `$attempt++) {
   if (-not (Test-Path -LiteralPath `$target)) { break }
   try {
     Remove-Item -LiteralPath `$target -Recurse -Force -ErrorAction Stop
-    Write-Trace "removed install directory `$target (attempt `$attempt)"
+    Write-Trace "removed directory `$target (attempt `$attempt)"
     break
   }
   catch {
-    Write-Trace "failed to remove install directory `$target (attempt `$attempt): `$(`$_.Exception.Message)"
+    Write-Trace "failed to remove directory `$target (attempt `$attempt): `$(`$_.Exception.Message)"
     Start-Sleep -Seconds 2
   }
 }
 if (Test-Path -LiteralPath `$target) {
-  Write-Trace "failed to remove install directory `$target after retries"
+  Write-Trace "failed to remove directory `$target after retries"
   exit 1
 }
 exit 0
@@ -1772,7 +1776,7 @@ exit 0
   Start-Process -FilePath 'powershell.exe' -ArgumentList @(
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $runner
   ) | Out-Null
-  Write-HflOk "scheduled removal of install directory $target (after install.cmd exits)"
+  Write-HflOk "scheduled removal of $target (after install.cmd exits)"
 }
 
 function Install-HflService {
@@ -2081,6 +2085,27 @@ endlocal & exit /b %EC%
 function Get-FullPathOrSelf {
   param([Parameter(Mandatory = $true)][string]$Path)
   try { return [System.IO.Path]::GetFullPath($Path) } catch { return $Path }
+}
+
+function Test-HflPathIsUnder {
+  param(
+    [Parameter(Mandatory = $true)][string]$Child,
+    [Parameter(Mandatory = $true)][string]$Parent
+  )
+  try {
+    $childFull = [System.IO.Path]::GetFullPath($Child).TrimEnd('\')
+    $parentFull = [System.IO.Path]::GetFullPath($Parent).TrimEnd('\')
+  }
+  catch {
+    return $false
+  }
+  if ($childFull.Equals($parentFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return $true
+  }
+  return $childFull.StartsWith(
+    $parentFull + '\',
+    [System.StringComparison]::OrdinalIgnoreCase
+  )
 }
 
 function Register-DeferredFileMove {
@@ -2646,6 +2671,8 @@ function Invoke-Uninstall {
   }
 
   $uninstallLogPath = $script:HflUninstallLogPath
+  # Default: only the install root (bin) is deferred so install.cmd can exit.
+  $deferredRemovalTarget = $InstallRoot
   if ($preserveData) {
     if ($KeepInstallationIdentity) {
       Write-HflSkip "remove data directory $dataRoot (preserved for install retry)"
@@ -2655,8 +2682,19 @@ function Invoke-Uninstall {
     }
   }
   elseif ((Test-SafeDataPath $dataRoot) -and (Test-Path -LiteralPath $dataRoot)) {
-    Remove-Item -Recurse -Force -LiteralPath $dataRoot
-    Write-HflOk "removed data directory $dataRoot"
+    # Unified layout keeps bin under the Agent root. Sync-deleting that root
+    # while install.cmd (and often the caller's cwd) still hold it always
+    # fails with "in use". Defer the whole tree instead of only bin.
+    # If HFL_DATA_DIR points at a safe subdirectory, still remove the Agent
+    # root so bin/install.cmd is not left behind.
+    $deferredRemovalTarget = $dataRoot
+    if (
+      (Test-SafeDataPath $DefaultDataRoot) -and
+      (Test-HflPathIsUnder -Child $InstallRoot -Parent $DefaultDataRoot) -and
+      (Test-HflPathIsUnder -Child $dataRoot -Parent $DefaultDataRoot)
+    ) {
+      $deferredRemovalTarget = $DefaultDataRoot
+    }
   }
   elseif ($dataRoot) {
     Write-HflWarn "HFL_DATA_DIR ($dataRoot) is outside the approved Agent data directory; not deleted"
@@ -2665,15 +2703,18 @@ function Invoke-Uninstall {
     Write-HflSkip "remove data directory (none resolved)"
   }
 
-  # Complete removal deletes the data directory that owns uninstall.log. The detached
-  # install-root remover must never recreate that directory after cleanup.
+  # Complete removal deletes the data directory that owns uninstall.log. The
+  # deferred remover runs from %TEMP% and must never recreate that directory.
   $uninstallLog = if ($preserveData -and $uninstallLogPath) { $uninstallLogPath } else { "" }
-  Schedule-InstallRootRemoval -InstallRoot $InstallRoot -LogFile $uninstallLog
+  Schedule-InstallRootRemoval -InstallRoot $deferredRemovalTarget -LogFile $uninstallLog
 
   Write-HflSection "Verifying"
-  Write-HflOk "Agent service and installed files were removed"
+  Write-HflOk "Agent service and installed binaries were removed"
+  Write-HflOk "Final file cleanup is scheduled and finishes in a few seconds"
   Write-HflSection "Uninstallation summary"
-  Write-HflSummaryLine "Status" "uninstalled"
+  Write-HflSummaryLine "Status" (
+    $(if ($preserveData) { "uninstalled" } else { "uninstalled (final file cleanup scheduled)" })
+  )
   Write-HflSummaryLine "Console record" "not changed by local uninstall"
   Write-HflFooter -Outcome uninstall
   Release-HflLifecycleLock

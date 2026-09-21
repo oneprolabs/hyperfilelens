@@ -310,6 +310,41 @@ func TestInstallPs1ValidatesCompleteRemovalPathBeforeUninstallLogging(t *testing
 	}
 }
 
+func TestInstallPs1DefersCompleteDataRootRemovalUntilInstallCmdExits(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	uninstallStart := strings.Index(source, "function Invoke-Uninstall")
+	if uninstallStart < 0 {
+		t.Fatal("install.ps1 missing Invoke-Uninstall")
+	}
+	uninstall := source[uninstallStart:]
+	if strings.Contains(uninstall, "Remove-Item -Recurse -Force -LiteralPath $dataRoot") {
+		t.Fatal("complete uninstall must not sync-delete the Agent data root while install.cmd is still running")
+	}
+	if !strings.Contains(uninstall, "$deferredRemovalTarget = $dataRoot") {
+		t.Fatal("complete uninstall must defer removal of the Agent data root")
+	}
+	if !strings.Contains(uninstall, "$deferredRemovalTarget = $DefaultDataRoot") {
+		t.Fatal("complete uninstall must widen deferred removal to the Agent root when data is a safe subdirectory")
+	}
+	if !strings.Contains(uninstall, "Schedule-InstallRootRemoval -InstallRoot $deferredRemovalTarget") {
+		t.Fatal("complete uninstall must schedule deferred directory removal")
+	}
+	if !strings.Contains(uninstall, "uninstalled (final file cleanup scheduled)") {
+		t.Fatal("complete uninstall must tell the user final file cleanup is still scheduled")
+	}
+	scheduleStart := strings.Index(source, "function Schedule-InstallRootRemoval")
+	if scheduleStart < 0 {
+		t.Fatal("install.ps1 missing Schedule-InstallRootRemoval")
+	}
+	schedule := source[scheduleStart:uninstallStart]
+	if !strings.Contains(schedule, "Join-Path `$target 'bin\\install.cmd'") {
+		t.Fatal("deferred remover must locate install.cmd under bin when deleting the Agent data root")
+	}
+	if !strings.Contains(source, "function Test-HflPathIsUnder") {
+		t.Fatal("install.ps1 missing Test-HflPathIsUnder helper for deferred uninstall targeting")
+	}
+}
+
 func TestInstallPs1RetiresIdentityBeforeRemovingAgent(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	retire := `& $agentBinary config retire-installation --data-dir $dataRoot`
