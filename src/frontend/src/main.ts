@@ -39,12 +39,14 @@ async function bootstrap() {
     setLocale(String(i18n.global.locale.value))
   })
 
+  // Load language packs and resolve the preferred locale before mounting
+  // so the first paint uses the correct language — no English→Chinese flash.
+  await loadInstalledLangPacks()
+  resolveLocaleAfterPacksLoaded()
+
   app.mount('#app')
 
-  void loadInstalledLangPacks().then(() => {
-    resolveLocaleAfterPacksLoaded()
-    activateAppAnalytics()
-  })
+  activateAppAnalytics()
 }
 
 void bootstrap()

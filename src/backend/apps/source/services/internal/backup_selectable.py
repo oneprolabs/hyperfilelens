@@ -17,6 +17,7 @@ from django.utils import timezone
 
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
+from apps.node.models.node_task import NodeTask
 from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
@@ -190,6 +191,96 @@ def _agent_item(node: Node) -> dict[str, Any]:
     return item
 
 
+_LIFECYCLE_CORRELATION_TYPE = "node.lifecycle"
+_LIFECYCLE_KIND_REMOVE = "agent.uninstall"
+_LIFECYCLE_KIND_UPGRADE = "agent.upgrade"
+
+
+def _attach_agent_lifecycle_status(
+    *, organization_id: int, items: list[dict[str, Any]]
+) -> None:
+    """Override agent item `status` based on the latest node lifecycle task.
+
+    When a node has a pending, running, or failed lifecycle task (remove / upgrade),
+    the backup-selectable status should reflect that lifecycle instead of the raw
+    Node.status value.  This lets the frontend display „Deregistration Failed" /
+    „Upgrade Failed" directly from the list API without a separate lifecycle-watch
+    poll for nodes that have no *active* (queued / running) watcher.
+    """
+    agent_items = [it for it in items if it.get("kind") == "agent"]
+    if not agent_items:
+        return
+
+    node_ids = [it["ref_id"] for it in agent_items]
+    correlation_ids = []
+    for nid in node_ids:
+        correlation_ids.append(f"remove:{nid}")
+        correlation_ids.append(f"upgrade:{nid}")
+
+    lifecycle_tasks = NodeTask.objects.filter(
+        organization_id=organization_id,
+        node_id__in=node_ids,
+        kind__in=[_LIFECYCLE_KIND_REMOVE, _LIFECYCLE_KIND_UPGRADE],
+        correlation_type=_LIFECYCLE_CORRELATION_TYPE,
+        correlation_id__in=correlation_ids,
+    ).order_by("-created_at", "-id")
+
+    # Map node_id → latest task per lifecycle kind
+    latest_by_node: dict[int, dict[str, NodeTask]] = {}
+    for task in lifecycle_tasks:
+        bucket = latest_by_node.setdefault(task.node_id, {})
+        task_kind = "remove" if task.kind == _LIFECYCLE_KIND_REMOVE else "upgrade"
+        if task_kind not in bucket:
+            bucket[task_kind] = task
+
+    for item in agent_items:
+        node_id: int = item["ref_id"]
+        bucket = latest_by_node.get(node_id)
+        if not bucket:
+            continue
+
+        # Pick the most recently created task overall
+        latest: NodeTask
+        latest_kind: str = ""
+        for kind, task in bucket.items():
+            if not latest_kind or task.created_at > latest.created_at:
+                latest = task
+                latest_kind = kind
+
+        status = _map_lifecycle_task_to_status(task=latest, kind=latest_kind)
+        if status:
+            item["status"] = status
+
+
+def _map_lifecycle_task_to_status(*, task, kind: str) -> str | None:
+    """Map a node lifecycle task to a BackupSelectableSource status value."""
+    _ACTIVE_STATUSES = frozenset(
+        {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}
+    )
+    _FAILED_STATUSES = frozenset(
+        {NodeTask.Status.FAILED, NodeTask.Status.TIMEOUT, NodeTask.Status.CANCELED}
+    )
+
+    if task.status in _ACTIVE_STATUSES:
+        return "removing" if kind == "remove" else "upgrading"
+
+    if task.status in _FAILED_STATUSES:
+        return "deregistration_failed" if kind == "remove" else "upgrade_failed"
+
+    if task.status == NodeTask.Status.SUCCESS:
+        if kind == "remove":
+            result = task.result if isinstance(task.result, dict) else {}
+            if result.get("completion_received_at") or result.get(
+                "completion_timed_out_at"
+            ):
+                return "cleaning_up"
+            return "removing"
+        # Upgrade success → no lifecycle to report (matches _upgrade_lifecycle_payload)
+        return None
+
+    return None
+
+
 def _nas_item(resource: SourceResource) -> dict[str, Any]:
     cfg = resource.config if isinstance(resource.config, dict) else {}
     node = resource.bound_node
@@ -234,6 +325,7 @@ def _build_catalog(*, organization_id: int) -> list[dict[str, Any]]:
     )
     items = [_agent_item(node) for node in agents]
     items.extend(_nas_item(resource) for resource in nas_resources)
+    _attach_agent_lifecycle_status(organization_id=organization_id, items=items)
     items.sort(key=_sort_key, reverse=True)
     return items
 
@@ -1142,6 +1234,7 @@ def fetch_backup_selectable_by_ids(
             is_deleted=False,
         ):
             items.append(_agent_item(node))
+        _attach_agent_lifecycle_status(organization_id=organization_id, items=items)
     if nas_ids:
         for resource in SourceResource.objects.filter(
             organization_id=organization_id,
@@ -1341,6 +1434,7 @@ def _materialize_pipeline_page(
             continue
         item["pipeline_step"] = int(entry.step)
         items.append(item)
+    _attach_agent_lifecycle_status(organization_id=organization_id, items=items)
     _attach_expansions(organization_id=organization_id, items=items, expand=expand)
     return items
 
