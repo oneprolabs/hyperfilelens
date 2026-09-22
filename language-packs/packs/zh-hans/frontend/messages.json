@@ -7981,7 +7981,7 @@
         "googleClientId": "Client ID",
         "googleClientSecret": "Client Secret",
         "googleOAuthEnabled": "启用登录",
-        "googleRedirect": "Redirect URI",
+        "googleRedirect": "重定向 URI",
         "iamTitle": "验证时效",
         "iamHint": "注册、登录与重置密码相关验证码和令牌的有效时长。",
         "regCodeMinutes": "注册验证码",
