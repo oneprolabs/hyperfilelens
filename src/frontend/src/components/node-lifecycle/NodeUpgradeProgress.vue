@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, ArrowRight, Check, Circle, Clock3, Download, RefreshCw, X } from 'lucide-vue-next'
+import { AlertTriangle, ArrowRight, Check, Circle, Download, LoaderCircle, RefreshCw, X } from 'lucide-vue-next'
 import { PACKAGE_DOWNLOAD_FAILURE_CODES, type NodeLifecycleInfo } from '../../types/nodeLifecycle'
 import { formatBytes, formatSpeedBps } from '../../lib/kopiaProgress'
 
@@ -99,6 +99,11 @@ function phaseIcon(status: string) {
   }
 }
 
+function phaseLabelKey(phase: string): string {
+  if (phase === 'success') return 'nodeLifecycle.state.completed'
+  return `nodeLifecycle.state.${phase}`
+}
+
 function formatPhaseTime(at: string | null) {
   if (!at) return '—'
   const date = new Date(at)
@@ -143,9 +148,10 @@ function formatPhaseTime(at: string | null) {
             v-if="phase.status === 'completed'"
             :size="15"
           />
-          <Clock3
+          <LoaderCircle
             v-else-if="phase.status === 'active'"
             :size="15"
+            class="node-upgrade-progress__step-anchor-icon is-spinning"
           />
           <X
             v-else-if="phase.status === 'failed'"
@@ -160,7 +166,7 @@ function formatPhaseTime(at: string | null) {
         <article class="node-upgrade-progress__step-card">
           <div class="node-upgrade-progress__step-card-head">
             <span class="node-upgrade-progress__step-title">
-              {{ phase.label }}
+              {{ t(phaseLabelKey(phase.phase)) }}
               <span
                 v-if="phase.at"
                 class="node-upgrade-progress__step-time"
@@ -356,6 +362,10 @@ function formatPhaseTime(at: string | null) {
   color: #fff;
 }
 
+.node-upgrade-progress__step-anchor-icon.is-spinning {
+  animation: node-upgrade-progress-spin 0.8s linear infinite;
+}
+
 /* --- step card --- */
 .node-upgrade-progress__step-card {
   min-width: 0;
@@ -488,7 +498,8 @@ function formatPhaseTime(at: string | null) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .node-upgrade-progress__download-icon.is-spinning {
+  .node-upgrade-progress__download-icon.is-spinning,
+  .node-upgrade-progress__step-anchor-icon.is-spinning {
     animation: none;
   }
 }

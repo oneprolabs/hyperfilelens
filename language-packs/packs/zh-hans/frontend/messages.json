@@ -4323,6 +4323,7 @@
     "bannerRemove": "批量删除 · 进行中 {running} · 排队 {queued} · 完成 {done}/{total} · 失败 {failed}",
     "state": {
       "active": "已启用",
+      "dispatching": "下发中",
       "queued": "排队中",
       "upgrading": "升级中",
       "restarting": "重启中",

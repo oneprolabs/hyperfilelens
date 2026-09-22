@@ -4323,6 +4323,7 @@
     "bannerRemove": "Eliminación por lotes · En ejecución {running} · En cola {queued} · Completadas {done}/{total} · Fallidas {failed}",
     "state": {
       "active": "Activo",
+      "dispatching": "Despachando",
       "queued": "En cola",
       "upgrading": "Actualización",
       "restarting": "Reestrellante",
