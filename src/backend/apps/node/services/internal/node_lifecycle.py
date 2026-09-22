@@ -1007,6 +1007,12 @@ def _upgrade_timeout_failure(*, node: Node, task: NodeTask) -> tuple[str, str]:
             result.get("host_error") or "Agent failed to upgrade on the host."
         )
     if not result.get("reconnect_session_id"):
+        # Gateways remain offline longer while the AI engine image downloads.
+        # Classify that seal as verification timeout so a later host success can
+        # late-heal, instead of treating the normal sidecar gap as a permanent
+        # reconnect failure.
+        if node.role == NodeRole.GATEWAY:
+            return "UPGRADE_VERIFICATION_TIMEOUT", "Upgrade verification timed out."
         return "AGENT_RECONNECT_TIMEOUT", "Agent did not reconnect after the upgrade."
     if not result.get("inventory_session_id"):
         return (
