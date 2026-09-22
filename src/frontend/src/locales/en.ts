@@ -2014,6 +2014,7 @@ export const en = {
       'Batch removal · Running {running} · Queued {queued} · Done {done}/{total} · Failed {failed}',
     state: {
       active: 'Active',
+      dispatching: 'Dispatching',
       queued: 'Queued',
       upgrading: 'Upgrading',
       restarting: 'Restarting',
