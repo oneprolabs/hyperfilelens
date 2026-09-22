@@ -10,24 +10,20 @@ import { githubUrl, sourceLensUrl, useAppOrigin } from './useAppOrigin'
 
 const locale = useSiteLocale()
 const copy = computed(() => homeCopy[locale.value])
+const installCommand = computed(() => copy.value.openSource.terminal.installCommand)
 const { loginUrl, openApp } = useAppOrigin()
-
-const installCommand = [
-  'curl -fsSL \\',
-  '  https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh \\',
-  '  | sudo bash -s -- --mirror global --yes',
-].join('\n')
 
 const copied = ref(false)
 let copyResetTimer: number | undefined
 
 async function copyInstallCommand() {
   try {
+    const command = installCommand.value
     if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(installCommand)
+      await navigator.clipboard.writeText(command)
     } else {
       const textarea = document.createElement('textarea')
-      textarea.value = installCommand
+      textarea.value = command
       textarea.setAttribute('readonly', '')
       textarea.style.position = 'fixed'
       textarea.style.opacity = '0'

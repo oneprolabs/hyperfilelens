@@ -87,6 +87,7 @@ export interface HomeCopy {
       copied: string
       context: string
       comment: string
+      installCommand: string
       summaryTitle: string
       summarySteps: string
     }
@@ -197,6 +198,11 @@ const en: HomeCopy = {
       copied: 'Copied',
       context: 'Run on an Ubuntu host',
       comment: '# Install the latest Community tag',
+      installCommand: [
+        'curl -fsSL \\',
+        '  https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh \\',
+        '  | sudo bash -s -- --mirror global --yes',
+      ].join('\n'),
       summaryTitle: 'Installer handles the rest',
       summarySteps: 'Environment check · Image pull · Service startup',
     },
@@ -341,6 +347,11 @@ const zh: HomeCopy = {
       copied: '已复制',
       context: '在 Ubuntu 主机上运行',
       comment: '# 安装最新社区版',
+      installCommand: [
+        'curl -fsSL \\',
+        '  https://gitee.com/oneprolabs/hyperfilelens/raw/main/deploy/online/install.sh \\',
+        '  | sudo bash -s -- --mirror cn --yes',
+      ].join('\n'),
       summaryTitle: '安装程序自动完成',
       summarySteps: '环境检查 · 镜像拉取 · 服务启动',
     },
@@ -487,6 +498,11 @@ const es: HomeCopy = {
       copied: 'Copiado',
       context: 'Ejecuta en un host Ubuntu',
       comment: '# Instala la última versión Community',
+      installCommand: [
+        'curl -fsSL \\',
+        '  https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh \\',
+        '  | sudo bash -s -- --mirror global --yes',
+      ].join('\n'),
       summaryTitle: 'El instalador se encarga del resto',
       summarySteps: 'Comprobación del entorno · Descarga de imágenes · Arranque de servicios',
     },
