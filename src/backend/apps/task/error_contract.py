@@ -56,7 +56,7 @@ def _reasons(value, code="TASK_FAILED"):
 
 def task_error_contract(task, resources=()):
     status = str(task.status)
-    if status not in {"failed", "timeout", "success", "partial"}:
+    if status not in {"failed", "timeout", "success", "partial", "cancelled"}:
         return None
     result = _record(task.result_payload)
     failure = _record(result.get("failure_details"))
@@ -76,15 +76,22 @@ def task_error_contract(task, resources=()):
                        or result.get("skipped_directory_count") or failure or summary.get("failed_directories"))
     if status == "success" and not has_warning:
         return None
-    outcome = "partial" if partial else "warning" if status == "success" else "timeout" if status == "timeout" else "failed"
-    severity = "warning" if outcome in {"partial", "warning"} else "error"
+    if status == "cancelled":
+        outcome = "cancelled"
+        severity = "warning"
+    else:
+        outcome = "partial" if partial else "warning" if status == "success" else "timeout" if status == "timeout" else "failed"
+        severity = "warning" if outcome in {"partial", "warning"} else "error"
     code = str(task.error_code or failure.get("category") or "TASK_FAILED")
     reasons = _reasons(result.get("reasons"), code) + _reasons(cleanup) + _reasons(warnings)
     if task.error_message:
         reasons.append({"code": code, "detail": str(task.error_message)})
     if failure:
         reasons.append({"code": str(failure.get("category") or code), "detail": str(failure.get("category") or code), "count": failure.get("total_count", failure.get("count", 0))})
-    suggestions = _reasons(result.get("suggestions"), "review_task")
+    suggestions = _reasons(
+        result.get("suggestions") or result.get("resolutions"),
+        "review_task",
+    )
     if result.get("hint"):
         suggestions.append({"code": "review_task", "detail": str(result["hint"])})
     suggestions += _reasons(failure.get("remediation"), "backup_remediation")
@@ -109,7 +116,7 @@ def task_error_contract(task, resources=()):
         "version": 1,
         "severity": severity,
         "outcome": outcome,
-        "summary": {"failed": "Task failed.", "timeout": "Task timed out.", "partial": "Task partially completed.", "warning": "Task completed with warnings."}[outcome],
+        "summary": {"failed": "Task failed.", "timeout": "Task timed out.", "partial": "Task partially completed.", "warning": "Task completed with warnings.", "cancelled": "Task cancelled."}[outcome],
         "reasons": reasons,
         "suggestions": suggestions,
         "failed_step": result.get("failed_step") or (task.current_step if severity == "error" else None),

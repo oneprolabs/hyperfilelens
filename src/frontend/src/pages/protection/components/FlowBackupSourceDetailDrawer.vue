@@ -43,6 +43,7 @@ import HflHelpTip from '../../../components/HflHelpTip.vue'
 import HflPopover from '../../../components/HflPopover.vue'
 import HflPagination from '../../../components/HflPagination.vue'
 import SnapshotPointDetailPanel from './SnapshotPointDetailPanel.vue'
+import TaskDetailDrawer from './TaskDetailDrawer.vue'
 import { useDrawerTableMaxHeight } from '../../../composables/useDrawerTableMaxHeight'
 import { apiErrorMessage } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
@@ -4729,6 +4730,7 @@ function onClosed() {
 
   <ElDrawer
     v-model="taskDetailOpen"
+    v-if="false"
     class="hfl-task-drawer dp-task-detail-drawer"
     :size="taskDetailDrawerSize"
     :z-index="3200"
@@ -5376,6 +5378,14 @@ function onClosed() {
       </ElTabs>
     </div>
   </ElDrawer>
+
+  <TaskDetailDrawer
+    v-model="taskDetailOpen"
+    :task-uuid="activeTask?.task_uuid || ''"
+    :drawer-size="taskDetailDrawerSize"
+    :drawer-z-index="3300"
+    @open-task="openTaskDetailByUuid"
+  />
   <ProtectionStopConfirmDialog
     v-if="stopConfirmOpen"
     v-model="stopConfirmOpen"

@@ -370,6 +370,18 @@ def cancel_task(
     return finalize_task_cancellation(task=task, reason=reason)
 
 
+def _build_cancellation_result_payload(task: Task) -> dict[str, Any]:
+    """Build a minimal result_payload so task_error_contract has context."""
+    return {
+        "summary": "Task cancelled by user",
+        "resolutions": ["You can retry the operation from the original workflow."],
+        "technical_detail": {
+            "task_type": str(task.task_type or ""),
+            "cancelled_step": str(task.current_step or ""),
+        },
+    }
+
+
 def finalize_task_cancellation(*, task: Task, reason: str = "") -> Task:
     """Finalize cancellation after the owning domain has locked its task."""
 
@@ -377,11 +389,14 @@ def finalize_task_cancellation(*, task: Task, reason: str = "") -> Task:
     task.error_code = "TASK_CANCELLED"
     task.error_message = reason.strip() or "Task cancelled by user"
     task.finished_at = timezone.now()
+    if not task.result_payload:
+        task.result_payload = _build_cancellation_result_payload(task)
     task.save(
         update_fields=[
             "status",
             "error_code",
             "error_message",
+            "result_payload",
             "finished_at",
             "updated_at",
         ]

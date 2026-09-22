@@ -35,6 +35,45 @@ describe('task event internationalization', () => {
       .toBe('ops.task.eventMessage.cleaningDirectNasPhysicalRepositories')
     expect(taskEventMessageKey('Direct NAS repository cleanup completed'))
       .toBe('ops.task.eventMessage.directNasRepositoryCleanupCompleted')
+    expect(taskEventMessageKey('Direct NAS repository cleanup failed.'))
+      .toBe('ops.task.eventMessage.directNasRepositoryCleanupFailed')
+    expect(taskEventMessageKey('Direct NAS repository cleanup was blocked.'))
+      .toBe('ops.task.eventMessage.directNasRepositoryCleanupBlocked')
+  })
+
+  it('maps source unregister wait and error event messages to translation keys', () => {
+    expect(taskEventMessageKey('Waiting for Direct NAS repository cleanup'))
+      .toBe('ops.task.eventMessage.waitingForDirectNasRepositoryCleanup')
+    expect(taskEventMessageKey('Waiting for backup snapshot cleanup'))
+      .toBe('ops.task.eventMessage.waitingForBackupSnapshotCleanup')
+    expect(taskEventMessageKey('Waiting for Agent uninstall completion'))
+      .toBe('ops.task.eventMessage.waitingForAgentUninstallCompletion')
+    expect(taskEventMessageKey('Agent uninstall could not be started.'))
+      .toBe('ops.task.eventMessage.agentUninstallCouldNotBeStarted')
+    expect(taskEventMessageKey('Agent uninstall failed.'))
+      .toBe('ops.task.eventMessage.agentUninstallFailed')
+  })
+
+  it('maps source endpoint cleanup and reset deferral messages to translation keys', () => {
+    expect(taskEventMessageKey('Source endpoint cleanup completed'))
+      .toBe('ops.task.eventMessage.sourceEndpointCleanupCompleted')
+    expect(taskEventMessageKey('Source endpoint cleanup completed with retained resources'))
+      .toBe('ops.task.eventMessage.sourceEndpointCleanupCompletedWithRetained')
+    expect(taskEventMessageKey('Backup configuration reset deferred until endpoint cleanup completes'))
+      .toBe('ops.task.eventMessage.backupConfigurationResetDeferred')
+  })
+
+  it('maps all source deregistration lifecycle messages to translation keys', () => {
+    expect(taskEventMessageKey('Source deregistration is in progress.'))
+      .toBe('ops.task.eventMessage.sourceUnregisterInProgress')
+    expect(taskEventMessageKey('Source deregistration prepared for retry'))
+      .toBe('ops.task.eventMessage.sourceUnregisterPreparedForRetry')
+    expect(taskEventMessageKey('No backup source deregistration was accepted.'))
+      .toBe('ops.task.eventMessage.noSourceUnregisterAccepted')
+    expect(taskEventMessageKey('No backup sources were specified.'))
+      .toBe('ops.task.eventMessage.noBackupSourcesSpecified')
+    expect(taskEventMessageKey('Synchronous source deregistration accepts one source at a time.'))
+      .toBe('ops.task.eventMessage.synchronousSourceUnregisterOneAtATime')
   })
 
   it('maps the repository maintenance summary event to a translation key', () => {

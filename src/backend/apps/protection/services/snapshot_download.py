@@ -1051,6 +1051,17 @@ def _complete_failed_snapshot_download(
         organization_id=task.organization_id,
         status=Task.Status.FAILED,
         progress=failed_progress,
+        result_payload={
+            "summary": "Snapshot download failed",
+            "resolutions": [
+                "Check that the source endpoint is online and reachable, then retry the restore.",
+            ],
+            "technical_detail": {
+                "failed_step": failed_step,
+                "has_artifact": artifact is not None,
+                "artifact_id": artifact.id if artifact else None,
+            },
+        },
         error_code="SNAPSHOT_DOWNLOAD_FAILED",
         error_message=message,
     )
