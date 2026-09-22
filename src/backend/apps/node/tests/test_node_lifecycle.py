@@ -23,6 +23,7 @@ from apps.node.services.internal.node_lifecycle import (
     _version_matches_target,
     advance_node_lifecycle,
     compute_node_lifecycle,
+    heal_upgrade_failed_after_late_host_success,
     preview_batch_operations,
     queue_detached_remove_verification,
     record_upgrade_disconnect,
@@ -591,6 +592,34 @@ class NodeLifecycleTests(TestCase):
             _upgrade_lifecycle_payload(org=self.org, node=self.node, task=task)
         )
 
+    def test_stale_failed_upgrade_is_hidden_after_late_host_success(self):
+        self.node.status = Node.Status.ACTIVE
+        self.node.version = "1.0.0"
+        self.node.metadata = {"inventory": {"agent_version": "1.0.0"}}
+        self.node.save(update_fields=["status", "version", "metadata", "updated_at"])
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.FAILED,
+            payload={"target_version": "1.2.0", "target_commit": "a" * 40},
+            result={
+                "mode": "local_detached",
+                "failure_code": "UPGRADE_VERIFICATION_TIMEOUT",
+                "late_result": {
+                    "status": "success",
+                    "result": {"host_upgrade_status": "success"},
+                },
+            },
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        self.assertIsNone(
+            _upgrade_lifecycle_payload(org=self.org, node=self.node, task=task)
+        )
+
     def test_failed_upgrade_remains_visible_when_build_does_not_match(self):
         task = NodeTask.objects.create(
             organization=self.org,
@@ -697,6 +726,223 @@ class NodeLifecycleTests(TestCase):
         entry.refresh_from_db()
         self.assertEqual(self.node.status, Node.Status.ACTIVE)
         self.assertEqual(entry.source_status, Node.Status.ACTIVE)
+
+    @patch(
+        "apps.node.services.internal.node_lifecycle.agent_release_commit",
+        return_value="a" * 40,
+    )
+    @patch(
+        "apps.node.services.internal.node_lifecycle.validate_agent_upgrade",
+        return_value="1.0.0",
+    )
+    @patch("apps.node.services.internal.node_lifecycle.run_agent_task_async")
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
+    def test_already_current_gateway_still_upgrades_unhealthy_sidecar(
+        self,
+        _routable,
+        mock_run,
+        _validate,
+        _release_commit,
+    ):
+        from apps.lens_bridge.models import LensGatewayLink
+
+        self.node.role = NodeRole.GATEWAY
+        self.node.metadata = {
+            "inventory": {
+                "agent_version": "1.0.0",
+                "agent_commit": "a" * 40,
+            }
+        }
+        self.node.save(update_fields=["role", "metadata", "updated_at"])
+        LensGatewayLink.objects.create(
+            organization=self.org,
+            gateway=self.node,
+            owner_user=self.user,
+            sidecar_status=LensGatewayLink.SidecarStatus.OFFLINE,
+        )
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            result={"target_version": "1.0.0"},
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+        )
+        mock_run.return_value = type(
+            "Handle",
+            (),
+            {"task": task, "task_id": str(task.id)},
+        )()
+
+        result = start_node_upgrade(org=self.org, node=self.node, user=self.user)
+
+        self.assertEqual(result["state"], "upgrading")
+        mock_run.assert_called_once()
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
+    def test_gateway_upgrade_waits_while_sidecar_progress_advances(self, _routable):
+        self.node.role = NodeRole.GATEWAY
+        self.node.save(update_fields=["role", "updated_at"])
+        detached_at = timezone.now() - timezone.timedelta(
+            seconds=node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS + 60
+        )
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"target_version": "1.2.0"},
+            result={
+                "mode": "local_detached",
+                "detached_at": detached_at.isoformat(),
+                "sidecar_progress": {
+                    "phase": "download",
+                    "bytes_done": 50_000_000,
+                    "bytes_total": 300_000_000,
+                    "percent": 16,
+                    "reported_at": timezone.now().isoformat(),
+                },
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        summary = advance_node_lifecycle(org=self.org, node=self.node, user=self.user)
+
+        task.refresh_from_db()
+        self.assertIsNone(summary)
+        self.assertEqual(task.status, NodeTask.Status.RUNNING)
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
+    def test_gateway_upgrade_waits_without_progress_until_hard_timeout(self, _routable):
+        self.node.role = NodeRole.GATEWAY
+        self.node.save(update_fields=["role", "updated_at"])
+        detached_at = timezone.now() - timezone.timedelta(
+            seconds=node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS + 60
+        )
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"target_version": "1.2.0"},
+            result={
+                "mode": "local_detached",
+                "detached_at": detached_at.isoformat(),
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        summary = advance_node_lifecycle(org=self.org, node=self.node, user=self.user)
+
+        task.refresh_from_db()
+        self.assertIsNone(summary)
+        self.assertEqual(task.status, NodeTask.Status.RUNNING)
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
+    def test_gateway_upgrade_fails_at_hard_timeout_without_progress(self, _routable):
+        self.node.role = NodeRole.GATEWAY
+        self.node.save(update_fields=["role", "updated_at"])
+        detached_at = timezone.now() - timezone.timedelta(
+            seconds=node_conf.GATEWAY_LIFECYCLE_DETACHED_TIMEOUT_SECONDS + 1
+        )
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"target_version": "1.2.0"},
+            result={
+                "mode": "local_detached",
+                "detached_at": detached_at.isoformat(),
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        advance_node_lifecycle(org=self.org, node=self.node, user=self.user)
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, NodeTask.Status.FAILED)
+        self.assertEqual((task.result or {}).get("failure_code"), "UPGRADE_VERIFICATION_TIMEOUT")
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
+    def test_gateway_upgrade_fails_when_sidecar_progress_stalls(self, _routable):
+        self.node.role = NodeRole.GATEWAY
+        self.node.save(update_fields=["role", "updated_at"])
+        detached_at = timezone.now() - timezone.timedelta(
+            seconds=node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS + 60
+        )
+        stalled_at = timezone.now() - timezone.timedelta(
+            seconds=node_conf.GATEWAY_SIDECAR_PROGRESS_STALL_SECONDS + 1
+        )
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"target_version": "1.2.0"},
+            result={
+                "mode": "local_detached",
+                "detached_at": detached_at.isoformat(),
+                "sidecar_progress": {
+                    "phase": "download",
+                    "bytes_done": 10_000_000,
+                    "bytes_total": 300_000_000,
+                    "percent": 3,
+                    "reported_at": stalled_at.isoformat(),
+                },
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        advance_node_lifecycle(org=self.org, node=self.node, user=self.user)
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, NodeTask.Status.FAILED)
+        self.assertEqual((task.result or {}).get("failure_code"), "UPGRADE_VERIFICATION_TIMEOUT")
+
+    @patch("apps.node.services.internal.task._update_node_lifecycle_status")
+    def test_late_host_success_heals_upgrade_failed_despite_stale_inventory(
+        self, mock_status
+    ):
+        self.node.role = NodeRole.GATEWAY
+        self.node.status = Node.Status.UPGRADE_FAILED
+        self.node.version = "1.0.0"
+        self.node.metadata = {"inventory": {"agent_version": "1.0.0"}}
+        self.node.save(update_fields=["role", "status", "version", "metadata", "updated_at"])
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.FAILED,
+            payload={"target_version": "1.2.0"},
+            result={
+                "mode": "local_detached",
+                "failure_code": "UPGRADE_VERIFICATION_TIMEOUT",
+                "late_result": {
+                    "status": "success",
+                    "result": {"host_upgrade_status": "success"},
+                },
+            },
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        healed = heal_upgrade_failed_after_late_host_success(node=self.node, task=task)
+
+        self.assertTrue(healed)
+        mock_status.assert_called_once_with(
+            node_id=self.node.id,
+            status=Node.Status.ACTIVE,
+        )
 
     @patch("apps.node.services.internal.node_workload.get_node_workload_blockers")
     def test_upgrade_blocked_by_workload(self, mock_blockers):

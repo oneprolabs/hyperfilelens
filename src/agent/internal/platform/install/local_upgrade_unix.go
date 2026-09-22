@@ -128,6 +128,9 @@ rc=$?
 set -e
 if [[ "$rc" -eq 0 ]]; then
   log " OK  " "Upgrade completed successfully."
+  # Data Gateway upgrade is atomic: Agent + AI engine must both succeed before
+  # clearing detached-upgrade markers. Control-plane stall handling must tolerate
+  # long sidecar image downloads via progress keepalives, not by splitting success.
   if ! run_gateway_sidecar_upgrade_if_needed; then
     log "FAIL " "Gateway sidecar upgrade failed after agent upgrade."
     echo "failed" > "$PENDING_DIR/FAILED"

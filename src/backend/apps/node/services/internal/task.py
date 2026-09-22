@@ -1596,6 +1596,20 @@ def complete_task(
         # trigger ordinary task-result follow-up for a lifecycle operation
         # that has already been durably failed by the coordinator.
         task._late_result_ignored = True
+        try:
+            from apps.node.services.internal.node_lifecycle import (
+                heal_upgrade_failed_after_late_host_success,
+            )
+
+            node = Node.objects.filter(pk=node_id).first()
+            if node is not None:
+                heal_upgrade_failed_after_late_host_success(node=node, task=task)
+        except Exception:
+            logger.exception(
+                "late upgrade heal failed task_id=%s node_id=%s",
+                task.id,
+                node_id,
+            )
         return task
     if (
         incoming_terminal_status is not None

@@ -77,6 +77,18 @@ LIFECYCLE_MAX_CONCURRENT_HARD = env_int("NODE_LIFECYCLE_MAX_CONCURRENT_HARD", 10
 LIFECYCLE_DETACHED_TIMEOUT_SECONDS = env_int(
     "NODE_LIFECYCLE_DETACHED_TIMEOUT_SECONDS", 600
 )
+# Private/Public Data Gateway upgrades also download the LensNode image after the
+# Agent restarts. Keep a longer hard ceiling so a slow download is not sealed as
+# upgrade_failed before the host finishes, even when progress keepalives are
+# missing (older host scripts or soft report failures).
+GATEWAY_LIFECYCLE_DETACHED_TIMEOUT_SECONDS = env_int(
+    "NODE_GATEWAY_LIFECYCLE_DETACHED_TIMEOUT_SECONDS", 2700
+)
+# After Gateway sidecar progress has been observed, fail earlier if samples stop
+# advancing for this long (still bounded by the hard ceiling above).
+GATEWAY_SIDECAR_PROGRESS_STALL_SECONDS = env_int(
+    "NODE_GATEWAY_SIDECAR_PROGRESS_STALL_SECONDS", 600
+)
 UNINSTALL_COMPLETION_MAX_AGE_SECONDS = env_int(
     "NODE_UNINSTALL_COMPLETION_MAX_AGE_SECONDS",
     LIFECYCLE_DETACHED_TIMEOUT_SECONDS + 300,

@@ -201,6 +201,29 @@ def _stale_failed_upgrade_is_current(*, node: Node, task: NodeTask) -> bool:
         NodeTask.Status.TIMEOUT,
     } or node.status != Node.Status.ACTIVE:
         return False
+    result = task.result if isinstance(task.result, dict) else {}
+    # After a verification-timeout seal, a late atomic host success may heal the
+    # node to ACTIVE before inventory catches up. Suppress the obsolete failure
+    # banner immediately instead of waiting for version/commit projection.
+    if str(result.get("failure_code") or "") == "UPGRADE_VERIFICATION_TIMEOUT":
+        late = result.get("late_result")
+        late_result = (
+            late.get("result") if isinstance(late, dict) and isinstance(late.get("result"), dict) else {}
+        )
+        host_status = str(
+            late_result.get("host_upgrade_status")
+            or result.get("host_upgrade_status")
+            or ""
+        ).strip().lower()
+        if host_status == "success":
+            observed = str(
+                late_result.get("observed_agent_version")
+                or result.get("observed_agent_version")
+                or ""
+            ).strip()
+            target_version = _target_version_from_task(task)
+            if not target_version or not observed or observed == target_version:
+                return True
     target_version = _target_version_from_task(task)
     target_commit = _target_commit_from_task(task)
     if not target_version or not target_commit:
@@ -567,6 +590,216 @@ def _running_lifecycle_task(
     return None
 
 
+def _gateway_sidecar_needs_repair(*, node: Node) -> bool:
+    """Return whether a Gateway still needs an AI engine repair upgrade."""
+
+    if node.role != NodeRole.GATEWAY:
+        return False
+    from apps.lens_bridge.models import LensGatewayLink
+
+    link = (
+        LensGatewayLink.objects.filter(gateway=node, is_deleted=False)
+        .only("sidecar_status")
+        .first()
+    )
+    if link is None:
+        return True
+    if link.sidecar_status == LensGatewayLink.SidecarStatus.ONLINE:
+        return False
+    if link.sidecar_status in {
+        LensGatewayLink.SidecarStatus.UPGRADING,
+        LensGatewayLink.SidecarStatus.REMOVING,
+    }:
+        # Transient while a lifecycle op is active. If the marker is stuck with
+        # no active task, allow another upgrade to repair the AI engine.
+        if _active_lifecycle_task(org=node.organization, node=node) is not None:
+            return False
+        return True
+    return True
+
+
+def _sidecar_progress_reported_at(task: NodeTask):
+    result = task.result if isinstance(task.result, dict) else {}
+    progress = result.get("sidecar_progress")
+    if not isinstance(progress, dict):
+        return None
+    raw = str(progress.get("reported_at") or "").strip()
+    if not raw:
+        return None
+    from django.utils.dateparse import parse_datetime
+
+    parsed = parse_datetime(raw)
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        return timezone.make_aware(parsed)
+    return parsed
+
+
+def _sidecar_progress_advanced(
+    *,
+    previous: dict[str, Any] | None,
+    incoming: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(incoming, dict) or not incoming:
+        return False
+    if not isinstance(previous, dict) or not previous:
+        return True
+    prev_phase = str(previous.get("phase") or "")
+    next_phase = str(incoming.get("phase") or "")
+    if next_phase and next_phase != prev_phase:
+        return True
+    try:
+        prev_bytes = int(previous.get("bytes_done") or 0)
+    except (TypeError, ValueError):
+        prev_bytes = 0
+    try:
+        next_bytes = int(incoming.get("bytes_done") or 0)
+    except (TypeError, ValueError):
+        next_bytes = 0
+    if next_bytes > prev_bytes:
+        return True
+    try:
+        prev_pct = float(previous.get("percent") or -1)
+    except (TypeError, ValueError):
+        prev_pct = -1.0
+    try:
+        next_pct = float(incoming.get("percent") or -1)
+    except (TypeError, ValueError):
+        next_pct = -1.0
+    return next_pct > prev_pct
+
+
+def _detached_upgrade_timed_out(
+    *,
+    node: Node,
+    task: NodeTask,
+    detached_at,
+) -> bool:
+    """Return whether a detached upgrade may be sealed as timed out.
+
+    Non-Gateway nodes keep the short detached window. Gateways get a longer
+    hard ceiling so a slow AI engine image download is not sealed early when
+    progress keepalives are missing (older host scripts / soft report failures).
+    Once sidecar progress has been observed, a shorter stall window still fails
+    upgrades that stop advancing before the hard ceiling.
+    """
+
+    now = timezone.now()
+    elapsed = now - detached_at
+    base_timeout = timedelta(seconds=node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS)
+    if elapsed < base_timeout:
+        return False
+    if node.role != NodeRole.GATEWAY:
+        return True
+    hard_timeout = timedelta(
+        seconds=node_conf.GATEWAY_LIFECYCLE_DETACHED_TIMEOUT_SECONDS
+    )
+    if elapsed >= hard_timeout:
+        return True
+    reported_at = _sidecar_progress_reported_at(task)
+    if reported_at is None:
+        # No keepalive yet: keep waiting until the Gateway hard ceiling.
+        return False
+    stall = timedelta(seconds=node_conf.GATEWAY_SIDECAR_PROGRESS_STALL_SECONDS)
+    return now - reported_at >= stall
+
+
+@transaction.atomic
+def record_gateway_sidecar_upgrade_progress(
+    *,
+    gateway: Node,
+    progress: dict[str, Any] | None,
+) -> NodeTask | None:
+    """Persist Gateway AI engine progress onto the active upgrade task."""
+
+    if gateway.role != NodeRole.GATEWAY or not isinstance(progress, dict) or not progress:
+        return None
+    task = _running_lifecycle_task(
+        org=gateway.organization,
+        node=gateway,
+        kind=LIFECYCLE_KIND_UPGRADE,
+    )
+    if task is None or not _is_detached_lifecycle_task(task):
+        return None
+    locked = (
+        NodeTask.objects.select_for_update()
+        .filter(pk=task.pk, status__in=_ACTIVE_TASK_STATUSES)
+        .first()
+    )
+    if locked is None:
+        return None
+    merged = dict(locked.result or {})
+    previous = merged.get("sidecar_progress")
+    previous = previous if isinstance(previous, dict) else None
+    if not _sidecar_progress_advanced(previous=previous, incoming=progress):
+        return locked
+    now = timezone.now()
+    snapshot = {
+        key: progress[key]
+        for key in ("phase", "bytes_done", "bytes_total", "percent", "label")
+        if key in progress
+    }
+    snapshot["reported_at"] = now.isoformat()
+    merged["sidecar_progress"] = snapshot
+    merged["last_progress"] = {
+        "phase": "sidecar_upgrade",
+        "mode": "local_detached",
+        "sidecar": dict(snapshot),
+    }
+    locked.result = merged
+    locked.last_progress_at = now
+    locked.save(update_fields=["result", "last_progress_at", "updated_at"])
+    return locked
+
+
+def heal_upgrade_failed_after_late_host_success(*, node: Node, task: NodeTask) -> bool:
+    """Clear UPGRADE_FAILED after a late host success for verification timeout."""
+
+    if task.kind != _LIFECYCLE_TASK_KINDS[LIFECYCLE_KIND_UPGRADE]:
+        return False
+    if task.status not in {NodeTask.Status.FAILED, NodeTask.Status.TIMEOUT}:
+        return False
+    result = task.result if isinstance(task.result, dict) else {}
+    if str(result.get("failure_code") or "") != "UPGRADE_VERIFICATION_TIMEOUT":
+        return False
+    late = result.get("late_result")
+    late_result: dict[str, Any] = {}
+    if isinstance(late, dict):
+        nested = late.get("result")
+        if isinstance(nested, dict):
+            late_result = nested
+    host_status = str(
+        late_result.get("host_upgrade_status") or result.get("host_upgrade_status") or ""
+    ).strip().lower()
+    if host_status != "success":
+        return False
+    target_version = _target_version_from_task(task)
+    # Trust atomic host success even when node inventory has not caught up yet.
+    # Only refuse when task evidence already recorded a conflicting version.
+    if target_version:
+        observed = str(
+            late_result.get("observed_agent_version")
+            or result.get("observed_agent_version")
+            or ""
+        ).strip()
+        if observed and observed != target_version:
+            return False
+    # Host success is atomic (Agent + AI engine). Do not require sidecar ONLINE
+    # here: install-status often lands on OFFLINE until SourceLens sync catches up.
+    if node.status != Node.Status.UPGRADE_FAILED:
+        return False
+    from apps.node.services.internal.task import _update_node_lifecycle_status
+
+    _update_node_lifecycle_status(node_id=node.id, status=Node.Status.ACTIVE)
+    logger.info(
+        "healed upgrade_failed after late host success node_id=%s task_id=%s",
+        node.id,
+        task.id,
+    )
+    return True
+
+
 def _verify_started_at_from_task(task: NodeTask) -> timezone.datetime | None:
     result = task.result if isinstance(task.result, dict) else {}
     raw = result.get("verify_started_at")
@@ -846,9 +1079,7 @@ def _fail_stale_upgrade_task(*, node: Node, task: NodeTask) -> bool:
     detached_at = _detached_at_from_task(task)
     if detached_at is None:
         return False
-    if timezone.now() - detached_at < timedelta(
-        seconds=node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS,
-    ):
+    if not _detached_upgrade_timed_out(node=node, task=task, detached_at=detached_at):
         return False
     target_version = _target_version_from_task(task)
     if target_version and _upgrade_verify_ready(node=node, task=task):
@@ -1449,6 +1680,7 @@ def start_node_upgrade(
         and current_commit
         and current_version == target_version
         and current_commit == target_commit.lower()
+        and not _gateway_sidecar_needs_repair(node=node)
     ):
         logger.info(
             "node lifecycle upgrade skipped; requested build is already installed "
@@ -1493,6 +1725,21 @@ def start_node_upgrade(
             "target_commit": target_commit,
             "current_version": current_version,
         }
+    if (
+        target_commit
+        and current_version
+        and current_commit
+        and current_version == target_version
+        and current_commit == target_commit.lower()
+        and _gateway_sidecar_needs_repair(node=node)
+    ):
+        logger.info(
+            "node lifecycle upgrade continuing for Gateway AI engine repair "
+            "node_id=%s version=%s commit=%s",
+            node.id,
+            target_version,
+            target_commit,
+        )
     payload = {"target_version": target_version}
     if target_commit:
         payload["target_commit"] = target_commit

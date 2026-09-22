@@ -38,6 +38,8 @@ class GatewayInstallStatusView(APIView):
         error_message = str(
             payload.get("error_message") or payload.get("message") or ""
         ).strip()
+        progress_raw = payload.get("progress")
+        progress = progress_raw if isinstance(progress_raw, dict) else None
 
         if not org_key or not node_token or not node_id_raw or not install_status:
             return Response(
@@ -95,6 +97,7 @@ class GatewayInstallStatusView(APIView):
             status=install_status,
             error_message=error_message,
             phase=phase,
+            progress=progress,
         )
         if link is None:
             return Response(
