@@ -12,7 +12,8 @@ class GlobalConfig(models.Model):
     Store runtime configuration values as JSON.
 
     Resolution order at read time (see ``selectors.interface.get_config``):
-    tenant row → global row → caller ``default`` from owning app ``conf``.
+    tenant row → global Runtime row → Deployment (env/settings) → caller
+    ``default``. Explicit empty Runtime values win and do not fall through.
     """
 
     class Scope(models.TextChoices):
@@ -39,7 +40,7 @@ class GlobalConfig(models.Model):
         default="",
         db_index=True,
     )
-    value = models.JSONField()
+    value = models.JSONField(blank=True)
     value_type = models.CharField(
         max_length=20,
         choices=ValueType.choices,

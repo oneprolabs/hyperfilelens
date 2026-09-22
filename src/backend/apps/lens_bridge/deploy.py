@@ -54,14 +54,27 @@ def sourcelens_version() -> str:
 
 def lens_gateway_base_url() -> str:
     """SourceLens URL reachable from enrolled gateway hosts (native OS, not Docker DNS)."""
+    use_deployment_origin_fallback = True
     if sourcelens_mode() == "bundled":
+        from apps.configuration.constants import NOT_FOUND
+        from apps.configuration.selectors.interface import has_runtime_config
+        from apps.configuration.selectors.internal.resolver import resolve_global_value
+        from apps.instance_settings.conf import CONFIG_KEY_EXTERNAL_ACCESS_URL
         from apps.instance_settings.services.external_access import (
             configured_external_access_url,
         )
 
-        configured = configured_external_access_url()
-        if configured:
-            return f"{configured}{LENS_GATEWAY_PUBLIC_PATH}"
+        # Match effective_external_access_url(): valid Runtime wins; explicit empty
+        # blocks Deployment; policy-rejected non-empty values still fall through.
+        # Dedicated LENS_GATEWAY_BASE_URL still outranks Deployment below.
+        if has_runtime_config(CONFIG_KEY_EXTERNAL_ACCESS_URL):
+            configured = configured_external_access_url()
+            if configured:
+                return f"{configured}{LENS_GATEWAY_PUBLIC_PATH}"
+            raw = resolve_global_value(config_key=CONFIG_KEY_EXTERNAL_ACCESS_URL)
+            raw_text = raw if isinstance(raw, str) else ""
+            if raw is not NOT_FOUND and not raw_text.strip():
+                use_deployment_origin_fallback = False
 
     explicit = env_str("LENS_GATEWAY_BASE_URL", "").rstrip("/")
     if explicit:
@@ -71,9 +84,15 @@ def lens_gateway_base_url() -> str:
     if sourcelens_mode() == "external":
         return base
 
-    frontend = env_str("FRONTEND_URL", "").rstrip("/")
-    if frontend:
-        return f"{frontend}{LENS_GATEWAY_PUBLIC_PATH}"
+    if use_deployment_origin_fallback:
+        from apps.instance_settings.services.external_access import (
+            deployment_external_access_url,
+        )
+
+        # HFL_EXTERNAL_ACCESS_URL → FRONTEND_URL (same Deployment chain as Console).
+        origin = deployment_external_access_url().rstrip("/")
+        if origin:
+            return f"{origin}{LENS_GATEWAY_PUBLIC_PATH}"
 
     if not base:
         return ""

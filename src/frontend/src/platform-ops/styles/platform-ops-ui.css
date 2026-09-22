@@ -239,10 +239,6 @@
   overflow-y: auto;
 }
 
-.platform-ops-shell .platform-settings__alert {
-  margin-bottom: 1rem;
-}
-
 .platform-ops-shell .platform-settings__intro {
   margin: 0 0 16px;
   font-size: 13px;
@@ -265,6 +261,289 @@
   max-width: 52rem;
 }
 
+.platform-ops-shell .platform-settings__toolbar-actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.platform-ops-shell .platform-settings__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 760px;
+}
+
+.platform-ops-shell .platform-settings--identity,
+.platform-ops-shell .platform-settings--stacked {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.platform-ops-shell .platform-settings--identity > .platform-settings__alert,
+.platform-ops-shell .platform-settings--stacked > .platform-settings__alert {
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__stack,
+.platform-ops-shell .platform-settings--stacked .platform-settings__stack {
+  flex: 1 1 auto;
+  max-width: none;
+  width: 100%;
+  min-height: 0;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__panel,
+.platform-ops-shell .platform-settings--stacked .platform-settings__panel {
+  max-width: none;
+  width: 100%;
+  flex-shrink: 0;
+  padding: 18px 0 0;
+  overflow: hidden;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.96) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 8px 20px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__panel:hover,
+.platform-ops-shell .platform-settings--stacked .platform-settings__panel:hover {
+  border-color: rgba(148, 163, 184, 0.55);
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__form .el-form-item__content > .el-input,
+.platform-ops-shell .platform-settings--stacked .platform-settings__form .el-form-item__content > .el-input,
+.platform-ops-shell .platform-settings--identity .platform-settings__form .el-form-item__content > .el-textarea,
+.platform-ops-shell .platform-settings--stacked .platform-settings__form .el-form-item__content > .el-textarea {
+  max-width: min(100%, 40rem);
+  width: 100%;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__rows,
+.platform-ops-shell .platform-settings--stacked .platform-settings__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-row,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-row {
+  display: grid;
+  grid-template-columns: minmax(14rem, 20rem) minmax(0, 1fr);
+  gap: 12px 28px;
+  align-items: start;
+  margin: 0;
+  padding: 14px 24px;
+  border-bottom: 1px solid #e5e6eb;
+  transition: background-color 0.12s ease;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-row:hover,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-row:hover {
+  background-color: rgba(15, 23, 42, 0.08);
+}
+
+/* Select dropdown is teleported; match setting-row hover gray. */
+.platform-settings__select-dropdown .el-select-dropdown__item.is-hovering,
+.platform-settings__select-dropdown .el-select-dropdown__item.is-selected {
+  background-color: rgba(15, 23, 42, 0.08);
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-row:last-child,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-row:last-child,
+.platform-ops-shell .platform-settings--identity .platform-settings__rows > .platform-settings__inline-alert,
+.platform-ops-shell .platform-settings--stacked .platform-settings__rows > .platform-settings__inline-alert {
+  border-bottom: 0;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-label,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-label {
+  min-width: 0;
+  padding-top: 8px;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-label > span,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-label > span {
+  display: block;
+  color: var(--color-text-title, #1c1c26);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control {
+  min-width: 0;
+  max-width: 44rem;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control .el-input,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control .el-input,
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control .el-input-number,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control .el-input-number {
+  width: 100%;
+  --el-input-border-color: var(--el-input-hover-border-color, #c0c4cc);
+  --el-disabled-border-color: var(--el-input-hover-border-color, #c0c4cc);
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control .el-select,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control .el-select {
+  --el-border-color: var(--el-input-hover-border-color, #c0c4cc);
+  --el-select-disabled-border: var(--el-input-hover-border-color, #c0c4cc);
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control .el-input__inner::placeholder,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control .el-input__inner::placeholder,
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control .el-input__wrapper input::placeholder,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control .el-input__wrapper input::placeholder {
+  font-size: 13px;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control--compact,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control--compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: none;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control--compact > .el-input-number,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control--compact > .el-input-number {
+  width: 12rem;
+}
+
+.platform-ops-shell .platform-settings__unit {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control > .el-switch,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control > .el-switch,
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control > .el-tag,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control > .el-tag {
+  margin-top: 0;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control > .el-switch,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control > .el-switch {
+  --el-switch-off-color: #c0c4cc;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__setting-control .platform-settings__hint,
+.platform-ops-shell .platform-settings--stacked .platform-settings__setting-control .platform-settings__hint {
+  margin: 6px 0 0;
+  color: var(--color-text-secondary, #70707e);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__panel-head,
+.platform-ops-shell .platform-settings--stacked .platform-settings__panel-head {
+  margin: 0 0 0;
+  padding: 2px 24px 14px;
+  border-bottom: 1px solid #e5e6eb;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__panel-head h3,
+.platform-ops-shell .platform-settings--stacked .platform-settings__panel-head h3 {
+  margin: 0;
+  color: var(--color-text-title, #1c1c26);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__inline-alert,
+.platform-ops-shell .platform-settings--stacked .platform-settings__inline-alert {
+  margin: 8px 24px 0;
+}
+
+.platform-ops-shell .platform-settings--identity .platform-settings__actions,
+.platform-ops-shell .platform-settings--stacked .platform-settings__actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-top: auto;
+  padding: 12px 0 4px;
+  border-top: 1px solid #e5e6eb;
+  background: color-mix(in srgb, var(--el-bg-color, #fff) 92%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.platform-ops-shell .platform-settings--stacked .platform-settings__inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.platform-ops-shell .platform-settings--stacked .platform-settings__inline-actions .el-input {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.platform-ops-shell .platform-settings--stacked .platform-settings__hint--error {
+  color: var(--el-color-danger);
+}
+
+.platform-ops-shell .platform-settings--stacked .platform-settings__suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.9);
+  color: var(--color-text-secondary, #70707e);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.platform-ops-shell .platform-settings--stacked .platform-settings__suggestion code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-title, #1c1c26);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 12px;
+}
+
+.platform-ops-shell .platform-settings--stacked .platform-settings__mono {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 13px;
+}
+
+.platform-ops-shell .platform-settings--stacked .platform-settings__panel-body {
+  padding: 4px 24px 16px;
+}
+
+.platform-ops-shell .platform-settings--stacked .platform-settings__panel-body .platform-settings__hint {
+  margin: 0;
+}
+
 .platform-ops-shell .platform-settings__panel {
   max-width: 640px;
   padding: 20px 24px;
@@ -272,6 +551,31 @@
   border-radius: 12px;
   background: var(--el-bg-color, #fff);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.platform-ops-shell .platform-settings__panel-head {
+  margin-bottom: 16px;
+}
+
+.platform-ops-shell .platform-settings__panel-head h3 {
+  margin: 0;
+  color: var(--color-text-title, #1d2129);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.platform-ops-shell .platform-settings__panel-head p {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary, #64748b);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.platform-ops-shell .platform-settings__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
 }
 
 .platform-ops-shell .platform-settings__panel .platform-settings__form .el-form-item:last-child {
@@ -340,6 +644,42 @@
   font-size: 15px;
   font-weight: 600;
   color: var(--color-text-title, #1d2129);
+}
+
+@media (max-width: 720px) {
+  .platform-ops-shell .platform-settings__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-ops-shell .platform-settings--identity .platform-settings__setting-row,
+  .platform-ops-shell .platform-settings--stacked .platform-settings__setting-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .platform-ops-shell .platform-settings--identity .platform-settings__setting-label,
+  .platform-ops-shell .platform-settings--stacked .platform-settings__setting-label {
+    padding-top: 0;
+  }
+
+  .platform-ops-shell .platform-settings__toolbar {
+    flex-direction: column;
+  }
+
+  .platform-ops-shell .platform-settings__toolbar-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .platform-ops-shell .platform-settings--identity .platform-settings__actions,
+  .platform-ops-shell .platform-settings--stacked .platform-settings__actions {
+    justify-content: stretch;
+  }
+
+  .platform-ops-shell .platform-settings--identity .platform-settings__actions .el-button,
+  .platform-ops-shell .platform-settings--stacked .platform-settings__actions .el-button {
+    flex: 1 1 auto;
+  }
 }
 
 /* Environment read-only page */

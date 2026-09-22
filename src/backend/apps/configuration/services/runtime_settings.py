@@ -82,6 +82,18 @@ EMAIL_RUNTIME_KEYS = (
     KEY_EMAIL_FROM,
 )
 
+IDENTITY_RUNTIME_KEYS = (
+    KEY_IDENTITY_EMAIL_SIGNUP,
+    KEY_IDENTITY_EMAIL_CODE_LOGIN,
+    KEY_IDENTITY_PLATFORM_OPS,
+    KEY_IDENTITY_OPS_CIDRS,
+    KEY_IDENTITY_TURNSTILE_SITE,
+    KEY_IDENTITY_GOOGLE_CLIENT_ID,
+    KEY_IDENTITY_GOOGLE_OAUTH,
+    SECRET_KEY_TURNSTILE,
+    SECRET_KEY_GOOGLE,
+)
+
 
 @dataclass(frozen=True)
 class GoogleSocialAppSyncResult:
@@ -131,16 +143,38 @@ def _runtime_raw(key: str) -> tuple[str, bool]:
     return (row.value_text or "").strip(), True
 
 
-def get_source(key: str) -> str:
-    row = _row(key)
-    if row and (row.secret_ciphertext or (row.value_text or "").strip()):
+def has_runtime_override(key: str) -> bool:
+    """Whether a Runtime row exists (including explicit empty values)."""
+    return _row(key) is not None
+
+
+def get_source(
+    key: str,
+    *,
+    env_name: str = "",
+    settings_attr: str = "",
+) -> str:
+    """Return runtime | deployment | default for one PlatformRuntimeSetting key.
+
+    Matches resolve semantics: empty env / empty settings string = unset
+    (not Deployment). Boolean Django settings defaults alone do not count as
+    Deployment (they are indistinguishable from code Default).
+    """
+    if has_runtime_override(key):
         return "runtime"
-    return "env"
+    if env_name and _env_str(env_name):
+        return "deployment"
+    if settings_attr:
+        val = getattr(settings, settings_attr, None)
+        if isinstance(val, str) and val.strip():
+            return "deployment"
+    return "default"
 
 
 def get_str(key: str, *, env_name: str = "", settings_attr: str = "", default: str = "") -> str:
+    """Resolve str: Runtime (incl. explicit empty) > Deployment > Default."""
     raw, from_runtime = _runtime_raw(key)
-    if from_runtime and raw:
+    if from_runtime:
         return raw
     if env_name:
         val = _env_str(env_name)
@@ -154,8 +188,9 @@ def get_str(key: str, *, env_name: str = "", settings_attr: str = "", default: s
 
 
 def get_secret(key: str, *, env_name: str = "", settings_attr: str = "", default: str = "") -> str:
+    """Resolve secret: Runtime (incl. explicit empty) > Deployment > Default."""
     raw, from_runtime = _runtime_raw(key)
-    if from_runtime and raw:
+    if from_runtime:
         return raw
     if env_name:
         val = _env_str(env_name)
@@ -173,8 +208,9 @@ def get_bool(
     settings_attr: str = "",
     default: bool = False,
 ) -> bool:
+    """Resolve bool: Runtime (incl. empty→default) > Deployment > Default."""
     raw, from_runtime = _runtime_raw(key)
-    if from_runtime and raw != "":
+    if from_runtime:
         return _parse_bool(raw, default=default)
     if env_name:
         env_val = _env_str(env_name)
@@ -186,8 +222,11 @@ def get_bool(
 
 
 def get_int(key: str, *, env_name: str = "", settings_attr: str = "", default: int = 0) -> int:
+    """Resolve int: Runtime (incl. empty→default) > Deployment > Default."""
     raw, from_runtime = _runtime_raw(key)
-    if from_runtime and raw != "":
+    if from_runtime:
+        if raw == "":
+            return default
         try:
             return int(raw)
         except ValueError:
@@ -208,14 +247,18 @@ def get_int(key: str, *, env_name: str = "", settings_attr: str = "", default: i
 
 
 def get_str_list(key: str, *, settings_attr: str = "") -> list[str]:
+    """Resolve list: Runtime (incl. explicit empty→[]) > Deployment > Default."""
     raw, from_runtime = _runtime_raw(key)
-    if from_runtime and raw:
+    if from_runtime:
+        if not raw:
+            return []
         try:
             parsed = json.loads(raw)
             if isinstance(parsed, list):
                 return [str(x).strip() for x in parsed if str(x).strip()]
         except json.JSONDecodeError:
             return [part.strip() for part in raw.split(",") if part.strip()]
+        return []
     if settings_attr:
         val = getattr(settings, settings_attr, None)
         if isinstance(val, (list, tuple)):
@@ -225,8 +268,8 @@ def get_str_list(key: str, *, settings_attr: str = "") -> list[str]:
 
 def secret_configured(key: str, *, env_name: str = "", settings_attr: str = "") -> bool:
     row = _row(key)
-    if row and row.secret_ciphertext:
-        return True
+    if row is not None:
+        return bool(row.secret_ciphertext)
     if env_name and _env_str(env_name):
         return True
     if settings_attr and _settings_str(settings_attr):
@@ -521,7 +564,7 @@ def _deployment_email_has_intent(config: dict[str, Any]) -> bool:
 
 
 def email_settings_managed_by_deployment() -> bool:
-    """Whether process environment SMTP values own the effective configuration."""
+    """Whether Deployment SMTP is non-empty (UI hint only; does not change reads)."""
     return _deployment_email_has_intent(_settings_email_connection_kwargs())
 
 
@@ -529,14 +572,41 @@ def _runtime_email_configured() -> bool:
     return PlatformRuntimeSetting.objects.filter(key__in=EMAIL_RUNTIME_KEYS).exists()
 
 
+def clear_email_runtime_settings(*, user: AbstractBaseUser | None = None) -> None:
+    """Delete Runtime email overrides so Deployment → Default apply again."""
+    _ = user
+    PlatformRuntimeSetting.objects.filter(key__in=EMAIL_RUNTIME_KEYS).delete()
+    invalidate_runtime_settings_cache()
+
+
+def has_identity_runtime_override() -> bool:
+    """Whether any identity PlatformRuntimeSetting row exists."""
+    return PlatformRuntimeSetting.objects.filter(key__in=IDENTITY_RUNTIME_KEYS).exists()
+
+
+def clear_identity_runtime_settings(*, user: AbstractBaseUser | None = None) -> None:
+    """Delete Runtime identity overrides so Deployment → Default apply again."""
+    _ = user
+    PlatformRuntimeSetting.objects.filter(key__in=IDENTITY_RUNTIME_KEYS).delete()
+    invalidate_runtime_settings_cache()
+
+
 def email_connection_kwargs() -> dict[str, Any]:
+    """Effective SMTP config: Runtime > Deployment > Default (per field)."""
     environment = _settings_email_connection_kwargs()
     managed = _deployment_email_has_intent(environment)
-    config = environment if managed else _runtime_email_connection_kwargs()
-    source = "deployment" if managed else ("runtime" if _runtime_email_configured() else "default")
+    config = _runtime_email_connection_kwargs()
+    has_runtime = _runtime_email_configured()
+    if has_runtime:
+        source = "runtime"
+    elif managed:
+        source = "deployment"
+    else:
+        source = "default"
     return {
         **config,
         "source": source,
+        "has_runtime_override": has_runtime,
         "managed_by_deployment": managed,
         "configuration_error": validate_email_connection_config(config),
     }
@@ -590,9 +660,8 @@ def langfuse_base_url() -> str:
 
 
 def langfuse_enabled() -> bool:
-    if get_bool(KEY_AI_LANGFUSE_ENABLED, env_name="LANGFUSE_ENABLED", default=False):
-        return True
-    return _parse_bool(_env_str("LANGFUSE_ENABLED"), default=False)
+    """Resolve Langfuse enabled: Runtime > Deployment > Default."""
+    return get_bool(KEY_AI_LANGFUSE_ENABLED, env_name="LANGFUSE_ENABLED", default=False)
 
 
 def _google_site_domain() -> str:

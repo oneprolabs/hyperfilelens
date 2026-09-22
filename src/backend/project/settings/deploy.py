@@ -12,6 +12,8 @@ HFL_PLATFORM_OPS_ALLOWED_CIDRS = env_csv("HFL_PLATFORM_OPS_ALLOWED_CIDRS")
 HFL_TENANT_PORT = env_int("HFL_TENANT_PORT", 11443)
 HFL_ADMIN_PORT = env_int("HFL_ADMIN_PORT", 11444)
 HFL_ADMIN_PUBLIC_URL = env_str("HFL_ADMIN_PUBLIC_URL")
+# Optional dedicated external-access origin. Empty falls through to FRONTEND_URL.
+HFL_EXTERNAL_ACCESS_URL = env_str("HFL_EXTERNAL_ACCESS_URL")
 HFL_INSECURE_TLS = env_bool("HFL_INSECURE_TLS", default=True)
 
 # Community limits are enforced by Host.  Enterprise's QuotaProvider performs
