@@ -1309,6 +1309,7 @@ def record_gateway_install_status(
     status: str,
     error_message: str = "",
     phase: str = "install",
+    progress: dict[str, Any] | None = None,
 ) -> LensGatewayLink | None:
     """Update sidecar status when gateway lifecycle reports progress."""
     if gateway.role != NodeRole.GATEWAY:
@@ -1327,6 +1328,31 @@ def record_gateway_install_status(
         config["lifecycle_error"] = error_message[:2000]
     elif status in {"success", "running"}:
         config.pop("lifecycle_error", None)
+
+    if isinstance(progress, dict) and progress:
+        config["lifecycle_progress"] = {
+            key: progress[key]
+            for key in ("phase", "bytes_done", "bytes_total", "percent", "label")
+            if key in progress
+        }
+        from apps.node.services.internal.node_lifecycle import (
+            record_gateway_sidecar_upgrade_progress,
+        )
+
+        record_gateway_sidecar_upgrade_progress(gateway=gateway, progress=progress)
+    elif status == "running" and phase == "sidecar_upgrade":
+        from apps.node.services.internal.node_lifecycle import (
+            record_gateway_sidecar_upgrade_progress,
+        )
+
+        # Keep the upgrade stall window alive once the AI engine phase starts,
+        # even before the first byte-level download progress sample arrives.
+        record_gateway_sidecar_upgrade_progress(
+            gateway=gateway,
+            progress={"phase": "sidecar_upgrade", "label": "AI engine upgrade"},
+        )
+    elif status in {"success", "failed"}:
+        config.pop("lifecycle_progress", None)
 
     if status == "running":
         if phase == "sidecar_upgrade":
@@ -1349,6 +1375,8 @@ def record_gateway_install_status(
             if link.sl_lensnode_uuid and link.sidecar_status == LensGatewayLink.SidecarStatus.ERROR:
                 link.sidecar_status = LensGatewayLink.SidecarStatus.OFFLINE
         elif phase == "sidecar_upgrade":
+            # A successful host-side upgrade must not leave the Gateway stuck on
+            # OFFLINE when SourceLens already sees the LensNode online.
             link.sidecar_status = LensGatewayLink.SidecarStatus.OFFLINE
         elif phase == "sidecar_uninstall":
             link.sidecar_status = LensGatewayLink.SidecarStatus.NOT_DEPLOYED
@@ -1356,6 +1384,14 @@ def record_gateway_install_status(
 
     link.config_json = config
     link.save(update_fields=["sidecar_status", "config_json", "updated_at"])
+    if status == "success" and phase == "sidecar_upgrade" and link.sl_lensnode_uuid:
+        synced = sync_gateway_lensnode_status(link)
+        # Keep a successful install from becoming a hard error solely because
+        # the immediate SourceLens probe failed; later heartbeats can heal it.
+        if synced.sidecar_status == LensGatewayLink.SidecarStatus.ERROR:
+            synced.sidecar_status = LensGatewayLink.SidecarStatus.OFFLINE
+            synced.save(update_fields=["sidecar_status", "updated_at"])
+        return synced
     return link
 
 

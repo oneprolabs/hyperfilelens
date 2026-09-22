@@ -154,3 +154,50 @@ func TestUnixUserUpgradeScriptUsesUserLifecycleForRecovery(t *testing.T) {
 		t.Fatalf("generated user upgrade script is not valid bash: %v\n%s", err, out)
 	}
 }
+
+func TestUnixUpgradeScriptKeepsGatewaySidecarInAgentUpgrade(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "run-upgrade.sh")
+	err := writeUnixUpgradeScript(
+		filepath.Join(dir, "package.tar.gz"),
+		filepath.Join(dir, "installer", "install.sh"),
+		filepath.Join(dir, "logs"),
+		"system",
+		"",
+		"",
+		false,
+		scriptPath,
+	)
+	if err != nil {
+		t.Fatalf("writeUnixUpgradeScript: %v", err)
+	}
+	body, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	successIdx := strings.Index(text, `log " OK  " "Upgrade completed successfully."`)
+	sidecarIdx := strings.Index(text, "if ! run_gateway_sidecar_upgrade_if_needed")
+	clearIdx := strings.Index(text, `rm -rf "$PENDING_DIR"`)
+	if successIdx < 0 || clearIdx < 0 || sidecarIdx < 0 {
+		t.Fatal("upgrade script is missing success, sidecar, or pending clear steps")
+	}
+	if !(successIdx < sidecarIdx && sidecarIdx < clearIdx) {
+		t.Fatalf("expected success log, then sidecar upgrade, then pending clear")
+	}
+	successBranchStart := strings.Index(text, `if [[ "$rc" -eq 0 ]]; then`)
+	failBranchStart := strings.Index(text, `log "FAIL " "Upgrade failed (exit=${rc})`)
+	if successBranchStart < 0 || failBranchStart < 0 || successBranchStart >= failBranchStart {
+		t.Fatal("could not isolate the agent-success branch of the upgrade script")
+	}
+	successBranch := text[successBranchStart:failBranchStart]
+	if !strings.Contains(successBranch, `echo "failed" > "$PENDING_DIR/FAILED"`) {
+		t.Fatal("sidecar failure must still fail the whole Data Gateway upgrade")
+	}
+	if strings.Contains(successBranch, "AI engine status is reported separately") {
+		t.Fatal("sidecar failure must not be treated as a non-fatal Agent-only success")
+	}
+	if out, err := exec.Command("bash", "-n", scriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("generated upgrade script is not valid bash: %v\n%s", err, out)
+	}
+}

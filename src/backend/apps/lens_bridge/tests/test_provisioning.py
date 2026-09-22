@@ -9,6 +9,7 @@ from apps.lens_bridge.services import sl_client
 from apps.lens_bridge.services.provisioning import (
     _lensnode_matches_workspace,
     apply_gateway_lensnode_snapshot,
+    record_gateway_install_status,
 )
 
 
@@ -316,6 +317,57 @@ class SlLensnodeSnapshotTests(SimpleTestCase):
         apply_gateway_lensnode_snapshot(link, {"status": "online"})
 
         self.assertEqual(link.sidecar_status, LensGatewayLink.SidecarStatus.ONLINE)
+
+
+class RecordGatewayInstallStatusTests(SimpleTestCase):
+    @patch("apps.lens_bridge.services.provisioning.sync_gateway_lensnode_status")
+    @patch("apps.lens_bridge.models.LensGatewayLink.objects.filter")
+    def test_sidecar_upgrade_success_refreshes_live_status(self, mock_filter, mock_sync):
+        link = MagicMock()
+        link.sl_lensnode_uuid = "db6659c9-d5bc-46bd-a01b-11699428232d"
+        link.sidecar_status = LensGatewayLink.SidecarStatus.UPGRADING
+        link.config_json = {"lifecycle_status": "running"}
+        mock_filter.return_value.first.return_value = link
+        refreshed = MagicMock(sidecar_status=LensGatewayLink.SidecarStatus.ONLINE)
+        mock_sync.return_value = refreshed
+
+        org = MagicMock()
+        gateway = MagicMock(role="gateway")
+        result = record_gateway_install_status(
+            org=org,
+            gateway=gateway,
+            status="success",
+            phase="sidecar_upgrade",
+        )
+
+        self.assertIs(result, refreshed)
+        self.assertEqual(link.config_json["lifecycle_status"], "success")
+        self.assertEqual(link.config_json["lifecycle_phase"], "sidecar_upgrade")
+        mock_sync.assert_called_once_with(link)
+
+    @patch("apps.lens_bridge.services.provisioning.sync_gateway_lensnode_status")
+    @patch("apps.lens_bridge.models.LensGatewayLink.objects.filter")
+    def test_sidecar_upgrade_success_keeps_offline_when_sync_errors(
+        self, mock_filter, mock_sync
+    ):
+        link = MagicMock()
+        link.sl_lensnode_uuid = "db6659c9-d5bc-46bd-a01b-11699428232d"
+        link.sidecar_status = LensGatewayLink.SidecarStatus.UPGRADING
+        link.config_json = {}
+        mock_filter.return_value.first.return_value = link
+        errored = MagicMock(sidecar_status=LensGatewayLink.SidecarStatus.ERROR)
+        mock_sync.return_value = errored
+
+        result = record_gateway_install_status(
+            org=MagicMock(),
+            gateway=MagicMock(role="gateway"),
+            status="success",
+            phase="sidecar_upgrade",
+        )
+
+        self.assertIs(result, errored)
+        self.assertEqual(errored.sidecar_status, LensGatewayLink.SidecarStatus.OFFLINE)
+        errored.save.assert_called()
 
 
 class EnsureKsWorkspaceTests(SimpleTestCase):

@@ -291,25 +291,58 @@ migrate_legacy_layout() {
 }
 
 report_lifecycle_status() {
-	local phase=$1 status=$2 message=${3:-}
+	local phase=$1 status=$2 message=${3:-} progress_json=${4:-}
 	[[ -n "${HFL_API_BASE}" ]] || return 0
 	local payload
-	payload="$(python3 - "${HFL_NODE_ID}" "${phase}" "${status}" "${message}" <<'PY'
-import json, sys
+	payload="$(PROGRESS_JSON="${progress_json}" python3 - "${HFL_NODE_ID}" "${phase}" "${status}" "${message}" <<'PY'
+import json, os, sys
 node_id, phase, status, message = sys.argv[1:5]
 body = {"node_id": node_id, "phase": phase, "status": status}
 if message:
     body["error_message"] = message[:2000]
+raw = (os.environ.get("PROGRESS_JSON") or "").strip()
+if raw:
+    try:
+        progress = json.loads(raw)
+    except Exception:
+        progress = None
+    if isinstance(progress, dict) and progress:
+        body["progress"] = progress
 print(json.dumps(body))
 PY
 )"
-	curl "${curl_tls[@]}" -fsS -X POST \
+	# Bound the keepalive so a hung control plane cannot block download/load loops
+	# and starve later progress samples (which would trip the CP stall window).
+	curl "${curl_tls[@]}" -fsS --connect-timeout 5 --max-time 10 -X POST \
 		-H "Content-Type: application/json" \
 		-H "X-Org-Key: ${HFL_ORG_KEY}" \
 		-H "X-Node-Token: ${HFL_NODE_TOKEN}" \
 		-d "${payload}" \
 		"${HFL_API_BASE%/}/api/v1/node/enrollment/gateway-install-status" >/dev/null \
 		|| hfl_log "warning: failed to report lifecycle status (${phase}/${status})"
+}
+
+report_sidecar_download_progress() {
+	local label=$1 bytes=$2 total=$3
+	local percent=0 progress
+	[[ -n "${HFL_API_BASE}" ]] || return 0
+	if ((total > 0)); then
+		percent=$((bytes * 100 / total))
+		((percent > 100)) && percent=100
+	fi
+	progress="$(python3 - "${label}" "${bytes}" "${total}" "${percent}" <<'PY'
+import json, sys
+label, bytes_done, bytes_total, percent = sys.argv[1:5]
+print(json.dumps({
+    "phase": "download",
+    "label": label,
+    "bytes_done": int(bytes_done),
+    "bytes_total": int(bytes_total),
+    "percent": float(percent),
+}))
+PY
+)"
+	report_lifecycle_status "sidecar_upgrade" "running" "" "${progress}"
 }
 
 ensure_docker_ready() {
@@ -388,6 +421,7 @@ compose_down_sidecar() {
 download_bootstrap_file() {
 	local name=$1 dest=$2 partial="${2}.part"
 	local label="${name}" attempt curl_rc delay headers curl_pid started elapsed bytes total last_report
+	local last_api_report=0 last_api_bytes=0
 	case "${name}" in
 		"${LENSNODE_IMAGE_ARCHIVE}") label="AI engine image bundle" ;;
 		"${SIDECAR_INSTALL_SCRIPT}") label="AI engine installer" ;;
@@ -401,7 +435,7 @@ download_bootstrap_file() {
 		curl_rc=0
 		headers="${partial}.headers.$$"
 		rm -f "${headers}"
-		started=${SECONDS}; last_report=0
+		started=${SECONDS}; last_report=0; last_api_report=0; last_api_bytes=0
 		curl "${curl_tls[@]}" \
 			--fail --silent --show-error --location \
 			--continue-at - \
@@ -423,6 +457,13 @@ download_bootstrap_file() {
 				fi
 				last_report=${elapsed}
 			fi
+			# Keep the control-plane upgrade stall window alive while the AI
+			# engine image download is still advancing (every 30s or 10 MiB).
+			if ((elapsed - last_api_report >= 30 || bytes - last_api_bytes >= 10485760)); then
+				report_sidecar_download_progress "${label}" "${bytes}" "${total}"
+				last_api_report=${elapsed}
+				last_api_bytes=${bytes}
+			fi
 			sleep 1
 		done
 		if wait "${curl_pid}"; then
@@ -443,6 +484,7 @@ download_bootstrap_file() {
 				else
 					printf '%s\n' "$(hfl_download_progress_line "${label}" "${bytes}" "${total}" "${elapsed}")"
 				fi
+				report_sidecar_download_progress "${label}" "${bytes}" "${total}"
 				rm -f "${headers}"
 				mv -f "${partial}" "${dest}"
 				hfl_log "Downloaded ${label} ($(hfl_format_bytes "${bytes}"))."
@@ -479,9 +521,44 @@ lensnode_image_supports_insecure_tls() {
 load_lensnode_image() {
 	local work_dir=$1 ref upstream_ref compatibility_id candidate candidate_id
 	local archive="${work_dir}/${LENSNODE_IMAGE_ARCHIVE}"
+	local load_pid load_rc=0 load_started last_hb heartbeat_secs progress
 	download_bootstrap_file "${LENSNODE_IMAGE_ARCHIVE}" "${archive}"
 	hfl_log "Loading AI engine container image."
-	docker load -i "${archive}"
+	report_lifecycle_status "sidecar_upgrade" "running" "" \
+		'{"phase":"load_image","label":"AI engine image load","bytes_done":0,"percent":100}'
+	# docker load can take several minutes with no stdout; keep the control-plane
+	# stall window alive with advancing heartbeat samples.
+	docker load -i "${archive}" &
+	load_pid=$!
+	load_started=${SECONDS}
+	last_hb=${SECONDS}
+	while kill -0 "${load_pid}" 2>/dev/null; do
+		if ((SECONDS - last_hb >= 30)); then
+			heartbeat_secs=$((SECONDS - load_started))
+			progress="$(python3 - "${heartbeat_secs}" <<'PY'
+import json, sys
+secs = int(sys.argv[1])
+print(json.dumps({
+    "phase": "load_image",
+    "label": "AI engine image load",
+    "bytes_done": secs,
+    "percent": 100,
+}))
+PY
+)"
+			report_lifecycle_status "sidecar_upgrade" "running" "" "${progress}"
+			last_hb=${SECONDS}
+		fi
+		sleep 1
+	done
+	if wait "${load_pid}"; then
+		load_rc=0
+	else
+		load_rc=$?
+	fi
+	((load_rc == 0)) || hfl_fail "docker load failed for AI engine image (exit=${load_rc})" 5
+	report_lifecycle_status "sidecar_upgrade" "running" "" \
+		"{\"phase\":\"load_image\",\"label\":\"AI engine image load\",\"bytes_done\":$((SECONDS - load_started)),\"percent\":100}"
 	compatibility_id="$(docker image inspect "${DEFAULT_LENSNODE_IMAGE}" \
 		--format '{{.Id}}' 2>/dev/null || true)"
 	upstream_ref=""
@@ -519,14 +596,50 @@ load_lensnode_image() {
 
 run_sidecar_install_script() {
 	local script="${1:-}"
+	local install_pid install_rc=0 install_started last_hb heartbeat_secs progress
 	[[ -n "${script}" && -f "${script}" ]] || hfl_fail "sidecar install script missing" 3
 	[[ -f "${LENS_ENV_FILE}" ]] || hfl_fail "missing ${LENS_ENV_FILE}" 2
+	report_lifecycle_status "sidecar_upgrade" "running" "" \
+		'{"phase":"install_script","label":"AI engine installer","bytes_done":0,"percent":100}'
+	# Sidecar installer / compose startup can exceed the CP stall window; keep
+	# heartbeats advancing while it runs.
 	HFL_LENS_ENV_FILE="${LENS_ENV_FILE}" \
 	HFL_GATEWAY_COMPOSE_DIR="${COMPOSE_DIR}" \
 	HFL_AGENT_ROOT="${AGENT_ROOT}" \
 		HFL_INSECURE_TLS="${HFL_INSECURE_TLS}" \
 		LENSNODE_IMAGE="${RESOLVED_LENSNODE_IMAGE}" \
-		bash "${script}"
+		bash "${script}" &
+	install_pid=$!
+	install_started=${SECONDS}
+	last_hb=${SECONDS}
+	while kill -0 "${install_pid}" 2>/dev/null; do
+		if ((SECONDS - last_hb >= 30)); then
+			heartbeat_secs=$((SECONDS - install_started))
+			progress="$(python3 - "${heartbeat_secs}" <<'PY'
+import json, sys
+secs = int(sys.argv[1])
+print(json.dumps({
+    "phase": "install_script",
+    "label": "AI engine installer",
+    "bytes_done": secs,
+    "percent": 100,
+}))
+PY
+)"
+			report_lifecycle_status "sidecar_upgrade" "running" "" "${progress}"
+			last_hb=${SECONDS}
+		fi
+		sleep 1
+	done
+	if wait "${install_pid}"; then
+		install_rc=0
+	else
+		install_rc=$?
+	fi
+	((install_rc == 0)) || return "${install_rc}"
+	report_lifecycle_status "sidecar_upgrade" "running" "" \
+		"{\"phase\":\"install_script\",\"label\":\"AI engine installer\",\"bytes_done\":$((SECONDS - install_started)),\"percent\":100}"
+	return 0
 }
 
 cmd_upgrade_sidecar() {
