@@ -2,11 +2,28 @@ from __future__ import annotations
 
 import json
 
-from django.core.mail import EmailMessage, get_connection, send_mail
+from django.core.mail import EmailMessage, get_connection
 
 from apps.notification.channels.base import BaseChannel
 from apps.notification.exceptions import ChannelConfigError
 from apps.notification.models import NotificationChannel, NotificationDelivery
+
+
+def _connection_from_platform_email():
+    """Django mail connection using Runtime > Deployment > Default SMTP."""
+    from apps.configuration.services.runtime_settings import email_connection_kwargs
+
+    cfg = email_connection_kwargs()
+    connection = get_connection(
+        backend=cfg["backend"],
+        host=cfg["host"] or None,
+        port=cfg["port"] or None,
+        username=cfg["username"] or None,
+        password=cfg["password"] or None,
+        use_tls=cfg["use_tls"],
+        use_ssl=cfg["use_ssl"],
+    )
+    return connection, cfg
 
 
 class EmailChannel(BaseChannel):
@@ -46,20 +63,17 @@ class EmailChannel(BaseChannel):
                 use_tls=cfg.get("use_tls", True),
                 use_ssl=cfg.get("use_ssl", False),
             )
-            sent = EmailMessage(
-                subject=subject,
-                body=str(body),
-                from_email=from_email,
-                to=[str(x) for x in to],
-                connection=connection,
-            ).send()
         else:
-            sent = send_mail(
-                subject=subject,
-                message=str(body),
-                from_email=from_email,
-                recipient_list=[str(x) for x in to],
-                fail_silently=False,
-            )
+            connection, platform_cfg = _connection_from_platform_email()
+            if not from_email:
+                from_email = platform_cfg.get("from_email") or None
+
+        sent = EmailMessage(
+            subject=subject,
+            body=str(body),
+            from_email=from_email,
+            to=[str(x) for x in to],
+            connection=connection,
+        ).send()
         if sent <= 0:
             raise RuntimeError("send_mail returned 0")

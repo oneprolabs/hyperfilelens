@@ -146,6 +146,26 @@ class PlatformIdentitySettingsEnterpriseTests(TestCase):
         self.assertTrue(response.data["enterprise_identity_enabled"])
         self.assertTrue(response.data["email_signup_enabled"])
 
+    def test_clear_runtime_restores_deployment_defaults(self):
+        response = self.client.patch(
+            self.path,
+            {"email_signup_enabled": True},
+            format="json",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["has_runtime_override"])
+        self.assertTrue(response.data["email_signup_enabled"])
+
+        response = self.client.patch(
+            self.path,
+            {"clear_runtime": True},
+            format="json",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["has_runtime_override"])
+        self.assertFalse(response.data["email_signup_enabled"])
 
 class PlatformEmailSettingsCommunityTests(TestCase):
     path = "/api/v1/instance-settings/email"

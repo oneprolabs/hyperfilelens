@@ -2,6 +2,9 @@
 Configuration read API (platform-wide).
 
 Other apps should call ``get_config`` here — not query ``GlobalConfig`` directly.
+
+Resolution: Tenant → Runtime (active GlobalConfig) → Deployment → Default.
+Explicit empty Runtime values win and do not fall through.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from apps.configuration.selectors.internal.cache import (
     get_cache_version,
     invalidate_entry,
 )
+from apps.configuration.selectors.internal.deployment import resolve_deployment_value
 from apps.configuration.selectors.internal.resolver import (
     resolve_global_value,
     resolve_tenant_value,
@@ -40,10 +44,11 @@ def get_config(
     cache_ttl_seconds: int | None = None,
 ) -> Any:
     """
-    Resolve a config value: tenant override → global row → ``default``.
+    Resolve a config value: tenant → runtime → deployment → ``default``.
 
-    Global values are cached under the global slot only (never under a tenant
-    slot) so updating global does not leave stale data in per-tenant keys.
+    Runtime is an active GlobalConfig row (including explicit empty values).
+    Deployment comes from the key registry (env / settings). Empty deployment
+    values are treated as unset.
     """
     config_key = normalize_key(key)
     if not config_key:
@@ -94,7 +99,55 @@ def get_config(
             cache.set(global_cache_key, global_value, cache_ttl_seconds)
         return global_value
 
+    deployment_value = resolve_deployment_value(config_key=config_key)
+    if deployment_value is not NOT_FOUND:
+        return deployment_value
+
     return default
+
+
+def get_config_source(
+    key: str,
+    *,
+    tenant_key: str | None = None,
+) -> str:
+    """Return tenant | runtime | deployment | default for ``key``."""
+    config_key = normalize_key(key)
+    if not config_key:
+        return "default"
+
+    if tenant_key:
+        tenant = str(tenant_key).strip()
+        if tenant:
+            tenant_value = resolve_tenant_value(
+                config_key=config_key,
+                tenant_key=tenant,
+            )
+            if tenant_value is not NOT_FOUND:
+                return "tenant"
+
+    if resolve_global_value(config_key=config_key) is not NOT_FOUND:
+        return "runtime"
+
+    if resolve_deployment_value(config_key=config_key) is not NOT_FOUND:
+        return "deployment"
+
+    return "default"
+
+
+def has_runtime_config(key: str, *, tenant_key: str | None = None) -> bool:
+    """Whether an active Runtime (or tenant) override exists, including empty."""
+    config_key = normalize_key(key)
+    if not config_key:
+        return False
+    if tenant_key:
+        tenant = str(tenant_key).strip()
+        if tenant and resolve_tenant_value(
+            config_key=config_key,
+            tenant_key=tenant,
+        ) is not NOT_FOUND:
+            return True
+    return resolve_global_value(config_key=config_key) is not NOT_FOUND
 
 
 def list_registry_specs() -> tuple[ConfigKeySpec, ...]:

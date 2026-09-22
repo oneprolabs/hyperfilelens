@@ -81,8 +81,27 @@ class PlatformEmailSettingsTests(TestCase):
         self.assertTrue(response.data["delivery_configured"])
         self.assertFalse(response.data["managed_by_deployment"])
         self.assertEqual(response.data["source"], "runtime")
+        self.assertEqual(response.data["backend"], SMTP_EMAIL_BACKEND)
         self.assertTrue(response.data["password_configured"])
         self.assertNotIn("runtime-secret", str(response.data))
+
+    def test_console_save_forces_smtp_backend_and_ignores_client_backend(self):
+        response = self._patch(
+            {
+                "backend": CONSOLE_EMAIL_BACKEND,
+                "host": "smtp.example.com",
+                "port": 587,
+                "use_tls": True,
+                "use_ssl": False,
+                "host_user": "mailer@example.com",
+                "password": "runtime-secret",
+                "from_email": "HyperFileLens <mailer@example.com>",
+            }
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["backend"], SMTP_EMAIL_BACKEND)
+        self.assertTrue(response.data["delivery_configured"])
 
     def test_partial_runtime_smtp_configuration_is_rejected(self):
         response = self._patch(
@@ -111,18 +130,36 @@ class PlatformEmailSettingsTests(TestCase):
         EMAIL_HOST_PASSWORD="deployment-secret",
         DEFAULT_FROM_EMAIL="HyperFileLens <mailer@example.com>",
     )
-    def test_deployment_managed_smtp_is_read_only(self):
+    def test_deployment_smtp_is_hint_and_runtime_can_override(self):
         response = self._get()
         self.assertTrue(response.data["delivery_configured"])
         self.assertTrue(response.data["managed_by_deployment"])
         self.assertEqual(response.data["source"], "deployment")
 
-        response = self._patch({"host": "other.example.com"})
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
-        self.assertEqual(
-            response.data["code"],
-            "EMAIL_SETTINGS_MANAGED_BY_DEPLOYMENT",
+        response = self._patch(
+            {
+                "backend": SMTP_EMAIL_BACKEND,
+                "host": "runtime.example.com",
+                "port": 465,
+                "use_tls": False,
+                "use_ssl": True,
+                "host_user": "mailer@example.com",
+                "password": "runtime-secret",
+                "from_email": "HyperFileLens <mailer@example.com>",
+            }
         )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["source"], "runtime")
+        self.assertEqual(response.data["host"], "runtime.example.com")
+        self.assertTrue(response.data["managed_by_deployment"])
+        self.assertTrue(response.data["has_runtime_override"])
+
+        response = self._patch({"clear_runtime": True})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["source"], "deployment")
+        self.assertEqual(response.data["host"], "smtp.example.com")
+        self.assertFalse(response.data["has_runtime_override"])
+        self.assertTrue(response.data["managed_by_deployment"])
 
     @override_settings(
         EMAIL_BACKEND=SMTP_EMAIL_BACKEND,

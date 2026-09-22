@@ -94,6 +94,7 @@ class ExternalAccessSettingsTests(TestCase):
             "https://192.168.0.89:11443",
         )
         self.assertEqual(response.data["source"], "deployment")
+        self.assertFalse(response.data["has_runtime_override"])
         self.assertEqual(response.data["suggested_url"], "https://113.44.213.250:11443")
         self.assertTrue(response.data["editable"])
 
@@ -104,12 +105,38 @@ class ExternalAccessSettingsTests(TestCase):
         self.assertEqual(response.data["external_access_url"], "https://hfl.example.com")
         self.assertEqual(response.data["effective_url"], "https://hfl.example.com")
         self.assertEqual(response.data["source"], "runtime")
+        self.assertTrue(response.data["has_runtime_override"])
         self.assertEqual(effective_external_access_url(), "https://hfl.example.com")
 
-    def test_empty_patch_restores_installation_default(self):
+    def test_empty_patch_sets_explicit_empty_runtime(self):
         self._patch("https://hfl.example.com")
 
         response = self._patch("")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["source"], "runtime")
+        self.assertEqual(response.data["external_access_url"], "")
+        self.assertEqual(response.data["effective_url"], "")
+        self.assertTrue(
+            GlobalConfig.objects.filter(
+                key=CONFIG_KEY_EXTERNAL_ACCESS_URL,
+                scope=GlobalConfig.Scope.GLOBAL,
+                tenant_key="",
+                is_active=True,
+            ).exists()
+        )
+
+    def test_null_patch_clears_runtime_override(self):
+        self._patch("https://hfl.example.com")
+
+        response = self.client.patch(
+            self.path,
+            {"external_access_url": None},
+            format="json",
+            HTTP_HOST="113.44.213.250:11444",
+            HTTP_X_FORWARDED_PROTO="https",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["source"], "deployment")
@@ -171,7 +198,7 @@ class ExternalAccessSettingsTests(TestCase):
                 self.assertEqual(configured_external_access_url(), "")
 
     def test_patch_rejects_non_string_and_zero_port(self):
-        for value in (None, 42, "https://hfl.example.com:0"):
+        for value in (42, "https://hfl.example.com:0"):
             with self.subTest(value=value):
                 response = self._patch(value)
 
@@ -200,6 +227,11 @@ class ExternalAccessSettingsTests(TestCase):
                 effective_external_access_url(),
                 "https://192.168.0.89:11443",
             )
+            response = self._get()
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(response.data["source"], "deployment")
+            self.assertTrue(response.data["has_runtime_override"])
+            self.assertEqual(response.data["effective_url"], "https://192.168.0.89:11443")
 
     def test_cli_uses_the_same_configuration_service(self):
         call_command(
@@ -253,7 +285,14 @@ class ExternalAccessSettingsTests(TestCase):
     def test_enterprise_patch_can_restore_deployment_default(self):
         with patch.dict(os.environ, {"HFL_EDITION": "enterprise"}):
             self._patch("https://enterprise.example.com")
-            response = self._patch("")
+            response = self.client.patch(
+                self.path,
+                {"external_access_url": None},
+                format="json",
+                HTTP_HOST="113.44.213.250:11444",
+                HTTP_X_FORWARDED_PROTO="https",
+                HTTP_X_HFL_SITE_ROLE="ops",
+            )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["external_access_url"], "")

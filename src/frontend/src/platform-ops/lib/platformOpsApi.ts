@@ -24,6 +24,7 @@ export interface PlatformEmailSettings {
   delivery_configured: boolean
   configuration_error: string
   managed_by_deployment: boolean
+  has_runtime_override?: boolean
   source: 'deployment' | 'runtime' | 'default'
   sources?: Record<string, string>
 }
@@ -43,11 +44,12 @@ export interface PlatformIdentitySettings {
   google_client_secret_configured: boolean
   google_oauth_enabled: boolean
   google_oauth_redirect_uri: string
+  has_runtime_override?: boolean
   iam: {
     registration_verification_code_minutes: number
-    registration_token_expiry_hours: number
+    registration_token_expiry_minutes: number
     password_reset_verification_code_minutes: number
-    password_reset_timeout_seconds: number
+    password_reset_timeout_minutes: number
     login_verification_code_minutes: number
   }
 }
@@ -64,7 +66,8 @@ export interface PlatformEnvironmentSettings {
 export interface PlatformExternalAccessSettings {
   external_access_url: string
   effective_url: string
-  source: 'deployment' | 'runtime'
+  source: 'deployment' | 'runtime' | 'default'
+  has_runtime_override?: boolean
   suggested_url: string
   editable: boolean
 }
@@ -129,7 +132,9 @@ export async function fetchPlatformExternalAccess() {
   )
 }
 
-export async function patchPlatformExternalAccess(externalAccessUrl: string) {
+export async function patchPlatformExternalAccess(
+  externalAccessUrl: string | null,
+) {
   return send<PlatformExternalAccessSettings>(
     '/api/v1/platform-ops/platform/settings/external-access',
     {

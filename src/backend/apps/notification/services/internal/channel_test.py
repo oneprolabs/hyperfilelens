@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from django.core.mail import EmailMessage, send_mail
+from django.core.mail import EmailMessage
 
 from apps.notification.constants import ChannelType
 from apps.notification.models import NotificationChannel
@@ -27,6 +27,7 @@ def test_channel(channel: NotificationChannel) -> dict:
         smtp_host = cfg.get("smtp_host")
         smtp_port = cfg.get("smtp_port")
 
+        from_email = cfg.get("from_email") or None
         if smtp_host and smtp_port:
             from django.core.mail import get_connection
 
@@ -38,22 +39,21 @@ def test_channel(channel: NotificationChannel) -> dict:
                 use_tls=cfg.get("use_tls", True),
                 use_ssl=cfg.get("use_ssl", False),
             )
-            email = EmailMessage(
-                subject=subject,
-                body="This is a test notification from HyperFileLens.",
-                from_email=cfg.get("from_email"),
-                to=recipients,
-                connection=connection,
-            )
-            email.send()
         else:
-            send_mail(
-                subject=subject,
-                message="This is a test notification from HyperFileLens.",
-                from_email=cfg.get("from_email") or None,
-                recipient_list=[str(x) for x in recipients],
-                fail_silently=False,
-            )
+            from apps.notification.channels.email import _connection_from_platform_email
+
+            connection, platform_cfg = _connection_from_platform_email()
+            if not from_email:
+                from_email = platform_cfg.get("from_email") or None
+
+        email = EmailMessage(
+            subject=subject,
+            body="This is a test notification from HyperFileLens.",
+            from_email=from_email,
+            to=recipients,
+            connection=connection,
+        )
+        email.send()
         return {"status": "success"}
 
     if channel_type in (ChannelType.WEBHOOK, ChannelType.DINGTALK, ChannelType.WECOM):

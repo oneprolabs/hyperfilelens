@@ -19,7 +19,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         try:
-            value = set_external_access_url("" if options["clear"] else options["url"])
+            value = set_external_access_url(
+                "",
+                clear=True,
+            ) if options["clear"] else set_external_access_url(options["url"])
         except ValueError as exc:
             raise CommandError(str(exc)) from exc
         if value:

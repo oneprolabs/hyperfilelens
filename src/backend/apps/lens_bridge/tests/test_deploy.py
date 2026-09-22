@@ -63,13 +63,22 @@ class LensDeployUrlTest(unittest.TestCase):
             "https://lens-console.example.com/admin",
         )
 
+    @patch(
+        "apps.configuration.selectors.interface.has_runtime_config",
+        return_value=False,
+    )
+    @patch(
+        "apps.instance_settings.services.external_access.deployment_external_access_url",
+        return_value="https://console.example.com",
+    )
     @patch("apps.lens_bridge.deploy.env_str")
-    def test_lens_gateway_base_url_defaults_to_frontend_sourcelens(self, env_str):
+    def test_lens_gateway_base_url_defaults_to_frontend_sourcelens(
+        self, env_str, _deployment_url, _has_runtime
+    ):
         def side_effect(key, default=""):
             values = {
                 "SOURCELENS_MODE": "bundled",
                 "LENS_GATEWAY_BASE_URL": "",
-                "FRONTEND_URL": "https://console.example.com",
                 "LENS_BASE_URL": "http://host.docker.internal:20080",
             }
             return values.get(key, default)
@@ -80,13 +89,46 @@ class LensDeployUrlTest(unittest.TestCase):
             "https://console.example.com/sourcelens",
         )
 
+    @patch(
+        "apps.configuration.selectors.interface.has_runtime_config",
+        return_value=False,
+    )
+    @patch(
+        "apps.instance_settings.services.external_access.deployment_external_access_url",
+        return_value="https://external.example.com",
+    )
     @patch("apps.lens_bridge.deploy.env_str")
-    def test_lens_gateway_base_url_rewrites_docker_internal(self, env_str):
+    def test_lens_gateway_prefers_hfl_external_access_over_lens_base(
+        self, env_str, _deployment_url, _has_runtime
+    ):
+        """Deployment external-access chain beats docker-internal LENS_BASE_URL."""
+        values = {
+            "SOURCELENS_MODE": "bundled",
+            "LENS_GATEWAY_BASE_URL": "",
+            "LENS_BASE_URL": "http://host.docker.internal:20080",
+        }
+        env_str.side_effect = lambda key, default="": values.get(key, default)
+        self.assertEqual(
+            deploy.lens_gateway_base_url(),
+            "https://external.example.com/sourcelens",
+        )
+
+    @patch(
+        "apps.configuration.selectors.interface.has_runtime_config",
+        return_value=False,
+    )
+    @patch(
+        "apps.instance_settings.services.external_access.deployment_external_access_url",
+        return_value="",
+    )
+    @patch("apps.lens_bridge.deploy.env_str")
+    def test_lens_gateway_base_url_rewrites_docker_internal(
+        self, env_str, _deployment_url, _has_runtime
+    ):
         def side_effect(key, default=""):
             values = {
                 "SOURCELENS_MODE": "bundled",
                 "LENS_GATEWAY_BASE_URL": "",
-                "FRONTEND_URL": "",
                 "LENS_BASE_URL": "http://host.docker.internal:20080",
             }
             return values.get(key, default)
@@ -109,6 +151,10 @@ class LensDeployUrlTest(unittest.TestCase):
         self.assertEqual(deploy.lens_gateway_base_url(), "http://192.168.1.10:20080")
 
     @patch(
+        "apps.configuration.selectors.interface.has_runtime_config",
+        return_value=True,
+    )
+    @patch(
         "apps.instance_settings.services.external_access.configured_external_access_url",
         return_value="https://public.example.com:11443",
     )
@@ -117,6 +163,7 @@ class LensDeployUrlTest(unittest.TestCase):
         self,
         env_str,
         _configured_url,
+        _has_runtime,
     ):
         values = {
             "SOURCELENS_MODE": "bundled",
@@ -129,13 +176,121 @@ class LensDeployUrlTest(unittest.TestCase):
             "https://public.example.com:11443/sourcelens",
         )
 
+    @patch(
+        "apps.configuration.selectors.interface.has_runtime_config",
+        return_value=True,
+    )
+    @patch(
+        "apps.configuration.selectors.internal.resolver.resolve_global_value",
+        return_value="",
+    )
+    @patch(
+        "apps.instance_settings.services.external_access.configured_external_access_url",
+        return_value="",
+    )
     @patch("apps.lens_bridge.deploy.env_str")
-    def test_lens_gateway_base_url_passthrough_localhost(self, env_str):
+    def test_explicit_empty_external_access_skips_frontend_fallback(
+        self,
+        env_str,
+        _configured_url,
+        _resolve_global,
+        _has_runtime,
+    ):
+        """Runtime empty must not fall through to FRONTEND_URL for gateways."""
+        values = {
+            "SOURCELENS_MODE": "bundled",
+            "LENS_GATEWAY_BASE_URL": "",
+            "FRONTEND_URL": "https://console.example.com",
+            "LENS_BASE_URL": "http://host.docker.internal:20080",
+        }
+        env_str.side_effect = lambda key, default="": values.get(key, default)
+
+        self.assertEqual(
+            deploy.lens_gateway_base_url(),
+            "http://127.0.0.1:20080",
+        )
+
+    @patch(
+        "apps.configuration.selectors.interface.has_runtime_config",
+        return_value=True,
+    )
+    @patch(
+        "apps.configuration.selectors.internal.resolver.resolve_global_value",
+        return_value="http://insecure.example.com",
+    )
+    @patch(
+        "apps.instance_settings.services.external_access.configured_external_access_url",
+        return_value="",
+    )
+    @patch(
+        "apps.instance_settings.services.external_access.deployment_external_access_url",
+        return_value="https://deploy.example.com",
+    )
+    @patch("apps.lens_bridge.deploy.env_str")
+    def test_policy_rejected_runtime_falls_back_to_deployment(
+        self,
+        env_str,
+        _deployment_url,
+        _configured_url,
+        _resolve_global,
+        _has_runtime,
+    ):
+        """Non-empty Runtime rejected by policy still uses Deployment origin."""
+        values = {
+            "SOURCELENS_MODE": "bundled",
+            "LENS_GATEWAY_BASE_URL": "",
+            "LENS_BASE_URL": "http://host.docker.internal:20080",
+        }
+        env_str.side_effect = lambda key, default="": values.get(key, default)
+
+        self.assertEqual(
+            deploy.lens_gateway_base_url(),
+            "https://deploy.example.com/sourcelens",
+        )
+
+    @patch(
+        "apps.configuration.selectors.interface.has_runtime_config",
+        return_value=True,
+    )
+    @patch(
+        "apps.instance_settings.services.external_access.configured_external_access_url",
+        return_value="",
+    )
+    @patch("apps.lens_bridge.deploy.env_str")
+    def test_explicit_empty_still_allows_dedicated_gateway_url(
+        self,
+        env_str,
+        _configured_url,
+        _has_runtime,
+    ):
+        values = {
+            "SOURCELENS_MODE": "bundled",
+            "LENS_GATEWAY_BASE_URL": "http://192.168.1.10:20080",
+            "FRONTEND_URL": "https://console.example.com",
+        }
+        env_str.side_effect = lambda key, default="": values.get(key, default)
+
+        self.assertEqual(
+            deploy.lens_gateway_base_url(),
+            "http://192.168.1.10:20080",
+        )
+
+    @patch(
+        "apps.configuration.selectors.interface.has_runtime_config",
+        return_value=False,
+    )
+    @patch(
+        "apps.instance_settings.services.external_access.deployment_external_access_url",
+        return_value="",
+    )
+    @patch("apps.lens_bridge.deploy.env_str")
+    def test_lens_gateway_base_url_passthrough_localhost(
+        self, env_str, _deployment_url, _has_runtime
+    ):
         def side_effect(key, default=""):
             values = {
                 "SOURCELENS_MODE": "bundled",
                 "LENS_GATEWAY_BASE_URL": "",
-                "FRONTEND_URL": "",
                 "LENS_BASE_URL": "http://localhost:20080",
             }
             return values.get(key, default)

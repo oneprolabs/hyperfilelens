@@ -13,14 +13,15 @@ from django.utils import timezone
 
 from apps.configuration.models import GlobalConfig
 from apps.configuration.selectors.interface import get_config, invalidate_config_cache
+from apps.configuration.services.interface import delete_global_config
 from apps.configuration.services.internal.registry import registry_by_key
 from apps.configuration.services.internal.validation import validate_config_key
 from apps.iam import conf as iam_conf
 from apps.iam.config import (
     get_login_verification_code_minutes,
-    get_password_reset_timeout_seconds,
+    get_password_reset_timeout_minutes,
     get_password_reset_verification_code_minutes,
-    get_registration_token_expiry_hours,
+    get_registration_token_expiry_minutes,
     get_registration_verification_code_minutes,
 )
 from apps.insight import conf as insight_conf
@@ -29,6 +30,7 @@ from apps.instance_settings.services.external_access import (
     configured_external_access_url,
     effective_external_access_url,
     external_access_source,
+    has_external_access_runtime_override,
     set_external_access_url,
     suggested_external_access_url,
 )
@@ -64,18 +66,21 @@ from apps.configuration.services.runtime_settings import (
     SECRET_KEY_LANGFUSE_SECRET,
     SECRET_KEY_OPENAI,
     SECRET_KEY_TURNSTILE,
+    SMTP_EMAIL_BACKEND,
+    clear_email_runtime_settings,
+    clear_identity_runtime_settings,
     email_code_login_enabled,
-    email_signup_enabled,
-    password_reset_available,
     email_connection_kwargs,
-    email_settings_managed_by_deployment,
+    email_signup_enabled,
     gemini_api_key,
     get_source,
     google_client_id,
     google_oauth_enabled,
+    has_identity_runtime_override,
     mask_secret,
     openai_api_base,
     openai_api_key,
+    password_reset_available,
     platform_ops_allowed_cidrs,
     platform_ops_enabled,
     secret_configured,
@@ -83,8 +88,8 @@ from apps.configuration.services.runtime_settings import (
     set_str_list,
     set_value,
     sync_google_social_app,
-    turnstile_site_key,
     turnstile_enabled,
+    turnstile_site_key,
     validate_email_connection_config,
 )
 from apps.configuration.services.runtime_settings import (
@@ -141,6 +146,7 @@ class PlatformOpsSettingsEmailView(APIView):
                 "delivery_configured": not bool(cfg["configuration_error"]),
                 "configuration_error": cfg["configuration_error"],
                 "managed_by_deployment": cfg["managed_by_deployment"],
+                "has_runtime_override": cfg["has_runtime_override"],
                 "source": cfg["source"],
                 "sources": {
                     "host": cfg["source"],
@@ -161,19 +167,16 @@ class PlatformOpsSettingsEmailView(APIView):
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
-        if email_settings_managed_by_deployment():
-            return Response(
-                {
-                    "detail": "Email settings are managed by deployment configuration.",
-                    "code": "EMAIL_SETTINGS_MANAGED_BY_DEPLOYMENT",
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
         data = request.data or {}
+        if bool(data.get("clear_runtime")):
+            clear_email_runtime_settings(user=request.user)
+            _audit(request, "platform_settings.email.clear_runtime")
+            return self.get(request)
         current = email_connection_kwargs()
         try:
+            # Console always configures SMTP; Django backend class is not operator-facing.
             candidate = {
-                "backend": str(data.get("backend", current["backend"]) or ""),
+                "backend": SMTP_EMAIL_BACKEND,
                 "host": str(data.get("host", current["host"]) or ""),
                 "port": int(data.get("port", current["port"])),
                 "use_tls": bool(data.get("use_tls", current["use_tls"])),
@@ -193,8 +196,8 @@ class PlatformOpsSettingsEmailView(APIView):
                 {"detail": configuration_error, "code": "EMAIL_CONFIGURATION_INVALID"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        set_value(key=KEY_EMAIL_BACKEND, value=SMTP_EMAIL_BACKEND, user=request.user)
         mapping = {
-            "backend": KEY_EMAIL_BACKEND,
             "host": KEY_EMAIL_HOST,
             "host_user": KEY_EMAIL_HOST_USER,
             "from_email": KEY_EMAIL_FROM,
@@ -285,6 +288,33 @@ _EE_IDENTITY_PATCH_FIELDS = frozenset(
     }
 )
 
+_IDENTITY_IAM_GLOBAL_KEYS = (
+    iam_conf.CONFIG_KEY_REGISTRATION_CODE_MINUTES,
+    iam_conf.CONFIG_KEY_REGISTRATION_TOKEN_EXPIRY_MINUTES,
+    iam_conf.CONFIG_KEY_REGISTRATION_TOKEN_EXPIRY_HOURS,
+    iam_conf.CONFIG_KEY_PASSWORD_RESET_CODE_MINUTES,
+    iam_conf.CONFIG_KEY_LOGIN_CODE_MINUTES,
+    iam_conf.CONFIG_KEY_PASSWORD_RESET_TIMEOUT_MINUTES,
+    iam_conf.CONFIG_KEY_PASSWORD_RESET_TIMEOUT,
+)
+
+
+def _identity_has_runtime_override() -> bool:
+    """Whether Console Runtime overrides exist for identity or IAM timeouts."""
+    if has_identity_runtime_override():
+        return True
+    return GlobalConfig.objects.filter(
+        key__in=_IDENTITY_IAM_GLOBAL_KEYS,
+        scope=GlobalConfig.Scope.GLOBAL,
+        tenant_key="",
+        is_active=True,
+    ).exists()
+
+
+def _clear_identity_iam_global_overrides() -> None:
+    for key in _IDENTITY_IAM_GLOBAL_KEYS:
+        delete_global_config(key=key)
+
 
 def _identity_patch_requires_extension(data: dict) -> bool:
     """Return whether this PATCH body touches enterprise identity settings.
@@ -316,7 +346,11 @@ class PlatformOpsSettingsIdentityView(APIView):
                 "email_code_login_enabled": email_code_login_enabled(),
                 "platform_ops_enabled": platform_ops_enabled(),
                 "platform_ops_allowed_cidrs": platform_ops_allowed_cidrs(),
-                "platform_ops_source": get_source(KEY_IDENTITY_PLATFORM_OPS),
+                "platform_ops_source": get_source(
+                    KEY_IDENTITY_PLATFORM_OPS,
+                    env_name="HFL_PLATFORM_OPS_ENABLED",
+                    settings_attr="HFL_PLATFORM_OPS_ENABLED",
+                ),
                 "turnstile_enabled": turnstile_enabled() if identity_enabled else False,
                 "turnstile_site_key": turnstile_site_key() if identity_enabled else "",
                 "turnstile_secret_configured": (
@@ -340,18 +374,25 @@ class PlatformOpsSettingsIdentityView(APIView):
                 ),
                 "google_oauth_enabled": google_oauth_enabled(),
                 "google_oauth_redirect_uri": _google_redirect_uri(),
+                "has_runtime_override": _identity_has_runtime_override(),
                 "iam": {
                     "registration_verification_code_minutes": get_registration_verification_code_minutes(),
-                    "registration_token_expiry_hours": get_registration_token_expiry_hours(),
+                    "registration_token_expiry_minutes": get_registration_token_expiry_minutes(),
                     "password_reset_verification_code_minutes": get_password_reset_verification_code_minutes(),
                     "login_verification_code_minutes": get_login_verification_code_minutes(),
-                    "password_reset_timeout_seconds": get_password_reset_timeout_seconds(),
+                    "password_reset_timeout_minutes": get_password_reset_timeout_minutes(),
                 },
             }
         )
 
     def patch(self, request):
         data = request.data or {}
+        if bool(data.get("clear_runtime")):
+            clear_identity_runtime_settings(user=request.user)
+            _clear_identity_iam_global_overrides()
+            sync_google_social_app()
+            _audit(request, "platform_settings.identity.clear_runtime")
+            return self.get(request)
         if _identity_patch_requires_extension(data):
             if not runtime_settings_svc.enterprise_identity_enabled():
                 return Response(
@@ -364,14 +405,8 @@ class PlatformOpsSettingsIdentityView(APIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
         if "platform_ops_enabled" in data:
-            if get_source(KEY_IDENTITY_PLATFORM_OPS) == "deployment":
-                return Response(
-                    {
-                        "detail": "Admin Console availability is managed by deployment configuration.",
-                        "code": "PLATFORM_OPS_MANAGED_BY_DEPLOYMENT",
-                    },
-                    status=status.HTTP_409_CONFLICT,
-                )
+            # Deployment may set the initial value; Console Runtime may still
+            # override. Disabling requires an explicit confirmation token.
             if platform_ops_enabled() and not bool(data["platform_ops_enabled"]):
                 if str(data.get("confirm_disable") or "") != "DISABLE":
                     return Response(
@@ -419,10 +454,10 @@ class PlatformOpsSettingsIdentityView(APIView):
                 GlobalConfig.ValueType.NUMBER,
                 iam_conf.DEFAULT_REGISTRATION_VERIFICATION_CODE_MINUTES,
             ),
-            "registration_token_expiry_hours": (
-                iam_conf.CONFIG_KEY_REGISTRATION_TOKEN_EXPIRY_HOURS,
+            "registration_token_expiry_minutes": (
+                iam_conf.CONFIG_KEY_REGISTRATION_TOKEN_EXPIRY_MINUTES,
                 GlobalConfig.ValueType.NUMBER,
-                iam_conf.DEFAULT_REGISTRATION_TOKEN_EXPIRY_HOURS,
+                iam_conf.DEFAULT_REGISTRATION_TOKEN_EXPIRY_MINUTES,
             ),
             "password_reset_verification_code_minutes": (
                 iam_conf.CONFIG_KEY_PASSWORD_RESET_CODE_MINUTES,
@@ -434,10 +469,10 @@ class PlatformOpsSettingsIdentityView(APIView):
                 GlobalConfig.ValueType.NUMBER,
                 iam_conf.DEFAULT_LOGIN_VERIFICATION_CODE_MINUTES,
             ),
-            "password_reset_timeout_seconds": (
-                iam_conf.CONFIG_KEY_PASSWORD_RESET_TIMEOUT,
+            "password_reset_timeout_minutes": (
+                iam_conf.CONFIG_KEY_PASSWORD_RESET_TIMEOUT_MINUTES,
                 GlobalConfig.ValueType.NUMBER,
-                iam_conf.DEFAULT_PASSWORD_RESET_TIMEOUT_SECONDS,
+                iam_conf.DEFAULT_PASSWORD_RESET_TIMEOUT_MINUTES,
             ),
         }
         for field, (key, value_type, default) in specs.items():
@@ -461,6 +496,11 @@ class PlatformOpsSettingsIdentityView(APIView):
                 },
             )
             invalidate_config_cache(key=key, tenant_key="", scope="global")
+            # Drop legacy unit keys so resolution stays on the minutes rows.
+            if field == "registration_token_expiry_minutes":
+                delete_global_config(key=iam_conf.CONFIG_KEY_REGISTRATION_TOKEN_EXPIRY_HOURS)
+            elif field == "password_reset_timeout_minutes":
+                delete_global_config(key=iam_conf.CONFIG_KEY_PASSWORD_RESET_TIMEOUT)
 
 
 class PlatformOpsSettingsAiView(APIView):
@@ -680,12 +720,22 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                     "openai_configured": bool(openai_api_key()),
                 },
                 "sources": {
-                    "email_signup_enabled": get_source(KEY_IDENTITY_EMAIL_SIGNUP),
-                    "email_code_login_enabled": get_source(
-                        KEY_IDENTITY_EMAIL_CODE_LOGIN
+                    "email_signup_enabled": get_source(
+                        KEY_IDENTITY_EMAIL_SIGNUP,
+                        env_name="HFL_EMAIL_SIGNUP_ENABLED",
+                        settings_attr="HFL_EMAIL_SIGNUP_ENABLED",
                     ),
-                    "google_oauth_enabled": get_source(KEY_IDENTITY_GOOGLE_OAUTH),
-                    "turnstile_enabled": "env" if identity_enabled else "extension",
+                    "email_code_login_enabled": get_source(
+                        KEY_IDENTITY_EMAIL_CODE_LOGIN,
+                        env_name="HFL_EMAIL_CODE_LOGIN_ENABLED",
+                        settings_attr="HFL_EMAIL_CODE_LOGIN_ENABLED",
+                    ),
+                    "google_oauth_enabled": get_source(
+                        KEY_IDENTITY_GOOGLE_OAUTH,
+                        env_name="HFL_GOOGLE_OAUTH_ENABLED",
+                        settings_attr="HFL_GOOGLE_OAUTH_ENABLED",
+                    ),
+                    "turnstile_enabled": "deployment" if identity_enabled else "extension",
                     "email_host": cfg["source"],
                 },
                 "health": health,
@@ -738,6 +788,7 @@ class PlatformOpsSettingsExternalAccessView(APIView):
                 "external_access_url": configured_external_access_url(),
                 "effective_url": effective_external_access_url(),
                 "source": external_access_source(),
+                "has_runtime_override": has_external_access_runtime_override(),
                 "suggested_url": suggested_external_access_url(request),
                 "editable": True,
             }
@@ -762,10 +813,13 @@ class PlatformOpsSettingsExternalAccessView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            value = set_external_access_url(
-                data["external_access_url"],
-                user=request.user,
-            )
+            if data["external_access_url"] is None:
+                value = set_external_access_url("", user=request.user, clear=True)
+            else:
+                value = set_external_access_url(
+                    data["external_access_url"],
+                    user=request.user,
+                )
         except ValueError as exc:
             return Response(
                 {"detail": str(exc), "code": "EXTERNAL_ACCESS_URL_INVALID"},

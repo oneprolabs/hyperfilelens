@@ -114,7 +114,12 @@ def get_gemini_config(*, tenant_key: str | None = None) -> dict[str, Any]:
 
 
 def get_langfuse_settings(*, tenant_key: str | None = None) -> dict[str, Any]:
-    """Langfuse client settings (secrets from deploy, policy from GlobalConfig)."""
+    """Langfuse client settings (secrets/enabled from PRS deploy; sample/timeout from GC).
+
+    ``enabled``: optional Tenant/GC Runtime override via get_config (no Deployment
+    env on that key), else PlatformRuntimeSetting R>D>Def (``LANGFUSE_ENABLED`` /
+    Console ``ai.langfuse_enabled``).
+    """
     enabled_override = get_config(
         conf.CONFIG_KEY_LANGFUSE_ENABLED,
         tenant_key=tenant_key,

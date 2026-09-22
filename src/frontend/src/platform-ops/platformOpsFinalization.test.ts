@@ -66,12 +66,12 @@ describe('Admin Console finalization contracts', () => {
     expect(environment).not.toContain('sourceEntries')
   })
 
-  it('requires the DISABLE keyword before saving an Admin Console lockout', () => {
+  it('keeps Admin Console enablement read-only in Identity settings', () => {
     const identity = source('src/platform-ops/pages/platform/settings/IdentitySettings.vue')
 
-    expect(identity).toContain('if (disablesPlatformOps.value)')
-    expect(identity).toContain('disableConfirmOpen.value = true')
-    expect(identity).toContain('confirm-keyword="DISABLE"')
-    expect(identity).toContain("body.confirm_disable = 'DISABLE'")
+    expect(identity).toContain('v-model="form.platform_ops_enabled"')
+    expect(identity).toMatch(/v-model="form\.platform_ops_enabled"[\s\S]*?\bdisabled\b/)
+    expect(identity).not.toContain('if (disablesPlatformOps.value)')
+    expect(identity).not.toContain("body.confirm_disable = 'DISABLE'")
   })
 })

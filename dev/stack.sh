@@ -687,6 +687,9 @@ ensure_data_dirs() {
 	local language_root
 	language_root="${ROOT}/data/lang-packs/versions/$(read_project_version)"
 	mkdir -p "${ROOT}/data/postgresql" "${ROOT}/data/redis"
+	# Nested bind under src/backend:/opt/backend needs a host mountpoint or
+	# Docker records the volume but the path stays invisible in the container.
+	install -d -m 0755 "${ROOT}/src/backend/lang-packs"
 	install -d -m 0755 \
 		"${ROOT}/data/logs" \
 		"${language_root}" \
