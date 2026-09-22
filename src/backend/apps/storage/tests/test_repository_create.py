@@ -192,6 +192,36 @@ class RepositoryCreateTaskTests(TestCase):
         self.assertTrue(Repository.objects.filter(id=repository.id).exists())
 
     @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_s3_repository"
+    )
+    def test_run_create_task_s3_init_failure_populates_result_payload(self, initialize):
+        initialize.side_effect = RepositoryInitializationError(
+            "The configured credentials were rejected."
+        )
+        repository = self._s3_repository()
+        repository_task = self._enqueue_create(repository)
+
+        result = run_repository_create_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(result["status"], "failed")
+        repository_task.task.refresh_from_db()
+        result_payload = repository_task.task.result_payload
+        self.assertIsNotNone(result_payload)
+        self.assertIn("summary", result_payload)
+        self.assertIn("reasons", result_payload)
+        self.assertIn("resolutions", result_payload)
+        self.assertIn("technical_detail", result_payload)
+        self.assertIsInstance(result_payload["reasons"], list)
+        self.assertEqual(len(result_payload["reasons"]), 0)
+        self.assertIsInstance(result_payload["resolutions"], list)
+        self.assertTrue(len(result_payload["resolutions"]) > 0)
+        self.assertEqual(result_payload["technical_detail"]["repo_type"], "s3")
+        # Secrets must not leak into result_payload
+        payload_text = str(result_payload)
+        self.assertNotIn("secret_access_key", payload_text)
+        self.assertNotIn("kopia-pass", payload_text)
+
+    @mock.patch(
         "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
     )
     @mock.patch(

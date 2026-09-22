@@ -471,6 +471,11 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
             error_code="DIRECT_NAS_BIND_RECOVERY_FAILED",
             message=message,
             physical_initialize_done=False,
+            result_payload=_build_create_failure_result_payload(
+                repository_task=repository_task,
+                error_code="DIRECT_NAS_BIND_RECOVERY_FAILED",
+                error_message=message,
+            ),
         )
         return {
             "status": "failed",
@@ -625,6 +630,11 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
                     error_code=REPOSITORY_ALREADY_EXISTS_CODE,
                     message=message,
                     physical_initialize_done=False,
+                    result_payload=_build_create_failure_result_payload(
+                        repository_task=repository_task,
+                        error_code=REPOSITORY_ALREADY_EXISTS_CODE,
+                        error_message=message,
+                    ),
                 )
                 return {
                     "status": "failed",
@@ -686,6 +696,11 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
             error_code=error_code,
             message=message,
             physical_initialize_done=physical_initialize_done,
+            result_payload=_build_create_failure_result_payload(
+                repository_task=repository_task,
+                error_code=error_code,
+                error_message=message,
+            ),
         )
         return {
             "status": "failed",
@@ -1256,6 +1271,75 @@ def _fail_repair_bind_already_exists(
     _clear_target_active_task(repository_task)
 
 
+def _build_create_failure_result_payload(
+    *,
+    repository_task: RepositoryTask,
+    error_code: str,
+    error_message: str,
+) -> dict[str, Any]:
+    resolution = _create_failure_resolution(error_code)
+    repository = (
+        Repository.objects.filter(pk=repository_task.repository_id).first()
+    )
+    technical_detail: dict[str, Any] = {}
+    if repository is not None:
+        technical_detail["repo_type"] = repository.repo_type
+        if repository.repo_type == Repository.Type.S3:
+            config = repository.config or {}
+            technical_detail["provider"] = config.get("platform") or config.get(
+                "s3_platform", ""
+            )
+            endpoint = str(config.get("endpoint") or "")
+            if endpoint:
+                technical_detail["endpoint"] = scrub_secrets(endpoint)
+            bucket = str(config.get("bucket") or config.get("s3_bucket") or "")
+            if bucket:
+                technical_detail["bucket"] = scrub_secrets(bucket)
+        elif repository.repo_type == Repository.Type.NAS:
+            config = repository.config or {}
+            server = str(config.get("server_address") or "")
+            if server:
+                technical_detail["server_address"] = scrub_secrets(server)
+    return {
+        "summary": "Repository creation failed",
+        "reasons": [],
+        "resolutions": [resolution],
+        "technical_detail": technical_detail,
+    }
+
+
+def _create_failure_resolution(error_code: str) -> str:
+    if error_code == "STORAGE.S3_VALIDATION_FAILED":
+        return (
+            "Open the repository form and verify the S3 connection settings, "
+            "IAM permissions, and bucket access, then retry."
+        )
+    if error_code == REPOSITORY_ALREADY_EXISTS_CODE:
+        return (
+            "A repository already exists at this location. Choose a different "
+            "storage location or bucket name and retry."
+        )
+    if error_code == "REPOSITORY_CREATE_TIMEOUT":
+        return (
+            "The operation timed out. Check network connectivity and storage "
+            "provider status, then retry."
+        )
+    if error_code == "REPOSITORY_CREATE_INVALID":
+        return (
+            "A required field is missing or invalid. Review the repository form "
+            "and retry."
+        )
+    if error_code == "DIRECT_NAS_BIND_RECOVERY_FAILED":
+        return (
+            "The NAS binding recovery failed. Check the NAS share accessibility "
+            "and Agent connectivity, then retry."
+        )
+    return (
+        "Open the repository form, review the configuration and credentials, "
+        "then retry the creation task."
+    )
+
+
 def _fail_create_already_exists(
     repository_task: RepositoryTask, *, message: str
 ) -> None:
@@ -1280,6 +1364,11 @@ def _fail_create_already_exists(
             organization_id=task.organization_id,
             status=Task.Status.FAILED,
             progress=max(1, int(task.progress or 0)),
+            result_payload=_build_create_failure_result_payload(
+                repository_task=repository_task,
+                error_code=REPOSITORY_ALREADY_EXISTS_CODE,
+                error_message=message,
+            ),
             error_code=REPOSITORY_ALREADY_EXISTS_CODE,
             error_message=message[:2000],
         )
@@ -1309,6 +1398,7 @@ def _fail_create_keep_row(
     error_code: str,
     message: str,
     physical_initialize_done: bool | None = None,
+    result_payload: dict[str, Any] | None = None,
 ) -> None:
     task = repository_task.task
     # Prefer the in-process latch from the runner: step persistence can lag
@@ -1367,6 +1457,7 @@ def _fail_create_keep_row(
             progress=max(1, int(task.progress or 0)),
             error_code=error_code,
             error_message=message[:2000],
+            result_payload=result_payload,
         )
     _clear_target_active_task(repository_task)
 
@@ -1412,6 +1503,11 @@ def _complete_create_failure_already_applied(
             progress=max(1, int(task.progress or 0)),
             error_code=error_code,
             error_message=message[:2000],
+            result_payload=_build_create_failure_result_payload(
+                repository_task=repository_task,
+                error_code=error_code,
+                error_message=message,
+            ),
         )
     _clear_target_active_task(repository_task)
     return {

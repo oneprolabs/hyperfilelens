@@ -3658,13 +3658,15 @@ func managedRestoreConflictMode(p Payload) (string, error) {
 
 func managedRestoreConflictArgs(conflictMode string) []string {
 	if conflictMode == "skip" {
+		// Kopia's incremental mode skips existing files and symlinks while still
+		// traversing existing directories. Keep metadata restoration enabled so
+		// directory attributes are applied and newly created entries get their
+		// source metadata. The skip mode is about file-content conflicts, not a
+		// request to disable metadata restoration globally.
 		return []string{
 			"--skip-existing",
 			"--no-overwrite-files",
 			"--no-overwrite-symlinks",
-			"--skip-owners",
-			"--skip-permissions",
-			"--skip-times",
 		}
 	}
 	return []string{

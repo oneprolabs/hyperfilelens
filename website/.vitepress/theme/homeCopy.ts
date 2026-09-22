@@ -38,6 +38,9 @@ export interface HomeCopy {
     githubAria: string
     githubLabel: string
     cta: string
+    openMenu: string
+    closeMenu: string
+    mobileNavAria: string
   }
   hero: {
     pill: string
@@ -119,6 +122,9 @@ const en: HomeCopy = {
     githubAria: 'HyperFileLens on GitHub',
     githubLabel: 'GitHub',
     cta: 'Try free',
+    openMenu: 'Open menu',
+    closeMenu: 'Close menu',
+    mobileNavAria: 'Mobile navigation',
   },
   hero: {
     pill: 'OneProLabs · Apache 2.0',
@@ -260,6 +266,9 @@ const zh: HomeCopy = {
     githubAria: 'HyperFileLens GitHub 仓库',
     githubLabel: 'GitHub',
     cta: '免费试用',
+    openMenu: '打开菜单',
+    closeMenu: '关闭菜单',
+    mobileNavAria: '移动导航',
   },
   hero: {
     pill: 'OneProLabs · Apache 2.0',
@@ -403,6 +412,9 @@ const es: HomeCopy = {
     githubAria: 'HyperFileLens en GitHub',
     githubLabel: 'GitHub',
     cta: 'Prueba gratis',
+    openMenu: 'Abrir menú',
+    closeMenu: 'Cerrar menú',
+    mobileNavAria: 'Navegación móvil',
   },
   hero: {
     pill: 'OneProLabs · Apache 2.0',

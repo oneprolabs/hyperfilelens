@@ -52,9 +52,14 @@ let authenticatedLocale: string | null = null
 let languagePacksLoaded = false
 const localeAliases = new Map<string, string>()
 
+function getInitialLocale(): string {
+  const stored = readStoredLocale()
+  return stored && /^[a-z]{2,3}(-[a-zA-Z0-9]{2,8})*$/.test(stored) ? stored : DEFAULT_LOCALE
+}
+
 export const i18n = createI18n({
   legacy: false,
-  locale: DEFAULT_LOCALE,
+  locale: getInitialLocale(),
   fallbackLocale: DEFAULT_LOCALE,
   messages: { en },
 })

@@ -20,13 +20,16 @@ README_LANGUAGE_SWITCH = (
 LOCALIZED_EXACT_LINES = {
     Path("README.md"): frozenset({README_LANGUAGE_SWITCH}),
 }
-LOCALIZED_WEBSITE_ROOTS = (Path("website/zh"),)
+LOCALIZED_WEBSITE_ROOTS = (Path("website/zh"), Path("website/es"))
 LOCALIZED_WEBSITE_FILES = frozenset(
     {
         Path("website/.vitepress/config.mts"),
         Path("website/.vitepress/navigation/zh.ts"),
-        Path("website/.vitepress/theme/HomeLandingZh.vue"),
+        Path("website/.vitepress/theme/homeCopy.ts"),
+        Path("website/.vitepress/theme/blogCopy.ts"),
         Path("website/.vitepress/theme/languages.ts"),
+        Path("website/.vitepress/data/README.md"),
+        Path("website/.vitepress/data/external.example.json"),
     },
 )
 CJK_CODE_POINT_RANGES = (
