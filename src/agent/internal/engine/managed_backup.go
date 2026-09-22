@@ -48,6 +48,7 @@ const (
 	snapshotFailureSampleLimit           = 10
 	snapshotFailurePathLimit             = 1024
 	snapshotFailureErrorLimit            = 2048
+	snapshotBrowseInvalidPreviewLimit    = 256
 	snapshotDownloadMaxSelections        = 100
 	snapshotDownloadArchiveRoot          = "snapshot-download"
 	snapshotDownloadStaleAge             = 24 * time.Hour
@@ -2027,13 +2028,17 @@ type insightSnapshotBrowseCollector struct {
 }
 
 type snapshotBrowsePageCollector struct {
-	basePath string
-	offset   int
-	limit    int
-	seen     int
-	entries  []map[string]any
-	hasMore  bool
-	invalid  bool
+	basePath           string
+	offset             int
+	limit              int
+	seen               int
+	linesSeen          int
+	entries            []map[string]any
+	hasMore            bool
+	invalid            bool
+	invalidLineNumber  int
+	invalidReason      string
+	invalidLinePreview string
 }
 
 func newSnapshotBrowsePageCollector(basePath string, limit int, cursor string) (*snapshotBrowsePageCollector, error) {
@@ -2060,13 +2065,18 @@ func newSnapshotBrowsePageCollector(basePath string, limit int, cursor string) (
 }
 
 func (collector *snapshotBrowsePageCollector) consume(line string) bool {
+	rawLine := line
+	collector.linesSeen++
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return true
 	}
-	mode, size, modTime, name, ok := parseSnapshotBrowseLongLine(line)
+	mode, size, modTime, name, reason, ok := parseSnapshotBrowseLongLineDiagnostic(line)
 	if !ok {
 		collector.invalid = true
+		collector.invalidLineNumber = collector.linesSeen
+		collector.invalidReason = reason
+		collector.invalidLinePreview = sanitizeSnapshotBrowseLine(rawLine)
 		return false
 	}
 	if collector.seen < collector.offset {
@@ -2281,6 +2291,19 @@ func (e *Engine) runManagedSnapshotBrowse(
 	result["has_more"] = collector.hasMore
 	result["next_cursor"] = collector.nextCursor()
 	if collector.invalid {
+		result["invalid_line_number"] = collector.invalidLineNumber
+		result["invalid_reason"] = collector.invalidReason
+		result["invalid_line_preview"] = collector.invalidLinePreview
+		slog.Warn(
+			"snapshot browse output line could not be parsed",
+			"event", "snapshot_browse_invalid_directory_entry",
+			"task_id", taskID,
+			"snapshot_id", p.SnapshotID,
+			"path", result["path"],
+			"line_number", collector.invalidLineNumber,
+			"reason", collector.invalidReason,
+			"line_preview", collector.invalidLinePreview,
+		)
 		return "failed", result, "snapshot browse returned invalid directory entries"
 	}
 	limitReached := collector.hasMore && ctx.Err() == nil
@@ -4565,9 +4588,17 @@ func formatModTimeUTCInLocation(raw string, local *time.Location) string {
 }
 
 func parseSnapshotBrowseLongLine(line string) (mode string, size int64, modTime string, name string, ok bool) {
+	mode, size, modTime, name, _, ok = parseSnapshotBrowseLongLineDiagnostic(line)
+	return mode, size, modTime, name, ok
+}
+
+func parseSnapshotBrowseLongLineDiagnostic(line string) (mode string, size int64, modTime string, name string, reason string, ok bool) {
 	fields := strings.Fields(line)
-	if len(fields) < 7 || !looksLikeMode(fields[0]) {
-		return "", 0, "", "", false
+	if len(fields) < 7 {
+		return "", 0, "", "", "insufficient_fields", false
+	}
+	if !looksLikeMode(fields[0]) {
+		return "", 0, "", "", "invalid_mode", false
 	}
 	mode = fields[0]
 	size, _ = strconv.ParseInt(fields[1], 10, 64)
@@ -4581,9 +4612,23 @@ func parseSnapshotBrowseLongLine(line string) (mode string, size int64, modTime 
 	}
 	name = strings.Trim(name, "/\\")
 	if name == "" {
-		return "", 0, "", "", false
+		return "", 0, "", "", "empty_name", false
 	}
-	return mode, size, modTime, name, true
+	return mode, size, modTime, name, "", true
+}
+
+func sanitizeSnapshotBrowseLine(line string) string {
+	line = strings.ReplaceAll(line, "\\", "\\\\")
+	line = strings.ReplaceAll(line, "\r", "\\r")
+	line = strings.ReplaceAll(line, "\n", "\\n")
+	line = strings.ReplaceAll(line, "\x00", "\\x00")
+	if !utf8.ValidString(line) {
+		line = strings.ToValidUTF8(line, "\uFFFD")
+	}
+	if len(line) > snapshotBrowseInvalidPreviewLimit {
+		return line[:snapshotBrowseInvalidPreviewLimit] + "..."
+	}
+	return line
 }
 
 func parseInsightSnapshotLongLine(line string) (mode string, size int64, modTime string, name string, ok bool) {
@@ -4653,11 +4698,22 @@ func looksLikeMode(value string) bool {
 	if len(value) < 10 {
 		return false
 	}
-	first := value[0]
-	return first == 'd' || first == '-' || first == 'l' || first == 'L' ||
-		first == 's' || first == 'S' || first == 'p' || first == 'P' ||
-		first == 'b' || first == 'c' || first == 'C' || first == 'D' ||
-		first == 'w'
+	if !strings.ContainsRune("d-lLsSpPbBcCDwWuUgG", rune(value[0])) {
+		return false
+	}
+	for _, permission := range value[1:10] {
+		if !strings.ContainsRune("rwxXsStT-", permission) {
+			return false
+		}
+	}
+	for index, permission := range value[1:10] {
+		if (index%3 == 0 && permission != 'r' && permission != '-') ||
+			(index%3 == 1 && permission != 'w' && permission != '-') ||
+			(index%3 == 2 && !strings.ContainsRune("xXsStT-", permission)) {
+			return false
+		}
+	}
+	return true
 }
 
 func mapSnapshotBrowseType(isDir bool) string {
