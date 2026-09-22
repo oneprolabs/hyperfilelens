@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed } from 'vue'
 import { useRoute } from 'vitepress'
-import { trackWebsiteOpenApp } from './analytics'
+import { useAppOrigin } from './useAppOrigin'
 import { siteTrialLabels } from './languages'
 
 const props = defineProps<{
@@ -9,44 +9,13 @@ const props = defineProps<{
 }>()
 
 const route = useRoute()
-const appOrigin = ref('')
+const { loginUrl, openApp } = useAppOrigin()
+
 const isDocs = computed(() =>
   route.path.startsWith('/zh/docs')
   || route.path.startsWith('/docs'),
 )
 const label = computed(() => route.path.startsWith('/zh/docs') ? siteTrialLabels.zh : siteTrialLabels.en)
-
-function validOrigin(value: string): string {
-  try {
-    const parsed = new URL(value)
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return ''
-    if (parsed.pathname !== '/' || parsed.search || parsed.hash) return ''
-    return parsed.origin
-  } catch {
-    return ''
-  }
-}
-
-function directAppOrigin(): string {
-  const hostname = window.location.hostname || '127.0.0.1'
-  const host = hostname.includes(':') ? `[${hostname}]` : hostname
-  return `https://${host}:11443`
-}
-
-onMounted(() => {
-  appOrigin.value = validOrigin(window.__HFL_WEBSITE_CONFIG__?.appUrl || '') || directAppOrigin()
-})
-
-const loginUrl = computed(() => `${appOrigin.value || '#'}${appOrigin.value ? '/login' : ''}`)
-
-function openApp(event: MouseEvent) {
-  const target = loginUrl.value
-  if (!target || target === '#') {
-    event.preventDefault()
-    return
-  }
-  trackWebsiteOpenApp('docs_header')
-}
 </script>
 
 <template>
@@ -56,7 +25,7 @@ function openApp(event: MouseEvent) {
     :href="loginUrl"
     target="_blank"
     rel="noopener noreferrer"
-    @click="openApp"
+    @click="openApp($event, 'docs_header')"
   >
     {{ label }}
   </a>

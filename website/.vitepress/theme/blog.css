@@ -1,0 +1,49 @@
+/* Blog surfaces. Reuses the landing tokens from custom.css so the blog and the
+   home page read as one site. */
+
+.blog-index .section-heading { max-width: 760px; }
+.blog-index h1 { margin: 0 0 18px; font-size: clamp(32px, 4vw, 46px); line-height: 1.1; letter-spacing: -.03em; }
+.blog-lead { margin: 0; color: var(--hfl-muted); font-size: 16px; line-height: 1.7; }
+
+
+
+.blog-grid { margin-top: 32px; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
+
+.blog-card { position: relative; display: flex; flex-direction: column; padding: 30px; border: 1px solid var(--hfl-line); border-radius: 20px; background: #fff; transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
+.blog-card:hover { border-color: #c3d3e7; box-shadow: 0 20px 44px rgba(31, 56, 88, .08); transform: translateY(-3px); }
+
+
+.blog-card-title { margin: 0 0 12px; font-size: 19px; line-height: 1.3; letter-spacing: -.02em; }
+.blog-card-title a { transition: color .18s ease; }
+.blog-card-title a:hover { color: var(--hfl-blue); }
+/* The whole card is clickable; the title anchor carries the accessible name. */
+.blog-card-title a::after { content: ''; position: absolute; inset: 0; }
+
+.blog-card-summary { margin: 0 0 18px; color: var(--hfl-muted); font-size: 14px; line-height: 1.68; }
+.blog-card-meta { margin: auto 0 14px; color: #7b8ca1; font-size: 12.5px; }
+.blog-meta-sep { margin: 0 7px; }
+.blog-card-cta { font-size: 13.5px; }
+
+.blog-empty { margin-top: 32px; color: var(--hfl-muted); font-size: 15px; }
+
+.home-blog { padding-top: 0; }
+.home-blog-more { margin: 32px 0 0; text-align: center; }
+
+.blog-post { max-width: 760px; }
+.blog-back { margin-bottom: 28px; font-size: 13.5px; }
+.blog-back-icon { transform: rotate(180deg); }
+.blog-post h1 { margin: 0 0 16px; font-size: clamp(30px, 3.6vw, 42px); line-height: 1.14; letter-spacing: -.03em; }
+.blog-post-meta { margin: 0 0 24px; color: #7b8ca1; font-size: 13px; }
+.blog-post-lead { margin: 0 0 40px; padding-bottom: 32px; border-bottom: 1px solid var(--hfl-line); color: var(--hfl-muted); font-size: 17px; line-height: 1.68; }
+.blog-post-body { font-size: 16px; line-height: 1.78; }
+.blog-post-body.vp-doc h2 { margin: 48px 0 16px; padding-top: 0; border-top: 0; font-size: 24px; letter-spacing: -.02em; }
+.blog-post-body.vp-doc h3 { margin: 36px 0 12px; font-size: 19px; letter-spacing: -.015em; }
+.blog-post-body p { margin: 0 0 20px; }
+.blog-post-body a { color: var(--hfl-blue); text-decoration: underline; text-underline-offset: 2px; }
+.blog-post-body img { max-width: 100%; height: auto; border-radius: 12px; }
+.blog-post-canonical { margin: 48px 0 0; padding-top: 24px; border-top: 1px solid var(--hfl-line); color: var(--hfl-muted); font-size: 13px; }
+.blog-post-canonical a { color: var(--hfl-blue); }
+
+@media (max-width: 640px) {
+  .blog-grid { grid-template-columns: 1fr; }
+}

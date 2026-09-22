@@ -27,10 +27,11 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .site-header { height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 30px; }
 .brand { display: inline-flex; align-items: center; white-space: nowrap; }
 .brand-lockup { display: block; width: 150px; height: auto; max-width: 100%; object-fit: contain; transform: translateY(2px); }
-.site-header nav { display: flex; align-items: center; gap: 31px; margin-left: auto; color: #4e6076; font-size: 14px; font-weight: 570; }
+.site-header nav { display: flex; align-items: center; gap: clamp(17px, 2vw, 31px); margin-left: auto; color: #4e6076; font-size: 14px; font-weight: 570; }
+.site-header nav a { white-space: nowrap; }
 .site-header nav a, .github-link, .hfl-site > footer a { transition: color .18s ease; }
 .site-header nav a:hover, .github-link:hover, .hfl-site > footer a:hover { color: var(--hfl-blue); }
-.header-actions { display: flex; align-items: center; gap: 11px; }
+.header-actions { display: flex; align-items: center; gap: 11px; flex: 0 0 auto; }
 .lang-switcher { position: relative; }
 .lang-switcher-trigger { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 0; background: none; color: #4e6076; font-size: 14px; font-weight: 610; cursor: pointer; }
 .lang-switcher-trigger svg { width: 16px; height: 16px; }
@@ -44,7 +45,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .lang-switcher-item.active .lang-switcher-check { visibility: visible; }
 .github-link { min-height: 44px; display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; color: #33445b; font-size: 14px; font-weight: 650; }
 .github-link svg { width: 18px; height: 18px; }
-.header-cta { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; padding: 0 18px; border-radius: 10px; color: #fff; background: var(--hfl-navy); font-size: 14px; font-weight: 720; transition: background .18s ease, transform .18s ease; }
+.header-cta { min-height: 42px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; padding: 0 18px; border-radius: 10px; color: #fff; background: var(--hfl-navy); font-size: 14px; font-weight: 720; transition: background .18s ease, transform .18s ease; }
 .header-cta:hover { background: var(--hfl-blue); transform: translateY(-1px); }
 
 .hero { position: relative; padding: 112px 0 84px; background: linear-gradient(180deg, #fff 0%, #f8fbff 74%, #fff 100%); }

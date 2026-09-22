@@ -2,7 +2,8 @@
 import DefaultTheme from 'vitepress/theme'
 import { useData } from 'vitepress'
 import HomeLanding from './HomeLanding.vue'
-import HomeLandingZh from './HomeLandingZh.vue'
+import BlogIndex from './BlogIndex.vue'
+import BlogPost from './BlogPost.vue'
 import DocTrialLink from './DocTrialLink.vue'
 
 const { frontmatter } = useData()
@@ -10,7 +11,8 @@ const { frontmatter } = useData()
 
 <template>
   <HomeLanding v-if="frontmatter.layout === 'hfl-home'" />
-  <HomeLandingZh v-else-if="frontmatter.layout === 'hfl-home-zh'" />
+  <BlogIndex v-else-if="frontmatter.layout === 'hfl-blog'" />
+  <BlogPost v-else-if="frontmatter.layout === 'hfl-blog-post'" />
   <DefaultTheme.Layout v-else>
     <template #nav-bar-content-after>
       <DocTrialLink placement="bar" />
