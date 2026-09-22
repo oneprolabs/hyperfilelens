@@ -8,11 +8,13 @@ export interface SiteLanguage {
 export const siteLanguages: SiteLanguage[] = [
   { code: 'en', label: 'English', path: '/' },
   { code: 'zh', label: '简体中文', path: '/zh/' },
+  { code: 'es', label: 'Español', path: '/es/' },
 ]
 
 export const siteTrialLabels = {
   en: 'Try free',
   zh: '免费试用',
+  es: 'Prueba gratis',
 } as const
 
 export const zhDocA11yLabels = {

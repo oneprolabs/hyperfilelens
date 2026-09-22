@@ -1,0 +1,82 @@
+[
+  {
+    "title": "如何用 Office 文档直接构建企业 AI 知识库？",
+    "url": "https://blog.csdn.net/xiaoquqi/article/details/166204631",
+    "source": "CSDN",
+    "author": "开源早知道",
+    "affiliation": "team",
+    "date": "2026-09-21",
+    "summary": "CSDN 版本：不用向量数据库，让 Agent 直接读 Office 文档构建企业知识库，和传统 RAG 的对比。",
+    "tags": [
+      "SourceLens",
+      "RAG",
+      "知识库"
+    ]
+  },
+  {
+    "title": "你的备份会说话吗？试试 HyperFileLens",
+    "url": "https://blog.csdn.net/sinat_35036325/article/details/165297240",
+    "source": "CSDN",
+    "author": "sinat_35036325",
+    "affiliation": "community",
+    "date": "2026-09-21",
+    "summary": "备份、快照恢复，再用 AI Copilot 对选定快照直接提问——一份上手体验记录。",
+    "tags": [
+      "HyperFileLens",
+      "备份"
+    ]
+  },
+  {
+    "title": "给 Kopia 装上 AI 大脑",
+    "url": "https://blog.csdn.net/xiaoquqi/article/details/165199101",
+    "source": "CSDN",
+    "author": "开源早知道",
+    "affiliation": "team",
+    "date": "2026-09-19",
+    "summary": "CSDN 版本：HyperFileLens 构建在 Kopia 之上补齐多主机协调与 AI 分析，从部署到用自然语言查询快照的完整实操。",
+    "tags": [
+      "Kopia",
+      "备份",
+      "AI"
+    ]
+  },
+  {
+    "title": "备份不是终点，找回文件才是目的（HyperFileLens）",
+    "url": "https://blog.csdn.net/guohewei123/article/details/165321920",
+    "source": "CSDN",
+    "author": "guohewei123",
+    "affiliation": "community",
+    "date": "2026-09-14",
+    "summary": "快照浏览、单文件恢复、AI 检索——从「找回文件」这个目的出发看 HyperFileLens。",
+    "tags": [
+      "HyperFileLens",
+      "恢复"
+    ]
+  },
+  {
+    "title": "备份不是终点，找回文件才是目的（HyperFileLens）",
+    "url": "https://juejin.cn/post/7684965404387639311",
+    "source": "稀土掘金",
+    "author": "赫do",
+    "affiliation": "community",
+    "date": "2026-09-14",
+    "summary": "快照浏览、单文件恢复、AI 检索——从「找回文件」这个目的出发看 HyperFileLens。",
+    "tags": [
+      "HyperFileLens",
+      "恢复"
+    ]
+  },
+  {
+    "title": "发现一个开源项目 HyperFileLens：用 AI 分析我本地的文件",
+    "url": "https://blog.csdn.net/u013606637/article/details/165297713",
+    "source": "CSDN",
+    "author": "我来打酱油8293",
+    "affiliation": "community",
+    "date": "2026-09-14",
+    "summary": "把本地文件交给 HyperFileLens 备份，再用 AI 分析这批文件的使用体验。",
+    "tags": [
+      "HyperFileLens",
+      "开源"
+    ]
+  }
+]

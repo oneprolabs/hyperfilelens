@@ -121,6 +121,7 @@ export default defineConfig({
   title: 'HyperFileLens',
   description: 'Open source backup with agentic AI insight — protect your files without touching production, then ask deep questions, no pre-built index required.',
   cleanUrls: true,
+  sitemap: { hostname: 'https://hyperfilelens.com' },
   rewrites: (id) => id.startsWith('en/') ? id.slice(3) : id,
   head: [
     ['link', { rel: 'icon', type: 'image/x-icon', href: '/brand/icons/favicon.ico' }],
@@ -212,6 +213,19 @@ export default defineConfig({
       head: [
         ['meta', { property: 'og:title', content: 'HyperFileLens — 你的备份，藏着意想不到的答案。' }],
         ['meta', { property: 'og:description', content: '开源备份工具，内置 Agentic AI 洞察能力——在不影响生产环境的前提下保护你的文件，再对备份直接提问，无需预建索引。' }],
+      ],
+    },
+    // Spanish covers the landing page and the blog only; documentation links
+    // deliberately fall back to the English guides until /es/docs exists.
+    es: {
+      label: 'Español',
+      lang: 'es-ES',
+      link: '/es/',
+      title: 'HyperFileLens',
+      description: 'Backup de código abierto con insights de IA agéntica: protege tus archivos sin tocar producción y después hazles preguntas profundas, sin necesidad de un índice previo.',
+      head: [
+        ['meta', { property: 'og:title', content: 'HyperFileLens — Tus copias de seguridad saben más de lo que imaginas.' }],
+        ['meta', { property: 'og:description', content: 'Backup de código abierto con insights de IA agéntica: protege tus archivos sin tocar producción y después hazles preguntas profundas, sin necesidad de un índice previo.' }],
       ],
     },
   },

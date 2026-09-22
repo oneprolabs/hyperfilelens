@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import Layout from './Layout.vue'
 import './custom.css'
 import './docs.css'
+import './blog.css'
 import { initWebsiteAnalytics, trackWebsitePageView } from './analytics'
 import { enDocA11yLabels, zhDocA11yLabels } from './languages'
 
