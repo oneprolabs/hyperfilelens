@@ -5982,9 +5982,9 @@
         "taskFinishedFailed": "任务执行失败",
         "taskFinishedCancelled": "任务已取消",
         "taskFinishedTimeout": "任务执行超时",
+        "backupQueueRecoveryReenqueued": "备份队列恢复已重新排队原始任务",
         "taskFinished": "任务执行完成",
-        "stepStatusUpdated": "{step}：{status}",
-        "backupQueueRecoveryReenqueued": "备份队列恢复已重新排队原始任务"
+        "stepStatusUpdated": "{step}：{status}"
       },
       "maintenanceSummary": {
         "contentGc": "逻辑 Content GC",
@@ -7937,6 +7937,7 @@
         "deliveryUnavailable": "电子邮件无法发送",
         "restoreDefaults": "恢复默认值",
         "passwordHint": "留空则保留已保存的密码。",
+        "smtpTitle": "SMTP 配置",
         "testSectionTitle": "发送测试邮件",
         "host": "主机",
         "port": "端口",
@@ -7944,12 +7945,6 @@
         "password": "密码",
         "fromEmail": "发件地址",
         "encryption": "加密方式",
-        "testRecipient": "收件邮箱地址",
-        "testRecipientRequired": "请输入测试收件邮箱",
-        "testSend": "发送",
-        "testSuccess": "测试邮件已发送至 {recipient}",
-        "testFailed": "发送测试邮件失败",
-        "smtpTitle": "SMTP 配置",
         "transportSsl": "SSL",
         "transportTls": "STARTTLS",
         "transportNone": "无",
@@ -7957,7 +7952,12 @@
         "sourceDeployment": "部署环境",
         "passwordConfigured": "已配置",
         "passwordNotConfigured": "未配置",
-        "testRecipientPlaceholder": "ops{'@'}example.com"
+        "testRecipient": "收件邮箱地址",
+        "testRecipientPlaceholder": "ops{'@'}example.com",
+        "testRecipientRequired": "请输入测试收件邮箱",
+        "testSend": "发送",
+        "testSuccess": "测试邮件已发送至 {recipient}",
+        "testFailed": "发送测试邮件失败"
       },
       "identity": {
         "extensionRequiredTitle": "企业身份不可用",
@@ -7985,11 +7985,11 @@
         "iamTitle": "验证时效",
         "iamHint": "注册、登录与重置密码相关验证码和令牌的有效时长。",
         "regCodeMinutes": "注册验证码",
-        "resetCodeMinutes": "重置密码验证码",
-        "loginCodeMinutes": "登录验证码",
-        "unitMinutes": "分钟",
         "regTokenMinutes": "注册令牌",
-        "resetTimeoutMinutes": "重置密码令牌"
+        "resetCodeMinutes": "重置密码验证码",
+        "resetTimeoutMinutes": "重置密码令牌",
+        "loginCodeMinutes": "登录验证码",
+        "unitMinutes": "分钟"
       },
       "defaults": {
         "intro": "以下值为新租户的全局默认值，不会修改已有租户覆盖项。",
