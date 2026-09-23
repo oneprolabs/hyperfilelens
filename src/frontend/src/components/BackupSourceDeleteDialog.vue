@@ -117,7 +117,6 @@ async function loadPreflight() {
     preflightLoading.value = false
     return
   }
-  preflight.value = null
   preflightError.value = false
   preflightLoading.value = true
   try {
