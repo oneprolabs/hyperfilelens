@@ -171,7 +171,22 @@ def slim_transfer_progress(kopia_payload: dict[str, Any]) -> dict[str, Any]:
         "lanes_running": int(aggregate.get("lanes_running") or 0),
         "lanes_queued": int(aggregate.get("lanes_queued") or 0),
         "lanes_total": int(aggregate.get("lanes_total") or 0),
+        "phase_started_at": aggregate.get("phase_started_at"),
+        "last_progress_at": aggregate.get("last_progress_at"),
+        "phase_elapsed_seconds": _phase_elapsed_seconds(aggregate.get("phase_started_at")),
     }
+
+
+def _phase_elapsed_seconds(raw: Any) -> int | None:
+    if not raw:
+        return None
+    try:
+        started = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timezone.is_naive(started):
+        started = timezone.make_aware(started, timezone.get_current_timezone())
+    return max(0, int((timezone.now() - started).total_seconds()))
 
 
 def merge_transfer_progress(
@@ -188,6 +203,10 @@ def merge_transfer_progress(
             merged["estimating_started_at"] = prev["estimating_started_at"]
         elif not merged.get("estimating_started_at"):
             merged["estimating_started_at"] = timezone.now().isoformat()
+    if phase == prev_phase:
+        for key in ("phase_started_at", "last_progress_at", "phase_elapsed_seconds"):
+            if prev.get(key) is not None and merged.get(key) is None:
+                merged[key] = prev[key]
     if phase == "transferring" and not merged.get("bytes_total_known"):
         if (
             prev_phase == "transferring"

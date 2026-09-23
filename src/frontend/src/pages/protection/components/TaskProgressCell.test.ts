@@ -156,6 +156,19 @@ describe('TaskProgressCell', () => {
     expect(wrapper.text()).not.toContain('947')
   })
 
+  it('shows the backup phase, directory counts, and elapsed time', () => {
+    const wrapper = mountCell({
+      phase: 'estimating',
+      label_key: 'protection.taskProgress.backup.comparing',
+      label_args: { done: 2, total: 5 },
+      phase_elapsed_seconds: 125,
+    })
+
+    expect(wrapper.get('.task-progress-cell__label-text').text()).toBe(
+      'Comparing files · 2/5 directories completed · Active for 2 min',
+    )
+  })
+
   it('preserves restore orchestration and transfer metrics without a percentage', () => {
     const wrapper = mountCell({
       label_key: 'protection.taskProgress.restore.transferring',
@@ -212,6 +225,8 @@ describe('TaskProgressCell', () => {
     expect(wrapper.get('.task-progress-cell').attributes()).toHaveProperty('data-table-overflow-explicit-only')
     expect(metric.attributes()).toHaveProperty('data-table-overflow-title-always')
     expect(metric.attributes('data-table-overflow-title')).toBe([
+      'Backing up',
+      '0.28%',
       'Backup progress: 858 MB / 300 GB',
       'About 15 min remaining',
     ].join('\n'))
@@ -227,9 +242,48 @@ describe('TaskProgressCell', () => {
       step3_display_percent: null,
     })
 
-    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBeUndefined()
-    expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe([
+    const title = [
+      'Backing up',
       'Backup progress: 858 MB',
-    ].join('\n'))
+    ].join('\n')
+    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe(title)
+    expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe(title)
+  })
+
+  it('keeps the full phase and queue state available when the label is truncated', () => {
+    const wrapper = mountCell({
+      phase: 'queued',
+      label_key: 'protection.taskProgress.backup.queued',
+      label_args: { queued: 3, done: 0, total: 3 },
+      bytes_total: null,
+      bytes_total_known: false,
+      step3_display_percent: null,
+      processing_speed_bps: null,
+      upload_speed_bps: null,
+      eta_seconds: null,
+    })
+
+    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe(
+      'Waiting for backup capacity · 3 queued · 0/3 directories completed',
+    )
+    expect(wrapper.find('.task-progress-cell__metric-line').exists()).toBe(false)
+  })
+
+  it('combines orchestration and backup progress in one hover title', () => {
+    const wrapper = mountCell({
+      phase: 'transferring',
+      label_key: 'protection.taskProgress.backup.uploadingQueued',
+      label_args: { running: 2, queued: 3, done: 1, total: 6 },
+    })
+
+    const title = [
+      'Uploading changed data · 2 running · 3 queued · 1/6 directories completed',
+      '0.28%',
+      'Backup progress: 858 MB / 300 GB',
+      'About 15 min remaining',
+    ].join('\n')
+
+    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe(title)
+    expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe(title)
   })
 })

@@ -87,6 +87,41 @@ class KopiaProgressAggregatorTests(SimpleTestCase):
         self.assertEqual(aggregate["upload_speed_bps"], 3_000_000)
         self.assertEqual(aggregate["eta_seconds"], 1500)
 
+    def test_aggregate_uses_selected_phase_timing_for_parallel_lanes(self):
+        lanes = [
+            {
+                "id": "processing",
+                "status": "running",
+                "progress": normalize_lane_progress(
+                    progress={
+                        "phase": "kopia_transfer",
+                        "kopia_phase": "processing",
+                        "phase_started_at": "2026-09-23T08:00:00+00:00",
+                        "last_progress_at": "2026-09-23T08:03:00+00:00",
+                    },
+                    status="running",
+                ),
+            },
+            {
+                "id": "uploading",
+                "status": "running",
+                "progress": normalize_lane_progress(
+                    progress={
+                        "phase": "kopia_transfer",
+                        "kopia_phase": "uploading",
+                        "phase_started_at": "2026-09-23T08:02:00+00:00",
+                        "last_progress_at": "2026-09-23T08:04:00+00:00",
+                    },
+                    status="running",
+                ),
+            },
+        ]
+
+        aggregate = aggregate_lanes(lanes)
+
+        self.assertEqual(aggregate["phase_started_at"], "2026-09-23T08:02:00+00:00")
+        self.assertEqual(aggregate["last_progress_at"], "2026-09-23T08:04:00+00:00")
+
     def test_partial_estimate_includes_completed_lane_total(self):
         aggregate = aggregate_lanes([
             {
@@ -399,6 +434,94 @@ class KopiaProgressDisplayTests(SimpleTestCase):
         )
         self.assertEqual(phase, "estimating")
         self.assertEqual(meta["label_key"], "protection.taskProgress.backup.estimating")
+
+    def test_backup_label_exposes_active_kopia_phases(self):
+        expected = {
+            "estimating": ("protection.taskProgress.backup.comparing", "estimating"),
+            "processing": ("protection.taskProgress.backup.comparing", "estimating"),
+            "hashing": ("protection.taskProgress.backup.scanning", "transferring"),
+            "uploading": ("protection.taskProgress.backup.uploading", "transferring"),
+        }
+        for kopia_phase, (label_key, orchestration_phase) in expected.items():
+            with self.subTest(kopia_phase=kopia_phase):
+                lanes = [
+                    {
+                        "status": "success",
+                        "progress": {},
+                    },
+                    {
+                        "status": "running",
+                        "progress": normalize_lane_progress(
+                            progress={
+                                "phase": "kopia_transfer",
+                                "kopia_phase": kopia_phase,
+                            },
+                            status="running",
+                        ),
+                    },
+                ]
+                meta, phase = backup_orchestration_label_meta(
+                    task_status="running",
+                    lanes=lanes,
+                    aggregate=aggregate_lanes(lanes),
+                )
+
+                self.assertEqual(phase, orchestration_phase)
+                self.assertEqual(meta, {
+                    "label_key": label_key,
+                    "label_args": {"done": 1, "total": 2},
+                })
+
+    def test_backup_label_prioritizes_uploading_over_other_active_phases(self):
+        lanes = [
+            {
+                "status": "running",
+                "progress": normalize_lane_progress(
+                    progress={"phase": "kopia_transfer", "kopia_phase": "hashing"},
+                    status="running",
+                ),
+            },
+            {
+                "status": "running",
+                "progress": normalize_lane_progress(
+                    progress={"phase": "kopia_transfer", "kopia_phase": "uploading"},
+                    status="running",
+                ),
+            },
+        ]
+
+        meta, phase = backup_orchestration_label_meta(
+            task_status="running",
+            lanes=lanes,
+            aggregate=aggregate_lanes(lanes),
+        )
+
+        self.assertEqual(phase, "transferring")
+        self.assertEqual(meta["label_key"], "protection.taskProgress.backup.uploading")
+
+    def test_backup_label_keeps_active_phase_when_other_directories_are_queued(self):
+        lanes = [
+            {
+                "status": "running",
+                "progress": normalize_lane_progress(
+                    progress={"phase": "kopia_transfer", "kopia_phase": "uploading"},
+                    status="running",
+                ),
+            },
+            {"status": "pending", "progress": {}},
+        ]
+
+        meta, phase = backup_orchestration_label_meta(
+            task_status="running",
+            lanes=lanes,
+            aggregate=aggregate_lanes(lanes),
+        )
+
+        self.assertEqual(phase, "transferring")
+        self.assertEqual(meta, {
+            "label_key": "protection.taskProgress.backup.uploadingQueued",
+            "label_args": {"done": 0, "total": 2, "running": 1, "queued": 1},
+        })
 
     def test_backup_label_exposes_running_and_queued_directories(self):
         lanes = [

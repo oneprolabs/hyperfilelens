@@ -17,6 +17,9 @@ export type KopiaProgressAggregate = {
   lanes_queued?: number
   lanes_total: number
   slowest_lane?: { id?: string; name?: string; eta_seconds?: number } | null
+  phase_started_at?: string | null
+  last_progress_at?: string | null
+  phase_elapsed_seconds?: number | null
 }
 
 export type KopiaProgressLane = {
@@ -40,6 +43,8 @@ export type KopiaProgressLane = {
   path_index?: number | null
   path_total?: number | null
   orchestration_label?: string
+  phase_started_at?: string | null
+  last_progress_at?: string | null
 }
 
 export type TransferProgress = {
@@ -88,6 +93,9 @@ export type TransferProgress = {
   lanes_queued?: number
   lanes_total?: number
   estimating_started_at?: string
+  phase_started_at?: string | null
+  last_progress_at?: string | null
+  phase_elapsed_seconds?: number | null
 }
 
 export type TaskRuntimePayload = {
@@ -179,6 +187,22 @@ export function transferEtaText(t: TranslateFn, value: number | null | undefined
   return minutes > 0
     ? t(`protection.taskProgress.${key}HoursMinutes`, { h: hours, m: minutes })
     : t(`protection.taskProgress.${key}Hours`, { n: hours })
+}
+
+export function transferPhaseElapsedText(
+  t: TranslateFn,
+  value: number | null | undefined,
+): string | null {
+  const seconds = Math.floor(Number(value || 0))
+  if (!Number.isFinite(seconds) || seconds <= 0) return null
+  if (seconds < 60) return t('protection.taskProgress.backupElapsedSeconds', { n: seconds })
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return t('protection.taskProgress.backupElapsedMinutes', { n: minutes })
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return remainingMinutes > 0
+    ? t('protection.taskProgress.backupElapsedHoursMinutes', { h: hours, m: remainingMinutes })
+    : t('protection.taskProgress.backupElapsedHours', { n: hours })
 }
 
 export function transferCapacityText(t: TranslateFn, transfer?: TransferProgress | null, preserveLegacyRestore = false): string | null {

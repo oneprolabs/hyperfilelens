@@ -36,6 +36,16 @@ def backup_orchestration_label_meta(
         for lane in lanes
         if str(lane.get("status") or "").lower() in {"running", "dispatching", "creating"}
     }
+    active_lanes = [
+        lane
+        for lane in lanes
+        if str(lane.get("status") or "").lower() in {"running", "dispatching", "creating"}
+    ]
+    active_label_args = {
+        "done": int(aggregate.get("lanes_done") or 0),
+        "total": int(aggregate.get("lanes_total") or 0),
+    }
+    transfer_phase = _transfer_phase_key(active_lanes)
     if "finalizing" in active_phases:
         return {"label_key": "protection.taskProgress.backup.finalizing"}, "finalizing"
 
@@ -51,6 +61,21 @@ def backup_orchestration_label_meta(
             "label_key": "protection.taskProgress.backup.stalled",
             "label_args": {"name": name},
         }, "stalled"
+
+    if transfer_phase in {"uploading", "scanning", "comparing"}:
+        queued = int(aggregate.get("lanes_queued") or 0)
+        label_key = f"protection.taskProgress.backup.{transfer_phase}"
+        label_args = active_label_args
+        if queued > 0:
+            label_key += "Queued"
+            label_args = {
+                **active_label_args,
+                "running": int(aggregate.get("lanes_running") or 0),
+                "queued": queued,
+            }
+        return {"label_key": label_key, "label_args": label_args}, (
+            "estimating" if transfer_phase == "comparing" else "transferring"
+        )
 
     running = int(aggregate.get("lanes_running") or 0)
     queued = int(aggregate.get("lanes_queued") or 0)
@@ -149,8 +174,10 @@ def _transfer_phase_key(lanes: list[dict[str, Any]]) -> str:
     }
     if "uploading" in phases:
         return "uploading"
-    if "processing" in phases or "hashing" in phases:
-        return "hashing"
+    if "hashing" in phases:
+        return "scanning"
+    if "processing" in phases or "estimating" in phases:
+        return "comparing"
     if "finalizing" in phases:
         return "finalizing"
     if "restoring" in phases:

@@ -485,7 +485,7 @@
   "protection.taskProgress.backup.runningQueued": "7b8471397953d967a7731f354bbceac2cf857e7f4924d69c9fc4176b927415ed",
   "protection.taskProgress.backup.queued": "2c63f07c723dd874faf14d1a610c4e5e4c6c96e67d87eaa17687c68326a5644d",
   "protection.taskProgress.backup.stalled": "f66390e969afcc6a34752d086c0d72fe47b38379c48e1e2bce8e079a422a9c17",
-  "protection.taskProgress.backup.uploading": "7454d93e11440d635e7cc7042f5bc1a29f60b0effcc70bcfa31ab7b6a48119fd",
+  "protection.taskProgress.backup.uploading": "5b39ccbfcb4e6f417c084f4006d30f24e59079cab65c4873d66a09320460b986",
   "protection.taskProgress.backup.hashing": "c68e754a30e6e58074febc603e5eb8c918d797d6abe885c93381154f6754e64e",
   "protection.taskProgress.backup.restoring": "828ec787b4eb6d5374cd1f22d8003bb521df2b31c97f0ff0a02999696ea9714f",
   "protection.taskProgress.backup.transferringGeneric": "295993aa66f7a77092bee3a27a4e9dfabef27a3a6aaa220f7da516fa1773e9eb",
@@ -7797,5 +7797,14 @@
   "platformOps.settings.identity.emailServiceRequired": "092685fa9dcb33e937f12db01efe75da707528108c2947f8f6420a8d2dc1b737",
   "platformOps.settings.identity.unitMinutes": "96a5ce654496f466aaca246e9a85f9f684354634c5bdb65ade5cb036fc4e7bd1",
   "platformOps.settings.identity.regTokenMinutes": "a08a7acfb6f8a6b9f36c74b631726743d06f39b09ba6332c94352851dba7bfc0",
-  "platformOps.settings.identity.resetTimeoutMinutes": "63fea8cc09ef4ce750ff962b3ecf9d067184e57231331f8d1081918d31239838"
+  "platformOps.settings.identity.resetTimeoutMinutes": "63fea8cc09ef4ce750ff962b3ecf9d067184e57231331f8d1081918d31239838",
+  "protection.taskProgress.backupElapsedSeconds": "da0fb1ada78ad16e632b7c4f27b7ae594ead6c8b387c76b89fcda79f9afd2c39",
+  "protection.taskProgress.backupElapsedMinutes": "fd269daba4b9e268cf8c0b045c080423d061bbbda795a86a3b2cdfcd0cd7a495",
+  "protection.taskProgress.backupElapsedHours": "8798db10b90e80eeabea7a69defdec5f041cfabc956ebd64de84dbeb0e2b12ba",
+  "protection.taskProgress.backupElapsedHoursMinutes": "4cacbcfcbb502ebec08969266d5fd5b2adfb5bc8e24a2c6cfe5541dfd7fb5c88",
+  "protection.taskProgress.backup.comparing": "679af69a808e979a8ccffdf50fb087f42b68b0b1a1e0633dc9f2fcdbbd73c40d",
+  "protection.taskProgress.backup.scanning": "e5ea1cd1bfc25f5781952ff4b547b7e662dfc02d90d0b207217bb10af7b9a85f",
+  "protection.taskProgress.backup.comparingQueued": "dfda9baa30f6ca89470b1234d6115f7a1f10b0fd048b0bab79fe67418a85bd89",
+  "protection.taskProgress.backup.scanningQueued": "7eead97f633e13d6cbe470537b33d3a4c95e6b8ed001ca462e92e3fa86fc6ab0",
+  "protection.taskProgress.backup.uploadingQueued": "b1abdf9f9fe85d5a8d20dd5a7625c9a29c29609459ec50aa3450d86cd8a05d45"
 }

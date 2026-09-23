@@ -106,6 +106,8 @@ class OrchestratedProgressTests(SimpleTestCase):
                     "eta_seconds": 30,
                     "lanes_done": 0,
                     "lanes_total": 1,
+                    "phase_started_at": "2026-09-23T08:00:00+00:00",
+                    "last_progress_at": "2026-09-23T08:01:00+00:00",
                 },
             }
         )
@@ -113,7 +115,26 @@ class OrchestratedProgressTests(SimpleTestCase):
         self.assertEqual(payload["label_key"], "protection.taskProgress.backup.uploading")
         self.assertEqual(payload["speed_bps"], 1000)
         self.assertTrue(payload["show_metrics"])
+        self.assertEqual(payload["phase_started_at"], "2026-09-23T08:00:00+00:00")
+        self.assertEqual(payload["last_progress_at"], "2026-09-23T08:01:00+00:00")
+        self.assertIsInstance(payload["phase_elapsed_seconds"], int)
         self.assertNotIn("transfer_percent", payload)
+
+    def test_merge_transfer_progress_preserves_phase_timing_for_same_phase(self):
+        started_at = "2026-09-23T08:00:00+00:00"
+        merged = merge_transfer_progress(
+            previous={
+                "phase": "transferring",
+                "phase_started_at": started_at,
+                "last_progress_at": "2026-09-23T08:01:00+00:00",
+                "phase_elapsed_seconds": 60,
+            },
+            current={"phase": "transferring"},
+        )
+
+        self.assertEqual(merged["phase_started_at"], started_at)
+        self.assertEqual(merged["last_progress_at"], "2026-09-23T08:01:00+00:00")
+        self.assertEqual(merged["phase_elapsed_seconds"], 60)
 
     def test_merge_transfer_progress_preserves_estimating_started_at(self):
         now = timezone.now().isoformat()

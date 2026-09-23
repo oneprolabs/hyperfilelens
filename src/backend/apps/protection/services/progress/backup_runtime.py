@@ -175,6 +175,7 @@ def update_directory_progress_snapshot(
         else {}
     )
     sample = directory.last_progress_sample if isinstance(directory.last_progress_sample, dict) else {}
+    now = timezone.now()
     normalized = normalize_lane_progress(
         progress=progress,
         status=str(directory.status or "").lower(),
@@ -184,6 +185,19 @@ def update_directory_progress_snapshot(
     )
     if normalized.get("is_transfer"):
         normalized = apply_speed_and_eta(lane=normalized, sample=sample, persist_sample=True)
+    current_phase = str(normalized.get("kopia_phase") or "").strip().lower()
+    previous_phase = str(
+        previous_progress.get("kopia_phase")
+        or previous_progress.get("phase")
+        or ""
+    ).strip().lower()
+    phase_started_at = str(previous_progress.get("phase_started_at") or "").strip()
+    if current_phase and current_phase != previous_phase:
+        phase_started_at = now.isoformat()
+    elif current_phase and not phase_started_at:
+        phase_started_at = now.isoformat()
+    normalized["phase_started_at"] = phase_started_at or None
+    normalized["last_progress_at"] = now.isoformat()
     update_fields = ["updated_at"]
     directory.last_progress_snapshot = {
         **(progress or {}),
@@ -194,7 +208,7 @@ def update_directory_progress_snapshot(
         current=progress,
         previous=previous_progress,
     ):
-        directory.last_substantive_progress_at = timezone.now()
+        directory.last_substantive_progress_at = now
         directory.stall_warned_at = None
         update_fields.extend(["last_substantive_progress_at", "stall_warned_at"])
     if normalized.get("last_sample"):

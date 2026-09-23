@@ -1751,6 +1751,9 @@ class ProtectionBackupTaskApiTests(TestCase):
         directory.refresh_from_db()
         first_activity = directory.last_substantive_progress_at
         self.assertIsNotNone(first_activity)
+        first_phase_started = directory.last_progress_snapshot["phase_started_at"]
+        self.assertIsNotNone(first_phase_started)
+        self.assertIsNotNone(directory.last_progress_snapshot["last_progress_at"])
 
         directory.stall_warned_at = timezone.now()
         directory.save(update_fields=["stall_warned_at", "updated_at"])
@@ -1761,14 +1764,16 @@ class ProtectionBackupTaskApiTests(TestCase):
         directory.refresh_from_db()
         self.assertEqual(directory.last_substantive_progress_at, first_activity)
         self.assertIsNotNone(directory.stall_warned_at)
+        self.assertEqual(directory.last_progress_snapshot["phase_started_at"], first_phase_started)
 
         update_directory_progress_snapshot(
             directory=directory,
-            progress={"hashed_count": 11, "hashed_bytes": 0},
+            progress={"kopia_phase": "hashing", "hashed_count": 11, "hashed_bytes": 0},
         )
         directory.refresh_from_db()
         self.assertGreater(directory.last_substantive_progress_at, first_activity)
         self.assertIsNone(directory.stall_warned_at)
+        self.assertNotEqual(directory.last_progress_snapshot["phase_started_at"], first_phase_started)
 
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",

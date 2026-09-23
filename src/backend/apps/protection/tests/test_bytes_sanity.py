@@ -333,7 +333,10 @@ class OrchestrationLabelMetaTests(SimpleTestCase):
             aggregate={"lanes_done": 0, "lanes_total": 1},
         )
         self.assertEqual(phase, "transferring")
-        self.assertEqual(meta["label_key"], "protection.taskProgress.transfer.hashedOnly")
+        self.assertEqual(meta, {
+            "label_key": "protection.taskProgress.backup.uploading",
+            "label_args": {"done": 0, "total": 1},
+        })
 
     def test_finalizing_kopia_phase_uses_finalizing_label(self):
         meta, phase = backup_orchestration_label_meta(
