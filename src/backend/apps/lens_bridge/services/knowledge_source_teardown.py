@@ -450,10 +450,8 @@ def _claim(knowledge_source_id: int) -> tuple[str | None, str]:
             == LensKnowledgeSource.LifecycleStatus.DELETED
         ):
             return None, "deleted"
-        if teardown_blocking.intervention_required(
-            knowledge_source.teardown_state_json
-        ):
-            return None, "intervention_required"
+        if teardown_blocking.retry_exhausted(knowledge_source.teardown_state_json):
+            return None, "retry_exhausted"
         if (
             knowledge_source.teardown_claimed_at
             and knowledge_source.teardown_claimed_at
@@ -668,6 +666,22 @@ def run_knowledge_source_teardown(
             teardown_state_json__forced_remote_cleanup__status="pending",
         ).exists():
             owner_session_link_id = forced_owner_id
+    if owner_session_link_id is None and LensSessionLink.objects.filter(
+        knowledge_source_id=knowledge_source.id,
+        lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+        cleanup_intent=LensSessionLink.CleanupIntent.DELETE_SESSION,
+    ).exists():
+        # The Chat is the teardown owner. A standalone KS reconciler cannot
+        # carry its owner id through the Celery task and would repeatedly fail
+        # ownership validation while the Chat is deleting (#1296).
+        _claimed_update(
+            knowledge_source.id,
+            claim_token,
+            teardown_claim_token=None,
+            teardown_claimed_at=None,
+            teardown_next_retry_at=None,
+        )
+        return {"knowledge_source_id": knowledge_source.id, "status": "owned_by_chat"}
     stop_assessment: managed_datasource.ConversionStopAssessment | None = None
     restore_stop_assessment: ChatRestoreStopAssessment | None = None
     blocking_step = "validate_gateway_workload"
@@ -890,17 +904,17 @@ def run_knowledge_source_teardown(
             stop_confirmation_source=stop_confirmation_source,
         )
         forced_cleanup_pending = forced_cleanup.get("status") == "pending"
-        requires_intervention = bool(blocking["intervention_required"])
+        retries_exhausted = teardown_blocking.retry_exhausted(state)
         if forced_cleanup_pending:
             # Force deletion separates the user-visible Chat from its durable
             # remote cleanup debt. Keep the low-frequency reconciliation alive
             # instead of returning this expected offline case to an operator.
-            requires_intervention = False
-            blocking["intervention_required"] = False
+            retries_exhausted = False
+            blocking[teardown_blocking.RETRY_EXHAUSTED_KEY] = False
             state["blocking"] = blocking
         retry_at = (
             None
-            if requires_intervention
+            if retries_exhausted
             else next_retry_at(int(blocking["consecutive_attempts"]))
         )
         LensKnowledgeSource.all_objects.filter(
@@ -911,8 +925,8 @@ def run_knowledge_source_teardown(
                 "Remote workspace cleanup is pending until the Data Gateway can complete it."
                 if forced_cleanup_pending
                 else (
-                    "Knowledge source cleanup requires operator intervention."
-                    if requires_intervention
+                    "Knowledge source cleanup failed. Retry the owning Chat."
+                    if retries_exhausted
                     else "Knowledge source cleanup is incomplete and will be retried."
                 )
             ),
@@ -925,13 +939,13 @@ def run_knowledge_source_teardown(
         logger.warning(
             "knowledge source teardown blocked ks_id=%s gateway_link_id=%s "
             "task_id=%s remote_status=%s reason=%s attempts=%s "
-            "intervention_required=%s",
+            "retry_exhausted=%s",
             knowledge_source.id,
             knowledge_source.gateway_link_id,
             task_id,
             remote_status,
             blocking_reason,
             blocking["consecutive_attempts"],
-            requires_intervention,
+            retries_exhausted,
         )
         raise KnowledgeSourceTeardownIncompleteError(str(exc)) from exc

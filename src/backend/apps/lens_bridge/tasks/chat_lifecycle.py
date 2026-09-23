@@ -205,12 +205,8 @@ def reconcile_lens_resource_teardowns_task(*, limit: int = 100) -> dict:
             )
         )
         .filter(
-            Q(
-                teardown_state_json__blocking__intervention_required__isnull=True
-            )
-            | Q(
-                teardown_state_json__blocking__intervention_required=False
-            )
+            Q(teardown_state_json__blocking__retry_exhausted__isnull=True)
+            | Q(teardown_state_json__blocking__retry_exhausted=False)
         )
         .filter(
             Q(teardown_next_retry_at__isnull=True)

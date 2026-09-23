@@ -953,9 +953,9 @@ export const en = {
       deleteConfirmMessage:
         'This will delete the Chat, its conversation history, shared links, and temporary resources. This action cannot be undone.',
       forceDeleteConfirmMessage:
-        'The Private Data Gateway is offline. The Chat will be deleted from HFL immediately, but remote SourceLens resources and gateway workspace files may remain.',
+        'Force Cleanup will remove this Chat from HyperFileLens immediately. Remote SourceLens resources or Gateway workspace files may remain.',
       forceDeleteComplete:
-        'Chat deleted from HFL. Remote resources may remain on the offline Private Data Gateway.',
+        'Chat deleted from HyperFileLens. Remote resources may remain.',
       renamePlaceholder: 'Enter chat name',
       renameFailed: 'Failed to rename chat',
       sessionRecovering: 'Recovering chat…',
@@ -1124,7 +1124,8 @@ export const en = {
       deletingChat: 'Deleting Chat',
       genericLifecycleError: 'Something went wrong while preparing the selected data. Try again, or delete this chat and create a new one.',
       retryPreparationDetail: 'The previous preparation attempt stopped. Temporary resources are being removed safely before you can try again.',
-      cleanupBlockedDetail: 'Cleanup could not finish safely. Retry when the Data Gateway is available.',
+      cleanupBlockedDetail: 'Chat cleanup failed. Retry the deletion or use Force Cleanup when it is safe.',
+      cleanupSafetyDetail: 'Cleanup is waiting for a remote restore or conversion task to stop.',
       deletingChatDetail: 'The chat and its temporary data are being removed.',
       dataOriginHint:
         'This chat uses a protected backup snapshot, not the live source. Document conversion runs on the selected Data Gateway workspace.',

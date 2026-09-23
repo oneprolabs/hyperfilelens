@@ -141,6 +141,15 @@ const isForceDeleteAvailable = computed(() => (
   && props.session.cleanup_intent === 'delete_session'
   && props.session.force_delete_available === true
 ))
+const isCleanupSafetyBlocked = computed(() => (
+  [
+    'restore_still_running',
+    'conversion_still_running',
+    'remote_task_state_unknown',
+    'active_cleanup_lease',
+    'active_run',
+  ].includes(props.session.force_delete_reason || '')
+))
 const isGatewayQueued = computed(() => (
   props.session.lifecycle_status === 'provisioning'
   && props.session.provision_phase === 'queued'
@@ -181,6 +190,9 @@ function stepState(index: number) {
       <h2>{{ t(isDeleteCleanupBlocked ? 'insight.copilot.chatCouldNotBeDeleted' : 'insight.copilot.chatCleanupPaused') }}</h2>
       <p v-if="isForceDeleteAvailable">
         {{ t('insight.copilot.forceDeleteConfirmMessage') }}
+      </p>
+      <p v-else-if="isCleanupSafetyBlocked">
+        {{ t('insight.copilot.cleanupSafetyDetail') }}
       </p>
       <p v-else>
         {{ t('insight.copilot.cleanupBlockedDetail') }}
@@ -231,7 +243,7 @@ function stepState(index: number) {
             :key="`${item.name}-${index}`"
           >
             <strong>{{ item.name }}</strong>
-            <span>{{ problemReasonLabel(item) }}</span>
+                  <span>{{ problemReasonLabel(item) }}</span>
           </li>
         </ul>
         <ul
@@ -274,6 +286,9 @@ function stepState(index: number) {
       <h2>{{ t('insight.copilot.deletingChat') }}</h2>
       <p v-if="isForceDeleteAvailable">
         {{ t('insight.copilot.forceDeleteConfirmMessage') }}
+      </p>
+      <p v-else-if="isCleanupSafetyBlocked">
+        {{ t('insight.copilot.cleanupSafetyDetail') }}
       </p>
       <p v-else>
         {{ t('insight.copilot.deletingChatDetail') }}
