@@ -70,6 +70,7 @@ const BodyStub = defineComponent({
       <span data-test="preflight-loading">{{ preflightLoading }}</span>
       <span data-test="preflight-error">{{ preflightError }}</span>
       <span data-test="preflight-disabled">{{ preflight?.delete_disabled }}</span>
+      <span data-test="preflight-risk-count">{{ preflight?.risks?.length || 0 }}</span>
       <span data-test="dialog-source-count">{{ sourceIds?.length || 0 }}</span>
       <button data-test="select-force" @click="$emit('update:force', true)">force</button>
       <button data-test="strict-confirmation" @click="$emit('update:confirmText', 'DEREGISTER')">strict</button>
@@ -110,6 +111,17 @@ const successfulPreflight: BackupSourceDeletePreflight = {
   risks: [],
   blocking: [],
   strict_may_fail: false,
+  delete_disabled: false,
+}
+
+const riskyPreflight: BackupSourceDeletePreflight = {
+  risks: [{
+    code: 'repository_unreachable',
+    detail: 'Target repository is unreachable.',
+    repository_name: 'NAS-Storage',
+  }],
+  blocking: [],
+  strict_may_fail: true,
   delete_disabled: false,
 }
 
@@ -210,6 +222,27 @@ describe.each([
       'FORCE DEREGISTER',
       expect.stringMatching(/^source-unregister:/),
     )
+    wrapper.unmount()
+  })
+
+  it('keeps the existing warning visible while Force preflight refreshes', async () => {
+    const forcePreflightRequest = deferred<typeof riskyPreflight>()
+    preflightDeleteBackupSources
+      .mockResolvedValueOnce(riskyPreflight)
+      .mockReturnValueOnce(forcePreflightRequest.promise)
+    const wrapper = mountDialog(component)
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="preflight-risk-count"]').text()).toBe('1')
+    await wrapper.get('[data-test="select-force"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.get('[data-test="preflight-loading"]').text()).toBe('true')
+    expect(wrapper.get('[data-test="preflight-risk-count"]').text()).toBe('1')
+
+    forcePreflightRequest.resolve(riskyPreflight)
+    await flushPromises()
+    expect(wrapper.get('[data-test="preflight-risk-count"]').text()).toBe('1')
     wrapper.unmount()
   })
 
