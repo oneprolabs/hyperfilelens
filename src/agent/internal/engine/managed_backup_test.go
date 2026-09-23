@@ -1726,6 +1726,120 @@ func TestSnapshotBrowsePageCollectorRejectsInvalidCursor(t *testing.T) {
 	}
 }
 
+func TestSnapshotBrowsePageCollectorRecordsMalformedLineDiagnostics(t *testing.T) {
+	collector, err := newSnapshotBrowsePageCollector("bin", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if collector.consume("unexpected kopia output") {
+		t.Fatal("expected malformed output to stop collection")
+	}
+	if !collector.invalid {
+		t.Fatal("expected malformed output to invalidate the result")
+	}
+	if collector.invalidLineNumber != 1 || collector.invalidReason != "insufficient_fields" {
+		t.Fatalf("unexpected invalid line diagnostics: %#v", collector)
+	}
+	if collector.invalidLinePreview != "unexpected kopia output" {
+		t.Fatalf("unexpected invalid line preview: %q", collector.invalidLinePreview)
+	}
+}
+
+func TestSnapshotBrowsePageCollectorRecordsInvalidModeAndEscapesPreview(t *testing.T) {
+	collector, err := newSnapshotBrowsePageCollector("sbin", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if collector.consume("not-a-mode 1 2026-08-12 11:15:59 UTC object bad\r\nname") {
+		t.Fatal("expected invalid mode to stop collection")
+	}
+	if collector.invalidReason != "invalid_mode" {
+		t.Fatalf("invalid reason = %q, want invalid_mode", collector.invalidReason)
+	}
+	if got, want := collector.invalidLinePreview, `not-a-mode 1 2026-08-12 11:15:59 UTC object bad\r\nname`; got != want {
+		t.Fatalf("invalid preview = %q, want %q", got, want)
+	}
+}
+
+func TestSnapshotBrowsePageCollectorAcceptsKopiaUnknownTypeAsSpecial(t *testing.T) {
+	collector, err := newSnapshotBrowsePageCollector("bin", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !collector.consume("urwxr-xr-x 39296 2026-08-19 16:47:51 UTC object-umount umount") {
+		t.Fatal("expected Kopia unknown type entry to be parsed")
+	}
+	if len(collector.entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(collector.entries))
+	}
+	entry := collector.entries[0]
+	if entry["type"] != "special" || entry["downloadable"] != false {
+		t.Fatalf("unexpected special entry classification: %#v", entry)
+	}
+	if entry["download_reason"] != "Special files cannot be downloaded individually." {
+		t.Fatalf("unexpected download reason: %#v", entry["download_reason"])
+	}
+}
+
+func TestLooksLikeModeAcceptsKopiaUnknownType(t *testing.T) {
+	for _, mode := range []string{"urwxr-xr-x", "Urwxr-xr-x", "grwxr-xr-x", "Grwxr-xr-x"} {
+		if !looksLikeMode(mode) {
+			t.Fatalf("looksLikeMode(%q) = false", mode)
+		}
+	}
+}
+
+func TestLooksLikeModeRejectsMalformedPermissionSuffix(t *testing.T) {
+	for _, mode := range []string{"grwxr-x-xx", "grwxr-x-rx", "not-a-mode"} {
+		if looksLikeMode(mode) {
+			t.Fatalf("looksLikeMode(%q) = true", mode)
+		}
+	}
+}
+
+func TestSnapshotBrowseEntryTypeUsesDownloadWhitelist(t *testing.T) {
+	for _, mode := range []string{"-rwxr-xr-x", "drwxr-xr-x"} {
+		_, downloadable, _ := snapshotBrowseEntryType(mode, "")
+		if !downloadable {
+			t.Fatalf("mode %q should be downloadable", mode)
+		}
+	}
+	for _, mode := range []string{"lrwxrwxrwx", "urwxr-xr-x", "grwxr-xr-x", "srwxr-xr-x", "prwxr-xr-x"} {
+		entryType, downloadable, reason := snapshotBrowseEntryType(mode, "")
+		if downloadable || entryType != "special" && entryType != "symlink" || reason == "" {
+			t.Fatalf("mode %q should be view-only, got type=%q downloadable=%v reason=%q", mode, entryType, downloadable, reason)
+		}
+	}
+}
+
+func TestSnapshotBrowsePageCollectorAcceptsKopiaGroupTypeAsSpecial(t *testing.T) {
+	collector, err := newSnapshotBrowsePageCollector("bin", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !collector.consume("grwxr-xr-x 39664 2024-03-31 00:06:27 UTC object-crontab crontab") {
+		t.Fatal("expected Kopia group type entry to be parsed")
+	}
+	if got := collector.entries[0]["type"]; got != "special" {
+		t.Fatalf("entry type = %v, want special", got)
+	}
+	if got := collector.entries[0]["downloadable"]; got != false {
+		t.Fatalf("entry downloadable = %v, want false", got)
+	}
+}
+
+func TestSanitizeSnapshotBrowseLineLimitsPreview(t *testing.T) {
+	line := strings.Repeat("x", snapshotBrowseInvalidPreviewLimit+10)
+	got := sanitizeSnapshotBrowseLine(line)
+	if len(got) != snapshotBrowseInvalidPreviewLimit+3 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("sanitized preview length/suffix = %d/%q", len(got), got[len(got)-3:])
+	}
+}
+
 func TestInsightSnapshotBrowseCollectorRejectsMalformedOutput(t *testing.T) {
 	collector := newInsightSnapshotBrowseCollector("reports", 2)
 	collector.consume("unexpected kopia output")
