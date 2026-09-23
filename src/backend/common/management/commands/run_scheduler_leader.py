@@ -8,12 +8,32 @@ import signal
 import subprocess
 import time
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import connection
 
 
 _SCHEDULER_LOCK_ID = 0x48464C534348  # "HFLSCH", stable across every HFL host.
 _STANDBY_FILE = Path("/tmp/hfl-scheduler-standby")
+_HEARTBEAT_KEY = "hyperfilelens:runtime:scheduler-heartbeat"
+
+
+def touch_scheduler_heartbeat() -> None:
+    try:
+        import redis
+
+        url = getattr(settings, "REDIS_URL", "") or os.getenv("REDIS_URL", "")
+        if not url:
+            return
+        redis.from_url(url, socket_connect_timeout=2).set(
+            _HEARTBEAT_KEY,
+            str(time.time()),
+            ex=30,
+        )
+    except Exception:
+        # Redis health is reported independently; a transient heartbeat write
+        # failure must not terminate the scheduler.
+        return
 
 
 class Command(BaseCommand):
@@ -45,11 +65,13 @@ class Command(BaseCommand):
             if not acquired:
                 _STANDBY_FILE.touch()
                 self.stdout.write("Scheduler leader lock is held by another instance")
+                touch_scheduler_heartbeat()
                 time.sleep(retry_seconds)
                 continue
 
             _STANDBY_FILE.unlink(missing_ok=True)
             self.stdout.write(self.style.SUCCESS("Scheduler leader lock acquired"))
+            touch_scheduler_heartbeat()
             command = [
                 "celery",
                 "-A",
@@ -64,6 +86,7 @@ class Command(BaseCommand):
                 while child.poll() is None and not stopping:
                     # Keep the advisory-lock session alive and fail closed if it is lost.
                     time.sleep(retry_seconds)
+                    touch_scheduler_heartbeat()
                     with connection.cursor() as cursor:
                         cursor.execute("SELECT 1")
                         cursor.fetchone()

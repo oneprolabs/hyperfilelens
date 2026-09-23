@@ -58,7 +58,6 @@ SENTRY_FRONTEND_DSN=
 SENTRY_ENVIRONMENT=
 SENTRY_TRACES_SAMPLE_RATE=0
 HFL_DEPLOY_TARGET=
-HFL_DEPLOYMENT_MODE=standalone
 HFL_INSECURE_TLS=1
 DJANGO_ALLOWED_HOSTS=localhost
 CSRF_TRUSTED_ORIGINS=https://localhost:11443
@@ -100,7 +99,10 @@ grep -Fx 'SENTRY_BACKEND_DSN="https://backend@sentry.example.com/41"' "${env_fil
 grep -Fx 'SENTRY_FRONTEND_DSN="https://frontend@sentry.example.com/42"' "${env_file}" >/dev/null
 grep -Fx 'SENTRY_ENVIRONMENT=hfl-community' "${env_file}" >/dev/null
 grep -Fx 'HFL_DEPLOY_TARGET=community' "${env_file}" >/dev/null
-grep -Fx 'HFL_DEPLOYMENT_MODE=managed' "${env_file}" >/dev/null
+if grep -F 'HFL_DEPLOYMENT_MODE=' "${env_file}" >/dev/null; then
+	printf 'ERROR: retired HFL_DEPLOYMENT_MODE remained in runtime config\n' >&2
+	exit 1
+fi
 
 sl_env="${tmp}/sl.env"
 cat >"${sl_env}" <<'EOF'

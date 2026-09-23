@@ -59,9 +59,10 @@ describe('Admin Console finalization contracts', () => {
   it('shows runtime environment summary, infrastructure health, and service connections', () => {
     const environment = source('src/platform-ops/pages/platform/settings/EnvironmentSettings.vue')
 
-    expect(environment).toContain("t('platformOps.settings.environment.summaryTitle')")
-    expect(environment).toContain("t('platformOps.settings.environment.healthTitle')")
-    expect(environment).toContain('<RuntimeServiceConnections />')
+    expect(environment).toContain("t('platformOps.settings.environment.overviewTitle')")
+    expect(environment).toContain("t('platformOps.settings.environment.controlPlaneTitle')")
+    expect(environment).toContain("RuntimeStatusTable :rows=\"controlPlaneRows\"")
+    expect(environment).toContain('<RuntimeServiceConnections :data-gateway="dataGatewayProbe" />')
     expect(environment).not.toContain('effectiveEntries')
     expect(environment).not.toContain('sourceEntries')
   })
