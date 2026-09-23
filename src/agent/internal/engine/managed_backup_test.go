@@ -1732,17 +1732,17 @@ func TestSnapshotBrowsePageCollectorRecordsMalformedLineDiagnostics(t *testing.T
 		t.Fatal(err)
 	}
 
-	if collector.consume("unexpected kopia output") {
-		t.Fatal("expected malformed output to stop collection")
+	if !collector.consume("unexpected kopia output") {
+		t.Fatal("expected malformed output to be skipped without aborting collection")
 	}
-	if !collector.invalid {
-		t.Fatal("expected malformed output to invalidate the result")
+	if collector.invalid || collector.skippedInvalidCount != 1 {
+		t.Fatalf("expected malformed output to be recorded without invalidating the result: %#v", collector)
 	}
-	if collector.invalidLineNumber != 1 || collector.invalidReason != "insufficient_fields" {
-		t.Fatalf("unexpected invalid line diagnostics: %#v", collector)
+	if collector.invalidLineNumber != 0 || collector.invalidReason != "" {
+		t.Fatalf("legacy invalid diagnostics should remain empty: %#v", collector)
 	}
-	if collector.invalidLinePreview != "unexpected kopia output" {
-		t.Fatalf("unexpected invalid line preview: %q", collector.invalidLinePreview)
+	if len(collector.warnings) != 1 || collector.warnings[0]["reason"] != "insufficient_fields" {
+		t.Fatalf("unexpected browse warnings: %#v", collector.warnings)
 	}
 }
 
@@ -1752,13 +1752,13 @@ func TestSnapshotBrowsePageCollectorRecordsInvalidModeAndEscapesPreview(t *testi
 		t.Fatal(err)
 	}
 
-	if collector.consume("not-a-mode 1 2026-08-12 11:15:59 UTC object bad\r\nname") {
-		t.Fatal("expected invalid mode to stop collection")
+	if !collector.consume("zrw-r--r-- 1 2026-08-12 11:15:59 UTC object bad\r\nname") {
+		t.Fatal("expected invalid mode to be handled without aborting collection")
 	}
-	if collector.invalidReason != "invalid_mode" {
-		t.Fatalf("invalid reason = %q, want invalid_mode", collector.invalidReason)
+	if collector.invalid || len(collector.warnings) != 1 {
+		t.Fatalf("expected a degraded browse warning: %#v", collector)
 	}
-	if got, want := collector.invalidLinePreview, `not-a-mode 1 2026-08-12 11:15:59 UTC object bad\r\nname`; got != want {
+	if got, want := collector.warnings[0]["line_preview"], `zrw-r--r-- 1 2026-08-12 11:15:59 UTC object bad\r\nname`; got != want {
 		t.Fatalf("invalid preview = %q, want %q", got, want)
 	}
 }
@@ -1776,16 +1776,16 @@ func TestSnapshotBrowsePageCollectorAcceptsKopiaUnknownTypeAsSpecial(t *testing.
 		t.Fatalf("entries = %d, want 1", len(collector.entries))
 	}
 	entry := collector.entries[0]
-	if entry["type"] != "special" || entry["downloadable"] != false {
-		t.Fatalf("unexpected special entry classification: %#v", entry)
+	if entry["type"] != "file" || entry["downloadable"] != true {
+		t.Fatalf("unexpected setuid entry classification: %#v", entry)
 	}
-	if entry["download_reason"] != "Special files cannot be downloaded individually." {
+	if entry["download_reason"] != nil {
 		t.Fatalf("unexpected download reason: %#v", entry["download_reason"])
 	}
 }
 
 func TestLooksLikeModeAcceptsKopiaUnknownType(t *testing.T) {
-	for _, mode := range []string{"urwxr-xr-x", "Urwxr-xr-x", "grwxr-xr-x", "Grwxr-xr-x"} {
+	for _, mode := range []string{"urwxr-xr-x", "grwxr-xr-x", "dgrwxrwxr-x", "dgtrwxrwxrwx"} {
 		if !looksLikeMode(mode) {
 			t.Fatalf("looksLikeMode(%q) = false", mode)
 		}
@@ -1807,10 +1807,27 @@ func TestSnapshotBrowseEntryTypeUsesDownloadWhitelist(t *testing.T) {
 			t.Fatalf("mode %q should be downloadable", mode)
 		}
 	}
-	for _, mode := range []string{"lrwxrwxrwx", "urwxr-xr-x", "grwxr-xr-x", "srwxr-xr-x", "prwxr-xr-x"} {
+	for _, mode := range []string{"Lrwxrwxrwx", "srwxr-xr-x", "prwxr-xr-x"} {
 		entryType, downloadable, reason := snapshotBrowseEntryType(mode, "")
 		if downloadable || entryType != "special" && entryType != "symlink" || reason == "" {
 			t.Fatalf("mode %q should be view-only, got type=%q downloadable=%v reason=%q", mode, entryType, downloadable, reason)
+		}
+	}
+}
+
+func TestClassifyInsightSnapshotEntryUsesGoModeTypeBits(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want string
+	}{
+		{mode: "urwxr-xr-x", want: "file"},
+		{mode: "grwxr-xr-x", want: "file"},
+		{mode: "dgrwxrwxr-x", want: "dir"},
+		{mode: "dgtrwxrwxrwx", want: "dir"},
+		{mode: "Lrwxrwxrwx", want: "special"},
+	} {
+		if got, valid := classifyInsightSnapshotEntry(tc.mode, 1); !valid || got != tc.want {
+			t.Fatalf("classifyInsightSnapshotEntry(%q) = %q, %v; want %q, true", tc.mode, got, valid, tc.want)
 		}
 	}
 }
@@ -1824,11 +1841,11 @@ func TestSnapshotBrowsePageCollectorAcceptsKopiaGroupTypeAsSpecial(t *testing.T)
 	if !collector.consume("grwxr-xr-x 39664 2024-03-31 00:06:27 UTC object-crontab crontab") {
 		t.Fatal("expected Kopia group type entry to be parsed")
 	}
-	if got := collector.entries[0]["type"]; got != "special" {
-		t.Fatalf("entry type = %v, want special", got)
+	if got := collector.entries[0]["type"]; got != "file" {
+		t.Fatalf("entry type = %v, want file", got)
 	}
-	if got := collector.entries[0]["downloadable"]; got != false {
-		t.Fatalf("entry downloadable = %v, want false", got)
+	if got := collector.entries[0]["downloadable"]; got != true {
+		t.Fatalf("entry downloadable = %v, want true", got)
 	}
 }
 

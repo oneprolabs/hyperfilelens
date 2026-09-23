@@ -153,19 +153,32 @@ def _normalize_entries(raw_entries: Any, *, base_path: str, limit: int) -> list[
         if not name:
             name = _filename(rel_path)
         item_type = str(item.get("type") or "").strip().lower()
-        mode = str(item.get("mode") or item.get("permissions") or "").strip().lower()
-        is_dir = bool(item.get("is_dir")) or item_type in {"dir", "directory", "d", "folder"} or mode.startswith("d")
-        normalized_type = "dir" if is_dir else (
-            "symlink" if item_type in {"symlink", "symbolic-link", "link"} or mode.startswith("l") else "file"
+        mode = str(item.get("mode") or item.get("permissions") or "").strip()
+        is_dir = bool(item.get("is_dir")) or item_type in {"dir", "directory", "d", "folder"}
+        if is_dir:
+            normalized_type = "dir"
+        elif item_type in {"symlink", "symbolic-link", "link"} or mode.startswith("L"):
+            normalized_type = "symlink"
+        elif item_type in {"special", "unknown"}:
+            normalized_type = item_type
+        elif item_type in {"file", "f", "regular"}:
+            normalized_type = "file"
+        else:
+            normalized_type = "unknown"
+        downloadable = (
+            normalized_type in {"file", "dir"}
+            and item.get("downloadable", True) is not False
         )
-        downloadable = False if normalized_type == "symlink" else item.get("downloadable", True) is not False
         download_reason = str(item.get("download_reason") or "").strip()
         if normalized_type == "symlink" and not download_reason:
             download_reason = "Symbolic links cannot be downloaded individually."
+        if normalized_type in {"special", "unknown"} and not download_reason:
+            download_reason = "Entry type could not be verified safely."
         rows.append(
             {
                 "name": name,
                 "path": rel_path,
+                "mode": mode or None,
                 "type": normalized_type,
                 "size_bytes": int(item.get("size_bytes") or item.get("size") or 0),
                 "modified_at": item.get("modified_at") or item.get("mod_time") or None,
@@ -378,6 +391,10 @@ def browse_snapshot_directory(
         "entries": entries,
         "has_more": has_more,
         "next_cursor": next_cursor,
+        "skipped_invalid_count": int(result.get("skipped_invalid_count") or 0),
+        "browse_warnings": result.get("browse_warnings")
+        if isinstance(result.get("browse_warnings"), list)
+        else [],
     }
 
 

@@ -28,6 +28,7 @@ from apps.protection.services.backup_source_snapshot import create_source_snapsh
 from apps.protection.services.snapshot_browser import (
     SnapshotArtifactUploadUnsupported,
     SnapshotFileDownload,
+    _normalize_entries,
 )
 from apps.protection.services.snapshot_download import (
     _create_pending_artifact,
@@ -40,6 +41,39 @@ from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 
 
 class SnapshotBrowserApiTests(TestCase):
+    def test_normalize_entries_keeps_unknown_and_special_view_only(self):
+        rows = _normalize_entries(
+            [
+                {
+                    "name": "mail",
+                    "path": "mail",
+                    "type": "dir",
+                    "mode": "dgrwxrwxr-x",
+                    "downloadable": True,
+                },
+                {
+                    "name": "unknown",
+                    "path": "unknown",
+                    "type": "unknown",
+                    "downloadable": True,
+                },
+                {
+                    "name": "socket",
+                    "path": "socket",
+                    "type": "special",
+                    "downloadable": True,
+                },
+            ],
+            base_path="",
+            limit=10,
+        )
+
+        self.assertEqual([row["type"] for row in rows], ["dir", "unknown", "special"])
+        self.assertTrue(rows[0]["downloadable"])
+        self.assertFalse(rows[1]["downloadable"])
+        self.assertFalse(rows[2]["downloadable"])
+        self.assertIsNotNone(rows[1]["download_reason"])
+
     def setUp(self):
         self.client = APIClient()
         user_model = get_user_model()
@@ -200,6 +234,41 @@ class SnapshotBrowserApiTests(TestCase):
         self.assertEqual(payload["path"], "archive")
         self.assertEqual(payload["limit"], 50)
         self.assertEqual(payload["cursor"], "200")
+
+    @patch("apps.protection.services.snapshot_browser.run_agent_task_sync")
+    def test_browse_snapshot_directory_returns_degraded_entry_warnings(
+        self, mock_run_agent_task_sync
+    ):
+        mock_run_agent_task_sync.return_value = SimpleNamespace(
+            ok=True,
+            timed_out=False,
+            result={
+                "entries": [
+                    {
+                        "name": "unknown",
+                        "path": "unknown",
+                        "type": "unknown",
+                        "downloadable": False,
+                    }
+                ],
+                "skipped_invalid_count": 1,
+                "browse_warnings": [
+                    {"line_number": 7, "reason": "invalid_mode", "line_preview": "..."}
+                ],
+            },
+            task=SimpleNamespace(last_error=""),
+        )
+
+        response = self.client.get(
+            f"/api/v1/protection/backup-source-snapshot-directories/{self.directory.id}/browse/",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(response.data["entries"][0]["type"], "unknown")
+        self.assertFalse(response.data["entries"][0]["downloadable"])
+        self.assertEqual(response.data["skipped_invalid_count"], 1)
+        self.assertEqual(response.data["browse_warnings"][0]["reason"], "invalid_mode")
 
     def test_browse_snapshot_directory_rejects_invalid_cursor(self):
         response = self.client.get(
