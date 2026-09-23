@@ -899,6 +899,125 @@ class TaskApiTests(TestCase):
         failed.refresh_from_db()
         self.assertEqual(failed.status, Task.Status.FAILED)
 
+    def test_node_lifecycle_failed_task_exposes_error_details_with_reasons_and_suggestions(self):
+        """Failed NODE_LIFECYCLE task should surface structured reasons & suggestions."""
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.NODE_LIFECYCLE,
+            display_name="Remove proxy host",
+            status=Task.Status.FAILED,
+            error_code="NODE_REMOVE_FAILED",
+            error_message="Node removal did not complete.",
+            result_payload={
+                "result": "failed",
+                "cleanup_complete": False,
+                "cleanup_failures": [{"code": "agent_unreachable", "detail": "Agent did not respond to uninstall request."}],
+                "retained_resources": ["agent_installation"],
+                "reasons": [{"code": "NODE_REMOVE_FAILED", "detail": "Node removal did not complete successfully."}],
+                "suggestions": [
+                    {"code": "manual_cleanup_required", "detail": "Physical resources remain on the host."},
+                    {"code": "retry_or_force_cleanup", "detail": "Retry the uninstall or use Force Cleanup."},
+                ],
+            },
+        )
+        data = TaskSerializer(task).data
+        contract = data["error_details"]
+        self.assertIsNotNone(contract)
+        self.assertEqual(contract["severity"], "error")
+        self.assertEqual(contract["outcome"], "failed")
+        self.assertFalse(contract["cleanup_complete"])
+        self.assertEqual(contract["retained_resources"], ["agent_installation"])
+        # Structured reasons from result_payload appear first
+        self.assertTrue(any(r["code"] == "NODE_REMOVE_FAILED" for r in contract["reasons"]))
+        # Structured suggestions appear
+        self.assertTrue(any(s["code"] == "manual_cleanup_required" for s in contract["suggestions"]))
+        self.assertTrue(any(s["code"] == "retry_or_force_cleanup" for s in contract["suggestions"]))
+        # Generic cleanup review suggestion is also appended
+        self.assertTrue(any(s["code"] == "review_cleanup" for s in contract["suggestions"]))
+
+    def test_node_lifecycle_force_cleanup_partial_success_produces_warning_contract(self):
+        """Force cleanup with retained resources should produce warning severity."""
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.NODE_LIFECYCLE,
+            display_name="Force remove offline host",
+            status=Task.Status.SUCCESS,
+            result_payload={
+                "result": "partial_success",
+                "cleanup_complete": False,
+                "cleanup_failures": [{"code": "node_offline", "detail": "Node is offline."}],
+                "retained_resources": ["agent_installation"],
+                "outcome": "force_cleanup_success",
+                "suggestions": [
+                    {"code": "manual_cleanup_required", "detail": "Physical resources remain on the host."},
+                ],
+            },
+        )
+        data = TaskSerializer(task).data
+        contract = data["error_details"]
+        self.assertIsNotNone(contract)
+        self.assertEqual(contract["severity"], "warning")
+        self.assertEqual(contract["outcome"], "partial")
+        self.assertFalse(contract["cleanup_complete"])
+        self.assertEqual(contract["retained_resources"], ["agent_installation"])
+        self.assertTrue(any(s["code"] == "manual_cleanup_required" for s in contract["suggestions"]))
+
+    def test_node_lifecycle_timeout_task_exposes_error_details(self):
+        """Timeout NODE_LIFECYCLE task should surface timeout outcome with suggestions."""
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.NODE_LIFECYCLE,
+            display_name="Uninstall timed out",
+            status=Task.Status.TIMEOUT,
+            error_code="NODE_REMOVE_TIMEOUT",
+            error_message="Uninstall timed out waiting for its completion callback.",
+            result_payload={
+                "result": "failed",
+                "cleanup_complete": False,
+                "retained_resources": ["unverified_agent_installation"],
+                "reasons": [{"code": "NODE_REMOVE_TIMEOUT", "detail": "Node removal did not complete successfully."}],
+                "suggestions": [
+                    {"code": "check_agent_process", "detail": "The agent process may still be running."},
+                    {"code": "manual_cleanup_required", "detail": "Physical resources remain on the host."},
+                ],
+            },
+        )
+        data = TaskSerializer(task).data
+        contract = data["error_details"]
+        self.assertIsNotNone(contract)
+        self.assertEqual(contract["severity"], "error")
+        self.assertEqual(contract["outcome"], "timeout")
+        self.assertFalse(contract["cleanup_complete"])
+        self.assertTrue(any(r["code"] == "NODE_REMOVE_TIMEOUT" for r in contract["reasons"]))
+        self.assertTrue(any(s["code"] == "check_agent_process" for s in contract["suggestions"]))
+
+    def test_node_lifecycle_upgrade_failure_exposes_reasons_and_suggestions(self):
+        """Failed NODE_LIFECYCLE upgrade task should surface upgrade-specific reasons."""
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.NODE_LIFECYCLE,
+            display_name="Upgrade agent",
+            status=Task.Status.FAILED,
+            error_code="NODE_UPGRADE_FAILED",
+            error_message="Agent upgrade did not complete successfully.",
+            result_payload={
+                "result": "failed",
+                "failure_code": "AGENT_DOWNLOAD_FAILED",
+                "cleanup_complete": True,
+                "reasons": [{"code": "AGENT_DOWNLOAD_FAILED", "detail": "Agent upgrade did not complete successfully."}],
+                "suggestions": [
+                    {"code": "review_upgrade_details", "detail": "Review the upgrade timeline before retrying."},
+                ],
+            },
+        )
+        data = TaskSerializer(task).data
+        contract = data["error_details"]
+        self.assertIsNotNone(contract)
+        self.assertEqual(contract["severity"], "error")
+        self.assertEqual(contract["outcome"], "failed")
+        self.assertTrue(any(r["code"] == "AGENT_DOWNLOAD_FAILED" for r in contract["reasons"]))
+        self.assertTrue(any(s["code"] == "review_upgrade_details" for s in contract["suggestions"]))
+
     def test_preflight_failed_source_unregister_requires_a_new_submission(self):
         task = Task.objects.create(
             organization_id=self.org.id,

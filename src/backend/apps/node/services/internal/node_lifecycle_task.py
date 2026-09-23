@@ -141,12 +141,50 @@ def _result_payload(node_task: NodeTask) -> dict[str, Any]:
         result.get("cleanup_complete", node_task.status == NodeTask.Status.SUCCESS)
     )
     partial = node_task.status == NodeTask.Status.SUCCESS and not cleanup_complete
+    failed = node_task.status in {NodeTask.Status.FAILED, NodeTask.Status.TIMEOUT}
+    force = bool((node_task.payload or {}).get("force_cleanup"))
+    error_code = result.get("failure_code") or (
+        "NODE_REMOVE_TIMEOUT" if node_task.status == NodeTask.Status.TIMEOUT else ""
+    )
+    reasons = []
+    if failed:
+        reasons.append({
+            "code": error_code or "NODE_REMOVE_FAILED",
+            "detail": str(node_task.last_error or "Node removal did not complete successfully."),
+        })
+    suggestions = []
+    if not cleanup_complete:
+        suggestions.append({
+            "code": "manual_cleanup_required",
+            "detail": (
+                "Physical resources remain on the host. "
+                "Run the local uninstall command shown on the Node maintenance panel, "
+                "then delete the node from the console."
+            ),
+        })
+    if node_task.status == NodeTask.Status.TIMEOUT:
+        suggestions.append({
+            "code": "check_agent_process",
+            "detail": (
+                "The agent process may still be running on the host. "
+                "Verify the agent status locally and stop it if needed before retrying."
+            ),
+        })
+    if failed and not error_code:
+        suggestions.append({
+            "code": "retry_or_force_cleanup",
+            "detail": (
+                "Retry the uninstall from the Node maintenance panel, "
+                "or use Force Cleanup to remove the node from the control plane "
+                "without remote uninstall (physical resources may be retained)."
+            ),
+        })
     return {
         **result,
         "node_task_id": str(node_task.id),
         "node_id": int(node_task.node_id),
         "node": _node_snapshot(node_task.node),
-        "force": bool((node_task.payload or {}).get("force_cleanup")),
+        "force": force,
         "cleanup_complete": cleanup_complete,
         "cleanup_failures": [
             dict(item)
@@ -165,6 +203,8 @@ def _result_payload(node_task: NodeTask) -> dict[str, Any]:
         else "success"
         if node_task.status == NodeTask.Status.SUCCESS
         else "failed",
+        "reasons": reasons,
+        "suggestions": suggestions,
     }
 
 
