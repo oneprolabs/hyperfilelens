@@ -766,6 +766,302 @@ class RepositoryCleanupTests(TestCase):
         )
 
     @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
+        return_value=RepositoryAgentOperationResult(
+            waiting=True,
+            node_task_id=None,
+            result={},
+        ),
+    )
+    def test_online_safe_agent_can_cleanup_with_stale_capability_snapshot(
+        self, dispatch
+    ):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="stale-inventory-nas-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            version="0.2.24",
+            metadata={"inventory": {"capabilities": []}},
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="stale-inventory-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "192.0.2.10", "share_path": "/backup"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        self._mark_owned_location(repository)
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = _execute_physical_cleanup(repository_task)
+
+        self.assertTrue(result.waiting)
+        dispatch.assert_called_once()
+        self.assertEqual(
+            dispatch.call_args.kwargs["payload"]["unmounted_policy"],
+            "retain_and_continue",
+        )
+
+    def test_old_agent_without_ownership_capability_still_fails_closed(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="old-nas-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            version="0.2.1",
+            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="old-agent-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "192.0.2.11", "share_path": "/backup"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        self._mark_owned_location(repository)
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Repository owner cannot verify physical repository ownership.",
+        ):
+            _execute_physical_cleanup(repository_task)
+
+    def test_unknown_agent_version_with_incomplete_capabilities_fails_closed(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="unknown-version-nas-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            version="0.2.24-dev",
+            metadata={"inventory": {"capabilities": []}},
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="unknown-version-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "192.0.2.16", "share_path": "/backup"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        self._mark_owned_location(repository)
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Repository owner does not advertise repository_cleanup_v1.",
+        ):
+            _execute_physical_cleanup(repository_task)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
+        return_value=RepositoryAgentOperationResult(
+            waiting=False,
+            node_task_id=None,
+            result={
+                "physical_cleanup": "deleted",
+                "repository_existed": True,
+                "ownership_verified": True,
+                "cleanup_complete": True,
+                "local_state_cleanup": "completed",
+                "mount_status": "unmounted",
+            },
+        ),
+    )
+    def test_incomplete_capability_cleanup_accepts_complete_agent_attestation(
+        self, dispatch
+    ):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="attested-stale-inventory-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            version="0.2.24",
+            metadata={"inventory": {"capabilities": []}},
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="attested-stale-inventory-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "192.0.2.13", "share_path": "/backup"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        self._mark_owned_location(repository)
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = _execute_physical_cleanup(repository_task)
+
+        self.assertFalse(result.waiting)
+        dispatch.assert_called_once()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
+        return_value=RepositoryAgentOperationResult(
+            waiting=False,
+            node_task_id=None,
+            result={
+                "physical_cleanup": "deleted",
+                "repository_existed": True,
+                "cleanup_complete": False,
+                "local_state_cleanup": "completed",
+                "mount_status": "unmounted",
+            },
+        ),
+    )
+    def test_incomplete_capability_cleanup_rejects_incomplete_attestation(
+        self, dispatch
+    ):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="incomplete-attestation-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            version="0.2.24",
+            metadata={"inventory": {"capabilities": []}},
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="incomplete-attestation-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "192.0.2.15", "share_path": "/backup"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        self._mark_owned_location(repository)
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Proxy did not confirm complete NAS repository cleanup.",
+        ):
+            _execute_physical_cleanup(repository_task)
+        dispatch.assert_called_once()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
+        return_value=RepositoryAgentOperationResult(
+            waiting=False,
+            node_task_id=None,
+            result={
+                "physical_cleanup": "deleted",
+                "repository_existed": True,
+                "cleanup_complete": True,
+                "local_state_cleanup": "completed",
+                "mount_status": "unmounted",
+            },
+        ),
+    )
+    def test_current_session_missing_capabilities_fails_closed(self, dispatch):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="current-session-missing-capabilities",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            version="0.2.24",
+            metadata={
+                "inventory": {"capabilities": []},
+                "inventory_session_id": "session-current",
+                "inventory_capabilities_session_id": "session-current",
+            },
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="current-session-missing-capabilities-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "192.0.2.14", "share_path": "/backup"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        self._mark_owned_location(repository)
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Repository owner does not advertise repository_cleanup_v1.",
+        ):
+            _execute_physical_cleanup(repository_task)
+        dispatch.assert_not_called()
+
+    def test_offline_agent_with_stale_capability_snapshot_still_fails_closed(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="offline-stale-inventory-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+            version="0.2.24",
+            metadata={"inventory": {"capabilities": []}},
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="offline-stale-inventory-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.OFFLINE,
+            config={"server_address": "192.0.2.12", "share_path": "/backup"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        self._mark_owned_location(repository)
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Repository owner does not advertise repository_cleanup_v1.",
+        ):
+            _execute_physical_cleanup(repository_task)
+
+    @mock.patch(
         "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation"
     )
     def test_manual_agent_cleanup_retry_inherits_owner_verification(self, dispatch):
