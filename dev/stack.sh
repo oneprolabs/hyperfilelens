@@ -1145,7 +1145,7 @@ extension_revision() {
 }
 
 print_dev_target() {
-	local edition="Community" branch commit worktree_revision source display ext_label ext_rev
+	local edition="Community" branch commit worktree_revision source ext_id source_name
 	local command="${CMD:-unknown}" sourcelens_mode sourcelens_ref
 	local host_platform runtime_platform
 	[[ ${#EXTENSION_SOURCES[@]} -eq 0 ]] || edition="Enterprise"
@@ -1157,43 +1157,55 @@ print_dev_target() {
 	fi
 	host_platform="$(uname -s | tr '[:upper:]' '[:lower:]')/$(uname -m)"
 	runtime_platform="${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
-	hfl_print_section "Target"
-	hfl_print_value "Command" "${command}"
-	hfl_print_value "Edition" "${edition}"
-	hfl_print_value "OSS source" "${ROOT}"
-	hfl_print_value "OSS worktree" "${OSS_WORKTREE_DIR}"
-	hfl_print_value "Backend mount" "${WORKTREE_DIR}/src/backend:/opt/hyperfilelens/backend"
-	hfl_print_value "Frontend mount" "${WORKTREE_DIR}/src/frontend:/opt/hyperfilelens/frontend"
+	target_value() {
+		printf '  %-20s %s\n' "$1" "${2:-}"
+	}
+	printf '\n'
+	target_value "Command" "${command}"
+	target_value "Edition" "${edition}"
 	if [[ "${OSS_WORKTREE_DIR}" == "${ROOT}" ]]; then
-		hfl_print_value "OSS revision" "${branch:-detached} (${commit:-unknown})"
+		target_value "Repository" "${ROOT}"
 	else
-		hfl_print_value "OSS revision" "${worktree_revision}"
+		target_value "Repository" "${ROOT}"
+		target_value "Worktree" "${OSS_WORKTREE_DIR}"
 	fi
-	if [[ ${#EXTENSION_SOURCES[@]} -eq 0 ]]; then
-		hfl_print_value "Extension" "none"
+	if [[ "${OSS_WORKTREE_DIR}" == "${ROOT}" ]]; then
+		target_value "Revision" "${branch:-detached} (${commit:-unknown})"
 	else
+		target_value "Revision" "${worktree_revision}"
+	fi
+	target_value "Backend mount" \
+		"${WORKTREE_DIR}/src/backend -> /opt/hyperfilelens/backend"
+	target_value "Frontend mount" \
+		"${WORKTREE_DIR}/src/frontend -> /opt/hyperfilelens/frontend"
+	if [[ ${#EXTENSION_SOURCES[@]} -eq 0 ]]; then
+		target_value "Extensions" "none"
+	else
+		ext_id=""
 		for source in "${EXTENSION_SOURCES[@]}"; do
-			ext_label="Extension"
-			ext_rev="Extension rev"
-			if [[ "${source}" == http://* || "${source}" == https://* ]]; then
-				display="remote Git source configured"
-			else
-				display="${source}"
+			if [[ -f "${source}/extension.toml" ]]; then
+				ext_id="$(sed -n 's/^[[:space:]]*id[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${source}/extension.toml" | head -1)"
 			fi
-			hfl_print_value "${ext_label}" "${display}"
-			hfl_print_value "${ext_rev}" "$(extension_revision "${source}")"
+			if [[ -z "${ext_id}" ]]; then
+				source_name="${source##*/}"
+				ext_id="${source_name%%@*}"
+				ext_id="${ext_id#hyperfilelens-}"
+			fi
+			target_value "Extensions" "${ext_id}"
+			target_value "Extension source" "${source}"
+			target_value "Extension revision" "$(extension_revision "${source}")"
 		done
 	fi
 	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
 		sourcelens_mode="$(read_env_value_or SOURCELENS_MODE bundled "${ROOT}/.env" | tr 'A-Z' 'a-z')"
 		sourcelens_ref="${SOURCELENS_GIT_REF:-v0.57.0}"
-		hfl_print_value "SourceLens" "${sourcelens_mode} / ${sourcelens_ref}"
+		target_value "SourceLens" "${sourcelens_mode} / ${sourcelens_ref}"
 	else
-		hfl_print_value "SourceLens" "disabled"
+		target_value "SourceLens" "disabled"
 	fi
-	hfl_print_value "Host platform" "${host_platform}"
-	hfl_print_value "Runtime" "${runtime_platform}"
-	hfl_print_value "Session log" "${LOG_FILE#${ROOT}/}"
+	target_value "Host platform" "${host_platform}"
+	target_value "Container platform" "${runtime_platform}"
+	target_value "Session log" "${LOG_FILE#${ROOT}/}"
 	printf '\n'
 }
 
@@ -1201,37 +1213,71 @@ print_urls() {
 	local env_file="${ROOT}/.env"
 	local sl_env="${ROOT}/data/sourcelens/config/.env"
 	local seed seed_email seed_pass seed_org sourcelens_mode sourcelens_console_port
-	local website_bind website_port tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
-	local pg_user pg_pass pg_db frontend_url lens_base lens_gw lens_email lens_pass
+	local website_port tenant_port admin_port
+	local frontend_url admin_public_url website_url tenant_url admin_url sourcelens_console_url
+	local lens_base source_lens_display gateway_status
 	local sl_user sl_email sl_pass
-	local gateway_env gateway_node_id gateway_org gateway_version gateway_service gateway_lensnode gateway_log
+	local gateway_env gateway_node_id gateway_org gateway_version gateway_service gateway_lensnode
+	local edition extensions source ext_id source_name
+
+	replace_url_port() {
+		local url="${1%/}" port="$2" scheme authority host
+		scheme="${url%%://*}://"
+		authority="${url#*://}"
+		authority="${authority%%/*}"
+		if [[ "${authority}" == *:* ]]; then
+			host="${authority%:*}"
+		else
+			host="${authority}"
+		fi
+		printf '%s%s:%s/' "${scheme}" "${host}" "${port}"
+	}
 
 	seed="$(read_env_value_or SEED_INITIAL_DATA 1 "${env_file}")"
 	seed_email="$(read_env_value_or SEED_ADMIN_EMAIL admin@hyperfilelens.com "${env_file}")"
 	seed_pass="$(read_env_value_or SEED_ADMIN_PASSWORD 'Admin@123' "${env_file}")"
 	seed_org="$(read_env_value_or SEED_ORG_NAME HyperFileLens "${env_file}")"
 	sourcelens_mode="$(read_env_value_or SOURCELENS_MODE bundled "${env_file}" | tr 'A-Z' 'a-z')"
-	website_bind="$(read_env_value_or HFL_WEBSITE_BIND_ADDRESS 0.0.0.0 "${env_file}")"
 	website_port="$(read_env_value_or HFL_WEBSITE_PORT 11442 "${env_file}")"
-	tenant_bind="$(read_env_value_or HFL_TENANT_BIND_ADDRESS 0.0.0.0 "${env_file}")"
 	tenant_port="$(read_env_value_or HFL_TENANT_PORT 11443 "${env_file}")"
-	admin_bind="$(read_env_value_or HFL_ADMIN_BIND_ADDRESS 0.0.0.0 "${env_file}")"
 	admin_port="$(read_env_value_or HFL_ADMIN_PORT 11444 "${env_file}")"
-	sourcelens_console_bind="$(read_env_value_or SOURCELENS_CONSOLE_BIND_ADDRESS 0.0.0.0 "${env_file}")"
 	sourcelens_console_port="$(read_env_value_or SOURCELENS_CONSOLE_PORT 11445 "${env_file}")"
-	pg_user="$(read_env_value_or POSTGRES_USER postgres "${env_file}")"
-	pg_pass="$(read_env_value_or POSTGRES_PASSWORD postgres "${env_file}")"
-	pg_db="$(read_env_value_or POSTGRES_DB hyperfilelens "${env_file}")"
 	frontend_url="$(read_env_value_or FRONTEND_URL "https://127.0.0.1:${tenant_port}" "${env_file}")"
+	admin_public_url="$(read_env_value_or HFL_ADMIN_PUBLIC_URL "" "${env_file}")"
 	lens_base="$(read_env_value_or LENS_BASE_URL http://sourcelens-nginx "${env_file}")"
-	if [[ "${sourcelens_mode}" == "external" ]]; then
-		lens_gw="$(read_env_value_or LENS_GATEWAY_BASE_URL "${lens_base}" "${env_file}")"
+	tenant_url="${frontend_url%/}/"
+	website_url="$(replace_url_port "${frontend_url}" "${website_port}")"
+	sourcelens_console_url="$(replace_url_port "${frontend_url}" "${sourcelens_console_port}")"
+	if [[ -n "${admin_public_url}" ]]; then
+		admin_url="${admin_public_url%/}/"
 	else
-		lens_gw="$(read_env_value_or LENS_GATEWAY_BASE_URL "${frontend_url%/}/sourcelens" "${env_file}")"
+		admin_url="$(replace_url_port "${frontend_url}" "${admin_port}")"
 	fi
-	lens_email="$(read_env_value_or LENS_BRIDGE_EMAIL admin@example.com "${env_file}")"
-	lens_pass="$(read_env_value_or LENS_BRIDGE_PASSWORD adminpassword "${env_file}")"
+
+	edition="Community"
+	extensions="none"
+	if [[ ${#EXTENSION_SOURCES[@]} -gt 0 ]]; then
+		edition="Enterprise"
+		extensions=""
+		for source in "${EXTENSION_SOURCES[@]}"; do
+			ext_id=""
+			if [[ -f "${source}/extension.toml" ]]; then
+				ext_id="$(sed -n 's/^[[:space:]]*id[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${source}/extension.toml" | head -1)"
+			fi
+			if [[ -z "${ext_id}" ]]; then
+				source_name="${source##*/}"
+				ext_id="${source_name%%@*}"
+				ext_id="${ext_id#hyperfilelens-}"
+			fi
+			if [[ -n "${extensions}" ]]; then
+				extensions+=","
+			fi
+			extensions+="${ext_id}"
+		done
+	fi
+
 	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
+		source_lens_display="${sourcelens_mode} / ${SOURCELENS_GIT_REF:-v0.57.0}"
 		if [[ -f "${sl_env}" ]]; then
 			sl_user="$(read_env_value_or DJANGO_SUPERUSER_USERNAME admin "${sl_env}")"
 			sl_email="$(read_env_value_or DJANGO_SUPERUSER_EMAIL admin@example.com "${sl_env}")"
@@ -1239,8 +1285,12 @@ print_urls() {
 		else
 			sl_user=admin
 			sl_email=admin@example.com
-	sl_pass=adminpassword
+			sl_pass=adminpassword
 		fi
+	elif [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
+		source_lens_display="${sourcelens_mode}"
+	else
+		source_lens_display="disabled"
 	fi
 	gateway_env="/opt/hyperfilelens-agent/config/agent.env"
 	gateway_node_id=""
@@ -1248,7 +1298,6 @@ print_urls() {
 	gateway_version="unknown"
 	gateway_service="not installed"
 	gateway_lensnode="not installed"
-	gateway_log="/opt/hyperfilelens-agent/logs/install.log"
 	if [[ -r "${gateway_env}" ]]; then
 		gateway_node_id="$(grep -E '^HFL_NODE_ID=' "${gateway_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
 		gateway_org="$(grep -E '^HFL_ORG_KEY=' "${gateway_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
@@ -1267,196 +1316,117 @@ print_urls() {
 		fi
 		[[ -n "${gateway_lensnode}" ]] || gateway_lensnode=unknown
 	fi
+	if [[ -n "${gateway_node_id}" && "${gateway_service}" == "active" ]]; then
+		gateway_status=online
+	elif [[ -n "${gateway_node_id}" ]]; then
+		gateway_status=registered
+	else
+		gateway_status="${gateway_service}"
+	fi
+	gateway_org="${gateway_org#__}"
+	gateway_org="${gateway_org%__}"
 	cat <<EOF
 
 ================================================================
 Development stack is ready
 ================================================================
 
-User access
+Edition          ${edition}
+Extensions       ${extensions}
+SourceLens       ${source_lens_display}
 
-  Website
-    URL              https://localhost:${website_port}/
-    Purpose          Main HyperFileLens website
-    Listen           ${website_bind}:${website_port}
+Port ${website_port}/TCP - Website
+  URL              ${website_url}
+  Purpose          HyperFileLens website and documentation
+  Login            Not required
+EOF
 
-  Tenant workspace
-    URL              https://localhost:${tenant_port}/
-    Purpose          Tenant operations, backup and restore
+	cat <<EOF
+
+Port ${tenant_port}/TCP - Tenant Console / API
+  URL              ${tenant_url}
+  Purpose          Backup, restore, and tenant operations
 EOF
 
 	if [[ "${seed}" == "1" ]]; then
 		cat <<EOF
-    Email            ${seed_email}
-    Password         ${seed_pass}
-    Organization     ${seed_org}
+  Email            ${seed_email}
+  Password         ${seed_pass}
+  Organization     ${seed_org}
 EOF
 	else
 		cat <<EOF
-    Login            Not configured (SEED_INITIAL_DATA=${seed})
+  Login            Not configured (SEED_INITIAL_DATA=${seed})
 EOF
 	fi
 
 	cat <<EOF
-    Listen           ${tenant_bind}:${tenant_port}
+  API / Swagger    ${tenant_url}swagger
+EOF
+	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
+		printf '  %-16s %s\n' 'Insights API' "${tenant_url}sourcelens/api/"
+	fi
 
-  Platform Operations
-    URL              https://localhost:${admin_port}/
-    Purpose          Platform-level administration and operations
+	cat <<EOF
+
+Port ${admin_port}/TCP - Platform Operations / Django Admin
+  URL              ${admin_url}
+  Purpose          Platform administration
 EOF
 
 	if [[ "${seed}" == "1" ]]; then
 		cat <<EOF
-    Email            ${seed_email}
-    Password         ${seed_pass}
-    Organization     ${seed_org}
+  Email            ${seed_email}
+  Password         ${seed_pass}
+  Organization     ${seed_org}
 EOF
 	else
 		cat <<EOF
-    Login            Not configured (SEED_INITIAL_DATA=${seed})
+  Login            Not configured (SEED_INITIAL_DATA=${seed})
 EOF
 	fi
 
 	cat <<EOF
-    Listen           ${admin_bind}:${admin_port}
-
-  Django Admin
-    URL              https://localhost:${admin_port}/admin/
-    Purpose          Django administration and troubleshooting
+  Django Admin     ${admin_url}admin/
 EOF
-
-	if [[ "${seed}" == "1" ]]; then
-		cat <<EOF
-    Email            ${seed_email}
-    Password         ${seed_pass}
-EOF
-	else
-		cat <<EOF
-    Login            Not configured (SEED_INITIAL_DATA=${seed})
-EOF
-	fi
 
 	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
 		cat <<EOF
 
-  Insight Console
-    URL              https://localhost:${sourcelens_console_port}/
-    Purpose          SourceLens administration and insight configuration
-    Username         ${sl_user}
-    Email            ${sl_email}
-    Password         ${sl_pass}
-    Listen           ${sourcelens_console_bind}:${sourcelens_console_port}
+Port ${sourcelens_console_port}/TCP - Insight Console
+  URL              ${sourcelens_console_url}
+  Purpose          SourceLens administration and insight configuration
+  Username         ${sl_user}
+  Email            ${sl_email}
+  Password         ${sl_pass}
 EOF
 	elif [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "external" ]]; then
 		cat <<EOF
 
-  Insight Console
-    URL              ${lens_base}
-    Purpose          External SourceLens console (not managed by stack.sh)
+Port ${sourcelens_console_port}/TCP - Insight Console
+  Status           External SourceLens (not managed by stack.sh)
+  URL              ${lens_base}
 EOF
 	else
 		cat <<EOF
 
-  Insight Console
-    Status           Not started (SourceLens disabled)
+Port ${sourcelens_console_port}/TCP - Insight Console
+  Status           Disabled (SourceLens not started)
 EOF
 	fi
 
 	cat <<EOF
 
-Port map
-EOF
-	printf '  %-18s %s\n' "${website_port}" 'Website'
-	printf '  %-18s %s\n' "${tenant_port}" 'Tenant / API / Swagger / SourceLens Gateway'
-	printf '  %-18s %s\n' "${admin_port}" 'Platform Operations / Django Admin'
-	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
-		printf '  %-18s %s\n' "${sourcelens_console_port}" 'SourceLens Insight Console'
-	elif [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "external" ]]; then
-		printf '  %-18s %s\n' "${sourcelens_console_port}" 'Unused by external SourceLens'
-	else
-		printf '  %-18s %s\n' "${sourcelens_console_port}" 'SourceLens disabled'
-	fi
-	printf '\n'
-
-cat <<EOF
-Developer endpoints
-  API / Swagger      https://localhost:${tenant_port}/swagger
-EOF
-
-	cat <<EOF
-
-Development services
-  PostgreSQL         postgres:5432/${pg_db} (private)
-  Database user      ${pg_user}
-  Database password  ${pg_pass}
-  Agent packages     https://localhost:${tenant_port}/media/agent-releases/
-  AI engine bundle   https://localhost:${tenant_port}/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz
-  Configuration      ${env_file#${ROOT}/}
-  Session log        ${LOG_FILE#${ROOT}/}
-  Migration log      data/logs/migration.log
-EOF
-
-	if [[ -n "${gateway_node_id}" ]]; then
-		gateway_org="${gateway_org#__}"
-		gateway_org="${gateway_org%__}"
-		cat <<EOF
-
-Platform Data Gateway
-  Console            https://localhost:${tenant_port}
-  Gateway route      https://localhost:${tenant_port}/sourcelens
-  Organization       ${gateway_org}
-  Node ID            ${gateway_node_id}
-  Agent version      ${gateway_version}
-  Agent service      ${gateway_service}
-  AI engine          ${gateway_lensnode}
-  Console state      online
-  Install path       /opt/hyperfilelens-agent/bin
-  Data path          /opt/hyperfilelens-agent
-  Install log        ${gateway_log}
-EOF
-	fi
-
-	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
-		cat <<EOF
-
-SourceLens integration
-  Insight API        https://localhost:${tenant_port}/sourcelens/api/
-  Insight WSS        wss://localhost:${tenant_port}/sourcelens/ws/lens/lensnodes/
-  Insight network    hyperfilelens-bridge (private)
-  HFL bridge         ${lens_base}
-  Gateway URL        ${lens_gw}
-  Bridge account     ${lens_email} / ${lens_pass} (internal only; not a user login)
-EOF
-		if [[ -f "${sl_env}" ]]; then
-			printf '  %-18s %s\n' 'SL configuration' 'data/sourcelens/config/.env'
-		fi
-	elif [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "external" ]]; then
-		cat <<EOF
-
-SourceLens integration
-  Insight mode       external (not managed by stack.sh)
-  Insight base URL   ${lens_base}
-  Gateway URL        ${lens_gw}
-  Bridge account     ${lens_email} / ${lens_pass} (internal only; not a user login)
-EOF
-	fi
-
-	cat <<EOF
-
-Useful commands
-  Status           ./dev/stack.sh status
-  Doctor           ./dev/stack.sh doctor
-  Smoke test       ./dev/stack.sh smoke
-  Restart          ./dev/stack.sh restart
-  Force rebuild    ./dev/stack.sh restart --force
-  Stop HFL         ./dev/stack.sh down --hfl-only
-  Stop all         ./dev/stack.sh down
-
-Notes
-  - Backend and frontend source changes reload automatically
-  - Website source changes are rebuilt by ./dev/stack.sh restart
-  - Accept the self-signed TLS warning for localhost
-  - Change default passwords after first login
+Public Data Gateway
+  Deployment       Auto-deployed local Gateway
+  Status           ${gateway_status}
+  Control plane    ${tenant_url}
+  Gateway route    ${tenant_url}sourcelens
+  Organization     ${gateway_org#__}
+  Node ID          ${gateway_node_id:-not registered}
+  Agent version    ${gateway_version}
+  Agent service    ${gateway_service}
+  AI engine        ${gateway_lensnode}
 EOF
 }
 

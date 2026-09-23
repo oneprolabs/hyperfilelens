@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Mapping
 
 from django.core.mail import EmailMessage, get_connection
@@ -650,6 +651,9 @@ class PlatformOpsSettingsEnvironmentView(APIView):
     def get(self, request):
         from apps.instance_settings.services.environment_payload import (
             deploy_profile_staff_payload,
+            probe_nginx,
+            probe_platform_data_gateway,
+            probe_web,
             system_health_payload,
         )
 
@@ -674,7 +678,12 @@ class PlatformOpsSettingsEnvironmentView(APIView):
             "business_ready": bool(lens.get("business_ready")),
             "warning": lens.get("warning") or "",
             "base_url": lens.get("base_url") or lens_deploy.lens_base_url(),
+            "mode": lens_deploy.sourcelens_mode(),
+            "version": lens_deploy.sourcelens_version(),
+            "console_url": lens_deploy.sourcelens_console_url(),
         }
+        health["nginx"] = probe_nginx()
+        health["web"] = probe_web()
         gateway_url = (lens_deploy.lens_gateway_base_url() or "").strip()
         gateway = {
             "status": "unknown",
@@ -700,11 +709,18 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                 gateway["status"] = "degraded"
                 gateway["warning"] = f"Hosted data gateway unreachable ({type(exc).__name__})."
         health["gateway"] = gateway
+        data_gateway = probe_platform_data_gateway(
+            source_lens_status=lens.get("status", ""),
+        )
+        data_gateway["endpoint"] = gateway_url
+        data_gateway["endpoint_reachable"] = bool(gateway.get("reachable"))
+        health["data_gateway"] = data_gateway
         return Response(
             {
                 "app_version": deploy_profile_staff_payload().get("app_version"),
                 "agent_version": deploy_profile_staff_payload().get("agent_version"),
                 "django_debug": deploy_profile_staff_payload().get("django_debug"),
+                "edition": os.getenv("HFL_EDITION", "community"),
                 "effective": {
                     "tenant_public_url": tenant_public_url(),
                     "email_signup_enabled": email_signup_enabled(),

@@ -57,6 +57,7 @@ export interface PlatformIdentitySettings {
 export interface PlatformEnvironmentSettings {
   app_version: string | null
   agent_version: string | null
+  edition?: string
   django_debug: boolean
   effective: Record<string, unknown>
   sources: Record<string, string>

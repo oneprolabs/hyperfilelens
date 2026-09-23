@@ -382,7 +382,7 @@ def apply_configuration(
     updates: Dict[str, str] = {}
     # Always purge the retired single-stream key. Its value is never read or
     # migrated, including standalone installs without a staged runtime file.
-    removals: Set[str] = {"HFL_" + "GA_MEASUREMENT_ID"}
+    removals: Set[str] = {"HFL_" + "GA_MEASUREMENT_ID", "HFL_DEPLOYMENT_MODE"}
     runtime_values = read_runtime_values(runtime_path)
     if runtime_path is not None:
         signup_enabled = runtime_values.get("HFL_EMAIL_SIGNUP_ENABLED", "").lower()
@@ -436,9 +436,8 @@ def apply_configuration(
         deploy_target = runtime_values.get("HFL_DEPLOY_TARGET", "").strip()
         if deploy_target in {"test", "community", "preprod", "prod"}:
             updates["HFL_DEPLOY_TARGET"] = deploy_target
-            updates["HFL_DEPLOYMENT_MODE"] = "managed"
         else:
-            warn("invalid deployment target; preserving installed deployment identity")
+            warn("invalid deployment target; preserving installed deployment target")
 
     direct_host = direct_host.strip()
     if direct_host and (

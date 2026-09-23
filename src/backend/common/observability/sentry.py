@@ -205,7 +205,6 @@ def _before_send(event: dict[str, Any], hint: Any) -> dict[str, Any]:  # noqa: A
     for env_name, tag_name in (
         ("SENTRY_COMPONENT", "component"),
         ("SENTRY_SERVICE", "service"),
-        ("HFL_DEPLOYMENT_MODE", "deployment_mode"),
         ("HFL_DEPLOY_TARGET", "deploy_target"),
         ("HFL_RELEASE_CHANNEL", "release_channel"),
     ):
