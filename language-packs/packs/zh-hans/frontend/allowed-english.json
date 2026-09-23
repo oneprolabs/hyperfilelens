@@ -219,5 +219,6 @@
   "repositoriesPage.protocolNfs",
   "repositoriesPage.protocolSmb",
   "repositoriesPage.storageTypeNas",
-  "searchPage.colId"
+  "searchPage.colId",
+  "ops.task.failureDetails.retainedResource.lensnode_sidecar"
 ]

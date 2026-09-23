@@ -6056,6 +6056,25 @@
         "restorePermissionDenied": "写入恢复目标时权限被拒绝。",
         "restorePermissionRemediation": "1. 将恢复目录修改为恢复服务可以写入的位置。\n2. 在 File conflict policy 中选择 Skip duplicate files (keep source)，以保留现有目标。\n3. 授予恢复服务账号修改目标并写入其父目录的权限。",
         "technicalDetails": "技术详情",
+        "technicalDetailsExpand": "查看技术详情",
+        "technicalDetailsCollapse": "收起技术详情",
+        "cleanupFailureMessage": {
+          "node_offline": "节点离线。",
+          "agent_unreachable": "Agent 未响应卸载请求。",
+          "agent_offline": "Agent 离线或无法访问。",
+          "cleanup_failed": "清理失败。",
+          "cleanup_warning": "清理完成但有警告。"
+        },
+        "cleanupFailureCode": {
+          "node_offline": "节点离线",
+          "agent_unreachable": "Agent 不可达",
+          "cleanup_failed": "清理失败",
+          "cleanup_warning": "清理警告"
+        },
+        "retainedResource": {
+          "agent_installation": "Agent 安装目录",
+          "lensnode_sidecar": "LensNode Sidecar"
+        },
         "reasons": "失败原因",
         "suggestions": "处理建议",
         "reason": {

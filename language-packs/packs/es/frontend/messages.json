@@ -6056,6 +6056,25 @@
         "restorePermissionDenied": "Permiso denegado al escribir en el destino de restauración.",
         "restorePermissionRemediation": "1. Cambie el directorio de restauración a una ubicación en la que el servicio de restauración pueda escribir.\n2. En File conflict policy, seleccione Skip duplicate files (keep source) para conservar el destino existente.\n3. Conceda a la cuenta de servicio de restauración permisos para modificar el destino y escribir en su directorio principal.",
         "technicalDetails": "Detalles técnicos",
+        "technicalDetailsExpand": "Ver detalles técnicos",
+        "technicalDetailsCollapse": "Ocultar detalles técnicos",
+        "cleanupFailureMessage": {
+          "node_offline": "El nodo está fuera de línea.",
+          "agent_unreachable": "El agente no respondió a la solicitud de desinstalación.",
+          "agent_offline": "El Agent está fuera de línea o no se puede contactar.",
+          "cleanup_failed": "La limpieza falló.",
+          "cleanup_warning": "La limpieza se completó con una advertencia."
+        },
+        "cleanupFailureCode": {
+          "node_offline": "Nodo fuera de línea",
+          "agent_unreachable": "Agente inalcanzable",
+          "cleanup_failed": "Limpieza fallida",
+          "cleanup_warning": "Advertencia de limpieza"
+        },
+        "retainedResource": {
+          "agent_installation": "Instalación del agente",
+          "lensnode_sidecar": "Sidecar de LensNode"
+        },
         "reasons": "Motivos",
         "suggestions": "Siguientes pasos sugeridos",
         "reason": {

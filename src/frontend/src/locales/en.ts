@@ -3760,6 +3760,25 @@ export const en = {
         restorePermissionDenied: 'Permission denied while writing the restore target.',
         restorePermissionRemediation: '1. Change the restore directory to a location the restore service can write to.\n2. Under File conflict policy, select Skip duplicate files (keep source) to preserve an existing target.\n3. Grant the service account used for restore permission to modify the target and write to its parent directory.',
         technicalDetails: 'Technical details',
+        technicalDetailsExpand: 'View technical details',
+        technicalDetailsCollapse: 'Hide technical details',
+        cleanupFailureMessage: {
+          node_offline: 'Node is offline.',
+          agent_unreachable: 'Agent did not respond to uninstall request.',
+          agent_offline: 'The Agent is offline or cannot be reached.',
+          cleanup_failed: 'Cleanup failed.',
+          cleanup_warning: 'Cleanup completed with a warning.',
+        },
+        cleanupFailureCode: {
+          node_offline: 'Node Offline',
+          agent_unreachable: 'Agent Unreachable',
+          cleanup_failed: 'Cleanup Failed',
+          cleanup_warning: 'Cleanup Warning',
+        },
+        retainedResource: {
+          agent_installation: 'Agent Installation',
+          lensnode_sidecar: 'LensNode Sidecar',
+        },
         reasons: 'Reasons',
         suggestions: 'Suggested next steps',
         reason: {
