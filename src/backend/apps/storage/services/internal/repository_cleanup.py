@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Iterable
@@ -19,6 +20,7 @@ from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
 from apps.node.services.interface import cancel_agent_task
 from apps.node.services.capabilities import node_capabilities
+from apps.node.services.internal.agent_release import parse_semver
 from apps.storage.repositories.models import (
     Credential,
     Repository,
@@ -114,12 +116,77 @@ _S3_CLEANUP_OWNER_VERIFIED_KEY = "s3_cleanup_owner_verified"
 _S3_CLEANUP_AGENT_ATTEMPTED_KEY = "s3_cleanup_agent_attempted"
 _S3_CLEANUP_AGENT_NODE_ID_KEY = "s3_cleanup_agent_node_id"
 _AGENT_CLEANUP_OWNER_VERIFIED_KEY = "agent_cleanup_owner_verified"
+_MIN_SAFE_REPOSITORY_CLEANUP_AGENT_VERSION = (0, 2, 2)
+_RELEASE_VERSION_PATTERN = re.compile(r"[vV]?\d+\.\d+\.\d+\Z")
 
 
 class RepositoryCleanupBlocked(ValidationError):
     def __init__(self, preflight: dict[str, Any]):
         super().__init__("Repository cleanup is blocked.")
         self.preflight = preflight
+
+
+def _can_attempt_nas_cleanup_with_incomplete_capabilities(
+    *, repository: Repository, node: Node
+) -> bool:
+    """Trust only known-safe, online Proxy builds when inventory is incomplete.
+
+    Agent 0.2.2 introduced the physical ownership check. The Agent's actual
+    cleanup attestation remains authoritative; the fallback only replaces an
+    incomplete control-plane capability snapshot for a known-safe build.
+    """
+    if (
+        repository.repo_type != Repository.Type.NAS
+        or repository.bind_node_type != Repository.BindNodeType.PROXY
+        or repository.bind_node_id != node.id
+        or node.role != Node.Role.PROXY
+        or node.status != Node.Status.ACTIVE
+    ):
+        return False
+    if node.availability != Node.Availability.ONLINE:
+        return False
+    metadata = node.metadata if isinstance(node.metadata, dict) else {}
+    inventory = metadata.get("inventory")
+    inventory = inventory if isinstance(inventory, dict) else {}
+    session_id = str(metadata.get("inventory_session_id") or "").strip()
+    capability_session_id = str(
+        metadata.get("inventory_capabilities_session_id") or ""
+    ).strip()
+    if session_id and capability_session_id == session_id:
+        # A complete inventory from the current session is authoritative. Do
+        # not infer support from the Agent version when that session explicitly
+        # reported an incomplete capability set.
+        return False
+    version_text = str(node.version or inventory.get("agent_version") or "").strip()
+    if not _RELEASE_VERSION_PATTERN.fullmatch(version_text):
+        return False
+    version = parse_semver(version_text)
+    return version is not None and version >= _MIN_SAFE_REPOSITORY_CLEANUP_AGENT_VERSION
+
+
+def _require_nas_cleanup_compatibility_result(result: dict[str, Any]) -> None:
+    """Do not turn an incomplete legacy Agent reply into a successful delete."""
+    if result.get("physical_cleanup") == "skipped_unmounted":
+        # Existing NAS policy explicitly retains data when the share is not mounted.
+        return
+    if result.get("cleanup_complete") is not True or (
+        result.get("local_state_cleanup") != "completed"
+        or result.get("mount_status") != "unmounted"
+    ):
+        raise ValidationError(
+            "Proxy did not confirm complete NAS repository cleanup."
+        )
+    if result.get("physical_cleanup") == "deleted":
+        if result.get("ownership_verified") is True:
+            return
+    elif (
+        result.get("physical_cleanup") == "already_absent"
+        and result.get("repository_existed") is False
+    ):
+        return
+    raise ValidationError(
+        "Proxy did not verify physical repository ownership and deletion."
+    )
 
 
 def _is_automatic_repository_health_probe(
@@ -1863,14 +1930,14 @@ def _execute_physical_cleanup(
     ).first()
     if node is None:
         raise ValidationError("Repository owner node was not found.")
-    inventory = (
-        (node.metadata or {}).get("inventory")
-        if isinstance(node.metadata, dict)
-        else {}
-    )
-    capabilities = inventory.get("capabilities") if isinstance(inventory, dict) else []
-    capabilities = capabilities if isinstance(capabilities, list) else []
+    capabilities = node_capabilities(node)
     cleanup_scope = "managed_repository"
+    incomplete_capabilities_allowed = (
+        _can_attempt_nas_cleanup_with_incomplete_capabilities(
+            repository=repository,
+            node=node,
+        )
+    )
     if repository.repo_type == Repository.Type.PROXY_FS:
         if not proxy_fs_uses_managed_subdir(repository):
             if "repository_cleanup_v2" not in capabilities:
@@ -1886,12 +1953,16 @@ def _execute_physical_cleanup(
             raise ValidationError(
                 "Repository owner does not advertise repository_cleanup_v2. Upgrade the Proxy before deleting this Local Disk."
             )
-    elif "repository_cleanup_v1" not in capabilities:
+    elif (
+        "repository_cleanup_v1" not in capabilities
+        and not incomplete_capabilities_allowed
+    ):
         raise ValidationError(
             "Repository owner does not advertise repository_cleanup_v1."
         )
     if cleanup_scope == "managed_repository" and (
         "repository_cleanup_ownership_v1" not in capabilities
+        and not incomplete_capabilities_allowed
     ):
         raise ValidationError(
             "Repository owner cannot verify physical repository ownership. "
@@ -1943,6 +2014,8 @@ def _execute_physical_cleanup(
             "Repository owner did not verify physical repository ownership. "
             "No retained Direct NAS target was released."
         )
+    if incomplete_capabilities_allowed and not operation.waiting:
+        _require_nas_cleanup_compatibility_result(operation.result)
     if operation.result.get("ownership_verified") is True:
         _persist_agent_cleanup_owner_verified(repository_task.task)
     return operation
