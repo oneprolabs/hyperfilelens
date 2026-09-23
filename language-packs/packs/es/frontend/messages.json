@@ -3481,6 +3481,7 @@
       "genericLifecycleError": "Algo salió mal al preparar los datos seleccionados. Inténtalo de nuevo o elimina este chat y crea uno nuevo.",
       "retryPreparationDetail": "La preparación anterior se detuvo. Los recursos temporales se eliminan de forma segura antes de reintentarlo.",
       "cleanupBlockedDetail": "La limpieza del chat falló. Reintenta la eliminación o usa la limpieza forzada cuando sea segura.",
+      "cleanupSafetyDetail": "La limpieza está esperando a que se detenga una tarea remota de restauración o conversión.",
       "deletingChatDetail": "Se están eliminando el chat y sus datos temporales.",
       "dataOriginHint": "Este chat utiliza una instantánea protegida, no el origen activo. La conversión de documentos se ejecuta en el espacio de trabajo de la puerta de enlace de datos seleccionada.",
       "dataOriginLabel": "Origen",
@@ -3642,8 +3643,7 @@
       "clarificationTitle": "Se necesita un poco más de información",
       "clarificationPlaceholder": "Añada los detalles necesarios para continuar…",
       "clarificationSubmit": "Continuar",
-      "clarificationSubmitting": "Continuando…",
-      "cleanupSafetyDetail": "La limpieza está esperando a que se detenga una tarea remota de restauración o conversión."
+      "clarificationSubmitting": "Continuando…"
     },
     "aiSettings": {
       "btnAdd": "Añadir",

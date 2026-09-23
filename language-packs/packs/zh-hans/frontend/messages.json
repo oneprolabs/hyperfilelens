@@ -3481,6 +3481,7 @@
       "genericLifecycleError": "准备所选数据时出错。请重试，或删除此聊天后新建聊天。",
       "retryPreparationDetail": "上次准备已停止。正在安全清理临时资源，然后即可重试。",
       "cleanupBlockedDetail": "聊天清理失败。请重试删除，或在满足安全条件时使用强制清理。",
+      "cleanupSafetyDetail": "清理正在等待远程恢复或文档转换任务停止。",
       "deletingChatDetail": "正在删除聊天及其临时数据。",
       "dataOriginHint": "本次对话使用已保护的备份快照，而非实时源端数据；文档转换在所选数据网关的工作区中执行。",
       "dataOriginLabel": "数据来源",
@@ -3642,8 +3643,7 @@
       "clarificationTitle": "还需要一些信息",
       "clarificationPlaceholder": "补充继续处理所需的详细信息…",
       "clarificationSubmit": "继续",
-      "clarificationSubmitting": "正在继续…",
-      "cleanupSafetyDetail": "清理正在等待远程恢复或文档转换任务停止。"
+      "clarificationSubmitting": "正在继续…"
     },
     "aiSettings": {
       "btnAdd": "添加",
