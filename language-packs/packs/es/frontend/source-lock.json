@@ -3166,8 +3166,8 @@
   "insight.copilot.deleteConfirm": "a8d892f4bcef4f347d03700e9865c726ae44db9cef7fc134defc908abe51d77f",
   "insight.copilot.forceDeleteConfirm": "3f553fc82ba90d329f3b585103a71bfd2886fa2401b16d4c5c2df36a4a3745f2",
   "insight.copilot.deleteConfirmMessage": "5703b4ddd1f2a4696f41baf039c8af6c262bd3d436c775abaa3fa76a9e4d8792",
-  "insight.copilot.forceDeleteConfirmMessage": "fa18fdc7f3936a80c52e0c32fa681687cf2c583a8950b0427e51c78b5a5283b3",
-  "insight.copilot.forceDeleteComplete": "3522ced818ebf81e5e93fc3ccffd1b70a1b544d5753e41a9d1eb360d09488269",
+  "insight.copilot.forceDeleteConfirmMessage": "9130aba6b0d0a3417ff9b4c3840dc6c8b56747c9d14b4797af5c61671ea95ec9",
+  "insight.copilot.forceDeleteComplete": "24bce199b913f668ced5281a714fc81faa3c6d28188be5214f1a637b6ab05922",
   "insight.copilot.renamePlaceholder": "1ac8763406186f4bab08ed9fa3d4a6d6b2dbe9b6a257b52b3e16e7fe2f2672a7",
   "insight.copilot.renameFailed": "80a686726451322c5ef119ab85a17b40a04de925b9643eaf358da79b7017f21e",
   "insight.copilot.sessionRecovering": "c0c3ead6672fa3f3a272e2d1bdaba18f257cd0d83fa974aeb7da1810f0fe67d9",
@@ -3332,7 +3332,7 @@
   "insight.copilot.deletingChat": "7f770549ec15968e751f05a9aea85c85e8000d7c1f3421147a447d3a6d1b9fee",
   "insight.copilot.genericLifecycleError": "8b651e0d27507ebafaeab667a345bbf8e9fe8b73c98270b40508ecd4565a8d9d",
   "insight.copilot.retryPreparationDetail": "09e5199a69560be2a0b18086f54e573b0fa96bc0188446447639f09634990ced",
-  "insight.copilot.cleanupBlockedDetail": "fe59e99b2e39d14e1784698c26d48adc5a10e35824906abbf30765a53333663c",
+  "insight.copilot.cleanupBlockedDetail": "7058aea25d6f2fdc22000081ad24c98ce99ebbc37e110fe2848fed08d0ad965f",
   "insight.copilot.deletingChatDetail": "7f9bfec2f43c734a994103b40ca3e2e957f0f2e871881a7251a10b8d78cbff81",
   "insight.copilot.dataOriginHint": "2074e69d9efe4cb8e23558081fd021a521b60afe9f2277c4c021149d13982c36",
   "insight.copilot.dataOriginLabel": "26de7310884abe176deaebd21505bd5a9655ff594e0430abe22d3dd1bb1c6c2f",
@@ -7806,5 +7806,6 @@
   "protection.taskProgress.backup.scanning": "e5ea1cd1bfc25f5781952ff4b547b7e662dfc02d90d0b207217bb10af7b9a85f",
   "protection.taskProgress.backup.comparingQueued": "dfda9baa30f6ca89470b1234d6115f7a1f10b0fd048b0bab79fe67418a85bd89",
   "protection.taskProgress.backup.scanningQueued": "7eead97f633e13d6cbe470537b33d3a4c95e6b8ed001ca462e92e3fa86fc6ab0",
-  "protection.taskProgress.backup.uploadingQueued": "b1abdf9f9fe85d5a8d20dd5a7625c9a29c29609459ec50aa3450d86cd8a05d45"
+  "protection.taskProgress.backup.uploadingQueued": "b1abdf9f9fe85d5a8d20dd5a7625c9a29c29609459ec50aa3450d86cd8a05d45",
+  "insight.copilot.cleanupSafetyDetail": "4f2fcc7e063f596f437a90ad73d869c373869ff22388c31ce2c1cd9a5f735ba4"
 }
