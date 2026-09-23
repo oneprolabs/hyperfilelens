@@ -2028,17 +2028,19 @@ type insightSnapshotBrowseCollector struct {
 }
 
 type snapshotBrowsePageCollector struct {
-	basePath           string
-	offset             int
-	limit              int
-	seen               int
-	linesSeen          int
-	entries            []map[string]any
-	hasMore            bool
-	invalid            bool
-	invalidLineNumber  int
-	invalidReason      string
-	invalidLinePreview string
+	basePath            string
+	offset              int
+	limit               int
+	seen                int
+	linesSeen           int
+	entries             []map[string]any
+	hasMore             bool
+	invalid             bool
+	invalidLineNumber   int
+	invalidReason       string
+	invalidLinePreview  string
+	skippedInvalidCount int
+	warnings            []map[string]any
 }
 
 func newSnapshotBrowsePageCollector(basePath string, limit int, cursor string) (*snapshotBrowsePageCollector, error) {
@@ -2061,6 +2063,7 @@ func newSnapshotBrowsePageCollector(basePath string, limit int, cursor string) (
 		offset:   offset,
 		limit:    limit,
 		entries:  make([]map[string]any, 0, limit),
+		warnings: make([]map[string]any, 0, 4),
 	}, nil
 }
 
@@ -2071,13 +2074,19 @@ func (collector *snapshotBrowsePageCollector) consume(line string) bool {
 	if line == "" {
 		return true
 	}
+	degraded := false
 	mode, size, modTime, name, reason, ok := parseSnapshotBrowseLongLineDiagnostic(line)
 	if !ok {
-		collector.invalid = true
-		collector.invalidLineNumber = collector.linesSeen
-		collector.invalidReason = reason
-		collector.invalidLinePreview = sanitizeSnapshotBrowseLine(rawLine)
-		return false
+		if fallbackMode, fallbackSize, fallbackModTime, fallbackName, fallbackOK :=
+			parseSnapshotBrowseFallbackLine(line); fallbackOK {
+			mode, size, modTime, name = fallbackMode, fallbackSize, fallbackModTime, fallbackName
+			degraded = true
+			collector.recordWarning(collector.linesSeen, reason, rawLine)
+		} else {
+			collector.skippedInvalidCount++
+			collector.recordWarning(collector.linesSeen, reason, rawLine)
+			return true
+		}
 	}
 	if collector.seen < collector.offset {
 		collector.seen++
@@ -2089,11 +2098,30 @@ func (collector *snapshotBrowsePageCollector) consume(line string) bool {
 	}
 	collector.seen++
 	entryType, downloadable, downloadReason := snapshotBrowseEntryType(mode, "")
+	if degraded {
+		entryType = "unknown"
+		downloadable = false
+		downloadReason = "Entry type could not be verified safely."
+	}
+	collector.appendEntry(mode, size, modTime, name, entryType, downloadable, downloadReason)
+	return true
+}
+
+func (collector *snapshotBrowsePageCollector) appendEntry(
+	mode string,
+	size int64,
+	modTime string,
+	name string,
+	entryType string,
+	downloadable bool,
+	downloadReason string,
+) {
 	isDir := entryType == "dir"
 	path := normalizeSnapshotBrowsePath(name, name, collector.basePath, "")
 	entry := map[string]any{
 		"name":         snapshotBrowseName(name, path),
 		"path":         path,
+		"mode":         mode,
 		"type":         entryType,
 		"is_dir":       isDir,
 		"size_bytes":   size,
@@ -2105,7 +2133,17 @@ func (collector *snapshotBrowsePageCollector) consume(line string) bool {
 		entry["download_reason"] = downloadReason
 	}
 	collector.entries = append(collector.entries, entry)
-	return true
+}
+
+func (collector *snapshotBrowsePageCollector) recordWarning(lineNumber int, reason string, line string) {
+	if len(collector.warnings) >= snapshotFailureSampleLimit {
+		return
+	}
+	collector.warnings = append(collector.warnings, map[string]any{
+		"line_number":  lineNumber,
+		"reason":       reason,
+		"line_preview": sanitizeSnapshotBrowseLine(line),
+	})
 }
 
 func (collector *snapshotBrowsePageCollector) nextCursor() string {
@@ -2190,17 +2228,46 @@ func classifyInsightSnapshotEntry(mode string, size int64) (string, bool) {
 	if size < 0 {
 		return "", false
 	}
-	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
-	switch {
-	case strings.HasPrefix(normalizedMode, "-"):
-		return "file", true
-	case strings.HasPrefix(normalizedMode, "d"):
-		return "dir", true
-	case normalizedMode != "":
+	entryType, downloadable, _ := snapshotBrowseEntryType(mode, "")
+	if !downloadable {
 		return "special", true
-	default:
-		return "", false
 	}
+	switch entryType {
+	case "file":
+		return "file", true
+	case "dir":
+		return "dir", true
+	default:
+		return "special", true
+	}
+}
+
+func validateSnapshotDownloadSelection(
+	ctx context.Context,
+	bin string,
+	configFile string,
+	env map[string]string,
+	snapshotID string,
+	selectedPath string,
+) error {
+	if strings.TrimSpace(selectedPath) == "" {
+		return nil
+	}
+	selection, inspectResult, inspectErr := inspectManagedSnapshotSelection(
+		ctx,
+		bin,
+		configFile,
+		env,
+		snapshotID,
+		selectedPath,
+	)
+	if inspectErr != nil {
+		return fmt.Errorf("%s", snapshotBrowseFailureMessage(inspectResult, inspectErr))
+	}
+	if !selection.found || selection.invalidType || (selection.pathType != "file" && selection.pathType != "dir") {
+		return fmt.Errorf("snapshot entry type is unknown and cannot be downloaded safely")
+	}
+	return nil
 }
 
 func inspectManagedSnapshotSelection(
@@ -2290,6 +2357,10 @@ func (e *Engine) runManagedSnapshotBrowse(
 	result["count"] = len(collector.entries)
 	result["has_more"] = collector.hasMore
 	result["next_cursor"] = collector.nextCursor()
+	result["skipped_invalid_count"] = collector.skippedInvalidCount
+	if len(collector.warnings) > 0 {
+		result["browse_warnings"] = collector.warnings
+	}
 	if collector.invalid {
 		result["invalid_line_number"] = collector.invalidLineNumber
 		result["invalid_reason"] = collector.invalidReason
@@ -2861,6 +2932,16 @@ func restoreSnapshotDownloadGroups(
 			}
 		}
 		for _, requestedPath := range group.paths {
+			if err := validateSnapshotDownloadSelection(
+				ctx,
+				bin,
+				configFile,
+				env,
+				group.snapshotID,
+				requestedPath,
+			); err != nil {
+				return err
+			}
 			target := snapshotObjectPath(group.snapshotID, requestedPath)
 			isDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, target)
 			result["snapshot_download_inspect"] = commandResult(inspectRes)
@@ -2980,6 +3061,16 @@ func (e *Engine) runManagedSnapshotDownload(
 			requestedPaths = []string{strings.Trim(strings.TrimSpace(p.Path), "/\\")}
 		}
 		for _, requestedPath := range requestedPaths {
+			if err := validateSnapshotDownloadSelection(
+				ctx,
+				bin,
+				configFile,
+				env,
+				p.SnapshotID,
+				requestedPath,
+			); err != nil {
+				return "failed", result, err.Error()
+			}
 			target := snapshotObjectPath(p.SnapshotID, requestedPath)
 			isDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, target)
 			result["snapshot_download_inspect"] = commandResult(inspectRes)
@@ -4617,6 +4708,26 @@ func parseSnapshotBrowseLongLineDiagnostic(line string) (mode string, size int64
 	return mode, size, modTime, name, "", true
 }
 
+func parseSnapshotBrowseFallbackLine(line string) (mode string, size int64, modTime string, name string, ok bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 7 || strings.TrimSpace(fields[0]) == "" ||
+		len(fields[0]) < 10 || !hasSnapshotPermissionSuffix(fields[0][len(fields[0])-9:]) {
+		return "", 0, "", "", false
+	}
+	mode = fields[0]
+	size, _ = strconv.ParseInt(fields[1], 10, 64)
+	modTime = formatModTimeUTC(strings.Join(fields[2:5], " "))
+	objectID := fields[5]
+	idx := strings.Index(line, objectID)
+	if idx < 0 {
+		name = strings.Join(fields[6:], " ")
+	} else {
+		name = strings.TrimSpace(line[idx+len(objectID):])
+	}
+	name = strings.Trim(name, "/\\")
+	return mode, size, modTime, name, name != ""
+}
+
 func sanitizeSnapshotBrowseLine(line string) string {
 	line = strings.ReplaceAll(line, "\\", "\\\\")
 	line = strings.ReplaceAll(line, "\r", "\\r")
@@ -4698,15 +4809,28 @@ func looksLikeMode(value string) bool {
 	if len(value) < 10 {
 		return false
 	}
-	if !strings.ContainsRune("d-lLsSpPbBcCDwWuUgG", rune(value[0])) {
+	permissionStart := len(value) - 9
+	if permissionStart < 1 {
 		return false
 	}
-	for _, permission := range value[1:10] {
+	for _, marker := range value[:permissionStart] {
+		if !strings.ContainsRune("-dalTLDpSugsct?lbCw", marker) {
+			return false
+		}
+	}
+	return hasSnapshotPermissionSuffix(value[permissionStart:])
+}
+
+func hasSnapshotPermissionSuffix(value string) bool {
+	if len(value) != 9 {
+		return false
+	}
+	for _, permission := range value {
 		if !strings.ContainsRune("rwxXsStT-", permission) {
 			return false
 		}
 	}
-	for index, permission := range value[1:10] {
+	for index, permission := range value {
 		if (index%3 == 0 && permission != 'r' && permission != '-') ||
 			(index%3 == 1 && permission != 'w' && permission != '-') ||
 			(index%3 == 2 && !strings.ContainsRune("xXsStT-", permission)) {
@@ -4724,7 +4848,7 @@ func mapSnapshotBrowseType(isDir bool) string {
 }
 
 func snapshotBrowseEntryType(mode string, reportedType string) (string, bool, string) {
-	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
+	normalizedMode := strings.TrimSpace(mode)
 	normalizedType := strings.ToLower(strings.TrimSpace(reportedType))
 	switch {
 	case normalizedType == "symlink" || normalizedType == "symbolic-link" || normalizedType == "link":
@@ -4733,11 +4857,15 @@ func snapshotBrowseEntryType(mode string, reportedType string) (string, bool, st
 		return "dir", true, ""
 	case normalizedType == "file" || normalizedType == "f" || normalizedType == "regular":
 		return "file", true, ""
-	case strings.HasPrefix(normalizedMode, "l"):
+	case normalizedType == "unknown":
+		return "unknown", false, "Entry type could not be verified safely."
+	case strings.Contains(normalizedMode, "L"):
 		return "symlink", false, "Symbolic links cannot be downloaded individually."
-	case strings.HasPrefix(normalizedMode, "d"):
+	case strings.Contains(normalizedMode, "d"):
 		return "dir", true, ""
-	case strings.HasPrefix(normalizedMode, "-"):
+	case strings.ContainsAny(normalizedMode, "pSDc?P"):
+		return "special", false, "Special files cannot be downloaded individually."
+	case strings.HasPrefix(normalizedMode, "-") || strings.ContainsAny(normalizedMode, "aguTt"):
 		return "file", true, ""
 	default:
 		return "special", false, "Special files cannot be downloaded individually."
