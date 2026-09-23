@@ -13,7 +13,7 @@ ARG SENTRY_ORG=
 ARG SENTRY_FRONTEND_PROJECT=
 ARG SENTRY_RELEASE=
 
-WORKDIR /app
+WORKDIR /opt/hyperfilelens/frontend
 COPY src/frontend/package.json src/frontend/package-lock.json ./
 RUN if [ -n "${NPM_REGISTRY}" ]; then npm config set registry "${NPM_REGISTRY}"; fi
 RUN npm ci \
@@ -36,7 +36,7 @@ FROM frontend-dependencies AS frontend-build
 
 COPY src/frontend/ ./
 # Optional Open Core extensions for Vite discovery at build time (may be empty).
-COPY build/release/extensions/ /opt/hfl/extensions/
+COPY build/release/extensions/ /opt/hyperfilelens/extensions/
 ARG HFL_EXTENSIONS=
 ENV HFL_EXTENSIONS=${HFL_EXTENSIONS}
 ENV VITE_SHOW_EULA=${VITE_SHOW_EULA}
@@ -62,7 +62,7 @@ ENV TZ=UTC \
 
 RUN apk add --no-cache logrotate
 
-COPY --from=frontend-build /app/dist /usr/share/nginx/html
+COPY --from=frontend-build /opt/hyperfilelens/frontend/dist /usr/share/nginx/html
 COPY build/website/public /usr/share/nginx/website
 COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY deploy/nginx/snippets /etc/nginx/snippets

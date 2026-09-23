@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-cd /app
+cd /opt/hyperfilelens/frontend
 
 lock_sha="$(sha256sum package-lock.json | awk '{print $1}')"
 installed_sha="$(cat node_modules/.hfl-package-lock.sha 2>/dev/null || true)"

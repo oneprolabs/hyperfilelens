@@ -51,7 +51,7 @@ trap 'rm -rf "${tmp_extensions}"' EXIT
 env_file="${tmp_extensions}/.env"
 example_file="${tmp_extensions}/.env.example"
 printf '%s\n' 'APP_VERSION=1.2.2-ee' \
-	'HFL_EXTENSIONS=/opt/hfl/extensions/platform' >"${env_file}"
+	'HFL_EXTENSIONS=/opt/hyperfilelens/extensions/platform' >"${env_file}"
 printf '%s\n' 'APP_VERSION=1.2.3' >"${example_file}"
 reconcile_hfl_extensions_env "${env_file}" "${example_file}"
 if grep -F 'HFL_EXTENSIONS=' "${env_file}" >/dev/null; then
@@ -59,9 +59,9 @@ if grep -F 'HFL_EXTENSIONS=' "${env_file}" >/dev/null; then
 	exit 1
 fi
 printf '%s\n' 'APP_VERSION=1.2.3-ee' \
-	'HFL_EXTENSIONS=/opt/hfl/extensions/platform' >"${example_file}"
+	'HFL_EXTENSIONS=/opt/hyperfilelens/extensions/platform' >"${example_file}"
 reconcile_hfl_extensions_env "${env_file}" "${example_file}"
-grep -Fx 'HFL_EXTENSIONS=/opt/hfl/extensions/platform' "${env_file}" >/dev/null
+grep -Fx 'HFL_EXTENSIONS=/opt/hyperfilelens/extensions/platform' "${env_file}" >/dev/null
 rm -rf "${tmp_extensions}"
 trap - EXIT
 

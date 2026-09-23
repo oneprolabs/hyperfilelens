@@ -153,7 +153,7 @@ SourceLens options (enabled by default for up/restart):
   --sourcelens-git-url URL    Override the SourceLens repository URL
                               (env: SOURCELENS_GIT_URL)
 
-Extensions (optional overlay; Open Source default: no extensions):
+Extensions (optional overlay; Community default: no extensions):
   --extension-source SRC      Local path or Git/HTTPS URL[@REF]. Repeatable.
                               Not read from .env (prepare/packaging input only).
                               Private HTTPS uses --github-token or
@@ -164,7 +164,7 @@ Extensions (optional overlay; Open Source default: no extensions):
                               HFL_EXTENSIONS paths; API and Web never clone
                               extension repositories at runtime.
 
-Open Source worktree (optional):
+Community worktree (optional):
   --worktree-dir PATH         Bind-mount an OSS worktree's src/backend and
                               src/frontend into the running containers.
                               Relative paths are resolved from the directory
@@ -245,7 +245,7 @@ Examples:
 
   ./dev/stack.sh clean --all --yes
 
-  # Open Source Edition
+  # Community Edition
   ./dev/stack.sh up \
     --github-download-mirror https://ghfast.top \
     --docker-download-mirror docker.m.daocloud.io \
@@ -356,8 +356,8 @@ data_dir=${ROOT}/data
 source_check=${ROOT}/tools/quality/check-english-source.py
 oss_source=${ROOT}
 oss_worktree=${OSS_WORKTREE_DIR}
-backend_source_mount=${WORKTREE_DIR}/src/backend:/opt/backend
-frontend_source_mount=${WORKTREE_DIR}/src/frontend:/app
+backend_source_mount=${WORKTREE_DIR}/src/backend:/opt/hyperfilelens/backend
+frontend_source_mount=${WORKTREE_DIR}/src/frontend:/opt/hyperfilelens/frontend
 frontend_modules_volume=frontend-node-modules
 website_source=${ROOT}/website
 website_artifact=${WEBSITE_OUTPUT}
@@ -687,7 +687,7 @@ ensure_data_dirs() {
 	local language_root
 	language_root="${ROOT}/data/lang-packs/versions/$(read_project_version)"
 	mkdir -p "${ROOT}/data/postgresql" "${ROOT}/data/redis"
-	# Nested bind under src/backend:/opt/backend needs a host mountpoint or
+	# Nested bind under src/backend:/opt/hyperfilelens/backend needs a host mountpoint or
 	# Docker records the volume but the path stays invisible in the container.
 	install -d -m 0755 "${ROOT}/src/backend/lang-packs"
 	install -d -m 0755 \
@@ -1162,8 +1162,8 @@ print_dev_target() {
 	hfl_print_value "Edition" "${edition}"
 	hfl_print_value "OSS source" "${ROOT}"
 	hfl_print_value "OSS worktree" "${OSS_WORKTREE_DIR}"
-	hfl_print_value "Backend mount" "${WORKTREE_DIR}/src/backend:/opt/backend"
-	hfl_print_value "Frontend mount" "${WORKTREE_DIR}/src/frontend:/app"
+	hfl_print_value "Backend mount" "${WORKTREE_DIR}/src/backend:/opt/hyperfilelens/backend"
+	hfl_print_value "Frontend mount" "${WORKTREE_DIR}/src/frontend:/opt/hyperfilelens/frontend"
 	if [[ "${OSS_WORKTREE_DIR}" == "${ROOT}" ]]; then
 		hfl_print_value "OSS revision" "${branch:-detached} (${commit:-unknown})"
 	else
@@ -2014,16 +2014,16 @@ print_runtime_source_mounts() {
 	backend_mount=""
 	frontend_mount=""
 	if [[ -n "${api_id}" ]]; then
-		backend_mount="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/opt/backend\"}}{{.Source}}{{end}}{{end}}' "${api_id}" 2>/dev/null || true)"
+		backend_mount="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/opt/hyperfilelens/backend\"}}{{.Source}}{{end}}{{end}}' "${api_id}" 2>/dev/null || true)"
 	fi
 	if [[ -n "${web_id}" ]]; then
-		frontend_mount="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/app\"}}{{.Source}}{{end}}{{end}}' "${web_id}" 2>/dev/null || true)"
+		frontend_mount="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/opt/hyperfilelens/frontend\"}}{{.Source}}{{end}}{{end}}' "${web_id}" 2>/dev/null || true)"
 	fi
 	hfl_print_section "Source mounts"
 	hfl_print_value "OSS source" "${ROOT}"
 	if [[ -n "${backend_mount}" ]]; then
 		hfl_print_value "OSS worktree" "${backend_mount%/src/backend}"
-		hfl_print_value "Backend mount" "${backend_mount}:/opt/backend"
+		hfl_print_value "Backend mount" "${backend_mount}:/opt/hyperfilelens/backend"
 		backend_revision="$(extension_revision "${backend_mount%/src/backend}")"
 		hfl_print_value "OSS revision" "${backend_revision}"
 	else
@@ -2031,7 +2031,7 @@ print_runtime_source_mounts() {
 		hfl_print_value "Backend mount" "not running"
 	fi
 	if [[ -n "${frontend_mount}" ]]; then
-		hfl_print_value "Frontend mount" "${frontend_mount}:/app"
+		hfl_print_value "Frontend mount" "${frontend_mount}:/opt/hyperfilelens/frontend"
 	else
 		hfl_print_value "Frontend mount" "not running"
 	fi

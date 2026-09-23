@@ -20,7 +20,7 @@ extensions=$5
 output=$6
 [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 [[ "${oss_commit}" =~ ^[0-9a-f]{40}$ && "${ee_commit}" =~ ^[0-9a-f]{40}$ ]]
-[[ "${extensions}" =~ ^/opt/hfl/extensions/[a-zA-Z0-9._-]+(,/opt/hfl/extensions/[a-zA-Z0-9._-]+)*$ ]]
+[[ "${extensions}" =~ ^/opt/hyperfilelens/extensions/[a-zA-Z0-9._-]+(,/opt/hyperfilelens/extensions/[a-zA-Z0-9._-]+)*$ ]]
 
 for component in \
 	hfl-backend hfl-frontend \

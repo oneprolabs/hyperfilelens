@@ -14,7 +14,7 @@ from django.utils.translation import to_locale
 
 LANG_PACKS_ENV = "HFL_LANG_PACKS_DIR"
 APP_VERSION_ENV = "HFL_PRODUCT_VERSION"
-DEFAULT_LANG_PACKS_ROOT = Path("/opt/backend/lang-packs")
+DEFAULT_LANG_PACKS_ROOT = Path("/opt/hyperfilelens/backend/lang-packs")
 SUPPORTED_MANIFEST_SCHEMAS = frozenset({1, 2})
 _PACK_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _LANGUAGE_CODE_PATTERN = re.compile(

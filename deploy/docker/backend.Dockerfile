@@ -49,7 +49,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
 COPY --chmod=0755 ${KOPIA_BINARY} /usr/local/bin/kopia
 RUN kopia --version
 
-WORKDIR /opt/backend
+WORKDIR /opt/hyperfilelens/backend
 
 COPY pyproject.toml uv.lock /tmp/backend-project/
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -77,7 +77,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     PIP_CACHE_DIR=/root/.cache/pip pip install --retries 15 --timeout "${PIP_TIMEOUT}" --require-hashes -r /tmp/dev-requirements.txt \
  && rm -f /tmp/dev-requirements.txt
 
-COPY deploy/bootstrap /opt/bootstrap
+COPY deploy/bootstrap /opt/hyperfilelens/bootstrap
 COPY deploy/docker/backend-entrypoint.sh /entrypoint.sh
 COPY deploy/docker/dev-process-supervisor.py /dev-process-supervisor.py
 
@@ -98,11 +98,11 @@ LABEL org.opencontainers.image.version="${IMAGE_VERSION}" \
 
 RUN rm -f /tmp/dev-requirements.txt
 
-COPY src/backend /opt/backend
-COPY deploy/bootstrap /opt/bootstrap
+COPY src/backend /opt/hyperfilelens/backend
+COPY deploy/bootstrap /opt/hyperfilelens/bootstrap
 COPY deploy/docker/backend-entrypoint.sh /entrypoint.sh
 # Optional Open Core extensions staged by release/build.sh or CI (may be empty).
-COPY build/release/extensions/ /opt/hfl/extensions/
+COPY build/release/extensions/ /opt/hyperfilelens/extensions/
 ARG HFL_EXTENSIONS=
 ENV HFL_EXTENSIONS=${HFL_EXTENSIONS}
 

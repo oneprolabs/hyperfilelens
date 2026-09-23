@@ -91,7 +91,7 @@ function hflExtOssBridgePlugin() {
 }
 
 const hostNodeModules = resolve(frontendDir, 'node_modules')
-// Extensions mount outside the Vite root (e.g. /opt/hfl/extensions/<id>). Bare
+// Extensions mount outside the Vite root (e.g. /opt/hyperfilelens/extensions/<id>). Bare
 // imports from those trees do not walk into Host node_modules — pin them here
 // for both vite build/dev and vitest.
 const extensionDepAlias = extensionFrontendSrcs.length

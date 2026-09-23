@@ -29,7 +29,7 @@ def bootstrap_dir() -> Path:
     ).strip()
     if custom:
         return Path(custom)
-    container_default = Path("/opt/bootstrap")
+    container_default = Path("/opt/hyperfilelens/bootstrap")
     if container_default.is_dir():
         return container_default
     repo_relative = Path(settings.BASE_DIR).resolve().parent.parent / "deploy" / "bootstrap"
