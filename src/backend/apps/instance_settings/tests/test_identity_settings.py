@@ -245,5 +245,7 @@ class PlatformEnvironmentSettingsCommunityTests(TestCase):
         self.assertFalse(response.data["effective"]["turnstile_enabled"])
         self.assertEqual(response.data["sources"]["turnstile_enabled"], "extension")
         self.assertIn("edition", response.data)
+        self.assertIn("nginx", response.data["health"])
+        self.assertIn("web", response.data["health"])
         self.assertIn("scheduler", response.data["health"])
         self.assertIn("data_gateway", response.data["health"])
