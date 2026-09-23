@@ -324,6 +324,5 @@
   "settings.org.colPlan",
   "settings.org.unitBytes",
   "settings.subscription.limitGateways",
-  "settings.subscription.planLimit",
-  "ops.task.failureDetails.retainedResource.lensnode_sidecar"
+  "settings.subscription.planLimit"
 ]

@@ -2693,10 +2693,10 @@ watch(
 
 .hfl-task-drawer__technical-log-shell {
   overflow: hidden;
-  border: 1px solid rgb(15 23 42 / 18%);
+  border: 1px solid var(--el-border-color);
   border-radius: 8px;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-primary);
 }
 
 .hfl-task-drawer__technical-log-head {
@@ -2705,8 +2705,8 @@ watch(
   justify-content: space-between;
   gap: 8px;
   padding: 7px 10px;
-  background: #1e293b;
-  color: #cbd5e1;
+  background: var(--el-bg-color-overlay);
+  color: var(--el-text-color-regular);
   font-size: 11px;
 }
 
@@ -2715,7 +2715,7 @@ watch(
 }
 
 .hfl-task-drawer__technical-log-head .el-button {
-  color: #cbd5e1;
+  color: var(--el-text-color-regular);
 }
 
 .hfl-task-drawer__technical-log {

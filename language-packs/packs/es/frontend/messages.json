@@ -6073,7 +6073,7 @@
         },
         "retainedResource": {
           "agent_installation": "Instalación del agente",
-          "lensnode_sidecar": "LensNode Sidecar"
+          "lensnode_sidecar": "Sidecar de LensNode"
         },
         "reasons": "Motivos",
         "suggestions": "Siguientes pasos sugeridos",
