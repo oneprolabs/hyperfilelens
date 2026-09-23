@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
-cd /opt/backend
+cd /opt/hyperfilelens/backend
 
-export PYTHONPATH=/opt/backend
+export PYTHONPATH=/opt/hyperfilelens/backend
 export DJANGO_SETTINGS_MODULE=project.settings
 
 ensure_log_dir() {
@@ -271,19 +271,24 @@ require_watchfiles() {
   }
 }
 
-DEV_WATCH_IGNORE_PATHS="/opt/backend/media,/opt/backend/staticfiles,/opt/backend/lang-packs"
+DEV_WATCH_IGNORE_PATHS="/opt/hyperfilelens/backend/media,/opt/hyperfilelens/backend/staticfiles,/opt/hyperfilelens/backend/lang-packs"
 
 run_api_dev() {
   ensure_log_dir
   wait_for_postgres
   require_watchfiles
+  # The extension tree is optional in Community containers.  Only pass it to
+  # watchfiles when the EE overlay mounted it into this container.
+  set -- --watch /opt/hyperfilelens/backend
+  if [ -d /opt/hyperfilelens/extensions ]; then
+    set -- "$@" --watch /opt/hyperfilelens/extensions
+  fi
   echo "[entrypoint] supervise backend HTTP/WebSocket API with hot reload"
   exec python /dev-process-supervisor.py \
-    --watch /opt/backend \
-    --watch /opt/hfl/extensions \
-    --ignore /opt/backend/media \
-    --ignore /opt/backend/staticfiles \
-    --ignore /opt/backend/lang-packs \
+    "$@" \
+    --ignore /opt/hyperfilelens/backend/media \
+    --ignore /opt/hyperfilelens/backend/staticfiles \
+    --ignore /opt/hyperfilelens/backend/lang-packs \
     --max-restarts "${DEV_API_MAX_RESTARTS:-5}" \
     --stable-seconds "${DEV_API_STABLE_SECONDS:-30}" \
     --base-delay "${DEV_API_RESTART_DELAY_SECONDS:-1}" \
@@ -296,10 +301,10 @@ run_worker_dev() {
   require_watchfiles
   echo "[entrypoint] supervise celery worker with hot reload"
   exec python /dev-process-supervisor.py \
-    --watch /opt/backend \
-    --ignore /opt/backend/media \
-    --ignore /opt/backend/staticfiles \
-    --ignore /opt/backend/lang-packs \
+    --watch /opt/hyperfilelens/backend \
+    --ignore /opt/hyperfilelens/backend/media \
+    --ignore /opt/hyperfilelens/backend/staticfiles \
+    --ignore /opt/hyperfilelens/backend/lang-packs \
     --max-restarts "${DEV_WORKER_MAX_RESTARTS:-5}" \
     --stable-seconds "${DEV_WORKER_STABLE_SECONDS:-30}" \
     --base-delay "${DEV_WORKER_RESTART_DELAY_SECONDS:-1}" \
@@ -314,10 +319,10 @@ run_scheduler_dev() {
   require_watchfiles
   echo "[entrypoint] supervise cluster-safe celery scheduler with hot reload"
   exec python /dev-process-supervisor.py \
-    --watch /opt/backend \
-    --ignore /opt/backend/media \
-    --ignore /opt/backend/staticfiles \
-    --ignore /opt/backend/lang-packs \
+    --watch /opt/hyperfilelens/backend \
+    --ignore /opt/hyperfilelens/backend/media \
+    --ignore /opt/hyperfilelens/backend/staticfiles \
+    --ignore /opt/hyperfilelens/backend/lang-packs \
     --max-restarts "${DEV_SCHEDULER_MAX_RESTARTS:-5}" \
     --stable-seconds "${DEV_SCHEDULER_STABLE_SECONDS:-30}" \
     --base-delay "${DEV_SCHEDULER_RESTART_DELAY_SECONDS:-1}" \

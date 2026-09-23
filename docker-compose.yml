@@ -11,12 +11,12 @@ x-backend-environment: &backend-environment
   WATCHFILES_FORCE_POLLING: ${WATCHFILES_FORCE_POLLING:-true}
 
 x-backend-volumes: &backend-volumes
-  - ${WORKTREE_DIR:-.}/src/backend:/opt/backend
-  - ./deploy/bootstrap:/opt/bootstrap:ro
+  - ${WORKTREE_DIR:-.}/src/backend:/opt/hyperfilelens/backend
+  - ./deploy/bootstrap:/opt/hyperfilelens/bootstrap:ro
   # Language packs follow the product version synchronized by dev/stack.sh.
-  - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/backend/lang-packs:ro
-  - ./data/media:/opt/backend/media
-  - ./data/staticfiles:/opt/backend/staticfiles
+  - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/hyperfilelens/backend/lang-packs:ro
+  - ./data/media:/opt/hyperfilelens/backend/media
+  - ./data/staticfiles:/opt/hyperfilelens/backend/staticfiles
   - ./data/logs:/var/log/hyperfilelens
   - ./data/sourcelens/logs:/var/log/sourcelens:ro
 
@@ -215,8 +215,8 @@ services:
       api:
         condition: service_healthy
     volumes:
-      - ${WORKTREE_DIR:-.}/src/frontend:/app
-      - frontend-node-modules:/app/node_modules
+      - ${WORKTREE_DIR:-.}/src/frontend:/opt/hyperfilelens/frontend
+      - frontend-node-modules:/opt/hyperfilelens/frontend/node_modules
       - ./build/website/public:/usr/share/nginx/website:ro
     healthcheck:
       test:
@@ -252,9 +252,9 @@ services:
       - ./deploy/nginx/development-upstreams.conf:/etc/nginx/snippets/hfl-active-upstreams.conf:ro
       - ./deploy/nginx/development-tenant-spa-locations.conf:/etc/nginx/snippets/hfl-tenant-spa-locations.conf:ro
       - ./deploy/nginx/development-ops-spa-locations.conf:/etc/nginx/snippets/hfl-ops-spa-locations.conf:ro
-      - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/hyperfilelens/lang-packs:ro
-      - ./data/media:/opt/backend/media:ro
-      - ./data/staticfiles:/opt/django-static:ro
+      - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/hyperfilelens/backend/lang-packs:ro
+      - ./data/media:/opt/hyperfilelens/backend/media:ro
+      - ./data/staticfiles:/opt/hyperfilelens/backend/staticfiles:ro
       - ./deploy/nginx/certs:/etc/nginx/certs:ro
       - ./data/logs:/var/log/hyperfilelens
     networks:

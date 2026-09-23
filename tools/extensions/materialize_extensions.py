@@ -219,7 +219,7 @@ def bake_extensions(host_roots: list[Path], bake_dir: Path) -> list[tuple[str, P
         seen_ids.add(ext_id)
         staged = bake_dir / ext_id
         _copy_tree(root, staged)
-        mounts.append((f"/opt/hfl/extensions/{ext_id}", staged.resolve()))
+        mounts.append((f"/opt/hyperfilelens/extensions/{ext_id}", staged.resolve()))
     return mounts
 
 
@@ -355,7 +355,7 @@ def main() -> int:
         if ext_id in seen_ids:
             raise SystemExit(f"duplicate extension id: {ext_id}")
         seen_ids.add(ext_id)
-        mounts.append((f"/opt/hfl/extensions/{ext_id}", root))
+        mounts.append((f"/opt/hyperfilelens/extensions/{ext_id}", root))
 
     write_compose(compose_out, mounts)
     container_list = ",".join(c for c, _ in mounts)

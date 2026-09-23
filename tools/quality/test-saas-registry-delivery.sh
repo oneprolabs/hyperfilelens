@@ -780,7 +780,7 @@ for kind in ("agent", "gateway", "language"):
 PY
 "${ROOT}/release/ci/assemble-saas-candidate.sh" \
 	"${candidate_metadata}" 1.0.0 "${revision}" "$(printf 'c%.0s' {1..40})" \
-	/opt/hfl/extensions/hyperfilelens-ee "${candidate_archive}"
+	/opt/hyperfilelens/extensions/hyperfilelens-ee "${candidate_archive}"
 tar -xzf "${candidate_archive}" -C "${candidate_extract}"
 assembled_root="${candidate_extract}/hyperfilelens-1.0.0-ee-saas"
 grep -Fx 'HFL_POSTGRES_IMAGE=postgres:17' "${assembled_root}/.env.example" >/dev/null

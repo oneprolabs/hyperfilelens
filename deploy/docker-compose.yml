@@ -21,9 +21,9 @@ x-backend-image: &backend-image
 
 x-backend-volumes: &backend-volumes
   # Language packs follow the product Release, not the edition-specific image tag.
-  - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/backend/lang-packs:ro
-  - ./data/media:/opt/backend/media
-  - ./data/staticfiles:/opt/backend/staticfiles
+  - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/hyperfilelens/backend/lang-packs:ro
+  - ./data/media:/opt/hyperfilelens/backend/media
+  - ./data/staticfiles:/opt/hyperfilelens/backend/staticfiles
   - ./data/logs:/var/log/hyperfilelens
   - ./data/sourcelens/logs:/var/log/sourcelens:ro
 
@@ -79,7 +79,7 @@ x-web: &web
     LOGROTATE_INTERVAL_SECONDS: "3600"
   volumes:
     - ./deploy/nginx/web.conf:/etc/nginx/conf.d/default.conf:ro
-    - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/hyperfilelens/lang-packs:ro
+    - ./data/lang-packs/versions/${HFL_PRODUCT_VERSION:-latest}:/opt/hyperfilelens/backend/lang-packs:ro
   networks:
     - default
   mem_limit: 512m
@@ -281,8 +281,8 @@ services:
     volumes:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./deploy/nginx/snippets:/etc/nginx/snippets:ro
-      - ./data/media:/opt/backend/media:ro
-      - ./data/staticfiles:/opt/django-static:ro
+      - ./data/media:/opt/hyperfilelens/backend/media:ro
+      - ./data/staticfiles:/opt/hyperfilelens/backend/staticfiles:ro
       - ./deploy/nginx/certs:/etc/nginx/certs:ro
       - ./data/logs:/var/log/hyperfilelens
       - ./deploy/logrotate/hyperfilelens.conf:/etc/logrotate.d/hyperfilelens:ro

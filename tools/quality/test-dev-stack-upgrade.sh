@@ -12,9 +12,9 @@ trap 'rm -rf "${tmp}"' EXIT
 
 # An OSS worktree changes only the runtime source bind mounts; the current
 # repository remains the Compose/configuration and data root.
-grep -F '${WORKTREE_DIR:-.}/src/backend:/opt/backend' \
+grep -F '${WORKTREE_DIR:-.}/src/backend:/opt/hyperfilelens/backend' \
 	"${ROOT_REPO}/docker-compose.yml" >/dev/null
-grep -F '${WORKTREE_DIR:-.}/src/frontend:/app' \
+grep -F '${WORKTREE_DIR:-.}/src/frontend:/opt/hyperfilelens/frontend' \
 	"${ROOT_REPO}/docker-compose.yml" >/dev/null
 grep -F -- '--worktree-dir PATH' "${ROOT_REPO}/dev/stack.sh" >/dev/null
 grep -F 'worktree_recreate_args+=(--force-recreate)' "${ROOT_REPO}/dev/stack.sh" >/dev/null
@@ -263,12 +263,16 @@ grep -F 'for svc in ("migration", "api", "worker", "scheduler"):' \
 # Runtime artifacts are mounted below the backend source root in development.
 # Publishing Python helpers into media must not restart API or Celery processes.
 backend_entrypoint="${ROOT_REPO}/deploy/docker/backend-entrypoint.sh"
-grep -F 'DEV_WATCH_IGNORE_PATHS="/opt/backend/media,/opt/backend/staticfiles,/opt/backend/lang-packs"' \
+grep -F 'DEV_WATCH_IGNORE_PATHS="/opt/hyperfilelens/backend/media,/opt/hyperfilelens/backend/staticfiles,/opt/hyperfilelens/backend/lang-packs"' \
 	"${backend_entrypoint}" >/dev/null
 [[ "$(grep -Fc 'python /dev-process-supervisor.py' "${backend_entrypoint}")" -eq 3 ]]
 grep -F 'deploy/docker/dev-process-supervisor.py deploy/bootstrap' \
 	"${ROOT_REPO}/dev/stack.sh" >/dev/null
-[[ "$(grep -Fc -- '--watch /opt/backend' "${backend_entrypoint}")" -eq 3 ]]
+[[ "$(grep -Fc -- '--watch /opt/hyperfilelens/backend' "${backend_entrypoint}")" -eq 3 ]]
+grep -F 'if [ -d /opt/hyperfilelens/extensions ]; then' \
+	"${backend_entrypoint}" >/dev/null
+grep -F 'set -- "$@" --watch /opt/hyperfilelens/extensions' \
+	"${backend_entrypoint}" >/dev/null
 if grep -F 'exec watchfiles' "${backend_entrypoint}" >/dev/null; then
 	echo 'Development processes must be supervised through their real child process' >&2
 	exit 1

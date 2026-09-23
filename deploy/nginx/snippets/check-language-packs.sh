@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-language_root="${HFL_LANGUAGE_PACK_HEALTH_ROOT:-/opt/hyperfilelens/lang-packs}"
+language_root="${HFL_LANGUAGE_PACK_HEALTH_ROOT:-/opt/hyperfilelens/backend/lang-packs}"
 base_url="${HFL_LANGUAGE_PACK_HEALTH_BASE_URL:-https://127.0.0.1:11443}"
 
 wget --no-check-certificate --spider -q "${base_url}/locales/installed.json"
