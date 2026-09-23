@@ -18,13 +18,14 @@ nginx_generation_after_up=""
 nginx_generation_status=0
 nginx_generation_status_after_up=0
 compose_failure_pattern=""
+nginx_mounts_match=1
 
 compose_in_root() {
 	calls+=("compose:$*")
 	if [[ -n "${compose_failure_pattern}" && " $* " == *" ${compose_failure_pattern} "* ]]; then
 		return 1
 	fi
-	if [[ " $* " == *" up -d --no-build --pull never nginx "* ]]; then
+	if [[ "$*" == up\ -d\ --no-build\ --pull\ never*nginx ]]; then
 		nginx_generation="${nginx_generation_after_up}"
 		nginx_generation_status="${nginx_generation_status_after_up}"
 	fi
@@ -32,6 +33,7 @@ compose_in_root() {
 compose_color() { calls+=("color:$*"); }
 ensure_blue_green_state() { calls+=("ensure-state"); }
 read_active_color() { printf 'blue'; }
+stable_nginx_mounts_match() { [[ "${nginx_mounts_match}" -eq 1 ]]; }
 stable_nginx_running_generation() {
 	[[ "${nginx_generation_status}" -eq 0 ]] || return "${nginx_generation_status}"
 	printf '%s' "${nginx_generation}"
@@ -51,6 +53,18 @@ nginx_generation_status_after_up=0
 start_hfl_stack
 [[ " ${calls[*]} " != *" reload "* ]]
 [[ " ${calls[*]} " == *" service-health:600 nginx "* ]]
+
+# A release that changes the stable gateway's bind destinations must recreate
+# Nginx instead of merely reloading its old container mounts.
+calls=()
+nginx_mounts_match=0
+nginx_generation="stable-container|original-start"
+nginx_generation_after_up="new-container|new-start"
+nginx_generation_status=0
+nginx_generation_status_after_up=0
+start_hfl_stack
+[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never --force-recreate nginx "* ]]
+nginx_mounts_match=1
 
 # A failed Compose start must stop the function before instance inspection,
 # reload, or health checks. start_hfl_stack is called through `|| die`, so its

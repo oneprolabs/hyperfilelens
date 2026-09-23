@@ -58,6 +58,18 @@ if grep -F 'HFL_EXTENSIONS=' "${env_file}" >/dev/null; then
 	printf 'ERROR: Community upgrade must remove a previous Enterprise extension path\n' >&2
 	exit 1
 fi
+printf '%s\n' 'APP_VERSION=1.2.2-ee' \
+	'HFL_EXTENSIONS=/opt/hfl/extensions/platform' >"${env_file}"
+printf '%s\n' 'APP_VERSION=1.2.3-ee' \
+	'HFL_EXTENSIONS=/opt/hyperfilelens/extensions/platform' >"${example_file}"
+reconcile_hfl_extensions_env "${env_file}" "${example_file}"
+grep -Fx 'HFL_EXTENSIONS=/opt/hyperfilelens/extensions/platform' "${env_file}" >/dev/null
+printf '%s\n' 'APP_VERSION=1.2.2-ee' \
+	'HFL_EXTENSIONS=/custom/extensions/platform' >"${env_file}"
+reconcile_hfl_extensions_env "${env_file}" "${example_file}"
+grep -Fx 'HFL_EXTENSIONS=/custom/extensions/platform' "${env_file}" >/dev/null
+printf '%s\n' 'APP_VERSION=1.2.2-ee' \
+	'HFL_EXTENSIONS=/opt/hyperfilelens/extensions/platform' >"${env_file}"
 printf '%s\n' 'APP_VERSION=1.2.3-ee' \
 	'HFL_EXTENSIONS=/opt/hyperfilelens/extensions/platform' >"${example_file}"
 reconcile_hfl_extensions_env "${env_file}" "${example_file}"
