@@ -4814,7 +4814,7 @@ func looksLikeMode(value string) bool {
 		return false
 	}
 	for _, marker := range value[:permissionStart] {
-		if !strings.ContainsRune("-dalTLDpSugct?l", marker) {
+		if !strings.ContainsRune("-dalTLDpSugsct?lbCw", marker) {
 			return false
 		}
 	}
