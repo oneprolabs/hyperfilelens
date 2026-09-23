@@ -146,7 +146,7 @@ describe('CopilotLifecycleState', () => {
     }))
 
     expect(wrapper.text()).toContain('Chat Cleanup Paused')
-    expect(wrapper.text()).toContain('Cleanup could not finish safely')
+    expect(wrapper.text()).toContain('Chat cleanup failed')
     expect(wrapper.text()).not.toContain('Deleting Chat')
   })
 
@@ -163,7 +163,7 @@ describe('CopilotLifecycleState', () => {
     expect(wrapper.text()).not.toContain('Deleting Chat')
   })
 
-  it('offers force delete for an eligible offline private Gateway cleanup', async () => {
+  it('offers force cleanup for an eligible private Gateway cleanup', async () => {
     const wrapper = mountState(session({
       lifecycle_status: 'deleting',
       cleanup_intent: 'delete_session',
@@ -172,13 +172,13 @@ describe('CopilotLifecycleState', () => {
       force_delete_available: true,
     }))
 
-    expect(wrapper.text()).toContain('Private Data Gateway is offline')
+    expect(wrapper.text()).toContain('Force Cleanup will remove this Chat')
     expect(wrapper.text()).toContain('Force Delete')
     await wrapper.findAll('.copilot-lifecycle-actions button')[1]!.trigger('click')
     expect(wrapper.emitted('forceDelete')).toHaveLength(1)
   })
 
-  it('offers force delete while an eligible private Gateway cleanup is pending', async () => {
+  it('offers force cleanup while an eligible private Gateway cleanup is pending', async () => {
     const wrapper = mountState(session({
       lifecycle_status: 'deleting',
       cleanup_intent: 'delete_session',
@@ -188,7 +188,7 @@ describe('CopilotLifecycleState', () => {
     }))
 
     expect(wrapper.text()).toContain('Deleting Chat')
-    expect(wrapper.text()).toContain('Private Data Gateway is offline')
+    expect(wrapper.text()).toContain('Force Cleanup will remove this Chat')
     expect(wrapper.text()).toContain('Force Delete')
     await wrapper.get('.copilot-lifecycle-actions button').trigger('click')
     expect(wrapper.emitted('forceDelete')).toHaveLength(1)

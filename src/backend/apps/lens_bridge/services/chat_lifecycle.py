@@ -76,12 +76,11 @@ _MAX_BIGINT = 2**63 - 1
 _MIN_BIGINT = -(2**63)
 
 
-def can_force_delete_private_chat(link: LensSessionLink) -> bool:
-    """Return whether an offline private Gateway can be force-deleted.
+def private_chat_force_delete_reason(link: LensSessionLink) -> str:
+    """Return why a private Chat cannot be detached without remote cleanup.
 
-    Force deletion is deliberately limited to an explicitly deleting Chat on a
-    private Gateway that is no longer routable.  The control plane can then
-    finish the deletion without waiting for a remote workspace response.
+    An online Gateway needs durable stop evidence from the normal teardown,
+    not a stale ``STARTED``/``REVOKED`` status or a UI-provided assertion.
     """
 
     now = timezone.now()
@@ -99,7 +98,10 @@ def can_force_delete_private_chat(link: LensSessionLink) -> bool:
     if (
         link.gateway_link_id is None
         or link.gateway_link.scope == LensGatewayLink.GatewayScope.PLATFORM
-        or link.lifecycle_status != LensSessionLink.LifecycleStatus.DELETING
+    ):
+        return "private_gateway_required"
+    if (
+        link.lifecycle_status != LensSessionLink.LifecycleStatus.DELETING
         or link.cleanup_intent != LensSessionLink.CleanupIntent.DELETE_SESSION
         or link.cleanup_status
         not in {
@@ -108,7 +110,10 @@ def can_force_delete_private_chat(link: LensSessionLink) -> bool:
             LensSessionLink.CleanupStatus.BLOCKED,
         }
         or link.knowledge_source_id is None
-        or _claim_is_live(
+    ):
+        return "deletion_not_ready"
+    if (
+        _claim_is_live(
             link.provision_claim_token,
             link.provision_claimed_at,
             PROVISION_CLAIM_TTL_SECONDS,
@@ -119,7 +124,7 @@ def can_force_delete_private_chat(link: LensSessionLink) -> bool:
             TEARDOWN_CLAIM_TTL_SECONDS,
         )
     ):
-        return False
+        return "active_cleanup_lease"
     knowledge_source = link.knowledge_source
     if (
         knowledge_source is None
@@ -139,19 +144,45 @@ def can_force_delete_private_chat(link: LensSessionLink) -> bool:
             knowledge_source_sync.SYNC_CLAIM_TTL_SECONDS,
         )
     ):
-        return False
+        return "active_cleanup_lease"
+    if knowledge_source.session_links.exclude(pk=link.pk).exclude(
+        lifecycle_status=LensSessionLink.LifecycleStatus.DELETED
+    ).exists():
+        return "workspace_shared_with_another_chat"
     try:
         binding = knowledge_source.workspace_binding
     except LensWorkspaceBinding.DoesNotExist:
-        return False
+        return "workspace_binding_missing"
     if (
         binding.workspace_kind != LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE
         or binding.state == LensWorkspaceBinding.State.DELETED
     ):
-        return False
+        return "workspace_not_force_deletable"
     from apps.node.services.internal.node_registry import agent_ws_routable
 
-    return not agent_ws_routable(agent_id=link.gateway_link.gateway_id)
+    if not agent_ws_routable(agent_id=link.gateway_link.gateway_id):
+        return "safe_force_cleanup_available"
+
+    if link.active_run_uuid or (
+        (link.teardown_state_json or {}).get("cancel_run") or {}
+    ).get("status") == "warning":
+        return "active_run"
+    state = knowledge_source.teardown_state_json or {}
+    if teardown_blocking.is_safety_blocking(state):
+        return "remote_task_state_unknown"
+    restore_status = (state.get("cancel_chat_restore") or {}).get("status")
+    conversion_status = (state.get("cancel_conversion") or {}).get("status")
+    if restore_status != "success":
+        return "restore_still_running"
+    if conversion_status != "success":
+        return "conversion_still_running"
+    return "safe_force_cleanup_available"
+
+
+def can_force_delete_private_chat(link: LensSessionLink) -> bool:
+    """Return whether explicit Force Cleanup is safe for this private Chat."""
+
+    return private_chat_force_delete_reason(link) == "safe_force_cleanup_available"
 
 
 class ChatProvisionLeaseLostError(RuntimeError):
@@ -769,17 +800,20 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
         delete_intent_already_active
         and locked.cleanup_status == LensSessionLink.CleanupStatus.BLOCKED
     ):
-        # An explicit retry never bypasses a safety fence. It only resets the
-        # bounded retry journal so the same Restore, SourceLens, and Workspace
-        # checks can observe an externally resolved condition immediately.
+        # An explicit retry never bypasses a safety fence. Ordinary failure
+        # journals are cleared; safety evidence is retained so the next run
+        # re-evaluates the remote executor instead of treating a user click as
+        # proof that it stopped.
+        retry_state = dict(locked.teardown_state_json or {})
+        preserve_safety_state = teardown_blocking.is_safety_blocking(retry_state)
         locked.cleanup_status = LensSessionLink.CleanupStatus.PENDING
         locked.teardown_attempts = 0
         locked.teardown_claim_token = None
         locked.teardown_claimed_at = None
         locked.teardown_next_retry_at = None
-        locked.teardown_state_json = teardown_blocking.clear_blocking(
-            dict(locked.teardown_state_json or {})
-        )
+        if not preserve_safety_state:
+            retry_state = teardown_blocking.clear_blocking(retry_state)
+        locked.teardown_state_json = retry_state
         locked.provision_detail = "Retrying chat cleanup."
         locked.save(
             update_fields=[
@@ -800,9 +834,10 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
                 .first()
             )
             if knowledge_source is not None:
-                knowledge_source.teardown_state_json = teardown_blocking.clear_blocking(
-                    dict(knowledge_source.teardown_state_json or {})
-                )
+                knowledge_state = dict(knowledge_source.teardown_state_json or {})
+                if not teardown_blocking.is_safety_blocking(knowledge_state):
+                    knowledge_state = teardown_blocking.clear_blocking(knowledge_state)
+                knowledge_source.teardown_state_json = knowledge_state
                 knowledge_source.teardown_attempts = 0
                 knowledge_source.teardown_next_retry_at = None
                 knowledge_source.save(
@@ -869,12 +904,13 @@ def force_delete_private_copilot_chat(
     *,
     requested_by: AbstractBaseUser,
 ) -> LensSessionLink:
-    """Force-delete an offline private Chat from the HFL control plane.
+    """Force-clean a private Chat from the HFL control plane.
 
-    The remote Data Gateway is deliberately not retried from this path.  The
-    durable records retain the remote identities and a warning for audit, but
-    no longer participate in Chat visibility, quota accounting, or cleanup
-    scheduling.
+    The remote Data Gateway is deliberately not retried from this path. The
+    caller must have passed the safety checks in
+    :func:`private_chat_force_delete_reason`. Durable records retain the
+    remote identities and a warning for audit, but no longer participate in
+    Chat visibility, quota accounting, or cleanup scheduling.
     """
 
     locked = (
@@ -897,10 +933,7 @@ def force_delete_private_copilot_chat(
     ):
         return locked
     unavailable_error = {
-        "force_delete": (
-            "Force delete is available only for a Chat on an offline "
-            "Private Data Gateway."
-        )
+        "force_delete": private_chat_force_delete_reason(locked),
     }
     if not can_force_delete_private_chat(locked):
         raise ValidationError(unavailable_error)
@@ -936,11 +969,11 @@ def force_delete_private_copilot_chat(
         "requested_by_user_id": requested_by.pk,
         "session_link_id": locked.id,
         "gateway_link_id": locked.gateway_link_id,
-        "reason": "private_gateway_offline",
+        "reason": "force_cleanup",
         "remote_resources": remote_resources,
         "warning": (
-            "The private Data Gateway is offline. Remote SourceLens resources "
-            "and gateway workspace files may remain."
+            "Remote SourceLens resources and gateway workspace files may remain "
+            "after Force Cleanup."
         ),
     }
 
@@ -954,8 +987,7 @@ def force_delete_private_copilot_chat(
     knowledge_source.is_deleted = True
     knowledge_source.deleted_at = now
     knowledge_source.status_detail = (
-        "Deleted from HFL. Remote resources may remain because the Private "
-        "Data Gateway is offline."
+        "Deleted from HFL. Remote resources may remain after Force Cleanup."
     )
     # Keep remote identities in the durable force-delete audit record above,
     # but detach the soft-deleted Knowledge Source from active HFL mappings.
@@ -1082,8 +1114,8 @@ def force_delete_private_copilot_chat(
 
     LensGatewayChatSlot.objects.filter(session_link_id=locked.id).delete()
 
-    # The slot release is durable; wake only the local HFL queue.  No remote
-    # cleanup task is dispatched or scheduled for this explicit force delete.
+    # The slot release is durable; wake only the local HFL queue. No remote
+    # cleanup task is dispatched or scheduled for this explicit Force Cleanup.
     def _wake_local_queue() -> None:
         try:
             gateway_chat_queue.wake_gateway_queue(locked.gateway_link_id)
@@ -2404,7 +2436,7 @@ def _orphan_knowledge_source_needs_enqueue(knowledge_source_id: int) -> bool:
         return False
     if knowledge_source.lifecycle_status == LensKnowledgeSource.LifecycleStatus.DELETED:
         return False
-    if teardown_blocking.intervention_required(knowledge_source.teardown_state_json):
+    if teardown_blocking.retry_exhausted(knowledge_source.teardown_state_json):
         return False
     if (
         knowledge_source.teardown_claimed_at
@@ -2703,8 +2735,8 @@ def _claim_copilot_chat_teardown(session_link_id: int) -> tuple[str | None, str]
             return None, str(link.lifecycle_status)
         if link.cleanup_status == LensSessionLink.CleanupStatus.COMPLETE:
             return None, "complete"
-        if teardown_blocking.intervention_required(link.teardown_state_json):
-            return None, "intervention_required"
+        if teardown_blocking.retry_exhausted(link.teardown_state_json):
+            return None, "retry_exhausted"
         if link.teardown_claimed_at and link.teardown_claimed_at > now - timedelta(
             seconds=TEARDOWN_CLAIM_TTL_SECONDS
         ):
@@ -2925,7 +2957,8 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     failed_assistant_uuids: list[uuid_lib.UUID] = []
     ks = link.knowledge_source
     cleanup_waiting_for_conversion_stop = False
-    workspace_intervention_required = False
+    workspace_safety_blocked = False
+    workspace_retry_exhausted = False
     workspace_blocking: dict[str, Any] = {}
     prepare_slot_release_safe = False
     assistant_uuids: set[uuid_lib.UUID] = set()
@@ -3056,8 +3089,11 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
                 candidate_blocking = latest_ks_teardown_state.get("blocking")
                 if isinstance(candidate_blocking, dict):
                     workspace_blocking = candidate_blocking
-                workspace_intervention_required = (
-                    teardown_blocking.intervention_required(latest_ks_teardown_state)
+                workspace_safety_blocked = teardown_blocking.is_safety_blocking(
+                    latest_ks_teardown_state
+                )
+                workspace_retry_exhausted = teardown_blocking.retry_exhausted(
+                    latest_ks_teardown_state
                 )
                 restore_stop = latest_ks_teardown_state.get("cancel_chat_restore")
                 conversion_stop = latest_ks_teardown_state.get("cancel_conversion")
@@ -3117,7 +3153,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
             blocking_task_id = ""
             blocking_remote_status = ""
             blocking_stop_source = ""
-        if workspace_intervention_required and workspace_blocking:
+        if workspace_blocking:
             blocking = dict(workspace_blocking)
             teardown_state["blocking"] = blocking
         else:
@@ -3147,12 +3183,19 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
             ),
             "updated_at": timezone.now().isoformat(),
         }
-    intervention_required = bool(blocking.get("intervention_required"))
+    retry_exhausted = bool(
+        blocking.get(teardown_blocking.RETRY_EXHAUSTED_KEY)
+    )
     if critical_errors and forced_remote_cleanup_pending:
-        intervention_required = False
-        blocking["intervention_required"] = False
+        retry_exhausted = False
+        blocking[teardown_blocking.RETRY_EXHAUSTED_KEY] = False
         teardown_state["blocking"] = blocking
-    cleanup_blocked = cleanup_waiting_for_conversion_stop or intervention_required
+    cleanup_blocked = (
+        cleanup_waiting_for_conversion_stop
+        or workspace_safety_blocked
+        or workspace_retry_exhausted
+        or retry_exhausted
+    )
     if critical_errors:
         link.lifecycle_status = (
             LensSessionLink.LifecycleStatus.FAILED
@@ -3173,11 +3216,11 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         link.provision_detail = (
             "Remote cleanup is pending until the Private Data Gateway can complete it."
             if forced_remote_cleanup_pending
-            else "Chat cleanup requires operator intervention."
-            if intervention_required
+            else "Chat cleanup failed. Retry the deletion or use Force Cleanup if available."
+            if retry_exhausted or workspace_retry_exhausted
             else (
-                "Cleanup is waiting for SourceLens to confirm conversion has stopped."
-                if cleanup_waiting_for_conversion_stop
+                "Cleanup is waiting for a remote restore or conversion task to stop."
+                if cleanup_waiting_for_conversion_stop or workspace_safety_blocked
                 else "Chat cleanup is incomplete and will be retried."
             )
         )
@@ -3231,8 +3274,14 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     if critical_errors:
         link.teardown_next_retry_at = (
             None
-            if intervention_required
-            else next_retry_at(int(blocking["consecutive_attempts"]))
+            if retry_exhausted or workspace_retry_exhausted
+            else next_retry_at(
+                int(
+                    blocking.get("consecutive_attempts")
+                    or link.teardown_attempts
+                    or 1
+                )
+            )
         )
     else:
         link.teardown_next_retry_at = None
@@ -3284,7 +3333,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         logger.warning(
             "chat teardown blocked chat_id=%s knowledge_source_id=%s "
             "gateway_link_id=%s task_id=%s remote_status=%s reason=%s "
-            "attempts=%s intervention_required=%s",
+            "attempts=%s retry_exhausted=%s safety_blocked=%s",
             link.id,
             ks.id if ks is not None else None,
             link.gateway_link_id,
@@ -3292,7 +3341,8 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
             blocking.get("remote_status"),
             blocking.get("reason"),
             blocking.get("consecutive_attempts"),
-            intervention_required,
+            retry_exhausted or workspace_retry_exhausted,
+            workspace_safety_blocked or cleanup_waiting_for_conversion_stop,
         )
         raise ChatTeardownIncompleteError("; ".join(critical_errors))
     if slot_generation is not None and not prepare_slot_release_safe:

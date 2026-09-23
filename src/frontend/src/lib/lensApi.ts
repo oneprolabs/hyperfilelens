@@ -361,6 +361,7 @@ export type LensSessionLink = {
   cleanup_intent?: 'none' | 'reset_for_retry' | 'delete_session' | string
   cleanup_status?: 'none' | 'pending' | 'running' | 'blocked' | 'complete' | string
   force_delete_available?: boolean
+  force_delete_reason?: string
   document_conversion?: DocumentConversion | null
   data_context?: SessionDataContext | null
   last_message_at: string | null

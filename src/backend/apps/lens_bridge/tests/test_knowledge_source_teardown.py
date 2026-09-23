@@ -1,6 +1,5 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -340,13 +339,11 @@ class KnowledgeSourceDeleteApiTests(TestCase):
 
         self.assertEqual(result["status"], "deleted")
 
-    @mock.patch.object(teardown_blocking, "INTERVENTION_ATTEMPT_THRESHOLD", 2)
-    @mock.patch.object(teardown_blocking, "INTERVENTION_AGE_SECONDS", 1)
     @mock.patch(
         "apps.node.services.internal.node_workload.get_node_workload_blockers",
         return_value=[mock.MagicMock(code="restore_active")],
     )
-    def test_persistent_blocker_stops_reconciler_until_operator_recovery(
+    def test_persistent_restore_blocker_remains_machine_retryable(
         self,
         _blockers,
     ):
@@ -369,9 +366,6 @@ class KnowledgeSourceDeleteApiTests(TestCase):
 
         self.knowledge_source.refresh_from_db()
         state = dict(self.knowledge_source.teardown_state_json)
-        state["blocking"]["first_seen_at"] = (
-            timezone.now() - timedelta(seconds=2)
-        ).isoformat()
         self.knowledge_source.teardown_state_json = state
         self.knowledge_source.teardown_next_retry_at = timezone.now()
         self.knowledge_source.save(
@@ -394,12 +388,17 @@ class KnowledgeSourceDeleteApiTests(TestCase):
             self.knowledge_source.teardown_state_json["blocking"]["reason"],
             "validate_gateway_workload",
         )
-        self.assertTrue(
+        self.assertFalse(
             self.knowledge_source.teardown_state_json["blocking"][
                 "intervention_required"
             ]
         )
-        self.assertIsNone(self.knowledge_source.teardown_next_retry_at)
+        self.assertFalse(
+            self.knowledge_source.teardown_state_json["blocking"][
+                teardown_blocking.RETRY_EXHAUSTED_KEY
+            ]
+        )
+        self.assertIsNotNone(self.knowledge_source.teardown_next_retry_at)
         self.assertNotIn(
             self.knowledge_source.id,
             due_knowledge_source_teardown_ids(limit=10),

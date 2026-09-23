@@ -62,8 +62,8 @@ def _record_cleanup_confirmation(
 
 class Command(BaseCommand):
     help = (
-        "Resume one blocked Chat or orphan Knowledge Source cleanup after an "
-        "operator confirms the recorded blocking condition has been resolved."
+        "Deprecated compatibility command for legacy blocked Chat or Knowledge "
+        "Source cleanup. Prefer the normal Retry or Force Cleanup workflow."
     )
 
     def add_arguments(self, parser):
@@ -88,6 +88,12 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        self.stderr.write(
+            self.style.WARNING(
+                "resume_blocked_chat_cleanup is deprecated; use the Chat Retry "
+                "or Force Cleanup workflow."
+            )
+        )
         task_id = str(options.get("source_lens_task_id") or "").strip()
         restore_task_id = str(options.get("restore_task_id") or "").strip()
         if task_id and restore_task_id:
@@ -350,9 +356,12 @@ class Command(BaseCommand):
                     "Conversion cleanup requires --source-lens-task-id and "
                     "--confirm-executor-stopped."
                 )
-            elif not teardown_blocking.intervention_required(teardown_state):
+            elif not (
+                teardown_blocking.retry_exhausted(teardown_state)
+                or bool(blocking.get("intervention_required"))
+            ):
                 raise CommandError(
-                    "Knowledge Source cleanup does not require operator intervention."
+                    "Knowledge Source cleanup has no exhausted legacy retry state."
                 )
 
             confirmation = {

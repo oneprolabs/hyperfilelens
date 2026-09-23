@@ -81,12 +81,12 @@ def due_knowledge_source_teardown_ids(
             | ~Q(teardown_state_json__forced_remote_cleanup__status="pending")
         )
         .filter(
-            Q(
-                teardown_state_json__blocking__intervention_required__isnull=True
-            )
-            | Q(
-                teardown_state_json__blocking__intervention_required=False
-            )
+            Q(teardown_state_json__blocking__retry_exhausted__isnull=True)
+            | Q(teardown_state_json__blocking__retry_exhausted=False)
+        )
+        .exclude(
+            session_links__lifecycle_status="deleting",
+            session_links__cleanup_intent="delete_session",
         )
         .filter(
             Q(teardown_next_retry_at__isnull=True)
