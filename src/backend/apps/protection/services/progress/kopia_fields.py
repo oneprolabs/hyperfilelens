@@ -87,6 +87,8 @@ def normalize_lane_progress(
             "path_total": progress_int(progress.get("path_total")) or None,
             "percent_source": None,
             "is_transfer": False,
+            "phase_started_at": str(progress.get("phase_started_at") or "").strip() or None,
+            "last_progress_at": str(progress.get("last_progress_at") or "").strip() or None,
         }
 
     schema_version = progress_int(progress.get("progress_schema_version")) or 1
@@ -307,6 +309,8 @@ def _lane_from_bytes(
         "path_total": progress_int(progress.get("path_total")) or None,
         "percent_source": percent_source,
         "is_transfer": True,
+        "phase_started_at": str(progress.get("phase_started_at") or "").strip() or None,
+        "last_progress_at": str(progress.get("last_progress_at") or "").strip() or None,
     }
 
 
@@ -326,4 +330,6 @@ def _empty_lane(*, kopia_phase: str) -> dict[str, Any]:
         "path_total": None,
         "percent_source": None,
         "is_transfer": False,
+        "phase_started_at": None,
+        "last_progress_at": None,
     }

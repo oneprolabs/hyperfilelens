@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 _ACTIVE_STATUSES = frozenset({"pending", "dispatching", "running", "creating"})
@@ -34,6 +35,8 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
             "lanes_queued": 0,
             "lanes_total": 0,
             "slowest_lane": None,
+            "phase_started_at": None,
+            "last_progress_at": None,
         }
 
     bytes_done = 0
@@ -158,6 +161,47 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
     processing_speed_bps = sum(processing_speeds) if processing_speeds else None
     upload_speed_bps = sum(upload_speeds) if upload_speeds else None
 
+    phase_starts_by_phase: dict[str, list[datetime]] = {}
+    progress_updates: list[datetime] = []
+    for lane in lanes:
+        normalized = lane.get("progress") or {}
+        if not isinstance(normalized, dict):
+            continue
+        status = str(lane.get("status") or "").lower()
+        if status not in _ACTIVE_STATUSES:
+            continue
+        phase = str(normalized.get("kopia_phase") or "").strip().lower()
+        raw_phase_started = str(normalized.get("phase_started_at") or "").strip()
+        if raw_phase_started:
+            try:
+                parsed = datetime.fromisoformat(raw_phase_started.replace("Z", "+00:00"))
+            except ValueError:
+                parsed = None
+            if parsed is not None:
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                phase_starts_by_phase.setdefault(phase, []).append(parsed)
+        raw_last_progress = str(normalized.get("last_progress_at") or "").strip()
+        if raw_last_progress:
+            try:
+                parsed = datetime.fromisoformat(raw_last_progress.replace("Z", "+00:00"))
+            except ValueError:
+                parsed = None
+            if parsed is not None:
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                progress_updates.append(parsed)
+
+    phase_started_at = None
+    for phase in ("uploading", "hashing", "processing", "estimating"):
+        starts = phase_starts_by_phase.get(phase)
+        if starts:
+            phase_started_at = min(starts).isoformat()
+            break
+    if phase_started_at is None:
+        starts = [value for values in phase_starts_by_phase.values() for value in values]
+        phase_started_at = min(starts).isoformat() if starts else None
+
     return {
         "percent": percent,
         "progress_schema_version": schema_version,
@@ -184,4 +228,6 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         "lanes_queued": lanes_queued,
         "lanes_total": lanes_total,
         "slowest_lane": slowest_lane,
+        "phase_started_at": phase_started_at,
+        "last_progress_at": max(progress_updates).isoformat() if progress_updates else None,
     }

@@ -10,6 +10,7 @@ import {
   shouldShowStep3Percent,
   shouldShowTransferMetrics,
   transferCapacityText,
+  transferPhaseElapsedText,
   transferProgressLabel,
   transferMetricParts,
   type TransferProgress,
@@ -75,6 +76,16 @@ const orchestrationLabel = computed(() => {
   }
   return transferProgressLabel(t, props.transferProgress)
 })
+const phaseElapsedText = computed(() => {
+  if (props.compact || isRestore.value || props.stopping) return ''
+  const phase = String(props.transferProgress?.phase || '').toLowerCase()
+  if (!['estimating', 'transferring', 'finalizing'].includes(phase)) return ''
+  if (!String(props.transferProgress?.label_key || '').includes('taskProgress.backup.')) return ''
+  return transferPhaseElapsedText(t, props.transferProgress?.phase_elapsed_seconds) || ''
+})
+const displayOrchestrationLabel = computed(() => [orchestrationLabel.value, phaseElapsedText.value]
+  .filter(Boolean)
+  .join(' · '))
 const showSpinner = computed(() => {
   if (props.stopping) return false
   if (props.failed) return false
@@ -98,11 +109,22 @@ const restoreMetricLine = computed(() => {
   return [capacity, speed].filter(Boolean).join(' · ')
 })
 const overflowTitle = computed(() => {
-  if (!metricParts.value.length) return ''
-  const metrics = transferMetricParts(t, props.transferProgress, { labelProcessingSpeed: true, labelRestoreMetrics: isRestore.value })
-    .filter(Boolean)
-  if (!isRestore.value) return metrics.join('\n')
-  return [transferProgressLabel(t, props.transferProgress), ...metrics].filter(Boolean).join('\n')
+  if (props.compact) return ''
+
+  const label = isRestore.value
+    ? transferProgressLabel(t, props.transferProgress)
+    : displayOrchestrationLabel.value
+  const percent = !isRestore.value && showRightPercent.value
+    ? progressText.value
+    : ''
+  const metrics = isRestore.value
+    ? transferMetricParts(t, props.transferProgress, {
+      labelProcessingSpeed: true,
+      labelRestoreMetrics: true,
+    })
+    : metricParts.value
+
+  return [label, percent, ...metrics].filter(Boolean).join('\n')
 })
 </script>
 
@@ -113,11 +135,11 @@ const overflowTitle = computed(() => {
     data-table-overflow-explicit-only
   >
     <div
-      v-if="orchestrationLabel || showRightPercent"
+      v-if="displayOrchestrationLabel || showRightPercent"
       class="task-progress-cell__row1"
     >
       <p
-        v-if="orchestrationLabel"
+        v-if="displayOrchestrationLabel"
         class="task-progress-cell__label"
       >
         <span
@@ -127,9 +149,9 @@ const overflowTitle = computed(() => {
         />
         <span
           class="task-progress-cell__label-text"
-          :data-table-overflow-title="isRestore ? overflowTitle || undefined : undefined"
+          :data-table-overflow-title="overflowTitle || undefined"
           :data-table-overflow-title-always="isRestore || undefined"
-        >{{ orchestrationLabel }}</span>
+        >{{ displayOrchestrationLabel }}</span>
       </p>
       <span
         v-if="showRightPercent"
@@ -151,8 +173,8 @@ const overflowTitle = computed(() => {
       <span
         v-if="isRestore ? restoreMetricLine : metricLine"
         class="task-progress-cell__metric-line"
-        :data-table-overflow-title="isRestore ? undefined : overflowTitle || undefined"
-        data-table-overflow-title-always
+        :data-table-overflow-title="overflowTitle || undefined"
+        :data-table-overflow-title-always="!isRestore && overflowTitle ? '' : undefined"
       >{{ isRestore ? restoreMetricLine : metricLine }}</span>
     </p>
   </div>
