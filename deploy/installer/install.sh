@@ -483,10 +483,12 @@ recover_upgrade_services() {
 			# existing stable/color containers. Before commit, worker and scheduler
 			# must also remain on the previous release so API and background code do
 			# not run different schema/application contracts.
-			compose_in_root start postgres redis nginx
+			compose_in_root start postgres redis
 			[[ $? -eq 0 ]] || recovered=0
 			compose_color "${recovery_color}" start \
 				"api-${recovery_color}" "web-${recovery_color}"
+			[[ $? -eq 0 ]] || recovered=0
+			ensure_stable_nginx_container
 			[[ $? -eq 0 ]] || recovered=0
 			if [[ "${UPGRADE_HFL_COMMITTED}" == "1" ]]; then
 				compose_in_root up -d --no-build --pull never worker scheduler
@@ -1278,6 +1280,32 @@ stable_nginx_running_generation() {
 		"${cid}" 2>/dev/null
 }
 
+stable_nginx_mounts_match() {
+	local cid media_source static_source expected_media expected_static
+	cid="$(compose_in_root ps -q nginx 2>/dev/null | sed -n '1p')" || return 1
+	[[ -n "${cid}" ]] || return 1
+	expected_media="$(readlink -m "${ROOT}/data/media")"
+	expected_static="$(readlink -m "${ROOT}/data/staticfiles")"
+	media_source="$(docker inspect --format \
+		'{{range .Mounts}}{{if eq .Destination "/opt/hyperfilelens/backend/media"}}{{.Source}}{{end}}{{end}}' \
+		"${cid}" 2>/dev/null || true)"
+	static_source="$(docker inspect --format \
+		'{{range .Mounts}}{{if eq .Destination "/opt/hyperfilelens/backend/staticfiles"}}{{.Source}}{{end}}{{end}}' \
+		"${cid}" 2>/dev/null || true)"
+	[[ "$(readlink -m "${media_source}")" == "${expected_media}" \
+		&& "$(readlink -m "${static_source}")" == "${expected_static}" ]]
+}
+
+ensure_stable_nginx_container() {
+	local -a args=(up -d --no-build --pull never)
+	if ! stable_nginx_mounts_match; then
+		log "Stable Nginx mounts differ from the current release; recreating the gateway container"
+		args+=(--force-recreate)
+	fi
+	args+=(nginx)
+	compose_in_root "${args[@]}"
+}
+
 stable_nginx_master_ready() {
 	compose_in_root exec -T nginx sh -c '
 		pid="$(cat /run/nginx.pid 2>/dev/null || true)"
@@ -1339,7 +1367,7 @@ start_hfl_stack() {
 		print_section "Health checks"
 	fi
 	wait_for_color_health "${color}" || return 1
-	compose_in_root up -d --no-build --pull never nginx || return 1
+	ensure_stable_nginx_container || return 1
 	if ! nginx_generation_after="$(stable_nginx_running_generation)"; then
 		warn "could not inspect the stable Nginx instance after service convergence"
 		return 1
@@ -1416,6 +1444,7 @@ wait_for_public_endpoints() {
 cutover_hfl_color() {
 	local previous=$1 target=$2
 	UPGRADE_HFL_CUTOVER_ATTEMPTED=1
+	ensure_stable_nginx_container || return 1
 	render_active_upstreams "${target}"
 	if ! reload_stable_nginx || ! wait_for_public_endpoints; then
 		warn "${target} cutover health failed; restoring the previous API route"
@@ -1461,6 +1490,7 @@ wait_for_active_task_reattach() {
 restore_previous_hfl_color() {
 	local previous=$1 target=$2 rollback_web=$1
 	[[ "${previous}" == "legacy" ]] && rollback_web="${target}"
+	ensure_stable_nginx_container || return 1
 	render_active_upstreams "${previous}" "${rollback_web}"
 	reload_stable_nginx || return 1
 	wait_for_public_endpoints || return 1
@@ -2858,7 +2888,8 @@ reconcile_hfl_extensions_env() {
 	# Empty HFL_EXTENSIONS= in .env overrides Dockerfile ENV and disables baked plugins.
 	# - Example has a non-empty value → fill missing/empty .env from example (Enterprise).
 	# - Example omits the key (Community) → remove any previous extension setting.
-	# Non-empty Enterprise operator overrides are preserved.
+	# Known legacy container paths are migrated; other non-empty Enterprise
+	# operator overrides are preserved.
 	local env_file=$1
 	local example=$2
 	[[ -f "${env_file}" ]] || return 0
@@ -2878,6 +2909,24 @@ def read_key(text, key):
         return None
     return m.group(1).strip().strip("'\"")
 
+def split_paths(value):
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+def migrate_legacy_extension_paths(env_value, example_value):
+    old_prefix = "/opt/hfl/extensions/"
+    new_prefix = "/opt/hyperfilelens/extensions/"
+    old_paths = split_paths(env_value)
+    new_paths = split_paths(example_value)
+    if not old_paths or len(old_paths) != len(new_paths):
+        return None
+    if any(not path.startswith(old_prefix) for path in old_paths):
+        return None
+    migrated = [
+        f"{new_prefix}{path[len(old_prefix):]}"
+        for path in old_paths
+    ]
+    return ",".join(migrated) if migrated == new_paths else None
+
 example_val = read_key(example_text, "HFL_EXTENSIONS")
 env_val = read_key(env_text, "HFL_EXTENSIONS")
 
@@ -2892,7 +2941,15 @@ if example_val:
             count=1,
         )
     else:
-        raise SystemExit(0)
+        migrated = migrate_legacy_extension_paths(env_val, example_val)
+        if migrated is None:
+            raise SystemExit(0)
+        env_text = re.sub(
+            r"(?m)^[ \t]*HFL_EXTENSIONS=.*$",
+            f"HFL_EXTENSIONS={migrated}",
+            env_text,
+            count=1,
+        )
 elif env_val is not None:
     env_text = re.sub(r"(?m)^[ \t]*HFL_EXTENSIONS=.*\n?", "", env_text)
 else:

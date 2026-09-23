@@ -382,6 +382,17 @@ for current, directories, files in os.walk(root, topdown=True, followlinks=False
 if seen_prefixes != set(prefixes):
     missing = sorted(str(prefix) for prefix in set(prefixes) - seen_prefixes)
     raise SystemExit(f"asset {kind} is missing payload roots: {missing}")
+required_files = {
+    "gateway": (
+        "payload/media/gateway-bootstrap/gateway-install-lensnode-sidecar.sh",
+        "payload/media/gateway-bootstrap/gateway-lifecycle.sh",
+        "payload/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz",
+    ),
+}.get(kind, ())
+for relative in required_files:
+    path = root / relative
+    if not path.is_file() or path.stat().st_size == 0:
+        raise SystemExit(f"asset {kind} is missing required file: {relative}")
 PY
 	find "${asset_extract}" -type d -exec chmod 0755 {} +
 	find "${asset_extract}" -type f -exec chmod 0644 {} +

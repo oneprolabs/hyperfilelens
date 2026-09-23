@@ -120,7 +120,8 @@ compose_version_ge() {
 compose_candidate_version() {
 	local -a candidate=("$@")
 	local output version
-	version="$("${candidate[@]}" version --short 2>/dev/null || true)"
+	output="$("${candidate[@]}" version --short 2>/dev/null || true)"
+	version="$(grep -Eo '[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?' <<<"${output}" | head -1 || true)"
 	if [[ -z "${version}" ]]; then
 		output="$("${candidate[@]}" version 2>/dev/null || true)"
 		version="$(grep -Eo '[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?' <<<"${output}" | head -1 || true)"

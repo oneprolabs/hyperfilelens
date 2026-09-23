@@ -28,6 +28,7 @@ wait_for_color_health() { calls+=("color-health:$*"); }
 wait_for_services_health() { calls+=("service-health:$*"); }
 ensure_blue_green_state() { calls+=("ensure-state"); }
 read_active_color() { printf 'blue'; }
+stable_nginx_mounts_match() { return 0; }
 sourcelens_installed() { [[ "${sourcelens_present}" == "1" ]]; }
 sourcelens_compose() { calls+=("sourcelens:$*"); }
 wait_for_sourcelens_health() {
