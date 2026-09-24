@@ -754,6 +754,8 @@ def convert_documents(
                         raise ManagedDatasourceError(state["error"])
                     if resumed.get("resumed") is True and next_task_id:
                         resumed_at = timezone.now().isoformat()
+                        state.pop("error", None)
+                        state.pop("finished_at", None)
                         state.update(
                             {
                                 "original_task_id": task_id,

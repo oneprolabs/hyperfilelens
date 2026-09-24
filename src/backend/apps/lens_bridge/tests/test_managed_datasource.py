@@ -717,6 +717,7 @@ class ManagedDatasourceTests(SimpleTestCase):
                 "policy_fingerprint": (
                     managed_datasource.conversion_policy_fingerprint(policy)
                 ),
+                "error": "DATASOURCE_CONVERSION_ORPHANED",
             }
         }
         get_task.return_value = {
@@ -758,6 +759,7 @@ class ManagedDatasourceTests(SimpleTestCase):
             sync_state["conversion"]["resume_source"],
             "checkpoint",
         )
+        self.assertNotIn("error", sync_state["conversion"])
         self.assertIn("resume_started_at", sync_state["conversion"])
 
     @patch(
