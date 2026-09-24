@@ -163,3 +163,25 @@ class BackupTaskWatchdogTests(SimpleTestCase):
             started_at
             + timezone.timedelta(seconds=node_conf.PATH_SIZE_WATCHDOG_SECONDS),
         )
+
+    def test_insight_snapshot_operations_use_long_reader_watchdog(self):
+        started_at = timezone.now()
+
+        for correlation_type, kind in (
+            ("lens_bridge.snapshot_browse", "lens.snapshot.browse"),
+            ("lens_bridge.scope_resolve", "lens.snapshot.scope.resolve"),
+        ):
+            with self.subTest(correlation_type=correlation_type):
+                deadline = _initial_watchdog_deadline(
+                    correlation_type=correlation_type,
+                    kind=kind,
+                    from_time=started_at,
+                )
+
+                self.assertEqual(
+                    deadline,
+                    started_at
+                    + timezone.timedelta(
+                        seconds=node_conf.INSIGHT_SNAPSHOT_OPERATION_WATCHDOG_SECONDS
+                    ),
+                )

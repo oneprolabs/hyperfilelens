@@ -164,6 +164,28 @@ def _restore_watchdog_deadline(*, from_time: datetime | None = None) -> datetime
     return base + timezone.timedelta(seconds=restore_conf.ACTIVITY_LEASE_SECONDS)
 
 
+def _is_insight_snapshot_operation(*, correlation_type: str, kind: str) -> bool:
+    return (
+        (
+            correlation_type == "lens_bridge.snapshot_browse"
+            and kind == "lens.snapshot.browse"
+        )
+        or (
+            correlation_type == "lens_bridge.scope_resolve"
+            and kind == "lens.snapshot.scope.resolve"
+        )
+    )
+
+
+def _insight_snapshot_operation_watchdog_deadline(
+    *, from_time: datetime | None = None
+) -> datetime:
+    base = from_time or timezone.now()
+    return base + timezone.timedelta(
+        seconds=max(1, node_conf.INSIGHT_SNAPSHOT_OPERATION_WATCHDOG_SECONDS)
+    )
+
+
 def _is_source_nas_probe(*, correlation_type: str, kind: str) -> bool:
     return correlation_type == "source.connection_probe" and kind == "nas.test"
 
@@ -295,6 +317,11 @@ def _initial_watchdog_deadline(
     from_time: datetime | None = None,
     kind: str = "",
 ) -> datetime:
+    if _is_insight_snapshot_operation(
+        correlation_type=correlation_type,
+        kind=kind,
+    ):
+        return _insight_snapshot_operation_watchdog_deadline(from_time=from_time)
     if _is_restore_task(correlation_type=correlation_type, kind=kind):
         return _restore_watchdog_deadline(from_time=from_time)
     if _is_repository_initialize_task(
