@@ -721,6 +721,15 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	if spec.Type == "kopia_server" && mode == repositoryPrepareInitialize {
 		return "", nil, result, spec, "kopia_server repositories cannot be initialized"
 	}
+	insightRepositoryOperation, _ := payloadBoolValue(
+		p.Extra["insight_repository_operation"],
+	)
+	if mode == repositoryPrepareConnect &&
+		insightRepositoryOperation &&
+		insightRepositoryReady(configFile) {
+		slog.Info("managed_repository", "event", "status_cached", "task_id", taskID, "repo_type", spec.Type)
+		return configFile, env, result, spec, ""
+	}
 	statusArgs := []string{"--config-file=" + configFile, "repository", "status"}
 	runStatus := func(event string) (process.Result, error) {
 		started := time.Now()
@@ -782,6 +791,9 @@ func (e *Engine) prepareManagedRepositoryLocked(
 					result["ownership_verified"] = true
 				}
 				slog.Info("managed_repository", "event", "status_first_ok", "task_id", taskID, "repo_type", spec.Type)
+				if insightRepositoryOperation {
+					markInsightRepositoryReady(configFile)
+				}
 				_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
 					"repository_ready",
 					"Repository ready",
@@ -2393,6 +2405,12 @@ func (e *Engine) runManagedInsightSnapshotBrowse(
 	if p.SnapshotID == "" {
 		return "failed", nil, "snapshot_id is required"
 	}
+	p.Extra["insight_repository_operation"] = true
+	releaseRepository, lockErr := acquireInsightRepositoryOperationLock(ctx, p)
+	if lockErr != nil {
+		return "failed", nil, lockErr.Error()
+	}
+	defer releaseRepository()
 	bin, err := e.kopiaBin(ctx)
 	if err != nil {
 		return "failed", nil, err.Error()
@@ -2490,6 +2508,12 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 	if p.SnapshotID == "" {
 		return "failed", nil, "snapshot_id is required"
 	}
+	p.Extra["insight_repository_operation"] = true
+	releaseRepository, lockErr := acquireInsightRepositoryOperationLock(ctx, p)
+	if lockErr != nil {
+		return "failed", nil, lockErr.Error()
+	}
+	defer releaseRepository()
 	bin, err := e.kopiaBin(ctx)
 	if err != nil {
 		return "failed", nil, err.Error()

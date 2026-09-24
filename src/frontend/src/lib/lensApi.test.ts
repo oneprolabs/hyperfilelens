@@ -99,21 +99,16 @@ describe('Insight snapshot browsing', () => {
     )
   })
 
-  it('stops polling a task that never reaches a terminal state', async () => {
+  it('keeps polling a slow task past the old 120-second budget', async () => {
     vi.mocked(api).mockResolvedValue({ task_id: 'browse-stuck', status: 'pending' })
 
     const request = browseCopilotSnapshotDirectory(31, {
       backupSourceSnapshotId: 71,
       gatewayLinkId: 17,
     })
-    const rejection = expect(request).rejects.toMatchObject({
-      errorCode: 'INSIGHT.SNAPSHOT_BROWSE_TIMEOUT',
-      retryable: true,
-    })
-    await vi.runAllTimersAsync()
-
-    await rejection
-    expect(api).toHaveBeenCalledTimes(241)
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(api.mock.calls.length).toBeGreaterThan(121)
+    request.catch(() => undefined)
   })
 
   it('preserves the terminal task error contract', async () => {

@@ -119,6 +119,49 @@ class SnapshotBrowseApiTests(TestCase):
         self.assertEqual(kwargs["limit"], 500)
         self.assertTrue(kwargs["correlation_id"].startswith(f"user:{self.owner.id}:"))
 
+    @patch("apps.iam.permissions_org.get_authz_provider")
+    def test_duplicate_active_browse_reuses_existing_task(self, get_authz_provider):
+        get_authz_provider.return_value = SimpleNamespace(
+            get_org_role=lambda _user, _org_key: Membership.Role.OPERATOR,
+        )
+        correlation_id = snapshot_scope_tasks.browse_correlation_id(
+            user_id=self.owner.id,
+            snapshot_id=71,
+            directory_id=31,
+            gateway_link_id=17,
+            path="reports",
+            limit=500,
+        )
+        existing = NodeTask.objects.create(
+            organization=self.organization,
+            requesting_organization_id=self.organization.id,
+            node=self.node,
+            kind="lens.snapshot.browse",
+            correlation_type=snapshot_scope_tasks.BROWSE_CORRELATION_TYPE,
+            correlation_id=correlation_id,
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(minutes=5),
+        )
+
+        with patch(
+            "apps.lens_bridge.services.snapshot_scope_tasks.dispatch_snapshot_browse"
+        ) as dispatch:
+            response = self.client.post(
+                reverse("lens-copilot-snapshot-browse"),
+                {
+                    "directory_id": 31,
+                    "backup_source_snapshot_id": 71,
+                    "gateway_link_id": 17,
+                    "path": "reports",
+                },
+                format="json",
+                HTTP_X_ORG_KEY=self.organization.key,
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(self._payload(response)["task_id"], str(existing.id))
+        dispatch.assert_not_called()
+
     def test_owner_can_read_their_completed_browse_task(self):
         task = self._create_task()
 

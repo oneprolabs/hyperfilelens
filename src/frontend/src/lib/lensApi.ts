@@ -9,7 +9,12 @@ const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
 // The first read is immediate; bounded backoff keeps the picker responsive
 // without continuously polling a busy Reader.
 const COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS = [150, 300, 500]
-const COPILOT_SNAPSHOT_BROWSE_MAX_POLLS = 240
+// Keep waiting for the asynchronous Agent task instead of turning the normal
+// 120-second UI budget into a false terminal failure. The backend task remains
+// resumable after a page refresh; this is only a final client safety ceiling.
+const COPILOT_SNAPSHOT_BROWSE_MAX_POLLS = 600
+const COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_AFTER = 120
+const COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_DELAY_MS = 2000
 
 export type LensApiScope = 'tenant' | 'platform'
 
@@ -1196,7 +1201,7 @@ export async function fetchCopilotSnapshotBrowse(
   const qs = new URLSearchParams()
   if (organizationKey?.trim()) qs.set('organization_key', organizationKey.trim())
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  const raw = await api(lensUrl(`copilot/snapshot-browse/${taskId}${suffix}`), {
+  const raw = await api(lensUrl(`copilot/snapshot-browse/${taskId}/${suffix}`), {
     headers: lensHeaders(),
     signal,
   })
@@ -1232,9 +1237,11 @@ export async function browseCopilotSnapshotDirectory(
       }
     }
     if (polls > 0) {
-      const delay = COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS[
-        Math.min(polls - 1, COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS.length - 1)
-      ]
+      const delay = polls >= COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_AFTER
+        ? COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_DELAY_MS
+        : COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS[
+            Math.min(polls - 1, COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS.length - 1)
+          ]
       await new Promise<void>((resolve, reject) => {
         if (signal?.aborted) {
           reject(new DOMException('Aborted', 'AbortError'))
