@@ -65,10 +65,16 @@ class NotificationChannelSerializer(serializers.ModelSerializer):
         if config and isinstance(config, dict):
             existing = instance.config or {}
             sensitive = ["smtp_password", "token", "secret", "authorization", "api_key"]
+            config = dict(config)
+            clear_secret = config.pop("clear_secret", False) is True
             for field in sensitive:
-                if config.get(field) == "" and existing.get(field):
-                    config[field] = existing[field]
-                elif config.get(field) is None and existing.get(field):
+                # Secret values are deliberately omitted from edit forms and
+                # masked in API responses. Do not let an edit that changes an
+                # unrelated field erase the stored credential.
+                if (
+                    field not in config
+                    or config.get(field) in ("", None, "********")
+                ) and existing.get(field) and not (field == "secret" and clear_secret):
                     config[field] = existing[field]
             validated_data["config"] = config
         return super().update(instance, validated_data)

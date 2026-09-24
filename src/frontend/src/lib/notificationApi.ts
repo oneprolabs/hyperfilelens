@@ -217,6 +217,15 @@ export async function testChannel(id: number) {
   )
 }
 
+export async function testChannelConfig(body: Record<string, unknown>) {
+  return unwrapApiPayload<{ status: string; error?: string }>(
+    await api<unknown>(`${base}/channels/test-config/`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  )
+}
+
 export async function getChannelDetails(id: number) {
   const result = unwrapApiPayload<NotificationChannelDetails>(
     await api<unknown>(`${base}/channels/${id}/details/`),

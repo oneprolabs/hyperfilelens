@@ -28,5 +28,13 @@ urlpatterns = [
         UserNotificationReadView.as_view(),
         name="notification-read",
     ),
+    # Keep this explicit route ahead of the router's `channels/<pk>/` route.
+    # Otherwise "test-config" can be interpreted as a channel primary key and
+    # POST is rejected with 405 before the list action is reached.
+    path(
+        "channels/test-config/",
+        NotificationChannelViewSet.as_view({"post": "test_config"}),
+        name="notification-channel-test-config",
+    ),
     path("", include(router.urls)),
 ]
