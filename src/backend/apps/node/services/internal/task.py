@@ -1459,6 +1459,26 @@ def record_task_progress(
             "result",
             "updated_at",
         ]
+    elif _is_insight_snapshot_operation(
+        correlation_type=task.correlation_type,
+        kind=task.kind,
+    ):
+        # Reader operations may emit liveness frames while Kopia is waiting
+        # on repository/index work. Keep the 30-minute deadline absolute so
+        # heartbeats cannot turn a stuck Reader into an unbounded task.
+        task.watchdog_deadline_at = _initial_watchdog_deadline(
+            correlation_type=task.correlation_type,
+            from_time=task.accepted_at or now,
+            kind=task.kind,
+        )
+        update_fields = [
+            "status",
+            "accepted_at",
+            "last_progress_at",
+            "watchdog_deadline_at",
+            "result",
+            "updated_at",
+        ]
     elif _uses_upgrade_download_progress(task):
         # task.alive proves the Agent process is responsive, not that a body
         # transfer is advancing. Only bytes, attempts, or meaningful state
