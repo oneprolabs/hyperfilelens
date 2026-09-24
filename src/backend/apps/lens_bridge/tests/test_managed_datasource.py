@@ -763,6 +763,37 @@ class ManagedDatasourceTests(SimpleTestCase):
             sync_state["conversion"]["recovery"]["task_id"],
             "convert-2",
         )
+
+        sync_state["conversion"]["task_id"] = "convert-2"
+        get_task.return_value = {
+            "task_id": "convert-2",
+            "status": "FAILURE",
+            "error": "DATASOURCE_CONVERSION_ORPHANED",
+        }
+        recovery.return_value = {
+            "task_id": "convert-2",
+            "orphaned": True,
+            "resumable": True,
+            "resume_source": "checkpoint",
+            "reason": "CHECKPOINT_AVAILABLE",
+        }
+        resume.return_value = {
+            "task_id": "convert-3",
+            "resumed": True,
+            "resume_source": "checkpoint",
+            "reason": "CHECKPOINT_AVAILABLE",
+            "status": "PENDING",
+        }
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=knowledge_source,
+                sync_state=sync_state,
+                conversion=policy,
+            )
+        self.assertEqual(
+            sync_state["conversion"]["original_task_id"],
+            "convert-1",
+        )
         self.assertNotIn("error", sync_state["conversion"])
         self.assertIn("resume_started_at", sync_state["conversion"])
 

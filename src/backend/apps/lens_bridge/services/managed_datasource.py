@@ -793,6 +793,9 @@ def convert_documents(
                         )
                     ):
                         resumed_at = timezone.now().isoformat()
+                        original_task_id = str(
+                            state.get("original_task_id") or task_id
+                        )
                         state.pop("error", None)
                         state.pop("finished_at", None)
                         progress_message = (
@@ -809,7 +812,7 @@ def convert_documents(
                         )
                         state.update(
                             {
-                                "original_task_id": task_id,
+                                "original_task_id": original_task_id,
                                 "task_id": next_task_id,
                                 "status": str(
                                     resumed.get("status") or "PENDING"
@@ -825,7 +828,7 @@ def convert_documents(
                         state["recovery"] = {
                             **recovery,
                             **resumed,
-                            "original_task_id": task_id,
+                            "original_task_id": original_task_id,
                         }
                         _clear_transient_state(state)
                         _persist_conversion_state(
