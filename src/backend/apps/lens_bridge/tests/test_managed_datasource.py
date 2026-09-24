@@ -912,7 +912,7 @@ class ManagedDatasourceSourceLensClientTests(SimpleTestCase):
             (
                 "GET",
                 "/api/lens/admin/datasources/source-1/"
-                "conversion-tasks/convert-1/recovery",
+                "conversion-tasks/convert-1/recovery/",
             ),
         )
         self.assertEqual(
@@ -920,7 +920,7 @@ class ManagedDatasourceSourceLensClientTests(SimpleTestCase):
             (
                 "POST",
                 "/api/lens/admin/datasources/source-1/"
-                "conversion-tasks/convert-1/resume",
+                "conversion-tasks/convert-1/resume/",
             ),
         )
 

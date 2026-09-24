@@ -739,7 +739,7 @@ def get_managed_datasource_conversion_recovery(
         raw = request_json(
             "GET",
             f"/api/lens/admin/datasources/{datasource_uuid}/"
-            f"conversion-tasks/{task_id}/recovery",
+            f"conversion-tasks/{task_id}/recovery/",
         )
     except LensBridgeError as exc:
         if exc.status_code == 404:
@@ -757,7 +757,7 @@ def resume_managed_datasource_conversion(
     raw = request_json(
         "POST",
         f"/api/lens/admin/datasources/{datasource_uuid}/"
-        f"conversion-tasks/{task_id}/resume",
+        f"conversion-tasks/{task_id}/resume/",
     )
     if not isinstance(raw, dict) or not raw.get("task_id"):
         raise LensBridgeError(
