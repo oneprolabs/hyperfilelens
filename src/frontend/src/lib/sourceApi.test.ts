@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   bulkDeleteBackupSources,
+  createBackupSourceDirectory,
   listBackupSelectableSources,
   productionSourceSummary,
   testSourceDraft,
@@ -12,6 +13,43 @@ import {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+describe('createBackupSourceDirectory', () => {
+  it('posts the selected parent and one child folder name', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      source_id: 'agent:12',
+      node_id: 12,
+      path: '/data/restore_test',
+      label: 'restore_test',
+      isLeaf: false,
+      is_dir: true,
+      path_type: 'directory',
+      task_id: 'task-1',
+    }), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(createBackupSourceDirectory({
+      source_id: 'agent:12',
+      parent_path: '/data',
+      name: 'restore_test',
+    })).resolves.toMatchObject({ path: '/data/restore_test', path_type: 'directory' })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/source/backup-selectable/directories/create/',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          source_id: 'agent:12',
+          parent_path: '/data',
+          name: 'restore_test',
+        }),
+      }),
+    )
+  })
 })
 
 describe('listBackupSelectableSources', () => {

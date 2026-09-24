@@ -11,11 +11,14 @@ from apps.source.constants import PipelineStep
 from common.errors import AppError
 from apps.source.services.internal.backup_source_directory import (
     BackupSourceDirectoryError,
+    BackupSourceDirectoryCreateFailed,
     BackupSourceDirectoryForbidden,
     BackupSourceDirectoryInvalid,
     BackupSourceDirectoryNotFound,
     BackupSourceDirectoryTimeout,
+    BackupSourceDirectoryUnsupported,
     DEFAULT_DIRECTORY_LIMIT,
+    create_backup_source_directory,
     get_backup_source_path_info,
     list_backup_source_directories,
 )
@@ -511,6 +514,7 @@ class BackupSelectableDirectoryView(APIView):
             if include_metadata_param is None
             else _query_bool(include_metadata_param)
         )
+        restore_target = _query_bool(request.query_params.get("restore_target"))
 
         try:
             result = list_backup_source_directories(
@@ -522,6 +526,7 @@ class BackupSelectableDirectoryView(APIView):
                 include_files=_query_bool(request.query_params.get("include_files")),
                 include_metadata=include_metadata,
                 cursor=cursor,
+                restore_target=restore_target,
             )
         except BackupSourceDirectoryNotFound as exc:
             raise AppError(
@@ -542,6 +547,13 @@ class BackupSelectableDirectoryView(APIView):
                 code="AGENT.TIMEOUT",
                 status=status.HTTP_504_GATEWAY_TIMEOUT,
                 retryable=True,
+                diagnostic=str(exc),
+                meta={"source_id": source_id},
+            ) from exc
+        except BackupSourceDirectoryUnsupported as exc:
+            raise AppError(
+                code="AGENT.VERSION_TOO_OLD",
+                status=status.HTTP_426_UPGRADE_REQUIRED,
                 diagnostic=str(exc),
                 meta={"source_id": source_id},
             ) from exc
@@ -569,6 +581,77 @@ class BackupSelectableDirectoryView(APIView):
             ) from exc
 
         return Response(result)
+
+
+class BackupSelectableDirectoryCreateView(APIView):
+    """Create one child directory on the selected restore target."""
+
+    permission_classes = [IsAuthenticated, IsOrgOperator]
+
+    def post(self, request):
+        org = require_org(request)
+        source_id = str(request.data.get("source_id") or "").strip()
+        parent_path = str(request.data.get("parent_path") or "").strip()
+        name = str(request.data.get("name") or "")
+        if not source_id:
+            raise ValidationError({"source_id": "source_id is required."})
+        if not parent_path:
+            raise ValidationError({"parent_path": "Select a parent directory."})
+        _assert_selectable_access(request, [source_id], action="resources.manage")
+        try:
+            result = create_backup_source_directory(
+                organization_id=org.id,
+                source_id=source_id,
+                parent_path=parent_path,
+                name=name,
+            )
+        except BackupSourceDirectoryNotFound as exc:
+            raise AppError(
+                code="RESOURCE.NOT_FOUND",
+                status=status.HTTP_404_NOT_FOUND,
+                diagnostic=str(exc),
+            ) from exc
+        except BackupSourceDirectoryForbidden as exc:
+            raise AppError(
+                code="AUTH.FORBIDDEN",
+                status=status.HTTP_403_FORBIDDEN,
+                diagnostic=str(exc),
+            ) from exc
+        except BackupSourceDirectoryInvalid as exc:
+            raise ValidationError({"name": str(exc)}) from exc
+        except BackupSourceDirectoryTimeout as exc:
+            raise AppError(
+                code="AGENT.TIMEOUT",
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+                retryable=True,
+                diagnostic=str(exc),
+            ) from exc
+        except BackupSourceDirectoryUnsupported as exc:
+            raise AppError(
+                code="AGENT.VERSION_TOO_OLD",
+                status=status.HTTP_426_UPGRADE_REQUIRED,
+                diagnostic=str(exc),
+                meta={"source_id": source_id},
+            ) from exc
+        except BackupSourceDirectoryCreateFailed as exc:
+            error_code = exc.agent_error_code
+            if error_code == "PATH_ALREADY_EXISTS":
+                code, http_status = "DIRECTORY.ALREADY_EXISTS", status.HTTP_409_CONFLICT
+            elif error_code == "PATH_PERMISSION_DENIED":
+                code, http_status = "AGENT.PATH_PERMISSION_DENIED", status.HTTP_403_FORBIDDEN
+            elif error_code == "AGENT_PATH_FORBIDDEN":
+                code, http_status = "AGENT.PATH_PROTECTED", status.HTTP_400_BAD_REQUEST
+            elif error_code in {"PATH_PARENT_NOT_FOUND", "PATH_PARENT_INVALID", "PATH_INVALID"}:
+                code, http_status = "DIRECTORY.PARENT_INVALID", status.HTTP_400_BAD_REQUEST
+            else:
+                code, http_status = "DIRECTORY.CREATE_FAILED", status.HTTP_502_BAD_GATEWAY
+            raise AppError(
+                code=code,
+                status=http_status,
+                diagnostic=str(exc),
+                meta={"source_id": source_id, "parent_path": parent_path},
+            ) from exc
+        return Response(result, status=status.HTTP_201_CREATED)
 
 
 class BackupSelectablePathInfoView(APIView):
@@ -606,6 +689,7 @@ class BackupSelectablePathInfoView(APIView):
             if include_metadata_param is None
             else _query_bool(include_metadata_param)
         )
+        restore_target = _query_bool(request.query_params.get("restore_target"))
 
         try:
             result = get_backup_source_path_info(
@@ -614,6 +698,7 @@ class BackupSelectablePathInfoView(APIView):
                 path=path,
                 wait_timeout_seconds=timeout,
                 include_metadata=include_metadata,
+                restore_target=restore_target,
             )
         except BackupSourceDirectoryNotFound as exc:
             raise AppError(

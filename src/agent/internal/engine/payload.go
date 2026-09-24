@@ -187,6 +187,8 @@ func NormalizeKind(kind string) string {
 		return "repository.server.stop"
 	case "path.info", "path.stat", "fs.stat", "source.path.info":
 		return "path.info"
+	case "path.mkdir", "directory.create", "fs.mkdir":
+		return "path.mkdir"
 	case "path.size", "path.estimate", "source.path.size", "fs.du":
 		return "path.size"
 	case "path.usage", "disk.usage":

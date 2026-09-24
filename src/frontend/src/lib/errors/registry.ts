@@ -40,6 +40,7 @@ export const ERROR_CODE_I18N_KEYS: Record<string, string> = {
   'INSIGHT.GATEWAY_CHAT_QUEUE_FULL': 'errors.codes.insightGatewayChatQueueFull',
   'SERVER.INTERNAL_ERROR': 'errors.codes.serverInternal',
   'AGENT.TIMEOUT': 'errors.codes.agentTimeout',
+  'AGENT.VERSION_TOO_OLD': 'errors.codes.agentVersionTooOld',
   'AGENT.UNREACHABLE': 'errors.codes.agentUnreachable',
   'AGENT.PATH_PERMISSION_DENIED': 'errors.codes.agentPathPermissionDenied',
   'AGENT.PATH_PROTECTED': 'errors.codes.agentPathProtected',

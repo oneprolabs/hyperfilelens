@@ -6,6 +6,7 @@ from apps.source.api.views.backup_selectable import (
     BackupSelectableBulkDeleteView,
     BackupSelectableDeletePreflightView,
     BackupSelectableDirectoryView,
+    BackupSelectableDirectoryCreateView,
     BackupSelectableListView,
     BackupSelectablePathInfoView,
     BackupSelectablePipelineRevertView,
@@ -20,6 +21,7 @@ urlpatterns = [
     path("health", health, name="source-health"),
     path("backup-selectable/", BackupSelectableListView.as_view(), name="source-backup-selectable"),
     path("backup-selectable/directories/", BackupSelectableDirectoryView.as_view(), name="source-backup-selectable-directories"),
+    path("backup-selectable/directories/create/", BackupSelectableDirectoryCreateView.as_view(), name="source-backup-selectable-directory-create"),
     path("backup-selectable/path-info/", BackupSelectablePathInfoView.as_view(), name="source-backup-selectable-path-info"),
     path("backup-selectable/pipeline/", BackupSelectablePipelineView.as_view(), name="source-backup-selectable-pipeline"),
     path(
