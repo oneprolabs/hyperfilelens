@@ -1,41 +1,41 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg id="_图层_2" data-name="图层 2" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 186.63 240">
+<svg id="_u56feu5c42_2" data-name="u56feu5c42 2" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 186.63 240">
   <defs>
     <style>
       .cls-1 {
-        fill: url(#_未命名的渐变_27);
+        fill: url(#_u672au547du540du7684u6e10u53d8_27);
       }
 
       .cls-2 {
-        fill: url(#_未命名的渐变_37);
+        fill: url(#_u672au547du540du7684u6e10u53d8_37);
       }
 
       .cls-3 {
-        fill: url(#_未命名的渐变_32);
+        fill: url(#_u672au547du540du7684u6e10u53d8_32);
       }
 
       .cls-4 {
-        fill: url(#_未命名的渐变_22);
+        fill: url(#_u672au547du540du7684u6e10u53d8_22);
       }
     </style>
-    <linearGradient id="_未命名的渐变_37" data-name="未命名的渐变 37" x1="154.41" y1="240" x2="154.41" y2="0" gradientUnits="userSpaceOnUse">
+    <linearGradient id="_u672au547du540du7684u6e10u53d8_37" data-name="u672au547du540du7684u6e10u53d8 37" x1="154.41" y1="240" x2="154.41" y2="0" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#0b1a32"/>
       <stop offset="1" stop-color="#2372ef"/>
     </linearGradient>
-    <linearGradient id="_未命名的渐变_22" data-name="未命名的渐变 22" x1="11.46" y1="240" x2="11.46" y2="0" gradientUnits="userSpaceOnUse">
+    <linearGradient id="_u672au547du540du7684u6e10u53d8_22" data-name="u672au547du540du7684u6e10u53d8 22" x1="11.46" y1="240" x2="11.46" y2="0" gradientUnits="userSpaceOnUse">
       <stop offset=".51" stop-color="#2168f3"/>
       <stop offset="1" stop-color="#37caca"/>
     </linearGradient>
-    <linearGradient id="_未命名的渐变_27" data-name="未命名的渐变 27" x1="73.58" y1="104.54" x2="73.58" y2="0" gradientUnits="userSpaceOnUse">
+    <linearGradient id="_u672au547du540du7684u6e10u53d8_27" data-name="u672au547du540du7684u6e10u53d8 27" x1="73.58" y1="104.54" x2="73.58" y2="0" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#2168f3"/>
       <stop offset="1" stop-color="#2e9edd"/>
     </linearGradient>
-    <linearGradient id="_未命名的渐变_32" data-name="未命名的渐变 32" x1="73.58" y1="240" x2="73.58" y2="135.46" gradientUnits="userSpaceOnUse">
+    <linearGradient id="_u672au547du540du7684u6e10u53d8_32" data-name="u672au547du540du7684u6e10u53d8 32" x1="73.58" y1="240" x2="73.58" y2="135.46" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#14387b"/>
       <stop offset="1" stop-color="#1d5bd4"/>
     </linearGradient>
   </defs>
-  <g id="_图层_1-2" data-name="图层 1">
+  <g id="_u56feu5c42_1-2" data-name="u56feu5c42 1">
     <g>
       <polygon class="cls-2" points="123.07 42.59 122.18 192.55 186.63 240 186.63 0 123.07 42.59"/>
       <polygon class="cls-4" points="0 219.16 22.92 240 22.92 0 0 20.84 0 219.16"/>
