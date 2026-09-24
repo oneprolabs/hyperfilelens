@@ -63,7 +63,7 @@ const cardAccents = ['violet', '', 'amber'] as const
           <p class="hero-lead">{{ copy.hero.lead }}</p>
           <div class="hero-actions">
             <a class="button button-primary" :href="loginUrl" target="_blank" rel="noopener noreferrer" @click="openApp($event, 'hero')">
-              <img src="/brand/icons/hyperfilelens-mark-32.png" alt="" class="button-logo" />
+              <img src="/brand/icons/hyperfilelens-mark-white-32.png" alt="" class="button-logo" />
               {{ copy.hero.primaryCta }}
               <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
               <span class="free-badge">{{ copy.hero.freeBadge }}</span>

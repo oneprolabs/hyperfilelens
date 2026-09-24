@@ -124,7 +124,8 @@ export default defineConfig({
   sitemap: { hostname: 'https://hyperfilelens.com' },
   rewrites: (id) => id.startsWith('en/') ? id.slice(3) : id,
   head: [
-    ['link', { rel: 'icon', type: 'image/x-icon', href: '/brand/icons/favicon.ico' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/brand/icons/favicon-on-light.svg', media: '(prefers-color-scheme: light)' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/brand/icons/favicon-on-dark.svg', media: '(prefers-color-scheme: dark)' }],
     ['meta', { name: 'theme-color', content: '#07111f' }],
     ['meta', { name: 'viewport', content: 'width=device-width, initial-scale=1' }],
     ['meta', { property: 'og:type', content: 'website' }],
