@@ -169,6 +169,7 @@ class ChatSelectionPreviewTests(TestCase):
             payload={
                 "snapshot_directory_id": self.directory.id,
                 "snapshot_id": self.directory.kopia_snapshot_id,
+                "gateway_link_id": gateway_link.id,
                 "path": "contracts",
             },
             watchdog_deadline_at=timezone.now() + timezone.timedelta(minutes=5),

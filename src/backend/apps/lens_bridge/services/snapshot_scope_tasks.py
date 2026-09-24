@@ -103,25 +103,21 @@ def active_scope_task_for_selection(
 ) -> NodeTask | None:
     """Find an in-flight scope calculation after a page/request restart."""
 
-    gateway = (
-        LensGatewayLink.objects.filter(
-            pk=gateway_link_id,
-            organization_id=organization.id,
-            is_deleted=False,
-        )
-        .values_list("gateway_id", flat=True)
-        .first()
-    )
-    if gateway is None:
+    gateway_exists = LensGatewayLink.objects.filter(
+        pk=gateway_link_id,
+        organization_id=organization.id,
+        is_deleted=False,
+    ).exists()
+    if not gateway_exists:
         return None
     wanted_path = _clean_relative_path(path)
     prefix = f"selection:user:{int(user_id)}:"
     tasks = NodeTask.objects.filter(
         requesting_organization_id=organization.id,
-        node_id=gateway,
         kind="lens.snapshot.scope.resolve",
         correlation_type=SCOPE_CORRELATION_TYPE,
         correlation_id__startswith=prefix,
+        payload__gateway_link_id=gateway_link_id,
         status__in=(NodeTask.Status.PENDING, NodeTask.Status.RUNNING),
     ).order_by("-created_at", "-id")[:20]
     for task in tasks:
@@ -372,6 +368,7 @@ def dispatch_snapshot_operation(
     persisted_payload = {
         "snapshot_directory_id": directory.id,
         "snapshot_id": directory.kopia_snapshot_id,
+        "gateway_link_id": gateway_link_id,
         "path": clean_path,
         "reader_mode": access.mode,
         **(extra_payload or {}),
