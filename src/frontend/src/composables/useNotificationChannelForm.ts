@@ -10,6 +10,7 @@ export type NotificationChannelFormState = {
     smtp_port: string
     smtp_username: string
     smtp_password: string
+    smtp_password_configured: boolean
     from_email: string
     email_subject: string
     to_emails: string
@@ -17,7 +18,7 @@ export type NotificationChannelFormState = {
     encryption: 'none' | 'starttls' | 'ssl'
   }
   webhook: { url: string; method: string; headers: string; timeout: number }
-  dingtalk: { webhook_url: string; secret: string; at_mobiles: string; at_user_ids: string; is_at_all: boolean }
+  dingtalk: { webhook_url: string; secret: string; secret_configured: boolean; secret_editing: boolean; at_mobiles: string; at_user_ids: string; is_at_all: boolean }
   wecom: { webhook_url: string; mentioned_list: string; mentioned_mobile_list: string; is_at_all: boolean }
   sms: {
     url: string
@@ -38,6 +39,7 @@ export function defaultNotificationChannelForm(): NotificationChannelFormState {
       smtp_port: '587',
       smtp_username: '',
       smtp_password: '',
+      smtp_password_configured: false,
       from_email: '',
       email_subject: '',
       to_emails: '',
@@ -45,7 +47,7 @@ export function defaultNotificationChannelForm(): NotificationChannelFormState {
       encryption: 'starttls',
     },
     webhook: { url: '', method: 'POST', headers: '', timeout: 30 },
-    dingtalk: { webhook_url: '', secret: '', at_mobiles: '', at_user_ids: '', is_at_all: false },
+    dingtalk: { webhook_url: '', secret: '', secret_configured: false, secret_editing: false, at_mobiles: '', at_user_ids: '', is_at_all: false },
     wecom: { webhook_url: '', mentioned_list: '', mentioned_mobile_list: '', is_at_all: false },
     sms: {
       url: '',
@@ -92,10 +94,15 @@ export function buildNotificationChannelConfig(form: NotificationChannelFormStat
     }
   }
   if (form.type === 'dingtalk') {
+    const secret = form.dingtalk.secret.trim()
     return {
       ...base,
       webhook_url: form.dingtalk.webhook_url,
-      secret: form.dingtalk.secret,
+      ...(secret
+        ? { secret: form.dingtalk.secret }
+        : form.dingtalk.secret_editing && form.dingtalk.secret_configured
+          ? { clear_secret: true }
+          : {}),
       at_mobiles: splitList(form.dingtalk.at_mobiles),
       at_user_ids: splitList(form.dingtalk.at_user_ids),
       is_at_all: form.dingtalk.is_at_all,
@@ -138,6 +145,7 @@ export function loadNotificationChannelConfig(
       smtp_port: String(config.smtp_port || '587'),
       smtp_username: config.smtp_username || '',
       smtp_password: '',
+      smtp_password_configured: Boolean(String(config.smtp_password || '').trim()),
       from_email: config.from_email || '',
       email_subject: config.email_subject || '',
       to_emails: config.to_emails || config.to || '',
@@ -153,6 +161,8 @@ export function loadNotificationChannelConfig(
   } else if (type === 'dingtalk') {
     form.dingtalk.webhook_url = String(config.webhook_url || config.url || '')
     form.dingtalk.secret = ''
+    form.dingtalk.secret_configured = Boolean(String(config.secret || '').trim())
+    form.dingtalk.secret_editing = false
     form.dingtalk.at_mobiles = listToText(config.at_mobiles)
     form.dingtalk.at_user_ids = listToText(config.at_user_ids)
     form.dingtalk.is_at_all = config.is_at_all === true

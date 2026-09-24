@@ -68,6 +68,74 @@ def test_channel_crud_and_logs_list(org_client):
 
 
 @pytest.mark.django_db
+def test_channel_update_preserves_masked_sensitive_config(org_client):
+    client, org = org_client
+    headers = {"HTTP_X_ORG_KEY": org.key}
+    channel = NotificationChannel.objects.create(
+        organization=org,
+        name="DingTalk",
+        channel_type="dingtalk",
+        config={
+            "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=old",
+            "secret": "existing-secret",
+            "is_at_all": True,
+        },
+    )
+
+    # The editor omits the secret when it has not been changed. A client that
+    # round-trips the masked API value must also not overwrite the credential.
+    res = client.patch(
+        f"/api/v1/notifications/channels/{channel.id}/",
+        {
+            "config": {
+                "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=new",
+                "secret": "********",
+            },
+        },
+        format="json",
+        **headers,
+    )
+
+    assert res.status_code == 200, res.content
+    channel.refresh_from_db()
+    assert channel.config["webhook_url"].endswith("access_token=new")
+    assert channel.config["secret"] == "existing-secret"
+    assert res.data["config"]["secret"] == "********"
+
+    res = client.patch(
+        f"/api/v1/notifications/channels/{channel.id}/",
+        {
+            "config": {
+                "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=latest",
+            },
+        },
+        format="json",
+        **headers,
+    )
+
+    assert res.status_code == 200, res.content
+    channel.refresh_from_db()
+    assert channel.config["webhook_url"].endswith("access_token=latest")
+    assert channel.config["secret"] == "existing-secret"
+
+    res = client.patch(
+        f"/api/v1/notifications/channels/{channel.id}/",
+        {
+            "config": {
+                "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=cleared",
+                "clear_secret": True,
+            },
+        },
+        format="json",
+        **headers,
+    )
+
+    assert res.status_code == 200, res.content
+    channel.refresh_from_db()
+    assert channel.config["webhook_url"].endswith("access_token=cleared")
+    assert "secret" not in channel.config
+
+@pytest.mark.django_db
 def test_email_channel_requires_recipients(org_client):
     client, org = org_client
     headers = {"HTTP_X_ORG_KEY": org.key}
