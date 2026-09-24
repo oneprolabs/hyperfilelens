@@ -12,7 +12,8 @@ func TestInstallPs1CompleteRemovalDoesNotRecreateDataLogDirectory(t *testing.T) 
 	source := readPackagingInstallScript(t)
 	for _, want := range []string{
 		"if (-not `$dir -or -not (Test-Path -LiteralPath `$dir)) { return }",
-		`$uninstallLog = if ($preserveData -and $uninstallLogPath) { $uninstallLogPath } else { "" }`,
+		`$manualUninstallLog = if ($env:HFL_MANUAL_UNINSTALL -eq "1")`,
+		`$uninstallLog = if ($manualUninstallLog)`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("install.ps1 missing %q", want)
@@ -20,6 +21,38 @@ func TestInstallPs1CompleteRemovalDoesNotRecreateDataLogDirectory(t *testing.T) 
 	}
 	if strings.Contains(source, "if (`$dir) { New-Item -ItemType Directory -Force -Path `$dir") {
 		t.Fatal("deferred install-root cleanup must not recreate the uninstall log directory")
+	}
+}
+
+func TestInstallPs1UsesExternalManualUninstallLog(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	for _, want := range []string{
+		`$manualUninstallLog = if ($env:HFL_MANUAL_UNINSTALL -eq "1")`,
+		`[string]$env:HFL_MANUAL_UNINSTALL_LOG`,
+		`$uninstallLog = if ($manualUninstallLog)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("install.ps1 missing manual uninstall log support %q", want)
+		}
+	}
+}
+
+func TestManualUninstallCommandWaitsForFinalRootCleanup(t *testing.T) {
+	body := readPackagingUninstallCommand(t)
+	for _, want := range []string{
+		`set "HFL_MANUAL_UNINSTALL=1"`,
+		`set "HFL_MANUAL_UNINSTALL_LOG=%TEMP%\HyperFileLens-uninstall-%RANDOM%.log"`,
+		`cd /d "%TEMP%"`,
+		`call :WaitForAgentRootRemoval`,
+		`if not exist "%AGENT_ROOT%\"`,
+		`HFL_MANUAL_UNINSTALL_LOG`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("uninstall.cmd missing final cleanup contract %q", want)
+		}
+	}
+	if strings.Contains(body, `cd /d "%INSTALL_DIR%"`) {
+		t.Fatal("manual uninstall must not keep the Agent directory as its working directory")
 	}
 }
 
@@ -380,6 +413,9 @@ func TestWindowsDetachedUninstallLeavesFinalDataRemovalToOuterRunner(t *testing.
 			t.Fatalf("Windows detached uninstall is missing %q", want)
 		}
 	}
+	if strings.Contains(source, "HFL_MANUAL_UNINSTALL") {
+		t.Fatal("Windows detached uninstall must not opt into manual uninstall handling")
+	}
 }
 
 func TestInstallPs1UpgradeRollbackUsesModeAwareLifecycle(t *testing.T) {
@@ -492,6 +528,26 @@ func readPackagingInstallScript(t *testing.T) string {
 	}
 	if err != nil {
 		t.Fatalf("read install.ps1: %v", err)
+	}
+	return string(raw)
+}
+
+func readPackagingUninstallCommand(t *testing.T) string {
+	t.Helper()
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve current test file")
+	}
+	path := filepath.Clean(filepath.Join(
+		filepath.Dir(currentFile),
+		"..", "..", "..", "packaging", "install", "uninstall.cmd",
+	))
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		t.Skipf("packaging source is not available beside the compiled test: %s", path)
+	}
+	if err != nil {
+		t.Fatalf("read uninstall.cmd: %v", err)
 	}
 	return string(raw)
 }
