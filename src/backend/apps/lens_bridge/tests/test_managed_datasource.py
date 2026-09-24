@@ -759,6 +759,10 @@ class ManagedDatasourceTests(SimpleTestCase):
             sync_state["conversion"]["resume_source"],
             "checkpoint",
         )
+        self.assertEqual(
+            sync_state["conversion"]["recovery"]["task_id"],
+            "convert-2",
+        )
         self.assertNotIn("error", sync_state["conversion"])
         self.assertIn("resume_started_at", sync_state["conversion"])
 

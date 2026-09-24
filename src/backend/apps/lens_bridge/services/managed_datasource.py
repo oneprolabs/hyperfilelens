@@ -794,6 +794,11 @@ def convert_documents(
                                 "resume_started_at": resumed_at,
                             }
                         )
+                        state["recovery"] = {
+                            **recovery,
+                            **resumed,
+                            "original_task_id": task_id,
+                        }
                         _clear_transient_state(state)
                         _persist_conversion_state(
                             ks=ks,
