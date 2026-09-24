@@ -1969,6 +1969,7 @@ class SourceResourceApiTests(TestCase):
             role=Node.Role.AGENT,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["restore_target_directory_create_v1"]}},
         )
         mock_run_task.return_value = SimpleNamespace(
             timed_out=False,

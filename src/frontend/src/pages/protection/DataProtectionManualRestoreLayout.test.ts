@@ -121,7 +121,7 @@ describe('manual restore wizard layout', () => {
     expect(scopeTree).not.toContain('<span v-if="data.path"')
     expect(scopeTree).not.toContain('highlight-current')
     expect(page).toContain('.el-tree-node__content:has(> .recovery-snapshot-tree-node--selected)')
-    expect(page).toContain('.el-tree-node__expand-icon.is-leaf) {\n  width: 8px;')
+    expect(page).toMatch(/\.create-recovery-popover-tree :deep\(\.el-tree-node__expand-icon\) \{[\s\S]*?width: 20px;[\s\S]*?flex: 0 0 20px;/)
     expect(page).toMatch(/\.source-dir-tree :deep\(\.el-tree-node__expand-icon\) \{[\s\S]*?width: 20px;[\s\S]*?flex: 0 0 20px;/)
     expect(page).toMatch(/\.source-dir-tree :deep\(\.el-tree-node\.is-current > \.el-tree-node__content\) \{[\s\S]*?var\(--el-bg-color-overlay\)/)
 
