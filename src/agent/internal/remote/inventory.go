@@ -21,6 +21,39 @@ import (
 
 const RestoreTargetDirectoryCreateCapability = "restore_target_directory_create_v1"
 
+// SupportedCapabilities returns the stable Agent capability contract.
+//
+// Capabilities are included in the initial inventory and in periodic
+// heartbeats so the control plane can recover a lost inventory projection
+// without requiring an Agent reconnect.
+func SupportedCapabilities() []string {
+	return []string{
+		"task_command_ack_v1",
+		"repository_operation_v1",
+		"repository_cleanup_v1",
+		"repository_cleanup_v2",
+		"repository_cleanup_ownership_v1",
+		"repository_cleanup_s3_v1",
+		"repository_cleanup_s3_md5_v2",
+		"repository_ownership_v1",
+		"backup_prepared_snapshot_v1",
+		"backup_operation_reconcile_v1",
+		"snapshot_browse_v1",
+		"snapshot_artifact_upload_v1",
+		"snapshot_multi_download_v1",
+		"snapshot_source_path_download_v1",
+		"snapshot_scope_resolve_v1",
+		"insight_safe_restore_v1",
+		"nas_mount_lifecycle_v1",
+		"network_inventory_v1",
+		"agent_upgrade_download_progress_v1",
+		"repository_server_port_range_v1",
+		"detached_uninstall_v2",
+		"storage_inventory_v1",
+		RestoreTargetDirectoryCreateCapability,
+	}
+}
+
 // SendInventory emits a heartbeat frame with host and bundle metadata for the control plane.
 func SendInventory(
 	ctx context.Context,
@@ -63,31 +96,7 @@ func SendInventory(
 		"data_path":    dataDir,
 		"agent_root":   rootPath,
 		"install_path": vfs.InstallDirForMode(installationMode),
-		"capabilities": []string{
-			"task_command_ack_v1",
-			"repository_operation_v1",
-			"repository_cleanup_v1",
-			"repository_cleanup_v2",
-			"repository_cleanup_ownership_v1",
-			"repository_cleanup_s3_v1",
-			"repository_cleanup_s3_md5_v2",
-			"repository_ownership_v1",
-			"backup_prepared_snapshot_v1",
-			"backup_operation_reconcile_v1",
-			"snapshot_browse_v1",
-			"snapshot_artifact_upload_v1",
-			"snapshot_multi_download_v1",
-			"snapshot_source_path_download_v1",
-			"snapshot_scope_resolve_v1",
-			"insight_safe_restore_v1",
-			"nas_mount_lifecycle_v1",
-			"network_inventory_v1",
-			"agent_upgrade_download_progress_v1",
-			"repository_server_port_range_v1",
-			"detached_uninstall_v2",
-			"storage_inventory_v1",
-			RestoreTargetDirectoryCreateCapability,
-		},
+		"capabilities": SupportedCapabilities(),
 	} {
 		payload[key] = value
 	}

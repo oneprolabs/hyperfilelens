@@ -6,6 +6,27 @@ import (
 	"hyperfilelens/agent/internal/model"
 )
 
+func TestHeartbeatPayloadIncludesCapabilities(t *testing.T) {
+	agent := &Agent{
+		storageInventory: map[string]any{"disk_count": 1},
+	}
+
+	payload := agent.heartbeatPayload()
+	if payload["disk_count"] != 1 {
+		t.Fatalf("heartbeat payload lost storage inventory: %#v", payload)
+	}
+	capabilities, ok := payload["capabilities"].([]string)
+	if !ok {
+		t.Fatalf("capabilities type = %T, want []string", payload["capabilities"])
+	}
+	for _, capability := range capabilities {
+		if capability == "insight_safe_restore_v1" {
+			return
+		}
+	}
+	t.Fatalf("heartbeat capabilities = %v, missing insight_safe_restore_v1", capabilities)
+}
+
 func TestDurableNodeIdentity(t *testing.T) {
 	for _, test := range []struct {
 		name string

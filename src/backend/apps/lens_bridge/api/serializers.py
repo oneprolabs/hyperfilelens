@@ -955,6 +955,7 @@ class LensCopilotGatewayOptionSerializer(serializers.Serializer):
     online = serializers.BooleanField()
     hfl_usable = serializers.BooleanField()
     copilot_eligible = serializers.BooleanField()
+    readiness_reason = serializers.CharField()
     analysis_types = serializers.ListField(
         child=serializers.ChoiceField(choices=LensSessionLink.AnalysisType.values),
         required=False,

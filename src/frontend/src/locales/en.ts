@@ -1078,13 +1078,25 @@ export const en = {
       gatewayNotReady: 'Not ready',
       gatewayPublicUnavailable:
         'No public Data Gateway is available. Select a private Data Gateway or contact your administrator.',
+      gatewayPublicOffline:
+        'The public Data Gateway is currently offline. Try again later or select a Private Data Gateway.',
+      gatewayPublicCapabilitiesSyncing:
+        'The public Data Gateway is online, but its Agent capabilities are still synchronizing. Refresh in a moment.',
       gatewayPrivateRequired: 'Select a Private Data Gateway to continue.',
       gatewayPrivateNoOnline: 'No online Private Data Gateways are available.',
+      gatewayPrivateNotConfigured:
+        'No Private Data Gateway has been configured. Deploy one or contact your administrator.',
+      gatewayPrivateNotReady:
+        'A Private Data Gateway is configured but not ready. Check that its Agent and LensNode are online.',
+      gatewayPrivateCapabilitiesSyncing:
+        'The Private Data Gateway is online, but its Agent capabilities are still synchronizing. Refresh in a moment.',
       gatewayPrivateSelectPlaceholder: 'Select a Private Data Gateway',
       gatewayPrivateRefreshAction: 'Refresh Private Data Gateways',
       gatewayPrivateInstallAction: 'Install a Private Data Gateway',
       gatewayPrivateRefreshSuccess: 'Private Data Gateways refreshed.',
       gatewayPrivateRefreshFailed: 'Unable to refresh Private Data Gateways.',
+      gatewayOptionsLoadFailed: 'Unable to load Data Gateway status.',
+      gatewayOptionsRetryAction: 'Retry',
       bindingSubmit: 'Prepare Copilot',
       bindingSubmitting: 'Preparing knowledge source…',
       bindingSuccess: 'Context saved. Start a new chat to restore data and create a knowledge source and assistant.',

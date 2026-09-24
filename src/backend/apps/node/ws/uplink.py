@@ -392,8 +392,15 @@ def _persist_heartbeat_snapshot(
     observed_at,
     merge_inventory: bool,
     session_id: str | None = None,
+    allow_stale_capability_snapshot: bool = False,
 ) -> tuple[Node | None, bool]:
-    """Serialize Node metadata updates shared by heartbeat and monitor ingest."""
+    """Serialize Node metadata updates shared by heartbeat and monitor ingest.
+
+    A full inventory is queued after the WebSocket hot path has already
+    persisted liveness. If a later heartbeat advances ``last_seen_at`` first,
+    only missing capability evidence for the current session may be recovered
+    from that older entry. Never roll other inventory fields back.
+    """
     node = (
         Node.objects.select_for_update()
         .filter(pk=node_id, is_deleted=False)
@@ -403,6 +410,36 @@ def _persist_heartbeat_snapshot(
         return None, False
     event_is_current = not node.last_seen_at or node.last_seen_at <= observed_at
     if not event_is_current:
+        if (
+            merge_inventory
+            and inventory
+            and session_id
+            and allow_stale_capability_snapshot
+            and isinstance(
+                inventory.get("capabilities"),
+                (list, tuple, set, frozenset),
+            )
+        ):
+            metadata = dict(node.metadata or {})
+            stored_inventory = metadata.get("inventory")
+            if (
+                metadata.get("inventory_capabilities_session_id") == session_id
+                and isinstance(stored_inventory, dict)
+                and isinstance(stored_inventory.get("capabilities"), (list, tuple, set, frozenset))
+            ):
+                return node, False
+            capabilities = [
+                str(value).strip()
+                for value in inventory["capabilities"]
+                if str(value or "").strip()
+            ]
+            stored_inventory = dict(stored_inventory or {})
+            stored_inventory["capabilities"] = capabilities
+            metadata["inventory"] = stored_inventory
+            metadata["inventory_session_id"] = session_id
+            metadata["inventory_capabilities_session_id"] = session_id
+            Node.objects.filter(pk=node_id).update(metadata=metadata)
+            return node, True
         return node, False
     updates: dict = {"last_seen_at": observed_at}
     if merge_inventory and inventory:
@@ -500,6 +537,36 @@ def _should_process_full_inventory(
         return True
 
 
+def _session_has_capability_snapshot(*, node_id: int, session_id: str) -> bool:
+    """Return whether this session already has a capability snapshot."""
+    row = (
+        Node.objects.filter(pk=node_id, is_deleted=False)
+        .values("metadata")
+        .first()
+    )
+    metadata = row.get("metadata") if isinstance(row, dict) else None
+    if not isinstance(metadata, dict):
+        return False
+    inventory = metadata.get("inventory")
+    capabilities = inventory.get("capabilities") if isinstance(inventory, dict) else None
+    return (
+        str(metadata.get("inventory_session_id") or "").strip() == session_id
+        and str(metadata.get("inventory_capabilities_session_id") or "").strip()
+        == session_id
+        and isinstance(capabilities, (list, tuple, set, frozenset))
+    )
+
+
+def _has_capability_snapshot(inventory: dict | None) -> bool:
+    return bool(
+        inventory
+        and isinstance(
+            inventory.get("capabilities"),
+            (list, tuple, set, frozenset),
+        )
+    )
+
+
 def _process_heartbeat_followup(
     *,
     node_id: int,
@@ -532,14 +599,32 @@ def _process_heartbeat_followup(
         observed_at=observed_at,
         merge_inventory=False,
     )
-    if node is None or not applied:
+    if node is None:
+        return
+    liveness_applied = applied
+    missing_capabilities = bool(
+        ownership is True
+        and session_id
+        and _has_capability_snapshot(inventory)
+        and not _session_has_capability_snapshot(
+            node_id=node_id,
+            session_id=session_id,
+        )
+    )
+    if not applied and not missing_capabilities:
         return
     full_inventory = bool(
         inventory
         and ownership is True
-        and _should_process_full_inventory(
-            node_id=node_id,
-            session_id=session_id,
+        and (
+            (
+                applied
+                and _should_process_full_inventory(
+                    node_id=node_id,
+                    session_id=session_id,
+                )
+            )
+            or missing_capabilities
         )
     )
     if full_inventory:
@@ -549,14 +634,17 @@ def _process_heartbeat_followup(
             observed_at=observed_at,
             merge_inventory=True,
             session_id=session_id,
+            allow_stale_capability_snapshot=missing_capabilities,
         )
         if node is None or not applied:
             return
-    record_node_available(node_id=node_id, observed_at=observed_at)
+    if liveness_applied:
+        record_node_available(node_id=node_id, observed_at=observed_at)
 
     if (
         ownership is True
         and full_inventory
+        and liveness_applied
         and inventory
         and isinstance(inventory.get("metrics"), dict)
         and inventory["metrics"]

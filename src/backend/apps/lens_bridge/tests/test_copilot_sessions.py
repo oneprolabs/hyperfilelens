@@ -151,6 +151,7 @@ class LensSessionCreateSerializerTests(SimpleTestCase):
                 "online": True,
                 "hfl_usable": True,
                 "copilot_eligible": True,
+                "readiness_reason": "ready",
                 "analysis_types": ["knowledge_qa", "code_analysis"],
             }
         )

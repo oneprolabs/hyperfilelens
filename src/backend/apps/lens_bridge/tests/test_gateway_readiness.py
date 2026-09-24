@@ -40,6 +40,7 @@ class GatewayReadinessTests(SimpleTestCase):
         self.assertTrue(state["hfl_sidecar_online"])
         self.assertTrue(state["hfl_usable"])
         self.assertTrue(state["copilot_eligible"])
+        self.assertEqual(state["readiness_reason"], "ready")
         mock_routable.assert_called_once_with(agent_id=21)
 
     def test_unmapped_sl_lensnode_is_discoverable_but_not_hfl_usable(self):
@@ -50,6 +51,7 @@ class GatewayReadinessTests(SimpleTestCase):
         self.assertFalse(state["hfl_sidecar_online"])
         self.assertFalse(state["hfl_usable"])
         self.assertFalse(state["copilot_eligible"])
+        self.assertEqual(state["readiness_reason"], "not_managed")
 
     @patch("apps.lens_bridge.services.gateway_readiness.agent_ws_routable", return_value=False)
     def test_hfl_gateway_without_routable_agent_is_not_usable(self, _mock_routable):
@@ -57,6 +59,7 @@ class GatewayReadinessTests(SimpleTestCase):
 
         self.assertFalse(state["hfl_usable"])
         self.assertFalse(state["copilot_eligible"])
+        self.assertEqual(state["readiness_reason"], "agent_offline")
 
     @patch(
         "apps.lens_bridge.services.gateway_readiness.get_agent_session",
@@ -75,6 +78,7 @@ class GatewayReadinessTests(SimpleTestCase):
         self.assertFalse(state["hfl_agent_capabilities_ready"])
         self.assertTrue(state["hfl_usable"])
         self.assertFalse(state["copilot_eligible"])
+        self.assertEqual(state["readiness_reason"], "capabilities_syncing")
 
     @patch(
         "apps.lens_bridge.services.gateway_readiness.get_agent_session",
