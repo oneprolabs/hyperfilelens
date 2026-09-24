@@ -161,6 +161,75 @@ def test_email_channel_requires_recipients(org_client):
 
 
 @pytest.mark.django_db
+def test_draft_channel_test_uses_unsaved_config_and_saved_secret(org_client):
+    client, org = org_client
+    headers = {"HTTP_X_ORG_KEY": org.key}
+    channel = NotificationChannel.objects.create(
+        organization=org,
+        name="DingTalk",
+        channel_type="dingtalk",
+        config={"webhook_url": "https://old.example.com", "secret": "saved-secret"},
+    )
+    with patch("apps.notification.api.views.channel.test_channel", return_value={"status": "success"}) as send:
+        res = client.post(
+            "/api/v1/notifications/channels/test-config/",
+            {
+                "channel_id": channel.id,
+                "type": "dingtalk",
+                "config": {"webhook_url": "https://new.example.com"},
+            },
+            format="json",
+            **headers,
+        )
+    assert res.status_code == 200, res.content
+    draft = send.call_args.args[0]
+    assert draft.config["webhook_url"] == "https://new.example.com"
+    assert draft.config["secret"] == "saved-secret"
+    channel.refresh_from_db()
+    assert channel.config == {"webhook_url": "https://old.example.com", "secret": "saved-secret"}
+
+    with patch("apps.notification.api.views.channel.test_channel", return_value={"status": "success"}) as send:
+        res = client.post(
+            "/api/v1/notifications/channels/test-config/",
+            {
+                "channel_id": channel.id,
+                "type": "dingtalk",
+                "config": {"webhook_url": "https://new.example.com", "clear_secret": True},
+            },
+            format="json",
+            **headers,
+        )
+    assert res.status_code == 200, res.content
+    assert "secret" not in send.call_args.args[0].config
+    channel.refresh_from_db()
+    assert channel.config["secret"] == "saved-secret"
+
+
+@pytest.mark.django_db
+def test_draft_channel_test_rejects_cross_org_channel(org_client):
+    client, org = org_client
+    other = Organization.objects.create(key="other-test-org", name="Other Org")
+    channel = NotificationChannel.objects.create(
+        organization=other,
+        name="Other DingTalk",
+        channel_type="dingtalk",
+        config={"webhook_url": "https://other.example.com", "secret": "private"},
+    )
+    with patch("apps.notification.api.views.channel.test_channel") as send:
+        res = client.post(
+            "/api/v1/notifications/channels/test-config/",
+            {
+                "channel_id": channel.id,
+                "type": "dingtalk",
+                "config": {"webhook_url": "https://new.example.com"},
+            },
+            format="json",
+            HTTP_X_ORG_KEY=org.key,
+        )
+    assert res.status_code == 404
+    send.assert_not_called()
+
+@pytest.mark.django_db
 def test_channel_bulk_state_and_delete(org_client):
     client, org = org_client
     headers = {"HTTP_X_ORG_KEY": org.key}

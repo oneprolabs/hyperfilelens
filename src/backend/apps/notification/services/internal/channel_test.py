@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 
+from urllib.parse import urlparse
+
 from django.core.mail import EmailMessage
 
 from apps.notification.constants import ChannelType
@@ -65,6 +67,9 @@ def test_channel(channel: NotificationChannel) -> dict:
         )
         if not str(url).strip():
             raise ValueError("Webhook URL is required.")
+        parsed_url = urlparse(str(url).strip())
+        if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
+            raise ValueError("Webhook URL must be a valid http:// or https:// URL.")
         test_cfg = {**cfg, "url": url}
         if channel_type in (ChannelType.DINGTALK, ChannelType.WECOM):
             test_cfg["webhook_platform"] = channel_type

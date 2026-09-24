@@ -16,6 +16,7 @@ from apps.notification.api.serializers import (
     NotificationChannelSerializer,
 )
 from apps.notification.api.views._org import require_org
+from apps.notification.constants import ChannelType
 from apps.notification.models import NotificationChannel, NotificationLog
 from apps.notification.selectors.interface import channel_statistics, channels_for_org, filter_channels
 from apps.notification.services.internal.log_details import notification_log_details
@@ -165,6 +166,60 @@ class NotificationChannelViewSet(viewsets.ModelViewSet):
         channel = self.get_object()
         try:
             return Response(test_channel(channel))
+        except Exception as exc:  # noqa: BLE001
+            return Response(
+                {"status": "failed", "error": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    @action(detail=False, methods=["post"], url_path="test-config")
+    def test_config(self, request):
+        """Test the editor's draft without persisting it."""
+        org = require_org(request)
+        channel_id = request.data.get("channel_id")
+        channel = None
+        if channel_id is not None:
+            try:
+                channel = self.get_queryset().get(pk=channel_id)
+            except (NotificationChannel.DoesNotExist, TypeError, ValueError):
+                return Response({"detail": "Channel not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        channel_type = str(request.data.get("type") or (channel.channel_type if channel else "")).strip()
+        config = request.data.get("config")
+        if not channel_type or not isinstance(config, dict):
+            return Response(
+                {"detail": "Channel type and config are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if channel_type not in (ChannelType.EMAIL, ChannelType.WEBHOOK, ChannelType.DINGTALK, ChannelType.WECOM):
+            return Response({"detail": "Unsupported channel type."}, status=status.HTTP_400_BAD_REQUEST)
+        if channel and channel.channel_type != channel_type:
+            return Response({"detail": "Channel type cannot be changed."}, status=status.HTTP_400_BAD_REQUEST)
+        config = dict(config)
+        if channel:
+            existing = channel.config or {}
+            clear_secret = config.pop("clear_secret", False) is True
+            for field in ("smtp_password", "token", "secret", "authorization", "api_key"):
+                if config.get(field) in (None, "", "********") and existing.get(field) and not (field == "secret" and clear_secret):
+                    config[field] = existing[field]
+            if clear_secret:
+                config.pop("secret", None)
+            organization = channel.organization
+            name = channel.name
+            is_active = channel.is_active
+        else:
+            organization = org
+            name = str(request.data.get("name") or "Draft notification channel")
+            is_active = True
+        draft = NotificationChannel(
+            organization=organization,
+            name=name,
+            channel_type=channel_type,
+            config=config,
+            is_active=is_active,
+        )
+        try:
+            return Response(test_channel(draft))
         except Exception as exc:  # noqa: BLE001
             return Response(
                 {"status": "failed", "error": str(exc)},
