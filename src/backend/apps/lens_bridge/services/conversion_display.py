@@ -160,6 +160,24 @@ def document_conversion_view(conversion_state: Any) -> dict[str, Any] | None:
         progress_percent = None
 
     error = str(conversion_state.get("error") or "").strip()
+    recovery_raw = conversion_state.get("recovery")
+    recovery = (
+        {
+            key: recovery_raw.get(key)
+            for key in (
+                "resumable",
+                "resumed",
+                "resume_source",
+                "restart_required",
+                "reason",
+                "original_task_id",
+                "task_id",
+            )
+            if key in recovery_raw
+        }
+        if isinstance(recovery_raw, dict)
+        else None
+    )
     # True only when at least one document is usable and nothing failed.
     # Zero-candidate runs are not "all ok" — UIs should show an empty/no-op state.
     all_ok = (
@@ -190,6 +208,7 @@ def document_conversion_view(conversion_state: Any) -> dict[str, Any] | None:
         "progress_message": str(conversion_state.get("progress_message") or ""),
         "progress_percent": progress_percent,
         "error": error,
+        "recovery": recovery,
         "finished_at": str(conversion_state.get("finished_at") or ""),
         "counts": {
             "total": total,

@@ -394,12 +394,12 @@ docker() {
 	"load -i ${archive}")
 		LOADED_LENSNODE_ARCHIVE=$((LOADED_LENSNODE_ARCHIVE + 1))
 		;;
-	"image inspect --format {{.Id}} hyperfilelens-sourcelens-lensnode:latest"|"image inspect --format {{.Id}} oneprolabs/sourcelens-lensnode:0.57.0")
+	"image inspect --format {{.Id}} hyperfilelens-sourcelens-lensnode:latest"|"image inspect --format {{.Id}} oneprolabs/sourcelens-lensnode:0.60.1")
 		printf '%s\n' "${DESIRED_LENSNODE_IMAGE_ID}"
 		;;
 	"image ls oneprolabs/sourcelens-lensnode --format {{.Repository}}:{{.Tag}}")
 		if [[ "${LIST_VERSIONED_LENSNODE}" == "1" ]]; then
-			printf '%s\n' "oneprolabs/sourcelens-lensnode:0.57.0"
+			printf '%s\n' "oneprolabs/sourcelens-lensnode:0.60.1"
 		fi
 		;;
 	"ps -aq --no-trunc --filter label=com.hyperfilelens.managed=true --filter label=com.hyperfilelens.component=gateway-lensnode --filter label=com.docker.compose.project=hyperfilelens-gateway --filter label=com.docker.compose.service=lensnode")
@@ -429,7 +429,7 @@ SIDECAR_RECREATED=0
 converge_local_platform_gateway_lensnode
 [[ "${LOADED_LENSNODE_ARCHIVE}" == "1" ]]
 [[ "${SIDECAR_RECREATED}" == "1" ]]
-[[ "${SIDECAR_LENSNODE_IMAGE}" == "oneprolabs/sourcelens-lensnode:0.57.0" ]]
+[[ "${SIDECAR_LENSNODE_IMAGE}" == "oneprolabs/sourcelens-lensnode:0.60.1" ]]
 [[ "${CURRENT_LENSNODE_IMAGE_ID}" == "${DESIRED_LENSNODE_IMAGE_ID}" ]]
 
 # The same archive must not recreate a container that already runs it.

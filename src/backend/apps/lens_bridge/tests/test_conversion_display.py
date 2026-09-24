@@ -31,6 +31,37 @@ class ConversionDisplayTests(TestCase):
         self.assertFalse(view["all_ok"])
         self.assertEqual(view["problem_items"], [])
 
+    def test_conversion_recovery_is_exposed_without_remote_details(self):
+        view = conversion_display.document_conversion_view(
+            {
+                "status": "PENDING",
+                "recovery": {
+                    "task_id": "resume-2",
+                    "original_task_id": "convert-1",
+                    "resumable": True,
+                    "resumed": True,
+                    "resume_source": "checkpoint",
+                    "restart_required": False,
+                    "reason": "CHECKPOINT_AVAILABLE",
+                    "sensitive": "must-not-be-forwarded",
+                },
+            }
+        )
+
+        assert view is not None
+        self.assertEqual(
+            view["recovery"],
+            {
+                "task_id": "resume-2",
+                "original_task_id": "convert-1",
+                "resumable": True,
+                "resumed": True,
+                "resume_source": "checkpoint",
+                "restart_required": False,
+                "reason": "CHECKPOINT_AVAILABLE",
+            },
+        )
+
     def test_document_conversion_view_counts_and_items(self):
         view = conversion_display.document_conversion_view(
             {

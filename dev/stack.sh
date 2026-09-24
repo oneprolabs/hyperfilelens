@@ -1198,7 +1198,7 @@ print_dev_target() {
 	fi
 	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
 		sourcelens_mode="$(read_env_value_or SOURCELENS_MODE bundled "${ROOT}/.env" | tr 'A-Z' 'a-z')"
-		sourcelens_ref="${SOURCELENS_GIT_REF:-v0.57.0}"
+		sourcelens_ref="${SOURCELENS_GIT_REF:-v0.60.1}"
 		target_value "SourceLens" "${sourcelens_mode} / ${sourcelens_ref}"
 	else
 		target_value "SourceLens" "disabled"
@@ -1277,7 +1277,7 @@ print_urls() {
 	fi
 
 	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
-		source_lens_display="${sourcelens_mode} / ${SOURCELENS_GIT_REF:-v0.57.0}"
+		source_lens_display="${sourcelens_mode} / ${SOURCELENS_GIT_REF:-v0.60.1}"
 		if [[ -f "${sl_env}" ]]; then
 			sl_user="$(read_env_value_or DJANGO_SUPERUSER_USERNAME admin "${sl_env}")"
 			sl_email="$(read_env_value_or DJANGO_SUPERUSER_EMAIL admin@example.com "${sl_env}")"

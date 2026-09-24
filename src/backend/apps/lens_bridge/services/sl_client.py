@@ -729,6 +729,43 @@ def list_managed_datasource_conversion_tasks(
     return []
 
 
+def get_managed_datasource_conversion_recovery(
+    datasource_uuid: str,
+    task_id: str,
+) -> dict[str, Any] | None:
+    """Return SourceLens' recovery assessment for one conversion task."""
+
+    try:
+        raw = request_json(
+            "GET",
+            f"/api/lens/admin/datasources/{datasource_uuid}/"
+            f"conversion-tasks/{task_id}/recovery",
+        )
+    except LensBridgeError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+    return raw if isinstance(raw, dict) else None
+
+
+def resume_managed_datasource_conversion(
+    datasource_uuid: str,
+    task_id: str,
+) -> dict[str, Any]:
+    """Ask SourceLens to resume one orphaned managed conversion idempotently."""
+
+    raw = request_json(
+        "POST",
+        f"/api/lens/admin/datasources/{datasource_uuid}/"
+        f"conversion-tasks/{task_id}/resume",
+    )
+    if not isinstance(raw, dict) or not raw.get("task_id"):
+        raise LensBridgeError(
+            "SourceLens conversion resume returned no task id."
+        )
+    return raw
+
+
 def get_task_by_id(task_id: str) -> dict[str, Any] | None:
     """Return full SourceLens task state by its stable task identifier."""
 

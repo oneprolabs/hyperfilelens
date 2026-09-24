@@ -688,6 +688,72 @@ def convert_documents(
             error = str(
                 task.get("error") or "DATASOURCE_CONVERSION_FAILED"
             )
+            recovery = None
+            try:
+                recovery = sl_client.get_managed_datasource_conversion_recovery(
+                    str(ks.sl_datasource_uuid),
+                    task_id,
+                )
+            except sl_client.LensBridgeUnavailable as exc:
+                retry_after = _record_transient_state(
+                    ks=ks,
+                    sync_state=sync_state,
+                    state=state,
+                    operation="recover_conversion",
+                )
+                raise ManagedDatasourcePending(
+                    "SourceLens is temporarily unavailable while checking "
+                    "conversion recovery.",
+                    retry_after_seconds=retry_after,
+                ) from exc
+            if isinstance(recovery, dict):
+                state["recovery"] = recovery
+                if recovery.get("resumable"):
+                    try:
+                        resumed = sl_client.resume_managed_datasource_conversion(
+                            str(ks.sl_datasource_uuid),
+                            task_id,
+                        )
+                    except sl_client.LensBridgeUnavailable as exc:
+                        retry_after = _record_transient_state(
+                            ks=ks,
+                            sync_state=sync_state,
+                            state=state,
+                            operation="resume_conversion",
+                        )
+                        raise ManagedDatasourcePending(
+                            "SourceLens is temporarily unavailable while "
+                            "resuming conversion.",
+                            retry_after_seconds=retry_after,
+                        ) from exc
+                    next_task_id = str(resumed.get("task_id") or "")
+                    if next_task_id:
+                        state.update(
+                            {
+                                "original_task_id": task_id,
+                                "task_id": next_task_id,
+                                "status": str(
+                                    resumed.get("status") or "PENDING"
+                                ),
+                                "resume_source": resumed.get("resume_source"),
+                                "resume_reason": resumed.get("reason"),
+                                "progress_message": (
+                                    "Document conversion is resuming from "
+                                    "the latest safe checkpoint."
+                                ),
+                                "resumed_at": timezone.now().isoformat(),
+                            }
+                        )
+                        _clear_transient_state(state)
+                        _persist_conversion_state(
+                            ks=ks,
+                            sync_state=sync_state,
+                            state=state,
+                        )
+                        raise ManagedDatasourcePending(
+                            "Document conversion is resuming from the "
+                            "latest safe checkpoint."
+                        )
             state["status"] = str(task.get("status") or "FAILURE")
             state["error"] = error
             _persist_conversion_state(
