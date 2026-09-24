@@ -92,6 +92,49 @@ def browse_task_for_correlation(
     return task
 
 
+def active_scope_task_for_selection(
+    *,
+    organization: Organization,
+    user_id: int,
+    directory_id: int,
+    snapshot_id: str,
+    gateway_link_id: int,
+    path: str,
+) -> NodeTask | None:
+    """Find an in-flight scope calculation after a page/request restart."""
+
+    gateway = (
+        LensGatewayLink.objects.filter(
+            pk=gateway_link_id,
+            organization_id=organization.id,
+            is_deleted=False,
+        )
+        .values_list("gateway_id", flat=True)
+        .first()
+    )
+    if gateway is None:
+        return None
+    wanted_path = _clean_relative_path(path)
+    prefix = f"selection:user:{int(user_id)}:"
+    tasks = NodeTask.objects.filter(
+        requesting_organization_id=organization.id,
+        node_id=gateway,
+        kind="lens.snapshot.scope.resolve",
+        correlation_type=SCOPE_CORRELATION_TYPE,
+        correlation_id__startswith=prefix,
+        status__in=(NodeTask.Status.PENDING, NodeTask.Status.RUNNING),
+    ).order_by("-created_at", "-id")[:20]
+    for task in tasks:
+        payload = task.payload if isinstance(task.payload, dict) else {}
+        if (
+            payload.get("snapshot_directory_id") == directory_id
+            and str(payload.get("snapshot_id") or "") == str(snapshot_id)
+            and _clean_relative_path(str(payload.get("path") or "")) == wanted_path
+        ):
+            return task
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class SnapshotTaskFailure:
     code: str

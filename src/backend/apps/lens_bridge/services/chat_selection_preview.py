@@ -189,6 +189,18 @@ def start_scope_preview(
             {"source_path": "Selected path is outside the snapshot directory."}
         )
 
+    Organization.objects.select_for_update().only("id").get(pk=organization.id)
+    existing = snapshot_scope_tasks.active_scope_task_for_selection(
+        organization=organization,
+        user_id=int(user.id),
+        directory_id=int(directory_id),
+        snapshot_id=str(directory.kopia_snapshot_id),
+        gateway_link_id=int(gateway_link_id),
+        path=relative_path,
+    )
+    if existing is not None:
+        return scope_task_payload(existing)
+
     correlation_id = _scope_correlation_id(
         user_id=int(user.id),
         snapshot_id=int(snapshot_id),
@@ -198,7 +210,6 @@ def start_scope_preview(
         request_token=str(request_token),
         attempt=int(attempt),
     )
-    Organization.objects.select_for_update().only("id").get(pk=organization.id)
     existing = snapshot_scope_tasks.scope_task_for_correlation(
         organization=organization,
         correlation_id=correlation_id,
