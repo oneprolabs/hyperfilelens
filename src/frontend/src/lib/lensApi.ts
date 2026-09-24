@@ -1217,19 +1217,12 @@ export async function fetchCopilotSnapshotBrowse(
   return lensPayload<LensSnapshotBrowseTask>(raw)
 }
 
-export async function browseCopilotSnapshotDirectory(
-  directoryId: number,
-  params: {
-    backupSourceSnapshotId: number
-    gatewayLinkId: number
-    path?: string
-    limit?: number
-    organization_key?: string
-  },
+async function pollCopilotSnapshotBrowseTask(
+  initialTask: LensSnapshotBrowseTask,
   signal?: AbortSignal,
+  organizationKey?: string,
 ): Promise<LensSnapshotBrowseResult> {
-  const started = await startCopilotSnapshotBrowse(directoryId, params, signal)
-  let task = started
+  let task = initialTask
   let polls = 0
   while (task.status === 'pending' || task.status === 'running') {
     if (polls >= COPILOT_SNAPSHOT_BROWSE_SOFT_WAIT_POLLS && task.task_id) {
@@ -1261,7 +1254,10 @@ export async function browseCopilotSnapshotDirectory(
     if (signal?.aborted) {
       throw new DOMException('Aborted', 'AbortError')
     }
-    task = await fetchCopilotSnapshotBrowse(task.task_id, signal, params.organization_key)
+    if (!task.task_id) {
+      return { status: 'waiting', task_id: '' }
+    }
+    task = await fetchCopilotSnapshotBrowse(task.task_id, signal, organizationKey)
   }
   if (task.status !== 'success') {
     const errorCode = task.error_code || 'INSIGHT.SNAPSHOT_BROWSE_FAILED'
@@ -1276,10 +1272,47 @@ export async function browseCopilotSnapshotDirectory(
   }
   return {
     status: 'success',
-    entries: (task.entries || []).slice(0, params?.limit || 500),
+    entries: (task.entries || []).slice(0, 500),
     has_more: Boolean(task.has_more),
     skipped_special_count: Math.max(0, Number(task.skipped_special_count || 0)),
   }
+}
+
+export async function resumeCopilotSnapshotBrowse(
+  taskId: string,
+  signal?: AbortSignal,
+  organizationKey?: string,
+): Promise<LensSnapshotBrowseResult> {
+  return pollCopilotSnapshotBrowseTask(
+    await fetchCopilotSnapshotBrowse(taskId, signal, organizationKey),
+    signal,
+    organizationKey,
+  )
+}
+
+export async function browseCopilotSnapshotDirectory(
+  directoryId: number,
+  params: {
+    backupSourceSnapshotId: number
+    gatewayLinkId: number
+    path?: string
+    limit?: number
+    organization_key?: string
+  },
+  signal?: AbortSignal,
+): Promise<LensSnapshotBrowseResult> {
+  const result = await pollCopilotSnapshotBrowseTask(
+    await startCopilotSnapshotBrowse(directoryId, params, signal),
+    signal,
+    params.organization_key,
+  )
+  if (result.status === 'success') {
+    return {
+      ...result,
+      entries: result.entries.slice(0, params?.limit || 500),
+    }
+  }
+  return result
 }
 
 export type LensScopeSummary = {

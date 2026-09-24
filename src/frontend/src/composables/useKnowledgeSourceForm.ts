@@ -12,6 +12,7 @@ import {
   listLensBackupSourceSnapshots,
   listLensGateways,
   patchKnowledgeSource,
+  resumeCopilotSnapshotBrowse,
   type LensGatewayInsight,
   type LensIngestPolicy,
   type LensSnapshotBrowseResult,
@@ -157,7 +158,7 @@ export function useKnowledgeSourceForm(
     const controller = new AbortController()
     snapshotBrowseControllers.add(controller)
     try {
-      const result = await browseCopilotSnapshotDirectory(
+      let result = await browseCopilotSnapshotDirectory(
         directoryId,
         {
           ...params,
@@ -169,6 +170,13 @@ export function useKnowledgeSourceForm(
         },
         controller.signal,
       )
+      while (result.status === 'waiting' && result.task_id) {
+        result = await resumeCopilotSnapshotBrowse(
+          result.task_id,
+          controller.signal,
+          orgKey,
+        )
+      }
       if (result.status === 'waiting') return result
       snapshotBrowseCache.set(cacheKey, result)
       while (snapshotBrowseCache.size > SNAPSHOT_BROWSE_CACHE_LIMIT) {
