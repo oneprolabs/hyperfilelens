@@ -726,6 +726,7 @@ class ManagedDatasourceTests(SimpleTestCase):
         }
         recovery.return_value = {
             "task_id": "convert-1",
+            "orphaned": True,
             "resumable": True,
             "resume_source": "checkpoint",
             "reason": "CHECKPOINT_AVAILABLE",
@@ -757,6 +758,46 @@ class ManagedDatasourceTests(SimpleTestCase):
             sync_state["conversion"]["resume_source"],
             "checkpoint",
         )
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.resume_managed_datasource_conversion"
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.get_managed_datasource_conversion_recovery",
+        return_value={
+            "task_id": "convert-1",
+            "orphaned": False,
+            "resumable": True,
+            "reason": "CHECKPOINT_AVAILABLE",
+        },
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value={"task_id": "convert-1", "status": "FAILURE", "error": "INVALID_DOCUMENT"},
+    )
+    def test_ordinary_failure_does_not_resume_even_with_checkpoint(
+        self, _get_task, _get_recovery, resume
+    ):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        conversion = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "convert-1",
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(conversion)
+                ),
+            }
+        }
+        with self.assertRaisesRegex(
+            managed_datasource.ManagedDatasourceError, "INVALID_DOCUMENT"
+        ):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=conversion
+            )
+        resume.assert_not_called()
 
     def test_unchanged_sidecar_counts_as_readable(self):
         self.assertFalse(

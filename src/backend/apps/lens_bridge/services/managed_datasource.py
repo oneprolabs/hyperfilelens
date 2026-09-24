@@ -708,7 +708,11 @@ def convert_documents(
                 ) from exc
             if isinstance(recovery, dict):
                 state["recovery"] = recovery
-                if recovery.get("resumable"):
+                # Only orphaned conversions may be resumed automatically.
+                # A regular conversion failure can also carry a checkpoint,
+                # but retrying it here would silently repeat a permanent
+                # document/model failure forever.
+                if recovery.get("orphaned") is True and recovery.get("resumable"):
                     try:
                         resumed = sl_client.resume_managed_datasource_conversion(
                             str(ks.sl_datasource_uuid),
@@ -754,6 +758,19 @@ def convert_documents(
                             "Document conversion is resuming from the "
                             "latest safe checkpoint."
                         )
+                if (
+                    recovery.get("orphaned") is True
+                    and recovery.get("reason") == "LENSNODE_UNAVAILABLE"
+                ):
+                    _persist_conversion_state(
+                        ks=ks,
+                        sync_state=sync_state,
+                        state=state,
+                    )
+                    raise ManagedDatasourcePending(
+                        "Waiting for the LensNode before resuming document conversion.",
+                        retry_after_seconds=CONVERSION_IDLE_RETRY_MAX_SECONDS,
+                    )
             state["status"] = str(task.get("status") or "FAILURE")
             state["error"] = error
             _persist_conversion_state(
