@@ -145,6 +145,50 @@ class ChatSelectionPreviewTests(TestCase):
             )
         )
 
+    @patch(
+        "apps.lens_bridge.services.chat_selection_preview."
+        "snapshot_scope_tasks.dispatch_scope_resolution"
+    )
+    def test_reopen_reuses_active_scope_task_without_dispatching_another_reader(
+        self, dispatch
+    ):
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.organization,
+            gateway=self.node,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+        )
+        active_task = NodeTask.objects.create(
+            organization=self.organization,
+            requesting_organization_id=self.organization.id,
+            node=self.node,
+            correlation_type=snapshot_scope_tasks.SCOPE_CORRELATION_TYPE,
+            correlation_id=f"selection:user:{self.user.id}:old-request",
+            kind="lens.snapshot.scope.resolve",
+            status=NodeTask.Status.RUNNING,
+            payload={
+                "snapshot_directory_id": self.directory.id,
+                "snapshot_id": self.directory.kopia_snapshot_id,
+                "path": "contracts",
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(minutes=5),
+        )
+
+        payload = chat_selection_preview.start_scope_preview(
+            organization=self.organization,
+            user=self.user,
+            snapshot_id=self.snapshot.id,
+            directory_id=self.directory.id,
+            source_path="/documents/contracts",
+            gateway_link_id=gateway_link.id,
+            request_token=str(uuid.uuid4()),
+            attempt=0,
+        )
+
+        self.assertEqual(payload["task_id"], str(active_task.id))
+        self.assertEqual(payload["status"], NodeTask.Status.RUNNING)
+        dispatch.assert_not_called()
+
     def test_scope_task_payload_never_exposes_agent_diagnostics(self):
         task = NodeTask.objects.create(
             organization=self.organization,
