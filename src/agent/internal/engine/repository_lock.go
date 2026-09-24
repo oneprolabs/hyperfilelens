@@ -3,9 +3,11 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 var repositoryPrepareLocks sync.Map
@@ -48,10 +50,23 @@ func acquireInsightRepositoryOperationLock(
 		make(chan struct{}, 1),
 	)
 	lock := lockValue.(chan struct{})
+	waitStarted := time.Now()
 	select {
 	case lock <- struct{}{}:
+		slog.Info(
+			"insight_repository",
+			"event", "operation_lock_acquired",
+			"repository_id", spec.ID,
+			"wait_ms", time.Since(waitStarted).Milliseconds(),
+		)
 		return func() { <-lock }, nil
 	case <-ctx.Done():
+		slog.Warn(
+			"insight_repository",
+			"event", "operation_lock_canceled",
+			"repository_id", spec.ID,
+			"wait_ms", time.Since(waitStarted).Milliseconds(),
+		)
 		return nil, ctx.Err()
 	}
 }
