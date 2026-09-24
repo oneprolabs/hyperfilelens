@@ -2705,7 +2705,21 @@ function Invoke-Uninstall {
 
   # Complete removal deletes the data directory that owns uninstall.log. The
   # deferred remover runs from %TEMP% and must never recreate that directory.
-  $uninstallLog = if ($preserveData -and $uninstallLogPath) { $uninstallLogPath } else { "" }
+  $manualUninstallLog = if ($env:HFL_MANUAL_UNINSTALL -eq "1") {
+    [string]$env:HFL_MANUAL_UNINSTALL_LOG
+  }
+  else {
+    ""
+  }
+  $uninstallLog = if ($manualUninstallLog) {
+    $manualUninstallLog
+  }
+  elseif ($preserveData -and $uninstallLogPath) {
+    $uninstallLogPath
+  }
+  else {
+    ""
+  }
   Schedule-InstallRootRemoval -InstallRoot $deferredRemovalTarget -LogFile $uninstallLog
 
   Write-HflSection "Verifying"
