@@ -58,7 +58,7 @@ describe('BackupCreateWizard restore plan layout', () => {
     expect(treeLabelRule).toContain('overflow-wrap: anywhere;')
     expect(treeLabelRule).toContain('white-space: normal;')
     expect(treeLabelRule).not.toContain('text-overflow: ellipsis;')
-    expect(wizardSource).toContain('.el-tree-node__expand-icon.is-leaf) {\n  width: 8px;')
+    expect(wizardSource).toMatch(/\.create-recovery-popover-tree :deep\(\.el-tree-node__expand-icon\) \{[\s\S]*?width: 20px;[\s\S]*?flex: 0 0 20px;/)
     expect(wizardSource).toMatch(/\.source-dir-tree :deep\(\.el-tree-node\.is-current > \.el-tree-node__content\) \{[\s\S]*?var\(--el-bg-color-overlay\)/)
     expect(wizardSource).not.toContain('width: min(360px, calc(100vw - 48px)) !important;')
     expect(compactWizardSource).toContain('class="create-recovery-plan-action hfl-table-no-tooltip"')

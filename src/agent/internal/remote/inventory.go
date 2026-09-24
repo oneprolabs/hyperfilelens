@@ -19,6 +19,8 @@ import (
 	"hyperfilelens/agent/internal/wire"
 )
 
+const RestoreTargetDirectoryCreateCapability = "restore_target_directory_create_v1"
+
 // SendInventory emits a heartbeat frame with host and bundle metadata for the control plane.
 func SendInventory(
 	ctx context.Context,
@@ -84,6 +86,7 @@ func SendInventory(
 			"repository_server_port_range_v1",
 			"detached_uninstall_v2",
 			"storage_inventory_v1",
+			RestoreTargetDirectoryCreateCapability,
 		},
 	} {
 		payload[key] = value

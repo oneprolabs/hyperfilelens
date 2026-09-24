@@ -235,6 +235,12 @@ export type BackupSourcePathInfo = BackupSourceDirectoryEntry & {
   task_id: string
 }
 
+export type BackupSourceDirectoryCreatePayload = {
+  source_id: string
+  parent_path: string
+  name: string
+}
+
 const base = '/api/v1/source/resources'
 const backupSelectableBase = '/api/v1/source/backup-selectable'
 
@@ -314,6 +320,7 @@ export async function listBackupSourceDirectories(params: {
   cursor?: string
   include_files?: boolean
   include_metadata?: boolean
+  restore_target?: boolean
 }, init?: RequestInit) {
   const qs = new URLSearchParams()
   qs.set('source_id', params.source_id)
@@ -323,6 +330,7 @@ export async function listBackupSourceDirectories(params: {
   if (params.cursor !== undefined && params.cursor !== '') qs.set('cursor', params.cursor)
   if (params.include_files !== undefined) qs.set('include_files', params.include_files ? 'true' : 'false')
   if (params.include_metadata !== undefined) qs.set('include_metadata', params.include_metadata ? 'true' : 'false')
+  if (params.restore_target !== undefined) qs.set('restore_target', params.restore_target ? 'true' : 'false')
   return unwrapApiPayload<BackupSourceDirectoryList>(
     await api<unknown>(`${backupSelectableBase}/directories/?${qs}`, { ...init, headers: orgHeaders() }),
   )
@@ -333,14 +341,32 @@ export async function getBackupSourcePathInfo(params: {
   path: string
   timeout?: number
   include_metadata?: boolean
+  restore_target?: boolean
 }, init?: RequestInit) {
   const qs = new URLSearchParams()
   qs.set('source_id', params.source_id)
   qs.set('path', params.path)
   if (params.timeout !== undefined) qs.set('timeout', String(params.timeout))
   if (params.include_metadata !== undefined) qs.set('include_metadata', params.include_metadata ? 'true' : 'false')
+  if (params.restore_target !== undefined) qs.set('restore_target', params.restore_target ? 'true' : 'false')
   return unwrapApiPayload<BackupSourcePathInfo>(
     await api<unknown>(`${backupSelectableBase}/path-info/?${qs}`, { ...init, headers: orgHeaders() }),
+  )
+}
+
+export async function createBackupSourceDirectory(
+  payload: BackupSourceDirectoryCreatePayload,
+) {
+  return unwrapApiPayload<BackupSourceDirectoryEntry & {
+    source_id: string
+    node_id: number
+    task_id: string
+  }>(
+    await api<unknown>(`${backupSelectableBase}/directories/create/`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      headers: orgHeaders(),
+    }),
   )
 }
 

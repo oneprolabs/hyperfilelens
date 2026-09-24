@@ -14,6 +14,10 @@ from django.utils import timezone
 from apps.monitor.services.internal.node_monitor import resource_type_for_role
 from apps.monitor.services.internal.resource_metrics import latest_resource_metric
 from apps.node.models import Node
+from apps.node.services.capabilities import (
+    RESTORE_TARGET_DIRECTORY_CREATE_CAPABILITY,
+    node_supports_capability,
+)
 from apps.node.models.base import NodeRole
 from apps.node.services.interface import run_agent_task_sync
 from apps.source.constants import ResourceType
@@ -59,6 +63,14 @@ class BackupSourceDirectoryTimeout(TimeoutError):
     """The Agent did not return a directory listing in time."""
 
 
+class BackupSourceDirectoryUnsupported(BackupSourceDirectoryError):
+    """The target Agent does not support restore directory creation."""
+
+
+class BackupSourceDirectoryCreateFailed(BackupSourceDirectoryError):
+    """The Agent could not create the requested child directory."""
+
+
 @dataclass(frozen=True)
 class BrowseTarget:
     source_kind: str
@@ -99,6 +111,111 @@ def _clean_path(path: str) -> str:
                 return f"{clean[0].upper()}:\\"
         return clean
     return posixpath.normpath(value)
+
+
+def _valid_child_name(name: str) -> bool:
+    if not name or name in {".", ".."} or len(name) > 255:
+        return False
+    if any(char in name for char in ("/", "\\", "\x00")):
+        return False
+    if name != name.strip() or name.endswith("."):
+        return False
+    return True
+
+
+def _join_child_path(parent: str, name: str, *, windows: bool) -> str:
+    return (
+        ntpath.join(parent, name)
+        if windows
+        else posixpath.join(parent, name)
+    )
+
+
+def create_backup_source_directory(
+    *,
+    organization_id: int,
+    source_id: str,
+    parent_path: str,
+    name: str,
+    wait_timeout_seconds: int = 20,
+) -> dict[str, Any]:
+    """Create exactly one child under an existing restore target directory."""
+
+    folder_name = str(name or "")
+    if not _valid_child_name(folder_name):
+        raise BackupSourceDirectoryInvalid("Invalid folder name.")
+    parent = _clean_path(parent_path)
+    if not parent:
+        raise BackupSourceDirectoryInvalid("Select a parent directory.")
+    target = _resolve_target(
+        organization_id=organization_id,
+        source_id=source_id,
+        path=parent,
+    )
+    windows = _is_windows_node(target.node) and target.source_kind != "nas"
+    if windows:
+        if any(char in folder_name for char in '<>:"|?*'):
+            raise BackupSourceDirectoryInvalid("Invalid Windows folder name.")
+        if folder_name.split(".", 1)[0].upper() in {
+            "CON", "PRN", "AUX", "NUL",
+            *(f"COM{index}" for index in range(1, 10)),
+            *(f"LPT{index}" for index in range(1, 10)),
+        }:
+            raise BackupSourceDirectoryInvalid("Reserved Windows folder name.")
+    if target.source_kind == "nas" and not _is_subpath(target.root_path, target.path):
+        raise BackupSourceDirectoryForbidden("Path is outside the mounted NAS directory.")
+    if not node_supports_capability(target.node, RESTORE_TARGET_DIRECTORY_CREATE_CAPABILITY):
+        raise BackupSourceDirectoryUnsupported(
+            "The target backup host or NAS Proxy is too old to create restore directories.",
+            agent_error_code="AGENT.VERSION_TOO_OLD",
+        )
+    requested_path = _join_child_path(
+        target.path,
+        folder_name,
+        windows=windows,
+    )
+    payload: dict[str, Any] = {"path": requested_path, "restore_target": True}
+    if target.nas_payload:
+        payload["nas"] = target.nas_payload
+    outcome = run_agent_task_sync(
+        organization_id=organization_id,
+        node_id=target.node.id,
+        kind="path.mkdir",
+        payload=payload,
+        correlation_type="source.directory_create",
+        correlation_id=source_id,
+        wait_timeout_seconds=wait_timeout_seconds,
+    )
+    if outcome.timed_out:
+        raise BackupSourceDirectoryTimeout("Directory creation timed out.")
+    if not outcome.ok:
+        raw_result = outcome.result if isinstance(outcome.result, dict) else {}
+        code = str(raw_result.get("error_code") or "")
+        raise BackupSourceDirectoryCreateFailed(
+            str(getattr(outcome.task, "last_error", "") or "Directory creation failed."),
+            agent_error_code=code,
+        )
+    result = outcome.result if isinstance(outcome.result, dict) else {}
+    resolved_path = _clean_path(str(result.get("path") or requested_path))
+    if _clean_path(resolved_path) != _clean_path(requested_path):
+        raise BackupSourceDirectoryCreateFailed(
+            "Agent returned an unexpected directory path.",
+            agent_error_code="PATH_CREATE_FAILED",
+        )
+    if target.source_kind == "nas":
+        if not _is_subpath(target.root_path, resolved_path):
+            raise BackupSourceDirectoryForbidden("Path is outside the mounted NAS directory.")
+        resolved_path = to_share_relative(target.root_path, resolved_path)
+    return {
+        "source_id": source_id,
+        "node_id": target.node.id,
+        "path": resolved_path,
+        "label": folder_name,
+        "isLeaf": False,
+        "is_dir": True,
+        "path_type": "directory",
+        "task_id": str(outcome.task_id),
+    }
 
 
 def _node_os_name(node: Node) -> str:
@@ -528,6 +645,7 @@ def list_backup_source_directories(
     include_files: bool = False,
     include_metadata: bool | None = None,
     cursor: str = "",
+    restore_target: bool = False,
 ) -> dict[str, Any]:
     """List child paths for a backup source through its Agent/Proxy WSS channel."""
 
@@ -587,6 +705,8 @@ def list_backup_source_directories(
         payload["cursor"] = cursor
     if target.nas_payload:
         payload["nas"] = target.nas_payload
+    if restore_target:
+        payload["restore_target"] = True
 
     logger.info(
         "backup source directory dispatch source_id=%s source_kind=%s node_id=%s path=%s timeout=%ss nas=%s",
@@ -740,6 +860,7 @@ def get_backup_source_path_info(
     path: str,
     wait_timeout_seconds: int = 10,
     include_metadata: bool | None = None,
+    restore_target: bool = False,
 ) -> dict[str, Any]:
     """Validate one source path and return file/folder metadata."""
 
@@ -759,6 +880,8 @@ def get_backup_source_path_info(
         payload["include_metadata"] = bool(include_metadata)
     if target.nas_payload:
         payload["nas"] = target.nas_payload
+    if restore_target:
+        payload["restore_target"] = True
 
     logger.info(
         "backup source path info dispatch source_id=%s source_kind=%s node_id=%s path=%s timeout=%ss",

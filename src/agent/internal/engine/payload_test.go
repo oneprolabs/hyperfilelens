@@ -38,6 +38,9 @@ func TestNormalizeKind(t *testing.T) {
 	if got := NormalizeKind("path.stat"); got != "path.info" {
 		t.Fatalf("got %q", got)
 	}
+	if got := NormalizeKind("directory.create"); got != "path.mkdir" {
+		t.Fatalf("got %q", got)
+	}
 	if got := NormalizeKind("path.usage"); got != "path.usage" {
 		t.Fatalf("got %q", got)
 	}

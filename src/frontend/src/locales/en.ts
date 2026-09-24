@@ -111,6 +111,7 @@ export const en = {
       insightGatewayChatQueueFull: 'The chat queue for this Data Gateway is full. Try again later or use another Data Gateway.',
       serverInternal: 'Service is temporarily unavailable. Please try again later.',
       agentTimeout: 'Agent timed out. Confirm the node is online and try again.',
+      agentVersionTooOld: 'This backup host or NAS Proxy is too old to create restore directories. Upgrade it and try again.',
       agentUnreachable: 'Agent is unreachable. Confirm the node is online.',
       agentPathPermissionDenied: 'The Agent does not have permission to access this path. Choose a readable path or use Host files · continuous when broader host access is required.',
       agentPathProtected: 'This directory is managed by the HyperFileLens Agent and cannot be selected as a backup source.',

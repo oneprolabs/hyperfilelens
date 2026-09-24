@@ -25,6 +25,7 @@ import {
   File as FileIcon,
   FolderTree,
   FolderOpen,
+  FolderPlus,
   TextCursorInput,
   Info,
   ShieldCheck,
@@ -85,6 +86,7 @@ import {
 } from '../../lib/protectionBackupTargetValidationDetails'
 import {
   createSourceResource,
+  createBackupSourceDirectory,
   listBackupSourceDirectories,
   getBackupSourcePathInfo,
   getSourceResource,
@@ -1044,6 +1046,10 @@ const createSourceTreeRemountKeyBySource = reactive<Record<string, number>>({})
 const refreshingSourceDirectoryByKey = reactive<Record<string, boolean>>({})
 const sourceDirectoryExpansionRevisionByKey = new Map<string, number>()
 const directoryLoadingByKey = reactive<Record<string, number>>({})
+const recoveryDirectoryCreateNameByKey = reactive<Record<string, string | undefined>>({})
+const recoveryDirectoryCreateInputRefs = new Map<string, { focus?: () => void }>()
+const recoveryDirectoryCreatingByKey = reactive<Record<string, boolean>>({})
+const recoveryDirectoryPendingPathByKey = reactive<Record<string, string>>({})
 const sourceTreeConflictWarnedAt = reactive<Record<string, number>>({})
 const dirTreeProps = { label: 'label', children: 'children', isLeaf: 'isLeaf', disabled: 'disabled' }
 const targetAssignmentCheckedGroupKeys = ref<string[]>([])
@@ -2212,6 +2218,12 @@ function setCreateRecoveryDestPathPickerVisible(group: WizardSourceGroup, dirPla
   const destKey = recoveryDirPlanPickerKey(group, dirPlan, 'dest')
   createRecoveryDestPathPickerVisible[destKey] = visible
   if (visible) {
+    recoveryDirectoryPendingPathByKey[destKey] = dirPlan.restoreDir || ''
+    if (!dirPlan.restoreDir) {
+      void nextTick(() => createRecoveryDirectoryTreeRefs.get(destKey)?.setCurrentKey(null))
+    }
+  }
+  if (visible) {
     createRecoverySourcePathPickerVisible[recoveryDirPlanPickerKey(group, dirPlan, 'source')] = false
   }
 }
@@ -2241,6 +2253,110 @@ function setDirectoryLoading(key: string, loading: boolean) {
 
 function isDirectoryLoading(key: string) {
   return (directoryLoadingByKey[key] ?? 0) > 0
+}
+
+function recoveryDirectoryCreateKey(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig) {
+  return `${recoveryDirPlanPickerKey(group, dirPlan, 'dest')}:${recoveryDirectoryPendingPath(group, dirPlan) || dirPlan.restoreDir}`
+}
+
+function recoveryDirectoryPendingKey(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig) {
+  return recoveryDirPlanPickerKey(group, dirPlan, 'dest')
+}
+
+function recoveryDirectoryPendingPath(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig) {
+  return recoveryDirectoryPendingPathByKey[recoveryDirectoryPendingKey(group, dirPlan)] || ''
+}
+
+function setRecoveryDirectoryPendingPath(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig, path: string) {
+  recoveryDirectoryPendingPathByKey[recoveryDirectoryPendingKey(group, dirPlan)] = path
+}
+
+function confirmRecoveryDirectory(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig) {
+  const path = recoveryDirectoryPendingPath(group, dirPlan)
+  if (!path) {
+    ElMessage.warning({ message: t('protection.backupsPage.restoreCreateFolderSelectParent'), grouping: true })
+    return
+  }
+  updateRecoveryDirPlan(group, dirPlan, {
+    restoreDir: path,
+    restoreDirValidation: 'valid',
+    restoreDirError: '',
+  })
+  setCreateRecoveryDestPathPickerVisible(group, dirPlan, false)
+}
+
+function cancelRecoveryDirectoryPicker(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig) {
+  const key = recoveryDirectoryPendingKey(group, dirPlan)
+  delete recoveryDirectoryPendingPathByKey[key]
+  Object.keys(recoveryDirectoryCreateNameByKey).forEach((createKey) => {
+    if (createKey.startsWith(`${key}:`)) delete recoveryDirectoryCreateNameByKey[createKey]
+  })
+  setCreateRecoveryDestPathPickerVisible(group, dirPlan, false)
+}
+
+function isRecoveryDirectoryCreating(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig) {
+  return Boolean(recoveryDirectoryCreatingByKey[recoveryDirectoryCreateKey(group, dirPlan)])
+}
+
+function setRecoveryDirectoryCreateName(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig, name: string | undefined) {
+  const key = recoveryDirectoryCreateKey(group, dirPlan)
+  recoveryDirectoryCreateNameByKey[key] = name
+  if (name !== undefined) {
+    void nextTick(() => recoveryDirectoryCreateInputRefs.get(key)?.focus?.())
+  }
+}
+
+function setRecoveryDirectoryCreateInputRef(key: string, el: unknown) {
+  if (el && typeof el === 'object' && 'focus' in el) {
+    recoveryDirectoryCreateInputRefs.set(key, el as { focus?: () => void })
+  } else {
+    recoveryDirectoryCreateInputRefs.delete(key)
+  }
+}
+
+async function createRecoveryDirectory(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig) {
+  const parentPath = recoveryDirectoryPendingPath(group, dirPlan)
+  const key = recoveryDirectoryCreateKey(group, dirPlan)
+  const name = String(recoveryDirectoryCreateNameByKey[key] || '').trim()
+  if (!parentPath) {
+    ElMessage.warning({ message: t('protection.backupsPage.restoreCreateFolderSelectParent'), grouping: true })
+    return
+  }
+  if (!name) {
+    ElMessage.warning({ message: t('protection.backupsPage.restoreCreateFolderNameRequired'), grouping: true })
+    return
+  }
+  recoveryDirectoryCreatingByKey[key] = true
+  try {
+    const created = await createBackupSourceDirectory({
+      source_id: restoreDirectoryBrowseSourceId(dirPlan.targetHostId),
+      parent_path: parentPath,
+      name,
+    })
+    const treeKey = recoveryDirPlanPickerKey(group, dirPlan, 'dest')
+    const tree = createRecoveryDirectoryTreeRefs.get(treeKey)
+    if (tree?.getNode(parentPath)) {
+      await refreshCreateRecoveryDestDirectory(group, dirPlan, {
+        label: basenamePath(parentPath),
+        path: parentPath,
+        isLeaf: false,
+        path_type: 'directory',
+      })
+    }
+    setRecoveryDirectoryPendingPath(group, dirPlan, created.path)
+    delete recoveryDirectoryCreateNameByKey[key]
+    ElMessage.success({
+      message: t('protection.backupsPage.restoreCreateFolderSuccess', { name }),
+      grouping: true,
+    })
+  } catch (e) {
+    ElMessage.error({
+      message: apiErrorMessageI18n(e, t, t('protection.backupsPage.restoreCreateFolderFailed')),
+      grouping: true,
+    })
+  } finally {
+    delete recoveryDirectoryCreatingByKey[key]
+  }
 }
 
 function createSourceDirectoryLoadingKey(sourceId: string) {
@@ -2313,7 +2429,7 @@ async function loadCreateRecoveryDestTreeNode(
   const parentPath = node.level === 0 ? '' : String(node.data?.path ?? '')
   setDirectoryLoading(loadingKey, true)
   try {
-    const page = await listRealSourceDirChildren(restoreDirectoryBrowseSourceId(targetHostId), parentPath, { includeFiles: false }).catch((err) => {
+    const page = await listRealSourceDirChildren(restoreDirectoryBrowseSourceId(targetHostId), parentPath, { includeFiles: false, restoreTarget: true }).catch((err) => {
       ElMessage.error({ message: apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed')), grouping: true })
       return { entries: [], hasMore: false, nextCursor: '', limit: SOURCE_TREE_CHILD_LIMIT } as SourceTreePage
     })
@@ -2352,6 +2468,7 @@ async function refreshCreateRecoveryDirectory(
   treeKey: string,
   data: SourceTreeItem,
   loadChildren: () => Promise<DemoDirTreeItem[]>,
+  notify = false,
 ) {
   if (!data.path || data.path_type === 'file' || isWholeSnapshotRecoveryPath(data.path)) return
   const tree = createRecoveryDirectoryTreeRefs.get(treeKey)
@@ -2381,7 +2498,7 @@ async function refreshCreateRecoveryDirectory(
     const hasChildren = children.length > 0
     if (!hasChildren) {
       refreshedNode.collapse?.()
-      ElMessage.info({
+      if (notify) ElMessage.info({
         message: t('protection.backupsPage.dirTreeRefreshEmpty', { path: data.path }),
         grouping: true,
       })
@@ -2396,7 +2513,7 @@ async function refreshCreateRecoveryDirectory(
     })) {
       refreshedNode.expand?.()
     }
-    ElMessage.success({
+    if (notify) ElMessage.success({
       message: t('protection.backupsPage.dirTreeRefreshSuccess', { path: data.path }),
       grouping: true,
     })
@@ -2434,6 +2551,7 @@ function refreshCreateRecoveryDestDirectory(
   return refreshCreateRecoveryDirectory(treeKey, data, async () => {
     const page = await listRealSourceDirChildren(restoreDirectoryBrowseSourceId(dirPlan.targetHostId), data.path, {
       includeFiles: false,
+      restoreTarget: true,
       forceRefresh: true,
     })
     return page.entries
@@ -2467,10 +2585,14 @@ function updateCreateRecoverySourcePathInput(group: WizardSourceGroup, dirPlan: 
   })
 }
 
-function onCreateRecoveryDestPathTreePick(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig, data: DemoDirTreeItem) {
-  restoreCreateRecoveryPathErrorNotice(group, dirPlan, 'dest')
-  updateRecoveryDirPlan(group, dirPlan, { restoreDir: data.path, restoreDirValidation: 'valid', restoreDirError: '' })
-  setCreateRecoveryDestPathPickerVisible(group, dirPlan, false)
+function onCreateRecoveryDestPathTreePick(
+  group: WizardSourceGroup,
+  dirPlan: CreateRecoveryDirPlanConfig,
+  data: DemoDirTreeItem,
+) {
+  const previousPath = recoveryDirectoryPendingPath(group, dirPlan)
+  if (previousPath !== data.path) delete recoveryDirectoryCreateNameByKey[recoveryDirectoryCreateKey(group, dirPlan)]
+  setRecoveryDirectoryPendingPath(group, dirPlan, data.path)
 }
 
 function findRecoveryPlanConfiguredRoot(group: WizardSourceGroup, path: string) {
@@ -2569,6 +2691,7 @@ async function validateCreateRecoveryDestPathInput(group: WizardSourceGroup, dir
       source_id: restoreDirectoryBrowseSourceId(dirPlan.targetHostId),
       path,
       timeout: 10,
+      restore_target: true,
     })
     if (pathInfo.is_dir === false) {
       const message = t('protection.backupsPage.msgRestoreDirectoryMustBeDirectory')
@@ -3852,7 +3975,7 @@ function sourceTreeItemWithBlockedState(sourceId: string, item: SourceTreeItem):
 async function listRealSourceDirChildren(
   sourceId: string,
   parentPath: string,
-  options: { includeFiles?: boolean; cursor?: string; timeout?: number; forceRefresh?: boolean } = {},
+  options: { includeFiles?: boolean; cursor?: string; timeout?: number; forceRefresh?: boolean; restoreTarget?: boolean } = {},
 ): Promise<SourceTreePage> {
   const isRoot = !parentPath
   const limit = isRoot ? SOURCE_TREE_ROOT_LIMIT : SOURCE_TREE_CHILD_LIMIT
@@ -3865,6 +3988,7 @@ async function listRealSourceDirChildren(
       cursor: options.cursor,
       include_files: Boolean(options.includeFiles),
       include_metadata: false,
+      restore_target: options.restoreTarget,
     },
     options.forceRefresh ? { cache: 'no-store' } : undefined,
   )
@@ -8577,6 +8701,62 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 </div>
                               </template>
                               <div class="create-recovery-tree-popover hfl-dir-tree-shell">
+                                <div class="create-recovery-tree-toolbar">
+                                  <span
+                                    class="create-recovery-tree-toolbar__path"
+                                    :class="{ 'create-recovery-tree-toolbar__path--prompt': !recoveryDirectoryPendingPath(group, dirPlan) }"
+                                  >
+                                    {{ recoveryDirectoryPendingPath(group, dirPlan) || t('protection.backupsPage.restoreCreateFolderSelectParent') }}
+                                  </span>
+                                  <ElButton
+                                    class="create-recovery-tree-toolbar__create"
+                                    text
+                                    type="primary"
+                                    size="small"
+                                    :disabled="!recoveryDirectoryPendingPath(group, dirPlan)"
+                                    @click.stop="setRecoveryDirectoryCreateName(group, dirPlan, '')"
+                                  >
+                                    <FolderPlus :size="15" :stroke-width="2.2" />
+                                    {{ t('protection.backupsPage.restoreCreateFolder') }}
+                                  </ElButton>
+                                </div>
+                                <div
+                                  v-if="recoveryDirectoryPendingPath(group, dirPlan) && recoveryDirectoryCreateNameByKey[recoveryDirectoryCreateKey(group, dirPlan)] !== undefined"
+                                  class="create-recovery-tree-create-row"
+                                >
+                                  <div class="create-recovery-tree-create-row__parent">
+                                    {{ t('protection.backupsPage.restoreCreateFolderUnder', { path: recoveryDirectoryPendingPath(group, dirPlan) }) }}
+                                  </div>
+                                  <el-input
+                                    :ref="(el) => setRecoveryDirectoryCreateInputRef(recoveryDirectoryCreateKey(group, dirPlan), el)"
+                                    :model-value="recoveryDirectoryCreateNameByKey[recoveryDirectoryCreateKey(group, dirPlan)] || ''"
+                                    size="small"
+                                    autofocus
+                                    :placeholder="t('protection.backupsPage.restoreCreateFolderNamePlaceholder')"
+                                    @update:model-value="(value) => setRecoveryDirectoryCreateName(group, dirPlan, String(value))"
+                                    @keydown.enter.prevent="createRecoveryDirectory(group, dirPlan)"
+                                    @keydown.esc.stop="delete recoveryDirectoryCreateNameByKey[recoveryDirectoryCreateKey(group, dirPlan)]"
+                                  >
+                                  </el-input>
+                                  <div class="create-recovery-tree-create-row__actions">
+                                    <ElButton
+                                      size="small"
+                                      :disabled="isRecoveryDirectoryCreating(group, dirPlan)"
+                                      @click.stop="setRecoveryDirectoryCreateName(group, dirPlan, undefined)"
+                                    >
+                                      {{ t('common.cancel') }}
+                                    </ElButton>
+                                      <ElButton
+                                        class="create-recovery-tree-create-row__submit"
+                                        type="primary"
+                                      size="small"
+                                      :loading="isRecoveryDirectoryCreating(group, dirPlan)"
+                                      @click.stop="createRecoveryDirectory(group, dirPlan)"
+                                    >
+                                      {{ t('protection.backupsPage.restoreCreateFolder') }}
+                                    </ElButton>
+                                  </div>
+                                </div>
                                 <el-tree
                                   :ref="(el) => setCreateRecoveryDirectoryTreeRef(recoveryDirPlanPickerKey(group, dirPlan, 'dest'), el)"
                                   :key="`create-recovery-dest-${group.key}-${dirPlan.id}-${dirPlan.targetHostId}`"
@@ -8587,14 +8767,17 @@ function preserveShallowestPathOrder(paths: string[]) {
                                   :expand-on-click-node="false"
                                   :load="(node, resolve) => loadCreateRecoveryDestTreeNode(dirPlan, node, resolve, recoveryDirPlanPickerKey(group, dirPlan, 'dest'))"
                                   :props="dirTreeProps"
-                                  :current-node-key="dirPlan.restoreDir"
+                                  :current-node-key="recoveryDirectoryPendingPath(group, dirPlan)"
                                   highlight-current
                                   @node-click="(data) => onCreateRecoveryDestPathTreePick(group, dirPlan, data)"
                                   @node-collapse="(data) => onCreateRecoveryDirectoryExpansionChange(recoveryDirPlanPickerKey(group, dirPlan, 'dest'), data)"
                                   @node-expand="(data) => onCreateRecoveryDirectoryExpansionChange(recoveryDirPlanPickerKey(group, dirPlan, 'dest'), data)"
                                 >
                                   <template #default="{ data }">
-                                    <div class="create-tree-node-content hfl-dir-tree-node">
+                                    <div
+                                      class="create-tree-node-content hfl-dir-tree-node"
+                                      :class="{ 'create-tree-node-content--selected': recoveryDirectoryPendingPath(group, dirPlan) === data.path }"
+                                    >
                                       <FolderOpen
                                         :size="15"
                                         class="create-tree-node-content__icon hfl-dir-tree-node__icon"
@@ -8621,6 +8804,19 @@ function preserveShallowestPathOrder(paths: string[]) {
                                     </div>
                                   </template>
                                 </el-tree>
+                                <div class="create-recovery-tree-actions">
+                                  <ElButton size="small" @click.stop="cancelRecoveryDirectoryPicker(group, dirPlan)">
+                                    {{ t('common.cancel') }}
+                                  </ElButton>
+                                  <ElButton
+                                    type="primary"
+                                    size="small"
+                                    :disabled="!recoveryDirectoryPendingPath(group, dirPlan)"
+                                    @click.stop="confirmRecoveryDirectory(group, dirPlan)"
+                                  >
+                                    {{ t('common.confirm') }}
+                                  </ElButton>
+                                </div>
                               </div>
                             </HflPopover>
                           </div>
@@ -12302,25 +12498,140 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .create-recovery-tree-popover {
-  max-height: none;
-  overflow: visible;
-  padding: 4px;
+  display: flex;
+  max-height: min(46vh, 400px);
+  flex-direction: column;
+  row-gap: 8px;
+  overflow: hidden;
+  padding: 0;
   border: 0;
+  border-radius: 10px;
   background: transparent;
 }
 
+.create-recovery-tree-toolbar {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 16%, var(--el-border-color-lighter));
+  border-radius: 10px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 9%, var(--el-bg-color-overlay)), color-mix(in srgb, var(--color-primary) 4%, var(--el-bg-color-overlay)));
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.create-recovery-tree-toolbar__path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.create-recovery-tree-toolbar__path--prompt {
+  color: var(--color-primary);
+  font-weight: 650;
+}
+
+.create-recovery-tree-toolbar__create {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 4px 8px !important;
+  border-radius: 6px !important;
+  color: var(--color-primary) !important;
+  font-size: 12px !important;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.create-recovery-tree-toolbar__create :deep(svg) {
+  margin-right: 4px;
+}
+
+.create-recovery-tree-toolbar__create:hover,
+.create-recovery-tree-toolbar__create:focus-visible {
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent) !important;
+  color: var(--color-primary-dark, var(--color-primary)) !important;
+}
+
+.create-recovery-tree-toolbar__create:active {
+  background: color-mix(in srgb, var(--color-primary) 20%, transparent) !important;
+}
+
+.create-recovery-tree-create-row {
+  margin: 8px 4px;
+  padding: 8px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--el-bg-color-overlay));
+}
+
+.create-recovery-tree-create-row__parent {
+  margin-bottom: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.create-recovery-tree-create-row__actions,
+.create-recovery-tree-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.create-recovery-tree-create-row__actions {
+  margin-top: 8px;
+}
+
+.create-recovery-tree-create-row__submit {
+  min-width: 92px;
+}
+
+.create-recovery-tree-actions {
+  padding: 0 8px 8px;
+}
+
 .create-recovery-popover-tree {
-  min-width: 100%;
+  flex: 1 1 auto;
+  width: calc(100% - 16px);
+  min-width: 0;
+  min-height: 0;
+  margin: 0 8px;
+  max-height: clamp(110px, 17vh, 180px);
+  padding: 8px 6px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-bg-color-overlay);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.025);
+  overflow: auto;
+}
+
+.create-recovery-popover-tree :deep(.el-tree-node__expand-icon) {
+  box-sizing: border-box;
+  width: 20px;
+  flex: 0 0 20px;
+  padding: 4px;
 }
 
 .create-recovery-popover-tree :deep(.el-tree-node__expand-icon.is-leaf) {
-  width: 8px;
-  flex: 0 0 8px;
-  padding: 0;
+  visibility: hidden;
 }
 
 .create-recovery-popover-tree :deep(.el-tree-node__content:has(> .create-tree-node-content--selected)) {
   background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 14%, var(--el-bg-color-overlay)) 0%, color-mix(in srgb, var(--color-primary) 20%, var(--el-bg-color-overlay)) 100%);
+}
+
+.create-recovery-popover-tree :deep(.create-tree-node-content--selected .create-tree-node-content__label),
+.create-recovery-popover-tree :deep(.create-tree-node-content--selected .create-tree-node-content__path) {
+  color: var(--color-primary);
+  font-weight: 600;
 }
 
 .create-tree-node-content__text {

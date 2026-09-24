@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -70,6 +71,11 @@ func (e *Engine) backupPathBoundary(p Payload) (backupPathBoundary, error) {
 		mountPoint = nasSpec.MountPoint
 	}
 	return newBackupPathBoundary(e.current(), p.Path, nasSource, mountPoint)
+}
+
+func restoreTargetPathOperation(p Payload) bool {
+	value, ok := p.Extra["restore_target"]
+	return ok && strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), "true")
 }
 
 // Run executes a command and reports progress via sink when provided.
@@ -265,6 +271,8 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 		status, result, errMsg = e.runPathUsage(ctx, p)
 	case "path.info":
 		status, result, errMsg = e.runPathInfo(ctx, p)
+	case "path.mkdir":
+		status, result, errMsg = e.runPathMkdir(ctx, p)
 	case "path.size", "path.estimate", "source.path.size":
 		status, result, errMsg = e.runPathSize(ctx, p)
 	case "lens.ks.prepare", "lens.workspace.prepare":
@@ -308,6 +316,114 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 		slog.WarnContext(ctx, "engine task finished", "node_id", nodeID, "task_id", cmd.ID, "kind", kind, "status", status, "err", errMsg)
 	}
 	return Result{Status: status, Result: result, Error: errMsg}
+}
+
+func (e *Engine) runPathMkdir(ctx context.Context, p Payload) (string, map[string]any, string) {
+	if err := ctx.Err(); err != nil {
+		return "failed", nil, "canceled"
+	}
+	path := strings.TrimSpace(p.Path)
+	if path == "" {
+		return "failed", map[string]any{"error_code": "PATH_INVALID"}, "path is required"
+	}
+	if strings.ContainsRune(path, '\x00') {
+		return "failed", map[string]any{"error_code": "PATH_INVALID", "path": path}, "path contains a NUL byte"
+	}
+	cleanPath := filepath.Clean(path)
+	base := filepath.Base(cleanPath)
+	if base == "." || base == string(filepath.Separator) || base == ".." ||
+		base == "" || strings.ContainsAny(base, `/\`) {
+		return "failed", map[string]any{
+			"error_code": "PATH_INVALID",
+			"path":       path,
+		}, "directory name must be a single path component"
+	}
+	if err := e.ensureNASMounted(ctx, p); err != nil {
+		return "failed", nil, err.Error()
+	}
+	_, boundaryErr := e.backupPathBoundary(p)
+	if boundaryErr != nil && !restoreTargetPathOperation(p) {
+		result := map[string]any{"path": path, "exists": false}
+		for key, value := range agentPathBoundaryErrorResult(boundaryErr) {
+			result[key] = value
+		}
+		return "failed", result, boundaryErr.Error()
+	}
+	parent := filepath.Dir(cleanPath)
+	parentInfo, statErr := os.Stat(parent)
+	if statErr != nil {
+		if errors.Is(statErr, fs.ErrNotExist) {
+			return "failed", map[string]any{
+				"error_code": "PATH_PARENT_NOT_FOUND",
+				"path":       cleanPath,
+				"parent":     parent,
+				"exists":     false,
+			}, "parent directory not found"
+		}
+		if errors.Is(statErr, fs.ErrPermission) {
+			return "failed", map[string]any{
+				"error_code": pathPermissionDeniedErrorCode,
+				"path":       cleanPath,
+				"parent":     parent,
+			}, "permission denied"
+		}
+		return "failed", map[string]any{
+			"error_code": "PATH_PARENT_INVALID",
+			"path":       cleanPath,
+			"parent":     parent,
+		}, statErr.Error()
+	}
+	if !parentInfo.IsDir() {
+		return "failed", map[string]any{
+			"error_code": "PATH_PARENT_INVALID",
+			"path":       cleanPath,
+			"parent":     parent,
+		}, "parent path is not a directory"
+	}
+	if _, statErr := os.Lstat(cleanPath); statErr == nil {
+		return "failed", map[string]any{
+			"error_code": "PATH_ALREADY_EXISTS",
+			"path":       cleanPath,
+			"exists":     true,
+		}, "directory already exists"
+	} else if !errors.Is(statErr, fs.ErrNotExist) {
+		if errors.Is(statErr, fs.ErrPermission) {
+			return "failed", map[string]any{
+				"error_code": pathPermissionDeniedErrorCode,
+				"path":       cleanPath,
+			}, "permission denied"
+		}
+		return "failed", map[string]any{
+			"error_code": "PATH_INVALID",
+			"path":       cleanPath,
+		}, statErr.Error()
+	}
+	if err := os.Mkdir(cleanPath, 0o755); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return "failed", map[string]any{
+				"error_code": "PATH_ALREADY_EXISTS",
+				"path":       cleanPath,
+				"exists":     true,
+			}, "directory already exists"
+		}
+		if errors.Is(err, fs.ErrPermission) {
+			return "failed", map[string]any{
+				"error_code": pathPermissionDeniedErrorCode,
+				"path":       cleanPath,
+			}, "permission denied"
+		}
+		return "failed", map[string]any{
+			"error_code": "PATH_CREATE_FAILED",
+			"path":       cleanPath,
+		}, err.Error()
+	}
+	return "success", map[string]any{
+		"path":      cleanPath,
+		"exists":    true,
+		"is_dir":    true,
+		"path_type": "directory",
+		"created":   true,
+	}, ""
 }
 
 func repositoryServerErrorCode(message string) string {
@@ -377,6 +493,11 @@ func (e *Engine) applyUserInstallationScope(kind string, payload Payload) (Paylo
 			kind == "repository.policy.apply") && !managedRepository {
 			return payload, fmt.Errorf("user-level Agent requires an Agent-managed repository")
 		}
+	case "path.mkdir":
+		if path == "" {
+			return payload, fmt.Errorf("a path available to the current user is required")
+		}
+		allowMissing = true
 	case "restore":
 		if target := payloadStringValue(payload.Extra["target_path"]); target != "" {
 			path = target
@@ -474,7 +595,7 @@ func (e *Engine) runBrowse(
 	if hasNAS && p.Path == "" {
 		p.Path = nasSpec.MountPoint
 	}
-	if p.Path != "" {
+	if p.Path != "" && !restoreTargetPathOperation(p) {
 		if _, boundaryErr := e.backupPathBoundary(p); boundaryErr != nil {
 			return "failed", agentPathBoundaryErrorResult(boundaryErr), boundaryErr.Error()
 		}
@@ -524,10 +645,12 @@ func (e *Engine) runBrowse(
 		}
 		candidate := p
 		candidate.Path = entry.Path
-		if _, boundaryErr := e.backupPathBoundary(candidate); errors.Is(boundaryErr, errAgentPathForbidden) {
-			row["selectable"] = false
-			row["protected"] = true
-			row["protection_reason"] = "agent_internal_root"
+		if !restoreTargetPathOperation(p) {
+			if _, boundaryErr := e.backupPathBoundary(candidate); errors.Is(boundaryErr, errAgentPathForbidden) {
+				row["selectable"] = false
+				row["protected"] = true
+				row["protection_reason"] = "agent_internal_root"
+			}
 		}
 		rows = append(rows, row)
 	}
@@ -639,7 +762,7 @@ func (e *Engine) runPathInfo(ctx context.Context, p Payload) (string, map[string
 		return "failed", nil, err.Error()
 	}
 	boundary, boundaryErr := e.backupPathBoundary(p)
-	if boundaryErr != nil {
+	if boundaryErr != nil && !restoreTargetPathOperation(p) {
 		result := map[string]any{
 			"path":   path,
 			"exists": false,

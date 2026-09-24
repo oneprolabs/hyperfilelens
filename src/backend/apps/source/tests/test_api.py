@@ -1962,6 +1962,112 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(kwargs["payload"], {"path": "/data/report.txt"})
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_backup_selectable_directory_create_dispatches_single_child(self, mock_run_task):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-directory-create",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["restore_target_directory_create_v1"]}},
+        )
+        mock_run_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=True,
+            task_id="task-directory-create",
+            result={
+                "path": "/data/restore_test",
+                "exists": True,
+                "is_dir": True,
+                "path_type": "directory",
+            },
+            task=SimpleNamespace(last_error="", status="success"),
+        )
+
+        resp = self.client.post(
+            "/api/v1/source/backup-selectable/directories/create/",
+            {
+                "source_id": f"agent:{agent.id}",
+                "parent_path": "/data",
+                "name": "restore_test",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.content)
+        self.assertEqual(resp.data["path"], "/data/restore_test")
+        self.assertEqual(resp.data["path_type"], "directory")
+        _, kwargs = mock_run_task.call_args
+        self.assertEqual(kwargs["kind"], "path.mkdir")
+        self.assertEqual(
+            kwargs["payload"],
+            {"path": "/data/restore_test", "restore_target": True},
+        )
+
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_backup_selectable_directory_create_rejects_nested_or_empty_name(
+        self, mock_run_task
+    ):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-directory-create-invalid",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+
+        for name in ("", "../escape", "nested/folder"):
+            resp = self.client.post(
+                "/api/v1/source/backup-selectable/directories/create/",
+                {
+                    "source_id": f"agent:{agent.id}",
+                    "parent_path": "/data",
+                    "name": name,
+                },
+                format="json",
+                **self._headers(),
+            )
+            self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST, resp.content)
+        mock_run_task.assert_not_called()
+
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_backup_selectable_directory_create_maps_duplicate_to_conflict(
+        self, mock_run_task
+    ):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-directory-create-conflict",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["restore_target_directory_create_v1"]}},
+        )
+        mock_run_task.return_value = SimpleNamespace(
+            timed_out=False,
+            ok=False,
+            result={"error_code": "PATH_ALREADY_EXISTS"},
+            task=SimpleNamespace(
+                last_error="directory already exists",
+                status="failed",
+            ),
+        )
+
+        resp = self.client.post(
+            "/api/v1/source/backup-selectable/directories/create/",
+            {
+                "source_id": f"agent:{agent.id}",
+                "parent_path": "/data",
+                "name": "restore_test",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_409_CONFLICT, resp.content)
+        self.assertEqual(resp.data["data"]["code"], "DIRECTORY.ALREADY_EXISTS")
+
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_path_info_can_skip_metadata(self, mock_run_task):
         agent = Node.objects.create(
             organization=self.org,
