@@ -14,6 +14,7 @@ import {
   patchKnowledgeSource,
   type LensGatewayInsight,
   type LensIngestPolicy,
+  type LensSnapshotBrowseResult,
 } from '../lib/lensApi'
 import {
   getBackupSourceSnapshot,
@@ -116,7 +117,7 @@ export function useKnowledgeSourceForm(
   let backupScopeBlurSequence = 0
   let scopeDisposed = false
   const snapshotBrowseControllers = new Set<AbortController>()
-  type SnapshotBrowseResult = Awaited<ReturnType<typeof browseCopilotSnapshotDirectory>>
+  type SnapshotBrowseResult = Extract<LensSnapshotBrowseResult, { status: 'success' }>
   const snapshotBrowseCache = new Map<string, SnapshotBrowseResult>()
   const SNAPSHOT_BROWSE_CACHE_LIMIT = 64
   const openBackupScopePickerId = ref<string | null>(null)
@@ -142,7 +143,7 @@ export function useKnowledgeSourceForm(
   async function browseInsightSnapshotDirectory(
     directoryId: number,
     params: { path?: string; limit?: number },
-  ) {
+  ): Promise<LensSnapshotBrowseResult> {
     const snapshotId = effectiveSnapshotId.value
     const gatewayLinkId = snapshotReaderGatewayLinkId.value
     if (!snapshotId) throw new Error('Select a backup snapshot before browsing files.')
@@ -168,6 +169,7 @@ export function useKnowledgeSourceForm(
         },
         controller.signal,
       )
+      if (result.status === 'waiting') return result
       snapshotBrowseCache.set(cacheKey, result)
       while (snapshotBrowseCache.size > SNAPSHOT_BROWSE_CACHE_LIMIT) {
         const oldest = snapshotBrowseCache.keys().next().value
@@ -538,6 +540,11 @@ export function useKnowledgeSourceForm(
         path: data.browsePath || '',
         limit: 500,
       })
+      if (result.status === 'waiting') {
+        ElMessage.info({ message: t('insight.copilot.selectionStillRunning'), grouping: true })
+        resolve([])
+        return
+      }
       const sep: '/' | '\\' = isWindowsPath(data.sourceRootPath || data.path) ? '\\' : '/'
       resolve(result.entries.map((entry) => {
         const isDir = entry.type === 'dir'
@@ -674,7 +681,19 @@ export function useKnowledgeSourceForm(
     const relativePath = relativeSnapshotPath(directory.source_path, rawPath)
     try {
       if (relativePath) {
-        await browseInsightSnapshotDirectory(directory.id, { path: relativePath, limit: 1 })
+        const browseResult = await browseInsightSnapshotDirectory(
+          directory.id,
+          { path: relativePath, limit: 1 },
+        )
+        if (browseResult.status === 'waiting') {
+          if (showMessage) {
+            ElMessage.info({
+              message: t('insight.copilot.selectionStillRunning'),
+              grouping: true,
+            })
+          }
+          return false
+        }
       }
       if (!isCurrentBackupScopeValidation(
         entryId,

@@ -11,6 +11,7 @@ const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
 const COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS = [150, 300, 500]
 // The backend NodeTask watchdog is the terminal timeout. The browser must not
 // turn a slow but healthy Reader task into a false failure.
+const COPILOT_SNAPSHOT_BROWSE_SOFT_WAIT_POLLS = 120
 const COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_AFTER = 120
 const COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_DELAY_MS = 2000
 
@@ -1161,6 +1162,16 @@ export type LensSnapshotBrowseTask = {
   skipped_special_count?: number
 }
 
+export type LensSnapshotBrowseResult = {
+  status: 'success'
+  entries: BackupSnapshotBrowserEntry[]
+  has_more: boolean
+  skipped_special_count: number
+} | {
+  status: 'waiting'
+  task_id: string
+}
+
 export async function startCopilotSnapshotBrowse(
   directoryId: number,
   params: {
@@ -1216,15 +1227,14 @@ export async function browseCopilotSnapshotDirectory(
     organization_key?: string
   },
   signal?: AbortSignal,
-): Promise<{
-  entries: BackupSnapshotBrowserEntry[]
-  has_more: boolean
-  skipped_special_count: number
-}> {
+): Promise<LensSnapshotBrowseResult> {
   const started = await startCopilotSnapshotBrowse(directoryId, params, signal)
   let task = started
   let polls = 0
   while (task.status === 'pending' || task.status === 'running') {
+    if (polls >= COPILOT_SNAPSHOT_BROWSE_SOFT_WAIT_POLLS && task.task_id) {
+      return { status: 'waiting', task_id: task.task_id }
+    }
     if (polls > 0) {
       const delay = polls >= COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_AFTER
         ? COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_DELAY_MS
@@ -1265,6 +1275,7 @@ export async function browseCopilotSnapshotDirectory(
     }
   }
   return {
+    status: 'success',
     entries: (task.entries || []).slice(0, params?.limit || 500),
     has_more: Boolean(task.has_more),
     skipped_special_count: Math.max(0, Number(task.skipped_special_count || 0)),

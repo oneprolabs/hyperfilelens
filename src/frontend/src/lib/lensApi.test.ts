@@ -99,18 +99,19 @@ describe('Insight snapshot browsing', () => {
     )
   })
 
-  it('keeps polling a slow task until the caller aborts', async () => {
+  it('returns a resumable waiting state after the soft wait budget', async () => {
     vi.mocked(api).mockResolvedValue({ task_id: 'browse-stuck', status: 'pending' })
 
-    const controller = new AbortController()
     const request = browseCopilotSnapshotDirectory(31, {
       backupSourceSnapshotId: 71,
       gatewayLinkId: 17,
-    }, controller.signal)
+    })
     await vi.advanceTimersByTimeAsync(120_000)
-    expect(api.mock.calls.length).toBeGreaterThan(121)
-    controller.abort()
-    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(request).resolves.toEqual({
+      status: 'waiting',
+      task_id: 'browse-stuck',
+    })
+    expect(api).toHaveBeenCalledTimes(121)
   })
 
   it('preserves the terminal task error contract', async () => {

@@ -305,7 +305,7 @@ describe('useCopilotSelectionPreview', () => {
     await vi.advanceTimersByTimeAsync(122_000)
     await nextTick()
 
-    expect(preview.calculationStatus.value).toBe('calculating')
+    expect(preview.calculationStatus.value).toBe('waiting')
     expect(mocks.startCopilotScopePreview).toHaveBeenCalledTimes(1)
     expect(mocks.cancelCopilotScopePreview).not.toHaveBeenCalled()
     vueScope.stop()
