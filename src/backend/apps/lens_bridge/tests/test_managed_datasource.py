@@ -864,6 +864,51 @@ class ManagedDatasourceTests(SimpleTestCase):
             "Document conversion is already running.",
         )
 
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.resume_managed_datasource_conversion"
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.get_managed_datasource_conversion_recovery",
+        return_value={"orphaned": True, "resumable": True},
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value={
+            "task_id": "convert-4",
+            "status": "FAILURE",
+            "error": "DATASOURCE_CONVERSION_ORPHANED",
+        },
+    )
+    def test_orphaned_conversion_stops_after_resume_budget(
+        self, _get_task, _get_recovery, resume
+    ):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        conversion = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "convert-4",
+                "resume_attempts": managed_datasource.CONVERSION_RESUME_MAX_ATTEMPTS,
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(conversion)
+                ),
+            }
+        }
+
+        with self.assertRaisesRegex(
+            managed_datasource.ManagedDatasourceError,
+            "DATASOURCE_CONVERSION_RESUME_EXHAUSTED",
+        ):
+            managed_datasource.convert_documents(
+                ks=ks,
+                sync_state=sync_state,
+                conversion=conversion,
+            )
+
+        resume.assert_not_called()
+
     def test_unchanged_sidecar_counts_as_readable(self):
         self.assertFalse(
             managed_datasource._all_supported_documents_unreadable(

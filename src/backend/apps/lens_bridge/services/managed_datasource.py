@@ -19,6 +19,7 @@ CONVERSION_RETRY_SECONDS = 5
 CONVERSION_RECOVERY_CLOCK_SKEW_SECONDS = 60
 CONVERSION_TRANSIENT_RETRY_MAX_SECONDS = 300
 CONVERSION_IDLE_RETRY_MAX_SECONDS = 60
+CONVERSION_RESUME_MAX_ATTEMPTS = 3
 
 
 class ManagedDatasourceError(RuntimeError):
@@ -723,6 +724,18 @@ def convert_documents(
                 # but retrying it here would silently repeat a permanent
                 # document/model failure forever.
                 if recovery.get("orphaned") is True and recovery.get("resumable"):
+                    resume_attempts = int(state.get("resume_attempts") or 0)
+                    if resume_attempts >= CONVERSION_RESUME_MAX_ATTEMPTS:
+                        state["status"] = "FAILURE"
+                        state["error"] = (
+                            "DATASOURCE_CONVERSION_RESUME_EXHAUSTED"
+                        )
+                        _persist_conversion_state(
+                            ks=ks,
+                            sync_state=sync_state,
+                            state=state,
+                        )
+                        raise ManagedDatasourceError(state["error"])
                     try:
                         resumed = sl_client.resume_managed_datasource_conversion(
                             str(ks.sl_datasource_uuid),
@@ -794,6 +807,7 @@ def convert_documents(
                                 "resume_started_at": resumed_at,
                             }
                         )
+                        state["resume_attempts"] = resume_attempts + 1
                         state["recovery"] = {
                             **recovery,
                             **resumed,
