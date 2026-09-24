@@ -282,7 +282,7 @@ describe('useCopilotSelectionPreview', () => {
     vueScope.stop()
   })
 
-  it('keeps a long-running Reader task for bounded automatic recovery', async () => {
+  it('keeps a long-running Reader task without a client timeout', async () => {
     vi.useFakeTimers()
     mocks.cancelCopilotScopePreview.mockResolvedValue(undefined)
     mocks.startCopilotScopePreview.mockResolvedValue({
@@ -305,7 +305,7 @@ describe('useCopilotSelectionPreview', () => {
     await vi.advanceTimersByTimeAsync(122_000)
     await nextTick()
 
-    expect(preview.calculationStatus.value).toBe('waiting')
+    expect(preview.calculationStatus.value).toBe('calculating')
     expect(mocks.startCopilotScopePreview).toHaveBeenCalledTimes(1)
     expect(mocks.cancelCopilotScopePreview).not.toHaveBeenCalled()
     vueScope.stop()

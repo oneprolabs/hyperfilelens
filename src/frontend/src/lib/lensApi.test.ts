@@ -99,16 +99,18 @@ describe('Insight snapshot browsing', () => {
     )
   })
 
-  it('keeps polling a slow task past the old 120-second budget', async () => {
+  it('keeps polling a slow task until the caller aborts', async () => {
     vi.mocked(api).mockResolvedValue({ task_id: 'browse-stuck', status: 'pending' })
 
+    const controller = new AbortController()
     const request = browseCopilotSnapshotDirectory(31, {
       backupSourceSnapshotId: 71,
       gatewayLinkId: 17,
-    })
+    }, controller.signal)
     await vi.advanceTimersByTimeAsync(120_000)
     expect(api.mock.calls.length).toBeGreaterThan(121)
-    request.catch(() => undefined)
+    controller.abort()
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
   })
 
   it('preserves the terminal task error contract', async () => {

@@ -9,10 +9,8 @@ const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
 // The first read is immediate; bounded backoff keeps the picker responsive
 // without continuously polling a busy Reader.
 const COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS = [150, 300, 500]
-// Keep waiting for the asynchronous Agent task instead of turning the normal
-// 120-second UI budget into a false terminal failure. The backend task remains
-// resumable after a page refresh; this is only a final client safety ceiling.
-const COPILOT_SNAPSHOT_BROWSE_MAX_POLLS = 600
+// The backend NodeTask watchdog is the terminal timeout. The browser must not
+// turn a slow but healthy Reader task into a false failure.
 const COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_AFTER = 120
 const COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_DELAY_MS = 2000
 
@@ -1227,15 +1225,6 @@ export async function browseCopilotSnapshotDirectory(
   let task = started
   let polls = 0
   while (task.status === 'pending' || task.status === 'running') {
-    if (polls >= COPILOT_SNAPSHOT_BROWSE_MAX_POLLS) {
-      throw <AppErrorShape>{
-        status: 504,
-        message: 'Snapshot browsing timed out. Check the Reader and try again.',
-        code: 'INSIGHT.SNAPSHOT_BROWSE_TIMEOUT',
-        errorCode: 'INSIGHT.SNAPSHOT_BROWSE_TIMEOUT',
-        retryable: true,
-      }
-    }
     if (polls > 0) {
       const delay = polls >= COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_AFTER
         ? COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_DELAY_MS
