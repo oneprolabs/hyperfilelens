@@ -3,10 +3,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { apiErrorMessage } from '../../lib/api'
-import { formatLocalDateTime } from '../../lib/dateTime'
 import { fetchPlatformIntegrations, type PlatformIntegration } from '../lib/platformOpsApi'
 import RuntimeStatusTable from './RuntimeStatusTable.vue'
-import type { RuntimeStatusCell, RuntimeStatusRow } from './runtimeStatus'
+import type {
+  RuntimeStatusCell,
+  RuntimeStatusNotice,
+  RuntimeStatusRow,
+} from './runtimeStatus'
 
 type ProbeRecord = Record<string, unknown>
 
@@ -31,16 +34,21 @@ function statusCell(label: string, type: RuntimeStatusCell['type']): RuntimeStat
   return { label, type }
 }
 
+function formatDeploymentMode(mode: string): string {
+  const value = mode.trim()
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : t('platformOps.integrations.notConfigured')
+}
+
 function sourceLensOverviewRow(row: PlatformIntegration): RuntimeStatusRow {
   const configured = row.configured === true
   return {
     key: `${row.key}-overview`,
-    service: 'SourceLens Runtime',
+    service: 'Runtime',
     runtime: statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info'),
     health: !configured
       ? statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info')
       : row.reachable
-      ? statusCell(t('platformOps.settings.environment.statusHealthy'), 'success')
+      ? statusCell(t('platformOps.integrations.healthy'), 'success')
       : statusCell(t('platformOps.settings.environment.healthUnhealthy'), 'danger'),
     availability: !configured
       ? statusCell(t('platformOps.settings.environment.statusNotConfigured'), 'info')
@@ -48,14 +56,13 @@ function sourceLensOverviewRow(row: PlatformIntegration): RuntimeStatusRow {
       ? statusCell(t('platformOps.settings.environment.statusOperational'), 'success')
       : statusCell(t('platformOps.settings.environment.statusUnavailable'), 'danger'),
     details: [
-      `${t('platformOps.integrations.deploymentMode')}: ${row.mode || t('platformOps.integrations.notConfigured')}`,
+      `${t('platformOps.settings.environment.deployment')}: ${formatDeploymentMode(row.mode || '')}`,
       `${t('platformOps.integrations.version')}: ${row.version || t('platformOps.integrations.unknown')}`,
-      `${t('platformOps.settings.environment.businessReadiness')}: ${row.business_ready ? t('platformOps.settings.environment.statusReady') : t('platformOps.settings.environment.statusUnavailable')}`,
-      `${t('platformOps.integrations.authentication')}: ${row.authenticated ? t('platformOps.integrations.authenticated') : t('platformOps.integrations.unavailable')}`,
-      ...(row.base_url ? [`${t('platformOps.settings.environment.endpoint')}: ${row.base_url}`] : []),
       ...(row.console_url ? [`${t('platformOps.integrations.consoleUrl')}: ${row.console_url}`] : []),
-      `${t('platformOps.integrations.lastChecked')}: ${formatLocalDateTime(row.checked_at, '—')}`,
     ],
+    notices: row.warning
+      ? [{ message: row.warning, level: 'warning' }]
+      : [],
   }
 }
 
@@ -63,15 +70,15 @@ function sourceLensContainerRows(row: PlatformIntegration): RuntimeStatusRow[] {
   if (row.mode !== 'bundled' || !row.configured) return []
   const aggregate = integrationStatus(row)
   const containers = [
-    ['sourcelens-nginx', t('platformOps.integrations.containerNginx')],
-    ['sourcelens-web', t('platformOps.integrations.containerWeb')],
-    ['sourcelens-api', t('platformOps.integrations.containerApi')],
-    ['sourcelens-worker', t('platformOps.integrations.containerWorker')],
-    ['sourcelens-scheduler', t('platformOps.integrations.containerScheduler')],
-    ['sourcelens-postgres', t('platformOps.integrations.containerPostgres')],
-    ['sourcelens-redis', t('platformOps.integrations.containerRedis')],
+    ['sourcelens-nginx', 'Nginx', t('platformOps.integrations.containerNginx')],
+    ['sourcelens-web', 'Web', t('platformOps.integrations.containerWeb')],
+    ['sourcelens-api', 'API', t('platformOps.integrations.containerApi')],
+    ['sourcelens-worker', 'Worker', t('platformOps.integrations.containerWorker')],
+    ['sourcelens-scheduler', 'Scheduler', t('platformOps.integrations.containerScheduler')],
+    ['sourcelens-postgres', 'PostgreSQL', t('platformOps.integrations.containerPostgres')],
+    ['sourcelens-redis', 'Redis', t('platformOps.integrations.containerRedis')],
   ]
-  return containers.map(([service, details]) => {
+  return containers.map(([service, displayName, details]) => {
     const monitored = service === 'sourcelens-api'
     const status = monitored
       ? aggregate.type === 'success'
@@ -84,10 +91,10 @@ function sourceLensContainerRows(row: PlatformIntegration): RuntimeStatusRow[] {
       : 'not_monitored'
     return {
       key: `${row.key}-${service}`,
-      service,
+      service: displayName,
       runtime: statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info'),
       health: status === 'ok'
-        ? statusCell(t('platformOps.settings.environment.statusHealthy'), 'success')
+        ? statusCell(t('platformOps.integrations.healthy'), 'success')
         : status === 'degraded'
           ? statusCell(t('platformOps.settings.environment.healthUnhealthy'), 'warning')
           : status === 'error'
@@ -118,7 +125,7 @@ function dataGatewayOverviewRows(): RuntimeStatusRow[] {
   const configured = value.configured === true
   return [{
     key: 'data-gateway-overview',
-    service: 'Platform Data Gateway',
+    service: 'Runtime',
     runtime: !configured
       ? statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info')
       : statusCell(
@@ -128,11 +135,12 @@ function dataGatewayOverviewRows(): RuntimeStatusRow[] {
     health: !configured
       ? statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info')
       : statusCell(
-      value.endpoint_reachable ? t('platformOps.settings.environment.statusHealthy') : t('platformOps.settings.environment.statusNotMonitored'),
+      value.endpoint_reachable ? t('platformOps.integrations.healthy') : t('platformOps.settings.environment.statusNotMonitored'),
       value.endpoint_reachable ? 'success' : 'info',
     ),
     availability: dataGatewayStatus(),
     details: dataGatewayDetails(),
+    notices: dataGatewayNotices(),
   }]
 }
 
@@ -142,7 +150,7 @@ function dataGatewayComponentRows(): RuntimeStatusRow[] {
   return [
     {
       key: 'data-gateway-agent',
-      service: 'HFL Host Agent',
+      service: 'Agent',
       runtime: !configured
         ? statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info')
         : statusCell(
@@ -156,11 +164,19 @@ function dataGatewayComponentRows(): RuntimeStatusRow[] {
           : value.agent_online ? t('platformOps.settings.environment.statusOperational') : t('platformOps.settings.environment.statusUnavailable'),
         !configured ? 'info' : value.agent_online ? 'success' : 'danger',
       ),
-      details: [t('platformOps.settings.environment.platformGatewayRole')],
+      details: [
+        t('platformOps.settings.environment.platformGatewayRole'),
+      ],
+      notices: !configured || value.agent_online
+        ? []
+        : [{
+          message: t('platformOps.settings.environment.gatewayAgentOffline'),
+          level: 'error',
+        }],
     },
     {
       key: 'data-gateway-lensnode',
-      service: 'Gateway LensNode',
+      service: 'LensNode',
       runtime: !configured
         ? statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info')
         : statusCell(
@@ -174,7 +190,15 @@ function dataGatewayComponentRows(): RuntimeStatusRow[] {
           : value.copilot_ready ? t('platformOps.settings.environment.statusOperational') : t('platformOps.settings.environment.statusUnavailable'),
         !configured ? 'info' : value.copilot_ready ? 'success' : 'danger',
       ),
-      details: [t('platformOps.settings.environment.gatewayLensNodeDetail')],
+      details: [
+        t('platformOps.settings.environment.gatewayLensNodeDetail'),
+      ],
+      notices: !configured || value.lensnode_online
+        ? []
+        : [{
+          message: t('platformOps.settings.environment.gatewayLensNodeOffline'),
+          level: 'error',
+        }],
     },
   ]
 }
@@ -184,12 +208,34 @@ function dataGatewayDetails(): string[] {
   return [
     `${t('platformOps.settings.environment.deployment')}: ${String(value.deployment || '—')}`,
     ...(value.name ? [`${t('platformOps.settings.environment.gatewayName')}: ${value.name}`] : []),
-    `${t('platformOps.settings.environment.controlPlaneConnection')}: ${value.control_plane_connected ? t('platformOps.settings.environment.connected') : t('platformOps.settings.environment.offline')}`,
-    `${t('platformOps.settings.environment.repositoryAccess')}: ${value.repository_access ? t('platformOps.settings.environment.statusReady') : t('platformOps.settings.environment.statusUnavailable')}`,
-    ...(value.endpoint ? [`${t('platformOps.settings.environment.endpoint')}: ${value.endpoint}`] : []),
     `${t('platformOps.settings.environment.agentVersion')}: ${String(value.agent_version || '—')}`,
-    `${t('platformOps.settings.environment.checkedAt')}: ${formatLocalDateTime(String(value.checked_at || ''), '—')}`,
   ]
+}
+
+function dataGatewayNotices(): RuntimeStatusNotice[] {
+  const value = dataGateway.value
+  if (!value.configured) {
+    return [{
+      message: t('platformOps.settings.environment.gatewayNotConfigured'),
+      level: 'info',
+    }]
+  }
+  if (value.warning) {
+    return [{ message: String(value.warning), level: 'warning' }]
+  }
+  if (!value.agent_online) {
+    return [{
+      message: t('platformOps.settings.environment.gatewayAgentOffline'),
+      level: 'error',
+    }]
+  }
+  if (!value.lensnode_online) {
+    return [{
+      message: t('platformOps.settings.environment.gatewayLensNodeOffline'),
+      level: 'error',
+    }]
+  }
+  return []
 }
 
 async function load() {

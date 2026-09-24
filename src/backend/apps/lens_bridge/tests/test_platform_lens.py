@@ -142,6 +142,83 @@ class PlatformGatewaySelectionTests(TestCase):
         self.assertEqual(resolved, fallback)
         self.assertNotEqual(resolved, stale_default)
 
+    def test_runtime_selection_prefers_online_gateway_over_stale_default(self):
+        org = platform_lens.get_or_create_platform_org()
+        stale_gateway = Node.objects.create(
+            organization=org,
+            name="stale-runtime-gateway",
+            role=NodeRole.GATEWAY,
+            availability=Node.Availability.OFFLINE,
+        )
+        online_gateway = Node.objects.create(
+            organization=org,
+            name="online-runtime-gateway",
+            role=NodeRole.GATEWAY,
+            availability=Node.Availability.ONLINE,
+        )
+        stale = LensGatewayLink.objects.create(
+            organization=org,
+            gateway=stale_gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+            sl_lensnode_uuid="c540d5a4-2dc0-4ff9-b268-5afee3211d30",
+            sidecar_status=LensGatewayLink.SidecarStatus.OFFLINE,
+            is_platform_default=True,
+        )
+        online = LensGatewayLink.objects.create(
+            organization=org,
+            gateway=online_gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+            sl_lensnode_uuid="d540d5a4-2dc0-4ff9-b268-5afee3211d31",
+            sidecar_status=LensGatewayLink.SidecarStatus.ONLINE,
+        )
+
+        def readiness(link):
+            return {
+                "hfl_agent_online": link == online,
+                "hfl_sidecar_online": link == online,
+                "hfl_usable": link == online,
+                "copilot_eligible": link == online,
+            }
+
+        with mock.patch(
+            "apps.lens_bridge.services.platform_lens.gateway_runtime_state",
+            side_effect=readiness,
+        ):
+            resolved = platform_lens.resolve_platform_runtime_gateway_link()
+
+        self.assertEqual(resolved, online)
+        self.assertNotEqual(resolved, stale)
+
+    def test_runtime_selection_includes_gateway_before_lensnode_provisioning(self):
+        org = platform_lens.get_or_create_platform_org()
+        gateway = Node.objects.create(
+            organization=org,
+            name="pending-lensnode-gateway",
+            role=NodeRole.GATEWAY,
+            availability=Node.Availability.ONLINE,
+        )
+        link = LensGatewayLink.objects.create(
+            organization=org,
+            gateway=gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+        )
+
+        with mock.patch(
+            "apps.lens_bridge.services.platform_lens.gateway_runtime_state",
+            return_value={
+                "hfl_agent_online": True,
+                "hfl_sidecar_online": False,
+                "hfl_usable": False,
+                "copilot_eligible": False,
+            },
+        ):
+            resolved = platform_lens.resolve_platform_runtime_gateway_link()
+
+        self.assertEqual(resolved, link)
+
     def test_database_rejects_multiple_live_platform_defaults(self):
         org = platform_lens.get_or_create_platform_org()
         first_gateway = Node.objects.create(

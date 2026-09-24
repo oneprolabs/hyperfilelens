@@ -23,6 +23,7 @@ from apps.node.services.internal.local_platform_gateway import (
     LOCAL_PLATFORM_GATEWAY_TOKEN_NOTE,
     ensure_local_platform_gateway_token,
     platform_gateway_api_base,
+    reconcile_local_platform_gateway_links,
     registration_metadata,
 )
 
@@ -430,3 +431,81 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         current_default.refresh_from_db()
         self.assertTrue(current_default.is_platform_default)
         self.assertFalse(local_link.is_platform_default)
+
+    def test_reconcile_promotes_online_local_gateway_over_stale_default(self):
+        org = platform_lens.get_or_create_platform_org()
+        stale_gateway = Node.objects.create(
+            organization=org,
+            name="stale-local-gateway",
+            role=NodeRole.GATEWAY,
+            availability=Node.Availability.OFFLINE,
+            metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
+        )
+        online_gateway = Node.objects.create(
+            organization=org,
+            name="online-local-gateway",
+            role=NodeRole.GATEWAY,
+            availability=Node.Availability.ONLINE,
+            metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
+        )
+        stale = LensGatewayLink.objects.create(
+            organization=org,
+            gateway=stale_gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+            is_platform_default=True,
+            sidecar_status=LensGatewayLink.SidecarStatus.OFFLINE,
+        )
+        online = LensGatewayLink.objects.create(
+            organization=org,
+            gateway=online_gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+            sidecar_status=LensGatewayLink.SidecarStatus.ONLINE,
+        )
+
+        reconcile_local_platform_gateway_links()
+
+        stale.refresh_from_db()
+        online.refresh_from_db()
+        self.assertFalse(stale.is_platform_default)
+        self.assertTrue(online.is_platform_default)
+
+    def test_reconcile_clears_newer_default_before_promoting_older_link(self):
+        org = platform_lens.get_or_create_platform_org()
+        online_gateway = Node.objects.create(
+            organization=org,
+            name="online-local-gateway",
+            role=NodeRole.GATEWAY,
+            availability=Node.Availability.ONLINE,
+            metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
+        )
+        stale_gateway = Node.objects.create(
+            organization=org,
+            name="stale-local-gateway",
+            role=NodeRole.GATEWAY,
+            availability=Node.Availability.OFFLINE,
+            metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
+        )
+        online = LensGatewayLink.objects.create(
+            organization=org,
+            gateway=online_gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+            sidecar_status=LensGatewayLink.SidecarStatus.ONLINE,
+        )
+        stale = LensGatewayLink.objects.create(
+            organization=org,
+            gateway=stale_gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+            sidecar_status=LensGatewayLink.SidecarStatus.OFFLINE,
+            is_platform_default=True,
+        )
+
+        reconcile_local_platform_gateway_links()
+
+        stale.refresh_from_db()
+        online.refresh_from_db()
+        self.assertFalse(stale.is_platform_default)
+        self.assertTrue(online.is_platform_default)

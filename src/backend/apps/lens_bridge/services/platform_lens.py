@@ -50,19 +50,77 @@ def _first_eligible(links) -> LensGatewayLink | None:
     return None
 
 
-def resolve_platform_default_gateway_link() -> LensGatewayLink | None:
-    """Resolve Auto to the first HFL-ready platform gateway in stable list order."""
+def _platform_gateway_links(*, require_lensnode: bool = False):
     org = get_or_create_platform_org()
-    return _first_eligible(
+    links = (
         LensGatewayLink.objects.filter(
             organization=org,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
-            sl_lensnode_uuid__isnull=False,
             is_deleted=False,
         )
         .select_related("gateway")
-        .order_by("-is_platform_default", "created_at", "id")
+        .order_by("id")
     )
+    if require_lensnode:
+        links = links.filter(sl_lensnode_uuid__isnull=False)
+    return links
+
+
+def _runtime_gateway_score(
+    link: LensGatewayLink, state: dict
+) -> tuple[int, int, int, int, int, float, int]:
+    """Prefer actual readiness over a stale default marker."""
+    return (
+        int(bool(state.get("copilot_eligible"))),
+        int(bool(state.get("hfl_usable"))),
+        int(bool(state.get("hfl_agent_online") and state.get("hfl_sidecar_online"))),
+        int(bool(state.get("hfl_agent_online"))),
+        int(bool(link.is_platform_default)),
+        link.gateway.last_seen_at.timestamp() if link.gateway.last_seen_at else 0.0,
+        -link.id,
+    )
+
+
+def resolve_platform_runtime_gateway_link() -> LensGatewayLink | None:
+    """Resolve the one platform Gateway that should represent runtime state.
+
+    The default flag is a preference, not proof that the Gateway is usable.
+    This keeps Runtime Environment and Copilot selection aligned when an old
+    local Gateway remains marked as default after a host re-enrollment.
+    """
+    candidates = list(_platform_gateway_links())
+    if not candidates:
+        return None
+    scored = [
+        (link, gateway_runtime_state(link))
+        for link in candidates
+    ]
+    return max(
+        scored,
+        key=lambda item: _runtime_gateway_score(item[0], item[1]),
+    )[0]
+
+
+def resolve_platform_default_gateway_link() -> LensGatewayLink | None:
+    """Resolve Auto to the first HFL-ready platform Gateway."""
+    candidates = list(_platform_gateway_links(require_lensnode=True))
+    if not candidates:
+        return None
+    eligible = [
+        (link, gateway_runtime_state(link))
+        for link in candidates
+    ]
+    eligible = [
+        (link, state)
+        for link, state in eligible
+        if state.get("copilot_eligible")
+    ]
+    if not eligible:
+        return None
+    return max(
+        eligible,
+        key=lambda item: _runtime_gateway_score(item[0], item[1]),
+    )[0]
 
 
 def resolve_organization_default_gateway_link(

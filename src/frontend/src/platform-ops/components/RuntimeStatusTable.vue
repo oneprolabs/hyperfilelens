@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import type { RuntimeStatusRow } from './runtimeStatus'
+import type { RuntimeStatusNoticeLevel, RuntimeStatusRow } from './runtimeStatus'
 
 defineProps<{
   rows: RuntimeStatusRow[]
@@ -8,12 +8,30 @@ defineProps<{
 }>()
 
 const { t } = useI18n()
+
+const noticeLabelKeys: Record<RuntimeStatusNoticeLevel, string> = {
+  info: 'platformOps.settings.environment.noticeInfo',
+  warning: 'platformOps.settings.environment.noticeWarning',
+  error: 'platformOps.settings.environment.noticeError',
+}
+
+function detailParts(detail: string): Array<{ text: string; href?: string }> {
+  const parts: Array<{ text: string; href?: string }> = []
+  const urlPattern = /https?:\/\/[^\s]+/g
+  let cursor = 0
+  let match: RegExpExecArray | null
+  while ((match = urlPattern.exec(detail))) {
+    if (match.index > cursor) parts.push({ text: detail.slice(cursor, match.index) })
+    parts.push({ text: match[0], href: match[0] })
+    cursor = match.index + match[0].length
+  }
+  if (cursor < detail.length) parts.push({ text: detail.slice(cursor) })
+  return parts.length ? parts : [{ text: detail }]
+}
 </script>
 
 <template>
-  <div
-    class="runtime-status-table"
-  >
+  <div class="runtime-status-table">
     <div
       v-if="!hideHeader"
       class="runtime-status-table__head"
@@ -56,7 +74,29 @@ const { t } = useI18n()
           v-for="detail in row.details"
           :key="detail"
         >
-          {{ detail }}
+          <template
+            v-for="(part, index) in detailParts(detail)"
+            :key="`${detail}-${index}`"
+          >
+            <a
+              v-if="part.href"
+              :href="part.href"
+              target="_blank"
+              rel="noopener noreferrer"
+            >{{ part.text }}</a>
+            <template v-else>
+              {{ part.text }}
+            </template>
+          </template>
+        </p>
+        <p
+          v-for="notice in row.notices || []"
+          :key="`${notice.level}-${notice.message}`"
+          class="runtime-status-table__notice"
+          :class="`runtime-status-table__notice--${notice.level}`"
+        >
+          <strong>{{ t(noticeLabelKeys[notice.level]) }}:</strong>
+          {{ notice.message }}
         </p>
       </div>
     </div>
@@ -72,11 +112,11 @@ const { t } = useI18n()
 .runtime-status-table__row {
   display: grid;
   grid-template-columns:
-    minmax(10rem, 15rem)
-    minmax(7rem, 9rem)
-    minmax(7rem, 9rem)
-    minmax(9rem, 12rem)
-    minmax(0, 1fr);
+    minmax(13rem, 1.2fr)
+    minmax(9rem, 0.9fr)
+    minmax(9rem, 0.9fr)
+    minmax(11rem, 1.1fr)
+    minmax(20rem, 2.4fr);
   gap: 12px 16px;
   align-items: center;
   padding: 0 24px;
@@ -85,15 +125,15 @@ const { t } = useI18n()
 .runtime-status-table__head {
   min-height: 38px;
   border-bottom: 1px solid #e5e6eb;
-  color: var(--el-text-color-secondary);
-  font-size: 11px;
-  font-weight: 650;
+  color: var(--color-text-secondary, #70707e);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .runtime-status-table__row {
   min-height: 64px;
-  padding-top: 10px;
-  padding-bottom: 10px;
+  padding-top: 14px;
+  padding-bottom: 14px;
   border-bottom: 1px solid #e5e6eb;
   transition: background-color 0.12s ease;
 }
@@ -103,20 +143,22 @@ const { t } = useI18n()
 }
 
 .runtime-status-table__row:hover {
-  background-color: rgba(15, 23, 42, 0.04);
+  background-color: rgba(15, 23, 42, 0.08);
 }
 
 .runtime-status-table__service {
   color: var(--color-text-title, #1c1c26);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", sans-serif;
-  font-size: 12px;
-  font-weight: 650;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
 }
 
 .runtime-status-table__details {
   min-width: 0;
-  color: var(--color-text-secondary, #64748b);
+  color: var(--color-text-secondary, #70707e);
   font-size: 12px;
+  font-weight: 400;
   line-height: 1.45;
 }
 
@@ -128,15 +170,82 @@ const { t } = useI18n()
   margin-top: 3px;
 }
 
+.runtime-status-table__notice {
+  margin: 6px 0 0;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.runtime-status-table__notice--info {
+  border-left: 2px solid #60a5fa;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.runtime-status-table__notice--warning {
+  border-left: 2px solid #f59e0b;
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.runtime-status-table__notice--error {
+  border-left: 2px solid #ef4444;
+  background: #fef2f2;
+  color: #b42318;
+}
+
+.runtime-status-table__notice strong {
+  font-weight: 600;
+}
+
+.runtime-status-table__details a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.runtime-status-table__details a:hover {
+  text-decoration: underline;
+}
+
+.runtime-status-table .el-tag {
+  justify-self: start;
+  width: auto;
+  min-width: 0;
+}
+
+.runtime-status-table .el-tag {
+  background: transparent !important;
+}
+
+.runtime-status-table .el-tag--info {
+  border-color: #bfdbfe;
+  color: #2563eb;
+}
+
+.runtime-status-table .el-tag--success {
+  border-color: #86efac;
+  color: #15803d;
+}
+
+.runtime-status-table .el-tag--warning {
+  border-color: #fcd34d;
+  color: #b45309;
+}
+
+.runtime-status-table .el-tag--danger {
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+
 @media (max-width: 960px) {
   .runtime-status-table__head,
   .runtime-status-table__row {
     grid-template-columns:
-      minmax(9rem, 13rem)
-      minmax(6rem, 8rem)
-      minmax(6rem, 8rem)
-      minmax(8rem, 10rem)
-      minmax(0, 1fr);
+      minmax(11rem, 1.1fr)
+      minmax(8rem, 0.9fr)
+      minmax(8rem, 0.9fr)
+      minmax(10rem, 1.1fr)
+      minmax(16rem, 1.8fr);
     gap: 8px 10px;
     padding-left: 16px;
     padding-right: 16px;

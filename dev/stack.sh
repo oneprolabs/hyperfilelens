@@ -559,6 +559,14 @@ render_migration_stream() {
 			;;
 		Network\ *\ Creating|Network\ *\ Created|Volume\ *\ Creating|Volume\ *\ Created)
 			;;
+		"Operations to perform:"|"Apply all migrations:"*)
+			# The complete migration plan is preserved in migration.log. Do not
+			# print the long Django heading/list to the terminal: its wrapped
+			# continuation lines obscure the following structured events.
+			;;
+		"Running migrations:")
+			hfl_log_emit_with_component INFO migration "Running migrations"
+			;;
 		'[entrypoint]'*)
 			# Compact entrypoint events replace these routine labels.
 			;;

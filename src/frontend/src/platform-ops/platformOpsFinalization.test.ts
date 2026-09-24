@@ -61,7 +61,10 @@ describe('Admin Console finalization contracts', () => {
 
     expect(environment).toContain("t('platformOps.settings.environment.overviewTitle')")
     expect(environment).toContain("t('platformOps.settings.environment.controlPlaneTitle')")
-    expect(environment).toContain("RuntimeStatusTable :rows=\"controlPlaneRows\"")
+    expect(environment).toContain("RuntimeStatusTable :rows=\"[controlPlaneOverviewRow, ...controlPlaneRows]\"")
+    expect(environment).toContain('const controlPlaneHealth = computed(() =>')
+    expect(environment).toContain('probeStatus(dataGatewayProbe.value),')
+    expect(environment).toContain('health: healthCell(controlPlaneHealth.value)')
     expect(environment).toContain('<RuntimeServiceConnections :data-gateway="dataGatewayProbe" />')
     expect(environment).not.toContain('effectiveEntries')
     expect(environment).not.toContain('sourceEntries')

@@ -7,7 +7,11 @@ import { apiErrorMessage } from '../../../../lib/api'
 import { formatLocalDateTime } from '../../../../lib/dateTime'
 import RuntimeServiceConnections from '../../../components/RuntimeServiceConnections.vue'
 import RuntimeStatusTable from '../../../components/RuntimeStatusTable.vue'
-import type { RuntimeStatusCell, RuntimeStatusRow } from '../../../components/runtimeStatus'
+import type {
+  RuntimeStatusCell,
+  RuntimeStatusNotice,
+  RuntimeStatusRow,
+} from '../../../components/runtimeStatus'
 import { useResolvedPlatformOpsSideNav } from '../../../composables/useResolvedPlatformOpsSideNav'
 import { fetchPlatformEnvironment, type PlatformEnvironmentSettings } from '../../../lib/platformOpsApi'
 
@@ -33,6 +37,12 @@ const checkedAt = computed(() => {
   const raw = health.value.checked_at
   return typeof raw === 'string' ? raw : ''
 })
+const editionLabel = computed(() => {
+  const edition = String(payload.value?.edition || '').trim().toLowerCase()
+  if (edition === 'community') return t('editionCommunity')
+  if (edition === 'enterprise') return t('editionEnterprise')
+  return edition ? `${edition.charAt(0).toUpperCase()}${edition.slice(1)}` : '—'
+})
 
 const instanceHealth = computed(() =>
   aggregateStatus([
@@ -43,6 +53,17 @@ const instanceHealth = computed(() =>
     probeStatus(schedulerProbe.value),
     probeStatus(sourceLensProbe.value),
     probeStatus(dataGatewayProbe.value),
+  ]),
+)
+const controlPlaneHealth = computed(() =>
+  aggregateStatus([
+    probeStatus(nginxProbe.value),
+    probeStatus(webProbe.value),
+    probeStatus(apiProbe.value),
+    probeStatus(celeryProbe.value),
+    probeStatus(schedulerProbe.value),
+    probeStatus(databaseProbe.value),
+    probeStatus(redisProbe.value),
   ]),
 )
 
@@ -59,8 +80,32 @@ const controlPlaneRows = computed<RuntimeStatusRow[]>(() => [
   ),
   serviceRow('scheduler', 'Scheduler', schedulerProbe.value, schedulerDetails(schedulerProbe.value)),
   serviceRow('postgres', 'PostgreSQL', databaseProbe.value, databaseDetails(databaseProbe.value)),
-  serviceRow('redis', 'Redis', redisProbe.value, redisDetails(redisProbe.value)),
+  serviceRow(
+    'redis',
+    'Redis',
+    redisProbe.value,
+    redisDetails(redisProbe.value),
+    probeStatus(redisProbe.value),
+    backlogNotices(celeryProbe.value.backlog),
+  ),
 ])
+
+const controlPlaneOverviewRow = computed<RuntimeStatusRow>(() => {
+  const details = [
+    `${t('platformOps.settings.environment.deployment')}: ${t('platformOps.settings.environment.dockerCompose')}`,
+    `${t('platformOps.integrations.version')}: ${payload.value?.app_version || '—'}`,
+    `${t('platformOps.integrations.consoleUrl')}: ${typeof window === 'undefined' ? '—' : window.location.origin}`,
+  ]
+  return {
+    key: 'control-plane-runtime',
+    service: 'Runtime',
+    runtime: statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info'),
+    health: healthCell(controlPlaneHealth.value),
+    availability: availabilityCell(controlPlaneHealth.value),
+    details,
+    notices: controlPlaneNotices(),
+  }
+})
 
 function asProbe(value: unknown): ProbeRecord {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -73,21 +118,38 @@ function probeStatus(probe: ProbeRecord): string {
   return String(probe.status || '').trim().toLowerCase() || 'unknown'
 }
 
+function statusCell(label: string, type: RuntimeStatusCell['type']): RuntimeStatusCell {
+  return { label, type }
+}
+
 function serviceRow(
   key: string,
   service: string,
   probe: ProbeRecord,
   details: string[],
   healthStatus = probeStatus(probe),
+  notices: RuntimeStatusNotice[] = [],
 ): RuntimeStatusRow {
-  const error = String(probe.error || probe.message || '').trim()
+  const probeNotice = noticeForProbe(probe)
   return {
     key,
     service,
     runtime: runtimeCell(probe),
     health: healthCell(healthStatus),
     availability: availabilityCell(probeStatus(probe)),
-    details: error ? [error] : details.filter(Boolean),
+    details: probeNotice ? [] : details.filter(Boolean),
+    notices: probeNotice ? [probeNotice] : notices,
+  }
+}
+
+function noticeForProbe(probe: ProbeRecord): RuntimeStatusNotice | null {
+  const error = String(probe.error || '').trim()
+  if (error) return { message: error, level: 'error' }
+  const message = String(probe.message || '').trim()
+  if (!message) return null
+  return {
+    message,
+    level: probeStatus(probe) === 'degraded' ? 'warning' : 'info',
   }
 }
 
@@ -97,7 +159,7 @@ function runtimeCell(probe: ProbeRecord): RuntimeStatusCell {
 }
 
 function healthCell(status: string): RuntimeStatusCell {
-  if (status === 'ok') return { label: t('platformOps.settings.environment.statusHealthy'), type: 'success' }
+  if (status === 'ok') return { label: t('platformOps.integrations.healthy'), type: 'success' }
   if (status === 'error') return { label: t('platformOps.settings.environment.healthUnhealthy'), type: 'danger' }
   if (status === 'degraded') return { label: t('platformOps.settings.environment.healthUnhealthy'), type: 'warning' }
   return { label: t('platformOps.settings.environment.statusNotMonitored'), type: 'info' }
@@ -169,12 +231,14 @@ function formatDatabaseEngine(value: unknown): string {
   return formatText(value)
 }
 
-function formatBacklog(value: unknown): string {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const status = String((value as ProbeRecord).status || '').trim().toLowerCase()
-    if (status) return statusLabel(status)
-  }
-  return ''
+function backlogNotices(value: unknown): RuntimeStatusNotice[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  const warnings = (value as ProbeRecord).warnings
+  if (!Array.isArray(warnings)) return []
+  return warnings
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .map((message) => ({ message, level: 'warning' as const }))
 }
 
 function workerDetails(probe: ProbeRecord): string[] {
@@ -186,11 +250,24 @@ function workerDetails(probe: ProbeRecord): string[] {
       active: activeTasks,
     }),
   ]
-  const backlog = formatBacklog(probe.backlog)
-  if (backlog && backlog !== t('platformOps.settings.environment.statusHealthy')) {
-    details.push(t('platformOps.settings.environment.queueHealth', { status: backlog }))
-  }
   return details
+}
+
+function controlPlaneNotices(): RuntimeStatusNotice[] {
+  const notices: RuntimeStatusNotice[] = []
+  const probes: Array<[string, ProbeRecord]> = [
+    ['Nginx', nginxProbe.value],
+    ['Web', webProbe.value],
+    ['API', apiProbe.value],
+    ['PostgreSQL', databaseProbe.value],
+    ['Redis', redisProbe.value],
+    ['Scheduler', schedulerProbe.value],
+  ]
+  probes.forEach(([name, probe]) => {
+    const notice = noticeForProbe(probe)
+    if (notice) notices.push({ ...notice, message: `${name}: ${notice.message}` })
+  })
+  return notices
 }
 
 function schedulerDetails(probe: ProbeRecord): string[] {
@@ -294,7 +371,7 @@ onMounted(load)
             </div>
             <div class="platform-settings__overview-item">
               <span class="platform-settings__overview-label">{{ t('platformOps.settings.environment.edition') }}</span>
-              <span class="platform-settings__value">{{ payload.edition || '—' }}</span>
+              <span class="platform-settings__value">{{ editionLabel }}</span>
             </div>
             <div class="platform-settings__overview-item">
               <span class="platform-settings__overview-label">{{ t('platformOps.settings.environment.checkedAt') }}</span>
@@ -307,7 +384,7 @@ onMounted(load)
           <header class="platform-settings__panel-head">
             <h3>{{ t('platformOps.settings.environment.controlPlaneTitle') }}</h3>
           </header>
-          <RuntimeStatusTable :rows="controlPlaneRows" />
+          <RuntimeStatusTable :rows="[controlPlaneOverviewRow, ...controlPlaneRows]" />
         </section>
 
         <RuntimeServiceConnections :data-gateway="dataGatewayProbe" />
@@ -355,8 +432,13 @@ onMounted(load)
   align-items: center;
   min-width: 0;
   min-height: 64px;
-  padding: 12px 24px;
+  padding: 14px 24px;
   border-bottom: 1px solid #e5e6eb;
+  transition: background-color 0.12s ease;
+}
+
+.platform-settings--runtime .platform-settings__overview-item:hover {
+  background-color: rgba(15, 23, 42, 0.08);
 }
 
 .platform-settings--runtime .platform-settings__overview-item:nth-child(even) {
@@ -368,6 +450,35 @@ onMounted(load)
   color: var(--color-text-title, #1c1c26);
   font-size: 13px;
   line-height: 1.35;
+}
+
+.platform-settings--runtime .platform-settings__overview-item > .el-tag {
+  justify-self: start;
+  width: auto;
+  min-width: 0;
+  background: transparent !important;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.platform-settings--runtime .platform-settings__overview-item > .el-tag--info {
+  border-color: #bfdbfe;
+  color: #2563eb;
+}
+
+.platform-settings--runtime .platform-settings__overview-item > .el-tag--success {
+  border-color: #86efac;
+  color: #15803d;
+}
+
+.platform-settings--runtime .platform-settings__overview-item > .el-tag--warning {
+  border-color: #fcd34d;
+  color: #b45309;
+}
+
+.platform-settings--runtime .platform-settings__overview-item > .el-tag--danger {
+  border-color: #fca5a5;
+  color: #b91c1c;
 }
 
 @media (max-width: 720px) {

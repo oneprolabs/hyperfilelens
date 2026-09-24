@@ -327,15 +327,35 @@ def reconcile_local_platform_gateway_links() -> int:
     ).exclude(gateway_id__in=managed_gateway_ids).exists()
     preferred_id = None
     if not other_default_exists:
-        preferred_id = next(
-            (link.id for link in links if link.is_platform_default),
-            links[0].id,
-        )
+        ready_links = [
+            link
+            for link in links
+            if (
+                link.gateway.availability == Node.Availability.ONLINE
+                and link.sidecar_status == LensGatewayLink.SidecarStatus.ONLINE
+            )
+        ]
+        preferred_id = max(
+            ready_links or [link for link in links if link.is_platform_default] or links,
+            key=lambda link: (
+                link.gateway.last_seen_at.timestamp()
+                if link.gateway.last_seen_at
+                else 0.0,
+                link.id,
+            ),
+        ).id
+
+    # Clear the previous default before setting its replacement: the partial
+    # unique constraint is checked immediately, regardless of link ID order.
+    for link in links:
+        if link.is_platform_default and link.id != preferred_id:
+            link.is_platform_default = False
+            link.save(update_fields=["is_platform_default", "updated_at"])
+            changed += 1
 
     for link in links:
-        should_be_default = link.id == preferred_id
-        if link.is_platform_default != should_be_default:
-            link.is_platform_default = should_be_default
+        if link.id == preferred_id and not link.is_platform_default:
+            link.is_platform_default = True
             link.save(update_fields=["is_platform_default", "updated_at"])
             changed += 1
 
