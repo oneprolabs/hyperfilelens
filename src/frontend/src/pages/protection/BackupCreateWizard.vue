@@ -5,7 +5,6 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   Plus,
-  Check,
   Pencil,
   ArrowLeft,
   ArrowRight,
