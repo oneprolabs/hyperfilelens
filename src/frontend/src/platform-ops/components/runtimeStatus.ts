@@ -5,6 +5,13 @@ export type RuntimeStatusCell = {
   type: RuntimeStatusTone
 }
 
+export type RuntimeStatusNoticeLevel = 'info' | 'warning' | 'error'
+
+export type RuntimeStatusNotice = {
+  message: string
+  level: RuntimeStatusNoticeLevel
+}
+
 export type RuntimeStatusRow = {
   key: string
   service: string
@@ -12,4 +19,5 @@ export type RuntimeStatusRow = {
   health: RuntimeStatusCell
   availability: RuntimeStatusCell
   details: string[]
+  notices?: RuntimeStatusNotice[]
 }

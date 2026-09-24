@@ -169,6 +169,30 @@ class RedisRuntimeCleanupTests(SimpleTestCase):
     @patch(
         "apps.node.management.commands.cleanup_redis_runtime_backlog.redis_store.get_redis"
     )
+    def test_task_stream_only_does_not_inspect_or_modify_uplink_history(
+        self, get_redis
+    ) -> None:
+        client = _CleanupRedis()
+        get_redis.return_value = client
+
+        call_command(
+            "cleanup_redis_runtime_backlog",
+            "--apply",
+            "--task-stream-only",
+            "--task-stream-ttl-seconds=300",
+            stdout=StringIO(),
+        )
+
+        self.assertEqual(client.key_ttls["task_stream:legacy"], 300)
+        self.assertEqual(client.key_ttls["task_stream:active"], -1)
+        self.assertEqual(
+            [entry_id for entry_id, _fields in client.stream],
+            ["1-0", "2-0", "3-0", "4-0"],
+        )
+
+    @patch(
+        "apps.node.management.commands.cleanup_redis_runtime_backlog.redis_store.get_redis"
+    )
     def test_refuses_retained_stream_without_consumer_groups(self, get_redis) -> None:
         client = _CleanupRedis()
         client.groups = []

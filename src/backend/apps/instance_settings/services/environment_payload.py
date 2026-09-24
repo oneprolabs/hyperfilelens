@@ -73,8 +73,6 @@ def probe_celery() -> dict:
     from common.ops.runtime_backlog import runtime_backlog_snapshot
 
     backlog = runtime_backlog_snapshot()
-    if celery_status == "ok" and backlog["status"] != "ok":
-        celery_status = "degraded"
     return {
         "status": celery_status,
         "worker_count": worker_count,
@@ -142,18 +140,12 @@ def probe_nginx() -> dict:
 
 
 def probe_platform_data_gateway(*, source_lens_status: str = "") -> dict:
-    from apps.lens_bridge.models import LensGatewayLink
     from apps.lens_bridge.services.gateway_readiness import gateway_runtime_state
-
-    link = (
-        LensGatewayLink.objects.filter(
-            scope=LensGatewayLink.GatewayScope.PLATFORM,
-            is_deleted=False,
-        )
-        .select_related("gateway")
-        .order_by("-is_platform_default", "-created_at", "id")
-        .first()
+    from apps.lens_bridge.services.platform_lens import (
+        resolve_platform_runtime_gateway_link,
     )
+
+    link = resolve_platform_runtime_gateway_link()
     if link is None:
         return {
             "status": "not_configured",

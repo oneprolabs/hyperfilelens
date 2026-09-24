@@ -53,6 +53,11 @@ class Command(BaseCommand):
             default=86_400,
             help="Transitional TTL assigned to legacy notification Lists.",
         )
+        parser.add_argument(
+            "--task-stream-only",
+            action="store_true",
+            help="Only expire legacy task notification Lists; leave Agent uplink history unchanged.",
+        )
 
     @staticmethod
     def _memory_used(client) -> int:
@@ -196,12 +201,18 @@ class Command(BaseCommand):
                 client,
                 batch_size=batch_size,
             )
-            (
-                uplink_length,
-                safe_uplink_ids,
-                uplink_pending,
-                uplink_lag,
-            ) = self._safe_uplink_entries(client, batch_size=batch_size)
+            if options["task_stream_only"]:
+                uplink_length = int(client.xlen(NODE_UPLINK_STREAM))
+                safe_uplink_ids = []
+                uplink_pending = 0
+                uplink_lag = 0
+            else:
+                (
+                    uplink_length,
+                    safe_uplink_ids,
+                    uplink_pending,
+                    uplink_lag,
+                ) = self._safe_uplink_entries(client, batch_size=batch_size)
             task_stream_expired = 0
             if apply:
                 pipeline = client.pipeline(transaction=True)

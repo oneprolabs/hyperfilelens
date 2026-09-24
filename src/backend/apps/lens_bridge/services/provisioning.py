@@ -1221,12 +1221,25 @@ def ensure_lensnode_for_gateway(
             link.refresh_from_db(fields=["is_platform_default"])
 
     if link.sl_lensnode_uuid:
+        if is_platform and is_local_platform_gateway_metadata(gateway.metadata):
+            from apps.node.services.internal.local_platform_gateway import (
+                reconcile_local_platform_gateway_links,
+            )
+
+            reconcile_local_platform_gateway_links()
         return link
-    return _provision_source_lens_lensnode(
+    provisioned = _provision_source_lens_lensnode(
         link=link,
         gateway=gateway,
         requested_name=name,
     )
+    if is_platform and is_local_platform_gateway_metadata(gateway.metadata):
+        from apps.node.services.internal.local_platform_gateway import (
+            reconcile_local_platform_gateway_links,
+        )
+
+        reconcile_local_platform_gateway_links()
+    return provisioned
 
 
 def enable_ai_on_gateway(

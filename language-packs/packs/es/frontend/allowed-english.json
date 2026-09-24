@@ -184,6 +184,7 @@
   "platformOps.settings.email.transportTls",
   "platformOps.settings.environment.endpoint",
   "platformOps.settings.environment.latencyMs",
+  "platformOps.settings.environment.noticeError",
   "platformOps.settings.externalAccess.urlPlaceholder",
   "platformOps.settings.googleOAuthTitle",
   "platformOps.settings.identity.googleClientId",
