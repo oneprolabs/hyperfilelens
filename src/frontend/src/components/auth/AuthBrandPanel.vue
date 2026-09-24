@@ -42,7 +42,7 @@ defineProps<{
   width: min(360px, 100%);
   height: auto;
   object-fit: contain;
-  transform: translate(-4.4%, 6px);
+  transform: translateY(6px);
 }
 
 .auth-brand-copy {
