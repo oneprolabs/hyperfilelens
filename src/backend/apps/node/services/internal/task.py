@@ -164,6 +164,28 @@ def _restore_watchdog_deadline(*, from_time: datetime | None = None) -> datetime
     return base + timezone.timedelta(seconds=restore_conf.ACTIVITY_LEASE_SECONDS)
 
 
+def _is_insight_snapshot_operation(*, correlation_type: str, kind: str) -> bool:
+    return (
+        (
+            correlation_type == "lens_bridge.snapshot_browse"
+            and kind == "lens.snapshot.browse"
+        )
+        or (
+            correlation_type == "lens_bridge.scope_resolve"
+            and kind == "lens.snapshot.scope.resolve"
+        )
+    )
+
+
+def _insight_snapshot_operation_watchdog_deadline(
+    *, from_time: datetime | None = None
+) -> datetime:
+    base = from_time or timezone.now()
+    return base + timezone.timedelta(
+        seconds=max(1, node_conf.INSIGHT_SNAPSHOT_OPERATION_WATCHDOG_SECONDS)
+    )
+
+
 def _is_source_nas_probe(*, correlation_type: str, kind: str) -> bool:
     return correlation_type == "source.connection_probe" and kind == "nas.test"
 
@@ -295,6 +317,11 @@ def _initial_watchdog_deadline(
     from_time: datetime | None = None,
     kind: str = "",
 ) -> datetime:
+    if _is_insight_snapshot_operation(
+        correlation_type=correlation_type,
+        kind=kind,
+    ):
+        return _insight_snapshot_operation_watchdog_deadline(from_time=from_time)
     if _is_restore_task(correlation_type=correlation_type, kind=kind):
         return _restore_watchdog_deadline(from_time=from_time)
     if _is_repository_initialize_task(
@@ -1419,6 +1446,26 @@ def record_task_progress(
     ):
         # path.size can legitimately run for a long time. Keep an absolute
         # deadline from acceptance instead of renewing it on each heartbeat.
+        task.watchdog_deadline_at = _initial_watchdog_deadline(
+            correlation_type=task.correlation_type,
+            from_time=task.accepted_at or now,
+            kind=task.kind,
+        )
+        update_fields = [
+            "status",
+            "accepted_at",
+            "last_progress_at",
+            "watchdog_deadline_at",
+            "result",
+            "updated_at",
+        ]
+    elif _is_insight_snapshot_operation(
+        correlation_type=task.correlation_type,
+        kind=task.kind,
+    ):
+        # Reader operations may emit liveness frames while Kopia is waiting
+        # on repository/index work. Keep the 30-minute deadline absolute so
+        # heartbeats cannot turn a stuck Reader into an unbounded task.
         task.watchdog_deadline_at = _initial_watchdog_deadline(
             correlation_type=task.correlation_type,
             from_time=task.accepted_at or now,

@@ -282,7 +282,7 @@ describe('useCopilotSelectionPreview', () => {
     vueScope.stop()
   })
 
-  it('keeps a long-running Reader task for bounded automatic recovery', async () => {
+  it('keeps a long-running Reader task without a client timeout', async () => {
     vi.useFakeTimers()
     mocks.cancelCopilotScopePreview.mockResolvedValue(undefined)
     mocks.startCopilotScopePreview.mockResolvedValue({

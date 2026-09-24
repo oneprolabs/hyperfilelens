@@ -2393,6 +2393,11 @@ func (e *Engine) runManagedInsightSnapshotBrowse(
 	if p.SnapshotID == "" {
 		return "failed", nil, "snapshot_id is required"
 	}
+	releaseRepository, lockErr := acquireInsightRepositoryOperationLock(ctx, p)
+	if lockErr != nil {
+		return "failed", nil, lockErr.Error()
+	}
+	defer releaseRepository()
 	bin, err := e.kopiaBin(ctx)
 	if err != nil {
 		return "failed", nil, err.Error()
@@ -2417,6 +2422,14 @@ func (e *Engine) runManagedInsightSnapshotBrowse(
 	target := snapshotObjectPath(p.SnapshotID, basePath)
 	args := []string{"--config-file=" + configFile, "ls", "-l", target}
 	collector := newInsightSnapshotBrowseCollector(basePath, p.Limit)
+	lsStarted := time.Now()
+	slog.Info(
+		"insight_snapshot_browse",
+		"event", "ls_begin",
+		"task_id", taskID,
+		"snapshot_id", p.SnapshotID,
+		"path", basePath,
+	)
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	res, runErr := process.RunStreamingDiscardStdout(
@@ -2430,6 +2443,15 @@ func (e *Engine) runManagedInsightSnapshotBrowse(
 				cancelRun()
 			}
 		},
+	)
+	slog.Info(
+		"insight_snapshot_browse",
+		"event", "ls_finished",
+		"task_id", taskID,
+		"snapshot_id", p.SnapshotID,
+		"path", basePath,
+		"duration_ms", time.Since(lsStarted).Milliseconds(),
+		"ok", runErr == nil,
 	)
 	limitReached := collector.hasMore && ctx.Err() == nil
 	if collector.invalid {
@@ -2490,6 +2512,11 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 	if p.SnapshotID == "" {
 		return "failed", nil, "snapshot_id is required"
 	}
+	releaseRepository, lockErr := acquireInsightRepositoryOperationLock(ctx, p)
+	if lockErr != nil {
+		return "failed", nil, lockErr.Error()
+	}
+	defer releaseRepository()
 	bin, err := e.kopiaBin(ctx)
 	if err != nil {
 		return "failed", nil, err.Error()
@@ -2557,6 +2584,14 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 
 	target := snapshotObjectPath(p.SnapshotID, cleanPath)
 	args := []string{"--config-file=" + configFile, "ls", "-lr", target}
+	lsStarted := time.Now()
+	slog.Info(
+		"insight_snapshot_scope",
+		"event", "ls_begin",
+		"task_id", taskID,
+		"snapshot_id", p.SnapshotID,
+		"path", cleanPath,
+	)
 	var fileCount int64
 	var sizeBytes int64
 	var directoryCount int64
@@ -2603,6 +2638,15 @@ func (e *Engine) runManagedSnapshotScopeResolve(
 				invalidTotals = true
 			}
 		},
+	)
+	slog.Info(
+		"insight_snapshot_scope",
+		"event", "ls_finished",
+		"task_id", taskID,
+		"snapshot_id", p.SnapshotID,
+		"path", cleanPath,
+		"duration_ms", time.Since(lsStarted).Milliseconds(),
+		"ok", runErr == nil,
 	)
 	if runErr != nil {
 		return "failed", result, snapshotBrowseFailureMessage(res, runErr)

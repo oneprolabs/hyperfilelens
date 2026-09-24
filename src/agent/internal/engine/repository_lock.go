@@ -2,12 +2,16 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 var repositoryPrepareLocks sync.Map
+var insightRepositoryOperationLocks sync.Map
 
 func withRepositoryPrepareLock(ctx context.Context, configFile string, fn func() (string, map[string]string, map[string]any, repositorySpec, string)) (string, map[string]string, map[string]any, repositorySpec, string) {
 	if err := ctx.Err(); err != nil {
@@ -27,6 +31,44 @@ func withRepositoryPrepareLock(ctx context.Context, configFile string, fn func()
 	}
 	defer unlock()
 	return fn()
+}
+
+func acquireInsightRepositoryOperationLock(
+	ctx context.Context,
+	p Payload,
+) (func(), error) {
+	spec, ok, err := parseRepositorySpec(p.Extra["repository"])
+	if err != nil {
+		return nil, err
+	}
+	if !ok || spec.ID <= 0 {
+		return func() {}, nil
+	}
+	key := fmt.Sprintf("insight-repository-%d", spec.ID)
+	lockValue, _ := insightRepositoryOperationLocks.LoadOrStore(
+		key,
+		make(chan struct{}, 1),
+	)
+	lock := lockValue.(chan struct{})
+	waitStarted := time.Now()
+	select {
+	case lock <- struct{}{}:
+		slog.Info(
+			"insight_repository",
+			"event", "operation_lock_acquired",
+			"repository_id", spec.ID,
+			"wait_ms", time.Since(waitStarted).Milliseconds(),
+		)
+		return func() { <-lock }, nil
+	case <-ctx.Done():
+		slog.Warn(
+			"insight_repository",
+			"event", "operation_lock_canceled",
+			"repository_id", spec.ID,
+			"wait_ms", time.Since(waitStarted).Milliseconds(),
+		)
+		return nil, ctx.Err()
+	}
 }
 
 func repositoryLockFile(configFile string) string {

@@ -9,7 +9,11 @@ const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
 // The first read is immediate; bounded backoff keeps the picker responsive
 // without continuously polling a busy Reader.
 const COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS = [150, 300, 500]
-const COPILOT_SNAPSHOT_BROWSE_MAX_POLLS = 240
+// The backend NodeTask watchdog is the terminal timeout. The browser must not
+// turn a slow but healthy Reader task into a false failure.
+const COPILOT_SNAPSHOT_BROWSE_SOFT_WAIT_POLLS = 120
+const COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_AFTER = 120
+const COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_DELAY_MS = 2000
 
 export type LensApiScope = 'tenant' | 'platform'
 
@@ -1158,6 +1162,16 @@ export type LensSnapshotBrowseTask = {
   skipped_special_count?: number
 }
 
+export type LensSnapshotBrowseResult = {
+  status: 'success'
+  entries: BackupSnapshotBrowserEntry[]
+  has_more: boolean
+  skipped_special_count: number
+} | {
+  status: 'waiting'
+  task_id: string
+}
+
 export async function startCopilotSnapshotBrowse(
   directoryId: number,
   params: {
@@ -1196,45 +1210,30 @@ export async function fetchCopilotSnapshotBrowse(
   const qs = new URLSearchParams()
   if (organizationKey?.trim()) qs.set('organization_key', organizationKey.trim())
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  const raw = await api(lensUrl(`copilot/snapshot-browse/${taskId}${suffix}`), {
+  const raw = await api(lensUrl(`copilot/snapshot-browse/${taskId}/${suffix}`), {
     headers: lensHeaders(),
     signal,
   })
   return lensPayload<LensSnapshotBrowseTask>(raw)
 }
 
-export async function browseCopilotSnapshotDirectory(
-  directoryId: number,
-  params: {
-    backupSourceSnapshotId: number
-    gatewayLinkId: number
-    path?: string
-    limit?: number
-    organization_key?: string
-  },
+async function pollCopilotSnapshotBrowseTask(
+  initialTask: LensSnapshotBrowseTask,
   signal?: AbortSignal,
-): Promise<{
-  entries: BackupSnapshotBrowserEntry[]
-  has_more: boolean
-  skipped_special_count: number
-}> {
-  const started = await startCopilotSnapshotBrowse(directoryId, params, signal)
-  let task = started
+  organizationKey?: string,
+): Promise<LensSnapshotBrowseResult> {
+  let task = initialTask
   let polls = 0
   while (task.status === 'pending' || task.status === 'running') {
-    if (polls >= COPILOT_SNAPSHOT_BROWSE_MAX_POLLS) {
-      throw <AppErrorShape>{
-        status: 504,
-        message: 'Snapshot browsing timed out. Check the Reader and try again.',
-        code: 'INSIGHT.SNAPSHOT_BROWSE_TIMEOUT',
-        errorCode: 'INSIGHT.SNAPSHOT_BROWSE_TIMEOUT',
-        retryable: true,
-      }
+    if (polls >= COPILOT_SNAPSHOT_BROWSE_SOFT_WAIT_POLLS && task.task_id) {
+      return { status: 'waiting', task_id: task.task_id }
     }
     if (polls > 0) {
-      const delay = COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS[
-        Math.min(polls - 1, COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS.length - 1)
-      ]
+      const delay = polls >= COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_AFTER
+        ? COPILOT_SNAPSHOT_BROWSE_SLOW_POLL_DELAY_MS
+        : COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS[
+            Math.min(polls - 1, COPILOT_SNAPSHOT_BROWSE_POLL_DELAYS_MS.length - 1)
+          ]
       await new Promise<void>((resolve, reject) => {
         if (signal?.aborted) {
           reject(new DOMException('Aborted', 'AbortError'))
@@ -1255,7 +1254,10 @@ export async function browseCopilotSnapshotDirectory(
     if (signal?.aborted) {
       throw new DOMException('Aborted', 'AbortError')
     }
-    task = await fetchCopilotSnapshotBrowse(task.task_id, signal, params.organization_key)
+    if (!task.task_id) {
+      return { status: 'waiting', task_id: '' }
+    }
+    task = await fetchCopilotSnapshotBrowse(task.task_id, signal, organizationKey)
   }
   if (task.status !== 'success') {
     const errorCode = task.error_code || 'INSIGHT.SNAPSHOT_BROWSE_FAILED'
@@ -1269,10 +1271,48 @@ export async function browseCopilotSnapshotDirectory(
     }
   }
   return {
-    entries: (task.entries || []).slice(0, params?.limit || 500),
+    status: 'success',
+    entries: (task.entries || []).slice(0, 500),
     has_more: Boolean(task.has_more),
     skipped_special_count: Math.max(0, Number(task.skipped_special_count || 0)),
   }
+}
+
+export async function resumeCopilotSnapshotBrowse(
+  taskId: string,
+  signal?: AbortSignal,
+  organizationKey?: string,
+): Promise<LensSnapshotBrowseResult> {
+  return pollCopilotSnapshotBrowseTask(
+    await fetchCopilotSnapshotBrowse(taskId, signal, organizationKey),
+    signal,
+    organizationKey,
+  )
+}
+
+export async function browseCopilotSnapshotDirectory(
+  directoryId: number,
+  params: {
+    backupSourceSnapshotId: number
+    gatewayLinkId: number
+    path?: string
+    limit?: number
+    organization_key?: string
+  },
+  signal?: AbortSignal,
+): Promise<LensSnapshotBrowseResult> {
+  const result = await pollCopilotSnapshotBrowseTask(
+    await startCopilotSnapshotBrowse(directoryId, params, signal),
+    signal,
+    params.organization_key,
+  )
+  if (result.status === 'success') {
+    return {
+      ...result,
+      entries: result.entries.slice(0, params?.limit || 500),
+    }
+  }
+  return result
 }
 
 export type LensScopeSummary = {

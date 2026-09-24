@@ -42,7 +42,9 @@ type PreviewOptions = {
 // The Reader task is asynchronous, but a completed task should not add an
 // unnecessary full second to the user's selection flow.
 const POLL_DELAYS_MS = [250, 400, 650, 1_000]
-const MAX_POLLS = 120
+const SOFT_WAIT_POLLS = 120
+const SLOW_POLL_AFTER = 120
+const SLOW_POLL_DELAY_MS = 2_000
 const RETRY_DELAYS_MS = [0, 2_000, 5_000, 15_000]
 const REQUEST_RETRY_DELAYS_MS = [0, 2_000, 5_000, 15_000]
 const RECOVERY_DELAYS_MS = [30_000, 60_000, 120_000, 240_000]
@@ -254,16 +256,18 @@ export function useCopilotSelectionPreview(options: PreviewOptions) {
     let current = task
     let polls = 0
     while (current.status === 'pending' || current.status === 'running') {
-      if (!current.task_id || polls >= MAX_POLLS) {
+      if (!current.task_id || polls >= SOFT_WAIT_POLLS) {
         return {
           ...current,
           status: 'client_timeout',
-          retryable: false,
+          retryable: true,
           error: translate('insight.copilot.selectionCalculationSlow'),
         }
       }
       if (polls > 0) {
-        const delay = POLL_DELAYS_MS[Math.min(polls - 1, POLL_DELAYS_MS.length - 1)]
+        const delay = polls >= SLOW_POLL_AFTER
+          ? SLOW_POLL_DELAY_MS
+          : POLL_DELAYS_MS[Math.min(polls - 1, POLL_DELAYS_MS.length - 1)]
         await sleep(delay, signal)
       }
       polls += 1

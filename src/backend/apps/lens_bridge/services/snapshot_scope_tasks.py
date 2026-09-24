@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import hashlib
 import ntpath
 import posixpath
 from dataclasses import dataclass
@@ -47,6 +48,87 @@ _UNSUPPORTED_CONTENT_ERROR_CODE = "INSIGHT_UNSUPPORTED_CONTENT_TYPE"
 UNSUPPORTED_CONTENT_MESSAGE = (
     "Symbolic links, sockets, pipes, and device files cannot be used in Chat."
 )
+
+
+def browse_correlation_id(
+    *,
+    user_id: int,
+    snapshot_id: int,
+    directory_id: int,
+    gateway_link_id: int,
+    path: str,
+    limit: int,
+) -> str:
+    """Return a stable per-user identity for one in-flight browse request."""
+
+    identity = "\x00".join(
+        (
+            str(int(snapshot_id)),
+            str(int(directory_id)),
+            str(int(gateway_link_id)),
+            _clean_relative_path(path),
+            str(max(1, min(int(limit), 500))),
+        )
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:48]
+    return f"user:{int(user_id)}:browse:{digest}"
+
+
+def browse_task_for_correlation(
+    *,
+    organization: Organization,
+    correlation_id: str,
+) -> NodeTask | None:
+    """Return an active browse task for the current user's stable request."""
+
+    task = get_node_task_by_correlation_for_requesting_org(
+        org=organization,
+        correlation_type=BROWSE_CORRELATION_TYPE,
+        correlation_id=correlation_id,
+        active_only=True,
+    )
+    if task is None or task.kind != "lens.snapshot.browse":
+        return None
+    return task
+
+
+def active_scope_task_for_selection(
+    *,
+    organization: Organization,
+    user_id: int,
+    directory_id: int,
+    snapshot_id: str,
+    gateway_link_id: int,
+    path: str,
+) -> NodeTask | None:
+    """Find an in-flight scope calculation after a page/request restart."""
+
+    gateway_exists = LensGatewayLink.objects.filter(
+        pk=gateway_link_id,
+        organization_id=organization.id,
+        is_deleted=False,
+    ).exists()
+    if not gateway_exists:
+        return None
+    wanted_path = _clean_relative_path(path)
+    prefix = f"selection:user:{int(user_id)}:"
+    tasks = NodeTask.objects.filter(
+        requesting_organization_id=organization.id,
+        kind="lens.snapshot.scope.resolve",
+        correlation_type=SCOPE_CORRELATION_TYPE,
+        correlation_id__startswith=prefix,
+        payload__gateway_link_id=gateway_link_id,
+        status__in=(NodeTask.Status.PENDING, NodeTask.Status.RUNNING),
+    ).order_by("-created_at", "-id")[:20]
+    for task in tasks:
+        payload = task.payload if isinstance(task.payload, dict) else {}
+        if (
+            payload.get("snapshot_directory_id") == directory_id
+            and str(payload.get("snapshot_id") or "") == str(snapshot_id)
+            and _clean_relative_path(str(payload.get("path") or "")) == wanted_path
+        ):
+            return task
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,6 +368,7 @@ def dispatch_snapshot_operation(
     persisted_payload = {
         "snapshot_directory_id": directory.id,
         "snapshot_id": directory.kopia_snapshot_id,
+        "gateway_link_id": gateway_link_id,
         "path": clean_path,
         "reader_mode": access.mode,
         **(extra_payload or {}),
@@ -314,6 +397,8 @@ def dispatch_snapshot_browse(
     limit: int,
     correlation_id: str,
 ) -> NodeTask:
+    # A stable correlation is used by the API layer to coalesce duplicate
+    # refresh/reopen requests. The final dispatch remains asynchronous.
     return dispatch_snapshot_operation(
         organization_id=organization_id,
         directory_id=directory_id,

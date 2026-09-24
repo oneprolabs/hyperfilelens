@@ -24,6 +24,7 @@ from apps.iam.permissions_org import (
     IsOrgWriter,
     get_membership,
 )
+from apps.iam.models import Organization
 from apps.lens_bridge.api.negotiation import PDFDownloadContentNegotiation
 from apps.lens_bridge.api.serializers import (
     LensAdmissionPreviewSerializer,
@@ -132,18 +133,41 @@ class LensCopilotSnapshotBrowseView(OrgScopedMixin, APIView):
         body.is_valid(raise_exception=True)
         from apps.lens_bridge.services import snapshot_scope_tasks
 
-        task = snapshot_scope_tasks.dispatch_snapshot_browse(
-            organization_id=self.org.id,
+        limit = body.validated_data["limit"]
+        path = body.validated_data.get("path", "")
+        correlation_id = snapshot_scope_tasks.browse_correlation_id(
+            user_id=request.user.id,
+            snapshot_id=body.validated_data["backup_source_snapshot_id"],
             directory_id=body.validated_data["directory_id"],
-            backup_source_snapshot_id=body.validated_data[
-                "backup_source_snapshot_id"
-            ],
             gateway_link_id=body.validated_data["gateway_link_id"],
-            requesting_user_id=request.user.id,
-            path=body.validated_data.get("path", ""),
-            limit=body.validated_data["limit"],
-            correlation_id=f"user:{request.user.id}:{uuid.uuid4()}",
+            path=path,
+            limit=limit,
         )
+        with transaction.atomic():
+            # Serialize the check-and-dispatch pair per tenant so two browser
+            # mounts cannot both create the same in-flight Reader operation.
+            Organization.objects.select_for_update().only("id").get(pk=self.org.id)
+            existing = snapshot_scope_tasks.browse_task_for_correlation(
+                organization=self.org,
+                correlation_id=correlation_id,
+            )
+            if existing is not None:
+                return Response(
+                    {"task_id": str(existing.id), "status": str(existing.status)},
+                    status=status.HTTP_202_ACCEPTED,
+                )
+            task = snapshot_scope_tasks.dispatch_snapshot_browse(
+                organization_id=self.org.id,
+                directory_id=body.validated_data["directory_id"],
+                backup_source_snapshot_id=body.validated_data[
+                    "backup_source_snapshot_id"
+                ],
+                gateway_link_id=body.validated_data["gateway_link_id"],
+                requesting_user_id=request.user.id,
+                path=path,
+                limit=limit,
+                correlation_id=correlation_id,
+            )
         return Response(
             {"task_id": str(task.id), "status": str(task.status)},
             status=status.HTTP_202_ACCEPTED,

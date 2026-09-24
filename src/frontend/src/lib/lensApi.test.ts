@@ -99,21 +99,19 @@ describe('Insight snapshot browsing', () => {
     )
   })
 
-  it('stops polling a task that never reaches a terminal state', async () => {
+  it('returns a resumable waiting state after the soft wait budget', async () => {
     vi.mocked(api).mockResolvedValue({ task_id: 'browse-stuck', status: 'pending' })
 
     const request = browseCopilotSnapshotDirectory(31, {
       backupSourceSnapshotId: 71,
       gatewayLinkId: 17,
     })
-    const rejection = expect(request).rejects.toMatchObject({
-      errorCode: 'INSIGHT.SNAPSHOT_BROWSE_TIMEOUT',
-      retryable: true,
+    await vi.advanceTimersByTimeAsync(120_000)
+    await expect(request).resolves.toEqual({
+      status: 'waiting',
+      task_id: 'browse-stuck',
     })
-    await vi.runAllTimersAsync()
-
-    await rejection
-    expect(api).toHaveBeenCalledTimes(241)
+    expect(api).toHaveBeenCalledTimes(121)
   })
 
   it('preserves the terminal task error contract', async () => {
