@@ -6,6 +6,24 @@ import (
 	agentdisk "hyperfilelens/agent/internal/platform/disk"
 )
 
+func TestSupportedCapabilitiesIncludeInsightRestore(t *testing.T) {
+	capabilities := SupportedCapabilities()
+	found := false
+	seen := make(map[string]struct{}, len(capabilities))
+	for _, capability := range capabilities {
+		if _, duplicate := seen[capability]; duplicate {
+			t.Fatalf("duplicate capability %q", capability)
+		}
+		seen[capability] = struct{}{}
+		if capability == "insight_safe_restore_v1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("SupportedCapabilities() is missing insight_safe_restore_v1")
+	}
+}
+
 func TestStorageInventoryPayloadSummarizesOnlyLocalPools(t *testing.T) {
 	payload := storageInventoryPayload(agentdisk.StorageInventory{
 		LocalPools: []agentdisk.StoragePool{

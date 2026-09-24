@@ -1860,6 +1860,14 @@ export type LensCopilotGatewayOption = {
   online: boolean
   hfl_usable: boolean
   copilot_eligible: boolean
+  readiness_reason?: (
+    | 'ready'
+    | 'not_managed'
+    | 'agent_offline'
+    | 'lensnode_offline'
+    | 'capabilities_syncing'
+    | 'not_copilot_eligible'
+  )
   analysis_types?: LensAnalysisType[]
 }
 

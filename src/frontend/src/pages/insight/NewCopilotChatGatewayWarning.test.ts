@@ -333,6 +333,55 @@ describe('New Chat Public Data Gateway warning', () => {
     wrapper.unmount()
   })
 
+  it('shows capability synchronization rather than reporting an online Gateway as absent', async () => {
+    const wrapper = await mountNewChat({
+      gatewayResponse: [
+        { ...publicGateway, copilot_eligible: false, readiness_reason: 'capabilities_syncing' },
+        { ...privateGateway, copilot_eligible: false, readiness_reason: 'capabilities_syncing' },
+      ],
+    })
+    expect(wrapper.get('.new-chat-gateway-warning').text()).toBe(
+      en.insight.copilot.gatewayPublicCapabilitiesSyncing,
+    )
+    await wrapper.get('input[value="manual"]').setValue(true)
+    expect(wrapper.text()).toContain(en.insight.copilot.gatewayPrivateCapabilitiesSyncing)
+    expect(footerHint(wrapper).text()).toBe(en.insight.copilot.gatewayPrivateCapabilitiesSyncing)
+    expect(wrapper.findAll('.new-chat-gateway-option')).toHaveLength(0)
+    expect(startChatButton(wrapper).attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('distinguishes offline and unconfigured Private Data Gateways', async () => {
+    const offline = await mountNewChat({
+      gatewayResponse: [{ ...privateGateway, online: false, hfl_usable: false, copilot_eligible: false, readiness_reason: 'agent_offline' }],
+    })
+    expect(offline.text()).toContain(en.insight.copilot.gatewayPrivateNotReady)
+    expect(offline.get('.new-chat-gateway-warning').text()).toBe(en.insight.copilot.gatewayPublicUnavailable)
+    offline.unmount()
+
+    const missing = await mountNewChat()
+    expect(missing.text()).toContain(en.insight.copilot.gatewayPrivateNotConfigured)
+    missing.unmount()
+  })
+
+  it('shows request errors separately from empty results and retries only Gateway options', async () => {
+    mocks.listCopilotGatewayOptions.mockRejectedValueOnce(new Error('network unavailable'))
+    const wrapper = await mountNewChat()
+    // An initial request failure must not be presented as an empty Gateway list.
+    expect(wrapper.get('.new-chat-gateway-warning').text()).toContain(
+      en.insight.copilot.gatewayOptionsLoadFailed,
+    )
+    expect(wrapper.text()).not.toContain(en.insight.copilot.gatewayPrivateNotConfigured)
+    mocks.listCopilotGatewayOptions.mockResolvedValueOnce([publicGateway])
+    await wrapper.get('.new-chat-gateway-warning .el-button').trigger('click')
+    await flushPromises()
+
+    expect(mocks.listCopilotGatewayOptions).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.new-chat-gateway-warning').exists()).toBe(false)
+    expect(startChatButton(wrapper).attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('switches to the Private Gateway blocker without retaining the Public warning', async () => {
     const wrapper = await mountNewChat({ gatewayResponse: [privateGateway] })
     expect(wrapper.find('.new-chat-gateway-warning').exists()).toBe(true)

@@ -254,6 +254,11 @@ func (a *Agent) heartbeatPayload() map[string]any {
 	a.heartbeatMu.RLock()
 	defer a.heartbeatMu.RUnlock()
 	payload := clonePayload(a.storageInventory)
+	// Keep the capability contract on periodic heartbeats as well as the
+	// initial inventory. The control plane projects heartbeats asynchronously,
+	// so a reconnect inventory can be delayed or lost without this recovery
+	// path.
+	payload["capabilities"] = remote.SupportedCapabilities()
 	if len(a.monitorMetrics) > 0 {
 		payload["metrics"] = a.monitorMetrics
 	}

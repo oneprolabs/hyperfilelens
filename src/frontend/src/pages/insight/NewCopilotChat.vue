@@ -55,6 +55,7 @@ const editingId = ref<number | null>(null)
 const submitting = ref(false)
 const gatewayRefreshing = ref(false)
 const gatewayOptionsResolved = ref(false)
+const gatewayOptionsLoadFailed = ref(false)
 const gatewayOptions = ref<LensCopilotGatewayOption[]>([])
 const readiness = ref<LensCopilotReadiness | null>(null)
 const selectedAnalysisType = ref<LensAnalysisType>('knowledge_qa')
@@ -75,14 +76,55 @@ function newCreateIdempotencyKey(): string {
 const readyGateways = computed(() => gatewayOptions.value.filter(
   (row) => row.online && row.hfl_usable && row.copilot_eligible,
 ))
+const privateGatewayRows = computed(() => gatewayOptions.value.filter(
+  (row) => row.scope === 'organization' || row.scope === 'user',
+))
 const privateGateways = computed(() => readyGateways.value.filter(
   (row) => row.scope === 'organization' || row.scope === 'user',
 ))
+const privateGatewayCapabilitiesSyncing = computed(() => privateGatewayRows.value.some(
+  (row) => row.readiness_reason === 'capabilities_syncing',
+))
+const privateGatewayConfiguredButNotReady = computed(() => (
+  privateGatewayRows.value.length > 0
+  && privateGateways.value.length === 0
+  && !privateGatewayCapabilitiesSyncing.value
+))
+const privateGatewayStatusMessage = computed(() => {
+  if (!gatewayOptionsResolved.value) return ''
+  if (privateGateways.value.length > 0) return ''
+  if (gatewayOptionsLoadFailed.value) return t('insight.copilot.gatewayOptionsLoadFailed')
+  if (privateGatewayCapabilitiesSyncing.value) {
+    return t('insight.copilot.gatewayPrivateCapabilitiesSyncing')
+  }
+  if (privateGatewayConfiguredButNotReady.value) {
+    return t('insight.copilot.gatewayPrivateNotReady')
+  }
+  if (privateGatewayRows.value.length === 0) {
+    return t('insight.copilot.gatewayPrivateNotConfigured')
+  }
+  return ''
+})
 const platformGateway = computed(() => {
   const rows = readyGateways.value.filter((row) => row.scope === 'platform')
   return rows.find((row) => row.is_platform_default) ?? rows[0] ?? null
 })
 const autoGateway = computed(() => platformGateway.value)
+const publicGatewayCapabilitiesSyncing = computed(() => gatewayOptions.value.some(
+  (row) => row.scope === 'platform' && row.readiness_reason === 'capabilities_syncing',
+))
+const publicGatewayStatusMessage = computed(() => {
+  if (gatewayMode.value !== 'auto' || !gatewayOptionsResolved.value) return ''
+  if (autoGateway.value) return ''
+  if (gatewayOptionsLoadFailed.value) return t('insight.copilot.gatewayOptionsLoadFailed')
+  if (publicGatewayCapabilitiesSyncing.value) {
+    return t('insight.copilot.gatewayPublicCapabilitiesSyncing')
+  }
+  if (gatewayOptions.value.some((row) => row.scope === 'platform')) {
+    return t('insight.copilot.gatewayPublicOffline')
+  }
+  return t('insight.copilot.gatewayPublicUnavailable')
+})
 const snapshotGatewayLinkId = computed(() => {
   if (gatewayMode.value === 'auto') {
     return autoGateway.value?.gateway_link_id ?? null
@@ -154,11 +196,6 @@ const visualModelReady = computed(() => Boolean(readiness.value?.default_multimo
 const selectedGateway = computed(() => gatewayMode.value === 'auto'
   ? autoGateway.value
   : privateGateways.value.find((row) => row.gateway_link_id === gatewayLinkId.value) ?? null)
-const publicGatewayUnavailable = computed(() => (
-  gatewayOptionsResolved.value
-  && gatewayMode.value === 'auto'
-  && !autoGateway.value
-))
 const selectedBackupSource = computed(() => backupSourceOptions.value.find(
   (row) => row.backupConfigId === selectedBackupConfigId.value,
 ) ?? null)
@@ -205,15 +242,27 @@ const submitBlocker = computed<SubmitBlocker | null>(() => {
   }
   if (!selectedGateway.value) {
     if (gatewayMode.value === 'manual') {
+      if (gatewayOptionsLoadFailed.value) {
+        return {
+          code: 'private_gateway',
+          message: t('insight.copilot.gatewayOptionsLoadFailed'),
+        }
+      }
+      if (privateGatewayCapabilitiesSyncing.value) {
+        return {
+          code: 'private_gateway',
+          message: t('insight.copilot.gatewayPrivateCapabilitiesSyncing'),
+        }
+      }
       return {
         code: 'private_gateway',
-        message: t('insight.copilot.gatewayPrivateRequired'),
+        message: privateGatewayStatusMessage.value || t('insight.copilot.gatewayPrivateRequired'),
       }
     }
     if (gatewayOptionsResolved.value) {
       return {
         code: 'public_gateway',
-        message: t('insight.copilot.gatewayPublicUnavailable'),
+        message: publicGatewayStatusMessage.value || t('insight.copilot.gatewayPublicUnavailable'),
       }
     }
   }
@@ -359,6 +408,7 @@ function syncBackupScopePickerWidth() {
 async function refreshGatewayOptions(showFeedback = true) {
   if (gatewayRefreshing.value) return
   gatewayRefreshing.value = true
+  gatewayOptionsLoadFailed.value = false
   try {
     gatewayOptions.value = await listCopilotGatewayOptions()
     if (
@@ -371,6 +421,7 @@ async function refreshGatewayOptions(showFeedback = true) {
       ElMessage.success({ message: t('insight.copilot.gatewayPrivateRefreshSuccess'), grouping: true })
     }
   } catch (error) {
+    gatewayOptionsLoadFailed.value = true
     if (!showFeedback) throw error
     ElMessage.error({ message: apiErrorMessage(error, t('insight.copilot.gatewayPrivateRefreshFailed')), grouping: true })
   } finally {
@@ -842,7 +893,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                           class="new-chat-gateway-select"
                           filterable
                           :loading="gatewayRefreshing"
-                          :no-data-text="t('insight.copilot.gatewayPrivateNoOnline')"
+                          :no-data-text="privateGatewayStatusMessage || t('insight.copilot.gatewayPrivateNoOnline')"
                           placement="top-start"
                           :fallback-placements="['bottom-start', 'top-end', 'bottom-end']"
                           :placeholder="t('insight.copilot.gatewayPrivateSelectPlaceholder')"
@@ -884,15 +935,24 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                         </ElButton>
                       </div>
                       <p
-                        v-if="!gatewayRefreshing && privateGateways.length === 0"
+                        v-if="!gatewayRefreshing && privateGatewayStatusMessage"
                         class="new-chat-hint new-chat-hint--warn"
                       >
-                        {{ t('insight.copilot.gatewayPrivateNoOnline') }}
+                        {{ privateGatewayStatusMessage }}
+                        <ElButton
+                          v-if="gatewayOptionsLoadFailed"
+                          link
+                          type="primary"
+                          size="small"
+                          @click="refreshGatewayOptions()"
+                        >
+                          {{ t('insight.copilot.gatewayOptionsRetryAction') }}
+                        </ElButton>
                       </p>
                     </div>
                   </div>
                   <div
-                    v-if="publicGatewayUnavailable"
+                    v-if="publicGatewayStatusMessage"
                     class="new-chat-gateway-warning"
                     role="alert"
                   >
@@ -900,7 +960,16 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       :size="16"
                       aria-hidden="true"
                     />
-                    <span>{{ t('insight.copilot.gatewayPublicUnavailable') }}</span>
+                    <span>{{ publicGatewayStatusMessage }}</span>
+                    <ElButton
+                      v-if="gatewayOptionsLoadFailed"
+                      link
+                      type="primary"
+                      size="small"
+                      @click="refreshGatewayOptions()"
+                    >
+                      {{ t('insight.copilot.gatewayOptionsRetryAction') }}
+                    </ElButton>
                   </div>
                 </div>
               </section>

@@ -460,6 +460,90 @@ class NodeNetworkInventoryHeartbeatTests(TestCase):
         _mock_should_process.assert_not_called()
         _mock_record_available.assert_not_called()
 
+    @patch("apps.node.ws.uplink.sync_agent_source_host_by_id")
+    @patch("apps.node.ws.uplink._schedule_lifecycle_advance")
+    @patch("apps.node.ws.uplink._record_upgrade_session")
+    @patch(
+        "apps.node.ws.uplink.redis_store.is_agent_session_current",
+        return_value=True,
+    )
+    @patch("apps.node.ws.uplink._should_process_full_inventory", return_value=False)
+    @patch("apps.node.ws.uplink.redis_store.touch_ws_instance_alive")
+    def test_delayed_current_session_capabilities_are_not_dropped_by_liveness(
+        self,
+        _touch_alive,
+        _should_process,
+        _current_session,
+        record_upgrade_session,
+        _schedule_lifecycle_advance,
+        _sync_source,
+    ):
+        self.node.metadata = {
+            "inventory": {
+                "capabilities": [],
+                "disk_total_bytes": 200,
+            },
+            "inventory_session_id": "session-current",
+            "inventory_capabilities_session_id": "",
+        }
+        self.node.last_seen_at = timezone.now()
+        self.node.save(update_fields=["metadata", "last_seen_at", "updated_at"])
+
+        inventory = {
+            "capabilities": ["insight_safe_restore_v1"],
+            "disk_total_bytes": 100,
+        }
+        expected_last_seen = self.node.last_seen_at
+        _process_heartbeat_followup(
+            node_id=self.node.id,
+            session_id="session-current",
+            observed_at=timezone.now() - timezone.timedelta(seconds=30),
+            inventory=inventory,
+        )
+
+        self.node.refresh_from_db()
+        self.assertEqual(
+            self.node.metadata["inventory_capabilities_session_id"],
+            "session-current",
+        )
+        self.assertEqual(
+            self.node.metadata["inventory"]["capabilities"],
+            ["insight_safe_restore_v1"],
+        )
+        self.assertEqual(self.node.metadata["inventory"]["disk_total_bytes"], 200)
+        self.assertEqual(self.node.last_seen_at, expected_last_seen)
+        record_upgrade_session.assert_called_once_with(
+            node_id=self.node.id,
+            session_id="session-current",
+            inventory=inventory,
+        )
+
+    @patch("apps.node.ws.uplink._should_process_full_inventory")
+    @patch(
+        "apps.node.ws.uplink.redis_store.is_agent_session_current",
+        return_value=False,
+    )
+    @patch("apps.node.ws.uplink.redis_store.touch_ws_instance_alive")
+    def test_delayed_old_session_capabilities_cannot_recover_current_session(
+        self, _touch_alive, _current_session, should_process
+    ):
+        self.node.metadata = {
+            "inventory": {"capabilities": []},
+            "inventory_session_id": "session-new",
+            "inventory_capabilities_session_id": "",
+        }
+        self.node.save(update_fields=["metadata", "updated_at"])
+
+        _process_heartbeat_followup(
+            node_id=self.node.id,
+            session_id="session-old",
+            inventory={"capabilities": ["insight_safe_restore_v1"]},
+        )
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.metadata["inventory_session_id"], "session-new")
+        self.assertEqual(self.node.metadata["inventory"]["capabilities"], [])
+        should_process.assert_not_called()
+
 
 class NodeNetworkInventoryMigrationTests(TestCase):
     def test_migration_splits_legacy_connection_and_reported_host_ips(self):

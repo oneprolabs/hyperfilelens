@@ -13,6 +13,14 @@ from apps.node.services.internal.node_registry import agent_ws_routable
 from apps.node.services.internal.redis_store import get_agent_session
 
 
+READINESS_READY = "ready"
+READINESS_NOT_MANAGED = "not_managed"
+READINESS_AGENT_OFFLINE = "agent_offline"
+READINESS_LENSNODE_OFFLINE = "lensnode_offline"
+READINESS_CAPABILITIES_SYNCING = "capabilities_syncing"
+READINESS_NOT_COPILOT_ELIGIBLE = "not_copilot_eligible"
+
+
 def _session_inventory_capabilities_ready(
     *, link: LensGatewayLink, agent_session: str | None
 ) -> bool:
@@ -33,6 +41,28 @@ def _session_inventory_capabilities_ready(
     return INSIGHT_SAFE_RESTORE_CAPABILITY in {
         str(value).strip() for value in capabilities if str(value or "").strip()
     }
+
+
+def _readiness_reason(
+    *,
+    link: LensGatewayLink | None,
+    hfl_managed: bool,
+    hfl_agent_online: bool,
+    hfl_sidecar_online: bool,
+    copilot_eligible: bool,
+    hfl_agent_capabilities_ready: bool,
+) -> str:
+    if copilot_eligible:
+        return READINESS_READY
+    if not hfl_managed:
+        return READINESS_NOT_MANAGED
+    if not hfl_agent_online:
+        return READINESS_AGENT_OFFLINE
+    if not link or not link.sl_lensnode_uuid or not hfl_sidecar_online:
+        return READINESS_LENSNODE_OFFLINE
+    if not hfl_agent_capabilities_ready:
+        return READINESS_CAPABILITIES_SYNCING
+    return READINESS_NOT_COPILOT_ELIGIBLE
 
 
 def gateway_runtime_state(
@@ -90,6 +120,14 @@ def gateway_runtime_state(
         and link.origin
         in {LensGatewayLink.Origin.USER, LensGatewayLink.Origin.PLATFORM}
     )
+    readiness_reason = _readiness_reason(
+        link=link,
+        hfl_managed=hfl_managed,
+        hfl_agent_online=hfl_agent_online,
+        hfl_sidecar_online=hfl_sidecar_online,
+        copilot_eligible=copilot_eligible,
+        hfl_agent_capabilities_ready=hfl_agent_capabilities_ready,
+    )
     return {
         "sl_runtime_status": str(sl_runtime_status or "offline"),
         "hfl_managed": hfl_managed,
@@ -98,6 +136,7 @@ def gateway_runtime_state(
         "hfl_sidecar_online": hfl_sidecar_online,
         "hfl_usable": hfl_usable,
         "copilot_eligible": copilot_eligible,
+        "readiness_reason": readiness_reason,
     }
 
 
