@@ -1969,7 +1969,6 @@ class SourceResourceApiTests(TestCase):
             role=Node.Role.AGENT,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
-            metadata={"inventory": {"capabilities": ["restore_target_directory_create_v1"]}},
         )
         mock_run_task.return_value = SimpleNamespace(
             timed_out=False,
@@ -2000,7 +1999,10 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(resp.data["path_type"], "directory")
         _, kwargs = mock_run_task.call_args
         self.assertEqual(kwargs["kind"], "path.mkdir")
-        self.assertEqual(kwargs["payload"], {"path": "/data/restore_test"})
+        self.assertEqual(
+            kwargs["payload"],
+            {"path": "/data/restore_test", "restore_target": True},
+        )
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_directory_create_rejects_nested_or_empty_name(
@@ -2038,6 +2040,7 @@ class SourceResourceApiTests(TestCase):
             role=Node.Role.AGENT,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["restore_target_directory_create_v1"]}},
         )
         mock_run_task.return_value = SimpleNamespace(
             timed_out=False,
