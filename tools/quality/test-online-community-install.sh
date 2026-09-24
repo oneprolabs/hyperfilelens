@@ -7,6 +7,7 @@ online="${ROOT}/deploy/online"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 export PYTHONDONTWRITEBYTECODE=1
+export HFL_TEST_SOURCELENS_RUNTIME="${online}/sourcelens/runtime.json"
 
 bash -n "${online}/install.sh"
 PYTHONPYCACHEPREFIX="${tmp}/pycache" python3 -m py_compile "${online}/prepare.py"
@@ -608,9 +609,9 @@ digest="sha256:$(printf 'b%.0s' {1..64})"
 revision="$(printf 'c%.0s' {1..40})"
 digest_for_ref() {
 	case "$1" in
-	*sourcelens-backend*) printf '%s' sha256:931d539ce9430b3759ef3164ff7b4f47d9cf1f875f6683fe3173d0e791386af3 ;;
-	*sourcelens-frontend*) printf '%s' sha256:4e4dc9dfd58f74fb03235330c78860777f1d622aac4b45c9ac901c1c91018810 ;;
-	*sourcelens-lensnode*) printf '%s' sha256:bd7d822147fa1e40f3adccc3e1c4128a002631a7874e5e688fa6e10aa76d8d1a ;;
+	*sourcelens-backend*) jq -er '.images.backend.digest' "${HFL_TEST_SOURCELENS_RUNTIME}" ;;
+	*sourcelens-frontend*) jq -er '.images.frontend.digest' "${HFL_TEST_SOURCELENS_RUNTIME}" ;;
+	*sourcelens-lensnode*) jq -er '.images.lensnode.digest' "${HFL_TEST_SOURCELENS_RUNTIME}" ;;
 	*postgres*) printf '%s' sha256:0027bef26712baaee437a4ea48fdf3d2d2e2bc5f0d81615374408ca320f3c7e3 ;;
 	*redis*) printf '%s' sha256:09160599abd229764c0fb44cb6be640294e1d360a54b19985ab4843dcf2d90f1 ;;
 	*nginx*) printf '%s' sha256:0d3b80406a13a767339fbe2f41406d6c7da727ab89cf8fae399e81f780f814d1 ;;
