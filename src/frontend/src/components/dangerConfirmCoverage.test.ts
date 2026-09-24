@@ -23,6 +23,7 @@ describe('danger confirmation coverage', () => {
       'lib/logout.ts',
       'pages/node/RepairNasRepository.vue',
       'pages/ops/AlertIncidents.vue',
+      'pages/ops/NotificationChannelEditorPage.vue',
       'pages/protection/DataProtection.vue',
       'pages/protection/components/FlowBackupSourceDetailDrawer.vue',
     ].sort())

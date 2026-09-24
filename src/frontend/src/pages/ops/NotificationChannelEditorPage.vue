@@ -3,7 +3,7 @@ import '../../styles/fullscreen-form-styles'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ArrowLeft } from 'lucide-vue-next'
 import {
@@ -17,7 +17,7 @@ import { apiErrorMessageI18n } from '../../lib/api'
 import {
   createChannel,
   getChannel,
-  testChannel,
+  testChannelConfig,
   updateChannel,
 } from '../../lib/notificationApi'
 import type { ChannelType } from './notificationTypes'
@@ -44,6 +44,13 @@ const pageTitle = computed(() =>
     ? t('ops.notification.modalTitleEdit')
     : t('ops.notification.modalTitleCreate'),
 )
+const testButtonLabel = computed(() => t(
+  form.type === 'email'
+    ? 'ops.notification.testEmailDraft'
+    : form.type === 'dingtalk' || form.type === 'wecom'
+      ? 'ops.notification.testMessageDraft'
+      : 'ops.notification.testWebhookDraft',
+))
 
 const typeOptions = computed(() => {
   const base = [
@@ -78,20 +85,175 @@ const requiredStringRule = (message: string) => [
   },
 ]
 
+function isValidSmtpHost(value: string) {
+  const host = value.trim()
+  if (!host || /\s|[\\/]/.test(host) || host.includes('://') || host.length > 253) return false
+  if (host.startsWith('[') || host.endsWith(']')) return false
+  if (host.includes(':')) {
+    return /^(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}$/i.test(host)
+  }
+  if (host === 'localhost') return true
+  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(host)) {
+    return host.split('.').every((part) => Number(part) <= 255)
+  }
+  if (host.startsWith('.') || host.endsWith('.') || host.includes('..')) return false
+  const labels = host.split('.')
+  // A bare one-letter/one-label value such as "w" is not a useful SMTP
+  // server address. Keep localhost as the explicit local-development
+  // exception; normal hostnames must contain a DNS-style suffix.
+  if (labels.length < 2) return false
+  return labels.every((label) =>
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label),
+  )
+}
+
+const smtpHostRule = [
+  {
+    required: true,
+    validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
+      const text = String(value || '').trim()
+      if (!text) {
+        callback(new Error(t('ops.notification.validateSmtpHostRequired')))
+        return
+      }
+      if (!isValidSmtpHost(text)) {
+        callback(new Error(t('ops.notification.validateSmtpHostInvalid')))
+        return
+      }
+      callback()
+    },
+    trigger: ['blur', 'change'],
+  },
+]
+
+const webhookUrlRule = [
+  {
+    required: true,
+    validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
+      const text = String(value || '').trim()
+      if (!text) {
+        callback(new Error(t('ops.notification.validateWebhookUrlRequired')))
+        return
+      }
+      try {
+        const parsed = new URL(text)
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          throw new Error('unsupported protocol')
+        }
+        callback()
+      } catch {
+        callback(new Error(t('ops.notification.validateWebhookUrlInvalid')))
+      }
+    },
+    trigger: ['blur', 'change'],
+  },
+]
+
+const emailAddressRule = [
+  {
+    required: true,
+    validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
+      const text = String(value || '').trim()
+      if (!text) {
+        callback(new Error(t('ops.notification.validateFromEmailRequired')))
+        return
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
+        callback(new Error(t('ops.notification.validateFromEmailInvalid')))
+        return
+      }
+      callback()
+    },
+    trigger: ['blur', 'change'],
+  },
+]
+
+const emailRecipientsRule = [
+  {
+    required: true,
+    validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
+      const text = String(value || '').trim()
+      const recipients = text.split(',').map((item) => item.trim()).filter(Boolean)
+      if (!recipients.length) {
+        callback(new Error(t('ops.notification.validateRecipientsRequired')))
+        return
+      }
+      if (recipients.some((recipient) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient))) {
+        callback(new Error(t('ops.notification.validateRecipientsInvalid')))
+        return
+      }
+      callback()
+    },
+    trigger: ['blur', 'change'],
+  },
+]
+
+const smtpPortRule = [
+  {
+    required: true,
+    validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
+      const text = String(value || '').trim()
+      const port = Number(text)
+      if (!text) {
+        callback(new Error(t('ops.notification.validateSmtpPortRequired')))
+      } else if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        callback(new Error(t('ops.notification.validateSmtpPortInvalid')))
+      } else {
+        callback()
+      }
+    },
+    trigger: ['blur', 'change'],
+  },
+]
+
+const jsonObjectRule = [
+  {
+    validator: (_rule: unknown, value: unknown, callback: (error?: Error) => void) => {
+      const text = String(value || '').trim()
+      if (!text) {
+        callback()
+        return
+      }
+      try {
+        const parsed = JSON.parse(text)
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('object')
+        callback()
+      } catch {
+        callback(new Error(t('ops.notification.validateHeadersInvalid')))
+      }
+    },
+    trigger: ['blur', 'change'],
+  },
+]
+
+function validateHttpUrl(value: string) {
+  try {
+    const parsed = new URL(value.trim())
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 const formRules = computed<FormRules>(() => ({
   name: requiredStringRule(t('ops.notification.validateChannelNameRequired')),
-  'email.smtp_host': requiredStringRule(t('ops.notification.validateSmtpHostRequired')),
-  'email.smtp_port': requiredStringRule(t('ops.notification.validateSmtpPortRequired')),
-  'email.from_email': requiredStringRule(t('ops.notification.validateFromEmailRequired')),
-  'email.to_emails': requiredStringRule(t('ops.notification.validateRecipientsRequired')),
-  'webhook.url': requiredStringRule(t('ops.notification.validateWebhookUrlRequired')),
-  'dingtalk.webhook_url': requiredStringRule(t('ops.notification.validateWebhookUrlRequired')),
-  'sms.url': requiredStringRule(t('ops.notification.validateWebhookUrlRequired')),
+  'email.smtp_host': smtpHostRule,
+  'email.smtp_port': smtpPortRule,
+  'email.from_email': emailAddressRule,
+  'email.to_emails': emailRecipientsRule,
+  'webhook.url': webhookUrlRule,
+  'dingtalk.webhook_url': webhookUrlRule,
+  'sms.url': webhookUrlRule,
   'sms.phone_numbers': requiredStringRule(t('ops.notification.validateRecipientsRequired')),
-  'wecom.webhook_url': requiredStringRule(t('ops.notification.validateWebhookUrlRequired')),
+  'wecom.webhook_url': webhookUrlRule,
+  'webhook.headers': jsonObjectRule,
 }))
 
 const previewTypeIcon = computed(() => getNotificationTypeIcon(form.type))
+
+function maskPreviewSecret(value: string, configured = false) {
+  return value.trim() || configured ? '******' : ''
+}
 
 const previewBasicRows = computed(() => [
   { label: t('ops.notification.formChannelType'), value: channelTypeLabel(form.type) },
@@ -108,8 +270,15 @@ const previewTargetRows = computed(() => {
     return [
       { label: t('ops.notification.emailSmtpHost'), value: form.email.smtp_host, mono: true },
       { label: t('ops.notification.emailSmtpPort'), value: form.email.smtp_port },
+      { label: t('ops.notification.emailSmtpUsername'), value: form.email.smtp_username, mono: true },
+      {
+        label: t('ops.notification.emailSmtpPassword'),
+        value: maskPreviewSecret(form.email.smtp_password, form.email.smtp_password_configured),
+        mono: true,
+      },
       { label: t('ops.notification.emailFrom'), value: form.email.from_email, mono: true },
       { label: t('ops.notification.emailTo'), value: form.email.to_emails },
+      { label: t('ops.notification.emailSubjectOptional'), value: form.email.email_subject },
       {
         label: t('ops.notification.emailEncryption'),
         value: emailEncryptionOptions.value.find((opt) => opt.value === form.email.encryption)?.label || form.email.encryption,
@@ -128,6 +297,13 @@ const previewTargetRows = computed(() => {
   if (form.type === 'dingtalk') {
     return [
       { label: t('ops.notification.formWebhookUrl'), value: form.dingtalk.webhook_url, mono: true },
+      {
+        label: t('ops.notification.formSecret'),
+        value: maskPreviewSecret(form.dingtalk.secret, form.dingtalk.secret_configured),
+        mono: true,
+      },
+      { label: t('ops.notification.formAtMobiles'), value: form.dingtalk.at_mobiles },
+      { label: t('ops.notification.formAtUserIds'), value: form.dingtalk.at_user_ids },
       { label: t('ops.notification.formAtAll'), value: form.dingtalk.is_at_all ? t('ops.notification.statusEnabled') : t('ops.notification.statusDisabled'), badge: true, success: form.dingtalk.is_at_all },
     ]
   }
@@ -139,6 +315,8 @@ const previewTargetRows = computed(() => {
   }
   return [
     { label: t('ops.notification.formWebhookUrl'), value: form.wecom.webhook_url, mono: true },
+    { label: t('ops.notification.formMentionedList'), value: form.wecom.mentioned_list },
+    { label: t('ops.notification.formMentionedMobileList'), value: form.wecom.mentioned_mobile_list },
     { label: t('ops.notification.formAtAll'), value: form.wecom.is_at_all ? t('ops.notification.statusEnabled') : t('ops.notification.statusDisabled'), badge: true, success: form.wecom.is_at_all },
   ]
 })
@@ -149,6 +327,42 @@ function handleBack() {
 
 function buildConfig() {
   return buildNotificationChannelConfig(form)
+}
+
+function startDingtalkSecretEdit() {
+  form.dingtalk.secret = ''
+  form.dingtalk.secret_editing = true
+}
+
+function cancelDingtalkSecretEdit() {
+  form.dingtalk.secret = ''
+  form.dingtalk.secret_editing = false
+}
+
+async function confirmDingtalkSecretClear(): Promise<boolean> {
+  if (form.type !== 'dingtalk' || !editingId.value ||
+      !form.dingtalk.secret_configured || !form.dingtalk.secret_editing ||
+      form.dingtalk.secret.trim()) return true
+  try {
+    await ElMessageBox.confirm(
+      t('ops.notification.emptySecretConfirm'),
+      t('ops.notification.clearSecret'),
+      {
+        type: 'warning',
+        confirmButtonText: t('ops.notification.clearSecretAction'),
+        cancelButtonText: t('common.cancel'),
+      },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+function validateFieldOnInput(field: string) {
+  void nextTick(() => {
+    void formRef.value?.validateField(field).catch(() => undefined)
+  })
 }
 
 function locateRequiredField(field: string) {
@@ -169,16 +383,34 @@ function locateRequiredField(field: string) {
 function firstMissingField() {
   if (!form.name.trim()) return 'name'
   if (form.type === 'email') {
-    if (!form.email.smtp_host.trim()) return 'email.smtp_host'
-    if (!form.email.smtp_port.trim()) return 'email.smtp_port'
-    if (!form.email.from_email.trim()) return 'email.from_email'
-    if (!form.email.to_emails.trim()) return 'email.to_emails'
+    if (!isValidSmtpHost(form.email.smtp_host)) return 'email.smtp_host'
+    const port = Number(form.email.smtp_port.trim())
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return 'email.smtp_port'
+    if (!form.email.from_email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.from_email.trim())) return 'email.from_email'
+    const recipients = form.email.to_emails.split(',').map((item) => item.trim()).filter(Boolean)
+    if (!recipients.length || recipients.some((recipient) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient))) return 'email.to_emails'
   }
-  if (form.type === 'webhook' && !form.webhook.url.trim()) return 'webhook.url'
-  if (form.type === 'dingtalk' && !form.dingtalk.webhook_url.trim()) return 'dingtalk.webhook_url'
-  if (form.type === 'wecom' && !form.wecom.webhook_url.trim()) return 'wecom.webhook_url'
+  const validWebhook = (value: string) => {
+    try {
+      const parsed = new URL(value.trim())
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+    } catch {
+      return false
+    }
+  }
+  if (form.type === 'webhook' && !validWebhook(form.webhook.url)) return 'webhook.url'
+  if (form.type === 'webhook' && form.webhook.headers.trim()) {
+    try {
+      const parsed = JSON.parse(form.webhook.headers)
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') return 'webhook.headers'
+    } catch {
+      return 'webhook.headers'
+    }
+  }
+  if (form.type === 'dingtalk' && !validWebhook(form.dingtalk.webhook_url)) return 'dingtalk.webhook_url'
+  if (form.type === 'wecom' && !validWebhook(form.wecom.webhook_url)) return 'wecom.webhook_url'
   if (form.type === 'sms') {
-    if (!form.sms.url.trim()) return 'sms.url'
+    if (!form.sms.url.trim() || !validateHttpUrl(form.sms.url)) return 'sms.url'
     if (!form.sms.phone_numbers.trim()) return 'sms.phone_numbers'
   }
   return ''
@@ -211,9 +443,11 @@ async function persistChannel(): Promise<number> {
 }
 
 async function saveChannel() {
+  if (saving.value || testing.value) return
   if (!(await validateRequiredFields())) return
   saving.value = true
   try {
+    if (!(await confirmDingtalkSecretClear())) return
     const isEdit = !!editingId.value
     await persistChannel()
     ElMessage.success(
@@ -231,16 +465,19 @@ async function saveChannel() {
 }
 
 async function testFromEditor() {
+  if (saving.value || testing.value) return
   if (!(await validateRequiredFields())) return
   testing.value = true
   try {
-    const channelId = await persistChannel()
-    if (!editingId.value) {
-      await router.replace(`/ops/channels/${channelId}/edit`)
-    }
-    const res = await testChannel(channelId)
+    if (!(await confirmDingtalkSecretClear())) return
+    const res = await testChannelConfig({
+      ...(editingId.value ? { channel_id: editingId.value } : {}),
+      name: form.name,
+      type: form.type,
+      config: buildConfig(),
+    })
     const ok = res.status === 'success'
-    if (ok) ElMessage.success({ message: t('ops.notification.testSuccess'), grouping: true })
+    if (ok) ElMessage.success({ message: t('ops.notification.testDraftSuccess'), grouping: true })
     else ElMessage.error({ message: res.error || t('ops.notification.testFailed'), grouping: true })
   } catch (e: unknown) {
     ElMessage.error({
@@ -387,6 +624,7 @@ watch(() => form.type, () => {
                       <el-input
                         v-model="form.email.smtp_host"
                         :placeholder="t('ops.notification.phSmtpHost')"
+                        @input="validateFieldOnInput('email.smtp_host')"
                       />
                       <p class="fullscreen-form-field__hint">
                         {{ t('ops.notification.tipSmtpHost') }}
@@ -401,6 +639,7 @@ watch(() => form.type, () => {
                       <el-input
                         v-model="form.email.smtp_port"
                         :placeholder="t('ops.notification.phSmtpPort')"
+                        @input="validateFieldOnInput('email.smtp_port')"
                       />
                       <p class="fullscreen-form-field__hint">
                         {{ t('ops.notification.tipSmtpPort') }}
@@ -442,6 +681,7 @@ watch(() => form.type, () => {
                     <el-input
                       v-model="form.email.from_email"
                       :placeholder="t('ops.notification.phFromEmail')"
+                      @input="validateFieldOnInput('email.from_email')"
                     />
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.notification.tipEmailFrom') }}
@@ -468,6 +708,7 @@ watch(() => form.type, () => {
                     <el-input
                       v-model="form.email.to_emails"
                       :placeholder="t('ops.notification.phRecipientsComma')"
+                      @input="validateFieldOnInput('email.to_emails')"
                     />
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.notification.tipEmailRecipients') }}
@@ -548,7 +789,9 @@ watch(() => form.type, () => {
                   </div>
                   <el-form-item
                     :label="t('ops.notification.webhookHeaders')"
+                    prop="webhook.headers"
                     class="fullscreen-form-item--in-card"
+                    data-notification-channel-field="webhook.headers"
                   >
                     <el-input
                       v-model="form.webhook.headers"
@@ -581,15 +824,52 @@ watch(() => form.type, () => {
                     :label="t('ops.notification.formSecret')"
                     class="fullscreen-form-item--in-card"
                   >
-                    <el-input
-                      v-model="form.dingtalk.secret"
-                      type="password"
-                      show-password
-                      :placeholder="t('ops.notification.phSecret')"
-                    />
-                    <p class="fullscreen-form-field__hint">
-                      {{ t('ops.notification.tipSecret') }}
-                    </p>
+                    <template v-if="!editingId || form.dingtalk.secret_editing">
+                      <el-input
+                        v-model="form.dingtalk.secret"
+                        type="password"
+                        show-password
+                        :placeholder="t('ops.notification.phSecret')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ editingId && form.dingtalk.secret_configured
+                          ? t('ops.notification.tipRewriteSecret')
+                          : t('ops.notification.tipSecret') }}
+                      </p>
+                      <div
+                        v-if="editingId && form.dingtalk.secret_editing"
+                        class="flex items-center gap-3"
+                      >
+                        <el-button
+                          link
+                          type="info"
+                          @click="cancelDingtalkSecretEdit"
+                        >
+                          {{ t('common.cancel') }}
+                        </el-button>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="flex flex-wrap items-center gap-3">
+                        <el-input
+                          :model-value="form.dingtalk.secret_configured ? '••••••••' : t('ops.notification.secretNotConfigured')"
+                          :type="form.dingtalk.secret_configured ? 'password' : 'text'"
+                          readonly
+                          disabled
+                        />
+                        <el-button
+                          size="small"
+                          @click="startDingtalkSecretEdit"
+                        >
+                          {{ form.dingtalk.secret_configured
+                            ? t('ops.notification.rewriteSecret')
+                            : t('ops.notification.configureSecret') }}
+                        </el-button>
+                      </div>
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipSecret') }}
+                      </p>
+                    </template>
                   </el-form-item>
                   <div class="fullscreen-form-grid">
                     <el-form-item
@@ -751,10 +1031,10 @@ watch(() => form.type, () => {
           <div class="fullscreen-form-footer fullscreen-form-action-footer fullscreen-form-footer--split">
             <ElButton
               :loading="testing"
-              :disabled="testing"
+              :disabled="testing || saving || form.type === 'sms'"
               @click="testFromEditor"
             >
-              {{ t('ops.notification.testConnection') }}
+              {{ testButtonLabel }}
             </ElButton>
             <div class="flex gap-2">
               <ElButton @click="handleBack">
@@ -763,7 +1043,7 @@ watch(() => form.type, () => {
               <ElButton
                 type="primary"
                 :loading="saving"
-                :disabled="saving"
+                :disabled="saving || testing"
                 @click="saveChannel"
               >
                 {{ t('common.save') }}
