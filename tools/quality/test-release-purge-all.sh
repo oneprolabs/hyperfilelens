@@ -136,7 +136,7 @@ fi
   "images": [
     {"role": "hyperfilelens", "refs": ["hyperfilelens-backend:1.0.0"]},
     {"role": "shared", "refs": ["postgres:17", "redis:alpine"]},
-    {"role": "sourcelens-backend", "refs": ["oneprolabs/sourcelens-backend:0.57.0"]},
+    {"role": "sourcelens-backend", "refs": ["oneprolabs/sourcelens-backend:0.60.1"]},
     {"role": "sourcelens-nginx", "refs": ["nginx:stable-alpine"]},
     {"role": "sourcelens-frontend", "refs": ["hyperfilelens-sourcelens-frontend:legacy"]}
   ],
@@ -154,11 +154,11 @@ fi
       },
       {
         "role": "sourcelens-backend",
-        "local_ref": "oneprolabs/sourcelens-backend:0.57.0",
+        "local_ref": "oneprolabs/sourcelens-backend:0.60.1",
         "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
         "sources": [
-          {"region": "cn", "ref": "registry.example.cn/oneprolabs/sourcelens-backend:0.57.0"},
-          {"region": "global", "ref": "docker.io/oneprolabs/sourcelens-backend:0.57.0"}
+          {"region": "cn", "ref": "registry.example.cn/oneprolabs/sourcelens-backend:0.60.1"},
+          {"region": "global", "ref": "docker.io/oneprolabs/sourcelens-backend:0.60.1"}
         ]
       },
       {
@@ -218,7 +218,7 @@ JSON
 {
   "images": {
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {"refs": ["hyperfilelens-backend:1.0.0", "registry.example.cn/oneprolabs/hyperfilelens-backend:1.0.0", "registry.example.cn/oneprolabs/hyperfilelens-backend@sha256:1111111111111111111111111111111111111111111111111111111111111111"]},
-    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {"refs": ["oneprolabs/sourcelens-backend:0.57.0", "docker.io/oneprolabs/sourcelens-backend:0.57.0", "docker.io/oneprolabs/sourcelens-backend@sha256:2222222222222222222222222222222222222222222222222222222222222222"]},
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {"refs": ["oneprolabs/sourcelens-backend:0.60.1", "docker.io/oneprolabs/sourcelens-backend:0.60.1", "docker.io/oneprolabs/sourcelens-backend@sha256:2222222222222222222222222222222222222222222222222222222222222222"]},
     "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {"refs": ["postgres:17", "registry.example.cn/oneprolabs/postgres:17-pinned", "registry.example.cn/oneprolabs/postgres@sha256:3333333333333333333333333333333333333333333333333333333333333333"]},
     "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": {"refs": ["redis:alpine", "docker.io/oneprolabs/redis:alpine-pinned", "docker.io/oneprolabs/redis@sha256:4444444444444444444444444444444444444444444444444444444444444444"]},
     "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {"refs": ["nginx:stable-alpine", "registry.example.cn/oneprolabs/nginx:stable-alpine-pinned", "registry.example.cn/oneprolabs/nginx@sha256:5555555555555555555555555555555555555555555555555555555555555555"]},
@@ -370,8 +370,8 @@ path.write_text(
                 },
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
                     "refs": [
-                        "oneprolabs/sourcelens-backend:0.57.0",
-                        "docker.io/oneprolabs/sourcelens-backend:0.57.0",
+                        "oneprolabs/sourcelens-backend:0.60.1",
+                        "docker.io/oneprolabs/sourcelens-backend:0.60.1",
                         "docker.io/oneprolabs/sourcelens-backend@sha256:2222222222222222222222222222222222222222222222222222222222222222",
                     ]
                 },

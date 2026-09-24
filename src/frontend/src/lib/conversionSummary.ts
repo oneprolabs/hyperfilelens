@@ -25,6 +25,16 @@ export type DocumentConversionCounts = {
 
 export type DocumentConversionPhase = 'pending' | 'running' | 'succeeded' | 'failed' | string
 
+export type DocumentConversionRecovery = {
+  resumable?: boolean
+  resumed?: boolean
+  resume_source?: 'lensnode_executor' | 'checkpoint' | string | null
+  restart_required?: boolean
+  reason?: string
+  original_task_id?: string
+  task_id?: string
+}
+
 export type DocumentConversion = {
   status: string
   phase?: DocumentConversionPhase
@@ -35,6 +45,7 @@ export type DocumentConversion = {
   progress_message?: string
   progress_percent?: number | null
   error?: string
+  recovery?: DocumentConversionRecovery | null
   finished_at?: string
   counts: DocumentConversionCounts
   items: DocumentConversionItem[]

@@ -19,6 +19,7 @@ CONVERSION_RETRY_SECONDS = 5
 CONVERSION_RECOVERY_CLOCK_SKEW_SECONDS = 60
 CONVERSION_TRANSIENT_RETRY_MAX_SECONDS = 300
 CONVERSION_IDLE_RETRY_MAX_SECONDS = 60
+CONVERSION_RESUME_MAX_ATTEMPTS = 3
 
 
 class ManagedDatasourceError(RuntimeError):
@@ -255,6 +256,16 @@ def _conversion_deadline_exceeded(started_at: Any) -> bool:
     if started.tzinfo is None:
         started = started.replace(tzinfo=timezone.get_current_timezone())
     return (timezone.now() - started).total_seconds() >= CONVERSION_WAIT_SECONDS
+
+
+def _conversion_started_at(state: dict[str, Any]) -> Any:
+    """Return the active conversion attempt timestamp.
+
+    A resumed SourceLens task gets a fresh HFL polling budget while the
+    original start timestamp remains available for audit.
+    """
+
+    return state.get("resume_started_at") or state.get("started_at")
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -608,7 +619,7 @@ def convert_documents(
                 sync_state=sync_state,
                 state=state,
             )
-            if _conversion_deadline_exceeded(state.get("started_at")):
+            if _conversion_deadline_exceeded(_conversion_started_at(state)):
                 raise ManagedDatasourceError(
                     "SourceLens conversion start could not be recovered."
                 )
@@ -650,7 +661,7 @@ def convert_documents(
                 sync_state=sync_state,
                 state=state,
             )
-            if _conversion_deadline_exceeded(state.get("started_at")):
+            if _conversion_deadline_exceeded(_conversion_started_at(state)):
                 raise ManagedDatasourceError(
                     "SourceLens conversion task could not be recovered."
                 )
@@ -688,6 +699,160 @@ def convert_documents(
             error = str(
                 task.get("error") or "DATASOURCE_CONVERSION_FAILED"
             )
+            recovery = None
+            try:
+                recovery = sl_client.get_managed_datasource_conversion_recovery(
+                    str(ks.sl_datasource_uuid),
+                    task_id,
+                )
+            except sl_client.LensBridgeUnavailable as exc:
+                retry_after = _record_transient_state(
+                    ks=ks,
+                    sync_state=sync_state,
+                    state=state,
+                    operation="recover_conversion",
+                )
+                raise ManagedDatasourcePending(
+                    "SourceLens is temporarily unavailable while checking "
+                    "conversion recovery.",
+                    retry_after_seconds=retry_after,
+                ) from exc
+            if isinstance(recovery, dict):
+                state["recovery"] = recovery
+                if (
+                    recovery.get("orphaned") is True
+                    and recovery.get("restart_required") is True
+                ):
+                    state["status"] = "FAILURE"
+                    state["error"] = (
+                        "DATASOURCE_CONVERSION_RESTART_REQUIRED"
+                    )
+                    _persist_conversion_state(
+                        ks=ks,
+                        sync_state=sync_state,
+                        state=state,
+                    )
+                    raise ManagedDatasourceError(state["error"])
+                # Only orphaned conversions may be resumed automatically.
+                # A regular conversion failure can also carry a checkpoint,
+                # but retrying it here would silently repeat a permanent
+                # document/model failure forever.
+                if recovery.get("orphaned") is True and recovery.get("resumable"):
+                    resume_attempts = int(state.get("resume_attempts") or 0)
+                    if resume_attempts >= CONVERSION_RESUME_MAX_ATTEMPTS:
+                        state["status"] = "FAILURE"
+                        state["error"] = (
+                            "DATASOURCE_CONVERSION_RESUME_EXHAUSTED"
+                        )
+                        _persist_conversion_state(
+                            ks=ks,
+                            sync_state=sync_state,
+                            state=state,
+                        )
+                        raise ManagedDatasourceError(state["error"])
+                    try:
+                        resumed = sl_client.resume_managed_datasource_conversion(
+                            str(ks.sl_datasource_uuid),
+                            task_id,
+                        )
+                    except sl_client.LensBridgeUnavailable as exc:
+                        retry_after = _record_transient_state(
+                            ks=ks,
+                            sync_state=sync_state,
+                            state=state,
+                            operation="resume_conversion",
+                        )
+                        raise ManagedDatasourcePending(
+                            "SourceLens is temporarily unavailable while "
+                            "resuming conversion.",
+                            retry_after_seconds=retry_after,
+                        ) from exc
+                    next_task_id = str(resumed.get("task_id") or "")
+                    if resumed.get("restart_required"):
+                        state["status"] = "FAILURE"
+                        state["error"] = (
+                            "SourceLens conversion restart is required."
+                        )
+                        _persist_conversion_state(
+                            ks=ks,
+                            sync_state=sync_state,
+                            state=state,
+                        )
+                        raise ManagedDatasourceError(state["error"])
+                    resume_reason = str(resumed.get("reason") or "")
+                    task_already_running = resume_reason in {
+                        "ALREADY_RESUMED",
+                        "CONVERSION_ALREADY_RUNNING",
+                        "CONVERSION_ALREADY_COMPLETED",
+                    }
+                    if (
+                        next_task_id
+                        and (
+                            resumed.get("resumed") is True
+                            or task_already_running
+                        )
+                    ):
+                        resumed_at = timezone.now().isoformat()
+                        original_task_id = str(
+                            state.get("original_task_id") or task_id
+                        )
+                        state.pop("error", None)
+                        state.pop("finished_at", None)
+                        progress_message = (
+                            "Document conversion is already running."
+                            if resume_reason == "CONVERSION_ALREADY_RUNNING"
+                            else (
+                                "Document conversion has already completed."
+                                if resume_reason == "CONVERSION_ALREADY_COMPLETED"
+                                else (
+                                    "Document conversion is resuming from "
+                                    "the latest safe checkpoint."
+                                )
+                            )
+                        )
+                        state.update(
+                            {
+                                "original_task_id": original_task_id,
+                                "task_id": next_task_id,
+                                "status": str(
+                                    resumed.get("status") or "PENDING"
+                                ),
+                                "resume_source": resumed.get("resume_source"),
+                                "resume_reason": resumed.get("reason"),
+                                "progress_message": progress_message,
+                                "resumed_at": resumed_at,
+                                "resume_started_at": resumed_at,
+                            }
+                        )
+                        state["resume_attempts"] = resume_attempts + 1
+                        state["recovery"] = {
+                            **recovery,
+                            **resumed,
+                            "original_task_id": original_task_id,
+                        }
+                        _clear_transient_state(state)
+                        _persist_conversion_state(
+                            ks=ks,
+                            sync_state=sync_state,
+                            state=state,
+                        )
+                        raise ManagedDatasourcePending(
+                            "Document conversion is resuming from the "
+                            "latest safe checkpoint."
+                        )
+                if (
+                    recovery.get("orphaned") is True
+                    and recovery.get("reason") == "LENSNODE_UNAVAILABLE"
+                ):
+                    _persist_conversion_state(
+                        ks=ks,
+                        sync_state=sync_state,
+                        state=state,
+                    )
+                    raise ManagedDatasourcePending(
+                        "Waiting for the LensNode before resuming document conversion.",
+                        retry_after_seconds=CONVERSION_IDLE_RETRY_MAX_SECONDS,
+                    )
             state["status"] = str(task.get("status") or "FAILURE")
             state["error"] = error
             _persist_conversion_state(
@@ -829,7 +994,7 @@ def convert_documents(
             state=state,
         )
         raise ManagedDatasourceError(error)
-    if _conversion_deadline_exceeded(state.get("started_at")):
+    if _conversion_deadline_exceeded(_conversion_started_at(state)):
         raise ManagedDatasourceError(
             "SourceLens conversion did not complete before the wait timeout."
         )
