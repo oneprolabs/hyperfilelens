@@ -138,6 +138,46 @@ def test_channel_update_preserves_masked_sensitive_config(org_client):
     assert "secret" not in channel.config
 
 @pytest.mark.django_db
+def test_dingtalk_details_include_saved_configuration(org_client):
+    """DingTalk Overview data remains populated after the channel is saved."""
+    client, org = org_client
+    headers = {"HTTP_X_ORG_KEY": org.key}
+    channel = NotificationChannel.objects.create(
+        organization=org,
+        name="regression-dingtalk-1254",
+        channel_type="dingtalk",
+        config={
+            "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test",
+            "secret": "test-secret",
+            "at_mobiles": ["13800138000"],
+            "at_user_ids": ["user-1"],
+            "is_at_all": True,
+        },
+    )
+
+    response = client.get(
+        f"/api/v1/notifications/channels/{channel.id}/details/",
+        **headers,
+    )
+
+    assert response.status_code == 200, response.content
+    data = response.data
+    assert data["channel"]["id"] == channel.id
+    assert data["channel"]["name"] == "regression-dingtalk-1254"
+    assert data["channel"]["type"] == "dingtalk"
+    assert data["channel"]["config"] == {
+        "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test",
+        "secret": "********",
+        "at_mobiles": ["13800138000"],
+        "at_user_ids": ["user-1"],
+        "is_at_all": True,
+    }
+    assert data["stats"]["logs_count"] == 0
+    assert data["stats"]["success_rate"] == 0
+    assert data["stats"]["policies_count"] == 0
+    assert data["stats"]["alerts_count"] == 0
+
+@pytest.mark.django_db
 def test_email_channel_requires_recipients(org_client):
     client, org = org_client
     headers = {"HTTP_X_ORG_KEY": org.key}
