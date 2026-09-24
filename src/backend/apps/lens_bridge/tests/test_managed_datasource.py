@@ -802,6 +802,64 @@ class ManagedDatasourceTests(SimpleTestCase):
             )
         resume.assert_not_called()
 
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.resume_managed_datasource_conversion"
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.get_managed_datasource_conversion_recovery"
+    )
+    @patch("apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id")
+    def test_resume_uses_already_running_task_instead_of_failing(
+        self,
+        get_task,
+        recovery,
+        resume,
+    ):
+        knowledge_source = self._knowledge_source()
+        knowledge_source.sl_datasource_uuid = self.datasource_uuid
+        conversion = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "orphaned-1",
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(conversion)
+                ),
+            }
+        }
+        get_task.return_value = {
+            "task_id": "orphaned-1",
+            "status": "FAILURE",
+            "error": "DATASOURCE_CONVERSION_ORPHANED",
+        }
+        recovery.return_value = {
+            "task_id": "orphaned-1",
+            "orphaned": True,
+            "resumable": True,
+            "reason": "CHECKPOINT_AVAILABLE",
+        }
+        resume.return_value = {
+            "task_id": "active-2",
+            "resumable": True,
+            "resumed": False,
+            "reason": "CONVERSION_ALREADY_RUNNING",
+            "status": "STARTED",
+        }
+
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=knowledge_source,
+                sync_state=sync_state,
+                conversion=conversion,
+            )
+
+        self.assertEqual(sync_state["conversion"]["task_id"], "active-2")
+        self.assertEqual(
+            sync_state["conversion"]["progress_message"],
+            "Document conversion is already running.",
+        )
+
     def test_unchanged_sidecar_counts_as_readable(self):
         self.assertFalse(
             managed_datasource._all_supported_documents_unreadable(

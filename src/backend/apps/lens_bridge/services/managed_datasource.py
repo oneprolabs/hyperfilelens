@@ -752,10 +752,34 @@ def convert_documents(
                             state=state,
                         )
                         raise ManagedDatasourceError(state["error"])
-                    if resumed.get("resumed") is True and next_task_id:
+                    resume_reason = str(resumed.get("reason") or "")
+                    task_already_running = resume_reason in {
+                        "ALREADY_RESUMED",
+                        "CONVERSION_ALREADY_RUNNING",
+                        "CONVERSION_ALREADY_COMPLETED",
+                    }
+                    if (
+                        next_task_id
+                        and (
+                            resumed.get("resumed") is True
+                            or task_already_running
+                        )
+                    ):
                         resumed_at = timezone.now().isoformat()
                         state.pop("error", None)
                         state.pop("finished_at", None)
+                        progress_message = (
+                            "Document conversion is already running."
+                            if resume_reason == "CONVERSION_ALREADY_RUNNING"
+                            else (
+                                "Document conversion has already completed."
+                                if resume_reason == "CONVERSION_ALREADY_COMPLETED"
+                                else (
+                                    "Document conversion is resuming from "
+                                    "the latest safe checkpoint."
+                                )
+                            )
+                        )
                         state.update(
                             {
                                 "original_task_id": task_id,
@@ -765,10 +789,7 @@ def convert_documents(
                                 ),
                                 "resume_source": resumed.get("resume_source"),
                                 "resume_reason": resumed.get("reason"),
-                                "progress_message": (
-                                    "Document conversion is resuming from "
-                                    "the latest safe checkpoint."
-                                ),
+                                "progress_message": progress_message,
                                 "resumed_at": resumed_at,
                                 "resume_started_at": resumed_at,
                             }
