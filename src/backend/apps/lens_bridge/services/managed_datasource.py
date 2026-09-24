@@ -257,6 +257,16 @@ def _conversion_deadline_exceeded(started_at: Any) -> bool:
     return (timezone.now() - started).total_seconds() >= CONVERSION_WAIT_SECONDS
 
 
+def _conversion_started_at(state: dict[str, Any]) -> Any:
+    """Return the active conversion attempt timestamp.
+
+    A resumed SourceLens task gets a fresh HFL polling budget while the
+    original start timestamp remains available for audit.
+    """
+
+    return state.get("resume_started_at") or state.get("started_at")
+
+
 def _parse_timestamp(value: Any) -> datetime | None:
     """Parse one upstream timestamp into an aware datetime."""
 
@@ -608,7 +618,7 @@ def convert_documents(
                 sync_state=sync_state,
                 state=state,
             )
-            if _conversion_deadline_exceeded(state.get("started_at")):
+            if _conversion_deadline_exceeded(_conversion_started_at(state)):
                 raise ManagedDatasourceError(
                     "SourceLens conversion start could not be recovered."
                 )
@@ -650,7 +660,7 @@ def convert_documents(
                 sync_state=sync_state,
                 state=state,
             )
-            if _conversion_deadline_exceeded(state.get("started_at")):
+            if _conversion_deadline_exceeded(_conversion_started_at(state)):
                 raise ManagedDatasourceError(
                     "SourceLens conversion task could not be recovered."
                 )
@@ -731,7 +741,19 @@ def convert_documents(
                             retry_after_seconds=retry_after,
                         ) from exc
                     next_task_id = str(resumed.get("task_id") or "")
-                    if next_task_id:
+                    if resumed.get("restart_required"):
+                        state["status"] = "FAILURE"
+                        state["error"] = (
+                            "SourceLens conversion restart is required."
+                        )
+                        _persist_conversion_state(
+                            ks=ks,
+                            sync_state=sync_state,
+                            state=state,
+                        )
+                        raise ManagedDatasourceError(state["error"])
+                    if resumed.get("resumed") is True and next_task_id:
+                        resumed_at = timezone.now().isoformat()
                         state.update(
                             {
                                 "original_task_id": task_id,
@@ -745,7 +767,8 @@ def convert_documents(
                                     "Document conversion is resuming from "
                                     "the latest safe checkpoint."
                                 ),
-                                "resumed_at": timezone.now().isoformat(),
+                                "resumed_at": resumed_at,
+                                "resume_started_at": resumed_at,
                             }
                         )
                         _clear_transient_state(state)
@@ -912,7 +935,7 @@ def convert_documents(
             state=state,
         )
         raise ManagedDatasourceError(error)
-    if _conversion_deadline_exceeded(state.get("started_at")):
+    if _conversion_deadline_exceeded(_conversion_started_at(state)):
         raise ManagedDatasourceError(
             "SourceLens conversion did not complete before the wait timeout."
         )

@@ -758,6 +758,7 @@ class ManagedDatasourceTests(SimpleTestCase):
             sync_state["conversion"]["resume_source"],
             "checkpoint",
         )
+        self.assertIn("resume_started_at", sync_state["conversion"])
 
     @patch(
         "apps.lens_bridge.services.managed_datasource."
