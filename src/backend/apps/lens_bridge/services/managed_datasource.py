@@ -719,6 +719,20 @@ def convert_documents(
                 ) from exc
             if isinstance(recovery, dict):
                 state["recovery"] = recovery
+                if (
+                    recovery.get("orphaned") is True
+                    and recovery.get("restart_required") is True
+                ):
+                    state["status"] = "FAILURE"
+                    state["error"] = (
+                        "DATASOURCE_CONVERSION_RESTART_REQUIRED"
+                    )
+                    _persist_conversion_state(
+                        ks=ks,
+                        sync_state=sync_state,
+                        state=state,
+                    )
+                    raise ManagedDatasourceError(state["error"])
                 # Only orphaned conversions may be resumed automatically.
                 # A regular conversion failure can also carry a checkpoint,
                 # but retrying it here would silently repeat a permanent
