@@ -1595,12 +1595,16 @@ func runPreparedManagedSnapshot(
 	snapshotArgs := managedBackupSnapshotArgs(configFile, sourcePath, operationID)
 	progressState := newKopiaProgressReporter()
 	failureCollector := newSnapshotFailureCollector()
+	skippedCollector := newSnapshotFailureCollector()
 	runCtx, cancelRun := context.WithCancel(ctx)
 	stallSeconds := kopiaProgressStallSeconds()
 	stallDone := make(chan struct{})
 	go monitorKopiaProgressStall(runCtx, cancelRun, progressState, stallSeconds, stallDone)
 	onProgressLine := func(line string, stderr bool) {
 		failureCollector.observe(line)
+		if isIgnoredSnapshotFailureLine(line) {
+			skippedCollector.observe(line)
+		}
 		snapshot, ok := kopia.ParseProgressLine(line)
 		if !ok {
 			return
@@ -1626,7 +1630,22 @@ func runPreparedManagedSnapshot(
 	if failureSummary == nil {
 		failureSummary = failureCollector.summary()
 	}
+	skippedSummary := skippedCollector.summary()
+	if skippedSummary == nil && runErr == nil {
+		skippedSummary, _ = parsedResult["snapshot_failure_summary"].(map[string]any)
+	}
 	command := commandResult(res)
+	if skippedSummary != nil {
+		result["snapshot_skipped_summary"] = skippedSummary
+	}
+	if runErr != nil {
+		if terminal := terminalSnapshotError(res.Stderr); terminal != "" {
+			result["snapshot_terminal_error"] = terminal
+		}
+		if diagnostic := terminalSnapshotDiagnostic(res.Stderr); diagnostic != "" {
+			result["snapshot_terminal_diagnostic"] = diagnostic
+		}
+	}
 	if failureSummary != nil {
 		// Full Kopia JSON and stderr repeat the same per-path failures and can be
 		// hundreds of kilobytes. Preserve bounded tails for legacy diagnostics;
@@ -5379,20 +5398,26 @@ func snapshotFailureSummary(parsed any) map[string]any {
 		return nil
 	}
 	collector := newSnapshotFailureCollector()
+	fatalCount, _ := findIntKey(summary, "numFailed", "fatalErrorCount")
+	ignoredCount, _ := findIntKey(summary, "numIgnoredErrors", "ignoredErrorCount")
 	for _, raw := range errors {
 		item, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-		collector.add(stringValue(item["path"]), stringValue(item["error"]))
+		collector.add(stringValue(item["path"]), stringValue(item["error"]), dispositionForCounts(fatalCount, ignoredCount))
 	}
-	collector.reportedTotal = len(errors)
+	collector.fatalCount = int(fatalCount)
+	collector.ignoredCount = int(ignoredCount)
+	collector.reportedTotal = max(len(errors), int(fatalCount+ignoredCount))
 	return collector.summary()
 }
 
 type snapshotFailureCollector struct {
 	reportedTotal  int
 	observedCount  int
+	fatalCount     int
+	ignoredCount   int
 	causeCounts    map[string]int
 	itemTypes      map[string]string
 	itemTypeCounts map[string]int
@@ -5412,19 +5437,25 @@ func (c *snapshotFailureCollector) observe(line string) {
 	if match := snapshotFatalCountPattern.FindStringSubmatch(line); len(match) == 2 {
 		if count, err := strconv.Atoi(match[1]); err == nil && count > c.reportedTotal {
 			c.reportedTotal = count
+			c.fatalCount = count
 		}
 	}
-	path, failure, ok := parseSnapshotFailureLine(line)
+	path, failure, disposition, ok := parseSnapshotFailureLine(line)
 	if ok {
-		c.add(path, failure)
+		c.add(path, failure, disposition)
 	}
 }
 
-func (c *snapshotFailureCollector) add(path string, failure string) {
+func (c *snapshotFailureCollector) add(path string, failure string, disposition string) {
 	path = strings.TrimSpace(path)
 	failure = strings.TrimSpace(failure)
 	if path == "" && failure == "" {
 		return
+	}
+	if disposition == "skipped" {
+		c.ignoredCount++
+	} else if disposition == "fatal" {
+		c.fatalCount++
 	}
 	cause, itemType := snapshotFailureCause(failure)
 	c.observedCount++
@@ -5434,16 +5465,20 @@ func (c *snapshotFailureCollector) add(path string, failure string) {
 	if len(c.items) >= snapshotFailureSampleLimit {
 		return
 	}
-	c.items = append(c.items, map[string]any{
+	item := map[string]any{
 		"path":      truncateSnapshotFailureHead(path, snapshotFailurePathLimit),
 		"error":     truncateFailureTail("", failure, snapshotFailureErrorLimit),
 		"cause":     cause,
 		"item_type": itemType,
-	})
+	}
+	if disposition != "" {
+		item["disposition"] = disposition
+	}
+	c.items = append(c.items, item)
 }
 
 func (c *snapshotFailureCollector) summary() map[string]any {
-	total := max(c.reportedTotal, c.observedCount)
+	total := max(c.reportedTotal, c.observedCount, c.fatalCount+c.ignoredCount)
 	if total == 0 {
 		return nil
 	}
@@ -5464,6 +5499,8 @@ func (c *snapshotFailureCollector) summary() map[string]any {
 	}
 	return map[string]any{
 		"total_count":      total,
+		"fatal_count":      c.fatalCount,
+		"ignored_count":    c.ignoredCount,
 		"reported_count":   len(c.items),
 		"truncated":        total > len(c.items),
 		"cause_counts":     causeCounts,
@@ -5473,19 +5510,69 @@ func (c *snapshotFailureCollector) summary() map[string]any {
 	}
 }
 
-func parseSnapshotFailureLine(line string) (string, string, bool) {
+func parseSnapshotFailureLine(line string) (string, string, string, bool) {
 	const marker = `error when processing "`
 	lower := strings.ToLower(line)
 	start := strings.Index(lower, marker)
 	if start < 0 {
-		return "", "", false
+		return "", "", "", false
 	}
 	rest := line[start+len(marker):]
 	separator := strings.Index(rest, `":`)
 	if separator < 0 {
-		return "", "", false
+		return "", "", "", false
 	}
-	return strings.TrimSpace(rest[:separator]), strings.TrimSpace(rest[separator+2:]), true
+	disposition := "fatal"
+	if strings.Contains(lower, "! ignored error when processing") ||
+		strings.Contains(lower, "ignored error when processing") {
+		disposition = "skipped"
+	}
+	return strings.TrimSpace(rest[:separator]), strings.TrimSpace(rest[separator+2:]), disposition, true
+}
+
+func isIgnoredSnapshotFailureLine(line string) bool {
+	return strings.Contains(strings.ToLower(line), "ignored error when processing")
+}
+
+func dispositionForCounts(fatalCount, ignoredCount int64) string {
+	switch {
+	case fatalCount == 0 && ignoredCount > 0:
+		return "skipped"
+	case ignoredCount == 0 && fatalCount > 0:
+		return "fatal"
+	default:
+		return ""
+	}
+}
+
+func terminalSnapshotError(stderr string) string {
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(strings.ToLower(line), "upload error:") ||
+			strings.Contains(strings.ToLower(line), "error flushing writer") {
+			return line
+		}
+	}
+	return ""
+}
+
+func terminalSnapshotDiagnostic(stderr string) string {
+	lines := strings.Split(stderr, "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(strings.ToLower(line), "hfl_snapshot_progress") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	if len(filtered) > 10 {
+		filtered = filtered[len(filtered)-10:]
+	}
+	return strings.Join(filtered, "\n")
 }
 
 func snapshotFailureCause(failure string) (string, string) {

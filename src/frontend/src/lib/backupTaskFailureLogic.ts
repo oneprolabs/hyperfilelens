@@ -300,6 +300,9 @@ export function buildTaskFailureErrorDetails(params: {
   const skippedDetails = extractSkippedDetails(meta)
   const backupSummary = extractBackupSummary(meta)
   const friendly = backupFailurePresentation(meta)
+  const terminalFailure = String(
+    record(meta.terminal_failure).message || task.error_message || '',
+  ).trim()
 
   const severity = severityFromTask(task)
   const title = severity === 'warning'
@@ -308,6 +311,10 @@ export function buildTaskFailureErrorDetails(params: {
 
   // Build reasons from structured details
   const reasons: string[] = []
+
+  if (terminalFailure && !extractFailureDetails(meta)) {
+    reasons.push(terminalFailure)
+  }
 
   if (friendly) {
     reasons.push(friendly.reason)
@@ -333,10 +340,7 @@ export function buildTaskFailureErrorDetails(params: {
     }))
   }
 
-  // Fallback to task error_message
-  if (!reasons.length && task.error_message) {
-    reasons.push(task.error_message)
-  }
+  if (!reasons.length && task.error_message) reasons.push(task.error_message)
 
   // Resolutions from friendly copy or failure remediation codes
   const resolutions: string[] = []

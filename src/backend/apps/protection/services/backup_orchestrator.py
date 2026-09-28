@@ -1619,10 +1619,14 @@ def _observe_running_directory(
             if not node_online:
                 return
     if node_task.status in _NODE_TASK_TERMINAL:
+        node_result = node_task.result if isinstance(node_task.result, dict) else {}
         snapshot_id, size_bytes, file_count, dir_count, stats = (
             bt._extract_snapshot_metrics(
-                node_task.result if isinstance(node_task.result, dict) else {},
-                include_skipped_items=node_task.status == NodeTask.Status.SUCCESS,
+                node_result,
+                include_skipped_items=(
+                    node_task.status == NodeTask.Status.SUCCESS
+                    or bt.kopia_snapshot_has_explicit_skipped(node_result)
+                ),
             )
         )
         if node_task.status == NodeTask.Status.SUCCESS:
@@ -1838,6 +1842,9 @@ def _observe_running_directory(
                 error_code=error_code,
                 error_message=error_message,
             )
+            terminal_technical_detail = bt.kopia_terminal_technical_detail(
+                node_task.result
+            )
             append_task_step_event(
                 task=task,
                 step_name="kopia_snapshot",
@@ -1850,7 +1857,17 @@ def _observe_running_directory(
                     "node_task_status": node_task.status,
                     "error_code": error_code,
                     "error_message": error_message,
+                    "terminal_failure": {
+                        "error_code": error_code,
+                        "message": error_message,
+                        **(
+                            {"technical_detail": terminal_technical_detail}
+                            if terminal_technical_detail
+                            else {}
+                        ),
+                    },
                     "object_name": directory_row.source_path,
+                    **bt.kopia_snapshot_skipped_metadata(node_task.result),
                     **bt.kopia_snapshot_failure_metadata(
                         node_task.result,
                         backup_policy=(
@@ -1931,6 +1948,19 @@ def _finalize_backup_task(
         for row in rows
         if isinstance(row.stats, dict)
     )
+    skipped_items: list[dict[str, Any]] = []
+    node_task_ids = [row.node_task_id for row in rows if row.node_task_id]
+    node_tasks_by_id: dict[str, NodeTask] = {}
+    if node_task_ids:
+        node_tasks = NodeTask.objects.filter(id__in=node_task_ids).only("id", "result")
+        for node_task in node_tasks:
+            node_tasks_by_id[str(node_task.id)] = node_task
+            skipped = bt.kopia_snapshot_skipped_metadata(node_task.result)
+            details = skipped.get("skipped_details") if isinstance(skipped, dict) else None
+            if isinstance(details, dict):
+                for item in details.get("items") or []:
+                    if isinstance(item, dict) and item not in skipped_items:
+                        skipped_items.append(item)
     any_failure = successful < total_dirs
     step_progress, task_progress = bt._backup_success_progress(successful, total_dirs)
     bt._set_step_status(
@@ -1955,6 +1985,17 @@ def _finalize_backup_task(
         "skipped_directory_count": skipped_directory_count,
         "skipped_special_count": skipped_special_count,
     }
+    if skipped_items:
+        task_result["skipped_details"] = {
+            "category": "source_items_skipped",
+            "count": skipped_item_count,
+            "file_count": skipped_file_count,
+            "directory_count": skipped_directory_count,
+            "special_count": skipped_special_count,
+            "items": skipped_items[:10],
+            "reported_count": min(len(skipped_items), 10),
+            "truncated": skipped_item_count > min(len(skipped_items), 10),
+        }
     repository = Repository.objects.filter(
         organization_id=organization_id,
         id=source_snapshot.repository_id,
@@ -2063,6 +2104,19 @@ def _finalize_backup_task(
                 error_code = str(primary.error_code).strip()
             if str(primary.error_message or "").strip():
                 error_message = str(primary.error_message).strip()
+            task_result["terminal_failure"] = {
+                "error_code": error_code,
+                "message": error_message,
+            }
+            primary_node_task = node_tasks_by_id.get(str(primary.node_task_id or ""))
+            terminal_detail = (
+                bt.kopia_terminal_technical_detail(primary_node_task.result)
+                if primary_node_task is not None
+                else ""
+            )
+            if terminal_detail:
+                task_result["terminal_failure"]["technical_detail"] = terminal_detail
+            task_result["failed_step"] = "kopia_snapshot"
         source_snapshot.error_code = error_code
         source_snapshot.error_message = error_message
         source_snapshot.save(

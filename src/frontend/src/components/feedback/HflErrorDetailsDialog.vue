@@ -150,7 +150,22 @@ function entityIcon(type: ErrorEntity['type']) {
       </section>
 
       <section
-        v-if="details.cleanupResidue?.failures?.length || details.cleanupResidue?.skippedItems?.length || details.cleanupResidue?.retainedResources?.length"
+        v-if="details.cleanupResidue?.skippedItems?.length"
+        class="hfl-error-details__section hfl-error-details__skipped"
+      >
+        <h3>{{ t('ops.task.failureDetails.skippedItems') }}</h3>
+        <ul class="hfl-error-details__list">
+          <li
+            v-for="item in details.cleanupResidue.skippedItems"
+            :key="`skipped:${item}`"
+          >
+            {{ item }}
+          </li>
+        </ul>
+      </section>
+
+      <section
+        v-if="details.cleanupResidue?.failures?.length || details.cleanupResidue?.retainedResources?.length"
         class="hfl-error-details__section"
       >
         <h3>{{ t('feedback.errorDetails.cleanup') }}</h3>
@@ -158,12 +173,6 @@ function entityIcon(type: ErrorEntity['type']) {
           <li
             v-for="item in details.cleanupResidue.failures"
             :key="`failure:${item}`"
-          >
-            {{ item }}
-          </li>
-          <li
-            v-for="item in details.cleanupResidue.skippedItems"
-            :key="`skipped:${item}`"
           >
             {{ item }}
           </li>
@@ -353,6 +362,16 @@ function entityIcon(type: ErrorEntity['type']) {
   font-weight: 700;
   letter-spacing: .09em;
   text-transform: uppercase;
+}
+.hfl-error-details__skipped {
+  padding: 12px 14px;
+  background: var(--color-warning-light);
+  border: 1px solid color-mix(in srgb, var(--color-warning-text) 24%, transparent);
+  border-radius: 11px;
+}
+.hfl-error-details__skipped h3,
+.hfl-error-details__skipped .hfl-error-details__list li {
+  color: var(--color-warning-text);
 }
 .hfl-error-details__issue {
   padding: 12px 14px;

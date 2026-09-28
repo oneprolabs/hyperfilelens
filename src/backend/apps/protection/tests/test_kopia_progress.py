@@ -699,6 +699,74 @@ class KopiaFailureMessageTests(SimpleTestCase):
         self.assertIn("Device or resource busy", message)
         self.assertIn("path could not be determined", message)
 
+    def test_terminal_error_wins_over_ignored_snapshot_items(self):
+        from apps.protection.services.backup_task import (
+            classify_kopia_execution_failure,
+            extract_kopia_failure_message,
+            kopia_snapshot_failure_metadata,
+            kopia_snapshot_skipped_metadata,
+        )
+
+        result = {
+            "snapshot_failure_summary": {
+                "total_count": 1,
+                "fatal_count": 0,
+                "ignored_count": 1,
+                "items": [{
+                    "path": "Documents and Settings",
+                    "error": "readdirent: permission denied",
+                    "cause": "permission_denied",
+                    "item_type": "directory",
+                    "disposition": "skipped",
+                }],
+            },
+            "snapshot_skipped_summary": {
+                "total_count": 1,
+                "ignored_count": 1,
+                "items": [{
+                    "path": "Documents and Settings",
+                    "error": "readdirent: permission denied",
+                    "cause": "permission_denied",
+                    "item_type": "directory",
+                    "disposition": "skipped",
+                }],
+            },
+            "snapshot_terminal_error": "upload error: device or resource busy",
+            "snapshot_create": {"exit_code": 1},
+        }
+
+        self.assertIn("Device or resource busy", extract_kopia_failure_message(result, last_error="exit 1: exit status 1"))
+        self.assertEqual(classify_kopia_execution_failure(result, last_error="exit 1: exit status 1")[0], "KOPIA_PROCESS_DIED")
+        self.assertEqual(kopia_snapshot_failure_metadata(result), {})
+        skipped = kopia_snapshot_skipped_metadata(result)["skipped_details"]
+        self.assertEqual(skipped["items"][0]["path"], "Documents and Settings")
+
+    def test_terminal_technical_detail_prefers_preserved_agent_context(self):
+        from apps.protection.services.backup_task import kopia_terminal_technical_detail
+
+        diagnostic = "\n".join(
+            ["context before", "upload error: device or resource busy", "context after"]
+        )
+        self.assertEqual(
+            kopia_terminal_technical_detail({
+                "snapshot_terminal_diagnostic": diagnostic,
+                "snapshot_create": {"stderr_tail": "short tail"},
+            }),
+            diagnostic,
+        )
+
+    def test_terminal_technical_detail_filters_progress_and_caps_at_ten_lines(self):
+        from apps.protection.services.backup_task import kopia_terminal_technical_detail
+
+        diagnostic = "\n".join(
+            [f'{{"type":"hfl_snapshot_progress","sequence":{i}}}' for i in range(30)]
+            + [f"failure context {i}" for i in range(12)]
+        )
+        detail = kopia_terminal_technical_detail({"snapshot_terminal_diagnostic": diagnostic})
+        self.assertNotIn("hfl_snapshot_progress", detail)
+        self.assertLessEqual(len(detail.splitlines()), 10)
+        self.assertIn("failure context 11", detail)
+
     def test_failure_metadata_groups_causes_and_limits_samples(self):
         from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
 

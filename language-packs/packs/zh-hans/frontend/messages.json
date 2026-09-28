@@ -6113,6 +6113,9 @@
         },
         "suggestion": {
           "review_task": "检查仓库凭据后重试创建任务。",
+          "review_backup_diagnostics": "请检查受影响的备份源、目标仓库和技术详情，然后重试备份。",
+          "review_restore_diagnostics": "请检查恢复源、目标路径和技术详情，然后重试恢复。",
+          "review_repository_operation": "请检查仓库配置和技术详情，然后重试该操作。",
           "force_cleanup": "确认 Agent 连接正常后，重试清理操作。",
           "review_cleanup": "检查保留的资源，并在重试前完成剩余清理。",
           "check_agent": "检查 Agent 连接后重试清理操作。",

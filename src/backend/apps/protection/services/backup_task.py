@@ -1486,6 +1486,16 @@ def extract_kopia_failure_message(
     if not isinstance(result, dict):
         return str(last_error or "").strip()
 
+    terminal = _extract_kopia_terminal_error(result, last_error=last_error)
+    if terminal:
+        lower_terminal = terminal.lower()
+        if "device or resource busy" in lower_terminal:
+            return (
+                "Backup processing failed: Device or resource busy. "
+                "The affected path could not be determined from the available diagnostics."
+            )
+        return terminal[:2000]
+
     failure_details = extract_kopia_snapshot_failure_details(result)
     if failure_details and all(
         _is_source_resource_busy_error(item["error"]) for item in failure_details
@@ -1623,6 +1633,58 @@ def extract_kopia_failure_message(
     return cleaned_error[:2000]
 
 
+def _extract_kopia_terminal_error(
+    result: dict[str, Any] | None, *, last_error: str = ""
+) -> str:
+    """Return a terminal command failure without confusing it with skipped entries."""
+    if not isinstance(result, dict):
+        return "" if _is_generic_exit_message(last_error) else str(last_error or "").strip()
+    explicit = str(result.get("snapshot_terminal_error") or "").strip()
+    if explicit:
+        return explicit
+    nested = result.get("snapshot_create")
+    messages: list[str] = []
+    if isinstance(nested, dict):
+        for key in ("stderr", "stderr_tail", "stdout", "stdout_tail"):
+            value = str(nested.get(key) or "").strip()
+            if value:
+                messages.extend(value.splitlines())
+    for line in reversed(messages):
+        stripped = line.strip().lstrip("!").strip()
+        lower = stripped.lower()
+        if (
+            "upload error:" in lower
+            or "error flushing writer" in lower
+        ):
+            return stripped
+    return ""
+
+
+def kopia_terminal_technical_detail(result: dict[str, Any] | None) -> str:
+    """Return a bounded raw diagnostic tail for the directory that failed."""
+    if not isinstance(result, dict):
+        return ""
+    diagnostic = str(result.get("snapshot_terminal_diagnostic") or "").strip()
+    if diagnostic:
+        lines = [
+            line.strip()
+            for line in diagnostic.splitlines()
+            if line.strip() and "hfl_snapshot_progress" not in line
+        ]
+        return "\n".join(lines[-10:])
+    nested = result.get("snapshot_create")
+    if not isinstance(nested, dict):
+        return ""
+    raw = str(nested.get("stderr_tail") or nested.get("stderr") or "").strip()
+    if not raw:
+        return ""
+    lines = [
+        line for line in raw.splitlines()
+        if "hfl_snapshot_progress" not in line
+    ]
+    return "\n".join(lines[-10:])[-12000:]
+
+
 def extract_kopia_snapshot_failure_details(
     result: dict[str, Any] | None,
 ) -> list[dict[str, str]]:
@@ -1646,6 +1708,15 @@ def extract_kopia_snapshot_failure_details(
     if not isinstance(errors, list):
         return []
 
+    skipped_keys: set[tuple[str, str]] = set()
+    skipped_summary = result.get("snapshot_skipped_summary")
+    if isinstance(skipped_summary, dict):
+        for skipped in skipped_summary.get("items") or []:
+            if isinstance(skipped, dict):
+                skipped_keys.add((
+                    str(skipped.get("path") or "").strip(),
+                    str(skipped.get("error") or "").strip(),
+                ))
     details: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for item in errors:
@@ -1653,6 +1724,10 @@ def extract_kopia_snapshot_failure_details(
             continue
         path = str(item.get("path") or "").strip()
         error = str(item.get("error") or "").strip()
+        if str(item.get("disposition") or "").strip().lower() == "skipped":
+            continue
+        if (path, error) in skipped_keys:
+            continue
         if not path and not error:
             continue
         key = (path, error)
@@ -1905,9 +1980,42 @@ def kopia_snapshot_failure_metadata(
                     continue
                 if count > 0:
                     summary_item_type_counts[item_type] = count
+    summary_fatal_count = 0
+    summary_ignored_count = 0
+    if isinstance(summary, dict):
+        try:
+            summary_fatal_count = int(summary.get("fatal_count") or 0)
+        except (TypeError, ValueError):
+            summary_fatal_count = 0
+        try:
+            summary_ignored_count = int(summary.get("ignored_count") or 0)
+        except (TypeError, ValueError):
+            summary_ignored_count = 0
+        if not details and summary_fatal_count == 0 and summary_ignored_count > 0:
+            return {}
+    if not details and isinstance(result.get("snapshot_skipped_summary"), dict):
+        return {}
+    has_explicit_disposition = any(
+        isinstance(item, dict)
+        and str(item.get("disposition") or "").strip()
+        for item in (summary.get("items") if isinstance(summary, dict) else [])
+    ) or isinstance(result.get("snapshot_skipped_summary"), dict)
+    if details and has_explicit_disposition:
+        detail_counts: dict[str, int] = {}
+        detail_types: dict[str, str] = {}
+        detail_type_counts: dict[str, int] = {}
+        for item in details:
+            cause, item_type = _snapshot_error_cause(item)
+            detail_counts[cause] = detail_counts.get(cause, 0) + 1
+            detail_types[cause] = item_type
+            detail_type_counts[item_type] = detail_type_counts.get(item_type, 0) + 1
+        summary_counts = detail_counts
+        summary_types = detail_types
+        summary_item_type_counts = detail_type_counts
     total_count = max(
         len(details),
-        _snapshot_failure_count(result),
+        summary_fatal_count,
+        _snapshot_failure_count(result) if summary_fatal_count == 0 else 0,
         sum(summary_counts.values()),
     )
     if not total_count:
@@ -2027,8 +2135,38 @@ def kopia_snapshot_failure_metadata(
 def kopia_snapshot_skipped_metadata(
     result: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Describe unreadable source items retained in an otherwise successful snapshot."""
-    details = extract_kopia_snapshot_failure_details(result)
+    """Describe source items Kopia explicitly skipped, including failed tasks."""
+    if not isinstance(result, dict):
+        return {}
+    skipped_summary = result.get("snapshot_skipped_summary")
+    if isinstance(skipped_summary, dict):
+        raw_items = skipped_summary.get("items")
+        details = [
+            {
+                str(key): str(value)
+                for key, value in item.items()
+                if key in {"path", "error", "cause", "item_type", "disposition"}
+            }
+            for item in (raw_items or [])
+            if isinstance(item, dict)
+        ]
+    else:
+        summary = result.get("snapshot_failure_summary")
+        raw_items = summary.get("items") if isinstance(summary, dict) else []
+        details = [
+            {
+                str(key): str(value)
+                for key, value in item.items()
+                if key in {"path", "error", "cause", "item_type", "disposition"}
+            }
+            for item in (raw_items or [])
+            if isinstance(item, dict)
+            and str(item.get("disposition") or "").strip().lower() == "skipped"
+        ]
+        if not details:
+            # Preserve the legacy successful-snapshot contract. New Agent
+            # payloads provide an explicit disposition or skipped summary.
+            details = extract_kopia_snapshot_failure_details(result)
     if not details:
         return {}
     items = [
@@ -2042,7 +2180,11 @@ def kopia_snapshot_skipped_metadata(
     directory_count = sum(1 for item in items if item["item_type"] == "directory")
     special_count = sum(1 for item in items if item["item_type"] == "special")
     total_count = len(items)
-    summary = result.get("snapshot_failure_summary") if isinstance(result, dict) else None
+    summary = skipped_summary or (
+        result.get("snapshot_failure_summary")
+        if isinstance(result, dict)
+        else None
+    )
     if isinstance(summary, dict):
         try:
             reported_total = int(summary.get("total_count") or 0)
@@ -2079,6 +2221,21 @@ def kopia_snapshot_skipped_metadata(
             "truncated": total_count > min(len(items), _MAX_SKIPPED_EVENT_ITEMS),
         }
     }
+
+
+def kopia_snapshot_has_explicit_skipped(result: dict[str, Any] | None) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if isinstance(result.get("snapshot_skipped_summary"), dict):
+        return True
+    summary = result.get("snapshot_failure_summary")
+    if not isinstance(summary, dict):
+        return False
+    return any(
+        isinstance(item, dict)
+        and str(item.get("disposition") or "").strip().lower() == "skipped"
+        for item in summary.get("items") or []
+    )
 
 
 def public_repository_failure_message(message: str) -> str:

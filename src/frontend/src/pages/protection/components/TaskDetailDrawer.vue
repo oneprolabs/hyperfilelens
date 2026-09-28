@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { backupFailureCategory, backupFailureMetadata } from '../../../lib/backupFailureDisplay'
-import { safeErrorDetailText } from '../../../lib/errors/details'
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { i18n } from '../../../i18n'
 import { ElMessage } from 'element-plus'
@@ -158,49 +157,6 @@ const taskErrorDetails = computed(() => {
     technical_detail: payload.technical_detail || payload,
   }
 })
-const userFacingTechnicalKeys = new Set([
-  'summary',
-  'reasons',
-  'suggestions',
-  'resolutions',
-  'failure_details',
-  'skipped_details',
-  'backup_summary',
-  'remediation',
-  'hint',
-  'warnings',
-  'error_code',
-  'errorCode',
-])
-function stripUserFacingTechnicalFields(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripUserFacingTechnicalFields)
-  if (!value || typeof value !== 'object') return value
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => !userFacingTechnicalKeys.has(key))
-      .map(([key, item]) => [key, stripUserFacingTechnicalFields(item)]),
-  )
-}
-const technicalDetailText = computed(() => {
-  const contractDetail = taskErrorDetails.value?.technical_detail
-  const rawTechnicalDetail = contractDetail && typeof contractDetail === 'object' && !Array.isArray(contractDetail)
-    && 'technical_detail' in contractDetail
-    ? (contractDetail as Record<string, unknown>).technical_detail
-    : contractDetail
-  const technicalDetail = stripUserFacingTechnicalFields(rawTechnicalDetail)
-  const detail = safeErrorDetailText(technicalDetail)
-  const errorCode = String(taskErrorDetails.value?.error_code || '').trim()
-  const errorCodeLine = errorCode
-    ? `${t('ops.task.failureDetails.errorCode')}: ${errorCode}`
-    : ''
-  const rawEventErrors = detailEvents.value
-    .map(event => eventErrorText(event))
-    .filter(Boolean)
-    .filter((value, index, values) => values.indexOf(value) === index)
-  if (!rawEventErrors.length) return [errorCodeLine, detail].filter(Boolean).join('\n\n')
-  const eventDetail = rawEventErrors.join('\n\n')
-  return [errorCodeLine, detail, eventDetail].filter(Boolean).join('\n\n')
-})
 const taskFailureSummary = computed(() => {
   const summary = String(taskErrorDetails.value?.summary || '').trim()
   if (!summary || /^task failed\.?$/i.test(summary) || /^task cancelled\.?$/i.test(summary) || /^task cancelled by user\.?$/i.test(summary) || /^task timed out\.?$/i.test(summary) || /^task partially completed\.?$/i.test(summary)) {
@@ -239,6 +195,12 @@ function localizedFailureText(item: { code?: string; detail: string }, kind: 're
   if (msgTranslated) return msgTranslated
   return item.detail
 }
+
+const terminalFailureResolutions = computed(() =>
+  (taskErrorDetails.value?.suggestions || [])
+    .map(item => localizedFailureText(item, 'suggestion'))
+    .filter(Boolean),
+)
 const effectiveReasons = computed(() => {
     const seen = new Set<string>()
     return (taskErrorDetails.value?.reasons || []).filter(
@@ -251,14 +213,6 @@ const effectiveReasons = computed(() => {
       }
     )
   })
-  const hasCleanupOutcome = computed(() => Boolean(
-  taskErrorDetails.value?.cleanup_failures?.length
-  || taskErrorDetails.value?.retained_resources?.length
-))
-const showTaskOutcome = computed(() => Boolean(
-  activeTask.value && ['failed', 'timeout', 'cancelled'].includes(String(activeTask.value.status)),
-))
-const taskOutcomeExpanded = ref(false)
 const activeDependencies = computed(() =>
   (activeTask.value?.dependencies || []).filter((dependency) => dependency.is_active),
 )
@@ -270,16 +224,6 @@ function openTriggeredCleanupTask() {
 
 function openBlockingTask(taskUuid?: string | null) {
   if (taskUuid) emit('open-task', taskUuid)
-}
-
-function toggleTaskOutcome() {
-  taskOutcomeExpanded.value = !taskOutcomeExpanded.value
-  if (taskOutcomeExpanded.value) {
-    void nextTick(() => {
-      const drawerBody = drawerScrollAnchorRef.value?.closest<HTMLElement>('.el-drawer__body')
-      if (drawerBody) drawerBody.scrollTop = drawerBody.scrollHeight
-    })
-  }
 }
 
 const stepsWithEvents = computed(() => {
@@ -296,8 +240,38 @@ const stepsWithEvents = computed(() => {
 })
 function shouldShowStepErrorDetails(step: { id: number; status: string; step_name: string; events: TaskEventRow[] }, index: number) {
   if (!taskErrorDetails.value) return false
+  const hasDirectoryFailureEvent = stepsWithEvents.value.some(item => item.events.some((event) => {
+    const metadata = taskEventMetadata(event)
+    const message = String(event.message || '').trim()
+    return message === 'Directory backup failed'
+      && Boolean(
+        metadata.terminal_failure
+        || metadata.error_message
+        || metadata.error_code
+        || metadata.failure_details,
+      )
+  }))
+  if (hasDirectoryFailureEvent) {
+    return false
+  }
   const failedStep = String(taskErrorDetails.value.failed_step || '').trim()
   if (failedStep) return step.step_name === failedStep
+
+  const terminalErrorCode = String(activeTask.value?.error_code || '').trim()
+  const terminalErrorMessage = String(activeTask.value?.error_message || '').trim().toLowerCase()
+  const snapshotFailed = stepsWithEvents.value.find(
+    item => item.step_name === 'kopia_snapshot' && item.status === 'failed',
+  )
+  if (
+    snapshotFailed
+    && (
+      terminalErrorCode === 'KOPIA_PROCESS_DIED'
+      || terminalErrorCode === 'REPOSITORY_PROCESS_DIED'
+      || terminalErrorMessage.includes('backup processing failed:')
+    )
+  ) {
+    return step.id === snapshotFailed.id
+  }
 
   const currentStep = String(activeTask.value?.current_step || '').trim()
   if (currentStep) return step.step_name === currentStep
@@ -369,7 +343,6 @@ const {
 } = useRepositoryTaskCancellation(activeTask, {
   onUpdate: async (task) => {
     activeTask.value = task
-    taskOutcomeExpanded.value = false
     emit('task-updated', task)
   },
   onTerminal: async (task) => {
@@ -495,7 +468,8 @@ function hasEventDetailPanel(event: TaskEventRow) {
   return ['failure_details', 'skipped_details'].some((key) => {
     const details = metadata[key]
     return Boolean(details && typeof details === 'object' && !Array.isArray(details))
-  }) || ['skipped_item_count', 'skipped_file_count', 'skipped_directory_count', 'skipped_special_count']
+  }) || Boolean(metadata.terminal_failure)
+    || ['skipped_item_count', 'skipped_file_count', 'skipped_directory_count', 'skipped_special_count']
     .some(key => Number(metadata[key]) > 0)
 }
 
@@ -511,7 +485,16 @@ function taskEventMetadataText(event: TaskEventRow, keys: string[]) {
 function eventErrorText(event: TaskEventRow) {
   const step = activeTask.value?.steps?.find(item => item.id === event.step_id)
   if (event.message === 'Task finished with status failed' && step?.step_name === 'finalize_snapshot') return ''
-  if (taskEventMetadata(event).failure_details) return ''
+  const metadata = taskEventMetadata(event)
+  if (
+    metadata.failure_details
+    || metadata.skipped_details
+    || metadata.terminal_failure
+    || (
+      String(event.message || '').trim() === 'Directory backup failed'
+      && Boolean(metadata.error_message || metadata.error_code)
+    )
+  ) return ''
   const message = taskEventMetadataText(event, ['error_message'])
   const code = taskEventMetadataText(event, ['error_code'])
   if (backupFailureCategory(taskEventMetadata(event)) === 'backup_communication_timeout') {
@@ -520,6 +503,16 @@ function eventErrorText(event: TaskEventRow) {
   const display = nasRepositoryFailureMessage(code, message, t)
   if (!display) return ''
   return code && display === message ? `[${code}] ${display}` : display
+}
+
+function terminalTechnicalDetail(event: TaskEventRow) {
+  const metadata = taskEventMetadata(event)
+  const terminal = metadata.terminal_failure
+  if (terminal && typeof terminal === 'object' && !Array.isArray(terminal)) {
+    const detail = String((terminal as Record<string, unknown>).technical_detail || '').trim()
+    if (detail) return detail
+  }
+  return String(metadata.error_diagnostic || metadata.error_message || '').trim()
 }
 
 function eventObjectText(event: TaskEventRow) {
@@ -744,17 +737,6 @@ async function copyTaskUuid() {
   }
 }
 
-async function copyTechnicalDetail() {
-  const detail = technicalDetailText.value
-  if (!detail) return
-  try {
-    await copyTextToClipboard(detail)
-    ElMessage.success(t('ops.task.technicalDetailCopied'))
-  } catch {
-    ElMessage.error(t('ops.task.msgCopyFailed'))
-  }
-}
-
 async function loadTaskDetail(taskUuid: string) {
   const uuid = String(taskUuid || '').trim()
   if (!uuid) return
@@ -841,7 +823,6 @@ function refreshActiveTask() {
 function closeDetail() {
   stopRepositoryCancellation()
   activeTask.value = null
-  taskOutcomeExpanded.value = false
   detailLoadError.value = ''
   taskOwner.value = ''
   detailEvents.value = []
@@ -1251,7 +1232,11 @@ watch(
                             </div>
                           </div>
                         </div>
-                        <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
+                        <TaskEventFailureDetails
+                          :metadata="taskEventMetadata(event)"
+                          :technical-detail="terminalTechnicalDetail(event)"
+                          :terminal-resolutions="terminalFailureResolutions"
+                        />
                       </div>
                       <span
                         class="hfl-task-drawer__event-time"
@@ -1330,7 +1315,11 @@ watch(
                           </div>
                         </div>
                       </div>
-                    <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
+                    <TaskEventFailureDetails
+                      :metadata="taskEventMetadata(event)"
+                      :technical-detail="terminalTechnicalDetail(event)"
+                      :terminal-resolutions="terminalFailureResolutions"
+                    />
                   </div>
                   <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
                 </div>
@@ -1342,49 +1331,6 @@ watch(
                 :image-size="52"
               />
 
-              <section
-                v-if="showTaskOutcome"
-                class="hfl-task-drawer__cleanup-outcome hfl-task-drawer__cleanup-outcome--final"
-                :class="{ 'hfl-task-drawer__cleanup-outcome--technical': !hasCleanupOutcome }"
-              >
-                <button
-                  type="button"
-                  class="hfl-task-drawer__cleanup-summary"
-                  :aria-expanded="taskOutcomeExpanded"
-                  @click="toggleTaskOutcome"
-                >
-                  <AlertTriangle :size="17" aria-hidden="true" />
-                  <div class="hfl-task-drawer__cleanup-summary-copy">
-                    <strong>{{ hasCleanupOutcome ? t('ops.task.cleanupIncompleteTitle') : t('ops.task.failureDetails.technicalDetails') }}</strong>
-                    <p v-if="hasCleanupOutcome">{{ t('ops.task.cleanupIncompleteDescription') }}</p>
-                    <span class="hfl-task-drawer__cleanup-view-details">
-                      {{ t(taskOutcomeExpanded ? 'ops.task.cleanupCollapseDetails' : 'ops.task.cleanupViewDetails') }}
-                    </span>
-                  </div>
-                  <ChevronDown
-                    :size="16"
-                    class="hfl-task-drawer__cleanup-toggle"
-                    :class="{ 'is-expanded': taskOutcomeExpanded }"
-                  />
-                </button>
-                <div v-if="taskOutcomeExpanded" class="hfl-task-drawer__cleanup-details">
-                  <div v-if="technicalDetailText" class="hfl-task-drawer__cleanup-group">
-                    <div class="hfl-task-drawer__technical-log-shell">
-                      <div class="hfl-task-drawer__technical-log-head">
-                        <span class="hfl-task-drawer__technical-log-title">
-                          <span class="hfl-task-drawer__technical-log-dot" aria-hidden="true" />
-                          {{ t('ops.task.failureDetails.technicalDetails') }}
-                        </span>
-                        <ElButton link size="small" class="hfl-btn-with-icon" @click="copyTechnicalDetail">
-                          <Copy :size="13" />
-                          {{ t('feedback.toast.copy') }}
-                        </ElButton>
-                      </div>
-                      <pre class="hfl-task-drawer__technical-log">{{ technicalDetailText }}</pre>
-                    </div>
-                  </div>
-                </div>
-              </section>
             </section>
         </ElTabPane>
 

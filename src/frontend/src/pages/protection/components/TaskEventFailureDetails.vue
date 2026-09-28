@@ -11,9 +11,16 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, ChevronRight, Lightbulb, LockKeyhole } from 'lucide-vue-next'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   metadata?: unknown
-}>()
+  showTerminalFailure?: boolean
+  technicalDetail?: string
+  terminalResolutions?: string[]
+}>(), {
+  showTerminalFailure: true,
+  technicalDetail: '',
+  terminalResolutions: () => [],
+})
 
 const MAX_SKIPPED_ITEMS = 10
 const skippedDetailsOpen = ref(false)
@@ -47,6 +54,15 @@ const restorePermissionRemediationItems = computed(() => restorePermissionRemedi
 const restoreTargetPath = computed(() => String(metadataRecord.value.target_path || '').trim())
 const errorDiagnostic = computed(() => String(metadataRecord.value.error_diagnostic || '').trim())
 const originalError = computed(() => String(metadataRecord.value.error_message || '').trim())
+const terminalFailure = computed(() => {
+  if (!props.showTerminalFailure) return ''
+  const terminal = metadataRecord.value.terminal_failure
+  if (terminal && typeof terminal === 'object' && !Array.isArray(terminal)) {
+    const message = String((terminal as Record<string, unknown>).message || '').trim()
+    if (message) return message
+  }
+  return errorCode.value ? originalError.value : ''
+})
 
 const items = computed<FailureItem[]>(() => structuredFailure.value?.items || [])
 const causes = computed(() => structuredFailure.value?.causes || [])
@@ -62,6 +78,7 @@ const skippedDirectoryCount = computed(() => structuredSkipped.value?.directory_
 const skippedSpecialCount = computed(() => structuredSkipped.value?.special_count || 0)
 const skippedReportedCount = computed(() => Math.min(MAX_SKIPPED_ITEMS, structuredSkipped.value?.reported_count || 0))
 const hasSkippedDetails = computed(() => skippedCount.value > 0)
+const technicalDetail = computed(() => String(props.technicalDetail || '').trim())
 
 const summarySnapshotId = computed(() => structuredSummary.value?.snapshot_id || '')
 const summaryRestoreRecordId = computed(() => structuredSummary.value?.restore_record_id || '')
@@ -73,6 +90,7 @@ const hasDetails = computed(() => (
   || failureCount.value > 0
   || hasSkippedDetails.value
   || restorePermissionDenied.value
+  || Boolean(terminalFailure.value)
   || Boolean(summarySnapshotId.value && failedDirectories.value.length)
   || Boolean(summaryRestoreRecordId.value && failedDirectories.value.length)
   || backupSourceOffline.value
@@ -112,7 +130,10 @@ function remediationText(code: string) {
   <section
     v-if="hasDetails"
     class="task-event-failure"
-    :class="{ 'task-event-failure--warning': hasSkippedDetails && !items.length }"
+    :class="{
+      'task-event-failure--warning': hasSkippedDetails && !items.length && !terminalFailure,
+      'task-event-failure--mixed': Boolean(terminalFailure),
+    }"
   >
     <template v-if="backupSourceOffline">
       <div class="task-event-failure__summary">
@@ -149,7 +170,7 @@ function remediationText(code: string) {
         <span>{{ t(summaryRestoreRecordId ? 'ops.task.failureDetails.restoreRecordId' : 'ops.task.failureDetails.snapshotId') }}:</span>
         <code>{{ summaryRestoreRecordId || summarySnapshotId }}</code>
       </div>
-      <div class="task-event-failure__label">
+      <div class="task-event-failure__label task-event-failure__label--directory">
         {{ t('ops.task.failureDetails.failedDirectories') }}
       </div>
       <ul class="task-event-failure__directory-list">
@@ -161,8 +182,49 @@ function remediationText(code: string) {
         </li>
       </ul>
     </template>
-    <template v-if="hasSkippedDetails">
-      <div class="task-event-failure__summary">
+    <div
+      v-if="terminalFailure && !failureCount && !backupSourceOffline && !restorePermissionDenied"
+      class="task-event-failure__terminal-box"
+    >
+      <div class="task-event-failure__summary task-event-failure__summary--terminal">
+        <AlertTriangle :size="15" />
+        <div class="task-event-failure__terminal-copy">
+          <span>{{ terminalFailure }}</span>
+        </div>
+      </div>
+      <div
+        v-if="terminalResolutions.length"
+        class="task-event-failure__remediation"
+      >
+        <div class="task-event-failure__label">
+          <Lightbulb :size="14" />
+          {{ t('ops.task.failureDetails.howToResolve') }}
+        </div>
+        <ol class="task-event-failure__remediation-list">
+          <li
+            v-for="resolution in terminalResolutions"
+            :key="resolution"
+          >
+            {{ resolution }}
+          </li>
+        </ol>
+      </div>
+      <details
+        v-if="technicalDetail"
+        class="task-event-failure__technical"
+      >
+        <summary>
+          <ChevronRight :size="14" />
+          {{ t('ops.task.failureDetails.technicalDetails') }}
+        </summary>
+        <pre>{{ technicalDetail }}</pre>
+      </details>
+    </div>
+    <div
+      v-if="hasSkippedDetails"
+      :class="{ 'task-event-failure__skipped-box': Boolean(terminalFailure) }"
+    >
+      <div class="task-event-failure__summary task-event-failure__summary--warning">
         <AlertTriangle :size="15" />
         <span>{{ t('ops.task.failureDetails.summary.source_items_skipped', {
           count: skippedCount,
@@ -174,7 +236,7 @@ function remediationText(code: string) {
 
       <details
         v-if="skippedItems.length"
-        class="task-event-failure__files"
+        class="task-event-failure__files task-event-failure__files--warning"
         @toggle="skippedDetailsOpen = ($event.currentTarget as HTMLDetailsElement).open"
       >
         <summary>
@@ -194,7 +256,7 @@ function remediationText(code: string) {
           </li>
         </ul>
       </details>
-    </template>
+    </div>
     <template v-if="restorePermissionDenied">
       <div class="task-event-failure__summary">
         <LockKeyhole :size="15" />
@@ -376,12 +438,128 @@ function remediationText(code: string) {
 
 .task-event-failure__summary--neutral {
   color: rgb(51 65 85);
+  font-size: 12px;
+}
+
+.task-event-failure__summary--warning {
+  color: rgb(120 53 15);
+  font-size: 12px;
+}
+
+.task-event-failure__label--directory {
+  font-size: 12px;
+}
+
+.task-event-failure__summary--terminal {
+  padding: 0;
+  color: rgb(127 29 29);
+}
+
+.task-event-failure__terminal-box {
+  display: grid;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid rgb(254 202 202);
+  border-radius: 7px;
+  background: rgb(254 242 242);
+}
+
+.task-event-failure__terminal-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.task-event-failure__terminal-copy strong {
+  color: rgb(153 27 27);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.task-event-failure__terminal-copy span {
+  color: rgb(127 29 29);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.task-event-failure--mixed {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.task-event-failure__skipped-box {
+  display: grid;
+  gap: 0;
+  margin-top: 8px;
+  border: 1px solid rgb(253 230 138);
+  border-radius: 7px;
+  background: rgb(255 251 235);
+  color: rgb(120 53 15);
+  overflow: hidden;
+}
+
+.task-event-failure__skipped-box .task-event-failure__summary--warning {
+  padding: 10px 12px;
+}
+
+.task-event-failure__skipped-box .task-event-failure__files--warning {
+  margin: 0 10px 10px;
+  border: 1px solid rgb(253 230 138);
+  background: rgb(255 255 255 / 60%);
+}
+
+.task-event-failure__technical {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgb(252 165 165 / 72%);
+  border-radius: 7px;
+  background: rgb(255 255 255 / 82%);
+}
+
+.task-event-failure__technical summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: rgb(153 27 27);
+  font-size: 12px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.task-event-failure__technical summary::-webkit-details-marker {
+  display: none;
+}
+
+.task-event-failure__technical[open] summary svg {
+  transform: rotate(90deg);
+}
+
+.task-event-failure__technical pre {
+  max-height: 220px;
+  margin: 8px 0 0;
+  overflow: auto;
+  color: rgb(127 29 29);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .task-event-failure--warning {
+  gap: 0;
+  padding: 0;
   border-color: rgb(253 230 138);
   background: rgb(255 251 235);
   color: rgb(120 53 15);
+}
+
+.task-event-failure--warning .task-event-failure__summary--warning {
+  padding: 10px 12px;
 }
 
 .task-event-failure--warning .task-event-failure__files summary,
@@ -403,8 +581,23 @@ function remediationText(code: string) {
 }
 
 .task-event-failure--warning .task-event-failure__files {
+  margin: 0 10px 10px;
+}
+
+.task-event-failure__files--warning {
+  margin: 0 10px 10px;
   border-color: rgb(253 230 138);
   background: rgb(255 255 255 / 60%);
+}
+
+.task-event-failure__files--warning summary,
+.task-event-failure__files--warning code,
+.task-event-failure__files--warning li span {
+  color: rgb(120 53 15);
+}
+
+.task-event-failure__files--warning li {
+  border-top-color: rgb(253 230 138);
 }
 
 .task-event-failure__truncated {
@@ -444,6 +637,7 @@ function remediationText(code: string) {
   margin: 0;
   padding: 0;
   list-style: none;
+  font-size: 12px;
 }
 
 .task-event-failure__directory-list li {
@@ -488,6 +682,7 @@ function remediationText(code: string) {
   cursor: pointer;
   list-style: none;
   color: rgb(185 28 28);
+  font-size: 12px;
 }
 
 .task-event-failure__files summary::-webkit-details-marker {
@@ -529,5 +724,18 @@ function remediationText(code: string) {
 
 .task-event-failure__files li span {
   color: rgb(153 27 27);
+}
+
+/* Keep skipped-item details aligned with the warning title, after the
+ * generic failure-detail rules above so the warning color cannot be reset. */
+.task-event-failure__files--warning summary,
+.task-event-failure__files--warning code,
+.task-event-failure__files--warning li span {
+  color: rgb(120 53 15);
+  font-size: 12px;
+}
+
+.task-event-failure__files--warning summary {
+  font-weight: 700;
 }
 </style>
