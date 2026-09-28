@@ -162,6 +162,18 @@ func TestReadEnvKeyMissing(t *testing.T) {
 	}
 }
 
+func TestFormatExistingInstallDetailNormalizesUTF8BOM(t *testing.T) {
+	got := formatExistingInstallDetail(InstallState{
+		NodeID:  "136",
+		Version: "\uFEFF0.2.26\r\n",
+		Service: "RUNNING",
+	})
+	want := " (node 136, v0.2.26, service RUNNING)"
+	if got != want {
+		t.Fatalf("formatExistingInstallDetail()=%q, want %q", got, want)
+	}
+}
+
 func TestInstallMarkersDetectPartialInstallation(t *testing.T) {
 	dir := t.TempDir()
 	if installMarkersPresent(dir) {

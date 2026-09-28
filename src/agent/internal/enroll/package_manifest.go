@@ -37,7 +37,7 @@ func installedAgentBuildIdentity(installedVersion string) (selfupdate.BuildIdent
 	if manifestVersion == "" || manifestCommit == "" {
 		return selfupdate.BuildIdentity{}, fmt.Errorf("installed package manifest is missing the Agent build identity")
 	}
-	installedVersion = strings.TrimPrefix(strings.TrimSpace(installedVersion), "v")
+	installedVersion = strings.TrimPrefix(normalizeVersion(installedVersion), "v")
 	if installedVersion != "" && strings.TrimPrefix(manifestVersion, "v") != installedVersion {
 		return selfupdate.BuildIdentity{}, fmt.Errorf(
 			"installed Agent version %s does not match package manifest version %s",

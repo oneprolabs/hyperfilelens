@@ -28,6 +28,19 @@ func TestVersionGreater(t *testing.T) {
 	}
 }
 
+func TestVersionHelpersNormalizeUTF8BOM(t *testing.T) {
+	const installed = "\uFEFF0.2.26\r\n"
+	if got := normalizeVersion(installed); got != "0.2.26" {
+		t.Fatalf("normalizeVersion(%q)=%q", installed, got)
+	}
+	if !versionGreater(installed, "0.2.25") {
+		t.Fatalf("versionGreater(%q, 0.2.25)=false", installed)
+	}
+	if got := versionLabel(installed, "0.2.28"); got != "v0.2.26 -> v0.2.28" {
+		t.Fatalf("versionLabel(%q, 0.2.28)=%q", installed, got)
+	}
+}
+
 func TestIsServiceHealthy(t *testing.T) {
 	if !isServiceHealthy("active") {
 		t.Fatal("expected active")

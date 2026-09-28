@@ -95,6 +95,31 @@ func TestInstalledAgentBuildIdentityUsesOneManifest(t *testing.T) {
 	}
 }
 
+func TestInstalledAgentBuildIdentityAcceptsUTF8BOMVersion(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HFL_DATA_DIR", root)
+	manifest := agentPackageManifest{
+		Schema:       1,
+		AgentVersion: "1.2.3",
+		AgentCommit:  "abc123",
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "MANIFEST.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := installedAgentBuildIdentity("\uFEFF1.2.3\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Version != "1.2.3" || identity.Commit != "abc123" {
+		t.Fatalf("identity=%#v", identity)
+	}
+}
+
 func TestInstalledAgentBuildIdentityRejectsMissingManifest(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HFL_DATA_DIR", root)

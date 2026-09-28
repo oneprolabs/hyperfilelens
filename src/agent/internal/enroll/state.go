@@ -57,7 +57,7 @@ func DetectInstallState() InstallState {
 		versionRoot = installDir
 	}
 	if data, err := os.ReadFile(vfs.AgentInstalledVersionPath(versionRoot)); err == nil {
-		state.Version = strings.TrimSpace(string(data))
+		state.Version = normalizeVersion(string(data))
 	}
 
 	envPath := installedEnvPath()
