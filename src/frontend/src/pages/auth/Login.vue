@@ -542,6 +542,8 @@ async function handleSubmit() {
           messageKey: 'login.accountLockedMessage',
         }
         resetTurnstile()
+      } else if (errorCode === 'INVALID_PASSWORD') {
+        showInvalidPasswordError()
       } else if (fields && Object.keys(fields).length > 0) {
         handleFieldsError(fields)
       } else {
@@ -590,6 +592,8 @@ async function handleSubmit() {
         messageKey: 'login.accountLockedMessage',
       }
       resetTurnstile()
+    } else if (errObj.errorCode === 'INVALID_PASSWORD') {
+      showInvalidPasswordError()
     } else if (fields && Object.keys(fields).length > 0) handleFieldsError(fields)
     else {
       resetTurnstile()
@@ -685,6 +689,15 @@ async function handleEmailCodeVerificationUnknown() {
   if (loginState.value !== 'idle') return
   navigationFinished.value = false
   await recoverUnknownAuthenticationResult()
+}
+
+function showInvalidPasswordError() {
+  formItems.password.errorMsg = t('login.passwordErrIncorrect')
+  formItems.password.showError = true
+  if (isTurnstileReady.value) {
+    // Turnstile tokens are single-use; refresh while the user corrects their password.
+    resetTurnstile()
+  }
 }
 
 function handleFieldsError(fields?: Record<string, string[]>) {

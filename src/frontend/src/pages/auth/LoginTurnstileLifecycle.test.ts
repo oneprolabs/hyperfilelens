@@ -329,7 +329,8 @@ describe('Login Turnstile lifecycle', () => {
 
     const notice = wrapper.get('.login-form-alert')
     expect(notice.text()).toContain('Account temporarily locked')
-    expect(notice.text()).toContain('Try again in a few minutes')
+    expect(notice.text()).toContain('Please try again in 3 minutes')
+    expect(notice.text()).not.toContain('Try again in a few minutes')
     expect(notice.text()).not.toContain('attempts left')
     expect(notice.text()).not.toMatch(/\d{1,2}:\d{2}/)
     wrapper.unmount()
@@ -657,7 +658,36 @@ describe('Login Turnstile lifecycle', () => {
       password,
       turnstile_token: 'verified-token',
     })
-    expect(wrapper.get('.input-wrapper.has-error .error-msg').text()).toBe('Incorrect password')
+    expect(wrapper.get('.input-wrapper.has-error .error-msg').text()).toBe(
+      'Incorrect password. Repeated failed attempts will temporarily lock your account. Reset your password if you are unsure of it.',
+    )
+    wrapper.unmount()
+  })
+
+  it('uses the fixed localized password warning when the backend translates the field error', async () => {
+    const wrapper = await mountLogin(1440)
+    const inputs = wrapper.findAll('input')
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+
+    mocks.api.mockResolvedValue({
+      code: '1001',
+      data: {},
+      error: {
+        error_code: 'INVALID_PASSWORD',
+        fields: { password: ['Translated backend password error'] },
+      },
+    })
+
+    await inputs[0].setValue('person@example.com')
+    await inputs[1].setValue('WrongPass123')
+    turnstile.vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    await inputs[1].trigger('keyup.enter')
+    await flushPromises()
+
+    expect(wrapper.get('.input-wrapper.has-error .error-msg').text()).toBe(
+      'Incorrect password. Repeated failed attempts will temporarily lock your account. Reset your password if you are unsure of it.',
+    )
     wrapper.unmount()
   })
 
@@ -836,7 +866,9 @@ describe('Login Turnstile lifecycle', () => {
 
     expect(mocks.resetWidget).toHaveBeenCalledTimes(1)
     expect(submit.attributes('disabled')).toBeUndefined()
-    expect(wrapper.get('.input-wrapper.has-error .error-msg').text()).toBe('Incorrect password')
+    expect(wrapper.get('.input-wrapper.has-error .error-msg').text()).toBe(
+      'Incorrect password. Repeated failed attempts will temporarily lock your account. Reset your password if you are unsure of it.',
+    )
 
     await wrapper.findAll('input')[1].setValue('CorrectPass123')
     turnstile.vm.$emit('success', 'replacement-token')
