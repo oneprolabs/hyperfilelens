@@ -3649,6 +3649,8 @@
       "outputFilePreviewTooLarge": "Los archivos de más de 5 MB solo se pueden descargar.",
       "outputFilePreviewLoading": "Cargando vista previa…",
       "outputFilePreviewFailed": "No se pudo previsualizar este archivo. Descárguelo en su lugar.",
+      "outputFilePreviewRestricted": "La vista previa HTML está aislada y no puede ejecutar scripts ni navegar por enlaces.",
+      "outputFileViewSource": "Ver código fuente",
       "outputFilePreviousSlide": "Diapositiva anterior",
       "outputFileNextSlide": "Diapositiva siguiente",
       "outputFileSheet": "Hoja",

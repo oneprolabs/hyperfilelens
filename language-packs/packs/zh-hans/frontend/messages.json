@@ -3649,6 +3649,8 @@
       "outputFilePreviewTooLarge": "超过 5 MB 的文件仅支持下载。",
       "outputFilePreviewLoading": "正在加载预览…",
       "outputFilePreviewFailed": "无法预览此文件，请改为下载。",
+      "outputFilePreviewRestricted": "HTML 预览运行在沙箱中，不会执行脚本或打开链接。",
+      "outputFileViewSource": "查看源代码",
       "outputFilePreviousSlide": "上一张幻灯片",
       "outputFileNextSlide": "下一张幻灯片",
       "outputFileSheet": "工作表",

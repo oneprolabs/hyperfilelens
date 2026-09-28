@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronLeft, ChevronRight, Download, Maximize2, Minimize2, X } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Code2, Download, Maximize2, Minimize2, X } from 'lucide-vue-next'
 import CopilotMarkdown from '../../../components/copilot/CopilotMarkdown.vue'
 import { fetchCopilotAttachmentBlob, type LensRunOutputFile } from '../../../lib/lensApi'
 
@@ -13,8 +13,10 @@ const kind = ref('')
 const loading = ref(false)
 const failed = ref(false)
 const fullscreen = ref(false)
+const showSource = ref(false)
 const objectUrl = ref('')
 const textContent = ref('')
+const htmlPreviewDocument = ref('')
 const workbook = ref<{ XLSX: typeof import('xlsx'); sheets: Record<string, unknown> } | null>(null)
 const sheetNames = ref<string[]>([])
 const selectedSheet = ref('')
@@ -45,7 +47,7 @@ function previewKind(file: LensRunOutputFile | null) {
 }
 function clearPreview() {
   if (currentUrl) URL.revokeObjectURL(currentUrl)
-  currentUrl = ''; objectUrl.value = ''; textContent.value = ''; workbook.value = null; sheetNames.value = []; selectedSheet.value = ''; pptxBuffer = null
+  currentUrl = ''; objectUrl.value = ''; textContent.value = ''; htmlPreviewDocument.value = ''; showSource.value = false; workbook.value = null; sheetNames.value = []; selectedSheet.value = ''; pptxBuffer = null
   pptxPreviewer?.destroy?.(); pptxPreviewer = null
   if (docxHost.value) docxHost.value.innerHTML = ''
   if (pptxHost.value) pptxHost.value.innerHTML = ''
@@ -65,7 +67,9 @@ async function load(file: LensRunOutputFile | null) {
       if (current !== sequence) return
       textContent.value = text
     } else if (kind.value === 'html') {
-      currentUrl = URL.createObjectURL(new Blob([blob], { type: 'text/html' })); objectUrl.value = currentUrl
+      textContent.value = await blob.text()
+      if (current !== sequence) return
+      htmlPreviewDocument.value = buildHtmlPreviewDocument(textContent.value)
     } else if (kind.value === 'docx') {
       const { renderAsync } = await import('docx-preview')
       await nextTick(); if (current !== sequence || !docxHost.value) return
@@ -83,6 +87,19 @@ async function load(file: LensRunOutputFile | null) {
       workbook.value = { XLSX, sheets: parsed.Sheets as Record<string, unknown> }; sheetNames.value = parsed.SheetNames || []; selectedSheet.value = sheetNames.value[0] || ''
     }
   } catch { if (current === sequence) failed.value = true } finally { if (current === sequence) loading.value = false }
+}
+
+function buildHtmlPreviewDocument(source: string) {
+  const document = new DOMParser().parseFromString(source, 'text/html')
+  document.querySelectorAll('script, base, meta[http-equiv="refresh"]').forEach((element) => element.remove())
+  document.querySelectorAll('a[href], area[href]').forEach((element) => element.removeAttribute('href'))
+  const formActionDirective = 'form-' + 'action'
+  const policy = `default-src 'none'; img-src data: blob:; style-src 'unsafe-inline' data:; font-src data:; ${formActionDirective} 'none'; base-uri 'none'; navigate-to 'none'`
+  document.head.insertAdjacentHTML(
+    'afterbegin',
+    `<meta http-equiv="Content-Security-Policy" content="${policy}">`,
+  )
+  return `<!doctype html>${document.documentElement.outerHTML}`
 }
 const selectedRows = computed(() => {
   if (!workbook.value || !selectedSheet.value) return [] as string[][]
@@ -206,6 +223,15 @@ onBeforeUnmount(() => {
           <strong class="copilot-preview__title">{{ file.filename }}</strong>
           <div class="copilot-preview__actions">
             <button
+              v-if="kind === 'html'"
+              type="button"
+              :title="showSource ? t('insight.copilot.outputFilePreview') : t('insight.copilot.outputFileViewSource')"
+              :aria-label="showSource ? t('insight.copilot.outputFilePreview') : t('insight.copilot.outputFileViewSource')"
+              @click="showSource = !showSource"
+            >
+              <Code2 :size="17" />
+            </button>
+            <button
               type="button"
               :title="fullscreen ? t('insight.copilot.outputFileExitFullscreen') : t('insight.copilot.outputFileFullscreen')"
               :aria-label="fullscreen ? t('insight.copilot.outputFileExitFullscreen') : t('insight.copilot.outputFileFullscreen')"
@@ -238,6 +264,12 @@ onBeforeUnmount(() => {
           </div>
         </header>
         <div class="copilot-preview__body">
+          <div
+            v-if="kind === 'html' && !showSource"
+            class="copilot-preview__security-note"
+          >
+            {{ t('insight.copilot.outputFilePreviewRestricted') }}
+          </div>
           <div
             v-if="kind === 'docx'"
             ref="docxHost"
@@ -294,12 +326,16 @@ onBeforeUnmount(() => {
             class="copilot-preview__frame"
           />
           <iframe
-            v-else-if="kind === 'html'"
-            :src="objectUrl"
+            v-else-if="kind === 'html' && !showSource"
+            :srcdoc="htmlPreviewDocument"
             :title="file.filename"
             class="copilot-preview__frame"
             sandbox=""
           />
+          <pre
+            v-else-if="kind === 'html' && showSource"
+            class="copilot-preview__source"
+          >{{ textContent }}</pre>
           <CopilotMarkdown
             v-else-if="kind === 'markdown'"
             :content="textContent"
@@ -364,6 +400,8 @@ onBeforeUnmount(() => {
 .copilot-preview__state--error { color: var(--color-danger, #dc2626); }
 .copilot-preview__image { display: block; max-width: 100%; max-height: 100%; margin: auto; object-fit: contain; }
 .copilot-preview__frame { width: 100%; height: 100%; min-height: 520px; border: 0; }
+.copilot-preview__security-note { padding: 8px 16px; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 12px; }
+.copilot-preview__source { min-height: 100%; margin: 0; padding: 20px 24px; overflow: auto; background: var(--color-grey-2); color: var(--color-text-primary); font: 13px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .copilot-preview__text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.6 var(--font-mono); }
 .copilot-preview__office, .copilot-preview__pptx { min-height: 500px; background: #fff; color: #111; }
 .copilot-preview__pptx-wrap { position: relative; }
