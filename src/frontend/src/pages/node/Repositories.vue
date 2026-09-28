@@ -44,7 +44,6 @@ import {
   listStorageRepositoryTasks,
   deleteStorageRepository,
   preflightStorageRepositoryCleanup,
-  releaseStorageRepositoryResidualLocation,
   retryStorageRepositoryInitialization,
   type StorageRepositoryCleanupPreflight,
   type StorageRepositoryAssociatedSource,
@@ -660,8 +659,6 @@ const currentPage = ref(1)
 const selectedRows = ref<RepositoryRow[]>([])
 const repositoryTotal = ref(0)
 const deleteRepositoriesDialogOpen = ref(false)
-const releaseResidualDialogOpen = ref(false)
-const pendingResidualRepository = ref<RepositoryRow | null>(null)
 const pendingDeleteRepositories = ref<RepositoryRow[]>([])
 const repositoryCleanupBlockedDialogOpen = ref(false)
 const repositoryCleanupBlockedRows = ref<Array<{
@@ -1312,13 +1309,6 @@ const selectedRetryableRow = computed(() => {
   if (selectedRows.value.length !== 1) return null
   return selectedRows.value[0]?.status === 'create_failed'
     ? selectedRows.value[0]!
-    : null
-})
-const selectedResidualRow = computed(() => {
-  if (selectedRows.value.length !== 1) return null
-  const row = selectedRows.value[0]!
-  return row.status === 'removed' && row.initialization_state === 'attention_required'
-    ? row
     : null
 })
 
@@ -2346,8 +2336,6 @@ function onMoreCommand(cmd: string) {
     editFirstSelected()
   } else if (cmd === 'retry-initialization') {
     void retrySelectedInitialization()
-  } else if (cmd === 'release-residual-location') {
-    openReleaseResidualDialog()
   }
 }
 
@@ -2364,51 +2352,6 @@ async function retrySelectedInitialization() {
     tableRef.value?.clearSelection()
     ElMessage.success({
       message: t('repositoriesPage.retryInitializationAccepted'),
-      grouping: true,
-    })
-    await load()
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
-  } finally {
-    busy.value = false
-  }
-}
-
-function openReleaseResidualDialogFor(row: RepositoryRow | null) {
-  if (!row || busy.value) return
-  pendingResidualRepository.value = row
-  releaseResidualDialogOpen.value = true
-}
-
-function openReleaseResidualDialog() {
-  openReleaseResidualDialogFor(selectedResidualRow.value)
-}
-
-function openDetailReleaseResidualDialog() {
-  const row = detailRow.value
-  openReleaseResidualDialogFor(
-    row && isRemovedRepositoryWithResidualLocation(row) ? row : null,
-  )
-}
-
-function closeReleaseResidualDialog() {
-  if (busy.value) return
-  releaseResidualDialogOpen.value = false
-  pendingResidualRepository.value = null
-}
-
-async function confirmReleaseResidualLocation() {
-  const row = pendingResidualRepository.value
-  if (!row || busy.value) return
-  busy.value = true
-  try {
-    await releaseStorageRepositoryResidualLocation(row.id)
-    releaseResidualDialogOpen.value = false
-    pendingResidualRepository.value = null
-    if (detailRow.value?.id === row.id) drawerDetailOpen.value = false
-    tableRef.value?.clearSelection()
-    ElMessage.success({
-      message: t('repositoriesPage.releaseResidualSuccess'),
       grouping: true,
     })
     await load()
@@ -2602,18 +2545,6 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                       class="shrink-0"
                     />
                     <span>{{ t('repositoriesPage.retryInitialization') }}</span>
-                  </span>
-                </ElDropdownItem>
-                <ElDropdownItem
-                  command="release-residual-location"
-                  :disabled="!selectedResidualRow"
-                >
-                  <span class="el-dropdown-menu__item-content">
-                    <Unlink
-                      :size="14"
-                      class="shrink-0"
-                    />
-                    <span>{{ t('repositoriesPage.releaseResidualLocation') }}</span>
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
@@ -3123,17 +3054,6 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <p class="repo-residual-attention__description">
               {{ t('repositoriesPage.residualAttentionDescription') }}
             </p>
-            <div class="repo-residual-attention__actions">
-              <ElButton
-                type="warning"
-                plain
-                size="small"
-                class="repo-residual-attention__action"
-                @click="openDetailReleaseResidualDialog"
-              >
-                {{ t('repositoriesPage.releaseResidualLocation') }}
-              </ElButton>
-            </div>
           </div>
         </ElAlert>
         <ElTabs
@@ -4562,22 +4482,6 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
         </ElButton>
       </template>
     </ElDialog>
-    <DangerConfirmDialog
-      v-model="releaseResidualDialogOpen"
-      :title="t('repositoriesPage.releaseResidualTitle')"
-      :message="t('repositoriesPage.releaseResidualMessage')"
-      :warning="t('repositoriesPage.releaseResidualWarning')"
-      confirm-mode="keyword"
-      confirm-keyword="RELEASE LOCATION"
-      :confirm-keyword-hint="t('repositoriesPage.releaseResidualPrompt')"
-      confirm-keyword-placeholder="RELEASE LOCATION"
-      :cancel-text="t('repositoriesPage.btnCancel')"
-      :confirm-text="t('repositoriesPage.releaseResidualConfirm')"
-      :loading="busy"
-      level="high"
-      @confirm="confirmReleaseResidualLocation"
-      @cancel="closeReleaseResidualDialog"
-    />
     <DangerConfirmDialog
       v-model="deleteRepositoriesDialogOpen"
       :title="deleteRepositoriesTitle"
