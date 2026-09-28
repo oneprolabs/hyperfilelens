@@ -36,24 +36,8 @@ class LensOrgLink(OrganizationScopedModel):
 class LensOrgModelLink(OrganizationScopedModel):
     """Maps an organization to a SourceLens LLMConfig uuid it owns."""
 
-    class DeploymentRole(models.TextChoices):
-        AGENT = "agent", "Agent"
-        MULTIMODAL = "multimodal", "Multimodal"
-
     sl_config_uuid = models.UUIDField(db_index=True)
     display_name = models.CharField(max_length=160, blank=True, default="")
-    management_key = models.CharField(
-        max_length=64, blank=True, default="", db_index=True
-    )
-    deployment_role = models.CharField(
-        max_length=16,
-        choices=DeploymentRole.choices,
-        blank=True,
-        default="",
-        db_index=True,
-    )
-    is_deployment_history = models.BooleanField(default=False, db_index=True)
-    deployment_fingerprint = models.CharField(max_length=64, blank=True, default="")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -73,11 +57,6 @@ class LensOrgModelLink(OrganizationScopedModel):
             models.UniqueConstraint(
                 fields=["sl_config_uuid"],
                 name="uniq_lens_bridge_org_model_uuid",
-            ),
-            models.UniqueConstraint(
-                fields=["organization", "management_key"],
-                condition=~models.Q(management_key=""),
-                name="uniq_lens_borgmdl_org_mgmt_key",
             ),
         ]
         indexes = [

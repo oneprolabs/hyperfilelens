@@ -108,17 +108,14 @@ function onPaginationSizeChange() {
 
 const batchDisabled = computed(() => selectedRows.value.length === 0)
 const singleSelected = computed(() => selectedRows.value.length === 1 ? selectedRows.value[0]! : null)
-const selectedIsManaged = computed(() => Boolean(singleSelected.value?.deployment_managed))
 const selectedCanSetAgentDefault = computed(() => Boolean(
   singleSelected.value &&
   singleSelected.value.is_active !== false &&
-  !singleSelected.value.is_deployment_history &&
   !singleSelected.value.is_default_agent,
 ))
 const selectedCanSetMultimodalDefault = computed(() => Boolean(
   singleSelected.value &&
   singleSelected.value.is_active !== false &&
-  !singleSelected.value.is_deployment_history &&
   !singleSelected.value.is_default_multimodal,
 ))
 
@@ -174,7 +171,6 @@ function onSelectionChange(rows: LensLlmConfig[]) {
 }
 
 async function setActive(row: LensLlmConfig, isActive: boolean) {
-  if (row.deployment_managed) return
   if (row.is_active === isActive) return
   try {
     await patchLensModel(row.uuid, { is_active: isActive })
@@ -189,7 +185,7 @@ async function setActive(row: LensLlmConfig, isActive: boolean) {
 }
 
 async function setAgentDefault(row: LensLlmConfig) {
-  if (row.is_default_agent || row.is_active === false || row.is_deployment_history) return
+  if (row.is_default_agent || row.is_active === false) return
   try {
     await setLensDefaultAgentModel(row.uuid)
     ElMessage.success({ message: t('insight.aiSettings.defaultAgentModelSaved'), grouping: true })
@@ -200,7 +196,7 @@ async function setAgentDefault(row: LensLlmConfig) {
 }
 
 async function setMultimodalDefault(row: LensLlmConfig) {
-  if (row.is_default_multimodal || row.is_active === false || row.is_deployment_history) return
+  if (row.is_default_multimodal || row.is_active === false) return
   try {
     await setLensDefaultMultimodalModel(row.uuid)
     ElMessage.success({ message: t('insight.aiSettings.defaultMultimodalModelSaved'), grouping: true })
@@ -235,13 +231,13 @@ async function confirmDelete() {
 
 async function deleteSelected() {
   const row = singleSelected.value
-  if (!row || row.deployment_managed) return
+  if (!row) return
   await deleteRow(row)
 }
 
 function enableSelected() {
   const row = singleSelected.value
-  if (!row || row.deployment_managed || row.is_active !== false) return
+  if (!row || row.is_active !== false) return
   ElMessage.info({
     message: t('insight.aiSettings.apiKeyRequiredForActivation'),
     grouping: true,
@@ -251,13 +247,13 @@ function enableSelected() {
 
 async function disableSelected() {
   const row = singleSelected.value
-  if (!row || row.deployment_managed) return
+  if (!row) return
   await setActive(row, false)
 }
 
 function editSelected() {
   const row = singleSelected.value
-  if (!row || row.deployment_managed) return
+  if (!row) return
   openEdit(row)
 }
 
@@ -307,7 +303,7 @@ onMounted(() => {
           <template #dropdown>
             <ElDropdownMenu>
               <ElDropdownItem
-                :disabled="batchDisabled || !singleSelected || selectedIsManaged"
+                :disabled="batchDisabled || !singleSelected"
                 @click="editSelected"
               >
                 <span class="el-dropdown-menu__item-content">
@@ -344,7 +340,7 @@ onMounted(() => {
               </ElDropdownItem>
               <ElDropdownItem
                 divided
-                :disabled="batchDisabled || !singleSelected || selectedIsManaged"
+                :disabled="batchDisabled || !singleSelected || singleSelected.is_active !== false"
                 @click="enableSelected"
               >
                 <span class="el-dropdown-menu__item-content">
@@ -356,7 +352,7 @@ onMounted(() => {
                 </span>
               </ElDropdownItem>
               <ElDropdownItem
-                :disabled="batchDisabled || !singleSelected || selectedIsManaged"
+                :disabled="batchDisabled || !singleSelected || singleSelected.is_active === false"
                 @click="disableSelected"
               >
                 <span class="el-dropdown-menu__item-content">
@@ -370,7 +366,7 @@ onMounted(() => {
               <ElDropdownItem
                 divided
                 class="el-dropdown-menu__item--danger"
-                :disabled="batchDisabled || !singleSelected || selectedIsManaged"
+                :disabled="batchDisabled || !singleSelected"
                 @click="deleteSelected"
               >
                 <span class="el-dropdown-menu__item-content">
@@ -455,7 +451,7 @@ onMounted(() => {
                   {{ modelName(row) }}
                 </button>
                 <div
-                  v-if="row.is_default_agent || row.is_default_multimodal || row.deployment_managed || row.is_deployment_history"
+                  v-if="row.is_default_agent || row.is_default_multimodal"
                   class="insight-ai-models-badges"
                 >
                   <ElTag
@@ -473,22 +469,6 @@ onMounted(() => {
                     effect="plain"
                   >
                     {{ t('insight.aiSettings.defaultMultimodalBadge') }}
-                  </ElTag>
-                  <ElTag
-                    v-if="row.deployment_managed"
-                    size="small"
-                    type="info"
-                    effect="plain"
-                  >
-                    {{ t('insight.aiSettings.deploymentManagedBadge') }}
-                  </ElTag>
-                  <ElTag
-                    v-if="row.is_deployment_history"
-                    size="small"
-                    type="info"
-                    effect="plain"
-                  >
-                    {{ t('insight.aiSettings.deploymentHistoryBadge') }}
                   </ElTag>
                 </div>
               </div>

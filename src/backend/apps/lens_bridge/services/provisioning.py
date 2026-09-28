@@ -166,12 +166,12 @@ def default_model_refs_for_org(
     tenant_active = {
         str(row.get("uuid") or "")
         for row in tenant_rows
-        if row.get("uuid") and not row.get("is_deployment_history")
+        if row.get("uuid")
     }
     platform_active = {
         str(row.get("uuid") or "")
         for row in platform_rows
-        if row.get("uuid") and not row.get("is_deployment_history")
+        if row.get("uuid")
     }
 
     org_defaults = org_models.ensure_org_model_defaults(org)
@@ -190,14 +190,6 @@ def default_model_refs_for_org(
         candidate = str(platform_defaults.default_agent_model_ref)
         if candidate in platform_active:
             agent_ref = candidate
-    if agent_ref is None:
-        managed_agent = org_models.deployment_managed_model_uuid(
-            platform_org,
-            role="agent",
-        )
-        if managed_agent is not None and str(managed_agent) in platform_active:
-            agent_ref = str(managed_agent)
-
     multimodal_ref: str | None = None
     if (
         org.pk != platform_org.pk
@@ -213,17 +205,6 @@ def default_model_refs_for_org(
         candidate = str(platform_defaults.default_multimodal_model_ref)
         if candidate in platform_active:
             multimodal_ref = candidate
-    if multimodal_ref is None:
-        managed_multimodal = org_models.deployment_managed_model_uuid(
-            platform_org,
-            role="multimodal",
-        )
-        if (
-            managed_multimodal is not None
-            and str(managed_multimodal) in platform_active
-        ):
-            multimodal_ref = str(managed_multimodal)
-
     return agent_ref, multimodal_ref
 
 
@@ -247,7 +228,6 @@ def configured_default_model_refs_for_org(
             return None
         exists = org_models.org_model_links(owner).filter(
             sl_config_uuid=model_ref,
-            is_deployment_history=False,
         ).exists()
         return str(model_ref) if exists else None
 
@@ -259,13 +239,6 @@ def configured_default_model_refs_for_org(
             platform_org,
             platform_defaults.default_agent_model_ref,
         )
-    if agent_ref is None:
-        managed_agent = org_models.deployment_managed_model_uuid(
-            platform_org,
-            role="agent",
-        )
-        agent_ref = str(managed_agent) if managed_agent is not None else None
-
     multimodal_ref = None
     if org.pk != platform_org.pk:
         multimodal_ref = _owned_default(
@@ -276,16 +249,6 @@ def configured_default_model_refs_for_org(
         multimodal_ref = _owned_default(
             platform_org,
             platform_defaults.default_multimodal_model_ref,
-        )
-    if multimodal_ref is None:
-        managed_multimodal = org_models.deployment_managed_model_uuid(
-            platform_org,
-            role="multimodal",
-        )
-        multimodal_ref = (
-            str(managed_multimodal)
-            if managed_multimodal is not None
-            else None
         )
     return agent_ref, multimodal_ref
 

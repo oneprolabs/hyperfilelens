@@ -31,23 +31,6 @@ def _platform_org() -> Organization:
     return platform_lens.get_or_create_platform_org()
 
 
-def _is_deployment_managed(link: LensOrgModelLink) -> bool:
-    return bool(link.management_key)
-
-
-def _deployment_managed_model_error() -> Response:
-    return Response(
-        {
-            "code": "AI_MODEL_MANAGED_BY_DEPLOYMENT",
-            "detail": (
-                "This AI model is managed by deployment configuration. "
-                "Connection settings are read-only."
-            ),
-        },
-        status=status.HTTP_409_CONFLICT,
-    )
-
-
 def _connection_test_succeeded(payload: object) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -270,10 +253,6 @@ class PlatformOpsLensModelProxyView(APIView):
     def put(self, request, config_uuid):
         org = _platform_org()
         link = org_models.require_org_model(org, config_uuid)
-        if _is_deployment_managed(link) and (
-            link.is_deployment_history or set(request.data) - {"is_default"}
-        ):
-            return _deployment_managed_model_error()
         body = dict(request.data)
         display_name = body.pop("name", None)
         make_agent_default = body.pop("is_default", None) is True
@@ -293,6 +272,17 @@ class PlatformOpsLensModelProxyView(APIView):
         link.refresh_from_db(fields=["display_name"])
         if make_agent_default:
             _set_platform_default_model_ref(org, config_uuid)
+        if body.get("is_active") is False:
+            defaults = provisioning.get_or_create_org_link(org)
+            update_fields: list[str] = []
+            if defaults.default_agent_model_ref == config_uuid:
+                defaults.default_agent_model_ref = None
+                update_fields.append("default_agent_model_ref")
+            if defaults.default_multimodal_model_ref == config_uuid:
+                defaults.default_multimodal_model_ref = None
+                update_fields.append("default_multimodal_model_ref")
+            if update_fields:
+                defaults.save(update_fields=[*update_fields, "updated_at"])
         return Response(org_models.merge_model_display_name(data, link))
 
     def patch(self, request, config_uuid):
@@ -300,9 +290,7 @@ class PlatformOpsLensModelProxyView(APIView):
 
     def delete(self, request, config_uuid):
         org = _platform_org()
-        link = org_models.require_org_model(org, config_uuid)
-        if _is_deployment_managed(link):
-            return _deployment_managed_model_error()
+        org_models.require_org_model(org, config_uuid)
         sl_client.request_json("DELETE", f"/api/v1/admin/llm-config/{config_uuid}/")
         LensOrgModelLink.objects.filter(
             organization=org,

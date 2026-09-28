@@ -841,10 +841,6 @@ class LensCopilotReadinessView(OrgScopedMixin, APIView):
                     "provider": str(model.get("provider") or ""),
                     "config": {"model": str(config.get("model") or "")},
                     "is_active": True,
-                    "deployment_role": str(model.get("deployment_role") or ""),
-                    "is_deployment_history": bool(
-                        model.get("is_deployment_history")
-                    ),
                     "is_default_agent": bool(
                         model.get("is_default_agent")
                     ),

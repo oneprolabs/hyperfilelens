@@ -267,7 +267,7 @@ describe('knowledge source ingest policy', () => {
       ingest_policy: ingestPolicy,
     })],
     ['patch', () => patchKnowledgeSource(7, { ingest_policy: ingestPolicy })],
-  ])('keeps deployment-owned model references out of %s requests', async (_operation, request) => {
+  ])('keeps model references out of %s requests', async (_operation, request) => {
     vi.mocked(api).mockResolvedValue({ id: 7 })
 
     await request()

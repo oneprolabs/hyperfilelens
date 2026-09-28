@@ -1756,11 +1756,6 @@ render_backend_result() {
 				value="${line#HFL_GOOGLE_OAUTH_STATUS=}"
 				hfl_log_emit_with_component WARN identity "Google OAuth status: ${value}"
 				;;
-			HFL_AI_MODEL_REPAIRED=true)
-				;;
-			HFL_AI_MODEL_REPAIRED=false)
-				hfl_log_emit_with_component WARN ai-model "Multimodal model capability was not changed"
-				;;
 			'[WARN]'*|WARN\ *|*'WARNING'*)
 				hfl_log_emit_with_component WARN "${operation}" "${line#\[WARN\] }"
 				;;
@@ -1805,35 +1800,6 @@ sync_optional_identity_settings() {
 		[[ "${VERBOSE}" -eq 1 ]] || printf '%s\n' "${output}" | hfl_log_output_section backend
 		warn "Google OAuth local route or generated callback is not ready; the dev stack remains available"
 	fi
-}
-
-repair_existing_multimodal_model() {
-	local output command_status
-	if [[ "${WITH_SOURCELENS}" -ne 1 ]]; then
-		hfl_log_skip "Existing multimodal model repair is not needed without insight services"
-		return 0
-	fi
-	if ! wait_for_api_healthy; then
-		warn "Skipping existing multimodal model repair because the API is not healthy yet"
-		return 0
-	fi
-
-	hfl_log_step "Checking multimodal model capability"
-	set +e
-	output="$(
-		printf '%s\n' '{"role":"multimodal","repair_existing":true}' \
-			| compose exec -T api python manage.py ensure_platform_ai_model 2>&1
-	)"
-	command_status=$?
-	set -e
-	render_backend_result ai-model "${output}"
-	if [[ "${command_status}" -ne 0 ]]; then
-		hfl_log_emit_with_component FAIL ai-model "Multimodal model capability check failed"
-		[[ "${VERBOSE}" -eq 1 ]] || printf '%s\n' "${output}" | hfl_log_output_section backend
-		warn "Existing multimodal model capability could not be reconciled; the dev stack remains available"
-		return 0
-	fi
-	hfl_log_ok "Multimodal model capability is ready"
 }
 
 run_dev_migration_gate() {
@@ -1891,7 +1857,6 @@ cmd_up() {
 	hfl_log_ok "Hot-reload HyperFileLens services started"
 	hfl_log_step "[6/8] Applying identity and email configuration"
 	sync_optional_identity_settings
-	repair_existing_multimodal_model
 	hfl_log_step "[7/8] Preparing Platform Data Gateway"
 	ensure_local_platform_gateway_dev
 	hfl_log_step "[8/8] Development environment summary"
@@ -1954,7 +1919,6 @@ cmd_restart() {
 	hfl_log_ok "HyperFileLens development services restarted"
 	hfl_log_step "[6/8] Applying identity and email configuration"
 	sync_optional_identity_settings
-	repair_existing_multimodal_model
 	hfl_log_step "[7/8] Preparing Platform Data Gateway"
 	ensure_local_platform_gateway_dev
 	hfl_log_step "[8/8] Development environment summary"

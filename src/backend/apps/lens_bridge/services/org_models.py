@@ -40,13 +40,6 @@ def merge_model_display_name(
     out = dict(data)
     stored = (link.display_name if link else "") or ""
     out["name"] = stored.strip() or default_model_display_name(out)
-    out["deployment_managed"] = bool(
-        link and (link.management_key or link.deployment_role)
-    )
-    out["deployment_role"] = link.deployment_role if link else ""
-    out["is_deployment_history"] = bool(
-        link and link.is_deployment_history
-    )
     if defaults is None and link is not None:
         defaults = provisioning.get_or_create_org_link(link.organization)
     out["is_default_agent"] = bool(
@@ -60,32 +53,6 @@ def merge_model_display_name(
         and defaults.default_multimodal_model_ref == link.sl_config_uuid
     )
     return out
-
-
-def deployment_managed_model_uuid(
-    org: Organization,
-    *,
-    role: str = "agent",
-) -> uuid.UUID | None:
-    """Return the deployment-managed model UUID for one explicit role."""
-
-    from apps.lens_bridge.services import deployment_ai_model
-
-    management_keys = (
-        [
-            deployment_ai_model.DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY,
-            deployment_ai_model.LEGACY_DEPLOYMENT_MODEL_MANAGEMENT_KEY,
-        ]
-        if role == "agent"
-        else [deployment_ai_model.DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY]
-    )
-
-    return (
-        org_model_links(org)
-        .filter(management_key__in=management_keys)
-        .values_list("sl_config_uuid", flat=True)
-        .first()
-    )
 
 
 def set_model_display_name(link: LensOrgModelLink, name: str | None) -> None:
@@ -103,8 +70,9 @@ def register_org_model(
     org: Organization,
     sl_config_uuid: uuid.UUID,
     created_by: User | None = None,
+    ensure_agent_default: bool = True,
 ) -> LensOrgModelLink:
-    link, created = LensOrgModelLink.objects.get_or_create(
+    link, created = LensOrgModelLink.all_objects.get_or_create(
         organization=org,
         sl_config_uuid=sl_config_uuid,
         defaults={"created_by": created_by},
@@ -115,7 +83,8 @@ def register_org_model(
         if created_by is not None:
             link.created_by = created_by
         link.save(update_fields=["is_deleted", "deleted_at", "created_by", "updated_at"])
-    ensure_org_default_model(org)
+    if ensure_agent_default:
+        ensure_org_default_model(org)
     return link
 
 
@@ -128,17 +97,7 @@ def require_org_model(org: Organization, config_uuid: uuid.UUID) -> LensOrgModel
 
 def ensure_org_default_model(org: Organization) -> LensOrgLink:
     org_link = provisioning.get_or_create_org_link(org)
-    from apps.lens_bridge.services import deployment_ai_model
-
-    agent_links = org_model_links(org).filter(
-        is_deployment_history=False,
-    ).exclude(
-        deployment_role=LensOrgModelLink.DeploymentRole.MULTIMODAL,
-    ).exclude(
-        management_key=(
-            deployment_ai_model.DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY
-        )
-    )
+    agent_links = org_model_links(org)
     current_ref = org_link.default_agent_model_ref
     if current_ref:
         if agent_links.filter(
@@ -160,7 +119,6 @@ def ensure_org_model_defaults(org: Organization) -> LensOrgLink:
     multimodal_ref = org_link.default_multimodal_model_ref
     if multimodal_ref and not org_model_links(org).filter(
         sl_config_uuid=multimodal_ref,
-        is_deployment_history=False,
     ).exists():
         org_link.default_multimodal_model_ref = None
         org_link.save(
@@ -335,7 +293,6 @@ def validate_default_model_ref(
         return
     if not org_model_links(org).filter(
         sl_config_uuid=config_uuid,
-        is_deployment_history=False,
     ).exists():
         raise ValidationError(
             {field_name: "Model does not belong to this organization."}
@@ -354,7 +311,6 @@ def validate_agent_model_ref(
         return
     link = org_model_links(org).filter(
         sl_config_uuid=config_uuid,
-        is_deployment_history=False,
     ).first()
     if link is None:
         from apps.lens_bridge.services import platform_lens
@@ -363,15 +319,10 @@ def validate_agent_model_ref(
         if org.pk != platform_org.pk:
             link = org_model_links(platform_org).filter(
                 sl_config_uuid=config_uuid,
-                is_deployment_history=False,
             ).first()
     if link is None:
         raise ValidationError(
             {field_name: "Model is not available to this organization."}
-        )
-    if link.deployment_role == LensOrgModelLink.DeploymentRole.MULTIMODAL:
-        raise ValidationError(
-            {field_name: "Select an Agent model for Chat responses."}
         )
     from apps.lens_bridge.services import provisioning
 
