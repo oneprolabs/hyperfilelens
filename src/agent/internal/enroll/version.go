@@ -6,10 +6,16 @@ import (
 	"strings"
 )
 
+func normalizeVersion(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "\uFEFF")
+	return strings.TrimSpace(value)
+}
+
 // versionGreater reports whether version a is newer than b (semver-like numeric segments).
 func versionGreater(a, b string) bool {
-	a = strings.TrimSpace(a)
-	b = strings.TrimSpace(b)
+	a = normalizeVersion(a)
+	b = normalizeVersion(b)
 	if a == "" || b == "" || a == "unknown" || b == "unknown" {
 		return false
 	}
@@ -38,6 +44,8 @@ func versionGreater(a, b string) bool {
 }
 
 func versionLabel(installed, release string) string {
+	installed = normalizeVersion(installed)
+	release = normalizeVersion(release)
 	if installed != "" && release != "" {
 		return fmt.Sprintf("v%s -> v%s", installed, release)
 	}

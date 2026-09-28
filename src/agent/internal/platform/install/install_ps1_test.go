@@ -37,6 +37,17 @@ func TestInstallPs1UsesExternalManualUninstallLog(t *testing.T) {
 	}
 }
 
+func TestInstallPs1WritesInstalledVersionWithoutBom(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	if !strings.Contains(source, "New-Object System.Text.UTF8Encoding($false)") ||
+		!strings.Contains(source, "[System.IO.File]::WriteAllText($versionTemp, $ver, $utf8NoBom)") {
+		t.Fatal("install.ps1 must write INSTALLED_VERSION as UTF-8 without BOM")
+	}
+	if strings.Contains(source, "Set-Content -LiteralPath $versionTemp -Value $ver -Encoding UTF8") {
+		t.Fatal("install.ps1 must not write INSTALLED_VERSION with Windows PowerShell UTF8 encoding")
+	}
+}
+
 func TestManualUninstallCommandWaitsForFinalRootCleanup(t *testing.T) {
 	body := readPackagingUninstallCommand(t)
 	for _, want := range []string{

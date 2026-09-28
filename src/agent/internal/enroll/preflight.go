@@ -238,8 +238,8 @@ func formatExistingInstallDetail(state InstallState) string {
 	if state.NodeID != "" {
 		parts = append(parts, "node "+state.NodeID)
 	}
-	if state.Version != "" {
-		parts = append(parts, "v"+state.Version)
+	if version := normalizeVersion(state.Version); version != "" {
+		parts = append(parts, "v"+version)
 	}
 	if state.Service != "" && state.Service != "unknown" {
 		parts = append(parts, "service "+state.Service)

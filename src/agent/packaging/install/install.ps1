@@ -2198,7 +2198,8 @@ function Deploy-Binaries {
   }
   $versionTemp = "$InstalledVersionFile.new.$([Guid]::NewGuid().ToString('N'))"
   try {
-    Set-Content -LiteralPath $versionTemp -Value $ver -Encoding UTF8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($versionTemp, $ver, $utf8NoBom)
     Move-Item -Force -LiteralPath $versionTemp -Destination $InstalledVersionFile
   }
   finally { Remove-Item -Force -LiteralPath $versionTemp -ErrorAction SilentlyContinue }
