@@ -674,7 +674,7 @@ describe('Login Turnstile lifecycle', () => {
       data: {},
       error: {
         error_code: 'INVALID_PASSWORD',
-        fields: { password: ['密码不正确'] },
+        fields: { password: ['Translated backend password error'] },
       },
     })
 
