@@ -17,7 +17,7 @@ from apps.source.services.internal.connection import best_effort_unmount_on_prox
 from apps.source.services.interface import (
     bind_node,
     mount_resource,
-    test_resource_connection,
+    test_resource_connection as run_test_resource_connection,
     update_source_resource,
 )
 from apps.source.tasks.connection_probe import (
@@ -383,7 +383,7 @@ class SourceConnectionProbeTests(TestCase):
             status="remove_failed",
         )
 
-        result = test_resource_connection(resource=self.resource)
+        result = run_test_resource_connection(resource=self.resource)
 
         self.assertFalse(result["success"])
         self.assertIn("being removed", result["message"])
@@ -409,7 +409,7 @@ class SourceConnectionProbeTests(TestCase):
 
         run_test.side_effect = remove_source
 
-        result = test_resource_connection(resource=self.resource)
+        result = run_test_resource_connection(resource=self.resource)
 
         self.assertFalse(result["success"])
         self.assertTrue(result["stale"])
@@ -422,7 +422,7 @@ class SourceConnectionProbeTests(TestCase):
 
     @mock.patch("apps.source.services.interface.run_connection_test")
     def test_manual_probe_does_not_overlap_active_probe(self, run_test):
-        result = test_resource_connection(resource=self.resource)
+        result = run_test_resource_connection(resource=self.resource)
 
         self.assertFalse(result["success"])
         self.assertIn("already running", result["message"])
@@ -956,7 +956,7 @@ class SourceConnectionProbeTests(TestCase):
 
         run_test.side_effect = edit_source
 
-        result = test_resource_connection(resource=self.resource)
+        result = run_test_resource_connection(resource=self.resource)
 
         self.resource.refresh_from_db()
         self.assertTrue(result["stale"])

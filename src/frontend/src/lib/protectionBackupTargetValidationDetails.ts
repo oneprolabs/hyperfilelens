@@ -68,7 +68,7 @@ export function backupTargetValidationFailureSummary({
   return t('protection.backupsPage.targetValidationFailedSummary')
 }
 
-export function backupTargetValidationFailureDetails({
+function backupTargetValidationFailureDetailsBase({
   result,
   sourceName,
   t,
@@ -308,6 +308,42 @@ export function backupTargetValidationFailureDetails({
       ...result.details,
       execution_node: node,
       agent_message: message,
+    },
+  }
+}
+
+export function backupTargetValidationFailureDetails(
+  input: ValidationFailureDetailsInput,
+): ErrorDetailsPayload {
+  const details = backupTargetValidationFailureDetailsBase(input)
+  const contract = input.result.error_details
+  if (!contract) {
+    return details
+  }
+  return {
+    ...details,
+    summary: contract.summary || details.summary,
+    errorCode: contract.error_code || details.errorCode,
+    taskUuid: input.result.task_id || contract.task_uuid || details.taskUuid,
+    failedStep: contract.failed_step || details.failedStep,
+    severity: contract.severity,
+    reasons: contract.reasons?.map((item) => item.detail) || details.reasons,
+    resolutions: contract.suggestions?.map((item) => item.detail) || details.resolutions,
+    cleanupResidue: contract.cleanup_complete === false
+      ? {
+          hasResidue: true,
+          retainedResources: contract.retained_resources,
+          failures: contract.cleanup_failures?.map((item) => (
+            typeof item === 'string' ? item : JSON.stringify(item)
+          )),
+        }
+      : details.cleanupResidue,
+    rawDetail: {
+      ...(details.rawDetail && typeof details.rawDetail === 'object'
+        ? details.rawDetail
+        : {}),
+      task_id: input.result.task_id,
+      error_details: contract,
     },
   }
 }

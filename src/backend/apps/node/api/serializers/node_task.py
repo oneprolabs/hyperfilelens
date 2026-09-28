@@ -3,6 +3,7 @@
 from rest_framework import serializers
 
 from apps.node.models import NodeTask
+from apps.task.error_contract import node_task_error_contract
 from apps.storage.services.internal.repository_secrets import scrub_secrets
 
 
@@ -10,6 +11,7 @@ class NodeTaskSerializer(serializers.ModelSerializer):
     payload = serializers.SerializerMethodField()
     result = serializers.SerializerMethodField()
     last_error = serializers.SerializerMethodField()
+    error_details = serializers.SerializerMethodField()
 
     class Meta:
         model = NodeTask
@@ -27,6 +29,7 @@ class NodeTaskSerializer(serializers.ModelSerializer):
             "last_progress_at",
             "watchdog_deadline_at",
             "last_error",
+            "error_details",
             "created_at",
             "updated_at",
             "is_deleted",
@@ -42,6 +45,9 @@ class NodeTaskSerializer(serializers.ModelSerializer):
 
     def get_last_error(self, obj: NodeTask) -> str:
         return str(scrub_secrets(obj.last_error or ""))
+
+    def get_error_details(self, obj: NodeTask):
+        return node_task_error_contract(obj)
 
 
 class NodeTaskDispatchSerializer(serializers.Serializer):

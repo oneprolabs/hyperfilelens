@@ -80,6 +80,7 @@ from apps.storage.services.internal.s3_validation_errors import (
     classify_s3_validation_error,
 )
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
+from apps.task.error_contract import task_error_contract
 from apps.task.services.interface import (
     append_task_event,
     complete_task,
@@ -136,6 +137,7 @@ def repository_create_task_payload(repository_task: RepositoryTask) -> dict[str,
         "status": task.status,
         "error_code": task.error_code,
         "error_message": task.error_message,
+        "error_details": task_error_contract(task, task.resources.all()),
         "created_at": task.created_at,
         "operation_type": repository_task.operation_type,
     }

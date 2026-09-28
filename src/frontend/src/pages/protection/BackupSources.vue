@@ -38,9 +38,9 @@ import { getEffectiveOrgKey } from '../../composables/useAuth'
 import { apiErrorMessage, isAbortError } from '../../lib/api'
 import { formatAppDateTime } from '../../lib/dateTime'
 import { copyTextToClipboard } from '../../lib/clipboard'
-import { openErrorDetails, type ErrorDetailsPayload } from '../../lib/errors/details'
+import { openErrorDetails, type ErrorDetailsPayload, type ErrorEntity } from '../../lib/errors/details'
 import { notifyInfo, notifySuccess } from '../../lib/notify'
-import { getTask } from '../../lib/taskApi'
+import { getTask, type TaskErrorContract } from '../../lib/taskApi'
 import {
   sourceUnregisterPendingKind,
   sourceUnregisterTaskBindings,
@@ -658,14 +658,20 @@ async function onTest(row: SourceResource) {
     if (r.success) {
       showConnectionTestSuccess(t('protection.sourceResources.testOk'), row.id)
     } else {
-      showConnectionTestError(connectionTestFailureMessage(r), r.details ?? r)
+      showConnectionTestError(connectionTestFailureMessage(r), r.details ?? r, undefined, r)
     }
     void load()
   } catch (e) {
     await waitForMinTestFeedback(startedAt)
     closeLoading()
     if (isAbortError(e)) {
-      showConnectionTestError(t('protection.sourceResources.testConnectionTimedOut'))
+      showConnectionTestError(
+        t('protection.sourceResources.testConnectionTimedOut'),
+        undefined,
+        undefined,
+        undefined,
+        { timeout: true },
+      )
     } else {
       const message = apiErrorMessage(e, t('protection.sourceResources.testFail'))
       const gatewayTimeout = /gateway time/i.test(message)
@@ -921,6 +927,15 @@ function connectionTestFailureMessage(result: { message?: string; gatewayTimeout
   if (result.gatewayTimeout) {
     return t('protection.sourceResources.testConnectionGatewayTimeout')
   }
+  if (result.message === 'Connection testing is unavailable while this source is being removed.') {
+    return t('protection.sourceResources.testConnectionSourceRemoving')
+  }
+  if (result.message === 'A connection test is already running for this source.') {
+    return t('protection.sourceResources.testConnectionAlreadyRunning')
+  }
+  if (result.message === 'Connection test timed out on the proxy agent.') {
+    return t('protection.sourceResources.testConnectionTimedOut')
+  }
   return result.message || t('protection.sourceResources.testFail')
 }
 
@@ -944,16 +959,68 @@ function showConnectionTestSuccess(message: string, sourceId: number) {
   })
 }
 
-function showConnectionTestError(message: string, rawDetail?: unknown, error?: unknown) {
+function showConnectionTestError(
+  message: string,
+  rawDetail?: unknown,
+  error?: unknown,
+  result?: {
+    error_code?: string
+    task_id?: string
+    error_details?: TaskErrorContract | null
+  },
+  options: { timeout?: boolean } = {},
+) {
   const title = t('protection.sourceResources.testFail')
+  const contract = result?.error_details
+  const timedOut = options.timeout || result?.error_code === 'AGENT.TIMEOUT'
+  const mountFailure = result?.error_code === 'AGENT.NAS_MOUNT_FAILED'
+    || /mount\.nfs|mount NFS export/i.test(message)
+  const overrides: Partial<ErrorDetailsPayload> = {
+    title,
+    summary: mountFailure
+      ? t('protection.sourceResources.testConnectionMountSummary')
+      : contract?.summary || message,
+    issue: mountFailure
+      ? t('protection.sourceResources.testConnectionMountIssue')
+      : message,
+    rawDetail,
+    errorCode: contract?.error_code || result?.error_code,
+    taskUuid: result?.task_id,
+    failedStep: contract?.failed_step || undefined,
+    severity: contract?.severity || 'error',
+    reasons: mountFailure
+      ? [t('protection.sourceResources.testConnectionMountReason')]
+      : contract?.reasons?.map(item => item.detail),
+    resolutions: contract?.suggestions?.map(item => item.code === 'review_mount'
+      ? t('protection.sourceResources.testConnectionMountResolution')
+      : item.detail)
+      || (timedOut
+        ? [
+            t('protection.sourceResources.testConnectionTimeoutResolution'),
+            t('protection.sourceResources.testConnectionRetrying'),
+          ]
+        : undefined),
+    entities: contract?.entities?.map(item => ({
+      id: item.id,
+      name: item.name,
+      type: (
+        ['source', 'repository', 'node', 'child_task'].includes(item.type)
+          ? item.type
+          : 'source'
+      ) as ErrorEntity['type'],
+      error: mountFailure
+        ? t('protection.sourceResources.testConnectionMountEntityError')
+        : item.error,
+    })),
+  }
   if (error !== undefined) {
     openErrorDetails({
       error,
-      overrides: { title, summary: message, issue: message, rawDetail },
+      overrides,
     })
     return
   }
-  openErrorDetails({ title, summary: message, issue: message, rawDetail })
+  openErrorDetails(overrides)
 }
 const hostMoreActionsOpen = ref(false)
 const nasMoreActionsOpen = ref(false)

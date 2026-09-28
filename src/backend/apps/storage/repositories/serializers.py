@@ -16,6 +16,7 @@ from apps.storage.repositories.models import (
     RepositoryLocationClaim,
     RepositoryTask,
 )
+from apps.task.error_contract import task_error_contract
 from apps.task.models import Task
 from apps.storage.selectors.interface import get_effective_storage_provider
 from apps.storage.services.interface import create_repository, update_repository
@@ -371,6 +372,7 @@ class RepositorySerializer(serializers.ModelSerializer):
                 "status": task.status,
                 "error_code": task.error_code,
                 "error_message": task.error_message,
+                "error_details": task_error_contract(task, task.resources.all()),
                 "created_at": task.created_at,
             }
         operation = (
@@ -391,6 +393,7 @@ class RepositorySerializer(serializers.ModelSerializer):
             "status": task.status,
             "error_code": task.error_code,
             "error_message": task.error_message,
+            "error_details": task_error_contract(task, task.resources.all()),
             "created_at": task.created_at,
         }
 

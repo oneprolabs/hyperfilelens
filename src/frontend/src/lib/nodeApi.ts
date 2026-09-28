@@ -674,6 +674,7 @@ export async function issueEnrollmentInstall(params: {
 }
 
 import { formatAppTime } from './dateTime'
+import type { TaskErrorContract } from './taskApi'
 
 export function formatLogTime(d = new Date()): string {
   return formatAppTime(d, '')
@@ -685,6 +686,7 @@ export interface NodeTaskRecord {
   kind?: string
   result?: Record<string, unknown>
   message?: Record<string, unknown> | string
+  error_details?: TaskErrorContract | null
 }
 
 export function formatNodeTaskFailure(

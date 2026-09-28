@@ -49,12 +49,56 @@ import {
   type StorageRepositoryAssociatedSource,
 } from '../../lib/storageRepositoryApi'
 import { getTask, type TaskRow } from '../../lib/taskApi'
+import { notifyError, notifyWarning } from '../../lib/notify'
+import type { ErrorDetailsPayload, ErrorEntity } from '../../lib/errors/details'
 import type { ApiNode } from '../../types/node'
 import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformBrandIcon.vue'
 import HflHelpTip from '../../components/HflHelpTip.vue'
 import DangerConfirmDialog, { type DangerConfirmItem } from '../../components/DangerConfirmDialog.vue'
 import TaskDetailDrawer from '../protection/components/TaskDetailDrawer.vue'
 import FlowSourceConnectionCell from '../protection/components/FlowSourceConnectionCell.vue'
+
+function repositoryTaskErrorDetails(task: TaskRow, fallback: string): ErrorDetailsPayload {
+  const contract = task.error_details
+  return {
+    title: contract?.severity === 'warning' ? 'Repository operation warning' : 'Repository operation failed',
+    summary: contract?.summary || task.error_message || fallback,
+    severity: contract?.severity || 'error',
+    taskUuid: task.task_uuid,
+    errorCode: contract?.error_code || task.error_code || undefined,
+    failedStep: contract?.failed_step || undefined,
+    reasons: contract?.reasons?.map((item) => item.detail) || [task.error_message || fallback],
+    resolutions: contract?.suggestions?.map((item) => item.detail) || [],
+    entities: contract?.entities?.map((item) => ({
+      id: item.id,
+      name: item.name,
+      type: (['source', 'repository', 'node', 'child_task'].includes(item.type) ? item.type : 'repository') as ErrorEntity['type'],
+      error: item.error,
+    })),
+    cleanupResidue: contract?.cleanup_complete === false ? {
+      hasResidue: true,
+      retainedResources: contract.retained_resources,
+      failures: contract.cleanup_failures?.map((item) => typeof item === 'string' ? item : JSON.stringify(item)),
+    } : undefined,
+    rawDetail: contract?.technical_detail,
+  }
+}
+
+function notifyRepositoryTaskFailure(task: TaskRow, fallback: string) {
+  const details = repositoryTaskErrorDetails(task, fallback)
+  const notify = details.severity === 'warning' ? notifyWarning : notifyError
+  notify({
+    title: details.summary,
+    message: details.summary,
+    details,
+    showDetails: true,
+    dedupeKey: `repository-task:${task.task_uuid}`,
+  })
+}
+
+function isRepositoryTaskWarning(task: TaskRow) {
+  return task.error_details?.severity === 'warning'
+}
 
 export type RepoKind = 's3' | 'nas' | 'proxy_fs'
 
@@ -1026,24 +1070,33 @@ async function reconcileRepositoryCleanupTasks() {
       if (result.status === 'rejected') {
         if (Date.now() - pending.startedAt >= REPOSITORY_CLEANUP_TIMEOUT_MS) {
           repositoryCleanupPending.value.delete(repositoryId)
-          ElMessage.error({
+          notifyError({
             message: `${pending.repositoryName}: ${t('repositoriesPage.cleanupFailed')}`,
-            grouping: true,
+            error: result.reason,
+            showDetails: true,
+            dedupeKey: `repository-cleanup-monitor:${repositoryId}`,
           })
           terminal = true
         }
         return
       }
       const status = String(result.value.status || '').toLowerCase()
-      if (status === 'success') {
+      if (status === 'success' && isRepositoryTaskWarning(result.value)) {
+        repositoryCleanupPending.value.delete(repositoryId)
+        notifyRepositoryTaskFailure(
+          result.value,
+          `${pending.repositoryName}: ${t('repositoriesPage.cleanupFailed')}`,
+        )
+        terminal = true
+      } else if (status === 'success') {
         repositoryCleanupPending.value.delete(repositoryId)
         terminal = true
       } else if (['failed', 'cancelled', 'timeout'].includes(status)) {
         repositoryCleanupPending.value.delete(repositoryId)
-        ElMessage.error({
-          message: result.value.error_message || `${pending.repositoryName}: ${t('repositoriesPage.cleanupFailed')}`,
-          grouping: true,
-        })
+        notifyRepositoryTaskFailure(
+          result.value,
+          `${pending.repositoryName}: ${t('repositoriesPage.cleanupFailed')}`,
+        )
         terminal = true
       }
     })
@@ -1067,16 +1120,25 @@ async function reconcileRepositoryCreateTasks() {
       if (result.status === 'rejected') {
         if (Date.now() - pending.startedAt >= REPOSITORY_CREATE_TIMEOUT_MS) {
           repositoryCreatePending.value.delete(repositoryId)
-          ElMessage.error({
+          notifyError({
             message: `${pending.repositoryName}: ${t('repositoriesPage.createFailed')}`,
-            grouping: true,
+            error: result.reason,
+            showDetails: true,
+            dedupeKey: `repository-create-monitor:${repositoryId}`,
           })
           terminal = true
         }
         return
       }
       const status = String(result.value.status || '').toLowerCase()
-      if (status === 'success') {
+      if (status === 'success' && isRepositoryTaskWarning(result.value)) {
+        repositoryCreatePending.value.delete(repositoryId)
+        notifyRepositoryTaskFailure(
+          result.value,
+          `${pending.repositoryName}: ${t('repositoriesPage.createFailed')}`,
+        )
+        terminal = true
+      } else if (status === 'success') {
         repositoryCreatePending.value.delete(repositoryId)
         ElMessage.success({
           message: `${pending.repositoryName}: ${t('repositoriesPage.createSucceeded')}`,
@@ -1085,14 +1147,14 @@ async function reconcileRepositoryCreateTasks() {
         terminal = true
       } else if (['failed', 'cancelled', 'timeout'].includes(status)) {
         repositoryCreatePending.value.delete(repositoryId)
-        ElMessage.error({
-          message: nasRepositoryFailureMessage(
+        notifyRepositoryTaskFailure(
+          result.value,
+          nasRepositoryFailureMessage(
             result.value.error_code,
             result.value.error_message,
             t,
           ) || `${pending.repositoryName}: ${t('repositoriesPage.createFailed')}`,
-          grouping: true,
-        })
+        )
         terminal = true
       }
     })
