@@ -3508,6 +3508,8 @@
   "insight.copilot.outputFilePreviewTooLarge": "dc24a4a12b2333687fda9d15778cd230b514acb49da23a9460c57c10f1bb488b",
   "insight.copilot.outputFilePreviewLoading": "7eb1aaa736866aeb9e0d1e8602f67038f628e0407eb949d6905e0eef3d1d9ab9",
   "insight.copilot.outputFilePreviewFailed": "40a236b27bcde881876e038f3db2f8d9d78848d1d57d162ac3047ed0dd5756d8",
+  "insight.copilot.outputFilePreviewRestricted": "545dafc2890b5fcfee0144e1937b6d5a410b2a64f73ee9f85f114288077b2198",
+  "insight.copilot.outputFileViewSource": "ea65d6de6fab63f1824713ced6b3c54577f1f2276b735e94eeb86498bd9dcee0",
   "insight.copilot.outputFilePreviousSlide": "c290a73ecefb4806f764d9ef8db0af8c9008a2a3a2156cbbbbff243689d77fc3",
   "insight.copilot.outputFileNextSlide": "23e0ef4ee93af74f87d22f48eb49317f68807b9342a2ca7c91237380def0e081",
   "insight.copilot.outputFileSheet": "625e021a734c856a4fffb04d545ae3c1c9a79deb2365884d801d21059d8f9dfa",

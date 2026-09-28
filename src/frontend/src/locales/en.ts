@@ -1298,6 +1298,8 @@ export const en = {
       outputFilePreviewTooLarge: 'Files larger than 5 MB are available for download only.',
       outputFilePreviewLoading: 'Loading preview…',
       outputFilePreviewFailed: 'This file could not be previewed. Download it instead.',
+      outputFilePreviewRestricted: 'HTML preview is sandboxed and cannot run scripts or navigate links.',
+      outputFileViewSource: 'View source',
       outputFilePreviousSlide: 'Previous slide',
       outputFileNextSlide: 'Next slide',
       outputFileSheet: 'Sheet',
