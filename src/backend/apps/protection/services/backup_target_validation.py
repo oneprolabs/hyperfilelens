@@ -1311,6 +1311,8 @@ def _outcome_result(
     failure_code: str,
     repository: Repository,
 ) -> TargetValidationResult:
+    task_id = getattr(outcome, "task_id", None)
+    error_details = getattr(outcome, "error_details", None)
     if outcome.ok:
         return TargetValidationResult(status="success")
     if outcome.timed_out:
@@ -1319,8 +1321,8 @@ def _outcome_result(
             code="VALIDATION_TIMEOUT",
             message="Backup target validation timed out. Try again.",
             details=_agent_outcome_details(outcome),
-            task_id=outcome.task_id,
-            error_details=outcome.error_details,
+            task_id=task_id,
+            error_details=error_details,
         )
     specific_code = str(outcome.result.get("error_code") or "").strip()
     if specific_code in _NAS_WRITE_FAILURE_REMEDIATIONS:
@@ -1339,8 +1341,8 @@ def _outcome_result(
                 ).strip(),
                 **_agent_outcome_details(outcome),
             },
-            task_id=outcome.task_id,
-            error_details=outcome.error_details,
+            task_id=task_id,
+            error_details=error_details,
         )
     return TargetValidationResult(
         status="failed",
@@ -1350,17 +1352,19 @@ def _outcome_result(
             repository=repository,
         ),
         details=_agent_outcome_details(outcome),
-        task_id=outcome.task_id,
-        error_details=outcome.error_details,
+        task_id=task_id,
+        error_details=error_details,
     )
 
 
 def _agent_outcome_details(outcome: _AgentOutcome) -> dict[str, Any]:
     details: dict[str, Any] = {}
-    if outcome.task_id:
-        details["agent_task_id"] = outcome.task_id
-    if outcome.error_details:
-        details["agent_error_details"] = outcome.error_details
+    task_id = getattr(outcome, "task_id", None)
+    error_details = getattr(outcome, "error_details", None)
+    if task_id:
+        details["agent_task_id"] = task_id
+    if error_details:
+        details["agent_error_details"] = error_details
     return details
 
 
