@@ -65,6 +65,10 @@
     "codes": {
       "networkUnavailable": "No se pudo conectar. Compruebe la red y vuelva a intentarlo.",
       "networkTimeout": "La solicitud agotó el tiempo de espera. Vuelva a intentarlo más tarde.",
+      "notificationWebhookTimeout": "La solicitud del webhook agotó el tiempo de espera. Verifique que la URL sea accesible desde el servidor de HyperFileLens.",
+      "notificationWebhookTlsFailed": "No se pudo verificar el certificado HTTPS del webhook. Use un certificado de confianza o compruebe la cadena de certificados.",
+      "notificationWebhookUnreachable": "No se pudo acceder al servidor del webhook. Verifique la URL, el puerto, el firewall y la ruta de red.",
+      "notificationWebhookHttpError": "El endpoint del webhook rechazó la solicitud. Compruebe la URL, el método, los encabezados y el contenido.",
       "clientOffline": "No tiene conexión. Compruebe la conexión de red.",
       "clientAborted": "",
       "unknown": "Algo salió mal. Vuelva a intentarlo.",
@@ -121,11 +125,7 @@
       "subscriptionQuotaExceededGateway": "La puerta de enlace de datos compartida actualmente tiene una capacidad insuficiente. Pruebe de nuevo más tarde o póngase en contacto con su administrador de la plataforma.",
       "subscriptionQuotaUsageUnavailable": "La información sobre la capacidad no está disponible temporalmente. Inténtelo de nuevo en breve.",
       "backupAlreadyRunning": "Una copia de seguridad está empezando o funcionando para esta fuente. Detenga o espere a que termine antes de continuar.",
-      "restoreAlreadyRunning": "Una tarea de restauración ya se está ejecutando para esta fuente.",
-      "notificationWebhookTimeout": "La solicitud del webhook agotó el tiempo de espera. Verifique que la URL sea accesible desde el servidor de HyperFileLens.",
-      "notificationWebhookTlsFailed": "No se pudo verificar el certificado HTTPS del webhook. Use un certificado de confianza o compruebe la cadena de certificados.",
-      "notificationWebhookUnreachable": "No se pudo acceder al servidor del webhook. Verifique la URL, el puerto, el firewall y la ruta de red.",
-      "notificationWebhookHttpError": "El endpoint del webhook rechazó la solicitud. Compruebe la URL, el método, los encabezados y el contenido."
+      "restoreAlreadyRunning": "Una tarea de restauración ya se está ejecutando para esta fuente."
     }
   },
   "feedback": {
