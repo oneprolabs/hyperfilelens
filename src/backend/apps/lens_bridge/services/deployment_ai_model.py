@@ -1,87 +1,28 @@
-"""Idempotent deployment ownership for the platform's default AI model."""
+"""Reconcile deployment-provided platform AI model configurations.
+
+Deployment configuration is an input to reconciliation, not a separate model
+lifecycle. Models created by deployment and models created in the Admin Console
+share the same HFL/SourceLens model resources and remain user-manageable.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import json
-import logging
 import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
-from django.conf import settings
-from django.db import DatabaseError, transaction
+from django.db import transaction
 
-from apps.lens_bridge.models import LensOrgLink, LensOrgModelLink
-from apps.lens_bridge.services import platform_lens, provisioning, sl_client
+from apps.iam.models import Organization
+from apps.lens_bridge.services import org_models, platform_lens, provisioning, sl_client
 
 AiModelRole = Literal["agent", "multimodal"]
-
-DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY = "deployment-agent"
-DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY = "deployment-multimodal"
-LEGACY_DEPLOYMENT_MODEL_MANAGEMENT_KEY = "deployment-default"
-# Backwards-compatible import for tests and upgrade tooling that still names
-# the original single deployment-managed model.
-DEPLOYMENT_MODEL_MANAGEMENT_KEY = DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY
-logger = logging.getLogger(__name__)
 
 
 class DeploymentAiModelConfigurationError(ValueError):
     """Raised when deployment input is incomplete or unsafe."""
-
-
-def _required_single_line(
-    values: Mapping[str, Any],
-    key: str,
-    *,
-    max_length: int,
-) -> str:
-    value = str(values.get(key) or "").strip()
-    if not value:
-        raise DeploymentAiModelConfigurationError(f"{key} is required")
-    if len(value) > max_length or re.search(r"[\x00\r\n]", value):
-        raise DeploymentAiModelConfigurationError(
-            f"{key} must be a single-line value of at most {max_length} characters"
-        )
-    return value
-
-
-def _validated_api_base(values: Mapping[str, Any]) -> str:
-    value = _required_single_line(values, "api_base", max_length=2048)
-    try:
-        parsed = urlsplit(value)
-        parsed.port
-    except ValueError as exc:
-        raise DeploymentAiModelConfigurationError(
-            "api_base must be a valid HTTPS URL"
-        ) from exc
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username
-        or parsed.password
-        or parsed.query
-        or parsed.fragment
-        or re.search(r"\s", parsed.netloc)
-    ):
-        raise DeploymentAiModelConfigurationError(
-            "api_base must be an HTTPS URL without credentials, query, or fragment"
-        )
-    normalized_path = parsed.path.rstrip("/")
-    return urlunsplit((parsed.scheme, parsed.netloc, normalized_path, "", ""))
-
-
-def _coerced_bool(values: Mapping[str, Any], key: str) -> bool:
-    """Coerce a JSON boolean or common string representation to bool."""
-    value = values.get(key)
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return False
-    return str(value).strip().lower() in {"true", "1", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -93,30 +34,71 @@ class DeploymentAiModelConfig:
     display_name: str
     api_base: str
     api_key: str
-    # SourceLens >= 0.39 validates multimodal models against an explicit
-    # vision-capability declaration before it allows assistant creation.
     supports_vision: bool = False
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any]) -> DeploymentAiModelConfig:
-        """Validate and normalize a JSON-compatible configuration mapping."""
-
-        provider = _required_single_line(values, "provider", max_length=64).lower()
-        if not re.fullmatch(r"[a-z0-9_]+", provider):
+    def from_mapping(cls, values: Mapping[str, Any]) -> "DeploymentAiModelConfig":
+        provider = str(values.get("provider") or "").strip().lower()
+        model_id = str(values.get("model_id") or "").strip()
+        display_name = str(values.get("display_name") or "").strip()
+        api_base = str(values.get("api_base") or "").strip()
+        api_key = str(values.get("api_key") or "").strip()
+        if (
+            not provider
+            or len(provider) > 64
+            or not re.fullmatch(r"[a-z0-9_]+", provider)
+        ):
+            raise DeploymentAiModelConfigurationError("provider is required")
+        if (
+            not model_id
+            or len(model_id) > 255
+            or "\n" in model_id
+            or "\r" in model_id
+        ):
+            raise DeploymentAiModelConfigurationError("model_id is required")
+        if not display_name or "\n" in display_name or "\r" in display_name:
+            raise DeploymentAiModelConfigurationError("display_name is required")
+        if (
+            not api_key
+            or len(api_key) > 4096
+            or "\n" in api_key
+            or "\r" in api_key
+        ):
+            raise DeploymentAiModelConfigurationError("api_key is required")
+        try:
+            parsed = urlsplit(api_base)
+            parsed.port
+        except ValueError as exc:
+            raise DeploymentAiModelConfigurationError("api_base is invalid") from exc
+        if (
+            len(api_base) > 2048
+            or
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or re.search(r"\s", parsed.netloc)
+        ):
             raise DeploymentAiModelConfigurationError(
-                "provider must contain only lowercase letters, numbers, and underscores"
+                "api_base must be an HTTPS URL without credentials, query, or fragment"
             )
+        supports_vision = values.get("supports_vision")
+        if isinstance(supports_vision, str):
+            supports_vision = supports_vision.strip().lower() in {
+                "true",
+                "1",
+                "yes",
+                "on",
+            }
         return cls(
             provider=provider,
-            model_id=_required_single_line(values, "model_id", max_length=255),
-            display_name=_required_single_line(
-                values,
-                "display_name",
-                max_length=160,
-            ),
-            api_base=_validated_api_base(values),
-            api_key=_required_single_line(values, "api_key", max_length=4096),
-            supports_vision=_coerced_bool(values, "supports_vision"),
+            model_id=model_id,
+            display_name=display_name[:160],
+            api_base=urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", "")),
+            api_key=api_key,
+            supports_vision=bool(supports_vision),
         )
 
 
@@ -124,561 +106,153 @@ class DeploymentAiModelConfig:
 class DeploymentAiModelResult:
     """Sanitized result suitable for management-command output."""
 
-    action: Literal["created", "updated", "recreated"]
+    action: Literal["created", "updated"]
     connectivity_ok: bool
     applied: bool = True
 
 
-def _deployment_fingerprint_from_values(values: Mapping[str, Any]) -> str:
-    """Return a keyed fingerprint without persisting deployment secrets."""
-
-    raw = json.dumps(
-        values,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hmac.new(
-        str(settings.SECRET_KEY).encode("utf-8"),
-        raw,
-        hashlib.sha256,
-    ).hexdigest()
-
-
-def _deployment_fingerprint(config: DeploymentAiModelConfig) -> str:
-    """Return the current deployment configuration fingerprint."""
-
-    return _deployment_fingerprint_from_values(
-        {
-            "provider": config.provider,
-            "model_id": config.model_id,
-            "display_name": config.display_name,
-            "api_base": config.api_base,
-            "api_key": config.api_key,
-            "supports_vision": config.supports_vision,
-        }
-    )
-
-
-def _legacy_deployment_fingerprint(config: DeploymentAiModelConfig) -> str:
-    """Return the pre-vision fingerprint accepted during in-place upgrades."""
-
-    return _deployment_fingerprint_from_values(
-        {
-            "provider": config.provider,
-            "model_id": config.model_id,
-            "display_name": config.display_name,
-            "api_base": config.api_base,
-            "api_key": config.api_key,
-        }
-    )
-
-
 def _source_lens_payload(
     config: DeploymentAiModelConfig,
-    *,
-    make_default: bool | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
+    model_config: dict[str, Any] = {
+        "model": config.model_id,
+        "api_base": config.api_base,
+        "api_key": config.api_key,
+    }
+    if config.supports_vision:
+        model_config["supports_vision"] = True
+    return {
         "provider": config.provider,
-        "config": {
-            "model": config.model_id,
-            "api_base": config.api_base,
-            "api_key": config.api_key,
-            "supports_vision": config.supports_vision,
-        },
+        "config": model_config,
         "is_active": True,
     }
-    if make_default is not None:
-        payload["is_default"] = make_default
-    return payload
 
 
-def _source_lens_model(config_uuid: uuid.UUID) -> dict[str, Any] | None:
-    try:
-        data = sl_client.request_json(
-            "GET",
-            f"/api/v1/admin/llm-config/{config_uuid}/",
-        )
-    except sl_client.LensBridgeError as exc:
-        if exc.status_code == 404:
-            return None
-        raise
-    if not isinstance(data, dict):
-        raise sl_client.LensBridgeError("SourceLens returned an invalid AI model.")
-    return data
+def _remote_items(raw: Any) -> list[dict[str, Any]]:
+    if isinstance(raw, list):
+        return [row for row in raw if isinstance(row, dict)]
+    if isinstance(raw, dict):
+        for key in ("results", "items", "data"):
+            value = raw.get(key)
+            if isinstance(value, list):
+                return [row for row in value if isinstance(row, dict)]
+            if isinstance(value, dict):
+                nested = _remote_items(value)
+                if nested:
+                    return nested
+    return []
 
 
-def _source_lens_model_is_active(config_ref: str) -> bool:
-    data = _source_lens_model(uuid.UUID(config_ref))
-    if data is None or data.get("is_active") is False:
-        return False
-    status = str(data.get("status") or "").strip().lower()
-    return status not in {"inactive", "disabled"}
+def _normalized_api_base(value: Any) -> str:
+    return str(value or "").strip().rstrip("/")
 
 
 def _model_matches_config(
     data: dict[str, Any] | None,
     config: DeploymentAiModelConfig,
 ) -> bool:
-    """Match model identity without comparing or exposing API credentials."""
-
     if not isinstance(data, dict):
         return False
     model_config = data.get("config")
     if not isinstance(model_config, dict):
         return False
-    provider = str(data.get("provider") or "").strip().lower()
-    model_id = str(model_config.get("model") or "").strip()
-    api_base = str(model_config.get("api_base") or "").strip().rstrip("/")
     return (
-        provider == config.provider
-        and model_id == config.model_id
-        and api_base == config.api_base.rstrip("/")
+        str(data.get("provider") or "").strip().lower() == config.provider
+        and str(model_config.get("model") or "").strip() == config.model_id
+        and _normalized_api_base(model_config.get("api_base"))
+        == _normalized_api_base(config.api_base)
     )
 
 
-def _vision_capability_patch() -> dict[str, Any]:
-    """Return a credential-free in-place capability repair payload."""
-
-    return {"config": {"supports_vision": True}}
+def _list_source_lens_models() -> list[dict[str, Any]]:
+    return _remote_items(sl_client.request_json("GET", "/api/v1/admin/llm-config/"))
 
 
-def _sl_model_supports_vision(data: dict[str, Any] | None) -> bool:
-    """Return whether the installed SourceLens model declares vision support."""
-    if not isinstance(data, dict):
-        return False
-    config = data.get("config")
-    if not isinstance(config, dict):
-        return False
-    value = config.get("supports_vision")
-    return value is True or str(value).strip().lower() in {"true", "1", "yes", "on"}
-
-
-def _created_uuid(data: Any) -> uuid.UUID:
-    if not isinstance(data, dict) or not data.get("uuid"):
-        raise sl_client.LensBridgeError(
-            "SourceLens did not return the created AI model identifier."
-        )
-    try:
-        return uuid.UUID(str(data["uuid"]))
-    except (TypeError, ValueError) as exc:
-        raise sl_client.LensBridgeError(
-            "SourceLens returned an invalid AI model identifier."
-        ) from exc
-
-
-@transaction.atomic
-def _persist_link(
+def _find_existing_model(
     *,
-    link: LensOrgModelLink | None,
-    config_uuid: uuid.UUID,
-    display_name: str,
-    management_key: str,
+    org: Organization,
+    config: DeploymentAiModelConfig,
     role: AiModelRole,
-    preserve_existing: bool,
-    deployment_fingerprint: str,
-) -> LensOrgModelLink:
-    """Persist the current link while retaining live historical identities."""
-
-    org = platform_lens.get_or_create_platform_org()
-    if link is None:
-        return LensOrgModelLink.all_objects.create(
-            organization=org,
-            sl_config_uuid=config_uuid,
-            display_name=display_name,
-            management_key=management_key,
-            deployment_role=role,
-            deployment_fingerprint=deployment_fingerprint,
-        )
-
-    link = LensOrgModelLink.all_objects.select_for_update().get(pk=link.pk)
-    if preserve_existing and link.sl_config_uuid != config_uuid:
-        link.management_key = (
-            f"deploy-{role}-history-{link.sl_config_uuid.hex}"
-        )
-        link.deployment_role = role
-        link.is_deployment_history = True
-        link.deployment_fingerprint = ""
-        link.save(
-            update_fields=[
-                "management_key",
-                "deployment_role",
-                "is_deployment_history",
-                "deployment_fingerprint",
-                "updated_at",
-            ]
-        )
-        return LensOrgModelLink.all_objects.create(
-            organization=org,
-            sl_config_uuid=config_uuid,
-            display_name=display_name,
-            management_key=management_key,
-            deployment_role=role,
-            deployment_fingerprint=deployment_fingerprint,
-        )
-
-    link.sl_config_uuid = config_uuid
-    link.display_name = display_name
-    link.management_key = management_key
-    link.deployment_role = role
-    link.is_deployment_history = False
-    link.is_deleted = False
-    link.deployment_fingerprint = deployment_fingerprint
-    link.deleted_at = None
-    link.save(
-        update_fields=[
-            "sl_config_uuid",
-            "display_name",
-            "management_key",
-            "deployment_role",
-            "is_deployment_history",
-            "is_deleted",
-            "deployment_fingerprint",
-            "deleted_at",
-            "updated_at",
-        ]
+) -> dict[str, Any] | None:
+    rows = [row for row in _list_source_lens_models() if _model_matches_config(row, config)]
+    if not rows:
+        return None
+    defaults = provisioning.get_or_create_org_link(org)
+    preferred_ref = (
+        defaults.default_multimodal_model_ref
+        if role == "multimodal"
+        else defaults.default_agent_model_ref
     )
-    return link
+    preferred = str(preferred_ref or "")
+    if preferred:
+        for row in rows:
+            if str(row.get("uuid") or "") == preferred:
+                return row
+    return rows[0]
 
 
-def _test_connection(config_uuid: uuid.UUID) -> bool:
+def _test_connection(config: DeploymentAiModelConfig) -> bool:
     try:
-        response = sl_client.request_json(
+        data = sl_client.request_json(
             "POST",
-            "/api/v1/admin/llm-config/test-call/",
-            json_body={
-                "config_uuid": str(config_uuid),
-                "prompt": "Respond with exactly OK and no explanation.",
-                "max_tokens": 512,
-            },
-            timeout=90,
+            "/api/v1/admin/llm-config/test/",
+            json_body=_source_lens_payload(config),
         )
     except sl_client.LensBridgeError:
         return False
-    if isinstance(response, dict):
-        if "ok" in response:
-            return bool(response["ok"])
-        if "success" in response:
-            return bool(response["success"])
-    return False
+    return isinstance(data, dict) and (data.get("ok") is True or data.get("success") is True)
 
 
-def _management_keys_for_role(role: AiModelRole) -> tuple[str, ...]:
-    """Return current and adoptable deployment keys for one model role."""
-
-    if role == "agent":
-        return (
-            DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY,
-            LEGACY_DEPLOYMENT_MODEL_MANAGEMENT_KEY,
-        )
-    return (DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY,)
-
-
-def _management_key_for_role(role: AiModelRole) -> str:
-    """Return the canonical deployment management key for one role."""
-
-    if role == "agent":
-        return DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY
-    return DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY
-
-
-def _deployment_link(
-    org: Any,
-    role: AiModelRole,
-) -> LensOrgModelLink | None:
-    return (
-        LensOrgModelLink.all_objects.filter(
-            organization=org,
-            management_key__in=_management_keys_for_role(role),
-        )
-        .order_by("id")
-        .first()
-    )
-
-
-def repair_existing_platform_ai_model(*, role: AiModelRole) -> bool:
-    """Repair an already-installed model when deployment config is absent.
-
-    Older releases may have a multimodal model but no current deployment
-    variables.  The upgrade path must still repair its SourceLens capability
-    declaration without requiring or replacing its credentials.
-    """
-
-    if role != "multimodal":
-        return False
-    org = platform_lens.get_or_create_platform_org()
-    link = _deployment_link(org, role)
-    defaults = provisioning.get_or_create_org_link(org)
-    config_uuid = (
-        link.sl_config_uuid
-        if link is not None
-        else defaults.default_multimodal_model_ref
-    )
-    if config_uuid is None:
-        return False
-    current = _source_lens_model(config_uuid)
-    if current is None:
-        return False
-
-    # A previous upgrade could leave the HFL link missing while retaining the
-    # platform default pointer. Recreate that local ownership record before
-    # repairing the SourceLens capability so normal model resolution can use
-    # the existing model without creating another one.
-    if link is None:
-        display_name = str(
-            current.get("display_name") or current.get("name") or "Multimodal model"
-        ).strip()[:160]
-        link = LensOrgModelLink.all_objects.filter(
-            organization=org,
-            sl_config_uuid=config_uuid,
-        ).first()
-        if link is None:
-            link = LensOrgModelLink.all_objects.create(
-                organization=org,
-                sl_config_uuid=config_uuid,
-                display_name=display_name,
-                management_key=_management_key_for_role(role),
-                deployment_role=role,
-                deployment_fingerprint="",
-            )
-        else:
-            _persist_link(
-                link=link,
-                config_uuid=config_uuid,
-                display_name=display_name,
-                management_key=_management_key_for_role(role),
-                role=role,
-                preserve_existing=False,
-                deployment_fingerprint="",
-            )
-
-    if _sl_model_supports_vision(current):
-        return True
-    sl_client.request_json(
-        "PUT",
-        f"/api/v1/admin/llm-config/{config_uuid}/",
-        json_body=_vision_capability_patch(),
-    )
-    logger.info(
-        "Repaired existing SourceLens multimodal model %s vision capability.",
-        config_uuid,
-    )
-    return True
-
-
-def _set_role_default(
-    *,
-    defaults_id: int,
-    role: AiModelRole,
-    config_uuid: uuid.UUID,
-) -> None:
-    """Set one HFL role default while holding its organization row lock."""
-
-    defaults = LensOrgLink.objects.select_for_update().get(pk=defaults_id)
-    field_name = (
-        "default_agent_model_ref"
-        if role == "agent"
-        else "default_multimodal_model_ref"
-    )
-    if getattr(defaults, field_name) == config_uuid:
-        return
-    setattr(defaults, field_name, config_uuid)
-    defaults.save(update_fields=[field_name, "updated_at"])
-
-
+@transaction.atomic
 def ensure_platform_ai_model(
     config: DeploymentAiModelConfig,
     *,
     role: AiModelRole = "agent",
 ) -> DeploymentAiModelResult:
-    """Create, update, or repair the deployment-owned SourceLens model.
-
-    Candidates are tested before HFL promotes a role pointer. SourceLens's
-    process-wide default is never changed, and an administrator's later HFL
-    role selection is preserved across deployment-managed updates.
-    """
+    """Ensure one configured model exists, is active, and is the role default."""
 
     org = platform_lens.get_or_create_platform_org()
-    platform_defaults = provisioning.get_or_create_org_link(org)
-    management_key = _management_key_for_role(role)
-    link = _deployment_link(org, role)
-    current = _source_lens_model(link.sl_config_uuid) if link is not None else None
-    selected_model_ref = (
-        platform_defaults.default_agent_model_ref
-        if role == "agent"
-        else platform_defaults.default_multimodal_model_ref
-    )
-    selected_ref = str(selected_model_ref) if selected_model_ref else ""
-    managed_ref = str(link.sl_config_uuid) if link is not None else ""
-    # If the deployment link was lost during an older upgrade, adopt the
-    # selected matching SourceLens model instead of creating a duplicate.
-    if link is None and selected_model_ref:
-        selected_model = _source_lens_model(selected_model_ref)
-        if _model_matches_config(selected_model, config):
-            current = selected_model
-            link = LensOrgModelLink.all_objects.filter(
-                organization=org,
-                sl_config_uuid=selected_model_ref,
-            ).first()
-            if link is None:
-                link = LensOrgModelLink.all_objects.create(
-                    organization=org,
-                    sl_config_uuid=selected_model_ref,
-                    display_name=config.display_name,
-                    management_key=management_key,
-                    deployment_role=role,
-                    deployment_fingerprint="",
-                )
-            managed_ref = str(link.sl_config_uuid)
-    first_adoption = link is None
-    deployment_fingerprint = _deployment_fingerprint(config)
-    compatible_fingerprints = {
-        deployment_fingerprint,
-        _legacy_deployment_fingerprint(config),
-    }
-    link_needs_reconciliation = bool(
-        link
-        and (
-            link.management_key != management_key
-            or link.deployment_role != role
-            or link.display_name != config.display_name
-            or link.deployment_fingerprint != deployment_fingerprint
-            or link.is_deployment_history
-            or link.is_deleted
-        )
-    )
-    should_select_managed = (
-        first_adoption or not selected_ref or selected_ref == managed_ref
-    )
-    if not should_select_managed:
-        selected_owned = LensOrgModelLink.objects.filter(
-            organization=org,
-            sl_config_uuid=selected_model_ref,
-            is_deleted=False,
-            is_deployment_history=False,
-        ).exists()
-        if not selected_owned or not _source_lens_model_is_active(selected_ref):
-            should_select_managed = True
-
-    current_identity_matches = _model_matches_config(current, config)
-    if (
-        current is not None
-        and link is not None
-        and (
-            link.deployment_fingerprint in compatible_fingerprints
-            or (not link.deployment_fingerprint and current_identity_matches)
-        )
-    ):
-        # Capability declarations added by a newer HFL/SourceLens contract are
-        # mutable configuration, not a new model identity. Repair the existing
-        # UUID before promoting the current fingerprint so upgrades do not
-        # manufacture a duplicate deployment-history model.
-        if config.supports_vision and not _sl_model_supports_vision(current):
-            # Deliberately omit is_default from the patch payload: the PUT
-            # endpoint applies partial updates and would otherwise clear
-            # SourceLens's process-wide default if this model holds it.
-            sl_client.request_json(
-                "PUT",
-                f"/api/v1/admin/llm-config/{link.sl_config_uuid}/",
-                json_body=(
-                    _vision_capability_patch()
-                    if not config.api_key
-                    else _source_lens_payload(config)
-                ),
-            )
-            logger.info(
-                "Repaired SourceLens multimodal model %s vision-capability "
-                "declaration.",
-                link.sl_config_uuid,
-            )
-
-        connectivity_ok = _test_connection(link.sl_config_uuid)
-        if connectivity_ok:
-            if link_needs_reconciliation or should_select_managed:
-                with transaction.atomic():
-                    if link_needs_reconciliation:
-                        _persist_link(
-                            link=link,
-                            config_uuid=link.sl_config_uuid,
-                            display_name=config.display_name,
-                            management_key=management_key,
-                            role=role,
-                            preserve_existing=False,
-                            deployment_fingerprint=deployment_fingerprint,
-                        )
-                    if should_select_managed:
-                        _set_role_default(
-                            defaults_id=platform_defaults.id,
-                            role=role,
-                            config_uuid=link.sl_config_uuid,
-                        )
-            return DeploymentAiModelResult(
-                action="updated",
-                connectivity_ok=True,
-            )
-        logger.warning(
-            "Deployment-managed %s model failed its recheck; "
-            "validating a replacement candidate.",
-            role,
-        )
-
-    created = sl_client.request_json(
-        "POST",
-        "/api/v1/admin/llm-config/",
-        json_body=_source_lens_payload(config, make_default=False),
-    )
-    config_uuid = _created_uuid(created)
-    action: Literal["created", "updated", "recreated"] = (
-        "created" if first_adoption else "recreated"
-    )
-
-    connectivity_ok = _test_connection(config_uuid)
-    if not connectivity_ok:
-        try:
-            sl_client.request_json(
-                "DELETE",
-                f"/api/v1/admin/llm-config/{config_uuid}/",
-            )
-        except sl_client.LensBridgeError:
-            logger.warning(
-                "Unable to remove rejected deployment-managed AI model."
-            )
+    existing = _find_existing_model(org=org, config=config, role=role)
+    if not _test_connection(config):
         return DeploymentAiModelResult(
-            action=action,
+            action="updated" if existing else "created",
             connectivity_ok=False,
             applied=False,
         )
 
-    try:
-        with transaction.atomic():
-            _persist_link(
-                link=link,
-                config_uuid=config_uuid,
-                display_name=config.display_name,
-                management_key=management_key,
-                role=role,
-                preserve_existing=(current is not None),
-                deployment_fingerprint=deployment_fingerprint,
+    action: Literal["created", "updated"]
+    if existing and existing.get("uuid"):
+        config_uuid = uuid.UUID(str(existing["uuid"]))
+        sl_client.request_json(
+            "PUT",
+            f"/api/v1/admin/llm-config/{config_uuid}/",
+            json_body=_source_lens_payload(config),
+        )
+        action = "updated"
+    else:
+        created = sl_client.request_json(
+            "POST",
+            "/api/v1/admin/llm-config/",
+            json_body=_source_lens_payload(config),
+        )
+        if not isinstance(created, dict) or not created.get("uuid"):
+            raise sl_client.LensBridgeError(
+                "SourceLens did not return the created AI model identifier."
             )
-            if should_select_managed:
-                _set_role_default(
-                    defaults_id=platform_defaults.id,
-                    role=role,
-                    config_uuid=config_uuid,
-                )
-    except DatabaseError:
-        if action in {"created", "recreated"}:
-            try:
-                sl_client.request_json(
-                    "DELETE",
-                    f"/api/v1/admin/llm-config/{config_uuid}/",
-                )
-            except sl_client.LensBridgeError:
-                logger.warning(
-                    "Unable to remove orphaned deployment-managed SourceLens model."
-                )
-        raise
-    return DeploymentAiModelResult(
-        action=action,
-        connectivity_ok=connectivity_ok,
+        config_uuid = uuid.UUID(str(created["uuid"]))
+        action = "created"
+
+    link = org_models.register_org_model(
+        org=org,
+        sl_config_uuid=config_uuid,
+        ensure_agent_default=role == "agent",
     )
+    org_models.set_model_display_name(link, config.display_name)
+    defaults = provisioning.get_or_create_org_link(org)
+    field_name = (
+        "default_agent_model_ref" if role == "agent" else "default_multimodal_model_ref"
+    )
+    if getattr(defaults, field_name) != config_uuid:
+        setattr(defaults, field_name, config_uuid)
+        defaults.save(update_fields=[field_name, "updated_at"])
+    return DeploymentAiModelResult(action=action, connectivity_ok=True)

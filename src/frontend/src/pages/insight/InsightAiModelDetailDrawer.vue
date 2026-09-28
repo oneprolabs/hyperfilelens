@@ -304,13 +304,6 @@ onUnmounted(() => {
                   />
                 </span>
               </div>
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelManagedBy') }}</span>
-                <span class="hfl-detail-row__value">
-                  {{ detail.deployment_managed ? t('insight.aiSettings.deploymentManagedBadge') : t('insight.aiSettings.manuallyManagedBadge') }}
-                </span>
-              </div>
-
               <div
                 class="hfl-detail-row ai-model-drawer__divider"
                 aria-hidden="true"
@@ -396,7 +389,6 @@ onUnmounted(() => {
           {{ t('insight.aiSettings.testConnection') }}
         </ElButton>
         <ElButton
-          v-if="!detail.deployment_managed"
           type="primary"
           :disabled="testing"
           @click="onEdit"

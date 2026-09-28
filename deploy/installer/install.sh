@@ -5661,7 +5661,7 @@ render_deployment_command_output() {
 		Deployment-managed\ SMTP\ is\ unavailable\;*)
 			skip "SMTP synchronization skipped because SMTP is not configured"
 			;;
-		HFL_IDENTITY_STATUS=*|HFL_GOOGLE_OAUTH_STATUS=*|HFL_AI_MODEL_REPAIRED=*)
+		HFL_IDENTITY_STATUS=*|HFL_GOOGLE_OAUTH_STATUS=*)
 			# Internal machine-readable result markers are represented by the
 			# surrounding structured status lines.
 			;;
@@ -5728,31 +5728,6 @@ sync_optional_identity_settings() {
 	if [[ "${command_status}" -ne 0 ]]; then
 		warn "Google OAuth local route or generated callback is not ready; core services remain available"
 	fi
-}
-
-repair_existing_multimodal_model() {
-	step "Reconciling the existing multimodal model capability"
-	local output command_status
-	set +e
-	output="$(
-		printf '%s\n' '{"role":"multimodal","repair_existing":true}' \
-			| compose_in_root exec -T "$(active_api_service)" \
-				python manage.py ensure_platform_ai_model 2>&1
-	)"
-	command_status=$?
-	set -e
-	if [[ -n "${output}" ]]; then
-		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
-			render_deployment_command_output "${output}"
-		else
-			printf '%s\n' "${output}"
-		fi
-	fi
-	if [[ "${command_status}" -ne 0 ]]; then
-		warn "Existing multimodal model capability could not be reconciled; core services remain available"
-		return 0
-	fi
-	ok "Existing multimodal model capability reconciled"
 }
 
 # --- Commands ---
@@ -5910,7 +5885,6 @@ cmd_install() {
 	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
 		print_section "Multimodal model"
 	fi
-	repair_existing_multimodal_model
 	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
 		print_section "Platform Data Gateway"
 	fi
@@ -6020,7 +5994,6 @@ cmd_start() {
 	wait_for_hfl_health || die "HyperFileLens failed its startup health gate"
 	wait_for_sourcelens_health || die "bundled SourceLens failed its startup health gate"
 	sync_optional_identity_settings
-	repair_existing_multimodal_model
 	log "Services started"
 	compose_all_profiles ps
 }
@@ -7747,7 +7720,6 @@ cmd_upgrade() {
 	fi
 	record_upgrade_transaction_phase sourcelens_complete
 	sync_optional_identity_settings
-	repair_existing_multimodal_model
 	check_local_platform_gateway_continuity
 	ensure_local_platform_gateway
 	record_upgrade_transaction_phase gateway_verified

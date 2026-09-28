@@ -136,32 +136,32 @@ on:
         default: ''
         type: string
       ai_model_provider:
-        description: Optional deployment-managed SourceLens model provider
+        description: Optional configured SourceLens model provider
         required: false
         default: ''
         type: string
       ai_model_id:
-        description: Optional deployment-managed SourceLens model identifier
+        description: Optional configured SourceLens model identifier
         required: false
         default: ''
         type: string
       ai_model_display_name:
-        description: Optional deployment-managed model display name
+        description: Optional configured model display name
         required: false
         default: ''
         type: string
       ai_multimodal_model_provider:
-        description: Optional deployment-managed multimodal model provider
+        description: Optional configured multimodal model provider
         required: false
         default: ''
         type: string
       ai_multimodal_model_id:
-        description: Optional deployment-managed multimodal model identifier
+        description: Optional configured multimodal model identifier
         required: false
         default: ''
         type: string
       ai_multimodal_model_display_name:
-        description: Optional deployment-managed multimodal model display name
+        description: Optional configured multimodal model display name
         required: false
         default: ''
         type: string
@@ -179,10 +179,10 @@ on:
         description: Optional Google OAuth web client secret
         required: false
       ai_model_api_base:
-        description: Optional HTTPS API base for the deployment-managed model
+        description: Optional HTTPS API base for the configured model
         required: false
       ai_model_api_key:
-        description: Optional API key for the deployment-managed model
+        description: Optional API key for the configured model
         required: false
       sentry_backend_dsn:
         description: Optional HFL backend Sentry DSN
@@ -702,7 +702,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$AI_MODEL_PROVIDER" ]]; then
-            printf '### AI model deployment\n\nSkipped: deployment-managed AI model is not configured.\n' >> "$GITHUB_STEP_SUMMARY"
+            printf '### AI model deployment\n\nSkipped: no Agent model configuration was provided.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
@@ -743,7 +743,7 @@ jobs:
           set -e
           printf '%s\n' "$output"
           if (( command_status != 0 )); then
-            echo '::error title=AI model deployment::Unable to apply the configured deployment-managed model.'
+            echo '::error title=AI model deployment::Unable to apply the configured model.'
             printf '### AI model deployment\n\nFailed: configured model could not be created or updated.\n' >> "$GITHUB_STEP_SUMMARY"
             exit "$command_status"
           elif grep -F 'HFL_AI_MODEL_APPLIED=false' <<<"$output" >/dev/null; then
@@ -755,7 +755,7 @@ jobs:
             printf '### AI model deployment\n\nFailed: required Agent model connectivity validation failed.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           else
-            printf '### AI model deployment\n\nPassed: deployment-managed model was applied and tested successfully.\n' >> "$GITHUB_STEP_SUMMARY"
+            printf '### AI model deployment\n\nPassed: configured model was applied and tested successfully.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Configure Default Multimodal Model
@@ -768,35 +768,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          repair_historical_multimodal() {
-            payload="$RUNNER_TEMP/hyperfilelens-multimodal-model-repair.json"
-            trap 'rm -f -- "$payload"' RETURN
-            umask 077
-            printf '{"role":"multimodal","repair_existing":true}\n' > "$payload"
-            set +e
-            output="$(ssh -i ~/.ssh/hyperfilelens_deploy \
-              -o BatchMode=yes \
-              -o StrictHostKeyChecking=yes \
-              -o ConnectTimeout=20 \
-              -o ServerAliveInterval=30 \
-              -o ServerAliveCountMax=20 \
-              -o TCPKeepAlive=yes \
-              -p "$DEPLOY_SSH_PORT" \
-              "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-              '/opt/hyperfilelens/install.sh manage ensure_platform_ai_model' \
-              < "$payload" 2>&1)"
-            command_status=$?
-            set -e
-            printf '%s\n' "$output"
-            if (( command_status != 0 )); then
-              echo '::warning title=Multimodal model compatibility::Historical model repair could not be completed; the installed model was preserved.'
-              printf '### Multimodal model deployment\n\nWarning: historical model compatibility repair could not be completed.\n' >> "$GITHUB_STEP_SUMMARY"
-            else
-              printf '### Multimodal model deployment\n\nPassed: historical model compatibility was checked.\n' >> "$GITHUB_STEP_SUMMARY"
-            fi
-          }
           if [[ -z "$AI_MULTIMODAL_MODEL_PROVIDER" ]]; then
-            repair_historical_multimodal
+            printf '### Multimodal model deployment\n\nSkipped: no multimodal model configuration was provided.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           multimodal_values=(
@@ -809,7 +782,7 @@ jobs:
           for value in "${multimodal_values[@]}"; do
             if [[ -z "$value" ]]; then
               echo '::warning title=Multimodal model configuration::Configuration is incomplete; the installed multimodal default will be preserved.'
-              repair_historical_multimodal
+              printf '### Multimodal model deployment\n\nSkipped: incomplete optional configuration; the installed default was preserved.\n' >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
           done
@@ -820,7 +793,7 @@ jobs:
             || [[ "$AI_MODEL_API_BASE" == *$'\n'* || "$AI_MODEL_API_BASE" == *$'\r'* ]] \
             || [[ "$AI_MODEL_API_KEY" == *$'\n'* || "$AI_MODEL_API_KEY" == *$'\r'* ]]; then
             echo '::warning title=Multimodal model configuration::Configuration is malformed; the installed multimodal default will be preserved.'
-            repair_historical_multimodal
+            printf '### Multimodal model deployment\n\nSkipped: malformed optional configuration; the installed default was preserved.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
@@ -871,7 +844,7 @@ jobs:
             echo '::warning title=Multimodal model connectivity::The installed model failed its connectivity recheck. Text Chat remains available.'
             printf '### Multimodal model deployment\n\nWarning: the installed model failed its connectivity recheck.\n' >> "$GITHUB_STEP_SUMMARY"
           else
-            printf '### Multimodal model deployment\n\nPassed: deployment-managed multimodal model was applied successfully.\n' >> "$GITHUB_STEP_SUMMARY"
+            printf '### Multimodal model deployment\n\nPassed: configured multimodal model was applied successfully.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Check Public Endpoint

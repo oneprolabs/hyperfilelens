@@ -82,9 +82,6 @@ export type LensLlmConfig = {
   }
   is_active?: boolean
   is_default?: boolean
-  deployment_managed?: boolean
-  deployment_role?: '' | 'agent' | 'multimodal'
-  is_deployment_history?: boolean
   is_default_agent?: boolean
   is_default_multimodal?: boolean
   order?: number

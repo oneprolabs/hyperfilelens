@@ -11,7 +11,7 @@ from rest_framework.test import APIClient
 from apps.iam.models import Organization
 from apps.instance_settings.tests.helpers import ensure_ops_staff_role
 from apps.lens_bridge.models import LensOrgModelLink
-from apps.lens_bridge.services import deployment_ai_model, platform_lens
+from apps.lens_bridge.services import platform_lens
 
 
 @override_settings(HFL_PLATFORM_OPS_ENABLED=True)
@@ -37,8 +37,7 @@ class HostPlatformLensModelTests(TestCase):
         self.link = LensOrgModelLink.objects.create(
             organization=self.platform_org,
             sl_config_uuid=self.model_uuid,
-            display_name="Deployment Model",
-            management_key=deployment_ai_model.DEPLOYMENT_MODEL_MANAGEMENT_KEY,
+            display_name="Example Model",
         )
 
     @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
@@ -61,7 +60,9 @@ class HostPlatformLensModelTests(TestCase):
         self.assertEqual(uuids, {str(self.model_uuid)})
 
     @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
-    def test_detail_marks_deployment_managed_model(self, request_json):
+    def test_detail_exposes_model_display_name_without_management_metadata(
+        self, request_json
+    ):
         request_json.return_value = {
             "uuid": str(self.model_uuid),
             "provider": "openai_compatible",
@@ -73,20 +74,41 @@ class HostPlatformLensModelTests(TestCase):
         response = self.client.get(self.path)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data["deployment_managed"])
-        self.assertEqual(response.data["name"], "Deployment Model")
+        self.assertNotIn("deployment_managed", response.data)
+        self.assertEqual(response.data["name"], "Example Model")
 
     @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
-    def test_connection_fields_are_read_only(self, request_json):
+    def test_connection_fields_are_mutable(self, request_json):
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "provider": "openai_compatible",
+                "config": {"model": "model/one", "is_active": True},
+                "is_active": True,
+            },
+            {"ok": True},
+            {
+                "uuid": str(self.model_uuid),
+                "provider": "openai_compatible",
+                "config": {"model": "other", "api_key": "********"},
+                "is_active": True,
+            },
+        ]
         response = self.client.patch(
             self.path,
-            {"config": {"model": "other"}},
+            {
+                "provider": "openai_compatible",
+                "config": {
+                    "model": "other",
+                    "api_base": "https://models.example/v1",
+                    "api_key": "secret-value",
+                },
+            },
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
-        self.assertEqual(response.data["code"], "AI_MODEL_MANAGED_BY_DEPLOYMENT")
-        request_json.assert_not_called()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["name"], "Example Model")
 
     @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
     def test_foreign_model_uuid_is_rejected(self, request_json):

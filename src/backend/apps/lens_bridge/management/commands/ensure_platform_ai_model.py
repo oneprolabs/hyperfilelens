@@ -1,4 +1,4 @@
-"""Create or update the deployment-managed platform AI model."""
+"""Create or update one configured platform AI model."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from apps.lens_bridge.services.deployment_ai_model import (
     DeploymentAiModelConfig,
     DeploymentAiModelConfigurationError,
     ensure_platform_ai_model,
-    repair_existing_platform_ai_model,
 )
 
 MAX_INPUT_BYTES = 16 * 1024
@@ -23,7 +22,7 @@ MAX_INPUT_BYTES = 16 * 1024
 class Command(BaseCommand):
     """Apply one complete AI model configuration supplied through stdin."""
 
-    help = "Create or update the deployment-managed platform AI model from JSON stdin."
+    help = "Create or update one configured platform AI model from JSON stdin."
 
     def handle(self, *args: Any, **options: Any) -> None:
         raw = sys.stdin.read(MAX_INPUT_BYTES + 1)
@@ -42,23 +41,17 @@ class Command(BaseCommand):
                 raise DeploymentAiModelConfigurationError(
                     "role must be agent or multimodal"
                 )
-            if payload.get("repair_existing") is True:
-                repaired = repair_existing_platform_ai_model(role=role)
-                self.stdout.write(
-                    f"HFL_AI_MODEL_REPAIRED={'true' if repaired else 'false'}"
-                )
-                return
             config = DeploymentAiModelConfig.from_mapping(payload)
             result = ensure_platform_ai_model(config, role=role)
         except DeploymentAiModelConfigurationError as exc:
             raise CommandError(str(exc)) from exc
         except sl_client.LensBridgeError as exc:
             raise CommandError(
-                "Unable to apply the deployment-managed AI model in SourceLens."
+                "Unable to apply the configured AI model in SourceLens."
             ) from exc
         except DatabaseError as exc:
             raise CommandError(
-                "Unable to persist the deployment-managed AI model link."
+                "Unable to persist the configured AI model link."
             ) from exc
 
         if role == "agent" and not result.applied:
@@ -70,14 +63,14 @@ class Command(BaseCommand):
         if result.applied:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Deployment-managed {role} AI model "
+                    f"Configured {role} AI model "
                     f"{result.action} successfully."
                 )
             )
         else:
             self.stderr.write(
                 self.style.WARNING(
-                    f"Deployment-managed {role} AI model was not applied; "
+                    f"Configured {role} AI model was not applied; "
                     "the installed default was preserved."
                 )
             )
