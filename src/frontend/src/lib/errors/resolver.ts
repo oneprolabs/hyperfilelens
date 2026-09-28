@@ -120,6 +120,13 @@ export function resolveErrorMessage(
     return resolveSubscriptionQuotaMessage(meta, t)
   }
 
+  // Preserve diagnostics from legacy responses that do not include a
+  // registered error code (for example notification test failures returned as
+  // { error: "..." }). These are already the server's user-facing message.
+  if (code === 'UNKNOWN.ERROR' && diagnostic) {
+    return diagnostic
+  }
+
   if (t && isRegistryCode(code)) {
     const key = ERROR_CODE_I18N_KEYS[code]
     if (key) return interpolate(t(key, meta), meta)

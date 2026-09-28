@@ -3,14 +3,47 @@
 from __future__ import annotations
 
 
+import socket
+import ssl
 from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
 
 from django.core.mail import EmailMessage
 
 from apps.notification.constants import ChannelType
 from apps.notification.models import NotificationChannel
 from apps.notification.channels import WebhookChannel
+from apps.notification.exceptions import WebhookTestError
 from apps.notification.models import NotificationDelivery
+
+
+def _classify_webhook_error(exc: Exception) -> WebhookTestError:
+    diagnostic = str(exc)
+    reason = exc.reason if isinstance(exc, URLError) else exc
+    reason_text = str(reason).lower()
+    if isinstance(reason, ssl.SSLCertVerificationError) or "certificate verify failed" in reason_text:
+        return WebhookTestError(
+            "NOTIFICATION.WEBHOOK_TLS_FAILED",
+            "The webhook HTTPS certificate could not be verified.",
+            diagnostic,
+        )
+    if isinstance(exc, HTTPError):
+        return WebhookTestError(
+            "NOTIFICATION.WEBHOOK_HTTP_ERROR",
+            f"The webhook endpoint returned HTTP {exc.code}.",
+            diagnostic,
+        )
+    if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in reason_text:
+        return WebhookTestError(
+            "NOTIFICATION.WEBHOOK_TIMEOUT",
+            "The webhook request timed out.",
+            diagnostic,
+        )
+    return WebhookTestError(
+        "NOTIFICATION.WEBHOOK_UNREACHABLE",
+        "The webhook server could not be reached.",
+        diagnostic,
+    )
 
 
 def test_channel(channel: NotificationChannel) -> dict:
@@ -71,6 +104,16 @@ def test_channel(channel: NotificationChannel) -> dict:
         if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
             raise ValueError("Webhook URL must be a valid http:// or https:// URL.")
         test_cfg = {**cfg, "url": url}
+        # A connection test should report reachability promptly. Production
+        # delivery retries are intentionally not used for an interactive test.
+        test_cfg["max_attempts"] = 1
+        try:
+            test_cfg["timeout_seconds"] = min(
+                max(float(cfg.get("timeout_seconds") or 8), 1),
+                10,
+            )
+        except (TypeError, ValueError):
+            test_cfg["timeout_seconds"] = 8
         if channel_type in (ChannelType.DINGTALK, ChannelType.WECOM):
             test_cfg["webhook_platform"] = channel_type
         stub = NotificationDelivery(
@@ -87,7 +130,10 @@ def test_channel(channel: NotificationChannel) -> dict:
             config=test_cfg,
             is_active=channel.is_active,
         )
-        WebhookChannel().send(channel=patched, delivery=stub)
+        try:
+            WebhookChannel().send(channel=patched, delivery=stub)
+        except Exception as exc:
+            raise _classify_webhook_error(exc) from exc
         return {"status": "success"}
 
     return {"status": "skipped", "message": "Unsupported channel type."}

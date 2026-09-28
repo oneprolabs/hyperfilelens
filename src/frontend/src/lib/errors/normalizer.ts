@@ -107,7 +107,7 @@ export function normalizeThrownError(err: unknown): AppErrorShape {
 
   if (err && typeof err === 'object') {
     const o = err as AppErrorShape
-    if (typeof o.status === 'number' && (o.errorCode || o.code)) {
+    if (typeof o.status === 'number' && (o.errorCode || o.code || o.message)) {
       const code = o.errorCode || o.code
       if (o.message && isBrowserNetworkMessage(o.message)) {
         return { ...networkUnavailableError(), detail: o.detail, traceId: o.traceId }

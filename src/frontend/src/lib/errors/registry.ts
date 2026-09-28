@@ -2,6 +2,10 @@
 export const ERROR_CODE_I18N_KEYS: Record<string, string> = {
   'NETWORK.UNAVAILABLE': 'errors.codes.networkUnavailable',
   'NETWORK.TIMEOUT': 'errors.codes.networkTimeout',
+  'NOTIFICATION.WEBHOOK_TIMEOUT': 'errors.codes.notificationWebhookTimeout',
+  'NOTIFICATION.WEBHOOK_TLS_FAILED': 'errors.codes.notificationWebhookTlsFailed',
+  'NOTIFICATION.WEBHOOK_UNREACHABLE': 'errors.codes.notificationWebhookUnreachable',
+  'NOTIFICATION.WEBHOOK_HTTP_ERROR': 'errors.codes.notificationWebhookHttpError',
   'CLIENT.OFFLINE': 'errors.codes.clientOffline',
   'CLIENT.ABORTED': 'errors.codes.clientAborted',
   'UNKNOWN.ERROR': 'errors.codes.unknown',
@@ -60,6 +64,14 @@ export const ERROR_CODE_I18N_KEYS: Record<string, string> = {
 export const ERROR_CODE_FALLBACK_EN: Record<string, string> = {
   'NETWORK.UNAVAILABLE': 'Unable to connect. Check your network and try again.',
   'NETWORK.TIMEOUT': 'Request timed out. Please try again later.',
+  'NOTIFICATION.WEBHOOK_TIMEOUT':
+    'The webhook request timed out. Verify that the URL is reachable from the HyperFileLens server.',
+  'NOTIFICATION.WEBHOOK_TLS_FAILED':
+    'The webhook HTTPS certificate could not be verified. Use a trusted certificate or check the certificate chain.',
+  'NOTIFICATION.WEBHOOK_UNREACHABLE':
+    'The webhook server could not be reached. Verify the URL, port, firewall, and network route.',
+  'NOTIFICATION.WEBHOOK_HTTP_ERROR':
+    'The webhook endpoint rejected the request. Check the URL, method, headers, and payload.',
   'CLIENT.OFFLINE': 'You are offline. Check your network connection.',
   'UNKNOWN.ERROR': 'Something went wrong. Please try again.',
   'VALIDATION.FAILED': 'Please check the form and try again.',

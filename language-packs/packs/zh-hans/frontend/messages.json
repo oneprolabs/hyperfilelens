@@ -121,7 +121,11 @@
       "subscriptionQuotaExceededGateway": "共享数据网关当前容量不足。请稍后重试或联系平台管理员。",
       "subscriptionQuotaUsageUnavailable": "容量信息暂时不可用，请稍后重试。",
       "backupAlreadyRunning": "该备份源的备份正在启动或运行。请先停止备份或等待其完成，再继续操作。",
-      "restoreAlreadyRunning": "该备份源已有恢复任务正在运行"
+      "restoreAlreadyRunning": "该备份源已有恢复任务正在运行",
+      "notificationWebhookTimeout": "Webhook 请求超时。请确认 HyperFileLens 服务器可以访问该 URL。",
+      "notificationWebhookTlsFailed": "无法验证 Webhook HTTPS 证书。请使用受信任的证书或检查证书链。",
+      "notificationWebhookUnreachable": "无法访问 Webhook 服务器。请检查 URL、端口、防火墙和网络路由。",
+      "notificationWebhookHttpError": "Webhook 端点拒绝了请求。请检查 URL、方法、请求头和请求体。"
     }
   },
   "feedback": {
