@@ -54,14 +54,13 @@ describe('repository residual status UI', () => {
     expect(zhHans.repositoriesPage.healthBoundUnverifiedNfsHelp).not.toBe(en.repositoriesPage.healthBoundUnverifiedNfsHelp)
   })
 
-  it('keeps recovery guidance and the release action visible in repository details', () => {
+  it('keeps recovery guidance visible without exposing a second cleanup action', () => {
     expect(page).toContain('v-if="isRemovedRepositoryWithResidualLocation(detailRow)"')
     expect(page).toContain("t('repositoriesPage.residualAttentionDescription')")
     expect(page).toContain('class="repo-residual-attention__body"')
-    expect(page).toContain('class="repo-residual-attention__actions"')
-    expect(page).toContain('class="repo-residual-attention__action"')
-    expect(page).toContain('type="warning"\n                plain\n                size="small"')
-    expect(page).toContain('@click="openDetailReleaseResidualDialog"')
+    expect(page).not.toContain('releaseResidualDialogOpen')
+    expect(page).not.toContain('openDetailReleaseResidualDialog')
+    expect(page).not.toContain("t('repositoriesPage.releaseResidualLocation')")
   })
 
   it('provides English source copy and Simplified Chinese translations', () => {
