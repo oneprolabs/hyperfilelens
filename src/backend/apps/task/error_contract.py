@@ -54,6 +54,15 @@ def _reasons(value, code="TASK_FAILED"):
     ]
 
 
+def _default_suggestion_code(task) -> str:
+    task_type = str(getattr(task, "task_type", "") or "")
+    return {
+        "backup": "review_backup_diagnostics",
+        "restore": "review_restore_diagnostics",
+        "repository_operation": "review_repository_operation",
+    }.get(task_type, "review_task")
+
+
 def task_error_contract(task, resources=()):
     status = str(task.status)
     if status not in {"failed", "timeout", "success", "partial", "cancelled"}:
@@ -88,17 +97,23 @@ def task_error_contract(task, resources=()):
         reasons.append({"code": code, "detail": str(task.error_message)})
     if failure:
         reasons.append({"code": str(failure.get("category") or code), "detail": str(failure.get("category") or code), "count": failure.get("total_count", failure.get("count", 0))})
+    default_suggestion_code = _default_suggestion_code(task)
     suggestions = _reasons(
         result.get("suggestions") or result.get("resolutions"),
-        "review_task",
+        default_suggestion_code,
     )
+    if default_suggestion_code != "review_task":
+        for suggestion in suggestions:
+            if suggestion["code"] == "review_task":
+                suggestion["code"] = default_suggestion_code
+                suggestion["detail"] = default_suggestion_code
     if result.get("hint"):
-        suggestions.append({"code": "review_task", "detail": str(result["hint"])})
+        suggestions.append({"code": default_suggestion_code, "detail": str(result["hint"])})
     suggestions += _reasons(failure.get("remediation"), "backup_remediation")
     if retained or cleanup or result.get("cleanup_complete") is False:
         suggestions.append({"code": "review_cleanup", "detail": "Review retained resources and complete any remaining cleanup before retrying."})
     if not suggestions:
-        suggestions.append({"code": "review_task", "detail": "Review the affected resources and task details before retrying from the original workflow."})
+        suggestions.append({"code": default_suggestion_code, "detail": default_suggestion_code})
     entities = []
     for resource in resources:
         kind = str(resource.resource_type)
@@ -107,7 +122,9 @@ def task_error_contract(task, resources=()):
         for item in _list(result.get(key)):
             if isinstance(item, dict) and item.get("source_id"):
                 entities.append({"id": str(item["source_id"]), "name": str(item.get("source_name") or item["source_id"]), "type": "source", "error": str(item.get("detail") or "")})
-    for item in _list(failure.get("items")) + _list(skipped.get("items")) + _list(summary.get("failed_directories")):
+    # Keep ignored/skipped source items out of the fatal entity list. They are
+    # exposed through `skipped_items` below and rendered by the warning panel.
+    for item in _list(failure.get("items")) + _list(summary.get("failed_directories")):
         if isinstance(item, dict) and item.get("path"):
             entities.append({"id": str(item["path"]), "name": str(item["path"]), "type": "source", "error": str(item.get("error") or "")})
     for item in children:
