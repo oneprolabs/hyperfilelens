@@ -71,6 +71,10 @@ export const en = {
     codes: {
       networkUnavailable: 'Unable to connect. Check your network and try again.',
       networkTimeout: 'Request timed out. Please try again later.',
+      notificationWebhookTimeout: 'The webhook request timed out. Verify that the URL is reachable from the HyperFileLens server.',
+      notificationWebhookTlsFailed: 'The webhook HTTPS certificate could not be verified. Use a trusted certificate or check the certificate chain.',
+      notificationWebhookUnreachable: 'The webhook server could not be reached. Verify the URL, port, firewall, and network route.',
+      notificationWebhookHttpError: 'The webhook endpoint rejected the request. Check the URL, method, headers, and payload.',
       clientOffline: 'You are offline. Check your network connection.',
       clientAborted: '',
       unknown: 'Something went wrong. Please try again.',

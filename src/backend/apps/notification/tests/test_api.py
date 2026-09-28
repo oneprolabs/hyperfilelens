@@ -6,6 +6,7 @@ from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
 from apps.notification.channel_push import channel_group_name
+from apps.notification.exceptions import WebhookTestError
 from apps.notification.models import NotificationChannel, NotificationLog
 
 
@@ -270,6 +271,40 @@ def test_draft_channel_test_rejects_cross_org_channel(org_client):
         )
     assert res.status_code == 404
     send.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_webhook_test_returns_structured_failure(org_client):
+    client, org = org_client
+    channel = NotificationChannel.objects.create(
+        organization=org,
+        name="Webhook",
+        channel_type="webhook",
+        config={"url": "http://192.0.2.1:5000/webhook"},
+    )
+    with patch(
+        "apps.notification.api.views.channel.test_channel",
+        side_effect=WebhookTestError(
+            "NOTIFICATION.WEBHOOK_TIMEOUT",
+            "The webhook request timed out.",
+            "<urlopen error timed out>",
+        ),
+    ):
+        response = client.post(
+            f"/api/v1/notifications/channels/{channel.id}/test/",
+            {},
+            format="json",
+            HTTP_X_ORG_KEY=org.key,
+        )
+
+    assert response.status_code == 400, response.content
+    assert response.data == {
+        "status": "failed",
+        "code": "NOTIFICATION.WEBHOOK_TIMEOUT",
+        "message": "The webhook request timed out.",
+        "error": "<urlopen error timed out>",
+    }
+
 
 @pytest.mark.django_db
 def test_channel_bulk_state_and_delete(org_client):

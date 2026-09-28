@@ -85,6 +85,76 @@ describe('api validation errors', () => {
 
     expect(message).toBe('Configure an active AI model before creating a chat.')
   })
+
+  it('shows a top-level string error returned by legacy endpoints', async () => {
+    vi.mocked(getRouteRequestSignal).mockReturnValue(routeSignal)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: 'failed',
+      error: 'Webhook request timed out',
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    let message = ''
+    try {
+      await api('/api/v1/notifications/channels/test-config/', { method: 'POST' })
+    } catch (error) {
+      message = apiErrorMessage(error)
+    }
+
+    expect(message).toBe('Webhook request timed out')
+  })
+
+  it('localizes a structured nested webhook error code', async () => {
+    vi.mocked(getRouteRequestSignal).mockReturnValue(routeSignal)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 400,
+      message: 'failed',
+      data: {
+        status: 'failed',
+        code: 'NOTIFICATION.WEBHOOK_TIMEOUT',
+        message: 'The webhook request timed out.',
+        error: '<urlopen error timed out>',
+      },
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    let message = ''
+    try {
+      await api('/api/v1/notifications/channels/test-config/', { method: 'POST' })
+    } catch (error) {
+      message = apiErrorMessage(error)
+    }
+
+    expect(message).toBe('The webhook request timed out. Verify that the URL is reachable from the HyperFileLens server.')
+  })
+
+  it('prefers a nested legacy error over a generic envelope message', async () => {
+    vi.mocked(getRouteRequestSignal).mockReturnValue(routeSignal)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 400,
+      message: 'failed',
+      data: {
+        status: 'failed',
+        error: '<urlopen error timed out>',
+      },
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    let message = ''
+    try {
+      await api('/api/v1/notifications/channels/test-config/', { method: 'POST' })
+    } catch (error) {
+      message = apiErrorMessage(error)
+    }
+
+    expect(message).toBe('<urlopen error timed out>')
+  })
 })
 
 describe('repository conflict errors', () => {

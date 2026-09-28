@@ -65,6 +65,10 @@
     "codes": {
       "networkUnavailable": "网络连接失败，请检查网络后重试",
       "networkTimeout": "请求超时，请稍后重试",
+      "notificationWebhookTimeout": "Webhook 请求超时。请确认 HyperFileLens 服务器可以访问该 URL。",
+      "notificationWebhookTlsFailed": "无法验证 Webhook HTTPS 证书。请使用受信任的证书或检查证书链。",
+      "notificationWebhookUnreachable": "无法访问 Webhook 服务器。请检查 URL、端口、防火墙和网络路由。",
+      "notificationWebhookHttpError": "Webhook 端点拒绝了请求。请检查 URL、方法、请求头和请求体。",
       "clientOffline": "网络已断开，请检查网络连接",
       "clientAborted": "",
       "unknown": "操作失败，请稍后重试",

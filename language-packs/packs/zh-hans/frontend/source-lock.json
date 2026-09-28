@@ -7885,5 +7885,9 @@
   "proxyDetail.openInNewTab": "c9d8273d33663edc458a35e2a06ba0ee6fa7b8073ac501d56aa2f385a1e9ac77",
   "proxyDetail.emptyTargetNas": "ce108fa5710ddb33956527de85aff8d70b9354e240c714c330772c31f3ecc989",
   "proxyDetail.emptyStandaloneDisk": "9193b6df763a4baa06224e92900fe597bbed8c69e98e12c5c055a88b609019ac",
-  "proxyDetail.emptySourceNas": "443911a22dfdba7fb89830c61f5d0305057a0f733a1d6d863c198cdb7c0a38f0"
+  "proxyDetail.emptySourceNas": "443911a22dfdba7fb89830c61f5d0305057a0f733a1d6d863c198cdb7c0a38f0",
+  "errors.codes.notificationWebhookTimeout": "08d17fab5ea3eaf00336cfe3ee0c3420eab542ac96792c6eaabc3a83b86f8454",
+  "errors.codes.notificationWebhookTlsFailed": "ff3356d487407e00fedeff52c8cda816565a3dd66c1bdd511402220d87feaf0d",
+  "errors.codes.notificationWebhookUnreachable": "f29c1d2d08842e4a21e8cd35c96d5ad981550815dcf9ed6bb3f2ec093a0136f7",
+  "errors.codes.notificationWebhookHttpError": "5a77c15621172008d88972630c1fddbbf5fe579deb6055476d8b746d0ab18411"
 }

@@ -105,6 +105,17 @@ function extractMessage(data: unknown): string | undefined {
     // data.data.error.message (the actual response structure)
     if ('data' in d && d.data && typeof d.data === 'object') {
       const inner = d.data as Record<string, unknown>
+      if (
+        'message' in inner
+        && typeof inner.message === 'string'
+        && inner.message.trim()
+        && inner.message.toLowerCase() !== 'failed'
+      ) {
+        return inner.message
+      }
+      if ('error' in inner && typeof inner.error === 'string' && inner.error.trim()) {
+        return inner.error
+      }
       if ('message' in inner) return inner.message as string
       if ('error' in inner && typeof inner.error === 'object') {
         const err = inner.error as Record<string, unknown>
@@ -115,6 +126,11 @@ function extractMessage(data: unknown): string | undefined {
     if ('error' in d && typeof d.error === 'object') {
       const err = d.error as Record<string, unknown>
       if ('message' in err) return err.message as string
+    }
+    // Some legacy endpoints return a human-readable diagnostic as a
+    // top-level string instead of a Problem Details object.
+    if ('error' in d && typeof d.error === 'string' && d.error.trim()) {
+      return d.error
     }
     if ('message' in d) return d.message as string
   }

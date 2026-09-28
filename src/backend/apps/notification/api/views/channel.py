@@ -18,6 +18,7 @@ from apps.notification.api.serializers import (
 from apps.notification.api.views._org import require_org
 from apps.notification.constants import ChannelType
 from apps.notification.models import NotificationChannel, NotificationLog
+from apps.notification.exceptions import WebhookTestError
 from apps.notification.selectors.interface import channel_statistics, channels_for_org, filter_channels
 from apps.notification.services.internal.log_details import notification_log_details
 from apps.notification.services.interface import test_channel
@@ -26,6 +27,23 @@ from apps.notification.services.internal.channel_bulk import (
     bulk_set_channel_state,
 )
 from apps.iam.models import Organization
+
+
+def _test_failure_response(exc: Exception) -> Response:
+    if isinstance(exc, WebhookTestError):
+        return Response(
+            {
+                "status": "failed",
+                "code": exc.code,
+                "message": exc.message,
+                "error": exc.diagnostic,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return Response(
+        {"status": "failed", "error": str(exc)},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 class NotificationChannelViewSet(viewsets.ModelViewSet):
@@ -167,10 +185,7 @@ class NotificationChannelViewSet(viewsets.ModelViewSet):
         try:
             return Response(test_channel(channel))
         except Exception as exc:  # noqa: BLE001
-            return Response(
-                {"status": "failed", "error": str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _test_failure_response(exc)
 
     @action(detail=False, methods=["post"], url_path="test-config")
     def test_config(self, request):
@@ -221,10 +236,7 @@ class NotificationChannelViewSet(viewsets.ModelViewSet):
         try:
             return Response(test_channel(draft))
         except Exception as exc:  # noqa: BLE001
-            return Response(
-                {"status": "failed", "error": str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _test_failure_response(exc)
 
     @action(detail=True, methods=["get"])
     def details(self, request, pk=None):
