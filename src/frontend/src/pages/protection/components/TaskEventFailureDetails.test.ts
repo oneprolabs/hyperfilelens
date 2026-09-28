@@ -205,6 +205,78 @@ describe('TaskEventFailureDetails', () => {
     expect(wrapper.text()).toContain('readdir: access denied')
   })
 
+  it('shows terminal failure separately from skipped source items', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        terminalResolutions: ['Wait for the active operation to finish and retry the backup.'],
+        metadata: {
+          error_code: 'KOPIA_PROCESS_DIED',
+          error_message: 'Backup processing failed: Device or resource busy.',
+          skipped_details: {
+            count: 1,
+            directory_count: 1,
+            items: [{ path: 'Documents and Settings', error: 'permission denied', item_type: 'directory' }],
+          },
+        },
+      },
+      global: {
+        plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
+      },
+    })
+
+    expect(wrapper.text()).toContain('Backup processing failed: Device or resource busy.')
+    expect(wrapper.text()).toContain('Wait for the active operation to finish and retry the backup.')
+    expect(wrapper.text()).toContain('1 source items were skipped')
+    expect(wrapper.find('.task-event-failure--warning').exists()).toBe(false)
+    expect(wrapper.find('.task-event-failure--mixed').exists()).toBe(true)
+    expect(wrapper.find('.task-event-failure__summary--warning').exists()).toBe(true)
+    expect(wrapper.find('.task-event-failure__summary--terminal').exists()).toBe(true)
+    const summaries = wrapper.findAll('.task-event-failure__summary')
+    expect(summaries.findIndex(item => item.classes('task-event-failure__summary--terminal')))
+      .toBeLessThan(summaries.findIndex(item => item.classes('task-event-failure__summary--warning')))
+  })
+
+  it('can render only skipped warnings when the step owns terminal failure rendering', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        showTerminalFailure: false,
+        metadata: {
+          error_code: 'KOPIA_PROCESS_DIED',
+          error_message: 'Backup processing failed: Device or resource busy.',
+          skipped_details: {
+            count: 1,
+            directory_count: 1,
+            items: [{ path: 'Documents and Settings', error: 'permission denied', item_type: 'directory' }],
+          },
+        },
+      },
+      global: {
+        plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
+      },
+    })
+
+    expect(wrapper.find('.task-event-failure__summary--terminal').exists()).toBe(false)
+    expect(wrapper.find('.task-event-failure__summary--warning').exists()).toBe(true)
+  })
+
+  it('keeps technical details collapsible inside the directory failure box', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        technicalDetail: 'exit_code=1\nupload error: device or resource busy',
+        metadata: {
+          error_code: 'KOPIA_PROCESS_DIED',
+          error_message: 'Backup processing failed: Device or resource busy.',
+        },
+      },
+      global: {
+        plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
+      },
+    })
+
+    expect(wrapper.find('.task-event-failure__technical').exists()).toBe(true)
+    expect(wrapper.find('.task-event-failure__technical pre').text()).toContain('upload error')
+  })
+
   it('shows only skipped counts for a Finalize summary event', () => {
     const wrapper = mount(TaskEventFailureDetails, {
       props: {

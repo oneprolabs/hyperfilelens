@@ -6115,6 +6115,9 @@
         },
         "suggestion": {
           "review_task": "Revise las credenciales del repositorio y vuelva a intentar la creación.",
+          "review_backup_diagnostics": "Revise el origen de la copia, el repositorio de destino y los detalles técnicos afectados; después vuelva a intentar la copia.",
+          "review_restore_diagnostics": "Revise el origen de restauración, la ruta de destino y los detalles técnicos; después vuelva a intentar la restauración.",
+          "review_repository_operation": "Revise la configuración del repositorio y los detalles técnicos; después vuelva a intentar la operación.",
           "force_cleanup": "Verifique la conexión del Agent y vuelva a intentar la limpieza.",
           "review_cleanup": "Revise los recursos retenidos y complete la limpieza restante antes de reintentar.",
           "check_agent": "Compruebe la conexión del Agent y vuelva a intentar la limpieza.",

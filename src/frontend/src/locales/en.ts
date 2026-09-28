@@ -3816,6 +3816,9 @@ export const en = {
         },
         suggestion: {
           review_task: 'Review the repository credentials and retry the creation task.',
+          review_backup_diagnostics: 'Review the affected backup source, target repository, and technical details, then retry the backup.',
+          review_restore_diagnostics: 'Review the restore source, target path, and technical details, then retry the restore.',
+          review_repository_operation: 'Review the repository configuration and technical details, then retry the operation.',
           force_cleanup: 'Verify the Agent connection, then retry the cleanup operation.',
           review_cleanup: 'Review retained resources and complete the remaining cleanup before retrying.',
           check_agent: 'Check the Agent connection and retry the cleanup operation.',

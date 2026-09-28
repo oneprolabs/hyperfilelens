@@ -41,6 +41,28 @@ describe('backup task error details', () => {
     expect(details.taskUuid).toBe('task-1')
   })
 
+  it('keeps the terminal failure ahead of skipped item warnings', () => {
+    const details = buildTaskFailureErrorDetails({
+      task: {
+        task_uuid: 'task-terminal',
+        task_type: 'backup',
+        status: 'failed',
+        error_code: 'KOPIA_PROCESS_DIED',
+        error_message: 'Backup processing failed: Device or resource busy.',
+        result_payload: {
+          skipped_details: {
+            count: 1,
+            directory_count: 1,
+            items: [{ path: 'Documents and Settings', error: 'permission denied' }],
+          },
+        },
+      } as TaskRow,
+      t,
+    })
+    expect(details.reasons?.[0]).toContain('Device or resource busy')
+    expect(details.reasons?.[1]).toContain('source items were skipped')
+  })
+
   it('retains legacy items without counts and reports the actual sample size', () => {
     const items = Array.from({ length: 20 }, (_, i) => ({ path: `/data/${i}` }))
     const result = extractSkippedDetails({ skipped_details: { items } })

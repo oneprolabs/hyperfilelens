@@ -34,8 +34,9 @@ var essentialResultKeys = map[string]struct{}{
 	"failed_count": {}, "created": {}, "deleted_count": {},
 	"selected_paths": {}, "stats": {}, "restore": {}, "restore_results": {},
 	"results": {}, "entries": {}, "snapshot_browse": {}, "snapshot_download": {},
-	"snapshot_failure_summary": {},
-	"restore_outcome":          {}, "skip_reason": {}, "conflict_mode": {},
+	"snapshot_failure_summary": {}, "snapshot_skipped_summary": {},
+	"snapshot_terminal_error": {}, "snapshot_terminal_diagnostic": {},
+	"restore_outcome": {}, "skip_reason": {}, "conflict_mode": {},
 	"restored_item_count": {}, "skipped_item_count": {}, "failed_item_count": {},
 	"restored_path_count": {}, "skipped_path_count": {},
 	"restore_scope_summary": {},
@@ -74,7 +75,7 @@ func boundTaskResult(result map[string]any) (map[string]any, resultBoundStats) {
 	}
 	for key := range essentialResultKeys {
 		if value, ok := result[key]; ok {
-			if key == "snapshot_failure_summary" {
+			if key == "snapshot_failure_summary" || key == "snapshot_skipped_summary" {
 				compact[key] = compactSnapshotFailureSummary(value)
 			} else {
 				compact[key] = compactResultValue(value, 0)
@@ -89,6 +90,9 @@ func boundTaskResult(result map[string]any) (map[string]any, resultBoundStats) {
 		}
 		if value, ok := result["snapshot_failure_summary"]; ok {
 			compact["snapshot_failure_summary"] = compactSnapshotFailureSummary(value)
+		}
+		if value, ok := result["snapshot_skipped_summary"]; ok {
+			compact["snapshot_skipped_summary"] = compactSnapshotFailureSummary(value)
 		}
 		for key := range essentialResultKeys {
 			value, ok := result[key]
@@ -110,6 +114,9 @@ func boundTaskResult(result map[string]any) (map[string]any, resultBoundStats) {
 			if value, ok := result["snapshot_failure_summary"]; ok {
 				ultraCompact["snapshot_failure_summary"] = compactSnapshotFailureSummary(value)
 			}
+			if value, ok := result["snapshot_skipped_summary"]; ok {
+				ultraCompact["snapshot_skipped_summary"] = compactSnapshotFailureSummary(value)
+			}
 			compact = ultraCompact
 			finalBytes = jsonSize(compact)
 		}
@@ -128,7 +135,7 @@ func compactSnapshotFailureSummary(value any) any {
 	}
 	out := map[string]any{}
 	for _, key := range []string{
-		"total_count", "reported_count", "truncated", "cause_counts",
+		"total_count", "fatal_count", "ignored_count", "reported_count", "truncated", "cause_counts",
 		"item_types", "item_type_counts",
 	} {
 		if child, exists := summary[key]; exists {
@@ -143,10 +150,11 @@ func compactSnapshotFailureSummary(value any) any {
 			continue
 		}
 		boundedItems = append(boundedItems, map[string]any{
-			"path":      truncateUTF8(stringJSONScalar(item["path"]), 1024),
-			"error":     truncateUTF8(stringJSONScalar(item["error"]), 2048),
-			"cause":     truncateUTF8(stringJSONScalar(item["cause"]), 64),
-			"item_type": truncateUTF8(stringJSONScalar(item["item_type"]), 32),
+			"path":        truncateUTF8(stringJSONScalar(item["path"]), 1024),
+			"error":       truncateUTF8(stringJSONScalar(item["error"]), 2048),
+			"cause":       truncateUTF8(stringJSONScalar(item["cause"]), 64),
+			"item_type":   truncateUTF8(stringJSONScalar(item["item_type"]), 32),
+			"disposition": truncateUTF8(stringJSONScalar(item["disposition"]), 16),
 		})
 	}
 	out["reported_count"] = len(boundedItems)

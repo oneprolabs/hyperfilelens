@@ -14,6 +14,17 @@ describe('TaskDetailDrawer NAS repository write denial', () => {
   it('does not repeat a backup failure detail on the Finalize terminal event', () => {
     expect(source).toContain("event.message === 'Task finished with status failed' && step?.step_name === 'finalize_snapshot'")
   })
+
+  it('anchors Kopia process failures to the Syncing Data step', () => {
+    expect(source).toContain("item.step_name === 'kopia_snapshot' && item.status === 'failed'")
+    expect(source).toContain("terminalErrorCode === 'KOPIA_PROCESS_DIED'")
+    expect(source).toContain("terminalErrorCode === 'REPOSITORY_PROCESS_DIED'")
+  })
+
+  it('does not add a second step-level failure panel when the directory event already has an error', () => {
+    expect(source).toContain("message === 'Directory backup failed'")
+    expect(source).toContain("metadata.error_message || metadata.error_code")
+  })
 })
 
 describe('TaskDetailDrawer structured detail layout', () => {

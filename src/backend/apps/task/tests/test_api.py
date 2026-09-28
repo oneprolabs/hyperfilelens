@@ -89,6 +89,53 @@ class TaskApiTests(TestCase):
         self.assertNotIn("secret-token", str(data))
         self.assertNotIn("query-secret", str(data))
 
+    def test_serializer_keeps_skipped_items_out_of_fatal_entities(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Backup with skipped items",
+            status=Task.Status.FAILED,
+            error_code="KOPIA_PROCESS_DIED",
+            error_message="Backup processing failed: Device or resource busy.",
+            result_payload={
+                "terminal_failure": {
+                    "error_code": "KOPIA_PROCESS_DIED",
+                    "message": "Backup processing failed: Device or resource busy.",
+                },
+                "skipped_details": {
+                    "category": "source_items_skipped",
+                    "count": 1,
+                    "items": [{
+                        "path": "Documents and Settings",
+                        "error": "permission denied",
+                        "disposition": "skipped",
+                    }],
+                },
+            },
+        )
+        contract = TaskSerializer(task).data["error_details"]
+        self.assertEqual(contract["entities"], [])
+        self.assertEqual(
+            contract["skipped_items"]["items"][0]["path"],
+            "Documents and Settings",
+        )
+
+    def test_backup_unknown_failure_uses_backup_specific_fallback_suggestion(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Unknown backup failure",
+            status=Task.Status.FAILED,
+            error_code="KOPIA_PROCESS_DIED",
+            error_message="Backup processing failed.",
+            result_payload={},
+        )
+        contract = TaskSerializer(task).data["error_details"]
+        self.assertEqual(
+            contract["suggestions"][0]["code"],
+            "review_backup_diagnostics",
+        )
+
     def test_serializer_omits_clean_success_contract(self):
         task = Task.objects.create(
             organization_id=self.org.id,

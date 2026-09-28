@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"hyperfilelens/agent/internal/platform/process"
@@ -70,6 +71,58 @@ func TestSnapshotFailureCollectorClassifiesDeviceOrResourceBusyWithPath(t *testi
 	}
 }
 
+func TestSnapshotFailureCollectorSeparatesIgnoredEntries(t *testing.T) {
+	collector := newSnapshotFailureCollector()
+	collector.observe(`! Ignored error when processing "Documents and Settings": readdirent: permission denied`)
+	summary := collector.summary()
+	if summary["ignored_count"] != 1 || summary["fatal_count"] != 0 {
+		t.Fatalf("unexpected disposition counts: %#v", summary)
+	}
+	item := summary["items"].([]any)[0].(map[string]any)
+	if item["disposition"] != "skipped" {
+		t.Fatalf("unexpected disposition: %#v", item)
+	}
+}
+
+func TestTerminalSnapshotDiagnosticKeepsContextAroundTerminalError(t *testing.T) {
+	lines := make([]string, 0, 120)
+	for i := 0; i < 120; i++ {
+		lines = append(lines, `{"type":"hfl_snapshot_progress","sequence":1}`)
+	}
+	lines[80] = "source read failed: permission denied"
+	lines[81] = "upload error: device or resource busy"
+	diagnostic := terminalSnapshotDiagnostic(strings.Join(lines, "\n"))
+	if !strings.Contains(diagnostic, "upload error: device or resource busy") {
+		t.Fatalf("terminal error missing from diagnostic: %q", diagnostic)
+	}
+	if !strings.Contains(diagnostic, "source read failed: permission denied") {
+		t.Fatalf("failure context missing from diagnostic: %q", diagnostic)
+	}
+	if strings.Contains(diagnostic, "hfl_snapshot_progress") {
+		t.Fatalf("progress JSON should be filtered: %q", diagnostic)
+	}
+	if got := len(strings.Split(diagnostic, "\n")); got > 10 {
+		t.Fatalf("diagnostic lines=%d, want <= 10", got)
+	}
+}
+
+func TestSnapshotFailureSummaryUsesDirectoryDispositionCounts(t *testing.T) {
+	summary := snapshotFailureSummary(map[string]any{
+		"rootEntry": map[string]any{"summ": map[string]any{
+			"numFailed":        float64(0),
+			"numIgnoredErrors": float64(1),
+			"errors": []any{map[string]any{
+				"path":  "Documents and Settings",
+				"error": "readdirent: permission denied",
+			}},
+		}},
+	})
+	item := summary["items"].([]any)[0].(map[string]any)
+	if item["disposition"] != "skipped" {
+		t.Fatalf("unexpected disposition: %#v", item)
+	}
+}
+
 func TestPreparedSnapshotSendsCompactSummaryWhenStdoutCannotBeParsed(t *testing.T) {
 	originalRunner := runManagedSnapshotCommand
 	t.Cleanup(func() { runManagedSnapshotCommand = originalRunner })
@@ -113,5 +166,48 @@ func TestPreparedSnapshotSendsCompactSummaryWhenStdoutCannotBeParsed(t *testing.
 	}
 	if len(encoded) >= 64*1024 {
 		t.Fatalf("result was not compacted: bytes=%d", len(encoded))
+	}
+}
+
+func TestPreparedSnapshotSeparatesSkippedEntriesFromTerminalFailure(t *testing.T) {
+	originalRunner := runManagedSnapshotCommand
+	t.Cleanup(func() { runManagedSnapshotCommand = originalRunner })
+	runManagedSnapshotCommand = func(
+		_ context.Context,
+		_ string,
+		_ []string,
+		_ map[string]string,
+		_ string,
+		onLine process.OutputLineHandler,
+	) (process.Result, error) {
+		onLine(`! Ignored error when processing "Documents and Settings": readdirent: permission denied`, true)
+		return process.Result{
+			ExitCode: 1,
+			Stdout:   `{"rootEntry":{"summ":{"numFailed":0,"numIgnoredErrors":1,"errors":[{"path":"Documents and Settings","error":"readdirent: permission denied"}]}}}`,
+			Stderr:   "upload error: device or resource busy",
+		}, errors.New("exit status 1")
+	}
+
+	status, result, _ := runPreparedManagedSnapshot(
+		t.Context(), ReporterSink{}, "mixed-failure", "kopia", "/tmp/kopia.config",
+		nil, "/Users/ghw", map[string]any{},
+	)
+	if status != "failed" {
+		t.Fatalf("status=%q result=%#v", status, result)
+	}
+	skipped, ok := result["snapshot_skipped_summary"].(map[string]any)
+	if !ok || skipped["ignored_count"] != 1 {
+		t.Fatalf("missing skipped summary: %#v", result)
+	}
+	if got := result["snapshot_terminal_error"]; got != "upload error: device or resource busy" {
+		t.Fatalf("unexpected terminal error: %#v", got)
+	}
+	summary, ok := result["snapshot_failure_summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing failure summary: %#v", result)
+	}
+	item := summary["items"].([]any)[0].(map[string]any)
+	if item["disposition"] != "skipped" {
+		t.Fatalf("unexpected item disposition: %#v", item)
 	}
 }
