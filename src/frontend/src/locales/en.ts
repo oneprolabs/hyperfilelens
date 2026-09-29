@@ -1142,6 +1142,8 @@ export const en = {
       deletingChat: 'Deleting Chat',
       genericLifecycleError: 'Something went wrong while preparing the selected data. Try again, or delete this chat and create a new one.',
       retryPreparationDetail: 'The previous preparation attempt stopped. Temporary resources are being removed safely before you can try again.',
+      retainedRetryHint: 'Existing Chat data is preserved. Retry when the issue is resolved, or delete this Chat to remove its data.',
+      retainedConversionRetryHint: 'Automatic conversion recovery paused after repeated connection interruptions. Your Chat data is preserved; retry when the Data Gateway connection is stable.',
       cleanupBlockedDetail: 'Chat cleanup failed. Retry the deletion or use Force Cleanup when it is safe.',
       cleanupSafetyDetail: 'Cleanup is waiting for a remote restore or conversion task to stop.',
       deletingChatDetail: 'The chat and its temporary data are being removed.',

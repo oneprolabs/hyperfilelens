@@ -3516,6 +3516,8 @@
       "deletingChat": "Eliminando chat",
       "genericLifecycleError": "Algo salió mal al preparar los datos seleccionados. Inténtalo de nuevo o elimina este chat y crea uno nuevo.",
       "retryPreparationDetail": "La preparación anterior se detuvo. Los recursos temporales se eliminan de forma segura antes de reintentarlo.",
+      "retainedRetryHint": "Se conservan los datos del chat. Vuelve a intentarlo cuando se resuelva el problema o elimina este chat para quitarlos.",
+      "retainedConversionRetryHint": "La recuperación automática de la conversión se detuvo tras repetidas interrupciones de conexión. Se conservan los datos del chat; reinténtalo cuando la conexión de la puerta de enlace sea estable.",
       "cleanupBlockedDetail": "La limpieza del chat falló. Reintenta la eliminación o usa la limpieza forzada cuando sea segura.",
       "cleanupSafetyDetail": "La limpieza está esperando a que se detenga una tarea remota de restauración o conversión.",
       "deletingChatDetail": "Se están eliminando el chat y sus datos temporales.",

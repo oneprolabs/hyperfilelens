@@ -608,6 +608,71 @@ class PublicGatewayCapacityServiceTests(TestCase):
             2 * gib,
         )
 
+    def test_failed_chat_without_workspace_binding_keeps_capacity_reserved(self):
+        from apps.iam.models import Organization
+        from apps.lens_bridge.services import public_gateway_capacity as cap
+
+        tenant = Organization.objects.create(
+            key="cap-retained-chat", name="Retained Chat"
+        )
+        user = User.objects.create_user(username="cap-retained-chat@test.local")
+        gib = 1024**3
+        ks = LensKnowledgeSource.objects.create(
+            organization=tenant,
+            name="Retained Chat workspace",
+            gateway=self.link_a.gateway,
+            gateway_link=self.link_a,
+            source_scopes_json=[
+                {
+                    "source_path": "/root",
+                    "backup_snapshot_directory_id": 1,
+                    "path_type": "file",
+                    "file_count": 1,
+                    "size_bytes": 2 * gib,
+                }
+            ],
+            created_by=user,
+        )
+        LensSessionLink.objects.create(
+            organization=tenant,
+            hfl_user=user,
+            gateway_link=self.link_a,
+            knowledge_source=ks,
+            lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
+            cleanup_intent=LensSessionLink.CleanupIntent.NONE,
+            capacity_reservation_status=LensSessionLink.CapacityReservationStatus.RESERVED,
+            capacity_reserved_bytes=2 * gib,
+        )
+        self.assertEqual(
+            cap.public_gateway_used_bytes(gateway_link_id=self.link_a.id),
+            (2 * gib, False),
+        )
+        self.assertEqual(
+            org_public_gateway_capacity_used_bytes(organization_id=tenant.id),
+            2 * gib,
+        )
+
+        LensWorkspaceBinding.objects.create(
+            organization=tenant,
+            knowledge_source=ks,
+            gateway_link=self.link_a,
+            execution_organization_id=self.link_a.organization_id,
+            execution_node_id=self.link_a.gateway_id,
+            workspace_kind=LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE,
+            workspace_root="/workspace",
+            relative_path="retained-chat",
+        )
+        # Once a real workspace exists, use its binding instead of adding
+        # the old reservation for the same failed Chat a second time.
+        self.assertEqual(
+            cap.public_gateway_used_bytes(gateway_link_id=self.link_a.id),
+            (2 * gib, False),
+        )
+        self.assertEqual(
+            org_public_gateway_capacity_used_bytes(organization_id=tenant.id),
+            2 * gib,
+        )
+
     def test_provisioning_chat_reservation_is_not_double_counted_with_workspace(
         self,
     ):

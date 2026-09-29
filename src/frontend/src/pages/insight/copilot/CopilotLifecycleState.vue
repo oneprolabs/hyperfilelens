@@ -42,6 +42,10 @@ const currentStep = computed(() => {
 })
 
 const conversion = computed(() => props.session.document_conversion ?? null)
+const conversionRecoveryPaused = computed(() => (
+  ['DATASOURCE_CONVERSION_REBIND_PAUSED', 'DATASOURCE_CONVERSION_RESUME_EXHAUSTED']
+    .includes(conversion.value?.error || props.session.lifecycle_error || '')
+))
 const countsLabel = computed(() => {
   const counts = conversion.value?.counts
   if (!counts) return ''
@@ -218,6 +222,9 @@ function stepState(index: number) {
       <span class="copilot-lifecycle-icon is-failed"><AlertCircle :size="30" /></span>
       <h2>{{ t('insight.copilot.couldNotPrepareChat') }}</h2>
       <p>{{ lifecycleErrorMessage }}</p>
+      <p v-if="session.cleanup_intent === 'none' && session.knowledge_source">
+        {{ t(conversionRecoveryPaused ? 'insight.copilot.retainedConversionRetryHint' : 'insight.copilot.retainedRetryHint') }}
+      </p>
       <div
         v-if="showFailedConversionPanel"
         class="copilot-conversion copilot-conversion--failed"

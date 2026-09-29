@@ -138,6 +138,37 @@ describe('CopilotLifecycleState', () => {
     expect(wrapper.text()).not.toContain('Try Again')
   })
 
+  it('explains retained Chat data when a failed conversion can be retried', () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'failed',
+      cleanup_intent: 'none',
+      cleanup_status: 'none',
+      knowledge_source: 7,
+      document_conversion: {
+        ...session().document_conversion!,
+        status: 'FAILURE',
+        phase: 'failed',
+        error: 'DATASOURCE_CONVERSION_REBIND_PAUSED',
+      },
+    }))
+
+    expect(wrapper.text()).toContain('Automatic conversion recovery paused')
+    expect(wrapper.text()).toContain('Try Again')
+    expect(wrapper.text()).toContain('Delete Chat')
+  })
+
+  it('explains retained resources after a non-conversion preparation failure', () => {
+    const wrapper = mountState(session({
+      lifecycle_status: 'failed',
+      cleanup_intent: 'none',
+      cleanup_status: 'none',
+      knowledge_source: 7,
+      document_conversion: null,
+    }))
+
+    expect(wrapper.text()).toContain('Existing Chat data is preserved')
+  })
+
   it('explains blocked cleanup without an endless deleting spinner', () => {
     const wrapper = mountState(session({
       lifecycle_status: 'failed',

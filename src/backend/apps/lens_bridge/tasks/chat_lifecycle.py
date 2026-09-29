@@ -168,6 +168,23 @@ def reconcile_copilot_chat_provisions_task(*, limit: int = 100) -> dict:
 
 
 @shared_task(
+    name="apps.lens_bridge.tasks.chat_lifecycle.reconcile_failed_chat_slots_task",
+    soft_time_limit=220,
+    time_limit=240,
+)
+def reconcile_failed_chat_slots_task(*, limit: int = 3) -> dict[str, int]:
+    """Probe a few retained Chat slots without blocking normal provisioning."""
+
+    from apps.lens_bridge.services.chat_lifecycle import release_stopped_failed_chat_slots
+
+    return {
+        "released": release_stopped_failed_chat_slots(
+            limit=max(1, min(int(limit), 3))
+        ),
+    }
+
+
+@shared_task(
     name="apps.lens_bridge.tasks.chat_lifecycle.reconcile_lens_resource_teardowns_task",
 )
 def reconcile_lens_resource_teardowns_task(*, limit: int = 100) -> dict:

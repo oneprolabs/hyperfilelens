@@ -339,6 +339,14 @@ def request_knowledge_source_sync(
         raise ValidationError(
             {"lifecycle_status": "Knowledge source is being deleted."}
         )
+    from apps.lens_bridge.models import LensSessionLink
+
+    if ks.session_links.exclude(
+        lifecycle_status=LensSessionLink.LifecycleStatus.DELETED
+    ).exists():
+        raise ValidationError(
+            {"knowledge_source": "Retry this Chat rather than syncing its workspace."}
+        )
     if ks.status == LensKnowledgeSource.Status.SYNCING:
         raise ValidationError(
             {"status": "Knowledge source sync is already in progress."}

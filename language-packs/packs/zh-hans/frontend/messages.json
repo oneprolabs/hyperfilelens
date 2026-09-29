@@ -3516,6 +3516,8 @@
       "deletingChat": "正在删除聊天",
       "genericLifecycleError": "准备所选数据时出错。请重试，或删除此聊天后新建聊天。",
       "retryPreparationDetail": "上次准备已停止。正在安全清理临时资源，然后即可重试。",
+      "retainedRetryHint": "聊天数据已保留。问题解决后可重试；删除此聊天才会清理其数据。",
+      "retainedConversionRetryHint": "连接反复中断，自动转换恢复已暂停。聊天数据仍保留，请在数据网关连接稳定后重试。",
       "cleanupBlockedDetail": "聊天清理失败。请重试删除，或在满足安全条件时使用强制清理。",
       "cleanupSafetyDetail": "清理正在等待远程恢复或文档转换任务停止。",
       "deletingChatDetail": "正在删除聊天及其临时数据。",

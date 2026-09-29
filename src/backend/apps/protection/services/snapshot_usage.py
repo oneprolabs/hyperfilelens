@@ -265,6 +265,16 @@ def reconcile_snapshot_usage_leases(*, limit: int = 500) -> dict[str, int]:
                     retained += 1
                     retained_lease_ids.append(lease.id)
                     continue
+                if (
+                    session.lifecycle_status == LensSessionLink.LifecycleStatus.FAILED
+                    and session.knowledge_source_id is not None
+                    and session.cleanup_intent == LensSessionLink.CleanupIntent.NONE
+                ):
+                    # Failed Chat preparation now retains its workspace for
+                    # retry; protect the pinned source snapshot until deletion.
+                    retained += 1
+                    retained_lease_ids.append(lease.id)
+                    continue
                 if session.lifecycle_status in {
                     LensSessionLink.LifecycleStatus.READY,
                     LensSessionLink.LifecycleStatus.DELETED,

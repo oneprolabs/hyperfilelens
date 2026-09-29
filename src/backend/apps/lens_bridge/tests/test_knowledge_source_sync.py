@@ -1,6 +1,7 @@
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.utils import timezone
@@ -10,6 +11,7 @@ from apps.iam.models import Organization
 from apps.lens_bridge.models import (
     LensGatewayLink,
     LensKnowledgeSource,
+    LensSessionLink,
     LensWorkspaceBinding,
 )
 from apps.lens_bridge.services import knowledge_source_sync
@@ -462,6 +464,23 @@ class ManagedRestorePipelineOrderTests(TestCase):
             state=LensWorkspaceBinding.State.READY,
             identity_status=LensWorkspaceBinding.IdentityStatus.READY,
         )
+
+    def test_chat_owned_workspace_requires_chat_retry(self):
+        user = get_user_model().objects.create_user(
+            username="chat-owned-sync@example.test",
+            email="chat-owned-sync@example.test",
+        )
+        LensSessionLink.objects.create(
+            organization=self.organization,
+            hfl_user=user,
+            knowledge_source=self.knowledge_source,
+            lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
+        )
+        with self.assertRaisesRegex(ValidationError, "Retry this Chat"):
+            knowledge_source_sync.request_knowledge_source_sync(
+                org=self.organization,
+                ks=self.knowledge_source,
+            )
 
     def test_restore_identity_is_durable_before_agent_delivery_callback(self):
         record = MagicMock(id=91)
