@@ -31,8 +31,8 @@ import { getNotificationTypeIcon } from '../../composables/useNotificationTypeIc
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { booleanStatusTag, lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { apiErrorMessageI18n } from '../../lib/api'
-import { openErrorDetails } from '../../lib/errors/details'
 import { notifyError, notifySuccess } from '../../lib/notify'
+import { notificationTestFailureDetails } from '../../lib/notificationTestFailure'
 import {
   bulkDeleteChannels,
   bulkStateChannels,
@@ -549,23 +549,21 @@ async function runTest(row: NotificationChannel) {
         dedupeKey: `notification-channel-test:${row.id}:success`,
       })
     } else {
-      const message = res.error || t('ops.notification.testFailed')
-      openErrorDetails({
-        title: t('ops.notification.testFailed'),
-        summary: message,
-        issue: message,
-        rawDetail: res,
+      const details = notificationTestFailureDetails(res, t)
+      notifyError({
+        message: details.summary,
+        details,
+        showDetails: true,
+        dedupeKey: `notification-channel-test:${row.id}:failed`,
       })
     }
   } catch (e: unknown) {
-    const message = apiErrorMessageI18n(e, t, t('ops.notification.testFailed'))
-    openErrorDetails({
-      error: e,
-      overrides: {
-        title: t('ops.notification.testFailed'),
-        summary: message,
-        issue: message,
-      },
+    const details = notificationTestFailureDetails(e, t)
+    notifyError({
+      message: details.summary,
+      details,
+      showDetails: true,
+      dedupeKey: `notification-channel-test:${row.id}:failed`,
     })
   } finally {
     testing.value = false

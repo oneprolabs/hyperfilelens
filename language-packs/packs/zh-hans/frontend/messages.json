@@ -65,6 +65,7 @@
     "codes": {
       "networkUnavailable": "网络连接失败，请检查网络后重试",
       "networkTimeout": "请求超时，请稍后重试",
+      "notificationDingtalkRejected": "钉钉拒收了测试消息，请检查机器人安全设置。",
       "notificationWebhookTimeout": "Webhook 请求超时。请确认 HyperFileLens 服务器可以访问该 URL。",
       "notificationWebhookTlsFailed": "无法验证 Webhook HTTPS 证书。请使用受信任的证书或检查证书链。",
       "notificationWebhookUnreachable": "无法访问 Webhook 服务器。请检查 URL、端口、防火墙和网络路由。",
@@ -6620,6 +6621,10 @@
       "testMessageDraft": "发送测试消息",
       "testEmailDraft": "发送测试邮件",
       "testFailed": "测试通知发送失败",
+      "dingtalkKeywordReason": "机器人因消息不包含已配置的关键词而拒收。",
+      "dingtalkSecurityReason": "钉钉拒收了消息，具体原因请查看技术详情中的原始响应。",
+      "dingtalkKeywordResolution": "确认机器人配置的关键词出现在测试消息中（例如 FileLens），然后重试。",
+      "dingtalkSecurityResolution": "核对钉钉机器人的关键词、加签密钥和 IP 白名单设置，然后重试。",
       "deleteConfirm": "确认删除渠道「{name}」？",
       "emailSmtpHost": "SMTP 服务器",
       "emailSmtpPort": "SMTP 端口",

@@ -71,6 +71,7 @@ export const en = {
     codes: {
       networkUnavailable: 'Unable to connect. Check your network and try again.',
       networkTimeout: 'Request timed out. Please try again later.',
+      notificationDingtalkRejected: 'DingTalk rejected the test message. Check the robot security settings.',
       notificationWebhookTimeout: 'The webhook request timed out. Verify that the URL is reachable from the HyperFileLens server.',
       notificationWebhookTlsFailed: 'The webhook HTTPS certificate could not be verified. Use a trusted certificate or check the certificate chain.',
       notificationWebhookUnreachable: 'The webhook server could not be reached. Verify the URL, port, firewall, and network route.',
@@ -4307,6 +4308,10 @@ export const en = {
       testMessageDraft: 'Send test message',
       testEmailDraft: 'Send test email',
       testFailed: 'Test notification failed',
+      dingtalkKeywordReason: 'The robot rejected the message because it does not contain a configured keyword.',
+      dingtalkSecurityReason: 'DingTalk rejected the message. See the original response in Technical details for the specific cause.',
+      dingtalkKeywordResolution: 'Check that the robot keyword appears in the test message (for example, FileLens), then retry.',
+      dingtalkSecurityResolution: 'Check the robot keyword, signing Secret, and IP allowlist against the DingTalk robot settings, then retry.',
       deleteConfirm: 'Delete channel "{name}"?',
       emailSmtpHost: 'SMTP Server',
       emailSmtpPort: 'SMTP Port',

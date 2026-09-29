@@ -14,6 +14,8 @@ import {
 import { useNotificationLabels } from '../../composables/useNotificationLabels'
 import { getNotificationTypeIcon } from '../../composables/useNotificationTypeIcon'
 import { apiErrorMessageI18n } from '../../lib/api'
+import { notificationTestFailureDetails } from '../../lib/notificationTestFailure'
+import { notifyError } from '../../lib/notify'
 import {
   createChannel,
   getChannel,
@@ -478,11 +480,22 @@ async function testFromEditor() {
     })
     const ok = res.status === 'success'
     if (ok) ElMessage.success({ message: t('ops.notification.testDraftSuccess'), grouping: true })
-    else ElMessage.error({ message: res.error || t('ops.notification.testFailed'), grouping: true })
+    else {
+      const details = notificationTestFailureDetails(res, t)
+      notifyError({
+        message: details.summary,
+        details,
+        showDetails: true,
+        dedupeKey: `notification-channel-test:draft:${editingId.value ?? 'new'}:failed`,
+      })
+    }
   } catch (e: unknown) {
-    ElMessage.error({
-      message: apiErrorMessageI18n(e, t, t('ops.notification.testFailed')),
-      grouping: true,
+    const details = notificationTestFailureDetails(e, t)
+    notifyError({
+      message: details.summary,
+      details,
+      showDetails: true,
+      dedupeKey: `notification-channel-test:draft:${editingId.value ?? 'new'}:failed`,
     })
   } finally {
     testing.value = false

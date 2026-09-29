@@ -13,7 +13,7 @@ from django.core.mail import EmailMessage
 from apps.notification.constants import ChannelType
 from apps.notification.models import NotificationChannel
 from apps.notification.channels import WebhookChannel
-from apps.notification.exceptions import WebhookTestError
+from apps.notification.exceptions import DingTalkDeliveryError, WebhookTestError
 from apps.notification.models import NotificationDelivery
 
 
@@ -21,6 +21,12 @@ def _classify_webhook_error(exc: Exception) -> WebhookTestError:
     diagnostic = str(exc)
     reason = exc.reason if isinstance(exc, URLError) else exc
     reason_text = str(reason).lower()
+    if isinstance(exc, DingTalkDeliveryError):
+        return WebhookTestError(
+            "NOTIFICATION.DINGTALK_REJECTED",
+            "DingTalk rejected the notification.",
+            diagnostic,
+        )
     if isinstance(reason, ssl.SSLCertVerificationError) or "certificate verify failed" in reason_text:
         return WebhookTestError(
             "NOTIFICATION.WEBHOOK_TLS_FAILED",
