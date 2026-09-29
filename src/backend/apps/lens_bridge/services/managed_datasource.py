@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -14,7 +15,12 @@ from django.utils import timezone
 from apps.lens_bridge.models import LensKnowledgeSource, LensWorkspaceBinding
 from apps.lens_bridge.services import sl_client
 
-CONVERSION_WAIT_SECONDS = 6 * 3600
+logger = logging.getLogger(__name__)
+
+# A running SourceLens conversion may legitimately take longer than this.
+# This attention window applies only when HFL cannot account for the remote
+# task identity; it is not a conversion runtime limit.
+CONVERSION_RECONCILIATION_ATTENTION_SECONDS = 2 * 3600
 CONVERSION_RETRY_SECONDS = 5
 CONVERSION_RECOVERY_CLOCK_SKEW_SECONDS = 60
 CONVERSION_TRANSIENT_RETRY_MAX_SECONDS = 300
@@ -243,29 +249,61 @@ def conversion_policy_fingerprint(conversion: dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _conversion_deadline_exceeded(started_at: Any) -> bool:
-    """Return whether a durable conversion exceeded the end-to-end budget."""
+def _record_missing_conversion(
+    *,
+    ks: LensKnowledgeSource,
+    sync_state: dict[str, Any],
+    state: dict[str, Any],
+) -> str:
+    """Track a missing remote task without treating it as stopped."""
 
-    raw = str(started_at or "").strip()
-    if not raw:
-        return False
-    try:
-        started = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if started.tzinfo is None:
-        started = started.replace(tzinfo=timezone.get_current_timezone())
-    return (timezone.now() - started).total_seconds() >= CONVERSION_WAIT_SECONDS
+    now = timezone.now()
+    first_missing = _parse_timestamp(state.get("lookup_first_missing_at"))
+    if first_missing is None:
+        first_missing = now
+        state["lookup_first_missing_at"] = now.isoformat()
+    state["lookup_missing_at"] = now.isoformat()
+    needs_attention = (
+        (now - first_missing).total_seconds()
+        >= CONVERSION_RECONCILIATION_ATTENTION_SECONDS
+    )
+    if needs_attention and not state.get("reconciliation_attention_at"):
+        state["reconciliation_attention_at"] = now.isoformat()
+        logger.warning(
+            "conversion task is still unaccounted for "
+            "knowledge_source_id=%s datasource_uuid=%s task_id=%s",
+            ks.id,
+            ks.sl_datasource_uuid,
+            state.get("task_id"),
+        )
+    detail = (
+        "Document conversion cannot be located in SourceLens; recovery needs "
+        "attention. The workspace is retained until its task is accounted for."
+        if needs_attention
+        else "Document conversion state is being reconciled."
+    )
+    state["progress_message"] = detail
+    _persist_conversion_state(ks=ks, sync_state=sync_state, state=state)
+    return detail
 
 
-def _conversion_started_at(state: dict[str, Any]) -> Any:
-    """Return the active conversion attempt timestamp.
+def _clear_missing_conversion(state: dict[str, Any]) -> None:
+    state.pop("lookup_first_missing_at", None)
+    state.pop("lookup_missing_at", None)
+    state.pop("reconciliation_attention_at", None)
 
-    A resumed SourceLens task gets a fresh HFL polling budget while the
-    original start timestamp remains available for audit.
-    """
 
-    return state.get("resume_started_at") or state.get("started_at")
+def _recover_missing_conversion_task(
+    *,
+    datasource_uuid: str,
+    task_id: str,
+) -> dict[str, Any] | None:
+    """Recover the exact task from the datasource-scoped task list."""
+
+    for row in sl_client.list_managed_datasource_conversion_tasks(datasource_uuid):
+        if str(row.get("task_id") or "") == task_id:
+            return row
+    return None
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -613,25 +651,24 @@ def convert_documents(
                 retry_after_seconds=retry_after,
             ) from exc
         if task is None:
-            state["lookup_missing_at"] = timezone.now().isoformat()
-            _persist_conversion_state(
+            detail = _record_missing_conversion(
                 ks=ks,
                 sync_state=sync_state,
                 state=state,
             )
-            if _conversion_deadline_exceeded(_conversion_started_at(state)):
-                raise ManagedDatasourceError(
-                    "SourceLens conversion start could not be recovered."
-                )
             raise ManagedDatasourcePending(
-                "Document conversion start is being reconciled."
+                detail,
+                retry_after_seconds=CONVERSION_IDLE_RETRY_MAX_SECONDS,
             )
         task_id = str(task.get("task_id") or "")
         state.update(
             {
                 "task_id": task_id,
                 "task_execution_id": task.get("id"),
-                "status": str(task.get("status") or "PENDING"),
+                # The datasource task list is an identity/summary lookup.
+                # Do not expose its terminal-looking status before the full
+                # task response has been fetched below.
+                "status": "PENDING",
                 "recovered_at": timezone.now().isoformat(),
             }
         )
@@ -640,6 +677,10 @@ def convert_documents(
             sync_state=sync_state,
             state=state,
         )
+        # The datasource list is used only to recover identity. Its rows may
+        # lack the final conversion summary; always poll the full task before
+        # advancing this Knowledge Source.
+        task = None
     if task_id and state.get("policy_fingerprint") == fingerprint:
         try:
             task = task or sl_client.get_task_by_id(task_id)
@@ -654,27 +695,69 @@ def convert_documents(
                 "SourceLens is temporarily unavailable while checking conversion progress.",
                 retry_after_seconds=retry_after,
             ) from exc
-        if task is None:
-            state["lookup_missing_at"] = timezone.now().isoformat()
-            _persist_conversion_state(
+        if task is not None and str(task.get("task_id") or "") != task_id:
+            detail = _record_missing_conversion(
                 ks=ks,
                 sync_state=sync_state,
                 state=state,
             )
-            if _conversion_deadline_exceeded(_conversion_started_at(state)):
-                raise ManagedDatasourceError(
-                    "SourceLens conversion task could not be recovered."
-                )
             raise ManagedDatasourcePending(
-                "Document conversion state is being reconciled."
+                detail,
+                retry_after_seconds=CONVERSION_IDLE_RETRY_MAX_SECONDS,
             )
-        elif str(task.get("status") or "") == "SUCCESS":
+        if task is None:
+            try:
+                listed_task = _recover_missing_conversion_task(
+                    datasource_uuid=str(ks.sl_datasource_uuid),
+                    task_id=task_id,
+                )
+            except sl_client.LensBridgeUnavailable as exc:
+                retry_after = _record_transient_state(
+                    ks=ks,
+                    sync_state=sync_state,
+                    state=state,
+                    operation="reconcile_conversion",
+                )
+                raise ManagedDatasourcePending(
+                    "SourceLens is temporarily unavailable while reconciling conversion.",
+                    retry_after_seconds=retry_after,
+                ) from exc
+            detail = _record_missing_conversion(
+                ks=ks,
+                sync_state=sync_state,
+                state=state,
+            )
+            if listed_task is not None:
+                # SL's datasource task list is a paginated summary; it may
+                # omit the result and final callback evidence. Only the full
+                # by-task-id response may advance conversion or prove success.
+                detail = (
+                    "SourceLens lists the conversion task, but its full "
+                    "status is unavailable; recovery needs attention."
+                    if state.get("reconciliation_attention_at")
+                    else "SourceLens lists the conversion task, but its full "
+                    "status is temporarily unavailable."
+                )
+                state["progress_message"] = detail
+                _persist_conversion_state(ks=ks, sync_state=sync_state, state=state)
+            raise ManagedDatasourcePending(
+                detail,
+                retry_after_seconds=CONVERSION_IDLE_RETRY_MAX_SECONDS,
+            )
+        _clear_missing_conversion(state)
+        if str(task.get("status") or "") == "SUCCESS":
             _clear_transient_state(state)
             summary = _conversion_summary(task)
+            metadata = (
+                task.get("metadata")
+                if isinstance(task.get("metadata"), dict)
+                else {}
+            )
             state.update(
                 {
                     "status": "SUCCESS",
                     "summary": summary,
+                    "progress_message": str(metadata.get("progress_message") or ""),
                     "warnings": _conversion_warnings(
                         summary,
                         visual_model_configured=bool(
@@ -994,10 +1077,6 @@ def convert_documents(
             state=state,
         )
         raise ManagedDatasourceError(error)
-    if _conversion_deadline_exceeded(_conversion_started_at(state)):
-        raise ManagedDatasourceError(
-            "SourceLens conversion did not complete before the wait timeout."
-        )
     retry_after = min(
         CONVERSION_IDLE_RETRY_MAX_SECONDS,
         CONVERSION_RETRY_SECONDS * (2 ** min(idle_polls, 4)),
