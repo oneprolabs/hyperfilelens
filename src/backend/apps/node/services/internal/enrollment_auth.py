@@ -197,12 +197,26 @@ def open_installation_session(
         raise PermissionError("invalid or expired enrollment token")
 
     now = timezone.now()
-    NodeInstallationSession.objects.filter(
-        enrollment_token=token,
-        status=NodeInstallationSession.Status.ACTIVE,
-    ).filter(Q(idle_expires_at__lte=now) | Q(absolute_expires_at__lte=now)).update(
-        status=NodeInstallationSession.Status.RELEASED, updated_at=now
+    expired_session_ids = list(
+        NodeInstallationSession.objects.select_for_update()
+        .filter(
+            enrollment_token=token,
+            status=NodeInstallationSession.Status.ACTIVE,
+        )
+        .filter(Q(idle_expires_at__lte=now) | Q(absolute_expires_at__lte=now))
+        .values_list("pk", flat=True)
     )
+    if expired_session_ids:
+        NodeInstallationSession.objects.filter(
+            pk__in=expired_session_ids,
+            status=NodeInstallationSession.Status.ACTIVE,
+        ).update(status=NodeInstallationSession.Status.RELEASED, updated_at=now)
+        for session_id in expired_session_ids:
+            transaction.on_commit(
+                lambda org_key=org.key, session_id=session_id: release_session_slot(
+                    org_key, session_id
+                )
+            )
 
     session = (
         NodeInstallationSession.objects.select_for_update()

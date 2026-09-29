@@ -330,6 +330,22 @@ class InstallationSessionTests(TestCase):
         session.refresh_from_db()
         self.assertEqual(session.status, NodeInstallationSession.Status.RELEASED)
 
+    def test_opening_a_new_session_releases_expired_session_slot(self):
+        self._open_session("host-a")
+        session = NodeInstallationSession.objects.get(installation_id="host-a")
+        session.idle_expires_at = timezone.now() - timedelta(seconds=1)
+        session.save(update_fields=["idle_expires_at"])
+
+        with mock.patch.object(enrollment_auth, "release_session_slot") as release_slot:
+            with self.captureOnCommitCallbacks(execute=True):
+                second = self._open_session("host-b")
+
+            self.assertEqual(second.status_code, 201)
+            release_slot.assert_called_once_with(self.org.key, session.pk)
+
+        session.refresh_from_db()
+        self.assertEqual(session.status, NodeInstallationSession.Status.RELEASED)
+
     def test_session_slot_release_is_idempotent_but_rejects_wrong_identity(self):
         opened = self._open_session("host-a")
         secret = opened.data["installation_session"]
