@@ -73,8 +73,12 @@ redis-cli zadd "$full_deadlines" 1 session:1 >/dev/null
 [ "$(redis-cli sismember "$full" session:1)" = 0 ]
 [ "$(redis-cli sismember "$full" session:2)" = 1 ]
 [ "$(redis-cli sismember "$full" session:21)" = 1 ]
-redis-cli del "$key" >/dev/null
-[ "$(redis-cli --raw --eval /tmp/acquire.lua "$key" "$deadlines" , session:fresh 20 60)" = "$(printf "1\n1")" ]
-[ "$(redis-cli zcard "$deadlines")" = 1 ]
+# A legacy API may expire the shared Set while the new per-slot deadlines are
+# still live. The new API must rebuild the Set before counting.
+redis-cli del "$full" >/dev/null
+[ "$(redis-cli --raw --eval /tmp/acquire.lua "$full" "$full_deadlines" , session:fresh 20 60)" = "$(printf "0\n20")" ]
+[ "$(redis-cli scard "$full")" = 20 ]
+[ "$(redis-cli --raw --eval /tmp/release.lua "$full" "$full_deadlines" , session:2)" = 1 ]
+[ "$(redis-cli --raw --eval /tmp/acquire.lua "$full" "$full_deadlines" , session:fresh 20 60)" = "$(printf "1\n20")" ]
 printf "Agent download slot Lua checks passed.\n"
 '

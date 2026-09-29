@@ -53,12 +53,11 @@ for _, member in ipairs(redis.call('ZRANGEBYSCORE', deadlines, '-inf', now)) do
   redis.call('ZREM', deadlines, member)
 end
 
--- The Set may have expired in a mixed-version window. Its stale deadline
--- records must not count against new requests.
+-- An older API may have expired the shared Set before the new API's
+-- per-slot deadlines. Rebuild the Set from all still-live deadlines before
+-- counting, so a mixed-version rollout cannot lose active authorizations.
 for _, member in ipairs(redis.call('ZRANGE', deadlines, 0, -1)) do
-  if redis.call('SISMEMBER', key, member) == 0 then
-    redis.call('ZREM', deadlines, member)
-  end
+  redis.call('SADD', key, member)
 end
 
 local count = redis.call('SCARD', key)
