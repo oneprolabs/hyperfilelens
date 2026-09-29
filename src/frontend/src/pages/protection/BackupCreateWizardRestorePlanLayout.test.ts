@@ -18,6 +18,15 @@ describe('BackupCreateWizard restore plan layout', () => {
     expect(wizardSource).toContain('.create-recovery-dir-plan-cell--actions {\n    grid-column: 3;')
   })
 
+  it('keeps the recovery-plan table resizable and reserves room for localized headers', () => {
+    const tableStart = wizardSource.indexOf('ref="createRecoveryPlanTableRef"')
+    const recoveryPlanTable = wizardSource.slice(tableStart, wizardSource.indexOf('</el-table>', tableStart))
+
+    expect(recoveryPlanTable).toContain("v-table-column-resize=\"'protection.backupCreate.recoveryPlans'\"")
+    expect(recoveryPlanTable).toMatch(/colBackupSource'\)"[\s\S]*?min-width="168"/)
+    expect(recoveryPlanTable).toMatch(/createRecoveryPlanEnabled'\)"[\s\S]*?width="128"/)
+  })
+
   it('keeps inline validation in document flow', () => {
     const errorRule = wizardSource.match(/\.create-recovery-path-input__error \{([\s\S]*?)\n\}/)?.[1] || ''
     const invalidRowRule = wizardSource.match(/\.create-recovery-dir-plan-row--invalid \{([\s\S]*?)\n\}/)?.[1] || ''

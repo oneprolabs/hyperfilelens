@@ -8209,6 +8209,7 @@ function preserveShallowestPathOrder(paths: string[]) {
             </div>
             <el-table
               ref="createRecoveryPlanTableRef"
+              v-table-column-resize="'protection.backupCreate.recoveryPlans'"
               v-table-overflow-title
               :data="filteredRecoveryPlanGroups"
               row-key="key"
@@ -8881,7 +8882,7 @@ function preserveShallowestPathOrder(paths: string[]) {
               </el-table-column>
               <el-table-column
                 :label="t('protection.backupsPage.colBackupSource')"
-                min-width="200"
+                min-width="168"
                 fixed="left"
               >
                 <template #default="{ row: group }">
@@ -9197,7 +9198,7 @@ function preserveShallowestPathOrder(paths: string[]) {
               </el-table-column>
               <el-table-column
                 :label="t('protection.backupsPage.createRecoveryPlanEnabled')"
-                width="96"
+                width="128"
                 fixed="right"
                 align="center"
               >
