@@ -102,12 +102,20 @@ const recipes = [
             <span>Excludes files larger than the configured size.</span>
           </div>
           <div class="rule-guide__table-row">
-            <strong>Cache directories</strong>
-            <span>Excludes known cache folders to reduce scan time and storage usage.</span>
+            <strong>Marked cache directories</strong>
+            <span>
+              Skips directories containing a valid <code>CACHEDIR.TAG</code> marker, including
+              everything below them. Folder names alone are not matched; use
+              <code>**/.cache/**</code> for name-based exclusions.
+            </span>
           </div>
           <div class="rule-guide__table-row">
-            <strong>Current filesystem only</strong>
-            <span>Stays within the selected source filesystem and does not cross into other mounted filesystems.</span>
+            <strong>Stay on the selected filesystem</strong>
+            <span>
+              Skips nested disks, partitions, and network mounts. For example, if
+              <code>/data/archive</code> is mounted inside <code>/data</code>, that path and everything
+              below it are skipped.
+            </span>
           </div>
         </div>
       </section>
