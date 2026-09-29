@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { siteLanguages } from './languages'
 
 const props = defineProps<{
@@ -41,7 +41,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
 })
 
-const currentLabel = siteLanguages.find((lang) => lang.code === props.current)?.label ?? props.current
+const currentLabel = computed(
+  () => siteLanguages.find((lang) => lang.code === props.current)?.label ?? props.current,
+)
 </script>
 
 <template>
@@ -71,6 +73,7 @@ const currentLabel = siteLanguages.find((lang) => lang.code === props.current)?.
         class="lang-switcher-item"
         :class="{ active: lang.code === current }"
         role="menuitem"
+        @click="close"
       >
         <svg aria-hidden="true" class="lang-switcher-check"><use href="#icon-check" /></svg>
         <span>{{ lang.label }}</span>
