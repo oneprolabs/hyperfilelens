@@ -26,6 +26,8 @@ CONVERSION_RECOVERY_CLOCK_SKEW_SECONDS = 60
 CONVERSION_TRANSIENT_RETRY_MAX_SECONDS = 300
 CONVERSION_IDLE_RETRY_MAX_SECONDS = 60
 CONVERSION_RESUME_MAX_ATTEMPTS = 3
+CONVERSION_REBIND_MAX_ATTEMPTS = 3
+CONVERSION_REBIND_BASE_SECONDS = 30
 
 
 class ManagedDatasourceError(RuntimeError):
@@ -341,6 +343,13 @@ def _conversion_warnings(
     return list(dict.fromkeys(warnings))
 
 
+def _progress_count(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def _all_supported_documents_unreadable(
     summary: dict[str, Any],
 ) -> bool:
@@ -369,6 +378,32 @@ def _persist_conversion_state(
 ) -> None:
     sync_state["conversion"] = state
     _save_sync_state(ks, sync_state)
+
+
+def _restart_stopped_conversion_on_manual_retry(
+    *,
+    ks: LensKnowledgeSource,
+    sync_state: dict[str, Any],
+    task_id: str,
+    reason: str,
+) -> None:
+    """Discard a terminal task only after SL proves its executor stopped."""
+
+    if not conversion_stop_confirmed(ks):
+        raise ManagedDatasourcePending(
+            "Waiting for SourceLens to confirm the previous conversion stopped.",
+            retry_after_seconds=CONVERSION_IDLE_RETRY_MAX_SECONDS,
+        )
+    history = list(sync_state.get("conversion_history") or [])
+    history.append(
+        {"task_id": task_id, "reason": reason, "at": timezone.now().isoformat()}
+    )
+    sync_state["conversion_history"] = history[-10:]
+    sync_state.pop("conversion", None)
+    _save_sync_state(ks, sync_state)
+    raise ManagedDatasourcePending(
+        "Previous conversion stopped; preparing a fresh conversion."
+    )
 
 
 def _task_conversion_policy(task: dict[str, Any]) -> dict[str, Any] | None:
@@ -802,10 +837,16 @@ def convert_documents(
                 ) from exc
             if isinstance(recovery, dict):
                 state["recovery"] = recovery
-                if (
-                    recovery.get("orphaned") is True
-                    and recovery.get("restart_required") is True
-                ):
+                if recovery.get("restart_required") is True:
+                    if state.get("manual_retry_pending"):
+                        # Only a user-triggered retry may restart after SL
+                        # requires restart. Never clear an active task.
+                        _restart_stopped_conversion_on_manual_retry(
+                            ks=ks,
+                            sync_state=sync_state,
+                            task_id=task_id,
+                            reason="restart_required",
+                        )
                     state["status"] = "FAILURE"
                     state["error"] = (
                         "DATASOURCE_CONVERSION_RESTART_REQUIRED"
@@ -822,7 +863,16 @@ def convert_documents(
                 # document/model failure forever.
                 if recovery.get("orphaned") is True and recovery.get("resumable"):
                     resume_attempts = int(state.get("resume_attempts") or 0)
-                    if resume_attempts >= CONVERSION_RESUME_MAX_ATTEMPTS:
+                    rebind_attempts = int(state.get("rebind_attempts") or 0)
+                    rebind = recovery.get("resume_source") == "lensnode_executor"
+                    if rebind and rebind_attempts >= CONVERSION_REBIND_MAX_ATTEMPTS:
+                        state["status"] = "FAILURE"
+                        state["error"] = "DATASOURCE_CONVERSION_REBIND_PAUSED"
+                        _persist_conversion_state(
+                            ks=ks, sync_state=sync_state, state=state
+                        )
+                        raise ManagedDatasourceError(state["error"])
+                    if not rebind and resume_attempts >= CONVERSION_RESUME_MAX_ATTEMPTS:
                         state["status"] = "FAILURE"
                         state["error"] = (
                             "DATASOURCE_CONVERSION_RESUME_EXHAUSTED"
@@ -833,6 +883,14 @@ def convert_documents(
                             state=state,
                         )
                         raise ManagedDatasourceError(state["error"])
+                    rebind_due = _parse_timestamp(state.get("rebind_next_retry_at"))
+                    if rebind and rebind_due and rebind_due > timezone.now():
+                        raise ManagedDatasourcePending(
+                            "Waiting for the LensNode connection to stabilize.",
+                            retry_after_seconds=max(
+                                1, int((rebind_due - timezone.now()).total_seconds()),
+                            ),
+                        )
                     try:
                         resumed = sl_client.resume_managed_datasource_conversion(
                             str(ks.sl_datasource_uuid),
@@ -907,7 +965,25 @@ def convert_documents(
                                 "resume_started_at": resumed_at,
                             }
                         )
-                        state["resume_attempts"] = resume_attempts + 1
+                        if (
+                            resumed.get("resumed") is True
+                            and resumed.get("resume_source") == "lensnode_executor"
+                        ):
+                            state["rebind_attempts"] = rebind_attempts + 1
+                            wait_seconds = min(
+                                300,
+                                CONVERSION_REBIND_BASE_SECONDS * (2 ** rebind_attempts),
+                            )
+                            state["rebind_next_retry_at"] = (
+                                timezone.now() + timedelta(seconds=wait_seconds)
+                            ).isoformat()
+                        elif (
+                            resumed.get("resumed") is True
+                            and resumed.get("resume_source") == "checkpoint"
+                            and next_task_id != task_id
+                            and resume_reason != "ALREADY_RESUMED"
+                        ):
+                            state["resume_attempts"] = resume_attempts + 1
                         state["recovery"] = {
                             **recovery,
                             **resumed,
@@ -935,6 +1011,20 @@ def convert_documents(
                     raise ManagedDatasourcePending(
                         "Waiting for the LensNode before resuming document conversion.",
                         retry_after_seconds=CONVERSION_IDLE_RETRY_MAX_SECONDS,
+                    )
+                if (
+                    state.get("manual_retry_pending")
+                    and recovery.get("orphaned") is False
+                    and str(task.get("status") or "") in {"FAILURE", "REVOKED"}
+                ):
+                    # A permanent failure may still carry a checkpoint, but
+                    # SL must not automatically repeat the same bad document.
+                    # After a user fixes the cause, safely restart instead.
+                    _restart_stopped_conversion_on_manual_retry(
+                        ks=ks,
+                        sync_state=sync_state,
+                        task_id=task_id,
+                        reason="manual_retry_terminal_failure",
                     )
             state["status"] = str(task.get("status") or "FAILURE")
             state["error"] = error
@@ -1013,6 +1103,26 @@ def convert_documents(
         task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
     )
     summary = _conversion_summary(task)
+    progress_counts = (
+        metadata.get("progress_counts")
+        if isinstance(metadata.get("progress_counts"), dict)
+        else {}
+    )
+    previous_counts = state.get("progress_counts") or {}
+    previous_summary = state.get("summary") or {}
+    substantive_keys = ("processed", "converted", "success", "skipped", "failed")
+    if any(
+        _progress_count(current.get(key)) > _progress_count(previous.get(key))
+        for current, previous in (
+            (progress_counts, previous_counts),
+            (summary, previous_summary),
+        )
+        for key in substantive_keys
+    ):
+        # Count consecutive rebinds without actual file progress, not every
+        # reconnect across a healthy multi-hour conversion.
+        state["rebind_attempts"] = 0
+        state.pop("rebind_next_retry_at", None)
     previous_progress = str(state.get("progress_fingerprint") or "")
     progress_fingerprint = hashlib.sha256(
         json.dumps(
@@ -1037,6 +1147,7 @@ def convert_documents(
         {
             "status": status,
             "summary": summary,
+            "progress_counts": progress_counts,
             "progress_step": metadata.get("progress_step") or "",
             "progress_message": metadata.get("progress_message") or "",
             "progress_percent": metadata.get("progress_percent"),

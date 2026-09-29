@@ -415,6 +415,8 @@ def bulk_public_gateway_used_bytes(
     Counts managed-restore workspaces, except while a PROVISIONING Chat's
     durable reservation is authoritative for that workspace.
     """
+    from django.db.models import Q
+
     from apps.lens_bridge.models import LensSessionLink
     from apps.lens_bridge.services import platform_lens
 
@@ -441,11 +443,17 @@ def bulk_public_gateway_used_bytes(
         unknowns[link_id] = bool(unknowns.get(link_id) or unknown)
 
     provisioning = LensSessionLink.objects.filter(
-        gateway_link_id__in=ids,
-        lifecycle_status__in=(
+        Q(lifecycle_status__in=(
             LensSessionLink.LifecycleStatus.PROVISIONING,
             LensSessionLink.LifecycleStatus.DELETING,
+        ))
+        | Q(
+            lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
+            cleanup_intent=LensSessionLink.CleanupIntent.NONE,
+            knowledge_source__isnull=False,
+            knowledge_source__workspace_binding__isnull=True,
         ),
+        gateway_link_id__in=ids,
         capacity_reservation_status=(
             LensSessionLink.CapacityReservationStatus.RESERVED
         ),
@@ -487,6 +495,8 @@ def bulk_org_public_gateway_used_bytes(
     organization_ids: list[int] | tuple[int, ...] | None = None,
 ) -> dict[int, tuple[int, bool]]:
     """Return Public Gateway occupancy for organizations in one scan."""
+    from django.db.models import Q
+
     from apps.lens_bridge.models import LensSessionLink
     from apps.lens_bridge.services import platform_lens
 
@@ -531,11 +541,17 @@ def bulk_org_public_gateway_used_bytes(
         )
 
     provisioning = LensSessionLink.objects.filter(
-        gateway_link_id__in=platform_ids,
-        lifecycle_status__in=(
+        Q(lifecycle_status__in=(
             LensSessionLink.LifecycleStatus.PROVISIONING,
             LensSessionLink.LifecycleStatus.DELETING,
+        ))
+        | Q(
+            lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
+            cleanup_intent=LensSessionLink.CleanupIntent.NONE,
+            knowledge_source__isnull=False,
+            knowledge_source__workspace_binding__isnull=True,
         ),
+        gateway_link_id__in=platform_ids,
         capacity_reservation_status=(
             LensSessionLink.CapacityReservationStatus.RESERVED
         ),

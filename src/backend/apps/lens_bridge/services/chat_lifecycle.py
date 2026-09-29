@@ -13,6 +13,7 @@ from typing import Any
 from django.contrib.auth.models import AbstractBaseUser
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.exceptions import APIException, ValidationError
@@ -1263,36 +1264,16 @@ def run_copilot_chat_provision(
         )
         error_state = lifecycle_error_state_from_exception(exc)
         link = LensSessionLink.objects.filter(pk=session_link_id).first()
-        cleanup_errors: list[str] = []
-        if link is not None:
-            try:
-                cleanup_errors = _cleanup_failed_provision(link, claim_token)
-            except ChatProvisionLeaseLostError:
-                logger.info(
-                    "copilot cleanup fenced session_link_id=%s",
-                    session_link_id,
-                )
-            except Exception as cleanup_exc:
-                logger.exception(
-                    "copilot cleanup failed session_link_id=%s",
-                    session_link_id,
-                )
-                cleanup_errors = [f"cleanup_failed_provision: {cleanup_exc}"]
-        if cleanup_errors:
-            _transition_failed_provision_to_teardown(
-                session_link_id,
-                claim_token,
-                message=f"{exc}; {'; '.join(cleanup_errors)}",
-                error_state=error_state,
-            )
-        else:
-            _mark_provision_failed_by_id(
-                session_link_id,
-                claim_token,
-                str(exc),
-                error_state=error_state,
-                expected_generation=link.provision_generation if link else 0,
-            )
+        # A failed preparation is not a request to delete the Chat. Keep its
+        # owned workspace and remote operation journal for a later retry;
+        # destructive teardown is reserved for explicit Chat deletion.
+        _mark_provision_failed_by_id(
+            session_link_id,
+            claim_token,
+            str(exc),
+            error_state=error_state,
+            expected_generation=link.provision_generation if link else 0,
+        )
         raise
 
 
@@ -1547,7 +1528,7 @@ def _run_copilot_chat_provision(
             knowledge_source=ks,
             assistant_uuid=assistant_uuid,
         )
-    except ChatProvisionLeaseLostError:
+    except (ChatProvisionLeaseLostError, RuntimeError):
         _compensate_late_assistant(link.id, assistant_uuid)
         raise
     _set_phase(
@@ -1606,7 +1587,7 @@ def _run_copilot_chat_provision(
                 field="sl_session_uuid",
                 remote_uuid=session_uuid,
             )
-        except ChatProvisionLeaseLostError:
+        except (ChatProvisionLeaseLostError, RuntimeError):
             _compensate_late_session(link.id, session_uuid, user=user)
             raise
 
@@ -2030,6 +2011,7 @@ def _remote_items(raw: Any) -> list[dict[str, Any]]:
     return []
 
 
+@transaction.atomic
 def _prepare_remote_operation(
     link: LensSessionLink,
     claim_token: str,
@@ -2038,7 +2020,14 @@ def _prepare_remote_operation(
     lookup_key: str = "",
 ) -> dict[str, Any]:
     """Persist remote-create intent before SourceLens receives the request."""
-    state = dict(link.provision_state_json or {})
+    locked = LensSessionLink.objects.select_for_update().filter(
+        pk=link.id,
+        lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+        provision_claim_token=claim_token,
+    ).first()
+    if locked is None:
+        raise ChatProvisionLeaseLostError("Chat provisioning lease was lost.")
+    state = dict(locked.provision_state_json or {})
     operation = dict(state.get(kind) or {})
     if operation.get("status") in {"compensated", "not_created"}:
         operation = {}
@@ -2058,11 +2047,37 @@ def _prepare_remote_operation(
     elif lookup_key and operation.get("lookup_key") != lookup_key:
         raise RuntimeError(f"Remote operation lookup key changed for {kind}.")
     state[kind] = operation
+    locked.provision_state_json = state
+    locked.provision_claimed_at = timezone.now()
+    locked.save(
+        update_fields=["provision_state_json", "provision_claimed_at", "updated_at"]
+    )
     link.provision_state_json = state
-    _update_provision_claim(link, claim_token, "provision_state_json")
+    link.provision_claimed_at = locked.provision_claimed_at
     return operation
 
 
+def _discard_adopted_late_resource(
+    state: dict[str, Any],
+    kind: str,
+    remote_uuid: uuid_lib.UUID,
+) -> dict[str, Any]:
+    """Remove a late resource from the orphan journal once it is owned."""
+
+    items = state.get("late_resources")
+    if isinstance(items, list):
+        state["late_resources"] = [
+            item for item in items
+            if not (
+                isinstance(item, dict)
+                and item.get("kind") == kind
+                and str(item.get("remote_uuid") or "") == str(remote_uuid)
+            )
+        ]
+    return state
+
+
+@transaction.atomic
 def _record_remote_operation_resource(
     link: LensSessionLink,
     claim_token: str,
@@ -2072,22 +2087,44 @@ def _record_remote_operation_resource(
     remote_uuid: uuid_lib.UUID,
 ) -> None:
     """Atomically bind a returned UUID to its journal and Chat field."""
-    state = dict(link.provision_state_json or {})
+    locked = LensSessionLink.objects.select_for_update().filter(
+        pk=link.id,
+        lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+        provision_claim_token=claim_token,
+    ).first()
+    if locked is None:
+        raise ChatProvisionLeaseLostError("Chat provisioning lease was lost.")
+    state = dict(locked.provision_state_json or {})
     operation = dict(state.get(kind) or {})
     if not operation:
         raise RuntimeError(f"Remote operation intent is missing for {kind}.")
+    if (
+        operation.get("operation_id")
+        != dict((link.provision_state_json or {}).get(kind) or {}).get("operation_id")
+    ):
+        raise ChatProvisionLeaseLostError("Chat remote operation changed.")
+    if operation.get("remote_uuid") and operation["remote_uuid"] != str(remote_uuid):
+        raise RuntimeError(f"Remote operation journal references another {kind}.")
     operation["remote_uuid"] = str(remote_uuid)
     operation["status"] = "remote_created"
     operation["updated_at"] = timezone.now().isoformat()
     state[kind] = operation
+    _discard_adopted_late_resource(
+        state,
+        "session" if field == "sl_session_uuid" else "assistant",
+        remote_uuid,
+    )
+    locked.provision_state_json = state
+    setattr(locked, field, remote_uuid)
+    locked.provision_claimed_at = timezone.now()
+    locked.save(
+        update_fields=[
+            "provision_state_json", field, "provision_claimed_at", "updated_at",
+        ]
+    )
     link.provision_state_json = state
     setattr(link, field, remote_uuid)
-    _update_provision_claim(
-        link,
-        claim_token,
-        "provision_state_json",
-        field,
-    )
+    link.provision_claimed_at = locked.provision_claimed_at
 
 
 @transaction.atomic
@@ -2137,6 +2174,7 @@ def _bind_assistant_to_provision_claim(
         operation["updated_at"] = timezone.now().isoformat()
         state[_ASSISTANT_CREATE_OPERATION] = operation
 
+    _discard_adopted_late_resource(state, "assistant", assistant_uuid)
     locked.provision_state_json = state
     locked.sl_assistant_uuid = assistant_uuid
     locked_knowledge_source.sl_assistant_uuid = assistant_uuid
@@ -2548,6 +2586,39 @@ def _record_late_source_lens_resource(
         link.save(update_fields=["teardown_state_json", "updated_at"])
         return
     existing = getattr(link, field)
+    if (
+        link.lifecycle_status in {
+            LensSessionLink.LifecycleStatus.PROVISIONING,
+            LensSessionLink.LifecycleStatus.READY,
+        }
+        and link.cleanup_intent != LensSessionLink.CleanupIntent.DELETE_SESSION
+    ):
+        if existing != resource_uuid:
+            kind = "session" if field == "sl_session_uuid" else "assistant"
+            resources = _late_remote_uuids(link, kind)
+            resources.add(resource_uuid)
+            _retain_failed_late_resources(link, kind, sorted(resources, key=str))
+            link.save(update_fields=["provision_state_json", "updated_at"])
+        # A newer worker can still adopt this resource. Never delete it based
+        # on a stale observation made before its own response arrived.
+        return
+    if (
+        link.lifecycle_status == LensSessionLink.LifecycleStatus.FAILED
+        and link.cleanup_intent == LensSessionLink.CleanupIntent.NONE
+    ):
+        # A late response to failed preparation is still owned by this Chat.
+        # Keep it in the journal for retry/deletion instead of tearing down
+        # the entire preserved workspace.
+        if existing not in {None, resource_uuid}:
+            kind = "session" if field == "sl_session_uuid" else "assistant"
+            resources = _late_remote_uuids(link, kind)
+            resources.add(resource_uuid)
+            _retain_failed_late_resources(link, kind, sorted(resources, key=str))
+            link.save(update_fields=["provision_state_json", "updated_at"])
+        else:
+            setattr(link, field, resource_uuid)
+            link.save(update_fields=[field, "updated_at"])
+        return
     if existing not in {None, resource_uuid}:
         resource_kind = "session" if field == "sl_session_uuid" else "assistant"
         late_resources = _late_remote_uuids(link, resource_kind)
@@ -2648,6 +2719,28 @@ def _compensate_late_session(
     *,
     user: AbstractBaseUser,
 ) -> None:
+    link = LensSessionLink.all_objects.filter(pk=link_id).first()
+    if (
+        link is not None
+        and link.lifecycle_status in {
+            LensSessionLink.LifecycleStatus.PROVISIONING,
+            LensSessionLink.LifecycleStatus.FAILED,
+            LensSessionLink.LifecycleStatus.READY,
+        }
+        and link.cleanup_intent == LensSessionLink.CleanupIntent.NONE
+    ):
+        _record_late_source_lens_resource(
+            link_id,
+            field="sl_session_uuid",
+            resource_uuid=session_uuid,
+            error="Late session returned after failed Chat preparation.",
+        )
+        return
+    if link is not None and link.sl_session_uuid == session_uuid:
+        # A newer retry may have adopted the same idempotently recovered
+        # session while the stale worker was returning. It is no longer an
+        # orphan for the old worker to delete.
+        return
     try:
         sl_client.request_json(
             "DELETE",
@@ -2675,6 +2768,32 @@ def _compensate_late_assistant(
         .first()
     )
     if link is None:
+        return
+    if (
+        link.lifecycle_status in {
+            LensSessionLink.LifecycleStatus.PROVISIONING,
+            LensSessionLink.LifecycleStatus.FAILED,
+            LensSessionLink.LifecycleStatus.READY,
+        }
+        and link.cleanup_intent == LensSessionLink.CleanupIntent.NONE
+    ):
+        _record_late_source_lens_resource(
+            link_id,
+            field="sl_assistant_uuid",
+            resource_uuid=assistant_uuid,
+            error="Late Assistant returned after failed Chat preparation.",
+        )
+        return
+    if link.sl_assistant_uuid == assistant_uuid or (
+        link.knowledge_source_id
+        and LensKnowledgeSource.objects.filter(
+            pk=link.knowledge_source_id,
+            sl_assistant_uuid=assistant_uuid,
+        ).exists()
+    ):
+        # A newer generation may have bound this exact Assistant while the
+        # stale worker was waiting for its response. Never delete an adopted
+        # remote resource.
         return
     try:
         from apps.lens_bridge.services.assistants import _delete_sl_assistant
@@ -3367,50 +3486,80 @@ def _mark_provision_failed_by_id(
     error_state: dict[str, Any] | None = None,
     expected_generation: int,
 ) -> None:
-    updated = LensSessionLink.objects.filter(
-        pk=session_link_id,
-        lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
-        provision_claim_token=claim_token,
-    ).update(
-        lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
-        provision_phase=LensSessionLink.ProvisionPhase.QUEUED,
-        provision_detail="Chat preparation failed.",
-        lifecycle_error=(message or "provision failed")[:2000],
-        lifecycle_error_state_json=dict(error_state or {}),
-        provision_claim_token=None,
-        provision_claimed_at=None,
-        provision_next_retry_at=None,
-        cleanup_intent=LensSessionLink.CleanupIntent.RESET_FOR_RETRY,
-        cleanup_status=LensSessionLink.CleanupStatus.COMPLETE,
-        capacity_reservation_status=LensSessionLink.CapacityReservationStatus.RELEASED,
-        updated_at=timezone.now(),
-    )
-    if updated:
-        snapshot_id = (
-            LensSessionLink.objects.filter(pk=session_link_id)
-            .values_list("backup_source_snapshot_id", flat=True)
-            .first()
+    locked = (
+        LensSessionLink.objects.select_for_update(of=("self",))
+        .select_related("knowledge_source")
+        .filter(
+            pk=session_link_id,
+            lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+            provision_claim_token=claim_token,
         )
-        if snapshot_id is not None:
+        .first()
+    )
+    if locked is None:
+        return
+    ks = locked.knowledge_source
+    policy_state = (ks.sync_state_json or {}).get("conversion") if ks else None
+    # A READY knowledge source has completed its heavy preparation. A restored
+    # source with no conversion state has not dispatched a conversion yet.
+    # Otherwise keep its slot: an orphaned remote task may still own it.
+    release_slot = ks is None or (
+        ks is not None
+        and (
+            (
+                ks.status in {
+                    LensKnowledgeSource.Status.READY,
+                    LensKnowledgeSource.Status.DEGRADED,
+                }
+                and (
+                    not isinstance(policy_state, dict)
+                    or str(policy_state.get("status") or "") == "SUCCESS"
+                )
+            )
+            or (
+                policy_state is None
+                and "restore_snapshot"
+                in (ks.sync_state_json or {}).get("completed_phases", [])
+            )
+        )
+    )
+    locked.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
+    locked.provision_phase = LensSessionLink.ProvisionPhase.QUEUED
+    locked.provision_detail = "Chat preparation failed. Retry or delete this Chat."
+    locked.lifecycle_error = (message or "provision failed")[:2000]
+    locked.lifecycle_error_state_json = dict(error_state or {})
+    locked.provision_claim_token = None
+    locked.provision_claimed_at = None
+    locked.provision_next_retry_at = None
+    locked.cleanup_intent = LensSessionLink.CleanupIntent.NONE
+    locked.cleanup_status = LensSessionLink.CleanupStatus.NONE
+    if ks is None:
+        locked.capacity_reservation_status = (
+            LensSessionLink.CapacityReservationStatus.RELEASED
+        )
+    locked.save(
+        update_fields=[
+            "lifecycle_status", "provision_phase", "provision_detail",
+            "lifecycle_error", "lifecycle_error_state_json",
+            "provision_claim_token", "provision_claimed_at",
+            "provision_next_retry_at", "cleanup_intent", "cleanup_status",
+            "capacity_reservation_status", "updated_at",
+        ]
+    )
+    if ks is None:
+        if locked.backup_source_snapshot_id is not None:
             release_chat_usage(
                 session_link_id=session_link_id,
-                snapshot_id=snapshot_id,
+                snapshot_id=locked.backup_source_snapshot_id,
             )
+    if release_slot:
         released_gateway_id = gateway_chat_queue.release_chat_prepare_slot(
             session_link_id=session_link_id,
             expected_generation=expected_generation,
         )
         if released_gateway_id is None:
-            gateway_link_id = (
-                LensSessionLink.objects.filter(pk=session_link_id)
-                .values_list("gateway_link_id", flat=True)
-                .first()
-            )
-            if gateway_link_id is not None:
-                # The failed session may have been the FIFO head without ever
-                # acquiring a heavy-work slot (for example, scope validation
-                # failed). There is no slot-release callback in that case.
-                gateway_chat_queue.wake_gateway_queue(int(gateway_link_id))
+            if locked.gateway_link_id is not None:
+                gateway_chat_queue.wake_gateway_queue(locked.gateway_link_id)
 
 
 @transaction.atomic
@@ -3585,6 +3734,20 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
                 )
             }
         )
+    if _late_remote_uuids(locked, "assistant") or _late_remote_uuids(
+        locked, "session"
+    ):
+        raise ValidationError(
+            {"lifecycle_status": "Conflicting remote resources require Chat deletion."}
+        )
+    if (
+        locked.lifecycle_status == LensSessionLink.LifecycleStatus.FAILED
+        and locked.knowledge_source_id is None
+        and (locked.sl_assistant_uuid or locked.sl_session_uuid)
+    ):
+        raise ValidationError(
+            {"knowledge_source": "Remote Chat resources have no linked workspace."}
+        )
     if locked.lifecycle_status == LensSessionLink.LifecycleStatus.PROVISIONING:
         claim_is_live = (
             locked.provision_claimed_at is not None
@@ -3624,6 +3787,95 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             )
             transaction.on_commit(lambda: _queue_provision_or_mark_failed(locked.id))
             return locked
+
+    retained_ks = None
+    if (
+        locked.lifecycle_status == LensSessionLink.LifecycleStatus.FAILED
+        and locked.knowledge_source_id is not None
+    ):
+        retained_ks = (
+            LensKnowledgeSource.objects.select_for_update()
+            .filter(pk=locked.knowledge_source_id)
+            .first()
+        )
+        if (
+            retained_ks is None
+            or retained_ks.lifecycle_status != LensKnowledgeSource.LifecycleStatus.READY
+        ):
+            raise ValidationError(
+                {"knowledge_source": "Chat workspace is being deleted."}
+            )
+        if (
+            retained_ks.organization_id != locked.organization_id
+            or retained_ks.gateway_link_id != locked.gateway_link_id
+            or retained_ks.backup_source_snapshot_id
+            != locked.backup_source_snapshot_id
+        ):
+            raise ValidationError(
+                {"knowledge_source": "Chat workspace identity no longer matches."}
+            )
+        if (
+            retained_ks.sl_assistant_uuid
+            and locked.sl_assistant_uuid
+            and retained_ks.sl_assistant_uuid != locked.sl_assistant_uuid
+        ):
+            raise ValidationError(
+                {"knowledge_source": "Chat Assistant identity no longer matches."}
+            )
+        sync_state = dict(retained_ks.sync_state_json or {})
+        conversion = dict(sync_state.get("conversion") or {})
+        if conversion and str(conversion.get("status") or "").upper() != "SUCCESS":
+            conversion["manual_retry_count"] = (
+                int(conversion.get("manual_retry_count") or 0) + 1
+            )
+            conversion["resume_attempts"] = 0
+            conversion["rebind_attempts"] = 0
+            conversion.pop("rebind_next_retry_at", None)
+            conversion.pop("error", None)
+            conversion["manual_retry_pending"] = True
+            if conversion.get("task_id"):
+                # Re-read the same remote task; never create a second task
+                # simply because the previous HFL attempt was paused.
+                conversion["status"] = "STARTED"
+            sync_state["conversion"] = conversion
+        sync_state["last_error"] = None
+        retained_ks.status = LensKnowledgeSource.Status.SYNCING
+        retained_ks.status_detail = "Retrying Chat preparation."
+        retained_ks.sync_state_json = sync_state
+        retained_ks.sync_next_poll_at = None
+        retained_ks.save(
+            update_fields=[
+                "status", "status_detail", "sync_state_json",
+                "sync_next_poll_at", "updated_at",
+            ]
+        )
+
+    existing_slot = LensGatewayChatSlot.objects.filter(
+        session_link_id=locked.id,
+        session_generation=locked.provision_generation,
+    ).exists()
+    if retained_ks is not None and existing_slot:
+        # A remote executor may still own this workspace. Preserve its slot
+        # generation while fencing every old worker via the poll sequence.
+        locked.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
+        locked.provision_phase = LensSessionLink.ProvisionPhase.QUEUED
+        locked.provision_detail = "Resuming Chat preparation."
+        locked.lifecycle_error = ""
+        locked.lifecycle_error_state_json = {}
+        locked.provision_claim_token = None
+        locked.provision_claimed_at = None
+        locked.provision_next_retry_at = None
+        locked.provision_poll_sequence += 1
+        locked.save(
+            update_fields=[
+                "lifecycle_status", "provision_phase", "provision_detail",
+                "lifecycle_error", "lifecycle_error_state_json",
+                "provision_claim_token", "provision_claimed_at",
+                "provision_next_retry_at", "provision_poll_sequence", "updated_at",
+            ]
+        )
+        transaction.on_commit(lambda: _queue_provision_or_mark_failed(locked.id))
+        return locked
 
     gateway_link = locked.gateway_link or (
         locked.chat_binding.gateway_link if locked.chat_binding_id else None
@@ -3741,6 +3993,87 @@ def _queue_provision_or_mark_failed(
             provision_next_retry_at=timezone.now() + timedelta(seconds=60),
             updated_at=timezone.now(),
         )
+
+
+def release_stopped_failed_chat_slots(*, limit: int = 100) -> int:
+    """Release failed Chat slots only after SL proves the conversion stopped."""
+
+    from apps.lens_bridge.services import managed_datasource
+
+    now = timezone.now()
+    session_ids = list(
+        LensGatewayChatSlot.objects.filter(
+            session_link__lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
+            session_link__cleanup_intent=LensSessionLink.CleanupIntent.NONE,
+        )
+        .filter(
+            Q(session_link__provision_state_json__failed_slot_stop_probe_after__isnull=True)
+            | Q(
+                session_link__provision_state_json__failed_slot_stop_probe_after__lte=now.isoformat()
+            )
+        )
+        .order_by("id")
+        .values_list("session_link_id", flat=True)[: max(1, min(limit, 500))]
+    )
+    released = 0
+    for session_id in session_ids:
+        with transaction.atomic():
+            session = LensSessionLink.objects.select_for_update().filter(
+                pk=session_id,
+                lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
+                cleanup_intent=LensSessionLink.CleanupIntent.NONE,
+            ).first()
+            if session is None or session.knowledge_source_id is None:
+                continue
+            ks = LensKnowledgeSource.objects.filter(
+                pk=session.knowledge_source_id
+            ).first()
+            state = (ks.sync_state_json or {}).get("conversion") if ks else None
+            task_id = (
+                str(state.get("task_id") or "") if isinstance(state, dict) else ""
+            )
+            if not task_id:
+                continue
+            journal = dict(session.provision_state_json or {})
+            journal["failed_slot_stop_probe_after"] = (
+                now + timedelta(minutes=10)
+            ).isoformat()
+            session.provision_state_json = journal
+            session.save(update_fields=["provision_state_json", "updated_at"])
+        if ks is None:
+            continue
+        try:
+            if not managed_datasource.conversion_stop_confirmed(ks):
+                continue
+        except sl_client.LensBridgeError:
+            continue
+        with transaction.atomic():
+            locked = LensSessionLink.objects.select_for_update().filter(
+                pk=session_id,
+                lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
+                cleanup_intent=LensSessionLink.CleanupIntent.NONE,
+                knowledge_source_id=ks.id,
+            ).first()
+            if locked is None:
+                continue
+            current_state = (
+                LensKnowledgeSource.objects.filter(pk=ks.id)
+                .values_list("sync_state_json", flat=True)
+                .first()
+                or {}
+            )
+            current_conversion = current_state.get("conversion") or {}
+            if str(current_conversion.get("task_id") or "") != task_id:
+                continue
+            slot = LensGatewayChatSlot.objects.filter(session_link_id=session_id).first()
+            if slot is None or slot.session_generation != locked.provision_generation:
+                continue
+            if gateway_chat_queue.release_chat_prepare_slot(
+                session_link_id=session_id,
+                expected_generation=locked.provision_generation,
+            ) is not None:
+                released += 1
+    return released
 
 
 def _queue_teardown_or_record_error(session_link_id: int) -> None:

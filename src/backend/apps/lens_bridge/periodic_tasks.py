@@ -46,6 +46,13 @@ def register_periodic_tasks() -> None:
         enabled=True,
     )
     TASK_REGISTRY.add(
+        name="lens_bridge_reconcile_failed_chat_slots",
+        task="apps.lens_bridge.tasks.chat_lifecycle.reconcile_failed_chat_slots_task",
+        schedule=crontab(minute="*/5"),
+        kwargs={"limit": 3},
+        enabled=True,
+    )
+    TASK_REGISTRY.add(
         name="lens_bridge_reconcile_knowledge_source_syncs",
         task=(
             "apps.lens_bridge.tasks.knowledge_source_sync."

@@ -929,6 +929,12 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
             )
 
     def perform_update(self, serializer):
+        if LensSessionLink.objects.filter(
+            knowledge_source_id=serializer.instance.id
+        ).exclude(lifecycle_status=LensSessionLink.LifecycleStatus.DELETED).exists():
+            raise ValidationError(
+                {"knowledge_source": "Manage this workspace through its Chat."}
+            )
         if (
             serializer.instance.lifecycle_status
             != LensKnowledgeSource.LifecycleStatus.READY
@@ -948,6 +954,17 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
         )
 
         instance = self.get_object()
+        if LensSessionLink.objects.filter(
+            knowledge_source_id=instance.id
+        ).exclude(
+            lifecycle_status__in=(
+                LensSessionLink.LifecycleStatus.DELETING,
+                LensSessionLink.LifecycleStatus.DELETED,
+            )
+        ).exists():
+            raise ValidationError(
+                {"knowledge_source": "Delete the Chat to remove its workspace."}
+            )
         request_knowledge_source_teardown(instance)
         return Response(
             {"id": instance.id, "lifecycle_status": "deleting"},

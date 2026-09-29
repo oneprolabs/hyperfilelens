@@ -44,6 +44,16 @@ from common.errors import AppError
 
 class CopilotLifecycleQueueTests(SimpleTestCase):
     @patch(
+        "apps.lens_bridge.services.chat_lifecycle.release_stopped_failed_chat_slots",
+        return_value=2,
+    )
+    def test_failed_slot_reconciliation_has_independent_bounded_task(self, release):
+        result = chat_lifecycle_tasks.reconcile_failed_chat_slots_task.run(limit=100)
+
+        self.assertEqual(result, {"released": 2})
+        release.assert_called_once_with(limit=3)
+
+    @patch(
         "apps.lens_bridge.services.chat_lifecycle.run_copilot_chat_provision",
         return_value={
             "session_link_id": 42,
@@ -368,6 +378,21 @@ class CopilotRetryTests(TestCase):
         )
         self.assertEqual(updated.provision_phase, LensSessionLink.ProvisionPhase.QUEUED)
         queue_provision.assert_called_once_with(session.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    def test_failed_chat_does_not_adopt_assistant_without_workspace(
+        self, queue_provision
+    ):
+        session = self.create_session(LensSessionLink.LifecycleStatus.FAILED)
+        session.sl_assistant_uuid = uuid.uuid4()
+        session.save(update_fields=["sl_assistant_uuid", "updated_at"])
+
+        with self.assertRaisesRegex(
+            ValidationError, "Remote Chat resources have no linked workspace"
+        ):
+            chat_lifecycle.retry_copilot_chat_provision(session)
+
+        queue_provision.assert_not_called()
 
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
     def test_failed_session_retry_reacquires_snapshot_usage(self, queue_provision):

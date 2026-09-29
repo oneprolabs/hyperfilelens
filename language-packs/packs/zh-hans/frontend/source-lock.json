@@ -3364,6 +3364,8 @@
   "insight.copilot.deletingChat": "7f770549ec15968e751f05a9aea85c85e8000d7c1f3421147a447d3a6d1b9fee",
   "insight.copilot.genericLifecycleError": "8b651e0d27507ebafaeab667a345bbf8e9fe8b73c98270b40508ecd4565a8d9d",
   "insight.copilot.retryPreparationDetail": "09e5199a69560be2a0b18086f54e573b0fa96bc0188446447639f09634990ced",
+  "insight.copilot.retainedRetryHint": "615fb3345f0d7ac33834df8af26d323cbfe3eddd4afc7c787f59a0681e4ead06",
+  "insight.copilot.retainedConversionRetryHint": "05be8fde2169cbd4ef63fbcf005f36593c039265d789921e93a80a8e766d2976",
   "insight.copilot.cleanupBlockedDetail": "7058aea25d6f2fdc22000081ad24c98ce99ebbc37e110fe2848fed08d0ad965f",
   "insight.copilot.cleanupSafetyDetail": "4f2fcc7e063f596f437a90ad73d869c373869ff22388c31ce2c1cd9a5f735ba4",
   "insight.copilot.deletingChatDetail": "7f9bfec2f43c734a994103b40ca3e2e957f0f2e871881a7251a10b8d78cbff81",

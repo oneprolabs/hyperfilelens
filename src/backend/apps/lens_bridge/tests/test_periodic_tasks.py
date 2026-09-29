@@ -33,3 +33,10 @@ class LensBridgePeriodicTaskTests(SimpleTestCase):
             enabled=True,
             expire_seconds=25,
         )
+        self.assertEqual(
+            sum(
+                call.kwargs.get("name") == "lens_bridge_reconcile_failed_chat_slots"
+                for call in add.call_args_list
+            ),
+            1,
+        )

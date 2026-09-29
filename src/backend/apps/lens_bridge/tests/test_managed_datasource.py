@@ -1086,6 +1086,262 @@ class ManagedDatasourceTests(SimpleTestCase):
     )
     @patch(
         "apps.lens_bridge.services.managed_datasource."
+        "sl_client.get_managed_datasource_conversion_recovery"
+    )
+    @patch("apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id")
+    def test_rebind_is_bounded_without_consuming_checkpoint_budget(
+        self, get_task, recovery, resume
+    ):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "convert-1",
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(policy)
+                ),
+            }
+        }
+        get_task.return_value = {
+            "task_id": "convert-1",
+            "status": "FAILURE",
+            "error": "DATASOURCE_CONVERSION_ORPHANED",
+        }
+        recovery.return_value = {
+            "orphaned": True,
+            "resumable": True,
+            "resume_source": "lensnode_executor",
+            "reason": "EXECUTOR_ACTIVE",
+        }
+        resume.return_value = {
+            "task_id": "convert-1",
+            "resumed": True,
+            "resume_source": "lensnode_executor",
+            "reason": "EXECUTOR_ACTIVE",
+            "status": "STARTED",
+        }
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+        self.assertEqual(sync_state["conversion"]["rebind_attempts"], 1)
+        self.assertEqual(sync_state["conversion"].get("resume_attempts", 0), 0)
+
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+        resume.assert_called_once()
+        sync_state["conversion"]["rebind_attempts"] = (
+            managed_datasource.CONVERSION_REBIND_MAX_ATTEMPTS
+        )
+        with self.assertRaisesRegex(
+            managed_datasource.ManagedDatasourceError,
+            "DATASOURCE_CONVERSION_REBIND_PAUSED",
+        ):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+        resume.assert_called_once()
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value={
+            "task_id": "convert-1",
+            "status": "STARTED",
+            "metadata": {"progress_counts": {"processed": 12}},
+        },
+    )
+    def test_substantive_progress_resets_consecutive_rebind_count(self, _get_task):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "convert-1",
+                "rebind_attempts": 2,
+                "progress_counts": {"processed": 11},
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(policy)
+                ),
+            }
+        }
+
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+
+        self.assertEqual(sync_state["conversion"]["rebind_attempts"], 0)
+        self.assertEqual(sync_state["conversion"]["progress_counts"]["processed"], 12)
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.conversion_stop_confirmed",
+        return_value=True,
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.get_managed_datasource_conversion_recovery",
+        return_value={
+            "orphaned": True,
+            "resumable": False,
+            "restart_required": True,
+        },
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value={
+            "task_id": "old-conversion",
+            "status": "FAILURE",
+            "error": "DATASOURCE_CONVERSION_ORPHANED",
+        },
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.start_managed_datasource_conversion"
+    )
+    def test_manual_restart_waits_for_stop_confirmation(
+        self, start, _get_task, _recovery, stop_confirmed
+    ):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "old-conversion",
+                "manual_retry_pending": True,
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(policy)
+                ),
+            }
+        }
+        ks.sync_state_json = sync_state
+        stop_confirmed.return_value = False
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+        start.assert_not_called()
+        self.assertEqual(sync_state["conversion"]["task_id"], "old-conversion")
+
+        stop_confirmed.return_value = True
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+        start.assert_not_called()
+        self.assertNotIn("conversion", sync_state)
+        self.assertEqual(sync_state["conversion_history"][-1]["task_id"], "old-conversion")
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.conversion_stop_confirmed",
+        return_value=True,
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.get_managed_datasource_conversion_recovery",
+        return_value={
+            "orphaned": False,
+            "resumable": False,
+            "restart_required": True,
+        },
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value={
+            "task_id": "old-conversion",
+            "status": "FAILURE",
+            "error": "INVALID_DOCUMENT",
+        },
+    )
+    def test_manual_retry_can_restart_non_orphan_terminal_task(
+        self, _task, _recovery, _stopped
+    ):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "old-conversion",
+                "manual_retry_pending": True,
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(policy)
+                ),
+            }
+        }
+        ks.sync_state_json = sync_state
+
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+        self.assertNotIn("conversion", sync_state)
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.conversion_stop_confirmed",
+        return_value=True,
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.get_managed_datasource_conversion_recovery",
+        return_value={
+            "orphaned": False,
+            "resumable": True,
+            "restart_required": False,
+        },
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value={
+            "task_id": "old-conversion",
+            "status": "FAILURE",
+            "error": "INVALID_DOCUMENT",
+        },
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.resume_managed_datasource_conversion"
+    )
+    def test_manual_retry_restarts_ordinary_failure_even_with_checkpoint(
+        self, resume, _task, _recovery, stop_confirmed
+    ):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        conversion = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "old-conversion",
+                "manual_retry_pending": True,
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(conversion)
+                ),
+            }
+        }
+        ks.sync_state_json = sync_state
+
+        stop_confirmed.return_value = False
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=conversion
+            )
+        self.assertEqual(sync_state["conversion"]["task_id"], "old-conversion")
+        resume.assert_not_called()
+
+        stop_confirmed.return_value = True
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=conversion
+            )
+        self.assertNotIn("conversion", sync_state)
+        resume.assert_not_called()
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.resume_managed_datasource_conversion"
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
         "sl_client.get_managed_datasource_conversion_recovery",
         return_value={
             "task_id": "convert-1",
@@ -1177,6 +1433,7 @@ class ManagedDatasourceTests(SimpleTestCase):
             sync_state["conversion"]["progress_message"],
             "Document conversion is already running.",
         )
+        self.assertEqual(sync_state["conversion"].get("resume_attempts", 0), 0)
 
     @patch(
         "apps.lens_bridge.services.managed_datasource."

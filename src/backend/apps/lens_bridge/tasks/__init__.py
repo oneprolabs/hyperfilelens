@@ -2,6 +2,7 @@ from apps.lens_bridge.tasks.chat_lifecycle import (
     execute_copilot_chat_provision_task,
     execute_copilot_chat_teardown_task,
     reconcile_copilot_chat_provisions_task,
+    reconcile_failed_chat_slots_task,
     reconcile_lens_resource_teardowns_task,
 )
 from apps.lens_bridge.tasks.chat_user_provision import execute_chat_user_provision_task
@@ -34,6 +35,7 @@ __all__ = [
     "execute_copilot_chat_provision_task",
     "execute_copilot_chat_teardown_task",
     "reconcile_copilot_chat_provisions_task",
+    "reconcile_failed_chat_slots_task",
     "reconcile_lens_resource_teardowns_task",
     "execute_knowledge_source_teardown_task",
     "execute_run_submission_recovery_task",
