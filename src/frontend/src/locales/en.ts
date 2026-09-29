@@ -943,6 +943,7 @@ export const en = {
       attach: 'Add images or documents',
       pinned: 'Pinned chat',
       share: 'Share',
+      newFromChat: 'New Chat From This',
       renameSession: 'Rename',
       pinSession: 'Pin Chat',
       unpinSession: 'Unpin Chat',

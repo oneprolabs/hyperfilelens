@@ -16,6 +16,7 @@ import {
 import { useCopilotRunStore } from '../../stores/copilotRunStore'
 import {
   createCopilotRun,
+  createCopilotSessionFromExisting,
   submitCopilotClarification,
   deleteCopilotAttachment,
   deleteCopilotSession,
@@ -73,6 +74,8 @@ const copilotStore = useCopilotRunStore()
 const { isPhone } = useResponsiveLayout()
 const mobileSessionsOpen = ref(false)
 const clarificationResetToken = ref(0)
+const reuseSubmittingId = ref<number | null>(null)
+const reuseRequestKeys = new Map<number, string>()
 
 const bridgeReady = ref(false)
 const loading = ref(false)
@@ -651,6 +654,49 @@ async function retryProvision(row: SessionRow) {
     }
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
+  }
+}
+
+async function newChatFromSession(row: SessionRow) {
+  if (
+    row.lifecycle_status !== 'ready'
+    || row.knowledge_source == null
+    || !row.sl_assistant_uuid
+    || reuseSubmittingId.value !== null
+  ) return
+  reuseSubmittingId.value = row.id
+  const requestKey = reuseRequestKeys.get(row.id)
+    || (globalThis.crypto?.randomUUID?.() ?? `reuse-${row.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  reuseRequestKeys.set(row.id, requestKey)
+  try {
+    const created = await createCopilotSessionFromExisting(row.id, {
+      idempotency_key: requestKey,
+    })
+    const previousId = activeSessionId.value
+    sessions.value = toSessionRows([...sessions.value, created])
+    clearComposerAttachments({ deleteDocuments: true })
+    input.value = ''
+    retryDraft.value = null
+    mobileSessionsOpen.value = false
+    activeSessionId.value = created.id
+    if (previousId != null && previousId !== created.id) {
+      copilotStore.detachSessionStream(previousId)
+    }
+    await router.replace({ path: '/insight/copilot', query: { session: String(created.id) } })
+    if (created.lifecycle_status === 'ready') {
+      await copilotStore.selectSession(previousId, created.id, syncHandlers, created.id)
+    } else {
+      void pollSessionLifecycle(created.id)
+    }
+    reuseRequestKeys.delete(row.id)
+  } catch (err) {
+    const status = Number((err as { status?: number })?.status || 0)
+    if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+      reuseRequestKeys.delete(row.id)
+    }
+    ElMessage.error({ message: apiErrorMessage(err, t('insight.copilot.startChatFailed')), grouping: true })
+  } finally {
+    reuseSubmittingId.value = null
   }
 }
 
@@ -1251,11 +1297,13 @@ onUnmounted(() => {
       :active-id="activeSessionId"
       :loading="loading"
       :pending-notifications="copilotStore.pendingNotifications.value"
+      :new-from-id="reuseSubmittingId"
       @select="selectSession"
       @share="shareSession"
       @delete="deleteSession"
       @rename="renameSession"
       @retry="retryProvision"
+      @new-from="newChatFromSession"
       @pin="setSessionPinned"
       @new-chat="openNewChatFlow"
     />
@@ -1274,11 +1322,13 @@ onUnmounted(() => {
         :active-id="activeSessionId"
         :loading="loading"
         :pending-notifications="copilotStore.pendingNotifications.value"
+        :new-from-id="reuseSubmittingId"
         @select="selectSession($event); mobileSessionsOpen = false"
         @share="shareSession"
         @delete="deleteSession"
         @rename="renameSession"
         @retry="retryProvision"
+        @new-from="newChatFromSession"
         @pin="setSessionPinned"
         @new-chat="mobileSessionsOpen = false; openNewChatFlow()"
       />

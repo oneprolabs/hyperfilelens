@@ -3177,6 +3177,7 @@
   "insight.copilot.attach": "9cdfa72c73a360bd2b62e5d1aa7ebcd904ced1404cd2a313fca29193e111011c",
   "insight.copilot.pinned": "fdba1070d45b8591889a28a42c0e49f9a1b717fb63bd999124493988d43c8b3e",
   "insight.copilot.share": "331e1584943b09b9b2a27aeb787873184168cea298ccf71171dc16d4f8126dc4",
+  "insight.copilot.newFromChat": "95204f23e84c39d6a64fd1a3047424554c8c4174300712d161a5072419ce22b5",
   "insight.copilot.renameSession": "d6952b4e54d246ddccdbd03bb88c35d7d33e0845dc4120195a46a689297e9d12",
   "insight.copilot.pinSession": "a9a03cf6812d1502996423469180b04da0115aee421bd22e1547ac5f768e621d",
   "insight.copilot.unpinSession": "4cce162f25319cf0a697408675c64caab8105231347c639b2b18f8551357fe20",

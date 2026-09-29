@@ -10,6 +10,7 @@ const props = defineProps<{
   activeId: number | null
   loading?: boolean
   pendingNotifications?: Set<number>
+  newFromId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -18,6 +19,7 @@ const emit = defineEmits<{
   delete: [row: SessionRow]
   rename: [row: SessionRow, title: string]
   retry: [row: SessionRow]
+  newFrom: [row: SessionRow]
   pin: [row: SessionRow, pinned: boolean]
   newChat: []
 }>()
@@ -138,6 +140,7 @@ function handleAction(command: string, row: SessionRow) {
   if (command === 'unpin') emit('pin', row, false)
   if (command === 'rename') startRename(row)
   if (command === 'retry') emit('retry', row)
+  if (command === 'new-from') emit('newFrom', row)
   if (command === 'delete') emit('delete', row)
 }
 </script>
@@ -253,6 +256,15 @@ function handleAction(command: string, row: SessionRow) {
                 </button>
                 <template #dropdown>
                   <ElDropdownMenu>
+                    <ElDropdownItem
+                      v-if="row.lifecycle_status === 'ready' && row.knowledge_source != null && row.sl_assistant_uuid"
+                      class="copilot-session-menu__new-from"
+                      command="new-from"
+                      :icon="Plus"
+                      :disabled="newFromId === row.id"
+                    >
+                      {{ t('insight.copilot.newFromChat') }}
+                    </ElDropdownItem>
                     <ElDropdownItem
                       v-if="row.lifecycle_status === 'ready'"
                       class="copilot-session-menu__share"

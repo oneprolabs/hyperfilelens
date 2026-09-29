@@ -3323,6 +3323,7 @@
       "attach": "Añadir imágenes o documentos",
       "pinned": "Chat fijado",
       "share": "Compartir",
+      "newFromChat": "Nuevo chat a partir de este",
       "renameSession": "Renombrar",
       "pinSession": "Fijar chat",
       "unpinSession": "Desanclar chat",

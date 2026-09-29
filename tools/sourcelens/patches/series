@@ -1,2 +1,3 @@
 # Active patches are listed one per line as active/<name>.patch.
-# SourceLens v0.61.3 requires no HFL functional patches.
+# SourceLens v0.61.3: guard shared Chat Assistant archive against other sessions.
+active/archive-assistant-if-unused-v0.61.3.patch

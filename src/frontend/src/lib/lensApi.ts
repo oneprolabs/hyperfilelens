@@ -1148,6 +1148,18 @@ export async function createCopilotSession(body: CreateCopilotSessionPayload): P
   return lensPayload<LensSessionLink>(raw)
 }
 
+export async function createCopilotSessionFromExisting(
+  sessionId: number,
+  body: { idempotency_key: string; title?: string },
+): Promise<LensSessionLink> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/new/`), {
+    method: 'POST',
+    headers: lensHeaders(),
+    body: JSON.stringify(body),
+  })
+  return lensPayload<LensSessionLink>(raw)
+}
+
 export type LensSnapshotBrowseTask = {
   task_id: string
   status: 'pending' | 'running' | 'success' | 'failed' | 'timeout' | 'canceled' | string

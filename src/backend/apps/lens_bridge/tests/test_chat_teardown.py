@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from django.db import close_old_connections
 from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 
 from apps.iam.models import Organization
 from apps.lens_bridge.models import (
@@ -152,6 +153,466 @@ class CopilotChatTeardownTests(TestCase):
         )
         self.assertFalse(
             SnapshotUsageLease.objects.filter(snapshot_id=snapshot.id).exists()
+        )
+
+    def test_reused_chat_does_not_mark_degraded_shared_data_ready(self):
+        token = uuid.uuid4()
+        self.knowledge_source.status = LensKnowledgeSource.Status.DEGRADED
+        self.knowledge_source.status_detail = "Some files are unavailable."
+        self.knowledge_source.save(update_fields=["status", "status_detail"])
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
+        self.session.provision_claim_token = token
+        self.session.save(
+            update_fields=["lifecycle_status", "provision_claim_token", "updated_at"]
+        )
+
+        chat_lifecycle._complete_copilot_chat_provision(
+            link_id=self.session.id,
+            claim_token=str(token),
+            knowledge_source_id=self.knowledge_source.id,
+            assistant_uuid=self.knowledge_source.sl_assistant_uuid,
+            session_uuid=self.session.sl_session_uuid,
+            reuse_prepared_resources=True,
+        )
+
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(self.knowledge_source.status, LensKnowledgeSource.Status.DEGRADED)
+        self.assertEqual(
+            self.knowledge_source.status_detail, "Some files are unavailable."
+        )
+
+    def test_shared_resource_cleanup_waits_for_another_ready_chat(self):
+        other = LensSessionLink.objects.create(
+            organization=self.tenant,
+            hfl_user=self.user,
+            gateway_link=self.gateway_link,
+            knowledge_source=self.knowledge_source,
+            sl_session_uuid=uuid.uuid4(),
+            sl_assistant_uuid=self.knowledge_source.sl_assistant_uuid,
+            lifecycle_status=LensSessionLink.LifecycleStatus.READY,
+        )
+
+        claimed = chat_lifecycle._claim_shared_chat_resource_teardown(
+            knowledge_source=self.knowledge_source,
+            owner_session_link_id=self.session.id,
+        )
+
+        self.assertFalse(claimed)
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            self.knowledge_source.lifecycle_status,
+            LensKnowledgeSource.LifecycleStatus.READY,
+        )
+        other.refresh_from_db()
+        self.assertEqual(other.lifecycle_status, LensSessionLink.LifecycleStatus.READY)
+
+    def test_shared_resource_cleanup_claims_after_other_chat_is_deleted(self):
+        LensSessionLink.objects.create(
+            organization=self.tenant,
+            hfl_user=self.user,
+            gateway_link=self.gateway_link,
+            knowledge_source=self.knowledge_source,
+            sl_session_uuid=None,
+            sl_assistant_uuid=None,
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETED,
+        )
+
+        claimed = chat_lifecycle._claim_shared_chat_resource_teardown(
+            knowledge_source=self.knowledge_source,
+            owner_session_link_id=self.session.id,
+        )
+
+        self.assertTrue(claimed)
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            self.knowledge_source.lifecycle_status,
+            LensKnowledgeSource.LifecycleStatus.DELETING,
+        )
+        self.assertEqual(
+            self.knowledge_source.teardown_state_json[
+                "chat_cleanup_owner_session_id"
+            ],
+            self.session.id,
+        )
+
+    def test_legacy_deleting_knowledge_source_can_resume_with_sole_chat(self):
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.save(
+            update_fields=["lifecycle_status", "updated_at"]
+        )
+
+        claimed = chat_lifecycle._claim_shared_chat_resource_teardown(
+            knowledge_source=self.knowledge_source,
+            owner_session_link_id=self.session.id,
+        )
+
+        self.assertTrue(claimed)
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            self.knowledge_source.teardown_state_json["chat_cleanup_owner_session_id"],
+            self.session.id,
+        )
+
+    def test_shared_deleting_resource_without_owner_does_not_guess(self):
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.teardown_state_json = {"shared_chat_resources": True}
+        self.knowledge_source.save(
+            update_fields=[
+                "lifecycle_status", "teardown_state_json", "updated_at",
+            ]
+        )
+
+        with self.assertRaises(chat_lifecycle.ChatTeardownIncompleteError):
+            chat_lifecycle._claim_shared_chat_resource_teardown(
+                knowledge_source=self.knowledge_source,
+                owner_session_link_id=self.session.id,
+            )
+
+    def test_simultaneous_session_deletions_elect_one_cleanup_owner(self):
+        other = LensSessionLink.objects.create(
+            organization=self.tenant,
+            hfl_user=self.user,
+            gateway_link=self.gateway_link,
+            knowledge_source=self.knowledge_source,
+            sl_session_uuid=None,
+            sl_assistant_uuid=self.knowledge_source.sl_assistant_uuid,
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            cleanup_status=LensSessionLink.CleanupStatus.RUNNING,
+            teardown_claim_token=uuid.uuid4(),
+        )
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.RUNNING
+        self.session.sl_session_uuid = None
+        self.session.teardown_claim_token = uuid.uuid4()
+        self.session.save(
+            update_fields=[
+                "lifecycle_status", "cleanup_status", "sl_session_uuid",
+                "teardown_claim_token", "updated_at",
+            ]
+        )
+
+        first = chat_lifecycle._claim_shared_chat_resource_teardown(
+            knowledge_source=self.knowledge_source,
+            owner_session_link_id=self.session.id,
+            claim_token=str(self.session.teardown_claim_token),
+        )
+        self.session.refresh_from_db()
+        second = chat_lifecycle._claim_shared_chat_resource_teardown(
+            knowledge_source=self.knowledge_source,
+            owner_session_link_id=other.id,
+            claim_token=str(other.teardown_claim_token),
+        )
+
+        self.assertFalse(first)
+        self.assertIsNone(self.session.knowledge_source_id)
+        self.assertIsNone(self.session.sl_assistant_uuid)
+        self.assertTrue(second)
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            self.knowledge_source.teardown_state_json["chat_cleanup_owner_session_id"],
+            other.id,
+        )
+
+    @mock.patch(
+        "apps.lens_bridge.services.copilot_sharing.revoke_session_shares",
+        return_value=0,
+    )
+    @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
+    @mock.patch(
+        "apps.lens_bridge.services.knowledge_source_teardown.run_knowledge_source_teardown"
+    )
+    def test_session_only_cleanup_retry_never_retires_the_shared_assistant(
+        self, teardown_ks, delete_assistant, _revoke_shares
+    ):
+        assistant_uuid = self.session.sl_assistant_uuid
+        sibling = LensSessionLink.objects.create(
+            organization=self.tenant,
+            hfl_user=self.user,
+            gateway_link=self.gateway_link,
+            knowledge_source=self.knowledge_source,
+            sl_session_uuid=uuid.uuid4(),
+            sl_assistant_uuid=assistant_uuid,
+            lifecycle_status=LensSessionLink.LifecycleStatus.READY,
+        )
+        token = uuid.uuid4()
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.RUNNING
+        self.session.sl_session_uuid = None
+        self.session.teardown_claim_token = token
+        self.session.provision_state_json = {
+            "assistant_create": {
+                "status": "bound",
+                "remote_uuid": str(assistant_uuid),
+            }
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status", "cleanup_intent", "cleanup_status",
+                "sl_session_uuid", "teardown_claim_token",
+                "provision_state_json", "updated_at",
+            ]
+        )
+
+        # Simulate a worker crash immediately after the durable detach.
+        self.assertFalse(
+            chat_lifecycle._claim_shared_chat_resource_teardown(
+                knowledge_source=self.knowledge_source,
+                owner_session_link_id=self.session.id,
+                claim_token=str(token),
+            )
+        )
+        self.session.refresh_from_db()
+        self.assertIsNone(self.session.knowledge_source_id)
+        self.assertEqual(
+            self.session.teardown_state_json["shared_session_only"]["assistant_uuid"],
+            str(assistant_uuid),
+        )
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.PENDING
+        self.session.teardown_claim_token = None
+        self.session.teardown_next_retry_at = None
+        self.session.save(
+            update_fields=[
+                "cleanup_status", "teardown_claim_token",
+                "teardown_next_retry_at", "updated_at",
+            ]
+        )
+
+        result = chat_lifecycle.run_copilot_chat_teardown(
+            session_link_id=self.session.id
+        )
+
+        self.assertEqual(result["status"], "deleted")
+        sibling.refresh_from_db()
+        self.assertEqual(sibling.lifecycle_status, LensSessionLink.LifecycleStatus.READY)
+        self.assertEqual(sibling.sl_assistant_uuid, assistant_uuid)
+        delete_assistant.assert_not_called()
+        teardown_ks.assert_not_called()
+
+    @mock.patch(
+        "apps.lens_bridge.services.copilot_sharing.revoke_session_shares",
+        return_value=0,
+    )
+    @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
+    @mock.patch(
+        "apps.lens_bridge.services.knowledge_source_teardown.run_knowledge_source_teardown"
+    )
+    def test_session_only_retry_cleans_late_orphan_not_shared_assistant(
+        self, teardown_ks, delete_assistant, _revoke_shares
+    ):
+        shared_uuid = self.session.sl_assistant_uuid
+        orphan_uuid = uuid.uuid4()
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.PENDING
+        self.session.sl_session_uuid = None
+        self.session.sl_assistant_uuid = None
+        self.session.knowledge_source = None
+        self.session.teardown_state_json = {
+            "shared_session_only": {
+                "knowledge_source_id": self.knowledge_source.id,
+                "assistant_uuid": str(shared_uuid),
+            }
+        }
+        self.session.provision_state_json = {
+            "assistant_create": {
+                "status": "bound",
+                "remote_uuid": str(shared_uuid),
+            },
+            "late_resources": [
+                {"kind": "assistant", "remote_uuid": str(orphan_uuid)}
+            ],
+        }
+        self.session.save()
+        transient = sl_client.LensBridgeError("temporarily unavailable")
+        transient.status_code = 503
+        delete_assistant.side_effect = transient
+
+        with self.assertRaises(chat_lifecycle.ChatTeardownIncompleteError):
+            chat_lifecycle.run_copilot_chat_teardown(session_link_id=self.session.id)
+
+        self.session.refresh_from_db()
+        self.assertEqual(
+            chat_lifecycle._late_remote_uuids(self.session, "assistant"),
+            {orphan_uuid},
+        )
+        self.assertEqual(self.session.sl_assistant_uuid, orphan_uuid)
+        delete_assistant.assert_called_once_with(orphan_uuid)
+        teardown_ks.assert_not_called()
+
+        delete_assistant.reset_mock(side_effect=True)
+        self.session.teardown_next_retry_at = timezone.now() - timedelta(seconds=1)
+        self.session.save(update_fields=["teardown_next_retry_at", "updated_at"])
+
+        result = chat_lifecycle.run_copilot_chat_teardown(
+            session_link_id=self.session.id
+        )
+
+        self.assertEqual(result["status"], "deleted")
+        self.session.refresh_from_db()
+        self.assertEqual(
+            chat_lifecycle._late_remote_uuids(self.session, "assistant"),
+            set(),
+        )
+        delete_assistant.assert_called_once_with(orphan_uuid)
+        teardown_ks.assert_not_called()
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed"
+    )
+    def test_new_chat_reuses_prepared_resources_without_capacity_reservation(
+        self,
+        queue_provision,
+    ):
+        assistant_access.ensure_assistant_link(
+            org=self.tenant,
+            sl_assistant_uuid=self.knowledge_source.sl_assistant_uuid,
+            knowledge_source=self.knowledge_source,
+            created_by=self.user,
+            owner_user=self.user,
+            visibility_scope=LensAssistantLink.VisibilityScope.USER,
+            lifecycle_owner=LensAssistantLink.LifecycleOwner.CHAT,
+        )
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.READY
+        self.session.provision_phase = LensSessionLink.ProvisionPhase.READY
+        self.session.sl_session_uuid = uuid.uuid4()
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "provision_phase",
+                "sl_session_uuid",
+                "updated_at",
+            ]
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            reused = chat_lifecycle.create_copilot_chat_from_existing(
+                self.tenant,
+                user=self.user,
+                source_session_id=self.session.id,
+                idempotency_key="reuse-chat-test",
+            )
+
+        self.assertEqual(reused.knowledge_source_id, self.knowledge_source.id)
+        self.knowledge_source.refresh_from_db()
+        self.assertTrue(
+            self.knowledge_source.teardown_state_json["shared_chat_resources"]
+        )
+        self.assertEqual(
+            reused.sl_assistant_uuid,
+            self.knowledge_source.sl_assistant_uuid,
+        )
+        self.assertIsNone(reused.sl_session_uuid)
+        self.assertEqual(
+            reused.capacity_reservation_status,
+            LensSessionLink.CapacityReservationStatus.RELEASED,
+        )
+        self.assertEqual(
+            reused.provision_phase,
+            LensSessionLink.ProvisionPhase.CREATING_SESSION,
+        )
+        queue_provision.assert_called_once_with(reused.id)
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed"
+    )
+    def test_reused_chat_retry_does_not_reenter_restore_or_capacity_admission(
+        self,
+        queue_provision,
+    ):
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
+        self.session.provision_state_json = {
+            "reuse_existing_resources": {"source_session_id": self.session.id}
+        }
+        self.session.capacity_reservation_status = (
+            LensSessionLink.CapacityReservationStatus.RELEASED
+        )
+        self.session.save(
+            update_fields=[
+                "lifecycle_status", "provision_state_json",
+                "capacity_reservation_status", "updated_at",
+            ]
+        )
+
+        # Retry holds the Chat row lock; taking a KS lock in the opposite order
+        # to deletion would deadlock if both requests overlap.
+        with (
+            mock.patch.object(
+                LensKnowledgeSource.objects,
+                "select_for_update",
+                side_effect=AssertionError("Retry must not lock KS after Chat"),
+            ),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            retried = chat_lifecycle.retry_copilot_chat_provision(self.session)
+
+        self.assertEqual(
+            retried.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING
+        )
+        self.assertEqual(
+            retried.provision_phase, LensSessionLink.ProvisionPhase.CREATING_SESSION
+        )
+        self.assertEqual(
+            retried.capacity_reservation_status,
+            LensSessionLink.CapacityReservationStatus.RELEASED,
+        )
+        self.assertFalse(LensGatewayChatSlot.objects.filter(session_link=retried).exists())
+        queue_provision.assert_called_once_with(retried.id)
+
+    def test_new_from_chat_rejects_non_chat_owned_assistant(self):
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.READY
+        self.session.save(update_fields=["lifecycle_status", "updated_at"])
+        assistant_access.ensure_assistant_link(
+            org=self.tenant,
+            sl_assistant_uuid=self.knowledge_source.sl_assistant_uuid,
+            knowledge_source=self.knowledge_source,
+            created_by=self.user,
+            visibility_scope=LensAssistantLink.VisibilityScope.ORGANIZATION,
+            lifecycle_owner=LensAssistantLink.LifecycleOwner.MANUAL,
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError, "Chat resources are not owned by this user."
+        ):
+            chat_lifecycle.create_copilot_chat_from_existing(
+                self.tenant,
+                user=self.user,
+                source_session_id=self.session.id,
+                idempotency_key="non-chat-assistant",
+            )
+
+    def test_new_from_chat_rejects_revoked_gateway_link(self):
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.READY
+        self.session.save(update_fields=["lifecycle_status", "updated_at"])
+        assistant_access.ensure_assistant_link(
+            org=self.tenant,
+            sl_assistant_uuid=self.knowledge_source.sl_assistant_uuid,
+            knowledge_source=self.knowledge_source,
+            created_by=self.user,
+            owner_user=self.user,
+            visibility_scope=LensAssistantLink.VisibilityScope.USER,
+            lifecycle_owner=LensAssistantLink.LifecycleOwner.CHAT,
+        )
+        self.gateway_link.is_deleted = True
+        self.gateway_link.save(update_fields=["is_deleted", "updated_at"])
+
+        with self.assertRaisesMessage(
+            ValidationError, "Chat Gateway is unavailable."
+        ):
+            chat_lifecycle.create_copilot_chat_from_existing(
+                self.tenant,
+                user=self.user,
+                source_session_id=self.session.id,
+                idempotency_key="gateway-revoked",
+            )
+        self.assertFalse(
+            LensSessionLink.objects.filter(
+                create_idempotency_key="gateway-revoked"
+            ).exists()
         )
 
     def test_failed_chat_keeps_snapshot_while_cleanup_is_incomplete(self):
@@ -825,6 +1286,119 @@ class CopilotChatTeardownTests(TestCase):
         )
         self.assertTrue(self.workspace_binding.is_deleted)
         wake_gateway_queue.assert_called_once_with(self.gateway_link.id)
+
+    def _prepare_shared_force_cleanup(self):
+        self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
+        self.gateway_link.save(update_fields=["scope", "updated_at"])
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.status = LensSessionLink.Status.ARCHIVED
+        self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+        self.session.cleanup_status = LensSessionLink.CleanupStatus.BLOCKED
+        self.session.sl_session_uuid = None
+        self.session.teardown_state_json = {
+            "intent": "delete_session",
+            "delete_session": {"status": "success"},
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status", "status", "cleanup_intent",
+                "cleanup_status", "sl_session_uuid",
+                "teardown_state_json", "updated_at",
+            ]
+        )
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.teardown_state_json = {
+            "shared_chat_resources": True,
+            "chat_cleanup_owner_session_id": self.session.id,
+        }
+        self.knowledge_source.save(
+            update_fields=["lifecycle_status", "teardown_state_json", "updated_at"]
+        )
+        self.workspace_binding.state = LensWorkspaceBinding.State.DELETING
+        self.workspace_binding.save(update_fields=["state", "updated_at"])
+        assistant_access.ensure_assistant_link(
+            org=self.tenant,
+            sl_assistant_uuid=self.knowledge_source.sl_assistant_uuid,
+            knowledge_source=self.knowledge_source,
+            created_by=self.user,
+            owner_user=self.user,
+            visibility_scope=LensAssistantLink.VisibilityScope.USER,
+            lifecycle_owner=LensAssistantLink.LifecycleOwner.CHAT,
+        )
+        self.session.refresh_from_db()
+
+    @mock.patch(
+        "apps.node.services.internal.node_registry.agent_ws_routable",
+        return_value=False,
+    )
+    @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")
+    def test_shared_force_cleanup_requires_global_safe_archive(
+        self, request_json, _agent_ws_routable
+    ):
+        self._prepare_shared_force_cleanup()
+        assistant_uuid = self.knowledge_source.sl_assistant_uuid
+        request_json.return_value = {"status": "archived"}
+
+        result = chat_lifecycle.force_delete_private_copilot_chat(
+            self.session, requested_by=self.user
+        )
+
+        request_json.assert_called_once_with(
+            "POST",
+            f"/api/lens/assistants/{assistant_uuid}/archive-if-unused/",
+        )
+        self.assertEqual(result.lifecycle_status, LensSessionLink.LifecycleStatus.DELETED)
+
+    @mock.patch(
+        "apps.node.services.internal.node_registry.agent_ws_routable",
+        return_value=False,
+    )
+    @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")
+    def test_shared_force_cleanup_keeps_resources_when_external_session_exists(
+        self, request_json, _agent_ws_routable
+    ):
+        self._prepare_shared_force_cleanup()
+        conflict = sl_client.LensBridgeError("ASSISTANT_HAS_ACTIVE_SESSIONS")
+        conflict.status_code = 409
+        request_json.side_effect = conflict
+
+        with self.assertRaisesMessage(
+            ValidationError, "Other SourceLens conversations"
+        ):
+            chat_lifecycle.force_delete_private_copilot_chat(
+                self.session, requested_by=self.user
+            )
+
+        self.session.refresh_from_db()
+        self.knowledge_source.refresh_from_db()
+        self.workspace_binding.refresh_from_db()
+        self.assertEqual(
+            self.session.lifecycle_status, LensSessionLink.LifecycleStatus.DELETING
+        )
+        self.assertEqual(
+            self.knowledge_source.lifecycle_status,
+            LensKnowledgeSource.LifecycleStatus.DELETING,
+        )
+        self.assertFalse(self.workspace_binding.is_deleted)
+
+    @mock.patch(
+        "apps.node.services.internal.node_registry.agent_ws_routable",
+        return_value=False,
+    )
+    def test_shared_force_cleanup_requires_own_session_to_be_deleted(
+        self, _agent_ws_routable
+    ):
+        self._prepare_shared_force_cleanup()
+        self.session.sl_session_uuid = uuid.uuid4()
+        self.session.save(update_fields=["sl_session_uuid", "updated_at"])
+        self.session.refresh_from_db()
+
+        self.assertEqual(
+            chat_lifecycle.private_chat_force_delete_reason(self.session),
+            "shared_session_cleanup_unconfirmed",
+        )
 
     @mock.patch(
         "apps.node.services.internal.node_registry.agent_ws_routable",
@@ -2777,6 +3351,55 @@ class CopilotChatTeardownTests(TestCase):
 
         delete_assistant.assert_not_called()
 
+    @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
+    @mock.patch(
+        "apps.lens_bridge.services.chat_lifecycle._queue_teardown_or_record_error"
+    )
+    def test_deleted_source_chat_cannot_retire_a_shared_assistant(
+        self, queue_teardown, delete_assistant
+    ):
+        assistant_uuid = self.session.sl_assistant_uuid
+        LensSessionLink.objects.create(
+            organization=self.tenant,
+            hfl_user=self.user,
+            gateway_link=self.gateway_link,
+            knowledge_source=self.knowledge_source,
+            sl_assistant_uuid=assistant_uuid,
+            sl_session_uuid=uuid.uuid4(),
+            lifecycle_status=LensSessionLink.LifecycleStatus.READY,
+        )
+        self.knowledge_source.teardown_state_json = {
+            "shared_chat_resources": True
+        }
+        self.knowledge_source.save(
+            update_fields=["teardown_state_json", "updated_at"]
+        )
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETED
+        self.session.knowledge_source = None
+        self.session.sl_assistant_uuid = None
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "knowledge_source",
+                "sl_assistant_uuid",
+                "updated_at",
+            ]
+        )
+
+        chat_lifecycle._compensate_late_assistant(self.session.id, assistant_uuid)
+        chat_lifecycle._record_late_source_lens_resource(
+            self.session.id,
+            field="sl_assistant_uuid",
+            resource_uuid=assistant_uuid,
+            error="late worker response",
+        )
+
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.lifecycle_status, LensSessionLink.LifecycleStatus.DELETED)
+        self.assertIsNone(self.session.sl_assistant_uuid)
+        delete_assistant.assert_not_called()
+        queue_teardown.assert_not_called()
+
     @mock.patch(
         "apps.lens_bridge.services.chat_lifecycle._queue_teardown_or_record_error"
     )
@@ -3429,6 +4052,191 @@ class CopilotChatTeardownTests(TestCase):
 
 class CopilotChatTeardownConcurrencyTests(TransactionTestCase):
     reset_sequences = True
+
+    def test_new_from_chat_and_source_delete_share_one_resource_fence(self):
+        org = Organization.objects.create(
+            key="shared-create-delete-concurrency",
+            name="Shared Chat create/delete",
+        )
+        user = get_user_model().objects.create_user(
+            username="shared-create-delete@example.test",
+            email="shared-create-delete@example.test",
+        )
+        gateway = Node.objects.create(
+            organization=org,
+            name="shared-create-delete-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=org,
+            gateway=gateway,
+            scope=LensGatewayLink.GatewayScope.USER,
+            owner_user=user,
+        )
+        assistant_uuid = uuid.uuid4()
+        ks = LensKnowledgeSource.objects.create(
+            organization=org,
+            gateway=gateway,
+            gateway_link=gateway_link,
+            name="Shared Chat data",
+            source_path="/data",
+            status=LensKnowledgeSource.Status.READY,
+            sl_assistant_uuid=assistant_uuid,
+            created_by=user,
+        )
+        assistant_access.ensure_assistant_link(
+            org=org,
+            sl_assistant_uuid=assistant_uuid,
+            knowledge_source=ks,
+            owner_user=user,
+            created_by=user,
+            visibility_scope=LensAssistantLink.VisibilityScope.USER,
+            lifecycle_owner=LensAssistantLink.LifecycleOwner.CHAT,
+        )
+        source = LensSessionLink.objects.create(
+            organization=org,
+            hfl_user=user,
+            gateway_link=gateway_link,
+            knowledge_source=ks,
+            sl_assistant_uuid=assistant_uuid,
+            sl_session_uuid=uuid.uuid4(),
+            lifecycle_status=LensSessionLink.LifecycleStatus.READY,
+        )
+        barrier = threading.Barrier(2)
+
+        def run_create():
+            close_old_connections()
+            try:
+                barrier.wait(timeout=5)
+                try:
+                    return chat_lifecycle.create_copilot_chat_from_existing(
+                        org,
+                        user=user,
+                        source_session_id=source.id,
+                        idempotency_key="raced-new-chat",
+                    )
+                except ValidationError:
+                    return None
+            finally:
+                close_old_connections()
+
+        def run_delete():
+            close_old_connections()
+            try:
+                barrier.wait(timeout=5)
+                return chat_lifecycle.request_copilot_chat_teardown(source)
+            finally:
+                close_old_connections()
+
+        with (
+            mock.patch(
+                "apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed"
+            ),
+            mock.patch(
+                "apps.lens_bridge.services.chat_lifecycle._queue_teardown_or_record_error"
+            ),
+            mock.patch(
+                "apps.lens_bridge.services.chat_lifecycle.gateway_chat_queue.wake_gateway_queue"
+            ),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            created = executor.submit(run_create)
+            deleted = executor.submit(run_delete)
+            child = created.result(timeout=10)
+            deleted.result(timeout=10)
+
+        source.refresh_from_db()
+        ks.refresh_from_db()
+        self.assertEqual(
+            source.lifecycle_status, LensSessionLink.LifecycleStatus.DELETING
+        )
+        if child is not None:
+            self.assertEqual(child.knowledge_source_id, ks.id)
+            self.assertEqual(
+                child.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING
+            )
+            self.assertTrue(ks.teardown_state_json["shared_chat_resources"])
+        else:
+            self.assertFalse(
+                LensSessionLink.objects.filter(
+                    create_idempotency_key="raced-new-chat"
+                ).exists()
+            )
+
+    def test_two_chat_workers_elect_exactly_one_resource_cleanup_owner(self):
+        org = Organization.objects.create(
+            key="shared-chat-concurrency", name="Shared Chat"
+        )
+        user = get_user_model().objects.create_user(
+            username="shared-chat-concurrency@example.test",
+            email="shared-chat-concurrency@example.test",
+        )
+        gateway = Node.objects.create(
+            organization=org,
+            name="shared-chat-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=org,
+            gateway=gateway,
+            scope=LensGatewayLink.GatewayScope.USER,
+            owner_user=user,
+        )
+        ks = LensKnowledgeSource.objects.create(
+            organization=org,
+            gateway=gateway,
+            gateway_link=gateway_link,
+            name="Shared Chat data",
+            source_path="/data",
+            status=LensKnowledgeSource.Status.READY,
+            created_by=user,
+        )
+        sessions = [
+            LensSessionLink.objects.create(
+                organization=org,
+                hfl_user=user,
+                gateway_link=gateway_link,
+                knowledge_source=ks,
+                lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+                cleanup_status=LensSessionLink.CleanupStatus.RUNNING,
+                teardown_claim_token=uuid.uuid4(),
+            )
+            for _ in range(2)
+        ]
+        barrier = threading.Barrier(2)
+
+        def claim(session):
+            close_old_connections()
+            try:
+                barrier.wait(timeout=5)
+                return chat_lifecycle._claim_shared_chat_resource_teardown(
+                    knowledge_source=ks,
+                    owner_session_link_id=session.id,
+                    claim_token=str(session.teardown_claim_token),
+                )
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(claim, sessions))
+
+        self.assertEqual(sorted(results), [False, True])
+        ks.refresh_from_db()
+        self.assertIn(
+            ks.teardown_state_json["chat_cleanup_owner_session_id"],
+            [session.id for session in sessions],
+        )
+        self.assertEqual(
+            LensSessionLink.objects.filter(
+                knowledge_source=ks,
+                lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            ).count(),
+            1,
+        )
 
     def test_only_one_worker_claims_the_same_provision(self):
         organization = Organization.objects.create(
