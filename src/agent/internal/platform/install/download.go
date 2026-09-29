@@ -40,9 +40,16 @@ type DownloadHTTPError struct {
 	Status        string
 	retryAfter    time.Duration
 	hasRetryAfter bool
+	capacityLimit bool
 }
 
 func (err *DownloadHTTPError) Error() string {
+	if err.StatusCode == http.StatusTooManyRequests && err.capacityLimit {
+		if err.hasRetryAfter {
+			return fmt.Sprintf("Agent package downloads are temporarily at capacity; retry after %s", err.retryAfter)
+		}
+		return "Agent package downloads are temporarily at capacity; retry later"
+	}
 	return "download HTTP " + err.Status
 }
 
@@ -335,6 +342,7 @@ func downloadURLAttempt(
 			Status:        resp.Status,
 			retryAfter:    retryAfter,
 			hasRetryAfter: hasRetryAfter,
+			capacityLimit: resp.Header.Get("X-HFL-Download-Denial") == "capacity",
 		}
 	}
 	if resume {

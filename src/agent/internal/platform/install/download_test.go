@@ -149,6 +149,39 @@ func TestDownloadURLPreservesExistingSuccessful2xxBehavior(t *testing.T) {
 	}
 }
 
+func TestDownloadURLDistinguishesCapacityFromAuthorization(t *testing.T) {
+	t.Setenv("HFL_INSECURE_TLS", "0")
+	for _, tc := range []struct {
+		name     string
+		status   int
+		capacity bool
+		want     string
+	}{
+		{"capacity", http.StatusTooManyRequests, true, "temporarily at capacity; retry after 30s"},
+		{"ordinary rate limit", http.StatusTooManyRequests, false, "download HTTP 429 Too Many Requests"},
+		{"forbidden", http.StatusForbidden, false, "download HTTP 403 Forbidden"},
+		{"unauthorized", http.StatusUnauthorized, false, "download HTTP 401 Unauthorized"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tc.capacity {
+					w.Header().Set("X-HFL-Download-Denial", "capacity")
+					w.Header().Set("Retry-After", "30")
+				}
+				w.WriteHeader(tc.status)
+			}))
+			defer server.Close()
+			err := DownloadURL(context.Background(), server.URL+"?t=private-token", filepath.Join(t.TempDir(), "artifact"))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("download error = %v, want %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), "private-token") {
+				t.Fatalf("download error exposed the signed URL: %v", err)
+			}
+		})
+	}
+}
+
 func TestDownloadURLReportsHeartbeatWhileWaitingForData(t *testing.T) {
 	t.Setenv("HFL_INSECURE_TLS", "0")
 	payload := []byte("delayed payload")

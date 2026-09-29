@@ -17,6 +17,7 @@ from apps.node.models import (
     NodeInstallationSession,
     NodeToken,
 )
+from apps.node.services.internal.agent_download_slots import release_session_slot
 
 INSTALLATION_SESSION_IDLE_SECONDS = 6 * 60 * 60
 INSTALLATION_SESSION_ABSOLUTE_SECONDS = 48 * 60 * 60
@@ -124,24 +125,37 @@ def release_installation_session(
     installation_id: str,
 ) -> bool:
     """Release an unfinished host reservation after a failed installation."""
-    session = active_installation_session(
-        org=org,
-        secret=secret,
+    # Expired or already released sessions still own their Redis slot. Match
+    # the actual session secret and installation identity before cleaning it.
+    sessions = NodeInstallationSession.objects.select_for_update().filter(
+        organization=org,
         role=role,
-        touch=False,
+        installation_id=installation_id.strip(),
+        secret_prefix=secret[:12],
+        status__in=(
+            NodeInstallationSession.Status.ACTIVE,
+            NodeInstallationSession.Status.RELEASED,
+        ),
     )
-    if session is None or session.installation_id != installation_id.strip():
+    session = next((row for row in sessions if row.matches(secret)), None)
+    if session is None:
         return False
-    now = timezone.now()
-    updated = NodeInstallationSession.objects.filter(
-        pk=session.pk,
-        status=NodeInstallationSession.Status.ACTIVE,
-    ).update(
-        status=NodeInstallationSession.Status.RELEASED,
-        last_activity_at=now,
-        updated_at=now,
+    if session.status == NodeInstallationSession.Status.ACTIVE:
+        now = timezone.now()
+        NodeInstallationSession.objects.filter(
+            pk=session.pk,
+            status=NodeInstallationSession.Status.ACTIVE,
+        ).update(
+            status=NodeInstallationSession.Status.RELEASED,
+            last_activity_at=now,
+            updated_at=now,
+        )
+    transaction.on_commit(
+        lambda org_key=org.key, session_id=session.pk: release_session_slot(
+            org_key, session_id
+        )
     )
-    return updated == 1
+    return True
 
 
 def resolve_enrollment_authorization(
@@ -358,4 +372,10 @@ def complete_enrollment_authorization(
             completed_at=now,
             last_activity_at=now,
             updated_at=now,
+        )
+        transaction.on_commit(
+            lambda org_key=authorization.token.organization.key,
+            session_id=authorization.session.pk: release_session_slot(
+                org_key, session_id
+            )
         )

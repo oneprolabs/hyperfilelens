@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from unittest import mock
 
+from django.db import transaction
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory
@@ -14,6 +16,7 @@ from apps.node.api.views.node import NodeViewSet
 from apps.node.models import Node, NodeCredential, NodeInstallationSession, NodeToken
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_ws_auth import validate_agent_ws_credentials
+from apps.node.services.internal import enrollment_auth
 
 
 class InstallationSessionTests(TestCase):
@@ -259,6 +262,7 @@ class InstallationSessionTests(TestCase):
     def test_failed_installation_releases_its_session(self):
         opened = self._open_session("host-a")
         session_secret = opened.data["installation_session"]
+        session_id = NodeInstallationSession.objects.get(installation_id="host-a").pk
         request = self.factory.delete(
             "/api/v1/node/enrollment/session",
             {"role": NodeRole.AGENT, "installation_id": "host-a"},
@@ -267,7 +271,10 @@ class InstallationSessionTests(TestCase):
             HTTP_X_NODE_TOKEN=session_secret,
         )
 
-        released = InstallationSessionView.as_view()(request)
+        with mock.patch.object(enrollment_auth, "release_session_slot") as release_slot:
+            with self.captureOnCommitCallbacks(execute=True):
+                released = InstallationSessionView.as_view()(request)
+            release_slot.assert_called_once_with(self.org.key, session_id)
 
         self.assertEqual(released.status_code, 204)
         self.assertEqual(
@@ -275,6 +282,88 @@ class InstallationSessionTests(TestCase):
             NodeInstallationSession.Status.RELEASED,
         )
         self.assertEqual(self._open_session("host-b").status_code, 201)
+
+    def test_expired_session_can_release_its_slot_after_identity_check(self):
+        opened = self._open_session("host-a")
+        secret = opened.data["installation_session"]
+        session = NodeInstallationSession.objects.get(installation_id="host-a")
+        session.idle_expires_at = timezone.now() - timedelta(seconds=1)
+        session.save(update_fields=["idle_expires_at"])
+
+        request = self.factory.delete(
+            "/api/v1/node/enrollment/session",
+            {"role": NodeRole.AGENT, "installation_id": "host-a"},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+            HTTP_X_NODE_TOKEN=secret,
+        )
+        with mock.patch.object(enrollment_auth, "release_session_slot") as release_slot:
+            with self.captureOnCommitCallbacks(execute=True):
+                response = InstallationSessionView.as_view()(request)
+            self.assertEqual(response.status_code, 204)
+            release_slot.assert_called_once_with(self.org.key, session.pk)
+        session.refresh_from_db()
+        self.assertEqual(session.status, NodeInstallationSession.Status.RELEASED)
+
+    def test_session_slot_release_is_idempotent_but_rejects_wrong_identity(self):
+        opened = self._open_session("host-a")
+        secret = opened.data["installation_session"]
+        session = NodeInstallationSession.objects.get(installation_id="host-a")
+
+        def request(identity: str):
+            return self.factory.delete(
+                "/api/v1/node/enrollment/session",
+                {"role": NodeRole.AGENT, "installation_id": identity},
+                format="json",
+                HTTP_X_ORG_KEY=self.org.key,
+                HTTP_X_NODE_TOKEN=secret,
+            )
+
+        with mock.patch.object(enrollment_auth, "release_session_slot") as release_slot:
+            with self.captureOnCommitCallbacks(execute=True):
+                self.assertEqual(
+                    InstallationSessionView.as_view()(request("wrong-host")).status_code,
+                    404,
+                )
+            release_slot.assert_not_called()
+            for _ in range(2):
+                with self.captureOnCommitCallbacks(execute=True):
+                    response = InstallationSessionView.as_view()(request("host-a"))
+                self.assertEqual(response.status_code, 204)
+            self.assertEqual(
+                release_slot.call_args_list,
+                [
+                    mock.call(self.org.key, session.pk),
+                    mock.call(self.org.key, session.pk),
+                ],
+            )
+
+    def test_completed_session_slot_releases_only_after_commit(self):
+        opened = self._open_session("host-a")
+        session = NodeInstallationSession.objects.get(installation_id="host-a")
+        with mock.patch.object(enrollment_auth, "release_session_slot") as release_slot:
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self._register("host-a", opened.data["installation_session"])
+                self.assertEqual(response.status_code, 200)
+                release_slot.assert_not_called()
+            release_slot.assert_called_once_with(self.org.key, session.pk)
+
+    def test_rolled_back_session_release_does_not_free_slot(self):
+        opened = self._open_session("host-a")
+        secret = opened.data["installation_session"]
+        with mock.patch.object(enrollment_auth, "release_session_slot") as release_slot:
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                with self.assertRaises(RuntimeError):
+                    with transaction.atomic():
+                        enrollment_auth.release_installation_session(
+                            org=self.org,
+                            secret=secret,
+                            role=NodeRole.AGENT,
+                            installation_id="host-a",
+                        )
+                        raise RuntimeError("rollback")
+            self.assertEqual(callbacks, [])
+            release_slot.assert_not_called()
 
     def test_legacy_credential_is_rotated_during_existing_node_heartbeat(self):
         legacy = NodeToken.objects.create(

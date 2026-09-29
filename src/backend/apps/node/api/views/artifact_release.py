@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from datetime import timedelta
@@ -36,15 +37,13 @@ from apps.node.services.internal.agent_release import (
     ubuntu_bundle_release,
     version_has_dist,
 )
+from apps.node.services.internal.agent_download_slots import (
+    RETRY_AFTER_SECONDS,
+    slot_limit,
+    try_acquire_slot,
+)
 
-try:
-    import redis
-except ImportError:  # pragma: no cover
-    redis = None
-
-_REDIS_ERRORS: tuple[type[BaseException], ...] = (OSError, TypeError, ValueError)
-if redis is not None:
-    _REDIS_ERRORS += (redis.exceptions.RedisError,)
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -323,61 +322,6 @@ def _release_credential_is_valid(
     ).exists()
 
 
-def _redis_client():
-    if redis is None:
-        return None
-    url = (
-        os.getenv("AGENT_RELEASES_REDIS_URL")
-        or os.getenv("CACHE_REDIS_URL")
-        or os.getenv(
-            "CELERY_BROKER_URL",
-            "redis://redis:6379/0",
-        )
-    )
-    try:
-        return redis.Redis.from_url(url, decode_responses=True)
-    except OSError:
-        return None
-
-
-_SLOT_LUA = """
-local key = KEYS[1]
-local token = ARGV[1]
-local maxn = tonumber(ARGV[2])
-local ttl = tonumber(ARGV[3])
-
-if redis.call('SISMEMBER', key, token) == 1 then
-  return {1, redis.call('SCARD', key)}
-end
-
-local added = redis.call('SADD', key, token)
-local n = redis.call('SCARD', key)
-redis.call('EXPIRE', key, ttl)
-
-if n > maxn then
-  if added == 1 then
-    redis.call('SREM', key, token)
-  end
-  return {0, n}
-end
-return {1, n}
-"""
-
-
-def _try_acquire_slot(tenant_key: str, slot_id: str) -> tuple[bool, int]:
-    maxn = int(os.getenv("AGENT_RELEASES_TENANT_MAX_CONCURRENT_DOWNLOADS", "20"))
-    ttl = int(os.getenv("AGENT_RELEASES_SLOT_TTL_SECONDS", "3600"))
-    client = _redis_client()
-    if client is None:
-        return True, 0
-    key = f"hfl:agent-releases:slots:{tenant_key}"
-    try:
-        allowed, count = client.eval(_SLOT_LUA, 1, key, slot_id, str(maxn), str(ttl))
-        return bool(int(allowed)), int(count)
-    except _REDIS_ERRORS:
-        return True, 0
-
-
 class AgentLatestReleaseView(APIView):
     """Published agent semver for console upgrade UI."""
 
@@ -615,13 +559,23 @@ class AgentReleasesAuthView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        ok, _count = _try_acquire_slot(org.key, slot_id)
+        ok, count = try_acquire_slot(org.key, slot_id)
         if not ok:
-            # Nginx auth_request treats only 401/403 as expected denials; 429 becomes 500.
-            return Response(
+            logger.warning(
+                "Agent download capacity reached: organization=%s active_slots=%d limit=%d",
+                org.key,
+                count,
+                slot_limit(),
+            )
+            # auth_request accepts 403, not 429. Nginx maps only this marked
+            # capacity denial to a client-facing 429 with Retry-After.
+            response = Response(
                 {"error": "too many concurrent downloads"},
                 status=status.HTTP_403_FORBIDDEN,
             )
+            response["X-HFL-Download-Denial"] = "capacity"
+            response["Retry-After"] = str(RETRY_AFTER_SECONDS)
+            return response
 
         resp = Response(status=status.HTTP_204_NO_CONTENT)
         resp["X-Tenant-Key"] = org.key
