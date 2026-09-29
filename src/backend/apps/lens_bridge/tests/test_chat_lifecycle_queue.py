@@ -15,6 +15,7 @@ from rest_framework.exceptions import ValidationError
 from apps.iam.models import Organization
 from apps.lens_bridge.models import (
     LensChatBinding,
+    LensGatewayChatSlot,
     LensGatewayLink,
     LensKnowledgeSource,
     LensSessionLink,
@@ -405,6 +406,7 @@ class CopilotRetryTests(TestCase):
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
     def test_unclaimed_provisioning_session_retry_is_requeued(self, queue_provision):
         session = self.create_session(LensSessionLink.LifecycleStatus.PROVISIONING)
+        generation = session.provision_generation
 
         with self.captureOnCommitCallbacks(execute=True):
             updated = chat_lifecycle.retry_copilot_chat_provision(session)
@@ -412,6 +414,56 @@ class CopilotRetryTests(TestCase):
         self.assertEqual(
             updated.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING
         )
+        self.assertEqual(updated.provision_generation, generation + 1)
+        self.assertEqual(updated.provision_poll_sequence, 0)
+        queue_provision.assert_called_once_with(session.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    def test_pending_conversion_retry_keeps_workspace_and_slot(self, queue_provision):
+        gateway = Node.objects.create(
+            organization=self.organization, name="conversion-gateway", role=Node.Role.GATEWAY
+        )
+        link = LensGatewayLink.objects.create(
+            organization=self.organization,
+            gateway=gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+            origin=LensGatewayLink.Origin.USER,
+        )
+        ks = LensKnowledgeSource.objects.create(
+            organization=self.organization,
+            gateway=gateway,
+            gateway_link=link,
+            name="Conversion workspace",
+            source_path="/docs",
+            created_by=self.user,
+            sync_state_json={"conversion": {"task_id": "convert-1", "status": "STARTED"}},
+        )
+        session = self.create_session(LensSessionLink.LifecycleStatus.PROVISIONING)
+        session.gateway_link = link
+        session.knowledge_source = ks
+        session.save(update_fields=["gateway_link", "knowledge_source", "updated_at"])
+        now = timezone.now()
+        slot = LensGatewayChatSlot.objects.create(
+            gateway_link=link,
+            session_link=session,
+            session_generation=session.provision_generation,
+            slot_number=1,
+            acquired_at=now,
+            heartbeat_at=now,
+        )
+        generation = session.provision_generation
+        sequence = session.provision_poll_sequence
+
+        with self.captureOnCommitCallbacks(execute=True):
+            updated = chat_lifecycle.retry_copilot_chat_provision(session)
+
+        self.assertEqual(updated.knowledge_source_id, ks.id)
+        self.assertEqual(updated.provision_generation, generation)
+        self.assertEqual(updated.provision_poll_sequence, sequence + 1)
+        slot.refresh_from_db()
+        self.assertEqual(slot.session_generation, generation)
+        self.assertEqual(ks.sync_state_json["conversion"]["task_id"], "convert-1")
         queue_provision.assert_called_once_with(session.id)
 
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")

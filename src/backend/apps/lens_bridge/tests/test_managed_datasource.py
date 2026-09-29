@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -329,12 +330,18 @@ class ManagedDatasourceTests(SimpleTestCase):
         "sl_client.start_managed_datasource_conversion"
     )
     @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.list_managed_datasource_conversion_tasks",
+        return_value=[],
+    )
+    @patch(
         "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
         return_value=None,
     )
     def test_missing_known_task_is_not_reposted(
         self,
         _get_task,
+        _list_tasks,
         start_conversion,
     ):
         knowledge_source = self._knowledge_source()
@@ -360,6 +367,187 @@ class ManagedDatasourceTests(SimpleTestCase):
 
         start_conversion.assert_not_called()
         self.assertIn("lookup_missing_at", sync_state["conversion"])
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.list_managed_datasource_conversion_tasks",
+        return_value=[],
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value=None,
+    )
+    def test_missing_task_reconciliation_does_not_use_conversion_age(
+        self, _get_task, _list_tasks
+    ):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        state = {
+            "task_id": "convert-1",
+            "started_at": (timezone.now() - timedelta(hours=11)).isoformat(),
+            "policy_fingerprint": (
+                managed_datasource.conversion_policy_fingerprint(policy)
+            ),
+        }
+        sync_state = {"conversion": state}
+
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+        self.assertNotIn("reconciliation_attention_at", state)
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value={
+            "task_id": "convert-1",
+            "status": "STARTED",
+            "metadata": {"progress_message": "Converting a large document."},
+        },
+    )
+    def test_running_conversion_after_ten_hours_remains_pending(self, _get_task):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "convert-1",
+                "status": "STARTED",
+                "started_at": (timezone.now() - timedelta(hours=11)).isoformat(),
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(policy)
+                ),
+            }
+        }
+
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+        self.assertEqual(sync_state["conversion"]["status"], "STARTED")
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value={
+            "task_id": "convert-1",
+            "status": "SUCCESS",
+            "result": {"conversion_summary": {"total": 1, "success": 1}},
+        },
+    )
+    def test_success_clears_stale_reconciliation_progress(self, _get_task):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "convert-1",
+                "status": "STARTED",
+                "progress_message": "Document conversion state is being reconciled.",
+                "lookup_first_missing_at": timezone.now().isoformat(),
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(policy)
+                ),
+            }
+        }
+
+        summary = managed_datasource.convert_documents(
+            ks=ks, sync_state=sync_state, conversion=policy
+        )
+        self.assertEqual(summary["success"], 1)
+        self.assertEqual(sync_state["conversion"]["progress_message"], "")
+        self.assertNotIn("lookup_first_missing_at", sync_state["conversion"])
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.list_managed_datasource_conversion_tasks",
+        return_value=[],
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value=None,
+    )
+    def test_missing_task_keeps_reconciling_after_attention(
+        self, _get_task, _list_tasks
+    ):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        state = {
+            "task_id": "convert-1",
+            "lookup_first_missing_at": (
+                timezone.now() - timedelta(hours=3)
+            ).isoformat(),
+            "reconciliation_attention_at": timezone.now().isoformat(),
+            "policy_fingerprint": (
+                managed_datasource.conversion_policy_fingerprint(policy)
+            ),
+        }
+        sync_state = {"conversion": state}
+
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+        self.assertNotIn("error", sync_state["conversion"])
+        self.assertIn(
+            "needs attention", sync_state["conversion"]["progress_message"]
+        )
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.list_managed_datasource_conversion_tasks",
+        return_value=[{"task_id": "convert-1", "status": "SUCCESS"}],
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value=None,
+    )
+    def test_listed_success_without_full_result_does_not_complete_conversion(
+        self, _get_task, _list_tasks
+    ):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        state = {
+            "task_id": "convert-1",
+            "policy_fingerprint": (
+                managed_datasource.conversion_policy_fingerprint(policy)
+            ),
+        }
+        sync_state = {"conversion": state}
+
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+        self.assertEqual(sync_state["conversion"]["task_id"], "convert-1")
+        self.assertNotEqual(sync_state["conversion"].get("status"), "SUCCESS")
+        self.assertIn("full status", sync_state["conversion"]["progress_message"])
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value={"task_id": "another-task", "status": "SUCCESS"},
+    )
+    def test_mismatched_task_response_cannot_complete_conversion(self, _get_task):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "convert-1",
+                "policy_fingerprint": (
+                    managed_datasource.conversion_policy_fingerprint(policy)
+                ),
+            }
+        }
+
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+        self.assertNotEqual(sync_state["conversion"].get("status"), "SUCCESS")
+        self.assertEqual(sync_state["conversion"]["task_id"], "convert-1")
 
     @patch(
         "apps.lens_bridge.services.managed_datasource."
@@ -431,6 +619,10 @@ class ManagedDatasourceTests(SimpleTestCase):
         )
 
     @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value={"task_id": "recovered-task", "status": "STARTED"},
+    )
+    @patch(
         "apps.lens_bridge.services.managed_datasource."
         "sl_client.start_managed_datasource_conversion"
     )
@@ -442,6 +634,7 @@ class ManagedDatasourceTests(SimpleTestCase):
         self,
         list_tasks,
         start_conversion,
+        get_task,
     ):
         knowledge_source = self._knowledge_source()
         knowledge_source.sl_datasource_uuid = self.datasource_uuid
@@ -480,8 +673,98 @@ class ManagedDatasourceTests(SimpleTestCase):
             )
 
         self.assertEqual(start_conversion.call_count, 1)
+        get_task.assert_called_once_with("recovered-task")
         self.assertEqual(sync_state["conversion"]["task_id"], "recovered-task")
         self.assertIn("recovered_at", sync_state["conversion"])
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value=None,
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.list_managed_datasource_conversion_tasks"
+    )
+    def test_recovered_start_list_success_requires_full_result(
+        self, list_tasks, get_task
+    ):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        state = {
+            "status": "STARTING",
+            "operation_id": "operation-1",
+            "start_requested_at": timezone.now().isoformat(),
+            "policy_fingerprint": (
+                managed_datasource.conversion_policy_fingerprint(policy)
+            ),
+        }
+        sync_state = {"conversion": state}
+        list_tasks.return_value = [
+            {
+                "task_id": "convert-1",
+                "status": "SUCCESS",
+                "created_at": state["start_requested_at"],
+                "metadata": {
+                    "conversion": policy,
+                    "hfl_operation_id": "operation-1",
+                },
+            }
+        ]
+
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy
+            )
+
+        get_task.assert_called_once_with("convert-1")
+        self.assertEqual(sync_state["conversion"]["task_id"], "convert-1")
+        self.assertEqual(sync_state["conversion"]["status"], "PENDING")
+        self.assertNotIn("finished_at", sync_state["conversion"])
+
+    @patch(
+        "apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id",
+        return_value={
+            "task_id": "convert-1",
+            "status": "SUCCESS",
+            "result": {"conversion_summary": {"total": 1, "success": 1}},
+        },
+    )
+    @patch(
+        "apps.lens_bridge.services.managed_datasource."
+        "sl_client.list_managed_datasource_conversion_tasks"
+    )
+    def test_recovered_start_completes_with_full_result(self, list_tasks, get_task):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        state = {
+            "status": "STARTING",
+            "operation_id": "operation-1",
+            "start_requested_at": timezone.now().isoformat(),
+            "policy_fingerprint": (
+                managed_datasource.conversion_policy_fingerprint(policy)
+            ),
+        }
+        sync_state = {"conversion": state}
+        list_tasks.return_value = [
+            {
+                "task_id": "convert-1",
+                "status": "SUCCESS",
+                "created_at": state["start_requested_at"],
+                "metadata": {
+                    "conversion": policy,
+                    "hfl_operation_id": "operation-1",
+                },
+            }
+        ]
+
+        summary = managed_datasource.convert_documents(
+            ks=ks, sync_state=sync_state, conversion=policy
+        )
+        get_task.assert_called_once_with("convert-1")
+        self.assertEqual(summary["success"], 1)
+        self.assertEqual(sync_state["conversion"]["status"], "SUCCESS")
 
     @patch(
         "apps.lens_bridge.services.managed_datasource."

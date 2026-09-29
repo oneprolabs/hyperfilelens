@@ -551,11 +551,17 @@ def run_knowledge_source_sync(
     except managed_datasource.ManagedDatasourcePending as exc:
         retry_after_seconds = exc.retry_after_seconds
         _clear_source_lens_transient_state(ks)
+        # Keep a slow/reconciling conversion visible without turning it into
+        # a terminal sync failure.
+        ks.status_detail = str(exc)[:2000]
+        ks.save(update_fields=["status_detail", "updated_at"])
         _release_sync_claim(
             knowledge_source_id=knowledge_source_id,
             claim_token=claim_token,
             next_poll_at=(timezone.now() + timedelta(seconds=retry_after_seconds)),
         )
+        if progress_callback is not None:
+            progress_callback("convert_documents", ks.status_detail)
         return {
             "knowledge_source_id": ks.id,
             "status": "waiting",

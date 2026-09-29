@@ -3568,15 +3568,10 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     )
     if locked.lifecycle_status == LensSessionLink.LifecycleStatus.READY:
         return locked
-    if locked.lifecycle_status == LensSessionLink.LifecycleStatus.PROVISIONING:
-        claim_is_live = (
-            locked.provision_claimed_at is not None
-            and locked.provision_claimed_at
-            > timezone.now() - timedelta(seconds=PROVISION_CLAIM_TTL_SECONDS)
-        )
-        if claim_is_live:
-            return locked
-    elif locked.lifecycle_status != LensSessionLink.LifecycleStatus.FAILED:
+    if locked.lifecycle_status not in {
+        LensSessionLink.LifecycleStatus.PROVISIONING,
+        LensSessionLink.LifecycleStatus.FAILED,
+    }:
         raise ValidationError({"lifecycle_status": "Session is not retryable."})
     if locked.cleanup_status in {
         LensSessionLink.CleanupStatus.PENDING,
@@ -3590,6 +3585,45 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
                 )
             }
         )
+    if locked.lifecycle_status == LensSessionLink.LifecycleStatus.PROVISIONING:
+        claim_is_live = (
+            locked.provision_claimed_at is not None
+            and locked.provision_claimed_at
+            > timezone.now() - timedelta(seconds=PROVISION_CLAIM_TTL_SECONDS)
+        )
+        if claim_is_live:
+            return locked
+        conversion = (
+            (locked.knowledge_source.sync_state_json or {}).get("conversion")
+            if locked.knowledge_source_id
+            else None
+        )
+        if (
+            isinstance(conversion, dict)
+            and (
+                conversion.get("task_id")
+                or str(conversion.get("status") or "").upper() == "STARTING"
+            )
+            and str(conversion.get("status") or "").upper()
+            not in {"SUCCESS", "FAILURE", "REVOKED"}
+        ):
+            # Only a pending conversion retains the original generation/slot.
+            # Other provisioning retries keep their existing admission flow.
+            locked.provision_poll_sequence += 1
+            locked.provision_claim_token = None
+            locked.provision_claimed_at = None
+            locked.provision_next_retry_at = None
+            locked.save(
+                update_fields=[
+                    "provision_poll_sequence",
+                    "provision_claim_token",
+                    "provision_claimed_at",
+                    "provision_next_retry_at",
+                    "updated_at",
+                ]
+            )
+            transaction.on_commit(lambda: _queue_provision_or_mark_failed(locked.id))
+            return locked
 
     gateway_link = locked.gateway_link or (
         locked.chat_binding.gateway_link if locked.chat_binding_id else None
