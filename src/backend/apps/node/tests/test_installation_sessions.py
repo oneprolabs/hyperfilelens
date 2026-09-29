@@ -111,7 +111,9 @@ class InstallationSessionTests(TestCase):
         )
 
     def test_same_link_opens_sessions_for_more_than_ten_hosts(self):
-        for index in range(12):
+        # The per-org download-slot limit must not make an enrollment link
+        # single-use or cap the number of hosts that can obtain sessions.
+        for index in range(21):
             installation_id = f"host-{index}"
             opened = self._open_session(installation_id)
             self.assertEqual(opened.status_code, 201)
@@ -120,7 +122,23 @@ class InstallationSessionTests(TestCase):
                 enrollment_token=self.token,
                 status=NodeInstallationSession.Status.ACTIVE,
             ).count(),
-            12,
+            21,
+        )
+
+    def test_completed_installation_keeps_link_usable_for_another_host(self):
+        first = self._open_session("host-a")
+        self.assertEqual(first.status_code, 201)
+        registered = self._register("host-a", first.data["installation_session"])
+        self.assertEqual(registered.status_code, 200)
+        self.token.refresh_from_db()
+        self.assertIsNotNone(self.token.used_at)
+        self.assertTrue(self.token.is_active)
+
+        second = self._open_session("host-b")
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(
+            NodeInstallationSession.objects.get(installation_id="host-b").enrollment_token_id,
+            self.token.pk,
         )
 
     def test_session_rejects_oversized_installation_identity(self):
@@ -281,7 +299,14 @@ class InstallationSessionTests(TestCase):
             NodeInstallationSession.objects.get(installation_id="host-a").status,
             NodeInstallationSession.Status.RELEASED,
         )
-        self.assertEqual(self._open_session("host-b").status_code, 201)
+        self.token.refresh_from_db()
+        self.assertTrue(self.token.is_active)
+        second = self._open_session("host-b")
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(
+            NodeInstallationSession.objects.get(installation_id="host-b").enrollment_token_id,
+            self.token.pk,
+        )
 
     def test_expired_session_can_release_its_slot_after_identity_check(self):
         opened = self._open_session("host-a")

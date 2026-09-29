@@ -202,7 +202,11 @@ class AgentDownloadAuthorizationTests(SimpleTestCase):
             response = release.AgentReleasesAuthView.as_view()(request)
 
         self.assertEqual(response.status_code, 403)  # Nginx maps marked denials to 429.
-        self.assertEqual(response["X-HFL-Download-Denial"], "capacity")
+        self.assertEqual(response["X-HFL-Download-Denial"], "authorization-capacity")
+        self.assertEqual(
+            response.data["error"],
+            "too many active Agent download authorizations",
+        )
         self.assertEqual(response["Retry-After"], "30")
         self.assertNotIn("signed-secret", str(response.data))
 

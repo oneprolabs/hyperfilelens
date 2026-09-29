@@ -20,7 +20,7 @@ http {
         listen 18081;
         location = /api/v1/node/enrollment/agent-releases/auth {
             if ($http_x_original_uri ~ "t=capacity") {
-                add_header X-HFL-Download-Denial capacity always;
+                add_header X-HFL-Download-Denial authorization-capacity always;
                 add_header Retry-After 30 always;
                 return 403;
             }
@@ -47,6 +47,7 @@ check() {
     }
 }
 check capacity 429
+printf "%s\n" "$result" | grep -Ei "X-HFL-Download-Denial: authorization-capacity" >/dev/null
 printf "%s\n" "$result" | grep -Ei "Retry-After: 30" >/dev/null || {
     printf "capacity response omitted Retry-After:\n%s\n" "$result" >&2
     exit 1

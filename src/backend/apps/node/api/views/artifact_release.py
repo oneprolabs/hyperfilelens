@@ -562,7 +562,7 @@ class AgentReleasesAuthView(APIView):
         ok, count = try_acquire_slot(org.key, slot_id)
         if not ok:
             logger.warning(
-                "Agent download capacity reached: organization=%s active_slots=%d limit=%d",
+                "Agent download authorization capacity reached: organization=%s active_slots=%d limit=%d",
                 org.key,
                 count,
                 slot_limit(),
@@ -570,10 +570,10 @@ class AgentReleasesAuthView(APIView):
             # auth_request accepts 403, not 429. Nginx maps only this marked
             # capacity denial to a client-facing 429 with Retry-After.
             response = Response(
-                {"error": "too many concurrent downloads"},
+                {"error": "too many active Agent download authorizations"},
                 status=status.HTTP_403_FORBIDDEN,
             )
-            response["X-HFL-Download-Denial"] = "capacity"
+            response["X-HFL-Download-Denial"] = "authorization-capacity"
             response["Retry-After"] = str(RETRY_AFTER_SECONDS)
             return response
 
