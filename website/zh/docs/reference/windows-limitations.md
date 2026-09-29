@@ -12,16 +12,16 @@ Windows 文件属性或 NTFS 权限已经被备份或恢复。
 
 ## 当前支持边界
 
-当前版本通过 Kopia 执行文件系统快照和恢复。HyperFileLens 使用的 Kopia
-元数据模型会记录文件名、目录结构、文件内容、时间信息和基础 mode 信息，
-但不记录 Windows 特有文件属性和 NTFS Security Descriptor。因此，当前版本
+当前版本通过产品的文件系统快照和恢复引擎执行备份与恢复。该引擎的元数据
+模型会记录文件名、目录结构、文件内容、时间信息和基础 mode 信息，但不
+记录 Windows 特有文件属性和 NTFS Security Descriptor。因此，当前版本
 无法从快照中恢复这些信息。
 
 | 能力 | 当前行为 |
 | --- | --- |
 | 文件内容 | 备份和恢复均支持 |
 | 文件名和目录结构 | 支持备份和恢复，但受文件系统和路径限制影响 |
-| 修改时间 | Kopia 会尝试恢复；目标文件系统可能拒绝设置或改变结果 |
+| 修改时间 | 恢复引擎会尝试恢复；目标文件系统可能拒绝设置或改变结果 |
 | Windows `Hidden` 属性 | 不备份，也不恢复 |
 | Windows `System` 属性 | 不备份，也不恢复 |
 | Windows `Archive` 属性 | 不备份，也不恢复 |
@@ -38,7 +38,7 @@ Windows 可能将恢复后的文件显示为可见文件。`System` 和 `Archive
 ## NTFS 权限与 Active Directory ACL
 
 当前版本不备份或恢复文件、目录的 Windows Security Descriptor。以下源端
-信息不会进入 Kopia 快照，也不会在恢复时从快照重建：
+信息不会进入备份元数据，也不会在恢复时从备份元数据重建：
 
 - Owner；
 - 本地用户、域用户和组 SID；
@@ -61,13 +61,13 @@ ACE。不能把文件内容恢复成功作为源端 ACL 已经恢复的证明。
 
 ## 通过 Linux Proxy 连接 SMB 或 CIFS 共享
 
-当 SMB 或 CIFS 共享通过 Linux Proxy 挂载时，Kopia 看到的是 Linux 挂载
+当 SMB 或 CIFS 共享通过 Linux Proxy 挂载时，备份引擎看到的是 Linux 挂载
 暴露出来的文件系统视图。当前版本在此路径下不备份或恢复原始 Windows
 Security Descriptor、域用户和组 SID、DACL 以及继承行为。
 
 增加 `mount.cifs` 的 ACL 相关选项，可能改变 Linux 挂载层对权限的呈现方式，
-但不会使 HyperFileLens 和 Kopia 获得 Windows ACL 的采集或恢复能力。无论
-共享是备份源还是恢复目标，都适用此限制。
+但不会使 HyperFileLens 获得 Windows ACL 的采集或恢复能力。无论共享是
+备份源还是恢复目标，都适用此限制。
 
 ## 恢复验证建议
 
@@ -89,8 +89,4 @@ Security Descriptor、域用户和组 SID、DACL 以及继承行为。
 并验证 Windows 文件属性、Security Descriptor、SID 身份、权限要求以及
 SMB/NAS 目标行为后，本页和支持范围文档才会声明支持。
 
-相关 Kopia 上游讨论：
-
-- [Windows 文件 Owner 与 ACL 备份](https://github.com/kopia/kopia/issues/3884)
-- [支持高级文件系统能力](https://github.com/kopia/kopia/issues/544)
-- [明确哪些元数据已经支持](https://github.com/kopia/kopia/issues/3587)
+本页说明适用于当前产品版本的支持边界。

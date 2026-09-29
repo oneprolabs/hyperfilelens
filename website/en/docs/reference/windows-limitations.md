@@ -13,17 +13,17 @@ that Windows file attributes or NTFS permissions were backed up or restored.
 
 ## Current support boundary
 
-The current release uses Kopia for filesystem snapshots and restore. The
-Kopia metadata model used by HyperFileLens records file names, directory
-structure, content, timestamps, and basic mode information. It does not
-record Windows-specific file attributes or NTFS security descriptors, so the
-current release cannot restore them from a snapshot.
+The current release uses the product's filesystem snapshot and restore
+engine. Its metadata model records file names, directory structure, content,
+timestamps, and basic mode information. It does not record Windows-specific
+file attributes or NTFS security descriptors, so the current release cannot
+restore them from a snapshot.
 
 | Capability | Current behavior |
 | --- | --- |
 | File content | Backed up and restored |
 | File names and directory structure | Backed up and restored, subject to filesystem and path restrictions |
-| Modification times | Kopia attempts to restore them; the destination filesystem can reject or change the result |
+| Modification times | The restore engine attempts to restore them; the destination filesystem can reject or change the result |
 | Windows `Hidden` attribute | Not backed up or restored |
 | Windows `System` attribute | Not backed up or restored |
 | Windows `Archive` attribute | Not backed up or restored |
@@ -41,7 +41,7 @@ limitation applies to the `System` and `Archive` attributes.
 
 The current release does not back up or restore the Windows security descriptor
 for a file or directory. The following source details are not available in the
-Kopia snapshot and are not reconstructed during restore:
+backup metadata and are not reconstructed during restore:
 
 - the owner;
 - local or domain user and group SIDs;
@@ -61,15 +61,15 @@ and do not represent ACL recovery.
 
 ## SMB or CIFS shares through a Linux Proxy
 
-When an SMB or CIFS share is mounted through a Linux Proxy, Kopia works with
-the filesystem view exposed by the Linux mount. The current release does not
+When an SMB or CIFS share is mounted through a Linux Proxy, the backup engine
+works with the filesystem view exposed by the Linux mount. The current release does not
 back up or restore the original Windows security descriptor, domain SIDs,
 DACL, or inheritance behavior through this path.
 
 Adding an ACL-related `mount.cifs` option can change how the Linux mount
 exposes permissions. It does not make Windows ACL capture or restore supported
-by HyperFileLens and Kopia. This limitation applies whether the share is a
-backup source or a restore target.
+by HyperFileLens. This limitation applies whether the share is a backup source
+or a restore target.
 
 ## Restore validation recommendations
 
@@ -94,8 +94,4 @@ preservation. A future release must add and verify Windows file attributes,
 security descriptors, SID identity, privilege requirements, and SMB/NAS target
 behavior before this page or the support matrix can claim support.
 
-For the technical background, see the related upstream Kopia discussions:
-
-- [Backup file owner and ACL on Windows](https://github.com/kopia/kopia/issues/3884)
-- [Support for advanced filesystem features](https://github.com/kopia/kopia/issues/544)
-- [Document what metadata is or isn't backed up](https://github.com/kopia/kopia/issues/3587)
+The support boundary in this page applies to the current product release.
