@@ -109,7 +109,9 @@ def test_try_acquire_slot_reuses_enrollment_id(monkeypatch):
     store: dict[str, set[str]] = {}
 
     class FakeRedis:
-        def eval(self, script, numkeys, key, slot_id, maxn, ttl):  # noqa: ARG002
+        def eval(self, script, numkeys, key, deadlines, slot_id, maxn, ttl):  # noqa: ARG002
+            assert numkeys == 2
+            assert deadlines == f"{key}:deadlines"
             members = store.setdefault(key, set())
             if slot_id in members:
                 return [1, len(members)]
@@ -152,26 +154,37 @@ def test_release_session_slot_is_idempotent(monkeypatch):
     download_slots.release_session_slot("example", 3)
     download_slots.release_session_slot("example", 3)
 
-    assert client.srem.call_args_list == [
-        mock.call("hfl:agent-releases:slots:example", "session:3"),
-        mock.call("hfl:agent-releases:slots:example", "session:3"),
+    assert client.eval.call_args_list == [
+        mock.call(
+            download_slots._RELEASE_LUA,
+            2,
+            "hfl:agent-releases:slots:example",
+            "hfl:agent-releases:slots:example:deadlines",
+            "session:3",
+        ),
+        mock.call(
+            download_slots._RELEASE_LUA,
+            2,
+            "hfl:agent-releases:slots:example",
+            "hfl:agent-releases:slots:example:deadlines",
+            "session:3",
+        ),
     ]
 
 
 def test_release_session_slot_fails_open(monkeypatch):
     client = mock.Mock()
-    client.srem.side_effect = RedisConnectionError("Redis unavailable")
+    client.eval.side_effect = RedisConnectionError("Redis unavailable")
     monkeypatch.setattr(download_slots, "_redis_client", lambda: client)
 
     download_slots.release_session_slot("example", 3)
 
 
-def test_slot_script_does_not_extend_expiry_on_rejection_or_reuse():
+def test_slot_script_checks_capacity_before_acquiring():
     script = download_slots._ACQUIRE_LUA
-    assert script.index("SISMEMBER") < script.index("EXPIRE")
-    assert script.index("count >= limit") < script.index("EXPIRE")
-    assert script.count("redis.call('EXPIRE'") == 1
-    assert "redis.call('TTL', key) == -1" in script
+    assert script.index("count >= limit") < script.index("redis.call('SADD', key, slot)")
+    assert "redis.call('ZRANGEBYSCORE', deadlines, '-inf', now)" in script
+    assert "redis.call('ZADD', deadlines, now + ttl, slot)" in script
 
 
 class AgentDownloadAuthorizationTests(SimpleTestCase):

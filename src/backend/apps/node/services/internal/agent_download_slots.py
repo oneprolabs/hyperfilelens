@@ -1,8 +1,8 @@
-"""Bound Agent release download authorizations by organization.
+"""Bound Agent download authorizations with independently expiring slots.
 
-Keep the existing Redis Set/key so blue-green API versions share one quota.
-The key's TTL is a fallback for interrupted installations, not the normal
-release mechanism for completed installation sessions.
+The legacy Redis Set remains the quota authority across a rolling API upgrade.
+A companion sorted set tracks each slot's deadline so a newer installation
+does not extend an abandoned slot or erase a still-recent authorization.
 """
 
 from __future__ import annotations
@@ -24,32 +24,70 @@ if redis is not None:
 
 DEFAULT_LIMIT = 20
 RETRY_AFTER_SECONDS = 30
-# Match the installation session idle lease. A shorter Set TTL could erase a
-# still-valid authorization before its normal Session lifecycle completes.
+# A successful authenticated download renews its own slot, matching the
+# installation session's idle lease. Other slots never inherit that renewal.
 DEFAULT_SLOT_TTL_SECONDS = 6 * 60 * 60
 
 _ACQUIRE_LUA = """
 local key = KEYS[1]
+local deadlines = KEYS[2]
 local slot = ARGV[1]
 local limit = tonumber(ARGV[2])
 local ttl = tonumber(ARGV[3])
+local now = tonumber(redis.call('TIME')[1])
 
-if redis.call('SISMEMBER', key, slot) == 1 then
-  return {1, redis.call('SCARD', key)}
+-- Existing Set members were issued by the old API (or were added while an
+-- old and a new API instance were both serving traffic). Give each untracked
+-- member only the remaining legacy Set lifetime, not a fresh lease.
+local legacy_ttl_ms = redis.call('PTTL', key)
+for _, member in ipairs(redis.call('SMEMBERS', key)) do
+  if not redis.call('ZSCORE', deadlines, member) then
+    local remaining = legacy_ttl_ms >= 0 and math.ceil(legacy_ttl_ms / 1000) or ttl
+    redis.call('ZADD', deadlines, now + remaining, member)
+  end
+end
+
+-- Remove individually expired authorizations before testing capacity.
+for _, member in ipairs(redis.call('ZRANGEBYSCORE', deadlines, '-inf', now)) do
+  redis.call('SREM', key, member)
+  redis.call('ZREM', deadlines, member)
+end
+
+-- The Set may have expired in a mixed-version window. Its stale deadline
+-- records must not count against new requests.
+for _, member in ipairs(redis.call('ZRANGE', deadlines, 0, -1)) do
+  if redis.call('SISMEMBER', key, member) == 0 then
+    redis.call('ZREM', deadlines, member)
+  end
 end
 
 local count = redis.call('SCARD', key)
-if count >= limit then
+if redis.call('SISMEMBER', key, slot) == 1 then
+  -- This slot has just passed application authorization. Renew only itself.
+  redis.call('ZADD', deadlines, now + ttl, slot)
+elseif count >= limit then
   return {0, count}
+else
+  redis.call('SADD', key, slot)
+  redis.call('ZADD', deadlines, now + ttl, slot)
+  count = count + 1
 end
 
-redis.call('SADD', key, slot)
--- An existing key's expiration is never extended by another installation.
--- Also recover a pre-existing key that was left without an expiration.
-if redis.call('TTL', key) == -1 then
-  redis.call('EXPIRE', key, ttl)
+-- The Set is never allowed to expire before its latest member. TTLs are
+-- storage cleanup only; expired individual members are removed above.
+local latest = redis.call('ZREVRANGE', deadlines, 0, 0, 'WITHSCORES')
+local remaining = tonumber(latest[2]) - now
+if redis.call('TTL', key) < remaining then
+  redis.call('EXPIRE', key, remaining)
 end
-return {1, count + 1}
+redis.call('EXPIRE', deadlines, remaining)
+return {1, count}
+"""
+
+_RELEASE_LUA = """
+local removed = redis.call('SREM', KEYS[1], ARGV[1])
+redis.call('ZREM', KEYS[2], ARGV[1])
+return removed
 """
 
 
@@ -73,6 +111,11 @@ def _key(organization_key: str) -> str:
     return f"hfl:agent-releases:slots:{organization_key}"
 
 
+def _deadlines_key(organization_key: str) -> str:
+    """Track deadlines beside the existing shared quota key."""
+    return f"{_key(organization_key)}:deadlines"
+
+
 def slot_limit() -> int:
     """Return the configured organization-level authorization limit."""
     return int(
@@ -91,7 +134,13 @@ def try_acquire_slot(organization_key: str, slot_id: str) -> tuple[bool, int]:
         return True, 0  # Retain the existing fail-open behavior.
     try:
         allowed, count = client.eval(
-            _ACQUIRE_LUA, 1, _key(organization_key), slot_id, str(limit), str(ttl)
+            _ACQUIRE_LUA,
+            2,
+            _key(organization_key),
+            _deadlines_key(organization_key),
+            slot_id,
+            str(limit),
+            str(ttl),
         )
         return bool(int(allowed)), int(count)
     except _REDIS_ERRORS:
@@ -105,6 +154,12 @@ def release_session_slot(organization_key: str, session_id: int) -> None:
     if client is None:
         return
     try:
-        client.srem(_key(organization_key), f"session:{session_id}")
+        client.eval(
+            _RELEASE_LUA,
+            2,
+            _key(organization_key),
+            _deadlines_key(organization_key),
+            f"session:{session_id}",
+        )
     except _REDIS_ERRORS:
         logger.warning("Agent download session slot cleanup unavailable", exc_info=True)
