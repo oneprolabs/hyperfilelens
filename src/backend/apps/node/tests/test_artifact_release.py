@@ -134,17 +134,22 @@ def test_try_acquire_slot_reuses_enrollment_id(monkeypatch):
     assert count == 1
 
 
-def test_try_acquire_slot_fails_open_when_redis_is_unavailable(monkeypatch):
+def test_try_acquire_slot_fails_closed_when_redis_is_unavailable(monkeypatch):
     class UnavailableRedis:
         def eval(self, *_args, **_kwargs):
             raise RedisConnectionError("review Redis is unavailable")
 
     monkeypatch.setattr(download_slots, "_redis_client", lambda: UnavailableRedis())
 
-    allowed, count = download_slots.try_acquire_slot("default", "session:1")
+    with pytest.raises(download_slots.DownloadSlotUnavailable):
+        download_slots.try_acquire_slot("default", "session:1")
 
-    assert allowed is True
-    assert count == 0
+
+def test_try_acquire_slot_fails_closed_when_redis_client_is_missing(monkeypatch):
+    monkeypatch.setattr(download_slots, "_redis_client", lambda: None)
+
+    with pytest.raises(download_slots.DownloadSlotUnavailable):
+        download_slots.try_acquire_slot("default", "session:1")
 
 
 def test_release_session_slot_is_idempotent(monkeypatch):
@@ -188,6 +193,41 @@ def test_slot_script_checks_capacity_before_acquiring():
 
 
 class AgentDownloadAuthorizationTests(SimpleTestCase):
+    def test_redis_unavailable_is_marked_for_nginx_without_exposing_credentials(self):
+        artifact_path = "/media/agent-releases/1.0.0/agent.zip"
+        request = APIRequestFactory().get(
+            "/api/v1/node/enrollment/agent-releases/auth",
+            HTTP_X_ORIGINAL_URI=f"{artifact_path}?t=signed-secret",
+        )
+        payload = {
+            "p": artifact_path,
+            "org": "example",
+            "role": "agent",
+            "token_id": 17,
+        }
+        organization = SimpleNamespace(key="example")
+        with (
+            mock.patch.object(release, "_release_download_token", return_value="signed-secret"),
+            mock.patch.object(release, "_load_release_token", return_value=payload),
+            mock.patch.object(
+                release.Organization.objects,
+                "filter",
+                return_value=SimpleNamespace(first=lambda: organization),
+            ),
+            mock.patch.object(release, "_release_authorization_is_valid", return_value=True),
+            mock.patch.object(
+                release,
+                "try_acquire_slot",
+                side_effect=download_slots.DownloadSlotUnavailable(),
+            ),
+        ):
+            response = release.AgentReleasesAuthView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)  # Nginx maps marked denials to 503.
+        self.assertEqual(response["X-HFL-Download-Denial"], "authorization-unavailable")
+        self.assertEqual(response["Retry-After"], "30")
+        self.assertNotIn("signed-secret", str(response.data))
+
     def test_capacity_denial_is_marked_for_nginx_without_exposing_credentials(self):
         artifact_path = "/media/agent-releases/1.0.0/agent.zip"
         request = APIRequestFactory().get(

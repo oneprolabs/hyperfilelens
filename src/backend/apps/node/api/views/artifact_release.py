@@ -38,6 +38,7 @@ from apps.node.services.internal.agent_release import (
     version_has_dist,
 )
 from apps.node.services.internal.agent_download_slots import (
+    DownloadSlotUnavailable,
     RETRY_AFTER_SECONDS,
     release_session_slot,
     slot_limit,
@@ -560,7 +561,18 @@ class AgentReleasesAuthView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        ok, count = try_acquire_slot(org.key, slot_id)
+        try:
+            ok, count = try_acquire_slot(org.key, slot_id)
+        except DownloadSlotUnavailable:
+            # auth_request only accepts 401/403 denials. Nginx maps this
+            # distinguished 403 to a retryable client-facing 503.
+            response = Response(
+                {"error": "Agent download authorization is temporarily unavailable"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+            response["X-HFL-Download-Denial"] = "authorization-unavailable"
+            response["Retry-After"] = str(RETRY_AFTER_SECONDS)
+            return response
         if not ok:
             logger.warning(
                 "Agent download authorization capacity reached: organization=%s active_slots=%d limit=%d",

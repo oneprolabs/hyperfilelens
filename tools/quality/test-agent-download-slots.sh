@@ -80,5 +80,17 @@ redis-cli del "$full" >/dev/null
 [ "$(redis-cli scard "$full")" = 20 ]
 [ "$(redis-cli --raw --eval /tmp/release.lua "$full" "$full_deadlines" , session:2)" = 1 ]
 [ "$(redis-cli --raw --eval /tmp/acquire.lua "$full" "$full_deadlines" , session:fresh 20 60)" = "$(printf "1\n20")" ]
+# Model an old API still writing only the shared Set during a blue/green
+# overlap. The new API must count that member and preserve its legacy TTL.
+mixed=hfl:agent-releases:slots:mixed
+mixed_deadlines="${mixed}:deadlines"
+for number in $(seq 1 19); do
+    redis-cli --raw --eval /tmp/acquire.lua "$mixed" "$mixed_deadlines" , "session:$number" 20 60 >/dev/null
+done
+redis-cli sadd "$mixed" session:legacy >/dev/null
+redis-cli expire "$mixed" 5 >/dev/null
+[ "$(redis-cli --raw --eval /tmp/acquire.lua "$mixed" "$mixed_deadlines" , session:20 20 60)" = "$(printf "0\n20")" ]
+[ "$(redis-cli zcard "$mixed_deadlines")" = 20 ]
+[ "$(redis-cli zscore "$mixed_deadlines" session:legacy)" -lt "$(redis-cli zscore "$mixed_deadlines" session:19)" ]
 printf "Agent download slot Lua checks passed.\n"
 '

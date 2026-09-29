@@ -36,11 +36,12 @@ var (
 
 // DownloadHTTPError retains the response status without retaining a signed URL.
 type DownloadHTTPError struct {
-	StatusCode    int
-	Status        string
-	retryAfter    time.Duration
-	hasRetryAfter bool
-	authCapacity  bool
+	StatusCode      int
+	Status          string
+	retryAfter      time.Duration
+	hasRetryAfter   bool
+	authCapacity    bool
+	authUnavailable bool
 }
 
 func (err *DownloadHTTPError) Error() string {
@@ -49,6 +50,12 @@ func (err *DownloadHTTPError) Error() string {
 			return fmt.Sprintf("Agent download authorization capacity is temporarily full; retry after %s", err.retryAfter)
 		}
 		return "Agent download authorization capacity is temporarily full; retry later"
+	}
+	if err.StatusCode == http.StatusServiceUnavailable && err.authUnavailable {
+		if err.hasRetryAfter {
+			return fmt.Sprintf("Agent download authorization is temporarily unavailable; retry after %s", err.retryAfter)
+		}
+		return "Agent download authorization is temporarily unavailable; retry later"
 	}
 	return "download HTTP " + err.Status
 }
@@ -338,11 +345,12 @@ func downloadURLAttempt(
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		retryAfter, hasRetryAfter := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 		return &DownloadHTTPError{
-			StatusCode:    resp.StatusCode,
-			Status:        resp.Status,
-			retryAfter:    retryAfter,
-			hasRetryAfter: hasRetryAfter,
-			authCapacity:  resp.Header.Get("X-HFL-Download-Denial") == "authorization-capacity",
+			StatusCode:      resp.StatusCode,
+			Status:          resp.Status,
+			retryAfter:      retryAfter,
+			hasRetryAfter:   hasRetryAfter,
+			authCapacity:    resp.Header.Get("X-HFL-Download-Denial") == "authorization-capacity",
+			authUnavailable: resp.Header.Get("X-HFL-Download-Denial") == "authorization-unavailable",
 		}
 	}
 	if resume {

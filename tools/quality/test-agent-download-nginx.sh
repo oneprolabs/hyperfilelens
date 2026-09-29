@@ -24,6 +24,11 @@ http {
                 add_header Retry-After 30 always;
                 return 403;
             }
+            if ($http_x_original_uri ~ "t=unavailable") {
+                add_header X-HFL-Download-Denial authorization-unavailable always;
+                add_header Retry-After 30 always;
+                return 403;
+            }
             if ($http_x_original_uri ~ "t=invalid") { return 401; }
             if ($http_x_original_uri ~ "t=denied") { return 403; }
             return 204;
@@ -52,6 +57,9 @@ printf "%s\n" "$result" | grep -Ei "Retry-After: 30" >/dev/null || {
     printf "capacity response omitted Retry-After:\n%s\n" "$result" >&2
     exit 1
 }
+check unavailable 503
+printf "%s\n" "$result" | grep -Ei "X-HFL-Download-Denial: authorization-unavailable" >/dev/null
+printf "%s\n" "$result" | grep -Ei "Retry-After: 30" >/dev/null
 check invalid 401
 ! printf "%s\n" "$result" | grep -Ei "Retry-After:|X-HFL-Download-Denial:" >/dev/null
 check denied 403

@@ -158,6 +158,7 @@ func TestDownloadURLDistinguishesCapacityFromAuthorization(t *testing.T) {
 		want     string
 	}{
 		{"capacity", http.StatusTooManyRequests, true, "authorization capacity is temporarily full; retry after 30s"},
+		{"authorization unavailable", http.StatusServiceUnavailable, false, "authorization is temporarily unavailable; retry after 30s"},
 		{"ordinary rate limit", http.StatusTooManyRequests, false, "download HTTP 429 Too Many Requests"},
 		{"forbidden", http.StatusForbidden, false, "download HTTP 403 Forbidden"},
 		{"unauthorized", http.StatusUnauthorized, false, "download HTTP 401 Unauthorized"},
@@ -166,6 +167,9 @@ func TestDownloadURLDistinguishesCapacityFromAuthorization(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tc.capacity {
 					w.Header().Set("X-HFL-Download-Denial", "authorization-capacity")
+					w.Header().Set("Retry-After", "30")
+				} else if tc.name == "authorization unavailable" {
+					w.Header().Set("X-HFL-Download-Denial", "authorization-unavailable")
 					w.Header().Set("Retry-After", "30")
 				}
 				w.WriteHeader(tc.status)

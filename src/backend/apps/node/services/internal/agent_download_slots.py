@@ -28,6 +28,11 @@ RETRY_AFTER_SECONDS = 30
 # installation session's idle lease. Other slots never inherit that renewal.
 DEFAULT_SLOT_TTL_SECONDS = 6 * 60 * 60
 
+
+class DownloadSlotUnavailable(Exception):
+    """New download authorizations cannot be counted safely without Redis."""
+
+
 _ACQUIRE_LUA = """
 local key = KEYS[1]
 local deadlines = KEYS[2]
@@ -130,7 +135,8 @@ def try_acquire_slot(organization_key: str, slot_id: str) -> tuple[bool, int]:
     )
     client = _redis_client()
     if client is None:
-        return True, 0  # Retain the existing fail-open behavior.
+        logger.warning("Agent download slot acquisition unavailable: Redis client missing")
+        raise DownloadSlotUnavailable("Agent download authorization is unavailable")
     try:
         allowed, count = client.eval(
             _ACQUIRE_LUA,
@@ -142,9 +148,9 @@ def try_acquire_slot(organization_key: str, slot_id: str) -> tuple[bool, int]:
             str(ttl),
         )
         return bool(int(allowed)), int(count)
-    except _REDIS_ERRORS:
+    except _REDIS_ERRORS as exc:
         logger.warning("Agent download slot acquisition unavailable", exc_info=True)
-        return True, 0
+        raise DownloadSlotUnavailable("Agent download authorization is unavailable") from exc
 
 
 def release_session_slot(organization_key: str, session_id: int) -> None:
