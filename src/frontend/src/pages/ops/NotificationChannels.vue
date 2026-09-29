@@ -1184,10 +1184,6 @@ watch(
               :label="t('ops.notification.typeEmail')"
             />
             <el-option
-              value="sms"
-              :label="t('ops.notification.typeSms')"
-            />
-            <el-option
               value="webhook"
               :label="t('ops.notification.typeWebhook')"
             />
