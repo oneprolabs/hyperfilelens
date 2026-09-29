@@ -10,7 +10,7 @@ from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
 
 from apps.notification.channels.base import BaseChannel
-from apps.notification.exceptions import ChannelConfigError
+from apps.notification.exceptions import ChannelConfigError, DingTalkDeliveryError
 from apps.notification.models import NotificationChannel, NotificationDelivery
 
 
@@ -87,6 +87,23 @@ def _platform_payload(cfg: dict, delivery: NotificationDelivery) -> dict | None:
     return None
 
 
+def _validate_platform_response(platform: str, response_body: bytes) -> None:
+    """Raise when a platform reports an application-level delivery failure."""
+    if platform != "dingtalk":
+        return
+
+    try:
+        result = json.loads(response_body.decode("utf-8") or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("DingTalk returned an invalid JSON response") from exc
+
+    if not isinstance(result, dict):
+        raise RuntimeError("DingTalk returned an invalid JSON response")
+    errcode = result.get("errcode")
+    if str(errcode) != "0":
+        raise DingTalkDeliveryError(errcode, result.get("errmsg"))
+
+
 class WebhookChannel(BaseChannel):
     def send(self, *, channel: NotificationChannel, delivery: NotificationDelivery) -> None:
         cfg = channel.config or {}
@@ -119,7 +136,8 @@ class WebhookChannel(BaseChannel):
                     headers[str(key)] = str(value)
 
         secret = str(cfg.get("secret") or "").strip()
-        if str(cfg.get("webhook_platform") or "").lower() == "dingtalk":
+        platform = str(cfg.get("webhook_platform") or "").lower()
+        if platform == "dingtalk":
             url = _dingtalk_url(url, secret)
             secret = ""
         if secret:
@@ -135,6 +153,7 @@ class WebhookChannel(BaseChannel):
                     code = int(getattr(resp, "status", 200))
                     if code < 200 or code >= 300:
                         raise RuntimeError(f"webhook non-2xx: {code}")
+                    _validate_platform_response(platform, resp.read())
                 return
             except HTTPError as exc:
                 last_err = exc

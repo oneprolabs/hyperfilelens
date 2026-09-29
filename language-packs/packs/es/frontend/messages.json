@@ -65,6 +65,7 @@
     "codes": {
       "networkUnavailable": "No se pudo conectar. Compruebe la red y vuelva a intentarlo.",
       "networkTimeout": "La solicitud agotó el tiempo de espera. Vuelva a intentarlo más tarde.",
+      "notificationDingtalkRejected": "DingTalk rechazó el mensaje de prueba. Compruebe la configuración de seguridad del robot.",
       "notificationWebhookTimeout": "La solicitud del webhook agotó el tiempo de espera. Verifique que la URL sea accesible desde el servidor de HyperFileLens.",
       "notificationWebhookTlsFailed": "No se pudo verificar el certificado HTTPS del webhook. Use un certificado de confianza o compruebe la cadena de certificados.",
       "notificationWebhookUnreachable": "No se pudo acceder al servidor del webhook. Verifique la URL, el puerto, el firewall y la ruta de red.",
@@ -6620,6 +6621,10 @@
       "testMessageDraft": "Enviar mensaje de prueba",
       "testEmailDraft": "Enviar correo de prueba",
       "testFailed": "La notificación de prueba falló",
+      "dingtalkKeywordReason": "El robot rechazó el mensaje porque no contiene una palabra clave configurada.",
+      "dingtalkSecurityReason": "DingTalk rechazó el mensaje. Consulte la respuesta original en los detalles técnicos para conocer la causa.",
+      "dingtalkKeywordResolution": "Compruebe que la palabra clave del robot aparezca en el mensaje de prueba (por ejemplo, FileLens) y vuelva a intentarlo.",
+      "dingtalkSecurityResolution": "Compruebe la palabra clave, el secreto de firma y la lista de IP permitidas del robot de DingTalk; vuelva a intentarlo.",
       "deleteConfirm": "Eliminar el canal \"{name}\"?",
       "emailSmtpHost": "Servidor SMTP",
       "emailSmtpPort": "Puerto SMTP",

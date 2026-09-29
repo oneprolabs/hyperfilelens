@@ -2,6 +2,7 @@
 export const ERROR_CODE_I18N_KEYS: Record<string, string> = {
   'NETWORK.UNAVAILABLE': 'errors.codes.networkUnavailable',
   'NETWORK.TIMEOUT': 'errors.codes.networkTimeout',
+  'NOTIFICATION.DINGTALK_REJECTED': 'errors.codes.notificationDingtalkRejected',
   'NOTIFICATION.WEBHOOK_TIMEOUT': 'errors.codes.notificationWebhookTimeout',
   'NOTIFICATION.WEBHOOK_TLS_FAILED': 'errors.codes.notificationWebhookTlsFailed',
   'NOTIFICATION.WEBHOOK_UNREACHABLE': 'errors.codes.notificationWebhookUnreachable',
@@ -64,6 +65,7 @@ export const ERROR_CODE_I18N_KEYS: Record<string, string> = {
 export const ERROR_CODE_FALLBACK_EN: Record<string, string> = {
   'NETWORK.UNAVAILABLE': 'Unable to connect. Check your network and try again.',
   'NETWORK.TIMEOUT': 'Request timed out. Please try again later.',
+  'NOTIFICATION.DINGTALK_REJECTED': 'DingTalk rejected the test message. Check the robot security settings.',
   'NOTIFICATION.WEBHOOK_TIMEOUT':
     'The webhook request timed out. Verify that the URL is reachable from the HyperFileLens server.',
   'NOTIFICATION.WEBHOOK_TLS_FAILED':
