@@ -66,11 +66,12 @@ for _, member in ipairs(redis.call('ZRANGE', deadlines, 0, -1)) do
 end
 
 local count = redis.call('SCARD', key)
+local allowed = 1
 if redis.call('SISMEMBER', key, slot) == 1 then
   -- This slot has just passed application authorization. Renew only itself.
   redis.call('ZADD', deadlines, now + ttl, slot)
 elseif count >= limit then
-  return {0, count}
+  allowed = 0
 else
   redis.call('SADD', key, slot)
   redis.call('ZADD', deadlines, now + ttl, slot)
@@ -80,12 +81,14 @@ end
 -- The Set is never allowed to expire before its latest member. TTLs are
 -- storage cleanup only; expired individual members are removed above.
 local latest = redis.call('ZREVRANGE', deadlines, 0, 0, 'WITHSCORES')
-local remaining = tonumber(latest[2]) - now
-if redis.call('TTL', key) < remaining then
-  redis.call('EXPIRE', key, remaining)
+if latest[2] then
+  local remaining = tonumber(latest[2]) - now
+  if redis.call('TTL', key) < remaining then
+    redis.call('EXPIRE', key, remaining)
+  end
+  redis.call('EXPIRE', deadlines, remaining)
 end
-redis.call('EXPIRE', deadlines, remaining)
-return {1, count}
+return {allowed, count}
 """
 
 _RELEASE_LUA = """

@@ -78,6 +78,9 @@ redis-cli zadd "$full_deadlines" 1 session:1 >/dev/null
 redis-cli del "$full" >/dev/null
 [ "$(redis-cli --raw --eval /tmp/acquire.lua "$full" "$full_deadlines" , session:fresh 20 60)" = "$(printf "0\n20")" ]
 [ "$(redis-cli scard "$full")" = 20 ]
+# Rebuilding a full Set must also restore its cleanup TTL, even when the
+# incoming request is rejected. Otherwise the restored Set persists forever.
+[ "$(redis-cli ttl "$full")" -gt 0 ]
 [ "$(redis-cli --raw --eval /tmp/release.lua "$full" "$full_deadlines" , session:2)" = 1 ]
 [ "$(redis-cli --raw --eval /tmp/acquire.lua "$full" "$full_deadlines" , session:fresh 20 60)" = "$(printf "1\n20")" ]
 # Model an old API still writing only the shared Set during a blue/green
@@ -91,6 +94,10 @@ redis-cli sadd "$mixed" session:legacy >/dev/null
 redis-cli expire "$mixed" 5 >/dev/null
 [ "$(redis-cli --raw --eval /tmp/acquire.lua "$mixed" "$mixed_deadlines" , session:20 20 60)" = "$(printf "0\n20")" ]
 [ "$(redis-cli zcard "$mixed_deadlines")" = 20 ]
+[ "$(redis-cli ttl "$mixed_deadlines")" -gt 0 ]
 [ "$(redis-cli zscore "$mixed_deadlines" session:legacy)" -lt "$(redis-cli zscore "$mixed_deadlines" session:19)" ]
+# A configured zero limit still denies cleanly with no deadline to expire.
+zero=hfl:agent-releases:slots:zero
+[ "$(redis-cli --raw --eval /tmp/acquire.lua "$zero" "${zero}:deadlines" , session:1 0 60)" = "$(printf "0\n0")" ]
 printf "Agent download slot Lua checks passed.\n"
 '
