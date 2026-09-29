@@ -148,15 +148,17 @@ def _humanize_agent_ws_error(message: str) -> str:
 
 
 def _task_error_message(outcome) -> str:
-    error = str(getattr(outcome.task, "last_error", "") or "").strip()
+    task = getattr(outcome, "task", None)
+    error = str(getattr(task, "last_error", "") or "").strip()
     if error:
         return _humanize_agent_ws_error(error)
-    if isinstance(outcome.stream_message, dict):
+    stream_message = getattr(outcome, "stream_message", None)
+    if isinstance(stream_message, dict):
         for key in ("error", "message", "detail"):
-            value = str(outcome.stream_message.get(key) or "").strip()
+            value = str(stream_message.get(key) or "").strip()
             if value:
                 return value
-    status = str(getattr(outcome.task, "status", "") or "unknown")
+    status = str(getattr(task, "status", "") or "unknown")
     return f"Agent task failed (status: {status})."
 
 

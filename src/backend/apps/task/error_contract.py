@@ -148,3 +148,122 @@ def task_error_contract(task, resources=()):
         "limited": not any((failure, skipped, cleanup, warnings, retained, children, result.get("reasons"), summary)),
         "technical_detail": result,
     })
+
+
+def node_task_error_contract(task, *, timed_out=False):
+    """Project a terminal Agent task into the shared async-error contract.
+
+    NAS mount/unmount commands are persisted as ``NodeTask`` rows rather than
+    control-plane ``Task`` rows.  They still need the same stable, redacted
+    presentation contract so callers do not have to scrape ``last_error``.
+    """
+    status = str(getattr(task, "status", "") or "").lower()
+    if status not in {"failed", "timeout", "canceled", "cancelled", "success"} and not timed_out:
+        return None
+    result = _record(getattr(task, "result", None))
+    kind = str(getattr(task, "kind", "") or "").lower()
+    has_warning = bool(
+        result.get("cleanup_complete") is False
+        or result.get("warnings")
+        or result.get("retained_resources")
+    )
+    if status == "success" and not has_warning:
+        return None
+
+    error_code = str(
+        result.get("error_code")
+        or (
+            "AGENT.TIMEOUT"
+            if timed_out or status == "timeout"
+            else "AGENT.NAS_UNMOUNT_FAILED"
+            if "unmount" in kind
+            else "AGENT.NAS_MOUNT_FAILED"
+            if kind.startswith("nas.")
+            else "AGENT.TASK_FAILED"
+        )
+    )
+    raw_error = str(getattr(task, "last_error", "") or "").strip()
+    if timed_out or status in {"timeout"}:
+        outcome = "timeout"
+        severity = "error"
+    elif status in {"canceled", "cancelled"}:
+        outcome = "cancelled"
+        severity = "warning"
+    elif has_warning:
+        outcome = "partial" if result.get("cleanup_complete") is False else "warning"
+        severity = "warning"
+    else:
+        outcome = "failed"
+        severity = "error"
+
+    operation = (
+        "unmount"
+        if "unmount" in kind
+        else "mount"
+        if "mount" in kind
+        else "connection test"
+        if kind.endswith(".test")
+        else "Agent operation"
+    )
+    summary = (
+        f"NAS {operation} timed out."
+        if outcome == "timeout"
+        else f"NAS {operation} completed with warnings."
+        if outcome in {"partial", "warning"}
+        else f"NAS {operation} was cancelled."
+        if outcome == "cancelled"
+        else f"NAS {operation} failed."
+    )
+    reasons = _reasons(result.get("reasons"), error_code)
+    if raw_error:
+        reasons.append({"code": error_code, "detail": raw_error})
+    if not reasons:
+        reasons.append({"code": error_code, "detail": summary})
+    suggestions = _reasons(
+        result.get("suggestions") or result.get("resolutions"),
+        "review_mount",
+    )
+    if not suggestions:
+        suggestions.append({
+            "code": "review_mount",
+            "detail": (
+                "Check the NAS address, share permissions, and Agent connectivity, "
+                "then retry the originating workflow."
+            ),
+        })
+    entities = []
+    payload = _record(getattr(task, "payload", None))
+    source_id = payload.get("source_resource_id") or payload.get("resource_id")
+    if source_id:
+        entities.append({
+            "id": str(source_id),
+            "name": str(payload.get("source_name") or source_id),
+            "type": "source",
+            "error": raw_error,
+        })
+    node_id = getattr(task, "node_id", None)
+    if node_id:
+        entities.append({"id": node_id, "name": str(node_id), "type": "node"})
+    return sanitize_task_detail({
+        "version": 1,
+        "severity": severity,
+        "outcome": outcome,
+        "summary": summary,
+        "reasons": reasons,
+        "suggestions": suggestions,
+        "failed_step": operation,
+        "entities": entities,
+        "cleanup_complete": result.get("cleanup_complete"),
+        "cleanup_failures": _list(result.get("cleanup_failures")),
+        "retained_resources": _list(result.get("retained_resources")),
+        "task_uuid": str(task.id),
+        "correlation_id": str(getattr(task, "correlation_id", "") or task.id),
+        "error_code": error_code,
+        "limited": not bool(result),
+        "technical_detail": {
+            "kind": getattr(task, "kind", ""),
+            "status": status,
+            "last_error": raw_error,
+            "result": result,
+        },
+    })

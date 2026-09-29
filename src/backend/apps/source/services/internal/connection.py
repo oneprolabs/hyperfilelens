@@ -35,10 +35,25 @@ from apps.source.services.internal.availability import (
     confirmed_agent_failure,
     result_with_availability_observation,
 )
+from apps.task.error_contract import node_task_error_contract
 
 logger = logging.getLogger(__name__)
 
 SMB_CHARSET_UNAVAILABLE = "SMB_CHARSET_UNAVAILABLE"
+
+
+def _node_task_error_fields(outcome: Any, *, timed_out: bool = False) -> dict[str, Any]:
+    """Return optional task diagnostics without breaking legacy test doubles."""
+    task = getattr(outcome, "task", None)
+    if task is None:
+        task_id = getattr(outcome, "task_id", None)
+        return {"task_id": str(task_id)} if task_id else {}
+    task_id = getattr(task, "id", None)
+    if task_id is None:
+        return {}
+    fields: dict[str, Any] = {"task_id": str(task_id)}
+    fields["error_details"] = node_task_error_contract(task, timed_out=timed_out)
+    return fields
 
 
 def _uses_utf8_iocharset(options: object) -> bool:
@@ -161,7 +176,12 @@ def connection_test_result_from_agent_outcome(
             node.id,
             resource.id if resource else payload.get("resource_id"),
         )
-        return {"success": False, "message": "Connection test timed out on the proxy agent."}
+        return {
+            "success": False,
+            "message": "Connection test timed out on the proxy agent.",
+            "error_code": "AGENT.TIMEOUT",
+            **_node_task_error_fields(outcome, timed_out=True),
+        }
     if not outcome.ok:
         message = explain_nas_mount_point_error(
             resource=resource,
@@ -194,6 +214,7 @@ def connection_test_result_from_agent_outcome(
             "success": False,
             "message": message,
             "details": details,
+            **_node_task_error_fields(outcome),
         }
         error_code = task_error_code(outcome)
         if not error_code and _is_unstructured_smb_charset_failure(
@@ -204,6 +225,8 @@ def connection_test_result_from_agent_outcome(
             details["charset"] = "utf8"
         if error_code:
             failure["error_code"] = error_code
+        if getattr(getattr(outcome, "task", None), "id", None) is not None:
+            failure["error_details"] = node_task_error_contract(outcome.task)
         if confirmed_agent_failure(outcome):
             return result_with_availability_observation(failure, "offline")
         return failure
@@ -230,6 +253,7 @@ def connection_test_result_from_agent_outcome(
             "success": True,
             "message": "Connection test successful",
             "details": details,
+            **_node_task_error_fields(outcome),
         },
         "online",
     )
@@ -471,7 +495,11 @@ def mount_resource(resource: SourceResource) -> dict:
             availability_confirmed=False,
         ):
             _compensate_mount_if_removal_fenced(resource)
-        return {"success": False, "message": message}
+        return {
+            "success": False,
+            "message": message,
+            **_node_task_error_fields(outcome, timed_out=True),
+        }
     if not outcome.ok:
         message = explain_nas_mount_point_error(
             resource=resource,
@@ -485,6 +513,7 @@ def mount_resource(resource: SourceResource) -> dict:
         ):
             _compensate_mount_if_removal_fenced(resource)
         result = {"success": False, "message": message}
+        result.update(_node_task_error_fields(outcome))
         if error_code := task_error_code(outcome):
             result["error_code"] = error_code
         return result
@@ -709,9 +738,17 @@ def unmount_resource(resource: SourceResource, *, force: bool = False) -> dict:
         wait_timeout_seconds=60,
     )
     if outcome.timed_out:
-        return {"success": False, "message": "Unmount timed out on the proxy agent."}
+        return {
+            "success": False,
+            "message": "Unmount timed out on the proxy agent.",
+            **_node_task_error_fields(outcome, timed_out=True),
+        }
     if not outcome.ok:
-        return {"success": False, "message": _task_error_message(outcome)}
+        return {
+            "success": False,
+            "message": _task_error_message(outcome),
+            **_node_task_error_fields(outcome),
+        }
 
     apply_unmount_success(resource)
     logger.info(

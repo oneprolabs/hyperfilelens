@@ -22,6 +22,7 @@ from apps.protection.services.progress.orchestrated_progress import (
 from apps.protection.services.snapshot_usage import release_restore_usage
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskEvent, TaskStep
+from apps.task.error_contract import node_task_error_contract
 from apps.task.services.interface import (
     TERMINAL_STATUSES,
     append_task_step_event,
@@ -416,6 +417,9 @@ def _sync_restore_item(
             item.result_payload["error_remediation"] = remediation
         if diagnostic:
             item.result_payload["error_diagnostic"] = diagnostic
+        error_details = node_task_error_contract(node_task)
+        if error_details:
+            item.result_payload["error_details"] = error_details
     item.save(
         update_fields=[
             "status",

@@ -1,5 +1,6 @@
 import { api } from './api'
 import { unwrapApiPayload } from './parse'
+import type { TaskErrorContract } from './taskApi'
 
 export type BackupTargetValidationSource = {
   key: string
@@ -18,6 +19,8 @@ export type BackupTargetValidationResult = {
   status: 'success' | 'failed'
   code: string | null
   message: string
+  task_id?: string | null
+  error_details?: TaskErrorContract | null
   details?: {
     stage?: string
     source_name?: string

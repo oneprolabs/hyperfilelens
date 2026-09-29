@@ -5,6 +5,7 @@ import secrets
 import threading
 import time
 import uuid
+from copy import copy
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -15,6 +16,7 @@ from django.db.models import Q
 
 from apps.node import agent_paths
 from apps.node.models import NodeTask
+from apps.task.error_contract import node_task_error_contract
 from apps.node.services.internal.repository_server import (
     repository_server_diagnostic_code,
     repository_server_public_error_message,
@@ -123,6 +125,8 @@ class TargetValidationResult:
     code: str | None = None
     message: str = ""
     details: dict[str, Any] = field(default_factory=dict)
+    task_id: str | None = None
+    error_details: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -161,6 +165,8 @@ class _AgentOutcome:
     message: str
     result: dict[str, Any]
     timed_out: bool = False
+    task_id: str | None = None
+    error_details: dict[str, Any] | None = None
 
 
 @dataclass
@@ -267,16 +273,21 @@ def validate_backup_targets(
         for assignment in assignments:
             results[assignment.request.key] = route_result
 
-    ordered_results = [
-        {
+    ordered_results = []
+    for item in inputs:
+        result = results[item.key]
+        row = {
             "key": item.key,
-            "status": results[item.key].status,
-            "code": results[item.key].code,
-            "message": results[item.key].message,
-            "details": results[item.key].details,
+            "status": result.status,
+            "code": result.code,
+            "message": result.message,
+            "details": result.details,
         }
-        for item in inputs
-    ]
+        if result.task_id:
+            row["task_id"] = result.task_id
+        if result.error_details:
+            row["error_details"] = result.error_details
+        ordered_results.append(row)
     overall = (
         "success"
         if all(item["status"] == "success" for item in ordered_results)
@@ -1210,18 +1221,32 @@ def _execute_agent_task(
             task_id=handle.task_id,
             reason="backup target validation operation timed out",
         )
+        safe_task = copy(outcome.task)
+        safe_task.result = scrub_secrets(result, extra_values=secret_values)
+        safe_task.last_error = str(
+            scrub_secrets(message, extra_values=secret_values) or ""
+        )[:2000]
         return _AgentOutcome(
             ok=False,
             status="timeout",
             message="Backup target validation timed out.",
             result=scrub_secrets(result, extra_values=secret_values),
             timed_out=True,
+            task_id=str(handle.task_id),
+            error_details=node_task_error_contract(safe_task, timed_out=True),
         )
+    safe_task = copy(outcome.task)
+    safe_task.result = scrub_secrets(result, extra_values=secret_values)
+    safe_task.last_error = str(
+        scrub_secrets(message, extra_values=secret_values) or ""
+    )[:2000]
     return _AgentOutcome(
         ok=outcome.ok,
         status=str(outcome.task.status),
         message=str(scrub_secrets(message, extra_values=secret_values) or "")[:1000],
         result=scrub_secrets(result, extra_values=secret_values),
+        task_id=str(handle.task_id),
+        error_details=node_task_error_contract(safe_task),
     )
 
 
@@ -1286,6 +1311,8 @@ def _outcome_result(
     failure_code: str,
     repository: Repository,
 ) -> TargetValidationResult:
+    task_id = getattr(outcome, "task_id", None)
+    error_details = getattr(outcome, "error_details", None)
     if outcome.ok:
         return TargetValidationResult(status="success")
     if outcome.timed_out:
@@ -1293,6 +1320,9 @@ def _outcome_result(
             status="failed",
             code="VALIDATION_TIMEOUT",
             message="Backup target validation timed out. Try again.",
+            details=_agent_outcome_details(outcome),
+            task_id=task_id,
+            error_details=error_details,
         )
     specific_code = str(outcome.result.get("error_code") or "").strip()
     if specific_code in _NAS_WRITE_FAILURE_REMEDIATIONS:
@@ -1309,7 +1339,10 @@ def _outcome_result(
                     outcome.result.get("remediation")
                     or _NAS_WRITE_FAILURE_REMEDIATIONS[specific_code]
                 ).strip(),
+                **_agent_outcome_details(outcome),
             },
+            task_id=task_id,
+            error_details=error_details,
         )
     return TargetValidationResult(
         status="failed",
@@ -1318,7 +1351,21 @@ def _outcome_result(
             outcome.message or "Backup target connection failed.",
             repository=repository,
         ),
+        details=_agent_outcome_details(outcome),
+        task_id=task_id,
+        error_details=error_details,
     )
+
+
+def _agent_outcome_details(outcome: _AgentOutcome) -> dict[str, Any]:
+    details: dict[str, Any] = {}
+    task_id = getattr(outcome, "task_id", None)
+    error_details = getattr(outcome, "error_details", None)
+    if task_id:
+        details["agent_task_id"] = task_id
+    if error_details:
+        details["agent_error_details"] = error_details
+    return details
 
 
 def _nas_outcome_result(
@@ -1350,6 +1397,8 @@ def _nas_outcome_result(
             code=result.code,
             message=result.message,
             details=execution_details,
+            task_id=result.task_id,
+            error_details=result.error_details,
         )
     if result.code != "NAS_MOUNT_FAILED":
         return TargetValidationResult(
@@ -1357,6 +1406,8 @@ def _nas_outcome_result(
             code=result.code,
             message=result.message,
             details=execution_details,
+            task_id=result.task_id,
+            error_details=result.error_details,
         )
 
     smb_charset_unavailable = str(
@@ -1389,7 +1440,10 @@ def _nas_outcome_result(
                 "charset": str(outcome.result.get("charset") or "utf8").strip(),
                 "kernel": str(outcome.result.get("kernel") or "").strip(),
                 "module": "nls_utf8",
+                **_agent_outcome_details(outcome),
             },
+            task_id=result.task_id,
+            error_details=result.error_details,
         )
 
     helper_result = (
@@ -1404,6 +1458,8 @@ def _nas_outcome_result(
             code=result.code,
             message=result.message,
             details=execution_details,
+            task_id=result.task_id,
+            error_details=result.error_details,
         )
 
     return TargetValidationResult(
@@ -1417,7 +1473,10 @@ def _nas_outcome_result(
             "helper": helper_result[3],
             "execution_node_name": str(execution_node_name or "").strip(),
             "execution_node_address": str(execution_node_address or "").strip(),
+            **_agent_outcome_details(outcome),
         },
+        task_id=result.task_id,
+        error_details=result.error_details,
     )
 
 
@@ -1480,6 +1539,11 @@ def _merge_cleanup_failure(
         or f"Failed to clean up the {resource_label}.",
         repository=repository,
     )
+    cleanup_details = _agent_outcome_details(cleanup)
+    if cleanup.task_id:
+        cleanup_details["cleanup_task_id"] = cleanup.task_id
+    if cleanup.error_details:
+        cleanup_details["cleanup_error_details"] = cleanup.error_details
     if current.status == "success":
         return TargetValidationResult(
             status="failed",
@@ -1487,13 +1551,24 @@ def _merge_cleanup_failure(
             message=f"Connection succeeded, but cleanup failed: {cleanup_message}"[
                 :1000
             ],
+            details={
+                **current.details,
+                **cleanup_details,
+            },
+            task_id=current.task_id or cleanup.task_id,
+            error_details=current.error_details or cleanup.error_details,
         )
     message = current.message or "Backup target connection failed."
     return TargetValidationResult(
         status="failed",
         code=current.code or "TARGET_CONNECTION_FAILED",
         message=f"{message} Cleanup also failed: {cleanup_message}"[:1000],
-        details=current.details,
+        details={
+            **current.details,
+            **cleanup_details,
+        },
+        task_id=current.task_id or cleanup.task_id,
+        error_details=current.error_details or cleanup.error_details,
     )
 
 

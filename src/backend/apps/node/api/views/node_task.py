@@ -142,6 +142,7 @@ class NodeTaskViewSet(OrgScopedMixin, viewsets.ModelViewSet):
                 "timed_out": outcome.timed_out,
                 "message": scrub_secrets(outcome.stream_message),
                 "result": scrub_secrets(outcome.result),
+                "error_details": NodeTaskSerializer(outcome.task).data.get("error_details"),
             }
         )
 

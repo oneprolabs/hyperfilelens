@@ -4,6 +4,7 @@ import { getEffectiveOrgKey } from '../composables/useAuth'
 import type { BackupConfigDetail } from './protectionBackupConfigApi'
 import type { BackupPolicy, FileFilterRule } from './protectionPolicyApi'
 import type { NodeInstallationMode } from '../types/node'
+import type { TaskErrorContract } from './taskApi'
 
 export const SOURCE_DEREGISTER_CONFIRMATION = 'DEREGISTER'
 export const SOURCE_FORCE_DEREGISTER_CONFIRMATION = 'FORCE DEREGISTER'
@@ -570,6 +571,8 @@ export type SourceConnectionTestResult = {
   message?: string
   error_code?: string
   details?: Record<string, unknown>
+  task_id?: string
+  error_details?: TaskErrorContract | null
   gatewayTimeout?: boolean
 }
 
@@ -582,7 +585,7 @@ function parseConnectionTestResult(data: unknown): SourceConnectionTestResult | 
   const row = unwrapApiPayload<Record<string, unknown>>(data)
   if (!row || typeof row !== 'object') return null
   if (typeof row.success !== 'boolean') return null
-  return {
+  const result: SourceConnectionTestResult = {
     success: row.success,
     message: typeof row.message === 'string' ? row.message : undefined,
     error_code: typeof row.error_code === 'string' ? row.error_code : undefined,
@@ -590,6 +593,11 @@ function parseConnectionTestResult(data: unknown): SourceConnectionTestResult | 
       ? row.details as Record<string, unknown>
       : undefined,
   }
+  if (typeof row.task_id === 'string') result.task_id = row.task_id
+  if (row.error_details && typeof row.error_details === 'object') {
+    result.error_details = row.error_details as TaskErrorContract
+  }
+  return result
 }
 
 function connectionTestResultFromThrown(err: unknown): SourceConnectionTestResult | null {
@@ -647,13 +655,25 @@ export async function testSourceDraft(payload: Record<string, unknown>): Promise
 }
 
 export async function mountSource(id: number) {
-  return unwrapApiPayload<{ success: boolean; message?: string; error_code?: string; mount_point?: string }>(
+  return unwrapApiPayload<{
+    success: boolean
+    message?: string
+    error_code?: string
+    mount_point?: string
+    task_id?: string
+    error_details?: TaskErrorContract | null
+  }>(
     await api<unknown>(`${base}/${id}/mount/`, { method: 'POST', headers: orgHeaders() }),
   )
 }
 
 export async function unmountSource(id: number) {
-  return unwrapApiPayload<{ success: boolean; message?: string }>(
+  return unwrapApiPayload<{
+    success: boolean
+    message?: string
+    task_id?: string
+    error_details?: TaskErrorContract | null
+  }>(
     await api<unknown>(`${base}/${id}/unmount/`, { method: 'POST', headers: orgHeaders() }),
   )
 }
