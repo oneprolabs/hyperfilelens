@@ -1169,8 +1169,29 @@ function toggleScheduleMonthDay(day: number) {
             class="filter-advanced-row__switch"
           />
           <div class="filter-advanced-row__main">
-            <div class="filter-advanced-row__title">
+            <div class="filter-advanced-row__title filter-advanced-row__title--with-help">
               {{ t('protection.policiesPage.cacheTitle') }}
+              <HflHelpTip
+                :content="t('protection.policiesPage.cacheTooltipLead')"
+                :aria-label="t('protection.policiesPage.cacheTitle')"
+                popper-class="filter-advanced-help-popper"
+              >
+                <template #content>
+                  <div class="filter-advanced-help">
+                    <p class="filter-advanced-help__lead">
+                      {{ t('protection.policiesPage.cacheTooltipLead') }}
+                    </p>
+                    <ul class="filter-advanced-help__list">
+                      <li>{{ t('protection.policiesPage.cacheTooltipMarker') }}</li>
+                      <li>{{ t('protection.policiesPage.cacheTooltipNamedFolder') }}</li>
+                    </ul>
+                    <div class="filter-advanced-help__example">
+                      <strong>{{ t('protection.policiesPage.filterHelpExampleLabel') }}:</strong>
+                      <span>{{ t('protection.policiesPage.cacheTooltipExample') }}</span>
+                    </div>
+                  </div>
+                </template>
+              </HflHelpTip>
             </div>
             <p class="filter-advanced-row__desc">
               {{ t('protection.policiesPage.cacheSub') }}
@@ -1184,12 +1205,29 @@ function toggleScheduleMonthDay(day: number) {
             class="filter-advanced-row__switch"
           />
           <div class="filter-advanced-row__main">
-            <div class="filter-advanced-row__title">
+            <div class="filter-advanced-row__title filter-advanced-row__title--with-help">
               {{ t('protection.policiesPage.fsOnlyTitle') }}
               <HflHelpTip
                 :content="t('protection.policiesPage.fsOnlyTooltip')"
                 :aria-label="t('protection.policiesPage.fsOnlyTitle')"
-              />
+                popper-class="filter-advanced-help-popper"
+              >
+                <template #content>
+                  <div class="filter-advanced-help">
+                    <p class="filter-advanced-help__lead">
+                      {{ t('protection.policiesPage.fsOnlyTooltip') }}
+                    </p>
+                    <ul class="filter-advanced-help__list">
+                      <li>{{ t('protection.policiesPage.fsOnlyTooltipMounted') }}</li>
+                      <li>{{ t('protection.policiesPage.fsOnlyTooltipOff') }}</li>
+                    </ul>
+                    <div class="filter-advanced-help__example">
+                      <strong>{{ t('protection.policiesPage.filterHelpExampleLabel') }}:</strong>
+                      <span>{{ t('protection.policiesPage.fsOnlyTooltipExample') }}</span>
+                    </div>
+                  </div>
+                </template>
+              </HflHelpTip>
             </div>
             <p class="filter-advanced-row__desc">
               {{ t('protection.policiesPage.fsOnlySub') }}
@@ -1209,6 +1247,45 @@ function toggleScheduleMonthDay(day: number) {
   border-radius: 8px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.92) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.filter-advanced-row__title--with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+:global(.filter-advanced-help-popper) {
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 12px 14px;
+}
+
+.filter-advanced-help {
+  color: rgb(248 250 252);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.filter-advanced-help__lead {
+  margin: 0;
+}
+
+.filter-advanced-help__list {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+
+.filter-advanced-help__list li + li {
+  margin-top: 4px;
+}
+
+.filter-advanced-help__example {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgb(148 163 184 / 0.35);
 }
 
 :deep(.el-switch) {
