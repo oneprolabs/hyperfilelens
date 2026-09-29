@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { aiProviderIconUrl } from './aiProviderIcons'
 
 describe('aiProviderIconUrl', () => {
+  it('maps AGIOne to its local official brand icon', () => {
+    expect(aiProviderIconUrl('agione')).toBe('/ai-providers/agione.png')
+    expect(aiProviderIconUrl('AGIOne')).toBe('/ai-providers/agione.png')
+  })
+
   it('maps SourceLens provider ids to local brand icons', () => {
     expect(aiProviderIconUrl('openai')).toBe('/ai-providers/openai.svg')
     expect(aiProviderIconUrl('openai_compatible')).toBe('/ai-providers/openai-compatible.svg')

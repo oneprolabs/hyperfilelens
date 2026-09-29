@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import type { RuntimeStatusNoticeLevel, RuntimeStatusRow } from './runtimeStatus'
+import HflStatusTag from '../../components/HflStatusTag.vue'
 
 defineProps<{
   rows: RuntimeStatusRow[]
@@ -48,27 +49,21 @@ function detailParts(detail: string): Array<{ text: string; href?: string }> {
       class="runtime-status-table__row"
     >
       <span class="runtime-status-table__service">{{ row.service }}</span>
-      <el-tag
+      <HflStatusTag
         size="small"
-        :type="row.runtime.type"
-        effect="plain"
-      >
-        {{ row.runtime.label }}
-      </el-tag>
-      <el-tag
+        :tone="row.runtime.type"
+        :label="row.runtime.label"
+      />
+      <HflStatusTag
         size="small"
-        :type="row.health.type"
-        effect="plain"
-      >
-        {{ row.health.label }}
-      </el-tag>
-      <el-tag
+        :tone="row.health.type"
+        :label="row.health.label"
+      />
+      <HflStatusTag
         size="small"
-        :type="row.availability.type"
-        effect="plain"
-      >
-        {{ row.availability.label }}
-      </el-tag>
+        :tone="row.availability.type"
+        :label="row.availability.label"
+      />
       <div class="runtime-status-table__details">
         <p
           v-for="detail in row.details"
@@ -207,34 +202,10 @@ function detailParts(detail: string): Array<{ text: string; href?: string }> {
   text-decoration: underline;
 }
 
-.runtime-status-table .el-tag {
+.runtime-status-table .hfl-status-tag {
   justify-self: start;
   width: auto;
   min-width: 0;
-}
-
-.runtime-status-table .el-tag {
-  background: transparent !important;
-}
-
-.runtime-status-table .el-tag--info {
-  border-color: #bfdbfe;
-  color: #2563eb;
-}
-
-.runtime-status-table .el-tag--success {
-  border-color: #86efac;
-  color: #15803d;
-}
-
-.runtime-status-table .el-tag--warning {
-  border-color: #fcd34d;
-  color: #b45309;
-}
-
-.runtime-status-table .el-tag--danger {
-  border-color: #fca5a5;
-  color: #b91c1c;
 }
 
 @media (max-width: 960px) {

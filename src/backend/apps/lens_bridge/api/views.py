@@ -699,6 +699,10 @@ class LensModelProxyView(OrgScopedMixin, APIView):
     def post(self, request, config_uuid=None):
         url_name = getattr(request.resolver_match, "url_name", "")
         if url_name == "lens-models-test":
+            if "config_uuid" in request.data or "config_id" in request.data:
+                raise ValidationError(
+                    "Test saved models through their model-specific endpoint."
+                )
             data = sl_client.request_json(
                 "POST",
                 "/api/v1/admin/llm-config/test/",

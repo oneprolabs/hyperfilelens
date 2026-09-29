@@ -323,7 +323,8 @@ grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T.*\] \[ OK \] \[sourcelens\] Insight serv
 grep -F 'hfl_run_native_command env' "${ROOT_REPO}/tools/sourcelens/common.sh" >/dev/null
 grep -F 'BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-auto}"' \
 	"${ROOT_REPO}/tools/sourcelens/common.sh" >/dev/null
-grep -F 'hfl_run_native_command env' "${ROOT_REPO}/dev/stack.sh" >/dev/null
+grep -F 'local -a command=(env \' "${ROOT_REPO}/dev/stack.sh" >/dev/null
+grep -F 'hfl_run_native_command "${command[@]}"' "${ROOT_REPO}/dev/stack.sh" >/dev/null
 grep -F 'hfl_run_native_command "${ROOT}/website/build.sh"' \
 	"${ROOT_REPO}/dev/stack.sh" >/dev/null
 grep -F 'hfl_run_native_command docker build' "${ROOT_REPO}/dev/stack.sh" >/dev/null
@@ -491,17 +492,16 @@ target_output="$({
 	CMD=restart
 	restart_force=1
 	WITH_SOURCELENS=1
-	SOURCELENS_GIT_REF=v0.61.2
+	SOURCELENS_GIT_REF=v0.61.3
 	EXTENSION_SOURCES=("https://github.com/example/hyperfilelens-ee.git@v1.2.3")
 	LOG_FILE="${fixture}/build/logs/dev-restart.log"
 	print_dev_target
 } 2>&1)"
-grep -F '  Command        restart --force' <<<"${target_output}" >/dev/null
-grep -F '  Extension      remote Git source configured' <<<"${target_output}" >/dev/null
-grep -F '  Extension rev  v1.2.3' <<<"${target_output}" >/dev/null
-grep -F '  SourceLens     bundled / v0.61.2' <<<"${target_output}" >/dev/null
-grep -F '  Host platform  ' <<<"${target_output}" >/dev/null
-grep -F '  Runtime        linux/amd64' <<<"${target_output}" >/dev/null
-grep -F '  Session log    build/logs/dev-restart.log' <<<"${target_output}" >/dev/null
+grep -F '  Command              restart --force' <<<"${target_output}" >/dev/null
+grep -F '  Extension revision   v1.2.3' <<<"${target_output}" >/dev/null
+grep -F '  SourceLens           bundled / v0.61.3' <<<"${target_output}" >/dev/null
+grep -F '  Host platform        ' <<<"${target_output}" >/dev/null
+grep -F '  Container platform   linux/amd64' <<<"${target_output}" >/dev/null
+grep -F '  Session log          build/logs/dev-restart.log' <<<"${target_output}" >/dev/null
 
 printf 'Lifecycle output contract checks passed.\n'

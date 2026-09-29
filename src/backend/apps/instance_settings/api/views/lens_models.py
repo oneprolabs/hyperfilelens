@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -29,6 +30,14 @@ _CONNECTION_TEST_MAX_TOKENS = 64
 
 def _platform_org() -> Organization:
     return platform_lens.get_or_create_platform_org()
+
+
+def _reject_client_config_reference(body: dict) -> None:
+    """Only HFL may supply a saved config reference to SourceLens tests."""
+    if "config_uuid" in body or "config_id" in body:
+        raise ValidationError(
+            "Test saved models through their model-specific endpoint."
+        )
 
 
 def _connection_test_succeeded(payload: object) -> bool:
@@ -70,15 +79,9 @@ def _activation_test_required_error() -> AppError:
         code="AI_MODEL.CONNECTION_TEST_REQUIRED",
         status=status.HTTP_400_BAD_REQUEST,
         title="AI model connection test required.",
-        diagnostic=(
-            "SourceLens cannot test a saved inactive model. Re-enter the "
-            "API key so the configuration can be tested before activation."
-        ),
+        diagnostic="Provide both the provider and configuration to test connection changes.",
         meta={
-            "hint": (
-                "Open the model for editing, re-enter the API key, and "
-                "enable the model again."
-            ),
+            "hint": "Provide the complete connection configuration before enabling the model.",
         },
     )
 
@@ -97,7 +100,24 @@ def _validate_active_model_connection(body: dict) -> None:
     raise _connection_test_error(result)
 
 
-def _test_saved_model_connection(config_uuid: uuid.UUID) -> object:
+def _test_saved_model_connection(
+    config_uuid: uuid.UUID, current: dict | None = None
+) -> object:
+    if current is None:
+        current = sl_client.request_json(
+            "GET", f"/api/v1/admin/llm-config/{config_uuid}/"
+        )
+    if isinstance(current, dict) and current.get("is_active") is False:
+        return sl_client.request_json(
+            "POST",
+            "/api/v1/admin/llm-config/test/",
+            json_body={
+                "config_uuid": str(config_uuid),
+                "provider": current.get("provider") or "openai",
+                "config": current.get("config") or {},
+                "is_active": True,
+            },
+        )
     return sl_client.request_json(
         "POST",
         "/api/v1/admin/llm-config/test-call/",
@@ -132,7 +152,15 @@ def _validate_model_update_connection(
         raise _activation_test_required_error()
     if "is_active" not in body:
         return
-    raise _activation_test_required_error()
+    current = sl_client.request_json(
+        "GET",
+        f"/api/v1/admin/llm-config/{config_uuid}/",
+    )
+    if not isinstance(current, dict) or current.get("is_active") is not False:
+        return
+    result = _test_saved_model_connection(config_uuid, current)
+    if not _connection_test_succeeded(result):
+        raise _connection_test_error(result)
 
 
 def _set_platform_default_model_ref(
@@ -217,6 +245,7 @@ class PlatformOpsLensModelProxyView(APIView):
         org = _platform_org()
         url_name = getattr(request.resolver_match, "url_name", "")
         if url_name == "platform-ops-lens-models-test":
+            _reject_client_config_reference(request.data)
             data = sl_client.request_json(
                 "POST",
                 "/api/v1/admin/llm-config/test/",
@@ -227,6 +256,7 @@ class PlatformOpsLensModelProxyView(APIView):
             org_models.require_org_model(org, config_uuid)
             data = _test_saved_model_connection(config_uuid)
             return Response(data)
+        _reject_client_config_reference(request.data)
         body = dict(request.data)
         display_name = body.pop("name", None)
         make_agent_default = body.pop("is_default", None) is True
@@ -253,6 +283,7 @@ class PlatformOpsLensModelProxyView(APIView):
     def put(self, request, config_uuid):
         org = _platform_org()
         link = org_models.require_org_model(org, config_uuid)
+        _reject_client_config_reference(request.data)
         body = dict(request.data)
         display_name = body.pop("name", None)
         make_agent_default = body.pop("is_default", None) is True

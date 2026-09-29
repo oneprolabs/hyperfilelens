@@ -572,7 +572,7 @@ export GITHUB_STEP_SUMMARY="${tmp}/ai-summary.md"
 export RUNNER_TEMP="${tmp}"
 HFL_TEST_AI_RESULT=passed \
 	"${ROOT}/.github/scripts/reconcile-saas-ai-model.sh" agent
-grep -Fq 'Passed: the deployment-managed ai model was applied and verified.' \
+grep -Fq 'Passed: the configured ai model was applied and verified.' \
 	"${GITHUB_STEP_SUMMARY}"
 if AI_MODEL_ID="" HFL_TEST_AI_RESULT=passed \
 	"${ROOT}/.github/scripts/reconcile-saas-ai-model.sh" agent >/dev/null 2>&1; then
@@ -785,7 +785,7 @@ tar -xzf "${candidate_archive}" -C "${candidate_extract}"
 assembled_root="${candidate_extract}/hyperfilelens-1.0.0-ee-saas"
 grep -Fx 'HFL_POSTGRES_IMAGE=postgres:17' "${assembled_root}/.env.example" >/dev/null
 grep -Fx 'HFL_REDIS_IMAGE=redis:alpine' "${assembled_root}/.env.example" >/dev/null
-grep -F 'image: oneprolabs/sourcelens-backend:0.61.2' \
+grep -F 'image: oneprolabs/sourcelens-backend:0.61.3' \
 	"${assembled_root}/sourcelens/docker-compose.yml" >/dev/null
 grep -F 'image: nginx:stable-alpine' \
 	"${assembled_root}/sourcelens/docker-compose.yml" >/dev/null
@@ -801,8 +801,8 @@ refs = {entry["local_ref"] for entry in registry}
 assert refs == {
     "hyperfilelens-backend:1.0.0-ee",
     "hyperfilelens-frontend:1.0.0-ee",
-    "oneprolabs/sourcelens-backend:0.61.2",
-    "oneprolabs/sourcelens-frontend:0.61.2",
+    "oneprolabs/sourcelens-backend:0.61.3",
+    "oneprolabs/sourcelens-frontend:0.61.3",
     "nginx:stable-alpine",
     "postgres:17",
     "redis:alpine",
@@ -811,7 +811,7 @@ assert not any("lensnode" in ref for ref in refs)
 build_info = json.loads(
     (root / "sourcelens/BUILD_INFO.json").read_text(encoding="utf-8")
 )
-assert build_info["lensnode_image"] == "oneprolabs/sourcelens-lensnode:0.61.2"
+assert build_info["lensnode_image"] == "oneprolabs/sourcelens-lensnode:0.61.3"
 assert {
     name: build_info["images"][name]["ref"]
     for name in ("nginx", "postgres", "redis")

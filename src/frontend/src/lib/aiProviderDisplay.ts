@@ -1,4 +1,5 @@
 const PROVIDER_LABELS: Record<string, string> = {
+  agione: 'AGIOne',
   openai: 'OpenAI',
   azure_openai: 'Azure OpenAI',
   gemini: 'Google Gemini',
@@ -13,6 +14,9 @@ const PROVIDER_LABELS: Record<string, string> = {
   volcengine: 'Volcengine (Doubao)',
   openrouter: 'OpenRouter',
   openai_compatible: 'OpenAI Compatible',
+  amazon_nova: 'Amazon Nova',
+  meta_llama: 'Meta Llama',
+  nvidia_nim: 'NVIDIA NIM',
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
