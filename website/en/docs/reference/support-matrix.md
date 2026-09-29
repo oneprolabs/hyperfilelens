@@ -20,6 +20,11 @@ This page summarizes the primary platforms and capabilities supported by HyperFi
 
 See [System Requirements](/docs/deployment/requirements) for CPU, memory, and disk requirements.
 
+Windows file content backup does not imply complete preservation of Windows
+file attributes or NTFS permissions. See [Windows file attribute and permission
+limitations](/docs/reference/windows-limitations) before relying on a restore
+for ACL or metadata fidelity.
+
 ## Backup sources
 
 | Type | Supported configuration |

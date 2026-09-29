@@ -20,6 +20,10 @@ description: 查看 HyperFileLens 社区版当前支持的运行平台、备份�
 
 安装所需的 CPU、内存和磁盘空间请查看[系统要求](/zh/docs/deployment/requirements)。
 
+Windows 文件内容备份不代表 Windows 文件属性或 NTFS 权限可以完整保留。
+如果恢复结果需要满足 ACL 或元数据保真要求，请先阅读
+[Windows 文件属性与权限限制](/zh/docs/reference/windows-limitations)。
+
 ## 备份源
 
 | 类型 | 当前范围 |

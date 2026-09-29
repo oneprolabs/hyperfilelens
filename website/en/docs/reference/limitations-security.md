@@ -7,6 +7,9 @@ description: Understand product boundaries and security responsibilities when de
 
 This page describes important product boundaries. See [Supported Configurations](/docs/reference/support-matrix) for platforms and storage types.
 
+For Windows-specific file attributes, NTFS permissions, and SMB/CIFS behavior,
+see [Windows file attribute and permission limitations](/docs/reference/windows-limitations).
+
 ## Product boundaries
 
 - File-level backup does not automatically provide application-consistent copies of databases, virtual machines, or business applications.
