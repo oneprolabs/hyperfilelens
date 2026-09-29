@@ -1388,7 +1388,7 @@ The installer prints the effective Tenant, Platform Operations, Django Admin, an
 After \`install\`, the script prints the console URL and fixed initial login credentials from \`.env\`:
 
 - HFL defaults to \`admin@hyperfilelens.com\` / \`Admin@123\`
-- bundled SourceLens defaults to \`admin\` / \`adminpassword\`
+- bundled SourceLens uses Email login and defaults to \`admin@example.com\` / \`adminpassword\`
 - \`SEED_INITIAL_DATA=1\` enables first-run seeding via the worker service
 
 Passwords changed in either database are not reset by upgrades. Change the public defaults after first login unless external access controls provide the required protection.

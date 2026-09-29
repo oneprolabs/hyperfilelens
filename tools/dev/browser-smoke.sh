@@ -86,10 +86,7 @@ mkdir -p "${cache_dir}"
 source_lens_env="${SMOKE_SOURCELENS_ENV_FILE:-${ROOT}/data/sourcelens/config/.env}"
 source_lens_user="${SOURCELENS_USER:-}"
 if [[ -z "${source_lens_user}" ]]; then
-	source_lens_user="$(read_file_default "${source_lens_env}" DJANGO_SUPERUSER_EMAIL '')"
-fi
-if [[ -z "${source_lens_user}" ]]; then
-	source_lens_user="$(read_file_default "${source_lens_env}" DJANGO_SUPERUSER_USERNAME admin)"
+	source_lens_user="$(read_file_default "${source_lens_env}" DJANGO_SUPERUSER_EMAIL admin@example.com)"
 fi
 smoke_host="${SMOKE_HOST:-host.docker.internal}"
 tenant_port="$(read_default HFL_TENANT_PORT 11443)"

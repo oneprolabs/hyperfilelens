@@ -4131,7 +4131,7 @@ print_console_access_summary() {
 	[[ -f "${env_file}" ]] || return 0
 	local host seed seed_email seed_pass seed_org sourcelens_mode sourcelens_console_port
 	local website_bind website_port tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
-	local sl_env sl_user sl_email sl_pass show_credentials=0 credentials_note
+	local sl_env sl_email sl_pass show_credentials=0 credentials_note
 	local management_printer=print_value
 	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
 		management_printer=print_management_value
@@ -4174,10 +4174,8 @@ print_console_access_summary() {
 	fi
 	if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
 		sl_env="${ROOT}/data/sourcelens/config/.env"
-		sl_user="$(grep -E '^DJANGO_SUPERUSER_USERNAME=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
 		sl_email="$(grep -E '^DJANGO_SUPERUSER_EMAIL=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
 		sl_pass="$(grep -E '^DJANGO_SUPERUSER_PASSWORD=' "${sl_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "' || true)"
-		[[ -n "${sl_user}" ]] || sl_user="admin"
 		[[ -n "${sl_email}" ]] || sl_email="admin@example.com"
 		[[ -n "${sl_pass}" ]] || sl_pass="adminpassword"
 	fi
@@ -4241,7 +4239,6 @@ print_console_access_summary() {
 			print_nested_value "Bind" "${sourcelens_console_bind}"
 			if [[ "${seed}" == "1" ]]; then
 				if [[ "${show_credentials}" -eq 1 ]]; then
-					print_nested_value "Username" "${sl_user}"
 					print_nested_value "Email" "${sl_email}"
 					print_nested_value "Password" "${sl_pass}"
 				else
@@ -4289,7 +4286,6 @@ print_console_access_summary() {
 			if [[ "${sourcelens_mode}" == "bundled" ]] && sourcelens_installed; then
 				printf '\n  Insight Console\n'
 				if [[ "${show_credentials}" -eq 1 ]]; then
-					print_value "  Username" "${sl_user}"
 					print_value "  Email" "${sl_email}"
 					print_value "  Password" "${sl_pass}"
 				else

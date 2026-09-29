@@ -14,7 +14,7 @@ const loginPort = process.env.HFL_LOGIN_PORT || tenantPort
 const sourceLensPort = process.env.SOURCELENS_CONSOLE_PORT || '11445'
 const hflEmail = process.env.SEED_ADMIN_EMAIL || 'admin@hyperfilelens.com'
 const hflPassword = process.env.SEED_ADMIN_PASSWORD || 'Admin@123'
-const sourceLensUser = process.env.SOURCELENS_USER || 'admin'
+const sourceLensUser = process.env.SOURCELENS_USER || 'admin@example.com'
 const sourceLensPassword = process.env.SOURCELENS_PASSWORD || 'adminpassword'
 const requireHmr = process.env.SMOKE_REQUIRE_HMR !== '0'
 const skipSourceLens = process.env.SMOKE_SKIP_SOURCELENS === '1'

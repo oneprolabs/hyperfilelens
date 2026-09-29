@@ -101,6 +101,15 @@ describe('tableOverflowTitle', () => {
     customPopoverTarget.remove()
   })
 
+  it('skips an entire status column marked as no-tooltip', () => {
+    cell.classList.add('hfl-table-no-tooltip')
+    content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    vi.advanceTimersByTime(300)
+
+    expect(document.querySelector<HTMLElement>('#hfl-table-overflow-tooltip')?.style.display).toBe('none')
+    cell.classList.remove('hfl-table-no-tooltip')
+  })
+
   it('shows only the line that is overflowing', () => {
     Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 80 })
     content.dataset.tableOverflowTitle = 'explicit primary content'

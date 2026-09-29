@@ -15,6 +15,7 @@ describe('lifecycleStatusTone', () => {
     ['offline', 'danger'],
     ['running', 'info'],
     ['in_progress', 'info'],
+    ['testing', 'info'],
     ['mounting', 'info'],
     ['creating', 'info'],
     ['deleting', 'info'],

@@ -1224,7 +1224,7 @@ print_urls() {
 	local website_port tenant_port admin_port
 	local frontend_url admin_public_url website_url tenant_url admin_url sourcelens_console_url
 	local lens_base source_lens_display gateway_status
-	local sl_user sl_email sl_pass
+	local sl_email sl_pass
 	local gateway_env gateway_node_id gateway_org gateway_version gateway_service gateway_lensnode
 	local edition extensions source ext_id source_name
 
@@ -1287,11 +1287,9 @@ print_urls() {
 	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
 		source_lens_display="${sourcelens_mode} / ${SOURCELENS_GIT_REF:-v0.61.3}"
 		if [[ -f "${sl_env}" ]]; then
-			sl_user="$(read_env_value_or DJANGO_SUPERUSER_USERNAME admin "${sl_env}")"
 			sl_email="$(read_env_value_or DJANGO_SUPERUSER_EMAIL admin@example.com "${sl_env}")"
 			sl_pass="$(read_env_value_or DJANGO_SUPERUSER_PASSWORD adminpassword "${sl_env}")"
 		else
-			sl_user=admin
 			sl_email=admin@example.com
 			sl_pass=adminpassword
 		fi
@@ -1404,7 +1402,6 @@ EOF
 Port ${sourcelens_console_port}/TCP - Insight Console
   URL              ${sourcelens_console_url}
   Purpose          SourceLens administration and insight configuration
-  Username         ${sl_user}
   Email            ${sl_email}
   Password         ${sl_pass}
 EOF

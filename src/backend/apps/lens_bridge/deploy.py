@@ -129,11 +129,6 @@ def lens_bridge_email() -> str:
     return env_str("LENS_BRIDGE_EMAIL", "")
 
 
-def lens_bridge_legacy_username() -> str:
-    """Legacy SL login used only while upgrading pre-email releases."""
-    return env_str("LENS_BRIDGE_USERNAME", "")
-
-
 def lens_bridge_password() -> str:
     return env_str("LENS_BRIDGE_PASSWORD", "")
 

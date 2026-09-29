@@ -3585,6 +3585,7 @@
   "insight.aiSettings.labelStatus": "7eeef5d986492416cd588a4fe5069857e7dccf9adc3780e491a38674bfd7ea19",
   "insight.aiSettings.statusActive": "847ced6ca02b78495373bb6d354a2f2451b40c8abdc5f20b04cfb568d57cc764",
   "insight.aiSettings.statusInactive": "3bff69bd74544339ceb713df930f79519e1cdfeb91b64a8abe7d82a822ed4bd2",
+  "insight.aiSettings.statusTesting": "62047cdf5017526380ff9f6d7e5a83d93ea3be4c51a90a16a08e2a0946dacad3",
   "insight.aiSettings.modelPlaceholder": "1a4fc57e1efbf6a0d620fe9cb48d666e9af5727a9078b8dd92ed1f5f9b07612f",
   "insight.aiSettings.formRequired": "8e9fe3a26d7e5962a14353455367b05a881716eec62a492d4e8c9c64192f53e1",
   "insight.aiSettings.apiKeyRequired": "0df90990fa44e529f83d3041164b5b7dc8f5c4a809cef0b802c14dea66aceb63",
@@ -3596,8 +3597,8 @@
   "insight.aiSettings.labelDefaultAgent": "bbdb0845a9f65a5f705807b1962dc69573ec8f91322ba051c38a1bc1d8310adc",
   "insight.aiSettings.labelDefaultMultimodal": "480e028be22985e08c9489f2aadfd443346a738445e91aebe0fed38b04df27f5",
   "insight.aiSettings.setDefault": "59945836ea0cf35137972058abc99445e8e1b5961b8b34c7403da7ecb52eed69",
-  "insight.aiSettings.setDefaultAgent": "5a97185a9bf8fbb4204139d124b24da07e479826753b05f861c3a49a2daab42a",
-  "insight.aiSettings.setDefaultMultimodal": "b791924bc662674c73bb3c4d84e9fb65b455d6ebd53e24b98c5ce9b7de8d8daf",
+  "insight.aiSettings.setDefaultAgent": "102f1737e708dbf0f232534872c9259ace9fcaeb64ce7446f63ec3d245e31494",
+  "insight.aiSettings.setDefaultMultimodal": "dd91eda9e7209ef64006a0a1d331fd171674b1f8dfa5bf756e495212599a0fad",
   "insight.aiSettings.defaultBadge": "4ca0e0e73229540cc109b407b56d325b34def70f33f84982ed53de640d81ef49",
   "insight.aiSettings.defaultAgentBadge": "bbdb0845a9f65a5f705807b1962dc69573ec8f91322ba051c38a1bc1d8310adc",
   "insight.aiSettings.defaultMultimodalBadge": "480e028be22985e08c9489f2aadfd443346a738445e91aebe0fed38b04df27f5",
@@ -7902,6 +7903,7 @@
   "errors.codes.notificationWebhookTlsFailed": "ff3356d487407e00fedeff52c8cda816565a3dd66c1bdd511402220d87feaf0d",
   "errors.codes.notificationWebhookUnreachable": "f29c1d2d08842e4a21e8cd35c96d5ad981550815dcf9ed6bb3f2ec093a0136f7",
   "errors.codes.notificationWebhookHttpError": "5a77c15621172008d88972630c1fddbbf5fe579deb6055476d8b746d0ab18411",
-  "insight.aiSettings.modelEnabled": "3d35e8e855026a25e078b024e6984a5d2109da0e072958f2301bd35eab15fd97",
+  "insight.aiSettings.modelEnabled": "8ab1173e7ce77a55d81c570035504cfb856350ba644d9a7fd5721b917373d8f2",
+  "insight.aiSettings.enableTestFailed": "2b9b8f46306109eac905a1c598d5ab9da1b74c843e6694722c312615ffea694b",
   "insight.aiSettings.saveChanges": "f1b2574258fdf51fe50aa9fe74bd2a46e4c873f2c2ef813bea9f3c7868c64273"
 }

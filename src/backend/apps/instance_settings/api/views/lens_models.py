@@ -24,10 +24,6 @@ from common.errors import AppError
 from common.platform_authz import INFRA_AI_MODELS_MANAGE
 
 
-_CONNECTION_TEST_PROMPT = "Hi"
-_CONNECTION_TEST_MAX_TOKENS = 64
-
-
 def _platform_org() -> Organization:
     return platform_lens.get_or_create_platform_org()
 
@@ -107,24 +103,14 @@ def _test_saved_model_connection(
         current = sl_client.request_json(
             "GET", f"/api/v1/admin/llm-config/{config_uuid}/"
         )
-    if isinstance(current, dict) and current.get("is_active") is False:
-        return sl_client.request_json(
-            "POST",
-            "/api/v1/admin/llm-config/test/",
-            json_body={
-                "config_uuid": str(config_uuid),
-                "provider": current.get("provider") or "openai",
-                "config": current.get("config") or {},
-                "is_active": True,
-            },
-        )
     return sl_client.request_json(
         "POST",
-        "/api/v1/admin/llm-config/test-call/",
+        "/api/v1/admin/llm-config/test/",
         json_body={
             "config_uuid": str(config_uuid),
-            "prompt": _CONNECTION_TEST_PROMPT,
-            "max_tokens": _CONNECTION_TEST_MAX_TOKENS,
+            "provider": current.get("provider") if isinstance(current, dict) else "openai",
+            "config": current.get("config") if isinstance(current, dict) else {},
+            "is_active": True,
         },
     )
 
