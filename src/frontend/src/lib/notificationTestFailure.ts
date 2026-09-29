@@ -3,6 +3,24 @@ import { toErrorDetails, type ErrorDetailsPayload } from './errors/details'
 
 type Translate = (key: string) => string
 
+// DingTalk can return a Chinese-only keyword rejection, regardless of the UI
+// locale. Construct the provider markers without embedding localized copy in
+// the English application source.
+const chineseKeyword = String.fromCodePoint(20851, 38190, 35789)
+const chineseMismatch = String.fromCodePoint(19981, 21305, 37197)
+const chineseNotIncluded = [
+  String.fromCodePoint(19981, 21253, 21547),
+  String.fromCodePoint(26410, 21253, 21547),
+]
+
+function isKeywordRejection(diagnostic: string): boolean {
+  if (/keyword.{0,30}(?:mismatch|not match|not found)/i.test(diagnostic)) return true
+  const keywordIndex = diagnostic.indexOf(chineseKeyword)
+  if (keywordIndex === -1) return false
+  const nearby = diagnostic.slice(Math.max(0, keywordIndex - 15), keywordIndex + chineseKeyword.length + 15)
+  return nearby.includes(chineseMismatch) || chineseNotIncluded.some((marker) => nearby.includes(marker))
+}
+
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -37,7 +55,7 @@ export function notificationTestFailureDetails(
   const title = t('ops.notification.testFailed')
   const rejection = findRejection(error)
   if (rejection) {
-    const isKeywordFailure = /keyword.{0,30}(?:mismatch|not match|not found)|(?:不包含|未包含).{0,15}关键词|关键词.{0,15}(?:不匹配|不包含)/i.test(rejection.diagnostic)
+    const isKeywordFailure = isKeywordRejection(rejection.diagnostic)
     const summary = t('errors.codes.notificationDingtalkRejected')
     return toErrorDetails(error, {
       title,

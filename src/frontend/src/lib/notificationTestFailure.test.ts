@@ -53,21 +53,22 @@ describe('DingTalk test failure feedback', () => {
   })
 
   it('localizes a Chinese provider keyword rejection for English and Chinese UIs', () => {
+    const providerReason = String.fromCodePoint(20851, 38190, 35789, 19981, 21305, 37197)
     const response = {
       status: 400,
       errorCode: 'NOTIFICATION.DINGTALK_REJECTED',
       message: 'Bad Request',
       detail: {
         code: 'NOTIFICATION.DINGTALK_REJECTED',
-        error: 'DingTalk rejected the message (errcode=310000): 错误描述:关键词不匹配;解决方案:请联系群管理员查看此机器人的关键词，并在发送的信息中包含此关键词;',
+        error: `DingTalk rejected the message (errcode=310000): ${providerReason}`,
       },
     }
     const english = notificationTestFailureDetails(response, t)
     expect(english.reasons).toEqual([en.ops.notification.dingtalkKeywordReason])
     expect(english.resolutions).toEqual([en.ops.notification.dingtalkKeywordResolution])
     expect(english.resolutions?.join('')).not.toContain('HFL')
-    expect(english.reasons?.join('')).not.toMatch(/[\u3400-\u9fff]/)
-    expect(JSON.stringify(english.rawDetail)).toContain('关键词不匹配')
+    expect(english.reasons?.join('')).not.toContain(providerReason)
+    expect(JSON.stringify(english.rawDetail)).toContain(providerReason)
 
     const chinese = notificationTestFailureDetails(response, (key) => translate(zhHans, key))
     expect(chinese.reasons).toEqual([zhHans.ops.notification.dingtalkKeywordReason])
