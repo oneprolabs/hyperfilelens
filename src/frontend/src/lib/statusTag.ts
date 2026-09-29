@@ -36,7 +36,7 @@ export function lifecycleStatusTone(status?: string | null): StatusTagTone {
   if (['partial', 'degraded', 'retry', 'retrying', 'warning'].includes(normalized)) {
     return 'warning'
   }
-  if (['running', 'in_progress', 'mounting', 'creating', 'deleting', 'dispatching', 'reconnecting', 'removing', 'pending_install', 'installing', 'syncing', 'learning', 'provisioning', 'upgrading', 'restarting', 'verifying', 'cleaning_up'].includes(normalized)) {
+  if (['running', 'in_progress', 'testing', 'mounting', 'creating', 'deleting', 'dispatching', 'reconnecting', 'removing', 'pending_install', 'installing', 'syncing', 'learning', 'provisioning', 'upgrading', 'restarting', 'verifying', 'cleaning_up'].includes(normalized)) {
     return 'info'
   }
   return 'neutral'

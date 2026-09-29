@@ -108,23 +108,6 @@ def _login() -> None:
         )
     except requests.RequestException as exc:
         raise _transport_error(exc) from exc
-    legacy_username = deploy.lens_bridge_legacy_username()
-    if response.status_code in {400, 401} and legacy_username:
-        logger.info(
-            "SourceLens email login was rejected; retrying the legacy "
-            "username credential for an in-place upgrade."
-        )
-        try:
-            response = requests.post(
-                url,
-                json={
-                    "username": legacy_username,
-                    "password": deploy.lens_bridge_password(),
-                },
-                timeout=30,
-            )
-        except requests.RequestException as exc:
-            raise _transport_error(exc) from exc
     if response.status_code >= 400:
         if response.status_code >= 500:
             raise LensBridgeUnavailable()

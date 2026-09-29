@@ -193,12 +193,21 @@ class HostPlatformLensModelTests(TestCase):
         request_json.assert_not_called()
 
     @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
-    def test_saved_model_connection_uses_sourcelens_test_call_contract(
+    def test_saved_model_connection_uses_sourcelens_config_test_contract(
         self,
         request_json,
     ):
         request_json.side_effect = [
-            {"uuid": str(self.model_uuid), "is_active": True},
+            {
+                "uuid": str(self.model_uuid),
+                "provider": "openai_compatible",
+                "config": {
+                    "model": "example/chat-model",
+                    "api_base": "https://models.example.test/v1",
+                    "api_key": "********",
+                },
+                "is_active": True,
+            },
             {"ok": True},
         ]
 
@@ -211,18 +220,23 @@ class HostPlatformLensModelTests(TestCase):
                 call("GET", f"/api/v1/admin/llm-config/{self.model_uuid}/"),
                 call(
                     "POST",
-                    "/api/v1/admin/llm-config/test-call/",
+                    "/api/v1/admin/llm-config/test/",
                     json_body={
                         "config_uuid": str(self.model_uuid),
-                        "prompt": "Hi",
-                        "max_tokens": 64,
+                        "provider": "openai_compatible",
+                        "config": {
+                            "model": "example/chat-model",
+                            "api_base": "https://models.example.test/v1",
+                            "api_key": "********",
+                        },
+                        "is_active": True,
                     },
                 ),
             ],
         )
 
     @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
-    def test_inactive_saved_model_uses_config_test_without_enabling(
+    def test_saved_model_connection_does_not_change_active_state(
         self, request_json
     ):
         current_model = {

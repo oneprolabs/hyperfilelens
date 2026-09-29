@@ -333,7 +333,6 @@ class SourceLensClientReadinessTests(SimpleTestCase):
         self.assertEqual(upstream.cache_control, "private, no-store")
         upstream.body.close()
 
-    @patch.object(sl_client.deploy, "lens_bridge_legacy_username", return_value="")
     @patch.object(sl_client.deploy, "lens_bridge_password", return_value="password")
     @patch.object(sl_client.deploy, "lens_bridge_email", return_value="admin@example.test")
     @patch.object(sl_client, "_ensure_credentials")
@@ -346,7 +345,6 @@ class SourceLensClientReadinessTests(SimpleTestCase):
         _credentials,
         _email,
         _password,
-        _legacy_username,
     ) -> None:
         response = Mock(status_code=200)
         response.json.side_effect = ValueError("provider secret must-not-leak")

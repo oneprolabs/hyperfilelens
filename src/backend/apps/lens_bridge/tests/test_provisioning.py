@@ -1,4 +1,5 @@
 import uuid
+from os import environ
 from unittest.mock import MagicMock, call, patch
 
 from django.test import SimpleTestCase
@@ -44,11 +45,6 @@ class SlClientErrorFormatTests(SimpleTestCase):
                 "lens_bridge_password",
                 return_value="secret",
             ),
-            patch.object(
-                sl_client.deploy,
-                "lens_bridge_legacy_username",
-                return_value="",
-            ),
             patch.object(sl_client.requests, "post", return_value=response) as post,
         ):
             sl_client._login()
@@ -59,11 +55,10 @@ class SlClientErrorFormatTests(SimpleTestCase):
             timeout=30,
         )
 
-    def test_admin_login_falls_back_for_pre_email_sourcelens(self):
+    def test_admin_login_rejection_does_not_retry_with_legacy_username(self):
         rejected = MagicMock(status_code=400, text="email unsupported")
-        accepted = MagicMock(status_code=200)
-        accepted.json.return_value = {"access": "access", "refresh": "refresh"}
         with (
+            patch.dict(environ, {"LENS_BRIDGE_USERNAME": "admin"}),
             patch.object(sl_client.deploy, "lens_bridge_configured", return_value=True),
             patch.object(sl_client.deploy, "lens_base_url", return_value="http://lens"),
             patch.object(
@@ -73,36 +68,20 @@ class SlClientErrorFormatTests(SimpleTestCase):
             ),
             patch.object(
                 sl_client.deploy,
-                "lens_bridge_legacy_username",
-                return_value="admin",
-            ),
-            patch.object(
-                sl_client.deploy,
                 "lens_bridge_password",
                 return_value="secret",
             ),
-            patch.object(
-                sl_client.requests,
-                "post",
-                side_effect=[rejected, accepted],
-            ) as post,
+            patch.object(sl_client.requests, "post", return_value=rejected) as post,
         ):
-            sl_client._login()
+            with self.assertRaisesMessage(
+                sl_client.LensBridgeError, "SourceLens authentication failed."
+            ):
+                sl_client._login()
 
-        self.assertEqual(
-            post.call_args_list,
-            [
-                call(
-                    "http://lens/api/v1/auth/login",
-                    json={"email": "admin@example.com", "password": "secret"},
-                    timeout=30,
-                ),
-                call(
-                    "http://lens/api/v1/auth/login",
-                    json={"username": "admin", "password": "secret"},
-                    timeout=30,
-                ),
-            ],
+        post.assert_called_once_with(
+            "http://lens/api/v1/auth/login",
+            json={"email": "admin@example.com", "password": "secret"},
+            timeout=30,
         )
 
     def test_chat_user_login_falls_back_during_mixed_version_upgrade(self):

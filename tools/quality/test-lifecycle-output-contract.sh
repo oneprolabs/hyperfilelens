@@ -55,8 +55,13 @@ grep -F 'https://192.0.2.10:11443/' <<<"${output}" >/dev/null
 grep -F 'https://192.0.2.10:11444/admin/' <<<"${output}" >/dev/null
 grep -F 'https://192.0.2.10:11445/' <<<"${output}" >/dev/null
 grep -F 'admin@hyperfilelens.com' <<<"${output}" >/dev/null
+grep -F 'admin@example.com' <<<"${output}" >/dev/null
 grep -F 'Admin@123' <<<"${output}" >/dev/null
 grep -F 'adminpassword' <<<"${output}" >/dev/null
+if grep -F 'Username' <<<"${output}" >/dev/null; then
+	echo 'Installer summary advertised username-based SourceLens login' >&2
+	exit 1
+fi
 grep -F 'install.sh upgrade --from /path/to/new-release.tar.gz' <<<"${output}" >/dev/null
 grep -F 'install.sh uninstall' <<<"${output}" >/dev/null
 if grep -F 'Online upgrade' <<<"${output}" >/dev/null \
@@ -73,6 +78,18 @@ HFL_ONLINE_CHILD=1
 HFL_REGISTRY_REGION=global
 online_upgrade_output="$(print_console_access_summary 2>&1)"
 unset HFL_ONLINE_CHILD HFL_REGISTRY_REGION
+if grep -F 'Username' <<<"${online_upgrade_output}" >/dev/null; then
+	echo 'Online summary advertised username-based SourceLens login' >&2
+	exit 1
+fi
+INTERACTIVE_SESSION=0
+noninteractive_insight_output="$(print_console_access_summary 2>&1)"
+INTERACTIVE_SESSION=1
+grep -F 'values are hidden in non-interactive logs' <<<"${noninteractive_insight_output}" >/dev/null
+if grep -F 'adminpassword' <<<"${noninteractive_insight_output}" >/dev/null; then
+	echo 'Non-interactive installer summary exposed SourceLens password' >&2
+	exit 1
+fi
 grep -F 'Online upgrade  curl -fsSL https://raw.githubusercontent.com/oneprolabs/hyperfilelens/main/deploy/online/install.sh | sudo bash -s -- --mirror global' \
 	<<<"${online_upgrade_output}" >/dev/null
 grep -F "Offline upgrade sudo ${ROOT}/install.sh upgrade --from /path/to/new-release.tar.gz" \
@@ -481,6 +498,20 @@ dev_output="$({
 grep -F 'Not configured (SEED_INITIAL_DATA=0)' <<<"${dev_output}" >/dev/null
 if grep -F 'Password' <<<"${dev_output}" >/dev/null; then
 	echo 'Dev summary advertised credentials while HFL seeding was disabled' >&2
+	exit 1
+fi
+
+dev_insight_output="$({
+	source "${ROOT_REPO}/dev/stack.sh"
+	ROOT="${dev_fixture}"
+	WITH_SOURCELENS=1
+	SOURCELENS_GIT_REF=v0.61.3
+	LOG_FILE="${dev_fixture}/dev.log"
+	print_urls
+} 2>&1)"
+grep -F 'admin@example.com' <<<"${dev_insight_output}" >/dev/null
+if grep -F 'Username' <<<"${dev_insight_output}" >/dev/null; then
+	echo 'Dev summary advertised username-based SourceLens login' >&2
 	exit 1
 fi
 
