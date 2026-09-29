@@ -24,6 +24,9 @@ if redis is not None:
 
 DEFAULT_LIMIT = 20
 RETRY_AFTER_SECONDS = 30
+# Match the installation session idle lease. A shorter Set TTL could erase a
+# still-valid authorization before its normal Session lifecycle completes.
+DEFAULT_SLOT_TTL_SECONDS = 6 * 60 * 60
 
 _ACQUIRE_LUA = """
 local key = KEYS[1]
@@ -80,7 +83,9 @@ def slot_limit() -> int:
 def try_acquire_slot(organization_key: str, slot_id: str) -> tuple[bool, int]:
     """Atomically accept at most the configured number of distinct slot IDs."""
     limit = slot_limit()
-    ttl = int(os.getenv("AGENT_RELEASES_SLOT_TTL_SECONDS", "3600"))
+    ttl = int(
+        os.getenv("AGENT_RELEASES_SLOT_TTL_SECONDS", str(DEFAULT_SLOT_TTL_SECONDS))
+    )
     client = _redis_client()
     if client is None:
         return True, 0  # Retain the existing fail-open behavior.

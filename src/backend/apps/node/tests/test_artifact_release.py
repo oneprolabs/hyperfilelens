@@ -221,6 +221,41 @@ class AgentDownloadAuthorizationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 401)
         self.assertNotIn("X-HFL-Download-Denial", response)
 
+    def test_session_ending_during_slot_acquisition_is_not_left_occupied(self):
+        artifact_path = "/media/agent-releases/1.0.0/agent.zip"
+        request = APIRequestFactory().get(
+            "/api/v1/node/enrollment/agent-releases/auth",
+            HTTP_X_ORIGINAL_URI=f"{artifact_path}?t=signed-secret",
+        )
+        payload = {
+            "p": artifact_path,
+            "org": "example",
+            "role": "agent",
+            "token_id": 17,
+            "session_id": 23,
+        }
+        organization = SimpleNamespace(key="example")
+        with (
+            mock.patch.object(release, "_release_download_token", return_value="signed-secret"),
+            mock.patch.object(release, "_load_release_token", return_value=payload),
+            mock.patch.object(
+                release.Organization.objects,
+                "filter",
+                return_value=SimpleNamespace(first=lambda: organization),
+            ),
+            mock.patch.object(
+                release,
+                "_release_authorization_is_valid",
+                side_effect=[True, False],
+            ),
+            mock.patch.object(release, "try_acquire_slot", return_value=(True, 1)),
+            mock.patch.object(release, "release_session_slot") as release_slot,
+        ):
+            response = release.AgentReleasesAuthView.as_view()(request)
+
+        self.assertEqual(response.status_code, 401)
+        release_slot.assert_called_once_with("example", 23)
+
 
 def test_session_download_auth_fails_when_conditional_renewal_loses_race():
     session = SimpleNamespace(

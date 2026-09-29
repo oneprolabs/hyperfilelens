@@ -39,6 +39,7 @@ from apps.node.services.internal.agent_release import (
 )
 from apps.node.services.internal.agent_download_slots import (
     RETRY_AFTER_SECONDS,
+    release_session_slot,
     slot_limit,
     try_acquire_slot,
 )
@@ -576,6 +577,21 @@ class AgentReleasesAuthView(APIView):
             response["X-HFL-Download-Denial"] = "authorization-capacity"
             response["Retry-After"] = str(RETRY_AFTER_SECONDS)
             return response
+
+        # Session release and download auth can race. Re-check the session
+        # after acquiring the slot and undo the acquisition if it ended while
+        # the authorization request was in flight.
+        if session_id is not None and not _release_authorization_is_valid(
+            org=org,
+            role=role,
+            token_id=token_id,
+            session_id=session_id,
+        ):
+            release_session_slot(org.key, session_id)
+            return Response(
+                {"error": "installation session expired or is no longer active"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         resp = Response(status=status.HTTP_204_NO_CONTENT)
         resp["X-Tenant-Key"] = org.key
