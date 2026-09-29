@@ -101,6 +101,7 @@ const enHelp = [
     items: [
       { text: 'Core concepts', link: '/docs/reference/' },
       { text: 'Supported configurations', link: '/docs/reference/support-matrix' },
+      { text: 'Windows file and permission limitations', link: '/docs/reference/windows-limitations' },
       { text: 'Security and limits', link: '/docs/reference/limitations-security' },
     ],
   },

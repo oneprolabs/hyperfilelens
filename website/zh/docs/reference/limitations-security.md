@@ -7,6 +7,9 @@ description: 部署和使用 HyperFileLens 时需要明确的产品边界与安�
 
 本页说明使用产品时需要注意的功能边界。运行平台和存储类型请查看[支持范围](/zh/docs/reference/support-matrix)。
 
+Windows 文件属性、NTFS 权限以及 SMB/CIFS 行为请查看
+[Windows 文件属性与权限限制](/zh/docs/reference/windows-limitations)。
+
 ## 功能边界
 
 - 文件级备份不自动保证数据库、虚拟机或业务应用的一致性。

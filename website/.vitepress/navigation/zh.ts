@@ -100,6 +100,7 @@ const help: DefaultTheme.SidebarItem[] = [
     items: [
       { text: '核心概念', link: '/zh/docs/reference/' },
       { text: '支持范围', link: '/zh/docs/reference/support-matrix' },
+      { text: 'Windows 文件属性与权限限制', link: '/zh/docs/reference/windows-limitations' },
       { text: '限制与安全建议', link: '/zh/docs/reference/limitations-security' },
     ],
   },
