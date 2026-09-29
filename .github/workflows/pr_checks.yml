@@ -168,6 +168,10 @@ jobs:
       - name: Agent checks
         working-directory: src/agent
         run: go test ./...
+      - name: Agent download authorization checks
+        run: |
+          ./tools/quality/test-agent-download-slots.sh
+          ./tools/quality/test-agent-download-nginx.sh
 
   commit-log:
     name: Commit messages use English

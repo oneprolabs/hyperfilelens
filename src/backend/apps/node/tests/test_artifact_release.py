@@ -7,11 +7,16 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
+from django.test import SimpleTestCase
 from django.utils import timezone
 from redis.exceptions import ConnectionError as RedisConnectionError
+from rest_framework.test import APIRequestFactory
 
 from apps.node.api.views import artifact_release as release
-from apps.node.services.internal import agent_release as release_service
+from apps.node.services.internal import (
+    agent_download_slots as download_slots,
+    agent_release as release_service,
+)
 
 
 @pytest.mark.parametrize(
@@ -104,7 +109,9 @@ def test_try_acquire_slot_reuses_enrollment_id(monkeypatch):
     store: dict[str, set[str]] = {}
 
     class FakeRedis:
-        def eval(self, script, numkeys, key, slot_id, maxn, ttl):  # noqa: ARG002
+        def eval(self, script, numkeys, key, deadlines, slot_id, maxn, ttl):  # noqa: ARG002
+            assert numkeys == 2
+            assert deadlines == f"{key}:deadlines"
             members = store.setdefault(key, set())
             if slot_id in members:
                 return [1, len(members)]
@@ -114,29 +121,193 @@ def test_try_acquire_slot_reuses_enrollment_id(monkeypatch):
                 return [0, len(members)]
             return [1, len(members)]
 
-    monkeypatch.setattr(release, "_redis_client", lambda: FakeRedis())
+    monkeypatch.setattr(download_slots, "_redis_client", lambda: FakeRedis())
     monkeypatch.setenv("AGENT_RELEASES_TENANT_MAX_CONCURRENT_DOWNLOADS", "1")
 
-    ok1, _ = release._try_acquire_slot("default", "enroll-token-a")
-    ok2, _ = release._try_acquire_slot("default", "enroll-token-a")
-    ok3, _ = release._try_acquire_slot("default", "enroll-token-b")
+    ok1, _ = download_slots.try_acquire_slot("default", "enroll-token-a")
+    ok2, _ = download_slots.try_acquire_slot("default", "enroll-token-a")
+    ok3, count = download_slots.try_acquire_slot("default", "enroll-token-b")
 
     assert ok1 is True
     assert ok2 is True
     assert ok3 is False
+    assert count == 1
 
 
-def test_try_acquire_slot_fails_open_when_redis_is_unavailable(monkeypatch):
+def test_try_acquire_slot_fails_closed_when_redis_is_unavailable(monkeypatch):
     class UnavailableRedis:
         def eval(self, *_args, **_kwargs):
             raise RedisConnectionError("review Redis is unavailable")
 
-    monkeypatch.setattr(release, "_redis_client", lambda: UnavailableRedis())
+    monkeypatch.setattr(download_slots, "_redis_client", lambda: UnavailableRedis())
 
-    allowed, count = release._try_acquire_slot("default", "session:1")
+    with pytest.raises(download_slots.DownloadSlotUnavailable):
+        download_slots.try_acquire_slot("default", "session:1")
 
-    assert allowed is True
-    assert count == 0
+
+def test_try_acquire_slot_fails_closed_when_redis_client_is_missing(monkeypatch):
+    monkeypatch.setattr(download_slots, "_redis_client", lambda: None)
+
+    with pytest.raises(download_slots.DownloadSlotUnavailable):
+        download_slots.try_acquire_slot("default", "session:1")
+
+
+def test_release_session_slot_is_idempotent(monkeypatch):
+    client = mock.Mock()
+    monkeypatch.setattr(download_slots, "_redis_client", lambda: client)
+
+    download_slots.release_session_slot("example", 3)
+    download_slots.release_session_slot("example", 3)
+
+    assert client.eval.call_args_list == [
+        mock.call(
+            download_slots._RELEASE_LUA,
+            2,
+            "hfl:agent-releases:slots:example",
+            "hfl:agent-releases:slots:example:deadlines",
+            "session:3",
+        ),
+        mock.call(
+            download_slots._RELEASE_LUA,
+            2,
+            "hfl:agent-releases:slots:example",
+            "hfl:agent-releases:slots:example:deadlines",
+            "session:3",
+        ),
+    ]
+
+
+def test_release_session_slot_fails_open(monkeypatch):
+    client = mock.Mock()
+    client.eval.side_effect = RedisConnectionError("Redis unavailable")
+    monkeypatch.setattr(download_slots, "_redis_client", lambda: client)
+
+    download_slots.release_session_slot("example", 3)
+
+
+def test_slot_script_checks_capacity_before_acquiring():
+    script = download_slots._ACQUIRE_LUA
+    assert script.index("count >= limit") < script.index("redis.call('SADD', key, slot)")
+    assert "redis.call('ZRANGEBYSCORE', deadlines, '-inf', now)" in script
+    assert "redis.call('ZADD', deadlines, now + ttl, slot)" in script
+
+
+class AgentDownloadAuthorizationTests(SimpleTestCase):
+    def test_redis_unavailable_is_marked_for_nginx_without_exposing_credentials(self):
+        artifact_path = "/media/agent-releases/1.0.0/agent.zip"
+        request = APIRequestFactory().get(
+            "/api/v1/node/enrollment/agent-releases/auth",
+            HTTP_X_ORIGINAL_URI=f"{artifact_path}?t=signed-secret",
+        )
+        payload = {
+            "p": artifact_path,
+            "org": "example",
+            "role": "agent",
+            "token_id": 17,
+        }
+        organization = SimpleNamespace(key="example")
+        with (
+            mock.patch.object(release, "_release_download_token", return_value="signed-secret"),
+            mock.patch.object(release, "_load_release_token", return_value=payload),
+            mock.patch.object(
+                release.Organization.objects,
+                "filter",
+                return_value=SimpleNamespace(first=lambda: organization),
+            ),
+            mock.patch.object(release, "_release_authorization_is_valid", return_value=True),
+            mock.patch.object(
+                release,
+                "try_acquire_slot",
+                side_effect=download_slots.DownloadSlotUnavailable(),
+            ),
+        ):
+            response = release.AgentReleasesAuthView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)  # Nginx maps marked denials to 503.
+        self.assertEqual(response["X-HFL-Download-Denial"], "authorization-unavailable")
+        self.assertEqual(response["Retry-After"], "30")
+        self.assertNotIn("signed-secret", str(response.data))
+
+    def test_capacity_denial_is_marked_for_nginx_without_exposing_credentials(self):
+        artifact_path = "/media/agent-releases/1.0.0/agent.zip"
+        request = APIRequestFactory().get(
+            "/api/v1/node/enrollment/agent-releases/auth",
+            HTTP_X_ORIGINAL_URI=f"{artifact_path}?t=signed-secret",
+        )
+        payload = {
+            "p": artifact_path,
+            "org": "example",
+            "role": "agent",
+            "token_id": 17,
+        }
+        organization = SimpleNamespace(key="example")
+        with (
+            mock.patch.object(release, "_release_download_token", return_value="signed-secret"),
+            mock.patch.object(release, "_load_release_token", return_value=payload),
+            mock.patch.object(
+                release.Organization.objects,
+                "filter",
+                return_value=SimpleNamespace(first=lambda: organization),
+            ),
+            mock.patch.object(release, "_release_authorization_is_valid", return_value=True),
+            mock.patch.object(release, "try_acquire_slot", return_value=(False, 20)),
+        ):
+            response = release.AgentReleasesAuthView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)  # Nginx maps marked denials to 429.
+        self.assertEqual(response["X-HFL-Download-Denial"], "authorization-capacity")
+        self.assertEqual(
+            response.data["error"],
+            "too many active Agent download authorizations",
+        )
+        self.assertEqual(response["Retry-After"], "30")
+        self.assertNotIn("signed-secret", str(response.data))
+
+    def test_invalid_signature_is_not_marked_as_capacity(self):
+        request = APIRequestFactory().get("/api/v1/node/enrollment/agent-releases/auth")
+        with (
+            mock.patch.object(release, "_release_download_token", return_value="bad"),
+            mock.patch.object(release, "_load_release_token", return_value=None),
+        ):
+            response = release.AgentReleasesAuthView.as_view()(request)
+
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("X-HFL-Download-Denial", response)
+
+    def test_session_ending_during_slot_acquisition_is_not_left_occupied(self):
+        artifact_path = "/media/agent-releases/1.0.0/agent.zip"
+        request = APIRequestFactory().get(
+            "/api/v1/node/enrollment/agent-releases/auth",
+            HTTP_X_ORIGINAL_URI=f"{artifact_path}?t=signed-secret",
+        )
+        payload = {
+            "p": artifact_path,
+            "org": "example",
+            "role": "agent",
+            "token_id": 17,
+            "session_id": 23,
+        }
+        organization = SimpleNamespace(key="example")
+        with (
+            mock.patch.object(release, "_release_download_token", return_value="signed-secret"),
+            mock.patch.object(release, "_load_release_token", return_value=payload),
+            mock.patch.object(
+                release.Organization.objects,
+                "filter",
+                return_value=SimpleNamespace(first=lambda: organization),
+            ),
+            mock.patch.object(
+                release,
+                "_release_authorization_is_valid",
+                side_effect=[True, False],
+            ),
+            mock.patch.object(release, "try_acquire_slot", return_value=(True, 1)),
+            mock.patch.object(release, "release_session_slot") as release_slot,
+        ):
+            response = release.AgentReleasesAuthView.as_view()(request)
+
+        self.assertEqual(response.status_code, 401)
+        release_slot.assert_called_once_with("example", 23)
 
 
 def test_session_download_auth_fails_when_conditional_renewal_loses_race():
