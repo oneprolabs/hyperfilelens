@@ -1,4 +1,4 @@
-"""Chat 1:1 lifecycle — each New Chat owns restore+KS+Ass; delete tears them down (not DG)."""
+"""Chat lifecycle — each Chat owns one session and may share prepared resources."""
 
 from __future__ import annotations
 
@@ -73,6 +73,8 @@ _TEARDOWN_INTENT_RESET_FOR_RETRY = "reset_for_retry"
 _PROVISION_TRANSIENT_RETRY_BASE_SECONDS = 15
 _PROVISION_TRANSIENT_RETRY_MAX_SECONDS = 300
 _SCOPE_TASK_STATE_KEY = "scope_resolution"
+_REUSE_RESOURCE_STATE_KEY = "reuse_existing_resources"
+_SHARED_SESSION_ONLY_STATE_KEY = "shared_session_only"
 _MAX_BIGINT = 2**63 - 1
 _MIN_BIGINT = -(2**63)
 
@@ -150,6 +152,24 @@ def private_chat_force_delete_reason(link: LensSessionLink) -> str:
         lifecycle_status=LensSessionLink.LifecycleStatus.DELETED
     ).exists():
         return "workspace_shared_with_another_chat"
+    if (knowledge_source.teardown_state_json or {}).get("shared_chat_resources"):
+        session_operation = (link.provision_state_json or {}).get(
+            _SESSION_CREATE_OPERATION
+        ) or {}
+        if (
+            link.sl_session_uuid is not None
+            or _late_remote_uuids(link, "session")
+            or (link.teardown_state_json or {}).get("delete_session", {}).get(
+                "status"
+            )
+            != "success"
+            or (
+                session_operation
+                and session_operation.get("status")
+                not in {"compensated", "not_created"}
+            )
+        ):
+            return "shared_session_cleanup_unconfirmed"
     try:
         binding = knowledge_source.workspace_binding
     except LensWorkspaceBinding.DoesNotExist:
@@ -774,10 +794,223 @@ def create_copilot_chat(
     return link
 
 
+def _matching_reuse_request(
+    existing: LensSessionLink | None,
+    *,
+    request_hash: str,
+) -> LensSessionLink | None:
+    if existing is None:
+        return None
+    if existing.create_request_hash != request_hash:
+        raise ChatCreateIdempotencyConflict()
+    if (
+        existing.lifecycle_status
+        in {
+            LensSessionLink.LifecycleStatus.DELETING,
+            LensSessionLink.LifecycleStatus.DELETED,
+        }
+        or existing.cleanup_intent == LensSessionLink.CleanupIntent.DELETE_SESSION
+        or existing.status != LensSessionLink.Status.ACTIVE
+    ):
+        raise ChatCreateIdempotencyConflict(
+            "The Chat created by this request is being deleted. Start a new request."
+        )
+    return existing
+
+
+@transaction.atomic
+def create_copilot_chat_from_existing(
+    org: Organization,
+    *,
+    user: AbstractBaseUser,
+    source_session_id: int,
+    idempotency_key: str,
+    title: str | None = None,
+) -> LensSessionLink:
+    """Create a new Chat session while reusing a prepared Chat workspace."""
+
+    request_key = str(idempotency_key or "").strip()
+    if not request_key:
+        raise ValidationError({"idempotency_key": "A chat request key is required."})
+    request_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "source_session_id": int(source_session_id),
+                "title": str(title or "").strip(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    existing = LensSessionLink.objects.filter(
+        organization=org,
+        hfl_user=user,
+        create_idempotency_key=request_key,
+        is_deleted=False,
+    ).first()
+    if _matching_reuse_request(existing, request_hash=request_hash):
+        return existing
+    source_identity = (
+        LensSessionLink.objects
+        .filter(
+            pk=source_session_id,
+            organization=org,
+            hfl_user=user,
+        )
+        .values_list("knowledge_source_id", flat=True)
+        .first()
+    )
+    if source_identity is None:
+        raise ValidationError({"source_session_id": "Chat not found."})
+    knowledge_source = (
+        LensKnowledgeSource.objects.select_for_update()
+        .filter(pk=source_identity)
+        .first()
+    )
+    source = (
+        LensSessionLink.objects.select_for_update()
+        .filter(
+            pk=source_session_id,
+            organization=org,
+            hfl_user=user,
+            knowledge_source_id=source_identity,
+        )
+        .first()
+    )
+    if source is None:
+        raise ValidationError({"source_session_id": "Chat resources changed."})
+    if source.lifecycle_status != LensSessionLink.LifecycleStatus.READY:
+        raise ValidationError({"source_session_id": "Chat is not ready."})
+    if not source.sl_session_uuid or not source.sl_assistant_uuid:
+        raise ValidationError({"source_session_id": "Chat resources are incomplete."})
+    if source.gateway_link_id is None:
+        raise ValidationError({"source_session_id": "Chat Gateway is unavailable."})
+    if (
+        knowledge_source is None
+        or knowledge_source.lifecycle_status
+        != LensKnowledgeSource.LifecycleStatus.READY
+        or knowledge_source.status
+        not in {
+            LensKnowledgeSource.Status.READY,
+            LensKnowledgeSource.Status.DEGRADED,
+        }
+    ):
+        raise ValidationError({"source_session_id": "Chat data is not ready."})
+    if knowledge_source.sl_assistant_uuid != source.sl_assistant_uuid:
+        raise ValidationError({"source_session_id": "Chat Assistant is unavailable."})
+    if (
+        knowledge_source.gateway_link_id != source.gateway_link_id
+        or not LensGatewayLink.objects.filter(
+            pk=source.gateway_link_id,
+            is_deleted=False,
+        ).exists()
+    ):
+        raise ValidationError({"source_session_id": "Chat Gateway is unavailable."})
+    from apps.lens_bridge.services.gateway_execution import (
+        context_for_knowledge_source,
+    )
+
+    context_for_knowledge_source(
+        tenant_organization=org,
+        knowledge_source=knowledge_source,
+        require_ready=False,
+    )
+    assistant_link = assistant_access.get_assistant_link(
+        org, source.sl_assistant_uuid
+    )
+    if (
+        assistant_link is None
+        or assistant_link.lifecycle_owner != LensAssistantLink.LifecycleOwner.CHAT
+        or assistant_link.knowledge_source_id != knowledge_source.id
+        or assistant_link.owner_user_id != user.id
+    ):
+        raise ValidationError(
+            {"source_session_id": "Chat resources are not owned by this user."}
+        )
+    if (
+        source.cleanup_intent != LensSessionLink.CleanupIntent.NONE
+        or knowledge_source.teardown_claim_token is not None
+    ):
+        raise ValidationError({"source_session_id": "Chat cleanup is in progress."})
+
+    existing = LensSessionLink.objects.filter(
+        organization=org,
+        hfl_user=user,
+        create_idempotency_key=request_key,
+        is_deleted=False,
+    ).first()
+    if _matching_reuse_request(existing, request_hash=request_hash):
+        return existing
+
+    try:
+        with transaction.atomic():
+            resource_state = dict(knowledge_source.teardown_state_json or {})
+            resource_state["shared_chat_resources"] = True
+            knowledge_source.teardown_state_json = resource_state
+            knowledge_source.save(
+                update_fields=["teardown_state_json", "updated_at"]
+            )
+            link = LensSessionLink.objects.create(
+                organization=org,
+                hfl_user=user,
+                create_idempotency_key=request_key,
+                create_request_hash=request_hash,
+                title=(title or "").strip() or _unique_session_title(
+                    org, user=user, base_title="New Chat"
+                ),
+                backup_config_id=source.backup_config_id,
+                backup_source_snapshot_id=source.backup_source_snapshot_id,
+                source_scopes_json=list(source.source_scopes_json or []),
+                gateway_link=source.gateway_link,
+                gateway_selection_mode=source.gateway_selection_mode,
+                knowledge_source=knowledge_source,
+                sl_assistant_uuid=source.sl_assistant_uuid,
+                agent_model_ref=source.agent_model_ref,
+                multimodal_model_ref=source.multimodal_model_ref,
+                analysis_type=source.analysis_type,
+                analysis_mode=source.analysis_mode,
+                scope_resolution_status=LensSessionLink.ScopeResolutionStatus.RESOLVED,
+                capacity_reservation_status=LensSessionLink.CapacityReservationStatus.RELEASED,
+                capacity_reserved_bytes=0,
+                status=LensSessionLink.Status.ACTIVE,
+                lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+                provision_phase=LensSessionLink.ProvisionPhase.CREATING_SESSION,
+                provision_detail="Opening a new Chat.",
+                provision_state_json={
+                    _REUSE_RESOURCE_STATE_KEY: {"source_session_id": source.id}
+                },
+            )
+    except IntegrityError:
+        existing = LensSessionLink.objects.filter(
+            organization=org,
+            hfl_user=user,
+            create_idempotency_key=request_key,
+            is_deleted=False,
+        ).first()
+        if existing is None:
+            raise
+        return _matching_reuse_request(existing, request_hash=request_hash)
+    transaction.on_commit(lambda: _queue_provision_or_mark_failed(link.id))
+    return link
+
+
 @transaction.atomic
 def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
     """Mark chat deleting and enqueue teardown. Never touches DG."""
+    resource_id = (
+        LensSessionLink.objects.filter(pk=link.pk)
+        .values_list("knowledge_source_id", flat=True)
+        .first()
+    )
+    if resource_id is not None:
+        LensKnowledgeSource.all_objects.select_for_update().filter(
+            pk=resource_id
+        ).first()
     locked = LensSessionLink.objects.select_for_update().get(pk=link.pk)
+    if locked.knowledge_source_id != resource_id:
+        raise ChatTeardownIncompleteError(
+            "Chat resources changed while deletion was requested."
+        )
     if locked.lifecycle_status == LensSessionLink.LifecycleStatus.DELETED:
         return locked
 
@@ -914,6 +1147,15 @@ def force_delete_private_copilot_chat(
     Chat visibility, quota accounting, or cleanup scheduling.
     """
 
+    resource_id = (
+        LensSessionLink.objects.filter(pk=link.pk)
+        .values_list("knowledge_source_id", flat=True)
+        .first()
+    )
+    if resource_id is not None:
+        LensKnowledgeSource.all_objects.select_for_update().filter(
+            pk=resource_id
+        ).first()
     locked = (
         LensSessionLink.objects.select_for_update(of=("self",))
         .select_related(
@@ -923,6 +1165,10 @@ def force_delete_private_copilot_chat(
         )
         .get(pk=link.pk)
     )
+    if locked.knowledge_source_id != resource_id:
+        raise ValidationError(
+            {"force_delete": "Chat resources changed during cleanup."}
+        )
     # A legacy ``pending`` marker means the old implementation deferred remote
     # cleanup.  It must remain force-deletable so the HFL control plane can be
     # finalized; only the new terminal ``skipped`` marker is idempotent.
@@ -951,6 +1197,38 @@ def force_delete_private_copilot_chat(
     knowledge_source.workspace_binding = workspace_binding
     if not can_force_delete_private_chat(locked):
         raise ValidationError(unavailable_error)
+
+    if (knowledge_source.teardown_state_json or {}).get("shared_chat_resources"):
+        from apps.lens_bridge.services.knowledge_source_teardown import (
+            _assistant_uuids_for_knowledge_source,
+        )
+
+        # Force Cleanup still skips the Gateway workspace. First ensure that
+        # SourceLens has atomically stopped new sessions and found no existing
+        # active sessions from any user; never archive based on HFL rows alone.
+        for assistant_uuid in sorted(
+            _assistant_uuids_for_knowledge_source(knowledge_source),
+            key=str,
+        ):
+            try:
+                archived = sl_client.request_json(
+                    "POST",
+                    f"/api/lens/assistants/{assistant_uuid}/archive-if-unused/",
+                )
+            except sl_client.LensBridgeError as exc:
+                if exc.status_code == 409:
+                    raise ValidationError(
+                        {
+                            "force_delete": (
+                                "Other SourceLens conversations still use this Chat data."
+                            )
+                        }
+                    ) from exc
+                raise
+            if not isinstance(archived, dict) or archived.get("status") != "archived":
+                raise sl_client.LensBridgeError(
+                    "SourceLens did not confirm safe Assistant archival."
+                )
 
     now = timezone.now()
     remote_resources = {
@@ -1299,6 +1577,12 @@ def _run_copilot_chat_provision(
         raise ValidationError({"session": "Session not found."})
     _require_provision_claim(link.id, claim_token)
 
+    if (link.provision_state_json or {}).get(_REUSE_RESOURCE_STATE_KEY):
+        return _run_reused_chat_session_provision(
+            link=link,
+            claim_token=claim_token,
+        )
+
     binding = link.chat_binding
     gateway_link = link.gateway_link or (binding.gateway_link if binding else None)
     if gateway_link is None:
@@ -1611,6 +1895,124 @@ def _run_copilot_chat_provision(
         "status": "ready",
         "knowledge_source_id": ks.id,
         "sync": sync_result,
+    }
+
+
+def _run_reused_chat_session_provision(
+    *,
+    link: LensSessionLink,
+    claim_token: str,
+) -> dict[str, Any]:
+    """Create only the SourceLens session for a prepared shared Chat."""
+
+    knowledge_source = link.knowledge_source
+    assistant_uuid = link.sl_assistant_uuid
+    if (
+        knowledge_source is None
+        or assistant_uuid is None
+        or knowledge_source.lifecycle_status
+        != LensKnowledgeSource.LifecycleStatus.READY
+        or knowledge_source.status
+        not in {
+            LensKnowledgeSource.Status.READY,
+            LensKnowledgeSource.Status.DEGRADED,
+        }
+    ):
+        raise ValidationError({"session": "The prepared Chat data is unavailable."})
+    if (
+        link.gateway_link_id != knowledge_source.gateway_link_id
+        or not LensGatewayLink.objects.filter(
+            pk=link.gateway_link_id,
+            is_deleted=False,
+        ).exists()
+    ):
+        raise ValidationError({"session": "Chat Gateway is unavailable."})
+    from apps.lens_bridge.services.gateway_execution import (
+        context_for_knowledge_source,
+    )
+
+    context_for_knowledge_source(
+        tenant_organization=link.organization,
+        knowledge_source=knowledge_source,
+        require_ready=False,
+    )
+    user = link.hfl_user
+    sl_user_link = chat_user_provisioning.ensure_sl_chat_user(user)
+    _set_phase(
+        link,
+        claim_token,
+        LensSessionLink.ProvisionPhase.GRANTING_ASSISTANT,
+        "Granting access to the prepared Chat.",
+    )
+    _grant_assistant_to_chat_user(
+        assistant_uuid=assistant_uuid,
+        sl_user_id=sl_user_link.sl_user_id,
+    )
+    _set_phase(
+        link,
+        claim_token,
+        LensSessionLink.ProvisionPhase.CREATING_SESSION,
+        "Opening the chat session.",
+    )
+    operation = _prepare_remote_operation(
+        link,
+        claim_token,
+        kind=_SESSION_CREATE_OPERATION,
+    )
+    stored_remote_uuid = str(operation.get("remote_uuid") or "").strip()
+    session_uuid = (
+        uuid_lib.UUID(stored_remote_uuid) if stored_remote_uuid else None
+    )
+    if session_uuid is None:
+        session_marker = str(operation["lookup_key"])
+        session_uuid = _find_remote_uuid(
+            path="/api/lens/sessions/",
+            field="title",
+            value=session_marker,
+            hfl_user=user,
+        )
+    if session_uuid is None:
+        sl_session = sl_client.request_json(
+            "POST",
+            "/api/lens/sessions/",
+            json_body={
+                "assistant_uuid": str(assistant_uuid),
+                "title": str(operation["lookup_key"]),
+            },
+            hfl_user=user,
+        )
+        session_uuid = uuid_lib.UUID(str(sl_session["uuid"]))
+    try:
+        _record_remote_operation_resource(
+            link,
+            claim_token,
+            kind=_SESSION_CREATE_OPERATION,
+            field="sl_session_uuid",
+            remote_uuid=session_uuid,
+        )
+    except (ChatProvisionLeaseLostError, RuntimeError):
+        _compensate_late_session(link.id, session_uuid, user=user)
+        raise
+    sl_client.request_json(
+        "PATCH",
+        f"/api/lens/sessions/{session_uuid}/",
+        json_body={"title": link.title},
+        hfl_user=user,
+    )
+    _require_provision_claim(link.id, claim_token)
+    _complete_copilot_chat_provision(
+        link_id=link.id,
+        claim_token=claim_token,
+        knowledge_source_id=knowledge_source.id,
+        assistant_uuid=assistant_uuid,
+        session_uuid=session_uuid,
+        reuse_prepared_resources=True,
+    )
+    return {
+        "session_link_id": link.id,
+        "status": "ready",
+        "knowledge_source_id": knowledge_source.id,
+        "reused_resources": True,
     }
 
 
@@ -2377,6 +2779,7 @@ def _complete_copilot_chat_provision(
     knowledge_source_id: int,
     assistant_uuid: uuid_lib.UUID,
     session_uuid: uuid_lib.UUID,
+    reuse_prepared_resources: bool = False,
 ) -> None:
     """Commit READY only if provisioning still owns the lifecycle lease."""
     link = (
@@ -2392,15 +2795,26 @@ def _complete_copilot_chat_provision(
         raise ChatProvisionLeaseLostError("Chat provisioning lease was lost.")
     if link.knowledge_source_id != knowledge_source_id:
         raise RuntimeError("Chat knowledge source changed during provisioning.")
-    updated_ks = LensKnowledgeSource.objects.filter(
+    ks_query = LensKnowledgeSource.objects.filter(
         pk=knowledge_source_id,
         lifecycle_status=LensKnowledgeSource.LifecycleStatus.READY,
-    ).update(
-        status=LensKnowledgeSource.Status.READY,
-        status_detail="Restored data and Assistant are ready for chat.",
-        updated_at=timezone.now(),
     )
-    if updated_ks != 1:
+    if reuse_prepared_resources:
+        # A new session must not silently turn a degraded shared KS into READY.
+        updated_ks = ks_query.filter(
+            status__in=(
+                LensKnowledgeSource.Status.READY,
+                LensKnowledgeSource.Status.DEGRADED,
+            ),
+            sl_assistant_uuid=assistant_uuid,
+        ).exists()
+    else:
+        updated_ks = ks_query.update(
+            status=LensKnowledgeSource.Status.READY,
+            status_detail="Restored data and Assistant are ready for chat.",
+            updated_at=timezone.now(),
+        ) == 1
+    if not updated_ks:
         raise ChatProvisionLeaseLostError(
             "Knowledge Source was deleted during Chat provisioning."
         )
@@ -2501,6 +2915,29 @@ def _enqueue_orphan_knowledge_source_teardown(
     _queue_teardown(knowledge_source_id)
 
 
+def _assistant_still_owned_by_chat_resources(
+    link: LensSessionLink,
+    assistant_uuid: uuid_lib.UUID,
+) -> bool:
+    """Never compensate an Assistant adopted by another live Chat or KS."""
+
+    return (
+        LensSessionLink.all_objects.filter(
+            organization_id=link.organization_id,
+            sl_assistant_uuid=assistant_uuid,
+        )
+        .exclude(pk=link.pk)
+        .exclude(lifecycle_status=LensSessionLink.LifecycleStatus.DELETED)
+        .exists()
+        or LensKnowledgeSource.all_objects.filter(
+            organization_id=link.organization_id,
+            sl_assistant_uuid=assistant_uuid,
+        )
+        .exclude(lifecycle_status=LensKnowledgeSource.LifecycleStatus.DELETED)
+        .exists()
+    )
+
+
 def _cleanup_orphan_knowledge_source(
     knowledge_source: LensKnowledgeSource,
     *,
@@ -2584,6 +3021,11 @@ def _record_late_source_lens_resource(
         state[teardown_blocking.FORCED_REMOTE_CLEANUP_KEY] = forced_cleanup
         link.teardown_state_json = state
         link.save(update_fields=["teardown_state_json", "updated_at"])
+        return
+    if (
+        field == "sl_assistant_uuid"
+        and _assistant_still_owned_by_chat_resources(link, resource_uuid)
+    ):
         return
     existing = getattr(link, field)
     if (
@@ -2795,6 +3237,8 @@ def _compensate_late_assistant(
         # stale worker was waiting for its response. Never delete an adopted
         # remote resource.
         return
+    if _assistant_still_owned_by_chat_resources(link, assistant_uuid):
+        return
     try:
         from apps.lens_bridge.services.assistants import _delete_sl_assistant
 
@@ -2920,6 +3364,119 @@ def _update_chat_claim(
     ).update(**values)
     if updated != 1:
         raise ChatTeardownIncompleteError("Chat teardown lease was lost.")
+
+
+@transaction.atomic
+def _claim_shared_chat_resource_teardown(
+    *,
+    knowledge_source: LensKnowledgeSource,
+    owner_session_link_id: int,
+    claim_token: str | None = None,
+) -> bool:
+    """Claim final cleanup or durably detach this Chat under one KS lock."""
+
+    locked_ks = (
+        LensKnowledgeSource.all_objects.select_for_update()
+        .filter(pk=knowledge_source.pk)
+        .first()
+    )
+    if locked_ks is None:
+        raise ChatTeardownIncompleteError("Chat Knowledge Source is missing.")
+
+    def detach_session_only() -> None:
+        if claim_token is None:
+            return
+        detached = (
+            LensSessionLink.objects.select_for_update()
+            .filter(
+                pk=owner_session_link_id,
+                knowledge_source_id=locked_ks.id,
+                teardown_claim_token=claim_token,
+                cleanup_status=LensSessionLink.CleanupStatus.RUNNING,
+                sl_session_uuid__isnull=True,
+            )
+            .first()
+        )
+        if detached is None:
+            raise ChatTeardownIncompleteError(
+                "Chat session-only cleanup lease was lost."
+            )
+        state = dict(detached.teardown_state_json or {})
+        state[_SHARED_SESSION_ONLY_STATE_KEY] = {
+            "knowledge_source_id": locked_ks.id,
+            "assistant_uuid": str(
+                detached.sl_assistant_uuid or locked_ks.sl_assistant_uuid or ""
+            ),
+        }
+        detached.knowledge_source = None
+        detached.sl_assistant_uuid = None
+        detached.teardown_state_json = state
+        detached.save(
+            update_fields=[
+                "knowledge_source",
+                "sl_assistant_uuid",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+
+    resource_state = dict(locked_ks.teardown_state_json or {})
+    current_owner = resource_state.get("chat_cleanup_owner_session_id")
+    if locked_ks.lifecycle_status == LensKnowledgeSource.LifecycleStatus.DELETING:
+        if str(current_owner or "") == str(owner_session_link_id):
+            return True
+        if current_owner:
+            detach_session_only()
+            return False
+        if (
+            not resource_state.get("shared_chat_resources")
+            and not (
+                locked_ks.teardown_claimed_at
+                and locked_ks.teardown_claimed_at
+                > timezone.now() - timedelta(seconds=TEARDOWN_CLAIM_TTL_SECONDS)
+            )
+            and not LensSessionLink.objects.filter(
+                knowledge_source_id=locked_ks.id,
+            ).exclude(pk=owner_session_link_id).exclude(
+                lifecycle_status=LensSessionLink.LifecycleStatus.DELETED,
+            ).exists()
+        ):
+            # Older 1:1 Chat deletions may have begun KS cleanup before the
+            # durable owner marker existed. Adopt only that exclusive legacy
+            # case; shared resources without an owner remain fail-closed.
+            resource_state["chat_cleanup_owner_session_id"] = owner_session_link_id
+            locked_ks.teardown_state_json = resource_state
+            locked_ks.save(update_fields=["teardown_state_json", "updated_at"])
+            return True
+        raise ChatTeardownIncompleteError(
+            "Knowledge Source cleanup ownership is unavailable."
+        )
+    if locked_ks.lifecycle_status != LensKnowledgeSource.LifecycleStatus.READY:
+        return False
+    # A deleting Chat with no visible UUID can still have an unresolved remote
+    # create journal. Finalization is serialized on KS; do not lock sibling
+    # Chat rows in the opposite order to request_copilot_chat_teardown.
+    if (
+        LensSessionLink.objects.filter(knowledge_source_id=locked_ks.id)
+        .exclude(pk=owner_session_link_id)
+        .exclude(lifecycle_status=LensSessionLink.LifecycleStatus.DELETED)
+        .exists()
+    ):
+        detach_session_only()
+        return False
+    resource_state["chat_cleanup_owner_session_id"] = owner_session_link_id
+    locked_ks.teardown_state_json = resource_state
+    locked_ks.lifecycle_status = LensKnowledgeSource.LifecycleStatus.DELETING
+    locked_ks.status_detail = "Shared Chat resource cleanup is queued."
+    locked_ks.save(
+        update_fields=[
+            "lifecycle_status",
+            "status_detail",
+            "teardown_state_json",
+            "updated_at",
+        ]
+    )
+    return True
 
 
 def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
@@ -3081,28 +3638,76 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     workspace_blocking: dict[str, Any] = {}
     prepare_slot_release_safe = False
     assistant_uuids: set[uuid_lib.UUID] = set()
-    if session_cleanup_complete:
-        try:
-            journal_assistant_uuid = _recover_journal_resource(
-                link,
-                _ASSISTANT_CREATE_OPERATION,
+    shared_session_only = bool(
+        teardown_state.get(_SHARED_SESSION_ONLY_STATE_KEY)
+    )
+    if (
+        teardown_intent == _TEARDOWN_INTENT_DELETE
+        and session_cleanup_complete
+        and ks is not None
+        and not shared_session_only
+    ):
+        owns_shared_resource_cleanup = _claim_shared_chat_resource_teardown(
+            knowledge_source=ks,
+            owner_session_link_id=link.id,
+            claim_token=claim_token,
+        )
+        if not owns_shared_resource_cleanup:
+            shared_session_only = True
+            link.refresh_from_db(
+                fields=[
+                    "sl_assistant_uuid",
+                    "knowledge_source",
+                    "teardown_state_json",
+                ]
             )
-        except Exception as exc:
-            assistant_recovery_failed = True
-            critical_errors.append(f"recover_assistant_operation: {exc}")
+            marker = (link.teardown_state_json or {}).get(
+                _SHARED_SESSION_ONLY_STATE_KEY
+            )
+            if not isinstance(marker, dict):
+                raise ChatTeardownIncompleteError(
+                    "Session-only cleanup ownership was not recorded."
+                )
+            teardown_state[_SHARED_SESSION_ONLY_STATE_KEY] = marker
+            ks = None
+    if session_cleanup_complete:
+        if not shared_session_only:
+            try:
+                journal_assistant_uuid = _recover_journal_resource(
+                    link,
+                    _ASSISTANT_CREATE_OPERATION,
+                )
+            except Exception as exc:
+                assistant_recovery_failed = True
+                critical_errors.append(f"recover_assistant_operation: {exc}")
         assistant_uuids = {
-            item
-            for item in (link.sl_assistant_uuid, journal_assistant_uuid)
+            item for item in (link.sl_assistant_uuid, journal_assistant_uuid)
             if item is not None
         }
         assistant_uuids.update(_late_remote_uuids(link, "assistant"))
+        if shared_session_only:
+            marker = teardown_state.get(_SHARED_SESSION_ONLY_STATE_KEY) or {}
+            shared_uuid = str(marker.get("assistant_uuid") or "")
+            assistant_uuids = {
+                item
+                for item in assistant_uuids
+                if str(item) != shared_uuid
+                and not _assistant_still_owned_by_chat_resources(link, item)
+            }
         for assistant_uuid in sorted(assistant_uuids, key=str):
             try:
                 from apps.lens_bridge.services.assistants import (
                     _delete_sl_assistant,
                 )
 
-                _delete_sl_assistant(assistant_uuid)
+                if ks is not None and (ks.teardown_state_json or {}).get(
+                    "shared_chat_resources"
+                ):
+                    _delete_sl_assistant(
+                        assistant_uuid, guard_active_sessions=True
+                    )
+                else:
+                    _delete_sl_assistant(assistant_uuid)
                 assistant_access.soft_delete_assistant_link(org, assistant_uuid)
             except Exception as exc:
                 failed_assistant_uuids.append(assistant_uuid)
@@ -3748,6 +4353,60 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
         raise ValidationError(
             {"knowledge_source": "Remote Chat resources have no linked workspace."}
         )
+    if (locked.provision_state_json or {}).get(_REUSE_RESOURCE_STATE_KEY):
+        if (
+            locked.lifecycle_status == LensSessionLink.LifecycleStatus.PROVISIONING
+            and locked.provision_claimed_at is not None
+            and locked.provision_claimed_at
+            > timezone.now() - timedelta(seconds=PROVISION_CLAIM_TTL_SECONDS)
+        ):
+            return locked
+        # Deletion locks KS before Chat. Retrying already holds the Chat lock,
+        # so a second KS row lock here would deadlock against concurrent delete.
+        # Provisioning revalidates the resource before creating its session.
+        knowledge_source = LensKnowledgeSource.objects.filter(
+            pk=locked.knowledge_source_id
+        ).first()
+        if (
+            knowledge_source is None
+            or knowledge_source.lifecycle_status
+            != LensKnowledgeSource.LifecycleStatus.READY
+            or knowledge_source.sl_assistant_uuid != locked.sl_assistant_uuid
+        ):
+            raise ValidationError(
+                {"knowledge_source": "Shared Chat resources are no longer available."}
+            )
+        locked.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
+        locked.provision_phase = LensSessionLink.ProvisionPhase.CREATING_SESSION
+        locked.provision_detail = "Opening the chat session."
+        locked.provision_claim_token = None
+        locked.provision_claimed_at = None
+        locked.provision_next_retry_at = None
+        locked.provision_generation += 1
+        locked.provision_poll_sequence = 0
+        locked.cleanup_intent = LensSessionLink.CleanupIntent.NONE
+        locked.cleanup_status = LensSessionLink.CleanupStatus.NONE
+        locked.lifecycle_error = ""
+        locked.lifecycle_error_state_json = {}
+        locked.save(
+            update_fields=[
+                "lifecycle_status",
+                "provision_phase",
+                "provision_detail",
+                "provision_claim_token",
+                "provision_claimed_at",
+                "provision_next_retry_at",
+                "provision_generation",
+                "provision_poll_sequence",
+                "cleanup_intent",
+                "cleanup_status",
+                "lifecycle_error",
+                "lifecycle_error_state_json",
+                "updated_at",
+            ]
+        )
+        transaction.on_commit(lambda: _queue_provision_or_mark_failed(locked.id))
+        return locked
     if locked.lifecycle_status == LensSessionLink.LifecycleStatus.PROVISIONING:
         claim_is_live = (
             locked.provision_claimed_at is not None

@@ -1,0 +1,203 @@
+diff --git a/backend/lens/views/assistants.py b/backend/lens/views/assistants.py
+index 2a44982f..86b91bcd 100644
+--- a/backend/lens/views/assistants.py
++++ b/backend/lens/views/assistants.py
+@@ -15,6 +15,8 @@ from lens.models import (
+     AssistantDataSourceBinding,
+     DataSource,
+     DataSourceItem,
++    Run,
++    Session,
+     user_sees_all_assistants,
+ )
+ from lens.serializers import AssistantListSerializer, AssistantSerializer
+@@ -120,6 +122,7 @@ class AssistantViewSet(BaseAuthenticatedViewSet):
+             "update",
+             "partial_update",
+             "archive",
++            "archive_if_unused",
+             "restore",
+         ):
+             return [permissions.IsAuthenticated(), HasRequiredFeature()]
+@@ -149,6 +152,10 @@ class AssistantViewSet(BaseAuthenticatedViewSet):
+             return queryset.filter(status=Assistant.Status.ARCHIVED)
+         if self.action == "archive":
+             return queryset.filter(status=Assistant.Status.ACTIVE)
++        if self.action == "archive_if_unused":
++            return queryset.filter(
++                status__in=[Assistant.Status.ACTIVE, Assistant.Status.ARCHIVED]
++            )
+ 
+         archived = self.request.query_params.get("archived", "").lower()
+         if archived == "true":
+@@ -168,6 +175,37 @@ class AssistantViewSet(BaseAuthenticatedViewSet):
+         assistant.save(update_fields=["status", "updated_at"])
+         return Response(self.get_serializer(assistant).data)
+ 
++    @action(detail=True, methods=["get", "post"], url_path="archive-if-unused")
++    @transaction.atomic
++    def archive_if_unused(self, request, *args, **kwargs):
++        """Archive only when no active session from any user uses this Assistant."""
++
++        assistant = self.get_object()
++        if request.method == "GET":
++            return Response({"supported": True, "status": assistant.status})
++        # Session creation locks this same Assistant row before inserting.
++        assistant = Assistant.objects.select_for_update().get(pk=assistant.pk)
++        if Session.objects.filter(
++            assistant=assistant,
++            status=Session.Status.ACTIVE,
++        ).exists() or Run.objects.filter(
++            session__assistant=assistant,
++            status__in=(
++                Run.Status.QUEUED,
++                Run.Status.RUNNING,
++                Run.Status.STREAMING,
++                Run.Status.AWAITING_USER_INPUT,
++            ),
++        ).exists():
++            return Response(
++                {"detail": "ASSISTANT_HAS_ACTIVE_SESSIONS"},
++                status=status.HTTP_409_CONFLICT,
++            )
++        if assistant.status != Assistant.Status.ARCHIVED:
++            assistant.status = Assistant.Status.ARCHIVED
++            assistant.save(update_fields=["status", "updated_at"])
++        return Response(self.get_serializer(assistant).data)
++
+     @action(detail=True, methods=["post"])
+     @transaction.atomic
+     def restore(self, request, *args, **kwargs):
+diff --git a/backend/lens/tests/test_api.py b/backend/lens/tests/test_api.py
+index 3feee0b1..7e701009 100644
+--- a/backend/lens/tests/test_api.py
++++ b/backend/lens/tests/test_api.py
+@@ -1043,6 +1043,75 @@ class LensApiTests(TestCase):
+         ]
+         self.assertIn(self.assistant.slug, archived_slugs)
+ 
++    def test_archive_if_unused_blocks_another_users_active_session(self):
++        capability = self.client.get(
++            f"/api/lens/assistants/{self.assistant.uuid}/archive-if-unused/"
++        )
++        self.assertEqual(capability.status_code, 200)
++        self.assertEqual(
++            capability.data, {"supported": True, "status": Assistant.Status.ACTIVE}
++        )
++        other = User.objects.create_user(
++            username="another-session-owner", password="pass12345"
++        )
++        session = Session.objects.create(
++            assistant=self.assistant,
++            user=other,
++            title="External conversation",
++        )
++
++        blocked = self.client.post(
++            f"/api/lens/assistants/{self.assistant.uuid}/archive-if-unused/"
++        )
++        self.assertEqual(blocked.status_code, 409)
++        self.assertEqual(blocked.data["detail"], "ASSISTANT_HAS_ACTIVE_SESSIONS")
++        self.assistant.refresh_from_db()
++        self.assertEqual(self.assistant.status, Assistant.Status.ACTIVE)
++
++        session.status = Session.Status.ARCHIVED
++        session.save(update_fields=["status"])
++        archived = self.client.post(
++            f"/api/lens/assistants/{self.assistant.uuid}/archive-if-unused/"
++        )
++        self.assertEqual(archived.status_code, 200)
++        self.assertEqual(archived.data["status"], Assistant.Status.ARCHIVED)
++        repeated = self.client.post(
++            f"/api/lens/assistants/{self.assistant.uuid}/archive-if-unused/"
++        )
++        self.assertEqual(repeated.status_code, 200)
++
++    def test_archive_if_unused_blocks_active_run_on_archived_session(self):
++        other = User.objects.create_user(
++            username="archived-session-run-owner", password="pass12345"
++        )
++        session = Session.objects.create(
++            assistant=self.assistant,
++            user=other,
++            status=Session.Status.ARCHIVED,
++        )
++        question = Message.objects.create(
++            session=session, role=Message.Role.USER, content="Still working?", sequence=1
++        )
++        run = Run.objects.create(
++            session=session,
++            input_message=question,
++            status=Run.Status.AWAITING_USER_INPUT,
++        )
++
++        blocked = self.client.post(
++            f"/api/lens/assistants/{self.assistant.uuid}/archive-if-unused/"
++        )
++        self.assertEqual(blocked.status_code, 409)
++        self.assistant.refresh_from_db()
++        self.assertEqual(self.assistant.status, Assistant.Status.ACTIVE)
++
++        run.status = Run.Status.DONE
++        run.save(update_fields=["status"])
++        archived = self.client.post(
++            f"/api/lens/assistants/{self.assistant.uuid}/archive-if-unused/"
++        )
++        self.assertEqual(archived.status_code, 200)
++
+     def test_assistant_restore_returns_it_to_active_list(self):
+         self.assistant.status = "archived"
+         self.assistant.save(update_fields=["status"])
+@@ -8234,7 +8303,7 @@ class AssistantArchiveConcurrencyTests(TransactionTestCase):
+         client.force_authenticate(user)
+         return client
+ 
+-    def _race_new_work_with_archive(self, create_request):
++    def _race_new_work_with_archive(self, create_request, *, safe_archive=False):
+         check_entered = threading.Event()
+         release_check = threading.Event()
+         archive_finished = threading.Event()
+@@ -8263,7 +8332,8 @@ class AssistantArchiveConcurrencyTests(TransactionTestCase):
+             close_old_connections()
+             try:
+                 responses["archive"] = self._client(self.admin).post(
+-                    f"/api/lens/assistants/{self.assistant.uuid}/archive/"
++                    f"/api/lens/assistants/{self.assistant.uuid}/"
++                    + ("archive-if-unused/" if safe_archive else "archive/")
+                 )
+             except Exception as exc:
+                 errors.append(exc)
+@@ -8294,9 +8364,14 @@ class AssistantArchiveConcurrencyTests(TransactionTestCase):
+             raise errors[0]
+         self.assertFalse(archive_overtook_creation)
+         self.assertEqual(responses["create"].status_code, 201)
+-        self.assertEqual(responses["archive"].status_code, 200)
++        self.assertEqual(
++            responses["archive"].status_code, 409 if safe_archive else 200
++        )
+         self.assistant.refresh_from_db()
+-        self.assertEqual(self.assistant.status, Assistant.Status.ARCHIVED)
++        self.assertEqual(
++            self.assistant.status,
++            Assistant.Status.ACTIVE if safe_archive else Assistant.Status.ARCHIVED,
++        )
+ 
+     def test_archive_waits_for_session_creation(self):
+         initial_count = Session.objects.count()
+@@ -8311,6 +8386,16 @@ class AssistantArchiveConcurrencyTests(TransactionTestCase):
+ 
+         self.assertEqual(Session.objects.count(), initial_count + 1)
+ 
++    def test_safe_archive_cannot_overtake_new_session_creation(self):
++        self._race_new_work_with_archive(
++            lambda: self._client(self.user).post(
++                "/api/lens/sessions/",
++                {"assistant_uuid": str(self.assistant.uuid)},
++                format="json",
++            ),
++            safe_archive=True,
++        )
++
+     def test_archive_waits_for_run_creation(self):
+         session = Session.objects.create(
+             assistant=self.assistant,

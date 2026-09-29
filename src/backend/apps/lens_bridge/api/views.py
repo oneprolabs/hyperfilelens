@@ -41,6 +41,7 @@ from apps.lens_bridge.api.serializers import (
     LensRunFeedbackSerializer,
     LensShareTitleSerializer,
     LensSessionCreateSerializer,
+    LensSessionReuseSerializer,
     LensSnapshotBrowseCreateSerializer,
     LensSessionLinkSerializer,
     LensSessionTitleSerializer,
@@ -1416,6 +1417,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
     def get_permissions(self):
         if self.action in (
             "create",
+            "new_from",
             "destroy",
             "force_delete",
             "create_run",
@@ -1624,6 +1626,99 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             LensSessionLinkSerializer(link).data, status=status.HTTP_201_CREATED
         )
 
+    @action(detail=True, methods=["post"], url_path="new")
+    def new_from(self, request, pk=None):
+        body = LensSessionReuseSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        try:
+            source_id = int(pk)
+        except (TypeError, ValueError) as exc:
+            raise NotFound() from exc
+        try:
+            from apps.lens_bridge.services import chat_lifecycle
+
+            # A retried request may arrive after its source Chat was deleted
+            # or SourceLens became unavailable. The service verifies the
+            # original request hash before returning the existing Chat.
+            existing_request = LensSessionLink.objects.filter(
+                organization=self.org,
+                hfl_user=request.user,
+                create_idempotency_key=body.validated_data["idempotency_key"],
+                is_deleted=False,
+            ).exists()
+            if not existing_request:
+                source = self._get_user_link(source_id)
+            if not existing_request and source.sl_assistant_uuid:
+                try:
+                    capability = sl_client.request_json(
+                        "GET",
+                        f"/api/lens/assistants/{source.sl_assistant_uuid}/archive-if-unused/",
+                    )
+                except sl_client.LensBridgeError as exc:
+                    if exc.status_code == 404:
+                        raise ValidationError(
+                            {"source_session_id": "Upgrade SourceLens before reusing Chat data."}
+                        ) from exc
+                    raise
+                if not isinstance(capability, dict) or capability.get("supported") is not True:
+                    raise sl_client.LensBridgeError(
+                        "SourceLens cannot safely clean up shared Chat resources."
+                    )
+                if capability.get("status") != "active":
+                    raise ValidationError(
+                        {"source_session_id": "This Chat can no longer start new conversations."}
+                    )
+            link = chat_lifecycle.create_copilot_chat_from_existing(
+                self.org,
+                user=request.user,
+                source_session_id=source_id,
+                idempotency_key=body.validated_data["idempotency_key"],
+                title=body.validated_data.get("title"),
+            )
+        except ValidationError:
+            raise
+        except sl_client.LensBridgeError as exc:
+            return _lens_error_response(exc)
+        return Response(
+            LensSessionLinkSerializer(link).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    def _lock_exclusive_chat_resource(self, link, *, field):
+        """Fence Assistant edits against reuse admission and Chat deletion."""
+        ks = (
+            LensKnowledgeSource.objects.select_for_update()
+            .filter(pk=link.knowledge_source_id)
+            .first()
+        )
+        locked_link = (
+            LensSessionLink.objects.select_for_update()
+            .filter(
+                pk=link.pk,
+                organization=self.org,
+                hfl_user=self.request.user,
+            )
+            .first()
+        )
+        if (
+            ks is None
+            or locked_link is None
+            or locked_link.knowledge_source_id != ks.id
+            or locked_link.lifecycle_status != LensSessionLink.LifecycleStatus.READY
+            or locked_link.cleanup_intent != LensSessionLink.CleanupIntent.NONE
+            or ks.lifecycle_status != LensKnowledgeSource.LifecycleStatus.READY
+        ):
+            raise ValidationError({field: "Chat resources are no longer ready."})
+        if LensSessionLink.objects.filter(
+            knowledge_source_id=ks.id,
+        ).exclude(pk=locked_link.pk).exclude(
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETED,
+        ).exists():
+            raise ValidationError(
+                {field: "Chats sharing prepared data cannot change their shared settings."}
+            )
+        return locked_link, ks
+
     @action(detail=True, methods=["patch"], url_path="model")
     def set_model(self, request, pk=None):
         link = self._get_user_link(pk)
@@ -1633,20 +1728,18 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         if model_ref is None:
             return Response(LensSessionLinkSerializer(link).data)
         org_models.validate_agent_model_ref(self.org, model_ref)
-        ks = link.knowledge_source
-        if ks is None:
-            return Response(
-                {"agent_model_ref": "Knowledge source is not ready."},
-                status=status.HTTP_400_BAD_REQUEST,
+        with transaction.atomic():
+            locked_link, ks = self._lock_exclusive_chat_resource(
+                link, field="agent_model_ref"
             )
-        provisioning.sync_assistant_agent_model(
-            ks=ks,
-            model_ref=model_ref,
-            assistant_uuid=link.sl_assistant_uuid,
-        )
-        link.agent_model_ref = model_ref
-        link.save(update_fields=["agent_model_ref", "updated_at"])
-        return Response(LensSessionLinkSerializer(link).data)
+            provisioning.sync_assistant_agent_model(
+                ks=ks,
+                model_ref=model_ref,
+                assistant_uuid=locked_link.sl_assistant_uuid,
+            )
+            locked_link.agent_model_ref = model_ref
+            locked_link.save(update_fields=["agent_model_ref", "updated_at"])
+            return Response(LensSessionLinkSerializer(locked_link).data)
 
     @action(detail=True, methods=["patch"], url_path="execution")
     def set_execution(self, request, pk=None):
@@ -1666,34 +1759,34 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             org_models.validate_agent_model_ref(self.org, model_ref)
         if analysis_type is not None:
             analysis_type = provisioning.normalize_analysis_type(analysis_type)
-        ks = link.knowledge_source
-        if ks is None or link.sl_assistant_uuid is None:
-            return Response(
-                {"execution": "Chat is not ready for execution settings."},
-                status=status.HTTP_400_BAD_REQUEST,
+        with transaction.atomic():
+            locked_link, ks = self._lock_exclusive_chat_resource(
+                link, field="execution"
             )
-        try:
-            provisioning.sync_assistant_execution_config(
-                ks=ks,
-                model_ref=model_ref,
-                analysis_mode=analysis_mode,
-                analysis_type=analysis_type,
-                assistant_uuid=link.sl_assistant_uuid,
-            )
-        except sl_client.LensBridgeError as exc:
-            return _lens_error_response(exc)
-        update_fields = ["updated_at"]
-        if model_ref is not None:
-            link.agent_model_ref = model_ref
-            update_fields.append("agent_model_ref")
-        if analysis_mode is not None:
-            link.analysis_mode = analysis_mode
-            update_fields.append("analysis_mode")
-        if analysis_type is not None:
-            link.analysis_type = analysis_type
-            update_fields.append("analysis_type")
-        link.save(update_fields=update_fields)
-        return Response(LensSessionLinkSerializer(link).data)
+            if locked_link.sl_assistant_uuid is None:
+                raise ValidationError({"execution": "Chat Assistant is unavailable."})
+            try:
+                provisioning.sync_assistant_execution_config(
+                    ks=ks,
+                    model_ref=model_ref,
+                    analysis_mode=analysis_mode,
+                    analysis_type=analysis_type,
+                    assistant_uuid=locked_link.sl_assistant_uuid,
+                )
+            except sl_client.LensBridgeError as exc:
+                return _lens_error_response(exc)
+            update_fields = ["updated_at"]
+            if model_ref is not None:
+                locked_link.agent_model_ref = model_ref
+                update_fields.append("agent_model_ref")
+            if analysis_mode is not None:
+                locked_link.analysis_mode = analysis_mode
+                update_fields.append("analysis_mode")
+            if analysis_type is not None:
+                locked_link.analysis_type = analysis_type
+                update_fields.append("analysis_type")
+            locked_link.save(update_fields=update_fields)
+            return Response(LensSessionLinkSerializer(locked_link).data)
 
     @action(detail=True, methods=["patch"], url_path="title")
     def set_title(self, request, pk=None):

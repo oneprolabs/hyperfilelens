@@ -641,7 +641,7 @@ class LensChatBinding(OrganizationScopedModel):
 
 
 class LensSessionLink(OrganizationScopedModel):
-    """Maps HFL user sessions to SourceLens sessions (1 Chat ↔ 1 KS+Ass)."""
+    """Maps each HFL Chat to one SourceLens session and prepared resources."""
 
     class AnalysisType(models.TextChoices):
         """User-facing Chat analysis choices mapped to SourceLens tasks."""

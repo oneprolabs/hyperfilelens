@@ -788,6 +788,13 @@ class LensSessionCreateSerializer(serializers.Serializer):
         return attrs
 
 
+class LensSessionReuseSerializer(serializers.Serializer):
+    """Create a new empty Chat from an existing prepared Chat."""
+
+    idempotency_key = serializers.CharField(max_length=128)
+    title = serializers.CharField(required=False, allow_blank=True, max_length=160)
+
+
 class LensSnapshotBrowseCreateSerializer(serializers.Serializer):
     """Insight-owned asynchronous snapshot browse request."""
 

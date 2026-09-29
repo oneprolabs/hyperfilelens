@@ -3323,6 +3323,7 @@
       "attach": "添加图片或文档",
       "pinned": "已置顶会话",
       "share": "分享",
+      "newFromChat": "基于此 Chat 新建",
       "renameSession": "重命名",
       "pinSession": "置顶会话",
       "unpinSession": "取消置顶",

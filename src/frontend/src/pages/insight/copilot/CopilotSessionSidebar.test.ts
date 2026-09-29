@@ -19,6 +19,7 @@ function session(lifecycleStatus: string, overrides: Partial<SessionRow> = {}): 
     title: 'Quarterly review',
     lifecycle_status: lifecycleStatus,
     status: 'active',
+    knowledge_source: lifecycleStatus === 'ready' ? 12 : null,
     sl_session_uuid: lifecycleStatus === 'ready' ? 'session-7' : null,
     sl_assistant_uuid: 'assistant-7',
     last_message_at: null,
@@ -60,6 +61,24 @@ function mountSidebar(row: SessionRow) {
 }
 
 describe('CopilotSessionSidebar pin actions', () => {
+  it('offers a fresh Chat only when a ready Chat has prepared resources', () => {
+    const ready = mountSidebar(session('ready'))
+    expect(ready.find('.copilot-session-menu__new-from').exists()).toBe(true)
+    ready.unmount()
+
+    const noKnowledgeSource = mountSidebar(session('ready', {
+      knowledge_source: null,
+    }))
+    expect(noKnowledgeSource.find('.copilot-session-menu__new-from').exists()).toBe(false)
+    noKnowledgeSource.unmount()
+
+    const noAssistant = mountSidebar(session('ready', {
+      sl_assistant_uuid: null,
+    }))
+    expect(noAssistant.find('.copilot-session-menu__new-from').exists()).toBe(false)
+    noAssistant.unmount()
+  })
+
   it('offers pinning only after the SourceLens session is ready', () => {
     const ready = mountSidebar(session('ready'))
     expect(ready.find('.copilot-session-menu__pin').exists()).toBe(true)

@@ -363,17 +363,19 @@ def _session_links_blocking_ks_teardown(
 ):
     """Return chats that still own this KS and must be deleted first.
 
-    Chats already in ``deleting``/``deleted`` are not blockers: they are tearing
-    the KS down (or finished). Treating ``deleting`` as active caused a deadlock
-    when Chat teardown and standalone KS teardown raced — KS waited for Chat to
-    become ``deleted``, while Chat waited for KS teardown to finish.
+    An active Chat cleanup remains a blocker even when its visible Session
+    UUID has been cleared. Preserve the legacy standalone teardown behavior
+    for a deleting row with no cleanup intent or remote operation journal.
     """
 
     blockers = knowledge_source.session_links.exclude(
-        lifecycle_status__in=(
-            LensSessionLink.LifecycleStatus.DELETED,
-            LensSessionLink.LifecycleStatus.DELETING,
-        )
+        lifecycle_status=LensSessionLink.LifecycleStatus.DELETED,
+    ).exclude(
+        lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+        cleanup_intent=LensSessionLink.CleanupIntent.NONE,
+        cleanup_status=LensSessionLink.CleanupStatus.NONE,
+        sl_session_uuid__isnull=True,
+        provision_state_json={},
     )
     if owner_session_link_id is not None:
         blockers = blockers.exclude(pk=owner_session_link_id)
@@ -778,7 +780,14 @@ def run_knowledge_source_teardown(
         assistant_uuids = _assistant_uuids_for_knowledge_source(knowledge_source)
         for assistant_uuid in sorted(assistant_uuids, key=str):
             _renew(knowledge_source.id, claim_token)
-            _delete_sl_assistant(assistant_uuid)
+            if (knowledge_source.teardown_state_json or {}).get(
+                "shared_chat_resources"
+            ):
+                _delete_sl_assistant(
+                    assistant_uuid, guard_active_sessions=True
+                )
+            else:
+                _delete_sl_assistant(assistant_uuid)
             assistant_access.soft_delete_assistant_link(
                 knowledge_source.organization, assistant_uuid
             )

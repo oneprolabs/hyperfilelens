@@ -12,6 +12,8 @@ import CopilotComposer from './copilot/CopilotComposer.vue'
 
 const mocks = vi.hoisted(() => ({
   createCopilotRun: vi.fn(),
+  createCopilotSessionFromExisting: vi.fn(),
+  routerReplace: vi.fn(),
   deleteCopilotAttachment: vi.fn(),
   forceDeleteCopilotSession: vi.fn(),
   listCopilotAssistants: vi.fn(),
@@ -24,7 +26,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ path: '/insight/copilot', query: {} }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: mocks.routerReplace }),
 }))
 
 vi.mock('../../composables/useResponsiveLayout', () => ({
@@ -38,6 +40,7 @@ vi.mock('../../composables/useAuth', () => ({
 vi.mock('../../lib/lensApi', () => ({
   cancelCopilotRun: vi.fn(),
   createCopilotRun: mocks.createCopilotRun,
+  createCopilotSessionFromExisting: mocks.createCopilotSessionFromExisting,
   deleteCopilotAttachment: mocks.deleteCopilotAttachment,
   deleteCopilotSession: vi.fn(),
   forceDeleteCopilotSession: mocks.forceDeleteCopilotSession,
@@ -84,6 +87,13 @@ const DeleteTriggerSidebar = defineComponent({
   emits: ['delete'],
   template: '<button class="delete-chat-trigger" @click="$emit(\'delete\', sessions[0])">Delete</button>',
 })
+const NewFromTriggerSidebar = defineComponent({
+  props: {
+    sessions: { type: Array, default: () => [] },
+  },
+  emits: ['newFrom'],
+  template: '<button class="new-from-trigger" @click="$emit(\'newFrom\', sessions[0])">New From</button>',
+})
 const DangerConfirmDialogStub = defineComponent({
   props: {
     modelValue: Boolean,
@@ -113,6 +123,7 @@ function sessionRow(
     title: 'Chat',
     lifecycle_status: lifecycleStatus,
     status: 'active',
+    knowledge_source: lifecycleStatus === 'ready' ? 12 : null,
     sl_session_uuid: `session-${id}`,
     sl_assistant_uuid: 'assistant-1',
     last_message_at: null,
@@ -153,6 +164,7 @@ function mountCopilot(
 describe('InsightCopilot question submission', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.routerReplace.mockResolvedValue(undefined)
     mocks.listCopilotSessions.mockResolvedValue([sessionRow()])
     mocks.listCopilotAssistants.mockResolvedValue([{
       uuid: 'assistant-1',
@@ -312,6 +324,45 @@ describe('InsightCopilot question submission', () => {
     expect(dialog.props('items')).toBeUndefined()
     expect(dialog.props('cancelText')).toBe('Cancel')
     expect(dialog.props('confirmText')).toBe('Delete Chat')
+    wrapper.unmount()
+  })
+
+  it('opens a fresh Chat from the selected one without retaining its draft', async () => {
+    mocks.createCopilotSessionFromExisting.mockResolvedValue(
+      sessionRow(null, 'ready', 445),
+    )
+    mocks.syncCopilotSession.mockImplementation(async (id: number) => ({
+      session_id: id,
+      messages: [],
+      active_run: null,
+      run_outcomes: [],
+    }))
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en },
+      missingWarn: false,
+      fallbackWarn: false,
+    })
+    const wrapper = mountCopilot(i18n, NewFromTriggerSidebar)
+    await flushPromises()
+    wrapper.findComponent(CopilotComposer).vm.$emit('update:modelValue', 'Old draft')
+    await nextTick()
+
+    await wrapper.get('.new-from-trigger').trigger('click')
+    await flushPromises()
+
+    expect(mocks.createCopilotSessionFromExisting).toHaveBeenCalledWith(
+      444,
+      { idempotency_key: expect.any(String) },
+    )
+    expect(mocks.routerReplace).toHaveBeenCalledWith({
+      path: '/insight/copilot',
+      query: { session: '445' },
+    })
+    expect(wrapper.vm.$.setupState.activeSessionId).toBe(445)
+    expect(wrapper.vm.$.setupState.input).toBe('')
+    expect(mocks.syncCopilotSession).toHaveBeenCalledWith(445)
     wrapper.unmount()
   })
 
