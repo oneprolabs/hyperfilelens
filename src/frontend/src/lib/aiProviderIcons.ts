@@ -1,5 +1,6 @@
-/** Provider brand SVGs mirror the local icon set used by SourceLens. */
+/** Provider brand assets mirror the local icon set used by SourceLens. */
 const PROVIDER_ICON_SLUGS = new Set([
+  'agione',
   'anthropic',
   'aws',
   'azure',
@@ -31,6 +32,10 @@ const PROVIDER_ICON_ALIASES: Record<string, string> = {
   zai: 'zhipu',
 }
 
+const PROVIDER_ICON_EXTENSIONS: Record<string, string> = {
+  agione: 'png',
+}
+
 function normalizeProvider(provider: string) {
   return provider.trim().toLowerCase()
 }
@@ -54,5 +59,5 @@ function providerIconSlug(provider: string) {
 
 export function aiProviderIconUrl(provider: string) {
   const slug = providerIconSlug(provider)
-  return slug ? `/ai-providers/${slug}.svg` : ''
+  return slug ? `/ai-providers/${slug}.${PROVIDER_ICON_EXTENSIONS[slug] || 'svg'}` : ''
 }

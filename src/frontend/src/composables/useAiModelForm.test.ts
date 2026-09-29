@@ -451,6 +451,28 @@ describe('useAiModelForm model updates', () => {
     expect(mocks.testLensModel).not.toHaveBeenCalled()
   })
 
+  it('tests an unchanged disabled model using its saved configuration', async () => {
+    mocks.fetchLensModelDetail.mockResolvedValue({
+      uuid: 'model-uuid',
+      name: 'Existing model',
+      provider: 'openai_compatible',
+      config: {
+        model: 'example/chat-model',
+        api_base: 'https://models.example.test/v1',
+      },
+      is_active: false,
+    })
+    mocks.testSavedLensModel.mockResolvedValue({ ok: true })
+    const modelForm = useAiModelForm(ref('model-uuid'))
+    await modelForm.init()
+
+    await expect(modelForm.runTest()).resolves.toBe(true)
+
+    expect(mocks.testSavedLensModel).toHaveBeenCalledWith('model-uuid')
+    expect(mocks.testLensModel).not.toHaveBeenCalled()
+    expect(mocks.messageWarning).not.toHaveBeenCalled()
+  })
+
   it('requires the API key again before changing an active connection', async () => {
     const modelForm = useAiModelForm(ref('model-uuid'))
     await modelForm.init()
@@ -539,7 +561,7 @@ describe('useAiModelForm model updates', () => {
     })
   })
 
-  it('requires the API key again before enabling an inactive model', async () => {
+  it('enables an unchanged inactive model using its saved configuration', async () => {
     mocks.fetchLensModelDetail.mockResolvedValue({
       uuid: 'model-uuid',
       name: 'Existing model',
@@ -554,14 +576,14 @@ describe('useAiModelForm model updates', () => {
     await modelForm.init()
     modelForm.form.is_active = true
 
-    expect(modelForm.apiKeyRequiredForSave.value).toBe(true)
-    await expect(modelForm.submit()).resolves.toBe(false)
+    expect(modelForm.apiKeyRequiredForSave.value).toBe(false)
+    await expect(modelForm.submit()).resolves.toBe(true)
 
-    expect(mocks.messageWarning).toHaveBeenCalledWith({
-      message: 'insight.aiSettings.apiKeyRequiredForActivation',
-      grouping: true,
+    expect(mocks.updateLensModel).toHaveBeenCalledWith('model-uuid', {
+      name: 'Existing model',
+      is_active: true,
     })
-    expect(mocks.updateLensModel).not.toHaveBeenCalled()
+    expect(mocks.messageWarning).not.toHaveBeenCalled()
   })
 
   it('sends complete settings when enabling an inactive model with a re-entered key', async () => {

@@ -630,7 +630,7 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
     if (!editingUuid.value) return true
     return Boolean(
       form.is_active &&
-      (connectionSettingsChanged() || initialConnectionSettings.value?.isActive === false),
+      connectionSettingsChanged(),
     )
   })
 
@@ -713,7 +713,6 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
   function canTestSavedConfiguration() {
     return Boolean(
       editingUuid.value &&
-      initialConnectionSettings.value?.isActive !== false &&
       !connectionSettingsChanged(),
     )
   }

@@ -86,3 +86,64 @@
   text-align: center;
   white-space: nowrap;
 }
+
+/* Shared low-contrast status treatment for AI model and runtime state tags. */
+.hfl-status-tag {
+  display: inline-flex;
+  width: fit-content;
+}
+
+.hfl-status-tag .el-tag:not(.el-tag--dark) {
+  box-sizing: border-box;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.hfl-status-tag .el-tag.el-tag--success:not(.el-tag--dark):not(.el-tag--plain) {
+  --el-tag-text-color: var(--color-success-text);
+  --el-tag-bg-color: color-mix(in srgb, var(--color-success) 6%, var(--color-card-bg));
+  --el-tag-border-color: color-mix(in srgb, var(--color-success) 22%, var(--color-border));
+  color: var(--color-success-text);
+  background-color: var(--el-tag-bg-color);
+  border-color: var(--el-tag-border-color);
+}
+
+.hfl-status-tag .el-tag.el-tag--primary:not(.el-tag--dark):not(.el-tag--plain) {
+  --el-tag-text-color: var(--color-primary-hover);
+  --el-tag-bg-color: color-mix(in srgb, var(--color-primary) 7%, var(--color-card-bg));
+  --el-tag-border-color: color-mix(in srgb, var(--color-primary) 22%, var(--color-border));
+  color: var(--color-primary-hover);
+  background-color: var(--el-tag-bg-color);
+  border-color: var(--el-tag-border-color);
+}
+
+.hfl-status-tag .hfl-tag--neutral .el-tag:not(.el-tag--dark):not(.el-tag--plain),
+.hfl-status-tag .el-tag.hfl-tag--neutral:not(.el-tag--dark):not(.el-tag--plain),
+.hfl-status-tag .el-tag.el-tag--info:not(.el-tag--dark):not(.el-tag--plain) {
+  --el-tag-text-color: var(--color-text-secondary);
+  --el-tag-bg-color: color-mix(in srgb, var(--color-grey-2) 72%, var(--color-card-bg));
+  --el-tag-border-color: var(--color-border);
+  color: var(--color-text-secondary);
+  background-color: var(--el-tag-bg-color);
+  border-color: var(--el-tag-border-color);
+}
+
+.hfl-status-tag .el-tag.el-tag--warning:not(.el-tag--dark):not(.el-tag--plain) {
+  --el-tag-text-color: var(--color-warning-text);
+  --el-tag-bg-color: color-mix(in srgb, var(--color-warning) 6%, var(--color-card-bg));
+  --el-tag-border-color: color-mix(in srgb, var(--color-warning) 22%, var(--color-border));
+  color: var(--color-warning-text);
+  background-color: var(--el-tag-bg-color);
+  border-color: var(--el-tag-border-color);
+}
+
+.hfl-status-tag .el-tag.el-tag--danger:not(.el-tag--dark):not(.el-tag--plain) {
+  --el-tag-text-color: var(--color-error-text);
+  --el-tag-bg-color: color-mix(in srgb, var(--color-error) 6%, var(--color-card-bg));
+  --el-tag-border-color: color-mix(in srgb, var(--color-error) 22%, var(--color-border));
+  color: var(--color-error-text);
+  background-color: var(--el-tag-bg-color);
+  border-color: var(--el-tag-border-color);
+}

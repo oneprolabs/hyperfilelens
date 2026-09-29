@@ -18,6 +18,7 @@ import {
 } from '../../lib/lensApi'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
+import HflStatusTag from '../../components/HflStatusTag.vue'
 import {
   aiModelConnectionTestFailureDetail,
   aiModelConnectionTestSucceeded,
@@ -77,6 +78,13 @@ const hasApiKey = computed(() => apiKeyDisplay.value !== DETAIL_EMPTY)
 const modelVersion = computed(() => detail.value?.config?.model?.trim() || DETAIL_EMPTY)
 const apiBase = computed(() => detail.value?.config?.api_base?.trim() || DETAIL_EMPTY)
 const displayModelUuid = computed(() => detail.value?.uuid || DETAIL_EMPTY)
+const displayCapabilities = computed(() => {
+  const capabilities = [...modelCapabilities.value]
+  const config = detail.value?.config
+  const supportsVision = config?.vision === true || config?.supports_vision === true
+  if (supportsVision && !capabilities.includes('vision')) capabilities.push('vision')
+  return capabilities
+})
 
 function capabilityLabel(key: string) {
   return capabilityLabels.value[key] || key
@@ -276,10 +284,10 @@ onUnmounted(() => {
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelActive') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelStatus') }}</span>
                 <span class="hfl-detail-row__value">
-                  <HflBooleanStatusTag
-                    :value="detail.is_active !== false"
+                  <HflStatusTag
+                    :tone="detail.is_active !== false ? 'success' : 'neutral'"
                     :label="detail.is_active !== false
                       ? t('insight.aiSettings.statusActive')
                       : t('insight.aiSettings.statusInactive')"
@@ -304,11 +312,6 @@ onUnmounted(() => {
                   />
                 </span>
               </div>
-              <div
-                class="hfl-detail-row ai-model-drawer__divider"
-                aria-hidden="true"
-              />
-
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelModel') }}</span>
                 <span
@@ -321,19 +324,19 @@ onUnmounted(() => {
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelCapabilities') }}</span>
                 <span class="hfl-detail-row__value">
-                  <span
-                    v-if="modelCapabilities.length"
+                  <div
+                    v-if="displayCapabilities.length"
                     class="ai-model-drawer__caps"
                   >
                     <span
-                      v-for="cap in modelCapabilities"
+                      v-for="cap in displayCapabilities"
                       :key="cap"
                       class="ai-cap-tag"
                       :class="capabilityClass(cap)"
                     >
                       {{ capabilityLabel(cap) }}
                     </span>
-                  </span>
+                  </div>
                   <span
                     v-else
                     class="hfl-detail-row__empty"
@@ -376,17 +379,16 @@ onUnmounted(() => {
     >
       <div class="el-drawer__footer-actions">
         <ElButton
-          :disabled="testing"
-          @click="open = false"
-        >
-          {{ t('common.cancel') }}
-        </ElButton>
-        <ElButton
-          v-if="detail.is_active !== false"
           :loading="testing"
           @click="testConnection"
         >
           {{ t('insight.aiSettings.testConnection') }}
+        </ElButton>
+        <ElButton
+          :disabled="testing"
+          @click="open = false"
+        >
+          {{ t('common.cancel') }}
         </ElButton>
         <ElButton
           type="primary"
@@ -410,33 +412,39 @@ onUnmounted(() => {
 .ai-model-drawer__caps {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
 }
 
 .ai-cap-tag {
   display: inline-flex;
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 11px;
-  font-weight: 600;
+  min-height: 22px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--ai-capability-color, #64748b) 24%, var(--color-border-light));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ai-capability-color, #64748b) 7%, var(--color-card-bg, #fff));
+  padding: 2px 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
 }
 
-.cap-sky { background: #e0f2fe; color: #0369a1; }
-.cap-emerald { background: #d1fae5; color: #047857; }
-.cap-violet { background: #ede9fe; color: #6d28d9; }
-.cap-indigo { background: #e0e7ff; color: #4338ca; }
-.cap-rose { background: #ffe4e6; color: #be123c; }
-.cap-teal { background: #ccfbf1; color: #0f766e; }
-.cap-gray { background: #f1f5f9; color: #475569; }
-
-.ai-model-drawer__divider {
-  grid-column: 1 / -1;
-  height: 1px;
-  margin: 4px 0;
-  padding: 0;
-  background: var(--color-border-light, #e5e7eb);
-  min-height: 1px;
+.ai-cap-tag::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ai-capability-color, var(--color-text-tertiary));
+  content: '';
 }
+
+.cap-sky { --ai-capability-color: #0284c7; }
+.cap-emerald { --ai-capability-color: #059669; }
+.cap-violet { --ai-capability-color: #7c3aed; }
+.cap-indigo { --ai-capability-color: #4f46e5; }
+.cap-rose { --ai-capability-color: #e11d48; }
+.cap-teal { --ai-capability-color: #0f766e; }
+.cap-gray { --ai-capability-color: #64748b; }
 
 .ai-model-drawer__uuid {
   font-size: 12px;

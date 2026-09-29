@@ -102,6 +102,26 @@ class LensOrgModelSettingsApiTests(TestCase):
             },
         )
 
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_config_test_cannot_reuse_stored_model_credentials(self, request_json):
+        for field, value in (
+            ("config_uuid", str(uuid.uuid4())),
+            ("config_id", 42),
+        ):
+            with self.subTest(field=field):
+                response = self.client.post(
+                    reverse("lens-models-test"),
+                    {
+                        "provider": "openai_compatible",
+                        "config": {"model": "tenant/model"},
+                        field: value,
+                    },
+                    format="json",
+                    HTTP_X_ORG_KEY=self.organization.key,
+                )
+                self.assertEqual(response.status_code, 400)
+        request_json.assert_not_called()
+
     @patch("apps.lens_bridge.services.org_models.active_llm_configs")
     def test_readiness_exposes_inherited_platform_defaults(
         self,

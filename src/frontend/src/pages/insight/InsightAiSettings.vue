@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensModelsPath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, CirclePlay, CircleStop, Images, Pencil, Plus, RefreshCw, Search, Star, Trash2 } from 'lucide-vue-next'
+import { Bot, ChevronDown, CirclePlay, CircleStop, Images, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-vue-next'
 import { ElMessage, type ElTable } from 'element-plus'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
@@ -22,7 +22,7 @@ import { defaultAiModelDisplayName } from '../../lib/aiModelDisplay'
 import { aiProviderLabel } from '../../lib/aiProviderDisplay'
 import AiProviderIcon from '../../components/ai-model/AiProviderIcon.vue'
 import InsightAiModelDetailDrawer from './InsightAiModelDetailDrawer.vue'
-import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
+import HflStatusTag from '../../components/HflStatusTag.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
 
@@ -158,12 +158,9 @@ function openDetail(row: LensLlmConfig) {
   detailOpen.value = true
 }
 
-function openEdit(row: LensLlmConfig | string, enable = false) {
+function openEdit(row: LensLlmConfig | string) {
   const uuid = typeof row === 'string' ? row : row.uuid
-  router.push({
-    path: `${lensModelsPath()}/${uuid}/edit`,
-    query: enable ? { enable: '1' } : undefined,
-  })
+  router.push(`${lensModelsPath()}/${uuid}/edit`)
 }
 
 function onSelectionChange(rows: LensLlmConfig[]) {
@@ -174,7 +171,10 @@ async function setActive(row: LensLlmConfig, isActive: boolean) {
   if (row.is_active === isActive) return
   try {
     await patchLensModel(row.uuid, { is_active: isActive })
-    ElMessage.success({ message: t('insight.aiSettings.saveSuccess'), grouping: true })
+    ElMessage.success({
+      message: t(isActive ? 'insight.aiSettings.modelEnabled' : 'insight.aiSettings.saveSuccess'),
+      grouping: true,
+    })
     await load()
   } catch (err) {
     ElMessage.error({
@@ -235,14 +235,10 @@ async function deleteSelected() {
   await deleteRow(row)
 }
 
-function enableSelected() {
+async function enableSelected() {
   const row = singleSelected.value
   if (!row || row.is_active !== false) return
-  ElMessage.info({
-    message: t('insight.aiSettings.apiKeyRequiredForActivation'),
-    grouping: true,
-  })
-  openEdit(row, true)
+  await setActive(row, true)
 }
 
 async function disableSelected() {
@@ -315,30 +311,6 @@ onMounted(() => {
                 </span>
               </ElDropdownItem>
               <ElDropdownItem
-                :disabled="!selectedCanSetAgentDefault"
-                @click="setSelectedAgentDefault"
-              >
-                <span class="el-dropdown-menu__item-content">
-                  <Star
-                    :size="14"
-                    class="shrink-0"
-                  />
-                  <span>{{ t('insight.aiSettings.setDefaultAgent') }}</span>
-                </span>
-              </ElDropdownItem>
-              <ElDropdownItem
-                :disabled="!selectedCanSetMultimodalDefault"
-                @click="setSelectedMultimodalDefault"
-              >
-                <span class="el-dropdown-menu__item-content">
-                  <Images
-                    :size="14"
-                    class="shrink-0"
-                  />
-                  <span>{{ t('insight.aiSettings.setDefaultMultimodal') }}</span>
-                </span>
-              </ElDropdownItem>
-              <ElDropdownItem
                 divided
                 :disabled="batchDisabled || !singleSelected || singleSelected.is_active !== false"
                 @click="enableSelected"
@@ -361,6 +333,31 @@ onMounted(() => {
                     class="shrink-0"
                   />
                   <span>{{ t('insight.aiSettings.disable') }}</span>
+                </span>
+              </ElDropdownItem>
+              <ElDropdownItem
+                divided
+                :disabled="!selectedCanSetAgentDefault"
+                @click="setSelectedAgentDefault"
+              >
+                <span class="el-dropdown-menu__item-content">
+                  <Bot
+                    :size="14"
+                    class="shrink-0"
+                  />
+                  <span>{{ t('insight.aiSettings.setDefaultAgent') }}</span>
+                </span>
+              </ElDropdownItem>
+              <ElDropdownItem
+                :disabled="!selectedCanSetMultimodalDefault"
+                @click="setSelectedMultimodalDefault"
+              >
+                <span class="el-dropdown-menu__item-content">
+                  <Images
+                    :size="14"
+                    class="shrink-0"
+                  />
+                  <span>{{ t('insight.aiSettings.setDefaultMultimodal') }}</span>
                 </span>
               </ElDropdownItem>
               <ElDropdownItem
@@ -454,22 +451,16 @@ onMounted(() => {
                   v-if="row.is_default_agent || row.is_default_multimodal"
                   class="insight-ai-models-badges"
                 >
-                  <ElTag
+                  <HflStatusTag
                     v-if="row.is_default_agent"
-                    size="small"
-                    type="success"
-                    effect="plain"
-                  >
-                    {{ t('insight.aiSettings.defaultAgentBadge') }}
-                  </ElTag>
-                  <ElTag
+                    tone="primary"
+                    :label="t('insight.aiSettings.defaultAgentBadge')"
+                  />
+                  <HflStatusTag
                     v-if="row.is_default_multimodal"
-                    size="small"
-                    type="warning"
-                    effect="plain"
-                  >
-                    {{ t('insight.aiSettings.defaultMultimodalBadge') }}
-                  </ElTag>
+                    tone="primary"
+                    :label="t('insight.aiSettings.defaultMultimodalBadge')"
+                  />
                 </div>
               </div>
             </template>
@@ -517,12 +508,12 @@ onMounted(() => {
             </template>
           </el-table-column>
           <el-table-column
-            :label="t('insight.aiSettings.labelActive')"
+            :label="t('insight.aiSettings.labelStatus')"
             width="110"
           >
             <template #default="{ row }">
-              <HflBooleanStatusTag
-                :value="row.is_active !== false"
+              <HflStatusTag
+                :tone="row.is_active !== false ? 'success' : 'neutral'"
                 :label="row.is_active !== false
                   ? t('insight.aiSettings.statusActive')
                   : t('insight.aiSettings.statusInactive')"

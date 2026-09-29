@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import '../../styles/fullscreen-form-styles'
-import { computed, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensModelsPath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
@@ -60,11 +60,20 @@ const pageDesc = computed(() =>
   isEditing.value ? t('insight.aiSettings.editModelPageDesc') : t('insight.aiSettings.addModelPageDesc'),
 )
 
+const modelDropdownRef = ref<HTMLElement | null>(null)
 const busy = computed(() => loading.value || saving.value || testing.value)
 const intlLocale = computed(() => locale.value === 'en' ? 'en-US' : locale.value)
 const tuningParameters = computed(() => (
   advancedParameters.value.filter((parameter) => parameter.inputType !== 'boolean')
 ))
+const orderedProviders = computed(() => [...providers.value].sort((left, right) => {
+  const leftLabel = left.label || left.name || left.id
+  const rightLabel = right.label || right.name || right.id
+  return leftLabel.localeCompare(rightLabel, undefined, {
+    sensitivity: 'base',
+    numeric: true,
+  }) || left.id.localeCompare(right.id)
+}))
 
 function formatTokenCount(value: number) {
   return new Intl.NumberFormat(intlLocale.value).format(value)
@@ -95,7 +104,7 @@ const testDuration = computed(() => {
 })
 
 const submitLabel = computed(() => {
-  if (isEditing.value) return t('common.save')
+  if (isEditing.value) return t('insight.aiSettings.saveChanges')
   if (!saving.value) return t('insight.aiSettings.btnCreateModel')
   return form.is_active
     ? t('insight.aiSettings.testingAndAddingModel')
@@ -113,8 +122,16 @@ function advancedParameterPlaceholder(parameter: AiModelAdvancedParameter) {
   return t('insight.aiSettings.optionalProviderValue')
 }
 
-function onVisionCapabilityChange(event: Event) {
-  updateAdvancedParameter('vision', (event.target as HTMLInputElement).checked)
+function onVisionCapabilityChange(value: boolean | string | number) {
+  updateAdvancedParameter('vision', value === true)
+}
+
+function onDocumentPointerDown(event: PointerEvent) {
+  if (!modelDropdownOpen.value) return
+  const target = event.target
+  if (target instanceof Node && !modelDropdownRef.value?.contains(target)) {
+    modelDropdownOpen.value = false
+  }
 }
 
 async function handleSubmit() {
@@ -123,10 +140,15 @@ async function handleSubmit() {
 }
 
 onMounted(async () => {
+  document.addEventListener('pointerdown', onDocumentPointerDown)
   await init()
   if (isEditing.value && route.query.enable === '1') {
     form.is_active = true
   }
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown)
 })
 </script>
 
@@ -166,9 +188,6 @@ onMounted(async () => {
                 <span class="fullscreen-form-section__indicator" />
                 {{ t('insight.aiSettings.sectionProvider') }}
               </h3>
-              <p class="ai-model-section-desc">
-                {{ t('insight.aiSettings.sectionProviderDesc') }}
-              </p>
 
               <ElRadioGroup
                 v-model="form.provider"
@@ -176,7 +195,7 @@ onMounted(async () => {
                 :disabled="isEditing"
               >
                 <ElRadio
-                  v-for="provider in providers"
+                  v-for="provider in orderedProviders"
                   :key="provider.id"
                   :value="provider.id"
                   border
@@ -218,7 +237,16 @@ onMounted(async () => {
                   :label="t('insight.aiSettings.labelModel')"
                   required
                 >
-                  <div class="ai-model-dropdown">
+                  <ElInput
+                    v-if="form.provider === 'openai_compatible'"
+                    v-model="form.model"
+                    :placeholder="t('insight.aiSettings.modelIdPlaceholder')"
+                  />
+                  <div
+                    v-else
+                    ref="modelDropdownRef"
+                    class="ai-model-dropdown"
+                  >
                     <button
                       type="button"
                       class="ai-model-dropdown__trigger"
@@ -271,7 +299,7 @@ onMounted(async () => {
                     </div>
                   </div>
                   <ElInput
-                    v-if="useCustomModel"
+                    v-if="form.provider !== 'openai_compatible' && useCustomModel"
                     v-model="form.model"
                     class="mt-2"
                     :placeholder="t('insight.aiSettings.modelPlaceholder')"
@@ -301,8 +329,8 @@ onMounted(async () => {
                     </div>
                   </div>
                   <dl
-                    v-if="selectedModelInfo.max_input_tokens || selectedModelInfo.max_output_tokens"
-                    class="ai-model-info-card__metrics"
+                    v-if="selectedModelInfo.max_input_tokens || selectedModelInfo.max_output_tokens || referencePriceLine(selectedModelInfo.reference_pricing)"
+                    class="ai-model-info-card__stats"
                   >
                     <div v-if="selectedModelInfo.max_input_tokens">
                       <dt>{{ t('insight.aiSettings.maxInputTokens') }}</dt>
@@ -312,14 +340,11 @@ onMounted(async () => {
                       <dt>{{ t('insight.aiSettings.maxOutputTokens') }}</dt>
                       <dd>{{ formatTokenCount(selectedModelInfo.max_output_tokens) }}</dd>
                     </div>
+                    <div v-if="referencePriceLine(selectedModelInfo.reference_pricing)">
+                      <dt>{{ t('insight.aiSettings.referencePrice') }}</dt>
+                      <dd>{{ referencePriceLine(selectedModelInfo.reference_pricing) }}</dd>
+                    </div>
                   </dl>
-                  <div
-                    v-if="referencePriceLine(selectedModelInfo.reference_pricing)"
-                    class="ai-model-info-card__price"
-                  >
-                    <span>{{ t('insight.aiSettings.referencePrice') }}</span>
-                    {{ referencePriceLine(selectedModelInfo.reference_pricing) }}
-                  </div>
                 </div>
 
                 <div
@@ -332,21 +357,20 @@ onMounted(async () => {
                   <p class="ai-model-capability-card__desc">
                     {{ t('insight.aiSettings.modelCapabilitiesHint') }}
                   </p>
-                  <label class="ai-model-capability-card__option">
-                    <input
-                      type="checkbox"
-                      :checked="form.advanced.vision === true"
+                  <div class="ai-model-capability-card__option">
+                    <ElCheckbox
+                      :model-value="form.advanced.vision === true"
+                      class="ai-model-capability-card__checkbox"
                       @change="onVisionCapabilityChange"
                     >
-                    <span>
                       <span class="ai-model-capability-card__option-title">
                         {{ t('insight.aiSettings.confirmVisionSupport') }}
                       </span>
                       <span class="ai-model-capability-card__option-desc">
                         {{ t('insight.aiSettings.confirmVisionSupportHint') }}
                       </span>
-                    </span>
-                  </label>
+                    </ElCheckbox>
+                  </div>
                 </div>
 
                 <ElFormItem
@@ -585,6 +609,26 @@ onMounted(async () => {
   background: var(--color-primary-light, #f2f0fe);
 }
 
+.ai-provider-grid :deep(.el-radio.is-bordered.is-disabled.is-checked) {
+  border-color: var(--color-primary, #6d5ef6) !important;
+  background: var(--color-primary-light, #f2f0fe) !important;
+  cursor: default;
+}
+
+.ai-provider-grid :deep(.el-radio__input.is-disabled.is-checked .el-radio__inner) {
+  border-color: var(--color-primary, #6d5ef6) !important;
+  background-color: var(--color-primary, #6d5ef6) !important;
+}
+
+.ai-provider-grid :deep(.el-radio__input.is-disabled.is-checked .el-radio__inner::after) {
+  background-color: #fff !important;
+}
+
+.ai-provider-grid :deep(.el-radio__input.is-disabled.is-checked + .el-radio__label) {
+  color: var(--color-text-title) !important;
+  cursor: default;
+}
+
 .ai-provider-card__inner {
   display: flex;
   align-items: center;
@@ -599,8 +643,8 @@ onMounted(async () => {
 
 .ai-provider-card__name {
   overflow: hidden;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--color-text-title);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -608,7 +652,8 @@ onMounted(async () => {
 
 .ai-provider-card__meta {
   margin-top: 2px;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 400;
   color: var(--color-text-tertiary);
 }
 
@@ -650,12 +695,17 @@ onMounted(async () => {
   overflow: visible;
 }
 
+.ai-model-section--connection :deep(.el-form-item__label) {
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .ai-model-dropdown__item {
   display: block;
   width: 100%;
   border: none;
   background: transparent;
-  padding: 10px 12px;
+  padding: 8px 12px;
   text-align: left;
   cursor: pointer;
 }
@@ -666,8 +716,9 @@ onMounted(async () => {
 }
 
 .ai-model-dropdown__item-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
   color: var(--color-text-title);
 }
 
@@ -690,80 +741,85 @@ onMounted(async () => {
 
 .ai-cap-tag {
   display: inline-flex;
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 11px;
-  font-weight: 600;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  border: 1px solid color-mix(in srgb, var(--ai-capability-color, #64748b) 24%, var(--color-border-light));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ai-capability-color, #64748b) 7%, var(--color-card-bg, #fff));
+  color: var(--color-text-secondary);
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
 }
 
-.cap-sky { background: #e0f2fe; color: #0369a1; }
-.cap-emerald { background: #d1fae5; color: #047857; }
-.cap-violet { background: #ede9fe; color: #6d28d9; }
-.cap-indigo { background: #e0e7ff; color: #4338ca; }
-.cap-rose { background: #ffe4e6; color: #be123c; }
-.cap-teal { background: #ccfbf1; color: #0f766e; }
-.cap-gray { background: #f1f5f9; color: #475569; }
+.ai-cap-tag::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ai-capability-color, var(--color-text-tertiary));
+  content: '';
+}
+
+.cap-sky { --ai-capability-color: #0284c7; }
+.cap-emerald { --ai-capability-color: #059669; }
+.cap-violet { --ai-capability-color: #7c3aed; }
+.cap-indigo { --ai-capability-color: #4f46e5; }
+.cap-rose { --ai-capability-color: #e11d48; }
+.cap-teal { --ai-capability-color: #0f766e; }
+.cap-gray { --ai-capability-color: #64748b; }
 
 .ai-model-info-card {
-  margin-top: 4px;
-  padding: 12px;
+  margin: 12px 0 18px;
+  padding: 16px;
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-card, 12px);
-  background: var(--color-grey-2, #f8fafc);
+  background: var(--color-grey-1, #fafafa);
 }
 
 .ai-model-info-card__label {
   margin-bottom: 8px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-secondary);
 }
 
-.ai-model-info-card__section + .ai-model-info-card__metrics,
-.ai-model-info-card__section + .ai-model-info-card__price,
-.ai-model-info-card__metrics + .ai-model-info-card__price {
+.ai-model-info-card__stats {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--color-border-light);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px 24px;
 }
 
-.ai-model-info-card__metrics {
+.ai-model-info-card__stats > div {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px 28px;
-  margin-bottom: 0;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.ai-model-info-card__metrics > div {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.ai-model-info-card__metrics dt,
-.ai-model-info-card__price span {
+.ai-model-info-card__stats dt {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-secondary);
 }
 
-.ai-model-info-card__metrics dd,
-.ai-model-info-card__price {
+.ai-model-info-card__stats dd {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 400;
   color: var(--color-text-primary);
-}
-
-.ai-model-info-card__price span {
-  margin-right: 6px;
 }
 
 .ai-model-capability-card {
   margin: 4px 0 18px;
-  padding: 14px;
-  border: 1px solid var(--color-border-light);
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-card, 12px);
-  background: var(--color-grey-2, #f8fafc);
+  background: var(--color-card-bg, #fff);
 }
 
 .ai-model-capability-card__title {
@@ -780,32 +836,35 @@ onMounted(async () => {
 }
 
 .ai-model-capability-card__option {
-  display: flex;
-  min-height: 48px;
-  align-items: flex-start;
-  gap: 10px;
-  margin-top: 10px;
-  padding: 10px;
-  border-radius: 8px;
-  background: var(--color-card-bg, #fff);
+  min-height: 40px;
+  margin: 12px -4px -4px;
+  padding: 8px 4px;
+  border-radius: 6px;
   cursor: pointer;
 }
 
 .ai-model-capability-card__option:hover {
-  background: var(--color-primary-light, #f2f0fe);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-card-bg, #fff));
 }
 
 .ai-model-capability-card__option:focus-within {
-  outline: 2px solid var(--color-primary, #6d5ef6);
-  outline-offset: -2px;
+  outline: none;
 }
 
-.ai-model-capability-card__option input {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  margin: 2px 0 0;
-  accent-color: var(--color-primary, #6d5ef6);
+.ai-model-capability-card__checkbox {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+}
+
+.ai-model-capability-card__checkbox :deep(.el-checkbox__input) {
+  margin-top: 2px;
+}
+
+.ai-model-capability-card__checkbox :deep(.el-checkbox__label) {
+  display: block;
+  padding-left: 10px;
+  white-space: normal;
 }
 
 .ai-model-capability-card__option-title,
@@ -815,7 +874,7 @@ onMounted(async () => {
 
 .ai-model-capability-card__option-title {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
 }
 

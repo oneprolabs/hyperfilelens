@@ -141,23 +141,117 @@ class HostPlatformLensModelTests(TestCase):
         request_json.assert_not_called()
 
     @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_config_test_rejects_stored_model_references(self, request_json):
+        for field, value in (
+            ("config_uuid", str(self.foreign_uuid)),
+            ("config_id", 42),
+        ):
+            with self.subTest(field=field):
+                response = self.client.post(
+                    "/api/v1/platform-ops/lens/models/test",
+                    {
+                        "provider": "openai_compatible",
+                        "config": {"model": "example/chat"},
+                        field: value,
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        request_json.assert_not_called()
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_create_and_update_reject_client_stored_model_references(
+        self, request_json
+    ):
+        for field, value in (
+            ("config_uuid", str(self.foreign_uuid)),
+            ("config_id", 42),
+        ):
+            for method, path, is_active in (
+                ("post", "/api/v1/platform-ops/lens/models", True),
+                ("post", "/api/v1/platform-ops/lens/models", False),
+                ("put", self.path, True),
+                ("patch", self.path, False),
+            ):
+                with self.subTest(field=field, method=method, is_active=is_active):
+                    response = getattr(self.client, method)(
+                        path,
+                        {
+                            "provider": "openai_compatible",
+                            "config": {
+                                "model": "example/chat",
+                                "api_base": "https://example.test/v1",
+                            },
+                            "is_active": is_active,
+                            field: value,
+                        },
+                        format="json",
+                    )
+                    self.assertEqual(
+                        response.status_code, status.HTTP_400_BAD_REQUEST
+                    )
+        request_json.assert_not_called()
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
     def test_saved_model_connection_uses_sourcelens_test_call_contract(
         self,
         request_json,
     ):
-        request_json.return_value = {"ok": True}
+        request_json.side_effect = [
+            {"uuid": str(self.model_uuid), "is_active": True},
+            {"ok": True},
+        ]
 
         response = self.client.post(f"{self.path}/test-call", {}, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        request_json.assert_called_once_with(
-            "POST",
-            "/api/v1/admin/llm-config/test-call/",
-            json_body={
-                "config_uuid": str(self.model_uuid),
-                "prompt": "Hi",
-                "max_tokens": 64,
-            },
+        self.assertEqual(
+            request_json.call_args_list,
+            [
+                call("GET", f"/api/v1/admin/llm-config/{self.model_uuid}/"),
+                call(
+                    "POST",
+                    "/api/v1/admin/llm-config/test-call/",
+                    json_body={
+                        "config_uuid": str(self.model_uuid),
+                        "prompt": "Hi",
+                        "max_tokens": 64,
+                    },
+                ),
+            ],
+        )
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_inactive_saved_model_uses_config_test_without_enabling(
+        self, request_json
+    ):
+        current_model = {
+            "uuid": str(self.model_uuid),
+            "provider": "agione",
+            "config": {"model": "custom-model", "api_key": "********"},
+            "is_active": False,
+        }
+        request_json.side_effect = [current_model, {"ok": True}]
+
+        response = self.client.post(f"{self.path}/test-call", {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, {"ok": True})
+        self.assertEqual(
+            request_json.call_args_list,
+            [
+                call("GET", f"/api/v1/admin/llm-config/{self.model_uuid}/"),
+                call(
+                    "POST",
+                    "/api/v1/admin/llm-config/test/",
+                    json_body={
+                        "config_uuid": str(self.model_uuid),
+                        "provider": "agione",
+                        "config": current_model["config"],
+                        "is_active": True,
+                    },
+                ),
+            ],
         )
 
     @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
@@ -291,7 +385,7 @@ class HostPlatformLensModelTests(TestCase):
         )
 
     @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
-    def test_inactive_model_requires_credentials_before_it_is_enabled(
+    def test_inactive_model_is_tested_with_saved_configuration_before_enable(
         self,
         request_json,
     ):
@@ -301,6 +395,79 @@ class HostPlatformLensModelTests(TestCase):
             sl_config_uuid=manual_uuid,
             display_name="Inactive model",
         )
+        current_model = {
+            "uuid": str(manual_uuid),
+            "provider": "agione",
+            "config": {
+                "model": "qwen/qwen3.6-flash/cd2c3",
+                "api_base": "https://agione.cc/hyperone/xapi/api",
+                "api_key": "********",
+            },
+            "is_active": False,
+        }
+        request_json.side_effect = [
+            current_model,
+            {"ok": True},
+            {**current_model, "is_active": True},
+        ]
+        response = self.client.patch(
+            f"/api/v1/platform-ops/lens/models/{manual_uuid}",
+            {"is_active": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            request_json.call_args_list,
+            [
+                call(
+                    "GET",
+                    f"/api/v1/admin/llm-config/{manual_uuid}/",
+                ),
+                call(
+                    "POST",
+                    "/api/v1/admin/llm-config/test/",
+                    json_body={
+                        "config_uuid": str(manual_uuid),
+                        "provider": "agione",
+                        "config": current_model["config"],
+                        "is_active": True,
+                    },
+                ),
+                call(
+                    "PUT",
+                    f"/api/v1/admin/llm-config/{manual_uuid}/",
+                    json_body={"is_active": True},
+                ),
+            ],
+        )
+
+    @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
+    def test_inactive_model_stays_disabled_when_saved_configuration_test_fails(
+        self,
+        request_json,
+    ):
+        manual_uuid = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
+        LensOrgModelLink.objects.create(
+            organization=self.platform_org,
+            sl_config_uuid=manual_uuid,
+            display_name="Inactive model",
+        )
+        current_model = {
+            "uuid": str(manual_uuid),
+            "provider": "agione",
+            "config": {
+                "model": "qwen/qwen3.6-flash/cd2c3",
+                "api_base": "https://agione.cc/hyperone/xapi/api",
+                "api_key": "********",
+            },
+            "is_active": False,
+        }
+        request_json.side_effect = [
+            current_model,
+            {"ok": False, "detail": "The provider rejected the credentials."},
+        ]
+
         response = self.client.patch(
             f"/api/v1/platform-ops/lens/models/{manual_uuid}",
             {"is_active": True},
@@ -310,9 +477,27 @@ class HostPlatformLensModelTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(
             response.data["data"]["code"],
-            "AI_MODEL.CONNECTION_TEST_REQUIRED",
+            "AI_MODEL.CONNECTION_TEST_FAILED",
         )
-        request_json.assert_not_called()
+        self.assertEqual(
+            request_json.call_args_list,
+            [
+                call(
+                    "GET",
+                    f"/api/v1/admin/llm-config/{manual_uuid}/",
+                ),
+                call(
+                    "POST",
+                    "/api/v1/admin/llm-config/test/",
+                    json_body={
+                        "config_uuid": str(manual_uuid),
+                        "provider": "agione",
+                        "config": current_model["config"],
+                        "is_active": True,
+                    },
+                ),
+            ],
+        )
 
     @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
     def test_inactive_model_stays_disabled_when_connection_test_fails(

@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import ModulePage from '../../../../components/ModulePage.vue'
 import { apiErrorMessage } from '../../../../lib/api'
 import { formatLocalDateTime } from '../../../../lib/dateTime'
+import HflStatusTag from '../../../../components/HflStatusTag.vue'
 import RuntimeServiceConnections from '../../../components/RuntimeServiceConnections.vue'
 import RuntimeStatusTable from '../../../components/RuntimeStatusTable.vue'
 import type {
@@ -39,8 +40,8 @@ const checkedAt = computed(() => {
 })
 const editionLabel = computed(() => {
   const edition = String(payload.value?.edition || '').trim().toLowerCase()
-  if (edition === 'community') return t('editionCommunity')
-  if (edition === 'enterprise') return t('editionEnterprise')
+  if (edition === 'community') return t('account.editionCommunity')
+  if (edition === 'enterprise') return t('account.editionEnterprise')
   return edition ? `${edition.charAt(0).toUpperCase()}${edition.slice(1)}` : '—'
 })
 
@@ -344,13 +345,11 @@ onMounted(load)
             </div>
             <div class="platform-settings__overview-item">
               <span class="platform-settings__overview-label">{{ t('platformOps.settings.environment.instanceHealth') }}</span>
-              <el-tag
+              <HflStatusTag
                 size="small"
-                :type="statusTone(instanceHealth)"
-                effect="plain"
-              >
-                {{ statusLabel(instanceHealth) }}
-              </el-tag>
+                :tone="statusTone(instanceHealth)"
+                :label="statusLabel(instanceHealth)"
+              />
             </div>
             <div class="platform-settings__overview-item">
               <span class="platform-settings__overview-label">{{ t('platformOps.settings.environment.agentVersion') }}</span>
@@ -361,13 +360,13 @@ onMounted(load)
             </div>
             <div class="platform-settings__overview-item">
               <span class="platform-settings__overview-label">{{ t('platformOps.settings.environment.djangoDebug') }}</span>
-              <el-tag
+              <HflStatusTag
                 size="small"
-                :type="payload.django_debug ? 'warning' : 'info'"
-                effect="plain"
-              >
-                {{ payload.django_debug ? t('platformOps.settings.environment.debugOn') : t('platformOps.settings.environment.debugOff') }}
-              </el-tag>
+                :tone="payload.django_debug ? 'warning' : 'info'"
+                :label="payload.django_debug
+                  ? t('platformOps.settings.environment.debugOn')
+                  : t('platformOps.settings.environment.debugOff')"
+              />
             </div>
             <div class="platform-settings__overview-item">
               <span class="platform-settings__overview-label">{{ t('platformOps.settings.environment.edition') }}</span>
@@ -452,33 +451,12 @@ onMounted(load)
   line-height: 1.35;
 }
 
-.platform-settings--runtime .platform-settings__overview-item > .el-tag {
+.platform-settings--runtime .platform-settings__overview-item > .hfl-status-tag {
   justify-self: start;
   width: auto;
   min-width: 0;
-  background: transparent !important;
   font-size: 12px;
   font-weight: 500;
-}
-
-.platform-settings--runtime .platform-settings__overview-item > .el-tag--info {
-  border-color: #bfdbfe;
-  color: #2563eb;
-}
-
-.platform-settings--runtime .platform-settings__overview-item > .el-tag--success {
-  border-color: #86efac;
-  color: #15803d;
-}
-
-.platform-settings--runtime .platform-settings__overview-item > .el-tag--warning {
-  border-color: #fcd34d;
-  color: #b45309;
-}
-
-.platform-settings--runtime .platform-settings__overview-item > .el-tag--danger {
-  border-color: #fca5a5;
-  color: #b91c1c;
 }
 
 @media (max-width: 720px) {

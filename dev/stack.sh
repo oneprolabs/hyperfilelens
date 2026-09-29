@@ -1206,7 +1206,7 @@ print_dev_target() {
 	fi
 	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
 		sourcelens_mode="$(read_env_value_or SOURCELENS_MODE bundled "${ROOT}/.env" | tr 'A-Z' 'a-z')"
-		sourcelens_ref="${SOURCELENS_GIT_REF:-v0.61.2}"
+		sourcelens_ref="${SOURCELENS_GIT_REF:-v0.61.3}"
 		target_value "SourceLens" "${sourcelens_mode} / ${sourcelens_ref}"
 	else
 		target_value "SourceLens" "disabled"
@@ -1285,7 +1285,7 @@ print_urls() {
 	fi
 
 	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
-		source_lens_display="${sourcelens_mode} / ${SOURCELENS_GIT_REF:-v0.61.2}"
+		source_lens_display="${sourcelens_mode} / ${SOURCELENS_GIT_REF:-v0.61.3}"
 		if [[ -f "${sl_env}" ]]; then
 			sl_user="$(read_env_value_or DJANGO_SUPERUSER_USERNAME admin "${sl_env}")"
 			sl_email="$(read_env_value_or DJANGO_SUPERUSER_EMAIL admin@example.com "${sl_env}")"
@@ -1511,6 +1511,23 @@ platform_gateway_auto_deploy_enabled() {
 	esac
 }
 
+refresh_local_platform_lensnode_image_dev() {
+	# Do not select the highest cached image: --sourcelens-ref may intentionally
+	# run an older release while a newer LensNode tag remains on this host.
+	local versioned_ref="hyperfilelens-sourcelens-lensnode:${SOURCELENS_GIT_REF#v}"
+	local versioned_id latest_id
+	versioned_id="$(docker image inspect --format '{{.Id}}' "${versioned_ref}" 2>/dev/null || true)"
+	if [[ -z "${versioned_id}" ]]; then
+		warn "Skipping local platform Gateway auto-deploy; LensNode image missing: ${versioned_ref}"
+		return 1
+	fi
+	latest_id="$(docker image inspect --format '{{.Id}}' hyperfilelens-sourcelens-lensnode:latest 2>/dev/null || true)"
+	if [[ "${latest_id}" != "${versioned_id}" ]]; then
+		docker tag "${versioned_ref}" hyperfilelens-sourcelens-lensnode:latest
+		log "Refreshed hyperfilelens-sourcelens-lensnode:latest from ${versioned_ref} for Gateway sidecar"
+	fi
+}
+
 # Ensure the installer-managed local public Data Gateway (host Agent + LensNode).
 # Mirrors deploy/installer/install.sh ensure_local_platform_gateway for the dev stack.
 # Failures warn instead of aborting stack up so Darwin/non-root hosts stay usable.
@@ -1535,29 +1552,9 @@ ensure_local_platform_gateway_dev() {
 	fi
 
 	log "Ensuring local public Data Gateway (platform Gateway auto-deploy)"
-	# Sidecar install expects :latest; versioned tags alone leave gateway-install
-	# downloading the bootstrap archive (or failing when that archive is stale).
-	# Re-tag whenever the newest versioned image differs from :latest so the
-	# sidecar (which compares image IDs) is recreated after a SourceLens rebuild.
-	local latest_id versioned_ref versioned_id
-	latest_id="$(docker image inspect --format '{{.Id}}' hyperfilelens-sourcelens-lensnode:latest 2>/dev/null || true)"
-	versioned_ref="$(
-		docker images --format '{{.Repository}}:{{.Tag}}' \
-			| grep -E '^hyperfilelens-sourcelens-lensnode:[0-9]' \
-			| while read -r ref; do
-				printf '%s %s\n' "$(docker image inspect --format '{{.Created}}' "${ref}" 2>/dev/null || true)" "${ref}"
-			done \
-			| sort -r \
-			| head -1 \
-			| awk '{print $NF}'
-	)"
-	if [[ -n "${versioned_ref}" ]]; then
-		versioned_id="$(docker image inspect --format '{{.Id}}' "${versioned_ref}" 2>/dev/null || true)"
-		if [[ -z "${latest_id}" || "${latest_id}" != "${versioned_id}" ]]; then
-			docker tag "${versioned_ref}" hyperfilelens-sourcelens-lensnode:latest
-			log "Refreshed hyperfilelens-sourcelens-lensnode:latest from ${versioned_ref} for Gateway sidecar"
-		fi
-	fi
+	# The sidecar install expects :latest; never populate it from a different
+	# SourceLens version when the configured image is not available.
+	refresh_local_platform_lensnode_image_dev || return 0
 
 	local command_output parsed org_key token api_base wss_url managed_node_ids
 	local agent_env="/opt/hyperfilelens-agent/config/agent.env"
