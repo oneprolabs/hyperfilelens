@@ -737,21 +737,23 @@ func printAgentLifecycleCommands(info SummaryInfo) {
 }
 
 func writeAgentLifecycleCommands(writer io.Writer, info SummaryInfo) {
-	fmt.Fprintln(writer, "Useful commands")
-	printSummaryValueTo(writer, "CLI path", filepath.Join(info.InstallPath, installerScriptName()))
 	if runtime.GOOS == "windows" {
-		command := windowsPowerShellCommand(filepath.Join(info.InstallPath, installerScriptName()))
+		installCmd := filepath.Join(info.InstallPath, "install.cmd")
+		command := windowsPowerShellCommand(installCmd)
+		fmt.Fprintln(writer, "Useful commands (PowerShell)")
+		printCommandBlockTo(writer, "CLI path", installCmd)
 		if vfs.UserInstallation() {
-			printSummaryValueTo(writer, "Task status", `powershell -NoProfile -Command "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Get-ScheduledTask -TaskName ('HyperFileLensAgent.User.'+$sid)"`)
+			printCommandBlockTo(writer, "Task status", `powershell -NoProfile -Command "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Get-ScheduledTask -TaskName ('HyperFileLensAgent.User.'+$sid)"`)
 		} else {
-			printSummaryValueTo(writer, "Service status", "sc.exe query HyperFileLensAgent")
+			printCommandBlockTo(writer, "Service status", "sc.exe query HyperFileLensAgent")
 		}
-		printSummaryValueTo(writer, "Agent status", command+" status")
-		printSummaryValueTo(writer, "Uninstall", command+" uninstall")
-		printSummaryValueTo(writer, "Keep data", command+" uninstall -KeepData")
+		printCommandBlockTo(writer, "Agent status", command+" status")
+		printCommandBlockTo(writer, "Uninstall", command+" uninstall")
 		return
 	}
 
+	fmt.Fprintln(writer, "Useful commands")
+	printSummaryValueTo(writer, "CLI path", filepath.Join(info.InstallPath, installerScriptName()))
 	var lifecycleStatus string
 	if runtime.GOOS == "darwin" {
 		if vfs.UserInstallation() {
@@ -772,6 +774,10 @@ func writeAgentLifecycleCommands(writer io.Writer, info SummaryInfo) {
 	printSummaryValueTo(writer, "Agent status", command+" status")
 	printSummaryValueTo(writer, "Uninstall", command+" uninstall")
 	printSummaryValueTo(writer, "Keep data", command+" uninstall --keep-data")
+}
+
+func printCommandBlockTo(writer io.Writer, label, command string) {
+	fmt.Fprintf(writer, "\n  %s:\n    %s\n", label, command)
 }
 
 // windowsPowerShellCommand returns a copyable PowerShell invocation for a

@@ -74,6 +74,15 @@ func TestWindowsPowerShellCommandUsesAbsoluteQuotedPath(t *testing.T) {
 	}
 }
 
+func TestWindowsCommandBlockUsesLabelAndSeparateCommandLine(t *testing.T) {
+	var output strings.Builder
+	printCommandBlockTo(&output, "Agent status", `& 'C:\ProgramData\HyperFileLens\Agent\bin\install.cmd' status`)
+	want := "\n  Agent status:\n    & 'C:\\ProgramData\\HyperFileLens\\Agent\\bin\\install.cmd' status\n"
+	if got := output.String(); got != want {
+		t.Fatalf("command block = %q, want %q", got, want)
+	}
+}
+
 func TestHumanBytes(t *testing.T) {
 	if humanBytes(2048) != "2.0 KB" {
 		t.Fatalf("got %q", humanBytes(2048))

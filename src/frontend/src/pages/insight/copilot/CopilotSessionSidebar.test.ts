@@ -119,24 +119,40 @@ describe('CopilotSessionSidebar pin actions', () => {
     expect(recovering.find('.copilot-session-menu__retry').exists()).toBe(false)
   })
 
-  it('keeps SourceLens-aligned actions in a stable order', () => {
+  it('groups Chat actions before data actions and keeps Delete last', () => {
     const wrapper = mountSidebar(session('ready', {
+      backup_config_id: 10,
       has_shareable_answer: true,
     }))
-    const menuClasses = wrapper.findAll('.copilot-session-menu__share, .copilot-session-menu__rename, .copilot-session-menu__pin, .copilot-session-menu__delete')
+    const menuClasses = wrapper.findAll('.copilot-session-menu__rename, .copilot-session-menu__pin, .copilot-session-menu__share, .copilot-session-menu__new-from, .copilot-session-menu__update-data, .copilot-session-menu__delete')
       .map((item) => item.classes().find((name) => name.startsWith('copilot-session-menu__')))
 
     expect(menuClasses).toEqual([
-      'copilot-session-menu__share',
       'copilot-session-menu__rename',
       'copilot-session-menu__pin',
+      'copilot-session-menu__share',
+      'copilot-session-menu__new-from',
+      'copilot-session-menu__update-data',
       'copilot-session-menu__delete',
     ])
+    expect(wrapper.get('.copilot-session-menu__new-from').attributes()).toHaveProperty('divided')
+    expect(wrapper.get('.copilot-session-menu__update-data').attributes('divided')).toBe('false')
+    expect(wrapper.get('.copilot-session-menu__delete').attributes()).toHaveProperty('divided')
     expect(wrapper.text()).toContain('Share')
     expect(wrapper.text()).toContain('Rename')
     expect(wrapper.text()).toContain('Pin Chat')
     expect(wrapper.text()).toContain('Delete Chat')
     expect(wrapper.text()).not.toContain('Delete Session')
+  })
+
+  it('keeps the data-action divider when New Chat From This is unavailable', () => {
+    const wrapper = mountSidebar(session('ready', {
+      backup_config_id: 10,
+      sl_assistant_uuid: null,
+    }))
+
+    expect(wrapper.find('.copilot-session-menu__new-from').exists()).toBe(false)
+    expect(wrapper.get('.copilot-session-menu__update-data').attributes('divided')).toBe('true')
   })
 
   it('disables sharing until a completed answer exists', () => {

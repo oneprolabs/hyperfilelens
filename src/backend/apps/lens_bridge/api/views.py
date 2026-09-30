@@ -1650,27 +1650,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                 is_deleted=False,
             ).exists()
             if not existing_request:
-                source = self._get_user_link(source_id)
-            if not existing_request and source.sl_assistant_uuid:
-                try:
-                    capability = sl_client.request_json(
-                        "GET",
-                        f"/api/lens/assistants/{source.sl_assistant_uuid}/archive-if-unused/",
-                    )
-                except sl_client.LensBridgeError as exc:
-                    if exc.status_code == 404:
-                        raise ValidationError(
-                            {"source_session_id": "Upgrade SourceLens before reusing Chat data."}
-                        ) from exc
-                    raise
-                if not isinstance(capability, dict) or capability.get("supported") is not True:
-                    raise sl_client.LensBridgeError(
-                        "SourceLens cannot safely clean up shared Chat resources."
-                    )
-                if capability.get("status") != "active":
-                    raise ValidationError(
-                        {"source_session_id": "This Chat can no longer start new conversations."}
-                    )
+                self._get_user_link(source_id)
             link = chat_lifecycle.create_copilot_chat_from_existing(
                 self.org,
                 user=request.user,

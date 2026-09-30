@@ -464,6 +464,9 @@ function Write-HflBanner {
 |_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/
        |___/|_|                     INSTALLER
 '@
+  if ($operation -eq 'Uninstaller') {
+    $banner = $banner.Replace('INSTALLER', 'UNINSTALLER')
+  }
   foreach ($line in ($banner -split "`r?`n")) {
     Write-HflDisplayLine $line
   }
@@ -505,7 +508,13 @@ function Write-HflLog {
     'SKIP' { 'SKIP'; break }
     default { 'INFO' }
   }
-  $displayLine = "  [$status] $messageText"
+  $displayText = if ($Command -eq 'uninstall') {
+    $messageText.Substring(0, 1).ToUpperInvariant() + $messageText.Substring(1)
+  }
+  else {
+    $messageText
+  }
+  $displayLine = "  [$status] $displayText"
   # QuietFooter only suppresses banners/sections/footers/summaries. Keep
   # lifecycle lines visible so a long binary copy does not look frozen.
   if ($Level -eq 'WARN ') {
@@ -540,7 +549,8 @@ function Write-HflSummaryLine {
   )
   $message = "${Key}: ${Value}"
   if (-not $QuietFooter) {
-    Write-Host ("  {0,-13} {1}" -f $Key, $Value)
+    $labelWidth = if ($Command -eq 'uninstall') { 16 } else { 13 }
+    Write-Host ("  {0,-$labelWidth} {1}" -f $Key, $Value)
   }
   Write-HflInstallLogLine "[$(Get-HflLogTimestamp)] [INFO ] $message"
 }
@@ -595,7 +605,13 @@ function Write-HflFooter {
     'uninstall' {
       Write-HflDisplayLine "Uninstallation completed successfully"
       Write-HflDisplayLine ("=" * 64)
-      Write-HflDisplayLine "  HyperFileLens Agent removed from this host."
+      Write-HflDisplayLine "  The Agent service and binaries have been removed."
+      if ($KeepData -or $KeepInstallationIdentity) {
+        Write-HflDisplayLine "  Local Agent data was preserved."
+      }
+      else {
+        Write-HflDisplayLine "  Final local file cleanup continues after install.cmd exits."
+      }
       Write-HflDisplayLine "  The local uninstall does not change the console record."
     }
     'status' {
@@ -1647,7 +1663,12 @@ function Stop-HflAgentProcesses {
       Write-HflWarn "process $name still running after stop attempts ($Reason)"
     }
     else {
-      Write-HflOk "stopped $name process(es) ($Reason)"
+      if ($Reason -eq 'uninstall') {
+        Write-HflOk "stopped $name process(es)"
+      }
+      else {
+        Write-HflOk "stopped $name process(es) ($Reason)"
+      }
     }
   }
 }
@@ -1776,7 +1797,12 @@ exit 0
   Start-Process -FilePath 'powershell.exe' -ArgumentList @(
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $runner
   ) | Out-Null
-  Write-HflOk "scheduled removal of $target (after install.cmd exits)"
+  if ($Command -eq 'uninstall') {
+    Write-HflOk "scheduled removal of $target after install.cmd exits"
+  }
+  else {
+    Write-HflOk "scheduled removal of $target (after install.cmd exits)"
+  }
 }
 
 function Install-HflService {
@@ -2261,7 +2287,12 @@ function Write-AgentEnv {
 function Remove-HflInstallFile {
   param([Parameter(Mandatory = $true)][string]$Path)
   if (-not (Test-Path -LiteralPath $Path)) {
-    Write-HflSkip "remove $Path (not present)"
+    if ($Command -eq 'uninstall') {
+      Write-HflSkip "$Path was not present"
+    }
+    else {
+      Write-HflSkip "remove $Path (not present)"
+    }
     return
   }
   Remove-Item -Force -LiteralPath $Path -ErrorAction SilentlyContinue
@@ -2637,12 +2668,15 @@ function Invoke-Uninstall {
   if ($preserveData -and (-not $KeepInstallationIdentity)) {
     Write-HflLog -Level 'STEP ' -Message "Retiring the local installation identity."
     $retireOutput = @(& $agentBinary config retire-installation --data-dir $dataRoot 2>&1)
+    $retireExitCode = $LASTEXITCODE
     foreach ($line in $retireOutput) {
       $text = [string]$line
       Write-HflDetailLine $text
-      if (-not $QuietFooter) { Write-Host $text }
     }
-    if ($LASTEXITCODE -ne 0) {
+    if ($retireExitCode -ne 0) {
+      foreach ($line in $retireOutput) {
+        Write-HflLog -Level 'FAIL ' -Message ([string]$line)
+      }
       throw "Failed to retire the local installation identity; Agent files and data were preserved for retry."
     }
     Write-HflOk "Local installation identity retired; the existing console record is preserved and the next installation will register a new record."
@@ -2659,7 +2693,7 @@ function Invoke-Uninstall {
   Remove-HflInstallFile (Join-Path $InstallRoot "uninstall.cmd")
   Remove-HflInstallFile $ManifestFile
   Remove-HflInstallFile $InstalledVersionFile
-  Write-HflSkip "remove $(Join-Path $InstallRoot 'install.cmd') (deferred; install.cmd is running this script)"
+  Write-HflSkip "The install.cmd wrapper will be removed after it exits"
 
   if (-not $preserveData) {
     Remove-HflInstallFile $envFile
@@ -2725,12 +2759,15 @@ function Invoke-Uninstall {
 
   Write-HflSection "Verifying"
   Write-HflOk "Agent service and installed binaries were removed"
-  Write-HflOk "Final file cleanup is scheduled and finishes in a few seconds"
+  Write-HflOk "Final file cleanup was scheduled"
   Write-HflSection "Uninstallation summary"
   Write-HflSummaryLine "Status" (
     $(if ($preserveData) { "uninstalled" } else { "uninstalled (final file cleanup scheduled)" })
   )
-  Write-HflSummaryLine "Console record" "not changed by local uninstall"
+  Write-HflSummaryLine "Data removal" (
+    $(if ($preserveData) { "preserved at $dataRoot" } else { "scheduled for $deferredRemovalTarget" })
+  )
+  Write-HflSummaryLine "Console record" "unchanged"
   Write-HflFooter -Outcome uninstall
   Release-HflLifecycleLock
   Stop-HflUninstallLog -ExitCode 0

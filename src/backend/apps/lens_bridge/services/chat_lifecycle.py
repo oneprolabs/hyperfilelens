@@ -1203,38 +1203,6 @@ def force_delete_private_copilot_chat(
     if not can_force_delete_private_chat(locked):
         raise ValidationError(unavailable_error)
 
-    if (knowledge_source.teardown_state_json or {}).get("shared_chat_resources"):
-        from apps.lens_bridge.services.knowledge_source_teardown import (
-            _assistant_uuids_for_knowledge_source,
-        )
-
-        # Force Cleanup still skips the Gateway workspace. First ensure that
-        # SourceLens has atomically stopped new sessions and found no existing
-        # active sessions from any user; never archive based on HFL rows alone.
-        for assistant_uuid in sorted(
-            _assistant_uuids_for_knowledge_source(knowledge_source),
-            key=str,
-        ):
-            try:
-                archived = sl_client.request_json(
-                    "POST",
-                    f"/api/lens/assistants/{assistant_uuid}/archive-if-unused/",
-                )
-            except sl_client.LensBridgeError as exc:
-                if exc.status_code == 409:
-                    raise ValidationError(
-                        {
-                            "force_delete": (
-                                "Other SourceLens conversations still use this Chat data."
-                            )
-                        }
-                    ) from exc
-                raise
-            if not isinstance(archived, dict) or archived.get("status") != "archived":
-                raise sl_client.LensBridgeError(
-                    "SourceLens did not confirm safe Assistant archival."
-                )
-
     now = timezone.now()
     remote_resources = {
         "run_uuid": str(locked.active_run_uuid or ""),
@@ -3705,14 +3673,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
                     _delete_sl_assistant,
                 )
 
-                if ks is not None and (ks.teardown_state_json or {}).get(
-                    "shared_chat_resources"
-                ):
-                    _delete_sl_assistant(
-                        assistant_uuid, guard_active_sessions=True
-                    )
-                else:
-                    _delete_sl_assistant(assistant_uuid)
+                _delete_sl_assistant(assistant_uuid)
                 assistant_access.soft_delete_assistant_link(org, assistant_uuid)
             except Exception as exc:
                 failed_assistant_uuids.append(assistant_uuid)

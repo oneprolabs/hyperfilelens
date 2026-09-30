@@ -261,36 +261,6 @@ function handleAction(command: string, row: SessionRow) {
                 <template #dropdown>
                   <ElDropdownMenu>
                     <ElDropdownItem
-                      v-if="row.lifecycle_status === 'ready' && row.knowledge_source != null && row.sl_assistant_uuid"
-                      class="copilot-session-menu__new-from"
-                      command="new-from"
-                      :icon="Plus"
-                      :disabled="newFromId === row.id || ['pending', 'running'].includes(row.data_update?.status || '')"
-                    >
-                      {{ t('insight.copilot.newFromChat') }}
-                    </ElDropdownItem>
-                    <ElDropdownItem
-                      v-if="row.lifecycle_status === 'ready' && row.knowledge_source != null && row.backup_config_id != null"
-                      class="copilot-session-menu__update-data"
-                      command="update-data"
-                      :icon="RotateCcw"
-                      :disabled="['pending', 'running'].includes(row.data_update?.status || '')"
-                    >
-                      {{ row.data_update?.status === 'failed'
-                        ? t('insight.copilot.retryDataUpdate')
-                        : t('insight.copilot.updateChatData') }}
-                    </ElDropdownItem>
-                    <ElDropdownItem
-                      v-if="row.lifecycle_status === 'ready'"
-                      class="copilot-session-menu__share"
-                      command="share"
-                      :icon="Share2"
-                      :disabled="!sessionHasShareableAnswer(row)"
-                      :title="!sessionHasShareableAnswer(row) ? t('insight.copilot.shareUnavailable') : ''"
-                    >
-                      {{ t('insight.copilot.share') }}
-                    </ElDropdownItem>
-                    <ElDropdownItem
                       class="copilot-session-menu__rename"
                       command="rename"
                       :icon="Pencil"
@@ -304,6 +274,38 @@ function handleAction(command: string, row: SessionRow) {
                       :icon="row.pinned_at ? PinOff : Pin"
                     >
                       {{ row.pinned_at ? t('insight.copilot.unpinSession') : t('insight.copilot.pinSession') }}
+                    </ElDropdownItem>
+                    <ElDropdownItem
+                      v-if="row.lifecycle_status === 'ready'"
+                      class="copilot-session-menu__share"
+                      command="share"
+                      :icon="Share2"
+                      :disabled="!sessionHasShareableAnswer(row)"
+                      :title="!sessionHasShareableAnswer(row) ? t('insight.copilot.shareUnavailable') : ''"
+                    >
+                      {{ t('insight.copilot.share') }}
+                    </ElDropdownItem>
+                    <ElDropdownItem
+                      v-if="row.lifecycle_status === 'ready' && row.knowledge_source != null && row.sl_assistant_uuid"
+                      class="copilot-session-menu__new-from"
+                      command="new-from"
+                      :icon="Plus"
+                      :disabled="newFromId === row.id || ['pending', 'running'].includes(row.data_update?.status || '')"
+                      divided
+                    >
+                      {{ t('insight.copilot.newFromChat') }}
+                    </ElDropdownItem>
+                    <ElDropdownItem
+                      v-if="row.lifecycle_status === 'ready' && row.knowledge_source != null && row.backup_config_id != null"
+                      class="copilot-session-menu__update-data"
+                      command="update-data"
+                      :icon="RotateCcw"
+                      :disabled="['pending', 'running'].includes(row.data_update?.status || '')"
+                      :divided="!row.sl_assistant_uuid"
+                    >
+                      {{ row.data_update?.status === 'failed'
+                        ? t('insight.copilot.retryDataUpdate')
+                        : t('insight.copilot.updateChatData') }}
                     </ElDropdownItem>
                     <ElDropdownItem
                       v-if="sessionIsRetryable(row)"

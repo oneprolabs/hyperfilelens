@@ -2342,54 +2342,17 @@ class CopilotChatTeardownTests(TestCase):
         return_value=False,
     )
     @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")
-    def test_shared_force_cleanup_requires_global_safe_archive(
+    def test_shared_force_cleanup_skips_remote_assistant_archive(
         self, request_json, _agent_ws_routable
     ):
         self._prepare_shared_force_cleanup()
-        assistant_uuid = self.knowledge_source.sl_assistant_uuid
-        request_json.return_value = {"status": "archived"}
 
         result = chat_lifecycle.force_delete_private_copilot_chat(
             self.session, requested_by=self.user
         )
 
-        request_json.assert_called_once_with(
-            "POST",
-            f"/api/lens/assistants/{assistant_uuid}/archive-if-unused/",
-        )
         self.assertEqual(result.lifecycle_status, LensSessionLink.LifecycleStatus.DELETED)
-
-    @mock.patch(
-        "apps.node.services.internal.node_registry.agent_ws_routable",
-        return_value=False,
-    )
-    @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")
-    def test_shared_force_cleanup_keeps_resources_when_external_session_exists(
-        self, request_json, _agent_ws_routable
-    ):
-        self._prepare_shared_force_cleanup()
-        conflict = sl_client.LensBridgeError("ASSISTANT_HAS_ACTIVE_SESSIONS")
-        conflict.status_code = 409
-        request_json.side_effect = conflict
-
-        with self.assertRaisesMessage(
-            ValidationError, "Other SourceLens conversations"
-        ):
-            chat_lifecycle.force_delete_private_copilot_chat(
-                self.session, requested_by=self.user
-            )
-
-        self.session.refresh_from_db()
-        self.knowledge_source.refresh_from_db()
-        self.workspace_binding.refresh_from_db()
-        self.assertEqual(
-            self.session.lifecycle_status, LensSessionLink.LifecycleStatus.DELETING
-        )
-        self.assertEqual(
-            self.knowledge_source.lifecycle_status,
-            LensKnowledgeSource.LifecycleStatus.DELETING,
-        )
-        self.assertFalse(self.workspace_binding.is_deleted)
+        request_json.assert_not_called()
 
     @mock.patch(
         "apps.node.services.internal.node_registry.agent_ws_routable",
