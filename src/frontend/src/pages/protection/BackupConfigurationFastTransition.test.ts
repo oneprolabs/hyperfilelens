@@ -173,11 +173,13 @@ describe('backup configuration fast transition', () => {
     expect(page).toContain('refreshBackupConfigs(signal, { preserveOnError: true })')
   })
 
-  it('waits for created repository metadata before entering Step 3', () => {
+  it('waits for created repository and binding details before entering Step 3', () => {
     const merge = sourceBetween(page, 'async function mergeCreatedBackupConfigs', 'let createdBackupRefresh')
     const finish = sourceBetween(page, 'async function finishCreateAndGoToStep3', 'function onCreateBackupPartial')
 
-    expect(merge).toContain('await hydrateCreatedConfigRepositories(items)')
+    expect(merge).toContain('await Promise.all([')
+    expect(merge).toContain('hydrateCreatedConfigRepositories(items)')
+    expect(merge).toContain('hydrateCreatedConfigBindings(items)')
     expect(finish).toContain('const sourceIds = await mergeCreatedBackupConfigs(payload)')
     expect(finish.indexOf('enterStartBackupStep')).toBeGreaterThan(finish.indexOf('await mergeCreatedBackupConfigs'))
   })
