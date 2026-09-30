@@ -24,9 +24,26 @@ run_success_case() (
 run_success_case >"${tmp}/success.out" 2>&1
 success_log="${tmp}/success/logs/install.log"
 grep -F 'HyperFileLens Source Host Installer' "${tmp}/success.out" >/dev/null
+grep -Fx ' _   _                       _____ _ _      _' \
+	"${tmp}/success.out" >/dev/null
+grep -Fx '| | | |_   _ _ __   ___ _ __|  ___(_) | ___| |    ___ _ __  ___' \
+	"${tmp}/success.out" >/dev/null
+grep -Fx '       |___/|_|            INSTALLER' \
+	"${tmp}/success.out" >/dev/null
 grep -F 'Installation completed successfully' "${tmp}/success.out" >/dev/null
 grep -F 'HyperFileLens Source Host Installer' "${success_log}" >/dev/null
 grep -F 'Installation completed successfully' "${success_log}" >/dev/null
+
+(
+	# The same wordmark must center longer lifecycle captions as well.
+	# shellcheck disable=SC1090
+	source <(sed '/^bundle_agent()/,$d' "${installer}")
+	begin_install_log "${tmp}/uninstaller" "uninstall"
+	hfl_print_banner "Source Host" "Uninstaller"
+	finish_install_log 0
+) >"${tmp}/uninstaller.out" 2>&1
+grep -Fx '       |___/|_|           UNINSTALLER' \
+	"${tmp}/uninstaller.out" >/dev/null
 
 role_labels="$({
 	# shellcheck disable=SC1090

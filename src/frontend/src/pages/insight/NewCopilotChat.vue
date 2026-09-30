@@ -9,9 +9,11 @@ import {
   FolderOpen,
   LoaderCircle,
   MessageSquare,
+  Monitor,
   Plus,
   RefreshCw,
-  TextCursorInput,
+  Search,
+  Share2,
   Trash2,
   TriangleAlert,
 } from 'lucide-vue-next'
@@ -53,6 +55,8 @@ type SubmitBlocker = {
 const sourceType = ref<KnowledgeSourceType>('backup_source')
 const editingId = ref<number | null>(null)
 const submitting = ref(false)
+const sourceSearchText = ref('')
+const snapshotSearchText = ref('')
 const gatewayRefreshing = ref(false)
 const gatewayOptionsResolved = ref(false)
 const gatewayOptionsLoadFailed = ref(false)
@@ -135,6 +139,15 @@ const snapshotGatewayLinkId = computed(() => {
 const {
   loading,
   snapshotLoading,
+  sourcePickerLoading,
+  sourcePickerError,
+  snapshotPickerError,
+  sourcePickerCount,
+  snapshotPickerCount,
+  loadedSourceCount,
+  loadedSnapshotCount,
+  sourcePickerHasMore,
+  snapshotPickerHasMore,
   selectedBackupConfigId,
   snapshotPickerValue,
   backupSourceOptions,
@@ -148,6 +161,10 @@ const {
   backupScopeTreeRevision,
   backupScopeBrowseLoading,
   loadSnapshots,
+  loadMorePickerSources,
+  loadMorePickerSnapshots,
+  searchPickerSources,
+  searchPickerSnapshots,
   loadBackupScopePickerNode,
   setBackupScopePickerOpen,
   addBackupScopeEntry,
@@ -160,6 +177,7 @@ const {
 } = useKnowledgeSourceForm(editingId, sourceType, {
   snapshotGatewayLinkId,
   snapshotSelectionMode: 'concrete',
+  paginatedSnapshotPicker: true,
 })
 
 const sourceScopes = computed(() => backupScopeEntries.value
@@ -203,6 +221,9 @@ const selectedGateway = computed(() => gatewayMode.value === 'auto'
 const selectedBackupSource = computed(() => backupSourceOptions.value.find(
   (row) => row.backupConfigId === selectedBackupConfigId.value,
 ) ?? null)
+watch(selectedBackupConfigId, () => {
+  snapshotSearchText.value = ''
+})
 const selectedSnapshot = computed(() => snapshotsForSelectedBackupSource.value.find(
   (row) => row.id === effectiveSnapshotId.value,
 ) ?? null)
@@ -331,14 +352,21 @@ const submitBlocker = computed<SubmitBlocker | null>(() => {
   return null
 })
 const footerSubmitBlockReason = computed(() => (
-  submitBlocker.value?.code === 'public_gateway'
+  submitBlocker.value?.code === 'backup_source'
+    || submitBlocker.value?.code === 'public_gateway'
+    || (
+      submitBlocker.value?.code === 'private_gateway'
+      && gatewayMode.value === 'manual'
+      && privateGatewayStatusMessage.value
+      && !gatewayRefreshing.value
+    )
     ? ''
     : submitBlocker.value?.message ?? ''
 ))
 
-function snapshotOptionLabel(row: { finished_at?: string | null; started_at?: string | null; created_at: string; total_size_bytes: number }) {
+function snapshotOptionLabel(row: { snapshot_uid: string; finished_at?: string | null; started_at?: string | null; created_at: string; total_size_bytes: number }) {
   const time = row.finished_at || row.started_at || row.created_at
-  return `${time ? formatLocalDateTime(time) : '—'} · ${formatBytes(row.total_size_bytes)}`
+  return `${row.snapshot_uid} · ${time ? formatLocalDateTime(time) : '—'} · ${formatBytes(row.total_size_bytes)}`
 }
 
 function pathCountLabel(count: number): string {
@@ -405,8 +433,12 @@ function organizationUsedBytes(
 }
 
 function syncBackupScopePickerWidth() {
-  const input = backupScopeStackRef.value?.querySelector<HTMLElement>('.new-chat-scope-input')
-  if (input) backupScopePickerWidth.value = Math.round(input.getBoundingClientRect().width)
+  const stack = backupScopeStackRef.value
+  const input = stack?.querySelector<HTMLElement>('.new-chat-scope-input')
+  if (!stack || !input) return
+  // Align with the Path field, but extend through Selected Data and Actions.
+  const width = stack.getBoundingClientRect().right - input.getBoundingClientRect().left - 14
+  if (width > 0) backupScopePickerWidth.value = Math.round(width)
 }
 
 async function refreshGatewayOptions(showFeedback = true) {
@@ -560,15 +592,71 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     <ElSelect
                       id="copilot-backup-source"
                       v-model="selectedBackupConfigId"
-                      filterable
+                      :loading="sourcePickerLoading"
                       :placeholder="t('insight.copilot.backupSourcePlaceholder')"
                     >
+                      <template #header>
+                        <ElInput
+                          v-model="sourceSearchText"
+                          clearable
+                          class="new-chat-picker-search"
+                          :placeholder="t('insight.copilot.searchBackupSource')"
+                          :aria-label="t('insight.copilot.searchBackupSource')"
+                          @input="searchPickerSources"
+                        >
+                          <template #prefix>
+                            <Search
+                              :size="16"
+                              class="hfl-list-search__icon"
+                              aria-hidden="true"
+                            />
+                          </template>
+                        </ElInput>
+                      </template>
+                      <template #label="{ label }">
+                        <span
+                          v-if="selectedBackupSource"
+                          class="new-chat-source-choice"
+                        >
+                          <component
+                            :is="selectedBackupSource.sourceType === 'nas' ? Share2 : Monitor"
+                            :size="16"
+                            aria-hidden="true"
+                          />
+                          <span class="new-chat-source-choice__name">{{ selectedBackupSource.label }}</span>
+                          <span class="new-chat-source-choice__address">{{ selectedBackupSource.sourceAddress || '—' }}</span>
+                        </span>
+                        <span v-else>{{ label }}</span>
+                      </template>
                       <ElOption
                         v-for="row in backupSourceOptions"
                         :key="row.backupConfigId"
-                        :label="row.label"
+                        :label="[row.label, row.sourceAddress].filter(Boolean).join(' · ')"
                         :value="row.backupConfigId"
-                      />
+                      >
+                        <span class="new-chat-source-choice">
+                          <component
+                            :is="row.sourceType === 'nas' ? Share2 : Monitor"
+                            :size="16"
+                            aria-hidden="true"
+                          />
+                          <span class="new-chat-source-choice__name">{{ row.label }}</span>
+                          <span class="new-chat-source-choice__address">{{ row.sourceAddress || '—' }}</span>
+                        </span>
+                      </ElOption>
+                      <template #footer>
+                        <div class="new-chat-picker-footer">
+                          <span>{{ loadedSourceCount }} / {{ sourcePickerCount }}</span>
+                          <button
+                            v-if="sourcePickerHasMore || sourcePickerError"
+                            type="button"
+                            :disabled="sourcePickerLoading"
+                            @click.stop="loadMorePickerSources"
+                          >
+                            {{ t(sourcePickerError ? 'common.retry' : 'insight.copilot.loadMore') }}
+                          </button>
+                        </div>
+                      </template>
                     </ElSelect>
                     <p class="fullscreen-form-field__hint">
                       {{ t('insight.copilot.backupSourceHint') }}
@@ -586,6 +674,25 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       :disabled="!selectedBackupConfigId"
                       :placeholder="t('insight.copilot.snapshotPlaceholder')"
                     >
+                      <template #header>
+                        <ElInput
+                          v-model="snapshotSearchText"
+                          clearable
+                          class="new-chat-picker-search"
+                          inputmode="text"
+                          :placeholder="t('insight.copilot.searchSnapshotId')"
+                          :aria-label="t('insight.copilot.searchSnapshotId')"
+                          @input="searchPickerSnapshots"
+                        >
+                          <template #prefix>
+                            <Search
+                              :size="16"
+                              class="hfl-list-search__icon"
+                              aria-hidden="true"
+                            />
+                          </template>
+                        </ElInput>
+                      </template>
                       <ElOption
                         v-if="!concreteSnapshotSelection"
                         :label="t('insight.copilot.latestSnapshot')"
@@ -597,6 +704,19 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                         :label="snapshotOptionLabel(row)"
                         :value="row.id"
                       />
+                      <template #footer>
+                        <div class="new-chat-picker-footer">
+                          <span>{{ loadedSnapshotCount }} / {{ snapshotPickerCount }}</span>
+                          <button
+                            v-if="snapshotPickerHasMore || snapshotPickerError"
+                            type="button"
+                            :disabled="snapshotLoading"
+                            @click.stop="loadMorePickerSnapshots"
+                          >
+                            {{ t(snapshotPickerError ? 'common.retry' : 'insight.copilot.loadMore') }}
+                          </button>
+                        </div>
+                      </template>
                     </ElSelect>
                     <p class="fullscreen-form-field__hint">
                       {{ t('insight.copilot.snapshotHint') }}
@@ -618,14 +738,13 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       class="new-chat-scope-stack__header"
                       aria-hidden="true"
                     >
-                      <span /><span>{{ t('insight.copilot.path') }}</span><span>{{ t('insight.copilot.selectedData') }}</span><span>{{ t('insight.copilot.actions') }}</span>
+                      <span>{{ t('insight.copilot.path') }}</span><span>{{ t('insight.copilot.selectedData') }}</span><span>{{ t('insight.copilot.actions') }}</span>
                     </div>
                     <div
-                      v-for="(scopeEntry, scopeIndex) in backupScopeEntries"
+                      v-for="scopeEntry in backupScopeEntries"
                       :key="scopeEntry.id"
                       class="new-chat-scope-row"
                     >
-                      <span class="new-chat-scope-row__index">{{ String(scopeIndex + 1).padStart(2, '0') }}</span>
                       <HflPopover
                         :visible="isBackupScopePickerOpen(scopeEntry.id)"
                         trigger="click"
@@ -646,11 +765,9 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                             @blur="validateBackupScopeEntryOnBlur(scopeEntry.id)"
                             @keydown.enter.prevent="validateBackupScopeEntry(scopeEntry.id)"
                           >
-                            <template #prefix>
-                              <TextCursorInput :size="14" />
-                            </template>
                             <template #append>
                               <ElButton
+                                class="new-chat-scope-input__browse"
                                 :aria-label="t('insight.copilot.browseBackupContent')"
                                 :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0"
                                 @click.stop="setBackupScopePickerOpen(scopeEntry.id, !isBackupScopePickerOpen(scopeEntry.id))"
@@ -713,6 +830,9 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       ><LoaderCircle v-if="['calculating', 'waiting'].includes(selectionStateForScope(scopeEntry.id).status)" class="new-chat-loading-icon" :class="{ 'is-waiting': selectionStateForScope(scopeEntry.id).status === 'waiting' }" :size="13" aria-hidden="true" />{{ scopeDataSummary(scopeEntry.id) }}</span>
                       <ElButton
                         type="danger"
+                        text
+                        circle
+                        size="small"
                         class="new-chat-scope-row__remove"
                         :disabled="backupScopeEntries.length <= 1"
                         :aria-label="t('insight.copilot.removeScope')"
@@ -732,13 +852,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     </div>
                   </div>
                   <p
-                    v-if="!effectiveSnapshotId"
-                    class="fullscreen-form-field__hint new-chat-scope-hint"
-                  >
-                    {{ t('insight.copilot.selectSnapshotBrowseHint') }}
-                  </p>
-                  <p
-                    v-else-if="snapshotDirectories.length === 0"
+                    v-if="effectiveSnapshotId && snapshotDirectories.length === 0"
                     class="fullscreen-form-field__hint new-chat-scope-hint new-chat-hint--warn"
                   >
                     {{ t('insight.copilot.noSnapshotEntries') }}
@@ -749,19 +863,13 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                   >
                     {{ t('insight.copilot.selectScopesHint') }}
                   </p>
-                  <p class="fullscreen-form-field__hint new-chat-scope-hint">
-                    {{ t('insight.copilot.documentFormatHint') }}
-                  </p>
-                  <p class="fullscreen-form-field__hint new-chat-scope-hint">
-                    {{ t('insight.copilot.dataOriginHint') }}
-                  </p>
                   <div
                     v-if="sourceScopes.length"
                     class="new-chat-selection-summary"
                     aria-live="polite"
                   >
                     <div class="new-chat-selection-summary__head">
-                      <strong>{{ t('insight.copilot.selectedData') }}</strong>
+                      <strong>{{ t('insight.copilot.selectionSummary') }}</strong>
                       <span>{{ pathCountLabel(sourceScopes.length) }}</span>
                     </div>
                     <dl>
@@ -769,14 +877,14 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                         <dt>{{ t('insight.copilot.files') }}</dt>
                         <dd>
                           {{ selectionTotals ? n(selectionTotals.fileCount) : (selectionCalculationStatus === 'error' ? t('insight.copilot.unavailable') : t('insight.copilot.calculating')) }}
-                          / {{ quotaCount(selectionAdmission?.selection_limits.max_files) }}
+                          <span class="new-chat-selection-summary__limit">/ {{ quotaCount(selectionAdmission?.selection_limits.max_files) }}</span>
                         </dd>
                       </div>
                       <div>
                         <dt>{{ t('insight.copilot.selectedSize') }}</dt>
                         <dd>
                           {{ selectionTotals ? formatBytes(selectionTotals.sizeBytes) : (selectionCalculationStatus === 'error' ? t('insight.copilot.unavailable') : t('insight.copilot.calculating')) }}
-                          / {{ quotaBytes(selectionAdmission?.selection_limits.max_bytes) }}
+                          <span class="new-chat-selection-summary__limit">/ {{ quotaBytes(selectionAdmission?.selection_limits.max_bytes) }}</span>
                         </dd>
                       </div>
                       <template v-if="selectionAdmission?.organization_capacity.applicable">
@@ -898,7 +1006,8 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                           class="new-chat-gateway-select"
                           filterable
                           :loading="gatewayRefreshing"
-                          :no-data-text="privateGatewayStatusMessage || t('insight.copilot.gatewayPrivateNoOnline')"
+                          :disabled="privateGateways.length === 0"
+                          :no-data-text="t('insight.copilot.gatewayPrivateNoOnline')"
                           placement="top-start"
                           :fallback-placements="['bottom-start', 'top-end', 'bottom-end']"
                           :placeholder="t('insight.copilot.gatewayPrivateSelectPlaceholder')"
@@ -940,7 +1049,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                         </ElButton>
                       </div>
                       <p
-                        v-if="!gatewayRefreshing && privateGatewayStatusMessage"
+                        v-if="gatewayMode === 'manual' && !gatewayRefreshing && privateGatewayStatusMessage"
                         class="new-chat-hint new-chat-hint--warn"
                       >
                         {{ privateGatewayStatusMessage }}
@@ -1008,9 +1117,6 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     class="add-form-preview-row__value"
                     :class="{ 'add-form-preview-row__value--empty': !selectedBackupSource }"
                   >{{ selectedBackupSource?.label || '—' }}</span>
-                </div>
-                <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">{{ t('insight.copilot.dataOriginLabel') }}</span><span class="add-form-preview-row__value">{{ t('insight.copilot.dataOriginProtected') }}</span>
                 </div>
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('insight.copilot.bindingSnapshot') }}</span><span
@@ -1087,24 +1193,41 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-copilot-chat-page .fullscreen-form-step-stack { padding-bottom: 28px; }
 .new-chat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; }
 .new-chat-grid :deep(.el-select), .new-chat-gateway-select { width: 100%; }
+.new-chat-source-choice { display: inline-flex; width: 100%; min-width: 0; align-items: center; gap: 8px; white-space: nowrap; }
+.new-chat-source-choice svg { flex: none; color: #4e5969; }
+.new-chat-source-choice__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.new-chat-source-choice__address { flex: 0 1 auto; max-width: 45%; min-width: 0; overflow: hidden; color: #86909c; font-size: 12px; text-overflow: ellipsis; }
+.new-chat-picker-search { width: 100%; }
+.new-chat-picker-search :deep(.el-input__wrapper) { border-radius: 8px; box-shadow: 0 0 0 1px rgba(203, 213, 225, .95) inset; }
+.new-chat-picker-search :deep(.el-input__wrapper.is-focus) { box-shadow: 0 0 0 1px var(--color-primary, #6d5ef6) inset; }
+.new-chat-picker-footer { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px; color: var(--color-text-tertiary, #86909c); font-size: 12px; }
+.new-chat-picker-footer button { border: 0; background: transparent; color: var(--color-primary, #6d5ef6); cursor: pointer; }
+.new-chat-picker-footer button:disabled { cursor: default; opacity: .5; }
 .new-chat-section-head { margin-bottom: 24px; }
 .new-chat-section-head .fullscreen-form-section__title { display: flex; align-items: center; gap: 8px; margin: 0; }
 .new-chat-analysis-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 0; padding: 0; border: 0; }
-.new-chat-analysis-option { display: flex; min-height: 88px; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid #e5e6eb; border-radius: 10px; background: #fff; cursor: pointer; transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }
-.new-chat-analysis-option:hover { border-color: #8aaeff; background: #f7faff; }
-.new-chat-analysis-option--selected { border-color: #165dff; background: #f5f8ff; box-shadow: 0 0 0 1px rgba(22, 93, 255, .12); }
-.new-chat-analysis-option input { width: 16px; height: 16px; margin-top: 2px; accent-color: #165dff; }
+.new-chat-analysis-option { display: flex; min-height: 88px; align-items: flex-start; gap: 12px; padding: 12px 14px; border: 1px solid var(--el-border-color, #dcdfe6); border-radius: 12px; background: var(--color-card-bg, #fff); cursor: pointer; transition: border-color .15s ease, background-color .15s ease; }
+.new-chat-analysis-option:hover { border-color: var(--color-primary, #6d5ef6); }
+.new-chat-analysis-option--selected { border-color: var(--color-primary, #6d5ef6); background: var(--color-primary-light, #f2f0fe); }
+.new-chat-analysis-option input { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--color-primary, #6d5ef6); }
 .new-chat-analysis-option span { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
-.new-chat-analysis-option strong { color: #1d2129; font-size: 14px; }
-.new-chat-analysis-option small { color: #86909c; font-size: 12px; line-height: 1.5; }
+.new-chat-analysis-option strong { color: var(--color-text-title, #1c1c26); font-size: 13px; }
+.new-chat-analysis-option small { color: var(--color-text-tertiary, #86909c); font-size: 12px; line-height: 1.5; }
 .new-chat-source-divider { height: 1px; margin: 26px 0 22px; background: #f2f3f5; }
 .new-chat-source-subsection__head { margin-bottom: 12px; }
 .new-chat-source-subsection__head h3 { margin: 0; }
-.new-chat-scope-stack { overflow: visible; border: 1px solid #e5e6eb; border-radius: 8px; background: #fff; }
-.new-chat-scope-stack__header, .new-chat-scope-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(150px, .55fr) 48px; gap: 8px; align-items: center; padding: 8px 16px 8px 10px; }
-.new-chat-scope-stack__header { color: #86909c; font-size: 12px; font-weight: 700; background: #f7f8fa; border-radius: 8px 8px 0 0; }
-.new-chat-scope-row { border-top: 1px solid #f2f3f5; }
-.new-chat-scope-row__index { color: #86909c; font-size: 12px; font-weight: 700; text-align: center; }
+.new-chat-scope-stack { overflow: visible; border: 1px solid var(--el-border-color, #dcdfe6); border-radius: 8px; background: var(--color-card-bg, #fff); }
+.new-chat-scope-stack__header, .new-chat-scope-row { display: grid; grid-template-columns: minmax(0, 50%) minmax(0, 1fr) 48px; gap: 10px; align-items: center; padding: 9px 14px; }
+.new-chat-scope-stack__header { border-bottom: 1px solid rgba(226, 232, 240, .95); background: transparent; color: rgb(71 85 105); font-size: 12px; font-weight: 700; }
+.new-chat-scope-row + .new-chat-scope-row { border-top: 1px solid var(--el-border-color-lighter, #ebeef5); }
+.new-chat-scope-input { width: 100%; min-width: 0; }
+.new-chat-scope-input :deep(.el-input__wrapper) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.new-chat-scope-input :deep(.el-input-group__append) { display: inline-flex; width: 40px; min-width: 40px; min-height: 32px; align-items: stretch; justify-content: stretch; overflow: hidden; padding: 0; border-radius: 0 var(--el-border-radius-base) var(--el-border-radius-base) 0; background: var(--color-card-bg, #fff); box-shadow: 0 0 0 1px var(--el-border-color) inset; }
+.new-chat-scope-input :deep(.new-chat-scope-input__browse) { display: inline-flex; width: 40px; min-width: 40px; height: 32px; min-height: 32px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 0; background: linear-gradient(180deg, rgba(239, 246, 255, .96), rgba(219, 234, 254, .86)); box-shadow: none; color: var(--color-primary, #6d5ef6); }
+.new-chat-scope-input :deep(.new-chat-scope-input__browse:hover:not(:disabled)), .new-chat-scope-input :deep(.new-chat-scope-input__browse:focus-visible) { background: linear-gradient(180deg, #dbeafe, rgba(191, 219, 254, .96)); color: var(--color-primary, #6d5ef6); }
+.new-chat-scope-input :deep(.new-chat-scope-input__browse:focus-visible) { outline: 2px solid var(--color-primary, #6d5ef6); outline-offset: -2px; }
+.new-chat-scope-input :deep(.new-chat-scope-input__browse:active:not(:disabled)) { background: #bfdbfe; }
+.new-chat-scope-input :deep(.new-chat-scope-input__browse:disabled) { background: var(--color-grey-1, #f7f8fa); color: var(--color-text-tertiary, #86909c); }
 .new-chat-scope-row__summary { min-width: 0; overflow: hidden; color: #4e5969; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .new-chat-scope-row__summary.is-waiting { color: var(--el-color-primary, #409eff); }
 .new-chat-loading-icon {
@@ -1121,9 +1244,9 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-scope-row__remove { width: 34px; height: 34px; padding: 0; justify-self: center; }
 .new-chat-scope-tree { min-width: 100%; }
 .new-chat-scope-tree__size { flex: 0 0 auto; color: #86909c; font-size: 12px; font-variant-numeric: tabular-nums; }
-.new-chat-scope-stack__add { display: flex; justify-content: center; padding: 8px 48px 10px; border-top: 1px solid #f2f3f5; }
-.new-chat-scope-stack__add button { display: inline-flex; width: 70%; min-height: 32px; align-items: center; justify-content: center; gap: 8px; margin: 0; padding: 0 12px; border: 1px dashed rgba(148, 163, 184, .8); border-radius: 8px; background: rgba(248, 250, 252, .72); color: #165dff; font-size: 13px; font-weight: 600; cursor: pointer; transition: border-color .16s ease, background .16s ease; }
-.new-chat-scope-stack__add button:hover:not(:disabled) { border-color: #165dff; background: rgba(239, 246, 255, .82); }
+.new-chat-scope-stack__add { display: grid; grid-template-columns: minmax(0, 50%) minmax(0, 1fr) 48px; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--el-border-color-lighter, #ebeef5); }
+.new-chat-scope-stack__add button { display: flex; grid-column: 1 / span 2; width: 70%; max-width: 100%; min-height: 32px; align-items: center; justify-self: center; justify-content: center; gap: 8px; margin: 0; border: 1px dashed rgba(148, 163, 184, .8); border-radius: 8px; background: rgba(248, 250, 252, .72); color: var(--color-primary, #6d5ef6); font-size: 13px; font-weight: 600; cursor: pointer; transition: border-color .16s ease, background .16s ease; }
+.new-chat-scope-stack__add button:hover:not(:disabled) { border-color: var(--color-primary, #6d5ef6); background: rgba(239, 246, 255, .82); }
 .new-chat-scope-stack__add button:disabled { cursor: not-allowed; opacity: .55; }
 .new-chat-scope-hint { margin-top: 8px; }
 .new-chat-selection-summary { margin-top: 14px; padding: 12px 14px; border: 1px solid #e5e6eb; border-radius: 8px; background: #f7f8fa; }
@@ -1131,8 +1254,9 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-selection-summary__head span { color: #86909c; font-size: 12px; }
 .new-chat-selection-summary dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin: 10px 0 0; }
 .new-chat-selection-summary dl div { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
-.new-chat-selection-summary dt { color: #86909c; font-size: 12px; }
-.new-chat-selection-summary dd { margin: 0; overflow: hidden; color: #1d2129; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.new-chat-selection-summary dt { color: rgb(71 85 105); font-size: 12px; font-weight: 400; }
+.new-chat-selection-summary dd { margin: 0; overflow: hidden; color: #1d2129; font-size: 13px; font-weight: 400; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.new-chat-selection-summary__limit { margin-left: 3px; color: var(--color-text-tertiary, #86909c); font-size: 12px; font-weight: 400; }
 .new-chat-selection-summary__status { margin: 10px 0 0; color: #4e5969; font-size: 12px; line-height: 1.5; }
 .new-chat-selection-summary__status:not(.is-error) {
   color: var(--el-color-primary, #409eff);
@@ -1154,15 +1278,16 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-gateway-warning svg { flex: 0 0 auto; margin-top: 1px; color: var(--color-warning); }
 .new-chat-gateway-warning span { min-width: 0; overflow-wrap: anywhere; }
 .new-chat-visual-warning { margin: 14px 0 0; padding: 9px 10px; border: 1px solid #ffe7ba; border-radius: 8px; background: #fffbe6; color: #ad6800; font-size: 12px; line-height: 1.5; }
-.new-chat-choice { display: flex; align-items: flex-start; gap: 12px; margin-top: 12px; padding: 13px; border: 1px solid #e5e6eb; border-radius: 8px; cursor: pointer; transition: border-color .15s, background .15s; }
-.new-chat-choice--selected { border-color: #165dff; background: #f2f6ff; }
-.new-chat-choice input { accent-color: #165dff; }
+.new-chat-choice { display: flex; align-items: flex-start; gap: 12px; margin-top: 12px; padding: 12px 14px; border: 1px solid var(--el-border-color, #dcdfe6); border-radius: 12px; background: var(--color-card-bg, #fff); cursor: pointer; transition: border-color .15s ease, background-color .15s ease; }
+.new-chat-choice:hover { border-color: var(--color-primary, #6d5ef6); }
+.new-chat-choice--selected { border-color: var(--color-primary, #6d5ef6); background: var(--color-primary-light, #f2f0fe); }
+.new-chat-choice input { accent-color: var(--color-primary, #6d5ef6); }
 .new-chat-choice span { display: grid; flex: 1; gap: 3px; }
-.new-chat-choice strong { color: #1d2129; font-size: 13px; }.new-chat-choice small { color: #86909c; font-size: 12px; }
+.new-chat-choice strong { color: var(--color-text-title, #1c1c26); font-size: 13px; }.new-chat-choice small { color: var(--color-text-tertiary, #86909c); font-size: 12px; }
 .new-chat-privacy-options { margin-top: -12px; }
 .new-chat-choice--private { display: block; cursor: default; }
 .new-chat-choice__radio { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
-.new-chat-choice__control { margin: 14px 0 0 26px; padding-top: 14px; border-top: 1px solid #dbe5ff; }
+.new-chat-choice__control { margin: 14px 0 0 26px; padding-top: 14px; border-top: 1px solid var(--el-border-color, #dcdfe6); }
 .new-chat-gateway-select-row { display: flex; align-items: center; gap: 8px; width: 100%; }
 .new-chat-gateway-select { flex: 1 1 auto; min-width: 0; }
 .new-chat-gateway-select-row__refresh { flex: 0 0 34px; }
@@ -1195,9 +1320,11 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
   .new-chat-grid { grid-template-columns: 1fr; }
   .new-chat-analysis-options { grid-template-columns: 1fr; }
   .new-chat-scope-stack__header { display: none; }
-  .new-chat-scope-row { grid-template-columns: 28px minmax(0, 1fr) 40px; }
-  .new-chat-scope-row__summary { grid-row: 2; grid-column: 2 / 4; }
-  .new-chat-scope-row__remove { grid-row: 1; grid-column: 3; }
+  .new-chat-scope-row { grid-template-columns: minmax(0, 1fr) 40px; }
+  .new-chat-scope-row__summary { grid-row: 2; grid-column: 1 / 3; }
+  .new-chat-scope-row__remove { grid-row: 1; grid-column: 2; }
+  .new-chat-scope-stack__add { grid-template-columns: minmax(0, 1fr) 40px; }
+  .new-chat-scope-stack__add button { grid-column: 1 / -1; }
   .new-chat-selection-summary dl { grid-template-columns: 1fr; }
 }
 </style>

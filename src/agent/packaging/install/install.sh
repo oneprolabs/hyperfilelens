@@ -972,7 +972,7 @@ hfl_emit_display_line() {
 }
 
 hfl_print_banner() {
-	local role="$1" operation="$2"
+	local role="$1" operation="$2" caption left caption_line
 	[[ "${QUIET_FOOTER}" -eq 0 ]] || return 0
 	if hfl_terminal_color_enabled stdout; then
 		printf '\033[1;35m' >&3
@@ -981,12 +981,15 @@ hfl_print_banner() {
 		hfl_emit_display_line "${line}"
 	done <<'BANNER'
  _   _                       _____ _ _      _
-| | | |_   _ _ __   ___ _ _|  ___(_) | ___| |    ___ _ __  ___
+| | | |_   _ _ __   ___ _ __|  ___(_) | ___| |    ___ _ __  ___
 | |_| | | | | '_ \ / _ \ '__| |_  | | |/ _ \ |   / _ \ '_ \/ __|
 |  _  | |_| | |_) |  __/ |  |  _| | | |  __/ |__|  __/ | | \__ \
 |_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/
-       |___/|_|                     INSTALLER
 BANNER
+	caption="$(printf '%s' "${operation}" | tr '[:lower:]' '[:upper:]')"
+	left=$(((64 - ${#caption}) / 2 - 15))
+	printf -v caption_line '       |___/|_|%*s%s' "${left}" '' "${caption}"
+	hfl_emit_display_line "${caption_line}"
 	if hfl_terminal_color_enabled stdout; then
 		printf '\033[0m' >&3
 	fi

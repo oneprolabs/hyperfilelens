@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   browseCopilotSnapshotDirectory: vi.fn(),
   createKnowledgeSource: vi.fn(),
   listBackupSourceSnapshots: vi.fn().mockResolvedValue({ count: 0, results: [] }),
+  listBackupSourcePickerSources: vi.fn().mockResolvedValue({ count: 0, results: [] }),
   warning: vi.fn(),
   error: vi.fn(),
   success: vi.fn(),
@@ -46,6 +47,7 @@ vi.mock('../lib/lensApi', () => ({
 vi.mock('../lib/protectionBackupConfigApi', () => ({
   getBackupSourceSnapshot: vi.fn(),
   listBackupSourceSnapshots: mocks.listBackupSourceSnapshots,
+  listBackupSourcePickerSources: mocks.listBackupSourcePickerSources,
 }))
 
 type KnowledgeSourceForm = ReturnType<typeof useKnowledgeSourceForm>
@@ -94,6 +96,7 @@ function snapshotFixture(): BackupSourceSnapshot {
 function mountForm(
   editingId: number | null = 1,
   snapshotSelectionMode?: 'concrete',
+  paginatedSnapshotPicker = false,
 ): { form: KnowledgeSourceForm; wrapper: VueWrapper } {
   let form!: KnowledgeSourceForm
   const wrapper = mount(defineComponent({
@@ -104,6 +107,7 @@ function mountForm(
         {
           snapshotGatewayLinkId: ref(17),
           ...(snapshotSelectionMode ? { snapshotSelectionMode } : {}),
+          paginatedSnapshotPicker,
         },
       )
       return () => h('div')
@@ -118,6 +122,137 @@ function mountForm(
 }
 
 describe('knowledge source backup scope validation', () => {
+  it('loads source pages without downloading all snapshots and searches server-side', async () => {
+    const { form, wrapper } = mountForm(null, 'concrete', true)
+    const source = (id: number) => ({
+      backup_config_id: id,
+      source_type: 'agent',
+      source_ref_id: id,
+      source_display_name: `Source ${id}`,
+      source_address: `192.0.2.${id}`,
+    })
+    try {
+      mocks.listBackupSourcePickerSources
+        .mockResolvedValueOnce({ count: 3, results: [source(1), source(2)] })
+        .mockResolvedValueOnce({ count: 3, results: [source(3)] })
+        .mockResolvedValueOnce({ count: 1, results: [source(2)] })
+      await form.loadSnapshots()
+      expect(form.backupSourceOptions.value.map((row) => row.backupConfigId)).toEqual([1, 2])
+      expect(form.sourcePickerHasMore.value).toBe(true)
+      await form.loadPickerSources(true)
+      expect(mocks.listBackupSourcePickerSources).toHaveBeenLastCalledWith(expect.objectContaining({
+        page: 2,
+      }))
+      form.selectedBackupConfigId.value = 1
+      await flushPromises()
+      form.searchPickerSources('192.0.2.2')
+      await vi.advanceTimersByTimeAsync(251)
+      expect(form.backupSourceOptions.value.map((row) => row.backupConfigId)).toEqual([1, 2])
+      expect(mocks.listBackupSourcePickerSources).toHaveBeenLastCalledWith(expect.objectContaining({
+        page: 1,
+        search: '192.0.2.2',
+      }))
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('loads snapshot pages by config and searches by the visible Snapshot ID', async () => {
+    const { form, wrapper } = mountForm(null, 'concrete', true)
+    const first = snapshotFixture()
+    const second = { ...snapshotFixture(), id: 72, snapshot_uid: 'bss-00214df23034b288b9c' }
+    try {
+      mocks.listBackupSourceSnapshots
+        .mockResolvedValueOnce({ count: 2, results: [first] })
+        .mockResolvedValueOnce({ count: 2, results: [second] })
+        .mockResolvedValueOnce({ count: 1, results: [second] })
+      form.selectedBackupConfigId.value = 42
+      await flushPromises()
+      expect(form.snapshotPickerValue.value).toBe(71)
+      expect(form.snapshotPickerHasMore.value).toBe(true)
+      await form.loadPickerSnapshots(true)
+      expect(form.snapshotsForSelectedBackupSource.value.map((row) => row.id)).toEqual([71, 72])
+      form.searchPickerSnapshots('bss-00214')
+      await vi.advanceTimersByTimeAsync(251)
+      expect(mocks.listBackupSourceSnapshots).toHaveBeenLastCalledWith(expect.objectContaining({
+        backup_config_id: 42,
+        snapshot_uid: 'bss-00214',
+        page: 1,
+      }))
+      expect(form.effectiveSnapshotId.value).toBe(71)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('ignores an older source search response after the query changes', async () => {
+    const { form, wrapper } = mountForm(null, 'concrete', true)
+    let resolveOld!: (value: { count: number; results: never[] }) => void
+    try {
+      mocks.listBackupSourcePickerSources
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+        .mockResolvedValueOnce({
+          count: 1,
+          results: [{
+            backup_config_id: 9,
+            source_type: 'nas',
+            source_ref_id: 9,
+            source_display_name: 'New NAS',
+            source_address: 'nas.example.internal',
+          }],
+        })
+      form.searchPickerSources('old')
+      await vi.advanceTimersByTimeAsync(251)
+      form.searchPickerSources('nas.example')
+      await vi.advanceTimersByTimeAsync(251)
+      resolveOld({ count: 0, results: [] })
+      await flushPromises()
+      expect(form.backupSourceOptions.value.map((row) => row.backupConfigId)).toEqual([9])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('allows retrying the same source page after a request failure', async () => {
+    const { form, wrapper } = mountForm(null, 'concrete', true)
+    try {
+      mocks.listBackupSourcePickerSources
+        .mockRejectedValueOnce(new Error('temporary error'))
+        .mockResolvedValueOnce({
+          count: 1,
+          results: [{
+            backup_config_id: 9,
+            source_type: 'nas',
+            source_ref_id: 9,
+            source_display_name: 'NAS',
+            source_address: 'nas.internal',
+          }],
+        })
+      await expect(form.loadSnapshots()).rejects.toThrow('temporary error')
+      expect(form.sourcePickerError.value).toBe(true)
+      form.loadMorePickerSources()
+      await flushPromises()
+      expect(form.sourcePickerError.value).toBe(false)
+      expect(form.backupSourceOptions.value[0].label).toBe('NAS')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('maps the source address into the Backup Source picker option', () => {
+    const { form, wrapper } = mountForm(null, 'concrete')
+    try {
+      form.snapshots.value = [{ ...snapshotFixture(), source_address: '192.0.2.10' }]
+      expect(form.backupSourceOptions.value[0]).toMatchObject({
+        label: 'test-source',
+        sourceType: 'agent',
+        sourceAddress: '192.0.2.10',
+      })
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers()

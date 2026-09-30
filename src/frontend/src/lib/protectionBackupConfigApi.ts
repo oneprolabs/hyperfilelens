@@ -155,6 +155,7 @@ export type BackupSourceSnapshot = {
   source_type: string
   source_ref_id: number
   source_display_name: string
+  source_address?: string
   backup_config_id: number
   backup_config_name: string
   repository_id: number
@@ -239,6 +240,7 @@ export type BackupSnapshotDownloadGroup = {
 export type BackupSourceSnapshotListParams = {
   page?: number
   page_size?: number
+  snapshot_id?: number
   snapshot_uid?: string
   search?: string
   source_type?: string
@@ -256,6 +258,14 @@ export type BackupSourceSnapshotListParams = {
 export type PagedResult<T> = {
   count: number
   results: T[]
+}
+
+export type BackupSourcePickerSource = {
+  backup_config_id: number
+  source_type: string
+  source_ref_id: number
+  source_display_name: string
+  source_address: string
 }
 
 export type BackupConfigResetResult = {
@@ -420,6 +430,17 @@ export async function listBackupSourceSnapshots(params?: BackupSourceSnapshotLis
   const qs = query(params as Record<string, string | number | undefined>)
   const path = qs ? `${sourceSnapshotBase}/?${qs}` : `${sourceSnapshotBase}/`
   return paged<BackupSourceSnapshot>(await api<unknown>(path, { ...init, headers: orgHeaders() }))
+}
+
+export async function listBackupSourcePickerSources(params: {
+  page: number
+  page_size: number
+  search?: string
+}): Promise<PagedResult<BackupSourcePickerSource>> {
+  const qs = query(params as Record<string, string | number | undefined>)
+  return paged<BackupSourcePickerSource>(
+    await api<unknown>(`${sourceSnapshotBase}/picker-sources/?${qs}`, { headers: orgHeaders() }),
+  )
 }
 
 /** Get backup source snapshot detail. */

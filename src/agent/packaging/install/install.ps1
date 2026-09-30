@@ -458,18 +458,19 @@ function Write-HflBanner {
   }
   $banner = @'
  _   _                       _____ _ _      _
-| | | |_   _ _ __   ___ _ _|  ___(_) | ___| |    ___ _ __  ___
+| | | |_   _ _ __   ___ _ __|  ___(_) | ___| |    ___ _ __  ___
 | |_| | | | | '_ \ / _ \ '__| |_  | | |/ _ \ |   / _ \ '_ \/ __|
 |  _  | |_| | |_) |  __/ |  |  _| | | |  __/ |__|  __/ | | \__ \
 |_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/
-       |___/|_|                     INSTALLER
 '@
-  if ($operation -eq 'Uninstaller') {
-    $banner = $banner.Replace('INSTALLER', 'UNINSTALLER')
-  }
   foreach ($line in ($banner -split "`r?`n")) {
     Write-HflDisplayLine $line
   }
+  $caption = if ($operation -eq 'Uninstaller') { 'UNINSTALLER' } else { 'INSTALLER' }
+  if ($operation -eq 'Upgrade') { $caption = 'UPGRADE' }
+  $tail = '       |___/|_|'
+  $captionColumn = [int][Math]::Floor((64 - $caption.Length) / 2)
+  Write-HflDisplayLine ($tail.PadRight($captionColumn) + $caption)
   Write-Host ""
   Write-HflDisplayLine "HyperFileLens $RoleName $operation"
   Write-HflDisplayLine ("-" * 64)

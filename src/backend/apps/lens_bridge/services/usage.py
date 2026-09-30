@@ -479,6 +479,11 @@ def _public_run_failure(status: str, raw_error: str) -> tuple[str, str]:
     normalized_error = str(raw_error or "").strip().upper()
     if normalized_status == "cancelled":
         return "RUN_CANCELLED", "The AI response was cancelled."
+    if "RUN_TOKEN_BUDGET_BUSY" in normalized_error:
+        return (
+            "AI_RUN_BUSY",
+            "The AI engine was busy processing this request. Please try again in a moment.",
+        )
     if "TIMEOUT" in normalized_error:
         return (
             "MODEL_TIMEOUT",

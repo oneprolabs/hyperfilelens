@@ -392,7 +392,10 @@ func TestInstallPs1DefersCompleteDataRootRemovalUntilInstallCmdExits(t *testing.
 func TestInstallPs1UninstallOutputDistinguishesScheduledCleanup(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	for _, want := range []string{
-		`$banner = $banner.Replace('INSTALLER', 'UNINSTALLER')`,
+		` _   _                       _____ _ _      _`,
+		`$caption = if ($operation -eq 'Uninstaller') { 'UNINSTALLER' } else { 'INSTALLER' }`,
+		`$captionColumn = [int][Math]::Floor((64 - $caption.Length) / 2)`,
+		`Write-HflDisplayLine ($tail.PadRight($captionColumn) + $caption)`,
 		`$labelWidth = if ($Command -eq 'uninstall') { 16 } else { 13 }`,
 		`Write-HflDisplayLine "  The Agent service and binaries have been removed."`,
 		`Write-HflDisplayLine "  Local Agent data was preserved."`,

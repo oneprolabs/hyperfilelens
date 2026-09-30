@@ -490,15 +490,19 @@ func printLifecycleBanner(role, operation string) {
 	}
 	bannerPrinted = true
 	columns, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS")))
-	if columns > 0 && columns < 96 {
-		fmt.Fprintln(os.Stdout, colorize(ansiBold+ansiMagenta, "HyperFileLens Installer"))
+	if columns > 0 && columns < 64 {
+		fmt.Fprintln(os.Stdout, colorize(ansiBold+ansiMagenta, "HyperFileLens "+operation))
 	} else {
-		fmt.Fprintln(os.Stdout, colorize(ansiBold+ansiMagenta, ` _   _                       _____ _ _      _
-| | | |_   _ _ __   ___ _ _|  ___(_) | ___| |    ___ _ __  ___
+		caption := strings.ToUpper(operation)
+		tail := "       |___/|_|"
+		padding := (64-len(caption))/2 - len(tail)
+		banner := ` _   _                       _____ _ _      _
+| | | |_   _ _ __   ___ _ __|  ___(_) | ___| |    ___ _ __  ___
 | |_| | | | | '_ \ / _ \ '__| |_  | | |/ _ \ |   / _ \ '_ \/ __|
 |  _  | |_| | |_) |  __/ |  |  _| | | |  __/ |__|  __/ | | \__ \
 |_| |_|\__, | .__/ \___|_|  |_|   |_|_|\___|_____\___|_| |_|___/
-       |___/|_|                     INSTALLER`))
+` + tail + strings.Repeat(" ", padding) + caption
+		fmt.Fprintln(os.Stdout, colorize(ansiBold+ansiMagenta, banner))
 	}
 	fmt.Fprintf(os.Stdout, "\nHyperFileLens %s %s\n", role, operation)
 	fmt.Fprintln(os.Stdout, strings.Repeat("-", 64))

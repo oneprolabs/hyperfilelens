@@ -695,6 +695,11 @@ export async function listLensBackupSourceSnapshots(params: {
   page_size?: number
   status?: string
   ordering?: string
+  backup_config_id?: number
+  snapshot_id?: number
+  snapshot_uid?: string
+  picker_sources?: boolean
+  search?: string
 }): Promise<{ count: number; results: import('./protectionBackupConfigApi').BackupSourceSnapshot[] }> {
   const qs = new URLSearchParams()
   qs.set('organization_key', params.organization_key.trim())
@@ -702,6 +707,11 @@ export async function listLensBackupSourceSnapshots(params: {
   if (params.page_size) qs.set('page_size', String(params.page_size))
   if (params.status) qs.set('status', params.status)
   if (params.ordering) qs.set('ordering', params.ordering)
+  if (params.backup_config_id) qs.set('backup_config_id', String(params.backup_config_id))
+  if (params.snapshot_id) qs.set('snapshot_id', String(params.snapshot_id))
+  if (params.snapshot_uid) qs.set('snapshot_uid', params.snapshot_uid)
+  if (params.picker_sources) qs.set('picker_sources', '1')
+  if (params.search) qs.set('search', params.search)
   const raw = await api(lensUrl(`backup-source-snapshots?${qs.toString()}`), {
     headers: lensHeaders(),
   })
@@ -709,6 +719,32 @@ export async function listLensBackupSourceSnapshots(params: {
   const results = asList<import('./protectionBackupConfigApi').BackupSourceSnapshot>(data)
   const count = typeof data.count === 'number' ? data.count : results.length
   return { count, results }
+}
+
+export async function listLensBackupSourcePickerSources(params: {
+  organization_key: string
+  page: number
+  page_size: number
+  search?: string
+}): Promise<{
+  count: number
+  results: import('./protectionBackupConfigApi').BackupSourcePickerSource[]
+}> {
+  const qs = new URLSearchParams({
+    organization_key: params.organization_key.trim(),
+    picker_sources: '1',
+    page: String(params.page),
+    page_size: String(params.page_size),
+  })
+  if (params.search) qs.set('search', params.search)
+  const raw = await api(lensUrl(`backup-source-snapshots?${qs.toString()}`), {
+    headers: lensHeaders(),
+  })
+  const data = unwrapApiPayload<Record<string, unknown>>(raw)
+  return {
+    count: typeof data.count === 'number' ? data.count : 0,
+    results: asList<import('./protectionBackupConfigApi').BackupSourcePickerSource>(data),
+  }
 }
 
 export async function getLensBackupSourceSnapshot(

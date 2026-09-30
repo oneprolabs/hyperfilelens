@@ -240,6 +240,27 @@ for item in files.values():
 PY
 }
 
+run_patch_test() {
+	local check_message=$1 success_message=$2 output_file status=0
+	shift 2
+	log "${check_message}"
+	output_file="$(mktemp "${TMPDIR:-/tmp}/hfl-kopia-test.XXXXXX")" || die "unable to capture Kopia test output"
+	"$@" >"${output_file}" 2>&1 || status=$?
+	if [[ "${status}" -ne 0 ]]; then
+		hfl_log_output_line kopia <"${output_file}"
+		rm -f -- "${output_file}"
+		hfl_log_fail "${check_message} failed"
+		return "${status}"
+	fi
+	# The dev stack supplies a session log; keep the complete Go results there
+	# without cluttering the successful terminal output with Go package paths.
+	if [[ -n "${HFL_LOG_FILE:-}" && -f "${HFL_LOG_FILE}" ]]; then
+		hfl_log_timestamp_stream "${HFL_LOG_FILE}" <"${output_file}"
+	fi
+	rm -f -- "${output_file}"
+	hfl_log_ok "${success_message}"
+}
+
 build_matrix() {
 	local patch
 	for patch in "${KOPIA_PATCH_FILES[@]}"; do
@@ -249,31 +270,36 @@ build_matrix() {
 		git -C "${KOPIA_SOURCE_DIR}" apply "${patch}"
 	done
 
-	log "Testing the Kopia S3 URL-style patch"
 	(
 		cd "${KOPIA_SOURCE_DIR}"
-		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" go test ./repo/blob/s3 \
+		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" run_patch_test \
+			"Checking the S3 URL-style patch" "S3 URL-style patch checks passed" \
+			go test ./repo/blob/s3 \
 			-run 'Test(BucketLookupForURLStyle|OptionsURLStyleJSONRoundTrip|URLStyleRequestAddressing)$'
 	)
-	log "Testing the Kopia HFL structured-progress patch"
 	(
 		cd "${KOPIA_SOURCE_DIR}"
-		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" go test ./cli -run '^TestHFLStructuredProgress$'
+		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" run_patch_test \
+			"Checking structured progress" "Structured progress checks passed" \
+			go test ./cli -run '^TestHFLStructuredProgress$'
 	)
-	log "Testing the Kopia HFL entry-summary patch"
 	(
 		cd "${KOPIA_SOURCE_DIR}"
-		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" go test ./cli -run '^TestHFLListSummary$'
+		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" run_patch_test \
+			"Checking entry summaries" "Entry summary checks passed" \
+			go test ./cli -run '^TestHFLListSummary$'
 	)
-	log "Testing the Kopia HFL upload-path diagnostics patch"
 	(
 		cd "${KOPIA_SOURCE_DIR}"
-		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" go test ./fs/localfs ./snapshot/upload
+		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" run_patch_test \
+			"Checking upload-path diagnostics" "Upload-path diagnostic checks passed" \
+			go test ./fs/localfs ./snapshot/upload
 	)
-	log "Testing the Kopia managed dot-ignore patch"
 	(
 		cd "${KOPIA_SOURCE_DIR}"
-		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" go test ./snapshot/policy ./fs/ignorefs \
+		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" run_patch_test \
+			"Checking managed dot-ignore rules" "Managed dot-ignore checks passed" \
+			go test ./snapshot/policy ./fs/ignorefs \
 			-run '^Test(NoParentDotIgnoreFiles|PolicyMerge)'
 	)
 

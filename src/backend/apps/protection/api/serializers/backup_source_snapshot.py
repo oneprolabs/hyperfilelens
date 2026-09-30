@@ -116,6 +116,7 @@ class BackupSourceSnapshotDirectorySerializer(serializers.ModelSerializer):
 
 class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
     source_display_name = serializers.SerializerMethodField()
+    source_address = serializers.SerializerMethodField()
     backup_config_name = serializers.SerializerMethodField()
     repository_display_name = serializers.SerializerMethodField()
     kopia_snapshot_count = serializers.SerializerMethodField()
@@ -139,6 +140,7 @@ class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
             "source_type",
             "source_ref_id",
             "source_display_name",
+            "source_address",
             "backup_config_id",
             "backup_config_name",
             "repository_id",
@@ -170,6 +172,13 @@ class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
 
     def get_source_display_name(self, obj: BackupSourceSnapshot) -> str:
         return str(self.context.get("source_names", {}).get((obj.source_type, obj.source_ref_id), ""))
+
+    def get_source_address(self, obj: BackupSourceSnapshot) -> str:
+        return str(
+            self.context.get("source_addresses", {}).get(
+                (obj.source_type, obj.source_ref_id), ""
+            )
+        )
 
     def get_backup_config_name(self, obj: BackupSourceSnapshot) -> str:
         return str(self.context.get("backup_config_names", {}).get(obj.backup_config_id, ""))
