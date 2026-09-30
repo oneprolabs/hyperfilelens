@@ -360,7 +360,7 @@ compose_in_root() {
 	"ps -q postgres") printf 'pg-container\n' ;;
 	"ps -q redis") printf 'redis-container\n' ;;
 	"ps -q nginx") printf 'nginx-container\n' ;;
-	"config --format json") printf '%s\n' '{"services":{"postgres":{"image":"postgres:17"},"redis":{"image":"redis:alpine"},"nginx":{"image":"nginx:stable-alpine","environment":{"HFL_WEBSITE_APP_URL":"https://example.invalid"}}}}' ;;
+	"config --format json") printf '%s\n' '{"services":{"postgres":{"image":"postgres:17","environment":{"POSTGRES_USER":"postgres","POSTGRES_PASSWORD":"test-secret","POSTGRES_DB":"hyperfilelens"}},"redis":{"image":"redis:alpine"},"nginx":{"image":"nginx:stable-alpine","environment":{"HFL_WEBSITE_APP_URL":"https://example.invalid"}}}}' ;;
 	*) return 1 ;;
 	esac
 }
@@ -376,7 +376,9 @@ docker() {
 	fi
 	case "${*: -1}" in
 	pg-container)
-		if [[ "$*" == *".State.StartedAt"* ]]; then
+		if [[ "$*" == *".Config.Env"* ]]; then
+			printf '["POSTGRES_USER=postgres","POSTGRES_PASSWORD=%s","POSTGRES_DB=hyperfilelens"]\n' "${pg_password:-test-secret}"
+		elif [[ "$*" == *".State.StartedAt"* ]]; then
 			printf 'pg-id|%s\n' "${pg_started_at:-start-1}"
 		else
 			printf 'pg-image\n'
@@ -402,6 +404,12 @@ docker() {
 baseline="$(upgrade_shared_service_identity)"
 assert_upgrade_shared_services_unchanged "${baseline}"
 assert_upgrade_shared_images_compatible
+pg_password=changed-secret
+if (assert_upgrade_shared_images_compatible) >/dev/null 2>&1; then
+	printf 'ERROR: changed PostgreSQL credentials passed the application upgrade gate\n' >&2
+	exit 1
+fi
+pg_password=test-secret
 assert_upgrade_gateway_runtime_compatible
 gateway_url=https://changed.invalid
 if (assert_upgrade_gateway_runtime_compatible) >/dev/null 2>&1; then

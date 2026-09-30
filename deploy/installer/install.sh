@@ -1233,7 +1233,7 @@ assert_upgrade_shared_services_unchanged() {
 }
 
 assert_upgrade_shared_images_compatible() {
-	local desired_services service cid reference target_id running_id
+	local desired_services service cid reference target_id running_id running_env
 	desired_services="$(compose_in_root config --format json)" \
 		|| die "could not inspect target Compose configuration for PostgreSQL/Redis"
 	for service in postgres redis; do
@@ -1250,6 +1250,25 @@ assert_upgrade_shared_images_compatible() {
 			|| die "could not inspect running ${service} image"
 		[[ "${running_id}" == "${target_id}" ]] \
 			|| die "${service} image change requires a separate stateful-service maintenance window; application blue/green upgrade cannot apply it"
+		if [[ "${service}" == "postgres" ]]; then
+			running_env="$(docker inspect --format '{{json .Config.Env}}' "${cid}" 2>/dev/null)" \
+				|| die "could not inspect running PostgreSQL environment"
+			# Only compare database identity/credential settings. Its env_file
+			# also contains unrelated application keys that legitimately change
+			# on every app release without requiring a database restart.
+			python3 -c '
+import json
+import os
+import sys
+
+desired = json.load(sys.stdin)["services"]["postgres"]["environment"]
+running = dict(entry.split("=", 1) for entry in json.load(os.fdopen(3)))
+keys = ("POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB")
+if any(str(desired.get(key, "")) != running.get(key, "") for key in keys):
+    raise SystemExit("PostgreSQL identity/credentials changed")
+' 3<<<"${running_env}" <<<"${desired_services}" \
+				|| die "PostgreSQL identity or credentials changed; schedule a separate stateful-service maintenance window"
+		fi
 	done
 }
 
