@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +24,28 @@ const (
 	releaseResponseLimit  = 64 * 1024
 	releaseMaxAttempts    = 5
 	releaseRetryDelay     = 5 * time.Second
+	preflightMaxAttempts  = 3
+	preflightRetryDelay   = 3 * time.Second
+	preflightMaxWait      = 8 * time.Second
+	preflightTimeout      = 20 * time.Second
+	releaseErrorBodyLimit = 2 * 1024
 )
+
+// ReleaseHTTPError retains a status and retry hint, never a response body or signed URL.
+type ReleaseHTTPError struct {
+	StatusCode int
+	Status     string
+	RetryAfter time.Duration
+	Detail     string
+}
+
+func (err *ReleaseHTTPError) Error() string {
+	message := "release API HTTP " + err.Status
+	if err.Detail != "" {
+		message += ": " + err.Detail
+	}
+	return message
+}
 
 // RetryHook is called before sleeping between release API retries.
 type RetryHook func(attempt, maxAttempts int, err error)
@@ -47,29 +69,92 @@ func FetchArtifact(ctx context.Context, cfg *model.AgentConfig) (Artifact, error
 	return fetchArtifactOnce(ctx, cfg)
 }
 
+// FetchArtifactWithRetry resolves release metadata for preflight, retrying
+// only transient control-plane failures a bounded number of times.
+func FetchArtifactWithRetry(
+	ctx context.Context,
+	cfg *model.AgentConfig,
+	onRetry RetryHook,
+) (Artifact, error) {
+	preflightCtx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
+	return fetchArtifactWithRetry(
+		preflightCtx,
+		cfg,
+		onRetry,
+		preflightMaxAttempts,
+		preflightRetryDelay,
+		preflightMaxWait,
+	)
+}
+
 // FetchDownloadURLWithRetry resolves a release URL, retrying transient console errors.
 func FetchDownloadURLWithRetry(ctx context.Context, cfg *model.AgentConfig, onRetry RetryHook) (downloadURL, version string, err error) {
+	artifact, err := fetchArtifactWithRetry(
+		ctx,
+		cfg,
+		onRetry,
+		releaseMaxAttempts,
+		releaseRetryDelay,
+		0,
+	)
+	if err != nil {
+		return "", "", err
+	}
+	return artifact.DownloadURL, artifact.Version, nil
+}
+
+func fetchArtifactWithRetry(
+	ctx context.Context,
+	cfg *model.AgentConfig,
+	onRetry RetryHook,
+	maxAttempts int,
+	retryDelay time.Duration,
+	maxRetryWait time.Duration,
+) (Artifact, error) {
 	var lastErr error
-	for attempt := 1; attempt <= releaseMaxAttempts; attempt++ {
-		var artifact Artifact
-		artifact, err = fetchArtifactOnce(ctx, cfg)
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		artifact, err := fetchArtifactOnce(ctx, cfg)
 		if err == nil {
-			return artifact.DownloadURL, artifact.Version, nil
+			return artifact, nil
 		}
 		lastErr = err
-		if attempt >= releaseMaxAttempts || !IsRetryableReleaseError(err) {
-			return "", "", err
+		if attempt >= maxAttempts || !IsRetryableReleaseError(err) {
+			return Artifact{}, err
 		}
 		if onRetry != nil {
-			onRetry(attempt, releaseMaxAttempts, err)
+			onRetry(attempt, maxAttempts, err)
+		}
+		delay := retryDelay
+		if maxRetryWait > 0 {
+			delay = preflightRetryWait(err, retryDelay, maxRetryWait)
 		}
 		select {
 		case <-ctx.Done():
-			return "", "", ctx.Err()
-		case <-time.After(releaseRetryDelay):
+			return Artifact{}, ctx.Err()
+		case <-time.After(delay):
 		}
 	}
-	return "", "", lastErr
+	return Artifact{}, lastErr
+}
+
+func preflightRetryWait(err error, fallback, maxWait time.Duration) time.Duration {
+	var httpErr *ReleaseHTTPError
+	if errors.As(err, &httpErr) && httpErr.RetryAfter > 0 {
+		return min(httpErr.RetryAfter, maxWait)
+	}
+	return fallback
+}
+
+func releaseRetryAfter(value string) time.Duration {
+	seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err == nil && seconds > 0 {
+		return time.Duration(min(seconds, int64(preflightMaxWait/time.Second))) * time.Second
+	}
+	if retryAt, err := http.ParseTime(value); err == nil {
+		return min(max(time.Until(retryAt), 0), preflightMaxWait)
+	}
+	return 0
 }
 
 func fetchArtifactOnce(ctx context.Context, cfg *model.AgentConfig) (Artifact, error) {
@@ -107,6 +192,16 @@ func fetchArtifactOnce(ctx context.Context, cfg *model.AgentConfig) (Artifact, e
 		)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Only fixed, known API errors may augment a status. Never surface
+		// upstream HTML, tracebacks, or arbitrary JSON in installation logs.
+		return Artifact{}, &ReleaseHTTPError{
+			StatusCode: resp.StatusCode,
+			Status:     fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)),
+			RetryAfter: releaseRetryAfter(resp.Header.Get("Retry-After")),
+			Detail:     trustedReleaseDetail(resp),
+		}
+	}
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, releaseResponseLimit+1))
 	if readErr != nil {
 		return Artifact{}, fmt.Errorf("release API response read failed: %w", readErr)
@@ -115,13 +210,6 @@ func fetchArtifactOnce(ctx context.Context, cfg *model.AgentConfig) (Artifact, e
 		return Artifact{}, fmt.Errorf(
 			"release API response exceeds %d bytes",
 			releaseResponseLimit,
-		)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Artifact{}, fmt.Errorf(
-			"release API HTTP %s: %s",
-			resp.Status,
-			redactReleaseSecret(strings.TrimSpace(string(body)), cfg.NodeToken),
 		)
 	}
 	var parsed map[string]any
@@ -145,20 +233,61 @@ func fetchArtifactOnce(ctx context.Context, cfg *model.AgentConfig) (Artifact, e
 	}, nil
 }
 
+func trustedReleaseDetail(resp *http.Response) string {
+	switch resp.StatusCode {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+		http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable:
+	default:
+		return ""
+	}
+	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, releaseErrorBodyLimit+1))
+	if err != nil || len(body) > releaseErrorBodyLimit {
+		return ""
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &payload) != nil {
+		return ""
+	}
+	switch resp.StatusCode {
+	case http.StatusBadRequest:
+		switch payload.Error {
+		case "invalid platform",
+			"invalid arch",
+			"gateway/proxy supports Ubuntu 20.04, 22.04, or 24.04",
+			"org/role/token required":
+			return payload.Error
+		}
+	case http.StatusUnauthorized:
+		if payload.Error == "invalid enrollment token" {
+			return payload.Error
+		}
+	case http.StatusNotFound:
+		if payload.Error == "organization not found" {
+			return payload.Error
+		}
+	case http.StatusConflict:
+		if payload.Error == "platform does not match enrollment token" {
+			return payload.Error
+		}
+	case http.StatusServiceUnavailable:
+		if payload.Error == "agent release artifact is unavailable" {
+			return payload.Error
+		}
+	}
+	return ""
+}
+
 func sanitizeReleaseRequestError(err error) error {
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) && urlErr.Err != nil {
 		return urlErr.Err
 	}
 	return err
-}
-
-func redactReleaseSecret(message, secret string) string {
-	secret = strings.TrimSpace(secret)
-	if secret == "" {
-		return message
-	}
-	return strings.ReplaceAll(message, secret, "<redacted>")
 }
 
 func uint64Number(value any) uint64 {
@@ -201,6 +330,19 @@ func releaseQueryValues(
 func IsRetryableReleaseError(err error) bool {
 	if err == nil {
 		return false
+	}
+	var httpErr *ReleaseHTTPError
+	if errors.As(err, &httpErr) {
+		switch httpErr.StatusCode {
+		case http.StatusTooManyRequests,
+			http.StatusInternalServerError,
+			http.StatusBadGateway,
+			http.StatusServiceUnavailable,
+			http.StatusGatewayTimeout:
+			return true
+		default:
+			return false
+		}
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return true

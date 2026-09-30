@@ -43,6 +43,36 @@ wait_for_services_health() { calls+=("service-health:$*"); }
 reload_stable_nginx() { calls+=("reload"); }
 log() { :; }
 
+# During an upgrade, a running stable gateway must not be converged from the
+# newly staged Compose config. Cutover updates its upstreams with a reload.
+calls=()
+UPGRADE_RECOVERY_ARMED=1
+nginx_generation="stable-container|original-start"
+nginx_mounts_match=1
+ensure_stable_nginx_container
+[[ " ${calls[*]} " != *" compose:up "* ]]
+nginx_mounts_match=0
+if ensure_stable_nginx_container; then
+	printf 'ERROR: changed gateway mounts passed the upgrade gate\n' >&2
+	exit 1
+fi
+[[ " ${calls[*]} " != *" compose:up "* ]]
+UPGRADE_RECOVERY_ARMED=0
+nginx_mounts_match=1
+
+# Legacy topology adoption may still need a gateway container migration.
+calls=()
+UPGRADE_RECOVERY_ARMED=1
+UPGRADE_PREVIOUS_COLOR=legacy
+nginx_generation="legacy-container|original-start"
+nginx_generation_after_up="blue-green-container|new-start"
+nginx_mounts_match=0
+ensure_stable_nginx_container
+[[ " ${calls[*]} " == *" compose:up -d --no-deps --no-build --pull never --force-recreate nginx "* ]]
+UPGRADE_RECOVERY_ARMED=0
+UPGRADE_PREVIOUS_COLOR=""
+nginx_mounts_match=1
+
 # A new stable gateway reads the current configuration during process startup.
 # Reloading it immediately is both redundant and racy because nginx.pid may not
 # have been populated yet.

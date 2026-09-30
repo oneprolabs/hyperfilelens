@@ -25,7 +25,10 @@ reload_stable_nginx() { calls+=("reload"); }
 write_active_color() { calls+=("active:$*"); }
 wait_for_public_endpoints() { calls+=("public-health"); }
 wait_for_color_health() { calls+=("color-health:$*"); }
-wait_for_services_health() { calls+=("service-health:$*"); }
+wait_for_services_health() {
+	calls+=("service-health:$*")
+	[[ "${shared_health_ok:-1}" == "1" ]]
+}
 ensure_blue_green_state() { calls+=("ensure-state"); }
 read_active_color() { printf 'blue'; }
 stable_nginx_mounts_match() { return 0; }
@@ -68,6 +71,7 @@ start_hfl_stack
 calls=()
 UPGRADE_HFL_WAS_RUNNING=1
 UPGRADE_SOURCELENS_WAS_RUNNING=0
+UPGRADE_RECOVERY_ARMED=1
 UPGRADE_PREVIOUS_COLOR=blue
 UPGRADE_TARGET_COLOR=green
 UPGRADE_HFL_COMMITTED=0
@@ -76,14 +80,24 @@ recover_upgrade_services
 [[ " ${calls[*]} " == *" active:blue "* ]]
 [[ " ${calls[*]} " != *" active:green "* ]]
 [[ " ${calls[*]} " == *" compose:start worker scheduler "* ]]
-[[ " ${calls[*]} " != *" compose:up -d --no-build --pull never worker scheduler "* ]]
+[[ " ${calls[*]} " != *" compose:up -d --no-deps --no-build --pull never worker scheduler "* ]]
 
 calls=()
 UPGRADE_HFL_COMMITTED=1
 recover_upgrade_services
 [[ " ${calls[*]} " == *" render:green "* ]]
 [[ " ${calls[*]} " == *" active:green "* ]]
-[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never worker scheduler "* ]]
+[[ " ${calls[*]} " == *" service-health:600 postgres redis "* ]]
+[[ " ${calls[*]} " == *" compose:up -d --no-deps --no-build --pull never worker scheduler "* ]]
+
+calls=()
+shared_health_ok=0
+if recover_upgrade_services; then
+	printf 'ERROR: unhealthy PostgreSQL/Redis passed committed upgrade recovery\n' >&2
+	exit 1
+fi
+[[ " ${calls[*]} " != *" compose:up -d --no-deps --no-build --pull never worker scheduler "* ]]
+shared_health_ok=1
 
 calls=()
 UPGRADE_HFL_CUTOVER_ATTEMPTED=1
@@ -352,6 +366,78 @@ printf '%s\n' '# static adapter change' \
 target_fingerprint="$(sourcelens_bundle_fingerprint "${tmp}/bundle-target")"
 if [[ "${current_fingerprint}" == "${target_fingerprint}" ]]; then
 	printf 'ERROR: SourceLens Sentry runtime adapter change was ignored\n' >&2
+	exit 1
+fi
+
+compose_in_root() {
+	case "$*" in
+	"ps -q postgres") printf 'pg-container\n' ;;
+	"ps -q redis") printf 'redis-container\n' ;;
+	"ps -q nginx") printf 'nginx-container\n' ;;
+	"config --format json") printf '%s\n' '{"services":{"postgres":{"image":"postgres:17","environment":{"POSTGRES_USER":"postgres","POSTGRES_PASSWORD":"test-secret","POSTGRES_DB":"hyperfilelens"}},"redis":{"image":"redis:alpine"},"nginx":{"image":"nginx:stable-alpine","environment":{"HFL_WEBSITE_APP_URL":"https://example.invalid"}}}}' ;;
+	*) return 1 ;;
+	esac
+}
+docker() {
+	if [[ "${1:-}" == "image" && "${2:-}" == "inspect" ]]; then
+		case "${*: -1}" in
+		postgres:17) printf '%s\n' "${pg_target_image:-pg-image}" ;;
+		redis:alpine) printf 'redis-image\n' ;;
+		nginx:stable-alpine) printf 'nginx-image\n' ;;
+		*) return 1 ;;
+		esac
+		return
+	fi
+	case "${*: -1}" in
+	pg-container)
+		if [[ "$*" == *".Config.Env"* ]]; then
+			printf '["POSTGRES_USER=postgres","POSTGRES_PASSWORD=%s","POSTGRES_DB=hyperfilelens"]\n' "${pg_password:-test-secret}"
+		elif [[ "$*" == *".State.StartedAt"* ]]; then
+			printf 'pg-id|%s\n' "${pg_started_at:-start-1}"
+		else
+			printf 'pg-image\n'
+		fi
+		;;
+	redis-container)
+		if [[ "$*" == *".State.StartedAt"* ]]; then
+			printf 'redis-id|start-1\n'
+		else
+			printf 'redis-image\n'
+		fi
+		;;
+	nginx-container)
+		if [[ "$*" == *".Config.Env"* ]]; then
+			printf '["HFL_WEBSITE_APP_URL=%s"]\n' "${gateway_url:-https://example.invalid}"
+		else
+			printf 'nginx-image\n'
+		fi
+		;;
+	*) return 1 ;;
+	esac
+}
+baseline="$(upgrade_shared_service_identity)"
+assert_upgrade_shared_services_unchanged "${baseline}"
+assert_upgrade_shared_images_compatible
+pg_password=changed-secret
+if (assert_upgrade_shared_images_compatible) >/dev/null 2>&1; then
+	printf 'ERROR: changed PostgreSQL credentials passed the application upgrade gate\n' >&2
+	exit 1
+fi
+pg_password=test-secret
+assert_upgrade_gateway_runtime_compatible
+gateway_url=https://changed.invalid
+if (assert_upgrade_gateway_runtime_compatible) >/dev/null 2>&1; then
+	printf 'ERROR: changed stable gateway settings passed the upgrade gate\n' >&2
+	exit 1
+fi
+pg_target_image=pg-target-image
+if (assert_upgrade_shared_images_compatible) >/dev/null 2>&1; then
+	printf 'ERROR: changed PostgreSQL image passed the application upgrade gate\n' >&2
+	exit 1
+fi
+pg_started_at=start-2
+if (assert_upgrade_shared_services_unchanged "${baseline}") >/dev/null 2>&1; then
+	printf 'ERROR: changed PostgreSQL instance passed the upgrade gate\n' >&2
 	exit 1
 fi
 
