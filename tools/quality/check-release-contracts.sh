@@ -1072,6 +1072,10 @@ grep -F 'assert_upgrade_shared_images_compatible' <<<"${upgrade_body}" >/dev/nul
 	printf 'ERROR: blue/green upgrade must detect stateful image changes\n' >&2
 	exit 1
 }
+grep -F 'assert_upgrade_gateway_runtime_compatible' <<<"${upgrade_body}" >/dev/null || {
+	printf 'ERROR: blue/green upgrade must detect stable gateway runtime changes\n' >&2
+	exit 1
+}
 if [[ "$(grep -Fc 'assert_upgrade_shared_services_unchanged "${shared_services_before_cutover}"' <<<"${upgrade_body}")" -ne 3 ]]; then
 	printf 'ERROR: blue/green upgrade must verify shared services after candidate, cutover, and worker startup\n' >&2
 	exit 1

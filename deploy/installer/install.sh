@@ -1253,6 +1253,52 @@ assert_upgrade_shared_images_compatible() {
 	done
 }
 
+assert_upgrade_gateway_runtime_compatible() {
+	local cid desired_services reference target_id running_id running_env
+	cid="$(compose_in_root ps -q nginx 2>/dev/null | head -1)" \
+		|| die "could not inspect the stable Nginx gateway during upgrade"
+	[[ -n "${cid}" ]] || return 0
+	stable_nginx_mounts_match \
+		|| die "stable Nginx mounts changed; a separate gateway maintenance window is required"
+	desired_services="$(compose_in_root config --format json)" \
+		|| die "could not inspect target Nginx Compose configuration"
+	reference="$(python3 -c \
+		'import json,sys; print(json.load(sys.stdin)["services"]["nginx"]["image"])' \
+		<<<"${desired_services}")" \
+		|| die "target gateway image is missing from the release Compose configuration"
+	target_id="$(docker image inspect --format '{{.Id}}' "${reference}" 2>/dev/null)" \
+		|| die "target gateway image is unavailable: ${reference}"
+	running_id="$(docker inspect --format '{{.Image}}' "${cid}" 2>/dev/null)" \
+		|| die "could not inspect the stable Nginx gateway image"
+	[[ "${running_id}" == "${target_id}" ]] \
+		|| die "stable Nginx image change requires a separate gateway maintenance window"
+	running_env="$(docker inspect --format '{{json .Config.Env}}' "${cid}" 2>/dev/null)" \
+		|| die "could not inspect the stable Nginx gateway environment"
+	# SENTRY_RELEASE changes once when the gateway release identity is first
+	# pinned; it does not require a restart. All other runtime env differences
+	# would otherwise be silently deferred by preserving the live gateway.
+	python3 -c '
+import json
+import os
+import sys
+
+desired = json.load(sys.stdin)["services"]["nginx"]["environment"]
+running = dict(entry.split("=", 1) for entry in json.load(os.fdopen(3)))
+keys = (
+    "HFL_WEBSITE_APP_URL",
+    "HFL_WEBSITE_GA_MEASUREMENT_ID",
+    "HFL_TENANT_GA_MEASUREMENT_ID",
+    "HFL_SENTRY_ENABLED",
+    "HFL_SENTRY_DSN",
+    "HFL_SENTRY_ENVIRONMENT",
+    "HFL_SENTRY_TRACES_SAMPLE_RATE",
+)
+if any(str(desired.get(key, "")) != running.get(key, "") for key in keys):
+    raise SystemExit("stable gateway runtime settings changed")
+' 3<<<"${running_env}" <<<"${desired_services}" \
+		|| die "stable Nginx runtime settings changed; schedule a separate gateway maintenance window"
+}
+
 active_api_service() {
 	local color
 	color="$(read_active_color)" || die "active blue/green color is unavailable"
@@ -7703,6 +7749,7 @@ cmd_upgrade() {
 	validate_tls_pair "${ROOT}/deploy/nginx/certs"
 	if [[ "${UPGRADE_HFL_WAS_RUNNING}" == "1" ]]; then
 		assert_upgrade_shared_images_compatible
+		assert_upgrade_gateway_runtime_compatible
 	fi
 
 	ensure_data_dirs

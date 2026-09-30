@@ -359,7 +359,8 @@ compose_in_root() {
 	case "$*" in
 	"ps -q postgres") printf 'pg-container\n' ;;
 	"ps -q redis") printf 'redis-container\n' ;;
-	"config --format json") printf '%s\n' '{"services":{"postgres":{"image":"postgres:17"},"redis":{"image":"redis:alpine"}}}' ;;
+	"ps -q nginx") printf 'nginx-container\n' ;;
+	"config --format json") printf '%s\n' '{"services":{"postgres":{"image":"postgres:17"},"redis":{"image":"redis:alpine"},"nginx":{"image":"nginx:stable-alpine","environment":{"HFL_WEBSITE_APP_URL":"https://example.invalid"}}}}' ;;
 	*) return 1 ;;
 	esac
 }
@@ -368,6 +369,7 @@ docker() {
 		case "${*: -1}" in
 		postgres:17) printf '%s\n' "${pg_target_image:-pg-image}" ;;
 		redis:alpine) printf 'redis-image\n' ;;
+		nginx:stable-alpine) printf 'nginx-image\n' ;;
 		*) return 1 ;;
 		esac
 		return
@@ -387,12 +389,25 @@ docker() {
 			printf 'redis-image\n'
 		fi
 		;;
+	nginx-container)
+		if [[ "$*" == *".Config.Env"* ]]; then
+			printf '["HFL_WEBSITE_APP_URL=%s"]\n' "${gateway_url:-https://example.invalid}"
+		else
+			printf 'nginx-image\n'
+		fi
+		;;
 	*) return 1 ;;
 	esac
 }
 baseline="$(upgrade_shared_service_identity)"
 assert_upgrade_shared_services_unchanged "${baseline}"
 assert_upgrade_shared_images_compatible
+assert_upgrade_gateway_runtime_compatible
+gateway_url=https://changed.invalid
+if (assert_upgrade_gateway_runtime_compatible) >/dev/null 2>&1; then
+	printf 'ERROR: changed stable gateway settings passed the upgrade gate\n' >&2
+	exit 1
+fi
 pg_target_image=pg-target-image
 if (assert_upgrade_shared_images_compatible) >/dev/null 2>&1; then
 	printf 'ERROR: changed PostgreSQL image passed the application upgrade gate\n' >&2
