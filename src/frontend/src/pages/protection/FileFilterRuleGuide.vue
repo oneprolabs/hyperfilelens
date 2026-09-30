@@ -102,7 +102,7 @@ const recipes = [
             <span>Excludes files larger than the configured size.</span>
           </div>
           <div class="rule-guide__table-row">
-            <strong>Marked cache directories</strong>
+            <strong>Skip marked cache folders</strong>
             <span>
               Skips directories containing a valid <code>CACHEDIR.TAG</code> marker, including
               everything below them. Folder names alone are not matched; use

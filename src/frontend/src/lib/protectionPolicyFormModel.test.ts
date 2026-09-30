@@ -4,6 +4,7 @@ import {
   backupPolicyToForm,
   createEmptyPolicyForm,
   formatScheduleStartForDisplay,
+  getRetentionTierDescription,
   getScheduleTimezoneOptions,
   policyFormToWritePayload,
   quickScheduleToCron,
@@ -49,6 +50,59 @@ function policyWithSchedule(schedule: BackupPolicy['schedule']): BackupPolicy {
 }
 
 describe('protection policy schedule mapping', () => {
+  it('uses the nearest enabled retention tier for independent retention descriptions', () => {
+    const form = createEmptyPolicyForm()
+
+    form.retentionShortHourly = false
+    form.retentionShortDaysMax = undefined
+    form.retentionMidDaily = true
+    form.retentionMidDaysMax = 30
+    expect(getRetentionTierDescription(form, 'daily')).toEqual({
+      key: 'midFirstDesc',
+      params: { days: 30 },
+    })
+
+    form.retentionMidDaily = false
+    form.retentionMidDaysMax = undefined
+    form.retentionLongMonthly = true
+    form.retentionLongMonths = 12
+    expect(getRetentionTierDescription(form, 'monthly')).toEqual({
+      key: 'longFirstDesc',
+      params: { months: 12 },
+    })
+
+    form.retentionMidDaily = true
+    form.retentionMidDaysMax = 30
+    expect(getRetentionTierDescription(form, 'monthly')).toEqual({
+      key: 'longDesc',
+      params: { day: 30, months: 12 },
+    })
+
+    form.retentionMidDaily = false
+    form.retentionMidDaysMax = undefined
+    form.retentionShortHourly = true
+    form.retentionShortDaysMax = 2
+    expect(getRetentionTierDescription(form, 'hourly')).toEqual({
+      key: 'shortDesc',
+      params: { days: 2 },
+    })
+    expect(getRetentionTierDescription(form, 'monthly')).toEqual({
+      key: 'longDesc',
+      params: { day: 2, months: 12 },
+    })
+
+    form.retentionMidDaily = true
+    form.retentionMidDaysMax = 30
+    expect(getRetentionTierDescription(form, 'daily')).toEqual({
+      key: 'midDesc',
+      params: { start: 2, end: 30 },
+    })
+    expect(getRetentionTierDescription(form, 'monthly')).toEqual({
+      key: 'longDesc',
+      params: { day: 30, months: 12 },
+    })
+  })
+
   it('rejects an empty enabled retention period and omits disabled periods from writes', () => {
     const form = createEmptyPolicyForm()
     expect(form.retentionWeeklyEnabled).toBe(false)

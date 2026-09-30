@@ -68,6 +68,7 @@ import {
   backupPolicyToForm,
   compileFilterIgnorePatterns,
   createEmptyFileFilterForm,
+  getRetentionTierDescription,
   type FileFilterRuleForm,
   type MessageLocale,
 } from '../../../lib/protectionPolicyFormModel'
@@ -1991,10 +1992,12 @@ function policyRetentionDetailLines(policy: BackupPolicy | null | undefined): Po
     lines.push({ text: t('protection.policiesPage.shortDesc', { days: f.retentionShortDaysMax }) })
   }
   if (f.retentionMidDaily) {
-    lines.push({ text: t('protection.policiesPage.midDesc', { start: f.retentionShortDaysMax, end: f.retentionMidDaysMax }) })
+    const description = getRetentionTierDescription(f, 'daily')
+    lines.push({ text: t(`protection.policiesPage.${description.key}`, description.params) })
   }
   if (f.retentionLongMonthly) {
-    lines.push({ text: t('protection.policiesPage.longDesc', { day: f.retentionMidDaysMax, months: f.retentionLongMonths }) })
+    const description = getRetentionTierDescription(f, 'monthly')
+    lines.push({ text: t(`protection.policiesPage.${description.key}`, description.params) })
   }
   return lines
 }

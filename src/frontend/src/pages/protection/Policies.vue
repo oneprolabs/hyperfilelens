@@ -40,6 +40,7 @@ import {
   backupPolicyToForm,
   compileFilterIgnorePatterns,
   fileFilterRuleToForm,
+  getRetentionTierDescription,
   summarizeSchedule,
   summarizeRetention,
   summarizeFilters,
@@ -657,13 +658,15 @@ function policyRetentionDetailLines(row: PolicyRow): PolicyRetentionDetailLine[]
     })
   }
   if (f.retentionMidDaily) {
+    const description = getRetentionTierDescription(f, 'daily')
     lines.push({
-      text: t('protection.policiesPage.midDesc', { start: f.retentionShortDaysMax, end: f.retentionMidDaysMax }),
+      text: t(`protection.policiesPage.${description.key}`, description.params),
     })
   }
   if (f.retentionLongMonthly) {
+    const description = getRetentionTierDescription(f, 'monthly')
     lines.push({
-      text: t('protection.policiesPage.longDesc', { day: f.retentionMidDaysMax, months: f.retentionLongMonths }),
+      text: t(`protection.policiesPage.${description.key}`, description.params),
     })
   }
   return lines

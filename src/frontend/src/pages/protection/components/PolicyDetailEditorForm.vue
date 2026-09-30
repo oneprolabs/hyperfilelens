@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import {
   formatScheduleStartForDisplay,
+  getRetentionTierDescription,
   humanizeCronExpression,
   type BackupPolicyForm,
   type MessageLocale,
@@ -73,17 +74,19 @@ const retentionDetailLines = computed(() => {
     })
   }
   if (f.retentionMidDaily) {
+    const description = getRetentionTierDescription(f, 'daily')
     lines.push({
       label: '',
       summary: false,
-      text: t('protection.policiesPage.midDesc', { start: f.retentionShortDaysMax, end: f.retentionMidDaysMax }),
+      text: t(`protection.policiesPage.${description.key}`, description.params),
     })
   }
   if (f.retentionLongMonthly) {
+    const description = getRetentionTierDescription(f, 'monthly')
     lines.push({
       label: '',
       summary: false,
-      text: t('protection.policiesPage.longDesc', { day: f.retentionMidDaysMax, months: f.retentionLongMonths }),
+      text: t(`protection.policiesPage.${description.key}`, description.params),
     })
   }
   return [

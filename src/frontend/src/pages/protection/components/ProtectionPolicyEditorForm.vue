@@ -6,6 +6,7 @@ import { BookOpen, Plus, TriangleAlert, Trash2 } from 'lucide-vue-next'
 import {
   compileFilterIgnorePatterns,
   createEmptyFilterCustomRule,
+  getRetentionTierDescription,
   getScheduleTimezoneOptions,
   getSimpleIntervalUnitMeta,
   getSimpleIntervalUnitOptions,
@@ -82,6 +83,8 @@ const cronErrorText = computed(() => {
 const scheduleErrorText = computed(() => validateScheduleForm(policyForm.value))
 const midRetentionError = computed(() => validateMidRetention(policyForm.value, messageLocale.value))
 const longVsShortRetentionError = computed(() => validateLongVsShortRetention(policyForm.value, messageLocale.value))
+const dailyRetentionDescription = computed(() => getRetentionTierDescription(policyForm.value, 'daily'))
+const monthlyRetentionDescription = computed(() => getRetentionTierDescription(policyForm.value, 'monthly'))
 const hourlyRetentionError = computed(() =>
   policyForm.value.sectionRetentionEnabled && policyForm.value.retentionShortHourly
   && (typeof policyForm.value.retentionShortDaysMax !== 'number' || policyForm.value.retentionShortDaysMax < 1)
@@ -775,7 +778,7 @@ function toggleScheduleMonthDay(day: number) {
               v-if="policyForm.retentionMidDaily"
               class="policy-inline-desc"
             >
-              {{ t('protection.policiesPage.midDesc', { start: policyForm.retentionShortDaysMax, end: policyForm.retentionMidDaysMax }) }}
+              {{ t(`protection.policiesPage.${dailyRetentionDescription.key}`, dailyRetentionDescription.params) }}
             </span>
           </div>
           <div class="retention-tier-row">
@@ -816,7 +819,7 @@ function toggleScheduleMonthDay(day: number) {
               v-if="policyForm.retentionLongMonthly"
               class="policy-inline-desc"
             >
-              {{ t('protection.policiesPage.longDesc', { day: policyForm.retentionMidDaysMax, months: policyForm.retentionLongMonths }) }}
+              {{ t(`protection.policiesPage.${monthlyRetentionDescription.key}`, monthlyRetentionDescription.params) }}
             </span>
           </div>
           <div class="retention-tier-row">
@@ -1261,7 +1264,7 @@ function toggleScheduleMonthDay(day: number) {
 }
 
 .filter-advanced-help {
-  color: rgb(248 250 252);
+  color: inherit;
   font-size: 12px;
   line-height: 1.55;
 }
