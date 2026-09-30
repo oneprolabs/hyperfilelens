@@ -15,10 +15,12 @@ describe('TaskDetailDrawer NAS repository write denial', () => {
     expect(source).toContain("event.message === 'Task finished with status failed' && step?.step_name === 'finalize_snapshot'")
   })
 
-  it('anchors Kopia process failures to the Syncing Data step', () => {
-    expect(source).toContain("item.step_name === 'kopia_snapshot' && item.status === 'failed'")
-    expect(source).toContain("terminalErrorCode === 'KOPIA_PROCESS_DIED'")
-    expect(source).toContain("terminalErrorCode === 'REPOSITORY_PROCESS_DIED'")
+  it('anchors fallback failures to a step actually marked failed', () => {
+    expect(source).toContain("step.status === 'failed' || step.status === 'timeout'")
+    expect(source).toContain('failedSteps.find(step => step.step_name === failedStep)?.id')
+    expect(source).toContain('fallbackFailureStepId === step.id')
+    expect(source).not.toContain("terminalErrorCode === 'KOPIA_PROCESS_DIED'")
+    expect(source).not.toContain('step.step_name === currentStep')
   })
 
   it('does not add a second step-level failure panel when the directory event already has an error', () => {
