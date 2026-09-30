@@ -80,7 +80,7 @@ nginx_generation_after_up="new-container|new-start"
 nginx_generation_status=0
 nginx_generation_status_after_up=0
 start_hfl_stack
-	[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never --force-recreate nginx "* ]]
+[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never --force-recreate nginx "* ]]
 nginx_mounts_match=1
 
 # A failed Compose start must stop the function before instance inspection,
