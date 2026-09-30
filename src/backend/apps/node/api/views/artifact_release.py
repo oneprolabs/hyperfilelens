@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, quote, urlparse, urlsplit, urlunsplit
 
 from django.core import signing
 from django.core.signing import BadSignature, SignatureExpired
+from django.db import InterfaceError, OperationalError
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
@@ -46,6 +47,41 @@ from apps.node.services.internal.agent_download_slots import (
 )
 
 logger = logging.getLogger(__name__)
+RELEASE_SERVICE_RETRY_AFTER_SECONDS = 15
+
+
+def _log_database_unavailable(request) -> None:
+    """Log an API database outage; the logging formatter adds the trace ID."""
+    logger.exception(
+        "Agent release API database unavailable: path=%s",
+        request.path,
+    )
+
+
+def _release_service_unavailable_response() -> Response:
+    response = Response(
+        {
+            "error": "Agent release service is temporarily unavailable",
+            "code": "release-service-unavailable",
+        },
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+    response["Retry-After"] = str(RELEASE_SERVICE_RETRY_AFTER_SECONDS)
+    return response
+
+
+def _release_auth_unavailable_response() -> Response:
+    """Return a marked denial that Nginx can translate to HTTP 503."""
+    response = Response(
+        {
+            "error": "Agent release authorization is temporarily unavailable",
+            "code": "release-service-unavailable",
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+    response["X-HFL-Download-Denial"] = "authorization-unavailable"
+    response["Retry-After"] = str(RELEASE_SERVICE_RETRY_AFTER_SECONDS)
+    return response
 
 
 @dataclass(frozen=True)
@@ -341,6 +377,12 @@ class AgentReleaseView(APIView):
 
     permission_classes = [node_permissions.AllowAny]
 
+    def handle_exception(self, exc):
+        if isinstance(exc, (InterfaceError, OperationalError)):
+            _log_database_unavailable(self.request)
+            return _release_service_unavailable_response()
+        return super().handle_exception(exc)
+
     def get(self, request):
         org_key = str(request.query_params.get("org") or "").strip()
         role = str(request.query_params.get("role") or "").strip()
@@ -453,6 +495,12 @@ class AgentReleasesAuthView(APIView):
     """Nginx ``auth_request`` hook for ``/media/agent-releases/*`` downloads."""
 
     permission_classes = [node_permissions.AllowAny]
+
+    def handle_exception(self, exc):
+        if isinstance(exc, (InterfaceError, OperationalError)):
+            _log_database_unavailable(self.request)
+            return _release_auth_unavailable_response()
+        return super().handle_exception(exc)
 
     def get(self, request):
         original_uri = str(request.headers.get("X-Original-URI", "") or "").strip()

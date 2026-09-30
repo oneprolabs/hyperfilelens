@@ -264,7 +264,8 @@ services:
       HFL_SENTRY_ENABLED: ${SENTRY_ENABLED:-false}
       HFL_SENTRY_DSN: ${SENTRY_FRONTEND_DSN:-}
       HFL_SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
-      HFL_SENTRY_RELEASE: hyperfilelens-frontend@${APP_VERSION:-unknown}
+      # The stable gateway keeps its pinned image during an app color cutover.
+      HFL_SENTRY_RELEASE: hyperfilelens-frontend@${HFL_GATEWAY_VERSION:-${APP_VERSION:-unknown}}
       HFL_SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0}
       LOGROTATE_INTERVAL_SECONDS: "3600"
       LOGROTATE_STATE: /var/log/hyperfilelens/.logrotate.status

@@ -491,7 +491,7 @@ recover_upgrade_services() {
 			ensure_stable_nginx_container
 			[[ $? -eq 0 ]] || recovered=0
 			if [[ "${UPGRADE_HFL_COMMITTED}" == "1" ]]; then
-				compose_in_root up -d --no-build --pull never worker scheduler
+				compose_in_root up -d --no-deps --no-build --pull never worker scheduler
 			else
 				compose_in_root start worker scheduler
 			fi
@@ -1211,6 +1211,48 @@ compose_all_profiles() {
 	compose_in_root --profile blue --profile green --profile tools "$@"
 }
 
+upgrade_shared_service_identity() {
+	local service cid state
+	for service in postgres redis; do
+		cid="$(compose_in_root ps -q "${service}" 2>/dev/null | head -1)" || return 1
+		[[ -n "${cid}" ]] || return 1
+		state="$(docker inspect --format \
+			'{{if .State.Running}}{{.Id}}|{{.State.StartedAt}}{{end}}' \
+			"${cid}" 2>/dev/null)" || return 1
+		[[ -n "${state}" ]] || return 1
+		printf '%s=%s\n' "${service}" "${state}"
+	done
+}
+
+assert_upgrade_shared_services_unchanged() {
+	local expected=$1 actual
+	actual="$(upgrade_shared_service_identity)" \
+		|| die "could not verify PostgreSQL/Redis state during application cutover"
+	[[ "${actual}" == "${expected}" ]] \
+		|| die "PostgreSQL or Redis was unexpectedly restarted during application cutover; investigate shared-service configuration before retrying"
+}
+
+assert_upgrade_shared_images_compatible() {
+	local desired_services service cid reference target_id running_id
+	desired_services="$(compose_in_root config --format json)" \
+		|| die "could not inspect target Compose configuration for PostgreSQL/Redis"
+	for service in postgres redis; do
+		cid="$(compose_in_root ps -q "${service}" 2>/dev/null | head -1)" \
+			|| die "could not inspect running ${service} during upgrade"
+		[[ -n "${cid}" ]] || die "${service} must be running before the application upgrade"
+		reference="$(python3 -c \
+			'import json,sys; print(json.load(sys.stdin)["services"][sys.argv[1]]["image"])' \
+			"${service}" <<<"${desired_services}")" \
+			|| die "target ${service} image is missing from the release Compose configuration"
+		target_id="$(docker image inspect --format '{{.Id}}' "${reference}" 2>/dev/null)" \
+			|| die "target ${service} image is unavailable: ${reference}"
+		running_id="$(docker inspect --format '{{.Image}}' "${cid}" 2>/dev/null)" \
+			|| die "could not inspect running ${service} image"
+		[[ "${running_id}" == "${target_id}" ]] \
+			|| die "${service} image change requires a separate stateful-service maintenance window; application blue/green upgrade cannot apply it"
+	done
+}
+
 active_api_service() {
 	local color
 	color="$(read_active_color)" || die "active blue/green color is unavailable"
@@ -1297,7 +1339,24 @@ stable_nginx_mounts_match() {
 }
 
 ensure_stable_nginx_container() {
-	local -a args=(up -d --no-build --pull never)
+	local running_generation
+	if [[ "${UPGRADE_RECOVERY_ARMED}" == "1" ]]; then
+		running_generation="$(stable_nginx_running_generation)" || return 1
+		if [[ -n "${running_generation}" ]]; then
+			if ! stable_nginx_mounts_match; then
+				warn "stable Nginx mounts changed; a separate gateway maintenance window is required"
+				return 1
+			fi
+			# Keep the existing gateway (and its pinned runtime settings)
+			# serving traffic. Blue/green changes upstreams with a reload.
+			log "Keeping the stable Nginx gateway running during application cutover"
+			return 0
+		fi
+	fi
+	# Nginx is the stable edge. Its healthcheck reaches the already-started
+	# HFL API, but Nginx itself must never cause Compose to converge shared
+	# PostgreSQL or Redis dependencies during a blue/green transition.
+	local -a args=(up -d --no-deps --no-build --pull never)
 	if ! stable_nginx_mounts_match; then
 		log "Stable Nginx mounts differ from the current release; recreating the gateway container"
 		args+=(--force-recreate)
@@ -7642,12 +7701,20 @@ cmd_upgrade() {
 	fi
 	apply_runtime_configuration
 	validate_tls_pair "${ROOT}/deploy/nginx/certs"
+	if [[ "${UPGRADE_HFL_WAS_RUNNING}" == "1" ]]; then
+		assert_upgrade_shared_images_compatible
+	fi
 
 	ensure_data_dirs
 	sync_bundled_language_packs
 	sync_runtime_media
 	compose_in_root up -d --no-build --pull never --no-recreate postgres redis
+	wait_for_services_health "${HFL_HEALTH_TIMEOUT_SECONDS:-600}" postgres redis \
+		|| die "PostgreSQL/Redis must be healthy before database migration and candidate startup"
 	compose_in_root --profile tools run --rm --no-deps migration
+	local shared_services_before_cutover
+	shared_services_before_cutover="$(upgrade_shared_service_identity)" \
+		|| die "PostgreSQL/Redis must be running before the application cutover"
 	record_deployment_phase migrated "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	record_upgrade_transaction_phase migrated
 	if online_console_enabled; then
@@ -7658,19 +7725,22 @@ cmd_upgrade() {
 	if online_console_enabled; then
 		online_console_line "  [....] Starting application services and switching traffic"
 	fi
-	compose_color "${target_color}" up -d --no-build --pull never \
+	compose_color "${target_color}" up -d --no-deps --no-build --pull never \
 		"api-${target_color}" "web-${target_color}"
+	assert_upgrade_shared_services_unchanged "${shared_services_before_cutover}"
 	wait_for_color_health "${target_color}" \
 		|| die "inactive ${target_color} API/Web pool failed its readiness gate"
 	record_deployment_phase candidate_ready "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	record_upgrade_transaction_phase candidate_ready
 	cutover_hfl_color "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" \
 		|| die "blue/green cutover failed; previous traffic route was restored"
+	assert_upgrade_shared_services_unchanged "${shared_services_before_cutover}"
 	record_deployment_phase switched "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	record_upgrade_transaction_phase hfl_switched
 	# The active API/Web pool is now authoritative; start singleton consumers
 	# from the target release and recover any returned in-flight work.
-	compose_in_root up -d --no-build --pull never worker scheduler
+	compose_in_root up -d --no-deps --no-build --pull never worker scheduler
+	assert_upgrade_shared_services_unchanged "${shared_services_before_cutover}"
 	wait_for_services_health "${HFL_HEALTH_TIMEOUT_SECONDS:-600}" \
 		postgres redis worker scheduler "api-${target_color}" "web-${target_color}" nginx \
 		&& wait_for_public_endpoints \

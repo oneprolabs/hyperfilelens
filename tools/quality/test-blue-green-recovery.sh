@@ -61,7 +61,7 @@ start_hfl_stack
 [[ " ${calls[*]} " != *" run --rm --no-deps --pull never migration "* ]]
 [[ " ${calls[*]} " == *" color:blue up -d --no-build --pull never api-blue web-blue "* ]]
 [[ " ${calls[*]} " == *" color-health:blue "* ]]
-[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never nginx "* ]]
+[[ " ${calls[*]} " == *" compose:up -d --no-deps --no-build --pull never nginx "* ]]
 [[ " ${calls[*]} " == *" service-health:600 nginx "* ]]
 [[ " ${calls[*]} " != *" reload "* ]]
 
@@ -76,14 +76,14 @@ recover_upgrade_services
 [[ " ${calls[*]} " == *" active:blue "* ]]
 [[ " ${calls[*]} " != *" active:green "* ]]
 [[ " ${calls[*]} " == *" compose:start worker scheduler "* ]]
-[[ " ${calls[*]} " != *" compose:up -d --no-build --pull never worker scheduler "* ]]
+[[ " ${calls[*]} " != *" compose:up -d --no-deps --no-build --pull never worker scheduler "* ]]
 
 calls=()
 UPGRADE_HFL_COMMITTED=1
 recover_upgrade_services
 [[ " ${calls[*]} " == *" render:green "* ]]
 [[ " ${calls[*]} " == *" active:green "* ]]
-[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never worker scheduler "* ]]
+[[ " ${calls[*]} " == *" compose:up -d --no-deps --no-build --pull never worker scheduler "* ]]
 
 calls=()
 UPGRADE_HFL_CUTOVER_ATTEMPTED=1
@@ -352,6 +352,55 @@ printf '%s\n' '# static adapter change' \
 target_fingerprint="$(sourcelens_bundle_fingerprint "${tmp}/bundle-target")"
 if [[ "${current_fingerprint}" == "${target_fingerprint}" ]]; then
 	printf 'ERROR: SourceLens Sentry runtime adapter change was ignored\n' >&2
+	exit 1
+fi
+
+compose_in_root() {
+	case "$*" in
+	"ps -q postgres") printf 'pg-container\n' ;;
+	"ps -q redis") printf 'redis-container\n' ;;
+	"config --format json") printf '%s\n' '{"services":{"postgres":{"image":"postgres:17"},"redis":{"image":"redis:alpine"}}}' ;;
+	*) return 1 ;;
+	esac
+}
+docker() {
+	if [[ "${1:-}" == "image" && "${2:-}" == "inspect" ]]; then
+		case "${*: -1}" in
+		postgres:17) printf '%s\n' "${pg_target_image:-pg-image}" ;;
+		redis:alpine) printf 'redis-image\n' ;;
+		*) return 1 ;;
+		esac
+		return
+	fi
+	case "${*: -1}" in
+	pg-container)
+		if [[ "$*" == *".State.StartedAt"* ]]; then
+			printf 'pg-id|%s\n' "${pg_started_at:-start-1}"
+		else
+			printf 'pg-image\n'
+		fi
+		;;
+	redis-container)
+		if [[ "$*" == *".State.StartedAt"* ]]; then
+			printf 'redis-id|start-1\n'
+		else
+			printf 'redis-image\n'
+		fi
+		;;
+	*) return 1 ;;
+	esac
+}
+baseline="$(upgrade_shared_service_identity)"
+assert_upgrade_shared_services_unchanged "${baseline}"
+assert_upgrade_shared_images_compatible
+pg_target_image=pg-target-image
+if (assert_upgrade_shared_images_compatible) >/dev/null 2>&1; then
+	printf 'ERROR: changed PostgreSQL image passed the application upgrade gate\n' >&2
+	exit 1
+fi
+pg_started_at=start-2
+if (assert_upgrade_shared_services_unchanged "${baseline}") >/dev/null 2>&1; then
+	printf 'ERROR: changed PostgreSQL instance passed the upgrade gate\n' >&2
 	exit 1
 fi
 

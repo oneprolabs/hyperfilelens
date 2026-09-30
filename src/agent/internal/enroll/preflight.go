@@ -148,15 +148,44 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 	requiredSpace := uint64(defaultEnrollmentRequiredBytes)
 	var gatewayCheck gatewayRuntimePreflightResult
 	if consoleReach.OK {
-		artifact, artifactErr := release.FetchArtifact(ctx, cfg.AgentConfig())
+		artifact, artifactErr := release.FetchArtifactWithRetry(
+			ctx,
+			cfg.AgentConfig(),
+			func(attempt, maxAttempts int, retryErr error) {
+				logWarnDetail(
+					"Agent package metadata is temporarily unavailable",
+					fmt.Sprintf(
+						"control plane may be restarting; retrying (%d/%d): %s",
+						attempt,
+						maxAttempts,
+						retryErr,
+					),
+				)
+			},
+		)
 		if artifactErr != nil {
+			artifactDetail := artifactErr.Error()
+			releaseUnavailable := release.IsRetryableReleaseError(artifactErr)
+			if releaseUnavailable {
+				artifactDetail =
+					"control plane release service is temporarily unavailable after retrying: " +
+						artifactDetail
+			}
 			if report.Existing.Installed {
 				logWarnDetail(
 					"Agent package metadata is unavailable",
-					artifactErr.Error()+"; the requested existing-install action will validate authorization before making changes",
+					artifactDetail+"; the requested existing-install action will validate authorization before making changes",
 				)
 			} else {
-				failures.add("Agent package metadata is unavailable", artifactErr.Error(), 3)
+				failures.add("Agent package metadata is unavailable", artifactDetail, 3)
+				if releaseUnavailable && failures.count == 1 {
+					failures.first.CodeKey = "RELEASE_SERVICE_UNAVAILABLE"
+					failures.first.RecommendedActions = []string{
+						"Wait for the control plane upgrade or recovery to finish.",
+						"Run the installation command again.",
+						"If the problem persists, provide the installation log to the administrator.",
+					}
+				}
 			}
 		} else {
 			if artifact.RequiredSpace > requiredSpace {

@@ -25,7 +25,7 @@ compose_in_root() {
 	if [[ -n "${compose_failure_pattern}" && " $* " == *" ${compose_failure_pattern} "* ]]; then
 		return 1
 	fi
-	if [[ "$*" == up\ -d\ --no-build\ --pull\ never*nginx ]]; then
+	if [[ "$*" == up\ -d\ --no-deps\ --no-build\ --pull\ never*nginx ]]; then
 		nginx_generation="${nginx_generation_after_up}"
 		nginx_generation_status="${nginx_generation_status_after_up}"
 	fi
@@ -42,6 +42,23 @@ wait_for_color_health() { calls+=("color-health:$*"); }
 wait_for_services_health() { calls+=("service-health:$*"); }
 reload_stable_nginx() { calls+=("reload"); }
 log() { :; }
+
+# During an upgrade, a running stable gateway must not be converged from the
+# newly staged Compose config. Cutover updates its upstreams with a reload.
+calls=()
+UPGRADE_RECOVERY_ARMED=1
+nginx_generation="stable-container|original-start"
+nginx_mounts_match=1
+ensure_stable_nginx_container
+[[ " ${calls[*]} " != *" compose:up "* ]]
+nginx_mounts_match=0
+if ensure_stable_nginx_container; then
+	printf 'ERROR: changed gateway mounts passed the upgrade gate\n' >&2
+	exit 1
+fi
+[[ " ${calls[*]} " != *" compose:up "* ]]
+UPGRADE_RECOVERY_ARMED=0
+nginx_mounts_match=1
 
 # A new stable gateway reads the current configuration during process startup.
 # Reloading it immediately is both redundant and racy because nginx.pid may not
@@ -63,7 +80,7 @@ nginx_generation_after_up="new-container|new-start"
 nginx_generation_status=0
 nginx_generation_status_after_up=0
 start_hfl_stack
-[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never --force-recreate nginx "* ]]
+	[[ " ${calls[*]} " == *" compose:up -d --no-deps --no-build --pull never --force-recreate nginx "* ]]
 nginx_mounts_match=1
 
 # A failed Compose start must stop the function before instance inspection,
@@ -74,12 +91,12 @@ nginx_generation="stable-container|original-start"
 nginx_generation_after_up="stable-container|original-start"
 nginx_generation_status=0
 nginx_generation_status_after_up=0
-compose_failure_pattern="up -d --no-build --pull never nginx"
+compose_failure_pattern="up -d --no-deps --no-build --pull never nginx"
 if start_hfl_stack; then
 	printf 'ERROR: failed Nginx Compose start was ignored\n' >&2
 	exit 1
 fi
-[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never nginx "* ]]
+[[ " ${calls[*]} " == *" compose:up -d --no-deps --no-build --pull never nginx "* ]]
 [[ " ${calls[*]} " != *" reload "* ]]
 [[ " ${calls[*]} " != *" service-health:600 nginx "* ]]
 compose_failure_pattern=""
@@ -115,7 +132,7 @@ if start_hfl_stack; then
 	printf 'ERROR: pre-start Nginx inspection failure was ignored\n' >&2
 	exit 1
 fi
-[[ " ${calls[*]} " != *" compose:up -d --no-build --pull never nginx "* ]]
+[[ " ${calls[*]} " != *" compose:up -d --no-deps --no-build --pull never nginx "* ]]
 
 calls=()
 nginx_generation="stable-container|original-start"
@@ -126,7 +143,7 @@ if start_hfl_stack; then
 	printf 'ERROR: post-start Nginx inspection failure was ignored\n' >&2
 	exit 1
 fi
-[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never nginx "* ]]
+[[ " ${calls[*]} " == *" compose:up -d --no-deps --no-build --pull never nginx "* ]]
 [[ " ${calls[*]} " != *" reload "* ]]
 
 # The reload helper waits for a numeric, live master PID before validating and

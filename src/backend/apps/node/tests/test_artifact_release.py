@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
+from django.db import OperationalError
 from django.test import SimpleTestCase
 from django.utils import timezone
 from redis.exceptions import ConnectionError as RedisConnectionError
@@ -193,6 +194,70 @@ def test_slot_script_checks_capacity_before_acquiring():
 
 
 class AgentDownloadAuthorizationTests(SimpleTestCase):
+    def test_release_metadata_database_outage_returns_retryable_503(self):
+        request = APIRequestFactory().get(
+            "/api/v1/node/enrollment/agent/release",
+            {"org": "example", "role": "agent", "token": "secret"},
+        )
+        with mock.patch.object(
+            release.Organization.objects,
+            "filter",
+            side_effect=OperationalError("database system is shutting down"),
+        ):
+            response = release.AgentReleaseView.as_view()(request)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response["Retry-After"], "15")
+        self.assertEqual(response.data["code"], "release-service-unavailable")
+        self.assertNotIn("database system is shutting down", str(response.data))
+
+    def test_release_metadata_programming_error_is_not_masked_as_503(self):
+        request = APIRequestFactory().get(
+            "/api/v1/node/enrollment/agent/release",
+            {"org": "example", "role": "agent", "token": "secret"},
+        )
+        with mock.patch.object(
+            release.Organization.objects,
+            "filter",
+            side_effect=ValueError("unexpected application error"),
+        ):
+            with self.assertRaisesRegex(ValueError, "unexpected application error"):
+                release.AgentReleaseView.as_view()(request)
+
+    def test_download_auth_database_outage_is_marked_for_nginx(self):
+        request = APIRequestFactory().get(
+            "/api/v1/node/enrollment/agent-releases/auth",
+            HTTP_X_ORIGINAL_URI="/media/agent-releases/1.0.0/agent.zip?t=signed-secret",
+        )
+        payload = {
+            "p": "/media/agent-releases/1.0.0/agent.zip",
+            "org": "example",
+            "role": "agent",
+            "token_id": 17,
+        }
+        with (
+            mock.patch.object(
+                release,
+                "_release_download_token",
+                return_value="signed-secret",
+            ),
+            mock.patch.object(release, "_load_release_token", return_value=payload),
+            mock.patch.object(
+                release.Organization.objects,
+                "filter",
+                side_effect=OperationalError("database system is shutting down"),
+            ),
+        ):
+            response = release.AgentReleasesAuthView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response["X-HFL-Download-Denial"],
+            "authorization-unavailable",
+        )
+        self.assertEqual(response["Retry-After"], "15")
+        self.assertNotIn("database system is shutting down", str(response.data))
+
     def test_redis_unavailable_is_marked_for_nginx_without_exposing_credentials(self):
         artifact_path = "/media/agent-releases/1.0.0/agent.zip"
         request = APIRequestFactory().get(

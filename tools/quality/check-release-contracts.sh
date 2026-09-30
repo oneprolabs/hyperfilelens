@@ -1053,6 +1053,29 @@ if grep -F 'run --rm --no-deps --pull never migration' \
 	printf 'ERROR: migration must not use the Docker Compose v2.27-incompatible run --pull flag\n' >&2
 	exit 1
 fi
+grep -F 'compose_color "${target_color}" up -d --no-deps' \
+	"${ROOT}/deploy/installer/install.sh" >/dev/null || {
+	printf 'ERROR: blue/green candidate startup must not converge shared dependencies\n' >&2
+	exit 1
+}
+grep -F 'compose_in_root up -d --no-deps --no-build --pull never worker scheduler' \
+	"${ROOT}/deploy/installer/install.sh" >/dev/null || {
+	printf 'ERROR: post-cutover worker startup must not converge shared dependencies\n' >&2
+	exit 1
+}
+grep -F 'local -a args=(up -d --no-deps --no-build --pull never)' \
+	"${ROOT}/deploy/installer/install.sh" >/dev/null || {
+	printf 'ERROR: stable Nginx startup must not converge shared dependencies\n' >&2
+	exit 1
+}
+grep -F 'assert_upgrade_shared_images_compatible' <<<"${upgrade_body}" >/dev/null || {
+	printf 'ERROR: blue/green upgrade must detect stateful image changes\n' >&2
+	exit 1
+}
+if [[ "$(grep -Fc 'assert_upgrade_shared_services_unchanged "${shared_services_before_cutover}"' <<<"${upgrade_body}")" -ne 3 ]]; then
+	printf 'ERROR: blue/green upgrade must verify shared services after candidate, cutover, and worker startup\n' >&2
+	exit 1
+fi
 release_backend_image_block="$(sed -n '/^x-backend-image:/,/^x-backend-volumes:/p' "${release_compose}")"
 grep -F 'pull_policy: never' <<<"${release_backend_image_block}" >/dev/null || {
 	printf 'ERROR: release backend services must remain offline through pull_policy: never\n' >&2
