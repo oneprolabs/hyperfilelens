@@ -1410,7 +1410,11 @@ stable_nginx_mounts_match() {
 
 ensure_stable_nginx_container() {
 	local running_generation
-	if [[ "${UPGRADE_RECOVERY_ARMED}" == "1" ]]; then
+	# The first migration from the legacy single-API topology may need to
+	# recreate its gateway to adopt the stable blue/green mounts. Subsequent
+	# blue/green application upgrades must preserve the running gateway.
+	if [[ "${UPGRADE_RECOVERY_ARMED}" == "1" \
+		&& "${UPGRADE_PREVIOUS_COLOR}" != "legacy" ]]; then
 		running_generation="$(stable_nginx_running_generation)" || return 1
 		if [[ -n "${running_generation}" ]]; then
 			if ! stable_nginx_mounts_match; then
@@ -7776,7 +7780,9 @@ cmd_upgrade() {
 	validate_tls_pair "${ROOT}/deploy/nginx/certs"
 	if [[ "${UPGRADE_HFL_WAS_RUNNING}" == "1" ]]; then
 		assert_upgrade_shared_images_compatible
-		assert_upgrade_gateway_runtime_compatible
+		if [[ "${UPGRADE_PREVIOUS_COLOR}" != "legacy" ]]; then
+			assert_upgrade_gateway_runtime_compatible
+		fi
 	fi
 
 	ensure_data_dirs
