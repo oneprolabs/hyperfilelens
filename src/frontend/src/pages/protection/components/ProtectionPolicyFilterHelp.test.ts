@@ -14,6 +14,10 @@ const locale = readFileSync(
   resolve(process.cwd(), 'src/locales/enProtectionPages.ts'),
   'utf8',
 )
+const popperStyles = readFileSync(
+  resolve(process.cwd(), 'src/styles/element-plus-table.css'),
+  'utf8',
+)
 
 describe('protection filter advanced-setting help', () => {
   it('gives both advanced settings structured help with a readable popover style', () => {
@@ -24,7 +28,15 @@ describe('protection filter advanced-setting help', () => {
     expect(editor).toMatch(/\.filter-advanced-help__example[\s\S]*?border-top:/)
   })
 
+  it('inherits the tooltip text color from the global light popper theme', () => {
+    expect(popperStyles).toMatch(/\.el-popper\.is-dark\s*\{[^}]*color:[^}]*!important;[^}]*background:[^}]*!important;/s)
+    expect(editor).toMatch(/\.filter-advanced-help\s*\{[^}]*color:\s*inherit;/s)
+    expect(editor).not.toMatch(/\.filter-advanced-help\s*\{[^}]*color:\s*rgb\(248 250 252\)/s)
+  })
+
   it('explains marker-based cache filtering without requiring a folder list', () => {
+    expect(locale).toContain("cacheTitle: 'Skip Marked Cache Folders'")
+    expect(guide).toContain('<strong>Skip marked cache folders</strong>')
     expect(editor).toContain("t('protection.policiesPage.cacheTooltipLead')")
     expect(editor).toContain("t('protection.policiesPage.cacheTooltipNamedFolder')")
     expect(editor).toContain("t('protection.policiesPage.cacheTooltipExample')")

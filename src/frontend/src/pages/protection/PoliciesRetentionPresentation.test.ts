@@ -13,6 +13,10 @@ const backupWizardPage = readFileSync(
   resolve(process.cwd(), 'src/pages/protection/BackupCreateWizard.vue'),
   'utf8',
 )
+const policyEditorPage = readFileSync(
+  resolve(process.cwd(), 'src/pages/protection/PolicyEditorPage.vue'),
+  'utf8',
+)
 const detailPageStyles = readFileSync(resolve(process.cwd(), 'src/styles/detail-page-ui.css'), 'utf8')
 const retentionConsumers = [
   policiesPage,
@@ -36,8 +40,12 @@ function contentDigest(value: string): string {
 describe('Backup Policies retention presentation', () => {
   it.each(retentionConsumers)('uses the same time-window retention copy', (source) => {
     expect(source).toContain('protection.policiesPage.shortDesc')
-    expect(source).toContain('protection.policiesPage.midDesc')
-    expect(source).toContain('protection.policiesPage.longDesc')
+    expect(source).toContain('getRetentionTierDescription')
+  })
+
+  it('resolves preview ranges from the same enabled-tier rules', () => {
+    expect(policyEditorPage).toContain("getRetentionTierDescription(f, 'daily')")
+    expect(policyEditorPage).toContain("getRetentionTierDescription(f, 'monthly')")
   })
 
   it.each([policiesPage, detailPage])('uses the shared latest-restore-point summary', (source) => {
@@ -72,21 +80,29 @@ describe('Backup Policies retention presentation', () => {
     expect(enProtectionPages.policiesPage).toMatchObject({
       shortDesc: 'First {days} days · Keep the latest restore point each hour',
       midDesc: 'After day {start} through day {end} · Keep the latest restore point each day',
+      midFirstDesc: 'First {days} days · Keep the latest restore point each day',
       longDesc: 'After day {day} through month {months} · Keep the latest restore point each month',
+      longFirstDesc: 'First {months} months · Keep the latest restore point each month',
     })
     expect({
       shortDesc: contentDigest(zhHans.shortDesc),
       midDesc: contentDigest(zhHans.midDesc),
+      midFirstDesc: contentDigest(zhHans.midFirstDesc),
       longDesc: contentDigest(zhHans.longDesc),
+      longFirstDesc: contentDigest(zhHans.longFirstDesc),
     }).toEqual({
       shortDesc: 'f733b8a40f14434bd696045279fc5b420b74d6b94665433664dc2267a342a54a',
       midDesc: '85e3f0ca549d24c3bf27200659820a2010cf05f7b947e9a1650193e1bd356621',
+      midFirstDesc: 'dc355c85a3ee04b6527866e31f7a0a12392c6d08cf43b48255cb66f5c14839fc',
       longDesc: 'f863afeb1bb454b3cbe4e4ff21f9049e8d08df24afb36ebba9d5f08806589200',
+      longFirstDesc: 'aef5b5210c52398dc87c73a60904fdb4a02746897703129d5488ea61139be5e9',
     })
     expect(spanish).toMatchObject({
       shortDesc: 'Primeros {days} días · Conservar el punto de restauración más reciente de cada hora',
       midDesc: 'Después del día {start} hasta el día {end} · Conservar el punto de restauración más reciente de cada día',
+      midFirstDesc: 'Primeros {days} días · Conservar el punto de restauración más reciente de cada día',
       longDesc: 'Después del día {day} hasta el mes {months} · Conservar el punto de restauración más reciente de cada mes',
+      longFirstDesc: 'Primeros {months} meses · Conservar el punto de restauración más reciente de cada mes',
     })
   })
 })

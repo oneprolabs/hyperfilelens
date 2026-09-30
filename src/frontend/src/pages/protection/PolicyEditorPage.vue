@@ -23,6 +23,7 @@ import {
   createEmptyPolicyForm,
   fileFilterFormToWritePayload,
   fileFilterRuleToForm,
+  getRetentionTierDescription,
   policyFormToWritePayload,
   validateRetentionForm,
   validateScheduleForm,
@@ -229,20 +230,34 @@ const backupRetentionPreviewRows = computed(() => {
     label: t('protection.policiesPage.shortTitle'),
     value: t('protection.policiesPage.previewRetentionFirstDays', { n: previewNumber(f.retentionShortDaysMax) }),
   })
-  if (f.retentionMidDaily) rows.push({
-    label: t('protection.policiesPage.midTitle'),
-    value: t('protection.policiesPage.previewRetentionDayRange', {
-      start: previewNumber(f.retentionShortDaysMax),
-      end: previewNumber(f.retentionMidDaysMax),
-    }),
-  })
-  if (f.retentionLongMonthly) rows.push({
-    label: t('protection.policiesPage.longTitle'),
-    value: t('protection.policiesPage.previewRetentionAfterDay', {
-      day: previewNumber(f.retentionMidDaysMax),
-      months: previewNumber(f.retentionLongMonths),
-    }),
-  })
+  if (f.retentionMidDaily) {
+    const description = getRetentionTierDescription(f, 'daily')
+    rows.push({
+      label: t('protection.policiesPage.midTitle'),
+      value: description.key === 'midDesc'
+        ? t('protection.policiesPage.previewRetentionDayRange', {
+            start: previewNumber(description.params.start),
+            end: previewNumber(description.params.end),
+          })
+        : t('protection.policiesPage.previewRetentionFirstDays', {
+            n: previewNumber(description.params.days),
+          }),
+    })
+  }
+  if (f.retentionLongMonthly) {
+    const description = getRetentionTierDescription(f, 'monthly')
+    rows.push({
+      label: t('protection.policiesPage.longTitle'),
+      value: description.key === 'longDesc'
+        ? t('protection.policiesPage.previewRetentionAfterDay', {
+            day: previewNumber(description.params.day),
+            months: previewNumber(description.params.months),
+          })
+        : t('protection.policiesPage.previewRetentionFirstMonths', {
+            n: previewNumber(description.params.months),
+          }),
+    })
+  }
   return rows
 })
 

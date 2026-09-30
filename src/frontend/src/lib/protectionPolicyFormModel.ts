@@ -202,6 +202,70 @@ export interface BackupPolicyForm {
   errorIgnoreUnknownEntries: boolean
 }
 
+export type RetentionTier = 'hourly' | 'daily' | 'monthly'
+
+export type RetentionTierDescription = {
+  key: 'shortDesc' | 'midDesc' | 'midFirstDesc' | 'longDesc' | 'longFirstDesc'
+  params: Record<string, number | undefined>
+}
+
+/**
+ * Resolve the copy for a retention tier without reading the value of a
+ * disabled preceding tier. The retention tiers can be configured
+ * independently, while the range copy is only meaningful when its
+ * preceding tier is enabled.
+ */
+export function getRetentionTierDescription(
+  form: BackupPolicyForm,
+  tier: RetentionTier,
+): RetentionTierDescription {
+  if (tier === 'hourly') {
+    return {
+      key: 'shortDesc',
+      params: { days: form.retentionShortDaysMax },
+    }
+  }
+
+  if (tier === 'daily') {
+    if (form.retentionShortHourly && typeof form.retentionShortDaysMax === 'number') {
+      return {
+        key: 'midDesc',
+        params: {
+          start: form.retentionShortDaysMax,
+          end: form.retentionMidDaysMax,
+        },
+      }
+    }
+    return {
+      key: 'midFirstDesc',
+      params: { days: form.retentionMidDaysMax },
+    }
+  }
+
+  if (form.retentionMidDaily && typeof form.retentionMidDaysMax === 'number') {
+    return {
+      key: 'longDesc',
+      params: {
+        day: form.retentionMidDaysMax,
+        months: form.retentionLongMonths,
+      },
+    }
+  }
+  if (form.retentionShortHourly && typeof form.retentionShortDaysMax === 'number') {
+    return {
+      key: 'longDesc',
+      params: {
+        day: form.retentionShortDaysMax,
+        months: form.retentionLongMonths,
+      },
+    }
+  }
+  return {
+    key: 'longFirstDesc',
+    params: { months: form.retentionLongMonths },
+  }
+}
+
 function formatPolicyNameTimestamp(date = new Date()): string {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
