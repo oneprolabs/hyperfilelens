@@ -20,6 +20,7 @@ const emit = defineEmits<{
   rename: [row: SessionRow, title: string]
   retry: [row: SessionRow]
   newFrom: [row: SessionRow]
+  updateData: [row: SessionRow]
   pin: [row: SessionRow, pinned: boolean]
   newChat: []
 }>()
@@ -49,6 +50,8 @@ function sessionTitle(row: SessionRow) {
 }
 
 function sessionMeta(row: SessionRow) {
+  if (row.data_update?.status === 'failed' || row.data_update?.status === 'abandoned') return t('insight.copilot.dataUpdateFailed')
+  if (['pending', 'running'].includes(row.data_update?.status || '')) return t('insight.copilot.dataUpdating')
   if (sessionIsRecovering(row)) return t('insight.copilot.sessionRecovering')
   if (sessionCleanupBlocked(row)) return t('insight.copilot.sessionRecoveryAttention')
   if (row.lifecycle_status === 'provisioning') return t('insight.copilot.sessionPreparing')
@@ -141,6 +144,7 @@ function handleAction(command: string, row: SessionRow) {
   if (command === 'rename') startRename(row)
   if (command === 'retry') emit('retry', row)
   if (command === 'new-from') emit('newFrom', row)
+  if (command === 'update-data') emit('updateData', row)
   if (command === 'delete') emit('delete', row)
 }
 </script>
@@ -261,9 +265,20 @@ function handleAction(command: string, row: SessionRow) {
                       class="copilot-session-menu__new-from"
                       command="new-from"
                       :icon="Plus"
-                      :disabled="newFromId === row.id"
+                      :disabled="newFromId === row.id || ['pending', 'running'].includes(row.data_update?.status || '')"
                     >
                       {{ t('insight.copilot.newFromChat') }}
+                    </ElDropdownItem>
+                    <ElDropdownItem
+                      v-if="row.lifecycle_status === 'ready' && row.knowledge_source != null && row.backup_config_id != null"
+                      class="copilot-session-menu__update-data"
+                      command="update-data"
+                      :icon="RotateCcw"
+                      :disabled="['pending', 'running'].includes(row.data_update?.status || '')"
+                    >
+                      {{ row.data_update?.status === 'failed'
+                        ? t('insight.copilot.retryDataUpdate')
+                        : t('insight.copilot.updateChatData') }}
                     </ElDropdownItem>
                     <ElDropdownItem
                       v-if="row.lifecycle_status === 'ready'"

@@ -540,6 +540,73 @@ class RestoreApiTests(TestCase):
     @patch(
         "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
     )
+    def test_chat_update_reconcile_requires_capability_and_pins_restore_contract(
+        self, _ready
+    ):
+        gateway = Node.objects.create(
+            organization=self.org,
+            name="chat-update-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.org,
+            gateway=gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+        )
+        binding = self._workspace_binding(gateway_link)
+        payload = self._manual_restore_payload()
+        payload.update(
+            {
+                "target_ref_id": gateway.id,
+                "target_path": binding.resolved_path(),
+                "idempotency_key": "chat-update-reconcile-test",
+                "chat_data_update_reconcile": True,
+            }
+        )
+        with self.assertRaisesMessage(
+            ValidationError, "Upgrade the Data Gateway Agent"
+        ):
+            restore_service.create_lens_workspace_restore_record(
+                organization_id=self.org.id,
+                workspace_binding_id=binding.id,
+                data=payload,
+            )
+
+        metadata = dict(gateway.metadata or {})
+        inventory = dict(metadata.get("inventory") or {})
+        inventory["capabilities"] = [
+            *(inventory.get("capabilities") or []),
+            "chat_workspace_reconcile_v1",
+        ]
+        metadata["inventory"] = inventory
+        gateway.metadata = metadata
+        gateway.save(update_fields=["metadata", "updated_at"])
+        record = restore_service.create_lens_workspace_restore_record(
+            organization_id=self.org.id,
+            workspace_binding_id=binding.id,
+            data=payload,
+        )
+        node_task = NodeTask.objects.get(
+            kind="restore.run", correlation_id=str(record.task_uuid)
+        )
+        self.assertTrue(record.request_payload["chat_data_update_reconcile"])
+        self.assertTrue(node_task.payload["chat_data_update_reconcile"])
+
+        without_reconciliation = dict(payload)
+        without_reconciliation.pop("chat_data_update_reconcile")
+        with self.assertRaisesMessage(ValidationError, "idempotency key"):
+            restore_service.create_lens_workspace_restore_record(
+                organization_id=self.org.id,
+                workspace_binding_id=binding.id,
+                data=without_reconciliation,
+            )
+
+    @patch(
+        "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
+    )
     def test_legacy_active_lens_restore_is_classified_after_failure(self, _ready):
         platform_org = platform_lens.get_or_create_platform_org()
         platform_gateway = Node.objects.create(

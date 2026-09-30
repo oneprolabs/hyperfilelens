@@ -6,6 +6,10 @@ from apps.lens_bridge.tasks.chat_lifecycle import (
     reconcile_lens_resource_teardowns_task,
 )
 from apps.lens_bridge.tasks.chat_user_provision import execute_chat_user_provision_task
+from apps.lens_bridge.tasks.chat_data_update import (
+    execute_chat_data_update_task,
+    reconcile_chat_data_updates_task,
+)
 from apps.lens_bridge.tasks.gateway_provisioning import (
     execute_gateway_lensnode_provision_task,
     reconcile_gateway_lensnode_provisions_task,
@@ -30,6 +34,8 @@ __all__ = [
     "execute_knowledge_source_sync_task",
     "reconcile_knowledge_source_syncs_task",
     "execute_chat_user_provision_task",
+    "execute_chat_data_update_task",
+    "reconcile_chat_data_updates_task",
     "execute_gateway_lensnode_provision_task",
     "reconcile_gateway_lensnode_provisions_task",
     "execute_copilot_chat_provision_task",

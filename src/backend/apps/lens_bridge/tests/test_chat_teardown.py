@@ -10,7 +10,9 @@ from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from common.errors import AppError
 from apps.iam.models import Organization
+from apps.lens_bridge.api.serializers import LensSessionLinkSerializer
 from apps.lens_bridge.models import (
     LensAssistantLink,
     LensGatewayChatSlot,
@@ -21,7 +23,9 @@ from apps.lens_bridge.models import (
 )
 from apps.lens_bridge.services import (
     assistant_access,
+    chat_data_update,
     chat_lifecycle,
+    knowledge_source_sync,
     knowledge_source_teardown,
     managed_datasource,
     sl_client,
@@ -30,12 +34,18 @@ from apps.lens_bridge.tasks.chat_lifecycle import (
     reconcile_copilot_chat_provisions_task,
     reconcile_lens_resource_teardowns_task,
 )
-from apps.node.models import Node
-from apps.protection.models import BackupSourceSnapshot, SnapshotUsageLease
+from apps.lens_bridge.tasks.chat_data_update import reconcile_chat_data_updates_task
+from apps.node.models import Node, NodeTask
+from apps.protection.models import (
+    BackupSourceSnapshot,
+    BackupSourceSnapshotDirectory,
+    SnapshotUsageLease,
+)
 from apps.protection.services.snapshot_usage import (
     acquire_snapshot_usage,
     reconcile_snapshot_usage_leases,
 )
+from apps.restore.models import RestoreRecord, RestoreRecordItem
 
 
 class CopilotChatTeardownTests(TestCase):
@@ -154,6 +164,989 @@ class CopilotChatTeardownTests(TestCase):
         self.assertFalse(
             SnapshotUsageLease.objects.filter(snapshot_id=snapshot.id).exists()
         )
+
+    def test_snapshot_scope_identity_keeps_drive_and_network_share(self):
+        self.assertNotEqual(
+            chat_data_update._scope_drive_and_parts("C:\\data\\reports")[0],
+            chat_data_update._scope_drive_and_parts("D:\\data\\reports")[0],
+        )
+        self.assertNotEqual(
+            chat_data_update._scope_drive_and_parts("//host/share-a/reports")[0],
+            chat_data_update._scope_drive_and_parts("//host/share-b/reports")[0],
+        )
+        self.assertEqual(
+            chat_data_update._scope_drive_and_parts("//host/share-a/reports")[1],
+            ["reports"],
+        )
+
+    def test_chat_data_update_rebinds_directory_in_same_source_snapshot(self):
+        self.gateway.metadata = {
+            "inventory": {"capabilities": ["chat_workspace_reconcile_v1"]}
+        }
+        self.gateway.save(update_fields=["metadata", "updated_at"])
+        old = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-old",
+            idempotency_key="chat-update-old",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        new = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-new",
+            idempotency_key="chat-update-new",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        directory = BackupSourceSnapshotDirectory.objects.create(
+            organization_id=self.tenant.id,
+            source_snapshot=new,
+            backup_config_id=1,
+            backup_config_dir_id=1,
+            source_path="/data",
+            repository_id=1,
+            status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
+        )
+        self.knowledge_source.backup_source_snapshot_id = old.id
+        self.knowledge_source.linked_version_mode = (
+            LensKnowledgeSource.LinkedVersionMode.PINNED
+        )
+        self.knowledge_source.sl_datasource_uuid = uuid.uuid4()
+        self.knowledge_source.ingest_policy_json = {"document": True}
+        self.knowledge_source.source_scopes_json = [
+            {"source_path": "/data/reports", "backup_snapshot_directory_id": 9876}
+        ]
+        self.knowledge_source.save()
+        self.session.backup_config_id = 1
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.READY
+        self.session.save()
+
+        snapshot, scopes = chat_data_update.resolve_update_scopes(
+            chat=self.session, snapshot_id=new.id
+        )
+        self.assertEqual(snapshot.id, new.id)
+        self.assertEqual(scopes[0].snapshot_directory_id, directory.id)
+        self.assertEqual(scopes[0].selected_path, "reports")
+        self.assertNotEqual(scopes[0].snapshot_directory_id, 9876)
+
+        initial = chat_data_update.prepare_chat_data_update(
+            chat=self.session, snapshot_id=new.id
+        )
+        duplicate = chat_data_update.prepare_chat_data_update(
+            chat=self.session, snapshot_id=new.id
+        )
+        self.assertEqual(initial, duplicate)
+        self.assertEqual(initial["scopes"][0]["snapshot_directory_id"], directory.id)
+        self.assertTrue(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=new.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.CHAT_UPDATE,
+                consumer_id=str(self.knowledge_source.id),
+            ).exists()
+        )
+        self.session.refresh_from_db()
+        self.assertEqual(
+            self.session.lifecycle_status, LensSessionLink.LifecycleStatus.READY
+        )
+
+        competing_snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-competing",
+            idempotency_key="chat-update-competing",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        BackupSourceSnapshotDirectory.objects.create(
+            organization_id=self.tenant.id,
+            source_snapshot=competing_snapshot,
+            backup_config_id=1,
+            backup_config_dir_id=1,
+            source_path="/data",
+            repository_id=1,
+            status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
+        )
+        with self.assertRaisesMessage(ValidationError, "Another Chat data update"):
+            chat_data_update.prepare_chat_data_update(
+                chat=self.session, snapshot_id=competing_snapshot.id
+            )
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=competing_snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.CHAT_UPDATE,
+                consumer_id=str(self.knowledge_source.id),
+            ).exists()
+        )
+
+        BackupSourceSnapshotDirectory.objects.create(
+            organization_id=self.tenant.id,
+            source_snapshot=new,
+            backup_config_id=1,
+            backup_config_dir_id=2,
+            source_path="/DATA",
+            repository_id=1,
+            status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
+        )
+        BackupSourceSnapshotDirectory.objects.create(
+            organization_id=self.tenant.id,
+            source_snapshot=new,
+            backup_config_id=1,
+            backup_config_dir_id=3,
+            source_path="/DATA/reports",
+            repository_id=1,
+            status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
+        )
+        exact_snapshot, exact_scopes = chat_data_update.resolve_update_scopes(
+            chat=self.session, snapshot_id=new.id
+        )
+        self.assertEqual(exact_snapshot.id, new.id)
+        self.assertEqual(exact_scopes[0].snapshot_directory_id, directory.id)
+        self.knowledge_source.source_scopes_json[0]["source_path"] = "/DaTa/reports"
+        self.knowledge_source.save(update_fields=["source_scopes_json", "updated_at"])
+        self.session.refresh_from_db()
+        with self.assertRaisesMessage(ValidationError, "ambiguous"):
+            chat_data_update.resolve_update_scopes(
+                chat=self.session, snapshot_id=new.id
+            )
+
+        self.knowledge_source.source_scopes_json[0]["source_path"] = "C:\\data\\reports"
+        self.knowledge_source.save(update_fields=["source_scopes_json", "updated_at"])
+        self.session.refresh_from_db()
+        with self.assertRaisesMessage(ValidationError, "absent"):
+            chat_data_update.resolve_update_scopes(
+                chat=self.session, snapshot_id=new.id
+            )
+
+        new.source_ref_id += 1
+        new.save(update_fields=["source_ref_id"])
+        with self.assertRaises(ValidationError):
+            chat_data_update.resolve_update_scopes(
+                chat=self.session, snapshot_id=new.id
+            )
+
+    def test_chat_update_rejects_a_changed_workspace_target_before_restore(self):
+        workspace = self.workspace_binding.resolved_path()
+        previous = RestoreRecord.objects.create(
+            organization_id=self.tenant.id,
+            requesting_organization_id=self.tenant.id,
+            target_execution_organization_id=self.platform_org.id,
+            target_execution_node_id=self.gateway.id,
+            purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+            idempotency_key="previous-chat-layout",
+            workspace_binding_id=self.workspace_binding.id,
+            restore_uid="previous-chat-layout",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=1,
+            source_type=RestoreRecord.EndpointType.AGENT,
+            source_ref_id=self.source_agent.id,
+            source_snapshot_id=11,
+            target_type=RestoreRecord.EndpointType.AGENT,
+            target_ref_id=self.gateway.id,
+            target_path=workspace,
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
+        )
+        RestoreRecordItem.objects.create(
+            organization_id=self.tenant.id,
+            restore_record=previous,
+            source_snapshot_directory_id=12,
+            backup_config_dir_id=1,
+            repository_id=1,
+            kopia_snapshot_id="old-snapshot",
+            source_path="/data",
+            target_path=f"{workspace}/reports",
+            conflict_mode=RestoreRecordItem.ConflictMode.OVERWRITE,
+            status=RestoreRecordItem.Status.SUCCESS,
+        )
+        common = {
+            "source_snapshot_directory_id": 21,
+            "selected_paths": [],
+            "source_path_type": "dir",
+            "restore_dir": workspace,
+            "conflict_mode": "overwrite",
+        }
+        knowledge_source_sync._require_unchanged_chat_workspace_layout(
+            org=self.tenant,
+            ks=self.knowledge_source,
+            update={"applied_snapshot_id": 11},
+            restore_dir=workspace,
+            candidate_items=[{**common, "target_source_path": "/data/reports"}],
+        )
+        with self.assertRaisesMessage(
+            knowledge_source_sync.KnowledgeSourceSyncError,
+            "would change this Chat's workspace layout",
+        ):
+            knowledge_source_sync._require_unchanged_chat_workspace_layout(
+                org=self.tenant,
+                ks=self.knowledge_source,
+                update={"applied_snapshot_id": 11},
+                restore_dir=workspace,
+                candidate_items=[{**common, "target_source_path": "/data/renamed"}],
+            )
+
+    def test_failed_chat_data_update_keeps_target_snapshot_for_retry(self):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-retry-target",
+            idempotency_key="chat-update-retry-target",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "failed",
+                "target_snapshot_id": snapshot.id,
+            }
+        }
+        self.knowledge_source.save(update_fields=["sync_state_json", "updated_at"])
+        lease = acquire_snapshot_usage(
+            organization_id=self.tenant.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT_UPDATE,
+            consumer_id=self.knowledge_source.id,
+        )
+
+        reconcile_snapshot_usage_leases()
+
+        self.assertTrue(SnapshotUsageLease.objects.filter(pk=lease.id).exists())
+        state = dict(self.knowledge_source.sync_state_json)
+        state["chat_data_update"]["status"] = "complete"
+        self.knowledge_source.sync_state_json = state
+        self.knowledge_source.save(update_fields=["sync_state_json", "updated_at"])
+        reconcile_snapshot_usage_leases()
+        self.assertFalse(SnapshotUsageLease.objects.filter(pk=lease.id).exists())
+
+    def test_deleted_chat_workspace_releases_failed_update_snapshot_lease(self):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-deleted-lease",
+            idempotency_key="chat-update-deleted-lease",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        self.knowledge_source.lifecycle_status = LensKnowledgeSource.LifecycleStatus.DELETED
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "failed",
+                "target_snapshot_id": snapshot.id,
+            }
+        }
+        self.knowledge_source.save(
+            update_fields=["lifecycle_status", "sync_state_json", "updated_at"]
+        )
+        lease = acquire_snapshot_usage(
+            organization_id=self.tenant.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT_UPDATE,
+            consumer_id=self.knowledge_source.id,
+        )
+
+        reconcile_snapshot_usage_leases()
+
+        self.assertFalse(SnapshotUsageLease.objects.filter(pk=lease.pk).exists())
+
+    @mock.patch(
+        "apps.lens_bridge.tasks.chat_data_update.execute_chat_data_update_task.delay"
+    )
+    def test_pending_chat_data_update_is_requeued_after_dispatch_loss(self, delay):
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {"status": "pending", "target_snapshot_id": 27}
+        }
+        self.knowledge_source.save(update_fields=["sync_state_json", "updated_at"])
+
+        result = reconcile_chat_data_updates_task(limit=10)
+
+        self.assertEqual(result["queued"], 1)
+        delay.assert_called_once_with(
+            organization_id=self.tenant.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+
+    @mock.patch(
+        "apps.lens_bridge.services.knowledge_source_teardown.assess_chat_restore_stop",
+        return_value=mock.Mock(confirmed=True),
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.managed_datasource.conversion_stop_confirmed",
+        return_value=True,
+    )
+    def test_abandon_failed_update_preserves_chat_but_releases_target(
+        self, _conversion_stop, _restore_stop
+    ):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-abandon-target",
+            idempotency_key="chat-update-abandon-target",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        self.knowledge_source.status = LensKnowledgeSource.Status.DEGRADED
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "failed",
+                "phase": "restore",
+                "target_snapshot_id": snapshot.id,
+            }
+        }
+        self.knowledge_source.save(update_fields=["status", "sync_state_json", "updated_at"])
+        lease = acquire_snapshot_usage(
+            organization_id=self.tenant.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT_UPDATE,
+            consumer_id=self.knowledge_source.id,
+        )
+
+        result = chat_data_update.abandon_chat_data_update(chat=self.session)
+
+        self.assertEqual(result["status"], "abandoned")
+        self.assertIs(_restore_stop.call_args.kwargs["request_cancel"], False)
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.lifecycle_status, LensSessionLink.LifecycleStatus.READY)
+        self.assertFalse(SnapshotUsageLease.objects.filter(pk=lease.pk).exists())
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.resolve_update_scopes"
+    )
+    def test_new_update_after_abandon_restores_original_health_baseline(
+        self, resolve_scopes
+    ):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-after-abandon",
+            idempotency_key="chat-update-after-abandon",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        resolve_scopes.return_value = (snapshot, ())
+        self.knowledge_source.status = LensKnowledgeSource.Status.DEGRADED
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "abandoned",
+                "previous_status": LensKnowledgeSource.Status.READY,
+                "target_snapshot_id": 77,
+            }
+        }
+        self.knowledge_source.save(update_fields=["status", "sync_state_json", "updated_at"])
+
+        update = chat_data_update.prepare_chat_data_update(
+            chat=self.session, snapshot_id=snapshot.id
+        )
+
+        self.assertEqual(update["previous_status"], LensKnowledgeSource.Status.READY)
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.resolve_update_scopes"
+    )
+    def test_completed_update_replay_does_not_retain_another_snapshot_lease(
+        self, resolve_scopes
+    ):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-completed-replay",
+            idempotency_key="chat-update-completed-replay",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        resolve_scopes.return_value = (snapshot, ())
+        self.knowledge_source.pinned_snapshot_id = snapshot.id
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "complete",
+                "target_snapshot_id": snapshot.id,
+            }
+        }
+        self.knowledge_source.save(
+            update_fields=["pinned_snapshot_id", "sync_state_json", "updated_at"]
+        )
+
+        replay = chat_data_update.prepare_chat_data_update(
+            chat=self.session, snapshot_id=snapshot.id
+        )
+
+        self.assertEqual(replay["status"], "complete")
+        self.assertFalse(
+            SnapshotUsageLease.objects.filter(
+                snapshot_id=snapshot.id,
+                consumer_type=SnapshotUsageLease.ConsumerType.CHAT_UPDATE,
+                consumer_id=str(self.knowledge_source.id),
+            ).exists()
+        )
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.managed_datasource.convert_documents"
+    )
+    def test_chat_data_conversion_completes_without_replacing_chat_session(
+        self, convert_documents
+    ):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-conversion-target",
+            idempotency_key="chat-update-conversion-target",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        original_session_uuid = self.session.sl_session_uuid
+        original_assistant_uuid = self.session.sl_assistant_uuid
+        self.workspace_binding.capacity_accounted_bytes = 1100
+        self.workspace_binding.capacity_accounting_status = (
+            LensWorkspaceBinding.CapacityAccountingStatus.CONSERVATIVE
+        )
+        self.workspace_binding.save(
+            update_fields=[
+                "capacity_accounted_bytes", "capacity_accounting_status", "updated_at",
+            ]
+        )
+        self.knowledge_source.pinned_snapshot_id = 17
+        self.knowledge_source.ingest_policy_json = {"document": True}
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "pending",
+                "phase": "convert",
+                "target_snapshot_id": snapshot.id,
+                "applied_snapshot_id": 17,
+                "validated_bytes": 900,
+                "scopes": [
+                    {
+                        "source_path": "/data",
+                        "snapshot_directory_id": 77,
+                        "snapshot_directory_source_path": "/data",
+                        "snapshot_directory_path_type": "dir",
+                        "selected_path": "",
+                        "size_bytes": 900,
+                        "file_count": 3,
+                        "path_type": "dir",
+                    }
+                ],
+            },
+        }
+        self.knowledge_source.save(
+            update_fields=[
+                "pinned_snapshot_id", "ingest_policy_json", "sync_state_json", "updated_at"
+            ]
+        )
+        lease = acquire_snapshot_usage(
+            organization_id=self.tenant.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT_UPDATE,
+            consumer_id=self.knowledge_source.id,
+        )
+        convert_documents.return_value = {"success": 2, "skipped": 8, "failed": 0}
+
+        result = chat_data_update.run_chat_data_update(
+            organization_id=self.tenant.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.knowledge_source.refresh_from_db()
+        self.session.refresh_from_db()
+        self.assertEqual(self.knowledge_source.pinned_snapshot_id, snapshot.id)
+        self.assertEqual(self.knowledge_source.backup_source_snapshot_id, snapshot.id)
+        self.assertEqual(self.knowledge_source.backup_snapshot_directory_id, 77)
+        self.assertEqual(
+            self.knowledge_source.source_scopes_json[0]["backup_snapshot_directory_id"],
+            77,
+        )
+        self.assertEqual(self.knowledge_source.source_scopes_json[0]["size_bytes"], 900)
+        self.workspace_binding.refresh_from_db()
+        self.assertEqual(self.workspace_binding.capacity_accounted_bytes, 900)
+        self.assertEqual(
+            self.workspace_binding.capacity_accounting_status,
+            LensWorkspaceBinding.CapacityAccountingStatus.EXACT,
+        )
+        self.assertEqual(
+            self.knowledge_source.sync_state_json["chat_data_update"]["status"],
+            "complete",
+        )
+        self.assertEqual(self.session.lifecycle_status, LensSessionLink.LifecycleStatus.READY)
+        self.assertEqual(self.session.sl_session_uuid, original_session_uuid)
+        self.assertEqual(self.session.sl_assistant_uuid, original_assistant_uuid)
+        self.assertFalse(SnapshotUsageLease.objects.filter(pk=lease.pk).exists())
+        self.assertFalse(convert_documents.call_args.kwargs["force"])
+        self.assertEqual(
+            LensSessionLinkSerializer(self.session).data["data_context"][
+                "backup_source_snapshot_id"
+            ],
+            snapshot.id,
+        )
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.managed_datasource.convert_documents"
+    )
+    def test_chat_data_update_does_not_claim_success_when_conversion_is_disabled(
+        self, convert_documents
+    ):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-without-conversion",
+            idempotency_key="chat-update-without-conversion",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        self.knowledge_source.ingest_policy_json = {"document": False}
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "pending",
+                "phase": "convert",
+                "target_snapshot_id": snapshot.id,
+            }
+        }
+        self.knowledge_source.save(
+            update_fields=["ingest_policy_json", "sync_state_json", "updated_at"]
+        )
+
+        result = chat_data_update.run_chat_data_update(
+            organization_id=self.tenant.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            self.knowledge_source.sync_state_json["chat_data_update"]["status"],
+            "failed",
+        )
+        self.assertNotEqual(self.knowledge_source.pinned_snapshot_id, snapshot.id)
+        convert_documents.assert_not_called()
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.managed_datasource.convert_documents",
+        return_value={"failed": 0, "skipped": 10},
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.knowledge_source_sync._run_phase_restore_snapshot"
+    )
+    def test_chat_data_update_resumes_restore_then_converts_without_disabling_chat(
+        self, restore, convert_documents
+    ):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-resume-target",
+            idempotency_key="chat-update-resume-target",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        self.knowledge_source.ingest_policy_json = {"document": True}
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "pending",
+                "phase": "restore",
+                "target_snapshot_id": snapshot.id,
+                "new_request": True,
+                "generation": 1,
+                "scopes": [],
+            }
+        }
+        self.knowledge_source.save(
+            update_fields=["ingest_policy_json", "sync_state_json", "updated_at"]
+        )
+        acquire_snapshot_usage(
+            organization_id=self.tenant.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT_UPDATE,
+            consumer_id=self.knowledge_source.id,
+        )
+        restore.side_effect = [
+            knowledge_source_sync.KnowledgeSourceSyncPending("Restore in progress."),
+            None,
+        ]
+
+        first = chat_data_update.run_chat_data_update(
+            organization_id=self.tenant.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+        self.assertEqual(first["status"], "waiting")
+        self.knowledge_source.sync_next_poll_at = timezone.now() - timedelta(seconds=1)
+        self.knowledge_source.save(update_fields=["sync_next_poll_at", "updated_at"])
+        second = chat_data_update.run_chat_data_update(
+            organization_id=self.tenant.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+        self.assertEqual(second["status"], "waiting")
+        self.knowledge_source.sync_next_poll_at = timezone.now() - timedelta(seconds=1)
+        self.knowledge_source.save(update_fields=["sync_next_poll_at", "updated_at"])
+        third = chat_data_update.run_chat_data_update(
+            organization_id=self.tenant.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+        self.assertEqual(third["status"], "complete")
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.lifecycle_status, LensSessionLink.LifecycleStatus.READY)
+        self.assertEqual(restore.call_count, 2)
+        convert_documents.assert_called_once()
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.knowledge_source_sync._run_phase_restore_snapshot",
+        side_effect=knowledge_source_sync.KnowledgeSourceSyncError(
+            "Data Gateway workspace has insufficient free space for this snapshot"
+        ),
+    )
+    def test_chat_update_reports_disk_full_without_disabling_chat(self, _restore):
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "pending",
+                "phase": "restore",
+                "new_request": True,
+                "target_snapshot_id": 44,
+                "generation": 1,
+            }
+        }
+        self.knowledge_source.save(update_fields=["sync_state_json", "updated_at"])
+
+        result = chat_data_update.run_chat_data_update(
+            organization_id=self.tenant.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("Free space and retry", result["error"])
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.lifecycle_status, LensSessionLink.LifecycleStatus.READY)
+
+    @mock.patch(
+        "apps.lens_bridge.services.snapshot_scope_tasks.dispatch_scope_resolution"
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.snapshot_scope_tasks.scope_task_for_correlation",
+        return_value=None,
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.knowledge_source_sync._run_phase_restore_snapshot"
+    )
+    def test_chat_update_checks_target_scope_before_restoring(
+        self, restore, _existing_task, dispatch
+    ):
+        dispatch.return_value = mock.Mock(
+            id=uuid.uuid4(),
+            status=NodeTask.Status.SUCCESS,
+            result={
+                "path_type": "dir",
+                "size_bytes": 100,
+                "file_count": 2,
+                "skipped_special_count": 0,
+            },
+        )
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "pending",
+                "phase": "validate",
+                "generation": 1,
+                "target_snapshot_id": 44,
+                "requested_by_user_id": self.user.id,
+                "scopes": [{
+                    "snapshot_directory_id": 22,
+                    "snapshot_directory_source_path": "/data",
+                    "snapshot_directory_path_type": "dir",
+                    "selected_path": "reports",
+                    "path_type": "dir",
+                }],
+            }
+        }
+        self.knowledge_source.save(update_fields=["sync_state_json", "updated_at"])
+
+        result = chat_data_update.run_chat_data_update(
+            organization_id=self.tenant.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+
+        self.assertEqual(result["status"], "waiting")
+        restore.assert_not_called()
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            self.knowledge_source.sync_state_json["chat_data_update"]["validation_index"],
+            1,
+        )
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.knowledge_source_sync._require_unchanged_chat_workspace_layout"
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.public_gateway_capacity.assert_public_gateway_capacity"
+    )
+    def test_chat_update_reserves_only_projected_growth_before_restore(
+        self, assert_capacity, _layout
+    ):
+        token = uuid.uuid4()
+        self.workspace_binding.capacity_accounted_bytes = 400
+        self.workspace_binding.capacity_accounting_status = (
+            LensWorkspaceBinding.CapacityAccountingStatus.EXACT
+        )
+        self.workspace_binding.save(
+            update_fields=[
+                "capacity_accounted_bytes", "capacity_accounting_status", "updated_at",
+            ]
+        )
+        self.knowledge_source.sync_claim_token = token
+        self.knowledge_source.sync_claimed_at = timezone.now()
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "running",
+                "phase": "validate",
+                "target_snapshot_id": 47,
+                "validation_index": 1,
+                "validated_bytes": 1000,
+                "validated_files": 2,
+                "scopes": [{
+                    "source_path": "/data",
+                    "snapshot_directory_id": 17,
+                    "snapshot_directory_source_path": "/data",
+                    "snapshot_directory_path_type": "dir",
+                    "selected_path": "",
+                    "size_bytes": 1000,
+                    "file_count": 2,
+                    "path_type": "dir",
+                }],
+            }
+        }
+        self.knowledge_source.save(
+            update_fields=[
+                "sync_claim_token", "sync_claimed_at", "sync_state_json", "updated_at",
+            ]
+        )
+
+        chat_data_update._reserve_capacity_and_start_restore(
+            ks=self.knowledge_source, token=str(token)
+        )
+
+        self.workspace_binding.refresh_from_db()
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(self.workspace_binding.capacity_accounted_bytes, 1000)
+        self.assertEqual(
+            self.workspace_binding.capacity_accounting_status,
+            LensWorkspaceBinding.CapacityAccountingStatus.CONSERVATIVE,
+        )
+        self.assertEqual(
+            self.knowledge_source.sync_state_json["chat_data_update"]["phase"],
+            "restore",
+        )
+        self.assertIsNone(self.knowledge_source.sync_claim_token)
+        self.assertEqual(
+            assert_capacity.call_args.kwargs["additional_bytes"], 600
+        )
+        from apps.lens_bridge.services.public_gateway_capacity import (
+            public_gateway_used_bytes,
+        )
+
+        used_bytes, unknown = public_gateway_used_bytes(
+            gateway_link_id=self.gateway_link.id
+        )
+        self.assertGreaterEqual(used_bytes, 1000)
+        self.assertFalse(unknown)
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.knowledge_source_sync._require_unchanged_chat_workspace_layout"
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.public_gateway_capacity.assert_public_gateway_capacity",
+        side_effect=AppError(
+            code="SUBSCRIPTION.QUOTA_EXCEEDED",
+            status=403,
+            diagnostic="gateway full",
+        ),
+    )
+    def test_insufficient_gateway_capacity_does_not_start_restore(
+        self, _assert_capacity, _layout
+    ):
+        token = uuid.uuid4()
+        self.workspace_binding.capacity_accounted_bytes = 400
+        self.workspace_binding.capacity_accounting_status = (
+            LensWorkspaceBinding.CapacityAccountingStatus.EXACT
+        )
+        self.workspace_binding.save(
+            update_fields=["capacity_accounted_bytes", "capacity_accounting_status", "updated_at"]
+        )
+        self.knowledge_source.sync_claim_token = token
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "running",
+                "phase": "validate",
+                "validation_index": 1,
+                "validated_bytes": 1000,
+                "validated_files": 2,
+                "scopes": [{
+                    "source_path": "/data",
+                    "snapshot_directory_id": 17,
+                    "snapshot_directory_source_path": "/data",
+                    "snapshot_directory_path_type": "dir",
+                    "selected_path": "",
+                    "size_bytes": 1000,
+                    "file_count": 2,
+                }],
+            }
+        }
+        self.knowledge_source.save(
+            update_fields=["sync_claim_token", "sync_state_json", "updated_at"]
+        )
+
+        with self.assertRaises(AppError):
+            chat_data_update._reserve_capacity_and_start_restore(
+                ks=self.knowledge_source, token=str(token)
+            )
+
+        self.workspace_binding.refresh_from_db()
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(self.workspace_binding.capacity_accounted_bytes, 400)
+        self.assertEqual(
+            self.knowledge_source.sync_state_json["chat_data_update"]["phase"],
+            "validate",
+        )
+        result = chat_data_update.run_chat_data_update(
+            organization_id=self.tenant.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("capacity", result["error"])
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.lifecycle_status, LensSessionLink.LifecycleStatus.READY)
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.managed_datasource.convert_documents",
+        side_effect=RuntimeError("conversion temporarily failed"),
+    )
+    def test_failed_chat_data_conversion_keeps_chat_ready_and_retryable(
+        self, _convert_documents
+    ):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-failed-conversion",
+            idempotency_key="chat-update-failed-conversion",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        self.knowledge_source.ingest_policy_json = {"document": True}
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "pending",
+                "phase": "convert",
+                "target_snapshot_id": snapshot.id,
+            }
+        }
+        self.knowledge_source.save(
+            update_fields=["ingest_policy_json", "sync_state_json", "updated_at"]
+        )
+        lease = acquire_snapshot_usage(
+            organization_id=self.tenant.id,
+            snapshot_id=snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT_UPDATE,
+            consumer_id=self.knowledge_source.id,
+        )
+
+        result = chat_data_update.run_chat_data_update(
+            organization_id=self.tenant.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.knowledge_source.refresh_from_db()
+        self.session.refresh_from_db()
+        self.assertEqual(
+            self.knowledge_source.sync_state_json["chat_data_update"]["status"],
+            "failed",
+        )
+        self.assertEqual(
+            self.knowledge_source.status, LensKnowledgeSource.Status.DEGRADED
+        )
+        self.assertEqual(self.session.lifecycle_status, LensSessionLink.LifecycleStatus.READY)
+        self.assertTrue(SnapshotUsageLease.objects.filter(pk=lease.pk).exists())
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_data_update.managed_datasource.convert_documents",
+        return_value={"failed": 0, "success": 1, "skipped": 9},
+    )
+    def test_partial_conversion_retries_non_forced_task_without_restoring_again(
+        self, convert_documents
+    ):
+        snapshot = BackupSourceSnapshot.objects.create(
+            organization_id=self.tenant.id,
+            snapshot_uid="chat-update-partial-retry",
+            idempotency_key="chat-update-partial-retry",
+            source_type="agent",
+            source_ref_id=self.source_agent.id,
+            backup_config_id=1,
+            repository_id=1,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        self.knowledge_source.status = LensKnowledgeSource.Status.DEGRADED
+        self.knowledge_source.ingest_policy_json = {"document": True}
+        self.knowledge_source.sync_state_json = {
+            "chat_data_update": {
+                "status": "failed",
+                "phase": "convert",
+                "target_snapshot_id": snapshot.id,
+            },
+            "conversion": {"status": "SUCCESS", "summary": {"failed": 1}},
+        }
+        self.knowledge_source.save(
+            update_fields=["status", "ingest_policy_json", "sync_state_json", "updated_at"]
+        )
+        with (
+            mock.patch(
+                "apps.lens_bridge.services.chat_data_update.resolve_update_scopes",
+                return_value=(snapshot, ()),
+            ),
+            mock.patch(
+                "apps.lens_bridge.services.chat_data_update.knowledge_source_sync._run_phase_restore_snapshot"
+            ) as restore,
+        ):
+            chat_data_update.prepare_chat_data_update(
+                chat=self.session, snapshot_id=snapshot.id
+            )
+            result = chat_data_update.run_chat_data_update(
+                organization_id=self.tenant.id,
+                knowledge_source_id=self.knowledge_source.id,
+            )
+        self.assertEqual(result["status"], "complete")
+        restore.assert_not_called()
+        self.assertNotIn("conversion", convert_documents.call_args.kwargs["sync_state"])
+        self.assertIs(convert_documents.call_args.kwargs["force"], False)
 
     def test_reused_chat_does_not_mark_degraded_shared_data_ready(self):
         token = uuid.uuid4()
@@ -480,13 +1473,26 @@ class CopilotChatTeardownTests(TestCase):
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.READY
         self.session.provision_phase = LensSessionLink.ProvisionPhase.READY
         self.session.sl_session_uuid = uuid.uuid4()
+        self.session.backup_source_snapshot_id = 11
+        self.session.source_scopes_json = [
+            {"source_path": "/data", "backup_snapshot_directory_id": 12}
+        ]
         self.session.save(
             update_fields=[
                 "lifecycle_status",
                 "provision_phase",
                 "sl_session_uuid",
+                "backup_source_snapshot_id",
+                "source_scopes_json",
                 "updated_at",
             ]
+        )
+        self.knowledge_source.backup_source_snapshot_id = 20
+        self.knowledge_source.source_scopes_json = [
+            {"source_path": "/data", "backup_snapshot_directory_id": 21}
+        ]
+        self.knowledge_source.save(
+            update_fields=["backup_source_snapshot_id", "source_scopes_json", "updated_at"]
         )
 
         with self.captureOnCommitCallbacks(execute=True):
@@ -498,6 +1504,8 @@ class CopilotChatTeardownTests(TestCase):
             )
 
         self.assertEqual(reused.knowledge_source_id, self.knowledge_source.id)
+        self.assertEqual(reused.backup_source_snapshot_id, 20)
+        self.assertEqual(reused.source_scopes_json[0]["backup_snapshot_directory_id"], 21)
         self.knowledge_source.refresh_from_db()
         self.assertTrue(
             self.knowledge_source.teardown_state_json["shared_chat_resources"]

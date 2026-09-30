@@ -365,6 +365,13 @@ export type LensSessionLink = {
   force_delete_reason?: string
   document_conversion?: DocumentConversion | null
   data_context?: SessionDataContext | null
+  data_update?: {
+    status: 'idle' | 'pending' | 'running' | 'failed' | 'complete' | string
+    phase: string
+    applied_snapshot_id: number | null
+    target_snapshot_id: number | null
+    error: string
+  } | null
   last_message_at: string | null
   last_assistant_message_at: string | null
   last_viewed_at: string | null
@@ -1158,6 +1165,28 @@ export async function createCopilotSessionFromExisting(
     body: JSON.stringify(body),
   })
   return lensPayload<LensSessionLink>(raw)
+}
+
+export async function updateCopilotChatData(
+  sessionId: number,
+  snapshotId: number,
+): Promise<NonNullable<LensSessionLink['data_update']>> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/update-data/`), {
+    method: 'POST',
+    headers: lensHeaders(),
+    body: JSON.stringify({ snapshot_id: snapshotId }),
+  })
+  return lensPayload<NonNullable<LensSessionLink['data_update']>>(raw)
+}
+
+export async function abandonCopilotChatDataUpdate(
+  sessionId: number,
+): Promise<NonNullable<LensSessionLink['data_update']>> {
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/abandon-update/`), {
+    method: 'POST',
+    headers: lensHeaders(),
+  })
+  return lensPayload<NonNullable<LensSessionLink['data_update']>>(raw)
 }
 
 export type LensSnapshotBrowseTask = {

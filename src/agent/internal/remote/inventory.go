@@ -43,6 +43,7 @@ func SupportedCapabilities() []string {
 		"snapshot_multi_download_v1",
 		"snapshot_source_path_download_v1",
 		"snapshot_scope_resolve_v1",
+		"chat_workspace_reconcile_v1",
 		"insight_safe_restore_v1",
 		"nas_mount_lifecycle_v1",
 		"network_inventory_v1",

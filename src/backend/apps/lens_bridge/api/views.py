@@ -42,6 +42,7 @@ from apps.lens_bridge.api.serializers import (
     LensShareTitleSerializer,
     LensSessionCreateSerializer,
     LensSessionReuseSerializer,
+    LensChatDataUpdateSerializer,
     LensSnapshotBrowseCreateSerializer,
     LensSessionLinkSerializer,
     LensSessionTitleSerializer,
@@ -1418,6 +1419,8 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         if self.action in (
             "create",
             "new_from",
+            "update_data",
+            "abandon_update",
             "destroy",
             "force_delete",
             "create_run",
@@ -1683,6 +1686,26 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             LensSessionLinkSerializer(link).data,
             status=status.HTTP_202_ACCEPTED,
         )
+
+    @action(detail=True, methods=["post"], url_path="update-data")
+    def update_data(self, request, pk=None):
+        from apps.lens_bridge.services.chat_data_update import prepare_chat_data_update
+
+        body = LensChatDataUpdateSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        link = self._get_user_link(pk)
+        update = prepare_chat_data_update(
+            chat=link, snapshot_id=body.validated_data["snapshot_id"]
+        )
+        return Response(update, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=["post"], url_path="abandon-update")
+    def abandon_update(self, request, pk=None):
+        from apps.lens_bridge.services.chat_data_update import abandon_chat_data_update
+
+        link = self._get_user_link(pk)
+        update = abandon_chat_data_update(chat=link)
+        return Response(update)
 
     def _lock_exclusive_chat_resource(self, link, *, field):
         """Fence Assistant edits against reuse admission and Chat deletion."""

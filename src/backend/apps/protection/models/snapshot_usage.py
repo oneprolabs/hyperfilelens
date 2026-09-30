@@ -9,6 +9,7 @@ class SnapshotUsageLease(models.Model):
     class ConsumerType(models.TextChoices):
         RESTORE = "restore", "Restore"
         CHAT = "chat", "Chat preparation"
+        CHAT_UPDATE = "chat_update", "Chat data update"
 
     organization_id = models.BigIntegerField(db_index=True)
     snapshot = models.ForeignKey(

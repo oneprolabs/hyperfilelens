@@ -72,3 +72,10 @@ def register_periodic_tasks() -> None:
         kwargs={"limit": 100},
         enabled=True,
     )
+    TASK_REGISTRY.add(
+        name="lens_bridge_reconcile_chat_data_updates",
+        task="apps.lens_bridge.tasks.chat_data_update.reconcile_chat_data_updates_task",
+        schedule=crontab(minute="*"),
+        kwargs={"limit": 100},
+        enabled=True,
+    )
