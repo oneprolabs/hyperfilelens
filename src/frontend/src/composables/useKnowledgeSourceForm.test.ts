@@ -9,6 +9,7 @@ import { useKnowledgeSourceForm } from './useKnowledgeSourceForm'
 const mocks = vi.hoisted(() => ({
   browseCopilotSnapshotDirectory: vi.fn(),
   createKnowledgeSource: vi.fn(),
+  listBackupSourceSnapshots: vi.fn().mockResolvedValue({ count: 0, results: [] }),
   warning: vi.fn(),
   error: vi.fn(),
   success: vi.fn(),
@@ -44,7 +45,7 @@ vi.mock('../lib/lensApi', () => ({
 
 vi.mock('../lib/protectionBackupConfigApi', () => ({
   getBackupSourceSnapshot: vi.fn(),
-  listBackupSourceSnapshots: vi.fn().mockResolvedValue({ results: [] }),
+  listBackupSourceSnapshots: mocks.listBackupSourceSnapshots,
 }))
 
 type KnowledgeSourceForm = ReturnType<typeof useKnowledgeSourceForm>
@@ -90,14 +91,20 @@ function snapshotFixture(): BackupSourceSnapshot {
   }
 }
 
-function mountForm(editingId: number | null = 1): { form: KnowledgeSourceForm; wrapper: VueWrapper } {
+function mountForm(
+  editingId: number | null = 1,
+  snapshotSelectionMode?: 'concrete',
+): { form: KnowledgeSourceForm; wrapper: VueWrapper } {
   let form!: KnowledgeSourceForm
   const wrapper = mount(defineComponent({
     setup() {
       form = useKnowledgeSourceForm(
         ref(editingId),
         ref('backup_source'),
-        { snapshotGatewayLinkId: ref(17) },
+        {
+          snapshotGatewayLinkId: ref(17),
+          ...(snapshotSelectionMode ? { snapshotSelectionMode } : {}),
+        },
       )
       return () => h('div')
     },
@@ -144,6 +151,80 @@ describe('knowledge source backup scope validation', () => {
         linked_version_mode: 'pinned',
         pinned_snapshot_id: 71,
       }))
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('uses the newest concrete snapshot by default for New Chat selection', async () => {
+    const { form, wrapper } = mountForm(null, 'concrete')
+    try {
+      const older = snapshotFixture()
+      older.id = 70
+      older.created_at = '2026-07-30T00:00:00Z'
+      const newer = snapshotFixture()
+      newer.id = 71
+      newer.created_at = '2026-07-31T00:00:00Z'
+      form.snapshots.value = [older, newer]
+      form.selectedBackupConfigId.value = newer.backup_config_id
+      await flushPromises()
+
+      expect(form.concreteSnapshotSelection.value).toBe(true)
+      expect(form.snapshotPickerValue.value).toBe(newer.id)
+      expect(form.effectiveSnapshotId.value).toBe(newer.id)
+      expect(form.snapshotsForSelectedBackupSource.value.map((row) => row.id)).toEqual([71, 70])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('loads every available snapshot before choosing the newest by completion time', async () => {
+    const { form, wrapper } = mountForm(null, 'concrete')
+    try {
+      form.selectedBackupConfigId.value = null
+      form.snapshotPickerValue.value = 'latest'
+      await flushPromises()
+      const newestCreated = snapshotFixture()
+      newestCreated.id = 71
+      newestCreated.finished_at = '2026-07-31T01:00:00Z'
+      const latestFinished = snapshotFixture()
+      latestFinished.id = 70
+      latestFinished.created_at = '2026-07-30T00:00:00Z'
+      latestFinished.finished_at = '2026-08-01T01:00:00Z'
+      mocks.listBackupSourceSnapshots
+        .mockResolvedValueOnce({ count: 2, results: [newestCreated] })
+        .mockResolvedValueOnce({ count: 2, results: [latestFinished] })
+      await form.loadSnapshots()
+      form.selectedBackupConfigId.value = newestCreated.backup_config_id
+      await flushPromises()
+
+      expect(mocks.listBackupSourceSnapshots).toHaveBeenCalledTimes(2)
+      expect(form.snapshotsForSelectedBackupSource.value.map((row) => row.id)).toEqual([70, 71])
+      expect(form.snapshotPickerValue.value).toBe(70)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps a manually chosen snapshot on refresh and falls back if it disappears', async () => {
+    const { form, wrapper } = mountForm(null, 'concrete')
+    try {
+      const oldSnapshot = snapshotFixture()
+      oldSnapshot.id = 70
+      oldSnapshot.created_at = '2026-07-30T00:00:00Z'
+      const newSnapshot = snapshotFixture()
+      form.snapshots.value = [newSnapshot, oldSnapshot]
+      await flushPromises()
+      form.snapshotPickerValue.value = oldSnapshot.id
+      expect(form.effectiveSnapshotId.value).toBe(oldSnapshot.id)
+
+      form.snapshots.value = [newSnapshot, { ...oldSnapshot }]
+      await flushPromises()
+      expect(form.snapshotPickerValue.value).toBe(oldSnapshot.id)
+
+      form.snapshots.value = [newSnapshot]
+      await flushPromises()
+      expect(form.snapshotPickerValue.value).toBe(newSnapshot.id)
     } finally {
       wrapper.unmount()
     }

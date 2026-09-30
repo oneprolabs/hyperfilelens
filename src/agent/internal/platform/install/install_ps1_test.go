@@ -389,6 +389,24 @@ func TestInstallPs1DefersCompleteDataRootRemovalUntilInstallCmdExits(t *testing.
 	}
 }
 
+func TestInstallPs1UninstallOutputDistinguishesScheduledCleanup(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	for _, want := range []string{
+		`$banner = $banner.Replace('INSTALLER', 'UNINSTALLER')`,
+		`$labelWidth = if ($Command -eq 'uninstall') { 16 } else { 13 }`,
+		`Write-HflDisplayLine "  The Agent service and binaries have been removed."`,
+		`Write-HflDisplayLine "  Local Agent data was preserved."`,
+		`Write-HflDisplayLine "  Final local file cleanup continues after install.cmd exits."`,
+		`Write-HflOk "Final file cleanup was scheduled"`,
+		`"scheduled for $deferredRemovalTarget"`,
+		`Write-HflSummaryLine "Console record" "unchanged"`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("install.ps1 missing uninstall output contract %q", want)
+		}
+	}
+}
+
 func TestInstallPs1RetiresIdentityBeforeRemovingAgent(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	retire := `& $agentBinary config retire-installation --data-dir $dataRoot`
@@ -410,6 +428,27 @@ func TestInstallPs1RetiresIdentityBeforeRemovingAgent(t *testing.T) {
 	}
 	if !strings.Contains(source, `$preserveData -and (-not $KeepInstallationIdentity)`) {
 		t.Fatal("install.ps1 must skip identity retirement during incomplete-install rollback")
+	}
+}
+
+func TestInstallPs1RetirementDetailsStayInLogUnlessItFails(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	start := strings.Index(source, `if ($preserveData -and (-not $KeepInstallationIdentity)) {`)
+	if start < 0 {
+		t.Fatal("install.ps1 missing preserve-data retirement branch")
+	}
+	end := strings.Index(source[start:], `elseif ($KeepInstallationIdentity)`)
+	if end < 0 {
+		t.Fatal("install.ps1 missing preserve-data retirement branch")
+	}
+	branch := source[start : start+end]
+	if !strings.Contains(branch, `Write-HflDetailLine $text`) ||
+		!strings.Contains(branch, `if ($retireExitCode -ne 0) {`) ||
+		!strings.Contains(branch, `Write-HflLog -Level 'FAIL ' -Message ([string]$line)`) {
+		t.Fatal("retirement must log native details and display them on failure")
+	}
+	if strings.Contains(branch, `Write-Host $text`) {
+		t.Fatal("successful retirement must not print unformatted native output")
 	}
 }
 

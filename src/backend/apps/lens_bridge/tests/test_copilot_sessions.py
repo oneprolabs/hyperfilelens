@@ -408,10 +408,7 @@ class CopilotSessionApiTests(TestCase):
         self.assertEqual(invalid.status_code, 400)
         prepare_update.assert_called_once()
 
-    @patch(
-        "apps.lens_bridge.api.views.sl_client.request_json",
-        return_value={"supported": True, "status": "active"},
-    )
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
     @patch("apps.lens_bridge.services.chat_lifecycle.create_copilot_chat_from_existing")
     def test_new_from_chat_uses_the_source_chat_and_idempotency_key(
         self,
@@ -441,56 +438,7 @@ class CopilotSessionApiTests(TestCase):
             idempotency_key="reuse-api-test",
             title="Follow-up",
         )
-        request_json.assert_called_once_with(
-            "GET",
-            f"/api/lens/assistants/{self.session.sl_assistant_uuid}/archive-if-unused/",
-        )
-
-    @patch("apps.lens_bridge.services.chat_lifecycle.create_copilot_chat_from_existing")
-    @patch("apps.lens_bridge.api.views.sl_client.request_json")
-    def test_new_from_chat_requires_safe_sourcelens_archive(
-        self, request_json, create_from_existing
-    ):
-        self._mark_session_ready()
-        self.session.sl_assistant_uuid = uuid.uuid4()
-        self.session.save(update_fields=["sl_assistant_uuid", "updated_at"])
-        missing = sl_client.LensBridgeError("not found")
-        missing.status_code = 404
-        request_json.side_effect = missing
-
-        response = self.client.post(
-            reverse("lens-copilot-session-new-from", kwargs={"pk": self.session.pk}),
-            {"idempotency_key": "unsupported-version"},
-            format="json",
-            HTTP_X_ORG_KEY=self.org.key,
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("Upgrade SourceLens", str(response.json()))
-        create_from_existing.assert_not_called()
-
-    @patch("apps.lens_bridge.services.chat_lifecycle.create_copilot_chat_from_existing")
-    @patch(
-        "apps.lens_bridge.api.views.sl_client.request_json",
-        return_value={"supported": True, "status": "archived"},
-    )
-    def test_new_from_chat_rejects_archived_assistant_before_creating_shell(
-        self, _request_json, create_from_existing
-    ):
-        self._mark_session_ready()
-        self.session.sl_assistant_uuid = uuid.uuid4()
-        self.session.save(update_fields=["sl_assistant_uuid", "updated_at"])
-
-        response = self.client.post(
-            reverse("lens-copilot-session-new-from", kwargs={"pk": self.session.pk}),
-            {"idempotency_key": "archived-source-assistant"},
-            format="json",
-            HTTP_X_ORG_KEY=self.org.key,
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("can no longer start", str(response.json()))
-        create_from_existing.assert_not_called()
+        request_json.assert_not_called()
 
     @patch(
         "apps.lens_bridge.api.views.sl_client.request_json",

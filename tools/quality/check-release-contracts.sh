@@ -486,7 +486,7 @@ grep -Fx '      context: .' \
 grep -Fx '      dockerfile: lensnode/Dockerfile' \
 	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 
-grep -Fx 'active/archive-assistant-if-unused-v0.61.3.patch' \
+grep -F '# SourceLens v0.61.3 requires no HFL functional patches.' \
 	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
 [[ -x "${ROOT}/tools/sourcelens/update-runtime-contract.sh" ]]
 [[ -x "${ROOT}/tools/quality/test-sourcelens-runtime-contract.sh" ]]
@@ -502,7 +502,7 @@ if [[ -e "${ROOT}/deploy/installer/sourcelens/lensnode-tls.patch" \
 	printf 'ERROR: retired SourceLens TLS patch remains active\n' >&2
 	exit 1
 fi
-[[ "$(sourcelens_patch_manifest_json)" == *'"file":"active/archive-assistant-if-unused-v0.61.3.patch"'* ]]
+[[ "$(sourcelens_patch_manifest_json)" == "[]" ]]
 [[ "$(sourcelens_patchset_digest | wc -c)" -eq 65 ]]
 
 original_build_dir="${SOURCELENS_BUILD_DIR}"

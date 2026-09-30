@@ -838,8 +838,6 @@ def _clear_sl_assistant_datasource_bindings(
 
 def _delete_sl_assistant(
     assistant_uuid: uuid_lib.UUID,
-    *,
-    guard_active_sessions: bool = False,
 ) -> None:
     """Retire an Assistant through SourceLens' supported archive contract.
 
@@ -848,20 +846,6 @@ def _delete_sl_assistant(
     then archives. An already archived or missing 404 is idempotent success;
     every other error is preserved for durable retry.
     """
-
-    if guard_active_sessions:
-        # Do not unbind the datasource before SourceLens has atomically
-        # confirmed that nobody can still start work with this Assistant.
-        archived = sl_client.request_json(
-            "POST",
-            f"/api/lens/assistants/{assistant_uuid}/archive-if-unused/",
-        )
-        if not isinstance(archived, dict) or archived.get("status") != "archived":
-            raise sl_client.LensBridgeError(
-                "SourceLens did not confirm safe Assistant archival."
-            )
-        _clear_sl_assistant_datasource_bindings(assistant_uuid)
-        return
 
     _clear_sl_assistant_datasource_bindings(assistant_uuid)
     try:

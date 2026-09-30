@@ -780,14 +780,7 @@ def run_knowledge_source_teardown(
         assistant_uuids = _assistant_uuids_for_knowledge_source(knowledge_source)
         for assistant_uuid in sorted(assistant_uuids, key=str):
             _renew(knowledge_source.id, claim_token)
-            if (knowledge_source.teardown_state_json or {}).get(
-                "shared_chat_resources"
-            ):
-                _delete_sl_assistant(
-                    assistant_uuid, guard_active_sessions=True
-                )
-            else:
-                _delete_sl_assistant(assistant_uuid)
+            _delete_sl_assistant(assistant_uuid)
             assistant_access.soft_delete_assistant_link(
                 knowledge_source.organization, assistant_uuid
             )

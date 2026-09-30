@@ -73,40 +73,16 @@ class DeleteOrgAssistantKsReassignTests(SimpleTestCase):
 
 class SourceLensAssistantRetirementTests(SimpleTestCase):
     @patch("apps.lens_bridge.services.assistants.sl_client.request_json")
-    def test_shared_chat_archive_checks_sessions_before_unbinding(self, request_json):
+    def test_chat_archive_uses_source_lens_native_archive(self, request_json):
         assistant_uuid = UUID("77777777-7777-7777-7777-777777777777")
-        request_json.return_value = {"status": "archived"}
 
-        assistants._delete_sl_assistant(
-            assistant_uuid, guard_active_sessions=True
-        )
+        assistants._delete_sl_assistant(assistant_uuid)
 
-        self.assertEqual(
-            [call.args[:2] for call in request_json.call_args_list],
-            [
-                (
-                    "POST",
-                    f"/api/lens/assistants/{assistant_uuid}/archive-if-unused/",
-                ),
-                ("PATCH", f"/api/lens/assistants/{assistant_uuid}/"),
-            ],
-        )
-
-    @patch("apps.lens_bridge.services.assistants.sl_client.request_json")
-    def test_shared_chat_archive_conflict_preserves_bindings(self, request_json):
-        assistant_uuid = UUID("88888888-8888-8888-8888-888888888888")
-        conflict = sl_client.LensBridgeError("ASSISTANT_HAS_ACTIVE_SESSIONS")
-        conflict.status_code = 409
-        request_json.side_effect = conflict
-
-        with self.assertRaises(sl_client.LensBridgeError):
-            assistants._delete_sl_assistant(
-                assistant_uuid, guard_active_sessions=True
-            )
-
-        request_json.assert_called_once_with(
-            "POST",
-            f"/api/lens/assistants/{assistant_uuid}/archive-if-unused/",
+        self.assertEqual(request_json.call_args_list[0].args[:2], (
+            "PATCH", f"/api/lens/assistants/{assistant_uuid}/"
+        ))
+        request_json.assert_any_call(
+            "POST", f"/api/lens/assistants/{assistant_uuid}/archive/"
         )
 
     @patch("apps.lens_bridge.services.assistants.sl_client.request_json")

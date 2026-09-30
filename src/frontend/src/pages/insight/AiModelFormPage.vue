@@ -418,8 +418,8 @@ onBeforeUnmount(() => {
 
                 <details
                   v-if="tuningParameters.length"
+                  :key="form.provider"
                   class="ai-model-advanced"
-                  :open="tuningParameters.some((parameter) => parameter.required)"
                 >
                   <summary class="ai-model-advanced__summary">
                     <span class="ai-model-advanced__summary-main">

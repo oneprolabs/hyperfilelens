@@ -28,7 +28,8 @@ import {
 } from '../lib/knowledgeSourceIngestPolicy'
 
 export const SNAPSHOT_PICKER_LATEST = 'latest' as const
-export type SnapshotPickerValue = typeof SNAPSHOT_PICKER_LATEST | number
+export type SnapshotPickerValue = typeof SNAPSHOT_PICKER_LATEST | number | null
+type SnapshotSelectionMode = 'latest_alias' | 'concrete'
 
 export type BackupSourcePickerOption = {
   backupConfigId: number
@@ -95,7 +96,10 @@ function createBackupScopeEntry(): BackupScopeEntry {
 export function useKnowledgeSourceForm(
   editingId: Ref<number | null>,
   sourceType: Ref<KnowledgeSourceType> = ref('backup_source'),
-  options: { snapshotGatewayLinkId?: Ref<number | null> } = {},
+  options: {
+    snapshotGatewayLinkId?: Ref<number | null>
+    snapshotSelectionMode?: SnapshotSelectionMode
+  } = {},
 ) {
   const { t } = useI18n()
 
@@ -110,6 +114,9 @@ export function useKnowledgeSourceForm(
   const snapshotLoading = ref(false)
   const selectedBackupConfigId = ref<number | null>(null)
   const snapshotPickerValue = ref<SnapshotPickerValue>(SNAPSHOT_PICKER_LATEST)
+  const concreteSnapshotSelection = computed(
+    () => options.snapshotSelectionMode === 'concrete',
+  )
   const snapshotDetail = ref<BackupSourceSnapshot | null>(null)
   const backupScopeEntries = ref<BackupScopeEntry[]>([createBackupScopeEntry()])
   const latestBackupScopeValidation = new Map<string, number>()
@@ -272,7 +279,7 @@ export function useKnowledgeSourceForm(
       .sort((a, b) => {
         const aTime = Date.parse(a.finished_at || a.started_at || a.created_at || '')
         const bTime = Date.parse(b.finished_at || b.started_at || b.created_at || '')
-        return bTime - aTime
+        return bTime - aTime || b.id - a.id
       })
   })
 
@@ -285,6 +292,17 @@ export function useKnowledgeSourceForm(
     if (!Number.isFinite(picked)) return null
     return snapshotsForSelectedBackupSource.value.some((row) => row.id === picked) ? picked : null
   })
+
+  watch(
+    snapshotsForSelectedBackupSource,
+    (rows) => {
+      if (!concreteSnapshotSelection.value || isEditing.value) return
+      const current = Number(snapshotPickerValue.value)
+      if (rows.some((row) => row.id === current)) return
+      snapshotPickerValue.value = rows[0]?.id ?? null
+    },
+    { immediate: true },
+  )
 
   const effectiveSourcePath = computed(() => {
     if (isGatewayLocal.value) return gatewaySelectedPath.value.trim()
@@ -414,21 +432,27 @@ export function useKnowledgeSourceForm(
     }
     snapshotLoading.value = true
     try {
-      const page = isPlatformScope.value
-        ? await listLensBackupSourceSnapshots({
-            organization_key: targetOrganizationKey.value!.trim(),
-            page: 1,
-            page_size: 50,
-            status: 'available',
-            ordering: '-created_at',
-          })
-        : await listBackupSourceSnapshots({
-            page: 1,
-            page_size: 50,
-            status: 'available',
-            ordering: '-created_at',
-          })
-      snapshots.value = page.results
+      const pageSize = concreteSnapshotSelection.value ? 200 : 50
+      const rows: BackupSourceSnapshot[] = []
+      for (let pageNumber = 1; ; pageNumber += 1) {
+        const page = isPlatformScope.value
+          ? await listLensBackupSourceSnapshots({
+              organization_key: targetOrganizationKey.value!.trim(),
+              page: pageNumber,
+              page_size: pageSize,
+              status: 'available',
+              ordering: '-created_at',
+            })
+          : await listBackupSourceSnapshots({
+              page: pageNumber,
+              page_size: pageSize,
+              status: 'available',
+              ordering: '-created_at',
+            })
+        rows.push(...page.results)
+        if (!concreteSnapshotSelection.value || rows.length >= page.count || page.results.length === 0) break
+      }
+      snapshots.value = rows
     } finally {
       snapshotLoading.value = false
     }
@@ -1052,7 +1076,9 @@ export function useKnowledgeSourceForm(
 
   watch(selectedBackupConfigId, (id, prev) => {
     if (isEditing.value || id === prev) return
-    snapshotPickerValue.value = SNAPSHOT_PICKER_LATEST
+    snapshotPickerValue.value = concreteSnapshotSelection.value
+      ? snapshotsForSelectedBackupSource.value[0]?.id ?? null
+      : SNAPSHOT_PICKER_LATEST
     snapshotDetail.value = null
     resetBackupScopeState()
   })
@@ -1114,6 +1140,7 @@ export function useKnowledgeSourceForm(
     snapshotLoading,
     selectedBackupConfigId,
     snapshotPickerValue,
+    concreteSnapshotSelection,
     backupSourceOptions,
     snapshotsForSelectedBackupSource,
     effectiveSnapshotId,

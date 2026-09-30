@@ -140,6 +140,7 @@ const {
   backupSourceOptions,
   snapshotsForSelectedBackupSource,
   SNAPSHOT_PICKER_LATEST,
+  concreteSnapshotSelection,
   effectiveSnapshotId,
   snapshotDirectories,
   backupScopeEntries,
@@ -156,7 +157,10 @@ const {
   validateBackupScopeEntryOnBlur,
   validateAllBackupScopeEntries,
   pickBackupScopeForEntry,
-} = useKnowledgeSourceForm(editingId, sourceType, { snapshotGatewayLinkId })
+} = useKnowledgeSourceForm(editingId, sourceType, {
+  snapshotGatewayLinkId,
+  snapshotSelectionMode: 'concrete',
+})
 
 const sourceScopes = computed(() => backupScopeEntries.value
   .filter((row) => row.path.trim() && row.directoryId)
@@ -583,6 +587,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       :placeholder="t('insight.copilot.snapshotPlaceholder')"
                     >
                       <ElOption
+                        v-if="!concreteSnapshotSelection"
                         :label="t('insight.copilot.latestSnapshot')"
                         :value="SNAPSHOT_PICKER_LATEST"
                       />
