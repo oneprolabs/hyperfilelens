@@ -259,6 +259,26 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(editCompletion).not.toContain('preserveExpandedState: true')
   })
 
+  it('hydrates bound policy and filter details like the target repository before Step 3', () => {
+    const merge = functionSource('mergeCreatedBackupConfigs', 'refreshEnteredFlowStep')
+    const loader = functionSource('loadStep3Selectable', 'refreshStep3State')
+    const bindingRows = functionSource('sourceConfigPolicyRows', 'fileFilterFormView')
+    const filterRows = functionSource('sourceConfigFilterRows', 'sourceBoundPolicyRows')
+
+    expect(merge).toContain('hydrateCreatedConfigRepositories(items)')
+    expect(merge).toContain('hydrateCreatedConfigBindings(items)')
+    expect(page).toContain('getBackupPolicy(id, signal ? { signal } : undefined)')
+    expect(page).toContain('getFileFilterRule(id, signal ? { signal } : undefined)')
+    expect(loader).toContain('if (options.syncExpanded === false) mergeExpandedBindings(rows)')
+    expect(loader).toContain('ensureBindingDetailsForConfigs(configs, signal)')
+    expect(bindingRows).toContain('name: policy?.name')
+    expect(bindingRows).toContain('detailRows: flowPolicyDetailRows(policy)')
+    expect(filterRows).toContain('name: rule?.name')
+    expect(filterRows).toContain('hoverRows: flowFilterHoverRows(rule)')
+    expect(bindingRows).toContain('isActive: policy?.is_active ?? null')
+    expect(filterRows).toContain('isActive: rule?.is_active ?? null')
+  })
+
   it('keeps backup refresh synchronous and restore refresh in the background after stopping', () => {
     const stopBackup = functionSource('stopSelectedBackupTasks', 'stopSelectedRestoreTasks')
     const stopRestore = functionSource('stopSelectedRestoreTasks', 'onBackupTaskSelection')

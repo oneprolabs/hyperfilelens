@@ -132,6 +132,8 @@ import {
   type CompressionLevel,
 } from '../../lib/protectionBackupConfigApi'
 import {
+  getBackupPolicy,
+  getFileFilterRule,
   listBackupPolicies,
   listFileFilterRules,
   type BackupPolicy,
@@ -139,6 +141,7 @@ import {
   type BackupPolicyScheduleMode,
   type FileFilterRule,
 } from '../../lib/protectionPolicyApi'
+import { loadMissingBindingDetails } from './lib/bindingDetails'
 import {
   backupPolicyToForm,
   compileFilterIgnorePatterns,
@@ -1434,6 +1437,43 @@ function expandedFilters(rows: FlowSourceRow[]): FileFilterRule[] {
   return Array.from(filters.values())
 }
 
+function mergeExpandedBindings(rows: FlowSourceRow[]) {
+  const policies = new Map(backupPolicyById.value)
+  for (const policy of expandedPolicies(rows)) {
+    policies.set(policy.id, policy)
+  }
+  backupPolicyById.value = policies
+  const filters = new Map(fileFilterById.value)
+  for (const rule of expandedFilters(rows)) {
+    filters.set(rule.id, rule)
+  }
+  fileFilterById.value = filters
+}
+
+async function ensureBindingDetailsForConfigs(
+  configs: Array<BackupConfig | BackupConfigDetail>,
+  signal?: AbortSignal,
+) {
+  const details = await loadMissingBindingDetails(
+    configs,
+    backupPolicyById.value,
+    fileFilterById.value,
+    (id) => getBackupPolicy(id, signal ? { signal } : undefined),
+    (id) => getFileFilterRule(id, signal ? { signal } : undefined),
+  )
+  if (signal?.aborted) return
+  const policies = new Map(backupPolicyById.value)
+  for (const policy of details.policies) {
+    if (!policies.has(policy.id)) policies.set(policy.id, policy)
+  }
+  backupPolicyById.value = policies
+  const filters = new Map(fileFilterById.value)
+  for (const rule of details.filters) {
+    if (!filters.has(rule.id)) filters.set(rule.id, rule)
+  }
+  fileFilterById.value = filters
+}
+
 function syncExpandedStep3Rows(rows: FlowSourceRow[]) {
   const configs = expandedBackupConfigs(rows)
   backupConfigRows.value = configs
@@ -1458,16 +1498,7 @@ function syncExpandedStep3Rows(rows: FlowSourceRow[]) {
     }
   }
   repositoryById.value = repositories
-  const policies = new Map(backupPolicyById.value)
-  for (const policy of expandedPolicies(rows)) {
-    if (!policies.has(policy.id)) policies.set(policy.id, policy)
-  }
-  backupPolicyById.value = policies
-  const filters = new Map(fileFilterById.value)
-  for (const rule of expandedFilters(rows)) {
-    if (!filters.has(rule.id)) filters.set(rule.id, rule)
-  }
-  fileFilterById.value = filters
+  mergeExpandedBindings(rows)
   backupSnapshotRows.value = expandedSnapshots(rows)
   backupTaskRows.value = expandedTasks(rows, 'backup')
   restoreTaskRows.value = expandedTasks(rows, 'restore')
@@ -1707,6 +1738,7 @@ async function loadStep3Selectable(options: { signal?: AbortSignal; syncExpanded
     step: 3,
     expand: STEP3_EXPAND,
   }, signal ? { signal } : undefined)
+  if (signal?.aborted) return
   const rows = list.results.map(mapBackupSelectableToFlowRow)
   step3SelectableRows.value = rows
   step3SelectableCount.value = list.count
@@ -1714,10 +1746,16 @@ async function loadStep3Selectable(options: { signal?: AbortSignal; syncExpanded
   step3InitialLoadPending.value = false
   rememberSelectableRows(rows)
   reconcileBackupStartAwaitingRuntime(rows.map((row) => row.id))
-  if (options.syncExpanded !== false) {
-    const configs = syncExpandedStep3Rows(rows)
-    await ensureRepositoryDetailsForConfigs(configs, signal)
-  }
+  // Keep optimistic configs after creation, but never discard the policy and
+  // filter metadata returned by the expanded Step 3 response.
+  const configs = options.syncExpanded === false
+    ? [...expandedBackupConfigs(rows), ...backupConfigRows.value]
+    : syncExpandedStep3Rows(rows)
+  if (options.syncExpanded === false) mergeExpandedBindings(rows)
+  await Promise.all([
+    options.syncExpanded === false ? Promise.resolve() : ensureRepositoryDetailsForConfigs(configs, signal),
+    ensureBindingDetailsForConfigs(configs, signal),
+  ])
 }
 
 async function refreshStep3State(signal?: AbortSignal) {
@@ -2331,6 +2369,10 @@ async function hydrateCreatedConfigRepositories(items: BackupCreateResultPayload
   }
 }
 
+async function hydrateCreatedConfigBindings(items: BackupCreateResultPayload['items']) {
+  await ensureBindingDetailsForConfigs(items.map((item) => item.config))
+}
+
 async function mergeCreatedBackupConfigs({ items }: BackupCreateResultPayload) {
   if (!items.length) return []
   const sourceIds = normalizeSourceIdList(items.map((item) => item.sourceId))
@@ -2352,9 +2394,12 @@ async function mergeCreatedBackupConfigs({ items }: BackupCreateResultPayload) {
   pipelineStep2Count.value = Math.max(0, pipelineStep2Count.value - newlyConfiguredIds.length)
   pipelineStep3Count.value += newlyConfiguredIds.length
   syncRealBackupConfigsToDemoStore(items.map((item) => item.config), backupSnapshotRows.value)
-  // Hydrate repository metadata before the fast Step 3 transition so a valid
-  // target is not briefly rendered as its numeric fallback ID.
-  await hydrateCreatedConfigRepositories(items)
+  // Hydrate bound metadata before the fast Step 3 transition so valid
+  // repository, policy, and filter names do not briefly render as IDs.
+  await Promise.all([
+    hydrateCreatedConfigRepositories(items),
+    hydrateCreatedConfigBindings(items),
+  ])
   return sourceIds
 }
 
@@ -3757,7 +3802,7 @@ function sourceConfigPolicyRows(sourceId: string) {
     return {
       id: `${config.id}:${config.backup_policy_id ?? 'none'}`,
       bound: Boolean(config.backup_policy_id),
-      isActive: policy?.is_active !== false,
+      isActive: policy?.is_active ?? null,
       name: policy?.name ?? (config.backup_policy_id ? `#${config.backup_policy_id}` : t('protection.backupsPage.flowBackupColPolicyNone')),
       detailRows: flowPolicyDetailRows(policy),
       retentionLines: flowPolicyRetentionDetailLines(policy),
@@ -3776,7 +3821,7 @@ function sourceConfigFilterRows(sourceId: string) {
     return {
       id: `${config.id}:${config.file_filter_rule_id ?? 'none'}`,
       bound: Boolean(config.file_filter_rule_id),
-      isActive: rule?.is_active !== false,
+      isActive: rule?.is_active ?? null,
       name: rule?.name ?? (config.file_filter_rule_id ? `#${config.file_filter_rule_id}` : t('protection.backupsPage.flowBackupColPolicyNone')),
       usage: flowPolicyUsageValue(rule?.related_backup_count ?? 0),
       hoverRows: flowFilterHoverRows(rule),
@@ -11716,6 +11761,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                     class="flow-binding-list-item"
                                   >
                                     <span
+                                      v-if="policy.isActive !== null"
                                       :class="flowBindingStatusDotClass(policy.isActive)"
                                       aria-hidden="true"
                                     />
@@ -11733,11 +11779,17 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                   <div class="create-policy-detail-popover__title">
                                     {{ policy.name }}
                                   </div>
-                                  <span :class="flowBindingStatePillClass(policy.isActive)">
+                                  <span
+                                    v-if="policy.isActive !== null"
+                                    :class="flowBindingStatePillClass(policy.isActive)"
+                                  >
                                     {{ flowBindingStateLabel(policy.isActive) }}
                                   </span>
                                 </div>
-                                <div class="create-policy-detail-popover__sections">
+                                <div
+                                  v-if="policy.isActive !== null"
+                                  class="create-policy-detail-popover__sections"
+                                >
                                   <section
                                     v-for="detailRow in policy.detailRows"
                                     :key="detailRow.label"
@@ -11893,6 +11945,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                     class="flow-binding-list-item"
                                   >
                                     <span
+                                      v-if="filter.isActive !== null"
                                       :class="flowBindingStatusDotClass(filter.isActive)"
                                       aria-hidden="true"
                                     />
@@ -11910,11 +11963,17 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                   <div class="create-policy-detail-popover__title">
                                     {{ filter.name }}
                                   </div>
-                                  <span :class="flowBindingStatePillClass(filter.isActive)">
+                                  <span
+                                    v-if="filter.isActive !== null"
+                                    :class="flowBindingStatePillClass(filter.isActive)"
+                                  >
                                     {{ flowBindingStateLabel(filter.isActive) }}
                                   </span>
                                 </div>
-                                <div class="create-policy-detail-popover__sections">
+                                <div
+                                  v-if="filter.isActive !== null"
+                                  class="create-policy-detail-popover__sections"
+                                >
                                   <section
                                     v-for="detailRow in filter.hoverRows"
                                     :key="detailRow.label"
