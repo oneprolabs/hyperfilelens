@@ -1845,6 +1845,11 @@ def _observe_running_directory(
             terminal_technical_detail = bt.kopia_terminal_technical_detail(
                 node_task.result
             )
+            node_result = node_task.result if isinstance(node_task.result, dict) else {}
+            node_payload = node_task.payload if isinstance(node_task.payload, dict) else {}
+            source_context = bt.kopia_terminal_source_context(
+                node_result, node_payload.get("source_path", "")
+            )
             append_task_step_event(
                 task=task,
                 step_name="kopia_snapshot",
@@ -1860,6 +1865,16 @@ def _observe_running_directory(
                     "terminal_failure": {
                         "error_code": error_code,
                         "message": error_message,
+                        **{
+                            key: node_result[key]
+                            for key in (
+                                "snapshot_terminal_path",
+                                "snapshot_terminal_side",
+                                "snapshot_terminal_phase",
+                            )
+                            if node_result.get(key)
+                        },
+                        **source_context,
                         **(
                             {"technical_detail": terminal_technical_detail}
                             if terminal_technical_detail
@@ -2116,6 +2131,29 @@ def _finalize_backup_task(
             )
             if terminal_detail:
                 task_result["terminal_failure"]["technical_detail"] = terminal_detail
+            if primary_node_task is not None:
+                primary_result = (
+                    primary_node_task.result
+                    if isinstance(primary_node_task.result, dict)
+                    else {}
+                )
+                for key in (
+                    "snapshot_terminal_path",
+                    "snapshot_terminal_side",
+                    "snapshot_terminal_phase",
+                ):
+                    if primary_result.get(key):
+                        task_result["terminal_failure"][key] = primary_result[key]
+                primary_payload = (
+                    primary_node_task.payload
+                    if isinstance(primary_node_task.payload, dict)
+                    else {}
+                )
+                task_result["terminal_failure"].update(
+                    bt.kopia_terminal_source_context(
+                        primary_result, primary_payload.get("source_path", "")
+                    )
+                )
             task_result["failed_step"] = "kopia_snapshot"
         source_snapshot.error_code = error_code
         source_snapshot.error_message = error_message

@@ -51,6 +51,11 @@ export type TransferProgress = {
   phase?: string
   label_key?: string | null
   label_args?: Record<string, string | number> | null
+  comparison?: {
+    label_key?: string | null
+    label_args?: Record<string, string | number> | null
+    phase_elapsed_seconds?: number | null
+  } | null
   label?: string
   execution_state?: string | null
   progress_schema_version?: number
@@ -152,8 +157,15 @@ export function resolveStep3DisplayPercent(
 export function shouldShowStep3Percent(transfer?: TransferProgress | null): boolean {
   if (!transfer) return false
   const phase = String(transfer.phase || '').toLowerCase()
-  if (!['transferring', 'finalizing', 'done'].includes(phase)) return false
-  return Boolean(transfer.bytes_total_known && (transfer.bytes_total || 0) > 0)
+  if (!['preparing', 'estimating', 'transferring', 'finalizing', 'done'].includes(phase)) return false
+  if (phase === 'preparing' && (
+    transfer.label_key !== 'protection.taskProgress.backup.preparing'
+    || Number(transfer.processed_bytes ?? transfer.bytes_done ?? 0) <= 0
+  )) return false
+  if (phase === 'estimating' && !transfer.comparison) return false
+  const percent = transfer.step3_display_percent
+  return Boolean(transfer.bytes_total_known && Number(transfer.bytes_total) > 0)
+    && percent != null && Number.isFinite(Number(percent))
 }
 
 export function formatBytes(value: number | null | undefined): string {

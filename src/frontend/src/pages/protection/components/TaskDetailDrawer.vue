@@ -23,6 +23,7 @@ import {
 import { apiErrorMessageI18n } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
 import { formatLocalDateTime } from '../../../lib/dateTime'
+import { elapsedTaskTime, totalTaskDuration } from '../../../lib/taskDuration'
 import { getNode } from '../../../lib/nodeApi'
 import { getBackupSourceSnapshot } from '../../../lib/protectionBackupConfigApi'
 import { cancelProtectionBackupTask } from '../../../lib/protectionBackupTaskApi'
@@ -86,6 +87,12 @@ const stopConfirmKind = stopConfirmDialog.kind
 const stopConfirmItems = stopConfirmDialog.items
 const { drawerScrollAnchorRef, resetDrawerScroll } = useDrawerScrollReset()
 const activeTask = ref<TaskRow | null>(null)
+const clockNow = ref(Date.now())
+const TASK_STATUS_REFRESH_MS = 2 * 60 * 1000
+let clockTimer: number | null = null
+let statusRefreshTimer: number | null = null
+let statusRefreshInFlight = false
+let detailRequestId = 0
 const detailEvents = ref<TaskEventRow[]>([])
 const detailRefreshing = ref(false)
 const detailLoadError = ref('')
@@ -157,12 +164,28 @@ const taskErrorDetails = computed(() => {
     technical_detail: payload.technical_detail || payload,
   }
 })
+const hasTerminalTaskFailure = computed(() => {
+  const status = String(activeTask.value?.status || '').toLowerCase()
+  const details = taskErrorDetails.value
+  if (!details) return false
+  return ['failed', 'timeout'].includes(status) && details.severity === 'error'
+})
 const taskFailureSummary = computed(() => {
   const summary = String(taskErrorDetails.value?.summary || '').trim()
   if (!summary || /^task failed\.?$/i.test(summary) || /^task cancelled\.?$/i.test(summary) || /^task cancelled by user\.?$/i.test(summary) || /^task timed out\.?$/i.test(summary) || /^task partially completed\.?$/i.test(summary)) {
     return ''
   }
   return summary
+})
+const showTaskSkippedDetails = computed(() => {
+  const task = activeTask.value
+  const result = task?.result_payload
+  if (!task || !['failed', 'timeout'].includes(String(task.status).toLowerCase())
+    || !result || typeof result !== 'object' || Array.isArray(result)) return true
+  const counts = result as Record<string, unknown>
+  // The final aggregate is authoritative for historical failed tasks whose
+  // fatal samples were accidentally copied into a skipped event.
+  return counts.skipped_item_count == null || Number(counts.skipped_item_count) !== 0
 })
 /**
  * Translate a dot-separated i18n key without triggering intlify missing-key warnings.
@@ -238,52 +261,32 @@ const stepsWithEvents = computed(() => {
     events: grouped[step.id] || [],
   }))
 })
-function shouldShowStepErrorDetails(step: { id: number; status: string; step_name: string; events: TaskEventRow[] }, index: number) {
-  if (!taskErrorDetails.value) return false
-  const hasDirectoryFailureEvent = stepsWithEvents.value.some(item => item.events.some((event) => {
+const hasLocatedFailureEvent = computed(() => detailEvents.value.some((event) => {
     const metadata = taskEventMetadata(event)
     const message = String(event.message || '').trim()
-    return message === 'Directory backup failed'
-      && Boolean(
+    const hasFailureMetadata = Boolean(
         metadata.terminal_failure
         || metadata.error_message
         || metadata.error_code
         || metadata.failure_details,
       )
+    return hasFailureMetadata
+      && (message === 'Directory backup failed' || String(event.level || '').toUpperCase() === 'ERROR')
   }))
-  if (hasDirectoryFailureEvent) {
-    return false
-  }
-  const failedStep = String(taskErrorDetails.value.failed_step || '').trim()
-  if (failedStep) return step.step_name === failedStep
-
-  const terminalErrorCode = String(activeTask.value?.error_code || '').trim()
-  const terminalErrorMessage = String(activeTask.value?.error_message || '').trim().toLowerCase()
-  const snapshotFailed = stepsWithEvents.value.find(
-    item => item.step_name === 'kopia_snapshot' && item.status === 'failed',
+const fallbackFailureStepId = computed(() => {
+  if (!hasTerminalTaskFailure.value || hasLocatedFailureEvent.value) return null
+  const failedSteps = stepsWithEvents.value.filter(
+    step => step.status === 'failed' || step.status === 'timeout',
   )
-  if (
-    snapshotFailed
-    && (
-      terminalErrorCode === 'KOPIA_PROCESS_DIED'
-      || terminalErrorCode === 'REPOSITORY_PROCESS_DIED'
-      || terminalErrorMessage.includes('backup processing failed:')
-    )
-  ) {
-    return step.id === snapshotFailed.id
-  }
-
-  const currentStep = String(activeTask.value?.current_step || '').trim()
-  if (currentStep) return step.step_name === currentStep
-
-  const failedSteps = stepsWithEvents.value.filter(item => item.status === 'failed' || item.status === 'timeout')
-  const firstFailedStepWithEvents = failedSteps.find(item => item.events.length > 0)
-  if (firstFailedStepWithEvents) return step.id === firstFailedStepWithEvents.id
-
-  return failedSteps.length > 0
-    ? step.id === failedSteps[0].id
-    : activeTask.value?.status === 'cancelled' && index === stepsWithEvents.value.length - 1
-}
+  const failedStep = String(taskErrorDetails.value?.failed_step || '').trim()
+  return failedSteps.find(step => step.step_name === failedStep)?.id
+    ?? failedSteps.find(step => step.events.length > 0)?.id
+    ?? failedSteps[0]?.id
+    ?? null
+})
+const showUnattributedTaskFailure = computed(() =>
+  hasTerminalTaskFailure.value && !hasLocatedFailureEvent.value && fallbackFailureStepId.value === null,
+)
 const hasExpandableSteps = computed(() => hasExpandableTaskStep(stepsWithEvents.value))
 const hasAnyExpandedStep = computed(() => hasExpandedTaskStep(stepsWithEvents.value, isStepExpanded))
 
@@ -449,15 +452,13 @@ async function loadTaskOwner(task: TaskRow) {
 }
 
 function taskDuration(row: TaskRow) {
-  const start = new Date(row.started_at || row.created_at || '').getTime()
-  const end = new Date(row.finished_at || '').getTime()
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return t('ops.task.emptyMark')
-  const seconds = Math.floor((end - start) / 1000)
-  const minutes = Math.floor(seconds / 60)
-  const restSeconds = seconds % 60
-  if (minutes <= 0) return `${restSeconds}s`
-  return `${minutes}m ${restSeconds}s`
+  return totalTaskDuration(row, clockNow.value) || t('ops.task.emptyMark')
 }
+const taskDurationExactTitle = computed(() => {
+  if (!activeTask.value) return undefined
+  const exact = totalTaskDuration(activeTask.value, clockNow.value, true)
+  return exact && exact !== totalTaskDuration(activeTask.value, clockNow.value) ? exact : undefined
+})
 
 function taskEventMetadata(event: TaskEventRow): Record<string, unknown> {
   return backupFailureMetadata(event.metadata)
@@ -577,8 +578,7 @@ function stepDuration(index: number) {
   const next = stepsWithEvents.value[index + 1]
   const start = step?.events[0]?.created_at || step?.created_at || activeTask.value?.started_at || activeTask.value?.created_at
   const end = next?.events[0]?.created_at || step?.events[step.events.length - 1]?.created_at || activeTask.value?.finished_at
-  if (!start || !end) return t('ops.task.emptyMark')
-  return taskDuration({ ...(activeTask.value as TaskRow), started_at: start, finished_at: end })
+  return elapsedTaskTime(start, end) || t('ops.task.emptyMark')
 }
 
 function stepKey(stepId: number | string) {
@@ -740,11 +740,13 @@ async function copyTaskUuid() {
 async function loadTaskDetail(taskUuid: string) {
   const uuid = String(taskUuid || '').trim()
   if (!uuid) return
+  const requestId = ++detailRequestId
   stopRepositoryCancellation()
   detailRefreshing.value = true
   detailLoadError.value = ''
   try {
     const task = await getTask(uuid)
+    if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid) return
     activeTask.value = task
     resetDrawerScroll()
     taskOwner.value = t('ops.task.emptyMark')
@@ -756,15 +758,62 @@ async function loadTaskDetail(taskUuid: string) {
     activeDetailTab.value = 'steps'
     void loadTaskOwner(task)
     const events = await listTaskEvents(uuid, { page: 1, page_size: 300 })
+    if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid) return
     detailEvents.value = events.results
     syncRepositoryCancellation(task)
   } catch (err) {
+    if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid) return
     activeTask.value = null
     detailLoadError.value = apiErrorMessageI18n(err, t)
   } finally {
-    detailRefreshing.value = false
+    if (requestId === detailRequestId) detailRefreshing.value = false
   }
 }
+
+async function refreshRunningTaskStatus() {
+  const uuid = activeTask.value?.task_uuid
+  if (!props.modelValue || !uuid || props.taskUuid !== uuid || activeTask.value?.status !== 'running'
+    || statusRefreshInFlight || detailRefreshing.value || actionBusy.value) return
+  statusRefreshInFlight = true
+  const requestId = detailRequestId
+  try {
+    const task = await getTask(uuid)
+    if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid
+      || activeTask.value?.task_uuid !== uuid || detailRefreshing.value || actionBusy.value) return
+    activeTask.value = task
+    emit('task-updated', task)
+    syncRepositoryCancellation(task)
+    if (task.status !== 'running') {
+      const events = await listTaskEvents(uuid, { page: 1, page_size: 300 })
+      if (requestId === detailRequestId && props.modelValue && props.taskUuid === uuid) {
+        detailEvents.value = events.results
+      }
+    }
+  } catch {
+    // A status-only refresh is best effort; leave the current detail visible.
+  } finally {
+    statusRefreshInFlight = false
+  }
+}
+
+function stopLiveTaskTimers() {
+  if (clockTimer !== null) window.clearInterval(clockTimer)
+  if (statusRefreshTimer !== null) window.clearInterval(statusRefreshTimer)
+  clockTimer = null
+  statusRefreshTimer = null
+}
+
+watch(
+  () => [props.modelValue, props.taskUuid, activeTask.value?.task_uuid, activeTask.value?.status, activeTask.value?.started_at] as const,
+  ([open, uuid, activeUuid, status, startedAt]) => {
+    stopLiveTaskTimers()
+    if (!open || !uuid || uuid !== activeUuid || status !== 'running') return
+    clockNow.value = Date.now()
+    if (startedAt) clockTimer = window.setInterval(() => { clockNow.value = Date.now() }, 1000)
+    statusRefreshTimer = window.setInterval(() => { void refreshRunningTaskStatus() }, TASK_STATUS_REFRESH_MS)
+  },
+  { immediate: true },
+)
 
 async function cancelActiveTask() {
   if (!activeTask.value || !canCancel.value) return
@@ -821,6 +870,8 @@ function refreshActiveTask() {
 }
 
 function closeDetail() {
+  detailRequestId += 1
+  stopLiveTaskTimers()
   stopRepositoryCancellation()
   activeTask.value = null
   detailLoadError.value = ''
@@ -834,12 +885,18 @@ function closeDetail() {
 }
 
 onBeforeUnmount(() => {
+  detailRequestId += 1
+  stopLiveTaskTimers()
   repositoryResourceController?.abort()
 })
 
 watch(
   () => [props.modelValue, props.taskUuid] as const,
   ([open, taskUuid]) => {
+    if (!open) {
+      detailRequestId += 1
+      stopLiveTaskTimers()
+    }
     if (open && taskUuid) void loadTaskDetail(taskUuid)
   },
   { immediate: true },
@@ -1023,8 +1080,8 @@ watch(
                 <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startTime') }}</span>
                 <span
                   class="hfl-task-drawer__time-value"
-                  :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }"
-                >{{ formatTime(activeTask.started_at || activeTask.created_at) }}</span>
+                  :class="{ 'hfl-empty-mark': !activeTask.started_at }"
+                >{{ formatTime(activeTask.started_at) }}</span>
               </div>
               <div>
                 <span class="hfl-task-drawer__metric-label">{{ t('ops.task.endTime') }}</span>
@@ -1038,6 +1095,7 @@ watch(
                 <span
                   class="hfl-task-drawer__time-value hfl-task-drawer__time-value--strong"
                   :class="{ 'hfl-empty-mark': taskDuration(activeTask) === t('ops.task.emptyMark') }"
+                  :title="taskDurationExactTitle"
                 >{{ taskDuration(activeTask) }}</span>
               </div>
             </div>
@@ -1236,6 +1294,7 @@ watch(
                           :metadata="taskEventMetadata(event)"
                           :technical-detail="terminalTechnicalDetail(event)"
                           :terminal-resolutions="terminalFailureResolutions"
+                          :show-skipped-details="showTaskSkippedDetails"
                         />
                       </div>
                       <span
@@ -1245,7 +1304,7 @@ watch(
                     </div>
                   </div>
                 <div
-                  v-if="shouldShowStepErrorDetails(step, index)"
+                  v-if="fallbackFailureStepId === step.id"
                   class="hfl-task-drawer__event-failure-panel hfl-task-drawer__event-failure-panel--stacked"
                 >
                   <div class="hfl-task-drawer__failure-panel-head">
@@ -1319,6 +1378,7 @@ watch(
                       :metadata="taskEventMetadata(event)"
                       :technical-detail="terminalTechnicalDetail(event)"
                       :terminal-resolutions="terminalFailureResolutions"
+                      :show-skipped-details="showTaskSkippedDetails"
                     />
                   </div>
                   <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
@@ -1330,6 +1390,33 @@ watch(
                 :description="t('ops.task.emptySteps')"
                 :image-size="52"
               />
+              <div
+                v-if="showUnattributedTaskFailure"
+                class="hfl-task-drawer__event-failure-panel hfl-task-drawer__event-failure-panel--stacked"
+              >
+                <div class="hfl-task-drawer__failure-panel-head">
+                  <span class="hfl-task-drawer__failure-panel-icon"><X :size="11" aria-hidden="true" /></span>
+                  <div class="hfl-task-drawer__failure-panel-copy">
+                    <strong>{{ activeTask?.status === 'cancelled' ? t('ops.task.failureDetails.cancelledTitle') : t('ops.task.failureDetails.failureTitle') }}</strong>
+                  </div>
+                </div>
+                <div class="hfl-task-drawer__failure-panel-summary">
+                  {{ t('ops.task.failureDetails.unattributedFailure') }}
+                </div>
+                <div v-if="taskFailureSummary" class="hfl-task-drawer__failure-panel-summary">{{ taskFailureSummary }}</div>
+                <div v-if="effectiveReasons.length" class="hfl-task-drawer__failure-panel-section">
+                  <span class="hfl-task-drawer__failure-panel-label">{{ t('ops.task.failureDetails.reasons') }}</span>
+                  <ul class="hfl-task-drawer__failure-list hfl-task-drawer__failure-panel-list">
+                    <li v-for="reason in effectiveReasons" :key="`${reason.code}-${reason.detail}`">{{ localizedFailureText(reason, 'reason') }}</li>
+                  </ul>
+                </div>
+                <div v-if="taskErrorDetails?.suggestions?.length" class="hfl-task-drawer__failure-panel-section hfl-task-drawer__failure-panel-section--suggestions">
+                  <span class="hfl-task-drawer__failure-panel-label">{{ t('ops.task.failureDetails.suggestions') }}</span>
+                  <ol class="hfl-task-drawer__failure-list hfl-task-drawer__failure-panel-list">
+                    <li v-for="suggestion in taskErrorDetails.suggestions" :key="`${suggestion.code}-${suggestion.detail}`">{{ localizedFailureText(suggestion, 'suggestion') }}</li>
+                  </ol>
+                </div>
+              </div>
 
             </section>
         </ElTabPane>
@@ -1904,6 +1991,10 @@ watch(
   color: rgb(15 23 42);
   font-size: 14px;
   font-weight: 800;
+}
+
+.hfl-task-drawer__time-value--strong {
+  font-variant-numeric: tabular-nums;
 }
 
 .hfl-task-drawer__time-grid {

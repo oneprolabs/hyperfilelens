@@ -91,6 +91,63 @@ describe('TaskEventFailureDetails', () => {
     expect(wrapper.findAll('.task-event-failure__files li')).toHaveLength(2)
   })
 
+  it('shows remediation before a collapsed affected-items list and omits redundant technical details', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        technicalDetail: 'Found 189 fatal error(s) while snapshotting.',
+        metadata: {
+          terminal_failure: { message: 'The backup could not process 189 source items.' },
+          error_code: 'SOURCE_ITEMS_UNREADABLE',
+          failure_details: {
+            category: 'mixed_source_errors',
+            count: 189,
+            reported_count: 10,
+            causes: [
+              { code: 'permission_denied', count: 9 },
+              { code: 'source_resource_busy', count: 1 },
+              { code: 'snapshot_errors', count: 179 },
+            ],
+            remediation: ['enable_backup_policy', 'retry_backup'],
+            items: Array.from({ length: 10 }, (_, index) => ({
+              path: `file-${index}.txt`, error: 'permission denied',
+            })),
+          },
+        },
+      },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    const panel = wrapper.get('.task-event-failure')
+    expect(panel.classes()).not.toContain('task-event-failure--mixed')
+    expect(panel.get('.task-event-failure__summary--structured').text()).toContain('189 source items could not be processed')
+    const remediation = panel.get('.task-event-failure__remediation')
+    const affected = panel.get('.task-event-failure__files')
+    expect(panel.element.compareDocumentPosition(remediation.element)).toBe(Node.DOCUMENT_POSITION_CONTAINED_BY | Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(remediation.element.compareDocumentPosition(affected.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(affected.get('summary').text()).toContain('View 10 affected items')
+    expect(affected.findAll('li')).toHaveLength(10)
+    expect(affected.find('.task-event-failure__causes').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('items blocked by permissions')
+    expect(wrapper.text()).not.toContain('snapshot errors')
+    expect(wrapper.text()).not.toContain('Technical details')
+  })
+
+  it('keeps technical details for a structured failure without path samples', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        technicalDetail: 'Found 189 fatal error(s) while snapshotting.',
+        metadata: {
+          failure_details: {
+            category: 'mixed_source_errors', count: 189, items: [],
+            remediation: ['retry_backup'],
+          },
+        },
+      },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    expect(wrapper.find('.task-event-failure__files').exists()).toBe(false)
+    expect(wrapper.get('.task-event-failure__technical summary').text()).toContain('Technical details')
+  })
+
   it('renders nothing without structured failure details', () => {
     const wrapper = mount(TaskEventFailureDetails, {
       props: { metadata: { error_message: 'plain failure' } },
@@ -152,6 +209,7 @@ describe('TaskEventFailureDetails', () => {
 
     expect(wrapper.text()).toContain('Showing 0 reported items of 795; 795 items have no detailed record.')
     expect(wrapper.find('.task-event-failure__files').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('snapshot errors')
   })
 
   it('identifies the snapshot and failed directories for Finalize events', () => {
@@ -275,6 +333,51 @@ describe('TaskEventFailureDetails', () => {
 
     expect(wrapper.find('.task-event-failure__technical').exists()).toBe(true)
     expect(wrapper.find('.task-event-failure__technical pre').text()).toContain('upload error')
+  })
+
+  it('shows the affected path as a compact second line', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        metadata: {
+          terminal_failure: {
+            message: 'The backup source reported Device or resource busy.',
+            path: '/DumpStack.log.tmp',
+          },
+        },
+      },
+      global: {
+        plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
+      },
+    })
+    expect(wrapper.text()).toContain('Affected path: /DumpStack.log.tmp')
+  })
+
+  it('shows a copy-ready exact exclusion rule for a known source Busy path', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        terminalResolutions: ['Review the source and target repository.'],
+        metadata: {
+          terminal_failure: {
+            message: 'Backup processing failed: Device or resource busy. The affected path could not be determined.',
+            side: 'source',
+            confidence: 'exact',
+            path: '/swapfile.sys',
+            filter_rule: '/swapfile.sys',
+          },
+        },
+      },
+      global: {
+        plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
+      },
+    })
+    expect(wrapper.get('.task-event-failure__summary--terminal').text())
+      .toContain('The backup source reported Device or resource busy.')
+    expect(wrapper.text()).toContain('Affected path: /swapfile.sys')
+    expect(wrapper.get('.task-event-failure__filter-rule').text()).toBe('/swapfile.sys')
+    expect(wrapper.get('.task-event-failure__copy-rule').attributes('aria-label'))
+      .toBe('Copy file filter rule')
+    expect(wrapper.text()).not.toContain('Review the source and target repository.')
+    expect(wrapper.text()).not.toContain('path could not be determined')
   })
 
   it('shows only skipped counts for a Finalize summary event', () => {

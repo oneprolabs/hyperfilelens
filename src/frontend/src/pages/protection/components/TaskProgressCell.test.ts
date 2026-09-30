@@ -83,9 +83,14 @@ function mountCell(
 
 describe('TaskProgressCell', () => {
   it.each(['preparingLogic', 'preparing', 'dispatching', 'estimating'])(
-    'hides backup graphics and residual metrics during %s', (stage) => {
+    'hides backup graphics and residual metrics without bytes during %s', (stage) => {
       const wrapper = mountCell({
-        phase: 'preparing', label_key: `protection.taskProgress.backup.${stage}`, show_metrics: true,
+        phase: 'preparing',
+        label_key: `protection.taskProgress.backup.${stage}`,
+        show_metrics: true,
+        bytes_done: 0,
+        processed_bytes: 0,
+        step3_display_percent: 0,
       })
       expect(wrapper.findComponent(ElProgress).exists()).toBe(false)
       expect(wrapper.find('.task-progress-cell__percent').exists()).toBe(false)
@@ -100,8 +105,9 @@ describe('TaskProgressCell', () => {
     await wrapper.setProps({ transferProgress: {
       ...active, label_key: 'protection.taskProgress.backup.preparing', show_metrics: true,
     } })
-    expect(wrapper.findComponent(ElProgress).exists()).toBe(false)
-    expect(wrapper.find('.task-progress-cell__metric-line').exists()).toBe(false)
+    expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Preparing backup…')
+    expect(wrapper.findComponent(ElProgress).exists()).toBe(true)
+    expect(wrapper.get('.task-progress-cell__metric-line').text()).toContain('Backup progress:')
     await wrapper.setProps({ transferProgress: active })
     expect(wrapper.findComponent(ElProgress).exists()).toBe(true)
     expect(wrapper.text()).toContain('Backup progress:')
@@ -114,6 +120,64 @@ describe('TaskProgressCell', () => {
     expect(wrapper.text()).toContain('Backup progress:')
     expect(wrapper.text()).not.toContain('remaining')
     wrapper.unmount()
+  })
+
+  it('retains known backup progress when the same task switches back to preparing', async () => {
+    const wrapper = mountCell()
+    await wrapper.setProps({ transferProgress: {
+      ...wrapper.props('transferProgress')!,
+      phase: 'preparing',
+      label_key: 'protection.taskProgress.backup.preparing',
+      show_metrics: false,
+      eta_seconds: null,
+    } })
+
+    expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Preparing backup…')
+    expect(wrapper.get('.task-progress-cell__bar-row .task-progress-cell__percent').text()).toBe('0.28%')
+    expect(wrapper.get('.task-progress-cell__metric-line').text()).toBe('Backup progress: 858 MB / 300 GB')
+    expect(wrapper.get('.task-progress-cell').attributes('data-table-overflow-title')).toBe([
+      'Preparing backup…',
+      '0.28%',
+      'Backup progress: 858 MB / 300 GB',
+    ].join('\n'))
+
+    await wrapper.setProps({ transferProgress: {
+      ...wrapper.props('transferProgress')!,
+      phase: 'transferring',
+      label_key: 'protection.taskProgress.transfer.hashedOnly',
+    } })
+    expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Backing up')
+    expect(wrapper.get('.task-progress-cell__bar-row .task-progress-cell__percent').text()).toBe('0.28%')
+  })
+
+  it('keeps backup bytes but no bar when preparing with an unknown total', () => {
+    const wrapper = mountCell({
+      phase: 'preparing',
+      label_key: 'protection.taskProgress.backup.preparing',
+      bytes_total: null,
+      bytes_total_known: false,
+      step3_display_percent: null,
+      show_metrics: false,
+      eta_seconds: null,
+    })
+
+    expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Preparing backup…')
+    expect(wrapper.findComponent(ElProgress).exists()).toBe(false)
+    expect(wrapper.find('.task-progress-cell__percent').exists()).toBe(false)
+    expect(wrapper.get('.task-progress-cell__metric-line').text()).toBe('Backup progress: 858 MB')
+  })
+
+  it('does not render a misleading bar for the initial preparing state with only a reference total', () => {
+    const wrapper = mountCell({
+      phase: 'preparing',
+      label_key: 'protection.taskProgress.backup.preparing',
+      bytes_done: 0,
+      processed_bytes: 0,
+      step3_display_percent: 0,
+      show_metrics: true,
+    })
+    expect(wrapper.findComponent(ElProgress).exists()).toBe(false)
+    expect(wrapper.find('.task-progress-cell__metrics').exists()).toBe(false)
   })
 
   it('restores the backup progress bar and percentage while preserving orchestration', () => {
@@ -134,7 +198,115 @@ describe('TaskProgressCell', () => {
     })
 
     expect(wrapper.find('.task-progress-cell__percent').exists()).toBe(false)
+    expect(wrapper.findComponent(ElProgress).exists()).toBe(false)
     expect(wrapper.text()).not.toContain('%')
+  })
+
+  it('keeps comparison and backup progress in separate lines without an empty bar', () => {
+    const wrapper = mountCell({
+      phase: 'transferring',
+      bytes_total: null,
+      bytes_total_known: false,
+      step3_display_percent: null,
+      comparison: {
+        label_key: 'protection.taskProgress.backup.comparing',
+        label_args: { done: 0, total: 1 },
+        phase_elapsed_seconds: 10,
+      },
+    })
+    expect(wrapper.get('.task-progress-cell__label-text').text()).toBe(
+      'Comparing files · 0/1 directories completed · Active for 10s',
+    )
+    expect(wrapper.get('.task-progress-cell__metric-line').text()).toBe('Backup progress: 858 MB')
+    expect(wrapper.find('.task-progress-cell__bar-row').exists()).toBe(false)
+    expect(wrapper.get('.task-progress-cell').attributes('data-table-overflow-title')).toBe([
+      'Comparing files · 0/1 directories completed · Active for 10s',
+      'Backup progress: 858 MB',
+    ].join('\n'))
+  })
+
+  it('does not reserve a metric line when comparison has no byte amount', () => {
+    const wrapper = mountCell({
+      phase: 'estimating',
+      label_key: 'protection.taskProgress.backup.comparing',
+      label_args: { done: 0, total: 1 },
+      bytes_done: 0,
+      processed_bytes: 0,
+      bytes_total: null,
+      bytes_total_known: false,
+      step3_display_percent: null,
+      comparison: {
+        label_key: 'protection.taskProgress.backup.comparing',
+        label_args: { done: 0, total: 1 },
+        phase_elapsed_seconds: 10,
+      },
+    })
+    expect(wrapper.find('.task-progress-cell__metrics').exists()).toBe(false)
+    expect(wrapper.find('.task-progress-cell__bar-row').exists()).toBe(false)
+    expect(wrapper.get('.task-progress-cell__row1').classes()).toContain('is-last')
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/protection/components/TaskProgressCell.vue'), 'utf8')
+    expect(source).not.toMatch(/\.task-progress-cell\s*{[^}]*min-height:\s*76px/s)
+  })
+
+  it('shows a valid bar during comparison even before the aggregate transfer phase', () => {
+    const wrapper = mountCell({
+      phase: 'estimating',
+      label_key: 'protection.taskProgress.backup.comparing',
+      label_args: { done: 0, total: 1 },
+      comparison: {
+        label_key: 'protection.taskProgress.backup.comparing',
+        label_args: { done: 0, total: 1 },
+        phase_elapsed_seconds: 10,
+      },
+    })
+    expect(wrapper.get('.task-progress-cell__label-text').text()).toContain('Comparing files')
+    expect(wrapper.get('.task-progress-cell__bar-row .task-progress-cell__percent').text()).toBe('0.28%')
+    expect(wrapper.get('.task-progress-cell__metric-line').text()).toContain('Backup progress:')
+  })
+
+  it('shows the percentage beside the bar with comparison and removes stale comparison', async () => {
+    const wrapper = mountCell({
+      comparison: {
+        label_key: 'protection.taskProgress.backup.comparing',
+        label_args: { done: 0, total: 1 },
+        phase_elapsed_seconds: 10,
+      },
+    })
+    expect(wrapper.get('.task-progress-cell__bar-row .task-progress-cell__percent').text()).toBe('0.28%')
+    expect(wrapper.get('.task-progress-cell__label-text').text()).toContain('Comparing files')
+    expect(wrapper.get('.task-progress-cell__metric-line').text()).toContain('Backup progress:')
+    expect(wrapper.get('.task-progress-cell').attributes('data-table-overflow-title')).toContain('Comparing files')
+
+    await wrapper.setProps({ transferProgress: {
+      ...wrapper.props('transferProgress')!,
+      comparison: null,
+    } })
+    expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Backing up')
+    expect(wrapper.get('.task-progress-cell').attributes('data-table-overflow-title')).not.toContain('Comparing files')
+
+    await wrapper.setProps({ transferProgress: {
+      phase: 'estimating',
+      label_key: 'protection.taskProgress.backup.estimating',
+      bytes_done: 0,
+      bytes_total_known: false,
+      step3_display_percent: null,
+    } })
+    expect(wrapper.find('.task-progress-cell__metric-line').exists()).toBe(false)
+    expect(wrapper.findComponent(ElProgress).exists()).toBe(false)
+  })
+
+  it('does not show stale comparison or progress while the agent reconnects', () => {
+    const wrapper = mountCell({
+      execution_state: 'reconnecting',
+      comparison: {
+        label_key: 'protection.taskProgress.backup.comparing',
+        label_args: { done: 0, total: 1 },
+        phase_elapsed_seconds: 10,
+      },
+    })
+    expect(wrapper.get('.task-progress-cell__label-text').text()).toBe('Reconnecting to agent…')
+    expect(wrapper.find('.task-progress-cell__metric-line').exists()).toBe(false)
+    expect(wrapper.findComponent(ElProgress).exists()).toBe(false)
   })
 
   it('keeps the stopping state and warning progress bar', () => {
@@ -182,7 +354,7 @@ describe('TaskProgressCell', () => {
     expect(wrapper.get('.task-progress-cell__metric-line').text()).toBe(
       'Data restored: 858 MB / 300 GB · 5.47 MB/s',
     )
-    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe([
+    expect(wrapper.get('.task-progress-cell').attributes('data-table-overflow-title')).toBe([
       'Restoring · 72592/333000 items restored',
       'Data restored: 858 MB / 300 GB',
       'Restore speed: 5.47 MB/s',
@@ -220,11 +392,10 @@ describe('TaskProgressCell', () => {
 
   it('provides structured overflow tooltip text without standalone separators', () => {
     const wrapper = mountCell()
-    const metric = wrapper.get('.task-progress-cell__metric-line')
 
     expect(wrapper.get('.task-progress-cell').attributes()).toHaveProperty('data-table-overflow-explicit-only')
-    expect(metric.attributes()).toHaveProperty('data-table-overflow-title-always')
-    expect(metric.attributes('data-table-overflow-title')).toBe([
+    expect(wrapper.get('.task-progress-cell').attributes()).toHaveProperty('data-table-overflow-title-always')
+    expect(wrapper.get('.task-progress-cell').attributes('data-table-overflow-title')).toBe([
       'Backing up',
       '0.28%',
       'Backup progress: 858 MB / 300 GB',
@@ -246,8 +417,7 @@ describe('TaskProgressCell', () => {
       'Backing up',
       'Backup progress: 858 MB',
     ].join('\n')
-    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe(title)
-    expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe(title)
+    expect(wrapper.get('.task-progress-cell').attributes('data-table-overflow-title')).toBe(title)
   })
 
   it('keeps the full phase and queue state available when the label is truncated', () => {
@@ -263,7 +433,7 @@ describe('TaskProgressCell', () => {
       eta_seconds: null,
     })
 
-    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe(
+    expect(wrapper.get('.task-progress-cell').attributes('data-table-overflow-title')).toBe(
       'Waiting for backup capacity · 3 queued · 0/3 directories completed',
     )
     expect(wrapper.find('.task-progress-cell__metric-line').exists()).toBe(false)
@@ -283,7 +453,6 @@ describe('TaskProgressCell', () => {
       'About 15 min remaining',
     ].join('\n')
 
-    expect(wrapper.get('.task-progress-cell__label-text').attributes('data-table-overflow-title')).toBe(title)
-    expect(wrapper.get('.task-progress-cell__metric-line').attributes('data-table-overflow-title')).toBe(title)
+    expect(wrapper.get('.task-progress-cell').attributes('data-table-overflow-title')).toBe(title)
   })
 })

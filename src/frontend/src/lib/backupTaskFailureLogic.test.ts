@@ -70,6 +70,19 @@ describe('backup task error details', () => {
     expect(result?.items).toHaveLength(10)
   })
 
+  it('does not render historical fatal samples when skipped count is explicitly zero', () => {
+    const fatal = { path: '/DumpStack.log.tmp', error: 'device or resource busy' }
+    expect(extractSkippedDetails({
+      skipped_item_count: 0,
+      skipped_file_count: 0,
+      skipped_directory_count: 0,
+      skipped_details: {
+        count: 0, file_count: 0, directory_count: 0, items: [fatal],
+      },
+      failure_details: { count: 189, items: [fatal] },
+    })).toBeNull()
+  })
+
   it('does not classify a clean snapshot summary as a warning', () => {
     expect(hasFailureDetails({ result_payload: { backup_summary: { snapshot_id: 'snapshot-1' } } })).toBe(false)
   })

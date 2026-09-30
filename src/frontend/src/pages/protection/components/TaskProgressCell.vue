@@ -5,7 +5,6 @@ import {
   formatTaskProgressBarPercent,
   formatTaskProgressPercent,
   formatSpeedBps,
-  parseTaskProgressValue,
   resolveStep3DisplayPercent,
   shouldShowStep3Percent,
   shouldShowTransferMetrics,
@@ -32,38 +31,46 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 
-const taskProgressValue = computed(() => {
-  const taskProgress = Number(props.progress)
-  if (!Number.isFinite(taskProgress) || taskProgress <= 0) return null
-  return parseTaskProgressValue(taskProgress)
-})
 const displayPercent = computed(() => {
   const transfer = props.transferProgress
-  const step3 = Number(transfer?.step3_display_percent)
-  if (props.stopping && taskProgressValue.value != null) {
-    return taskProgressValue.value
-  }
-  if (props.stopping && Number.isFinite(step3)) {
-    return parseTaskProgressValue(step3)
-  }
-  if (shouldShowStep3Percent(transfer)) {
+  if (showBackupBar.value) {
     return resolveStep3DisplayPercent(transfer, 0)
   }
   return 0
 })
 const barPercent = computed(() => formatTaskProgressBarPercent(displayPercent.value))
 const progressText = computed(() => formatTaskProgressPercent(displayPercent.value))
-const showRightPercent = computed(() => {
-  if (isRestore.value || !backupTransferStage.value) return false
-  if (props.stopping && taskProgressValue.value != null) return true
-  return shouldShowStep3Percent(props.transferProgress)
-})
 const isRestore = computed(() => String(props.transferProgress?.label_key || '').includes('taskProgress.restore.'))
 const backupTransferStage = computed(() => {
   const phase = String(props.transferProgress?.phase || '').toLowerCase()
   const label = String(props.transferProgress?.label_key || '')
   const preparing = /taskProgress\.backup\.(preparingLogic|preparing|dispatching|estimating)$/.test(label)
   return !preparing && ['transferring', 'finalizing', 'done'].includes(phase)
+})
+const preparingWithBytes = computed(() => {
+  const transfer = props.transferProgress
+  return transfer?.label_key === 'protection.taskProgress.backup.preparing'
+    && ['preparing', 'transferring'].includes(String(transfer.phase || '').toLowerCase())
+    && Number(transfer.processed_bytes ?? transfer.bytes_done ?? 0) > 0
+})
+const showBackupBar = computed(() => {
+  const transfer = props.transferProgress
+  if (isRestore.value || !transfer) return false
+  const state = String(transfer.execution_state || '').toLowerCase()
+  if (['reconnecting', 'offline_pending', 'offline_stale'].includes(state)) return false
+  const phase = String(transfer.phase || '').toLowerCase()
+  return (backupTransferStage.value || phase === 'estimating' || preparingWithBytes.value)
+    && shouldShowStep3Percent(transfer)
+})
+const comparisonLabel = computed(() => {
+  const transfer = props.transferProgress
+  const state = String(transfer?.execution_state || '').toLowerCase()
+  if (props.stopping || props.failed || ['reconnecting', 'offline_pending', 'offline_stale'].includes(state)) return ''
+  const comparison = transfer?.comparison
+  if (!comparison?.label_key) return ''
+  const label = t(comparison.label_key, comparison.label_args || {})
+  const elapsed = props.compact ? '' : transferPhaseElapsedText(t, comparison.phase_elapsed_seconds)
+  return [label, elapsed].filter(Boolean).join(' · ')
 })
 const orchestrationLabel = computed(() => {
   if (props.stopping) {
@@ -74,10 +81,10 @@ const orchestrationLabel = computed(() => {
   if (isRestore.value && String(props.transferProgress?.phase || '').toLowerCase() === 'transferring') {
     return t('protection.taskProgress.restore.running')
   }
-  return transferProgressLabel(t, props.transferProgress)
+  return comparisonLabel.value || transferProgressLabel(t, props.transferProgress)
 })
 const phaseElapsedText = computed(() => {
-  if (props.compact || isRestore.value || props.stopping) return ''
+  if (props.compact || isRestore.value || props.stopping || comparisonLabel.value) return ''
   const phase = String(props.transferProgress?.phase || '').toLowerCase()
   if (!['estimating', 'transferring', 'finalizing'].includes(phase)) return ''
   if (!String(props.transferProgress?.label_key || '').includes('taskProgress.backup.')) return ''
@@ -94,11 +101,15 @@ const showSpinner = computed(() => {
 })
 const metricParts = computed(() => {
   if (props.compact) return []
-  if (!isRestore.value && !backupTransferStage.value) return []
   const transfer = props.transferProgress
+  if (!transfer) return []
+  const state = String(transfer.execution_state || '').toLowerCase()
+  if (['reconnecting', 'offline_pending', 'offline_stale'].includes(state)) return []
+  const comparingWithBytes = comparisonLabel.value && Number(transfer.processed_bytes ?? transfer.bytes_done ?? 0) > 0
+  if (!isRestore.value && !backupTransferStage.value && !comparingWithBytes && !preparingWithBytes.value) return []
   const finalizingBackup = !isRestore.value && transfer?.phase === 'finalizing'
     && !['reconnecting', 'offline_pending'].includes(String(transfer.execution_state || '').toLowerCase())
-  if (!shouldShowTransferMetrics(transfer) && !props.failed && !finalizingBackup) return []
+  if (!shouldShowTransferMetrics(transfer) && !props.failed && !finalizingBackup && !comparingWithBytes && !preparingWithBytes.value) return []
   return transferMetricParts(t, props.transferProgress)
 })
 const metricLine = computed(() => metricParts.value.join(' · '))
@@ -114,7 +125,7 @@ const overflowTitle = computed(() => {
   const label = isRestore.value
     ? transferProgressLabel(t, props.transferProgress)
     : displayOrchestrationLabel.value
-  const percent = !isRestore.value && showRightPercent.value
+  const percent = showBackupBar.value
     ? progressText.value
     : ''
   const metrics = isRestore.value
@@ -133,10 +144,13 @@ const overflowTitle = computed(() => {
     class="task-progress-cell"
     :class="{ 'is-compact': compact, 'is-failed': failed, 'is-stopping': stopping }"
     data-table-overflow-explicit-only
+    :data-table-overflow-title="overflowTitle || undefined"
+    :data-table-overflow-title-always="!compact && overflowTitle ? '' : undefined"
   >
     <div
-      v-if="displayOrchestrationLabel || showRightPercent"
+      v-if="displayOrchestrationLabel"
       class="task-progress-cell__row1"
+      :class="{ 'is-last': !showBackupBar && !(isRestore ? restoreMetricLine : metricLine) }"
     >
       <p
         v-if="displayOrchestrationLabel"
@@ -149,32 +163,31 @@ const overflowTitle = computed(() => {
         />
         <span
           class="task-progress-cell__label-text"
-          :data-table-overflow-title="overflowTitle || undefined"
-          :data-table-overflow-title-always="isRestore || undefined"
         >{{ displayOrchestrationLabel }}</span>
       </p>
+    </div>
+    <div
+      v-if="showBackupBar"
+      class="task-progress-cell__bar-row"
+    >
+      <el-progress
+        class="protection-flow-progress task-progress-cell__bar"
+        :percentage="barPercent"
+        :status="failed ? 'exception' : stopping ? 'warning' : undefined"
+        :stroke-width="compact ? 7 : 8"
+        :show-text="false"
+      />
       <span
-        v-if="showRightPercent"
+        v-if="!compact"
         class="task-progress-cell__percent"
       >{{ progressText }}</span>
     </div>
-    <el-progress
-      v-if="!isRestore && backupTransferStage"
-      class="protection-flow-progress task-progress-cell__bar"
-      :percentage="barPercent"
-      :status="failed ? 'exception' : stopping ? 'warning' : undefined"
-      :stroke-width="compact ? 7 : 8"
-      :show-text="false"
-    />
     <p
+      v-if="isRestore ? restoreMetricLine : metricLine"
       class="task-progress-cell__metrics"
-      :class="{ 'is-empty': !(isRestore ? restoreMetricLine : metricLine) }"
     >
       <span
-        v-if="isRestore ? restoreMetricLine : metricLine"
         class="task-progress-cell__metric-line"
-        :data-table-overflow-title="overflowTitle || undefined"
-        :data-table-overflow-title-always="!isRestore && overflowTitle ? '' : undefined"
       >{{ isRestore ? restoreMetricLine : metricLine }}</span>
     </p>
   </div>
@@ -182,7 +195,6 @@ const overflowTitle = computed(() => {
 
 <style scoped>
 .task-progress-cell {
-  min-height: 76px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -195,6 +207,10 @@ const overflowTitle = computed(() => {
   gap: 8px;
   margin: 0 0 4px;
   min-height: 18px;
+}
+
+.task-progress-cell__row1.is-last {
+  margin-bottom: 0;
 }
 
 .task-progress-cell__label {
@@ -231,8 +247,15 @@ const overflowTitle = computed(() => {
   flex-shrink: 0;
 }
 
+.task-progress-cell__bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .task-progress-cell__bar {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: 8px;
   margin: 0;
 }
@@ -254,10 +277,6 @@ const overflowTitle = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.task-progress-cell__metrics.is-empty {
-  visibility: hidden;
 }
 
 .task-progress-cell__metric-line {

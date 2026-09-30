@@ -106,6 +106,24 @@ func TestTerminalSnapshotDiagnosticKeepsContextAroundTerminalError(t *testing.T)
 	}
 }
 
+func TestTerminalSnapshotSourcePathExtractsReaddirentPath(t *testing.T) {
+	path, phase := terminalSnapshotSourcePath(
+		"upload error: readdirent /opt/source/Documents and Settings: device or resource busy",
+	)
+	if path != "/opt/source/Documents and Settings" || phase != "directory_enumeration" {
+		t.Fatalf("unexpected source context path=%q phase=%q", path, phase)
+	}
+}
+
+func TestTerminalSnapshotSourcePathExtractsLstatPath(t *testing.T) {
+	path, phase := terminalSnapshotSourcePath(
+		"upload error: lstat /opt/source/DumpStack.log.tmp: device or resource busy",
+	)
+	if path != "/opt/source/DumpStack.log.tmp" || phase != "metadata_lookup" {
+		t.Fatalf("unexpected source context path=%q phase=%q", path, phase)
+	}
+}
+
 func TestSnapshotFailureSummaryUsesDirectoryDispositionCounts(t *testing.T) {
 	summary := snapshotFailureSummary(map[string]any{
 		"rootEntry": map[string]any{"summ": map[string]any{

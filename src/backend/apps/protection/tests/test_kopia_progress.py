@@ -767,6 +767,55 @@ class KopiaFailureMessageTests(SimpleTestCase):
         self.assertLessEqual(len(detail.splitlines()), 10)
         self.assertIn("failure context 11", detail)
 
+    def test_source_busy_context_builds_root_anchored_filter_rule(self):
+        from apps.protection.services.backup_task import (
+            extract_kopia_failure_message,
+            kopia_terminal_source_context,
+        )
+
+        result = {
+            "snapshot_terminal_error": (
+                "upload error: lstat /mnt/source/swapfile.sys: device or resource busy"
+            ),
+            "snapshot_terminal_side": "source",
+            "snapshot_terminal_path": "/mnt/source/swapfile.sys",
+        }
+        self.assertEqual(
+            kopia_terminal_source_context(result, "/mnt/source"),
+            {
+                "path": "/swapfile.sys",
+                "side": "source",
+                "confidence": "exact",
+                "filter_rule": "/swapfile.sys",
+            },
+        )
+        self.assertEqual(
+            extract_kopia_failure_message(result),
+            "The backup source reported Device or resource busy.",
+        )
+        self.assertEqual(
+            kopia_terminal_source_context(result, "/mnt/other"), {}
+        )
+        result["snapshot_terminal_path"] = "/mnt/source/file*.sys"
+        self.assertNotIn(
+            "filter_rule", kopia_terminal_source_context(result, "/mnt/source")
+        )
+
+    def test_terminal_technical_detail_removes_truncated_progress_fragment(self):
+        from apps.protection.services.backup_task import kopia_terminal_technical_detail
+
+        result = {
+            "snapshot_terminal_diagnostic": (
+                '! Ignored error when processing "Documents and Settings": permission denied\n'
+                '447354631Z","phase":"processing","processed_bytes":7834064754 '
+                "upload error: lstat /mnt/source/swapfile.sys: device or resource busy"
+            )
+        }
+        self.assertEqual(
+            kopia_terminal_technical_detail(result),
+            "upload error: lstat /mnt/source/swapfile.sys: device or resource busy",
+        )
+
     def test_failure_metadata_groups_causes_and_limits_samples(self):
         from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
 
@@ -782,10 +831,10 @@ class KopiaFailureMessageTests(SimpleTestCase):
         )["failure_details"]
 
         self.assertEqual(metadata["total_count"], 7)
-        self.assertEqual(metadata["reported_count"], 5)
-        self.assertTrue(metadata["truncated"])
+        self.assertEqual(metadata["reported_count"], 7)
+        self.assertFalse(metadata["truncated"])
         self.assertEqual(sum(item["count"] for item in metadata["causes"]), 7)
-        self.assertLessEqual(len(metadata["items"]), 5)
+        self.assertLessEqual(len(metadata["items"]), 10)
         self.assertIn("enable_skip_unsupported_entries", metadata["remediation"])
         self.assertIn("grant_macos_full_disk_access", metadata["remediation"])
         self.assertEqual(metadata["remediation"][0], "enable_backup_policy")
@@ -793,6 +842,26 @@ class KopiaFailureMessageTests(SimpleTestCase):
             metadata["remediation"].index("enable_skip_unreadable_directories"),
             metadata["remediation"].index("grant_macos_full_disk_access"),
         )
+
+    def test_failure_metadata_keeps_ten_representative_samples(self):
+        from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
+
+        errors = [
+            {"path": f"private-{index}", "error": "readdir private: permission denied"}
+            for index in range(18)
+        ] + [
+            {"path": f"busy-{index}.tmp", "error": "open busy: device or resource busy"}
+            for index in range(17)
+        ]
+        details = kopia_snapshot_failure_metadata({
+            "snapshot": {"rootEntry": {"summ": {"errors": errors}}},
+        })["failure_details"]
+        self.assertEqual(details["count"], 35)
+        self.assertEqual(details["reported_count"], 10)
+        self.assertEqual(len(details["items"]), 10)
+        self.assertTrue(details["truncated"])
+        self.assertTrue(any(item["cause"] == "permission_denied" for item in details["items"]))
+        self.assertTrue(any(item["cause"] == "source_resource_busy" for item in details["items"]))
 
     def test_failure_metadata_recovers_total_from_truncated_kopia_output(self):
         from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
@@ -955,6 +1024,44 @@ class KopiaFailureMessageTests(SimpleTestCase):
             ],
         )
 
+    def test_failure_metadata_keeps_agent_counts_when_fatal_samples_are_truncated(self):
+        from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
+
+        result = {"snapshot_failure_summary": {
+            "total_count": 189,
+            "fatal_count": 189,
+            "ignored_count": 0,
+            "cause_counts": {
+                "permission_denied": 109,
+                "source_resource_busy": 63,
+                "unreadable_file": 17,
+            },
+            "item_types": {
+                "permission_denied": "directory",
+                "source_resource_busy": "file",
+                "unreadable_file": "file",
+            },
+            "item_type_counts": {"file": 97, "directory": 92},
+            "items": [
+                *[
+                    {"path": f"private-{i}", "error": "permission denied",
+                     "cause": "permission_denied", "item_type": "directory",
+                     "disposition": "fatal"}
+                    for i in range(9)
+                ],
+                {"path": "busy.tmp", "error": "device or resource busy",
+                 "cause": "source_resource_busy", "item_type": "file",
+                 "disposition": "fatal"},
+            ],
+        }}
+        metadata = kopia_snapshot_failure_metadata(result)["failure_details"]
+        self.assertEqual(metadata["total_count"], 189)
+        self.assertEqual(
+            {cause["code"]: cause["count"] for cause in metadata["causes"]},
+            {"permission_denied": 109, "source_resource_busy": 63, "unreadable_file": 17},
+        )
+        self.assertEqual(metadata["reported_count"], 10)
+
     def test_failure_metadata_uses_reported_total_when_samples_are_incomplete(self):
         from apps.protection.services.backup_task import kopia_snapshot_failure_metadata
 
@@ -1110,21 +1217,13 @@ class KopiaFailureMessageTests(SimpleTestCase):
             kopia_snapshot_skipped_metadata,
         )
 
-        result = {
-            "snapshot": {
-                "rootEntry": {
-                    "summ": {
-                        "errors": [
-                            {"path": "locked.txt", "error": "sharing violation"},
-                            {
-                                "path": "private",
-                                "error": "readdir private: access denied",
-                            },
-                        ]
-                    }
-                }
-            }
-        }
+        result = {"snapshot_skipped_summary": {
+            "total_count": 2,
+            "items": [
+                {"path": "locked.txt", "error": "sharing violation", "disposition": "skipped"},
+                {"path": "private", "error": "readdir private: access denied", "disposition": "skipped"},
+            ],
+        }}
         details = kopia_snapshot_skipped_metadata(result)["skipped_details"]
 
         self.assertEqual(details["count"], 2)
@@ -1143,9 +1242,10 @@ class KopiaFailureMessageTests(SimpleTestCase):
             {"path": f"locked-{index}.txt", "error": "sharing violation"}
             for index in range(25)
         ]
-        result = {
-            "snapshot": {"rootEntry": {"summ": {"errors": errors}}},
-        }
+        result = {"snapshot_skipped_summary": {
+            "total_count": 25,
+            "items": [{**item, "disposition": "skipped"} for item in errors],
+        }}
 
         details = kopia_snapshot_skipped_metadata(result)["skipped_details"]
 
@@ -1160,7 +1260,7 @@ class KopiaFailureMessageTests(SimpleTestCase):
         )
 
         result = {
-            "snapshot_failure_summary": {
+            "snapshot_skipped_summary": {
                 "total_count": 955,
                 "reported_count": 2,
                 "item_type_counts": {
@@ -1186,6 +1286,66 @@ class KopiaFailureMessageTests(SimpleTestCase):
         self.assertEqual(details["special_count"], 42)
         self.assertEqual(details["reported_count"], 2)
         self.assertTrue(details["truncated"])
+
+    def test_fatal_snapshot_samples_are_not_skipped_without_policy(self):
+        from apps.protection.services.backup_task import kopia_snapshot_skipped_metadata
+
+        result = {"snapshot_failure_summary": {
+            "total_count": 189,
+            "fatal_count": 189,
+            "ignored_count": 0,
+            "item_type_counts": {"file": 97, "directory": 92},
+            "items": [
+                {"path": "Documents and Settings", "error": "permission denied", "disposition": "fatal"},
+                {"path": "DumpStack.log.tmp", "error": "device or resource busy", "disposition": "fatal"},
+            ],
+        }}
+        self.assertEqual(kopia_snapshot_skipped_metadata(result), {})
+
+    def test_mixed_fatal_and_skipped_counts_do_not_include_fatal_items(self):
+        from apps.protection.services.backup_task import kopia_snapshot_skipped_metadata
+
+        result = {"snapshot_failure_summary": {
+            "total_count": 189,
+            "fatal_count": 179,
+            "ignored_count": 10,
+            "item_type_counts": {"file": 97, "directory": 92},
+            "items": [
+                {"path": "fatal.txt", "error": "permission denied", "disposition": "fatal"},
+                {"path": "skipped.txt", "error": "device or resource busy", "disposition": "skipped"},
+            ],
+        }}
+        skipped = kopia_snapshot_skipped_metadata(result)["skipped_details"]
+        self.assertEqual(skipped["count"], 10)
+        self.assertEqual(skipped["items"][0]["path"], "skipped.txt")
+        self.assertEqual(skipped["file_count"], 1)
+        self.assertEqual(skipped["directory_count"], 0)
+
+    def test_failure_summary_with_only_explicit_skipped_items(self):
+        from apps.protection.services.backup_task import kopia_snapshot_skipped_metadata
+
+        result = {"snapshot_failure_summary": {
+            "total_count": 2,
+            "fatal_count": 0,
+            "ignored_count": 2,
+            "items": [
+                {"path": "unreadable.txt", "error": "permission denied", "disposition": "skipped"},
+                {"path": "private", "error": "readdir private: permission denied", "disposition": "skipped"},
+            ],
+        }}
+        skipped = kopia_snapshot_skipped_metadata(result)["skipped_details"]
+        self.assertEqual(skipped["count"], 2)
+        self.assertEqual(skipped["file_count"], 1)
+        self.assertEqual(skipped["directory_count"], 1)
+
+    def test_explicit_zero_skipped_count_disregards_stale_fatal_samples(self):
+        from apps.protection.services.backup_task import kopia_snapshot_skipped_metadata
+
+        result = {"snapshot_skipped_summary": {
+            "total_count": 0, "ignored_count": 0,
+            "items": [{"path": "fatal.txt", "error": "permission denied", "disposition": "fatal"}],
+        }}
+        self.assertEqual(kopia_snapshot_skipped_metadata(result), {})
 
     def test_failed_snapshot_metrics_do_not_project_failure_samples_as_skipped(self):
         from apps.protection.services.backup_task import _extract_snapshot_metrics

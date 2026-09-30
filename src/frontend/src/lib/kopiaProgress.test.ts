@@ -1,10 +1,42 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatSpeedBps, transferCapacityText, transferMetricParts, transferSpeedParts } from './kopiaProgress'
+import { formatSpeedBps, shouldShowStep3Percent, transferCapacityText, transferMetricParts, transferSpeedParts } from './kopiaProgress'
 
 import { createI18n } from 'vue-i18n'
 import { enProtectionPages } from '../locales/enProtectionPages'
 const t = createI18n({ legacy: false, locale: 'en', messages: { en: { protection: enProtectionPages } } }).global.t
+
+describe('shouldShowStep3Percent', () => {
+  it('requires an actual total and percentage, including during comparison', () => {
+    const comparison = { label_key: 'protection.taskProgress.backup.comparing' }
+    const transfer = {
+      phase: 'estimating',
+      comparison,
+      bytes_total_known: true,
+      bytes_total: 100,
+      step3_display_percent: 23.35,
+    }
+    expect(shouldShowStep3Percent(transfer)).toBe(true)
+    expect(shouldShowStep3Percent({ ...transfer, comparison: null })).toBe(false)
+    expect(shouldShowStep3Percent({ ...transfer, step3_display_percent: null })).toBe(false)
+    expect(shouldShowStep3Percent({ ...transfer, bytes_total_known: false })).toBe(false)
+  })
+
+  it('uses a previous valid byte amount rather than a placeholder during preparing', () => {
+    const preparing = {
+      phase: 'preparing',
+      label_key: 'protection.taskProgress.backup.preparing',
+      processed_bytes: 900_000_000,
+      bytes_total_known: true,
+      bytes_total: 2_000_000_000,
+      step3_display_percent: 45,
+    }
+    expect(shouldShowStep3Percent(preparing)).toBe(true)
+    expect(shouldShowStep3Percent({ ...preparing, processed_bytes: 0 })).toBe(false)
+    expect(shouldShowStep3Percent({ ...preparing, step3_display_percent: null })).toBe(false)
+    expect(shouldShowStep3Percent({ ...preparing, label_key: 'protection.taskProgress.backup.preparingLogic' })).toBe(false)
+  })
+})
 
 describe('transferCapacityText', () => {
   it('uses backup progress for the reference total', () => {

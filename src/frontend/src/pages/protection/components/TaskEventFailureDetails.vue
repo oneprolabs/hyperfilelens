@@ -9,15 +9,19 @@ import {
 } from '../../../lib/backupTaskFailureLogic'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, ChevronRight, Lightbulb, LockKeyhole } from 'lucide-vue-next'
+import { ElMessage } from 'element-plus'
+import { AlertTriangle, ChevronRight, Copy, Lightbulb, LockKeyhole } from 'lucide-vue-next'
+import { copyTextToClipboard } from '../../../lib/clipboard'
 
 const props = withDefaults(defineProps<{
   metadata?: unknown
   showTerminalFailure?: boolean
+  showSkippedDetails?: boolean
   technicalDetail?: string
   terminalResolutions?: string[]
 }>(), {
   showTerminalFailure: true,
+  showSkippedDetails: true,
   technicalDetail: '',
   terminalResolutions: () => [],
 })
@@ -54,8 +58,22 @@ const restorePermissionRemediationItems = computed(() => restorePermissionRemedi
 const restoreTargetPath = computed(() => String(metadataRecord.value.target_path || '').trim())
 const errorDiagnostic = computed(() => String(metadataRecord.value.error_diagnostic || '').trim())
 const originalError = computed(() => String(metadataRecord.value.error_message || '').trim())
+const terminalContext = computed(() => {
+  const value = metadataRecord.value.terminal_failure
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {} as Record<string, unknown>
+})
+const exactSourceBusy = computed(() =>
+  props.showTerminalFailure
+  && terminalContext.value.side === 'source'
+  && terminalContext.value.confidence === 'exact'
+  && Boolean(terminalContext.value.path)
+  && /device or resource busy/i.test(String(terminalContext.value.message || originalError.value)),
+)
 const terminalFailure = computed(() => {
   if (!props.showTerminalFailure) return ''
+  if (exactSourceBusy.value) return t('ops.task.failureDetails.sourceBusyTitle')
   const terminal = metadataRecord.value.terminal_failure
   if (terminal && typeof terminal === 'object' && !Array.isArray(terminal)) {
     const message = String((terminal as Record<string, unknown>).message || '').trim()
@@ -63,6 +81,33 @@ const terminalFailure = computed(() => {
   }
   return errorCode.value ? originalError.value : ''
 })
+const showTerminalBox = computed(() =>
+  Boolean(terminalFailure.value) && !failureCount.value && !backupSourceOffline.value && !restorePermissionDenied.value,
+)
+const terminalFailurePath = computed(() => {
+  const terminal = metadataRecord.value.terminal_failure
+  if (!terminal || typeof terminal !== 'object' || Array.isArray(terminal)) return ''
+  return String((terminal as Record<string, unknown>).path || '').trim()
+})
+const terminalFilterRule = computed(() =>
+  exactSourceBusy.value ? String(terminalContext.value.filter_rule || '') : '',
+)
+const effectiveTerminalResolutions = computed(() =>
+  exactSourceBusy.value
+    ? [
+        t('ops.task.failureDetails.sourceBusyCheck'),
+        t('ops.task.failureDetails.sourceBusyRetry'),
+      ]
+    : props.terminalResolutions,
+)
+async function copyFilterRule() {
+  try {
+    await copyTextToClipboard(terminalFilterRule.value)
+    ElMessage.success(t('feedback.toast.copied'))
+  } catch {
+    ElMessage.error(t('ops.task.msgCopyFailed'))
+  }
+}
 
 const items = computed<FailureItem[]>(() => structuredFailure.value?.items || [])
 const causes = computed(() => structuredFailure.value?.causes || [])
@@ -77,7 +122,7 @@ const skippedFileCount = computed(() => structuredSkipped.value?.file_count || 0
 const skippedDirectoryCount = computed(() => structuredSkipped.value?.directory_count || 0)
 const skippedSpecialCount = computed(() => structuredSkipped.value?.special_count || 0)
 const skippedReportedCount = computed(() => Math.min(MAX_SKIPPED_ITEMS, structuredSkipped.value?.reported_count || 0))
-const hasSkippedDetails = computed(() => skippedCount.value > 0)
+const hasSkippedDetails = computed(() => props.showSkippedDetails && skippedCount.value > 0)
 const technicalDetail = computed(() => String(props.technicalDetail || '').trim())
 
 const summarySnapshotId = computed(() => structuredSummary.value?.snapshot_id || '')
@@ -115,11 +160,6 @@ function failureReason(item: FailureItem) {
   return item.error || t('ops.task.failureDetails.readFailedReason')
 }
 
-function causeLabel(code: string, count: number) {
-  const key = `ops.task.failureDetails.causes.${code}`
-  return t(key, { count })
-}
-
 function remediationText(code: string) {
   const key = `ops.task.failureDetails.remediation.${code}`
   return t(key)
@@ -131,8 +171,8 @@ function remediationText(code: string) {
     v-if="hasDetails"
     class="task-event-failure"
     :class="{
-      'task-event-failure--warning': hasSkippedDetails && !items.length && !terminalFailure,
-      'task-event-failure--mixed': Boolean(terminalFailure),
+      'task-event-failure--warning': hasSkippedDetails && !items.length && !failureCount && !showTerminalBox,
+      'task-event-failure--mixed': showTerminalBox && hasSkippedDetails,
     }"
   >
     <template v-if="backupSourceOffline">
@@ -183,7 +223,7 @@ function remediationText(code: string) {
       </ul>
     </template>
     <div
-      v-if="terminalFailure && !failureCount && !backupSourceOffline && !restorePermissionDenied"
+      v-if="showTerminalBox"
       class="task-event-failure__terminal-box"
     >
       <div class="task-event-failure__summary task-event-failure__summary--terminal">
@@ -193,7 +233,13 @@ function remediationText(code: string) {
         </div>
       </div>
       <div
-        v-if="terminalResolutions.length"
+        v-if="terminalFailurePath"
+        class="task-event-failure__terminal-path"
+      >
+        {{ t('ops.task.failureDetails.affectedPath') }}: <code>{{ terminalFailurePath }}</code>
+      </div>
+      <div
+        v-if="effectiveTerminalResolutions.length || terminalFilterRule"
         class="task-event-failure__remediation"
       >
         <div class="task-event-failure__label">
@@ -202,10 +248,23 @@ function remediationText(code: string) {
         </div>
         <ol class="task-event-failure__remediation-list">
           <li
-            v-for="resolution in terminalResolutions"
+            v-for="resolution in effectiveTerminalResolutions"
             :key="resolution"
           >
             {{ resolution }}
+          </li>
+          <li v-if="terminalFilterRule">
+            {{ t('ops.task.failureDetails.sourceBusyExclude') }}
+            <code class="task-event-failure__filter-rule">{{ terminalFilterRule }}</code>
+            <button
+              type="button"
+              class="task-event-failure__copy-rule"
+              :aria-label="t('ops.task.failureDetails.copyFilterRule')"
+              @click="copyFilterRule"
+            >
+              <Copy :size="13" />
+              {{ t('feedback.toast.copy') }}
+            </button>
           </li>
         </ol>
       </div>
@@ -295,7 +354,7 @@ function remediationText(code: string) {
       </details>
     </template>
     <template v-if="!backupSourceOffline && (failureCount > 0 || causes.length || category === 'BACKUP_TARGET_STORAGE_FULL')">
-      <div class="task-event-failure__summary">
+      <div class="task-event-failure__summary task-event-failure__summary--structured">
         <LockKeyhole
           v-if="category === 'source_file_locked'"
           :size="15"
@@ -308,31 +367,7 @@ function remediationText(code: string) {
       </div>
 
       <div
-        v-if="causes.length"
-        class="task-event-failure__causes"
-      >
-        <div
-          v-for="cause in causes"
-          :key="cause.code"
-          class="task-event-failure__cause"
-        >
-          <span>{{ causeLabel(cause.code, cause.count) }}</span>
-        </div>
-      </div>
-
-      <p
-        v-if="failureTruncated && !items.length"
-        class="task-event-failure__truncated"
-      >
-        {{ t('ops.task.failureDetails.failureItemsTruncated', {
-          reportedCount: reportedFailureCount,
-          count: failureCount,
-          omittedCount: Math.max(0, failureCount - reportedFailureCount),
-        }) }}
-      </p>
-
-      <div
-        v-if="remediation.length && category === 'BACKUP_TARGET_STORAGE_FULL'"
+        v-if="remediation.length"
         class="task-event-failure__remediation"
       >
         <div class="task-event-failure__label">
@@ -348,6 +383,17 @@ function remediationText(code: string) {
           </li>
         </ol>
       </div>
+
+      <p
+        v-if="failureTruncated && !items.length"
+        class="task-event-failure__truncated"
+      >
+        {{ t('ops.task.failureDetails.failureItemsTruncated', {
+          reportedCount: reportedFailureCount,
+          count: failureCount,
+          omittedCount: Math.max(0, failureCount - reportedFailureCount),
+        }) }}
+      </p>
 
       <details
         v-if="category === 'BACKUP_TARGET_STORAGE_FULL' && (errorDiagnostic || originalError || items.length)"
@@ -390,23 +436,16 @@ function remediationText(code: string) {
           </li>
         </ul>
       </details>
-      <div
-        v-if="remediation.length && category !== 'BACKUP_TARGET_STORAGE_FULL'"
-        class="task-event-failure__remediation"
+      <details
+        v-if="!items.length && category !== 'BACKUP_TARGET_STORAGE_FULL' && (technicalDetail || errorDiagnostic)"
+        class="task-event-failure__technical"
       >
-        <div class="task-event-failure__label">
-          <Lightbulb :size="14" />
-          {{ t('ops.task.failureDetails.howToResolve') }}
-        </div>
-        <ol class="task-event-failure__remediation-list">
-          <li
-            v-for="code in remediation"
-            :key="code"
-          >
-            {{ remediationText(code) }}
-          </li>
-        </ol>
-      </div>
+        <summary>
+          <ChevronRight :size="14" />
+          {{ t('ops.task.failureDetails.technicalDetails') }}
+        </summary>
+        <pre>{{ technicalDetail || errorDiagnostic }}</pre>
+      </details>
     </template>
   </section>
 </template>
@@ -455,6 +494,12 @@ function remediationText(code: string) {
   color: rgb(127 29 29);
 }
 
+.task-event-failure__summary--structured {
+  color: rgb(127 29 29);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .task-event-failure__terminal-box {
   display: grid;
   gap: 9px;
@@ -483,6 +528,45 @@ function remediationText(code: string) {
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.task-event-failure__terminal-path {
+  padding: 0 0 1px;
+  color: rgb(127 29 29);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.task-event-failure__summary--terminal + .task-event-failure__terminal-path {
+  margin-top: -7px;
+}
+
+.task-event-failure__terminal-path code,
+.task-event-failure__filter-rule {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.task-event-failure__filter-rule {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 76%);
+  user-select: all;
+}
+
+.task-event-failure__copy-rule {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
 .task-event-failure--mixed {
@@ -616,19 +700,6 @@ function remediationText(code: string) {
 .task-event-failure__directory-list code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   overflow-wrap: anywhere;
-}
-
-.task-event-failure__causes {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding-left: 21px;
-}
-
-.task-event-failure__cause {
-  color: rgb(127 29 29);
-  font-size: 12px;
-  font-weight: 600;
 }
 
 .task-event-failure__directory-list {
