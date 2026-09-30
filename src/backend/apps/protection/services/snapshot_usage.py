@@ -177,7 +177,7 @@ def release_chat_usage(*, session_link_id: int, snapshot_id: int) -> int:
 
 def reconcile_snapshot_usage_leases(*, limit: int = 500) -> dict[str, int]:
     """Release orphaned or terminal leases after interrupted callbacks."""
-    from apps.lens_bridge.models import LensSessionLink
+    from apps.lens_bridge.models import LensKnowledgeSource, LensSessionLink
     from apps.node.models import NodeTask
     from apps.restore.models import RestoreRecord
     from apps.task.models import Task
@@ -293,6 +293,33 @@ def reconcile_snapshot_usage_leases(*, limit: int = 500) -> dict[str, int]:
                     lease.delete()
                     released += 1
                     continue
+                retained += 1
+                retained_lease_ids.append(lease.id)
+            continue
+
+        if lease.consumer_type == SnapshotUsageLease.ConsumerType.CHAT_UPDATE:
+            knowledge_source = LensKnowledgeSource.all_objects.filter(
+                pk=consumer_pk, organization_id=lease.organization_id
+            ).values("lifecycle_status", "sync_state_json").first()
+            if knowledge_source is None:
+                lease.delete()
+                released += 1
+                continue
+            update = (knowledge_source["sync_state_json"] or {}).get(
+                "chat_data_update"
+            ) or {}
+            if (
+                knowledge_source["lifecycle_status"]
+                == LensKnowledgeSource.LifecycleStatus.DELETED
+                or update.get("status") in {"complete", "abandoned"}
+                or (
+                    str(update.get("target_snapshot_id") or "") != str(lease.snapshot_id)
+                )
+            ):
+                lease.delete()
+                released += 1
+            else:
+                # A failed in-place update needs its pinned target for retry.
                 retained += 1
                 retained_lease_ids.append(lease.id)
             continue

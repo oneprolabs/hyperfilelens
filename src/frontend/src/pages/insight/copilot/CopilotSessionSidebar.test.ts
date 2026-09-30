@@ -61,6 +61,26 @@ function mountSidebar(row: SessionRow) {
 }
 
 describe('CopilotSessionSidebar pin actions', () => {
+  it('offers data updates on prepared Chats and a retry after update failure', () => {
+    const ready = mountSidebar(session('ready', {
+      backup_config_id: 10,
+      data_update: { status: 'idle', phase: '', applied_snapshot_id: 1, target_snapshot_id: null, error: '' },
+    }))
+    expect(ready.find('.copilot-session-menu__update-data').text()).toContain('Update Chat Data')
+    ready.unmount()
+
+    const failedUpdate = mountSidebar(session('ready', {
+      backup_config_id: 10,
+      data_update: { status: 'failed', phase: 'convert', applied_snapshot_id: 1, target_snapshot_id: 2, error: 'temporary' },
+    }))
+    expect(failedUpdate.find('.copilot-session-menu__update-data').text()).toContain('Retry Data Update')
+    failedUpdate.unmount()
+
+    const chatStillPreparing = mountSidebar(session('provisioning', { backup_config_id: 10 }))
+    expect(chatStillPreparing.find('.copilot-session-menu__update-data').exists()).toBe(false)
+    chatStillPreparing.unmount()
+  })
+
   it('offers a fresh Chat only when a ready Chat has prepared resources', () => {
     const ready = mountSidebar(session('ready'))
     expect(ready.find('.copilot-session-menu__new-from').exists()).toBe(true)

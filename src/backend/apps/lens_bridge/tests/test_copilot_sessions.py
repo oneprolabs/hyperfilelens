@@ -384,6 +384,31 @@ class CopilotSessionApiTests(TestCase):
         self.assertEqual(payload["response_state"]["status"], "idle")
 
     @patch(
+        "apps.lens_bridge.services.chat_data_update.prepare_chat_data_update",
+        return_value={"status": "pending", "target_snapshot_id": 19},
+    )
+    def test_update_data_only_targets_current_users_chat(self, prepare_update):
+        self._mark_session_ready()
+        url = reverse(
+            "lens-copilot-session-update-data", kwargs={"pk": self.session.id}
+        )
+
+        response = self.client.post(
+            url, {"snapshot_id": 19}, format="json", HTTP_X_ORG_KEY=self.org.key
+        )
+
+        self.assertEqual(response.status_code, 202)
+        prepare_update.assert_called_once()
+        self.assertEqual(prepare_update.call_args.kwargs["chat"].id, self.session.id)
+        self.assertEqual(prepare_update.call_args.kwargs["snapshot_id"], 19)
+
+        invalid = self.client.post(
+            url, {"snapshot_id": -1}, format="json", HTTP_X_ORG_KEY=self.org.key
+        )
+        self.assertEqual(invalid.status_code, 400)
+        prepare_update.assert_called_once()
+
+    @patch(
         "apps.lens_bridge.api.views.sl_client.request_json",
         return_value={"supported": True, "status": "active"},
     )

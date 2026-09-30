@@ -101,6 +101,11 @@ def _claim_sync(
         return None, "missing"
     if ks.lifecycle_status != LensKnowledgeSource.LifecycleStatus.READY:
         return None, "inactive"
+    if ((ks.sync_state_json or {}).get("chat_data_update") or {}).get("status") in {
+        "pending",
+        "running",
+    }:
+        return None, "chat_update_active"
     if ks.status != LensKnowledgeSource.Status.SYNCING:
         return None, str(ks.status)
     if ks.sync_next_poll_at and ks.sync_next_poll_at > now:
@@ -933,6 +938,64 @@ def _create_and_publish_workspace_restore(
     return record
 
 
+def _require_unchanged_chat_workspace_layout(
+    *,
+    org: Organization,
+    ks: LensKnowledgeSource,
+    update: dict[str, Any],
+    restore_dir: str,
+    candidate_items: list[dict[str, Any]],
+) -> None:
+    """A new snapshot must restore into the paths already owned by this Chat.
+
+    The restore API derives final targets from the snapshot directory roots.
+    Matching selected source paths alone does not prove that the old workspace
+    files will be overwritten and pruned.
+    """
+
+    try:
+        binding = ks.workspace_binding
+    except LensWorkspaceBinding.DoesNotExist as exc:
+        raise KnowledgeSourceSyncError("Chat workspace binding is missing.") from exc
+    applied_id = update.get("applied_snapshot_id") or ks.pinned_snapshot_id
+    if not applied_id:
+        raise KnowledgeSourceSyncError("Applied Chat snapshot identity is missing.")
+    old_records = RestoreRecord.objects.filter(
+        organization_id=org.id,
+        purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+        workspace_binding_id=binding.id,
+        source_snapshot_id=int(applied_id),
+        target_execution_organization_id=binding.execution_organization_id,
+        target_execution_node_id=binding.execution_node_id,
+        target_path=restore_dir,
+    ).order_by("-id")
+    old_record = next(
+        (
+            record
+            for record in old_records.iterator()
+            if _restore_record_succeeded(record_id=record.id, organization_id=org.id)
+        ),
+        None,
+    )
+    if old_record is None:
+        raise KnowledgeSourceSyncError(
+            "The existing Chat workspace layout cannot be verified."
+        )
+    prior_targets = list(
+        old_record.items.order_by("id").values_list("target_path", flat=True)
+    )
+    proposed_targets = [
+        item["target_path"]
+        for item in restore_services._finalize_restore_item_targets(
+            candidate_items, restore_dir=restore_dir
+        )
+    ]
+    if prior_targets != proposed_targets:
+        raise KnowledgeSourceSyncError(
+            "The new snapshot would change this Chat's workspace layout."
+        )
+
+
 def _run_phase_restore_snapshot(
     *,
     org: Organization,
@@ -960,11 +1023,17 @@ def _run_phase_restore_snapshot(
         )
         message = (task.error_message if task else None) or "Snapshot restore failed."
         raise KnowledgeSourceSyncError(message)
+    update = sync_state.get("chat_data_update") or {}
+    target_snapshot_id = update.get("target_snapshot_id")
     previous_snapshot_id = sync_state.get("snapshot_id_used")
     snapshot_id = (
         int(previous_snapshot_id)
         if previous_record_id and previous_snapshot_id is not None
-        else resolve_snapshot_id_for_sync(ks=ks)
+        else (
+            int(target_snapshot_id)
+            if target_snapshot_id and update.get("status") in {"pending", "running"}
+            else resolve_snapshot_id_for_sync(ks=ks)
+        )
     )
     snapshot = BackupSourceSnapshot.objects.filter(
         organization_id=org.id,
@@ -978,17 +1047,23 @@ def _run_phase_restore_snapshot(
 
     workspace = ks.workspace_path_on_lensnode
     items: list[dict[str, Any]] = []
+    preview_items: list[dict[str, Any]] = []
     restore_scope_status: dict[str, str] = dict(
         sync_state.get("restore_scope_status") or {}
     )
 
-    for index, entry in enumerate(scope_entries(ks)):
+    update_scopes = (
+        update.get("scopes") if update.get("status") in {"pending", "running"} else None
+    )
+    for index, entry in enumerate(update_scopes or scope_entries(ks)):
         key = str(index)
         if restore_scope_status.get(key) == "done":
             continue
         scope_path = str(entry.get("source_path") or "").strip()
         directory_id = (
-            entry.get("backup_snapshot_directory_id") or ks.backup_snapshot_directory_id
+            entry.get("snapshot_directory_id")
+            or entry.get("backup_snapshot_directory_id")
+            or ks.backup_snapshot_directory_id
         )
         if not directory_id:
             raise KnowledgeSourceSyncError(
@@ -1003,17 +1078,33 @@ def _run_phase_restore_snapshot(
             raise KnowledgeSourceSyncError(
                 f"Snapshot directory {directory_id} not found for restore."
             )
+        selected_paths = (
+            ([str(entry["selected_path"])] if entry.get("selected_path") else [])
+            if update_scopes is not None
+            else _restore_selected_paths(
+                directory_source_path=directory.source_path,
+                scope_path=scope_path,
+            )
+        )
         items.append(
             {
                 "source_snapshot_directory_id": int(directory_id),
-                "selected_paths": _restore_selected_paths(
-                    directory_source_path=directory.source_path,
-                    scope_path=scope_path,
-                ),
+                "selected_paths": selected_paths,
                 "target_path": workspace,
                 "conflict_mode": "overwrite",
             }
         )
+        if update_scopes is not None:
+            preview_items.append(
+                {
+                    "source_snapshot_directory_id": int(directory_id),
+                    "selected_paths": selected_paths,
+                    "target_source_path": directory.source_path,
+                    "source_path_type": directory.path_type,
+                    "restore_dir": workspace,
+                    "conflict_mode": "overwrite",
+                }
+            )
         restore_scope_status[key] = "pending"
 
     if not items:
@@ -1022,6 +1113,15 @@ def _run_phase_restore_snapshot(
         ks.sync_state_json = sync_state
         ks.save(update_fields=["sync_state_json", "updated_at"])
         return
+
+    if update_scopes is not None and not previous_record_id:
+        _require_unchanged_chat_workspace_layout(
+            org=org,
+            ks=ks,
+            update=update,
+            restore_dir=workspace,
+            candidate_items=preview_items,
+        )
 
     record = _create_and_publish_workspace_restore(
         org=org,
@@ -1037,7 +1137,14 @@ def _run_phase_restore_snapshot(
             "conflict_mode": "overwrite",
             "items": items,
             "idempotency_key": (
-                f"lens-workspace:{ks.id}:generation:{generation}:snapshot:{snapshot_id}"
+                f"lens-chat-update:{ks.id}:generation:{generation}:snapshot:{snapshot_id}"
+                if update_scopes is not None
+                else f"lens-workspace:{ks.id}:generation:{generation}:snapshot:{snapshot_id}"
+            ),
+            **(
+                {"chat_data_update_reconcile": True}
+                if update_scopes is not None
+                else {}
             ),
         },
         sync_state=sync_state,

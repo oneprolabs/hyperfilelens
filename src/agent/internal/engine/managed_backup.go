@@ -3520,6 +3520,11 @@ func (e *Engine) runManagedRestore(
 	if insightContentPolicy != "" && payloadStringValue(p.Extra["managed_workspace_path"]) == "" {
 		return "failed", nil, "insight content policy requires a managed workspace"
 	}
+	reconcileChatUpdate := p.Extra["chat_data_update_reconcile"] == true
+	if reconcileChatUpdate && (insightContentPolicy != insightRegularFilesOnlyPolicy ||
+		restoreTargetPathSemantics(p) != "final" || len(restoreSelectedPaths(p)) > 1) {
+		return "failed", nil, "Chat data update requires one managed final restore scope"
+	}
 	targetPath := restoreTargetPath(p)
 	if targetPath == "" {
 		return "failed", nil, "target_path is required"
@@ -3543,6 +3548,9 @@ func (e *Engine) runManagedRestore(
 	targetPath, nasMountRoot, err := resolveNASRestoreTarget(p, targetPath)
 	if err != nil {
 		return "failed", nil, err.Error()
+	}
+	if reconcileChatUpdate && conflictMode != "overwrite" {
+		return "failed", nil, "Chat data update requires overwrite restore"
 	}
 	if err := validateNASRestoreTarget(p, targetPath); err != nil {
 		return "failed", nil, err.Error()
@@ -3645,6 +3653,17 @@ func (e *Engine) runManagedRestore(
 			result["restore_inspect"] = managedRestoreCommandResult(inspectRes, spec, p)
 			return "failed", result, snapshotRestoreInspectFailureMessage(inspectRes, inspectErr, spec, p)
 		}
+		if reconcileChatUpdate && sourceObjectType != "directory" && sourceObjectType != "file" {
+			return "failed", result, "Chat update snapshot contains an unsupported scope"
+		}
+		if reconcileChatUpdate {
+			if !hasSummary || !summary.Complete {
+				return "failed", result, "Chat update snapshot size is unavailable"
+			}
+			if err := checkChatUpdateDiskHeadroom(ctx, restoreTarget, summary.SizeBytes); err != nil {
+				return "failed", result, err.Error()
+			}
+		}
 		directFinalTarget := restoreTargetPathSemantics(p) == "final" && len(selectedPaths) == 1
 		if conflictMode == "skip" && directFinalTarget {
 			targetExists, existsErr := restoreTargetExists(restoreTarget)
@@ -3724,6 +3743,9 @@ func (e *Engine) runManagedRestore(
 			"restore",
 		}
 		restoreArgs = append(restoreArgs, managedRestoreConflictArgs(conflictMode)...)
+		if reconcileChatUpdate {
+			restoreArgs = append(restoreArgs, "--write-files-atomically")
+		}
 		restoreArgs = append(restoreArgs, source, restoreTarget)
 		res, runErr := process.RunStreaming(runCtx, bin, restoreArgs, env, "", onProgressLine)
 		restoreEntry["result"] = managedRestoreCommandResult(res, spec, p)
@@ -3753,6 +3775,33 @@ func (e *Engine) runManagedRestore(
 			}
 			skippedSpecialCount += skipped
 			restoreEntry["skipped_special_count"] = skipped
+			if reconcileChatUpdate && skipped > 0 {
+				result["restore_results"] = restored
+				return "failed", result, "Chat update snapshot contains unsupported content"
+			}
+		}
+		if reconcileChatUpdate && sourceIsDir {
+			if err := validateLensManagedRestoreTarget(p, restoreTarget); err != nil {
+				result["restore_results"] = restored
+				return "failed", result, "managed workspace identity changed: " + err.Error()
+			}
+			removed, err := reconcileRestoredSnapshotDirectory(
+				ctx, bin, configFile, env, p.SnapshotID, selectedPath, restoreTarget,
+				payloadStringValue(p.Extra["managed_workspace_path"]),
+				func(scanned int) {
+					_ = sendProgress(ctx, rep, taskID, map[string]any{
+						"phase":           "chat_data_reconcile",
+						"scanned_entries": scanned,
+						"path_index":      pathIndexValue,
+						"path_total":      pathTotal,
+					})
+				},
+			)
+			if err != nil {
+				result["restore_results"] = restored
+				return "failed", result, "Chat data reconciliation failed: " + err.Error()
+			}
+			restoreEntry["removed_extra_entries"] = removed
 		}
 		if hasSummary && summary.Complete {
 			completedBytes += summary.SizeBytes

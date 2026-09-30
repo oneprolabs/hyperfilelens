@@ -577,6 +577,12 @@ def _create_manual_restore_record(
             "source_snapshot_id": source_snapshot_id,
             "scope": scope,
             "idempotency_key": str(data.get("idempotency_key") or ""),
+            **(
+                {"chat_data_update_reconcile": True}
+                if purpose == RestoreRecord.Purpose.LENS_WORKSPACE
+                and data.get("chat_data_update_reconcile") is True
+                else {}
+            ),
         },
         created_by_id=user_id,
         purpose=purpose,
@@ -609,6 +615,13 @@ def create_lens_workspace_restore_record(
     )
     if tenant_organization is None:
         raise ValidationError({"organization_id": "Organization is not available."})
+    if (
+        data.get("chat_data_update_reconcile") is not None
+        and data.get("chat_data_update_reconcile") is not True
+    ):
+        raise ValidationError(
+            {"chat_data_update_reconcile": "Chat update reconciliation must be explicitly enabled."}
+        )
     from apps.lens_bridge.services.gateway_execution import (
         context_for_workspace_binding,
     )
@@ -643,7 +656,9 @@ def create_lens_workspace_restore_record(
             existing.source_snapshot_id,
             existing.target_path,
         )
-        if actual != expected:
+        if actual != expected or bool(
+            (existing.request_payload or {}).get("chat_data_update_reconcile")
+        ) != (data.get("chat_data_update_reconcile") is True):
             raise ValidationError(
                 {
                     "idempotency_key": "Lens workspace idempotency key is bound to another execution request."
@@ -1862,6 +1877,12 @@ def _dispatch_restore_items(
                 )
             }
         )
+    if (record.request_payload or {}).get("chat_data_update_reconcile") and missing_node_capabilities(
+        node, ["chat_workspace_reconcile_v1"]
+    ):
+        raise ValidationError(
+            {"target_ref_id": "Upgrade the Data Gateway Agent before updating Chat data."}
+        )
     target_nas_payload: dict[str, Any] = {}
     if record.target_type == RestoreRecord.EndpointType.NAS:
         target_nas = SourceResource.objects.filter(
@@ -2053,6 +2074,11 @@ def _dispatch_restore_items(
                 # the ownership gate used by repository initialization.
                 "probe": "restore_execution",
                 "skip_ownership_check": True,
+                **(
+                    {"chat_data_update_reconcile": True}
+                    if (record.request_payload or {}).get("chat_data_update_reconcile")
+                    else {}
+                ),
                 **target_nas_payload,
                 **managed_workspace_payload,
             }

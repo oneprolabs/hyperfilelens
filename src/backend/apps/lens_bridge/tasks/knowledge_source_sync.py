@@ -90,6 +90,10 @@ def due_knowledge_source_sync_ids(
             lifecycle_status=LensKnowledgeSource.LifecycleStatus.READY,
         )
         .filter(
+            Q(sync_state_json__chat_data_update__isnull=True)
+            | Q(sync_state_json__chat_data_update__status__in=["complete", "failed", "abandoned"])
+        )
+        .filter(
             Q(sync_next_poll_at__isnull=True)
             | Q(sync_next_poll_at__lte=now)
         )

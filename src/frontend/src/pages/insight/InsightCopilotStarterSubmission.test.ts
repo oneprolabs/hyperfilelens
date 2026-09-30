@@ -152,6 +152,7 @@ function mountCopilot(
         CopilotLifecycleState: lifecycleState,
         CopilotEmptyState: SimpleStub,
         CopilotShareDialog: SimpleStub,
+        CopilotDataUpdateDialog: SimpleStub,
         CopilotExecutionSettingsDialog: SimpleStub,
         DangerConfirmDialog: dangerConfirmDialog,
         ElDrawer: SimpleStub,

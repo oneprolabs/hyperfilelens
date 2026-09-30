@@ -55,6 +55,7 @@ import CopilotMessageList from './copilot/CopilotMessageList.vue'
 import CopilotSessionSidebar from './copilot/CopilotSessionSidebar.vue'
 import CopilotShareDialog from './copilot/CopilotShareDialog.vue'
 import CopilotExecutionSettingsDialog from './copilot/CopilotExecutionSettingsDialog.vue'
+import CopilotDataUpdateDialog from './copilot/CopilotDataUpdateDialog.vue'
 import { toSessionRows, type SessionRow } from './copilot/sessionOrdering'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import type {
@@ -76,6 +77,10 @@ const mobileSessionsOpen = ref(false)
 const clarificationResetToken = ref(0)
 const reuseSubmittingId = ref<number | null>(null)
 const reuseRequestKeys = new Map<number, string>()
+const dataUpdateOpen = ref(false)
+const dataUpdateTarget = ref<SessionRow | null>(null)
+const dataUpdatePolling = new Map<number, number>()
+let dataUpdateEpoch = 0
 
 const bridgeReady = ref(false)
 const loading = ref(false)
@@ -340,6 +345,13 @@ const activeMessages = computed(() => {
   if (id == null) return []
   return messagesBySession.value[id] ?? []
 })
+const dataUpdatePhaseLabel = computed(() => {
+  const phase = activeSession.value?.data_update?.phase
+  if (phase === 'validate') return t('insight.copilot.dataUpdateValidating')
+  if (phase === 'restore') return t('insight.copilot.dataUpdateRestoring')
+  if (phase === 'convert') return t('insight.copilot.dataUpdateConverting')
+  return t('insight.copilot.dataUpdating')
+})
 
 const activeStream = computed(() => {
   const id = activeSessionId.value
@@ -497,6 +509,9 @@ async function bootstrap() {
     for (const session of sessions.value) {
       if (sessionNeedsLifecyclePolling(session)) {
         void pollSessionLifecycle(session.id)
+      }
+      if (['pending', 'running'].includes(session.data_update?.status || '') && session.knowledge_source != null) {
+        void pollChatDataUpdate(session.knowledge_source)
       }
     }
 
@@ -697,6 +712,54 @@ async function newChatFromSession(row: SessionRow) {
     ElMessage.error({ message: apiErrorMessage(err, t('insight.copilot.startChatFailed')), grouping: true })
   } finally {
     reuseSubmittingId.value = null
+  }
+}
+
+function openChatDataUpdate(row: SessionRow) {
+  if (row.lifecycle_status !== 'ready' || row.knowledge_source == null) return
+  dataUpdateTarget.value = row
+  dataUpdateOpen.value = true
+  mobileSessionsOpen.value = false
+}
+
+function onChatDataUpdateSaved(
+  knowledgeSourceId: number,
+  update: NonNullable<LensSessionLink['data_update']>,
+) {
+  sessions.value = sessions.value.map((row) =>
+    row.knowledge_source === knowledgeSourceId ? { ...row, data_update: update } : row,
+  )
+  if (['pending', 'running'].includes(update.status)) void pollChatDataUpdate(knowledgeSourceId)
+}
+
+async function pollChatDataUpdate(knowledgeSourceId: number) {
+  const epoch = dataUpdateEpoch
+  if (dataUpdatePolling.get(knowledgeSourceId) === epoch) return
+  dataUpdatePolling.set(knowledgeSourceId, epoch)
+  let delay = 5000
+  let unchanged = 0
+  let lastState = ''
+  try {
+    while (!componentUnmounted && componentActive && dataUpdateEpoch === epoch) {
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      if (componentUnmounted || !componentActive || dataUpdateEpoch !== epoch) return
+      try {
+        const rows = await listCopilotSessions()
+        if (componentUnmounted || !componentActive || dataUpdateEpoch !== epoch) return
+        sessions.value = toSessionRows(rows)
+        const current = rows.find((row) => row.knowledge_source === knowledgeSourceId)
+        if (!current || !['pending', 'running'].includes(current.data_update?.status || '')) return
+        const state = `${current.data_update?.status}:${current.data_update?.phase}`
+        unchanged = state === lastState ? unchanged + 1 : 0
+        lastState = state
+        delay = unchanged >= 20 ? 30000 : unchanged >= 4 ? 10000 : 5000
+      } catch {
+        // The durable task is polled again; a transient list failure does not stop it.
+        delay = Math.min(30000, delay * 2)
+      }
+    }
+  } finally {
+    if (dataUpdatePolling.get(knowledgeSourceId) === epoch) dataUpdatePolling.delete(knowledgeSourceId)
   }
 }
 
@@ -1269,12 +1332,16 @@ onActivated(() => {
       if (sessionNeedsLifecyclePolling(session)) {
         void pollSessionLifecycle(session.id)
       }
+      if (['pending', 'running'].includes(session.data_update?.status || '') && session.knowledge_source != null) {
+        void pollChatDataUpdate(session.knowledge_source)
+      }
     }
   }
 })
 
 onDeactivated(() => {
   componentActive = false
+  dataUpdateEpoch += 1
   lifecyclePollingEpoch += 1
   clearComposerAttachments({ deleteDocuments: true })
   copilotStore.detachSessionStream(activeSessionId.value ?? -1)
@@ -1282,6 +1349,7 @@ onDeactivated(() => {
 
 onUnmounted(() => {
   componentUnmounted = true
+  dataUpdateEpoch += 1
   componentActive = false
   lifecyclePollingEpoch += 1
   clearComposerAttachments({ deleteDocuments: true })
@@ -1304,6 +1372,7 @@ onUnmounted(() => {
       @rename="renameSession"
       @retry="retryProvision"
       @new-from="newChatFromSession"
+      @update-data="openChatDataUpdate"
       @pin="setSessionPinned"
       @new-chat="openNewChatFlow"
     />
@@ -1329,6 +1398,7 @@ onUnmounted(() => {
         @rename="renameSession"
         @retry="retryProvision"
         @new-from="newChatFromSession"
+        @update-data="openChatDataUpdate"
         @pin="setSessionPinned"
         @new-chat="mobileSessionsOpen = false; openNewChatFlow()"
       />
@@ -1354,6 +1424,20 @@ onUnmounted(() => {
           :session="activeSession"
           @edit-execution="openExecutionSettings"
         />
+        <p
+          v-if="['failed', 'abandoned'].includes(activeSession?.data_update?.status || '')"
+          class="chat-data-update-note"
+          role="status"
+        >
+          {{ t('insight.copilot.dataUpdateFailedNotice') }}
+        </p>
+        <p
+          v-else-if="['pending', 'running'].includes(activeSession?.data_update?.status || '')"
+          class="chat-data-update-note"
+          role="status"
+        >
+          {{ dataUpdatePhaseLabel }} · {{ t('insight.copilot.dataUpdateConsistency') }}
+        </p>
 
         <CopilotLifecycleState
           v-if="activeSession && activeSession.lifecycle_status !== 'ready'"
@@ -1448,10 +1532,23 @@ onUnmounted(() => {
       :session="activeSession"
       @saved="applyExecutionSettings"
     />
+    <CopilotDataUpdateDialog
+      v-model="dataUpdateOpen"
+      :session="dataUpdateTarget"
+      :shared-count="sessions.filter((row) => row.knowledge_source != null && row.knowledge_source === dataUpdateTarget?.knowledge_source).length"
+      @saved="onChatDataUpdateSaved"
+    />
   </div>
 </template>
 
 <style scoped>
+.chat-data-update-note {
+  margin: 0;
+  padding: 8px 16px;
+  color: var(--color-text-secondary);
+  background: var(--color-warning-bg, rgba(245, 158, 11, 0.1));
+  font-size: 13px;
+}
 .copilot-root {
   display: flex;
   flex-direction: row;

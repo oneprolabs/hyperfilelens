@@ -959,8 +959,13 @@ def create_copilot_chat_from_existing(
                     org, user=user, base_title="New Chat"
                 ),
                 backup_config_id=source.backup_config_id,
-                backup_source_snapshot_id=source.backup_source_snapshot_id,
-                source_scopes_json=list(source.source_scopes_json or []),
+                backup_source_snapshot_id=(
+                    knowledge_source.backup_source_snapshot_id
+                    or source.backup_source_snapshot_id
+                ),
+                source_scopes_json=list(
+                    knowledge_source.source_scopes_json or source.source_scopes_json or []
+                ),
                 gateway_link=source.gateway_link,
                 gateway_selection_mode=source.gateway_selection_mode,
                 knowledge_source=knowledge_source,

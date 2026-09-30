@@ -518,6 +518,7 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
     queue_ahead = serializers.SerializerMethodField()
     force_delete_available = serializers.SerializerMethodField()
     force_delete_reason = serializers.SerializerMethodField()
+    data_update = serializers.SerializerMethodField()
 
     class Meta:
         model = LensSessionLink
@@ -556,6 +557,7 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             "force_delete_reason",
             "document_conversion",
             "data_context",
+            "data_update",
             "lifecycle_error",
             "lifecycle_error_code",
             "lifecycle_error_message",
@@ -673,15 +675,20 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
         return cache[obj.backup_config_id]
 
     def _snapshot(self, obj: LensSessionLink) -> BackupSourceSnapshot | None:
-        if not obj.backup_source_snapshot_id:
+        effective_id = (
+            obj.knowledge_source.pinned_snapshot_id
+            if obj.knowledge_source_id and obj.knowledge_source is not None
+            else None
+        ) or obj.backup_source_snapshot_id
+        if not effective_id:
             return None
         cache = self.context.setdefault("session_snapshots", {})
-        if obj.backup_source_snapshot_id not in cache:
-            cache[obj.backup_source_snapshot_id] = BackupSourceSnapshot.objects.filter(
-                id=obj.backup_source_snapshot_id,
+        if effective_id not in cache:
+            cache[effective_id] = BackupSourceSnapshot.objects.filter(
+                id=effective_id,
                 organization_id=obj.organization_id,
             ).first()
-        return cache[obj.backup_source_snapshot_id]
+        return cache[effective_id]
 
     def get_backup_source_name(self, obj: LensSessionLink) -> str | None:
         config = self._backup_config(obj)
@@ -735,10 +742,31 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             conversion_display.conversion_state_from_knowledge_source(ks)
         )
 
+    def get_data_update(self, obj: LensSessionLink) -> dict | None:
+        ks = obj.knowledge_source
+        if ks is None:
+            return None
+        update = (ks.sync_state_json or {}).get("chat_data_update") or {}
+        return {
+            "status": update.get("status") or "idle",
+            "phase": update.get("phase") or "",
+            "applied_snapshot_id": (
+                update.get("applied_snapshot_id")
+                or ks.pinned_snapshot_id
+                or ks.backup_source_snapshot_id
+            ),
+            "target_snapshot_id": update.get("target_snapshot_id"),
+            "error": str(update.get("error") or "")[:500],
+        }
+
     def get_data_context(self, obj: LensSessionLink) -> dict:
         return conversion_display.data_context_for_session(
             backup_config_id=obj.backup_config_id,
-            backup_source_snapshot_id=obj.backup_source_snapshot_id,
+            backup_source_snapshot_id=(
+                (obj.knowledge_source.pinned_snapshot_id or obj.backup_source_snapshot_id)
+                if obj.knowledge_source_id and obj.knowledge_source is not None
+                else obj.backup_source_snapshot_id
+            ),
             snapshot_created_at=self.get_snapshot_created_at(obj),
             gateway_scope=self.get_gateway_scope(obj),
             gateway_name=self.get_gateway_name(obj),
@@ -793,6 +821,10 @@ class LensSessionReuseSerializer(serializers.Serializer):
 
     idempotency_key = serializers.CharField(max_length=128)
     title = serializers.CharField(required=False, allow_blank=True, max_length=160)
+
+
+class LensChatDataUpdateSerializer(serializers.Serializer):
+    snapshot_id = serializers.IntegerField(min_value=1)
 
 
 class LensSnapshotBrowseCreateSerializer(serializers.Serializer):
