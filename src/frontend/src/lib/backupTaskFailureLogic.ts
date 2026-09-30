@@ -179,7 +179,15 @@ export function extractSkippedDetails(metadata: unknown): SkippedDetails | null 
   const dirCount = positiveCount(details.directory_count ?? meta.skipped_directory_count)
   const specialCount = positiveCount(details.special_count ?? meta.skipped_special_count)
   const allItems = extractItems(details.items)
-  const count = itemCount || fileCount + dirCount + specialCount || allItems.length
+  // An older failed task can contain fatal samples in skipped_details.items
+  // while explicitly reporting zero skipped items. Samples never override
+  // an authoritative zero count or zero type totals.
+  const hasExplicitCount = details.count != null || meta.skipped_item_count != null
+  const hasTypeCounts = details.file_count != null || details.directory_count != null
+    || details.special_count != null || meta.skipped_file_count != null
+    || meta.skipped_directory_count != null || meta.skipped_special_count != null
+  const count = hasExplicitCount ? itemCount
+    : hasTypeCounts ? fileCount + dirCount + specialCount : allItems.length
   if (!count) return null
 
   const items = allItems.slice(0, MAX_ITEMS)

@@ -265,6 +265,11 @@ build_matrix() {
 		cd "${KOPIA_SOURCE_DIR}"
 		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" go test ./cli -run '^TestHFLListSummary$'
 	)
+	log "Testing the Kopia HFL upload-path diagnostics patch"
+	(
+		cd "${KOPIA_SOURCE_DIR}"
+		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" go test ./fs/localfs ./snapshot/upload
+	)
 	log "Testing the Kopia managed dot-ignore patch"
 	(
 		cd "${KOPIA_SOURCE_DIR}"

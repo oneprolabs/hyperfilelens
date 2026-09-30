@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from django.utils import timezone
@@ -86,6 +87,8 @@ def build_backup_kopia_progress(
         "aggregate": aggregate,
         "lanes": [_public_lane(row) for row in lane_rows],
     }
+    if phase in {"estimating", "transferring"}:
+        payload["comparison"] = _active_comparison(lane_rows, aggregate)
     result_payload = task.result_payload if isinstance(task.result_payload, dict) else {}
     previous_transfer = result_payload.get("transfer_progress") if isinstance(result_payload.get("transfer_progress"), dict) else {}
     transfer = merge_transfer_progress(previous=previous_transfer, current=slim_transfer_progress(payload))
@@ -154,6 +157,49 @@ def _node_task_progress(node_task: NodeTask) -> dict | None:
     result = node_task.result if isinstance(node_task.result, dict) else {}
     progress = result.get("last_progress")
     return progress if isinstance(progress, dict) else None
+
+
+def _active_comparison(
+    lanes: list[dict[str, Any]], aggregate: dict[str, Any]
+) -> dict[str, Any] | None:
+    comparing = [
+        row for row in lanes
+        if row.get("status") in {"running", "dispatching", "creating"}
+        and str((row.get("progress") or {}).get("kopia_phase") or "").lower()
+        in {"processing", "estimating"}
+    ]
+    if not comparing:
+        return None
+
+    starts = []
+    for row in comparing:
+        raw = str((row.get("progress") or {}).get("phase_started_at") or "").strip()
+        if not raw:
+            continue
+        try:
+            started = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if timezone.is_naive(started):
+            started = timezone.make_aware(started, timezone.get_current_timezone())
+        starts.append(started)
+
+    queued = int(aggregate.get("lanes_queued") or 0)
+    return {
+        "label_key": (
+            "protection.taskProgress.backup.comparingQueued"
+            if queued else "protection.taskProgress.backup.comparing"
+        ),
+        "label_args": {
+            "done": int(aggregate.get("lanes_done") or 0),
+            "total": int(aggregate.get("lanes_total") or 0),
+            **({
+                "running": int(aggregate.get("lanes_running") or 0),
+                "queued": queued,
+            } if queued else {}),
+        },
+        "phase_started_at": min(starts).isoformat() if starts else None,
+    }
 
 
 def sync_backup_task_progress(*, task: Task, source_snapshot: BackupSourceSnapshot | None = None) -> dict[str, Any]:

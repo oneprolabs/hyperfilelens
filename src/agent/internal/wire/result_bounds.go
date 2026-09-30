@@ -36,6 +36,7 @@ var essentialResultKeys = map[string]struct{}{
 	"results": {}, "entries": {}, "snapshot_browse": {}, "snapshot_download": {},
 	"snapshot_failure_summary": {}, "snapshot_skipped_summary": {},
 	"snapshot_terminal_error": {}, "snapshot_terminal_diagnostic": {},
+	"snapshot_terminal_path": {}, "snapshot_terminal_side": {}, "snapshot_terminal_phase": {},
 	"restore_outcome": {}, "skip_reason": {}, "conflict_mode": {},
 	"restored_item_count": {}, "skipped_item_count": {}, "failed_item_count": {},
 	"restored_path_count": {}, "skipped_path_count": {},

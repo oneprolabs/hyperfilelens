@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from datetime import timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
+
 from django.test import SimpleTestCase
 from django.utils import timezone
 
+from apps.protection.services.progress.backup_runtime import (
+    _active_comparison,
+    build_backup_kopia_progress,
+)
 from apps.protection.services.progress.orchestrated_progress import (
     BACKUP_ESTIMATE_END,
     BACKUP_PREPARE_END,
@@ -25,6 +33,96 @@ class _TaskStub:
 
 
 class OrchestratedProgressTests(SimpleTestCase):
+    def test_parallel_comparison_remains_visible_during_upload_and_clears_when_done(self):
+        started = timezone.now() - timedelta(seconds=10)
+        lanes = [
+            {"status": "running", "progress": {"kopia_phase": "uploading"}},
+            {"status": "running", "progress": {
+                "kopia_phase": "processing", "phase_started_at": started.isoformat(),
+            }},
+        ]
+        aggregate = {"lanes_done": 0, "lanes_total": 2, "lanes_running": 2}
+
+        comparison = _active_comparison(lanes, aggregate)
+        self.assertEqual(comparison["label_key"], "protection.taskProgress.backup.comparing")
+        self.assertEqual(comparison["label_args"], {"done": 0, "total": 2})
+        self.assertEqual(comparison["phase_started_at"], started.isoformat())
+
+        slim = slim_transfer_progress({
+            "orchestration_phase": "transferring",
+            "comparison": comparison,
+            "aggregate": aggregate,
+        })
+        self.assertGreaterEqual(slim["comparison"]["phase_elapsed_seconds"], 10)
+
+        lanes[1]["progress"]["kopia_phase"] = "uploading"
+        self.assertIsNone(_active_comparison(lanes, aggregate))
+        self.assertIsNone(slim_transfer_progress({
+            "orchestration_phase": "transferring",
+            "aggregate": aggregate,
+        })["comparison"])
+
+    def test_backup_runtime_includes_parallel_comparison_with_transfer_metrics(self):
+        started = (timezone.now() - timedelta(seconds=10)).isoformat()
+        rows = [
+            {"status": "running", "progress": {
+                "kopia_phase": "uploading", "is_transfer": True, "bytes_done": 123,
+            }},
+            {"status": "running", "progress": {
+                "kopia_phase": "processing", "is_transfer": True,
+                "phase_started_at": started, "bytes_done": 456,
+            }},
+        ]
+        task = SimpleNamespace(status="running", current_step="kopia_snapshot", result_payload={})
+        with (
+            patch("apps.protection.services.progress.backup_runtime._directories_for_task", return_value=[1, 2]),
+            patch("apps.protection.services.progress.backup_runtime._lane_from_directory", side_effect=rows),
+            patch("apps.protection.services.progress.backup_runtime.du_total_for_task", return_value=0),
+        ):
+            payload = build_backup_kopia_progress(task=task)
+
+        self.assertEqual(payload["orchestration_phase"], "transferring")
+        self.assertEqual(payload["transfer_progress"]["comparison"]["label_args"], {"done": 0, "total": 2})
+        self.assertEqual(payload["transfer_progress"]["bytes_done"], 579)
+
+    def test_preparing_runtime_keeps_valid_bytes_from_same_task(self):
+        task = SimpleNamespace(
+            status="running",
+            current_step="kopia_snapshot",
+            result_payload={"transfer_progress": {
+                "phase": "transferring",
+                "progress_schema_version": 2,
+                "bytes_done": 900_000_000,
+                "processed_bytes": 900_000_000,
+                "bytes_total": 2_000_000_000,
+                "bytes_total_known": True,
+                "bytes_total_source": "kopia",
+                "kopia_total_locked": 2_000_000_000,
+                "step3_display_percent": 45,
+            }},
+        )
+        lane = {
+            "status": "running",
+            "progress": {
+                "orchestration_label": "Preparing backup...",
+                "kopia_phase": "repository_prepare",
+                "is_transfer": False,
+            },
+        }
+        with (
+            patch("apps.protection.services.progress.backup_runtime._directories_for_task", return_value=[1]),
+            patch("apps.protection.services.progress.backup_runtime._lane_from_directory", return_value=lane),
+            patch("apps.protection.services.progress.backup_runtime.du_total_for_task", return_value=0),
+        ):
+            payload = build_backup_kopia_progress(task=task)
+
+        transfer = payload["transfer_progress"]
+        self.assertEqual(transfer["phase"], "preparing")
+        self.assertEqual(transfer["label_key"], "protection.taskProgress.backup.preparing")
+        self.assertEqual(transfer["processed_bytes"], 900_000_000)
+        self.assertEqual(transfer["bytes_total"], 2_000_000_000)
+        self.assertEqual(transfer["step3_display_percent"], 45)
+
     def test_backup_transferring_maps_kopia_percent_into_task_range(self):
         task = _TaskStub(current_step="kopia_snapshot")
         kopia_payload = {

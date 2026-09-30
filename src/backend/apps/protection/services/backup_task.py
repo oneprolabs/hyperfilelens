@@ -153,6 +153,7 @@ _DIRECTORY_TERMINAL_STATUSES = {
     BackupSourceSnapshotDirectory.Status.DELETED,
 }
 _MAX_SKIPPED_EVENT_ITEMS = 10
+_MAX_FAILURE_EVENT_ITEMS = 10
 
 
 def _is_global_backup_admission_error(exc: Exception) -> bool:
@@ -1490,6 +1491,11 @@ def extract_kopia_failure_message(
     if terminal:
         lower_terminal = terminal.lower()
         if "device or resource busy" in lower_terminal:
+            if (
+                result.get("snapshot_terminal_side") == "source"
+                and result.get("snapshot_terminal_path")
+            ):
+                return "The backup source reported Device or resource busy."
             return (
                 "Backup processing failed: Device or resource busy. "
                 "The affected path could not be determined from the available diagnostics."
@@ -1666,23 +1672,58 @@ def kopia_terminal_technical_detail(result: dict[str, Any] | None) -> str:
         return ""
     diagnostic = str(result.get("snapshot_terminal_diagnostic") or "").strip()
     if diagnostic:
-        lines = [
-            line.strip()
-            for line in diagnostic.splitlines()
-            if line.strip() and "hfl_snapshot_progress" not in line
-        ]
-        return "\n".join(lines[-10:])
+        return "\n".join(_terminal_diagnostic_lines(diagnostic)[-10:])
     nested = result.get("snapshot_create")
     if not isinstance(nested, dict):
         return ""
     raw = str(nested.get("stderr_tail") or nested.get("stderr") or "").strip()
     if not raw:
         return ""
-    lines = [
-        line for line in raw.splitlines()
-        if "hfl_snapshot_progress" not in line
-    ]
+    lines = _terminal_diagnostic_lines(raw)
     return "\n".join(lines[-10:])[-12000:]
+
+
+def _terminal_diagnostic_lines(raw: str) -> list[str]:
+    lines: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        terminal_at = stripped.lower().find("upload error:")
+        if terminal_at > 0:
+            stripped = stripped[terminal_at:]
+        if not stripped or "hfl_snapshot_progress" in stripped:
+            continue
+        if "ignored error when processing" in stripped.lower():
+            continue
+        # The Agent's bounded stderr tail can start in the middle of a
+        # progress JSON line, without the type marker.
+        if stripped.startswith(('"', "{", "}")) or '"phase":' in stripped:
+            continue
+        lines.append(stripped)
+    return lines
+
+
+def kopia_terminal_source_context(
+    result: dict[str, Any] | None, source_path: str
+) -> dict[str, str]:
+    """Expose an exact source-relative path and safe copyable exclusion rule."""
+    if not isinstance(result, dict) or result.get("snapshot_terminal_side") != "source":
+        return {}
+    absolute = str(result.get("snapshot_terminal_path") or "").strip()
+    root = str(source_path or "").strip()
+    if not absolute or not root:
+        return {}
+    root = posixpath.normpath(root)
+    absolute = posixpath.normpath(absolute)
+    if not root.startswith("/") or not absolute.startswith("/"):
+        return {}
+    relative = posixpath.relpath(absolute, root)
+    if relative in {".", ".."} or relative.startswith("../"):
+        return {}
+    path = "/" + relative
+    context = {"path": path, "side": "source", "confidence": "exact"}
+    if not any(char in path for char in "*?[]!\n\r"):
+        context["filter_rule"] = path
+    return context
 
 
 def extract_kopia_snapshot_failure_details(
@@ -1850,7 +1891,7 @@ def _snapshot_failure_count(result: dict[str, Any] | None) -> int:
 
 
 def _sample_snapshot_failure_items(
-    details: list[dict[str, str]], *, limit: int = 5
+    details: list[dict[str, str]], *, limit: int = _MAX_FAILURE_EVENT_ITEMS
 ) -> tuple[list[dict[str, str]], dict[str, list[dict[str, str]]]]:
     """Keep a small representative sample while retaining exact category counts."""
     grouped: dict[str, list[dict[str, str]]] = {}
@@ -1930,9 +1971,9 @@ def kopia_snapshot_failure_metadata(
                 "category": "BACKUP_TARGET_STORAGE_FULL",
                 "count": total,
                 "total_count": total,
-                "items": details[:5],
-                "reported_count": min(len(details), 5),
-                "truncated": total > min(len(details), 5),
+                "items": details[:_MAX_FAILURE_EVENT_ITEMS],
+                "reported_count": min(len(details), _MAX_FAILURE_EVENT_ITEMS),
+                "truncated": total > min(len(details), _MAX_FAILURE_EVENT_ITEMS),
                 "causes": [],
                 "remediation": ["BACKUP_TARGET_STORAGE_FULL"],
             },
@@ -2000,7 +2041,13 @@ def kopia_snapshot_failure_metadata(
         and str(item.get("disposition") or "").strip()
         for item in (summary.get("items") if isinstance(summary, dict) else [])
     ) or isinstance(result.get("snapshot_skipped_summary"), dict)
-    if details and has_explicit_disposition:
+    # Agent cause_counts summarize the whole snapshot, while items are only a
+    # bounded path sample. Never replace an all-fatal Agent tally with sample
+    # counts. Mixed fatal/skipped summaries need their own disposition split;
+    # without one, only the fatal samples can safely be classified here.
+    if details and has_explicit_disposition and (
+        not summary_counts or summary_ignored_count > 0
+    ):
         detail_counts: dict[str, int] = {}
         detail_types: dict[str, str] = {}
         detail_type_counts: dict[str, int] = {}
@@ -2149,6 +2196,7 @@ def kopia_snapshot_skipped_metadata(
             }
             for item in (raw_items or [])
             if isinstance(item, dict)
+            and str(item.get("disposition") or "skipped").strip().lower() == "skipped"
         ]
     else:
         summary = result.get("snapshot_failure_summary")
@@ -2163,11 +2211,16 @@ def kopia_snapshot_skipped_metadata(
             if isinstance(item, dict)
             and str(item.get("disposition") or "").strip().lower() == "skipped"
         ]
-        if not details:
-            # Preserve the legacy successful-snapshot contract. New Agent
-            # payloads provide an explicit disposition or skipped summary.
-            details = extract_kopia_snapshot_failure_details(result)
-    if not details:
+    summary = skipped_summary if isinstance(skipped_summary, dict) else result.get("snapshot_failure_summary")
+    ignored_count = 0
+    if isinstance(summary, dict):
+        try:
+            ignored_count = max(0, int(summary.get("ignored_count") or 0))
+        except (TypeError, ValueError):
+            ignored_count = 0
+        if "ignored_count" in summary and ignored_count == 0:
+            return {}
+    if not details and not ignored_count:
         return {}
     items = [
         {
@@ -2180,17 +2233,17 @@ def kopia_snapshot_skipped_metadata(
     directory_count = sum(1 for item in items if item["item_type"] == "directory")
     special_count = sum(1 for item in items if item["item_type"] == "special")
     total_count = len(items)
-    summary = skipped_summary or (
-        result.get("snapshot_failure_summary")
-        if isinstance(result, dict)
-        else None
-    )
     if isinstance(summary, dict):
-        try:
-            reported_total = int(summary.get("total_count") or 0)
-        except (TypeError, ValueError):
-            reported_total = 0
-        raw_type_counts = summary.get("item_type_counts")
+        if isinstance(skipped_summary, dict):
+            try:
+                reported_total = max(0, int(summary.get("total_count") or 0))
+            except (TypeError, ValueError):
+                reported_total = 0
+        else:
+            # A failure summary's total and type counts include fatal entries.
+            # Only its ignored count belongs to the skipped warning.
+            reported_total = ignored_count
+        raw_type_counts = summary.get("item_type_counts") if isinstance(skipped_summary, dict) else None
         if isinstance(raw_type_counts, dict):
             parsed_counts: dict[str, int] = {}
             for item_type in ("file", "directory", "special"):
@@ -2209,6 +2262,8 @@ def kopia_snapshot_skipped_metadata(
             reported_total,
             file_count + directory_count + special_count,
         )
+        if isinstance(skipped_summary, dict) and "total_count" in summary and reported_total == 0:
+            return {}
     return {
         "skipped_details": {
             "category": "source_items_skipped",

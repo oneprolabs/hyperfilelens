@@ -1641,6 +1641,11 @@ func runPreparedManagedSnapshot(
 	if runErr != nil {
 		if terminal := terminalSnapshotError(res.Stderr); terminal != "" {
 			result["snapshot_terminal_error"] = terminal
+			if path, phase := terminalSnapshotSourcePath(terminal); path != "" {
+				result["snapshot_terminal_path"] = path
+				result["snapshot_terminal_side"] = "source"
+				result["snapshot_terminal_phase"] = phase
+			}
 		}
 		if diagnostic := terminalSnapshotDiagnostic(res.Stderr); diagnostic != "" {
 			result["snapshot_terminal_diagnostic"] = diagnostic
@@ -5622,6 +5627,37 @@ func terminalSnapshotDiagnostic(stderr string) string {
 		filtered = filtered[len(filtered)-10:]
 	}
 	return strings.Join(filtered, "\n")
+}
+
+func terminalSnapshotSourcePath(message string) (string, string) {
+	lower := strings.ToLower(message)
+	const suffix = "device or resource busy"
+	busyIndex := strings.Index(lower, suffix)
+	if busyIndex < 0 {
+		return "", ""
+	}
+	prefix := strings.TrimSpace(message[:busyIndex])
+	for _, candidate := range []struct {
+		marker string
+		phase  string
+	}{
+		{"readdirent ", "directory_enumeration"},
+		{"lstat ", "metadata_lookup"},
+		{"stat ", "stat"},
+		{"open ", "open"},
+		{"read ", "read"},
+	} {
+		index := strings.Index(strings.ToLower(prefix), candidate.marker)
+		if index < 0 {
+			continue
+		}
+		path := strings.TrimSpace(prefix[index+len(candidate.marker):])
+		path = strings.TrimSuffix(path, ":")
+		if path != "" {
+			return path, candidate.phase
+		}
+	}
+	return "", ""
 }
 
 func snapshotFailureCause(failure string) (string, string) {

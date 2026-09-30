@@ -138,10 +138,19 @@ def orchestrated_task_percent(
 def slim_transfer_progress(kopia_payload: dict[str, Any]) -> dict[str, Any]:
     aggregate = kopia_payload.get("aggregate") if isinstance(kopia_payload.get("aggregate"), dict) else {}
     label_args = kopia_payload.get("orchestration_label_args")
+    comparison = kopia_payload.get("comparison")
+    comparison_progress = None
+    if isinstance(comparison, dict):
+        comparison_progress = {
+            "label_key": comparison.get("label_key"),
+            "label_args": comparison.get("label_args") or {},
+            "phase_elapsed_seconds": _phase_elapsed_seconds(comparison.get("phase_started_at")),
+        }
     return {
         "phase": str(kopia_payload.get("orchestration_phase") or "").strip().lower(),
         "label_key": str(kopia_payload.get("orchestration_label_key") or "").strip() or None,
         "label_args": label_args if isinstance(label_args, dict) else {},
+        "comparison": comparison_progress,
         "progress_schema_version": int(aggregate.get("progress_schema_version") or 1),
         "bytes_done": int(aggregate.get("bytes_done") or 0),
         "processed_bytes": int(aggregate.get("processed_bytes") or aggregate.get("bytes_done") or 0),

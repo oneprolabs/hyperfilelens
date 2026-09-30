@@ -1,0 +1,49 @@
+diff --git a/fs/localfs/local_fs_os.go b/fs/localfs/local_fs_os.go
+index 97b13ea6..7945db1c 100644
+--- a/fs/localfs/local_fs_os.go
++++ b/fs/localfs/local_fs_os.go
+@@ -123,7 +123,19 @@ func toDirEntryOrNil(dirEntry os.DirEntry, prefix string) (fs.Entry, error) {
+ 
+ 		return newFilesystemErrorEntry(e, err), nil
+ 	default:
+-		return nil, errors.Wrap(err, "error reading directory")
++		// Preserve an entry-level metadata error so the snapshot policy can
++		// apply path exclusions and unreadable-file/directory handling instead
++		// of aborting the parent directory iteration.
++		e := filesystemEntry{
++			name:       TrimShallowSuffix(n),
++			size:       0,
++			mtimeNanos: 0,
++			mode:       dirEntry.Type(),
++			owner:      fs.OwnerInfo{},
++			device:     fs.DeviceInfo{},
++			prefix:     prefix,
++		}
++		return newFilesystemErrorEntry(e, err), nil
+ 	}
+ }
+ 
+diff --git a/snapshot/upload/upload.go b/snapshot/upload/upload.go
+index c6975b53..035482b0 100644
+--- a/snapshot/upload/upload.go
++++ b/snapshot/upload/upload.go
+@@ -7,7 +7,6 @@
+ 	stderrors "errors"
+ 	"io"
+ 	"math/rand"
+-	"os"
+ 	"path"
+ 	"path/filepath"
+ 	"runtime"
+@@ -649,11 +648,6 @@ func rootCauseError(err error) error {
+ 
+ 	err = errors.Cause(err)
+ 
+-	var oserr *os.PathError
+-	if errors.As(err, &oserr) {
+-		err = oserr.Err
+-	}
+-
+ 	return err
+ }
+ 
