@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import DangerConfirmDialog from '../../../components/DangerConfirmDialog.vue'
 import { apiErrorMessage } from '../../../lib/api'
 import {
   abandonCopilotChatDataUpdate,
@@ -30,6 +31,7 @@ const saving = ref(false)
 const loadError = ref('')
 const hasMore = ref(false)
 const page = ref(1)
+const abandonConfirmOpen = ref(false)
 let requestEpoch = 0
 
 const retryTarget = computed(() =>
@@ -40,6 +42,7 @@ const retryTarget = computed(() =>
 
 watch(() => [props.modelValue, props.session?.id] as const, async ([open]) => {
   const epoch = ++requestEpoch
+  abandonConfirmOpen.value = false
   if (!open || !props.session?.backup_config_id) return
   loading.value = false
   snapshots.value = []
@@ -94,22 +97,20 @@ async function submit() {
   }
 }
 
-async function abandon() {
+function abandon() {
   const session = props.session
   if (!session || !retryTarget.value || saving.value) return
-  try {
-    await ElMessageBox.confirm(
-      t('insight.copilot.abandonDataUpdateWarning'),
-      t('insight.copilot.abandonDataUpdate'),
-      { type: 'warning' },
-    )
-  } catch {
-    return
-  }
+  abandonConfirmOpen.value = true
+}
+
+async function confirmAbandon() {
+  const session = props.session
+  if (!session || !retryTarget.value || saving.value) return
   saving.value = true
   try {
     const update = await abandonCopilotChatDataUpdate(session.id)
     if (session.knowledge_source != null) emit('saved', session.knowledge_source, update)
+    abandonConfirmOpen.value = false
     emit('update:modelValue', false)
   } catch (error) {
     ElMessage.error(apiErrorMessage(error, t('errors.generic.requestFailed')))
@@ -202,6 +203,15 @@ async function abandon() {
       </ElButton>
     </template>
   </ElDialog>
+  <DangerConfirmDialog
+    v-model="abandonConfirmOpen"
+    :title="t('insight.copilot.abandonDataUpdate')"
+    :message="t('insight.copilot.abandonDataUpdateWarning')"
+    :cancel-text="t('insight.copilot.btnCancel')"
+    :confirm-text="t('insight.copilot.abandonDataUpdate')"
+    :loading="saving"
+    @confirm="confirmAbandon"
+  />
 </template>
 
 <style scoped>
