@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from django.db.models import Q, QuerySet
+from django.db.models.functions import Coalesce
 
 from apps.protection.models import (
     BackupConfig,
@@ -90,11 +91,16 @@ def filter_backup_source_snapshots(
     if snapshot_uid_query:
         queryset = queryset.filter(snapshot_uid__icontains=snapshot_uid_query)
 
-    return _apply_search(
+    queryset = _apply_search(
         queryset=queryset,
         organization_id=organization_id,
         search=search,
-    ).order_by(*_ordering(ordering))
+    )
+    if ordering == "picker_latest":
+        return queryset.annotate(
+            selection_time=Coalesce("finished_at", "started_at", "created_at")
+        ).order_by("-selection_time", "-id")
+    return queryset.order_by(*_ordering(ordering))
 
 
 def _apply_search(

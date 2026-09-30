@@ -4,7 +4,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -13,6 +13,17 @@ from apps.iam.models import Membership
 from apps.iam.services.registration_service import provision_registered_user_tenant
 from apps.lens_bridge.models import LensSessionLink, LensSlUserLink, LensUsageLedger
 from apps.lens_bridge.services import usage
+
+
+class RunFailureMessageTests(SimpleTestCase):
+    def test_token_budget_lock_contention_is_reported_as_retryable_busy_state(self):
+        code, message = usage._public_run_failure(
+            "failed", "RUN_TOKEN_BUDGET_BUSY api_key=must-not-leak"
+        )
+
+        self.assertEqual(code, "AI_RUN_BUSY")
+        self.assertIn("try again in a moment", message.lower())
+        self.assertNotIn("must-not-leak", message)
 
 
 class UsageCaptureTests(TestCase):

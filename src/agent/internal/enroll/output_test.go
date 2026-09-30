@@ -74,6 +74,44 @@ func TestWindowsPowerShellCommandUsesAbsoluteQuotedPath(t *testing.T) {
 	}
 }
 
+func TestLifecycleBannerUsesAlignedAsciiWordmark(t *testing.T) {
+	t.Setenv("COLUMNS", "80")
+	t.Setenv("HFL_NO_BANNER", "")
+	previousStdout, previousPrinted, previousColor := os.Stdout, bannerPrinted, useColor
+	defer func() {
+		os.Stdout, bannerPrinted, useColor = previousStdout, previousPrinted, previousColor
+	}()
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout, bannerPrinted, useColor = writePipe, false, false
+	printLifecycleBanner("Source Host", "Uninstaller")
+	os.Stdout = previousStdout
+	if err := writePipe.Close(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := io.ReadAll(readPipe)
+	_ = readPipe.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(content), "\n")
+	want := []string{
+		" _   _                       _____ _ _      _",
+		"| | | |_   _ _ __   ___ _ __|  ___(_) | ___| |    ___ _ __  ___",
+		"| |_| | | | | '_ \\ / _ \\ '__| |_  | | |/ _ \\ |   / _ \\ '_ \\/ __|",
+		"|  _  | |_| | |_) |  __/ |  |  _| | | |  __/ |__|  __/ | | \\__ \\",
+		"|_| |_|\\__, | .__/ \\___|_|  |_|   |_|_|\\___|_____\\___|_| |_|___/",
+		"       |___/|_|           UNINSTALLER",
+	}
+	for i, line := range want {
+		if lines[i] != line || len(lines[i]) > 64 {
+			t.Fatalf("banner line %d = %q, want %q", i, lines[i], line)
+		}
+	}
+}
+
 func TestWindowsCommandBlockUsesLabelAndSeparateCommandLine(t *testing.T) {
 	var output strings.Builder
 	printCommandBlockTo(&output, "Agent status", `& 'C:\ProgramData\HyperFileLens\Agent\bin\install.cmd' status`)

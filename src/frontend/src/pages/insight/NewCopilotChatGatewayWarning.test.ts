@@ -132,6 +132,7 @@ function formState({
     snapshotsForSelectedBackupSource: ref(snapshotReady
       ? [{
           id: 17,
+          snapshot_uid: 'bss-00214df23034b288b9c',
           created_at: '2026-08-03T08:00:00Z',
           total_size_bytes: 1024,
         }]
@@ -151,6 +152,8 @@ function formState({
     backupScopeTreeRevision: ref(0),
     backupScopeBrowseLoading: ref(false),
     loadSnapshots: vi.fn().mockResolvedValue(undefined),
+    searchPickerSources: vi.fn(),
+    searchPickerSnapshots: vi.fn(),
     loadBackupScopePickerNode: vi.fn(),
     setBackupScopePickerOpen: vi.fn(),
     addBackupScopeEntry: vi.fn(),
@@ -251,6 +254,39 @@ function startChatButton(wrapper: VueWrapper) {
 }
 
 describe('New Chat Public Data Gateway warning', () => {
+  it('exposes search inputs in both dropdown menus', async () => {
+    const wrapper = await mountNewChat()
+    const form = mocks.useKnowledgeSourceForm.mock.results.at(-1)?.value
+    await wrapper.findAll('.new-chat-grid .el-select__wrapper')[0].trigger('click')
+    await flushPromises()
+    const sourceInput = document.querySelector<HTMLInputElement>(
+      '.new-chat-picker-search input[aria-label="Search name or IP / NAS address"]',
+    )
+    expect(sourceInput).not.toBeNull()
+    expect(sourceInput!.closest('.el-input__wrapper')).not.toBeNull()
+    expect(document.querySelector('.el-select-dropdown__item .new-chat-source-choice')?.hasAttribute('title')).toBe(false)
+    expect(wrapper.findAll('.new-chat-grid .new-chat-source-choice')[0].attributes('title')).toBeUndefined()
+    sourceInput!.value = '192.168.31.86'
+    sourceInput!.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(form.searchPickerSources).toHaveBeenCalledWith('192.168.31.86')
+
+    await wrapper.findAll('.new-chat-grid .el-select__wrapper')[1].trigger('click')
+    await flushPromises()
+    const snapshotInput = document.querySelector<HTMLInputElement>(
+      '.new-chat-picker-search input[aria-label="Search Snapshot ID"]',
+    )
+    expect(snapshotInput).not.toBeNull()
+    expect(snapshotInput!.closest('.el-input__wrapper')).not.toBeNull()
+    expect(document.querySelector('.el-select-dropdown__item[title]')).toBeNull()
+    expect(snapshotInput!.inputMode).toBe('text')
+    snapshotInput!.value = 'bss-00214'
+    snapshotInput!.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(form.searchPickerSnapshots).toHaveBeenCalledWith('bss-00214')
+    expect(wrapper.findAll('.new-chat-grid .el-select__wrapper')[1].text()).toContain('bss-00214df23034b288b9c')
+    expect(wrapper.findAll('.new-chat-grid .el-select__wrapper')[1].text()).not.toContain('Snapshot ID 17')
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     vi.stubGlobal('ResizeObserver', class {
@@ -295,6 +331,7 @@ describe('New Chat Public Data Gateway warning', () => {
     expect(wrapper.text()).toContain(zhHans.insight.copilot.detailsFilesFolders)
     expect(wrapper.text()).toContain(zhHans.insight.copilot.analysisTypeLabel)
     expect(wrapper.text()).toContain(zhHans.insight.copilot.analysisTypeKnowledgeQa)
+    expect(wrapper.get('.new-chat-analysis-option input[value="knowledge_qa"] + span strong').text()).toBe(zhHans.insight.copilot.analysisTypeKnowledgeQa)
     expect(wrapper.text()).toContain(zhHans.insight.copilot.analysisTypeCodeAnalysis)
     expect(wrapper.text()).toContain(zhHans.insight.copilot.dataPrivacy)
     expect(wrapper.text()).toContain(zhHans.insight.copilot.pathCountOne.replace('{count}', '1'))
@@ -302,6 +339,43 @@ describe('New Chat Public Data Gateway warning', () => {
     expect(wrapper.text()).not.toContain('Data Source')
     expect(wrapper.text()).not.toContain('Backup Source')
     expect(wrapper.text()).not.toContain('Advanced options')
+    wrapper.unmount()
+  })
+
+  it('shows one consistent selection hint before and after choosing a snapshot', async () => {
+    for (const snapshotReady of [false, true]) {
+      const wrapper = await mountNewChat({
+        gatewayResponse: [publicGateway],
+        sourceReady: snapshotReady,
+        snapshotReady,
+        scopeReady: snapshotReady,
+      })
+
+      const hints = wrapper.findAll('.new-chat-scope-hint')
+      expect(hints).toHaveLength(1)
+      expect(hints[0].text()).toBe(en.insight.copilot.selectScopesHint)
+      expect(wrapper.text()).toContain(en.insight.copilot.backupSourceHint)
+      expect(wrapper.text()).toContain(en.insight.copilot.snapshotHint)
+      expect(wrapper.text()).not.toContain(en.insight.copilot.documentFormatHint)
+      expect(wrapper.text()).not.toContain(en.insight.copilot.dataOriginHint)
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps the snapshot in the preview without a redundant origin row', async () => {
+    const wrapper = await mountNewChat({ gatewayResponse: [publicGateway] })
+    const preview = wrapper.get('.add-form-preview-body')
+
+    expect(preview.text()).toContain(en.insight.copilot.bindingSnapshot)
+    expect(preview.text()).not.toContain(en.insight.copilot.dataOriginLabel)
+    expect(preview.text()).not.toContain(en.insight.copilot.dataOriginProtected)
+    wrapper.unmount()
+  })
+
+  it('shows Knowledge Q&A without the recommendation suffix', async () => {
+    const wrapper = await mountNewChat({ gatewayResponse: [publicGateway] })
+    expect(wrapper.get('.new-chat-analysis-option input[value="knowledge_qa"] + span strong').text()).toBe('Knowledge Q&A')
+    expect(wrapper.get('.new-chat-analysis-option input[value="knowledge_qa"]').element).toHaveProperty('checked', true)
     wrapper.unmount()
   })
 
@@ -344,8 +418,8 @@ describe('New Chat Public Data Gateway warning', () => {
       en.insight.copilot.gatewayPublicCapabilitiesSyncing,
     )
     await wrapper.get('input[value="manual"]').setValue(true)
-    expect(wrapper.text()).toContain(en.insight.copilot.gatewayPrivateCapabilitiesSyncing)
-    expect(footerHint(wrapper).text()).toBe(en.insight.copilot.gatewayPrivateCapabilitiesSyncing)
+    expect(wrapper.get('.new-chat-choice--private .new-chat-hint').text()).toBe(en.insight.copilot.gatewayPrivateCapabilitiesSyncing)
+    expect(footerHint(wrapper).exists()).toBe(false)
     expect(wrapper.findAll('.new-chat-gateway-option')).toHaveLength(0)
     expect(startChatButton(wrapper).attributes('disabled')).toBeDefined()
     wrapper.unmount()
@@ -355,12 +429,24 @@ describe('New Chat Public Data Gateway warning', () => {
     const offline = await mountNewChat({
       gatewayResponse: [{ ...privateGateway, online: false, hfl_usable: false, copilot_eligible: false, readiness_reason: 'agent_offline' }],
     })
-    expect(offline.text()).toContain(en.insight.copilot.gatewayPrivateNotReady)
+    expect(offline.text()).not.toContain(en.insight.copilot.gatewayPrivateNotReady)
     expect(offline.get('.new-chat-gateway-warning').text()).toBe(en.insight.copilot.gatewayPublicUnavailable)
+    await offline.get('input[value="manual"]').setValue(true)
+    expect(offline.get('.new-chat-choice--private .new-chat-hint').text()).toBe(en.insight.copilot.gatewayPrivateNotReady)
+    expect(footerHint(offline).exists()).toBe(false)
+    expect(offline.find('.new-chat-gateway-warning').exists()).toBe(false)
     offline.unmount()
 
     const missing = await mountNewChat()
-    expect(missing.text()).toContain(en.insight.copilot.gatewayPrivateNotConfigured)
+    expect(missing.text()).not.toContain(en.insight.copilot.gatewayPrivateNotConfigured)
+    await missing.get('input[value="manual"]').setValue(true)
+    expect(missing.get('.new-chat-choice--private .new-chat-hint').text()).toBe(en.insight.copilot.gatewayPrivateNotConfigured)
+    expect(missing.text().split(en.insight.copilot.gatewayPrivateNotConfigured)).toHaveLength(2)
+    expect(footerHint(missing).exists()).toBe(false)
+    expect(missing.get('.new-chat-gateway-select .el-select__wrapper').classes()).toContain('is-disabled')
+    expect(missing.get('.new-chat-gateway-select-row__refresh').attributes('disabled')).toBeUndefined()
+    expect(missing.get('.new-chat-gateway-select-row__deploy').attributes('aria-label')).toBe(en.insight.copilot.gatewayPrivateInstallAction)
+    expect(startChatButton(missing).attributes('disabled')).toBeDefined()
     missing.unmount()
   })
 
@@ -382,6 +468,27 @@ describe('New Chat Public Data Gateway warning', () => {
     wrapper.unmount()
   })
 
+  it('shows one inline load error for Private Gateway and clears it after refresh', async () => {
+    mocks.listCopilotGatewayOptions.mockRejectedValueOnce(new Error('network unavailable'))
+    const wrapper = await mountNewChat()
+    await wrapper.get('input[value="manual"]').setValue(true)
+
+    expect(wrapper.get('.new-chat-choice--private .new-chat-hint').text()).toContain(
+      en.insight.copilot.gatewayOptionsLoadFailed,
+    )
+    expect(wrapper.text()).not.toContain(en.insight.copilot.gatewayPrivateNotConfigured)
+    expect(footerHint(wrapper).exists()).toBe(false)
+    expect(wrapper.get('.new-chat-gateway-select .el-select__wrapper').classes()).toContain('is-disabled')
+
+    mocks.listCopilotGatewayOptions.mockResolvedValueOnce([privateGateway])
+    await wrapper.get('.new-chat-gateway-select-row__refresh').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.new-chat-choice--private .new-chat-hint').exists()).toBe(false)
+    expect(wrapper.get('.new-chat-gateway-select .el-select__wrapper').classes()).not.toContain('is-disabled')
+    wrapper.unmount()
+  })
+
   it('switches to the Private Gateway blocker without retaining the Public warning', async () => {
     const wrapper = await mountNewChat({ gatewayResponse: [privateGateway] })
     expect(wrapper.find('.new-chat-gateway-warning').exists()).toBe(true)
@@ -394,16 +501,21 @@ describe('New Chat Public Data Gateway warning', () => {
     wrapper.unmount()
   })
 
+  it('does not repeat the Backup Source placeholder in the footer', async () => {
+    const wrapper = await mountNewChat({ sourceReady: false, snapshotReady: false, scopeReady: false })
+
+    expect(footerHint(wrapper).exists()).toBe(false)
+    expect(wrapper.get('.new-chat-grid .el-select__placeholder').text()).toBe(en.insight.copilot.backupSourcePlaceholder)
+    expect(startChatButton(wrapper).attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.fullscreen-form-footer .el-button:not(.el-button--primary)').text()).toBe('Cancel')
+    wrapper.unmount()
+  })
+
   it.each([
     {
       name: 'Agent model',
       scenario: { agentModelReady: false },
       message: 'No default Agent model is configured. Contact your administrator.',
-    },
-    {
-      name: 'Backup Source',
-      scenario: { sourceReady: false },
-      message: 'Select a backup source to continue.',
     },
     {
       name: 'Snapshot',

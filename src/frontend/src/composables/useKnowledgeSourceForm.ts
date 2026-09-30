@@ -9,6 +9,7 @@ import {
   fetchKnowledgeSource,
   getLensApiScope,
   getLensBackupSourceSnapshot,
+  listLensBackupSourcePickerSources,
   listLensBackupSourceSnapshots,
   listLensGateways,
   patchKnowledgeSource,
@@ -19,7 +20,9 @@ import {
 } from '../lib/lensApi'
 import {
   getBackupSourceSnapshot,
+  listBackupSourcePickerSources,
   listBackupSourceSnapshots,
+  type BackupSourcePickerSource,
   type BackupSourceSnapshot,
 } from '../lib/protectionBackupConfigApi'
 import {
@@ -36,6 +39,7 @@ export type BackupSourcePickerOption = {
   label: string
   sourceType: string
   sourceRefId: number
+  sourceAddress: string
 }
 
 export type BackupScopePickerNode = {
@@ -99,6 +103,7 @@ export function useKnowledgeSourceForm(
   options: {
     snapshotGatewayLinkId?: Ref<number | null>
     snapshotSelectionMode?: SnapshotSelectionMode
+    paginatedSnapshotPicker?: boolean
   } = {},
 ) {
   const { t } = useI18n()
@@ -112,6 +117,27 @@ export function useKnowledgeSourceForm(
   const gateways = ref<LensGatewayInsight[]>([])
   const snapshots = ref<BackupSourceSnapshot[]>([])
   const snapshotLoading = ref(false)
+  const sourcePickerLoading = ref(false)
+  const sourcePickerError = ref(false)
+  const snapshotPickerError = ref(false)
+  const pickerSourceRows = ref<BackupSourcePickerSource[]>([])
+  const selectedPickerSource = ref<BackupSourcePickerSource | null>(null)
+  const selectedPickerSnapshot = ref<BackupSourceSnapshot | null>(null)
+  const sourcePickerCount = ref(0)
+  const snapshotPickerCount = ref(0)
+  const loadedSourceCount = ref(0)
+  const loadedSnapshotCount = ref(0)
+  const sourcePickerPage = ref(0)
+  const snapshotPickerPage = ref(0)
+  const sourcePickerQuery = ref('')
+  const snapshotPickerQuery = ref('')
+  let sourcePickerEpoch = 0
+  let snapshotPickerEpoch = 0
+  let sourceSearchTimer: ReturnType<typeof setTimeout> | null = null
+  let snapshotSearchTimer: ReturnType<typeof setTimeout> | null = null
+  const PICKER_PAGE_SIZE = 30
+  const sourcePickerHasMore = computed(() => loadedSourceCount.value < sourcePickerCount.value)
+  const snapshotPickerHasMore = computed(() => loadedSnapshotCount.value < snapshotPickerCount.value)
   const selectedBackupConfigId = ref<number | null>(null)
   const snapshotPickerValue = ref<SnapshotPickerValue>(SNAPSHOT_PICKER_LATEST)
   const concreteSnapshotSelection = computed(
@@ -257,6 +283,19 @@ export function useKnowledgeSourceForm(
   const snapshotDirectories = computed(() => snapshotDetail.value?.directories ?? [])
 
   const backupSourceOptions = computed((): BackupSourcePickerOption[] => {
+    if (options.paginatedSnapshotPicker) {
+      const rows = [...pickerSourceRows.value]
+      if (selectedPickerSource.value && !rows.some((row) =>
+        row.backup_config_id === selectedPickerSource.value?.backup_config_id
+      )) rows.unshift(selectedPickerSource.value)
+      return rows.map((row) => ({
+        backupConfigId: row.backup_config_id,
+        label: row.source_display_name,
+        sourceType: row.source_type,
+        sourceRefId: row.source_ref_id,
+        sourceAddress: row.source_address,
+      }))
+    }
     const byConfig = new Map<number, BackupSourcePickerOption>()
     for (const row of snapshots.value) {
       const configId = Number(row.backup_config_id)
@@ -266,6 +305,7 @@ export function useKnowledgeSourceForm(
         label: row.source_display_name || row.backup_config_name || `#${configId}`,
         sourceType: row.source_type,
         sourceRefId: row.source_ref_id,
+        sourceAddress: row.source_address?.trim() || '',
       })
     }
     return [...byConfig.values()].sort((a, b) => a.label.localeCompare(b.label))
@@ -273,6 +313,15 @@ export function useKnowledgeSourceForm(
 
   const snapshotsForSelectedBackupSource = computed(() => {
     if (selectedBackupConfigId.value == null) return []
+    if (options.paginatedSnapshotPicker) {
+      const rows = snapshots.value.filter((row) =>
+        row.backup_config_id === selectedBackupConfigId.value
+      )
+      if (selectedPickerSnapshot.value && !rows.some((row) =>
+        row.id === selectedPickerSnapshot.value?.id
+      )) rows.unshift(selectedPickerSnapshot.value)
+      return rows
+    }
     return snapshots.value
       .filter((row) => row.backup_config_id === selectedBackupConfigId.value)
       .slice()
@@ -297,6 +346,8 @@ export function useKnowledgeSourceForm(
     snapshotsForSelectedBackupSource,
     (rows) => {
       if (!concreteSnapshotSelection.value || isEditing.value) return
+      if (options.paginatedSnapshotPicker && snapshotPickerQuery.value.trim()
+        && snapshotPickerValue.value == null) return
       const current = Number(snapshotPickerValue.value)
       if (rows.some((row) => row.id === current)) return
       snapshotPickerValue.value = rows[0]?.id ?? null
@@ -376,6 +427,25 @@ export function useKnowledgeSourceForm(
   }
 
   function resetBackupBrowseState() {
+    sourcePickerEpoch += 1
+    snapshotPickerEpoch += 1
+    if (sourceSearchTimer) clearTimeout(sourceSearchTimer)
+    if (snapshotSearchTimer) clearTimeout(snapshotSearchTimer)
+    pickerSourceRows.value = []
+    selectedPickerSource.value = null
+    selectedPickerSnapshot.value = null
+    sourcePickerQuery.value = ''
+    snapshotPickerQuery.value = ''
+    sourcePickerCount.value = 0
+    snapshotPickerCount.value = 0
+    loadedSourceCount.value = 0
+    loadedSnapshotCount.value = 0
+    sourcePickerPage.value = 0
+    snapshotPickerPage.value = 0
+    sourcePickerLoading.value = false
+    snapshotLoading.value = false
+    sourcePickerError.value = false
+    snapshotPickerError.value = false
     snapshots.value = []
     resetBackupSelectionState()
   }
@@ -425,7 +495,143 @@ export function useKnowledgeSourceForm(
     }
   }
 
+  async function loadPickerSources(append = false) {
+    if (isPlatformScope.value && !targetOrganizationKey.value?.trim()) return
+    if (append && (sourcePickerLoading.value || !sourcePickerHasMore.value)) return
+    const epoch = ++sourcePickerEpoch
+    const pageNumber = append ? sourcePickerPage.value + 1 : 1
+    sourcePickerLoading.value = true
+    sourcePickerError.value = false
+    try {
+      const params = {
+        page: pageNumber,
+        page_size: PICKER_PAGE_SIZE,
+        search: sourcePickerQuery.value,
+      }
+      const page = isPlatformScope.value
+        ? await listLensBackupSourcePickerSources({
+            ...params, organization_key: targetOrganizationKey.value!.trim(),
+          })
+        : await listBackupSourcePickerSources(params)
+      if (epoch !== sourcePickerEpoch || scopeDisposed) return
+      pickerSourceRows.value = append
+        ? [...pickerSourceRows.value, ...page.results.filter((row) =>
+            !pickerSourceRows.value.some((existing) =>
+              existing.backup_config_id === row.backup_config_id
+            )
+          )]
+        : page.results
+      loadedSourceCount.value = append
+        ? loadedSourceCount.value + page.results.length
+        : page.results.length
+      sourcePickerCount.value = page.results.length ? page.count : loadedSourceCount.value
+      sourcePickerPage.value = pageNumber
+    } catch (err) {
+      if (epoch === sourcePickerEpoch) sourcePickerError.value = true
+      throw err
+    } finally {
+      if (epoch === sourcePickerEpoch) sourcePickerLoading.value = false
+    }
+  }
+
+  async function loadPickerSnapshots(append = false) {
+    const configId = selectedBackupConfigId.value
+    if (!configId || (isPlatformScope.value && !targetOrganizationKey.value?.trim())) return
+    if (append && (snapshotLoading.value || !snapshotPickerHasMore.value)) return
+    const epoch = ++snapshotPickerEpoch
+    const pageNumber = append ? snapshotPickerPage.value + 1 : 1
+    const query = snapshotPickerQuery.value.trim()
+    snapshotLoading.value = true
+    snapshotPickerError.value = false
+    try {
+      const params = {
+        page: pageNumber,
+        page_size: PICKER_PAGE_SIZE,
+        backup_config_id: configId,
+        snapshot_uid: query || undefined,
+        status: 'available',
+        ordering: 'picker_latest',
+      }
+      const page = isPlatformScope.value
+        ? await listLensBackupSourceSnapshots({
+            ...params, organization_key: targetOrganizationKey.value!.trim(),
+          })
+        : await listBackupSourceSnapshots(params)
+      if (epoch !== snapshotPickerEpoch || scopeDisposed) return
+      snapshots.value = append
+        ? [...snapshots.value, ...page.results.filter((row) =>
+            !snapshots.value.some((existing) => existing.id === row.id)
+          )]
+        : page.results
+      loadedSnapshotCount.value = append
+        ? loadedSnapshotCount.value + page.results.length
+        : page.results.length
+      snapshotPickerCount.value = page.results.length ? page.count : loadedSnapshotCount.value
+      snapshotPickerPage.value = pageNumber
+      if (!append && snapshotPickerValue.value == null && page.results.length && !query) {
+        snapshotPickerValue.value = page.results[0].id
+      }
+    } catch (err) {
+      if (epoch === snapshotPickerEpoch) snapshotPickerError.value = true
+      throw err
+    } finally {
+      if (epoch === snapshotPickerEpoch) snapshotLoading.value = false
+    }
+  }
+
+  function loadMorePickerSources() {
+    void loadPickerSources(sourcePickerPage.value > 0).catch((err) =>
+      ElMessage.error(apiErrorMessage(err, t('errors.generic.loadFailed')))
+    )
+  }
+
+  function loadMorePickerSnapshots() {
+    void loadPickerSnapshots(snapshotPickerPage.value > 0).catch((err) =>
+      ElMessage.error(apiErrorMessage(err, t('errors.generic.loadFailed')))
+    )
+  }
+
+  function searchPickerSources(query: string) {
+    if (sourceSearchTimer) clearTimeout(sourceSearchTimer)
+    if (sourcePickerQuery.value === query) return
+    sourcePickerQuery.value = query
+    sourcePickerEpoch += 1
+    sourcePickerLoading.value = false
+    sourcePickerError.value = false
+    pickerSourceRows.value = []
+    sourcePickerCount.value = 0
+    loadedSourceCount.value = 0
+    sourcePickerPage.value = 0
+    sourceSearchTimer = setTimeout(() => {
+      void loadPickerSources().catch((err) =>
+        ElMessage.error(apiErrorMessage(err, t('errors.generic.loadFailed')))
+      )
+    }, 250)
+  }
+
+  function searchPickerSnapshots(query: string) {
+    if (snapshotSearchTimer) clearTimeout(snapshotSearchTimer)
+    if (snapshotPickerQuery.value === query) return
+    snapshotPickerQuery.value = query
+    snapshotPickerEpoch += 1
+    snapshotLoading.value = false
+    snapshotPickerError.value = false
+    snapshots.value = []
+    snapshotPickerCount.value = 0
+    loadedSnapshotCount.value = 0
+    snapshotPickerPage.value = 0
+    snapshotSearchTimer = setTimeout(() => {
+      void loadPickerSnapshots().catch((err) =>
+        ElMessage.error(apiErrorMessage(err, t('errors.generic.loadFailed')))
+      )
+    }, 250)
+  }
+
   async function loadSnapshots() {
+    if (options.paginatedSnapshotPicker) {
+      await loadPickerSources()
+      return
+    }
     if (isPlatformScope.value && !targetOrganizationKey.value?.trim()) {
       snapshots.value = []
       return
@@ -459,13 +665,18 @@ export function useKnowledgeSourceForm(
   }
 
   async function loadSnapshotDetail(id: number) {
+    const organizationKey = targetOrganizationKey.value
+    let detail: BackupSourceSnapshot
     if (isPlatformScope.value) {
       const key = targetOrganizationKey.value?.trim()
       if (!key) return
-      snapshotDetail.value = await getLensBackupSourceSnapshot(id, key)
+      detail = await getLensBackupSourceSnapshot(id, key)
     } else {
-      snapshotDetail.value = await getBackupSourceSnapshot(id)
+      detail = await getBackupSourceSnapshot(id)
     }
+    if (scopeDisposed || effectiveSnapshotId.value !== id
+      || targetOrganizationKey.value !== organizationKey) return
+    snapshotDetail.value = detail
     resetBackupScopeState()
   }
 
@@ -1076,11 +1287,38 @@ export function useKnowledgeSourceForm(
 
   watch(selectedBackupConfigId, (id, prev) => {
     if (isEditing.value || id === prev) return
+    if (options.paginatedSnapshotPicker) {
+      snapshotPickerEpoch += 1
+      if (snapshotSearchTimer) clearTimeout(snapshotSearchTimer)
+      selectedPickerSource.value = pickerSourceRows.value.find(
+        (row) => row.backup_config_id === id
+      ) ?? null
+      selectedPickerSnapshot.value = null
+      snapshotPickerQuery.value = ''
+      snapshots.value = []
+      snapshotPickerCount.value = 0
+      loadedSnapshotCount.value = 0
+      snapshotPickerPage.value = 0
+      snapshotPickerError.value = false
+      snapshotPickerValue.value = null
+      snapshotDetail.value = null
+      resetBackupScopeState()
+      if (id) void loadPickerSnapshots().catch((err) =>
+        ElMessage.error(apiErrorMessage(err, t('errors.generic.loadFailed')))
+      )
+      return
+    }
     snapshotPickerValue.value = concreteSnapshotSelection.value
       ? snapshotsForSelectedBackupSource.value[0]?.id ?? null
       : SNAPSHOT_PICKER_LATEST
     snapshotDetail.value = null
     resetBackupScopeState()
+  })
+
+  watch(snapshotPickerValue, (value) => {
+    if (!options.paginatedSnapshotPicker || typeof value !== 'number') return
+    const selected = snapshots.value.find((row) => row.id === value)
+    if (selected) selectedPickerSnapshot.value = selected
   })
 
   watch(sourceType, (next, prev) => {
@@ -1111,6 +1349,10 @@ export function useKnowledgeSourceForm(
 
   onScopeDispose(() => {
     scopeDisposed = true
+    if (sourceSearchTimer) clearTimeout(sourceSearchTimer)
+    if (snapshotSearchTimer) clearTimeout(snapshotSearchTimer)
+    sourcePickerEpoch += 1
+    snapshotPickerEpoch += 1
     cancelSnapshotBrowseRequests()
     latestBackupScopeValidation.clear()
     pendingBackupScopeBlurValidation.clear()
@@ -1138,6 +1380,15 @@ export function useKnowledgeSourceForm(
     selectedGateway,
     snapshots,
     snapshotLoading,
+    sourcePickerLoading,
+    sourcePickerError,
+    snapshotPickerError,
+    sourcePickerCount,
+    snapshotPickerCount,
+    loadedSourceCount,
+    loadedSnapshotCount,
+    sourcePickerHasMore,
+    snapshotPickerHasMore,
     selectedBackupConfigId,
     snapshotPickerValue,
     concreteSnapshotSelection,
@@ -1168,6 +1419,12 @@ export function useKnowledgeSourceForm(
     init,
     submit,
     loadSnapshots,
+    loadPickerSources,
+    loadPickerSnapshots,
+    loadMorePickerSources,
+    loadMorePickerSnapshots,
+    searchPickerSources,
+    searchPickerSnapshots,
     refreshGateways,
     loadBackupScopePickerNode,
     setBackupScopePickerOpen,

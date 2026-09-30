@@ -36,6 +36,8 @@ from apps.protection.services.snapshot_download import (
     prepare_snapshot_artifact_upload,
     run_snapshot_download_task,
 )
+from apps.protection.api.views.backup_source_snapshot import _snapshot_context
+from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 
@@ -150,6 +152,118 @@ class SnapshotBrowserApiTests(TestCase):
 
     def _headers(self):
         return {"HTTP_X_ORG_KEY": self.org.key}
+
+    def test_snapshot_list_source_address_requires_staff_access(self):
+        self.agent.ip_address = "192.0.2.10"
+        self.agent.save(update_fields=["ip_address", "updated_at"])
+        url = "/api/v1/protection/backup-source-snapshots/"
+
+        staff_response = self.client.get(url, **self._headers())
+        self.assertEqual(staff_response.status_code, 200)
+        self.assertEqual(staff_response.data["results"][0]["source_address"], "192.0.2.10")
+
+        with patch(
+            "apps.iam.permissions_org.get_effective_role",
+            return_value=Membership.Role.AUDITOR,
+        ):
+            auditor_response = self.client.get(url, **self._headers())
+        self.assertEqual(auditor_response.status_code, 200)
+        self.assertEqual(auditor_response.data["results"][0]["source_address"], "")
+
+    def test_nas_source_address_is_server_without_exposing_other_config(self):
+        nas = SourceResource.objects.create(
+            organization=self.org,
+            name="Shared NAS",
+            config={"server": "nas.example.internal", "password": "not-for-display"},
+        )
+        self.snapshot.source_type = "nas"
+        self.snapshot.source_ref_id = nas.id
+
+        context = _snapshot_context(organization_id=self.org.id, snapshots=[self.snapshot])
+
+        self.assertEqual(context["source_addresses"][("nas", nas.id)], "nas.example.internal")
+        self.assertNotIn("not-for-display", str(context["source_addresses"]))
+
+    def test_picker_sources_searches_addresses_and_paginates_configs(self):
+        self.agent.ip_address = "192.0.2.10"
+        self.agent.save(update_fields=["ip_address", "updated_at"])
+        nas = SourceResource.objects.create(
+            organization=self.org, name="Shared NAS", config={"server": "nas.example.internal"},
+        )
+        nas_config = BackupConfig.objects.create(
+            organization_id=self.org.id,
+            name="Shared NAS config",
+            source_type="nas",
+            source_ref_id=nas.id,
+            repository_id=self.repository.id,
+        )
+        create_source_snapshot(
+            organization_id=self.org.id,
+            source_type="nas",
+            source_ref_id=nas.id,
+            backup_config_id=nas_config.id,
+            repository_id=self.repository.id,
+            task_id=self.task.id,
+            task_uuid=self.task.task_uuid,
+            idempotency_key="nas-picker-test",
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        url = "/api/v1/protection/backup-source-snapshots/picker-sources/"
+        response = self.client.get(url, {"page_size": 1, "page": 1}, **self._headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 2)
+        second = self.client.get(url, {"page_size": 1, "page": 2}, **self._headers())
+        self.assertEqual(second.status_code, 200)
+        self.assertNotEqual(
+            response.data["results"][0]["backup_config_id"],
+            second.data["results"][0]["backup_config_id"],
+        )
+        nas_response = self.client.get(url, {"search": "nas.example.internal"}, **self._headers())
+        self.assertEqual(nas_response.data["count"], 1)
+        self.assertEqual(nas_response.data["results"][0]["source_address"], "nas.example.internal")
+        ip_response = self.client.get(url, {"search": "192.0.2.10"}, **self._headers())
+        self.assertEqual(ip_response.data["count"], 1)
+        self.assertEqual(ip_response.data["results"][0]["backup_config_id"], self.config.id)
+        with patch(
+            "apps.iam.permissions_org.get_effective_role",
+            return_value=Membership.Role.AUDITOR,
+        ):
+            auditor_response = self.client.get(url, **self._headers())
+        self.assertEqual(auditor_response.status_code, 403)
+
+    def test_picker_snapshots_filter_by_config_and_snapshot_id(self):
+        response = self.client.get(
+            "/api/v1/protection/backup-source-snapshots/",
+            {
+                "status": "available",
+                "backup_config_id": self.config.id,
+                "snapshot_id": self.snapshot.id,
+                "ordering": "picker_latest",
+            },
+            **self._headers(),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["id"] for row in response.data["results"]], [self.snapshot.id])
+        business_id_response = self.client.get(
+            "/api/v1/protection/backup-source-snapshots/",
+            {
+                "status": "available",
+                "backup_config_id": self.config.id,
+                "snapshot_uid": self.snapshot.snapshot_uid[:10],
+            },
+            **self._headers(),
+        )
+        self.assertEqual(business_id_response.status_code, 200)
+        self.assertEqual(
+            [row["snapshot_uid"] for row in business_id_response.data["results"]],
+            [self.snapshot.snapshot_uid],
+        )
+        missing = self.client.get(
+            "/api/v1/protection/backup-source-snapshots/",
+            {"snapshot_id": self.snapshot.id + 100, "backup_config_id": self.config.id},
+            **self._headers(),
+        )
+        self.assertEqual(missing.data["count"], 0)
 
     @override_settings(PROTECTION_SNAPSHOT_DOWNLOAD_MAX_LOGICAL_BYTES=321 * 1024 * 1024)
     def test_snapshot_detail_includes_effective_download_limits(self):
