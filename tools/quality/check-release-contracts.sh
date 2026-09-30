@@ -1063,7 +1063,7 @@ grep -F 'compose_in_root up -d --no-deps --no-build --pull never worker schedule
 	printf 'ERROR: post-cutover worker startup must not converge shared dependencies\n' >&2
 	exit 1
 }
-grep -F 'local -a args=(up -d --no-deps --no-build --pull never)' \
+grep -F 'args=(up -d --no-deps --no-build --pull never)' \
 	"${ROOT}/deploy/installer/install.sh" >/dev/null || {
 	printf 'ERROR: stable Nginx startup must not converge shared dependencies\n' >&2
 	exit 1

@@ -61,13 +61,14 @@ start_hfl_stack
 [[ " ${calls[*]} " != *" run --rm --no-deps --pull never migration "* ]]
 [[ " ${calls[*]} " == *" color:blue up -d --no-build --pull never api-blue web-blue "* ]]
 [[ " ${calls[*]} " == *" color-health:blue "* ]]
-[[ " ${calls[*]} " == *" compose:up -d --no-deps --no-build --pull never nginx "* ]]
+[[ " ${calls[*]} " == *" compose:up -d --no-build --pull never nginx "* ]]
 [[ " ${calls[*]} " == *" service-health:600 nginx "* ]]
 [[ " ${calls[*]} " != *" reload "* ]]
 
 calls=()
 UPGRADE_HFL_WAS_RUNNING=1
 UPGRADE_SOURCELENS_WAS_RUNNING=0
+UPGRADE_RECOVERY_ARMED=1
 UPGRADE_PREVIOUS_COLOR=blue
 UPGRADE_TARGET_COLOR=green
 UPGRADE_HFL_COMMITTED=0

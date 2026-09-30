@@ -1418,10 +1418,13 @@ ensure_stable_nginx_container() {
 			return 0
 		fi
 	fi
-	# Nginx is the stable edge. Its healthcheck reaches the already-started
-	# HFL API, but Nginx itself must never cause Compose to converge shared
-	# PostgreSQL or Redis dependencies during a blue/green transition.
-	local -a args=(up -d --no-deps --no-build --pull never)
+	# Preserve ordinary start/restart dependency handling. Only the upgrade
+	# path, which has already checked PostgreSQL/Redis and completed migrations,
+	# must prevent Nginx from converging shared services.
+	local -a args=(up -d --no-build --pull never)
+	if [[ "${UPGRADE_RECOVERY_ARMED}" == "1" ]]; then
+		args=(up -d --no-deps --no-build --pull never)
+	fi
 	if ! stable_nginx_mounts_match; then
 		log "Stable Nginx mounts differ from the current release; recreating the gateway container"
 		args+=(--force-recreate)
