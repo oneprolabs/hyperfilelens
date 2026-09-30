@@ -491,11 +491,16 @@ recover_upgrade_services() {
 			ensure_stable_nginx_container
 			[[ $? -eq 0 ]] || recovered=0
 			if [[ "${UPGRADE_HFL_COMMITTED}" == "1" ]]; then
-				compose_in_root up -d --no-deps --no-build --pull never worker scheduler
+				if wait_for_services_health "${HFL_HEALTH_TIMEOUT_SECONDS:-600}" postgres redis; then
+					compose_in_root up -d --no-deps --no-build --pull never worker scheduler
+					[[ $? -eq 0 ]] || recovered=0
+				else
+					recovered=0
+				fi
 			else
 				compose_in_root start worker scheduler
+				[[ $? -eq 0 ]] || recovered=0
 			fi
-			[[ $? -eq 0 ]] || recovered=0
 			if [[ "${UPGRADE_HFL_COMMITTED}" == "1" ]]; then
 				render_active_upstreams "${recovery_color}"
 				reload_stable_nginx

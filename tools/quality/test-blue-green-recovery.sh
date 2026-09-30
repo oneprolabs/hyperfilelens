@@ -25,7 +25,10 @@ reload_stable_nginx() { calls+=("reload"); }
 write_active_color() { calls+=("active:$*"); }
 wait_for_public_endpoints() { calls+=("public-health"); }
 wait_for_color_health() { calls+=("color-health:$*"); }
-wait_for_services_health() { calls+=("service-health:$*"); }
+wait_for_services_health() {
+	calls+=("service-health:$*")
+	[[ "${shared_health_ok:-1}" == "1" ]]
+}
 ensure_blue_green_state() { calls+=("ensure-state"); }
 read_active_color() { printf 'blue'; }
 stable_nginx_mounts_match() { return 0; }
@@ -84,7 +87,17 @@ UPGRADE_HFL_COMMITTED=1
 recover_upgrade_services
 [[ " ${calls[*]} " == *" render:green "* ]]
 [[ " ${calls[*]} " == *" active:green "* ]]
+[[ " ${calls[*]} " == *" service-health:600 postgres redis "* ]]
 [[ " ${calls[*]} " == *" compose:up -d --no-deps --no-build --pull never worker scheduler "* ]]
+
+calls=()
+shared_health_ok=0
+if recover_upgrade_services; then
+	printf 'ERROR: unhealthy PostgreSQL/Redis passed committed upgrade recovery\n' >&2
+	exit 1
+fi
+[[ " ${calls[*]} " != *" compose:up -d --no-deps --no-build --pull never worker scheduler "* ]]
+shared_health_ok=1
 
 calls=()
 UPGRADE_HFL_CUTOVER_ATTEMPTED=1
