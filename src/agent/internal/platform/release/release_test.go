@@ -3,6 +3,7 @@ package release
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -43,17 +44,6 @@ func TestReleaseRequestErrorDoesNotExposeSignedQuery(t *testing.T) {
 	message := sanitizeReleaseRequestError(err).Error()
 	if strings.Contains(message, "secret-value") || strings.Contains(message, "token=") {
 		t.Fatalf("request error exposed enrollment secret: %s", message)
-	}
-}
-
-func TestReleaseResponseBodyRedactsEnrollmentSecret(t *testing.T) {
-	t.Parallel()
-	message := redactReleaseSecret(
-		"request /release?token=secret-value was denied",
-		"secret-value",
-	)
-	if strings.Contains(message, "secret-value") {
-		t.Fatalf("response error exposed enrollment secret: %s", message)
 	}
 }
 
@@ -133,6 +123,60 @@ func TestFetchArtifactDoesNotExposeHTMLServerError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "<html>") || strings.Contains(err.Error(), "database is shutting down") {
 		t.Fatalf("FetchArtifact exposed HTML server details: %v", err)
+	}
+}
+
+func TestFetchArtifactRetainsOnlyKnownReleaseErrorDetails(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		status      int
+		body        string
+		wantDetail  string
+		neverExpose string
+	}{
+		{
+			name:       "known platform mismatch",
+			status:     http.StatusConflict,
+			body:       `{"error":"platform does not match enrollment token"}`,
+			wantDetail: "platform does not match enrollment token",
+		},
+		{
+			name:        "untrusted JSON",
+			status:      http.StatusConflict,
+			body:        `{"error":"token-a"}`,
+			neverExpose: "token-a",
+		},
+		{
+			name:        "500 JSON internal detail",
+			status:      http.StatusInternalServerError,
+			body:        `{"error":"database password in server error"}`,
+			neverExpose: "database password in server error",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+
+			_, err := FetchArtifact(t.Context(), &model.AgentConfig{
+				APIBaseURL: server.URL,
+				OrgKey:     "org-a",
+				NodeToken:  "token-a",
+				Role:       model.RoleAgent,
+			})
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%d", test.status)) {
+				t.Fatalf("FetchArtifact error = %v", err)
+			}
+			if test.wantDetail != "" && !strings.Contains(err.Error(), test.wantDetail) {
+				t.Fatalf("FetchArtifact lost safe API detail: %v", err)
+			}
+			if test.neverExpose != "" && strings.Contains(err.Error(), test.neverExpose) {
+				t.Fatalf("FetchArtifact exposed untrusted API detail: %v", err)
+			}
+		})
 	}
 }
 

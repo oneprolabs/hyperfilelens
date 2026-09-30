@@ -28,6 +28,7 @@ const (
 	preflightRetryDelay   = 3 * time.Second
 	preflightMaxWait      = 8 * time.Second
 	preflightTimeout      = 20 * time.Second
+	releaseErrorBodyLimit = 2 * 1024
 )
 
 // ReleaseHTTPError retains a status and retry hint, never a response body or signed URL.
@@ -35,9 +36,16 @@ type ReleaseHTTPError struct {
 	StatusCode int
 	Status     string
 	RetryAfter time.Duration
+	Detail     string
 }
 
-func (err *ReleaseHTTPError) Error() string { return "release API HTTP " + err.Status }
+func (err *ReleaseHTTPError) Error() string {
+	message := "release API HTTP " + err.Status
+	if err.Detail != "" {
+		message += ": " + err.Detail
+	}
+	return message
+}
 
 // RetryHook is called before sleeping between release API retries.
 type RetryHook func(attempt, maxAttempts int, err error)
@@ -185,12 +193,13 @@ func fetchArtifactOnce(ctx context.Context, cfg *model.AgentConfig) (Artifact, e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Do not surface upstream HTML, tracebacks, or untrusted JSON in the
-		// Agent installation log. Only the safe status and retry hint are used.
+		// Only fixed, known API errors may augment a status. Never surface
+		// upstream HTML, tracebacks, or arbitrary JSON in installation logs.
 		return Artifact{}, &ReleaseHTTPError{
 			StatusCode: resp.StatusCode,
 			Status:     fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)),
 			RetryAfter: releaseRetryAfter(resp.Header.Get("Retry-After")),
+			Detail:     trustedReleaseDetail(resp),
 		}
 	}
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, releaseResponseLimit+1))
@@ -224,20 +233,61 @@ func fetchArtifactOnce(ctx context.Context, cfg *model.AgentConfig) (Artifact, e
 	}, nil
 }
 
+func trustedReleaseDetail(resp *http.Response) string {
+	switch resp.StatusCode {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+		http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable:
+	default:
+		return ""
+	}
+	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, releaseErrorBodyLimit+1))
+	if err != nil || len(body) > releaseErrorBodyLimit {
+		return ""
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &payload) != nil {
+		return ""
+	}
+	switch resp.StatusCode {
+	case http.StatusBadRequest:
+		switch payload.Error {
+		case "invalid platform",
+			"invalid arch",
+			"gateway/proxy supports Ubuntu 20.04, 22.04, or 24.04",
+			"org/role/token required":
+			return payload.Error
+		}
+	case http.StatusUnauthorized:
+		if payload.Error == "invalid enrollment token" {
+			return payload.Error
+		}
+	case http.StatusNotFound:
+		if payload.Error == "organization not found" {
+			return payload.Error
+		}
+	case http.StatusConflict:
+		if payload.Error == "platform does not match enrollment token" {
+			return payload.Error
+		}
+	case http.StatusServiceUnavailable:
+		if payload.Error == "agent release artifact is unavailable" {
+			return payload.Error
+		}
+	}
+	return ""
+}
+
 func sanitizeReleaseRequestError(err error) error {
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) && urlErr.Err != nil {
 		return urlErr.Err
 	}
 	return err
-}
-
-func redactReleaseSecret(message, secret string) string {
-	secret = strings.TrimSpace(secret)
-	if secret == "" {
-		return message
-	}
-	return strings.ReplaceAll(message, secret, "<redacted>")
 }
 
 func uint64Number(value any) uint64 {
