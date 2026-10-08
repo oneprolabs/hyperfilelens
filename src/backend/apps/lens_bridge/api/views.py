@@ -31,6 +31,8 @@ from apps.lens_bridge.api.serializers import (
     LensChatBindingEnsureSerializer,
     LensCopilotGatewayOptionSerializer,
     LensGatewayChatWorkloadSerializer,
+    LensGatewayDirectoryQuerySerializer,
+    LensGatewayDirectoryStatusSerializer,
     LensGatewayEnableAiSerializer,
     LensKnowledgeSourceCreateSerializer,
     LensKnowledgeSourceSerializer,
@@ -998,10 +1000,18 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
         )
 
 
+class IsGatewayDirectoryStatusReader(IsOrgWriter):
+    """POST is a runtime read/cache refresh, available to directory readers."""
+
+    allowed_roles = IsOrgStaffReader.allowed_roles
+
+
 class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
     def get_permissions(self):
+        if self.action == "directory_status":
+            return [IsAuthenticated(), IsGatewayDirectoryStatusReader()]
         if self.action in ("enable_ai", "ai_status", "chat_workload"):
             return [IsAuthenticated(), IsOrgWriter()]
         return super().get_permissions()
@@ -1016,6 +1026,40 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
                 organization=self.org,
                 user=request.user,
             )
+        )
+
+    @action(detail=False, methods=["get"], url_path="directory")
+    def directory(self, request):
+        from apps.lens_bridge.services.gateway_insights import (
+            list_organization_gateway_directory_page,
+        )
+
+        query = LensGatewayDirectoryQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        return Response(
+            list_organization_gateway_directory_page(
+                organization=self.org,
+                user=request.user,
+                **query.validated_data,
+            )
+        )
+
+    @action(detail=False, methods=["post"], url_path="directory-status")
+    def directory_status(self, request):
+        from apps.lens_bridge.services.gateway_insights import (
+            refresh_organization_gateway_directory_status,
+        )
+
+        body = LensGatewayDirectoryStatusSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        return Response(
+            {
+                "results": refresh_organization_gateway_directory_status(
+                    organization=self.org,
+                    user=request.user,
+                    **body.validated_data,
+                )
+            }
         )
 
     @action(detail=True, methods=["post"], url_path="enable-ai")

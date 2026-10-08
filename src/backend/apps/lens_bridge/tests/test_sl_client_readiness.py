@@ -1,6 +1,8 @@
 """Tests for SourceLens transport classification and business readiness."""
 
 from unittest.mock import Mock, patch
+import threading
+import time
 
 import requests
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -12,6 +14,48 @@ from common.http.exceptions import api_exception_handler
 
 
 class SourceLensClientReadinessTests(SimpleTestCase):
+    def test_status_deadline_applies_to_login_not_just_business_request(self):
+        response = Mock(status_code=200)
+        response.json.return_value = {"access": "test", "refresh": "test-refresh"}
+        with (
+            patch.object(sl_client, "_ensure_credentials"),
+            patch.object(sl_client, "_base_url", return_value="http://lens"),
+            patch.object(sl_client.requests, "post", return_value=response) as post,
+            patch.object(sl_client, "_ADMIN_ACCESS_TOKEN"),
+            patch.object(sl_client, "_ADMIN_REFRESH_TOKEN"),
+            patch.object(sl_client, "_ADMIN_ACCESS_EXPIRES_AT"),
+        ):
+            sl_client._login(deadline=time.monotonic() + 0.5)
+        self.assertGreater(post.call_args.kwargs["timeout"], 0)
+        self.assertLessEqual(post.call_args.kwargs["timeout"], 0.5)
+
+    def test_status_deadline_bounds_wait_for_authentication_lock(self):
+        lock = threading.Lock()
+        lock.acquire()
+        started = time.monotonic()
+        try:
+            with patch.object(sl_client, "_ADMIN_TOKEN_LOCK", lock):
+                with self.assertRaises(sl_client.LensBridgeUnavailable):
+                    sl_client._get_admin_access_token(deadline=time.monotonic() + 0.02)
+        finally:
+            lock.release()
+        self.assertLess(time.monotonic() - started, 0.5)
+
+    def test_401_retry_cannot_restart_an_expired_status_budget(self):
+        response = Mock(status_code=401)
+        with (
+            patch.object(sl_client, "_base_url", return_value="http://lens"),
+            patch.object(sl_client, "_auth_headers", return_value={}),
+            patch.object(sl_client, "_invalidate_access_token"),
+            patch.object(sl_client.requests, "request", return_value=response) as request,
+            patch.object(sl_client.time, "monotonic", side_effect=[10, 12]),
+        ):
+            with self.assertRaises(sl_client.LensBridgeUnavailable):
+                sl_client.request_json("GET", "/lensnodes/id/", deadline=11)
+        request.assert_called_once()
+        self.assertEqual(request.call_args.kwargs["timeout"], 1)
+        response.close.assert_called_once()
+
     def test_retryable_status_survives_hfl_api_boundary(self) -> None:
         response = _lens_error_response(sl_client.LensBridgeUnavailable())
 

@@ -9,7 +9,9 @@ import {
   createKnowledgeSource,
   fetchCopilotShareCandidate,
   fetchSharedCopilotQA,
+  listLensGatewayDirectory,
   patchKnowledgeSource,
+  refreshLensGatewayDirectoryStatus,
   setLensApiScope,
   setLensDefaultAgentModel,
   setLensDefaultMultimodalModel,
@@ -50,6 +52,36 @@ vi.mock('../composables/useAuth', () => ({
 afterEach(() => {
   setLensApiScope('tenant')
   vi.clearAllMocks()
+})
+
+describe('HFL-authoritative private Gateway directory API', () => {
+  it('preserves pagination metadata and tenant headers even in platform scope', async () => {
+    setLensApiScope('platform')
+    vi.mocked(api).mockResolvedValueOnce({
+      code: 0, data: { count: 15, page: 2, page_size: 10, results: [{ id: 295 }] },
+    })
+    const signal = new AbortController().signal
+    await expect(listLensGatewayDirectory({
+      page: 2, page_size: 10, search: '  My gateway  ', signal,
+    })).resolves.toEqual({ count: 15, page: 2, page_size: 10, results: [{ id: 295 }] })
+    expect(api).toHaveBeenCalledWith(
+      '/api/v1/lens/gateways/directory/?page=2&page_size=10&search=My+gateway',
+      { headers: { 'X-Org-Key': 'tenant-a' }, signal },
+    )
+  })
+
+  it('posts only current-page HFL IDs and an explicit force flag, never client UUIDs', async () => {
+    setLensApiScope('platform')
+    vi.mocked(api).mockResolvedValueOnce({ results: [{ id: 295, sl_status: 'online' }] })
+    const signal = new AbortController().signal
+    await expect(refreshLensGatewayDirectoryStatus({
+      gateway_ids: [295, 5], force: true, signal,
+    })).resolves.toEqual([{ id: 295, sl_status: 'online' }])
+    expect(api).toHaveBeenCalledWith('/api/v1/lens/gateways/directory-status/', {
+      method: 'POST', headers: { 'X-Org-Key': 'tenant-a' }, signal,
+      body: JSON.stringify({ gateway_ids: [295, 5], force: true }),
+    })
+  })
 })
 
 describe('Insight snapshot browsing', () => {

@@ -8,6 +8,7 @@ from apps.lens_bridge.models import (
 from apps.lens_bridge.services import (
     conversion_display,
     gateway_chat_queue,
+    gateway_insights,
     gateway_readiness,
     ingest_policy,
     provisioning,
@@ -476,6 +477,31 @@ class LensGatewayInsightSerializer(serializers.Serializer):
     owner_organization_id = serializers.IntegerField(required=False, allow_null=True)
     is_platform_default = serializers.BooleanField(required=False)
     agent_release = serializers.DictField(required=False, allow_null=True)
+
+
+class LensGatewayDirectoryQuerySerializer(serializers.Serializer):
+    page = serializers.IntegerField(required=False, min_value=1, default=1)
+    page_size = serializers.ChoiceField(
+        required=False,
+        choices=gateway_insights.GATEWAY_DIRECTORY_PAGE_SIZES,
+        default=gateway_insights.GATEWAY_DIRECTORY_DEFAULT_PAGE_SIZE,
+    )
+    search = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=200,
+        default="",
+    )
+
+
+class LensGatewayDirectoryStatusSerializer(serializers.Serializer):
+    gateway_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        min_length=1,
+        max_length=max(gateway_insights.GATEWAY_DIRECTORY_PAGE_SIZES),
+        allow_empty=False,
+    )
+    force = serializers.BooleanField(required=False, default=False)
 
 
 class LensGatewayEnableAiSerializer(serializers.Serializer):

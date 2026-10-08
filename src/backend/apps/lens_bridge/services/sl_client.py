@@ -6,6 +6,7 @@ import json
 import logging
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Iterator
 from urllib.parse import urljoin
@@ -93,7 +94,34 @@ def _decode_login_payload(response: requests.Response) -> Any:
         raise LensBridgeUnavailable() from exc
 
 
-def _login() -> None:
+def _remaining_timeout(timeout: float, deadline: float | None) -> float:
+    """Include authentication and retries in an optional monotonic budget."""
+    if deadline is None:
+        return timeout
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise LensBridgeUnavailable()
+    return min(timeout, remaining)
+
+
+@contextmanager
+def _admin_token_guard(deadline: float | None = None) -> Iterator[None]:
+    """Bound token-lock contention for optional runtime status reads."""
+    if deadline is None:
+        acquired = _ADMIN_TOKEN_LOCK.acquire()
+    else:
+        acquired = _ADMIN_TOKEN_LOCK.acquire(
+            timeout=_remaining_timeout(30, deadline)
+        )
+    if not acquired:
+        raise LensBridgeUnavailable()
+    try:
+        yield
+    finally:
+        _ADMIN_TOKEN_LOCK.release()
+
+
+def _login(*, deadline: float | None = None) -> None:
     global _ADMIN_ACCESS_TOKEN, _ADMIN_REFRESH_TOKEN, _ADMIN_ACCESS_EXPIRES_AT
     _ensure_credentials()
     url = urljoin(_base_url() + "/", "api/v1/auth/login")
@@ -104,7 +132,7 @@ def _login() -> None:
                 "email": deploy.lens_bridge_email(),
                 "password": deploy.lens_bridge_password(),
             },
-            timeout=30,
+            timeout=_remaining_timeout(30, deadline),
         )
     except requests.RequestException as exc:
         raise _transport_error(exc) from exc
@@ -125,32 +153,32 @@ def _login() -> None:
     _ADMIN_ACCESS_EXPIRES_AT = time.time() + 25 * 60
 
 
-def _refresh_access() -> None:
+def _refresh_access(*, deadline: float | None = None) -> None:
     global _ADMIN_ACCESS_TOKEN, _ADMIN_REFRESH_TOKEN, _ADMIN_ACCESS_EXPIRES_AT
     if not _ADMIN_REFRESH_TOKEN:
-        _login()
+        _login(**({"deadline": deadline} if deadline is not None else {}))
         return
     url = urljoin(_base_url() + "/", "api/v1/auth/token/refresh")
     try:
         response = requests.post(
             url,
             json={"refresh": _ADMIN_REFRESH_TOKEN},
-            timeout=30,
+            timeout=_remaining_timeout(30, deadline),
         )
     except requests.RequestException as exc:
         raise _transport_error(exc) from exc
     if response.status_code >= 400:
         logger.info("SourceLens token refresh failed; re-login.")
-        _login()
+        _login(**({"deadline": deadline} if deadline is not None else {}))
         return
     try:
         payload = _decode_login_payload(response)
     except LensBridgeUnavailable:
         logger.info("SourceLens token refresh returned invalid JSON; re-login.")
-        _login()
+        _login(**({"deadline": deadline} if deadline is not None else {}))
         return
     if not isinstance(payload, dict):
-        _login()
+        _login(**({"deadline": deadline} if deadline is not None else {}))
         return
     access, refresh = _extract_tokens(payload)
     _ADMIN_ACCESS_TOKEN = access
@@ -214,14 +242,16 @@ def login_user(
     return access
 
 
-def _get_admin_access_token() -> str:
+def _get_admin_access_token(*, deadline: float | None = None) -> str:
     global _ADMIN_ACCESS_TOKEN
-    with _ADMIN_TOKEN_LOCK:
+    with _admin_token_guard(deadline):
         if not _ADMIN_ACCESS_TOKEN or time.time() >= _ADMIN_ACCESS_EXPIRES_AT:
             if _ADMIN_REFRESH_TOKEN:
-                _refresh_access()
+                _refresh_access(
+                    **({"deadline": deadline} if deadline is not None else {})
+                )
             else:
-                _login()
+                _login(**({"deadline": deadline} if deadline is not None else {}))
         if not _ADMIN_ACCESS_TOKEN:
             raise LensBridgeError("SourceLens access token unavailable.")
         return _ADMIN_ACCESS_TOKEN
@@ -241,8 +271,14 @@ def _auth_headers(
     extra: dict[str, str] | None = None,
     *,
     hfl_user: AbstractBaseUser | None = None,
+    deadline: float | None = None,
 ) -> dict[str, str]:
-    headers = {"Authorization": f"Bearer {_get_access_token(hfl_user=hfl_user)}"}
+    token = (
+        _get_admin_access_token(deadline=deadline)
+        if deadline is not None and hfl_user is None
+        else _get_access_token(hfl_user=hfl_user)
+    )
+    headers = {"Authorization": f"Bearer {token}"}
     if extra:
         headers.update(extra)
     return headers
@@ -250,6 +286,8 @@ def _auth_headers(
 
 def _invalidate_access_token(
     hfl_user: AbstractBaseUser | None,
+    *,
+    deadline: float | None = None,
 ) -> None:
     if hfl_user is not None:
         from apps.lens_bridge.services.chat_user_provisioning import (
@@ -258,7 +296,7 @@ def _invalidate_access_token(
 
         invalidate_user_token(hfl_user.pk)
         return
-    with _ADMIN_TOKEN_LOCK:
+    with _admin_token_guard(deadline):
         global _ADMIN_ACCESS_TOKEN
         _ADMIN_ACCESS_TOKEN = None
 
@@ -384,8 +422,14 @@ def request_json(
     extra_headers: dict[str, str] | None = None,
     timeout: int = 60,
     hfl_user: AbstractBaseUser | None = None,
+    deadline: float | None = None,
 ) -> Any:
-    """Authenticated JSON request to SourceLens."""
+    """Authenticated JSON request to SourceLens.
+
+    ``deadline`` optionally bounds admin authentication, lock contention and
+    retries within the caller's monotonic status-refresh budget. Existing
+    callers retain their original timeouts when no deadline is supplied.
+    """
 
     if not path.startswith("/"):
         path = f"/{path}"
@@ -393,6 +437,7 @@ def request_json(
     headers = _auth_headers(
         {"Accept": "application/json", **(extra_headers or {})},
         hfl_user=hfl_user,
+        **({"deadline": deadline} if deadline is not None else {}),
     )
     if json_body is not None:
         headers["Content-Type"] = "application/json"
@@ -403,15 +448,20 @@ def request_json(
             headers=headers,
             params=params,
             json=json_body,
-            timeout=timeout,
+            timeout=_remaining_timeout(timeout, deadline),
         )
     except requests.RequestException as exc:
         raise _transport_error(exc) from exc
     if response.status_code == 401:
-        _invalidate_access_token(hfl_user)
+        response.close()
+        _invalidate_access_token(
+            hfl_user,
+            **({"deadline": deadline} if deadline is not None else {}),
+        )
         headers = _auth_headers(
             {"Accept": "application/json", **(extra_headers or {})},
             hfl_user=hfl_user,
+            **({"deadline": deadline} if deadline is not None else {}),
         )
         if json_body is not None:
             headers["Content-Type"] = "application/json"
@@ -422,11 +472,14 @@ def request_json(
                 headers=headers,
                 params=params,
                 json=json_body,
-                timeout=timeout,
+                timeout=_remaining_timeout(timeout, deadline),
             )
         except requests.RequestException as exc:
             raise _transport_error(exc) from exc
-    return _raise_for_response(response)
+    try:
+        return _raise_for_response(response)
+    finally:
+        response.close()
 
 
 def request_multipart(
