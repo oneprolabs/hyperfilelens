@@ -1263,10 +1263,7 @@ def _repository_operation_error_message(exc: Exception) -> str:
     if isinstance(exc, (TimeoutError, RepositoryAgentOperationTimeout)) or (
         isinstance(exc, KopiaCliError) and "timed out" in str(exc).lower()
     ):
-        return (
-            "Repository maintenance exceeded its execution time limit. Check "
-            "the repository owner's activity and storage connectivity before retrying."
-        )
+        return "Repository maintenance did not finish within the execution time limit."
     if isinstance(exc, KopiaRepositoryBusyError):
         return "Repository is busy with another operation. Wait for it to finish before retrying maintenance."
     message = str(exc).lower()

@@ -19,11 +19,13 @@ const props = withDefaults(defineProps<{
   showSkippedDetails?: boolean
   technicalDetail?: string
   terminalResolutions?: string[]
+  repositoryConnectionReason?: string
 }>(), {
   showTerminalFailure: true,
   showSkippedDetails: true,
   technicalDetail: '',
   terminalResolutions: () => [],
+  repositoryConnectionReason: '',
 })
 
 const MAX_SKIPPED_ITEMS = 10
@@ -58,6 +60,17 @@ const restorePermissionRemediationItems = computed(() => restorePermissionRemedi
 const restoreTargetPath = computed(() => String(metadataRecord.value.target_path || '').trim())
 const errorDiagnostic = computed(() => String(metadataRecord.value.error_diagnostic || '').trim())
 const originalError = computed(() => String(metadataRecord.value.error_message || '').trim())
+const repositoryTimeout = computed(() =>
+  errorCode.value === 'REPOSITORY_OPERATION_TIMEOUT'
+  && (
+    originalError.value === "Repository maintenance exceeded its execution time limit. Check the repository owner's activity and storage connectivity before retrying."
+    || originalError.value === 'Repository maintenance did not finish within the execution time limit.'
+  ),
+)
+const repositoryAgentUnreachable = computed(() =>
+  errorCode.value === 'REPOSITORY_OPERATION_FAILED'
+  && originalError.value === 'agent websocket is not routable',
+)
 const terminalContext = computed(() => {
   const value = metadataRecord.value.terminal_failure
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -78,6 +91,10 @@ const terminalFailure = computed(() => {
   if (terminal && typeof terminal === 'object' && !Array.isArray(terminal)) {
     const message = String((terminal as Record<string, unknown>).message || '').trim()
     if (message) return message
+  }
+  if (repositoryTimeout.value) return t('ops.task.failureDetails.reason.REPOSITORY_OPERATION_TIMEOUT')
+  if (repositoryAgentUnreachable.value) {
+    return props.repositoryConnectionReason || t('ops.task.failureDetails.reason.repository_host_unreachable')
   }
   return errorCode.value ? originalError.value : ''
 })
@@ -123,7 +140,12 @@ const skippedDirectoryCount = computed(() => structuredSkipped.value?.directory_
 const skippedSpecialCount = computed(() => structuredSkipped.value?.special_count || 0)
 const skippedReportedCount = computed(() => Math.min(MAX_SKIPPED_ITEMS, structuredSkipped.value?.reported_count || 0))
 const hasSkippedDetails = computed(() => props.showSkippedDetails && skippedCount.value > 0)
-const technicalDetail = computed(() => String(props.technicalDetail || '').trim())
+const technicalDetail = computed(() => {
+  const detail = String(props.technicalDetail || '').trim()
+  return detail === terminalFailure.value || (repositoryTimeout.value && detail === originalError.value)
+    ? ''
+    : detail
+})
 
 const summarySnapshotId = computed(() => structuredSummary.value?.snapshot_id || '')
 const summaryRestoreRecordId = computed(() => structuredSummary.value?.restore_record_id || '')
@@ -503,10 +525,6 @@ function remediationText(code: string) {
 .task-event-failure__terminal-box {
   display: grid;
   gap: 9px;
-  padding: 10px 12px;
-  border: 1px solid rgb(254 202 202);
-  border-radius: 7px;
-  background: rgb(254 242 242);
 }
 
 .task-event-failure__terminal-copy {
@@ -574,6 +592,13 @@ function remediationText(code: string) {
   background: transparent;
   padding: 0;
   color: inherit;
+}
+
+.task-event-failure--mixed .task-event-failure__terminal-box {
+  padding: 10px 12px;
+  border: 1px solid rgb(254 202 202);
+  border-radius: 7px;
+  background: rgb(254 242 242);
 }
 
 .task-event-failure__skipped-box {

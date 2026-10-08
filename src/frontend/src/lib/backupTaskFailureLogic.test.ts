@@ -1,12 +1,43 @@
 import { describe, expect, it } from 'vitest'
 import { createI18n } from 'vue-i18n'
 import { en } from '../locales/en'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type { TaskRow } from './taskApi'
 import { buildTaskFailureErrorDetails, extractSkippedDetails, hasFailureDetails, buildSnapshotFailureErrorDetails } from './backupTaskFailureLogic'
 
 const { t } = createI18n({ legacy: false, locale: 'en', messages: { en } }).global
 
 describe('backup task error details', () => {
+  it.each(['en', 'zh-hans', 'es'])('localizes repository host connectivity contracts in %s', (locale) => {
+    const messages = locale === 'en' ? en : JSON.parse(
+      readFileSync(resolve(process.cwd(), `../../language-packs/packs/${locale}/frontend/messages.json`), 'utf8'),
+    )
+    const { t: translate } = createI18n({
+      legacy: false, locale, messages: { [locale]: messages },
+    }).global
+    for (const role of ['proxy', 'backup_host', 'host']) {
+      const reasonCode = `repository_${role}_unreachable`
+      const suggestionCode = `reconnect_repository_${role}`
+      const details = buildTaskFailureErrorDetails({
+        task: {
+          task_uuid: 'repository-task', task_type: 'repository_operation', status: 'failed',
+          error_details: {
+            version: 1, severity: 'error', outcome: 'failed', summary: 'Task failed.',
+            task_uuid: 'repository-task',
+            reasons: [{ code: reasonCode, detail: 'Server-side English fallback' }],
+            suggestions: [{ code: suggestionCode, detail: suggestionCode }],
+          },
+        } as TaskRow,
+        t: translate,
+      })
+      expect(details.reasons).toEqual([translate(`ops.task.failureDetails.reason.${reasonCode}`)])
+      expect(details.resolutions).toEqual([translate(`ops.task.failureDetails.suggestion.${suggestionCode}`)])
+      expect(details.reasons?.join()).not.toContain('Agent')
+      expect(details.resolutions?.join()).not.toContain('Agent')
+    }
+  })
+
   it('retains correlation, limited-detail notice and cleanup residue from the contract', () => {
     const task = {
       task_uuid: 'task-1', task_type: 'backup', status: 'success',
