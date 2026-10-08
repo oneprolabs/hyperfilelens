@@ -280,7 +280,12 @@ export function useKnowledgeSourceForm(
     return selectedGateway.value?.gateway_link_id ?? null
   })
 
-  const snapshotDirectories = computed(() => snapshotDetail.value?.directories ?? [])
+  const snapshotDirectories = computed(() => {
+    const rows = snapshotDetail.value?.directories ?? []
+    return options.paginatedSnapshotPicker
+      ? rows.filter((row) => row.status === 'available' && Boolean(row.kopia_snapshot_id?.trim()))
+      : rows
+  })
 
   const backupSourceOptions = computed((): BackupSourcePickerOption[] => {
     if (options.paginatedSnapshotPicker) {
@@ -350,7 +355,9 @@ export function useKnowledgeSourceForm(
         && snapshotPickerValue.value == null) return
       const current = Number(snapshotPickerValue.value)
       if (rows.some((row) => row.id === current)) return
-      snapshotPickerValue.value = rows[0]?.id ?? null
+      snapshotPickerValue.value = (options.paginatedSnapshotPicker
+        ? rows.find((row) => row.status === 'available')?.id
+        : rows[0]?.id) ?? null
     },
     { immediate: true },
   )
@@ -549,7 +556,7 @@ export function useKnowledgeSourceForm(
         page_size: PICKER_PAGE_SIZE,
         backup_config_id: configId,
         snapshot_uid: query || undefined,
-        status: 'available',
+        status: 'available,partial',
         ordering: 'picker_latest',
       }
       const page = isPlatformScope.value
@@ -569,7 +576,26 @@ export function useKnowledgeSourceForm(
       snapshotPickerCount.value = page.results.length ? page.count : loadedSnapshotCount.value
       snapshotPickerPage.value = pageNumber
       if (!append && snapshotPickerValue.value == null && page.results.length && !query) {
-        snapshotPickerValue.value = page.results[0].id
+        let preferred = page.results.find((row) => row.status === 'available')
+        if (!preferred) {
+          // A page of newer Partial snapshots must not hide the latest complete one.
+          const preferredParams = { ...params, status: 'available', page: 1, page_size: 1 }
+          try {
+            const availablePage = isPlatformScope.value
+              ? await listLensBackupSourceSnapshots({
+                  ...preferredParams, organization_key: targetOrganizationKey.value!.trim(),
+                })
+              : await listBackupSourceSnapshots(preferredParams)
+            preferred = availablePage.results.find((row) => row.status === 'available')
+          } catch {
+            // The loaded snapshots remain selectable; do not default to Partial.
+          }
+          if (epoch !== snapshotPickerEpoch || scopeDisposed) return
+        }
+        if (preferred && snapshotPickerValue.value == null) {
+          selectedPickerSnapshot.value = preferred
+          snapshotPickerValue.value = preferred.id
+        }
       }
     } catch (err) {
       if (epoch === snapshotPickerEpoch) snapshotPickerError.value = true
@@ -865,6 +891,9 @@ export function useKnowledgeSourceForm(
 
   function pickBackupScopeForEntry(entryId: string, node: BackupScopePickerNode) {
     if (!node.directoryId || !node.path) return
+    if (options.paginatedSnapshotPicker && !snapshotDirectories.value.some(
+      (directory) => directory.id === node.directoryId && isSameOrAncestorPath(directory.source_path, node.path),
+    )) return
     backupScopeEntries.value = backupScopeEntries.value.map((row) =>
       row.id === entryId
         ? {
@@ -906,7 +935,13 @@ export function useKnowledgeSourceForm(
       if (showMessage) ElMessage.warning({ message: t('protection.backupsPage.msgManualPathRequired'), grouping: true })
       return false
     }
-    if (entry.directoryId != null) return true
+    if (entry.directoryId != null) {
+      if (!options.paginatedSnapshotPicker || snapshotDirectories.value.some(
+        (directory) => directory.id === entry.directoryId && isSameOrAncestorPath(directory.source_path, rawPath),
+      )) return true
+      if (showMessage) ElMessage.warning({ message: t('protection.backupsPage.msgRestoreScopeOutsideSnapshot'), grouping: true })
+      return false
+    }
     if (!effectiveSnapshotId.value) {
       if (showMessage) ElMessage.warning({ message: t('insight.kb.backupScopePickSnapshotFirst'), grouping: true })
       return false

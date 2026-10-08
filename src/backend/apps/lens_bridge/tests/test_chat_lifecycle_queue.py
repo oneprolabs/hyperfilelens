@@ -1125,6 +1125,27 @@ class CopilotChatModelBindingTests(TestCase):
             analysis_type=analysis_type,
         )
 
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle.provisioning.configured_default_model_refs_for_org",
+        return_value=("fd1bd1fc-8856-4d3f-aae0-d0d289ddca98", None),
+    )
+    @patch("apps.lens_bridge.services.chat_lifecycle._configured_gateway_link_for_chat")
+    @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
+    def test_partial_snapshot_admits_only_successful_selected_directories(
+        self, _context, resolve_gateway, _models, _queue,
+    ):
+        resolve_gateway.return_value = self.gateway_link
+        self.snapshot.status = BackupSourceSnapshot.Status.PARTIAL
+        self.snapshot.save(update_fields=["status", "updated_at"])
+        session = self._create_chat()
+        self.assertEqual(session.backup_source_snapshot_id, self.snapshot.id)
+        self.directory.status = BackupSourceSnapshotDirectory.Status.FAILED
+        self.directory.save(update_fields=["status", "updated_at"])
+        with self.assertRaises(ValidationError) as raised:
+            self._create_chat(idempotency_key="failed-partial-scope")
+        self.assertIn("source_scopes", raised.exception.detail)
+
     @patch(
         "apps.lens_bridge.services.chat_lifecycle."
         "provisioning.configured_default_model_refs_for_org",

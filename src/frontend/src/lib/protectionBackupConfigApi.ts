@@ -241,6 +241,7 @@ export type BackupSourceSnapshotListParams = {
   page?: number
   page_size?: number
   snapshot_id?: number
+  exclude_snapshot_id?: number
   snapshot_uid?: string
   search?: string
   source_type?: string

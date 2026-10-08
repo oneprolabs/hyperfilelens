@@ -42,6 +42,8 @@ from apps.lens_bridge.api.serializers import (
     LensRunClarificationSerializer,
     LensRunFeedbackSerializer,
     LensShareTitleSerializer,
+    LensShareCreateSerializer,
+    LensShareCandidateSerializer,
     LensSessionCreateSerializer,
     LensSessionReuseSerializer,
     LensChatDataUpdateSerializer,
@@ -1584,7 +1586,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
 
     @action(detail=True, methods=["get", "post"], url_path="share")
     def share(self, request, pk=None):
-        """Inspect or publish the latest completed Q&A through SourceLens."""
+        """Inspect the latest/specified Q&A or publish the specified Run."""
 
         from apps.lens_bridge.services import copilot_sharing
 
@@ -1592,17 +1594,25 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         self._require_ready_session(link)
         try:
             if request.method == "GET":
-                payload = copilot_sharing.get_share_candidate(link)
+                query = LensShareCandidateSerializer(data=request.query_params)
+                query.is_valid(raise_exception=True)
+                run_uuid = query.validated_data.get("run_uuid")
+                payload = (
+                    copilot_sharing.get_share_candidate(link, run_uuid=str(run_uuid))
+                    if run_uuid is not None
+                    else copilot_sharing.get_share_candidate(link)
+                )
                 if isinstance(payload.get("share"), dict):
                     payload["share"] = self._share_response(
                         link,
                         payload["share"],
                     )
                 return Response(payload)
-            body = LensShareTitleSerializer(data=request.data)
+            body = LensShareCreateSerializer(data=request.data)
             body.is_valid(raise_exception=True)
             share = copilot_sharing.create_share(
                 link,
+                run_uuid=str(body.validated_data["run_uuid"]),
                 title=body.validated_data["title"],
             )
             return Response(

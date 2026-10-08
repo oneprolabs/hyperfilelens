@@ -254,6 +254,29 @@ function startChatButton(wrapper: VueWrapper) {
 }
 
 describe('New Chat Public Data Gateway warning', () => {
+  it('marks a selected Partial snapshot in the field and dropdown and explains successful paths', async () => {
+    const wrapper = await mountNewChat({ gatewayResponse: [publicGateway] })
+    const form = mocks.useKnowledgeSourceForm.mock.results.at(-1)?.value
+    form.snapshotsForSelectedBackupSource.value = form.snapshotsForSelectedBackupSource.value.map(
+      (row: { status?: string }) => ({ ...row, status: 'partial' }),
+    )
+    await flushPromises()
+    const select = wrapper.findAll('.new-chat-grid .el-select__wrapper')[1]
+    expect(select.get('.hfl-snapshot-choice__partial').text()).toBe('Partial')
+    expect(select.get('.hfl-snapshot-choice__partial').find('.el-tag--warning').exists()).toBe(true)
+    expect(wrapper.text()).toContain(en.insight.copilot.snapshotPartialHint)
+    await select.trigger('click')
+    await flushPromises()
+    expect(document.querySelector('.el-select-dropdown__item .hfl-snapshot-choice__partial')?.textContent?.trim()).toBe('Partial')
+    form.snapshotsForSelectedBackupSource.value = form.snapshotsForSelectedBackupSource.value.map(
+      (row: { status?: string }) => ({ ...row, status: 'available' }),
+    )
+    await flushPromises()
+    expect(select.get('.hfl-snapshot-choice__available').text()).toBe('Available')
+    expect(select.get('.hfl-snapshot-choice__available').find('.el-tag--success').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('exposes search inputs in both dropdown menus', async () => {
     const wrapper = await mountNewChat()
     const form = mocks.useKnowledgeSourceForm.mock.results.at(-1)?.value

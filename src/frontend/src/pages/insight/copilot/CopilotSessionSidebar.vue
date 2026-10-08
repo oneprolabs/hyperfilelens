@@ -374,11 +374,11 @@ function handleAction(command: string, row: SessionRow) {
 .copilot-session-item:hover .copilot-session-item__actions,.copilot-session-item:focus-within .copilot-session-item__actions { opacity: 1; pointer-events: auto; }
 .copilot-session-item:hover .copilot-session-item__more,.copilot-session-item__more:focus-visible { opacity: 1; }
 .copilot-session-item__more:hover { background: color-mix(in srgb, var(--color-text-title) 8%, transparent); color: var(--color-text-title); }
-:global(.copilot-session-menu__share),:global(.copilot-session-menu__pin),:global(.copilot-session-menu__rename),:global(.copilot-session-menu__retry),:global(.copilot-session-menu__delete) { min-height: 36px; padding: 0 14px; font-size: 13px; }
-:global(.copilot-session-menu__share .el-icon),:global(.copilot-session-menu__pin .el-icon),:global(.copilot-session-menu__rename .el-icon),:global(.copilot-session-menu__retry .el-icon),:global(.copilot-session-menu__delete .el-icon) { width: 15px; height: 15px; margin-right: 9px; font-size: 15px; }
-:global(.copilot-session-menu__share:not(.is-disabled):hover),
-:global(.copilot-session-menu__pin:not(.is-disabled):hover),
-:global(.copilot-session-menu__rename:not(.is-disabled):hover) { color: var(--color-primary) !important; }
+:global(.copilot-session-menu .el-dropdown-menu__item) { min-height: 36px; padding: 0 14px; font-size: 13px; font-weight: 400; line-height: 20px; }
+:global(.copilot-session-menu .el-dropdown-menu__item .el-icon) { width: 15px; height: 15px; flex-shrink: 0; margin-right: 9px; font-size: 15px; }
+:global(.copilot-session-menu .el-dropdown-menu__item .el-icon svg) { width: 15px; height: 15px; }
+:global(.copilot-session-menu .el-dropdown-menu__item:not(.is-disabled):not(.copilot-session-menu__delete):hover),
+:global(.copilot-session-menu .el-dropdown-menu__item:not(.is-disabled):not(.copilot-session-menu__delete):focus) { color: var(--color-primary) !important; }
 :global(.copilot-session-menu__delete) { color: var(--color-error-text) !important; }
 :global(.copilot-session-menu__delete:hover) { background: var(--color-error-light) !important; color: var(--color-error-text) !important; }
 .copilot-session-empty { padding: 24px 8px; color: var(--color-text-tertiary); font-size: 12px; text-align: center; }
@@ -389,6 +389,6 @@ function handleAction(command: string, row: SessionRow) {
   .copilot-session-item__actions { right: -8px; width: 44px; height: 44px; opacity: 1; pointer-events: auto; }
   .copilot-session-item__more { width: 44px; height: 44px; opacity: 1; }
   .copilot-session-item__state-slot { right: 36px; }
-  :global(.copilot-session-menu__share),:global(.copilot-session-menu__pin),:global(.copilot-session-menu__rename),:global(.copilot-session-menu__retry),:global(.copilot-session-menu__delete) { min-height: 44px; }
+  :global(.copilot-session-menu .el-dropdown-menu__item) { min-height: 44px; }
 }
 </style>

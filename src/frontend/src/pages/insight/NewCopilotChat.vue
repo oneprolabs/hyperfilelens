@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import '../../styles/fullscreen-form-styles'
+import '../../styles/snapshot-picker.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -17,14 +18,15 @@ import {
   Trash2,
   TriangleAlert,
 } from 'lucide-vue-next'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElTag } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import HflPopover from '../../components/HflPopover.vue'
 import { useCopilotSelectionPreview } from '../../composables/useCopilotSelectionPreview'
 import { useKnowledgeSourceForm, type BackupScopePickerNode, type KnowledgeSourceType } from '../../composables/useKnowledgeSourceForm'
 import { apiErrorMessage } from '../../lib/api'
 import { formatBytes } from '../../lib/kopiaProgress'
-import { formatLocalDateTime } from '../../lib/dateTime'
+import { snapshotOptionLabel } from '../../lib/snapshotPicker'
+import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import {
   createCopilotSession,
   fetchCopilotReadiness,
@@ -364,11 +366,6 @@ const footerSubmitBlockReason = computed(() => (
     : submitBlocker.value?.message ?? ''
 ))
 
-function snapshotOptionLabel(row: { snapshot_uid: string; finished_at?: string | null; started_at?: string | null; created_at: string; total_size_bytes: number }) {
-  const time = row.finished_at || row.started_at || row.created_at
-  return `${row.snapshot_uid} · ${time ? formatLocalDateTime(time) : '—'} · ${formatBytes(row.total_size_bytes)}`
-}
-
 function pathCountLabel(count: number): string {
   return t(
     count === 1 ? 'insight.copilot.pathCountOne' : 'insight.copilot.pathCountMany',
@@ -674,6 +671,21 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       :disabled="!selectedBackupConfigId"
                       :placeholder="t('insight.copilot.snapshotPlaceholder')"
                     >
+                      <template #label="{ label }">
+                        <span class="hfl-snapshot-choice">
+                          <span class="hfl-snapshot-choice__label">{{ label }}</span>
+                          <ElTag
+                            v-if="selectedSnapshot && ['available', 'partial'].includes(selectedSnapshot.status)"
+                            :type="lifecycleStatusTagAttrs(selectedSnapshot.status).type"
+                            class="hfl-snapshot-choice__status"
+                            :class="selectedSnapshot.status === 'partial' ? 'hfl-snapshot-choice__partial' : 'hfl-snapshot-choice__available'"
+                            size="small"
+                            effect="plain"
+                          >
+                            {{ t(selectedSnapshot.status === 'partial' ? 'insight.copilot.snapshotPartial' : 'insight.copilot.snapshotAvailable') }}
+                          </ElTag>
+                        </span>
+                      </template>
                       <template #header>
                         <ElInput
                           v-model="snapshotSearchText"
@@ -703,7 +715,21 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                         :key="row.id"
                         :label="snapshotOptionLabel(row)"
                         :value="row.id"
-                      />
+                      >
+                        <span class="hfl-snapshot-choice">
+                          <span class="hfl-snapshot-choice__label">{{ snapshotOptionLabel(row) }}</span>
+                          <ElTag
+                            v-if="['available', 'partial'].includes(row.status)"
+                            :type="lifecycleStatusTagAttrs(row.status).type"
+                            class="hfl-snapshot-choice__status"
+                            :class="row.status === 'partial' ? 'hfl-snapshot-choice__partial' : 'hfl-snapshot-choice__available'"
+                            size="small"
+                            effect="plain"
+                          >
+                            {{ t(row.status === 'partial' ? 'insight.copilot.snapshotPartial' : 'insight.copilot.snapshotAvailable') }}
+                          </ElTag>
+                        </span>
+                      </ElOption>
                       <template #footer>
                         <div class="new-chat-picker-footer">
                           <span>{{ loadedSnapshotCount }} / {{ snapshotPickerCount }}</span>
@@ -720,6 +746,12 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     </ElSelect>
                     <p class="fullscreen-form-field__hint">
                       {{ t('insight.copilot.snapshotHint') }}
+                    </p>
+                    <p
+                      v-if="selectedSnapshot?.status === 'partial' || (!selectedSnapshot && snapshotsForSelectedBackupSource.length && snapshotsForSelectedBackupSource.every((row) => row.status === 'partial'))"
+                      class="fullscreen-form-field__hint"
+                    >
+                      {{ t('insight.copilot.snapshotPartialHint') }}
                     </p>
                   </div>
                 </div>

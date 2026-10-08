@@ -98,7 +98,8 @@ const deleteTarget = ref<SessionRow | null>(null)
 const deleteMode = ref<'normal' | 'force'>('normal')
 const shareOpen = ref(false)
 const shareTarget = ref<SessionRow | null>(null)
-const sharedRunBySession = ref<Record<number, string | null>>({})
+const shareTargetRunUuid = ref<string | null>(null)
+const sharedRunsBySession = ref<Record<number, string[]>>({})
 const executionSettingsOpen = ref(false)
 const messagesBySession = ref<Record<number, CopilotDisplayMessage[]>>({})
 const input = ref('')
@@ -831,12 +832,16 @@ function forceDeleteActiveSession() {
 
 function shareSession(row: SessionRow) {
   shareTarget.value = row
+  shareTargetRunUuid.value = null
   shareOpen.value = true
   mobileSessionsOpen.value = false
 }
 
-function shareActiveAnswer() {
-  if (activeSession.value) shareSession(activeSession.value)
+function shareActiveAnswer(message: CopilotDisplayMessage) {
+  if (!activeSession.value || !message.runId) return
+  shareTarget.value = activeSession.value
+  shareTargetRunUuid.value = message.runId
+  shareOpen.value = true
 }
 
 async function confirmDeleteSession() {
@@ -1283,16 +1288,21 @@ watch(
   },
 )
 
-const sharedRunId = computed(() => {
+const sharedRunIds = computed(() => {
   const id = activeSessionId.value
-  if (id == null) return null
-  return sharedRunBySession.value[id] ?? null
+  if (id == null) return []
+  return sharedRunsBySession.value[id] ?? []
 })
 
-function applyShareState(state: { sessionId: number; runUuid: string | null }) {
-  sharedRunBySession.value = {
-    ...sharedRunBySession.value,
-    [state.sessionId]: state.runUuid,
+function applyShareState(state: { sessionId: number; runUuid: string | null; isShared: boolean; sharedRunUuids?: string[] }) {
+  const runs = new Set(state.sharedRunUuids ?? sharedRunsBySession.value[state.sessionId] ?? [])
+  if (state.runUuid) {
+    if (state.isShared) runs.add(state.runUuid)
+    else runs.delete(state.runUuid)
+  }
+  sharedRunsBySession.value = {
+    ...sharedRunsBySession.value,
+    [state.sessionId]: [...runs],
   }
 }
 
@@ -1303,6 +1313,8 @@ async function refreshSharedRun(sessionId: number) {
     applyShareState({
       sessionId,
       runUuid: candidate.share?.run_uuid || null,
+      isShared: Boolean(candidate.share),
+      sharedRunUuids: candidate.shared_run_uuids,
     })
   } catch {
     // Sharing state is decorative; the thread stays usable if SourceLens is unavailable.
@@ -1468,7 +1480,7 @@ onUnmounted(() => {
             :bubble-tag="bubbleTag"
             :starter-disabled="submissionBlocked"
             :clarification-reset-token="clarificationResetToken"
-            :shared-run-id="sharedRunId"
+            :shared-run-ids="sharedRunIds"
             @retry-question="retryQuestion"
             @feedback-updated="applyFeedbackUpdate"
             @clarification-submitted="submitClarification"
@@ -1524,6 +1536,7 @@ onUnmounted(() => {
     <CopilotShareDialog
       v-model="shareOpen"
       :session="shareTarget"
+      :run-uuid="shareTargetRunUuid"
       @share-state="applyShareState"
       @closed="shareTarget = null"
     />

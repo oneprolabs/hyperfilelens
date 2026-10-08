@@ -85,27 +85,6 @@ def _record_share(link: LensSessionLink, share: dict[str, Any]) -> None:
 
 
 @transaction.atomic
-def _retain_share(link: LensSessionLink, share: dict[str, Any]) -> None:
-    """Make one SourceLens share the only active HFL share identity."""
-
-    normalized = _normalized_share(share)
-    locked = LensSessionLink.objects.select_for_update().get(pk=link.pk)
-    _require_shareable_link(locked)
-    locked.share_state_json = {
-        "version": 1,
-        "shares": [
-            {
-                "uuid": normalized["uuid"],
-                "run_uuid": normalized["run_uuid"],
-                "token": normalized["token"],
-            }
-        ],
-    }
-    locked.save(update_fields=["share_state_json", "updated_at"])
-    link.share_state_json = locked.share_state_json
-
-
-@transaction.atomic
 def _forget_share(link: LensSessionLink, share_uuid: str) -> None:
     _discard_share_entries(link, {_canonical_uuid(share_uuid)})
 
@@ -178,24 +157,30 @@ def _list_my_shares(link: LensSessionLink) -> list[dict[str, Any]]:
         page += 1
 
 
-def _latest_shareable_turn(
+def _shareable_turn(
     messages: list[dict[str, Any]],
+    *,
+    run_uuid: str | None = None,
 ) -> dict[str, str] | None:
     for index in range(len(messages) - 1, -1, -1):
         answer = messages[index]
         if answer.get("role") != "assistant":
             continue
         content = str(answer.get("content") or "").strip()
-        run_uuid = answer.get("run")
-        if not content or not run_uuid or not answer.get("completed_at"):
+        answer_run_uuid = answer.get("run")
+        if not content or not answer_run_uuid or not answer.get("completed_at"):
             continue
         try:
-            canonical_run_uuid = _canonical_uuid(run_uuid)
+            canonical_run_uuid = _canonical_uuid(answer_run_uuid)
         except (TypeError, ValueError, AttributeError):
+            continue
+        if run_uuid is not None and canonical_run_uuid != run_uuid:
             continue
         question = ""
         for candidate in reversed(messages[:index]):
             if candidate.get("role") == "user":
+                if candidate.get("run") and str(candidate["run"]) != canonical_run_uuid:
+                    continue
                 question = str(candidate.get("content") or "").strip()
                 break
         return {
@@ -234,31 +219,29 @@ def _revoke_remote_share(link: LensSessionLink, share_uuid: str) -> None:
             raise
 
 
+def _lock_shareable_link(link: LensSessionLink) -> None:
+    """Serialize share changes with each other and with Chat cleanup."""
+
+    locked = LensSessionLink.objects.select_for_update().get(pk=link.pk)
+    _require_shareable_link(locked)
+    link.share_state_json = locked.share_state_json
+
+
 @transaction.atomic
-def _make_single_active_share(
-    link: LensSessionLink,
-    share: dict[str, Any],
+def get_share_candidate(
+    link: LensSessionLink, *, run_uuid: str | None = None,
 ) -> dict[str, Any]:
-    """Serialize replacement and retain one current Chat share identity."""
-
-    normalized = _normalized_share(share)
-    _record_share(link, normalized)
-    stale_uuids = {
-        row["uuid"]
-        for row in _share_entries(link)
-        if row["uuid"] != normalized["uuid"]
-    }
-    for share_uuid in sorted(stale_uuids):
-        _revoke_remote_share(link, share_uuid)
-    _retain_share(link, normalized)
-    return normalized
-
-
-def get_share_candidate(link: LensSessionLink) -> dict[str, Any]:
+    _lock_shareable_link(link)
+    if run_uuid is not None:
+        run_uuid = _canonical_uuid(run_uuid)
     messages = _session_messages(link)
-    turn = _latest_shareable_turn(messages)
+    turn = _shareable_turn(messages, run_uuid=run_uuid)
     if turn is None:
-        return {"shareable": False, "share": None}
+        return {
+            "shareable": False,
+            "share": None,
+            "shared_run_uuids": [row["run_uuid"] for row in _share_entries(link)],
+        }
     session_run_uuids = _session_run_uuids(link, messages=messages)
     existing = None
     for row in _list_my_shares(link):
@@ -268,23 +251,28 @@ def get_share_candidate(link: LensSessionLink) -> dict[str, Any]:
             continue
         if normalized["run_uuid"] not in session_run_uuids:
             continue
-        # Recover identities left between the SourceLens create and HFL record
-        # steps, so the next share operation can converge them to one link.
+        # Recover this Chat's identities without revoking other shared turns.
         _record_share(link, normalized)
         if existing is None and normalized["run_uuid"] == turn["run_uuid"]:
             existing = normalized
-    if existing is not None:
-        existing = _make_single_active_share(link, existing)
-    return {"shareable": True, **turn, "share": existing}
+    return {
+        "shareable": True,
+        **turn,
+        "share": existing,
+        "shared_run_uuids": [row["run_uuid"] for row in _share_entries(link)],
+    }
 
 
-def create_share(link: LensSessionLink, *, title: str = "") -> dict[str, Any]:
-    candidate = get_share_candidate(link)
+@transaction.atomic
+def create_share(
+    link: LensSessionLink, *, run_uuid: str, title: str = "",
+) -> dict[str, Any]:
+    candidate = get_share_candidate(link, run_uuid=run_uuid)
     if not candidate.get("shareable"):
         raise CopilotShareNotFoundError()
     existing = candidate.get("share")
     if isinstance(existing, dict):
-        return _make_single_active_share(link, existing)
+        return existing
     payload = sl_client.request_json(
         "POST",
         f"/api/lens/runs/{candidate['run_uuid']}/share/",
@@ -301,7 +289,7 @@ def create_share(link: LensSessionLink, *, title: str = "") -> dict[str, Any]:
             "SourceLens shared a different Q&A run than requested."
         )
     try:
-        share = _make_single_active_share(link, share)
+        _record_share(link, share)
     except Exception:
         # SourceLens and HFL cannot share one database transaction. Compensate
         # the remote create so an untracked link cannot survive an HFL failure.
@@ -347,12 +335,14 @@ def _owned_session_share(
     raise CopilotShareNotFoundError()
 
 
+@transaction.atomic
 def update_share_title(
     link: LensSessionLink,
     share_uuid: str,
     *,
     title: str,
 ) -> dict[str, Any]:
+    _lock_shareable_link(link)
     share = _owned_session_share(link, share_uuid)
     payload = sl_client.request_json(
         "PATCH",
@@ -372,22 +362,27 @@ def update_share_title(
         raise sl_client.LensBridgeError(
             "SourceLens updated a different shared Q&A than requested."
         )
-    return _make_single_active_share(link, updated)
+    _record_share(link, updated)
+    return updated
 
 
+@transaction.atomic
 def revoke_share(link: LensSessionLink, share_uuid: str) -> None:
+    _lock_shareable_link(link)
     canonical = _canonical_uuid(share_uuid)
     current = LensSessionLink.objects.only("share_state_json").get(pk=link.pk)
     if not any(row["uuid"] == canonical for row in _share_entries(current)):
         raise CopilotShareNotFoundError()
     link.share_state_json = current.share_state_json
-    revoke_session_shares(link)
+    _revoke_remote_share(link, canonical)
+    _forget_share(link, canonical)
 
 
+@transaction.atomic
 def revoke_session_shares(link: LensSessionLink) -> int:
     """Revoke all Q&A links before HFL deletes the wider Chat resource graph."""
 
-    current = LensSessionLink.objects.only("share_state_json").get(pk=link.pk)
+    current = LensSessionLink.objects.select_for_update().get(pk=link.pk)
     known = {row["uuid"]: row for row in _share_entries(current)}
     if not known:
         return 0
@@ -444,10 +439,6 @@ def require_active_share_access(
     if link is None:
         raise CopilotShareNotFoundError()
     entries = _share_entries(link)
-    if len(entries) != 1:
-        # Replacement may temporarily retain multiple identities so cleanup
-        # can be retried. Fail closed until reconciliation chooses one.
-        raise CopilotShareNotFoundError()
     expected = next(
         (
             row

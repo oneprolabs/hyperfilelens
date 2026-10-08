@@ -3,12 +3,13 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { ElMessage } from 'element-plus'
 import { createI18n } from 'vue-i18n'
-import { defineComponent, nextTick, ref } from 'vue'
+import { defineComponent, nextTick, ref, type Component, type Plugin } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../../locales/en'
 import InsightCopilot from './InsightCopilot.vue'
 import CopilotComposer from './copilot/CopilotComposer.vue'
+import CopilotMessageList from './copilot/CopilotMessageList.vue'
 
 const mocks = vi.hoisted(() => ({
   createCopilotRun: vi.fn(),
@@ -112,6 +113,12 @@ const ForceDeleteLifecycle = defineComponent({
   template: '<button class="force-delete-trigger" @click="$emit(\'forceDelete\')">Force Delete</button>',
 })
 
+const ShareDialogStub = defineComponent({
+  props: ['modelValue', 'session', 'runUuid'],
+  emits: ['shareState'],
+  template: '<aside class="share-dialog-stub" />',
+})
+
 function sessionRow(
   activeRun: { uuid: string; status: string } | null = null,
   lifecycleStatus = 'ready',
@@ -138,10 +145,10 @@ function sessionRow(
 }
 
 function mountCopilot(
-  i18n: ReturnType<typeof createI18n>,
-  sessionSidebar = SimpleStub,
-  dangerConfirmDialog = SimpleStub,
-  lifecycleState = SimpleStub,
+  i18n: Plugin,
+  sessionSidebar: Component = SimpleStub,
+  dangerConfirmDialog: Component = SimpleStub,
+  lifecycleState: Component = SimpleStub,
 ) {
   return mount(InsightCopilot, {
     global: {
@@ -151,7 +158,7 @@ function mountCopilot(
         CopilotContextBar: SimpleStub,
         CopilotLifecycleState: lifecycleState,
         CopilotEmptyState: SimpleStub,
-        CopilotShareDialog: SimpleStub,
+        CopilotShareDialog: ShareDialogStub,
         CopilotDataUpdateDialog: SimpleStub,
         CopilotExecutionSettingsDialog: SimpleStub,
         DangerConfirmDialog: dangerConfirmDialog,
@@ -206,6 +213,46 @@ describe('InsightCopilot question submission', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('passes the clicked answer Run to the dialog and retains other shared answer states', async () => {
+    const i18n = createI18n({
+      legacy: false, locale: 'en', messages: { en },
+      missingWarn: false, fallbackWarn: false,
+    })
+    const sidebar = defineComponent({
+      props: ['sessions'],
+      emits: ['share'],
+      template: '<button class="session-share" @click="$emit(\'share\', sessions[0])">Share Chat</button>',
+    })
+    const wrapper = mountCopilot(i18n, sidebar)
+    await flushPromises()
+    const messages = wrapper.findComponent(CopilotMessageList)
+    messages.vm.$emit('shareAnswer', {
+      id: 'older-answer', role: 'assistant', runId: 'older-run',
+      text: 'Older answer', completedAt: '2026-10-08T07:00:00Z',
+    })
+    await nextTick()
+    const dialog = wrapper.findComponent(ShareDialogStub)
+    expect(dialog.props('runUuid')).toBe('older-run')
+    expect(dialog.props('session').id).toBe(444)
+    dialog.vm.$emit('shareState', {
+      sessionId: 444, runUuid: 'older-run', isShared: true,
+    })
+    dialog.vm.$emit('shareState', {
+      sessionId: 444, runUuid: 'newer-run', isShared: true,
+    })
+    await nextTick()
+    expect(messages.props('sharedRunIds')).toEqual(['older-run', 'newer-run'])
+    dialog.vm.$emit('shareState', {
+      sessionId: 444, runUuid: 'older-run', isShared: false,
+    })
+    await nextTick()
+    expect(messages.props('sharedRunIds')).toEqual(['newer-run'])
+    await wrapper.get('.session-share').trigger('click')
+    expect(dialog.props('runUuid')).toBeNull()
+    expect(dialog.props('session').id).toBe(444)
+    wrapper.unmount()
   })
 
   it('reserves the measured composer height below the conversation', async () => {

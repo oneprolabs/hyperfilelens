@@ -201,6 +201,15 @@ describe('saved AI model connectivity', () => {
 })
 
 describe('Copilot shared Q&A adapter', () => {
+  it('requests a specific answer through the owning Chat', async () => {
+    vi.mocked(api).mockResolvedValue({ shareable: false, share: null })
+    const runUuid = '56ed8b87-b754-45d1-aaaf-e9134d52b756'
+    await fetchCopilotShareCandidate(7, runUuid)
+    expect(api).toHaveBeenCalledWith(
+      `/api/v1/lens/copilot/sessions/7/share/?run_uuid=${runUuid}`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    )
+  })
   it('loads and creates shares through the owning HFL session', async () => {
     vi.mocked(api)
       .mockResolvedValueOnce({
@@ -218,7 +227,7 @@ describe('Copilot shared Q&A adapter', () => {
       })
 
     await fetchCopilotShareCandidate(7)
-    await createCopilotShare(7, 'Shared answer')
+    await createCopilotShare(7, 'Shared answer', '56ed8b87-b754-45d1-aaaf-e9134d52b756')
 
     expect(api).toHaveBeenNthCalledWith(
       1,
@@ -230,7 +239,7 @@ describe('Copilot shared Q&A adapter', () => {
       '/api/v1/lens/copilot/sessions/7/share/',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ title: 'Shared answer' }),
+        body: JSON.stringify({ title: 'Shared answer', run_uuid: '56ed8b87-b754-45d1-aaaf-e9134d52b756' }),
       }),
     )
   })

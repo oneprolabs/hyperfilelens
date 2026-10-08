@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   createKnowledgeSource: vi.fn(),
   listBackupSourceSnapshots: vi.fn().mockResolvedValue({ count: 0, results: [] }),
   listBackupSourcePickerSources: vi.fn().mockResolvedValue({ count: 0, results: [] }),
+  getSnapshot: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
   success: vi.fn(),
@@ -45,7 +46,7 @@ vi.mock('../lib/lensApi', () => ({
 }))
 
 vi.mock('../lib/protectionBackupConfigApi', () => ({
-  getBackupSourceSnapshot: vi.fn(),
+  getBackupSourceSnapshot: mocks.getSnapshot,
   listBackupSourceSnapshots: mocks.listBackupSourceSnapshots,
   listBackupSourcePickerSources: mocks.listBackupSourcePickerSources,
 }))
@@ -85,6 +86,7 @@ function snapshotFixture(): BackupSourceSnapshot {
       display_name: 'datatest',
       repository_id: 3,
       status: 'available',
+      kopia_snapshot_id: 'kopia-root-31',
       created_at: '2026-07-31T00:00:00Z',
       size_bytes: 1024,
       file_count: 2,
@@ -185,6 +187,80 @@ describe('knowledge source backup scope validation', () => {
     }
   })
 
+  it('defaults to Available without hiding newer Partial snapshots', async () => {
+    const partial = { ...snapshotFixture(), id: 72, status: 'partial' }
+    const available = snapshotFixture()
+    const { form, wrapper } = mountForm(null, 'concrete', true)
+    mocks.listBackupSourceSnapshots.mockResolvedValueOnce({ count: 2, results: [partial, available] })
+    try {
+      await flushPromises()
+      expect(mocks.listBackupSourceSnapshots).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'available,partial',
+      }))
+      expect(form.snapshotsForSelectedBackupSource.value.map((row) => row.id)).toEqual([72, 71])
+      expect(form.snapshotPickerValue.value).toBe(71)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('finds the latest Available even when page one contains only Partial snapshots', async () => {
+    const partial = { ...snapshotFixture(), id: 72, status: 'partial' }
+    const available = snapshotFixture()
+    const { form, wrapper } = mountForm(null, 'concrete', true)
+    mocks.listBackupSourceSnapshots.mockResolvedValueOnce({ count: 31, results: [partial] })
+      .mockResolvedValueOnce({ count: 1, results: [available] })
+    try {
+      await flushPromises()
+      expect(mocks.listBackupSourceSnapshots).toHaveBeenLastCalledWith(expect.objectContaining({
+        status: 'available', page: 1, page_size: 1,
+      }))
+      expect(form.snapshotPickerValue.value).toBe(71)
+      expect(form.snapshotsForSelectedBackupSource.value.map((row) => row.id)).toEqual([71, 72])
+      expect(form.loadedSnapshotCount.value).toBe(1)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('requires an explicit choice when only Partial snapshots exist and exposes only successful paths', async () => {
+    const partial = snapshotFixture()
+    partial.status = 'partial'
+    partial.directories!.push(
+      { ...partial.directories![0], id: 32, source_path: '/failed', status: 'failed' },
+      { ...partial.directories![0], id: 33, source_path: '/missing', kopia_snapshot_id: '' },
+    )
+    const { form, wrapper } = mountForm(null, 'concrete', true)
+    mocks.getSnapshot.mockResolvedValue(partial)
+    mocks.listBackupSourceSnapshots.mockResolvedValueOnce({ count: 1, results: [partial] })
+      .mockResolvedValueOnce({ count: 0, results: [] })
+    try {
+      await flushPromises()
+      expect(form.snapshotPickerValue.value).toBeNull()
+      form.snapshotPickerValue.value = partial.id
+      await flushPromises()
+      expect(form.snapshotDirectories.value.map((row) => row.id)).toEqual([31])
+      const roots: unknown[][] = []
+      await form.loadBackupScopePickerNode({ level: 0, data: {} }, (nodes) => roots.push(nodes))
+      expect(roots[0]).toEqual([expect.objectContaining({ directoryId: 31 })])
+      const entryId = form.backupScopeEntries.value[0].id
+      form.pickBackupScopeForEntry(entryId, {
+        id: 'failed', directoryId: 32, path: '/failed', label: 'failed', type: 'dir', isLeaf: false,
+      })
+      expect(form.backupScopeEntries.value[0].directoryId).toBeNull()
+      form.updateBackupScopeEntryInput(entryId, '/failed')
+      expect(await form.validateBackupScopeEntry(entryId, false)).toBe(false)
+      form.backupScopeEntries.value[0].directoryId = 32
+      expect(await form.validateBackupScopeEntry(entryId, false)).toBe(false)
+      form.updateBackupScopeEntryInput(entryId, '/root/datatest')
+      expect(await form.validateBackupScopeEntry(entryId, false)).toBe(true)
+      expect(form.backupScopeEntries.value[0].directoryId).toBe(31)
+      expect(mocks.browseCopilotSnapshotDirectory).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('ignores an older source search response after the query changes', async () => {
     const { form, wrapper } = mountForm(null, 'concrete', true)
     let resolveOld!: (value: { count: number; results: never[] }) => void
@@ -255,6 +331,7 @@ describe('knowledge source backup scope validation', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.getSnapshot.mockReset()
     vi.useFakeTimers()
     mocks.browseCopilotSnapshotDirectory.mockResolvedValue({ entries: [] })
   })
@@ -468,7 +545,7 @@ describe('knowledge source backup scope validation', () => {
     const { form, wrapper } = mountForm()
     try {
       const rootSnapshot = snapshotFixture()
-      rootSnapshot.directories = rootSnapshot.directories.map((directory) => ({
+      rootSnapshot.directories = (rootSnapshot.directories || []).map((directory) => ({
         ...directory,
         source_path: '/',
       }))

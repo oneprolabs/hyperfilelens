@@ -93,7 +93,7 @@ async function confirmLogout() {
     ref="popoverRef"
     trigger="click"
     placement="bottom-end"
-    :width="320"
+    :width="360"
     :show-arrow="false"
     :effect="theme === 'light' ? 'light' : 'dark'"
     popper-class="nav-dropdown-popover"
@@ -118,10 +118,7 @@ async function confirmLogout() {
 
     <div class="nav-dropdown-panel">
       <header class="nav-dropdown-panel__head">
-        <h3
-          class="nav-dropdown-panel__title nav-user-menu__email"
-          :title="email"
-        >
+        <h3 class="nav-dropdown-panel__title nav-user-menu__email">
           {{ email }}
         </h3>
         <span class="nav-dropdown-panel__role-badge nav-user-menu__role">{{ role }}</span>

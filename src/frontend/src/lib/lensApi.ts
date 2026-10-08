@@ -568,6 +568,7 @@ export type LensSharedQA = {
 }
 
 export type LensCopilotShareCandidate = {
+  shared_run_uuids?: string[]
   shareable: boolean
   run_uuid?: string
   question?: string
@@ -1623,8 +1624,10 @@ export async function unpinCopilotSession(sessionId: number): Promise<LensSessio
 
 export async function fetchCopilotShareCandidate(
   sessionId: number,
+  runUuid?: string,
 ): Promise<LensCopilotShareCandidate> {
-  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/share/`), {
+  const query = runUuid ? `?run_uuid=${encodeURIComponent(runUuid)}` : ''
+  const raw = await api(lensUrl(`copilot/sessions/${sessionId}/share/${query}`), {
     headers: lensHeaders(),
   })
   return lensPayload<LensCopilotShareCandidate>(raw)
@@ -1633,11 +1636,12 @@ export async function fetchCopilotShareCandidate(
 export async function createCopilotShare(
   sessionId: number,
   title: string,
+  runUuid: string,
 ): Promise<LensSharedQA> {
   const raw = await api(lensUrl(`copilot/sessions/${sessionId}/share/`), {
     method: 'POST',
     headers: lensHeaders(),
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, run_uuid: runUuid }),
   })
   return lensPayload<LensSharedQA>(raw)
 }

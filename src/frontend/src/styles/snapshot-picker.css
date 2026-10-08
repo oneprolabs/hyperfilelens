@@ -1,0 +1,23 @@
+.hfl-snapshot-choice {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.hfl-snapshot-choice__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hfl-snapshot-choice__status {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.hfl-snapshot-choice__role {
+  flex-shrink: 0;
+}

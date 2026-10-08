@@ -231,6 +231,25 @@ class SnapshotBrowserApiTests(TestCase):
             auditor_response = self.client.get(url, **self._headers())
         self.assertEqual(auditor_response.status_code, 403)
 
+    def test_picker_sources_include_partial_but_not_failed_snapshots(self):
+        self.snapshot.status = BackupSourceSnapshot.Status.PARTIAL
+        self.snapshot.save(update_fields=["status", "updated_at"])
+        sources_url = "/api/v1/protection/backup-source-snapshots/picker-sources/"
+        sources = self.client.get(sources_url, **self._headers())
+        self.assertEqual(sources.status_code, 200)
+        self.assertEqual(sources.data["count"], 1)
+        snapshots = self.client.get(
+            "/api/v1/protection/backup-source-snapshots/",
+            {"backup_config_id": self.config.id, "status": "available,partial"},
+            **self._headers(),
+        )
+        self.assertEqual(snapshots.status_code, 200)
+        self.assertEqual(snapshots.data["results"][0]["status"], "partial")
+        self.snapshot.status = BackupSourceSnapshot.Status.FAILED
+        self.snapshot.save(update_fields=["status", "updated_at"])
+        sources = self.client.get(sources_url, **self._headers())
+        self.assertEqual(sources.data["count"], 0)
+
     def test_picker_snapshots_filter_by_config_and_snapshot_id(self):
         response = self.client.get(
             "/api/v1/protection/backup-source-snapshots/",
@@ -264,6 +283,19 @@ class SnapshotBrowserApiTests(TestCase):
             **self._headers(),
         )
         self.assertEqual(missing.data["count"], 0)
+        excluded = self.client.get(
+            "/api/v1/protection/backup-source-snapshots/",
+            {"backup_config_id": self.config.id, "exclude_snapshot_id": self.snapshot.id},
+            **self._headers(),
+        )
+        self.assertEqual(excluded.status_code, 200)
+        self.assertEqual(excluded.data["count"], 0)
+        invalid = self.client.get(
+            "/api/v1/protection/backup-source-snapshots/",
+            {"exclude_snapshot_id": "invalid"},
+            **self._headers(),
+        )
+        self.assertEqual(invalid.status_code, 400)
 
     @override_settings(PROTECTION_SNAPSHOT_DOWNLOAD_MAX_LOGICAL_BYTES=321 * 1024 * 1024)
     def test_snapshot_detail_includes_effective_download_limits(self):
