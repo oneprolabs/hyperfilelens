@@ -254,9 +254,12 @@ export type LensGatewayInsight = {
   gateway_link_id?: number | null
   managed_by_hfl?: boolean
   hfl_agent_online?: boolean
+  hfl_managed?: boolean
+  hfl_agent_capabilities_ready?: boolean
   hfl_sidecar_online?: boolean
   hfl_usable?: boolean
   copilot_eligible?: boolean
+  readiness_reason?: string
   sl_runtime_status?: string
   owner_user_id?: number | null
   owner_username?: string
@@ -271,6 +274,9 @@ export type LensGatewayInsight = {
   created_at?: string
   updated_at?: string
   routable?: boolean
+  availability?: import('../types/node').Availability
+  availability_updated_at?: string | null
+  last_seen_at?: string | null
   lifecycle?: unknown
   workload?: unknown
   sl_name?: string
@@ -282,6 +288,26 @@ export type LensGatewayInsight = {
   sl_tasks?: { name: string; title: string }[]
   agent_release?: import('../types/node').AgentReleaseStatus | null
 }
+
+export type LensGatewayDirectoryPage = {
+  count: number
+  page: number
+  page_size: number
+  results: LensGatewayInsight[]
+}
+
+export const GATEWAY_DIRECTORY_STATUS_FIELDS = [
+  'ai_enabled', 'lensnode_status', 'sidecar_status',
+  'hfl_managed', 'hfl_agent_online', 'hfl_agent_capabilities_ready',
+  'hfl_sidecar_online', 'hfl_usable', 'copilot_eligible', 'readiness_reason',
+  'sl_runtime_status', 'sl_name', 'sl_status', 'sl_workspace_path',
+  'sl_agent_version', 'sl_last_heartbeat_at', 'sl_registered_at', 'sl_tasks',
+  'availability', 'availability_updated_at', 'routable', 'last_seen_at',
+] as const satisfies readonly (keyof LensGatewayInsight)[]
+
+export type LensGatewayDirectoryStatus = Pick<
+  LensGatewayInsight, 'id' | 'gateway_link_id' | 'sl_lensnode_uuid'
+> & Partial<Pick<LensGatewayInsight, typeof GATEWAY_DIRECTORY_STATUS_FIELDS[number]>>
 
 export type SlLensnodeTask = {
   name: string
@@ -573,10 +599,10 @@ export type LensChatMessage = {
   feedback_updated_at?: string | null
 }
 
-export async function fetchLensHealth(): Promise<LensHealth> {
+export async function fetchLensHealth(params?: { signal?: AbortSignal }): Promise<LensHealth> {
   // Bridge connectivity is global — always use the tenant lens_bridge health endpoint,
   // even when Engine UI is in platform API scope.
-  return api<LensHealth>('/api/v1/lens/health', { headers: orgHeaders() })
+  return api<LensHealth>('/api/v1/lens/health', { headers: orgHeaders(), signal: params?.signal })
 }
 
 export async function listLensModels(): Promise<LensLlmConfig[]> {
@@ -835,12 +861,59 @@ export async function deleteKnowledgeSource(id: number): Promise<void> {
 
 export async function listLensGateways(params?: {
   organization_key?: string
+  signal?: AbortSignal
 }): Promise<LensGatewayInsight[]> {
   const qs = new URLSearchParams()
   if (params?.organization_key?.trim()) qs.set('organization_key', params.organization_key.trim())
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  const raw = await api(lensUrl(`gateways${suffix}`), { headers: lensHeaders() })
+  const raw = await api(lensUrl(`gateways${suffix}`), {
+    headers: lensHeaders(), signal: params?.signal,
+  })
   return lensList<LensGatewayInsight>(raw)
+}
+
+export async function listLensGatewayDirectory(params: {
+  page: number
+  page_size: number
+  search?: string
+  signal?: AbortSignal
+}): Promise<LensGatewayDirectoryPage> {
+  const qs = new URLSearchParams({
+    page: String(params.page),
+    page_size: String(params.page_size),
+  })
+  if (params.search?.trim()) qs.set('search', params.search.trim())
+  // The authoritative private directory is always tenant scoped, even if a
+  // background platform request changed the module's compatibility scope.
+  const raw = await api(`/api/v1/lens/gateways/directory/?${qs.toString()}`, {
+    headers: orgHeaders(),
+    signal: params.signal,
+  })
+  const data = unwrapApiPayload<Record<string, unknown>>(raw)
+  const results = asList<LensGatewayInsight>(data)
+  return {
+    count: Number(data.count) || 0,
+    page: Number(data.page) || params.page,
+    page_size: Number(data.page_size) || params.page_size,
+    results,
+  }
+}
+
+export async function refreshLensGatewayDirectoryStatus(params: {
+  gateway_ids: number[]
+  force?: boolean
+  signal?: AbortSignal
+}): Promise<LensGatewayDirectoryStatus[]> {
+  const raw = await api('/api/v1/lens/gateways/directory-status/', {
+    method: 'POST',
+    headers: orgHeaders(),
+    signal: params.signal,
+    body: JSON.stringify({
+      gateway_ids: params.gateway_ids,
+      force: params.force === true,
+    }),
+  })
+  return lensList<LensGatewayDirectoryStatus>(raw)
 }
 
 export async function enableGatewayAi(

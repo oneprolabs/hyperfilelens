@@ -25,11 +25,14 @@ import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { apiErrorMessage } from '../../lib/api'
+import { applyGatewayDirectoryStatus } from '../../lib/gatewayDirectory'
 import { afterOverlayDismiss } from '../../lib/uiDefer'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import {
   fetchLensHealth,
+  listLensGatewayDirectory,
   listLensGateways,
+  refreshLensGatewayDirectoryStatus,
   setPlatformLensGatewayDefault,
   setLensApiScope,
   type LensGatewayInsight,
@@ -138,12 +141,17 @@ const tableBlockRef = ref<HTMLElement | null>(null)
 const { tableMaxHeight, layoutTable, handleTableScroll } = useListTableLayout(tableRef, tableBlockRef)
 
 const pagination = reactive({ page: 1, pageSize: isPlatformEngine.value ? 20 : 30, count: 0 })
+let lastSuccessfulDirectoryQuery: {
+  page: number
+  pageSize: number
+  search: string
+} | null = null
 const visibleRows = computed(() => {
   if (!isPlatformEngine.value) return rows.value
   const start = (pagination.page - 1) * pagination.pageSize
   return rows.value.slice(start, start + pagination.pageSize)
 })
-const { appliedSearch, clearSearch } = useListSearch(search, () => {
+const { appliedSearch, clearSearch, resetSearch } = useListSearch(search, () => {
   pagination.page = 1
   void load()
 })
@@ -169,6 +177,7 @@ const lifecycleOps = useNodeLifecycleOps({
       return {
         ...row,
         status: next.status,
+        availability: next.availability,
         routable: next.routable,
         version: next.version,
         lifecycle: next.lifecycle,
@@ -177,6 +186,7 @@ const lifecycleOps = useNodeLifecycleOps({
     })
     // Remount / empty refresh: re-insert in-flight lifecycle rows from watch payload.
     for (const node of patched) {
+      if (!isPlatformEngine.value) continue
       if (existingIds.has(node.id) || !batchIds.has(node.id)) continue
       rows.value.push(
         mergeLensIntoNode({
@@ -196,7 +206,9 @@ const lifecycleOps = useNodeLifecycleOps({
       )
       existingIds.add(node.id)
     }
-    pagination.count = Math.max(pagination.count, rows.value.length)
+    if (isPlatformEngine.value) {
+      pagination.count = Math.max(pagination.count, rows.value.length)
+    }
   },
 })
 const upgradeConfirmOpen = lifecycleOps.upgradeConfirmOpen
@@ -236,11 +248,11 @@ function availabilityTagType(row: InsightGatewayRow): 'success' | 'danger' {
 }
 
 function aiPhase(row: InsightGatewayRow): GatewayAiPhase {
-  if (!bridgeReady.value) return 'not_provisioned'
+  if (isPlatformEngine.value && !bridgeReady.value) return 'not_provisioned'
   if (row.managed_by_hfl === false) return 'not_provisioned'
   if (!row.hfl_agent_online) return 'agent_offline'
   if (row.sidecar_status === 'error') return 'error'
-  if (!row.ai_enabled) {
+  if (isPlatformEngine.value ? !row.ai_enabled : !row.sl_lensnode_uuid) {
     if (row.status === 'online') return 'error'
     return 'not_provisioned'
   }
@@ -269,13 +281,15 @@ function applyGatewayRows(next: InsightGatewayRow[], totalHint?: number) {
   const prev = rows.value
   const batchIds = lifecycleOps.activeBatchNodeIds.value
   let merged = next
-  if (batchIds.size > 0) {
+  if (isPlatformEngine.value && batchIds.size > 0) {
     const nextIds = new Set(next.map((row) => row.id))
     const ghosts = prev.filter((row) => batchIds.has(row.id) && !nextIds.has(row.id))
     if (ghosts.length) merged = [...next, ...ghosts]
   }
   rows.value = lifecycleOps.mergeNodeListDuringLifecycleBatch(merged, prev, batchIds)
-  pagination.count = totalHint != null ? Math.max(totalHint, rows.value.length) : rows.value.length
+  pagination.count = totalHint != null
+    ? (isPlatformEngine.value ? Math.max(totalHint, rows.value.length) : totalHint)
+    : rows.value.length
 }
 
 async function loadLatestVersion(signal?: AbortSignal) {
@@ -365,40 +379,81 @@ async function submitCapacity() {
   }
 }
 
-async function load() {
+function refreshCurrentPageStatus(force = false) {
+  if (isPlatformEngine.value || rows.value.length === 0) return
+  const signal = pageRequests.nextSignal('dg-status')
+  void refreshLensGatewayDirectoryStatus({
+    gateway_ids: rows.value.map((row) => row.id),
+    force,
+    signal,
+  }).then((patches) => {
+    if (!pageRequests.isCurrentSignal('dg-status', signal)) return
+    rows.value = applyGatewayDirectoryStatus(rows.value, patches)
+  }).catch(() => {
+    // Status is optional. Preserve the authoritative directory and cached state.
+  }).finally(() => {
+    pageRequests.releaseSignal('dg-status', signal)
+  })
+}
+
+async function loadSupplementaryData() {
+  const signal = pageRequests.nextSignal('dg-extras')
+  try {
+    await Promise.all([loadLatestVersion(signal), loadCapacities(signal)])
+  } finally {
+    pageRequests.releaseSignal('dg-extras', signal)
+  }
+}
+
+async function load(options: { forceStatus?: boolean } = {}) {
   const signal = pageRequests.nextSignal('dg-list')
+  const directoryQuery = {
+    page: pagination.page,
+    pageSize: pagination.pageSize,
+    search: appliedSearch.value,
+  }
+  pageRequests.abortScope('dg-status')
+  pageRequests.abortScope('dg-extras')
   busy.value = true
   if (isPlatformEngine.value) {
     setLensApiScope('platform')
   }
   try {
-    // Admin Engine and Insights share the same SL-admin (platform) DG pool from listLensGateways.
-    let lensRows: LensGatewayInsight[] = []
-    let listFailed = false
-    const [lensResult, health] = await Promise.all([
-      listLensGateways()
-        .then((next) => {
-          lensRows = next
-          return next
-        })
-        .catch((e) => {
-          if (pageRequests.isAbortError(e)) throw e
-          listFailed = true
+    // The platform's external SL directory keeps its existing health semantics.
+    // Private membership never waits for, or invokes, this global SL probe.
+    const healthRequest = isPlatformEngine.value
+      ? fetchLensHealth({ signal }).catch(() => null)
+      : null
+    const lensResult = isPlatformEngine.value
+      ? await listLensGateways({ signal }).catch((error) => {
+          if (pageRequests.isAbortError(error)) throw error
           return null
-        }),
-      fetchLensHealth().catch(() => null),
-    ])
-    if (lensResult === null && listFailed) {
+        })
+      : await listLensGatewayDirectory({
+          page: directoryQuery.page,
+          page_size: directoryQuery.pageSize,
+          search: directoryQuery.search,
+          signal,
+        })
+    if (healthRequest) {
+      const health = await healthRequest
+      if (pageRequests.isCurrentSignal('dg-list', signal)) {
+        bridgeReady.value = Boolean(health?.lens?.configured && health?.lens?.authenticated)
+      }
+    }
+    if (!pageRequests.isCurrentSignal('dg-list', signal)) return
+    if (lensResult === null) {
+      // Preserve the platform's existing cached-list/health degradation.
       if (rows.value.length === 0) {
         ElMessage.error({ message: t('errors.generic.loadFailed'), grouping: true })
       }
-      bridgeReady.value = Boolean(health?.lens?.configured && health?.lens?.authenticated)
       await loadLatestVersion(signal)
       return
     }
-    bridgeReady.value = Boolean(health?.lens?.configured && health?.lens?.authenticated)
+    const lensRows = Array.isArray(lensResult) ? lensResult : lensResult.results
+    const directoryTotal = Array.isArray(lensResult) ? null : lensResult.count
     const term = appliedSearch.value.trim().toLowerCase()
-    const filtered = term
+    const filtered = isPlatformEngine.value && term
       ? lensRows.filter((row) => {
           const name = (row.name || '').toLowerCase()
           const ip = String(row.ip_address || '').toLowerCase()
@@ -430,10 +485,34 @@ async function load() {
         lens,
       )
     })
-    applyGatewayRows(next, filtered.length)
-    await Promise.all([loadLatestVersion(signal), loadCapacities(signal)])
+    if (
+      !isPlatformEngine.value
+      && directoryTotal != null
+      && next.length === 0
+      && pagination.page > 1
+    ) {
+      pagination.page = Math.max(1, Math.ceil(directoryTotal / pagination.pageSize))
+      await load(options)
+      return
+    }
+    applyGatewayRows(next, directoryTotal ?? filtered.length)
+    if (!isPlatformEngine.value) lastSuccessfulDirectoryQuery = directoryQuery
+    refreshCurrentPageStatus(options.forceStatus === true)
+    if (isPlatformEngine.value) await loadSupplementaryData()
+    else void loadSupplementaryData()
   } catch (e) {
-    if (pageRequests.isAbortError(e)) return
+    if (pageRequests.isAbortError(e) || !pageRequests.isCurrentSignal('dg-list', signal)) return
+    if (!isPlatformEngine.value && lastSuccessfulDirectoryQuery) {
+      // Retained rows and their paging/search controls must describe one result.
+      pagination.page = lastSuccessfulDirectoryQuery.page
+      pagination.pageSize = lastSuccessfulDirectoryQuery.pageSize
+      if (search.value === directoryQuery.search) {
+        resetSearch(lastSuccessfulDirectoryQuery.search)
+      } else {
+        // Do not discard a newer search draft that has not been applied yet.
+        appliedSearch.value = lastSuccessfulDirectoryQuery.search
+      }
+    }
     if (rows.value.length === 0) {
       rows.value = []
     }
@@ -651,12 +730,19 @@ function stopListPoll() {
 }
 
 function startListPoll() {
-  stopListPoll()
-  const needsPoll = rows.value.some((row) => row.ai_enabled && aiPhase(row) !== 'online')
-  if (!needsPoll) return
+  const needsPoll = isPlatformEngine.value
+    ? rows.value.some((row) => row.ai_enabled && aiPhase(row) !== 'online')
+    : rows.value.some((row) => Boolean(row.sl_lensnode_uuid))
+  if (!needsPoll) {
+    stopListPoll()
+    return
+  }
+  if (listPollTimer != null) return
   listPollTimer = setInterval(() => {
-    if (!busy.value) void load()
-  }, 12000)
+    if (busy.value) return
+    if (isPlatformEngine.value) void load()
+    else refreshCurrentPageStatus()
+  }, isPlatformEngine.value ? 12000 : 30000)
 }
 
 watch(rows, () => startListPoll(), { deep: true })
@@ -791,7 +877,7 @@ onUnmounted(() => {
               class="hfl-refresh-button"
               :title="t('protection.sourceResources.refresh')"
               :disabled="busy"
-              @click="load()"
+              @click="load({ forceStatus: true })"
             >
               <RefreshCw
                 :size="16"
