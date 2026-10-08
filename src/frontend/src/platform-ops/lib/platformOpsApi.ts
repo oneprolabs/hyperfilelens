@@ -74,6 +74,23 @@ export interface PlatformExternalAccessSettings {
 }
 
 /** Deployment-managed services shown in Runtime Environment. */
+export interface SourceLensRuntimeProbe {
+  health_status: string
+  availability_status: string
+  notices: Array<{
+    code: string
+    level: 'info' | 'warning' | 'error'
+    params: Record<string, string | number>
+  }>
+}
+
+export interface SourceLensRuntimeMonitor {
+  status: string
+  health_status: string
+  checked_at: string
+  components: Record<string, SourceLensRuntimeProbe>
+}
+
 export interface PlatformIntegration {
   key: string
   name: string
@@ -91,6 +108,7 @@ export interface PlatformIntegration {
   warning?: string
   managed_by: string
   checked_at: string
+  runtime_monitor?: SourceLensRuntimeMonitor
 }
 
 /** Legacy Admin Console paths; OSS also serves `/api/v1/instance-settings/*`. */
