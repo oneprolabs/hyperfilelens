@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import heapq
 import os
+import pickle
 import re
 import stat
 import time
@@ -19,7 +20,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from django.core.cache import cache
+from django.core.cache import cache, caches
+from django.core.cache.backends.locmem import LocMemCache
+from django.core.cache.backends.redis import RedisCache
 
 from apps.lens_bridge import deploy
 from apps.lens_bridge.services import sl_client
@@ -41,6 +44,78 @@ DATABASE_EXCEPTION = re.compile(
     r"^(?:[\w]+\.)*(?:DatabaseError|InternalError|OperationalError|"
     r"IndexCorrupted|InternalError_):"
 )
+SAVE_CHECKPOINT = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+return 1
+"""
+RELEASE_SCAN = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+return redis.call('DEL', KEYS[1])
+"""
+
+
+def _read_scan_checkpoint(key: str) -> dict[str, Any]:
+    """Read Redis checkpoints from the same primary used by atomic writes."""
+    backend = caches["default"]
+    if isinstance(backend, RedisCache):
+        namespaced_key = backend.make_and_validate_key(key)
+        factory = backend._cache
+        raw = factory.get_client(namespaced_key, write=True).get(namespaced_key)
+        return factory._serializer.loads(raw) if raw is not None else {}
+    return cache.get(key) or {}
+
+
+def _atomic_scan_update(
+    key: str,
+    lock_key: str,
+    owner: str,
+    payload: dict[str, Any] | None = None,
+) -> bool:
+    """Conditionally save/release this probe's lease in one backend operation.
+
+    Redis uses the existing HFL cache's serializer and primary connection.
+    LocMem uses its own shared mutex, including expiry validation. Other cache
+    backends fail closed rather than falling back to check-then-write.
+    """
+    backend = caches["default"]
+    namespaced_lock = backend.make_and_validate_key(lock_key)
+    if isinstance(backend, RedisCache):
+        factory = backend._cache
+        client = factory.get_client(namespaced_lock, write=True)
+        serialized_owner = factory._serializer.dumps(owner)
+        if payload is None:
+            return bool(client.eval(RELEASE_SCAN, 1, namespaced_lock, serialized_owner))
+        return bool(
+            client.eval(
+                SAVE_CHECKPOINT,
+                2,
+                namespaced_lock,
+                backend.make_and_validate_key(key),
+                serialized_owner,
+                factory._serializer.dumps(payload),
+                SCAN_STATE_SECONDS,
+            )
+        )
+    if isinstance(backend, LocMemCache):
+        serialized_owner = pickle.dumps(owner, backend.pickle_protocol)
+        serialized_payload = (
+            pickle.dumps(payload, backend.pickle_protocol)
+            if payload is not None
+            else None
+        )
+        namespaced_key = backend.make_and_validate_key(key)
+        with backend._lock:
+            if (
+                backend._has_expired(namespaced_lock)
+                or backend._cache.get(namespaced_lock) != serialized_owner
+            ):
+                return False
+            if payload is None:
+                return backend._delete(namespaced_lock)
+            backend._set(namespaced_key, serialized_payload, SCAN_STATE_SECONDS)
+            return True
+    return False
 
 
 def _notice(code: str, level: str, **params: Any) -> dict[str, Any]:
@@ -101,9 +176,11 @@ def _read_chunk(
             # Never make today's faults wait behind an old or fast-growing log.
             offset = size.st_size - MAX_SCAN_BYTES
             same_file = False
+            stream.seek(offset - 1)
+            starts_record = stream.read(1) == b"\n"
         stream.seek(offset)
         data = stream.read(MAX_SCAN_BYTES)
-    if jump:
+    if jump and not starts_record:
         # The first record may start before the selected window.
         boundary = data.find(b"\n") + 1
         if not boundary:
@@ -208,11 +285,7 @@ def probe_index_errors(root: Path, *, now: datetime) -> dict[str, Any]:
         # Expired owners must not remove a subsequent request's lock.
         if acquired:
             try:
-                if (
-                    cache.get(lock_key) == owner
-                    and time.monotonic() - started < SCAN_LOCK_SECONDS - 10
-                ):
-                    cache.delete(lock_key)
+                _atomic_scan_update(key, lock_key, owner)
             except Exception:
                 pass
 
@@ -227,7 +300,7 @@ def _probe_index_errors(
     """Read retained evidence; only the active lease holder scans and writes."""
     state_unavailable = False
     try:
-        saved = cache.get(key) or {}
+        saved = _read_scan_checkpoint(key)
     except Exception:
         saved = {}
         state_unavailable = True
@@ -266,21 +339,19 @@ def _probe_index_errors(
     if lease:
         lock_key, owner, started = lease
         try:
-            if (
-                cache.get(lock_key) != owner
-                or time.monotonic() - started >= SCAN_LOCK_SECONDS - 10
-            ):
+            if time.monotonic() - started >= SCAN_LOCK_SECONDS - 10:
                 state_unavailable = True
             else:
-                cache.set(
+                state_unavailable |= not _atomic_scan_update(
                     key,
+                    lock_key,
+                    owner,
                     {
                         "files": files_state,
                         "latest": latest.isoformat() if latest else None,
                         "undated": undated,
                         "retained_alert": retained_alert,
                     },
-                    SCAN_STATE_SECONDS,
                 )
         except Exception:
             state_unavailable = True

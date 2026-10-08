@@ -13,7 +13,8 @@ Bundled deployments already mount `data/sourcelens/logs` read-only at
 HFL incrementally scans PostgreSQL and Worker logs for `unexpected zero page` and
 `right sibling's left-link doesn't match`.
 
-- Maximum four files per directory, 256 KiB per file per scan, 512 directory entries.
+- Maximum four files per directory, a 256 KiB data window per file per scan
+  (plus one boundary-check byte on jumps), 512 directory entries.
 - Regular files only; no symlink files. The scan is best-effort, not a complete
   historical search or an index integrity check.
 - PostgreSQL/Celery event timestamps are used, not file modification times.
@@ -24,8 +25,9 @@ HFL incrementally scans PostgreSQL and Worker logs for `unexpected zero page` an
   Truncation/replacement likewise checks the latest bounded window. This is a
   recent-log probe, **not historical backfill**: records outside the window may
   be missed, and absence of errors never proves database integrity.
-- Partial first records after a jump are discarded, not interpreted as new
-  error messages. Complete records and error context are preserved for normal
+- A jump checks the preceding byte: a complete first record is kept when the
+  window already starts on a line boundary. Only genuinely partial first records
+  are discarded, not interpreted as new error messages. Error context is preserved for normal
   incremental reads; oversized lines are skipped rather than parsed as fragments.
   File size alone does not produce a scan-pending/degraded status.
 - Match only explicit ERROR/FATAL/PANIC messages or database exception records.
@@ -45,10 +47,17 @@ HFL incrementally scans PostgreSQL and Worker logs for `unexpected zero page` an
   or automatically acknowledge/clear an incident.
 - A non-blocking, per-log-root cache lease serializes scans/checkpoint writes.
   Contending requests reuse retained evidence with the existing scan-incomplete
-  warning; they neither scan nor overwrite checkpoints. Owners that lose their
-  lease or approach expiry do not commit, and do not remove a replacement
-  owner's lease. A crashed owner's lease expires after 60 seconds. Cache failures
-  are surfaced rather than proceeding with unprotected checkpoint writes.
+  warning; they neither scan nor overwrite checkpoints. Checkpoint reads also
+  use the HFL cache primary, not a potentially lagging read replica. Redis validates ownership
+  and writes the checkpoint in one Lua operation on the **HFL cache primary**,
+  preserving Django's key namespace and serializer. Conditional release also
+  uses one atomic operation, so an expired owner cannot delete its successor.
+  LocMem performs the same checks/write under its backend's shared mutex.
+  A crashed owner's lease expires after 60 seconds. Cache/script failures and
+  unsupported atomic-cache backends are surfaced as incomplete monitoring;
+  there is no unsafe check-then-write fallback. Other cache backends may still
+  show current log evidence but cannot persist this probe's checkpoints safely.
+  This does not connect to or execute scripts on SL Redis.
 - No matching errors does not turn PostgreSQL green. Missing/unreadable files
   are shown as unavailable/incomplete monitoring.
 - `HFL_SL_RUNTIME_LOG_DIR` optionally overrides the container-side directory.

@@ -1,14 +1,17 @@
 """Bounded, read-only SourceLens runtime monitoring contracts."""
 
 import os
+import hashlib
+import pickle
 import threading
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from django.core.cache import cache
+from django.core.cache import cache, caches
+from django.core.cache.backends.redis import RedisCache, RedisSerializer
 from django.test import SimpleTestCase, override_settings
 from rest_framework.test import APIRequestFactory
 
@@ -302,6 +305,28 @@ class IndexLogProbeTests(SimpleTestCase):
         with patch.object(runtime, "MAX_SCAN_BYTES", 27):
             self.assertEqual(self.probe()["health_status"], "unknown")
 
+    def test_aligned_window_keeps_its_first_complete_error_record(self):
+        error = "2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n"
+        filler = "x" * (runtime.MAX_SCAN_BYTES - len(error.encode()) - 1) + "\n"
+        path = self.write("postgresql", "old record\n" + error + filler)
+        self.assertGreater(path.stat().st_size, runtime.MAX_SCAN_BYTES)
+        chunk, _, more = runtime._read_chunk(path, {})
+        self.assertTrue(chunk.startswith(error))
+        self.assertLessEqual(len(chunk.encode()), runtime.MAX_SCAN_BYTES)
+        self.assertFalse(more)
+        self.assertEqual(self.probe()["health_status"], "error")
+
+    def test_partial_window_discards_only_the_truncated_record(self):
+        error = "2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n"
+        partial = "partial-record\n"
+        filler = (
+            "x"
+            * (runtime.MAX_SCAN_BYTES - len(partial.encode()) - len(error.encode()) - 1)
+            + "\n"
+        )
+        self.write("postgresql", "old " + partial + error + filler)
+        self.assertEqual(self.probe()["health_status"], "error")
+
     def test_concurrent_scan_does_not_write_over_the_owner_checkpoint(self):
         self.write(
             "postgresql",
@@ -406,6 +431,203 @@ class IndexLogProbeTests(SimpleTestCase):
             result = self.probe()
         write.assert_not_called()
         self.assertEqual(result["notices"][0]["code"], "index_scan_incomplete")
+
+    def test_lease_expiry_after_guard_cannot_overwrite_new_evidence(self):
+        normal = "2026-10-08 04:00:00 UTC LOG: connection received\n"
+        path = self.write("postgresql", normal)
+        key = (
+            "runtime:sl:logs:v2:"
+            + hashlib.sha256(
+                str(self.root.absolute()).encode(),
+            ).hexdigest()
+        )
+        lock_key = key + ":scan-lock"
+        blocked = threading.Event()
+        resume = threading.Event()
+        results = {}
+        original = runtime._atomic_scan_update
+
+        def pause_before_atomic_write(key, lock_key, owner, payload=None):
+            if payload is not None and threading.current_thread().name == "stale-owner":
+                blocked.set()
+                if not resume.wait(5):
+                    raise RuntimeError("Stale owner did not receive release")
+            return original(key, lock_key, owner, payload)
+
+        def old_request():
+            try:
+                results["old"] = self.probe()
+            except Exception as exc:
+                results["exception"] = exc
+
+        with patch.object(
+            runtime, "_atomic_scan_update", side_effect=pause_before_atomic_write
+        ):
+            thread = threading.Thread(target=old_request, name="stale-owner")
+            thread.start()
+            try:
+                self.assertTrue(blocked.wait(5))
+                backend = caches["default"]
+                # Expire the old lease while it is paused after the time guard.
+                with backend._lock:
+                    backend._expire_info[backend.make_key(lock_key)] = 0
+                with path.open("a") as stream:
+                    stream.write(
+                        "2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n"
+                    )
+                new_result = self.probe()
+                self.assertEqual(new_result["health_status"], "error")
+                self.assertIsNotNone(cache.get(key)["latest"])
+                self.assertTrue(
+                    cache.add(lock_key, "replacement-owner", runtime.SCAN_LOCK_SECONDS)
+                )
+            finally:
+                resume.set()
+                thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertNotIn("exception", results)
+        self.assertIsNotNone(cache.get(key)["latest"])
+        self.assertEqual(cache.get(lock_key), "replacement-owner")
+        self.assertIn(
+            "index_scan_incomplete", [n["code"] for n in results["old"]["notices"]]
+        )
+        cache.delete(lock_key)
+        path.unlink()
+        path.write_text(normal)
+        self.assertEqual(self.probe()["health_status"], "error")
+
+
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "KEY_PREFIX": "scan-test",
+            "VERSION": 7,
+        }
+    },
+)
+class AtomicScanUpdateTests(SimpleTestCase):
+    def setUp(self):
+        cache.clear()
+
+    def test_locmem_save_and_release_use_the_cache_namespace_and_expiry(self):
+        self.assertTrue(cache.add("scan:lease", "owner", runtime.SCAN_LOCK_SECONDS))
+        self.assertTrue(
+            runtime._atomic_scan_update(
+                "scan:state", "scan:lease", "owner", {"latest": "seen"}
+            )
+        )
+        self.assertEqual(cache.get("scan:state"), {"latest": "seen"})
+        self.assertTrue(
+            runtime._atomic_scan_update("scan:state", "scan:lease", "owner")
+        )
+        self.assertIsNone(cache.get("scan:lease"))
+        self.assertEqual(cache.get("scan:state"), {"latest": "seen"})
+
+    def test_locmem_rejects_expired_or_wrong_owner_without_touching_state(self):
+        cache.set("scan:state", {"latest": "newer"})
+        cache.add("scan:lease", "new-owner", runtime.SCAN_LOCK_SECONDS)
+        self.assertFalse(
+            runtime._atomic_scan_update("scan:state", "scan:lease", "old-owner", {})
+        )
+        self.assertFalse(
+            runtime._atomic_scan_update("scan:state", "scan:lease", "old-owner")
+        )
+        self.assertEqual(cache.get("scan:lease"), "new-owner")
+        backend = caches["default"]
+        with backend._lock:
+            backend._expire_info[backend.make_key("scan:lease")] = 0
+        self.assertFalse(
+            runtime._atomic_scan_update("scan:state", "scan:lease", "new-owner", {})
+        )
+        self.assertEqual(cache.get("scan:state"), {"latest": "newer"})
+
+    def test_redis_uses_one_atomic_script_on_primary_with_exact_serializer(self):
+        backend = RedisCache(
+            "redis://unused/1", {"KEY_PREFIX": "scan-test", "VERSION": 7}
+        )
+        client = Mock()
+        client.eval.return_value = 1
+        backend._cache.get_client = Mock(return_value=client)
+        backend._cache._serializer = RedisSerializer()
+        payload = {"latest": "newer", "files": {}}
+        with patch.object(runtime, "caches", {"default": backend}):
+            self.assertTrue(
+                runtime._atomic_scan_update(
+                    "scan:state", "scan:lease", "owner", payload
+                )
+            )
+        backend._cache.get_client.assert_called_once_with(
+            "scan-test:7:scan:lease", write=True
+        )
+        client.eval.assert_called_once_with(
+            runtime.SAVE_CHECKPOINT,
+            2,
+            "scan-test:7:scan:lease",
+            "scan-test:7:scan:state",
+            backend._cache._serializer.dumps("owner"),
+            backend._cache._serializer.dumps(payload),
+            runtime.SCAN_STATE_SECONDS,
+        )
+        self.assertEqual(pickle.loads(client.eval.call_args.args[4]), "owner")
+        self.assertEqual(pickle.loads(client.eval.call_args.args[5]), payload)
+
+    def test_redis_checkpoint_read_uses_primary_and_matching_namespace(self):
+        backend = RedisCache(
+            ["redis://unused-primary/1", "redis://unused-replica/1"],
+            {"KEY_PREFIX": "scan-test", "VERSION": 7},
+        )
+        client = Mock()
+        client.get.return_value = backend._cache._serializer.dumps({"latest": "newer"})
+        backend._cache.get_client = Mock(return_value=client)
+        with patch.object(runtime, "caches", {"default": backend}):
+            self.assertEqual(
+                runtime._read_scan_checkpoint("scan:state"), {"latest": "newer"}
+            )
+            client.get.return_value = None
+            self.assertEqual(runtime._read_scan_checkpoint("scan:state"), {})
+        self.assertTrue(
+            all(
+                call.kwargs["write"]
+                for call in backend._cache.get_client.call_args_list
+            )
+        )
+        client.get.assert_called_with("scan-test:7:scan:state")
+
+    def test_redis_stale_owner_cannot_write_or_release(self):
+        backend = RedisCache("redis://unused/1", {})
+        client = Mock()
+        client.eval.return_value = 0
+        backend._cache.get_client = Mock(return_value=client)
+        with patch.object(runtime, "caches", {"default": backend}):
+            self.assertFalse(
+                runtime._atomic_scan_update("scan:state", "scan:lease", "stale", {})
+            )
+            self.assertFalse(
+                runtime._atomic_scan_update("scan:state", "scan:lease", "stale")
+            )
+        self.assertEqual(client.eval.call_count, 2)
+        release = client.eval.call_args.args
+        self.assertEqual(release[:3], (runtime.RELEASE_SCAN, 1, ":1:scan:lease"))
+        self.assertEqual(pickle.loads(release[3]), "stale")
+        client.set.assert_not_called()
+        client.delete.assert_not_called()
+
+    @override_settings(
+        CACHES={"default": {"BACKEND": "django.core.cache.backends.dummy.DummyCache"}}
+    )
+    def test_unsupported_backend_never_falls_back_to_unsafe_write(self):
+        with (
+            patch.object(runtime.cache, "set") as write,
+            patch.object(
+                runtime.cache,
+                "delete",
+            ) as delete,
+        ):
+            self.assertFalse(runtime._atomic_scan_update("state", "lease", "owner", {}))
+            self.assertFalse(runtime._atomic_scan_update("state", "lease", "owner"))
+        write.assert_not_called()
+        delete.assert_not_called()
 
 
 @patch.dict(
