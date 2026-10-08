@@ -3,8 +3,10 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { apiErrorMessage } from '../../lib/api'
+import { formatLocalDateTime } from '../../lib/dateTime'
 import { fetchPlatformIntegrations, type PlatformIntegration } from '../lib/platformOpsApi'
 import RuntimeStatusTable from './RuntimeStatusTable.vue'
+import { sourceLensNotices, sourceLensStatusCell } from './sourceLensRuntime'
 import type {
   RuntimeStatusCell,
   RuntimeStatusNotice,
@@ -41,17 +43,22 @@ function formatDeploymentMode(mode: string): string {
 
 function sourceLensOverviewRow(row: PlatformIntegration): RuntimeStatusRow {
   const configured = row.configured === true
+  const monitor = row.runtime_monitor
   return {
     key: `${row.key}-overview`,
     service: 'Runtime',
     runtime: statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info'),
     health: !configured
       ? statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info')
+      : monitor
+      ? sourceLensStatusCell(monitor.health_status, 'health', t)
       : row.reachable
       ? statusCell(t('platformOps.integrations.healthy'), 'success')
       : statusCell(t('platformOps.settings.environment.healthUnhealthy'), 'danger'),
     availability: !configured
       ? statusCell(t('platformOps.settings.environment.statusNotConfigured'), 'info')
+      : monitor
+      ? sourceLensStatusCell(monitor.status, 'availability', t)
       : row.business_ready
       ? statusCell(t('platformOps.settings.environment.statusOperational'), 'success')
       : statusCell(t('platformOps.settings.environment.statusUnavailable'), 'danger'),
@@ -59,10 +66,14 @@ function sourceLensOverviewRow(row: PlatformIntegration): RuntimeStatusRow {
       `${t('platformOps.settings.environment.deployment')}: ${formatDeploymentMode(row.mode || '')}`,
       `${t('platformOps.integrations.version')}: ${row.version || t('platformOps.integrations.unknown')}`,
       ...(row.console_url ? [`${t('platformOps.integrations.consoleUrl')}: ${row.console_url}`] : []),
+      ...(monitor ? [
+        `${t('platformOps.settings.environment.checkedAt')}: ${formatLocalDateTime(monitor.checked_at, '—')}`,
+      ] : []),
     ],
-    notices: row.warning
-      ? [{ message: row.warning, level: 'warning' }]
-      : [],
+    notices: [
+      ...(row.warning ? [{ message: row.warning, level: 'warning' as const }] : []),
+      ...sourceLensNotices(Object.values(monitor?.components || {}), t, true),
+    ],
   }
 }
 
@@ -79,6 +90,18 @@ function sourceLensContainerRows(row: PlatformIntegration): RuntimeStatusRow[] {
     ['sourcelens-redis', 'Redis', t('platformOps.integrations.containerRedis')],
   ]
   return containers.map(([service, displayName, details]) => {
+    const probe = row.runtime_monitor?.components[service.replace('sourcelens-', '')]
+    if (probe) {
+      return {
+        key: `${row.key}-${service}`,
+        service: displayName,
+        runtime: statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info'),
+        health: sourceLensStatusCell(probe.health_status, 'health', t),
+        availability: sourceLensStatusCell(probe.availability_status, 'availability', t),
+        details: [details],
+        notices: sourceLensNotices([probe], t),
+      }
+    }
     const monitored = service === 'sourcelens-api'
     const status = monitored
       ? aggregate.type === 'success'

@@ -10,7 +10,6 @@ from django.core.mail import EmailMessage, get_connection
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.utils import timezone
 
 from apps.configuration.models import GlobalConfig
 from apps.configuration.selectors.interface import get_config, invalidate_config_cache
@@ -38,7 +37,6 @@ from apps.instance_settings.services.external_access import (
 from common.platform_audit import write_platform_audit_log
 from common.platform_authz import ADMIN_USERS_MANAGE, INFRA_AI_MODELS_MANAGE
 from apps.lens_bridge import deploy as lens_deploy
-from apps.lens_bridge.services import sl_client
 from apps.configuration.services import runtime_settings as runtime_settings_svc
 from apps.configuration.services.runtime_settings import (
     KEY_AI_AZURE_BASE,
@@ -656,22 +654,14 @@ class PlatformOpsSettingsEnvironmentView(APIView):
             probe_web,
             system_health_payload,
         )
+        from apps.instance_settings.services.sourcelens_runtime import sourcelens_health_payload
 
         cfg = email_connection_kwargs()
         identity_enabled = runtime_settings_svc.enterprise_identity_enabled()
         health = system_health_payload()
-        lens = sl_client.ping(timeout=2)
-        lens_status = (
-            "ok"
-            if lens.get("business_ready")
-            else "error"
-            if lens.get("configured") and not lens.get("reachable")
-            else "unknown"
-            if not lens.get("configured")
-            else "degraded"
-        )
+        lens = sourcelens_health_payload(timeout=2)
         health["sourcelens"] = {
-            "status": lens_status,
+            "status": lens["runtime_monitor"]["status"],
             "configured": bool(lens.get("configured")),
             "reachable": bool(lens.get("reachable")),
             "authenticated": bool(lens.get("authenticated")),
@@ -681,6 +671,7 @@ class PlatformOpsSettingsEnvironmentView(APIView):
             "mode": lens_deploy.sourcelens_mode(),
             "version": lens_deploy.sourcelens_version(),
             "console_url": lens_deploy.sourcelens_console_url(),
+            "runtime_monitor": lens["runtime_monitor"],
         }
         health["nginx"] = probe_nginx()
         health["web"] = probe_web()
@@ -765,8 +756,10 @@ class PlatformOpsSettingsIntegrationsView(APIView):
     permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
 
     def get(self, request):
-        health = sl_client.ping(timeout=3)
-        checked_at = timezone.now().isoformat()
+        from apps.instance_settings.services.sourcelens_runtime import sourcelens_health_payload
+
+        health = sourcelens_health_payload(timeout=3)
+        checked_at = health["runtime_monitor"]["checked_at"]
         return Response(
             {
                 "integrations": [
@@ -783,10 +776,11 @@ class PlatformOpsSettingsIntegrationsView(APIView):
                         "reachable": bool(health.get("reachable")),
                         "authenticated": bool(health.get("authenticated")),
                         "business_ready": bool(health.get("business_ready")),
-                        "status": health.get("status", "degraded"),
+                        "status": health["runtime_monitor"]["status"],
                         "warning": health.get("warning", ""),
                         "managed_by": "deployment",
                         "checked_at": checked_at,
+                        "runtime_monitor": health["runtime_monitor"],
                     }
                 ]
             }
