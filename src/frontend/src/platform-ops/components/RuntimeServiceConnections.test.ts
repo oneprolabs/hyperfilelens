@@ -158,6 +158,69 @@ describe('SourceLens Runtime Environment presentation', () => {
     wrapper.unmount()
   })
 
+  it('shows unconfirmed recovery as an existing warning instead of an all-green summary', async () => {
+    const snapshot = monitor()
+    snapshot.health_status = 'degraded'
+    snapshot.components = {
+      postgres: {
+        health_status: 'unknown', availability_status: 'unknown',
+        notices: [{
+          code: 'index_corruption_unconfirmed', level: 'warning',
+          params: { last_seen_at: '2026-10-06T05:00:00+00:00' },
+        }],
+      },
+    }
+    const wrapper = await render(integration(snapshot))
+    const rows = wrapper.findAll('.runtime-status-table__row')
+    expect(rows[0]!.findAll('.status-tag')[2]!.text()).toBe('Degraded')
+    expect(rows[0]!.get('.runtime-status-table__notice--warning').text()).toContain(
+      'recovery has not been confirmed',
+    )
+    expect(wrapper.find('.runtime-status-table__notice--error').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('reports incomplete scans with the existing warning style', async () => {
+    const snapshot = monitor()
+    snapshot.health_status = 'degraded'
+    snapshot.components = {
+      postgres: {
+        health_status: 'unknown', availability_status: 'unknown',
+        notices: [{ code: 'index_scan_incomplete', level: 'warning', params: {} }],
+      },
+    }
+    const wrapper = await render(integration(snapshot))
+    expect(wrapper.get('.runtime-status-table__notice--warning').text()).toContain(
+      'log scan is incomplete',
+    )
+    expect(wrapper.findAll('.runtime-status-table__row')[0]!.text()).toContain('Degraded')
+    wrapper.unmount()
+  })
+
+  it('keeps Redis Healthy when its queue metrics cannot be read', async () => {
+    const snapshot = monitor()
+    snapshot.health_status = 'degraded'
+    snapshot.components = {
+      redis: {
+        health_status: 'ok', availability_status: 'unknown',
+        notices: [{
+          code: 'queue_metrics_unavailable', level: 'warning', params: { queue: 'lens' },
+        }],
+      },
+    }
+    const wrapper = await render(integration(snapshot))
+    const redis = wrapper.findAll('.runtime-status-table__row').find(
+      row => row.get('.runtime-status-table__service').text() === 'Redis',
+    )!
+    expect(redis.findAll('.status-tag').map(tag => tag.text())).toEqual([
+      'Not Monitored', 'Healthy', '—',
+    ])
+    expect(redis.get('.runtime-status-table__notice--warning').text()).toContain(
+      'check monitoring permissions',
+    )
+    wrapper.unmount()
+  })
+
   it('propagates runtime degradation to the existing Instance Health tag', async () => {
     fetchIntegrations.mockResolvedValue({ integrations: [integration(monitor())] })
     fetchEnvironment.mockResolvedValue({

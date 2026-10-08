@@ -23,8 +23,12 @@ API_READY = {
 }
 
 
+@override_settings(
+    CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+)
 class IndexLogProbeTests(SimpleTestCase):
     def setUp(self):
+        cache.clear()
         self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -97,18 +101,19 @@ class IndexLogProbeTests(SimpleTestCase):
         self.assertEqual(result["health_status"], "unknown")
         self.assertEqual(result["notices"][0]["code"], "index_logs_unavailable")
         self.write("postgresql", "some text")
-        with patch.object(runtime, "_tail", side_effect=PermissionError):
+        with patch.object(runtime, "_read_chunk", side_effect=PermissionError):
             self.assertEqual(
                 self.probe()["notices"][0]["code"], "index_logs_unavailable"
             )
 
     def test_undated_and_future_errors_do_not_claim_current_failure(self):
         for text in (
-            "unexpected zero page\n",
+            "django.db.DatabaseError: unexpected zero page\n",
             "2027-01-01 05:00:00 UTC ERROR: unexpected zero page\n",
             "2026-99-99 05:00:00 UTC ERROR: unexpected zero page\n",
         ):
             with self.subTest(text=text):
+                cache.clear()
                 self.write("worker", text)
                 self.assertEqual(self.probe()["health_status"], "unknown")
                 self.assertEqual(
@@ -120,21 +125,147 @@ class IndexLogProbeTests(SimpleTestCase):
             path = self.write("postgresql", "ordinary log", f"db-{number}.log")
             os.utime(path, (number, number))
         (self.root / "postgresql" / "symlink.log").symlink_to("/etc/passwd")
-        self.assertEqual(len(runtime._log_files(self.root / "postgresql")), 4)
+        self.assertEqual(len(runtime._log_files(self.root / "postgresql")[0]), 4)
         path = self.write(
             "worker",
             (
                 "2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n"
-                + "normal line\n" * runtime.MAX_TAIL_BYTES
+                + "normal line\n" * runtime.MAX_SCAN_BYTES
             ),
         )
-        self.assertLessEqual(len(runtime._tail(path)), runtime.MAX_TAIL_BYTES)
-        self.assertEqual(self.probe()["health_status"], "unknown")
+        chunk, position, more = runtime._read_chunk(path, {})
+        self.assertLessEqual(len(chunk.encode()), runtime.MAX_SCAN_BYTES)
+        self.assertLessEqual(position["offset"], runtime.MAX_SCAN_BYTES)
+        self.assertTrue(more)
+        self.assertEqual(self.probe()["health_status"], "error")
 
     def test_recent_window_boundary(self):
         stamp = (NOW - timedelta(hours=24)).isoformat()
         self.write("worker", f"{stamp} ERROR: unexpected zero page\n")
         self.assertEqual(self.probe()["health_status"], "error")
+
+    def test_detected_error_survives_append_rotation_and_file_removal(self):
+        path = self.write(
+            "postgresql",
+            "2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n",
+        )
+        self.assertEqual(self.probe()["health_status"], "error")
+        with path.open("a") as stream:
+            stream.write("2026-10-08 05:01:00 UTC LOG: connection received\n" * 12000)
+        result = self.probe()
+        self.assertEqual(result["health_status"], "error")
+        self.assertIn("index_scan_incomplete", [n["code"] for n in result["notices"]])
+        path.rename(path.with_suffix(".log.1"))
+        path.write_text("2026-10-08 05:10:00 UTC LOG: connection received\n")
+        self.assertEqual(self.probe()["health_status"], "error")
+        path.unlink()
+        path.with_suffix(".log.1").unlink()
+        self.assertEqual(self.probe()["health_status"], "error")
+
+    def test_retained_alert_ages_to_unconfirmed_warning_not_recovery(self):
+        path = self.write(
+            "worker",
+            "[2026-10-08 05:00:00,000: ERROR/MainProcess] unexpected zero page\n",
+        )
+        self.assertEqual(self.probe()["health_status"], "error")
+        path.unlink()
+        result = runtime.probe_index_errors(self.root, now=NOW + timedelta(days=2))
+        self.assertEqual(result["health_status"], "unknown")
+        self.assertEqual(result["notices"][0]["code"], "index_corruption_unconfirmed")
+        self.assertEqual(result["notices"][0]["level"], "warning")
+
+    def test_initial_scan_reports_pending_coverage_then_reaches_error(self):
+        path = self.write(
+            "postgresql",
+            (
+                "2026-10-08 04:00:00 UTC LOG: connection received\n" * 7000
+                + "2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n"
+            ),
+        )
+        self.assertGreater(path.stat().st_size, runtime.MAX_SCAN_BYTES)
+        first = self.probe()
+        self.assertEqual(first["health_status"], "unknown")
+        self.assertEqual(first["notices"][0]["code"], "index_scan_incomplete")
+        second = self.probe()
+        self.assertEqual(second["health_status"], "error")
+        self.assertNotIn(
+            "index_scan_incomplete", [n["code"] for n in second["notices"]]
+        )
+
+    def test_normal_logs_and_statement_text_do_not_trigger_corruption(self):
+        cases = [
+            "2026-10-08 05:00:00 UTC LOG: duration: 2001 ms statement: SELECT 'unexpected zero page';\n",
+            "2026-10-08 05:00:00 UTC LOG: statement: SELECT 'ERROR: unexpected zero page';\n",
+            "[2026-10-08 05:00:00,000: INFO/MainProcess] unexpected zero page\n",
+            "2026-10-08 05:00:00 UTC ERROR: unrelated syntax error\n"
+            "STATEMENT: SELECT 'unexpected zero page';\n",
+            "[2026-10-08 05:00:00,000: ERROR/MainProcess] SQL syntax error\n"
+            "  cursor.execute(\"SELECT 'unexpected zero page'\")\n",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                cache.clear()
+                self.write("worker", text)
+                self.assertEqual(self.probe()["notices"], [])
+
+    def test_postgres_pid_prefix_and_worker_exception_across_scan_boundary(self):
+        text = (
+            "2026-10-08 05:00:00 UTC [1234] ERROR: unexpected zero page\n"
+            "[2026-10-08 05:10:00,000: ERROR/MainProcess] Task failed\n"
+        )
+        exception = (
+            "psycopg2.errors.IndexCorrupted: right sibling's left-link doesn't match\n"
+        )
+        self.write("worker", text + exception)
+        with patch.object(runtime, "MAX_SCAN_BYTES", len(text.encode())):
+            first = self.probe()
+            second = self.probe()
+        self.assertEqual(first["health_status"], "error")
+        self.assertEqual(
+            second["notices"][0]["params"]["last_seen_at"], "2026-10-08T05:10:00+00:00"
+        )
+
+    def test_truncated_file_restarts_scanning(self):
+        path = self.write(
+            "worker", "2026-10-08 04:00:00 UTC LOG: connection received\n" * 100
+        )
+        self.assertEqual(self.probe()["notices"], [])
+        path.write_text("2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n")
+        self.assertEqual(self.probe()["health_status"], "error")
+
+    def test_incomplete_final_line_is_retried(self):
+        path = self.write("worker", "2026-10-08 05:00:00 UTC ERROR: unexpected zero")
+        self.assertEqual(self.probe()["notices"][0]["code"], "index_scan_incomplete")
+        with path.open("a") as stream:
+            stream.write(" page\n")
+        self.assertEqual(self.probe()["health_status"], "error")
+
+    def test_oversized_line_fragments_are_not_parsed_as_error_records(self):
+        self.write(
+            "worker",
+            (
+                "2026-10-08 05:00:00 UTC LOG: large statement "
+                + "x" * 100
+                + "ERROR: unexpected zero page\n"
+            ),
+        )
+        with patch.object(runtime, "MAX_SCAN_BYTES", 64):
+            for _ in range(5):
+                self.assertEqual(self.probe()["health_status"], "unknown")
+
+    def test_cache_failure_reports_incomplete_monitoring(self):
+        self.write("worker", "2026-10-08 04:00:00 UTC LOG: connection received\n")
+        with (
+            patch.object(runtime.cache, "get", side_effect=RuntimeError),
+            patch.object(
+                runtime.cache,
+                "set",
+                side_effect=RuntimeError,
+            ),
+        ):
+            self.assertEqual(
+                self.probe()["notices"][0]["code"], "index_scan_incomplete"
+            )
 
 
 @patch.dict(
@@ -164,6 +295,7 @@ class QueueProbeTests(SimpleTestCase):
         self.assertEqual(len(result["notices"]), 2)
         client.pipeline.assert_called_once_with(transaction=False)
         pipeline.ping.assert_called_once_with()
+        pipeline.execute.assert_called_once_with(raise_on_error=False)
         self.assertEqual(
             [call.args for call in pipeline.llen.call_args_list],
             [
@@ -240,6 +372,58 @@ class QueueProbeTests(SimpleTestCase):
         self.assertNotIn("queue_lengths", result)
         self.assertNotIn("password", str(result))
         self.assertEqual(result["notices"][0]["code"], "queue_probe_failed")
+
+    @patch("redis.from_url")
+    def test_llen_permission_or_type_error_preserves_successful_ping(self, connect):
+        import redis
+
+        pipeline = connect.return_value.pipeline.return_value.__enter__.return_value
+        for message in ("NOPERM no permissions", "WRONGTYPE key is not a list"):
+            with self.subTest(message=message):
+                pipeline.execute.return_value = [
+                    True,
+                    redis.ResponseError(message),
+                    1573,
+                ]
+                result = runtime.probe_queue_backlog("redis://monitor:secret@sl/0")
+                self.assertEqual(result["health_status"], "ok")
+                self.assertEqual(result["queue_lengths"], {"sourcelens": 1573})
+                self.assertEqual(result["availability_status"], "degraded")
+                self.assertEqual(
+                    result["notices"][0]["code"], "queue_metrics_unavailable"
+                )
+                self.assertEqual(result["notices"][1]["code"], "queue_backlog")
+                self.assertNotIn(message, str(result))
+
+    @patch("redis.from_url")
+    def test_all_metric_errors_do_not_claim_business_unavailability(self, connect):
+        import redis
+
+        connect.return_value.pipeline.return_value.__enter__.return_value.execute.return_value = [
+            True,
+            redis.ResponseError("NOPERM"),
+            redis.ResponseError("WRONGTYPE"),
+        ]
+        result = runtime.probe_queue_backlog("redis://sl/0")
+        self.assertEqual(result["health_status"], "ok")
+        self.assertEqual(result["availability_status"], "unknown")
+        self.assertEqual(result["queue_lengths"], {})
+        self.assertTrue(
+            all(n["code"] == "queue_metrics_unavailable" for n in result["notices"])
+        )
+
+    @patch("redis.from_url")
+    def test_ping_permission_failure_is_unknown_not_unhealthy(self, connect):
+        import redis
+
+        connect.return_value.pipeline.return_value.__enter__.return_value.execute.return_value = [
+            redis.ResponseError("NOPERM ping"),
+            5,
+            10,
+        ]
+        result = runtime.probe_queue_backlog("redis://sl/0")
+        self.assertEqual(result["health_status"], "unknown")
+        self.assertEqual(result["queue_lengths"], {"lens": 5, "sourcelens": 10})
 
 
 @override_settings(
@@ -321,6 +505,25 @@ class SnapshotTests(SimpleTestCase):
         self.assertEqual(
             runtime.sourcelens_health_payload()["runtime_monitor"]["status"], "ok"
         )
+
+    @patch.object(runtime.deploy, "sourcelens_mode", return_value="bundled")
+    @patch.object(runtime.sl_client, "ping", return_value=API_READY)
+    def test_normal_log_growth_does_not_restore_overall_health(self, _ping, _mode):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "postgresql").mkdir()
+            (root / "worker").mkdir()
+            path = root / "postgresql" / "service.log"
+            stamp = datetime.now(timezone.utc).isoformat()
+            path.write_text(f"{stamp} ERROR: unexpected zero page\n")
+            with patch.dict(os.environ, {"HFL_SL_RUNTIME_LOG_DIR": directory}):
+                first = runtime._collect_health(timeout=2)["runtime_monitor"]
+                with path.open("a") as stream:
+                    stream.write(f"{stamp} LOG: connection received\n" * 12000)
+                second = runtime._collect_health(timeout=2)["runtime_monitor"]
+            self.assertEqual(first["status"], "degraded")
+            self.assertEqual(second["status"], "degraded")
+            self.assertEqual(second["health_status"], "error")
 
     @patch.object(runtime.deploy, "lens_gateway_base_url", return_value="")
     def test_integrations_view_returns_same_snapshot(self, _gateway):

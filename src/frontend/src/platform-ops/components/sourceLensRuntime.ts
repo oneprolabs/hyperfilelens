@@ -8,11 +8,14 @@ const noticeKeys: Record<string, string> = {
   index_corruption: 'indexCorruption',
   index_corruption_history: 'indexCorruptionHistory',
   index_corruption_undated: 'indexCorruptionUndated',
+  index_corruption_unconfirmed: 'indexCorruptionUnconfirmed',
+  index_scan_incomplete: 'indexScanIncomplete',
   index_logs_unavailable: 'indexLogsUnavailable',
   queue_backlog: 'queueBacklog',
   queue_not_configured: 'queueNotConfigured',
   queue_config_invalid: 'queueConfigInvalid',
   queue_probe_failed: 'queueProbeFailed',
+  queue_metrics_unavailable: 'queueMetricsUnavailable',
 }
 
 /** Reuse the table's existing notice styling; never expose raw upstream logs. */

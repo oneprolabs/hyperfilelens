@@ -10,19 +10,35 @@ deletions.
 
 Bundled deployments already mount `data/sourcelens/logs` read-only at
 `/var/log/sourcelens` in both development and production HFL Compose files.
-HFL inspects PostgreSQL and Worker log tails for `unexpected zero page` and
+HFL incrementally scans PostgreSQL and Worker logs for `unexpected zero page` and
 `right sibling's left-link doesn't match`.
 
-- Maximum four files per directory, 256 KiB per file, 512 directory entries.
+- Maximum four files per directory, 256 KiB per file per scan, 512 directory entries.
 - Regular files only; no symlink files. The scan is best-effort, not a complete
   historical search or an index integrity check.
 - PostgreSQL/Celery event timestamps are used, not file modification times.
   Naive timestamps are interpreted as UTC, matching the packaged SL runtime.
+- New files are scanned from the beginning; cached inode/offset checkpoints
+  resume subsequent scans. Truncation and replacement restart scanning. Complete
+  records and error context are preserved across chunks; oversized lines are
+  skipped rather than treating fragments as log records. Initial scans can
+  take multiple page refreshes; pending coverage is a yellow Warning, not proof
+  of health.
+- Match only explicit ERROR/FATAL/PANIC messages or database exception records.
+  Ordinary LOG/INFO, SQL statements and source-code stack frames are excluded.
 - Errors within the last 24 hours produce a red Error notice and Unhealthy
   Health Check on PostgreSQL. Business Availability remains unknown: an index
   error does not prove that every database query fails.
-- Older/undated evidence produces an informational notice explicitly saying
-  current integrity is not confirmed. Aging out does **not** mean repaired.
+- First-discovered older/undated evidence produces an informational notice
+  explicitly saying current integrity is not confirmed. Previously detected
+  recent errors remain in the HFL checkpoint even when logs grow/rotate/disappear.
+  After 24 hours their red notice becomes a yellow "recovery not confirmed"
+  warning; age/normal activity never automatically declares recovery.
+- Checkpoints/evidence are in the existing HFL cache, refreshed with a seven-day
+  TTL. They are not durable database records: cache eviction/expiry loses them
+  and restarts scanning. Cache failure is an incomplete-monitoring Warning.
+  Confirm repairs independently; this probe cannot validate index integrity
+  or automatically acknowledge/clear an incident.
 - No matching errors does not turn PostgreSQL green. Missing/unreadable files
   are shown as unavailable/incomplete monitoring.
 - `HFL_SL_RUNTIME_LOG_DIR` optionally overrides the container-side directory.
@@ -64,7 +80,14 @@ configuration to a shared environment.
   has stopped or a database is damaged.
 - Below threshold: no backlog warning; queue size alone does not establish
   business readiness.
-- Probe/config failure: explicit monitoring warning; no fabricated counts.
+- Pipeline replies are processed individually (`raise_on_error=False`). A
+  successful PING keeps Redis Healthy even when LLEN returns NOPERM/WRONGTYPE.
+  Failed queue metrics receive their own Warning with no fabricated count;
+  successful metrics for other queues are still retained. LLEN failure alone
+  does not set Business Availability to unavailable/degraded.
+- PING permission failure: Unknown health with a monitoring Warning, not a
+  claim that Redis is down. Transport/connect/read failures indicate an
+  unhealthy connection. Invalid configuration also receives a monitoring Warning.
 
 ## Summary and UI
 
@@ -73,7 +96,10 @@ API failure semantics remain; an otherwise ready API plus active index/queue
 alerts changes overall SourceLens and Instance Health to Degraded. Recent
 index evidence makes the SourceLens Health Check Unhealthy, without claiming
 complete business unavailability. Historical/info notices do not act as live
-failures. Cache failures fall back to probing rather than hiding diagnostics.
+failures, except retained incidents whose recovery is unconfirmed. Incomplete
+scanning/checkpoints and metrics-access failures also make the overall summary
+Degraded rather than silently declaring health. Snapshot cache failure falls
+back to probing; log checkpoint failure is surfaced explicitly.
 
 Reuse RuntimeStatusTable notices and HflStatusTag tones; no new CSS, columns,
 cards, icons or task views. English, Simplified Chinese and Spanish copy is

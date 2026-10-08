@@ -25,13 +25,19 @@ from apps.lens_bridge.services import sl_client
 CACHE_SECONDS = 30
 MAX_FILES_PER_DIRECTORY = 4
 MAX_DIRECTORY_ENTRIES = 512
-MAX_TAIL_BYTES = 256 * 1024
+MAX_SCAN_BYTES = 256 * 1024
+SCAN_STATE_SECONDS = 7 * 24 * 3600
 RECENT_ERROR_HOURS = 24
 TIMESTAMP = re.compile(
     r"^\[?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})"
     r"(?:[.,](\d{1,6}))?(?:\s*(UTC|GMT|Z|[+-]\d{2}:?\d{2}))?"
 )
 INDEX_ERRORS = ("unexpected zero page", "right sibling's left-link doesn't match")
+ERROR_LEVEL = re.compile(r"^\s*:?\s*(?:\[\d+\]\s*)?(?:ERROR|FATAL|PANIC)\s*[:/]")
+DATABASE_EXCEPTION = re.compile(
+    r"^(?:[\w]+\.)*(?:DatabaseError|InternalError|OperationalError|"
+    r"IndexCorrupted|InternalError_):"
+)
 
 
 def _notice(code: str, level: str, **params: Any) -> dict[str, Any]:
@@ -54,7 +60,7 @@ def _event_time(line: str) -> datetime | None:
         return None
 
 
-def _log_files(directory: Path) -> list[Path]:
+def _log_files(directory: Path) -> tuple[list[Path], bool]:
     """Bound directory enumeration and only inspect regular non-symlink files."""
     candidates: list[tuple[float, Path]] = []
     with os.scandir(directory) as entries:
@@ -65,54 +71,153 @@ def _log_files(directory: Path) -> list[Path]:
                 candidates.append(
                     (entry.stat(follow_symlinks=False).st_mtime, Path(entry.path))
                 )
-    return [path for _, path in heapq.nlargest(MAX_FILES_PER_DIRECTORY, candidates)]
+        truncated = next(entries, None) is not None
+    return (
+        [path for _, path in heapq.nlargest(MAX_FILES_PER_DIRECTORY, candidates)],
+        truncated,
+    )
 
 
-def _tail(path: Path) -> str:
-    """Read a bounded tail, avoiding symlinks and blocking on special files."""
+def _read_chunk(
+    path: Path, previous: dict[str, Any]
+) -> tuple[str, dict[str, Any], bool]:
+    """Incrementally scan from the beginning, with a fixed budget per file."""
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         size = os.fstat(stream.fileno())
         if not stat.S_ISREG(size.st_mode):
             raise OSError("Not a regular log file")
-        offset = max(0, size.st_size - MAX_TAIL_BYTES)
+        identity = f"{size.st_dev}:{size.st_ino}"
+        same_file = previous.get("identity") == identity
+        offset = int(previous.get("offset", 0)) if same_file else 0
+        if offset > size.st_size:  # Copy-truncate rotation.
+            offset = 0
+            same_file = False
         stream.seek(offset)
-        data = stream.read(MAX_TAIL_BYTES)
-    if offset:
-        data = data.partition(b"\n")[2]  # Discard the partial first line.
-    return data.decode("utf-8", errors="replace")
+        data = stream.read(MAX_SCAN_BYTES)
+    end = data.rfind(b"\n") + 1
+    skipped = False
+    if end:
+        data = data[:end]
+    elif len(data) == MAX_SCAN_BYTES:
+        # Skip oversized lines without interpreting their fragments as records.
+        skipped = True
+    else:
+        data = b""  # Retry an incomplete last record on the next scan.
+    state = dict(previous) if same_file else {}
+    if skipped or previous.get("skip_line") and same_file:
+        first_end = data.find(b"\n") + 1
+        text = data[first_end:] if first_end else b""
+        state["skip_line"] = not bool(first_end)
+        state.pop("event_at", None)
+        state["error_context"] = False
+    else:
+        text = data
+    state.update(identity=identity, offset=offset + len(data))
+    return (
+        text.decode("utf-8", errors="replace"),
+        state,
+        (state["offset"] < size.st_size or skipped),
+    )
+
+
+def _scan_errors(
+    text: str,
+    state: dict[str, Any],
+    *,
+    now: datetime,
+) -> tuple[datetime | None, bool]:
+    """Only match error messages or database exceptions, never LOG/SQL text."""
+    latest = None
+    undated = False
+    event_at = (
+        datetime.fromisoformat(state["event_at"]) if state.get("event_at") else None
+    )
+    error_context = bool(state.get("error_context"))
+    for line in text.splitlines():
+        timestamp = TIMESTAMP.match(line)
+        level = ERROR_LEVEL.match(line[timestamp.end() :] if timestamp else line)
+        if timestamp:
+            event_at = _event_time(line)
+            error_context = level is not None
+        elif level:
+            event_at = None
+            error_context = True
+        exception = DATABASE_EXCEPTION.match(line.strip())
+        if not level and not exception:
+            continue
+        if exception and timestamp is None and not error_context:
+            # A standalone exception is evidence, but has no reliable timestamp.
+            event_at = None
+        payload = line[timestamp.end() :] if timestamp else line
+        if not any(signature in payload.lower() for signature in INDEX_ERRORS):
+            continue
+        if event_at is None or event_at > now + timedelta(minutes=5):
+            undated = True
+        elif latest is None or event_at > latest:
+            latest = event_at
+    state["event_at"] = event_at.isoformat() if event_at else None
+    state["error_context"] = error_context
+    return latest, undated
 
 
 def probe_index_errors(root: Path, *, now: datetime) -> dict[str, Any]:
     """Report recent errors separately from historical or undated evidence."""
-    latest: datetime | None = None
-    undated = False
+    key = (
+        "runtime:sl:logs:v2:"
+        + hashlib.sha256(str(root.absolute()).encode()).hexdigest()
+    )
+    state_unavailable = False
+    try:
+        saved = cache.get(key) or {}
+    except Exception:
+        saved = {}
+        state_unavailable = True
+    latest = datetime.fromisoformat(saved["latest"]) if saved.get("latest") else None
+    undated = bool(saved.get("undated"))
+    retained_alert = bool(saved.get("retained_alert"))
+    previous_files = saved.get("files", {})
+    files_state = {}
     readable = False
     incomplete = False
+    pending = False
     for name in ("postgresql", "worker"):
         try:
-            files = _log_files(root / name)
+            files, truncated = _log_files(root / name)
+            pending |= truncated
         except OSError:
             incomplete = True
             continue
         for path in files:
             try:
-                text = _tail(path)
+                text, position, more = _read_chunk(
+                    path, previous_files.get(str(path), {})
+                )
             except OSError:
                 incomplete = True
                 continue
             readable = True
-            event_at = None
-            for line in text.splitlines():
-                stamp = _event_time(line)
-                if TIMESTAMP.match(line):
-                    event_at = stamp
-                if not any(signature in line.lower() for signature in INDEX_ERRORS):
-                    continue
-                if event_at is None or event_at > now + timedelta(minutes=5):
-                    undated = True
-                elif latest is None or event_at > latest:
-                    latest = event_at
+            pending |= more
+            found, unknown_time = _scan_errors(text, position, now=now)
+            files_state[str(path)] = position
+            undated |= unknown_time
+            if found and (latest is None or found > latest):
+                latest = found
+    if latest and latest >= now - timedelta(hours=RECENT_ERROR_HOURS):
+        retained_alert = True
+    try:
+        cache.set(
+            key,
+            {
+                "files": files_state,
+                "latest": latest.isoformat() if latest else None,
+                "undated": undated,
+                "retained_alert": retained_alert,
+            },
+            SCAN_STATE_SECONDS,
+        )
+    except Exception:
+        state_unavailable = True
 
     notices = []
     health = "unknown"  # Absence of log errors never proves database integrity.
@@ -121,8 +226,14 @@ def probe_index_errors(root: Path, *, now: datetime) -> dict[str, Any]:
         health = "error" if recent else "unknown"
         notices.append(
             _notice(
-                "index_corruption" if recent else "index_corruption_history",
-                "error" if recent else "info",
+                "index_corruption"
+                if recent
+                else (
+                    "index_corruption_unconfirmed"
+                    if retained_alert
+                    else "index_corruption_history"
+                ),
+                "error" if recent else ("warning" if retained_alert else "info"),
                 last_seen_at=latest.isoformat(),
             )
         )
@@ -130,6 +241,8 @@ def probe_index_errors(root: Path, *, now: datetime) -> dict[str, Any]:
         notices.append(_notice("index_corruption_undated", "info"))
     if not readable or incomplete:
         notices.append(_notice("index_logs_unavailable", "info"))
+    if pending or state_unavailable:
+        notices.append(_notice("index_scan_incomplete", "warning"))
     return {
         "health_status": health,
         "availability_status": "unknown",
@@ -197,12 +310,22 @@ def probe_queue_backlog(url: str) -> dict[str, Any]:
             pipeline.ping()
             for queue in queues:
                 pipeline.llen(queue)
-            response = pipeline.execute()
-        if len(response) != len(queues) + 1 or not response[0]:
+            response = pipeline.execute(raise_on_error=False)
+        if len(response) != len(queues) + 1:
             raise ValueError("Invalid queue probe response")
-        result["health_status"] = "ok"
+        if isinstance(response[0], (redis.ConnectionError, redis.TimeoutError)):
+            result["health_status"] = "error"
+        elif response[0] is True:
+            result["health_status"] = "ok"
+        else:
+            result["notices"].append(_notice("queue_probe_failed", "warning"))
         lengths = {}
         for queue, length in zip(queues, response[1:], strict=True):
+            if isinstance(length, redis.ResponseError):
+                result["notices"].append(
+                    _notice("queue_metrics_unavailable", "warning", queue=queue)
+                )
+                continue
             if not isinstance(length, int) or length < 0:
                 raise ValueError("Invalid queue length")
             lengths[queue] = length
@@ -217,11 +340,13 @@ def probe_queue_backlog(url: str) -> dict[str, Any]:
                     )
                 )
         result["queue_lengths"] = lengths
-        if result["notices"]:
+        if any(notice["code"] == "queue_backlog" for notice in result["notices"]):
             result["availability_status"] = "degraded"
-    except (redis.RedisError, OSError, ValueError):
+    except (redis.ConnectionError, redis.TimeoutError, OSError):
         # Never return credentials, endpoints or Redis exception messages.
         result["health_status"] = "error"
+        result["notices"] = [_notice("queue_probe_failed", "warning")]
+    except (redis.RedisError, ValueError):
         result["notices"] = [_notice("queue_probe_failed", "warning")]
     finally:
         if client is not None:
@@ -283,7 +408,7 @@ def sourcelens_health_payload(*, timeout: int = 3) -> dict[str, Any]:
             os.getenv("HFL_SL_RUNTIME_QUEUE_WARNING", ""),
         ]
     )
-    key = "runtime:sl:v1:" + hashlib.sha256(config.encode()).hexdigest()
+    key = "runtime:sl:v2:" + hashlib.sha256(config.encode()).hexdigest()
     try:
         cached = cache.get(key)
     except Exception:  # Cache failure must not prevent runtime diagnostics.
