@@ -336,7 +336,7 @@ def _probe_index_errors(
                 latest = found
     if latest and latest >= now - timedelta(hours=RECENT_ERROR_HOURS):
         retained_alert = True
-    if lease:
+    if lease and not state_unavailable:
         lock_key, owner, started = lease
         try:
             if time.monotonic() - started >= SCAN_LOCK_SECONDS - 10:

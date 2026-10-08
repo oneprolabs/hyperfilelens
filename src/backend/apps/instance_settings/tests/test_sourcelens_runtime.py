@@ -279,6 +279,71 @@ class IndexLogProbeTests(SimpleTestCase):
                 self.probe()["notices"][0]["code"], "index_scan_incomplete"
             )
 
+    def test_checkpoint_read_failure_does_not_overwrite_retained_error(self):
+        from redis.exceptions import TimeoutError
+
+        path = self.write(
+            "postgresql",
+            "2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n",
+        )
+        self.assertEqual(self.probe()["health_status"], "error")
+        key = (
+            "runtime:sl:logs:v2:"
+            + hashlib.sha256(
+                str(self.root.absolute()).encode(),
+            ).hexdigest()
+        )
+        before = cache.get(key)
+        path.unlink()
+        path.write_text("2026-10-08 05:10:00 UTC LOG: connection received\n")
+        with (
+            patch.object(
+                runtime,
+                "_read_scan_checkpoint",
+                side_effect=TimeoutError("temporary read timeout"),
+            ),
+            patch.object(
+                runtime,
+                "_atomic_scan_update",
+                wraps=runtime._atomic_scan_update,
+            ) as update,
+        ):
+            failed = self.probe()
+        self.assertEqual(failed["health_status"], "unknown")
+        self.assertIn("index_scan_incomplete", [n["code"] for n in failed["notices"]])
+        self.assertEqual(cache.get(key), before)
+        self.assertIsNone(cache.get(key + ":scan-lock"))
+        # Releasing the lease is allowed; writing a new checkpoint is not.
+        self.assertEqual(update.call_count, 1)
+        self.assertEqual(len(update.call_args.args), 3)
+        recovered = self.probe()
+        self.assertEqual(recovered["health_status"], "error")
+        self.assertEqual(recovered["notices"][0]["code"], "index_corruption")
+        self.assertNotIn(
+            "index_scan_incomplete", [n["code"] for n in recovered["notices"]]
+        )
+
+    def test_checkpoint_read_failure_still_reports_current_log_evidence(self):
+        self.write(
+            "worker",
+            "2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n",
+        )
+        key = (
+            "runtime:sl:logs:v2:"
+            + hashlib.sha256(
+                str(self.root.absolute()).encode(),
+            ).hexdigest()
+        )
+        with patch.object(runtime, "_read_scan_checkpoint", side_effect=RuntimeError):
+            failed = self.probe()
+        self.assertEqual(failed["health_status"], "error")
+        self.assertIn("index_scan_incomplete", [n["code"] for n in failed["notices"]])
+        self.assertIsNone(cache.get(key))
+        self.assertIsNone(cache.get(key + ":scan-lock"))
+        # A successful read of an absent checkpoint is not treated as a failure.
+        self.assertEqual(self.probe()["health_status"], "error")
+        self.assertIsNotNone(cache.get(key)["latest"])
+
     def test_large_normal_log_does_not_trigger_a_backfill_warning(self):
         self.write(
             "postgresql",

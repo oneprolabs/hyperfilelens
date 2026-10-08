@@ -43,6 +43,9 @@ HFL incrementally scans PostgreSQL and Worker logs for `unexpected zero page` an
 - Checkpoints/evidence are in the existing HFL cache, refreshed with a seven-day
   TTL. They are not durable database records: cache eviction/expiry loses them
   and restarts scanning. Cache failure is an incomplete-monitoring Warning.
+  If a checkpoint read fails, the probe may report current log evidence, but
+  does not write any checkpoint that round; retained cache data stays untouched,
+  and its owned lease is still released safely.
   Confirm repairs independently; this probe cannot validate index integrity
   or automatically acknowledge/clear an incident.
 - A non-blocking, per-log-root cache lease serializes scans/checkpoint writes.
