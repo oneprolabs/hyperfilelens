@@ -11,6 +11,8 @@ import heapq
 import os
 import re
 import stat
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from itertools import islice
 from pathlib import Path
@@ -27,6 +29,7 @@ MAX_FILES_PER_DIRECTORY = 4
 MAX_DIRECTORY_ENTRIES = 512
 MAX_SCAN_BYTES = 256 * 1024
 SCAN_STATE_SECONDS = 7 * 24 * 3600
+SCAN_LOCK_SECONDS = 60
 RECENT_ERROR_HOURS = 24
 TIMESTAMP = re.compile(
     r"^\[?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})"
@@ -81,7 +84,7 @@ def _log_files(directory: Path) -> tuple[list[Path], bool]:
 def _read_chunk(
     path: Path, previous: dict[str, Any]
 ) -> tuple[str, dict[str, Any], bool]:
-    """Incrementally scan from the beginning, with a fixed budget per file."""
+    """Prioritize recent records, then resume within a fixed budget per file."""
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         size = os.fstat(stream.fileno())
@@ -93,8 +96,28 @@ def _read_chunk(
         if offset > size.st_size:  # Copy-truncate rotation.
             offset = 0
             same_file = False
+        jump = size.st_size - offset > MAX_SCAN_BYTES
+        if jump:
+            # Never make today's faults wait behind an old or fast-growing log.
+            offset = size.st_size - MAX_SCAN_BYTES
+            same_file = False
         stream.seek(offset)
         data = stream.read(MAX_SCAN_BYTES)
+    if jump:
+        # The first record may start before the selected window.
+        boundary = data.find(b"\n") + 1
+        if not boundary:
+            return (
+                "",
+                {
+                    "identity": identity,
+                    "offset": offset + len(data),
+                    "skip_line": True,
+                },
+                True,
+            )
+        offset += boundary
+        data = data[boundary:]
     end = data.rfind(b"\n") + 1
     skipped = False
     if end:
@@ -162,11 +185,46 @@ def _scan_errors(
 
 
 def probe_index_errors(root: Path, *, now: datetime) -> dict[str, Any]:
-    """Report recent errors separately from historical or undated evidence."""
+    """Serialize checkpoint updates without waiting for another request."""
     key = (
         "runtime:sl:logs:v2:"
         + hashlib.sha256(str(root.absolute()).encode()).hexdigest()
     )
+    lock_key = key + ":scan-lock"
+    owner = uuid.uuid4().hex
+    started = time.monotonic()
+    try:
+        acquired = cache.add(lock_key, owner, SCAN_LOCK_SECONDS)
+    except Exception:
+        acquired = False
+    try:
+        return _probe_index_errors(
+            root,
+            key=key,
+            now=now,
+            lease=(lock_key, owner, started) if acquired else None,
+        )
+    finally:
+        # Expired owners must not remove a subsequent request's lock.
+        if acquired:
+            try:
+                if (
+                    cache.get(lock_key) == owner
+                    and time.monotonic() - started < SCAN_LOCK_SECONDS - 10
+                ):
+                    cache.delete(lock_key)
+            except Exception:
+                pass
+
+
+def _probe_index_errors(
+    root: Path,
+    *,
+    key: str,
+    now: datetime,
+    lease: tuple[str, str, float] | None,
+) -> dict[str, Any]:
+    """Read retained evidence; only the active lease holder scans and writes."""
     state_unavailable = False
     try:
         saved = cache.get(key) or {}
@@ -181,7 +239,7 @@ def probe_index_errors(root: Path, *, now: datetime) -> dict[str, Any]:
     readable = False
     incomplete = False
     pending = False
-    for name in ("postgresql", "worker"):
+    for name in ("postgresql", "worker") if lease else ():
         try:
             files, truncated = _log_files(root / name)
             pending |= truncated
@@ -205,18 +263,29 @@ def probe_index_errors(root: Path, *, now: datetime) -> dict[str, Any]:
                 latest = found
     if latest and latest >= now - timedelta(hours=RECENT_ERROR_HOURS):
         retained_alert = True
-    try:
-        cache.set(
-            key,
-            {
-                "files": files_state,
-                "latest": latest.isoformat() if latest else None,
-                "undated": undated,
-                "retained_alert": retained_alert,
-            },
-            SCAN_STATE_SECONDS,
-        )
-    except Exception:
+    if lease:
+        lock_key, owner, started = lease
+        try:
+            if (
+                cache.get(lock_key) != owner
+                or time.monotonic() - started >= SCAN_LOCK_SECONDS - 10
+            ):
+                state_unavailable = True
+            else:
+                cache.set(
+                    key,
+                    {
+                        "files": files_state,
+                        "latest": latest.isoformat() if latest else None,
+                        "undated": undated,
+                        "retained_alert": retained_alert,
+                    },
+                    SCAN_STATE_SECONDS,
+                )
+        except Exception:
+            state_unavailable = True
+    else:
+        # Busy/unavailable locks reuse evidence with an explicit warning.
         state_unavailable = True
 
     notices = []
@@ -239,7 +308,7 @@ def probe_index_errors(root: Path, *, now: datetime) -> dict[str, Any]:
         )
     elif undated:
         notices.append(_notice("index_corruption_undated", "info"))
-    if not readable or incomplete:
+    if lease and (not readable or incomplete):
         notices.append(_notice("index_logs_unavailable", "info"))
     if pending or state_unavailable:
         notices.append(_notice("index_scan_incomplete", "warning"))

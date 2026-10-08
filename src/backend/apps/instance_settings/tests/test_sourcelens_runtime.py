@@ -1,6 +1,7 @@
 """Bounded, read-only SourceLens runtime monitoring contracts."""
 
 import os
+import threading
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -135,9 +136,10 @@ class IndexLogProbeTests(SimpleTestCase):
         )
         chunk, position, more = runtime._read_chunk(path, {})
         self.assertLessEqual(len(chunk.encode()), runtime.MAX_SCAN_BYTES)
-        self.assertLessEqual(position["offset"], runtime.MAX_SCAN_BYTES)
-        self.assertTrue(more)
-        self.assertEqual(self.probe()["health_status"], "error")
+        self.assertLessEqual(position["offset"], path.stat().st_size)
+        self.assertFalse(more)
+        # Bounded recent-log checks do not claim complete historical coverage.
+        self.assertEqual(self.probe()["health_status"], "unknown")
 
     def test_recent_window_boundary(self):
         stamp = (NOW - timedelta(hours=24)).isoformat()
@@ -154,7 +156,9 @@ class IndexLogProbeTests(SimpleTestCase):
             stream.write("2026-10-08 05:01:00 UTC LOG: connection received\n" * 12000)
         result = self.probe()
         self.assertEqual(result["health_status"], "error")
-        self.assertIn("index_scan_incomplete", [n["code"] for n in result["notices"]])
+        self.assertNotIn(
+            "index_scan_incomplete", [n["code"] for n in result["notices"]]
+        )
         path.rename(path.with_suffix(".log.1"))
         path.write_text("2026-10-08 05:10:00 UTC LOG: connection received\n")
         self.assertEqual(self.probe()["health_status"], "error")
@@ -174,7 +178,7 @@ class IndexLogProbeTests(SimpleTestCase):
         self.assertEqual(result["notices"][0]["code"], "index_corruption_unconfirmed")
         self.assertEqual(result["notices"][0]["level"], "warning")
 
-    def test_initial_scan_reports_pending_coverage_then_reaches_error(self):
+    def test_initial_scan_finds_latest_error_without_historical_backfill(self):
         path = self.write(
             "postgresql",
             (
@@ -184,8 +188,11 @@ class IndexLogProbeTests(SimpleTestCase):
         )
         self.assertGreater(path.stat().st_size, runtime.MAX_SCAN_BYTES)
         first = self.probe()
-        self.assertEqual(first["health_status"], "unknown")
-        self.assertEqual(first["notices"][0]["code"], "index_scan_incomplete")
+        self.assertEqual(first["health_status"], "error")
+        self.assertNotIn(
+            "index_scan_incomplete",
+            [n["code"] for n in first["notices"]],
+        )
         second = self.probe()
         self.assertEqual(second["health_status"], "error")
         self.assertNotIn(
@@ -216,9 +223,11 @@ class IndexLogProbeTests(SimpleTestCase):
         exception = (
             "psycopg2.errors.IndexCorrupted: right sibling's left-link doesn't match\n"
         )
-        self.write("worker", text + exception)
+        path = self.write("worker", text)
         with patch.object(runtime, "MAX_SCAN_BYTES", len(text.encode())):
             first = self.probe()
+            with path.open("a") as stream:
+                stream.write(exception)
             second = self.probe()
         self.assertEqual(first["health_status"], "error")
         self.assertEqual(
@@ -266,6 +275,137 @@ class IndexLogProbeTests(SimpleTestCase):
             self.assertEqual(
                 self.probe()["notices"][0]["code"], "index_scan_incomplete"
             )
+
+    def test_large_normal_log_does_not_trigger_a_backfill_warning(self):
+        self.write(
+            "postgresql",
+            "2026-10-08 05:00:00 UTC LOG: connection received\n" * 12000,
+        )
+        result = self.probe()
+        self.assertEqual(result["health_status"], "unknown")
+        self.assertEqual(result["notices"], [])
+
+    def test_latest_error_is_found_after_large_growth_even_with_checkpoint(self):
+        path = self.write(
+            "postgresql",
+            "2026-10-08 04:00:00 UTC LOG: connection received\n",
+        )
+        self.assertEqual(self.probe()["notices"], [])
+        with path.open("a") as stream:
+            stream.write("2026-10-08 05:00:00 UTC LOG: connection received\n" * 12000)
+            stream.write("2026-10-08 05:30:00 UTC ERROR: unexpected zero page\n")
+        self.assertEqual(self.probe()["health_status"], "error")
+
+    def test_truncated_first_record_is_not_interpreted_as_a_new_error(self):
+        prefix = "2026-10-08 05:00:00 UTC LOG: statement: SELECT '"
+        self.write("worker", prefix + "ERROR: unexpected zero page';\n")
+        with patch.object(runtime, "MAX_SCAN_BYTES", 27):
+            self.assertEqual(self.probe()["health_status"], "unknown")
+
+    def test_concurrent_scan_does_not_write_over_the_owner_checkpoint(self):
+        self.write(
+            "postgresql",
+            "2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n",
+        )
+        started = threading.Event()
+        release = threading.Event()
+        results = {}
+        original = runtime._read_chunk
+
+        def pause_owner(path, previous):
+            value = original(path, previous)
+            if threading.current_thread().name == "checkpoint-owner":
+                started.set()
+                if not release.wait(5):
+                    raise RuntimeError("Test owner did not receive release")
+            return value
+
+        def scan_owner():
+            try:
+                results["owner"] = self.probe()
+            except Exception as exc:
+                results["exception"] = exc
+
+        with patch.object(runtime, "_read_chunk", side_effect=pause_owner):
+            thread = threading.Thread(target=scan_owner, name="checkpoint-owner")
+            thread.start()
+            try:
+                self.assertTrue(started.wait(5))
+                with patch.object(runtime.cache, "set", wraps=cache.set) as writes:
+                    busy = self.probe()
+                    writes.assert_not_called()
+                self.assertEqual(busy["notices"][0]["code"], "index_scan_incomplete")
+            finally:
+                release.set()
+                thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertNotIn("exception", results)
+        self.assertEqual(results["owner"]["health_status"], "error")
+        # Rotation/removal cannot erase the evidence committed by the owner.
+        for path in (self.root / "postgresql").iterdir():
+            path.unlink()
+        self.assertEqual(self.probe()["health_status"], "error")
+
+    def test_busy_lock_reuses_existing_error_evidence(self):
+        self.write(
+            "worker",
+            "2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n",
+        )
+        self.assertEqual(self.probe()["health_status"], "error")
+        with (
+            patch.object(runtime.cache, "add", return_value=False),
+            patch.object(
+                runtime,
+                "_read_chunk",
+            ) as read,
+        ):
+            result = self.probe()
+        read.assert_not_called()
+        self.assertEqual(result["health_status"], "error")
+        self.assertIn("index_scan_incomplete", [n["code"] for n in result["notices"]])
+
+    def test_expired_owner_cannot_commit_or_release_new_owner_lock(self):
+        self.write(
+            "worker",
+            "2026-10-08 05:00:00 UTC ERROR: unexpected zero page\n",
+        )
+        original = runtime._read_chunk
+        locks = []
+
+        def replace_lease(path, previous):
+            value = original(path, previous)
+            cache.set(locks[0], "new-owner", runtime.SCAN_LOCK_SECONDS)
+            return value
+
+        real_add = cache.add
+        with (
+            patch.object(
+                runtime.cache,
+                "add",
+                side_effect=lambda key, owner, timeout: (
+                    locks.append(key) or real_add(key, owner, timeout)
+                ),
+            ),
+            patch.object(runtime, "_read_chunk", side_effect=replace_lease),
+        ):
+            result = self.probe()
+        self.assertIn("index_scan_incomplete", [n["code"] for n in result["notices"]])
+        self.assertEqual(cache.get(locks[0]), "new-owner")
+        self.assertIsNone(cache.get(locks[0].removesuffix(":scan-lock")))
+
+    def test_near_expiry_owner_does_not_write_checkpoint(self):
+        self.write("worker", "2026-10-08 04:00:00 UTC LOG: connection received\n")
+        with (
+            patch.object(runtime.time, "monotonic", side_effect=[0, 55, 55]),
+            patch.object(
+                runtime.cache,
+                "set",
+                wraps=cache.set,
+            ) as write,
+        ):
+            result = self.probe()
+        write.assert_not_called()
+        self.assertEqual(result["notices"][0]["code"], "index_scan_incomplete")
 
 
 @patch.dict(

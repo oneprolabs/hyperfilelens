@@ -18,12 +18,16 @@ HFL incrementally scans PostgreSQL and Worker logs for `unexpected zero page` an
   historical search or an index integrity check.
 - PostgreSQL/Celery event timestamps are used, not file modification times.
   Naive timestamps are interpreted as UTC, matching the packaged SL runtime.
-- New files are scanned from the beginning; cached inode/offset checkpoints
-  resume subsequent scans. Truncation and replacement restart scanning. Complete
-  records and error context are preserved across chunks; oversized lines are
-  skipped rather than treating fragments as log records. Initial scans can
-  take multiple page refreshes; pending coverage is a yellow Warning, not proof
-  of health.
+- First checks prioritize the most recent 256 KiB. Cached inode/offset checkpoints
+  resume normal append-only reading; if new data exceeds the budget, the check
+  jumps to the latest window instead of waiting behind old log traffic.
+  Truncation/replacement likewise checks the latest bounded window. This is a
+  recent-log probe, **not historical backfill**: records outside the window may
+  be missed, and absence of errors never proves database integrity.
+- Partial first records after a jump are discarded, not interpreted as new
+  error messages. Complete records and error context are preserved for normal
+  incremental reads; oversized lines are skipped rather than parsed as fragments.
+  File size alone does not produce a scan-pending/degraded status.
 - Match only explicit ERROR/FATAL/PANIC messages or database exception records.
   Ordinary LOG/INFO, SQL statements and source-code stack frames are excluded.
 - Errors within the last 24 hours produce a red Error notice and Unhealthy
@@ -39,6 +43,12 @@ HFL incrementally scans PostgreSQL and Worker logs for `unexpected zero page` an
   and restarts scanning. Cache failure is an incomplete-monitoring Warning.
   Confirm repairs independently; this probe cannot validate index integrity
   or automatically acknowledge/clear an incident.
+- A non-blocking, per-log-root cache lease serializes scans/checkpoint writes.
+  Contending requests reuse retained evidence with the existing scan-incomplete
+  warning; they neither scan nor overwrite checkpoints. Owners that lose their
+  lease or approach expiry do not commit, and do not remove a replacement
+  owner's lease. A crashed owner's lease expires after 60 seconds. Cache failures
+  are surfaced rather than proceeding with unprotected checkpoint writes.
 - No matching errors does not turn PostgreSQL green. Missing/unreadable files
   are shown as unavailable/incomplete monitoring.
 - `HFL_SL_RUNTIME_LOG_DIR` optionally overrides the container-side directory.
