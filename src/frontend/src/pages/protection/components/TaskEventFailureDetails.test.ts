@@ -159,6 +159,44 @@ describe('TaskEventFailureDetails', () => {
     expect(wrapper.find('.task-event-failure').exists()).toBe(false)
   })
 
+  it('omits technical detail identical to the terminal reason but keeps distinct diagnostics', async () => {
+    const message = 'Maintenance lost its execution heartbeat.'
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        metadata: { error_code: 'CONTROL_PLANE_RESTART_INTERRUPTED', error_message: message },
+        technicalDetail: message,
+      },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    expect(wrapper.get('.task-event-failure__summary--terminal').text()).toBe(message)
+    expect(wrapper.find('.task-event-failure__technical').exists()).toBe(false)
+    await wrapper.setProps({ technicalDetail: 'Worker exited during maintenance.' })
+    expect(wrapper.get('.task-event-failure__technical pre').text()).toBe('Worker exited during maintenance.')
+  })
+
+  it('normalizes legacy maintenance timeout copy without hiding additional diagnostics', async () => {
+    const legacyMessage = "Repository maintenance exceeded its execution time limit. Check the repository owner's activity and storage connectivity before retrying."
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        metadata: { error_code: 'REPOSITORY_OPERATION_TIMEOUT', error_message: legacyMessage },
+        technicalDetail: legacyMessage,
+        terminalResolutions: [en.ops.task.failureDetails.suggestion.investigate_repository_timeout],
+      },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    expect(wrapper.get('.task-event-failure__summary--terminal').text()).toBe(en.ops.task.failureDetails.reason.REPOSITORY_OPERATION_TIMEOUT)
+    expect(wrapper.get('.task-event-failure__remediation-list').text()).toContain('Scheduled maintenance will retry automatically')
+    expect(wrapper.text()).not.toContain('Review the repository configuration')
+    expect(wrapper.find('.task-event-failure__technical').exists()).toBe(false)
+    await wrapper.setProps({ technicalDetail: 'Last progress: compacting indexes.' })
+    expect(wrapper.get('.task-event-failure__technical pre').text()).toBe('Last progress: compacting indexes.')
+    const specificMessage = 'Repository maintenance exceeded its execution time limit. Last progress: compacting indexes.'
+    await wrapper.setProps({
+      metadata: { error_code: 'REPOSITORY_OPERATION_TIMEOUT', error_message: specificMessage },
+    })
+    expect(wrapper.get('.task-event-failure__summary--terminal').text()).toBe(specificMessage)
+  })
+
   it('shows a concise restore permission cause, remediation, and optional diagnostics', () => {
     const wrapper = mount(TaskEventFailureDetails, {
       props: {

@@ -54,8 +54,49 @@ def _reasons(value, code="TASK_FAILED"):
     ]
 
 
+def _repository_agent_unreachable(task) -> bool:
+    return (
+        str(getattr(task, "task_type", "") or "") == "repository_operation"
+        and str(getattr(task, "error_code", "") or "") == "REPOSITORY_OPERATION_FAILED"
+        and str(getattr(task, "error_message", "") or "").strip()
+        == "agent websocket is not routable"
+    )
+
+
+def _repository_connection_role(task) -> str:
+    operation = getattr(task, "repository_operation", None)
+    if operation is None or operation.owner_type != "node" or not operation.owner_node_id:
+        return "host"
+    repository = operation.repository
+    if (
+        (
+            repository.repo_type == "proxy_fs"
+            or (repository.repo_type == "nas" and repository.bind_node_type == "proxy")
+        )
+        and repository.bind_node_id == operation.owner_node_id
+    ):
+        return "proxy"
+    if (
+        repository.repo_type == "nas"
+        and not repository.bind_node_type
+        and not repository.bind_node_id
+    ):
+        return "backup_host"
+    return "host"
+
+
 def _default_suggestion_code(task) -> str:
     task_type = str(getattr(task, "task_type", "") or "")
+    error_code = str(getattr(task, "error_code", "") or "")
+    if (
+        task_type == "repository_operation"
+        and error_code == "CONTROL_PLANE_RESTART_INTERRUPTED"
+    ):
+        return "recover_controller_interruption"
+    if task_type == "repository_operation" and error_code == "REPOSITORY_OPERATION_TIMEOUT":
+        return "investigate_repository_timeout"
+    if _repository_agent_unreachable(task):
+        return f"reconnect_repository_{_repository_connection_role(task)}"
     return {
         "backup": "review_backup_diagnostics",
         "restore": "review_restore_diagnostics",
@@ -94,7 +135,26 @@ def task_error_contract(task, resources=()):
     code = str(task.error_code or failure.get("category") or "TASK_FAILED")
     reasons = _reasons(result.get("reasons"), code) + _reasons(cleanup) + _reasons(warnings)
     if task.error_message:
-        reasons.append({"code": code, "detail": str(task.error_message)})
+        detail = str(task.error_message)
+        if (
+            str(task.task_type) == "repository_operation"
+            and code == "REPOSITORY_OPERATION_TIMEOUT"
+            and detail == (
+                "Repository maintenance exceeded its execution time limit. Check "
+                "the repository owner's activity and storage connectivity before retrying."
+            )
+        ):
+            detail = "Repository maintenance did not finish within the execution time limit."
+        reason_code = code
+        if _repository_agent_unreachable(task):
+            role = _repository_connection_role(task)
+            reason_code = f"repository_{role}_unreachable"
+            detail = {
+                "proxy": "Unable to connect to the proxy host. The maintenance command could not be sent.",
+                "backup_host": "Unable to connect to the backup host. The maintenance command could not be sent.",
+                "host": "The maintenance command could not be sent because the host connection is unavailable.",
+            }[role]
+        reasons.append({"code": reason_code, "detail": detail})
     if failure:
         reasons.append({"code": str(failure.get("category") or code), "detail": str(failure.get("category") or code), "count": failure.get("total_count", failure.get("count", 0))})
     default_suggestion_code = _default_suggestion_code(task)

@@ -224,6 +224,12 @@ const terminalFailureResolutions = computed(() =>
     .map(item => localizedFailureText(item, 'suggestion'))
     .filter(Boolean),
 )
+const repositoryConnectionReason = computed(() => {
+  const reason = taskErrorDetails.value?.reasons?.find(item =>
+    ['repository_proxy_unreachable', 'repository_backup_host_unreachable', 'repository_host_unreachable'].includes(item.code),
+  )
+  return reason ? localizedFailureText(reason, 'reason') : ''
+})
 const effectiveReasons = computed(() => {
     const seen = new Set<string>()
     return (taskErrorDetails.value?.reasons || []).filter(
@@ -267,7 +273,6 @@ const hasLocatedFailureEvent = computed(() => detailEvents.value.some((event) =>
     const hasFailureMetadata = Boolean(
         metadata.terminal_failure
         || metadata.error_message
-        || metadata.error_code
         || metadata.failure_details,
       )
     return hasFailureMetadata
@@ -470,6 +475,7 @@ function hasEventDetailPanel(event: TaskEventRow) {
     const details = metadata[key]
     return Boolean(details && typeof details === 'object' && !Array.isArray(details))
   }) || Boolean(metadata.terminal_failure)
+    || Boolean(metadata.error_code && metadata.error_message)
     || ['skipped_item_count', 'skipped_file_count', 'skipped_directory_count', 'skipped_special_count']
     .some(key => Number(metadata[key]) > 0)
 }
@@ -491,6 +497,7 @@ function eventErrorText(event: TaskEventRow) {
     metadata.failure_details
     || metadata.skipped_details
     || metadata.terminal_failure
+    || (metadata.error_code && metadata.error_message)
     || (
       String(event.message || '').trim() === 'Directory backup failed'
       && Boolean(metadata.error_message || metadata.error_code)
@@ -1294,6 +1301,7 @@ watch(
                           :metadata="taskEventMetadata(event)"
                           :technical-detail="terminalTechnicalDetail(event)"
                           :terminal-resolutions="terminalFailureResolutions"
+                          :repository-connection-reason="repositoryConnectionReason"
                           :show-skipped-details="showTaskSkippedDetails"
                         />
                       </div>
@@ -1378,6 +1386,7 @@ watch(
                       :metadata="taskEventMetadata(event)"
                       :technical-detail="terminalTechnicalDetail(event)"
                       :terminal-resolutions="terminalFailureResolutions"
+                      :repository-connection-reason="repositoryConnectionReason"
                       :show-skipped-details="showTaskSkippedDetails"
                     />
                   </div>

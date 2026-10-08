@@ -265,6 +265,15 @@ export function buildTaskFailureErrorDetails(params: {
   const meta = backupFailureMetadata({ ...task, ...record(metadata) })
   const contract = task.error_details
   if (contract) {
+    const connectionText = (item: { code: string; detail: string }, kind: 'reason' | 'suggestion') => {
+      const knownCode = ['proxy', 'backup_host', 'host'].some(role =>
+        item.code === (kind === 'reason' ? `repository_${role}_unreachable` : `reconnect_repository_${role}`),
+      )
+      if (!t || !knownCode) return item.detail
+      const key = `ops.task.failureDetails.${kind}.${item.code}`
+      const translated = t(key)
+      return translated && translated !== key ? translated : item.detail
+    }
     const itemText = (item: unknown): string => {
       if (typeof item === 'string') return item
       const value = record(item)
@@ -293,8 +302,11 @@ export function buildTaskFailureErrorDetails(params: {
       taskType: task.task_type,
       failedStep: contract.failed_step || undefined,
       errorCode: contract.error_code || task.error_code || undefined,
-      reasons: contract.reasons?.map(reason => reason.count ? `${reason.detail} (${reason.count})` : reason.detail),
-      resolutions: contract.suggestions?.map(suggestion => suggestion.detail),
+      reasons: contract.reasons?.map(reason => {
+        const detail = connectionText(reason, 'reason')
+        return reason.count ? `${detail} (${reason.count})` : detail
+      }),
+      resolutions: contract.suggestions?.map(suggestion => connectionText(suggestion, 'suggestion')),
       entities: contract.entities?.map(entity => ({
         id: entity.id,
         name: entity.name,

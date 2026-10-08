@@ -108,6 +108,10 @@ class RepositoryTaskTests(TestCase):
                 message = _repository_operation_error_message(KopiaCliError(text))
                 self.assertIn(expected, message)
                 self.assertNotIn("kopia", message.lower())
+        self.assertEqual(
+            _repository_operation_error_message(TimeoutError("execution deadline")),
+            "Repository maintenance did not finish within the execution time limit.",
+        )
 
     def setUp(self):
         self.org = Organization.objects.create(

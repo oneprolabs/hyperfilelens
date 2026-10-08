@@ -10,6 +10,7 @@ from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
 from apps.restore.models import RestoreRecord
+from apps.storage.repositories.models import Repository, RepositoryTask
 from apps.task.api.serializers.task import TaskSerializer, TaskStepInputSerializer
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import (
@@ -188,6 +189,121 @@ class TaskApiTests(TestCase):
         self.assertGreater(len(contract["suggestions"]), 0)
         self.assertIsNotNone(contract["technical_detail"])
         self.assertNotEqual(contract["technical_detail"], {})
+
+    def test_controller_interruption_uses_recovery_guidance_not_repository_configuration(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.REPOSITORY_OPERATION,
+            display_name="Full maintenance",
+            status=Task.Status.FAILED,
+            error_code="CONTROL_PLANE_RESTART_INTERRUPTED",
+            error_message="Controller repository maintenance lost its execution heartbeat.",
+        )
+        contract = TaskSerializer(task).data["error_details"]
+        self.assertEqual(
+            contract["suggestions"],
+            [{
+                "code": "recover_controller_interruption",
+                "detail": "recover_controller_interruption",
+            }],
+        )
+
+    def test_repository_timeout_separates_legacy_reason_from_guidance(self):
+        legacy_message = (
+            "Repository maintenance exceeded its execution time limit. Check "
+            "the repository owner's activity and storage connectivity before retrying."
+        )
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.REPOSITORY_OPERATION,
+            display_name="Quick maintenance",
+            status=Task.Status.FAILED,
+            error_code="REPOSITORY_OPERATION_TIMEOUT",
+            error_message=legacy_message,
+        )
+        contract = TaskSerializer(task).data["error_details"]
+        self.assertEqual(contract["reasons"], [{
+            "code": "REPOSITORY_OPERATION_TIMEOUT",
+            "detail": "Repository maintenance did not finish within the execution time limit.",
+        }])
+        self.assertEqual(contract["suggestions"][0]["code"], "investigate_repository_timeout")
+        task.refresh_from_db()
+        self.assertEqual(task.error_message, legacy_message)
+        task.error_message = "Repository maintenance exceeded its execution time limit. Last progress: compacting indexes."
+        self.assertEqual(
+            TaskSerializer(task).data["error_details"]["reasons"][0]["detail"],
+            task.error_message,
+        )
+
+    def test_repository_agent_route_failure_uses_connectivity_guidance(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.REPOSITORY_OPERATION,
+            display_name="Full maintenance",
+            status=Task.Status.FAILED,
+            error_code="REPOSITORY_OPERATION_FAILED",
+            error_message="agent websocket is not routable",
+        )
+        data = TaskSerializer(task).data
+        self.assertEqual(data["error_details"]["reasons"], [{
+            "code": "repository_host_unreachable",
+            "detail": "The maintenance command could not be sent because the host connection is unavailable.",
+        }])
+        self.assertEqual(
+            data["error_details"]["suggestions"][0]["code"],
+            "reconnect_repository_host",
+        )
+        self.assertEqual(data["error_message"], "agent websocket is not routable")
+        self.assertEqual(data["error_code"], "REPOSITORY_OPERATION_FAILED")
+        task.refresh_from_db()
+        self.assertEqual(task.error_message, "agent websocket is not routable")
+        task.error_message = "Repository location ownership requires verification."
+        contract = TaskSerializer(task).data["error_details"]
+        self.assertEqual(contract["reasons"][0]["detail"], task.error_message)
+        self.assertEqual(contract["suggestions"][0]["code"], "review_repository_operation")
+
+    def test_repository_connection_role_uses_binding_and_recorded_owner(self):
+        for repo_type, bind_type, bind_id, owner_id, expected_role in [
+            ("nas", "proxy", 29, 29, "proxy"),
+            ("proxy_fs", "proxy", 29, 29, "proxy"),
+            ("proxy_fs", None, 29, 29, "proxy"),
+            ("nas", None, None, 47, "backup_host"),
+            ("nas", "proxy", 29, 47, "host"),
+        ]:
+            with self.subTest(repo_type=repo_type, bind_type=bind_type, owner_id=owner_id):
+                repository = Repository.objects.create(
+                    organization_id=self.org.id,
+                    name="Misleading proxy or backup name",
+                    repo_type=repo_type,
+                    bind_node_type=bind_type,
+                    bind_node_id=bind_id,
+                )
+                task = Task.objects.create(
+                    organization_id=self.org.id,
+                    task_type=Task.Type.REPOSITORY_OPERATION,
+                    display_name="Full maintenance",
+                    status=Task.Status.FAILED,
+                    error_code="REPOSITORY_OPERATION_FAILED",
+                    error_message="agent websocket is not routable",
+                )
+                RepositoryTask.objects.create(
+                    task=task,
+                    repository=repository,
+                    operation_type="maintenance.full",
+                    owner_type="node",
+                    owner_node_id=owner_id,
+                    owner_identity=f"maintenance@node-{owner_id}",
+                )
+                contract = TaskSerializer(task).data["error_details"]
+                self.assertEqual(
+                    contract["reasons"][0]["code"],
+                    f"repository_{expected_role}_unreachable",
+                )
+                self.assertEqual(
+                    contract["suggestions"][0]["code"],
+                    f"reconnect_repository_{expected_role}",
+                )
+                self.assertNotIn("Agent", contract["reasons"][0]["detail"])
 
     def test_statistics_honors_task_type_and_created_range(self):
         now = timezone.now()

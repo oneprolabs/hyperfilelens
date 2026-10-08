@@ -38,3 +38,15 @@ describe('TaskDetailDrawer structured detail layout', () => {
     expect(source).toContain('.hfl-task-drawer__event-row--detail-panel .hfl-task-drawer__event-time')
   })
 })
+
+describe('TaskEventFailureDetails panel styling', () => {
+  const failureSource = readFileSync(resolve(process.cwd(), 'src/pages/protection/components/TaskEventFailureDetails.vue'), 'utf8')
+
+  it('keeps the nested border only for mixed failure and skipped-warning panels', () => {
+    const terminal = failureSource.match(/\.task-event-failure__terminal-box\s*\{([^}]*)\}/)?.[1]
+    const mixed = failureSource.match(/\.task-event-failure--mixed \.task-event-failure__terminal-box\s*\{([^}]*)\}/)?.[1]
+    expect(terminal).toBeDefined()
+    expect(terminal).not.toContain('border:')
+    expect(mixed).toContain('border:')
+  })
+})
