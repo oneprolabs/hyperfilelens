@@ -828,6 +828,42 @@ refresh_website_web_mount() {
 	compose_logged up -d --no-deps --no-build --pull never --force-recreate web
 }
 
+# Keep Compose as the default; retry only its explicit host-network consent error.
+build_dev_image() (
+	local output_file status log_start=1 bake_file=""
+	output_file="$(mktemp "${TMPDIR:-/tmp}/hfl-dev-build.XXXXXX")" || return 1
+	trap 'rm -f -- "${output_file}"; [[ -z "${bake_file}" ]] || rm -f -- "${bake_file}"' EXIT
+	if [[ -f "${HFL_LOG_FILE:-}" ]]; then
+		log_start=$(( $(wc -c <"${HFL_LOG_FILE}") + 1 ))
+	fi
+	if compose_logged build "$@" 2>&1 | tee "${output_file}"; then
+		return 0
+	else
+		status="${PIPESTATUS[0]}"
+	fi
+	# Native PTY output goes directly to the console/session log, not stdout.
+	if [[ -f "${HFL_LOG_FILE:-}" ]]; then
+		tail -c "+${log_start}" "${HFL_LOG_FILE}" >>"${output_file}"
+	fi
+	if [[ "${status}" -ne 1 ]] \
+		|| ! grep -Fq 'additional privileges requested: pass "--allow=network.host" to grant requested privileges' "${output_file}" \
+		|| ! docker compose build --help | grep -q -- '--print'; then
+		[[ "${status}" -ne 0 ]] && return "${status}"
+		return 1
+	fi
+	log "Retrying development image build with explicit network.host consent"
+	bake_file="$(mktemp "${TMPDIR:-/tmp}/hfl-dev-bake.XXXXXX")" || return 1
+	# Keep build arguments off terminal stdin and remove them after the build.
+	prepare_compose_files >&2 || return $?
+	compose --progress=plain build --print "$@" >"${bake_file}" || return $?
+	# Plain output keeps the exceptional retry safe through the session PTY proxy.
+	local -a command=(docker buildx bake --allow=network.host --file "${bake_file}" --progress=plain)
+	if [[ -n "${HFL_COMPOSE_TIMEOUT_SECONDS:-}" ]]; then
+		command=(timeout --foreground --kill-after=10s "${HFL_COMPOSE_TIMEOUT_SECONDS}s" "${command[@]}")
+	fi
+	hfl_run_native_command "${command[@]}"
+)
+
 build_dev_images() {
 	local force=$1 backend_fingerprint frontend_fingerprint
 	backend_fingerprint="$(cache_fingerprint \
@@ -851,9 +887,9 @@ build_dev_images() {
 			|| die "backend development image is missing or stale in offline mode"
 		log "Building backend development dependency image"
 		if [[ "${force}" -eq 1 ]]; then
-			compose_logged build --no-cache worker
+			build_dev_image --no-cache worker
 		else
-			compose_logged build worker
+			build_dev_image worker
 		fi
 		cache_update backend-image "${backend_fingerprint}"
 	else
@@ -866,9 +902,9 @@ build_dev_images() {
 			|| die "frontend development image is missing or stale in offline mode"
 		log "Building frontend development dependency image"
 		if [[ "${force}" -eq 1 ]]; then
-			compose_logged build --no-cache web
+			build_dev_image --no-cache web
 		else
-			compose_logged build web
+			build_dev_image web
 		fi
 		cache_update frontend-image "${frontend_fingerprint}"
 	else

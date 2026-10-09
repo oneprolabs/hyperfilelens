@@ -703,11 +703,18 @@ def _handle_task_progress(
             reattach_backup_node_task,
         )
 
+        backup_reattached = False
         if task.status == NodeTask.Status.TIMEOUT:
             reattached = reattach_backup_node_task(node_task=task)
             if reattached is not None:
                 task = reattached
-        maybe_trigger_backup_advance(node_task=task)
+                backup_reattached = True
+        # Liveness renews the NodeTask lease but must not rewrite the entire
+        # backup progress projection using the same old Kopia sample.
+        if backup_reattached or (
+            not message.is_alive and getattr(task, "_progress_update_applied", True)
+        ):
+            maybe_trigger_backup_advance(node_task=task)
         try:
             from apps.restore.services.restore_progress import maybe_trigger_restore_progress
 

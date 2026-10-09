@@ -140,3 +140,22 @@ func TestParseProgressLineParsesSpeed(t *testing.T) {
 		t.Fatalf("expected speed_bps in payload, got %#v", payload)
 	}
 }
+
+func TestStructuredBackupCountersPreserveMissingVersusZero(t *testing.T) {
+	raw := `{"type":"hfl_snapshot_progress","schema_version":2,"sequence":1,"phase":"processing","processed_bytes":0,"uploaded_bytes":0,"hashed_bytes":0,"cached_bytes":0,"hashed_count":0,"cached_count":3,"processed_entry_count":3,"estimated_file_count":2,"completed_directory_count":1}`
+	sample, ok := ParseProgressLine(raw)
+	if !ok {
+		t.Fatal("counters not parsed")
+	}
+	payload := ProgressPayload(sample)
+	if payload["processed_entry_count"] != int64(3) || payload["hashed_bytes"] != int64(0) {
+		t.Fatalf("wrong counters: %#v", payload)
+	}
+	if _, bad := payload["processed_count"]; bad {
+		t.Fatal("backup reused restore discriminator")
+	}
+	legacy, _ := ParseProgressLine(`{"type":"hfl_snapshot_progress","schema_version":2,"sequence":1,"phase":"processing","processed_bytes":0,"uploaded_bytes":0}`)
+	if _, known := ProgressPayload(legacy)["hashed_bytes"]; known {
+		t.Fatal("absent counter became zero")
+	}
+}

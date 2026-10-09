@@ -1144,17 +1144,15 @@ export const enProtectionPages = {
     snapshotStorageEfficiencyTitle: 'Storage Efficiency (Reference)',
     snapshotStorageEfficiencyLead: 'Calculated from Kopia file-content statistics for this snapshot.',
     snapshotStorageReferenceHint:
-      'Reference values from the snapshot source history. New storage excludes directory metadata, indexes, manifests, and repository management overhead.',
+      "Reference data-content lengths; excludes directory metadata, indexes, manifests and pack overhead. New snapshots use creation-session metrics; legacy snapshots retain history-based values.",
     snapshotListSize: 'Size',
     snapshotRecoverableData: 'Restore Size',
     snapshotRecoverableDataHint:
       'Total size of the files and folders that can be restored from this snapshot (does not represent repository storage used).',
     snapshotNewOriginalData: 'New Data',
-    snapshotNewOriginalDataHint:
-      'Data in this snapshot that was not already stored in the repository (measured before compression).',
+    snapshotNewOriginalDataHint: "Original length of new data content before content-layer compression (not the amount read or hashed).",
     snapshotNewStorage: 'Snapshot Size',
-    snapshotNewStorageHint:
-      'New file content added to the repository after compression and packing (not the total restorable size; excludes repository metadata and overhead).',
+    snapshotNewStorageHint: "Packed length of the same new data content, excluding repository metadata and pack overhead (not the upload counter or storage billing total).",
     snapshotDataReuse: 'Reuse Rate',
     snapshotDataReuseHint:
       'Percentage of Restore Size reused from data already in the repository (calculation: 1 − New Data ÷ Restore Size).',
@@ -1164,7 +1162,7 @@ export const enProtectionPages = {
     snapshotCombinedReduction: 'Reduction Ratio',
     snapshotCombinedReductionHint:
       'Ratio of Restore Size to Snapshot Size, combining data reuse and compression (calculation: Restore Size ÷ Snapshot Size; a higher ratio means less new storage was required).',
-    snapshotStorageFullyReused: 'Fully reused',
+    snapshotStorageFullyReused: "No new data content",
     flowSourceDetailTabRestoreRecords: 'Restore Records',
     flowSourceDetailTaskSubHistory: 'Backup History',
     flowSourceDetailTaskSubExecutions: 'Execution History',

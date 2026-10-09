@@ -450,6 +450,12 @@ def _should_apply_progress_update(
     """Ignore generic agent heartbeats once substantive Kopia progress exists."""
     if not _is_protection_backup_task(task):
         return True
+    if isinstance(existing, dict):
+        incoming_seq = incoming.get("progress_sequence")
+        existing_seq = existing.get("progress_sequence")
+        if (isinstance(incoming_seq, int) and isinstance(existing_seq, int)
+                and incoming_seq > 0 and existing_seq > 0 and incoming_seq <= existing_seq):
+            return False
     if _substantive_backup_progress(incoming):
         return True
     if not isinstance(existing, dict) or not _substantive_backup_progress(existing):
@@ -472,6 +478,7 @@ def _merge_progress_into_result(
     ):
         return
     merged["last_progress"] = progress
+    task._progress_update_applied = True
     mode = str(progress.get("mode") or "").strip()
     if mode != "local_detached":
         return
@@ -1515,6 +1522,7 @@ def record_task_progress(
             "result",
             "updated_at",
         ]
+    task._progress_update_applied = False
     if progress:
         merged = dict(task.result or {})
         _merge_progress_into_result(

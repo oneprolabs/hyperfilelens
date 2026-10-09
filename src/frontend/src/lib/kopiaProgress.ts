@@ -48,6 +48,13 @@ export type KopiaProgressLane = {
 }
 
 export type TransferProgress = {
+  hashed_bytes?: number | null
+  cached_bytes?: number | null
+  cached_count?: number | null
+  processed_entry_count?: number | null
+  estimated_file_count?: number | null
+  completed_directory_count?: number | null
+
   phase?: string
   label_key?: string | null
   label_args?: Record<string, string | number> | null
@@ -69,7 +76,7 @@ export type TransferProgress = {
   bytes_total_adjusted?: boolean
   uploaded_bytes?: number
   uploaded_count?: number
-  hashed_count?: number
+  hashed_count?: number | null
   estimated_bytes?: number
   processed_count?: number
   total_count?: number
@@ -104,6 +111,9 @@ export type TransferProgress = {
 }
 
 export type TaskRuntimePayload = {
+  status?: string
+  started_at?: string | null
+  finished_at?: string | null
   progress?: number
   transfer_progress?: TransferProgress | null
   kopia_progress?: KopiaProgressPayload

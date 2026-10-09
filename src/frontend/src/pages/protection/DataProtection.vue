@@ -4480,7 +4480,7 @@ watch(
 )
 
 const STEP3_REFRESH_IDLE_MS = 30000
-const STEP3_REFRESH_ACTIVE_MS = 2000
+const STEP3_REFRESH_ACTIVE_MS = 5000
 let step3RefreshTimer: number | null = null
 let step3RefreshInFlight = false
 let step3RefreshIntervalMs = STEP3_REFRESH_IDLE_MS
@@ -4523,7 +4523,7 @@ function ensureStep3AutoRefreshInterval() {
 }
 
 async function refreshStep3SourceList() {
-  if (flowMainStep.value !== 2 || step3RefreshInFlight || step3ActionRefreshInFlight) return
+  if (flowMainStep.value !== 2 || document.hidden || step3RefreshInFlight || step3ActionRefreshInFlight) return
   const scope = flowStepScope(2)
   const signal = pageRequests.nextSignal(scope)
   const resetTrackedIds = collectResetTrackedIds()
