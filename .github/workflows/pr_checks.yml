@@ -67,6 +67,7 @@ jobs:
           # same as the release pipeline quality gate.
           HFL_EXTENSIONS= uv run python src/backend/manage.py makemigrations --check --dry-run
           HFL_EXTENSIONS= uv run python src/backend/manage.py test
+          uv run python -m unittest discover -s tools/quality -p 'test_sl_queue_*.py'
 
   frontend:
     name: Frontend lint and unit tests

@@ -1468,7 +1468,7 @@ sourcelens_patch_env_runtime_defaults() {
 	local path=$1
 	local script="${SOURCELENS_INSTALLER_DIR}/sourcelens/patch-env-runtime.py"
 	[[ -f "${script}" ]] || sourcelens_die "missing ${script}"
-	python3 "${script}" "${path}"
+	python3 "${script}" "${path}" ${2:+"$2"}
 	python3 - "${path}" \
 		"${SOURCELENS_CONSOLE_BIND_ADDRESS}" \
 		"${SOURCELENS_CONSOLE_PORT}" <<'PY'
@@ -1739,7 +1739,7 @@ sourcelens_prepare_dev_runtime_tree() {
 	if [[ ! -f "${env_file}" ]]; then
 		cp "${env_sample}" "${env_file}"
 		chmod 600 "${env_file}"
-		sourcelens_patch_env_runtime_defaults "${env_file}"
+		sourcelens_patch_env_runtime_defaults "${env_file}" --template
 		sourcelens_log "Created ${env_file#${HFL_ROOT}/}"
 	else
 		chmod 600 "${env_file}"
@@ -1756,6 +1756,8 @@ for line in example_path.read_text(encoding="utf-8").splitlines():
     if not line or line.lstrip().startswith("#") or "=" not in line:
         continue
     key = line.split("=", 1)[0].strip()
+    if key == "CELERY_TASK_DEFAULT_QUEUE":
+        continue  # Preserve inheritance from the SL image, never re-add it.
     if key and key not in existing:
         text = text.rstrip() + f"\n{line}\n"
 env_path.write_text(text, encoding="utf-8")

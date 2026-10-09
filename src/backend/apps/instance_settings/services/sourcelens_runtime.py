@@ -398,7 +398,7 @@ def _probe_index_errors(
 
 
 def _queue_config() -> tuple[list[str], int]:
-    raw = os.getenv("HFL_SL_RUNTIME_QUEUES", "lens,sourcelens")
+    raw = os.getenv("HFL_SL_RUNTIME_QUEUES", "backend,lens,sourcelens")
     queues = list(
         dict.fromkeys(item.strip() for item in raw.split(",") if item.strip())
     )
@@ -413,6 +413,11 @@ def _queue_config() -> tuple[list[str], int]:
         or threshold < 1
     ):
         raise ValueError("Invalid queue monitor configuration")
+    # Existing bundled installations retain the old sample value in .env.
+    # Interpret only that known legacy list as the expanded monitoring default;
+    # other explicit lists and external installations remain untouched.
+    if queues == ["lens", "sourcelens"] and deploy.sourcelens_mode() == "bundled":
+        queues.insert(0, "backend")
     return queues, threshold
 
 
@@ -508,11 +513,12 @@ def cached_queue_backlog(url: str) -> dict[str, Any]:
     config = "\0".join(
         [
             url,
+            deploy.sourcelens_mode(),
             os.getenv("HFL_SL_RUNTIME_QUEUES", ""),
             os.getenv("HFL_SL_RUNTIME_QUEUE_WARNING", ""),
         ]
     )
-    key = "runtime:sl:queues:v1:" + hashlib.sha256(config.encode()).hexdigest()
+    key = "runtime:sl:queues:v2:" + hashlib.sha256(config.encode()).hexdigest()
     lock_key = key + ":lease"
     owner = uuid.uuid4().hex
     acquired = False

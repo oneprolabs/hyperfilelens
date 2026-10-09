@@ -117,4 +117,16 @@ if sourcelens_bundle_changed "${tmp}/target"; then
 	exit 1
 fi
 
+# A queue-environment adapter change must update the deployment even while
+# upstream SL tag and image identities remain unchanged.
+printf 'queue-env-adapter-v1\n' >"${target}/patch-env-runtime.py"
+sourcelens_bundle_changed "${tmp}/target"
+record_sourcelens_installed_bundle "${target}"
+if sourcelens_bundle_changed "${tmp}/target"; then
+	printf 'ERROR: recorded queue environment adapter was reported as changed\n' >&2
+	exit 1
+fi
+printf 'queue-env-adapter-v2\n' >"${target}/patch-env-runtime.py"
+sourcelens_bundle_changed "${tmp}/target"
+
 printf 'SourceLens runtime fingerprint checks passed.\n'

@@ -77,6 +77,13 @@ is preserved. The reserved alias is `hfl-sourcelens-redis`; generic service DNS
 names (including `redis`, `postgres`, `nginx`) are rejected in both Aliases and
 DNSNames. API/Worker/Scheduler/PostgreSQL network memberships remain unchanged.
 
+Local `./dev/stack.sh up` and `restart` use the same helper with `--dev` after
+SourceLens preparation and before HFL startup. This explicitly selects this
+repository's `build/sourcelens/dev` layout while retaining the same ownership,
+peer, and alias checks; the installed-layout default remains unchanged.
+SourceLens-skipping runs do not reconcile or remove monitoring. Direct manual
+container recreation still requires the next normal dev startup to reconcile.
+
 Bridge members must belong to this installation's trusted HFL backend services
 or its SL Nginx. Unknown workloads (including LensNode/other installations),
 ambiguous service discovery, alias collisions and unsafe existing endpoints
@@ -117,7 +124,7 @@ cleanup steps even if publishing one configuration file fails.
 A missing helper or failed setup warns rather than blocking installation/upgrade.
 Manual container recreation
 outside HFL's lifecycle can lose the extra attachment; normal HFL start restores
-it. Developer/custom SL layouts are not silently treated as owned deployments.
+it. Other developer/custom SL layouts are not silently treated as owned deployments.
 
 Queue queries remain on-demand: PING and LLEN in one non-transactional pipeline,
 no message reads, scans or consumption. Connect/read timeouts remain two seconds,
@@ -143,6 +150,10 @@ lifecycle acceptance remains a deployment check.
   Degraded availability. Queue size alone does not prove a stopped Worker.
 - Counts below the threshold appear as ordinary Details, with the actual Redis
   sample timestamp, not the page's newer API probe time.
+- Default monitored queues are `backend,lens,sourcelens`. The old bundled sample
+  list `lens,sourcelens` is interpreted as this expanded default without rewriting
+  environment files. Other explicit lists and external installations are preserved.
+  This is monitoring only: it never changes SL task routing or worker subscriptions.
 - External/custom SL access can still use an explicit broker URL and approved
   internal connectivity. Do not reuse HFL's `REDIS_URL` or publish SL Redis.
 
@@ -165,3 +176,27 @@ included. Reloading the existing page refreshes data (within the cache TTL).
 Live acceptance requires verifying mounted-log read permissions, the automatic
 bundled attachment/DNS isolation, and queue warnings after install/upgrade.
 Queue sample age is visible; core services must remain healthy if setup fails.
+
+## Bundled SL queue configuration inheritance
+
+HFL-generated SL environment templates omit `CELERY_TASK_DEFAULT_QUEUE`.
+Existing environment merges never reinsert it. The shared environment adapter
+removes the known `sourcelens` override only when associated queue settings still
+match the shipped defaults; explicit custom or ambiguous settings are retained.
+No replacement default/worker/required queue settings are injected by HFL.
+SL's running image therefore owns its default, including future version changes.
+
+Dev startup, installed startup/upgrade and SaaS deployment use the existing
+configuration helper's independent `--verify-queues` mode to compare the running
+API/Worker/Scheduler defaults and required queues against the owned Worker's live
+subscriptions. Discovery and read-only control queries share a finite deadline.
+Failure is a deployment validation error, not an invitation to change listeners.
+Upgrades that explicitly retain SL (including `--hfl-only`) retain the prior
+health gate without adding a queue hard gate for an unmigrated SL environment.
+The queue hard gate runs when this upgrade actually deploys the SL bundle.
+This mode does not connect/disconnect networks, publish monitoring configuration,
+read task arguments, or purge/move/replay tasks. Queue length need not be zero.
+The SL bundle fingerprint includes the environment adapter, so an adapter change
+can require the normal independent SL deployment lifecycle even with the same
+SL image/tag. Existing `sourcelens` messages and their monitoring alerts remain;
+historical backlog handling is a separate operator decision.

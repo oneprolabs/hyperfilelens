@@ -5135,6 +5135,13 @@ configure_sl_queue_monitor() {
 	return 0
 }
 
+verify_sl_queue_config() {
+	local helper="${ROOT}/configure-sl-queue-monitor.py"
+	[[ -f "${helper}" ]] || helper="${INSTALLER_SCRIPT_DIR}/configure-sl-queue-monitor.py"
+	python3 "${helper}" --root "${ROOT}" --verify-queues --timeout 60 \
+		|| die "SourceLens default queue is not verified against worker subscriptions"
+}
+
 configure_lens_bridge_env() {
 	local host tenant_port build_info
 	host="$(resolve_console_host)"
@@ -6000,6 +6007,7 @@ cmd_install() {
 
 	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] && sourcelens_installed; then
 		configure_lens_bridge_env
+		verify_sl_queue_config
 	fi
 	configure_sl_queue_monitor
 
@@ -6143,6 +6151,9 @@ cmd_start() {
 	start_hfl_stack || die "HyperFileLens active color failed to start"
 	wait_for_hfl_health || die "HyperFileLens failed its startup health gate"
 	wait_for_sourcelens_health || die "bundled SourceLens failed its startup health gate"
+	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] && sourcelens_installed; then
+		verify_sl_queue_config
+	fi
 	sync_optional_identity_settings
 	log "Services started"
 	compose_all_profiles ps
@@ -7878,8 +7889,11 @@ cmd_upgrade() {
 		configure_lens_bridge_env
 		wait_for_sourcelens_health || die "bundled SourceLens failed its independent post-upgrade health gate"
 		if [[ "${upgrade_sourcelens}" -eq 1 ]]; then
+			verify_sl_queue_config
 			record_sourcelens_installed_bundle "${ROOT}/sourcelens" \
 				|| die "could not record the installed SourceLens bundle identity"
+		else
+			log "Bundled SourceLens retained; queue configuration verification skipped"
 		fi
 	fi
 	if [[ "${SOURCELENS_MAINTENANCE_ARMED}" == "1" ]]; then

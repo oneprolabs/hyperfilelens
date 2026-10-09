@@ -176,7 +176,8 @@ runs:
             'curl -kfsS https://127.0.0.1:11442/ >/dev/null &&
              curl -kfsS https://127.0.0.1:11443/health/ready >/dev/null &&
              curl -kfsS https://127.0.0.1:11444/ >/dev/null &&
-             curl -kfsS https://127.0.0.1:11445/ >/dev/null'
+             curl -kfsS https://127.0.0.1:11445/ >/dev/null &&
+             python3 /opt/hyperfilelens/configure-sl-queue-monitor.py --root /opt/hyperfilelens --verify-queues --timeout 60'
     - name: Verify Platform Gateway
       if: ${{ env.HFL_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
       shell: bash

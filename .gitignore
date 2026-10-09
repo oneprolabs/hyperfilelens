@@ -56,6 +56,9 @@ src/backend/staticfiles/
 *.log
 
 # --- Runtime state ---
+# Installer/dev-owned network attachment marker; never share container IDs
+# or attachment ownership between installations through source control.
+/deploy/sl-queue-monitor.json
 # Generated deployment identity shared by API/worker containers. Each
 # installation must keep its own value out of source control.
 src/backend/media/.hfl_deployment_host_id
