@@ -45,12 +45,20 @@ def _query_bool(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def _agent_path_permission_denied(exc: Exception) -> bool:
-    if getattr(exc, "agent_error_code", "") == "PATH_PERMISSION_DENIED":
-        return True
+def _agent_path_access_error_code(exc: Exception) -> str:
+    """Preserve explicit access reasons; do not infer scope from legacy text."""
+    error_code = getattr(exc, "agent_error_code", "")
+    if error_code in {
+        "PATH_OUTSIDE_USER_HOME",
+        "PATH_READ_PERMISSION_DENIED",
+        "PATH_PERMISSION_DENIED",
+    }:
+        return f"AGENT.{error_code}"
+    if error_code:
+        return ""
     # Compatibility for older Agents that only returned a human-readable error.
     message = str(exc).strip().lower()
-    return any(
+    denied = any(
         marker in message
         for marker in (
             "permission denied",
@@ -58,6 +66,7 @@ def _agent_path_permission_denied(exc: Exception) -> bool:
             "access is denied",
         )
     )
+    return "AGENT.PATH_PERMISSION_DENIED" if denied else ""
 
 
 def _agent_path_protected(exc: Exception) -> bool:
@@ -565,9 +574,9 @@ class BackupSelectableDirectoryView(APIView):
                     diagnostic=str(exc),
                     meta={"source_id": source_id, "path": path},
                 ) from exc
-            if _agent_path_permission_denied(exc):
+            if access_code := _agent_path_access_error_code(exc):
                 raise AppError(
-                    code="AGENT.PATH_PERMISSION_DENIED",
+                    code=access_code,
                     status=status.HTTP_403_FORBIDDEN,
                     diagnostic=str(exc),
                     meta={"source_id": source_id, "path": path},
@@ -639,6 +648,10 @@ class BackupSelectableDirectoryCreateView(APIView):
                 code, http_status = "DIRECTORY.ALREADY_EXISTS", status.HTTP_409_CONFLICT
             elif error_code == "PATH_PERMISSION_DENIED":
                 code, http_status = "AGENT.PATH_PERMISSION_DENIED", status.HTTP_403_FORBIDDEN
+            elif error_code == "PATH_OUTSIDE_USER_HOME":
+                code, http_status = "AGENT.PATH_OUTSIDE_USER_HOME", status.HTTP_403_FORBIDDEN
+            elif error_code == "PATH_READ_PERMISSION_DENIED":
+                code, http_status = "AGENT.PATH_READ_PERMISSION_DENIED", status.HTTP_403_FORBIDDEN
             elif error_code == "AGENT_PATH_FORBIDDEN":
                 code, http_status = "AGENT.PATH_PROTECTED", status.HTTP_400_BAD_REQUEST
             elif error_code in {"PATH_PARENT_NOT_FOUND", "PATH_PARENT_INVALID", "PATH_INVALID"}:
@@ -730,9 +743,9 @@ class BackupSelectablePathInfoView(APIView):
                     diagnostic=str(exc),
                     meta={"source_id": source_id, "path": path},
                 ) from exc
-            if _agent_path_permission_denied(exc):
+            if access_code := _agent_path_access_error_code(exc):
                 raise AppError(
-                    code="AGENT.PATH_PERMISSION_DENIED",
+                    code=access_code,
                     status=status.HTTP_403_FORBIDDEN,
                     diagnostic=str(exc),
                     meta={"source_id": source_id, "path": path},

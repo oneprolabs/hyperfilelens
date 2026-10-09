@@ -443,6 +443,53 @@ class DirectorySizeEstimateTests(TestCase):
         "apps.protection.tasks.directory_size_estimate."
         "reconcile_directory_size_estimate_task.apply_async"
     )
+    @patch(
+        "apps.protection.services.directory_size_estimate."
+        "_schedule_directory_estimate_refresh"
+    )
+    def test_reconcile_path_access_failures_remain_unavailable(
+        self, mock_refresh, mock_monitor
+    ):
+        for code in (
+            "PATH_PERMISSION_DENIED",
+            "PATH_OUTSIDE_USER_HOME",
+            "PATH_READ_PERMISSION_DENIED",
+        ):
+            with self.subTest(code=code):
+                correlation_id = directory_size_correlation_id(
+                    config=self.config,
+                    directory=self.directory,
+                )
+                node_task = NodeTask.objects.create(
+                    organization=self.org,
+                    requesting_organization_id=self.org.id,
+                    node=self.agent,
+                    kind="path.size",
+                    correlation_type=node_conf.PATH_SIZE_CORRELATION_TYPE,
+                    correlation_id=correlation_id,
+                    status=NodeTask.Status.FAILED,
+                    result={"error_code": code},
+                    last_error="permission denied",
+                    watchdog_deadline_at=timezone.now(),
+                )
+                result = reconcile_directory_size_estimate(
+                    config_id=self.config.id,
+                    directory_id=self.directory.id,
+                    node_task_id=str(node_task.id),
+                    correlation_id=correlation_id,
+                )
+                self.assertEqual(result["status"], "unavailable")
+                self.directory.refresh_from_db()
+                self.assertEqual(
+                    self.directory.estimated_size_bytes, _ESTIMATE_UNAVAILABLE
+                )
+        self.assertEqual(mock_refresh.call_count, 3)
+        mock_monitor.assert_not_called()
+
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "reconcile_directory_size_estimate_task.apply_async"
+    )
     def test_reconcile_active_estimate_reschedules_short_monitor(self, mock_apply):
         correlation_id = directory_size_correlation_id(
             config=self.config,

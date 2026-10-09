@@ -407,7 +407,11 @@ def reconcile_directory_size_estimate(
         )
         return {"status": "busy"}
     if (
-        error_code == "PATH_PERMISSION_DENIED"
+        error_code in {
+            "PATH_PERMISSION_DENIED",
+            "PATH_OUTSIDE_USER_HOME",
+            "PATH_READ_PERMISSION_DENIED",
+        }
         or "path not found" in str(node_task.last_error or "").lower()
     ):
         _mark_estimate_unavailable_if_current(

@@ -24,7 +24,11 @@ import (
 	"hyperfilelens/agent/internal/service/nas"
 )
 
-const pathPermissionDeniedErrorCode = "PATH_PERMISSION_DENIED"
+const (
+	pathPermissionDeniedErrorCode = "PATH_PERMISSION_DENIED"
+	pathOutsideUserHomeErrorCode  = "PATH_OUTSIDE_USER_HOME"
+	pathReadPermissionErrorCode   = "PATH_READ_PERMISSION_DENIED"
+)
 
 // Engine runs backup, browse, and maintenance workloads for WebSocket and CLI entrypoints.
 type Engine struct {
@@ -784,7 +788,7 @@ func (e *Engine) runPathInfo(ctx context.Context, p Payload) (string, map[string
 			return "failed", map[string]any{
 				"path":       path,
 				"exists":     false,
-				"error_code": pathPermissionDeniedErrorCode,
+				"error_code": pathReadPermissionErrorCode,
 			}, "permission denied"
 		}
 		return "failed", map[string]any{
@@ -846,7 +850,7 @@ func (e *Engine) runPathSize(ctx context.Context, p Payload) (string, map[string
 			return "failed", map[string]any{
 				"path":       path,
 				"exists":     false,
-				"error_code": pathPermissionDeniedErrorCode,
+				"error_code": pathReadPermissionErrorCode,
 			}, "permission denied"
 		}
 		return "failed", map[string]any{"path": path}, sizeErr.Error()
@@ -863,8 +867,16 @@ func pathPermissionDeniedResult(err error, path string) map[string]any {
 	if !errors.Is(err, fs.ErrPermission) {
 		return nil
 	}
+	code := pathReadPermissionErrorCode
+	if errors.Is(err, vfs.ErrOutsideUserHome) {
+		// Only Linux Home-scoped installations use the root-reinstall guidance.
+		code = pathPermissionDeniedErrorCode
+		if runtime.GOOS == "linux" {
+			code = pathOutsideUserHomeErrorCode
+		}
+	}
 	return map[string]any{
-		"error_code": pathPermissionDeniedErrorCode,
+		"error_code": code,
 		"path":       strings.TrimSpace(path),
 	}
 }

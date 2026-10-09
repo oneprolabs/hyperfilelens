@@ -1836,6 +1836,59 @@ class SourceResourceApiTests(TestCase):
         self.assertEqual(entry["protection_reason"], "agent_internal_root")
 
     @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
+    def test_backup_selectable_preserves_specific_path_access_errors(
+        self, mock_run_task
+    ):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="agent-access-reasons",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+            metadata={"inventory": {"capabilities": ["restore_target_directory_create_v1"]}},
+        )
+        for endpoint in ("directories", "path-info", "directory-create"):
+            for code in (
+                "PATH_OUTSIDE_USER_HOME",
+                "PATH_READ_PERMISSION_DENIED",
+                "PATH_PERMISSION_DENIED",
+            ):
+                with self.subTest(endpoint=endpoint, code=code):
+                    mock_run_task.return_value = SimpleNamespace(
+                        timed_out=False,
+                        ok=False,
+                        result={"error_code": code},
+                        stream_message=None,
+                        task=SimpleNamespace(
+                            id="task-access-reasons",
+                            last_error="permission denied",
+                            status="failed",
+                        ),
+                    )
+                    if endpoint == "directory-create":
+                        response = self.client.post(
+                            "/api/v1/source/backup-selectable/directories/create/",
+                            {
+                                "source_id": f"agent:{agent.id}",
+                                "parent_path": "/workspace",
+                                "name": "restore",
+                            },
+                            format="json",
+                            **self._headers(),
+                        )
+                    else:
+                        response = self.client.get(
+                            f"/api/v1/source/backup-selectable/{endpoint}/",
+                            {"source_id": f"agent:{agent.id}", "path": "/workspace"},
+                            **self._headers(),
+                        )
+                    self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+                    problem = response.data["data"]
+                    self.assertEqual(problem["code"], f"AGENT.{code}")
+                    path_key = "parent_path" if endpoint == "directory-create" else "path"
+                    self.assertEqual(problem["meta"][path_key], "/workspace")
+
+    @patch("apps.source.services.internal.backup_source_directory.run_agent_task_sync")
     def test_backup_selectable_directory_reports_agent_path_permission(
         self, mock_run_task
     ):

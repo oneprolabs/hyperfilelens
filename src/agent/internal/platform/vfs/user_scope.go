@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+// ErrOutsideUserHome distinguishes the Home boundary from filesystem permissions.
+// It remains a permission error for callers that do not need the distinction.
+var ErrOutsideUserHome = fmt.Errorf("%w: path is outside the user Home directory", os.ErrPermission)
+
 // UserHome returns the canonical Home directory used by a user-level Agent.
 func UserHome() (string, error) {
 	_, canonical, err := userHomePaths()
@@ -72,7 +76,7 @@ func resolveHomeScopedPath(path string, allowMissing bool) (string, error) {
 	if !pathWithinHome(resolved, home) {
 		return "", fmt.Errorf(
 			"%w: user-level Agent paths must remain under %s",
-			os.ErrPermission,
+			ErrOutsideUserHome,
 			home,
 		)
 	}
@@ -115,7 +119,7 @@ func resolveAccountScopedPath(path string, allowMissing bool) (string, error) {
 	}
 	handle, err := os.Open(probe)
 	if err != nil {
-		return "", fmt.Errorf("%w: specified account cannot read %s", os.ErrPermission, resolved)
+		return "", fmt.Errorf("specified account cannot read %s: %w", resolved, err)
 	}
 	_ = handle.Close()
 	return resolved, nil
