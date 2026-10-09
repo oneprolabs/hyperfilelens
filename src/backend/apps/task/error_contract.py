@@ -48,7 +48,19 @@ def _list(value):
 
 def _reasons(value, code="TASK_FAILED"):
     return [
-        {"code": str(item.get("code") or code), "detail": str(item.get("detail") or item.get("message") or item.get("code") or code)}
+        {
+            "code": str(item.get("code") or code),
+            "detail": str(item.get("detail") or item.get("message") or item.get("code") or code),
+            **({"snapshot_id": item["snapshot_id"]} if item.get("snapshot_id") else {}),
+            **({
+                "consumers": [
+                    {"type": str(consumer.get("type") or ""),
+                     "status": str(consumer.get("status") or "unknown")}
+                    for consumer in item["consumers"]
+                    if isinstance(consumer, dict)
+                ],
+            } if isinstance(item.get("consumers"), list) else {}),
+        }
         if isinstance(item, dict) else {"code": code, "detail": str(item)}
         for item in _list(value) if item
     ]
@@ -88,6 +100,11 @@ def _repository_connection_role(task) -> str:
 def _default_suggestion_code(task) -> str:
     task_type = str(getattr(task, "task_type", "") or "")
     error_code = str(getattr(task, "error_code", "") or "")
+    if task_type == "source_unregister" and any(
+        isinstance(reason, dict) and reason.get("code") == "snapshot_in_use"
+        for reason in _list(_record(task.result_payload).get("reasons"))
+    ):
+        return "resolve_snapshot_usage"
     if (
         task_type == "repository_operation"
         and error_code == "CONTROL_PLANE_RESTART_INTERRUPTED"
@@ -167,7 +184,19 @@ def task_error_contract(task, resources=()):
             if suggestion["code"] == "review_task":
                 suggestion["code"] = default_suggestion_code
                 suggestion["detail"] = default_suggestion_code
-    if result.get("hint"):
+    if default_suggestion_code == "resolve_snapshot_usage":
+        # Also repair the guidance for historical tasks whose generic hint
+        # suggested Force Cleanup even though this request was already forced.
+        suggestions = [{
+            "code": "resolve_snapshot_usage",
+            "detail": (
+                "Wait for the restore or Chat preparation to finish. For a failed "
+                "Chat, retry it until preparation succeeds, or delete it and wait "
+                "for cleanup to complete, then submit a new source deregistration "
+                "request. Force Cleanup cannot bypass snapshot usage protection."
+            ),
+        }]
+    elif result.get("hint"):
         suggestions.append({"code": default_suggestion_code, "detail": str(result["hint"])})
     suggestions += _reasons(failure.get("remediation"), "backup_remediation")
     if retained or cleanup or result.get("cleanup_complete") is False:
@@ -177,11 +206,35 @@ def task_error_contract(task, resources=()):
     entities = []
     for resource in resources:
         kind = str(resource.resource_type)
-        entities.append({"id": resource.resource_id, "name": str(resource.resource_id), "type": "repository" if "repository" in kind else "node" if kind in {"host", "node"} else "source"})
+        resource_id = resource.resource_id
+        if (
+            str(task.task_type) == "source_unregister"
+            and kind == "backup_source"
+            and resource.resource_subtype in {"agent", "nas"}
+        ):
+            resource_id = f"{resource.resource_subtype}:{resource.resource_id}"
+        entities.append({"id": resource_id, "name": str(resource.resource_id), "type": "repository" if "repository" in kind else "node" if kind in {"host", "node"} else "source"})
     for key in ("sources", "cleanup_failures", "reasons"):
         for item in _list(result.get(key)):
             if isinstance(item, dict) and item.get("source_id"):
                 entities.append({"id": str(item["source_id"]), "name": str(item.get("source_name") or item["source_id"]), "type": "source", "error": str(item.get("detail") or "")})
+    if str(task.task_type) == "source_unregister":
+        merged = {}
+        for entity in entities:
+            key = (entity["type"], str(entity["id"]))
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = dict(entity)
+                continue
+            if entity["name"] != str(entity["id"]):
+                existing["name"] = entity["name"]
+            if entity.get("error"):
+                messages = existing.get("error", "").split("\n")
+                if entity["error"] not in messages:
+                    existing["error"] = "\n".join(
+                        message for message in [*messages, entity["error"]] if message
+                    )
+        entities = list(merged.values())
     # Keep ignored/skipped source items out of the fatal entity list. They are
     # exposed through `skipped_items` below and rendered by the warning panel.
     for item in _list(failure.get("items")) + _list(summary.get("failed_directories")):

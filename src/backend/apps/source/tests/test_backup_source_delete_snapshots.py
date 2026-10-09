@@ -41,6 +41,8 @@ from apps.source.services.internal.backup_source_delete import (
     _snapshot_delete_for_unregister,
     _snapshot_delete_owned_by_unregister_attempt,
     delete_backup_sources,
+    preflight_delete_backup_sources,
+    queue_delete_backup_sources,
     run_source_unregister_task,
 )
 from apps.storage.repositories.models import Repository
@@ -692,6 +694,163 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
                 source_ref_id=self.resource.id,
             ).exists()
         )
+
+    def test_snapshot_usage_blocks_strict_and_force_preflight(self):
+        lease = SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="unknown-chat",
+        )
+        for force in (False, True):
+            with self.subTest(force=force):
+                preflight = preflight_delete_backup_sources(
+                    organization_id=self.org.id,
+                    ids=[f"nas:{self.resource.id}"],
+                    force=force,
+                )
+                self.assertTrue(preflight["delete_disabled"])
+                reason = preflight["blocking"][0]
+                self.assertEqual(reason["code"], "snapshot_in_use")
+                self.assertEqual(reason["snapshot_id"], self.snapshot.id)
+                self.assertEqual(reason["consumers"], [
+                    {"type": "chat", "status": "unknown"},
+                ])
+        self.assertTrue(SnapshotUsageLease.objects.filter(pk=lease.id).exists())
+        self.resource.refresh_from_db()
+        self.assertFalse(self.resource.is_deleted)
+
+    def test_snapshot_usage_preflight_preserves_failed_chat_without_private_title(self):
+        from apps.lens_bridge.models import LensSessionLink
+
+        chat = LensSessionLink.objects.create(
+            organization=self.org,
+            hfl_user=self.user,
+            lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
+            title="Private Chat title",
+        )
+        lease = SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id=str(chat.id),
+        )
+        preflight = preflight_delete_backup_sources(
+            organization_id=self.org.id,
+            ids=[f"nas:{self.resource.id}"],
+            force=True,
+        )
+        reason = preflight["blocking"][0]
+        self.assertEqual(reason["consumers"], [{"type": "chat", "status": "failed"}])
+        self.assertIn("failed Chat", reason["detail"])
+        self.assertNotIn(chat.title, str(preflight))
+        self.assertNotIn("consumer_id", str(preflight))
+        self.assertTrue(SnapshotUsageLease.objects.filter(pk=lease.id).exists())
+
+    def test_snapshot_usage_blocks_admission_before_any_cleanup_dispatch(self):
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.RESTORE,
+            consumer_id="restore-record",
+        )
+        with patch(
+            "apps.source.tasks.source_unregister.execute_source_unregister_task.delay"
+        ) as dispatch:
+            result = queue_delete_backup_sources(
+                org=self.org, ids=[f"nas:{self.resource.id}"], force=True,
+                user=self.user,
+            )
+        dispatch.assert_not_called()
+        task = Task.objects.get(pk=result["task_id"])
+        self.assertEqual(task.error_code, "SOURCE_UNREGISTER_PREFLIGHT_FAILED")
+        self.assertEqual(task.current_step, "prepare_source_unregister")
+        self.assertEqual(task.result_payload["reasons"][0]["code"], "snapshot_in_use")
+
+    def test_execution_still_blocks_lease_acquired_after_admission(self):
+        parent = self._create_unregister_parent()
+        start_task(task_uuid=parent.task_uuid, organization_id=self.org.id)
+        lease = SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="late-chat",
+        )
+        with self.assertRaises(BackupSourceDeleteFailed) as raised:
+            run_source_unregister_task(
+                organization_id=self.org.id, task_uuid=str(parent.task_uuid),
+            )
+        self.assertEqual(raised.exception.reasons[0].code, "snapshot_in_use")
+        self.assertIn("cannot bypass", raised.exception.hint)
+        parent.refresh_from_db()
+        self.assertEqual(parent.error_code, "SOURCE_UNREGISTER_FAILED")
+        self.assertIn("cannot bypass", parent.result_payload["hint"])
+        self.resource.refresh_from_db()
+        self.assertFalse(self.resource.is_deleted)
+        self.assertTrue(SnapshotUsageLease.objects.filter(pk=lease.id).exists())
+
+    def test_releasing_usage_allows_preflight_without_changing_snapshot(self):
+        lease = SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="chat",
+        )
+        lease.delete()
+        preflight = preflight_delete_backup_sources(
+            organization_id=self.org.id,
+            ids=[f"nas:{self.resource.id}"], force=True,
+        )
+        self.assertFalse(preflight["delete_disabled"])
+        self.assertFalse(preflight["blocking"])
+
+    def test_other_organization_usage_does_not_block_preflight(self):
+        other_org = Organization.objects.create(key="other-usage-org", name="Other")
+        SnapshotUsageLease.objects.create(
+            organization_id=other_org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="foreign-chat",
+        )
+        preflight = preflight_delete_backup_sources(
+            organization_id=self.org.id,
+            ids=[f"nas:{self.resource.id}"], force=True,
+        )
+        self.assertFalse(preflight["delete_disabled"])
+
+    def test_preflight_matches_cleanup_for_legacy_host_snapshot(self):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="legacy-snapshot-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        self.config.source_type = "agent"
+        self.config.source_ref_id = agent.id
+        self.config.save(update_fields=["source_type", "source_ref_id"])
+        self.snapshot.source_type = "host"
+        self.snapshot.source_ref_id = agent.id
+        self.snapshot.save(update_fields=["source_type", "source_ref_id"])
+        lease = SnapshotUsageLease.objects.create(
+            organization_id=self.org.id,
+            snapshot_id=self.snapshot.id,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT,
+            consumer_id="legacy-chat",
+        )
+        preflight = preflight_delete_backup_sources(
+            organization_id=self.org.id,
+            ids=[f"agent:{agent.id}"], force=True,
+        )
+        self.assertTrue(preflight["delete_disabled"])
+        self.assertEqual(preflight["blocking"][0]["snapshot_id"], self.snapshot.id)
+        self.assertTrue(SnapshotUsageLease.objects.filter(pk=lease.id).exists())
+        # A source without ownership of that configuration is not blocked.
+        nas_preflight = preflight_delete_backup_sources(
+            organization_id=self.org.id,
+            ids=[f"nas:{self.resource.id}"], force=True,
+        )
+        self.assertFalse(nas_preflight["delete_disabled"])
 
     @patch(
         "apps.source.services.internal.backup_source_delete._soft_delete_identity",

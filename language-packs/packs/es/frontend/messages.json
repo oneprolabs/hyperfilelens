@@ -5964,7 +5964,7 @@
         "delete_backup_configs": "Eliminar configuraciones de copia de seguridad",
         "finalize_reset": "Finalizar restablecimiento",
         "prepare_source_unregister": "Preparar la baja de la fuente",
-        "cleanup_direct_nas_repositories": "Repositorios de NAS",
+        "cleanup_direct_nas_repositories": "Limpiar datos de copia de seguridad",
         "reset_backup_config": "Restablecer configuración de copia de seguridad",
         "cleanup_source_endpoint": "Limpiar endpoint de origen",
         "finalize_source_unregister": "Finalizar la baja del origen",
@@ -6173,12 +6173,14 @@
           "agent_offline": "El Agent está desconectado o no se puede alcanzar.",
           "source_not_found": "No se encontró el origen.",
           "node_workload_active": "El host de origen todavía tiene cargas de trabajo activas.",
-          "snapshot_in_use": "Una o más instantáneas todavía están en uso.",
+          "snapshot_in_use": "Una o varias instantáneas siguen protegidas por una restauración o la preparación de un Chat.",
           "nas_umount_retained": "No se pudo desmontar el recurso NAS y se conservó para su limpieza.",
           "nas_umount_failed": "La limpieza del montaje NAS falló.",
           "empty_ids": "No se proporcionaron identificadores de origen.",
           "invalid_id": "El identificador de origen no es válido.",
-          "cleanup_failed": "La operación de limpieza falló."
+          "cleanup_failed": "La operación de limpieza falló.",
+          "snapshot_in_use_detail": "La instantánea #{snapshotId} sigue protegida por una restauración o la preparación de un Chat.",
+          "snapshot_failed_chat": "Un Chat cuya preparación falló conserva esta instantánea para reintentarlo."
         },
         "suggestion": {
           "review_task": "Revise las credenciales del repositorio y vuelva a intentar la creación.",
@@ -6194,7 +6196,8 @@
           "review_cleanup": "Revise los recursos retenidos y complete la limpieza restante antes de reintentar.",
           "check_agent": "Compruebe la conexión del Agent y vuelva a intentar la limpieza.",
           "retry": "Resuelva el problema de limpieza y vuelva a intentar la operación.",
-          "backup_remediation": "Corrija el problema de origen indicado y vuelva a intentar la operación."
+          "backup_remediation": "Corrija el problema de origen indicado y vuelva a intentar la operación.",
+          "resolve_snapshot_usage": "Espere a que termine la restauración o la preparación del Chat. Si la preparación falló, reinténtela hasta que finalice correctamente, o elimine el Chat y espere a que termine la limpieza; después, vuelva a solicitar la baja del origen. La limpieza forzada tampoco puede omitir esta protección."
         },
         "reason_message": {
           "Task timed out": "La tarea expiró",

@@ -9,6 +9,7 @@ import type { TaskRow } from './taskApi'
 import { backupFailureMetadata, backupFailurePresentation } from './backupFailureDisplay'
 import type { ErrorDetailsPayload } from './errors/details'
 import type { TranslateFn } from './errors/resolver'
+import { snapshotUsageFailureText } from './snapshotUsageFailureDisplay'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -266,7 +267,7 @@ export function buildTaskFailureErrorDetails(params: {
   const contract = task.error_details
   if (contract) {
     const connectionText = (item: { code: string; detail: string }, kind: 'reason' | 'suggestion') => {
-      const knownCode = ['proxy', 'backup_host', 'host'].some(role =>
+      const knownCode = item.code === 'resolve_snapshot_usage' || ['proxy', 'backup_host', 'host'].some(role =>
         item.code === (kind === 'reason' ? `repository_${role}_unreachable` : `reconnect_repository_${role}`),
       )
       if (!t || !knownCode) return item.detail
@@ -303,7 +304,8 @@ export function buildTaskFailureErrorDetails(params: {
       failedStep: contract.failed_step || undefined,
       errorCode: contract.error_code || task.error_code || undefined,
       reasons: contract.reasons?.map(reason => {
-        const detail = connectionText(reason, 'reason')
+        const detail = (t ? snapshotUsageFailureText(reason, t) : undefined)
+          || connectionText(reason, 'reason')
         return reason.count ? `${detail} (${reason.count})` : detail
       }),
       resolutions: contract.suggestions?.map(suggestion => connectionText(suggestion, 'suggestion')),

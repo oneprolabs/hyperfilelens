@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -119,6 +120,8 @@ class DeleteReason:
     reference_id: str = ""
     reference_task_type: str = ""
     blocking_task_uuid: str = ""
+    snapshot_id: int | None = None
+    consumers: tuple[dict[str, str], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"code": self.code, "detail": self.detail}
@@ -138,6 +141,10 @@ class DeleteReason:
             payload["reference_task_type"] = self.reference_task_type
         if self.blocking_task_uuid:
             payload["blocking_task_uuid"] = self.blocking_task_uuid
+        if self.snapshot_id is not None:
+            payload["snapshot_id"] = self.snapshot_id
+        if self.consumers:
+            payload["consumers"] = list(self.consumers)
         return payload
 
 
@@ -208,8 +215,108 @@ class BackupSourceDeleteFailed(Exception):
         self.message = message
         self.reasons = reasons
         self.hint = hint or (
-            "Fix the issues above and try again, or use Force Cleanup where allowed."
+            _SNAPSHOT_USAGE_HINT
+            if any(reason.code == "snapshot_in_use" for reason in reasons)
+            else "Fix the issues above and try again, or use Force Cleanup where allowed."
         )
+
+
+_SNAPSHOT_USAGE_HINT = (
+    "Wait for the restore or Chat preparation to finish. For a failed Chat, "
+    "retry it until preparation succeeds, or delete it and wait for cleanup to "
+    "complete, then submit a new source deregistration request. "
+    "Force Cleanup cannot bypass snapshot usage protection."
+)
+
+
+def _snapshot_usage_delete_reasons(
+    *,
+    organization_id: int,
+    ctx: SourceDeleteContext,
+    snapshot_ids: Iterable[int] | None = None,
+) -> list[DeleteReason]:
+    """Describe existing leases without changing them or exposing private Chat data."""
+    from apps.lens_bridge.models import LensSessionLink
+
+    leases = SnapshotUsageLease.objects.filter(
+        organization_id=organization_id,
+        snapshot__organization_id=organization_id,
+        # Match _delete_repository_snapshots: configuration ownership is
+        # authoritative, including historical snapshots labelled "host".
+        snapshot__backup_config_id__in=BackupConfig.objects.filter(
+            organization_id=organization_id,
+            source_type=ctx.source_type,
+            source_ref_id=ctx.source_ref_id,
+        ).values("id"),
+    )
+    if snapshot_ids is not None:
+        leases = leases.filter(snapshot_id__in=snapshot_ids)
+    else:
+        leases = leases.exclude(snapshot__status=BackupSourceSnapshot.Status.DELETED)
+    rows = list(
+        leases.select_related("snapshot")
+        .only("snapshot_id", "consumer_type", "consumer_id", "snapshot__repository_id")
+        .order_by("snapshot_id", "id")
+    )
+    chat_ids = [
+        int(row.consumer_id)
+        for row in rows
+        if row.consumer_type == SnapshotUsageLease.ConsumerType.CHAT
+        and str(row.consumer_id).isascii()
+        and str(row.consumer_id).isdigit()
+    ]
+    chat_statuses = dict(
+        LensSessionLink.all_objects.filter(
+            organization_id=organization_id, id__in=chat_ids
+        ).values_list("id", "lifecycle_status")
+    )
+    repository_names = dict(
+        Repository.objects.filter(
+            organization_id=organization_id,
+            id__in={row.snapshot.repository_id for row in rows},
+        ).values_list("id", "name")
+    )
+    grouped: dict[int, list[SnapshotUsageLease]] = {}
+    for row in rows:
+        grouped.setdefault(row.snapshot_id, []).append(row)
+    reasons: list[DeleteReason] = []
+    for snapshot_id, snapshot_leases in grouped.items():
+        consumers: list[dict[str, str]] = []
+        for row in snapshot_leases:
+            consumer_status = "unknown"
+            if row.consumer_type == SnapshotUsageLease.ConsumerType.CHAT:
+                consumer_status = chat_statuses.get(
+                    int(row.consumer_id)
+                    if str(row.consumer_id).isascii() and str(row.consumer_id).isdigit()
+                    else 0,
+                    "unknown",
+                )
+            consumer = {"type": row.consumer_type, "status": consumer_status}
+            if consumer not in consumers:
+                consumers.append(consumer)
+        failed_chat = any(
+            item["type"] == SnapshotUsageLease.ConsumerType.CHAT
+            and item["status"] == LensSessionLink.LifecycleStatus.FAILED
+            for item in consumers
+        )
+        detail = f"Snapshot #{snapshot_id} is in use by a restore or Chat preparation."
+        if failed_chat:
+            detail += " A failed Chat retains this snapshot for preparation retry."
+        reasons.append(
+            DeleteReason(
+                code="snapshot_in_use",
+                detail=detail,
+                source_id=ctx.selectable_id,
+                source_name=ctx.display_name,
+                repository_id=snapshot_leases[0].snapshot.repository_id,
+                repository_name=repository_names.get(
+                    snapshot_leases[0].snapshot.repository_id, ""
+                ),
+                snapshot_id=snapshot_id,
+                consumers=tuple(consumers),
+            )
+        )
+    return reasons
 
 
 def _emit_task_update_after_commit(*, task: Task) -> None:
@@ -1031,6 +1138,7 @@ def _prepare_delete_batch(
     ids: list[str],
     force: bool,
     executing_task_uuid: str | None = None,
+    check_snapshot_usage: bool = False,
 ) -> list[tuple[SourceDeleteContext, dict[str, int], list[DeleteWarning]]]:
     prepared: list[tuple[SourceDeleteContext, dict[str, int], list[DeleteWarning]]] = []
     for selectable_id in ids:
@@ -1068,6 +1176,15 @@ def _prepare_delete_batch(
                     )
                 ],
             )
+        if check_snapshot_usage and not owns_unregister:
+            usage_reasons = _snapshot_usage_delete_reasons(
+                organization_id=org.id, ctx=ctx
+            )
+            if usage_reasons:
+                raise BackupSourceDeleteFailed(
+                    message="Backup source is still in use.",
+                    reasons=usage_reasons,
+                )
         active_reset = _active_reset_task_for_source(
             organization_id=org.id,
             source_type=ctx.source_type,
@@ -1301,6 +1418,7 @@ def evaluate_source_deregistration(
             ids=[selectable_id],
             force=force,
             executing_task_uuid=executing_task_uuid,
+            check_snapshot_usage=True,
         )
     except BackupSourceDeleteFailed as exc:
         reasons = tuple(exc.reasons)
@@ -2637,6 +2755,7 @@ def _execute_source_unregister_work(
             result_payload={
                 "source_ids": normalized,
                 "reasons": [reason.as_dict() for reason in exc.reasons],
+                "hint": exc.hint,
             },
             error_code="SOURCE_UNREGISTER_FAILED",
             error_message=exc.message,
@@ -2947,6 +3066,7 @@ def _execute_source_unregister_work(
             result_payload={
                 "source_ids": normalized,
                 "reasons": [reason.as_dict() for reason in exc.reasons],
+                "hint": exc.hint,
             },
             error_code="SOURCE_UNREGISTER_FAILED",
             error_message=exc.message,
@@ -3322,6 +3442,7 @@ def run_source_unregister_task(
             result_payload={
                 "source_ids": normalized,
                 "reasons": [reason.as_dict() for reason in exc.reasons],
+                "hint": exc.hint,
             },
             error_code="SOURCE_UNREGISTER_PREFLIGHT_FAILED",
             error_message=exc.message,
@@ -3882,15 +4003,23 @@ def _delete_repository_snapshots(
                 ok, err = _snapshot_delete_strict(source_snapshot=snapshot)
         except SnapshotUsageConflict as exc:
             detail = "; ".join(str(message) for message in exc.messages)
-            reasons.append(
-                DeleteReason(
-                    code="snapshot_in_use",
-                    detail=detail or "Snapshot is currently in use.",
-                    source_id=ctx.selectable_id,
-                    source_name=ctx.display_name,
-                    repository_id=int(snapshot.repository_id),
-                    repository_name=repo_name,
-                )
+            usage_reasons = _snapshot_usage_delete_reasons(
+                organization_id=organization_id,
+                ctx=ctx,
+                snapshot_ids=[snapshot.id],
+            )
+            reasons.extend(
+                usage_reasons or [
+                    DeleteReason(
+                        code="snapshot_in_use",
+                        detail=detail or "Snapshot is currently in use.",
+                        source_id=ctx.selectable_id,
+                        source_name=ctx.display_name,
+                        repository_id=int(snapshot.repository_id),
+                        repository_name=repo_name,
+                        snapshot_id=snapshot.id,
+                    )
+                ]
             )
             continue
         except Exception as exc:

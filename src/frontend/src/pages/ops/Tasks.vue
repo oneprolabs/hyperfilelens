@@ -27,6 +27,7 @@ import { useRepositoryTaskCancellation } from '../../composables/useRepositoryTa
 import { apiErrorMessage, apiErrorMessageI18n } from '../../lib/api'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import { safeErrorDetailText } from '../../lib/errors/details'
+import { snapshotUsageFailureText, type SnapshotUsageReason } from '../../lib/snapshotUsageFailureDisplay'
 import { notifyError, notifySuccess } from '../../lib/notify'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
@@ -171,7 +172,9 @@ function silentTranslate(key: string): string | undefined {
   }
   return undefined
 }
-function localizedFailureText(item: { code?: string; detail: string }, kind: 'reason' | 'suggestion') {
+function localizedFailureText(item: SnapshotUsageReason, kind: 'reason' | 'suggestion') {
+  const usageText = kind === 'reason' ? snapshotUsageFailureText(item, t) : undefined
+  if (usageText) return usageText
   const translated = silentTranslate(`ops.task.failureDetails.${kind}.${item.code || ''}`)
   if (translated) return translated
   const detail = item.detail.trim().replace(/[.!?。！？]+$/, '')
