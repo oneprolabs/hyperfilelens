@@ -26,6 +26,40 @@ RESERVED_NAMES = {
 }
 
 
+class UnsafeSetup(RuntimeError):
+    """A definitive safety/configuration rejection, not a discovery outage."""
+
+
+def runtime_config_path(root: pathlib.Path) -> pathlib.Path:
+    return root / "data" / "runtime" / "sl-queue-monitor.json"
+
+
+def write_runtime_url(root: pathlib.Path, url: str) -> None:
+    """Publish hot configuration outside logs/media, with no plaintext output."""
+    path = runtime_config_path(root)
+    if path.parent.is_symlink():
+        raise UnsafeSetup("Refusing a symlink runtime directory")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(str(path.parent), 0o700)
+    atomic_write(path, json.dumps({"version": 1, "url": url}) + "\n")
+
+
+def disable_automatic_monitor(root: pathlib.Path) -> None:
+    # Publish a tombstone before disconnecting; old API env cannot revive it.
+    failure = None
+    for operation in (
+        lambda: write_runtime_url(root, ""),
+        lambda: write_auto_url(root / ".env", ""),
+        lambda: detach(root),
+    ):
+        try:
+            operation()
+        except Exception as exc:
+            failure = exc
+    if failure:
+        raise failure
+
+
 def safe_endpoint(endpoint: Dict[str, Any]) -> bool:
     names = set((endpoint.get("Aliases") or []) + (endpoint.get("DNSNames") or []))
     return ALIAS in names and not names.intersection(RESERVED_NAMES)
@@ -161,7 +195,7 @@ def broker_url(root: pathlib.Path) -> str:
         or parsed.port not in (None, 6379)
         or not re.fullmatch(r"/\d+", parsed.path)
     ):
-        raise RuntimeError("SL broker does not target its managed Redis service")
+        raise UnsafeSetup("SL broker does not target its managed Redis service")
     credentials = parsed.netloc.rsplit("@", 1)[0] + "@" if "@" in parsed.netloc else ""
     return urlunsplit(
         (parsed.scheme, credentials + ALIAS + ":6379", parsed.path, "", "")
@@ -204,12 +238,10 @@ def configure(root: pathlib.Path, remove: bool = False) -> None:
         or mode != "bundled"
         or (explicit and urlsplit(explicit).hostname != ALIAS)
     ):
-        detach(root)
-        write_auto_url(env, "")
+        disable_automatic_monitor(root)
         return
     if not (root / "sourcelens" / "docker-compose.yml").is_file():
-        detach(root)
-        write_auto_url(env, "")
+        disable_automatic_monitor(root)
         return
     redis = find_service(root, "redis")
     url = broker_url(root)
@@ -223,7 +255,7 @@ def configure(root: pathlib.Path, remove: bool = False) -> None:
             continue
         peer = inspect(cid)
         if not trusted_peer(peer, root):
-            raise RuntimeError("Shared bridge contains an untrusted workload")
+            raise UnsafeSetup("Shared bridge contains an untrusted workload")
         aliases = (
             peer.get("NetworkSettings", {})
             .get("Networks", {})
@@ -232,34 +264,39 @@ def configure(root: pathlib.Path, remove: bool = False) -> None:
             or []
         )
         if ALIAS in aliases:
-            raise RuntimeError("Queue-monitor alias is already in use")
+            raise UnsafeSetup("Queue-monitor alias is already in use")
     if endpoint:
         if not safe_endpoint(endpoint):
-            raise RuntimeError("Existing SL Redis bridge endpoint has unsafe aliases")
+            raise UnsafeSetup("Existing SL Redis bridge endpoint has unsafe aliases")
         if marker.is_symlink():
             raise RuntimeError("Refusing a symlink attachment marker")
         previous = json.loads(marker.read_text()) if marker.exists() else {}
         created = previous.get("container") == redis["Id"] and bool(
             previous.get("created")
         )
-    else:
-        # Reject an alias already held by any other endpoint; do not reconnect it.
-        atomic_write(
-            marker, json.dumps({"container": redis["Id"], "created": True}) + "\n"
-        )
-        docker("network", "connect", "--alias", ALIAS, BRIDGE, redis["Id"])
-        created = True
+    requested_new_connection = not endpoint
     try:
+        if requested_new_connection:
+            # Roll back only this invocation's new attachment on failure.
+            atomic_write(
+                marker, json.dumps({"container": redis["Id"], "created": True}) + "\n"
+            )
+            docker("network", "connect", "--alias", ALIAS, BRIDGE, redis["Id"])
+            created = True
         endpoint = inspect(redis["Id"])["NetworkSettings"]["Networks"][BRIDGE]
         if not safe_endpoint(endpoint):
-            raise RuntimeError("Queue-monitor DNS alias verification failed")
+            raise UnsafeSetup("Queue-monitor DNS alias verification failed")
         atomic_write(
             marker, json.dumps({"container": redis["Id"], "created": created}) + "\n"
         )
         write_auto_url(env, url)
+        write_runtime_url(root, url)
     except Exception:
-        if created and not networks.get(BRIDGE):
-            docker("network", "disconnect", BRIDGE, redis["Id"])
+        if requested_new_connection:
+            try:
+                detach(root)
+            except Exception:
+                pass
         raise
 
 
@@ -272,18 +309,20 @@ def main() -> None:
     try:
         configure(root, args.remove)
         print("[queue-monitor] bundled monitoring configuration reconciled")
-    except Exception:
-        # Never print Docker stderr, broker URLs, credentials or task data.
+    except UnsafeSetup:
         try:
-            detach(root)
-        except Exception:
-            pass
-        try:
-            write_auto_url(root / ".env", "")
+            disable_automatic_monitor(root)
         except Exception:
             pass
         print(
-            "[queue-monitor] WARNING: automatic setup unavailable; core services are unaffected"
+            "[queue-monitor] WARNING: unsafe automatic setup disabled; core services are unaffected"
+        )
+    except Exception:
+        # Temporary discovery/daemon failures never tear down established setup.
+        # New-attachment rollback is scoped inside configure(); never print
+        # Docker stderr, URLs, credentials or task data.
+        print(
+            "[queue-monitor] WARNING: automatic setup could not be verified; existing setup retained; core services are unaffected"
         )
 
 

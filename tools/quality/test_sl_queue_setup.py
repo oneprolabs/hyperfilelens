@@ -113,6 +113,13 @@ class QueueSetupTests(unittest.TestCase):
             "REDIS_URL=redis://redis:6379/0", (self.root / ".env").read_text()
         )
         self.assertFalse(any(c[0] in ("restart", "stop", "exec") for c in self.calls))
+        runtime_path = setup.runtime_config_path(self.root)
+        self.assertEqual(
+            json.loads(runtime_path.read_text())["url"],
+            "redis://hfl-sourcelens-redis:6379/0",
+        )
+        self.assertEqual(runtime_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(runtime_path.parent.stat().st_mode & 0o777, 0o700)
 
     def test_recreated_redis_is_reattached(self):
         self.configure()
@@ -264,6 +271,130 @@ class QueueSetupTests(unittest.TestCase):
         self.assertNotIn("secret-password", output.getvalue())
         self.assertEqual(setup.env_value(self.root / ".env", setup.AUTO_KEY), "")
 
+    def test_transient_discovery_failure_preserves_previous_setup(self):
+        import io
+        from contextlib import redirect_stdout
+
+        self.configure()
+        env_before = (self.root / ".env").read_bytes()
+        runtime_before = setup.runtime_config_path(self.root).read_bytes()
+        marker = self.root / "deploy/sl-queue-monitor.json"
+        marker_before = marker.read_bytes()
+        real = self.docker
+
+        def unavailable(*args):
+            if args[0] == "ps" and "label=com.docker.compose.service=api" in args:
+                raise RuntimeError("temporary daemon error with secret")
+            return real(*args)
+
+        output = io.StringIO()
+        with (
+            patch("sys.argv", ["helper", "--root", str(self.root)]),
+            patch.object(
+                setup,
+                "docker",
+                side_effect=unavailable,
+            ),
+            redirect_stdout(output),
+        ):
+            setup.main()
+        self.assertEqual((self.root / ".env").read_bytes(), env_before)
+        self.assertEqual(
+            setup.runtime_config_path(self.root).read_bytes(), runtime_before
+        )
+        self.assertEqual(marker.read_bytes(), marker_before)
+        self.assertIn("a" * 64, self.members)
+        self.assertIn("existing setup retained", output.getvalue())
+        self.assertNotIn("secret", output.getvalue())
+
+    def test_failed_new_attachment_rolls_back_without_tearing_down_private_network(
+        self,
+    ):
+        import io
+        from contextlib import redirect_stdout
+
+        real = self.docker
+
+        def timeout_after_connect(*args):
+            result = real(*args)
+            if args[:2] == ("network", "connect"):
+                raise RuntimeError("daemon timeout after attaching")
+            return result
+
+        with (
+            patch("sys.argv", ["helper", "--root", str(self.root)]),
+            patch.object(
+                setup,
+                "docker",
+                side_effect=timeout_after_connect,
+            ),
+            redirect_stdout(io.StringIO()),
+        ):
+            setup.main()
+        self.assertFalse(self.members)
+        self.assertIn("private-sl", self.items["a" * 64]["NetworkSettings"]["Networks"])
+        self.assertFalse((self.root / "deploy/sl-queue-monitor.json").exists())
+
+    def test_definitive_security_rejection_disables_owned_setup(self):
+        import io
+        from contextlib import redirect_stdout
+
+        self.configure()
+        self.items["d" * 64] = self.item("d" * 64, "lensnode")
+        self.members["d" * 64] = {}
+        output = io.StringIO()
+        with (
+            patch("sys.argv", ["helper", "--root", str(self.root)]),
+            patch.object(
+                setup,
+                "docker",
+                side_effect=self.docker,
+            ),
+            redirect_stdout(output),
+        ):
+            setup.main()
+        self.assertNotIn("a" * 64, self.members)
+        self.assertIn("d" * 64, self.members)
+        self.assertEqual(setup.env_value(self.root / ".env", setup.AUTO_KEY), "")
+        self.assertEqual(
+            json.loads(setup.runtime_config_path(self.root).read_text())["url"], ""
+        )
+        self.assertIn("unsafe automatic setup disabled", output.getvalue())
+
+    def test_safety_cleanup_still_detaches_if_runtime_publication_fails(self):
+        self.configure()
+        with (
+            patch.object(setup, "docker", side_effect=self.docker),
+            patch.object(
+                setup,
+                "write_runtime_url",
+                side_effect=OSError("temporary write failure"),
+            ),
+        ):
+            with self.assertRaises(OSError):
+                setup.disable_automatic_monitor(self.root)
+        self.assertNotIn("a" * 64, self.members)
+        self.assertEqual(setup.env_value(self.root / ".env", setup.AUTO_KEY), "")
+
+    def test_broker_upgrade_publishes_hot_configuration_without_restart(self):
+        self.configure()
+        path = setup.runtime_config_path(self.root)
+        self.assertTrue(json.loads(path.read_text())["url"].endswith("/0"))
+        self.items["b" * 64]["Config"]["Env"] = [
+            "REDIS_URL=redis://user:new-secret@redis:6379/2"
+        ]
+        self.configure()
+        self.assertEqual(
+            json.loads(path.read_text())["url"],
+            "redis://user:new-secret@hfl-sourcelens-redis:6379/2",
+        )
+        self.assertFalse(any(c[0] in ("restart", "stop", "exec") for c in self.calls))
+        self.assertNotIn(
+            "new-secret", (self.root / "deploy/sl-queue-monitor.json").read_text()
+        )
+        self.configure(remove=True)
+        self.assertEqual(json.loads(path.read_text())["url"], "")
+
     def test_shell_lifecycle_and_all_packagers_ship_the_helper(self):
         installer = (ROOT / "deploy/installer/install.sh").read_text()
         self.assertIn("configure_sl_queue_monitor --remove", installer)
@@ -282,6 +413,9 @@ class QueueSetupTests(unittest.TestCase):
             "release/ci/assemble-saas-candidate.sh",
         ):
             self.assertIn("configure-sl-queue-monitor.py", (ROOT / path).read_text())
+        for path in ("deploy/docker-compose.yml", "docker-compose.yml"):
+            compose = (ROOT / path).read_text()
+            self.assertIn("./data/runtime:/opt/hyperfilelens/runtime:ro", compose)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ x-backend-volumes: &backend-volumes
   - ./data/staticfiles:/opt/hyperfilelens/backend/staticfiles
   - ./data/logs:/var/log/hyperfilelens
   - ./data/sourcelens/logs:/var/log/sourcelens:ro
+  - ./data/runtime:/opt/hyperfilelens/runtime:ro
 
 x-backend-image: &backend-image
   image: hyperfilelens-backend:dev

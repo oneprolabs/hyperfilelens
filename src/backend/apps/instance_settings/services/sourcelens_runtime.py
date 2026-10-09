@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import heapq
+import json
 import os
 import pickle
 import re
@@ -30,6 +31,8 @@ from apps.lens_bridge.services import sl_client
 CACHE_SECONDS = 30
 QUEUE_CACHE_SECONDS = 300
 QUEUE_FAILURE_CACHE_SECONDS = 60
+AUTO_QUEUE_CONFIG_PATH = Path("/opt/hyperfilelens/runtime/sl-queue-monitor.json")
+MAX_AUTO_CONFIG_BYTES = 8192
 MAX_FILES_PER_DIRECTORY = 4
 MAX_DIRECTORY_ENTRIES = 512
 MAX_SCAN_BYTES = 256 * 1024
@@ -555,7 +558,43 @@ def cached_queue_backlog(url: str) -> dict[str, Any]:
                 pass
 
 
-def _collect_health(*, timeout: int) -> dict[str, Any]:
+def queue_monitor_url() -> str:
+    """Resolve an explicit override or hot bundled configuration, never log it."""
+    explicit = os.getenv("HFL_SL_RUNTIME_REDIS_URL", "").strip()
+    if explicit:
+        return explicit
+    if deploy.sourcelens_mode() != "bundled":
+        return ""
+    try:
+        fd = os.open(
+            AUTO_QUEUE_CONFIG_PATH, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        )
+        with os.fdopen(fd, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_mode & 0o077
+                or metadata.st_size > MAX_AUTO_CONFIG_BYTES
+            ):
+                return ""
+            body = stream.read(MAX_AUTO_CONFIG_BYTES + 1)
+        if len(body) > MAX_AUTO_CONFIG_BYTES:
+            return ""
+        payload = json.loads(body)
+        if not isinstance(payload, dict) or payload.get("version") != 1:
+            return ""
+        url = payload.get("url")
+        if not isinstance(url, str):
+            return ""
+        return url.strip()  # An empty tombstone overrides the stale process env.
+    except FileNotFoundError:
+        # Backward compatibility for an installation without the new publisher.
+        return os.getenv("HFL_SL_RUNTIME_AUTO_REDIS_URL", "").strip()
+    except (OSError, ValueError, UnicodeError):
+        return ""  # Unreadable/invalid hot config never falls back to old creds.
+
+
+def _collect_health(*, timeout: int, queue_url: str | None = None) -> dict[str, Any]:
     health = dict(sl_client.ping(timeout=timeout))
     now = datetime.now(timezone.utc)
     root = os.getenv("HFL_SL_RUNTIME_LOG_DIR", "").strip()
@@ -565,9 +604,7 @@ def _collect_health(*, timeout: int) -> dict[str, Any]:
             Path(root or "/var/log/sourcelens"),
             now=now,
         )
-    url = os.getenv("HFL_SL_RUNTIME_REDIS_URL", "").strip()
-    if deploy.sourcelens_mode() == "bundled" and not url:
-        url = os.getenv("HFL_SL_RUNTIME_AUTO_REDIS_URL", "").strip()
+    url = queue_monitor_url() if queue_url is None else queue_url
     if deploy.sourcelens_mode() == "bundled" or url:
         components["redis"] = cached_queue_backlog(url)
         if not url and deploy.sourcelens_mode() == "bundled":
@@ -603,6 +640,7 @@ def _collect_health(*, timeout: int) -> dict[str, Any]:
 
 def sourcelens_health_payload(*, timeout: int = 3) -> dict[str, Any]:
     """Share one short-lived snapshot across Environment and Integrations."""
+    queue_url = queue_monitor_url()
     config = "\0".join(
         [
             deploy.sourcelens_mode(),
@@ -612,6 +650,7 @@ def sourcelens_health_payload(*, timeout: int = 3) -> dict[str, Any]:
             os.getenv("HFL_SL_RUNTIME_LOG_DIR", ""),
             os.getenv("HFL_SL_RUNTIME_REDIS_URL", ""),
             os.getenv("HFL_SL_RUNTIME_AUTO_REDIS_URL", ""),
+            queue_url,
             os.getenv("HFL_SL_RUNTIME_QUEUES", ""),
             os.getenv("HFL_SL_RUNTIME_QUEUE_WARNING", ""),
         ]
@@ -623,7 +662,7 @@ def sourcelens_health_payload(*, timeout: int = 3) -> dict[str, Any]:
         cached = None
     if cached is not None:
         return cached
-    payload = _collect_health(timeout=timeout)
+    payload = _collect_health(timeout=timeout, queue_url=queue_url)
     try:
         queue_expiry = (
             payload["runtime_monitor"]["components"].get("redis", {}).get("expires_at")

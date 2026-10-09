@@ -1,6 +1,9 @@
 """Low-frequency, single-flight SourceLens queue metrics."""
 
 import os
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import threading
 from unittest.mock import patch
 
@@ -25,6 +28,12 @@ from apps.instance_settings.services import sourcelens_runtime as runtime
 class QueueCacheTests(SimpleTestCase):
     def setUp(self):
         cache.clear()
+        self.temp = TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.config = Path(self.temp.name) / "sl-queue-monitor.json"
+        patcher = patch.object(runtime, "AUTO_QUEUE_CONFIG_PATH", self.config)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def good(self):
         return {
@@ -197,3 +206,98 @@ class QueueCacheTests(SimpleTestCase):
         ):
             runtime.sourcelens_health_payload()
         self.assertEqual(save.call_args.args[2], 2)
+
+    def publish(self, url):
+        path = self.config.with_suffix(".tmp")
+        path.write_text(json.dumps({"version": 1, "url": url}))
+        path.chmod(0o600)
+        path.replace(self.config)
+
+    @patch.object(runtime.deploy, "sourcelens_mode", return_value="bundled")
+    @patch.object(
+        runtime.sl_client,
+        "ping",
+        return_value={
+            "configured": True,
+            "reachable": True,
+            "authenticated": True,
+            "business_ready": True,
+        },
+    )
+    @patch.object(
+        runtime,
+        "probe_index_errors",
+        return_value={
+            "health_status": "unknown",
+            "availability_status": "unknown",
+            "notices": [],
+        },
+    )
+    @patch.object(runtime, "probe_queue_backlog")
+    def test_hot_broker_change_invalidates_both_caches_without_environment_change(
+        self,
+        query,
+        _logs,
+        _ping,
+        _mode,
+    ):
+        old = "redis://old-secret@hfl-sourcelens-redis:6379/0"
+        new = "redis://new-secret@hfl-sourcelens-redis:6379/2"
+        query.side_effect = lambda url: dict(
+            self.good(),
+            queue_lengths={"lens": 7 if url == old else 1234},
+        )
+        with patch.dict(os.environ, {"HFL_SL_RUNTIME_AUTO_REDIS_URL": old}):
+            self.publish(old)
+            first = runtime.sourcelens_health_payload()
+            self.publish(new)
+            second = runtime.sourcelens_health_payload()
+            runtime.sourcelens_health_payload()
+            self.assertEqual(os.environ["HFL_SL_RUNTIME_AUTO_REDIS_URL"], old)
+        self.assertEqual(
+            first["runtime_monitor"]["components"]["redis"]["queue_lengths"]["lens"], 7
+        )
+        self.assertEqual(
+            second["runtime_monitor"]["components"]["redis"]["queue_lengths"]["lens"],
+            1234,
+        )
+        self.assertEqual([c.args[0] for c in query.call_args_list], [old, new])
+        self.assertNotIn("secret", str(second))
+
+    @patch.object(runtime.deploy, "sourcelens_mode", return_value="bundled")
+    def test_tombstone_and_invalid_hot_config_never_restore_old_environment(
+        self, _mode
+    ):
+        with patch.dict(os.environ, {"HFL_SL_RUNTIME_AUTO_REDIS_URL": "redis://old/0"}):
+            self.publish("")
+            self.assertEqual(runtime.queue_monitor_url(), "")
+            self.config.write_text("{invalid-json")
+            self.assertEqual(runtime.queue_monitor_url(), "")
+            self.config.write_text(json.dumps({"version": 2, "url": "redis://old/0"}))
+            self.assertEqual(runtime.queue_monitor_url(), "")
+            self.config.unlink()
+            self.assertEqual(runtime.queue_monitor_url(), "redis://old/0")
+
+    @patch.object(runtime.deploy, "sourcelens_mode", return_value="bundled")
+    def test_explicit_override_still_wins_over_hot_config(self, _mode):
+        self.publish("redis://hfl-sourcelens-redis:6379/2")
+        with patch.dict(os.environ, {"HFL_SL_RUNTIME_REDIS_URL": "redis://custom/1"}):
+            self.assertEqual(runtime.queue_monitor_url(), "redis://custom/1")
+
+    @patch.object(runtime.deploy, "sourcelens_mode", return_value="external")
+    def test_external_ignores_hot_bundled_configuration(self, _mode):
+        self.publish("redis://hfl-sourcelens-redis:6379/2")
+        self.assertEqual(runtime.queue_monitor_url(), "")
+
+    @patch.object(runtime.deploy, "sourcelens_mode", return_value="bundled")
+    def test_hot_config_is_bounded_regular_and_private(self, _mode):
+        self.publish("redis://hfl-sourcelens-redis/0")
+        self.config.chmod(0o644)
+        self.assertEqual(runtime.queue_monitor_url(), "")
+        self.config.chmod(0o600)
+        self.config.write_text("x" * (runtime.MAX_AUTO_CONFIG_BYTES + 1))
+        self.assertEqual(runtime.queue_monitor_url(), "")
+        target = self.config.with_suffix(".target")
+        self.config.rename(target)
+        self.config.symlink_to(target)
+        self.assertEqual(runtime.queue_monitor_url(), "")

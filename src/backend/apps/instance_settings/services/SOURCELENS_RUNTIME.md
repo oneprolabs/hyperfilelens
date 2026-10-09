@@ -85,15 +85,32 @@ mounts, extra containers, timers, SL source/image changes or service restarts
 are added. Internal Redis reachability expands to the trusted bridge; this
 is not a Redis ACL/read-only account guarantee.
 
-The helper writes `HFL_SL_RUNTIME_AUTO_REDIS_URL` into the HFL environment before
-API startup. It records only attachment ownership (not credentials) in
+The helper writes `HFL_SL_RUNTIME_AUTO_REDIS_URL` before API startup for backwards
+compatibility and publishes the authoritative hot configuration at
+`data/runtime/sl-queue-monitor.json`. Backend containers mount this directory
+read-only at `/opt/hyperfilelens/runtime`; it is not mounted into Nginx/Web and
+is not in logs, media, or a public directory. The directory is 0700 and the file
+is atomically replaced with 0600 permissions. The running API reopens the file
+on requests; broker/database/credential changes alter both cache keys without
+restarting API or changing its environment. An empty tombstone overrides stale
+process environment; an invalid, non-private, symlinked, or unreadable file
+fails closed. Explicit URL overrides still win; external mode ignores this file.
+
+It records only attachment ownership (not credentials) in
 `deploy/sl-queue-monitor.json`. Configuration/marker writes are atomic with
 0600 permissions. SL recreation is reconciled after its independent upgrade;
 ordinary startup and recovery also reconcile. Explicit
 `HFL_SL_RUNTIME_REDIS_URL` overrides always win. External mode/uninstall clears
 automatic configuration and disconnects only an attachment the helper created;
-pre-existing user attachments are preserved. A missing helper or failed setup
-warns rather than blocking installation/upgrade. Manual container recreation
+pre-existing user attachments are preserved. A transient Docker/service-discovery
+failure keeps the last verified attachment, marker, and configuration untouched.
+Only a new attachment created/requested in that invocation is rolled back after
+failure. A definitive safety rejection (unsafe aliases/untrusted workloads or
+unsupported broker target) disables automatic configuration and disconnects
+only installer-owned attachment. Explicit cleanup and rejection attempt all
+cleanup steps even if publishing one configuration file fails.
+A missing helper or failed setup warns rather than blocking installation/upgrade.
+Manual container recreation
 outside HFL's lifecycle can lose the extra attachment; normal HFL start restores
 it. Developer/custom SL layouts are not silently treated as owned deployments.
 

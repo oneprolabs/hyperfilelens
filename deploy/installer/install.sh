@@ -2294,6 +2294,7 @@ ensure_data_dirs() {
 		"${ROOT}/data/postgresql" \
 		"${ROOT}/data/redis" \
 		"${ROOT}/data/logs" \
+		"${ROOT}/data/runtime" \
 		"${language_root}" \
 		"${ROOT}/data/media/agent-releases" \
 		"${ROOT}/data/media/enroll-bootstrap" \
@@ -2302,6 +2303,7 @@ ensure_data_dirs() {
 		"${ROOT}/data/staticfiles" \
 		"${ROOT}/data/sourcelens/config"
 	chmod 0755 "${language_base}" "${language_base}/versions" "${language_root}"
+	chmod 0700 "${ROOT}/data/runtime"
 	refresh_language_pack_index "${language_root}"
 	migrate_legacy_flat_language_packs "${app_version}" "${language_base}" "${language_root}"
 }
