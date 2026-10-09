@@ -6174,15 +6174,16 @@
           "source_not_found": "找不到该源。",
           "node_workload_active": "源主机仍有活动工作负载。",
           "snapshot_in_use": "一个或多个快照仍受恢复或 Chat 准备过程的使用保护。",
+          "snapshot_in_use_detail": "快照 #{snapshotId} 仍受恢复或 Chat 准备过程的使用保护。",
+          "snapshot_failed_chat": "准备失败的 Chat 保留了此快照，以便重试。",
           "nas_umount_retained": "无法移除 NAS 挂载，已保留以便后续清理。",
           "nas_umount_failed": "NAS 挂载清理失败。",
           "empty_ids": "未提供源标识。",
           "invalid_id": "源标识无效。",
-          "cleanup_failed": "清理操作失败。",
-          "snapshot_in_use_detail": "快照 #{snapshotId} 仍受恢复或 Chat 准备过程的使用保护。",
-          "snapshot_failed_chat": "准备失败的 Chat 保留了此快照，以便重试。"
+          "cleanup_failed": "清理操作失败。"
         },
         "suggestion": {
+          "resolve_snapshot_usage": "请等待恢复或 Chat 准备完成。对于准备失败的 Chat，请重试直至准备成功，或删除 Chat 并等待清理完成，然后重新提交备份源注销请求。强制清理也不能绕过此保护。",
           "review_task": "检查仓库凭据后重试创建任务。",
           "review_backup_diagnostics": "请检查受影响的备份源、目标仓库和技术详情，然后重试备份。",
           "review_restore_diagnostics": "请检查恢复源、目标路径和技术详情，然后重试恢复。",
@@ -6196,8 +6197,7 @@
           "review_cleanup": "检查保留的资源，并在重试前完成剩余清理。",
           "check_agent": "检查 Agent 连接后重试清理操作。",
           "retry": "解决清理问题后重试此操作。",
-          "backup_remediation": "修正报告的源问题后重试此操作。",
-          "resolve_snapshot_usage": "请等待恢复或 Chat 准备完成。对于准备失败的 Chat，请重试直至准备成功，或删除 Chat 并等待清理完成，然后重新提交备份源注销请求。强制清理也不能绕过此保护。"
+          "backup_remediation": "修正报告的源问题后重试此操作。"
         },
         "reason_message": {
           "Task timed out": "任务超时",
