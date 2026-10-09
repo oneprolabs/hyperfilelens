@@ -1,6 +1,7 @@
 package vfs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -67,15 +68,23 @@ func TestResolveUserScopedPathRejectsOutsideAndEscapingSymlink(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 
-	if _, err := ResolveUserScopedPath(outside, false); err == nil {
-		t.Fatal("outside path should be rejected")
+	if _, err := ResolveUserScopedPath(outside, false); !errors.Is(err, ErrOutsideUserHome) || !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("outside path should report the Home boundary as a permission error: %v", err)
 	}
 	link := filepath.Join(home, "outside-link")
 	if err := os.Symlink(outside, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ResolveUserScopedPath(filepath.Join(link, "restore.txt"), true); err == nil {
-		t.Fatal("symlink escaping Home should be rejected")
+	for _, request := range []struct {
+		path         string
+		allowMissing bool
+	}{
+		{link, false},
+		{filepath.Join(link, "restore.txt"), true},
+	} {
+		if _, err := ResolveUserScopedPath(request.path, request.allowMissing); !errors.Is(err, ErrOutsideUserHome) {
+			t.Fatalf("symlink escaping Home should report the Home boundary: %v", err)
+		}
 	}
 }
 

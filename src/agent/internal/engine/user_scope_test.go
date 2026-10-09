@@ -2,12 +2,14 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 func TestUserInstallationScopeUsesPlatformBrowseRoot(t *testing.T) {
@@ -69,8 +71,115 @@ func TestUserInstallationScopeReturnsStructuredPermissionFailure(t *testing.T) {
 	if result.Status != "failed" {
 		t.Fatalf("status = %q, want failed", result.Status)
 	}
-	if result.Result["error_code"] != pathPermissionDeniedErrorCode {
+	wantCode := pathPermissionDeniedErrorCode
+	if runtime.GOOS == "linux" {
+		wantCode = pathOutsideUserHomeErrorCode
+	}
+	if result.Result["error_code"] != wantCode {
 		t.Fatalf("error_code = %#v", result.Result["error_code"])
+	}
+}
+
+func TestPathAccessErrorsDistinguishScopeFromFilesystemPermission(t *testing.T) {
+	scopeCode := pathPermissionDeniedErrorCode
+	if runtime.GOOS == "linux" {
+		scopeCode = pathOutsideUserHomeErrorCode
+	}
+	for _, test := range []struct {
+		name string
+		err  error
+		code string
+	}{
+		{"outside Home", fmt.Errorf("resolve path: %w", vfs.ErrOutsideUserHome), scopeCode},
+		{"Windows drive policy", vfs.ErrLocalFixedDriveRequired, pathPermissionDeniedErrorCode},
+		{"wrapped Windows drive policy", fmt.Errorf("resolve path: %w", vfs.ErrLocalFixedDriveRequired), pathPermissionDeniedErrorCode},
+		{"filesystem permission", &os.PathError{Op: "open", Path: "/restricted", Err: os.ErrPermission}, pathReadPermissionErrorCode},
+		{"not found", os.ErrNotExist, ""},
+		{"unsupported task", fmt.Errorf("task is unavailable"), ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := pathPermissionDeniedResult(test.err, " /restricted ")
+			if test.code == "" {
+				if result != nil {
+					t.Fatalf("unrelated failure classified as a permission error: %#v", result)
+				}
+				return
+			}
+			if result["error_code"] != test.code || result["path"] != "/restricted" {
+				t.Fatalf("unexpected path access result: %#v", result)
+			}
+		})
+	}
+}
+
+func TestBrowsePermissionFailureDoesNotSuggestRootReinstallation(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires an ordinary Unix user; root can bypass directory permissions")
+	}
+	home := t.TempDir()
+	blocked := filepath.Join(home, "blocked")
+	if err := os.Mkdir(blocked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(blocked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o700) })
+	t.Setenv("HOME", home)
+	for _, mode := range []model.InstallationMode{model.InstallationModeUserContinuous, model.InstallationModeSystem} {
+		t.Setenv("HFL_INSTALLATION_MODE", string(mode))
+		engine := New(staticConfigProvider{cfg: &model.AgentConfig{InstallationMode: mode}})
+		result := engine.Run(context.Background(), Command{
+			Kind: "browse", Payload: map[string]any{"path": blocked},
+		}, nil)
+		if result.Status != "failed" || result.Result["error_code"] != pathReadPermissionErrorCode {
+			t.Fatalf("filesystem permission failure in mode %q: %#v", mode, result)
+		}
+	}
+}
+
+func TestLinuxUserContinuousScopeRejectsReadableOutsideHomeAndSymlink(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux Home scope guidance")
+	}
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	outside := filepath.Join(root, "workspace")
+	for _, path := range []string{home, outside} {
+		if err := os.Mkdir(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(home, "workspace")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("HFL_INSTALLATION_MODE", "user_continuous")
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		InstallationMode: model.InstallationModeUserContinuous,
+	}})
+	for _, path := range []string{outside, link} {
+		result := engine.Run(context.Background(), Command{
+			Kind: "path.info", Payload: map[string]any{"path": path},
+		}, nil)
+		if result.Status != "failed" || result.Result["error_code"] != pathOutsideUserHomeErrorCode {
+			t.Fatalf("outside path %q: %#v", path, result)
+		}
+	}
+	for _, mode := range []model.InstallationMode{model.InstallationModeUserContinuous, model.InstallationModeSystem, model.InstallationModeAccount} {
+		engine := New(staticConfigProvider{cfg: &model.AgentConfig{InstallationMode: mode}})
+		t.Setenv("HFL_INSTALLATION_MODE", string(mode))
+		path := outside
+		if mode == model.InstallationModeUserContinuous {
+			path = home
+		}
+		result := engine.Run(context.Background(), Command{
+			Kind: "path.info", Payload: map[string]any{"path": path},
+		}, nil)
+		if result.Status != "success" {
+			t.Fatalf("readable path %q in mode %q: %#v", path, mode, result)
+		}
 	}
 }
 

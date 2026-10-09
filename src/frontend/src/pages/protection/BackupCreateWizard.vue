@@ -58,6 +58,7 @@ import {
 } from '../../lib/resourceIcons'
 import { apiErrorMessage, apiErrorMessageI18n, isAbortError } from '../../lib/api'
 import { normalizeThrownError } from '../../lib/errors'
+import { backupPathAccessSummaryKey } from '../../lib/backupPathAccessError'
 import { openErrorDetails } from '../../lib/errors/details'
 import { notifyError } from '../../lib/notify'
 import { logger } from '../../lib/logger'
@@ -1030,6 +1031,7 @@ const createSourcePathTypeBySource = reactive<Record<string, Record<string, Back
 const manualSourcePathBySource = reactive<Record<string, string>>({})
 const manualSourcePathValidatingBySource = reactive<Record<string, boolean>>({})
 const manualSourcePathErrorBySource = reactive<Record<string, string>>({})
+const manualSourcePathErrorCodeBySource = reactive<Record<string, string>>({})
 const createExpandedSourceIds = ref<string[]>([])
 const createSourceValidationAttempted = ref(false)
 const highlightedCreateSourceId = ref('')
@@ -3548,11 +3550,14 @@ function sourceSelectedEntries(sourceId: string) {
 
 function clearManualSourcePathError(sourceId: string) {
   delete manualSourcePathErrorBySource[sourceId]
+  delete manualSourcePathErrorCodeBySource[sourceId]
 }
 
-function setManualSourcePathError(sourceId: string, message: string) {
-  if (message) manualSourcePathErrorBySource[sourceId] = message
-  else clearManualSourcePathError(sourceId)
+function setManualSourcePathError(sourceId: string, message: string, code = '') {
+  if (message) {
+    manualSourcePathErrorBySource[sourceId] = message
+    manualSourcePathErrorCodeBySource[sourceId] = code
+  } else clearManualSourcePathError(sourceId)
 }
 
 function sourceNameForError(sourceId: string) {
@@ -3791,6 +3796,11 @@ function createSourceDirIssue(sourceId: string) {
     return t('protection.backupsPage.validationMissingSourceDirsInline')
   }
   return ''
+}
+
+function createSourceDirIssueSummary(sourceId: string) {
+  const key = backupPathAccessSummaryKey(manualSourcePathErrorCodeBySource[sourceId] || '')
+  return key ? t(key) : createSourceDirIssue(sourceId)
 }
 
 function missingCreateSourceRows() {
@@ -4361,6 +4371,7 @@ function addPickedSourcesFor(sourceIds: string[]) {
     }
   })
   validSourceIds.forEach((sourceId) => {
+    clearManualSourcePathError(sourceId)
     createSourceDirKeysBySource[sourceId] = []
     refreshCreateSourceTreeBlockedState(sourceId)
   })
@@ -4402,9 +4413,12 @@ async function addManualSourcePath(sourceId: string) {
     })
   } catch (err) {
     const message = manualPathValidationErrorMessage(err, sourceId, path)
-    setManualSourcePathError(sourceId, message)
+    const normalized = normalizeThrownError(err)
+    const code = normalized.errorCode || normalized.code || ''
+    setManualSourcePathError(sourceId, message, code)
     highlightedCreateSourceId.value = sourceId
-    ElMessage.error({ message, grouping: true })
+    // Access guidance stays beside the field rather than repeating in a toast.
+    if (!backupPathAccessSummaryKey(code)) ElMessage.error({ message, grouping: true })
     return
   } finally {
     manualSourcePathValidatingBySource[sourceId] = false
@@ -6537,12 +6551,21 @@ function preserveShallowestPathOrder(paths: string[]) {
                   :class="{ 'create-source-dir-preview-empty--error': Boolean(createSourceDirIssue(row.id)) }"
                 >
                   <div>{{ t('protection.backupsPage.addedEmptyCompact') }}</div>
-                  <div
+                  <HflPopover
                     v-if="createSourceDirIssue(row.id)"
-                    class="create-source-dir-preview-empty__reason"
+                    trigger="hover"
+                    placement="top-start"
+                    :width="420"
                   >
-                    {{ createSourceDirIssue(row.id) }}
-                  </div>
+                    <template #reference>
+                      <div class="create-source-dir-preview-empty__reason hfl-table-no-tooltip">
+                        {{ createSourceDirIssueSummary(row.id) }}
+                      </div>
+                    </template>
+                    <div class="create-manual-path__error-details">
+                      {{ createSourceDirIssue(row.id) }}
+                    </div>
+                  </HflPopover>
                 </div>
                 <HflPopover
                   v-else
@@ -13449,6 +13472,12 @@ function preserveShallowestPathOrder(paths: string[]) {
   color: var(--color-error-text);
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.create-manual-path__error-details {
+  white-space: pre-line;
   overflow-wrap: anywhere;
 }
 

@@ -3,10 +3,13 @@
 package vfs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestResolveUserScopedPathWindowsAllowsReadableFixedDrivePaths(t *testing.T) {
@@ -50,7 +53,28 @@ func TestResolveUserScopedPathWindowsAllowsReadableFixedDrivePaths(t *testing.T)
 		t.Fatalf("outside-Home path resolved to %q, want %q", resolved, outside)
 	}
 
-	if _, err := ResolveUserScopedPath(`\\server\share`, false); err == nil {
-		t.Fatal("UNC path should be rejected for a user-level Agent")
+	for _, path := range []string{`\\server\share`, `\\server\share\folder`, `\\?\UNC\server\share\folder`} {
+		if _, err := ResolveUserScopedPath(path, false); !errors.Is(err, ErrLocalFixedDriveRequired) || !errors.Is(err, os.ErrPermission) {
+			t.Fatalf("UNC path %q must report the drive policy as a permission error: %v", path, err)
+		}
+	}
+}
+
+func TestRequireFixedDriveTypeDistinguishesPolicyFromReadPermissions(t *testing.T) {
+	for _, driveType := range []uint32{
+		windows.DRIVE_UNKNOWN,
+		windows.DRIVE_NO_ROOT_DIR,
+		windows.DRIVE_REMOVABLE,
+		windows.DRIVE_REMOTE,
+		windows.DRIVE_CDROM,
+		windows.DRIVE_RAMDISK,
+	} {
+		err := requireFixedDriveType(driveType)
+		if !errors.Is(err, ErrLocalFixedDriveRequired) || !errors.Is(err, os.ErrPermission) {
+			t.Fatalf("drive type %d must report the drive policy: %v", driveType, err)
+		}
+	}
+	if err := requireFixedDriveType(windows.DRIVE_FIXED); err != nil {
+		t.Fatalf("a fixed drive must remain allowed: %v", err)
 	}
 }
