@@ -1523,6 +1523,20 @@ class CopilotChatTeardownTests(TestCase):
             reused.provision_phase,
             LensSessionLink.ProvisionPhase.CREATING_SESSION,
         )
+        reused.refresh_from_db()
+        reused.knowledge_source.sync_state_json = {
+            "restore_record_id": 123,
+            "snapshot_id_used": 20,
+            "conversion": {"status": "SUCCESS"},
+        }
+        with mock.patch(
+            "apps.lens_bridge.services.preparation_progress.RestoreRecord.objects.filter"
+        ) as restore_lookup:
+            progress = LensSessionLinkSerializer().get_preparation_progress(reused)
+        self.assertTrue(progress["reused_data"])
+        self.assertIsNone(progress["restore"])
+        self.assertEqual(progress["assistant_state"], "waiting")
+        restore_lookup.assert_not_called()
         queue_provision.assert_called_once_with(reused.id)
 
     @mock.patch(

@@ -742,24 +742,15 @@ onBeforeUnmount(() => {
 .ai-cap-tag {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   min-height: 22px;
   border: 1px solid color-mix(in srgb, var(--ai-capability-color, #64748b) 24%, var(--color-border-light));
-  border-radius: 999px;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--ai-capability-color, #64748b) 7%, var(--color-card-bg, #fff));
   color: var(--color-text-secondary);
   padding: 2px 8px;
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;
-}
-
-.ai-cap-tag::before {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ai-capability-color, var(--color-text-tertiary));
-  content: '';
 }
 
 .cap-sky { --ai-capability-color: #0284c7; }

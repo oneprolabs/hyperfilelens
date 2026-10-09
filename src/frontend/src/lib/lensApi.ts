@@ -389,6 +389,18 @@ export type LensSessionLink = {
   cleanup_status?: 'none' | 'pending' | 'running' | 'blocked' | 'complete' | string
   force_delete_available?: boolean
   force_delete_reason?: string
+  preparation_progress?: {
+    reused_data: boolean
+    assistant_state?: 'waiting' | 'configuring' | 'opening_session' | 'retrying' | null
+    restore: {
+      status: string
+      phase: string
+      progress_percent: number | null
+      bytes_done: number | null
+      bytes_total: number | null
+      eta_seconds: number | null
+    } | null
+  } | null
   document_conversion?: DocumentConversion | null
   data_context?: SessionDataContext | null
   data_update?: {

@@ -3,7 +3,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -43,6 +43,63 @@ from common.errors import AppError
 
 
 class CopilotLifecycleQueueTests(SimpleTestCase):
+    @patch("apps.lens_bridge.services.chat_lifecycle.run_copilot_chat_provision")
+    def test_early_scheduled_delivery_keeps_follow_up_with_remaining_delay(self, run):
+        run.return_value = {
+            "status": "scheduled",
+            "next_poll": {"generation": 3, "sequence": 8, "retry_after_seconds": 2},
+        }
+        task = chat_lifecycle_tasks.execute_copilot_chat_provision_task
+        with patch.object(task, "apply_async") as apply_async:
+            task.run(session_link_id=42, expected_generation=3, expected_poll_sequence=8)
+        apply_async.assert_called_once_with(
+            kwargs={"session_link_id": 42, "expected_generation": 3, "expected_poll_sequence": 8},
+            countdown=2,
+        )
+
+    @patch("apps.lens_bridge.services.chat_lifecycle.run_copilot_chat_provision")
+    def test_unclaimed_or_terminal_delivery_does_not_schedule_duplicates(self, run):
+        task = chat_lifecycle_tasks.execute_copilot_chat_provision_task
+        for status in ("busy", "stale", "ready", "deleted", "missing", "scheduled"):
+            with self.subTest(status=status), patch.object(task, "apply_async") as apply_async:
+                run.return_value = {"status": status}
+                task.run(session_link_id=42)
+                apply_async.assert_not_called()
+
+    def test_busy_conversion_resume_does_not_flash_back_to_restoring(self):
+        link = SimpleNamespace(
+            id=42, provision_phase="converting", provision_state_json={},
+            chat_binding=None, gateway_link=object(), gateway_link_id=11,
+            knowledge_source=SimpleNamespace(id=9), knowledge_source_id=9,
+            organization=SimpleNamespace(id=3), hfl_user=object(),
+            backup_source_snapshot_id=7, provision_generation=1,
+            source_scopes_json=[{"source_path": "/documents", "backup_snapshot_directory_id": 31}],
+            refresh_from_db=lambda: None,
+        )
+        phases = Mock()
+        with (
+            patch("apps.lens_bridge.services.chat_lifecycle.LensSessionLink.objects.select_related") as sessions,
+            patch.multiple(
+                chat_lifecycle, _require_provision_claim=Mock(),
+                _resolve_chat_scopes=Mock(return_value=None),
+                _reserve_chat_capacity=Mock(), _set_phase=phases,
+            ),
+            patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link"),
+            patch.object(chat_lifecycle.chat_user_provisioning, "ensure_sl_chat_user"),
+            patch.object(chat_lifecycle.gateway_chat_queue, "try_acquire_chat_prepare_slot",
+                         return_value=SimpleNamespace(acquired=True)),
+            patch.object(chat_lifecycle.gateway_chat_queue, "heartbeat_chat_prepare_slot"),
+            patch.object(chat_lifecycle.knowledge_source_sync, "run_knowledge_source_sync",
+                         return_value={"status": "busy", "retry_after_seconds": 5}),
+        ):
+            sessions.return_value.filter.return_value.first.return_value = link
+            result = chat_lifecycle._run_copilot_chat_provision(
+                session_link_id=42, claim_token="claim",
+            )
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(link.provision_phase, "converting")
+        phases.assert_not_called()
+
     @patch(
         "apps.lens_bridge.services.chat_lifecycle.release_stopped_failed_chat_slots",
         return_value=2,
@@ -331,6 +388,169 @@ class CopilotRetryTests(TestCase):
             title="Retry Chat",
             lifecycle_status=lifecycle_status,
         )
+
+    def ready_source(self) -> LensKnowledgeSource:
+        gateway = Node.objects.create(
+            organization=self.organization, name="ready-gateway",
+            role=Node.Role.GATEWAY, status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.organization, gateway=gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+        )
+        return LensKnowledgeSource.objects.create(
+            organization=self.organization, name="Prepared source", source_path="/data",
+            gateway=gateway, gateway_link=gateway_link,
+            status=LensKnowledgeSource.Status.READY,
+            sync_state_json={"last_sync_at": timezone.now().isoformat()},
+        )
+
+    def waiting_session(self, ks: LensKnowledgeSource) -> LensSessionLink:
+        session = self.create_session(LensSessionLink.LifecycleStatus.PROVISIONING)
+        session.knowledge_source = ks
+        session.provision_phase = LensSessionLink.ProvisionPhase.CONVERTING
+        session.provision_generation = 3
+        session.provision_poll_sequence = 8
+        session.provision_next_retry_at = timezone.now() + timedelta(seconds=30)
+        session.save()
+        return session
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._run_copilot_chat_provision")
+    def test_scheduled_delivery_returns_ceil_delay_and_preserves_sequence(self, run):
+        session = self.waiting_session(self.ready_source())
+        now = timezone.now()
+        session.provision_next_retry_at = now + timedelta(seconds=2.2)
+        session.save()
+        with patch.object(chat_lifecycle.timezone, "now", return_value=now):
+            result = chat_lifecycle.run_copilot_chat_provision(
+                session_link_id=session.id, expected_generation=3, expected_poll_sequence=8,
+            )
+        self.assertEqual(result["status"], "scheduled")
+        self.assertEqual(result["next_poll"], {
+            "generation": 3, "sequence": 8, "retry_after_seconds": 3,
+        })
+        session.refresh_from_db()
+        self.assertEqual(session.provision_poll_sequence, 8)
+        self.assertIsNone(session.provision_claim_token)
+        run.assert_not_called()
+
+    def test_scheduled_snapshot_is_discarded_after_delete_retry_or_new_claim(self):
+        session = self.waiting_session(self.ready_source())
+        for changed in (
+            {"lifecycle_status": LensSessionLink.LifecycleStatus.DELETING},
+            {"provision_generation": 4},
+            {"provision_poll_sequence": 9},
+            {"provision_claim_token": uuid.uuid4(), "provision_claimed_at": timezone.now()},
+        ):
+            with self.subTest(changed=changed):
+                LensSessionLink.objects.filter(pk=session.id).update(**changed)
+                self.assertIsNone(chat_lifecycle._scheduled_provision_poll(
+                    session.id, expected_generation=3, expected_poll_sequence=8,
+                ))
+                LensSessionLink.objects.filter(pk=session.id).update(
+                    lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+                    provision_generation=3, provision_poll_sequence=8,
+                    provision_claim_token=None, provision_claimed_at=None,
+                )
+
+    @patch("apps.lens_bridge.services.sync_queue.queue_copilot_chat_provision")
+    def test_ready_source_wakes_after_commit_once_and_fences_older_polls(self, queue):
+        ks = self.ready_source()
+        session = self.waiting_session(ks)
+        with self.captureOnCommitCallbacks(execute=True):
+            count = chat_lifecycle.wake_chats_for_ready_knowledge_source(
+                organization_id=self.organization.id, knowledge_source_id=ks.id,
+            )
+            queue.assert_not_called()
+        self.assertEqual(count, 1)
+        queue.assert_called_once_with(
+            session_link_id=session.id, expected_generation=3, expected_poll_sequence=9,
+        )
+        session.refresh_from_db()
+        self.assertLessEqual(session.provision_next_retry_at, timezone.now())
+        self.assertEqual(chat_lifecycle._claim_copilot_chat_provision(
+            session.id, expected_generation=3, expected_poll_sequence=8,
+        ), (None, "stale"))
+        with self.captureOnCommitCallbacks(execute=True):
+            self.assertEqual(chat_lifecycle.wake_chats_for_ready_knowledge_source(
+                organization_id=self.organization.id, knowledge_source_id=ks.id,
+            ), 0)
+        self.assertEqual(queue.call_count, 1)
+        token, status = chat_lifecycle._claim_copilot_chat_provision(
+            session.id, expected_generation=3, expected_poll_sequence=9,
+        )
+        self.assertEqual(status, "claimed")
+        self.assertIsNotNone(token)
+
+    @patch("apps.lens_bridge.services.sync_queue.queue_copilot_chat_provision")
+    def test_ready_wakeup_preserves_active_claim_backoff_and_nonwaiting_sessions(self, queue):
+        ks = self.ready_source()
+        for changes in (
+            {"provision_claim_token": uuid.uuid4(), "provision_claimed_at": timezone.now()},
+            {"provision_state_json": {"source_lens_transient": {"count": 1}}},
+            {"lifecycle_status": LensSessionLink.LifecycleStatus.DELETING},
+            {"lifecycle_status": LensSessionLink.LifecycleStatus.READY},
+            {"provision_phase": LensSessionLink.ProvisionPhase.CREATING_ASSISTANT},
+        ):
+            with self.subTest(changes=changes):
+                session = self.waiting_session(ks)
+                LensSessionLink.objects.filter(pk=session.id).update(**changes)
+                with self.captureOnCommitCallbacks(execute=True):
+                    self.assertEqual(chat_lifecycle.wake_chats_for_ready_knowledge_source(
+                        organization_id=self.organization.id, knowledge_source_id=ks.id,
+                    ), 0)
+                session.refresh_from_db()
+                self.assertEqual(session.provision_poll_sequence, 8)
+                session.delete()
+        queue.assert_not_called()
+
+    @patch("apps.lens_bridge.services.sync_queue.queue_copilot_chat_provision")
+    def test_wakeup_does_not_dispatch_after_delete_before_commit(self, queue):
+        ks = self.ready_source()
+        session = self.waiting_session(ks)
+        with self.captureOnCommitCallbacks(execute=True):
+            chat_lifecycle.wake_chats_for_ready_knowledge_source(
+                organization_id=self.organization.id, knowledge_source_id=ks.id,
+            )
+            LensSessionLink.objects.filter(pk=session.id).update(
+                lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            )
+        queue.assert_not_called()
+
+    @patch("apps.lens_bridge.services.sync_queue.queue_copilot_chat_provision")
+    def test_nonready_or_other_tenant_source_cannot_wake_chats(self, queue):
+        ks = self.ready_source()
+        self.waiting_session(ks)
+        other = Organization.objects.create(key="other-wakeup", name="Other")
+        for organization_id, status in (
+            (other.id, LensKnowledgeSource.Status.READY),
+            (self.organization.id, LensKnowledgeSource.Status.SYNCING),
+        ):
+            ks.status = status
+            ks.save()
+            with self.captureOnCommitCallbacks(execute=True):
+                self.assertEqual(chat_lifecycle.wake_chats_for_ready_knowledge_source(
+                    organization_id=organization_id, knowledge_source_id=ks.id,
+                ), 0)
+        queue.assert_not_called()
+
+    @patch(
+        "apps.lens_bridge.services.sync_queue.queue_copilot_chat_provision",
+        side_effect=ConnectionError("broker unavailable"),
+    )
+    def test_wakeup_broker_failure_keeps_due_work_for_reconciler(self, _queue):
+        ks = self.ready_source()
+        session = self.waiting_session(ks)
+        with self.captureOnCommitCallbacks(execute=True):
+            chat_lifecycle.wake_chats_for_ready_knowledge_source(
+                organization_id=self.organization.id, knowledge_source_id=ks.id,
+            )
+        session.refresh_from_db()
+        self.assertEqual(session.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING)
+        self.assertLessEqual(session.provision_next_retry_at, timezone.now())
+        self.assertIsNone(session.provision_claim_token)
 
     def create_public_gateway_session(self) -> LensSessionLink:
         """Create a failed tenant chat reserved on a platform Gateway."""
@@ -823,6 +1043,54 @@ class CopilotRetryTests(TestCase):
         lock_capacity.assert_not_called()
         assert_capacity.assert_not_called()
         queue_provision.assert_called_once_with(session.id)
+
+
+class CopilotReadyWakeupConcurrencyTests(TransactionTestCase):
+    @patch("apps.lens_bridge.services.sync_queue.queue_copilot_chat_provision")
+    def test_simultaneous_notifications_publish_one_fenced_continuation(self, queue):
+        organization = Organization.objects.create(key="wake-concurrency", name="Wake concurrency")
+        user = get_user_model().objects.create_user(
+            username="wake-concurrency", email="wake-concurrency@example.test",
+        )
+        gateway = Node.objects.create(
+            organization=organization, name="wake-gateway", role=Node.Role.GATEWAY,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=organization, gateway=gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+        )
+        ks = LensKnowledgeSource.objects.create(
+            organization=organization, gateway=gateway, gateway_link=gateway_link, name="Prepared source",
+            status=LensKnowledgeSource.Status.READY,
+            sync_state_json={"last_sync_at": timezone.now().isoformat()},
+        )
+        session = LensSessionLink.objects.create(
+            organization=organization, hfl_user=user, knowledge_source=ks,
+            lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+            provision_phase=LensSessionLink.ProvisionPhase.CONVERTING,
+            provision_generation=2, provision_poll_sequence=4,
+        )
+        barrier = threading.Barrier(2)
+
+        def notify():
+            close_old_connections()
+            try:
+                barrier.wait(timeout=10)
+                return chat_lifecycle.wake_chats_for_ready_knowledge_source(
+                    organization_id=organization.id, knowledge_source_id=ks.id,
+                )
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda unused_index: notify(), range(2)))
+        self.assertEqual(sorted(results), [0, 1])
+        queue.assert_called_once_with(
+            session_link_id=session.id, expected_generation=2, expected_poll_sequence=5,
+        )
+        session.refresh_from_db()
+        self.assertEqual(session.provision_poll_sequence, 5)
 
 
 class CopilotCapacityReservationTests(TestCase):

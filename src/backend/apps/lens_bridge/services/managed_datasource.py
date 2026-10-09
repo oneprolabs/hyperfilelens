@@ -13,7 +13,7 @@ from typing import Any, Callable
 from django.utils import timezone
 
 from apps.lens_bridge.models import LensKnowledgeSource, LensWorkspaceBinding
-from apps.lens_bridge.services import sl_client
+from apps.lens_bridge.services import conversion_display, sl_client
 
 logger = logging.getLogger(__name__)
 
@@ -793,6 +793,11 @@ def convert_documents(
                     "status": "SUCCESS",
                     "summary": summary,
                     "progress_message": str(metadata.get("progress_message") or ""),
+                    "progress_step": "completed",
+                    "progress_phase": "COMPLETED",
+                    **conversion_display.conversion_progress_view({
+                        "status": "SUCCESS", "summary": summary,
+                    }),
                     "warnings": _conversion_warnings(
                         summary,
                         visual_model_configured=bool(
@@ -1149,8 +1154,10 @@ def convert_documents(
             "summary": summary,
             "progress_counts": progress_counts,
             "progress_step": metadata.get("progress_step") or "",
+            "progress_phase": metadata.get("phase") or "",
             "progress_message": metadata.get("progress_message") or "",
             "progress_percent": metadata.get("progress_percent"),
+            "overall_progress_percent": metadata.get("overall_progress_percent"),
             "warnings": _conversion_warnings(
                 summary,
                 visual_model_configured=bool(conversion.get("vision_model_ref")),

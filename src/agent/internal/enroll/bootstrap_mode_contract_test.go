@@ -41,6 +41,31 @@ func TestBootstrapAutomaticModeUsesActualExecutionIdentity(t *testing.T) {
 	}
 }
 
+func TestLinuxBootstrapExplainsSudoBeforeUserContinuousAuthorization(t *testing.T) {
+	source := readBootstrapSource(t, "agent-bootstrap-linux.sh")
+	previous := -1
+	for _, want := range []string{
+		`if [[ "${HFL_INSTALLATION_MODE}" == "user_continuous" && "${HFL_USER_LINGER}" != "yes" ]]; then`,
+		`hfl_step "Administrator authorization via sudo is needed to keep the Agent running after you sign out."`,
+		`hfl_step "This does not make the Agent run as root or expand the files it can back up. The Agent will still use the current user's permissions to read files."`,
+		`sudo loginctl enable-linger "$(id -un)"`,
+		`[[ "${HFL_USER_LINGER}" == "yes" ]]`,
+		`hfl_ok "The Agent can now continue running after you sign out, using the current user's permissions."`,
+	} {
+		index := strings.Index(source, want)
+		if index < 0 {
+			t.Fatalf("Linux bootstrap missing sudo explanation contract %q", want)
+		}
+		if index <= previous {
+			t.Fatalf("Linux bootstrap sudo explanation is out of order: %q", want)
+		}
+		previous = index
+	}
+	if strings.Contains(source, `hfl_step "Enabling systemd user lingering`) {
+		t.Fatal("Linux bootstrap must explain the authorization instead of only naming systemd lingering")
+	}
+}
+
 func readBootstrapSource(t *testing.T, name string) string {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)

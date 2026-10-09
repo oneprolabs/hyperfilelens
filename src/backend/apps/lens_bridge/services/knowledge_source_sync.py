@@ -547,6 +547,15 @@ def run_knowledge_source_sync(
             knowledge_source_id=knowledge_source_id,
             claim_token=claim_token,
         )
+        if result.get("status") in (
+            LensKnowledgeSource.Status.READY, LensKnowledgeSource.Status.DEGRADED,
+        ):
+            from apps.lens_bridge.services.chat_lifecycle import wake_chats_for_ready_knowledge_source
+
+            transaction.on_commit(lambda: wake_chats_for_ready_knowledge_source(
+                organization_id=organization_id,
+                knowledge_source_id=knowledge_source_id,
+            ), robust=True)
         return result
     except KnowledgeSourceSyncPending as exc:
         retry_after_seconds = exc.retry_after_seconds

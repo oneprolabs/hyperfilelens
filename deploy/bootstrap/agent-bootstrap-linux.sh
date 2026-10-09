@@ -221,7 +221,8 @@ if [[ "${HFL_INSTALLATION_MODE}" == "user" || "${HFL_INSTALLATION_MODE}" == "use
 	if [[ "${HFL_INSTALLATION_MODE}" == "user_continuous" && "${HFL_USER_LINGER}" != "yes" ]]; then
 		command -v sudo >/dev/null 2>&1 \
 			|| hfl_fail "Administrator authorization is required once to enable systemd user lingering (sudo is not available)." 2
-		hfl_step "Enabling systemd user lingering for $(id -un)."
+		hfl_step "Administrator authorization via sudo is needed to keep the Agent running after you sign out."
+		hfl_step "This does not make the Agent run as root or expand the files it can back up. The Agent will still use the current user's permissions to read files."
 		sudo loginctl enable-linger "$(id -un)" \
 			|| hfl_fail "Could not enable systemd user lingering. Ask an administrator to run: sudo loginctl enable-linger $(id -un)" 2
 		HFL_USER_LINGER="$(hfl_user_linger_state)" \
@@ -230,7 +231,7 @@ if [[ "${HFL_INSTALLATION_MODE}" == "user" || "${HFL_INSTALLATION_MODE}" == "use
 			|| hfl_fail "Unable to parse the current user's systemd linger state after authorization." 2
 		[[ "${HFL_USER_LINGER}" == "yes" ]] \
 			|| hfl_fail "systemd user lingering is still disabled after administrator authorization." 2
-		hfl_ok "systemd user lingering is enabled."
+		hfl_ok "The Agent can now continue running after you sign out, using the current user's permissions."
 	fi
 	if ! systemctl --user show-environment >/dev/null 2>&1; then
 		hfl_fail "A working systemd user service manager is required for user-level installation." 2

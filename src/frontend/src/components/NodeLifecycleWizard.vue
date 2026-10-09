@@ -829,16 +829,6 @@ defineExpose({ clearInstallCommand })
                     {{ name }}
                   </div>
                 </div>
-                <div class="agent-os-support__notes">
-                  <p class="agent-os-support__note">
-                    <strong>{{ t('nodeLifecycle.supportedLinuxAgentLabel') }}</strong>
-                    <span>{{ t('nodeLifecycle.supportedLinuxAgentArch') }}</span>
-                  </p>
-                  <p class="agent-os-support__note">
-                    <strong>{{ t('nodeLifecycle.supportedProxyGatewayLabel') }}</strong>
-                    <span>{{ t('nodeLifecycle.supportedProxyGatewayUbuntu') }}</span>
-                  </p>
-                </div>
               </template>
               <template v-else-if="os === 'windows'">
                 <p class="agent-os-support__group">
@@ -915,7 +905,7 @@ defineExpose({ clearInstallCommand })
               </template>
             </I18nT>
             <p
-              v-if="os === 'windows' && installGenerated"
+              v-if="os === 'windows' && installGenerated && !isNewAgentInstallation"
               class="fullscreen-form-field__hint agent-install-wizard__command-lead"
             >
               {{ t('nodeLifecycle.installClipboardHint') }}
@@ -979,25 +969,6 @@ defineExpose({ clearInstallCommand })
                   />
                   <span>{{ isCopied(displayCommand) ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                 </button>
-              </div>
-            </div>
-
-            <div
-              v-if="localCommandWarning"
-              class="add-s3-warning agent-install-wizard__warn"
-              role="note"
-            >
-              <TriangleAlert
-                :size="16"
-                aria-hidden="true"
-              />
-              <div class="agent-install-wizard__warn-body">
-                <p class="agent-install-wizard__warn-title">
-                  {{ t('nodeLifecycle.localInstallCommandTitle') }}
-                </p>
-                <p class="agent-install-wizard__warn-desc">
-                  {{ t('nodeLifecycle.localInstallCommandWarning') }}
-                </p>
               </div>
             </div>
 

@@ -26,6 +26,62 @@ class ManagedDatasourceTests(SimpleTestCase):
         )
         return knowledge_source
 
+    @patch("apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id")
+    def test_successful_poll_replaces_stale_progress_with_final_counts(self, get_task):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "convert-1", "status": "STARTED",
+                "policy_fingerprint": managed_datasource.conversion_policy_fingerprint(policy),
+                "progress_percent": 50,
+                "progress_counts": {"processed": 4, "candidates": 6},
+            },
+        }
+        summary = {
+            "total": 7, "candidates": 6, "success": 6,
+            "failed": 0, "skipped": 0, "unsupported": 1,
+        }
+        get_task.return_value = {
+            "task_id": "convert-1", "status": "SUCCESS",
+            "result": {"conversion_summary": summary},
+            "metadata": {"progress_percent": 50},
+        }
+        managed_datasource.convert_documents(
+            ks=ks, sync_state=sync_state, conversion=policy,
+        )
+        state = sync_state["conversion"]
+        self.assertEqual(state["progress_percent"], 100)
+        self.assertEqual(state["progress_counts"]["processed"], 7)
+        self.assertEqual(state["progress_counts"]["converted"], 6)
+        self.assertEqual(state["progress_step"], "completed")
+
+    @patch("apps.lens_bridge.services.managed_datasource.sl_client.get_task_by_id")
+    def test_poll_keeps_overall_and_phase_metrics_for_progress_normalization(self, get_task):
+        ks = self._knowledge_source()
+        ks.sl_datasource_uuid = self.datasource_uuid
+        policy = {"document": True}
+        sync_state = {
+            "conversion": {
+                "task_id": "convert-1",
+                "policy_fingerprint": managed_datasource.conversion_policy_fingerprint(policy),
+            },
+        }
+        get_task.return_value = {
+            "task_id": "convert-1", "status": "STARTED",
+            "metadata": {
+                "phase": "FINALIZING", "progress_percent": 90,
+                "overall_progress_percent": 99,
+            },
+        }
+        with self.assertRaises(managed_datasource.ManagedDatasourcePending):
+            managed_datasource.convert_documents(
+                ks=ks, sync_state=sync_state, conversion=policy,
+            )
+        self.assertEqual(sync_state["conversion"]["overall_progress_percent"], 99)
+        self.assertEqual(sync_state["conversion"]["progress_phase"], "FINALIZING")
+
     @patch(
         "apps.lens_bridge.services.managed_datasource."
         "sl_client.create_managed_datasource"

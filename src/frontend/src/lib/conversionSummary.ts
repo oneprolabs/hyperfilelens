@@ -6,6 +6,7 @@ export type DocumentConversionItem = {
   reason: string
   reason_label: string
   is_problem?: boolean
+  outcome?: 'skipped' | 'failed' | null
 }
 
 export type DocumentConversionWarning = {
@@ -44,11 +45,21 @@ export type DocumentConversion = {
   progress_step?: string
   progress_message?: string
   progress_percent?: number | null
+  progress_counts?: {
+    total: number
+    candidates: number
+    processed: number
+    converted: number
+    failed: number
+    skipped: number
+    unsupported: number
+  } | null
   error?: string
   recovery?: DocumentConversionRecovery | null
   finished_at?: string
   counts: DocumentConversionCounts
   items: DocumentConversionItem[]
+  items_truncated?: number
   problem_items?: DocumentConversionItem[]
   warnings: DocumentConversionWarning[]
   usable: boolean

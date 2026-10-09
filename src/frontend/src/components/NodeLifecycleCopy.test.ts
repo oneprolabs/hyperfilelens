@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { en } from '../locales/en'
 
 function source(path: string) {
   return readFileSync(resolve(process.cwd(), path), 'utf8')
@@ -29,32 +30,47 @@ describe('Node lifecycle copy', () => {
     expect(wizardSource()).toContain("os === 'linux' ? 'user_continuous' : 'user'")
     expect(wizardSource()).not.toContain('selectedInstallationMode')
     expect(wizardSource()).not.toContain('installationModeOptions')
-    expect(locale).toContain('Run the command below in a shell on the target Linux host.')
-    expect(locale).toContain('Run the command below in PowerShell on the target Windows host.')
-    expect(locale).toContain('Run the command below in Terminal on the target Mac.')
-    expect(locale).toContain('The installer shows the installation mode before proceeding.')
+    expect(locale).toContain('Run the command below in a terminal on the Linux host you want to back up.')
+    expect(locale).toContain('Run the command below in PowerShell on the Windows host you want to back up.')
+    expect(locale).toContain('Run the command below in Terminal on the Mac you want to back up.')
+    expect(locale).toContain('sudo authorization to keep the Agent running after you sign out')
+    expect(locale).toContain('This does not expand the files it can back up')
     expect(locale).not.toContain('The installer confirms the installation mode before proceeding.')
     expect(locale).toContain('grant HyperFileLens Agent Full Disk Access')
-    expect(locale).toContain('If paste is empty or the browser blocks copying')
+    expect(locale).toContain('If copying fails or pasting produces no text')
     expect(locale).not.toContain('windowsInstallStepDownload')
     expect(locale).not.toContain('windowsInstallStepExecute')
     expect(chinese.nodeLifecycle.installLeadAutomaticLinux).toContain('Linux')
     expect(chinese.nodeLifecycle.installLeadAutomaticWindows).toContain('PowerShell')
     expect(chinese.nodeLifecycle.installLeadAutomaticMacos).toContain('Mac')
-    expect(chinese.nodeLifecycle.installClipboardHint).toContain(
-      String.fromCodePoint(0x65e0, 0x75d5),
+    expect(chinese.nodeLifecycle.installLeadAutomaticLinux).toContain('sudo')
+    expect(chinese.nodeLifecycle.installLeadAutomaticLinux).toContain(
+      `${String.fromCodePoint(0x8fd9, 0x4e0d, 0x4f1a, 0x6269, 0x5927)} Agent ${String.fromCodePoint(0x53ef, 0x5907, 0x4efd, 0x7684, 0x6587, 0x4ef6, 0x8303, 0x56f4)}`,
+    )
+    expect(chinese.nodeLifecycle.installLeadAutomaticWindows).toContain(chinese.nodeLifecycle.installClipboardHint)
+    expect(chinese.nodeLifecycle.installLeadAutomaticMacos).toContain(
+      `${String.fromCodePoint(0x4ee5)} root ${String.fromCodePoint(0x8eab, 0x4efd, 0x5b89, 0x88c5, 0x65f6, 0x4e5f, 0x9700, 0x8981, 0x8fd9, 0x9879, 0x6388, 0x6743)}`,
     )
     for (const message of [
       chinese.nodeLifecycle.installLeadAutomaticLinux,
       chinese.nodeLifecycle.installLeadAutomaticWindows,
       chinese.nodeLifecycle.installLeadAutomaticMacos,
+      spanish.nodeLifecycle.installLeadAutomaticLinux,
+      spanish.nodeLifecycle.installLeadAutomaticWindows,
+      spanish.nodeLifecycle.installLeadAutomaticMacos,
+      en.nodeLifecycle.installLeadAutomaticLinux,
+      en.nodeLifecycle.installLeadAutomaticWindows,
+      en.nodeLifecycle.installLeadAutomaticMacos,
     ]) {
-      expect(message).toContain('\n')
+      expect(message.split('\n')).toHaveLength(3)
+      expect(message).not.toMatch(/\n\s*\n/)
+      expect(message).not.toContain(String.fromCodePoint(0x8bbf, 0x95ee, 0x6743, 0x9650, 0xff1a))
     }
-    expect(spanish.nodeLifecycle.installLeadAutomaticLinux).toContain('Ejecute el siguiente comando en una terminal del host Linux de destino.\nAcceso:')
-    expect(spanish.nodeLifecycle.installLeadAutomaticWindows).toContain('Ejecute el siguiente comando en PowerShell en el equipo Windows de destino.')
-    expect(spanish.nodeLifecycle.installLeadAutomaticMacos).toContain('Ejecute el siguiente comando en Terminal en el Mac de destino.\nAcceso:')
-    expect(spanish.nodeLifecycle.installClipboardHint).toContain('ventana privada')
+    expect(spanish.nodeLifecycle.installLeadAutomaticLinux).toContain('equipo Linux del que desea hacer copias de seguridad')
+    expect(spanish.nodeLifecycle.installLeadAutomaticLinux).toContain('Esto no amplía el conjunto de archivos que puede respaldar')
+    expect(spanish.nodeLifecycle.installLeadAutomaticWindows).toContain('Ejecutar como administrador')
+    expect(spanish.nodeLifecycle.installLeadAutomaticWindows).toContain(spanish.nodeLifecycle.installClipboardHint)
+    expect(spanish.nodeLifecycle.installLeadAutomaticMacos).toContain('Esta autorización también es necesaria al instalar como root')
     expect(css).toMatch(/agent-install-wizard__command-lead[\s\S]*?white-space: pre-line/)
     expect(locale).toContain("generateInstallCommand: 'Generate install command'")
     expect(locale).toContain('Copy the command and run it in a shell on the target host')
@@ -70,7 +86,7 @@ describe('Node lifecycle copy', () => {
     const dataProtection = source('src/pages/protection/DataProtection.vue')
     const backupWizard = source('src/pages/protection/BackupCreateWizard.vue')
 
-    expect(wizard).toContain("v-if=\"os === 'windows' && installGenerated\"")
+    expect(wizard).toContain("v-if=\"os === 'windows' && installGenerated && !isNewAgentInstallation\"")
     expect(wizard).toContain("t('nodeLifecycle.installClipboardHint')")
     expect(wizard).toContain('function onCopy()')
     expect(wizard).not.toContain('function onCopy(cmd')
@@ -120,6 +136,28 @@ describe('Node lifecycle copy', () => {
     expect(locale).toContain("gatewayReqDiskSub: 'Local runtime and workspace storage'")
     expect(locale).toContain('Registers the Public Data Gateway with HyperFileLens')
     expect(locale).toContain('Registers the Private Data Gateway with HyperFileLens')
+  })
+
+  it('keeps Linux distribution support without redundant Agent and Proxy/Gateway notes', () => {
+    const wizard = wizardSource()
+
+    expect(wizard).toContain('LINUX_DISTROS.deb')
+    expect(wizard).toContain('LINUX_DISTROS.rpm')
+    expect(wizard).toContain('LINUX_DISTROS.cloud')
+    expect(wizard).not.toContain("t('nodeLifecycle.supportedLinuxAgentLabel')")
+    expect(wizard).not.toContain("t('nodeLifecycle.supportedLinuxAgentArch')")
+    expect(wizard).not.toContain("t('nodeLifecycle.supportedProxyGatewayLabel')")
+    expect(wizard).not.toContain("t('nodeLifecycle.supportedProxyGatewayUbuntu')")
+  })
+
+  it('omits the local-console warning box on the install-only page', () => {
+    const wizard = wizardSource()
+    const installOnlyTemplate = wizard.split('<template v-if="installOnly">')[1]?.split('<template v-else>')[0]
+
+    expect(installOnlyTemplate).toBeDefined()
+    expect(installOnlyTemplate).not.toContain('v-if="localCommandWarning"')
+    expect(wizard).not.toContain("t('nodeLifecycle.localInstallCommandTitle')")
+    expect(wizard).toContain("t('nodeLifecycle.localUpgradeCommandWarning')")
   })
 
   it('uses product-role terminology in install and maintenance summaries', () => {

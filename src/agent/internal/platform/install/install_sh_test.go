@@ -113,6 +113,33 @@ func TestInstallShellDefinesLinuxUserContinuousLifecycle(t *testing.T) {
 	}
 }
 
+func TestInstallShellExplainsSudoBeforeUserContinuousAuthorization(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	previous := -1
+	for _, want := range []string{
+		`if [[ "${INSTALLATION_MODE}" == "user_continuous" ]]; then`,
+		`if [[ "${user_linger}" != "yes" ]]; then`,
+		`if [[ "${CMD}" == "install" ]]; then`,
+		`log_step "Administrator authorization via sudo is needed to keep the Agent running after you sign out."`,
+		`log_step "This does not make the Agent run as root or expand the files it can back up. The Agent will still use the current user's permissions to read files."`,
+		`sudo loginctl enable-linger "$(id -un)"`,
+		`[[ "${user_linger}" == "yes" ]]`,
+		`log_ok "The Agent can now continue running after you sign out, using the current user's permissions."`,
+	} {
+		index := strings.Index(body, want)
+		if index < 0 {
+			t.Fatalf("install.sh missing sudo explanation contract %q", want)
+		}
+		if index <= previous {
+			t.Fatalf("install.sh sudo explanation is out of order: %q", want)
+		}
+		previous = index
+	}
+	if strings.Contains(body, `log_step "Enabling systemd user lingering`) {
+		t.Fatal("install.sh must explain the authorization instead of only naming systemd lingering")
+	}
+}
+
 func TestUserSystemdUnitTemplateIsValid(t *testing.T) {
 	if _, err := exec.LookPath("systemd-analyze"); err != nil {
 		t.Skip("systemd-analyze is not available")
