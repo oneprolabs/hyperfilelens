@@ -283,7 +283,7 @@ stage_runtime_tree() {
 
 	if [[ -f "${src}/env.sample" ]]; then
 		cp "${src}/env.sample" "${sl_root}/.env.example"
-		sourcelens_patch_env_runtime_defaults "${sl_root}/.env.example"
+		sourcelens_patch_env_runtime_defaults "${sl_root}/.env.example" --template
 	fi
 
 	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/install.sh" "${sl_root}/install.sh"

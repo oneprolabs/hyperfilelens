@@ -207,6 +207,7 @@ ensure_env_file() {
 	local example="${root}/.env.example"
 	local env_file="${SOURCELENS_CONFIG_DIR}/.env"
 	local patch_script="${root}/patch-env-runtime.py"
+	local -a patch_args=()
 	[[ -f "${example}" ]] || die "missing ${example}"
 	run_as_root mkdir -p "${SOURCELENS_CONFIG_DIR}"
 	if [[ -f "${root}/.env" && ! -L "${root}/.env" && ! -f "${env_file}" ]]; then
@@ -217,6 +218,7 @@ ensure_env_file() {
 		run_as_root cp "${example}" "${env_file}"
 		run_as_root chmod 600 "${env_file}"
 		log "Created ${env_file} from .env.example"
+		patch_args+=(--template)
 	else
 		run_as_root chmod 600 "${env_file}"
 		python3 - "${env_file}" "${example}" <<'PY'
@@ -233,6 +235,8 @@ for line in example_path.read_text(encoding="utf-8").splitlines():
     if not line or line.lstrip().startswith("#") or "=" not in line:
         continue
     key = line.split("=", 1)[0].strip()
+    if key == "CELERY_TASK_DEFAULT_QUEUE":
+        continue  # Existing absence means inherit the image's default.
     if key and key not in existing:
         text = text.rstrip() + f"\n{line}\n"
         added.append(key)
@@ -242,7 +246,7 @@ if added:
 PY
 	fi
 	[[ -f "${patch_script}" ]] || die "missing ${patch_script}"
-	run_as_root python3 "${patch_script}" "${env_file}"
+	run_as_root python3 "${patch_script}" "${env_file}" "${patch_args[@]}"
 	run_as_root python3 - "${env_file}" \
 		"${SOURCELENS_CONSOLE_BIND_ADDRESS}" \
 		"${SOURCELENS_CONSOLE_PORT}" \

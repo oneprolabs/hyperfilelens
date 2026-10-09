@@ -170,6 +170,8 @@ jobs:
           ./tools/quality/test-saas-registry-delivery.sh
           ./tools/quality/test-online-community-install.sh
           ./tools/quality/test-sourcelens-runtime-contract.sh
+          python3 -m unittest discover -s tools/quality -p test_sl_queue_env.py
+          python3 -m unittest discover -s tools/quality -p test_sl_queue_setup.py
           ./tools/sourcelens/update-runtime-contract.sh --check
 
   verify-public-images:

@@ -90,9 +90,335 @@ class QueueSetupTests(unittest.TestCase):
             return ""
         raise AssertionError(args)
 
-    def configure(self, remove=False):
+    def configure(self, remove=False, *, dev=False):
         with patch.object(setup, "docker", side_effect=self.docker):
-            setup.configure(self.root, remove)
+            setup.configure(self.root, remove, dev=dev)
+
+    def use_dev_layout(self):
+        runtime = self.root / "build/sourcelens/dev"
+        runtime.mkdir(parents=True)
+        (self.root / "sourcelens/docker-compose.yml").rename(
+            runtime / "docker-compose.yml"
+        )
+        (self.root / "sourcelens").rmdir()
+        for item in self.items.values():
+            item["Config"]["Labels"]["com.docker.compose.project.working_dir"] = str(
+                runtime
+            )
+        return runtime
+
+    def test_dev_start_and_repeated_recovery_preserve_private_networks(self):
+        runtime = self.use_dev_layout()
+        nginx = self.item("c" * 64, "nginx")
+        nginx["Config"]["Labels"]["com.docker.compose.project.working_dir"] = str(
+            runtime
+        )
+        nginx["NetworkSettings"]["Networks"][setup.BRIDGE] = {
+            "Aliases": ["nginx", "sourcelens-nginx"],
+        }
+        self.items["c" * 64] = nginx
+        self.members["c" * 64] = {}
+        nginx_networks = json.dumps(
+            nginx["NetworkSettings"]["Networks"], sort_keys=True
+        )
+        api_networks = json.dumps(
+            self.items["b" * 64]["NetworkSettings"]["Networks"], sort_keys=True
+        )
+        self.configure(dev=True)
+        self.configure(dev=True)
+        self.assertEqual(
+            [call for call in self.calls if call[:2] == ("network", "connect")],
+            [("network", "connect", "--alias", setup.ALIAS, setup.BRIDGE, "a" * 64)],
+        )
+        self.assertEqual(
+            json.loads(setup.runtime_config_path(self.root).read_text())["url"],
+            "redis://hfl-sourcelens-redis:6379/0",
+        )
+        self.assertEqual(
+            json.dumps(nginx["NetworkSettings"]["Networks"], sort_keys=True),
+            nginx_networks,
+        )
+        self.assertEqual(
+            json.dumps(
+                self.items["b" * 64]["NetworkSettings"]["Networks"], sort_keys=True
+            ),
+            api_networks,
+        )
+        self.assertIn("private-sl", self.items["a" * 64]["NetworkSettings"]["Networks"])
+        self.assertFalse(
+            any(call[0] in ("restart", "stop", "exec") for call in self.calls)
+        )
+
+    def test_installed_layout_does_not_silently_trust_dev_labels(self):
+        self.use_dev_layout()
+        redis = self.items["a" * 64]
+        self.assertFalse(setup.owned(redis, self.root, "redis"))
+        self.assertTrue(setup.owned(redis, self.root, "redis", dev=True))
+        (self.root / "sourcelens").mkdir()
+        (self.root / "sourcelens/docker-compose.yml").write_text("services: {}")
+        with self.assertRaises(RuntimeError):
+            self.configure()
+        self.assertFalse(self.members)
+        self.assertFalse(setup.runtime_config_path(self.root).exists())
+
+    def test_dev_service_discovery_does_not_trust_another_repository(self):
+        self.use_dev_layout()
+        self.items["a" * 64]["Config"]["Labels"][
+            "com.docker.compose.project.working_dir"
+        ] = str(self.root / "another-repository/build/sourcelens/dev")
+        with self.assertRaises(RuntimeError):
+            self.configure(dev=True)
+        self.assertFalse(self.members)
+
+    def test_dev_recovery_reattaches_recreated_redis(self):
+        runtime = self.use_dev_layout()
+        self.configure(dev=True)
+        self.members.clear()
+        del self.items["a" * 64]
+        replacement = self.item("c" * 64, "redis")
+        replacement["Config"]["Labels"]["com.docker.compose.project.working_dir"] = str(
+            runtime
+        )
+        self.items["c" * 64] = replacement
+        self.configure(dev=True)
+        self.assertIn("c" * 64, self.members)
+        marker = json.loads((self.root / "deploy/sl-queue-monitor.json").read_text())
+        self.assertEqual(marker["container"], "c" * 64)
+
+    def test_dev_external_mode_cleans_up_only_owned_attachment(self):
+        self.use_dev_layout()
+        self.configure(dev=True)
+        env = self.root / ".env"
+        env.write_text(
+            env.read_text().replace(
+                "SOURCELENS_MODE=bundled", "SOURCELENS_MODE=external"
+            )
+        )
+        self.configure(dev=True)
+        self.assertFalse(self.members)
+        self.assertEqual(
+            json.loads(setup.runtime_config_path(self.root).read_text())["url"], ""
+        )
+        self.assertIn("private-sl", self.items["a" * 64]["NetworkSettings"]["Networks"])
+
+    def test_dev_explicit_endpoint_is_preserved(self):
+        self.use_dev_layout()
+        with (self.root / ".env").open("a") as stream:
+            stream.write("HFL_SL_RUNTIME_REDIS_URL=redis://custom:6379/1\n")
+        self.configure(dev=True)
+        self.assertEqual(
+            setup.env_value(self.root / ".env", "HFL_SL_RUNTIME_REDIS_URL"),
+            "redis://custom:6379/1",
+        )
+        self.assertFalse(self.calls)
+
+    def test_dev_security_rejection_keeps_original_network(self):
+        self.use_dev_layout()
+        self.items["a" * 64]["NetworkSettings"]["Networks"][setup.BRIDGE] = {
+            "Aliases": [setup.ALIAS, "redis"],
+        }
+        self.members["a" * 64] = {}
+        with self.assertRaises(setup.UnsafeSetup):
+            self.configure(dev=True)
+        self.assertIn("private-sl", self.items["a" * 64]["NetworkSettings"]["Networks"])
+
+    def test_dev_cli_selects_layout_without_printing_credentials(self):
+        import io
+        from contextlib import redirect_stdout
+
+        self.use_dev_layout()
+        output = io.StringIO()
+        with (
+            patch("sys.argv", ["helper", "--root", str(self.root), "--dev"]),
+            patch.object(setup, "docker", side_effect=self.docker),
+            redirect_stdout(output),
+        ):
+            setup.main()
+        self.assertIn("reconciled", output.getvalue())
+        self.assertNotIn("redis://", output.getvalue())
+        self.assertIn("a" * 64, self.members)
+
+    def test_verification_accepts_future_defaults_not_just_backend(self):
+        producer = {
+            "default_queue": "future-default",
+            "declared_queues": ["future-default", "future-lens"],
+            "required_queues": ["future-lens"],
+        }
+        self.assertTrue(
+            setup.queue_config_matches([producer], ["future-default", "future-lens"])
+        )
+        self.assertFalse(setup.queue_config_matches([producer], ["future-lens"]))
+        self.assertFalse(setup.queue_config_matches([producer], []))
+        self.assertFalse(setup.queue_config_matches([producer], [None]))
+        scheduler = dict(
+            producer,
+            default_queue="other-default",
+            declared_queues=["other-default", "future-lens"],
+        )
+        self.assertFalse(
+            setup.queue_config_matches(
+                [producer, scheduler], ["future-default", "future-lens"]
+            )
+        )
+        self.assertTrue(
+            setup.queue_config_matches(
+                [producer, scheduler],
+                ["future-default", "other-default", "future-lens"],
+            )
+        )
+
+    def test_verification_rejects_an_unconsumed_default_without_changing_it(self):
+        producer = {
+            "default_queue": "sourcelens",
+            "declared_queues": ["sourcelens", "backend", "lens"],
+            "required_queues": ["backend", "lens"],
+        }
+        with (
+            patch.object(setup, "find_service", return_value={"Id": "a" * 64}),
+            patch.object(
+                setup,
+                "read_queue_config",
+                side_effect=[
+                    producer,
+                    dict(producer, worker_name="celery@fixture"),
+                    producer,
+                    {"worker_queues": ["backend", "lens"]},
+                ],
+            ),
+            patch.object(setup, "configure") as configure,
+            patch.object(setup, "disable_automatic_monitor") as disable,
+        ):
+            with self.assertRaises(RuntimeError):
+                setup.verify_queue_config(self.root)
+        configure.assert_not_called()
+        disable.assert_not_called()
+
+    def test_verification_waits_for_starting_worker_with_finite_deadline(self):
+        producer = {
+            "default_queue": "future",
+            "declared_queues": ["future", "lens"],
+            "required_queues": ["lens"],
+        }
+        with (
+            patch.object(setup, "find_service", return_value={"Id": "a" * 64}),
+            patch.object(
+                setup,
+                "read_queue_config",
+                side_effect=[
+                    producer,
+                    dict(producer, worker_name="celery@fixture"),
+                    producer,
+                    {"worker_queues": []},
+                    {"worker_queues": ["future", "lens"]},
+                ],
+            ),
+            patch.object(setup.time, "sleep") as sleep,
+        ):
+            setup.verify_queue_config(self.root)
+        sleep.assert_called_once()
+
+    def test_verification_does_not_implicitly_accept_invalid_mode(self):
+        (self.root / ".env").write_text("SOURCELENS_MODE=invalid\n")
+        with patch.object(setup, "find_service") as find:
+            with self.assertRaises(RuntimeError):
+                setup.verify_queue_config(self.root)
+        find.assert_not_called()
+
+    def test_unresponsive_verification_stops_at_deadline(self):
+        producer = {
+            "default_queue": "future",
+            "declared_queues": ["future"],
+            "required_queues": [],
+        }
+        with (
+            patch.object(setup, "find_service", return_value={"Id": "a" * 64}),
+            patch.object(
+                setup,
+                "read_queue_config",
+                side_effect=[
+                    producer,
+                    dict(producer, worker_name="celery@fixture"),
+                    producer,
+                    {"worker_queues": []},
+                ],
+            ) as read,
+            patch.object(setup.time, "monotonic", side_effect=[0, 0.1, 0.2, 2]),
+            patch.object(setup.time, "sleep"),
+        ):
+            with self.assertRaises(RuntimeError):
+                setup.verify_queue_config(self.root, timeout=1)
+        self.assertEqual(read.call_count, 4)
+
+    def test_read_only_verification_does_not_change_monitoring_or_consumers(self):
+        producers = [
+            {
+                "default_queue": "backend",
+                "declared_queues": ["backend", "lens"],
+                "required_queues": ["lens"],
+            },
+            {
+                "default_queue": "backend",
+                "declared_queues": ["backend", "lens"],
+                "required_queues": ["lens"],
+                "worker_name": "celery@fixture",
+            },
+            {
+                "default_queue": "backend",
+                "declared_queues": ["backend", "lens"],
+                "required_queues": ["lens"],
+            },
+            {"worker_queues": ["backend", "lens"]},
+        ]
+        with (
+            patch.object(setup, "find_service", return_value={"Id": "a" * 64}),
+            patch.object(setup, "read_queue_config", side_effect=producers),
+            patch.object(setup, "configure") as configure,
+            patch.object(setup, "disable_automatic_monitor") as disable,
+        ):
+            setup.verify_queue_config(self.root)
+        configure.assert_not_called()
+        disable.assert_not_called()
+        self.assertFalse(self.calls)
+        self.assertFalse(setup.runtime_config_path(self.root).exists())
+
+    def test_failed_verification_is_nonzero_and_never_disables_monitoring(self):
+        import io
+        from contextlib import redirect_stdout
+
+        output = io.StringIO()
+        with (
+            patch("sys.argv", ["helper", "--root", str(self.root), "--verify-queues"]),
+            patch.object(
+                setup, "verify_queue_config", side_effect=RuntimeError("secret")
+            ),
+            patch.object(setup, "disable_automatic_monitor") as disable,
+            redirect_stdout(output),
+        ):
+            with self.assertRaises(SystemExit) as error:
+                setup.main()
+        self.assertEqual(error.exception.code, 1)
+        self.assertNotIn("secret", output.getvalue())
+        disable.assert_not_called()
+
+    def test_external_verification_does_not_inspect_or_change_services(self):
+        env = self.root / ".env"
+        env.write_text(
+            env.read_text().replace(
+                "SOURCELENS_MODE=bundled", "SOURCELENS_MODE=external"
+            )
+        )
+        with patch.object(setup, "find_service") as find:
+            setup.verify_queue_config(self.root)
+        find.assert_not_called()
+
+    def test_verification_discovery_respects_deadline(self):
+        with (
+            patch.object(setup.time, "monotonic", return_value=10),
+            patch.object(setup, "docker") as docker,
+        ):
+            with self.assertRaises(RuntimeError):
+                setup.find_service(self.root, "api", deadline=9)
+        docker.assert_not_called()
 
     def test_fresh_and_repeated_setup_only_attach_owned_redis(self):
         self.configure()
@@ -482,6 +808,20 @@ class QueueSetupTests(unittest.TestCase):
         for path in ("deploy/docker-compose.yml", "docker-compose.yml"):
             compose = (ROOT / path).read_text()
             self.assertIn("./data/runtime:/opt/hyperfilelens/runtime:ro", compose)
+        dev = (ROOT / "dev/stack.sh").read_text()
+        for start, end in (
+            ("cmd_up() {", "cmd_down() {"),
+            ("cmd_restart() {", "cmd_status() {"),
+        ):
+            block = dev.split(start, 1)[1].split(end, 1)[0]
+            self.assertLess(
+                block.index("prepare_sourcelens_dev"),
+                block.index("configure_sl_queue_monitor_dev"),
+            )
+            self.assertLess(
+                block.index("configure_sl_queue_monitor_dev"),
+                block.index("prepare_dev"),
+            )
 
 
 if __name__ == "__main__":

@@ -51,6 +51,71 @@ class QueueCacheTests(SimpleTestCase):
             ],
         }
 
+    def test_unset_monitoring_list_includes_backend_without_changing_routing(self):
+        with patch.dict(os.environ):
+            os.environ.pop("HFL_SL_RUNTIME_QUEUES", None)
+            os.environ["CELERY_TASK_DEFAULT_QUEUE"] = "custom-routing"
+            queues, threshold = runtime._queue_config()
+            self.assertEqual(queues, ["backend", "lens", "sourcelens"])
+            self.assertEqual(threshold, 1000)
+            self.assertEqual(
+                os.environ["CELERY_TASK_DEFAULT_QUEUE"], "custom-routing"
+            )
+            self.assertNotIn("HFL_SL_RUNTIME_QUEUES", os.environ)
+
+    @patch.object(runtime.deploy, "sourcelens_mode", return_value="bundled")
+    def test_bundled_legacy_monitoring_default_includes_backend(self, _mode):
+        self.assertEqual(
+            runtime._queue_config()[0], ["backend", "lens", "sourcelens"]
+        )
+        self.assertEqual(os.environ["HFL_SL_RUNTIME_QUEUES"], "lens,sourcelens")
+
+    @patch.object(runtime.deploy, "sourcelens_mode", return_value="external")
+    def test_external_legacy_list_is_not_expanded(self, _mode):
+        self.assertEqual(runtime._queue_config()[0], ["lens", "sourcelens"])
+
+    @patch.object(runtime.deploy, "sourcelens_mode", return_value="bundled")
+    def test_other_explicit_monitoring_lists_are_preserved(self, _mode):
+        for raw, expected in (
+            ("lens", ["lens"]),
+            ("custom,lens", ["custom", "lens"]),
+            ("sourcelens,lens", ["sourcelens", "lens"]),
+            ("backend,lens,sourcelens", ["backend", "lens", "sourcelens"]),
+        ):
+            with self.subTest(raw=raw), patch.dict(
+                os.environ, {"HFL_SL_RUNTIME_QUEUES": raw}
+            ):
+                self.assertEqual(runtime._queue_config()[0], expected)
+
+    @patch.object(runtime, "probe_queue_backlog")
+    def test_deployment_mode_cannot_reuse_a_different_legacy_queue_list(self, probe):
+        probe.side_effect = lambda _: self.good()
+        with patch.object(runtime.deploy, "sourcelens_mode", return_value="external"):
+            runtime.cached_queue_backlog("redis://sl/0")
+        with patch.object(runtime.deploy, "sourcelens_mode", return_value="bundled"):
+            runtime.cached_queue_backlog("redis://sl/0")
+        self.assertEqual(probe.call_count, 2)
+
+    @patch.object(runtime.deploy, "sourcelens_mode", return_value="bundled")
+    @patch("redis.from_url")
+    def test_backend_backlog_is_measured_and_alerted_with_read_only_commands(
+        self, connect, _mode
+    ):
+        pipeline = connect.return_value.pipeline.return_value.__enter__.return_value
+        pipeline.execute.return_value = [True, 1234, 0, 0]
+        result = runtime.probe_queue_backlog("redis://sl/0")
+        self.assertEqual(
+            result["queue_lengths"], {"backend": 1234, "lens": 0, "sourcelens": 0}
+        )
+        self.assertEqual(result["notices"][0]["params"]["queue"], "backend")
+        self.assertEqual(
+            [call.args for call in pipeline.llen.call_args_list],
+            [("backend",), ("lens",), ("sourcelens",)],
+        )
+        self.assertEqual(
+            {call[0] for call in pipeline.method_calls}, {"ping", "llen", "execute"}
+        )
+
     @patch.object(runtime, "probe_queue_backlog")
     def test_success_is_reused_for_five_minutes(self, probe):
         probe.side_effect = lambda _: self.good()

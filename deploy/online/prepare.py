@@ -441,6 +441,7 @@ def stage_sourcelens(
             sys.executable,
             str(source / "deploy/installer/sourcelens/patch-env-runtime.py"),
             str(root / ".env.example"),
+            "--template",
         ]
     )
     replace_env_values(

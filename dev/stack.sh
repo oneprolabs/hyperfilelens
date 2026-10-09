@@ -1063,6 +1063,27 @@ stop_sourcelens_dev() {
 	fi
 }
 
+configure_sl_queue_monitor_dev() {
+	[[ "${WITH_SOURCELENS}" -eq 1 ]] || return 0
+	local helper="${ROOT}/deploy/installer/configure-sl-queue-monitor.py"
+	if [[ ! -f "${helper}" ]]; then
+		warn "Bundled queue-monitor helper is unavailable; core services are unaffected"
+		return 0
+	fi
+	# SourceLens is running and the shared network exists at this stage. Publish
+	# the hot config before HFL startup; existing API mounts also see it directly.
+	python3 "${helper}" --root "${ROOT}" --dev \
+		|| warn "Bundled queue-monitor setup failed; core services are unaffected"
+	return 0
+}
+
+verify_sl_queue_config_dev() {
+	[[ "${WITH_SOURCELENS}" -eq 1 ]] || return 0
+	python3 "${ROOT}/deploy/installer/configure-sl-queue-monitor.py" \
+		--root "${ROOT}" --dev --verify-queues --timeout 60 \
+		|| die "SourceLens default queue is not verified against worker subscriptions"
+}
+
 publish_agent() {
 	local force=$1
 	local fingerprint
@@ -1869,6 +1890,8 @@ cmd_up() {
 	hfl_log_ok "Development tools, runtime images, and shared network are ready"
 	hfl_log_step "[2/8] Preparing insight services"
 	prepare_sourcelens_dev 0
+	verify_sl_queue_config_dev
+	configure_sl_queue_monitor_dev
 	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
 		hfl_log_ok "Insight services are prepared"
 	else
@@ -1921,6 +1944,8 @@ cmd_restart() {
 	hfl_log_ok "Development tools, runtime images, and shared network are ready"
 	hfl_log_step "[2/8] Preparing insight services"
 	prepare_sourcelens_dev "${force}"
+	verify_sl_queue_config_dev
+	configure_sl_queue_monitor_dev
 	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
 		hfl_log_ok "Insight services are prepared"
 	else

@@ -698,6 +698,9 @@ class AtomicScanUpdateTests(SimpleTestCase):
 @patch.dict(
     os.environ,
     {
+        # Explicit external metrics lists remain unchanged by the bundled
+        # legacy-default compatibility rule.
+        "SOURCELENS_MODE": "external",
         "HFL_SL_RUNTIME_QUEUES": "lens,sourcelens",
         "HFL_SL_RUNTIME_QUEUE_WARNING": "1000",
     },
