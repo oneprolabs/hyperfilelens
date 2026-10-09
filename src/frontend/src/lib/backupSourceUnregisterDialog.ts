@@ -1,6 +1,7 @@
 import type { ComposerTranslation } from 'vue-i18n'
 import type { BackupSourceDeletePreflight, BackupSourceDeleteReason } from './sourceApi'
 import { humanizeLegacyErrorMessage } from './errors'
+import { snapshotUsageFailureText } from './snapshotUsageFailureDisplay'
 
 export function mergeUnregisterSubmitRisks(
   preflight: BackupSourceDeletePreflight | null,
@@ -58,6 +59,9 @@ export function unregisterReasonLabel(
 ): string {
   const name = reason.source_name || reason.source_id || ''
   switch (reason.code) {
+    case 'snapshot_in_use':
+      return snapshotUsageFailureText(reason, t)
+        || t('ops.task.failureDetails.reason.snapshot_in_use')
     case 'agent_offline':
       return t('protection.backupsPage.deleteReasonAgentOffline', { name })
     case 'proxy_offline':

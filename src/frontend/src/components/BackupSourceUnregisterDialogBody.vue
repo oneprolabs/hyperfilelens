@@ -275,7 +275,9 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
           </li>
         </ul>
         <p class="hfl-flow-action-dialog__risks-hint">
-          {{ t('protection.backupsPage.deleteBlockingHint') }}
+          {{ preflight.blocking.some(reason => reason.code === 'snapshot_in_use')
+            ? t('ops.task.failureDetails.suggestion.resolve_snapshot_usage')
+            : t('protection.backupsPage.deleteBlockingHint') }}
         </p>
       </div>
 

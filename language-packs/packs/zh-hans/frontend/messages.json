@@ -5964,7 +5964,7 @@
         "delete_backup_configs": "删除备份配置",
         "finalize_reset": "完成重置",
         "prepare_source_unregister": "准备源注销",
-        "cleanup_direct_nas_repositories": "清理直连 NAS 仓库",
+        "cleanup_direct_nas_repositories": "清理备份数据",
         "reset_backup_config": "重置备份配置",
         "cleanup_source_endpoint": "清理源端",
         "finalize_source_unregister": "完成源注销",
@@ -6173,7 +6173,9 @@
           "agent_offline": "Agent 离线或无法连接。",
           "source_not_found": "找不到该源。",
           "node_workload_active": "源主机仍有活动工作负载。",
-          "snapshot_in_use": "一个或多个快照仍在使用中。",
+          "snapshot_in_use": "一个或多个快照仍受恢复或 Chat 准备过程的使用保护。",
+          "snapshot_in_use_detail": "快照 #{snapshotId} 仍受恢复或 Chat 准备过程的使用保护。",
+          "snapshot_failed_chat": "准备失败的 Chat 保留了此快照，以便重试。",
           "nas_umount_retained": "无法移除 NAS 挂载，已保留以便后续清理。",
           "nas_umount_failed": "NAS 挂载清理失败。",
           "empty_ids": "未提供源标识。",
@@ -6181,6 +6183,7 @@
           "cleanup_failed": "清理操作失败。"
         },
         "suggestion": {
+          "resolve_snapshot_usage": "请等待恢复或 Chat 准备完成。对于准备失败的 Chat，请重试直至准备成功，或删除 Chat 并等待清理完成，然后重新提交备份源注销请求。强制清理也不能绕过此保护。",
           "review_task": "检查仓库凭据后重试创建任务。",
           "review_backup_diagnostics": "请检查受影响的备份源、目标仓库和技术详情，然后重试备份。",
           "review_restore_diagnostics": "请检查恢复源、目标路径和技术详情，然后重试恢复。",

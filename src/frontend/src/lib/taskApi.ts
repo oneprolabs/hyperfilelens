@@ -57,7 +57,7 @@ export type TaskErrorContract = {
   severity: 'error' | 'warning'
   outcome: 'failed' | 'timeout' | 'partial' | 'warning' | 'cancelled'
   summary: string
-  reasons: Array<{ code: string; detail: string; count?: number }>
+  reasons: Array<{ code: string; detail: string; count?: number; snapshot_id?: number; consumers?: Array<{ type: string; status: string }> }>
   suggestions: Array<{ code: string; detail: string }>
   failed_step?: string | null
   entities?: Array<{ id: string | number; name: string; type: string; error?: string }>

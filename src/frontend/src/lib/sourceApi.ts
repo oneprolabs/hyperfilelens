@@ -402,6 +402,8 @@ export async function revertBackupSourcePipelineStep(payload: {
 
 export type BackupSourceDeleteReason = {
   code: string
+  snapshot_id?: number
+  consumers?: Array<{ type: string; status: string }>
   detail: string
   source_id?: string
   source_name?: string

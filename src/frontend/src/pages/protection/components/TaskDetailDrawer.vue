@@ -57,6 +57,7 @@ import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 import { cancelTask, getTask, listTaskEvents, type TaskEventRow, type TaskResourceRow, type TaskRow } from '../../../lib/taskApi'
 import { isRestoreTaskType } from '../../../lib/taskType'
+import { snapshotUsageFailureText, snapshotUsageReasonKey, type SnapshotUsageReason } from '../../../lib/snapshotUsageFailureDisplay'
 
 const props = withDefaults(defineProps<{
   modelValue: boolean
@@ -207,7 +208,9 @@ function silentTranslate(key: string): string | undefined {
   return undefined
 }
 
-function localizedFailureText(item: { code?: string; detail: string }, kind: 'reason' | 'suggestion') {
+function localizedFailureText(item: SnapshotUsageReason, kind: 'reason' | 'suggestion') {
+  const usageText = kind === 'reason' ? snapshotUsageFailureText(item, t) : undefined
+  if (usageText) return usageText
   const key = `ops.task.failureDetails.${kind}.${item.code || ''}`
   const translated = silentTranslate(key)
   if (translated) return translated
@@ -235,7 +238,7 @@ const effectiveReasons = computed(() => {
     return (taskErrorDetails.value?.reasons || []).filter(
       (r) => {
         if (r.code === 'TASK_FAILED') return false
-        const dedupe = r.code || r.detail || ''
+        const dedupe = snapshotUsageReasonKey(r)
         if (!dedupe || seen.has(dedupe)) return false
         seen.add(dedupe)
         return true
