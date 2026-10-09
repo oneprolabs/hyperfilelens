@@ -508,8 +508,16 @@ class ConversionStopAssessment:
     reason: str = ""
 
 
-def assess_conversion_stop(ks: LensKnowledgeSource) -> ConversionStopAssessment:
-    """Return SourceLens' durable proof that a conversion executor stopped."""
+def assess_conversion_stop(
+    ks: LensKnowledgeSource,
+    *,
+    task_response: dict[str, Any] | None = None,
+) -> ConversionStopAssessment:
+    """Return SourceLens' durable proof that a conversion executor stopped.
+
+    A caller may reuse a full task response; the same identity and stop-proof
+    checks apply, without fetching a second potentially different snapshot.
+    """
 
     conversion_state = (ks.sync_state_json or {}).get("conversion")
     if not isinstance(conversion_state, dict):
@@ -538,7 +546,7 @@ def assess_conversion_stop(ks: LensKnowledgeSource) -> ConversionStopAssessment:
         sync_state["conversion"] = conversion_state
         _save_sync_state(ks, sync_state)
     else:
-        task = None
+        task = task_response
     task = task or sl_client.get_task_by_id(task_id)
     if task is None:
         return ConversionStopAssessment(
@@ -637,10 +645,14 @@ def assess_conversion_stop(ks: LensKnowledgeSource) -> ConversionStopAssessment:
     )
 
 
-def conversion_stop_confirmed(ks: LensKnowledgeSource) -> bool:
+def conversion_stop_confirmed(
+    ks: LensKnowledgeSource,
+    *,
+    task_response: dict[str, Any] | None = None,
+) -> bool:
     """Return whether SourceLens proves the LensNode conversion has stopped."""
 
-    return assess_conversion_stop(ks).confirmed
+    return assess_conversion_stop(ks, task_response=task_response).confirmed
 
 
 def convert_documents(
