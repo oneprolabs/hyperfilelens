@@ -75,6 +75,8 @@ export interface PlatformExternalAccessSettings {
 
 /** Deployment-managed services shown in Runtime Environment. */
 export interface SourceLensRuntimeProbe {
+  queue_lengths?: Record<string, number>
+  checked_at?: string
   health_status: string
   availability_status: string
   notices: Array<{

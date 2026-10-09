@@ -16,6 +16,22 @@ const noticeKeys: Record<string, string> = {
   queue_config_invalid: 'queueConfigInvalid',
   queue_probe_failed: 'queueProbeFailed',
   queue_metrics_unavailable: 'queueMetricsUnavailable',
+  queue_auto_unavailable: 'queueAutoUnavailable',
+}
+
+export function sourceLensQueueDetails(probe: SourceLensRuntimeProbe, t: Translate): string[] {
+  const warned = new Set((probe.notices || [])
+    .filter(notice => notice.code === 'queue_backlog')
+    .map(notice => String(notice.params.queue || '')))
+  const details = Object.entries(probe.queue_lengths || {})
+    .filter(([queue]) => !warned.has(queue))
+    .map(([queue, count]) => t(
+    'platformOps.settings.environment.sourceLensMonitor.queueSummary', { queue, count },
+  ))
+  if (probe.checked_at) {
+    details.push(`${t('platformOps.settings.environment.checkedAt', {})}: ${formatLocalDateTime(probe.checked_at, '—')}`)
+  }
+  return details
 }
 
 /** Reuse the table's existing notice styling; never expose raw upstream logs. */

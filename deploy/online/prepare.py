@@ -364,6 +364,7 @@ def copy_runtime_files(
         "deploy/installer/install.sh": "install.sh",
         "deploy/installer/compose-runtime.sh": "payload/runtime/compose-runtime.sh",
         "deploy/installer/apply-runtime-config.py": "apply-runtime-config.py",
+        "deploy/installer/configure-sl-queue-monitor.py": "configure-sl-queue-monitor.py",
         "tools/config/sync_env.py": "sync-env.py",
         "LICENSE": "LICENSE",
     }

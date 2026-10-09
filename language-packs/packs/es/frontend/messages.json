@@ -8172,6 +8172,8 @@
         "runtimeRunning": "En ejecución",
         "runtimeStopped": "Detenido",
         "sourceLensMonitor": {
+          "queueSummary": "Cola \"{queue}\": {count} mensajes pendientes.",
+          "queueAutoUnavailable": "La supervisión de colas de SourceLens integrado no está disponible; la configuración automática del despliegue está incompleta.",
           "indexCorruption": "Se detectaron errores de corrupción de índices de la base de datos. Última aparición: {last_seen_at}.",
           "indexCorruptionHistory": "Se encontraron errores históricos de corrupción de índices ({last_seen_at}); la integridad actual no está confirmada.",
           "indexCorruptionUndated": "Se encontraron errores de corrupción de índices sin una fecha fiable; la integridad actual no está confirmada.",

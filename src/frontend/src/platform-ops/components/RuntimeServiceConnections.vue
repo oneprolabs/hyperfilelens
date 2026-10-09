@@ -6,7 +6,7 @@ import { apiErrorMessage } from '../../lib/api'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { fetchPlatformIntegrations, type PlatformIntegration } from '../lib/platformOpsApi'
 import RuntimeStatusTable from './RuntimeStatusTable.vue'
-import { sourceLensNotices, sourceLensStatusCell } from './sourceLensRuntime'
+import { sourceLensNotices, sourceLensQueueDetails, sourceLensStatusCell } from './sourceLensRuntime'
 import type {
   RuntimeStatusCell,
   RuntimeStatusNotice,
@@ -98,7 +98,7 @@ function sourceLensContainerRows(row: PlatformIntegration): RuntimeStatusRow[] {
         runtime: statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info'),
         health: sourceLensStatusCell(probe.health_status, 'health', t),
         availability: sourceLensStatusCell(probe.availability_status, 'availability', t),
-        details: [details],
+        details: [details, ...sourceLensQueueDetails(probe, t)],
         notices: sourceLensNotices([probe], t),
       }
     }

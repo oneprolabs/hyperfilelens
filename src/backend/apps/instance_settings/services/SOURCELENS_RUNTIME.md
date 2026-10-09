@@ -66,50 +66,85 @@ HFL incrementally scans PostgreSQL and Worker logs for `unexpected zero page` an
 - `HFL_SL_RUNTIME_LOG_DIR` optionally overrides the container-side directory.
   External SL deployments do not scan bundled logs unless explicitly configured.
 
-## Optional queue measurement
+## Automatic bundled queue measurement
 
-`HFL_SL_RUNTIME_REDIS_URL` is deliberately empty by default. Do not reuse HFL's
-`REDIS_URL`: this must address the SL **broker database**. No endpoint or
-credential is returned to the browser.
+Official HFL install/start/upgrade/recovery paths run the packaged
+`configure-sl-queue-monitor.py` helper as a best-effort step. It locates exactly
+one running SL Redis and API by Compose project/service/installation labels,
+reads the effective broker URI without logging credentials, and adds only the
+SL Redis to the existing `hyperfilelens-bridge`. The original private network
+is preserved. The reserved alias is `hfl-sourcelens-redis`; generic service DNS
+names (including `redis`, `postgres`, `nginx`) are rejected in both Aliases and
+DNSNames. API/Worker/Scheduler/PostgreSQL network memberships remain unchanged.
 
-```dotenv
-HFL_SL_RUNTIME_REDIS_URL=redis://<internal-sl-redis-host>:6379/0
-HFL_SL_RUNTIME_QUEUES=lens,sourcelens
-HFL_SL_RUNTIME_QUEUE_WARNING=1000
-```
+Bridge members must belong to this installation's trusted HFL backend services
+or its SL Nginx. Unknown workloads (including LensNode/other installations),
+ambiguous service discovery, alias collisions and unsafe existing endpoints
+cause a warning, never a core-service failure. No public ports, Docker socket
+mounts, extra containers, timers, SL source/image changes or service restarts
+are added. Internal Redis reachability expands to the trusted bridge; this
+is not a Redis ACL/read-only account guarantee.
 
-HFL executes only PING and LLEN via a non-transactional pipeline. It never reads
-message bodies or consumes a task. Network connect/read timeouts are two
-seconds each, with retries disabled. Redis URL query options are rejected to
-prevent overriding those limits. Queue names are deduplicated and limited to
-eight. The warning threshold must be a positive integer.
+The helper writes `HFL_SL_RUNTIME_AUTO_REDIS_URL` before API startup for backwards
+compatibility and publishes the authoritative hot configuration at
+`data/runtime/sl-queue-monitor.json`. Backend containers mount this directory
+read-only at `/opt/hyperfilelens/runtime`; it is not mounted into Nginx/Web and
+is not in logs, media, or a public directory. The directory is 0700 and the file
+is atomically replaced with 0600 permissions. The running API reopens the file
+on requests; broker/database/credential changes alter both cache keys without
+restarting API or changing its environment. An empty tombstone overrides stale
+process environment; an invalid, non-private, symlinked, or unreadable file
+fails closed. Explicit URL overrides still win; external mode ignores this file.
+The authoritative hot file is published before the compatibility `.env` update.
+If hot publication fails, the old `.env`/hot state stays intact and only this
+invocation's new attachment is rolled back. If hot publication succeeds but
+the compatibility update fails, the published endpoint and its attachment stay
+active; the running API uses the hot file, not the old environment.
 
-The URL requires internal connectivity. In the stock layout only SL Nginx is
-on the HFL bridge; SL Redis is on its separate private network. An operator
-must provide approved internal access to the existing Redis endpoint, such
-as an **HFL-side** Compose override attaching its API containers to the existing
-SL network. Verify the actual project/network name and avoid the generic
-`redis` hostname, which also names HFL's Redis. Do not expose Redis publicly,
-mount Docker socket, edit SL code/images, or change SL services for this feature.
-Use existing restricted credentials if the deployment supports them. This
-patch does not automatically alter networks, invent an ACL account, or deploy
-configuration to a shared environment.
+It records only attachment ownership (not credentials) in
+`deploy/sl-queue-monitor.json`. Configuration/marker writes are atomic with
+0600 permissions. SL recreation is reconciled after its independent upgrade;
+ordinary startup and recovery also reconcile. Explicit
+`HFL_SL_RUNTIME_REDIS_URL` overrides always win. External mode/uninstall clears
+automatic configuration and disconnects only an attachment the helper created;
+pre-existing user attachments are preserved. A transient Docker/service-discovery
+failure keeps the last verified attachment, marker, and configuration untouched.
+Only a new attachment created/requested in that invocation is rolled back after
+failure. A definitive safety rejection (unsafe aliases/untrusted workloads or
+unsupported broker target) disables automatic configuration and disconnects
+only installer-owned attachment. Explicit cleanup and rejection attempt all
+cleanup steps even if publishing one configuration file fails.
+A missing helper or failed setup warns rather than blocking installation/upgrade.
+Manual container recreation
+outside HFL's lifecycle can lose the extra attachment; normal HFL start restores
+it. Developer/custom SL layouts are not silently treated as owned deployments.
 
-- No URL: Not Monitored with an informational notice, not a zero queue depth.
-- Successful PING/LLEN: Redis Health Check is Healthy.
-- A queue at/above the threshold: yellow Warning with its name/count/threshold;
-  Business Availability is Degraded. Queue depth alone does not prove a worker
-  has stopped or a database is damaged.
-- Below threshold: no backlog warning; queue size alone does not establish
-  business readiness.
-- Pipeline replies are processed individually (`raise_on_error=False`). A
-  successful PING keeps Redis Healthy even when LLEN returns NOPERM/WRONGTYPE.
-  Failed queue metrics receive their own Warning with no fabricated count;
-  successful metrics for other queues are still retained. LLEN failure alone
-  does not set Business Availability to unavailable/degraded.
-- PING permission failure: Unknown health with a monitoring Warning, not a
-  claim that Redis is down. Transport/connect/read failures indicate an
-  unhealthy connection. Invalid configuration also receives a monitoring Warning.
+Queue queries remain on-demand: PING and LLEN in one non-transactional pipeline,
+no message reads, scans or consumption. Connect/read timeouts remain two seconds,
+with retries disabled. Successful results are cached independently for 300
+seconds; probe/permission/config failures for 60 seconds. Single-flight cache
+leases avoid overlapping queries and cache/lease failures do not cause unlocked
+upstream polling. The parent 30-second health snapshot cannot extend queue
+expiry. No scheduler task or host timer runs when nobody opens the page.
+
+The source URL, queue names and threshold are hashed into the queue cache key;
+endpoints, credentials and raw Redis errors never go to the browser. Unsupported
+atomic cache backends or unavailable cache scripting are explicit monitoring
+failures, not unsafe writes. `tools/quality/test-sl-queue-network.sh` exercises
+actual Docker DNS and Redis queries/cache Lua using disposable isolated
+containers/networks, never the running installation. Actual install/upgrade
+lifecycle acceptance remains a deployment check.
+
+- No automatic bundled endpoint: a deployment-setup Warning, not a false zero.
+- Successful PING: Redis Health Check remains Healthy even if LLEN returns
+  NOPERM/WRONGTYPE. Each failed queue is a separate metrics Warning; successful
+  counts are retained.
+- At/above `HFL_SL_RUNTIME_QUEUE_WARNING` (default 1000): backlog Warning and
+  Degraded availability. Queue size alone does not prove a stopped Worker.
+- Counts below the threshold appear as ordinary Details, with the actual Redis
+  sample timestamp, not the page's newer API probe time.
+- External/custom SL access can still use an explicit broker URL and approved
+  internal connectivity. Do not reuse HFL's `REDIS_URL` or publish SL Redis.
 
 ## Summary and UI
 
@@ -127,6 +162,6 @@ Reuse RuntimeStatusTable notices and HflStatusTag tones; no new CSS, columns,
 cards, icons or task views. English, Simplified Chinese and Spanish copy is
 included. Reloading the existing page refreshes data (within the cache TTL).
 
-Live acceptance requires verifying read permissions on the mounted logs and
-configuring the optional SL Redis connection. Until that connection exists,
-the page honestly reports that queue monitoring is not configured.
+Live acceptance requires verifying mounted-log read permissions, the automatic
+bundled attachment/DNS isolation, and queue warnings after install/upgrade.
+Queue sample age is visible; core services must remain healthy if setup fails.
