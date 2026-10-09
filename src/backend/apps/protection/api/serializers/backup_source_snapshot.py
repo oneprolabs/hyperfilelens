@@ -60,6 +60,7 @@ class BackupSourceSnapshotDirectorySerializer(serializers.ModelSerializer):
     size_bytes = serializers.SerializerMethodField()
     recoverable_size_bytes = serializers.SerializerMethodField()
     storage_stats_available = serializers.SerializerMethodField()
+    storage_stats_basis = serializers.SerializerMethodField()
     file_count = serializers.SerializerMethodField()
     dir_count = serializers.SerializerMethodField()
 
@@ -87,6 +88,7 @@ class BackupSourceSnapshotDirectorySerializer(serializers.ModelSerializer):
             "new_original_content_bytes",
             "new_packed_content_bytes",
             "storage_stats_available",
+            "storage_stats_basis",
             "file_count",
             "dir_count",
             "stats",
@@ -107,6 +109,11 @@ class BackupSourceSnapshotDirectorySerializer(serializers.ModelSerializer):
             and obj.new_packed_content_bytes is not None
         )
 
+    def get_storage_stats_basis(self, obj: BackupSourceSnapshotDirectory) -> str:
+        if not self.get_storage_stats_available(obj):
+            return "unavailable"
+        return str((obj.stats if isinstance(obj.stats, dict) else {}).get("storage_stats_basis") or "source_history")
+
     def get_file_count(self, obj: BackupSourceSnapshotDirectory) -> int:
         return _directory_file_count(obj)
 
@@ -125,6 +132,7 @@ class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
     new_original_content_bytes = serializers.SerializerMethodField()
     new_packed_content_bytes = serializers.SerializerMethodField()
     storage_stats_available = serializers.SerializerMethodField()
+    storage_stats_basis = serializers.SerializerMethodField()
     data_reuse_ratio = serializers.SerializerMethodField()
     compression_savings_ratio = serializers.SerializerMethodField()
     combined_reduction_ratio = serializers.SerializerMethodField()
@@ -161,6 +169,7 @@ class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
             "new_original_content_bytes",
             "new_packed_content_bytes",
             "storage_stats_available",
+            "storage_stats_basis",
             "data_reuse_ratio",
             "compression_savings_ratio",
             "combined_reduction_ratio",
@@ -230,7 +239,11 @@ class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
         reuse_ratio = None
         compression_ratio = None
         reduction_ratio = None
-        if complete and original is not None and packed is not None:
+        bases = {
+            str((row.stats if isinstance(row.stats, dict) else {}).get("storage_stats_basis") or "source_history")
+            for row in rows
+        }
+        if complete and len(bases) == 1 and original is not None and packed is not None:
             if recoverable > 0 and original <= recoverable:
                 reuse_ratio = 1 - (original / recoverable)
             if original > 0:
@@ -247,6 +260,7 @@ class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
             "fully_reused": bool(
                 complete
                 and recoverable > 0
+                and (bases == {"source_history"} or original == 0)
                 and packed == 0
             ),
         }
@@ -263,6 +277,15 @@ class BackupSourceSnapshotListSerializer(serializers.ModelSerializer):
 
     def get_storage_stats_available(self, obj: BackupSourceSnapshot) -> bool:
         return bool(self._storage_efficiency(obj)["available"])
+
+    def get_storage_stats_basis(self, obj: BackupSourceSnapshot) -> str:
+        if not self.get_storage_stats_available(obj):
+            return "unavailable"
+        bases = {
+            str((row.stats if isinstance(row.stats, dict) else {}).get("storage_stats_basis") or "source_history")
+            for row in self._available_directories(obj)
+        }
+        return next(iter(bases)) if len(bases) == 1 else "mixed"
 
     def get_data_reuse_ratio(self, obj: BackupSourceSnapshot) -> float | None:
         value = self._storage_efficiency(obj)["reuse_ratio"]

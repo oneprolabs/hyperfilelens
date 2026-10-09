@@ -141,6 +141,7 @@ export type BackupSourceSnapshotDirectory = {
   recoverable_size_bytes?: number
   new_original_content_bytes?: number | null
   new_packed_content_bytes?: number | null
+  storage_stats_basis?: string
   storage_stats_available?: boolean
   file_count: number
   dir_count: number
@@ -177,6 +178,7 @@ export type BackupSourceSnapshot = {
   recoverable_size_bytes?: number
   new_original_content_bytes?: number | null
   new_packed_content_bytes?: number | null
+  storage_stats_basis?: string
   storage_stats_available?: boolean
   data_reuse_ratio?: number | null
   compression_savings_ratio?: number | null

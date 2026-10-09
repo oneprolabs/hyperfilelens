@@ -281,7 +281,10 @@ build_matrix() {
 		cd "${KOPIA_SOURCE_DIR}"
 		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" run_patch_test \
 			"Checking structured progress" "Structured progress checks passed" \
-			go test ./cli -run '^TestHFLStructuredProgress$'
+			go test ./cli -run '^TestHFL(StructuredProgress|CreateStats)'
+		GOTOOLCHAIN="go${KOPIA_GO_VERSION}" run_patch_test \
+			"Checking creation statistics concurrency" "Creation statistics checks passed" \
+			go test ./repo/content -run 'TestFormatV[12]/TestHFLCreateStatsConcurrentAdmissions'
 	)
 	(
 		cd "${KOPIA_SOURCE_DIR}"
@@ -472,6 +475,7 @@ payload = {
         "hfl_structured_progress_v2": os.environ["MODE"] == "build",
         "hfl_managed_dot_ignore_v1": os.environ["MODE"] == "build",
         "hfl_entry_summary_v1": os.environ["MODE"] == "build",
+        "hfl_creation_session_data_v1": os.environ["MODE"] == "build",
     },
     "files": files,
     "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -508,7 +512,7 @@ EOF
 		KOPIA_PATCH_SHA256="$(patch_set_sha256)"
 		KOPIA_PATCH_NAMES="$(patch_names)"
 		KOPIA_PATCH_DIGESTS="$(patch_digests)"
-		KOPIA_BUILD_PROFILE="cgo-disabled,trimpath,strip,embedded-html-ui,hfl-buildinfo-v2,s3-patch-tests-v1,structured-progress-v2-tests-v1,managed-dot-ignore-v1,entry-summary-v1"
+		KOPIA_BUILD_PROFILE="cgo-disabled,trimpath,strip,embedded-html-ui,hfl-buildinfo-v2,s3-patch-tests-v1,structured-progress-v2-tests-v1,managed-dot-ignore-v1,entry-summary-v1,creation-session-data-v1"
 	else
 		KOPIA_PATCH_SHA256=""
 		KOPIA_PATCH_NAMES=""

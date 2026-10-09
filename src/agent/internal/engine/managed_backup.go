@@ -1397,10 +1397,7 @@ func (e *Engine) runManagedPolicyApply(
 	return "success", result, ""
 }
 
-var (
-	runManagedSnapshotCommand             = process.RunStreaming
-	runManagedSnapshotStorageStatsCommand = process.RunStreamingDiscardStdout
-)
+var runManagedSnapshotCommand = process.RunStreaming
 
 var runManagedSnapshotReconcileCommand = func(
 	ctx context.Context,
@@ -1600,6 +1597,24 @@ func runPreparedManagedSnapshot(
 	stallSeconds := kopiaProgressStallSeconds()
 	stallDone := make(chan struct{})
 	go monitorKopiaProgressStall(runCtx, cancelRun, progressState, stallSeconds, stallDone)
+	progressDone := make(chan struct{})
+	go func() {
+		defer close(progressDone)
+		ticker := time.NewTicker(backupProgressInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stallDone:
+				return
+			case <-runCtx.Done():
+				return
+			case <-progressState.notify:
+				progressState.sendLatest(runCtx, rep, taskID, false, time.Now())
+			case now := <-ticker.C:
+				progressState.sendLatest(runCtx, rep, taskID, false, now)
+			}
+		}
+	}()
 	onProgressLine := func(line string, stderr bool) {
 		failureCollector.observe(line)
 		if isIgnoredSnapshotFailureLine(line) {
@@ -1625,6 +1640,7 @@ func runPreparedManagedSnapshot(
 	stalled := runCtx.Err() != nil && ctx.Err() == nil && progressState.stallExceeded(stallSeconds)
 	close(stallDone)
 	cancelRun()
+	<-progressDone
 	parsedResult := parseSnapshotOutput(res.Stdout)
 	failureSummary, _ := parsedResult["snapshot_failure_summary"].(map[string]any)
 	if failureSummary == nil {
@@ -1674,6 +1690,16 @@ func runPreparedManagedSnapshot(
 		}
 	}
 	if runErr != nil {
+		result["storage_stats_available"] = false
+		result["storage_stats_basis"] = "unavailable"
+		delete(result, "new_original_content_bytes")
+		delete(result, "new_packed_content_bytes")
+		if stats, ok := result["stats"].(map[string]any); ok {
+			stats["storage_stats_available"] = false
+			stats["storage_stats_basis"] = "unavailable"
+			delete(stats, "new_original_content_bytes")
+			delete(stats, "new_packed_content_bytes")
+		}
 		if stalled {
 			result["error_code"] = "KOPIA_PROGRESS_STALL"
 			return "failed", result, "kopia progress stall"
@@ -1685,74 +1711,13 @@ func runPreparedManagedSnapshot(
 		}
 		return "failed", result, runErr.Error()
 	}
-	collectManagedSnapshotStorageStats(ctx, bin, configFile, env, sourcePath, result)
-
-	_ = sendProgress(ctx, rep, taskID, progressState.completionPayload(
-		stringValue(result["kopia_snapshot_id"]),
-	))
+	// Creation metrics are already in the manifest. Never walk source history here.
+	finalProgress := progressState.completionPayload(stringValue(result["kopia_snapshot_id"]))
+	if stats, ok := result["stats"].(map[string]any); ok {
+		stats["backup_run_counters"] = finalProgress
+	}
+	_ = sendProgress(ctx, rep, taskID, finalProgress)
 	return "success", result, ""
-}
-
-func collectManagedSnapshotStorageStats(
-	ctx context.Context,
-	bin string,
-	configFile string,
-	env map[string]string,
-	sourcePath string,
-	result map[string]any,
-) {
-	result["storage_stats_available"] = false
-	snapshotID := strings.TrimSpace(stringValue(result["kopia_snapshot_id"]))
-	if snapshotID == "" {
-		result["storage_stats_error"] = "Kopia snapshot id is unavailable"
-		return
-	}
-
-	var selected map[string]any
-	onLine := func(line string, stderr bool) {
-		if stderr || selected != nil {
-			return
-		}
-		if metrics, ok := parseManagedSnapshotStorageStatsLine(line, snapshotID); ok {
-			selected = metrics
-		}
-	}
-	res, err := runManagedSnapshotStorageStatsCommand(
-		ctx,
-		bin,
-		managedSnapshotStorageStatsArgs(configFile, sourcePath),
-		env,
-		"",
-		onLine,
-	)
-	if err != nil {
-		message := strings.TrimSpace(res.Stderr)
-		if message == "" {
-			message = err.Error()
-		}
-		result["storage_stats_error"] = truncateSnapshotBrowseError(message, 500)
-		return
-	}
-	if selected == nil {
-		result["storage_stats_error"] = "Created snapshot was not found in Kopia storage statistics"
-		return
-	}
-
-	for key, value := range selected {
-		result[key] = value
-	}
-	result["storage_stats_available"] = true
-	result["storage_stats_captured_at"] = time.Now().UTC().Format(time.RFC3339Nano)
-	result["stats"] = map[string]any{
-		"size_bytes":                 selected["recoverable_size_bytes"],
-		"recoverable_size_bytes":     selected["recoverable_size_bytes"],
-		"file_count":                 selected["file_count"],
-		"dir_count":                  selected["dir_count"],
-		"symlink_count":              selected["symlink_count"],
-		"new_original_content_bytes": selected["new_original_content_bytes"],
-		"new_packed_content_bytes":   selected["new_packed_content_bytes"],
-		"storage_stats_available":    true,
-	}
 }
 
 func managedSnapshotPolicyNotFound(res process.Result) bool {
@@ -1771,6 +1736,7 @@ func managedBackupSnapshotArgs(configFile string, sourcePath string, operationID
 		"--config-file=" + configFile,
 		"--progress",
 		"--progress-format=hfl-json",
+		"--progress-update-interval=1s",
 		"--progress-estimation-type=classic",
 		"snapshot",
 		"create",
@@ -1854,76 +1820,6 @@ func managedSnapshotHasOperation(snapshot map[string]any, operationID string) bo
 	}
 	return payloadStringValue(tags["tag:"+backupOperationTagKey]) == operationID ||
 		payloadStringValue(tags[backupOperationTagKey]) == operationID
-}
-
-func managedSnapshotStorageStatsArgs(configFile string, sourcePath string) []string {
-	return []string{
-		"--config-file=" + configFile,
-		"snapshot",
-		"list",
-		"--storage-stats",
-		"--no-retention",
-		"--json",
-		sourcePath,
-	}
-}
-
-func parseManagedSnapshotStorageStatsLine(line string, snapshotID string) (map[string]any, bool) {
-	trimmed := strings.TrimSpace(line)
-	trimmed = strings.TrimSuffix(trimmed, ",")
-	if trimmed == "" || trimmed == "[" || trimmed == "]" {
-		return nil, false
-	}
-
-	var row map[string]any
-	if json.Unmarshal([]byte(trimmed), &row) != nil {
-		return nil, false
-	}
-	if strings.TrimSpace(stringValue(row["id"])) != strings.TrimSpace(snapshotID) {
-		return nil, false
-	}
-
-	rootEntry, ok := row["rootEntry"].(map[string]any)
-	if !ok {
-		return nil, false
-	}
-	summary, ok := rootEntry["summ"].(map[string]any)
-	if !ok {
-		return nil, false
-	}
-	storageStats, ok := row["storageStats"].(map[string]any)
-	if !ok {
-		return nil, false
-	}
-	newData, ok := storageStats["newData"].(map[string]any)
-	if !ok {
-		return nil, false
-	}
-
-	recoverableSize, sizeOK := int64Value(summary["size"])
-	fileCount, fileOK := int64Value(summary["files"])
-	dirCount, dirOK := int64Value(summary["dirs"])
-	symlinkCount, symlinkOK := int64Value(summary["symlinks"])
-	newOriginalBytes, originalOK := int64Value(newData["originalContentBytes"])
-	newPackedBytes, packedOK := int64Value(newData["packedContentBytes"])
-	if !sizeOK || !fileOK || !dirOK || !originalOK || !packedOK ||
-		recoverableSize < 0 || fileCount < 0 || dirCount < 0 ||
-		newOriginalBytes < 0 || newPackedBytes < 0 {
-		return nil, false
-	}
-	if !symlinkOK || symlinkCount < 0 {
-		symlinkCount = 0
-	}
-
-	return map[string]any{
-		"recoverable_size_bytes":     recoverableSize,
-		"size_bytes":                 recoverableSize,
-		"file_count":                 fileCount,
-		"dir_count":                  dirCount,
-		"symlink_count":              symlinkCount,
-		"new_original_content_bytes": newOriginalBytes,
-		"new_packed_content_bytes":   newPackedBytes,
-	}, true
 }
 
 func (e *Engine) runManagedSnapshotDelete(
@@ -5092,36 +4988,38 @@ func firstPresent(m map[string]any, keys ...string) any {
 }
 
 type kopiaProgressReporter struct {
-	mu                    sync.Mutex
-	lastPercent           int
-	lastSentAt            time.Time
-	lastSubstantiveAt     time.Time
-	lastSignature         string
-	lastProcessingCounter int64
-	lastUploadCounter     int64
-	lastPhase             string
-	lastSequence          int64
-	lastHashedCount       int64
-	lastUploadedCount     int64
-	lastSnapshot          kopia.ProgressSnapshot
-	hasSnapshot           bool
-	hashSpeedTracker      kopia.SpeedTracker
-	uploadSpeedTracker    kopia.SpeedTracker
+	mu                 sync.Mutex
+	sendMu             sync.Mutex
+	latestPayload      map[string]any
+	pending            bool
+	forcePending       bool
+	notify             chan struct{}
+	lastPercent        int
+	lastSentAt         time.Time
+	lastSubstantiveAt  time.Time
+	lastSignature      string
+	lastHashedCount    int64
+	lastUploadedCount  int64
+	lastSnapshot       kopia.ProgressSnapshot
+	hasSnapshot        bool
+	hashSpeedTracker   kopia.SpeedTracker
+	uploadSpeedTracker kopia.SpeedTracker
 }
 
 func newKopiaProgressReporter() *kopiaProgressReporter {
 	now := time.Now()
-	return &kopiaProgressReporter{lastPercent: -1, lastSubstantiveAt: now}
+	return &kopiaProgressReporter{lastPercent: -1, lastSubstantiveAt: now, notify: make(chan struct{}, 1)}
 }
 
 func (r *kopiaProgressReporter) noteSubstantive(snapshot kopia.ProgressSnapshot) {
 	sig := fmt.Sprintf(
-		"%d|%d|%d|%d|%s",
+		"%d|%d|%d|%d|%s|%v|%v",
 		kopia.ProcessingCounter(snapshot),
 		snapshot.UploadedBytes,
 		snapshot.HashedCount,
 		snapshot.UploadedCount,
 		snapshot.Phase,
+		pointerCounter(snapshot.ProcessedEntryCount), pointerCounter(snapshot.CompletedDirectoryCount),
 	)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -5224,38 +5122,50 @@ func (r *kopiaProgressReporter) maybeSend(
 	}
 	hashSpeedBps, hashSpeedSource := r.hashSpeedTracker.Observe(processingCounter, sampleTime)
 	uploadSpeedBps, uploadSpeedSource := r.uploadSpeedTracker.Observe(uploadCounter, sampleTime)
+	r.noteSubstantive(snapshot)
 	r.mu.Lock()
-	shouldSend := r.lastPercent < 0 ||
-		snapshot.Percent > r.lastPercent ||
-		processingCounter > r.lastProcessingCounter ||
-		uploadCounter > r.lastUploadCounter ||
-		snapshot.Phase != r.lastPhase ||
-		snapshot.Sequence > r.lastSequence ||
-		now.Sub(r.lastSentAt) >= 3*time.Second
+	phaseChanged := !r.hasSnapshot || snapshot.Phase != r.lastSnapshot.Phase
 	r.lastSnapshot = snapshot
 	r.hasSnapshot = true
-	if shouldSend {
-		r.lastPercent = snapshot.Percent
-		r.lastProcessingCounter = processingCounter
-		r.lastUploadCounter = uploadCounter
-		r.lastPhase = snapshot.Phase
-		r.lastSequence = snapshot.Sequence
-		r.lastSentAt = now
-	}
+	r.latestPayload = kopia.ProgressPayloadWithDualSpeed(snapshot, hashSpeedBps, hashSpeedSource, uploadSpeedBps, uploadSpeedSource)
+	r.pending = true
+	r.forcePending = r.forcePending || phaseChanged
 	r.mu.Unlock()
-	if shouldSend || snapshot.HashedBytes > 0 || snapshot.UploadedBytes > 0 {
-		r.noteSubstantive(snapshot)
+	// Never perform network I/O on the subprocess output reader.
+	if phaseChanged {
+		select {
+		case r.notify <- struct{}{}:
+		default:
+		}
 	}
-	if !shouldSend {
+}
+
+const backupProgressInterval = 5 * time.Second
+
+func pointerCounter(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+// sendLatest sends at most one ordinary sample per interval, regardless of
+// counter or sequence changes. State is copied before any network I/O.
+func (r *kopiaProgressReporter) sendLatest(ctx context.Context, rep ReporterSink, taskID string, force bool, now time.Time) {
+	r.sendMu.Lock()
+	defer r.sendMu.Unlock()
+	r.mu.Lock()
+	force = force || r.forcePending
+	if !r.pending || (!force && !r.lastSentAt.IsZero() && now.Sub(r.lastSentAt) < backupProgressInterval) {
+		r.mu.Unlock()
 		return
 	}
-	_ = sendProgress(ctx, rep, taskID, kopia.ProgressPayloadWithDualSpeed(
-		snapshot,
-		hashSpeedBps,
-		hashSpeedSource,
-		uploadSpeedBps,
-		uploadSpeedSource,
-	))
+	payload := r.latestPayload
+	r.pending = false
+	r.forcePending = false
+	r.lastSentAt = now
+	r.mu.Unlock()
+	_ = sendProgress(ctx, rep, taskID, payload)
 }
 
 func (r *kopiaProgressReporter) completionPayload(snapshotID string) map[string]any {
@@ -5266,6 +5176,11 @@ func (r *kopiaProgressReporter) completionPayload(snapshotID string) map[string]
 
 	var payload map[string]any
 	if hasSnapshot {
+		// Completion is a new Agent event, not a replay of Kopia's last sample.
+		// The backend rejects duplicate sequences before updating the projection.
+		if snapshot.Sequence > 0 {
+			snapshot.Sequence++
+		}
 		payload = kopia.ProgressPayload(snapshot)
 	} else {
 		payload = map[string]any{
@@ -5369,6 +5284,31 @@ func snapshotResultFromParsed(parsed any) map[string]any {
 	result := map[string]any{
 		"snapshot": parsed,
 	}
+	result["storage_stats_available"] = false
+	result["storage_stats_basis"] = "unavailable"
+	if row, ok := parsed.(map[string]any); ok {
+		if root, ok := row["rootEntry"].(map[string]any); ok {
+			if summary, ok := root["summ"].(map[string]any); ok {
+				for dest, key := range map[string]string{"size_bytes": "size", "recoverable_size_bytes": "size", "file_count": "files", "dir_count": "dirs", "symlink_count": "symlinks"} {
+					if value, valid := int64Value(summary[key]); valid && value >= 0 {
+						result[dest] = value
+					}
+				}
+			}
+		}
+		if metrics, ok := row["hflCreateStats"].(map[string]any); ok {
+			version, vOK := int64Value(metrics["version"])
+			original, oOK := int64Value(metrics["originalBytes"])
+			packed, pOK := int64Value(metrics["packedBytes"])
+			if vOK && version == 1 && stringValue(metrics["basis"]) == "creation_session_data_v1" && oOK && pOK && original >= 0 && packed >= 0 {
+				result["new_original_content_bytes"] = original
+				result["new_packed_content_bytes"] = packed
+				result["storage_stats_basis"] = "creation_session_data_v1"
+				result["storage_stats_available"] = true
+			}
+		}
+	}
+
 	if failureSummary := snapshotFailureSummary(parsed); failureSummary != nil {
 		// Keep a compact diagnostic alongside the full snapshot. The wire
 		// result is intentionally bounded and may discard the large snapshot
@@ -5378,7 +5318,12 @@ func snapshotResultFromParsed(parsed any) map[string]any {
 	if id := findStringKey(parsed, "id", "snapshot_id", "snapshotID", "kopia_snapshot_id"); id != "" {
 		result["kopia_snapshot_id"] = id
 	}
-	stats := map[string]any{}
+	stats := map[string]any{"storage_stats_basis": result["storage_stats_basis"], "storage_stats_available": result["storage_stats_available"]}
+	for _, key := range []string{"new_original_content_bytes", "new_packed_content_bytes", "symlink_count"} {
+		if value, ok := result[key]; ok {
+			stats[key] = value
+		}
+	}
 	if size, ok := findIntKey(
 		parsed,
 		"size",
@@ -5391,6 +5336,9 @@ func snapshotResultFromParsed(parsed any) map[string]any {
 		"total_file_size",
 		"totalFileSize",
 	); ok {
+		if authoritative, exists := result["size_bytes"]; exists {
+			size, _ = int64Value(authoritative)
+		}
 		stats["size_bytes"] = size
 		result["size_bytes"] = size
 	}
@@ -5406,6 +5354,9 @@ func snapshotResultFromParsed(parsed any) map[string]any {
 		"num_files",
 		"numFiles",
 	); ok {
+		if authoritative, exists := result["file_count"]; exists {
+			files, _ = int64Value(authoritative)
+		}
 		stats["file_count"] = files
 		result["file_count"] = files
 	}
@@ -5425,6 +5376,9 @@ func snapshotResultFromParsed(parsed any) map[string]any {
 		"num_directories",
 		"numDirectories",
 	); ok {
+		if authoritative, exists := result["dir_count"]; exists {
+			dirs, _ = int64Value(authoritative)
+		}
 		stats["dir_count"] = dirs
 		result["dir_count"] = dirs
 	}

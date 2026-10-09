@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fetchBackupTaskRuntime } from '../../../lib/protectionBackupTaskApi'
 import TaskDetailDrawer from './TaskDetailDrawer.vue'
 import { getTask, listTaskEvents, type TaskRow } from '../../../lib/taskApi'
 
@@ -12,6 +13,7 @@ vi.mock('../../../lib/taskApi', async (importOriginal) => ({
   getTask: vi.fn(),
   listTaskEvents: vi.fn(),
 }))
+vi.mock('../../../lib/protectionBackupTaskApi', () => ({ cancelProtectionBackupTask: vi.fn(), fetchBackupTaskRuntime: vi.fn() }))
 vi.mock('../../../composables/useDrawerTableMaxHeight', () => ({
   useDrawerTableMaxHeight: () => ({ tableMaxHeight: ref(400), containerRef: ref(null) }),
 }))
@@ -28,6 +30,11 @@ const running = {
   retry_count: 0,
   recovery_attempt: 0,
   trigger_type: 'manual',
+  transfer_progress: {
+    processed_entry_count: 1604089,
+    hashed_count: 8,
+    cached_count: 1604081,
+  },
   resources: [],
   steps: [],
   recent_events: [],
@@ -74,6 +81,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date(start))
   vi.mocked(getTask).mockResolvedValue({ ...running })
+  vi.mocked(fetchBackupTaskRuntime).mockResolvedValue({ status: 'running', progress: 0 })
   vi.mocked(listTaskEvents).mockResolvedValue({ count: 0, results: [] })
 })
 
@@ -83,16 +91,21 @@ afterEach(() => {
 })
 
 describe('TaskDetailDrawer live duration', () => {
-  it('updates locally and checks server status only every two minutes', async () => {
+  it('updates locally and polls lightweight backup runtime every five seconds', async () => {
     const wrapper = mountDrawer()
     await flushPromises()
     expect(wrapper.text()).toContain('Total Duration')
+    expect(wrapper.find('.backup-run-counters').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Backup Counters')
+    expect(wrapper.text()).not.toContain('backupCountersTitle')
     expect(wrapper.get('.hfl-task-drawer__time-value--strong').text()).toBe('00:00:00')
 
     await vi.advanceTimersByTimeAsync(10_000)
     expect(wrapper.get('.hfl-task-drawer__time-value--strong').text()).toBe('00:00:10')
     expect(getTask).toHaveBeenCalledTimes(1)
 
+    expect(fetchBackupTaskRuntime).toHaveBeenCalledTimes(2)
+    vi.mocked(fetchBackupTaskRuntime).mockResolvedValueOnce({ status: 'success' })
     vi.mocked(getTask).mockResolvedValueOnce({
       ...running,
       status: 'success',
@@ -134,10 +147,10 @@ describe('TaskDetailDrawer live duration', () => {
   it('does not apply a late status response after the drawer switches tasks', async () => {
     const wrapper = mountDrawer()
     await flushPromises()
-    let resolvePoll!: (task: TaskRow) => void
-    vi.mocked(getTask).mockImplementationOnce(() => new Promise((resolve) => { resolvePoll = resolve }))
-    await vi.advanceTimersByTimeAsync(120_000)
-    expect(getTask).toHaveBeenCalledTimes(2)
+    let resolvePoll!: (task: { status: string }) => void
+    vi.mocked(fetchBackupTaskRuntime).mockImplementationOnce(() => new Promise((resolve) => { resolvePoll = resolve }))
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(getTask).toHaveBeenCalledTimes(1)
 
     vi.mocked(getTask).mockResolvedValueOnce({
       ...running,
@@ -147,12 +160,12 @@ describe('TaskDetailDrawer live duration', () => {
     })
     await wrapper.setProps({ taskUuid: 'new-task' })
     await flushPromises()
-    resolvePoll({ ...running, status: 'success', finished_at: new Date(Date.parse(start) + 119_000).toISOString() })
+    resolvePoll({ status: 'success' })
     await flushPromises()
     expect(wrapper.emitted('task-updated')).toBeUndefined()
     expect(wrapper.text()).not.toContain('00:01:59')
     await vi.advanceTimersByTimeAsync(120_000)
-    expect(getTask).toHaveBeenCalledTimes(3)
+    expect(getTask).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
 })

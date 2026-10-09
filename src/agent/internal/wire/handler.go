@@ -459,7 +459,11 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 	})
 
 	progressDone := make(chan struct{})
-	go h.progressLoop(taskCtx, sink, cmd.TaskID, progressDone)
+	// Backup has its own coalesced metrics and a separate aliveLoop. A generic
+	// three-second progress frame would bypass the backup reporting contract.
+	if engine.NormalizeKind(cmd.Kind) != "backup" && engine.NormalizeKind(cmd.Kind) != "backup.snapshot.create" {
+		go h.progressLoop(taskCtx, sink, cmd.TaskID, progressDone)
+	}
 	defer close(progressDone)
 
 	wsSink := &websocketSink{

@@ -205,6 +205,8 @@ describe('FlowBackupSourceDetailDrawer snapshot detail drawer', () => {
     expect(overview).toContain('snapshot.data_reuse_ratio')
     expect(overview).toContain('snapshot.compression_savings_ratio')
     expect(overview).toContain('fmtCombinedReduction(snapshot)')
+    expect(overview.match(/class="snapshot-point-detail-metrics__item"/g)).toHaveLength(6)
+    expect(overview).not.toContain('snapshotStatsBasis')
     expect(overview.match(/<HflHelpTip/g)).toHaveLength(6)
     expect(overview.match(/popper-class="snapshot-metric-help-popper"/g)).toHaveLength(6)
     expect(overview.match(/\bteleported\b/g)).toHaveLength(6)
@@ -238,7 +240,7 @@ describe('FlowBackupSourceDetailDrawer snapshot detail drawer', () => {
     expect(enProtectionPages.backupsPage.snapshotDataReuseHint).toContain('1 − New Data ÷ Restore Size')
     expect(enProtectionPages.backupsPage.snapshotCompressionSavingsHint).toContain('1 − Snapshot Size ÷ New Data')
     expect(enProtectionPages.backupsPage.snapshotCombinedReductionHint).toContain('Restore Size ÷ Snapshot Size')
-    expect(enProtectionPages.backupsPage.snapshotStorageFullyReused).toBe('Fully reused')
+    expect(enProtectionPages.backupsPage.snapshotStorageFullyReused).toBe('No new data content')
   })
 
   it('opens the same snapshot detail drawer from the ID and Browse action', () => {

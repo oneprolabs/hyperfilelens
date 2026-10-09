@@ -1464,6 +1464,9 @@ def _extract_snapshot_metrics(
             stats["new_original_content_bytes"] = new_original_content_bytes
         if new_packed_content_bytes is not None:
             stats["new_packed_content_bytes"] = new_packed_content_bytes
+    basis = result.get("storage_stats_basis")
+    if basis in {"creation_session_data_v1", "unavailable"}:
+        stats["storage_stats_basis"] = basis
     skipped = (
         kopia_snapshot_skipped_metadata(result).get("skipped_details", {})
         if include_skipped_items

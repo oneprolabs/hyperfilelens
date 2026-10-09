@@ -167,9 +167,9 @@ grep -F 'features.get("hfl_entry_summary_v1") is not True' \
 grep -F 'KOPIA_INFO.json is missing the HFL entry-summary capability' \
 	"${ROOT}/src/agent/scripts/package.sh" >/dev/null
 
-[[ "${#KOPIA_PATCH_FILES[@]}" -eq 5 ]]
+[[ "${#KOPIA_PATCH_FILES[@]}" -eq 7 ]]
 patch_set_digest="$(patch_set_sha256)"
 [[ "${patch_set_digest}" =~ ^[0-9a-f]{64}$ ]]
-[[ "$(patch_names)" == '0001-add-s3-url-style.patch 0002-add-structured-progress.patch 0003-disable-managed-dot-ignore.patch 0004-snapshot-estimator-best-effort-errors.patch 0005-add-entry-summary.patch ' ]]
+[[ "$(patch_names)" == '0001-add-s3-url-style.patch 0002-add-structured-progress.patch 0003-disable-managed-dot-ignore.patch 0004-snapshot-estimator-best-effort-errors.patch 0005-add-entry-summary.patch 0006-preserve-source-path-on-upload-failure.patch 0007-add-creation-session-statistics.patch ' ]]
 
 printf 'Kopia build configuration checks passed.\n'

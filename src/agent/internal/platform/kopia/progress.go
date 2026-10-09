@@ -23,27 +23,34 @@ var (
 
 // ProgressSnapshot captures parsed Kopia snapshot progress counters.
 type ProgressSnapshot struct {
-	SchemaVersion    int
-	Sequence         int64
-	SampledAt        string
-	Phase            string
-	Percent          int
-	PercentValue     float64
-	PercentKnown     bool
-	ProcessedBytes   int64
-	HashingCount     int64
-	HashedCount      int64
-	HashedBytes      int64
-	CachedCount      int64
-	CachedBytes      int64
-	UploadedCount    int64
-	UploadedBytes    int64
-	EstimatedBytes   int64
-	EstimatedKnown   bool
-	SpeedBytesPerSec int64
-	KopiaEtaSeconds  int64
-	KopiaEtaKnown    bool
-	Line             string
+	SchemaVersion           int
+	Sequence                int64
+	SampledAt               string
+	Phase                   string
+	Percent                 int
+	PercentValue            float64
+	PercentKnown            bool
+	ProcessedBytes          int64
+	HashingCount            int64
+	HashedCount             int64
+	HashedBytes             int64
+	CachedCount             int64
+	CachedBytes             int64
+	UploadedCount           int64
+	UploadedBytes           int64
+	EstimatedBytes          int64
+	EstimatedKnown          bool
+	SpeedBytesPerSec        int64
+	KopiaEtaSeconds         int64
+	KopiaEtaKnown           bool
+	Line                    string
+	ProcessedEntryCount     *int64
+	EstimatedFileCount      *int64
+	CompletedDirectoryCount *int64
+	HashedBytesKnown        bool
+	CachedBytesKnown        bool
+	HashedCountKnown        bool
+	CachedCountKnown        bool
 }
 
 // NormalizeProgressLine strips ANSI escapes and keeps the latest carriage-return segment.
@@ -166,16 +173,23 @@ func ParseProgressLine(raw string) (ProgressSnapshot, bool) {
 
 func parseStructuredProgressLine(raw string) (ProgressSnapshot, bool) {
 	var event struct {
-		Type             string   `json:"type"`
-		SchemaVersion    int      `json:"schema_version"`
-		Sequence         int64    `json:"sequence"`
-		SampledAt        string   `json:"sampled_at"`
-		Phase            string   `json:"phase"`
-		ProcessedBytes   int64    `json:"processed_bytes"`
-		EstimatedBytes   *int64   `json:"estimated_bytes"`
-		UploadedBytes    int64    `json:"uploaded_bytes"`
-		PercentComplete  *float64 `json:"percent_complete"`
-		RemainingSeconds *int64   `json:"remaining_seconds"`
+		Type                    string   `json:"type"`
+		SchemaVersion           int      `json:"schema_version"`
+		Sequence                int64    `json:"sequence"`
+		SampledAt               string   `json:"sampled_at"`
+		Phase                   string   `json:"phase"`
+		ProcessedBytes          int64    `json:"processed_bytes"`
+		EstimatedBytes          *int64   `json:"estimated_bytes"`
+		UploadedBytes           int64    `json:"uploaded_bytes"`
+		HashedBytes             *int64   `json:"hashed_bytes"`
+		CachedBytes             *int64   `json:"cached_bytes"`
+		HashedCount             *int64   `json:"hashed_count"`
+		CachedCount             *int64   `json:"cached_count"`
+		ProcessedEntryCount     *int64   `json:"processed_entry_count"`
+		EstimatedFileCount      *int64   `json:"estimated_file_count"`
+		CompletedDirectoryCount *int64   `json:"completed_directory_count"`
+		PercentComplete         *float64 `json:"percent_complete"`
+		RemainingSeconds        *int64   `json:"remaining_seconds"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &event); err != nil {
 		return ProgressSnapshot{}, false
@@ -197,6 +211,30 @@ func parseStructuredProgressLine(raw string) (ProgressSnapshot, bool) {
 		Phase:          event.Phase,
 		ProcessedBytes: event.ProcessedBytes,
 		UploadedBytes:  event.UploadedBytes,
+	}
+	for _, value := range []*int64{event.HashedBytes, event.CachedBytes, event.HashedCount, event.CachedCount, event.ProcessedEntryCount, event.EstimatedFileCount, event.CompletedDirectoryCount} {
+		if value != nil && *value < 0 {
+			return ProgressSnapshot{}, false
+		}
+	}
+	snapshot.ProcessedEntryCount = event.ProcessedEntryCount
+	snapshot.EstimatedFileCount = event.EstimatedFileCount
+	snapshot.CompletedDirectoryCount = event.CompletedDirectoryCount
+	if event.HashedBytes != nil {
+		snapshot.HashedBytes = *event.HashedBytes
+		snapshot.HashedBytesKnown = true
+	}
+	if event.CachedBytes != nil {
+		snapshot.CachedBytes = *event.CachedBytes
+		snapshot.CachedBytesKnown = true
+	}
+	if event.HashedCount != nil {
+		snapshot.HashedCount = *event.HashedCount
+		snapshot.HashedCountKnown = true
+	}
+	if event.CachedCount != nil {
+		snapshot.CachedCount = *event.CachedCount
+		snapshot.CachedCountKnown = true
 	}
 	if event.EstimatedBytes != nil {
 		if *event.EstimatedBytes < 0 {
@@ -263,6 +301,29 @@ func ProgressPayloadWithDualSpeed(
 		"bytes_done":              bytesDone,
 		"bytes_total":             bytesTotal,
 		"bytes_total_known":       totalKnown,
+	}
+	for key, value := range map[string]*int64{
+		"processed_entry_count":     snapshot.ProcessedEntryCount,
+		"estimated_file_count":      snapshot.EstimatedFileCount,
+		"completed_directory_count": snapshot.CompletedDirectoryCount,
+	} {
+		if value != nil {
+			payload[key] = *value
+		}
+	}
+	if schemaVersion >= 2 {
+		if !snapshot.HashedBytesKnown {
+			delete(payload, "hashed_bytes")
+		}
+		if !snapshot.CachedBytesKnown {
+			delete(payload, "cached_bytes")
+		}
+		if !snapshot.HashedCountKnown {
+			delete(payload, "hashed_count")
+		}
+		if !snapshot.CachedCountKnown {
+			delete(payload, "cached_count")
+		}
 	}
 	if snapshot.PercentKnown {
 		payload["kopia_percent"] = snapshot.PercentValue

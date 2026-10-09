@@ -39,6 +39,11 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
             "last_progress_at": None,
         }
 
+    backup_counter_keys = (
+        "hashed_bytes", "cached_bytes", "hashed_count", "cached_count",
+        "processed_entry_count", "estimated_file_count", "completed_directory_count",
+    )
+    backup_counters: dict[str, int | None] = {key: 0 for key in backup_counter_keys}
     bytes_done = 0
     bytes_total = 0
     total_known = True
@@ -72,6 +77,12 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         if not isinstance(normalized, dict):
             normalized = {}
         schema_version = max(schema_version, int(normalized.get("progress_schema_version") or 1))
+        for key in backup_counter_keys:
+            value = normalized.get(key)
+            if value is None:
+                backup_counters[key] = None
+            elif backup_counters[key] is not None:
+                backup_counters[key] += max(0, int(value))
         done = int(normalized.get("bytes_done") or 0)
         total = normalized.get("bytes_total")
         total_known_lane = bool(normalized.get("bytes_total_known"))
@@ -203,6 +214,7 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         phase_started_at = min(starts).isoformat() if starts else None
 
     return {
+        **backup_counters,
         "percent": percent,
         "progress_schema_version": schema_version,
         "bytes_done": bytes_done,
@@ -212,7 +224,6 @@ def aggregate_lanes(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         "bytes_total_reference": reference_total and total_known,
         "uploaded_bytes": uploaded_bytes,
         "uploaded_count": uploaded_count,
-        "hashed_count": hashed_count,
         "estimated_bytes": estimated_bytes,
         "processed_count": processed_count,
         "total_count": total_count,

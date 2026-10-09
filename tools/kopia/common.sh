@@ -21,6 +21,7 @@ KOPIA_PATCH_FILES=(
 	"${KOPIA_TOOLS_DIR}/patches/0004-snapshot-estimator-best-effort-errors.patch"
 	"${KOPIA_TOOLS_DIR}/patches/0005-add-entry-summary.patch"
 	"${KOPIA_TOOLS_DIR}/patches/0006-preserve-source-path-on-upload-failure.patch"
+	"${KOPIA_TOOLS_DIR}/patches/0007-add-creation-session-statistics.patch"
 )
 KOPIA_DEFAULT_MATRIX="linux:amd64 linux:arm64 darwin:amd64 darwin:arm64 windows:amd64"
 

@@ -26,7 +26,7 @@ import { formatLocalDateTime } from '../../../lib/dateTime'
 import { elapsedTaskTime, totalTaskDuration } from '../../../lib/taskDuration'
 import { getNode } from '../../../lib/nodeApi'
 import { getBackupSourceSnapshot } from '../../../lib/protectionBackupConfigApi'
-import { cancelProtectionBackupTask } from '../../../lib/protectionBackupTaskApi'
+import { cancelProtectionBackupTask, fetchBackupTaskRuntime } from '../../../lib/protectionBackupTaskApi'
 import { cancelProtectionRestoreTask } from '../../../lib/protectionRestoreTaskApi'
 import {
   buildStopConfirmItemFromTask,
@@ -787,6 +787,18 @@ async function refreshRunningTaskStatus() {
   statusRefreshInFlight = true
   const requestId = detailRequestId
   try {
+    if (activeTask.value?.task_type === 'backup') {
+      if (document.hidden) return
+      const runtime = await fetchBackupTaskRuntime(uuid)
+      if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid
+        || activeTask.value?.task_uuid !== uuid || detailRefreshing.value || actionBusy.value) return
+      if (!runtime.status || runtime.status === 'running' || runtime.status === 'pending') {
+        activeTask.value = { ...activeTask.value, progress: runtime.progress ?? activeTask.value.progress,
+          transfer_progress: runtime.transfer_progress ?? activeTask.value.transfer_progress }
+        emit('task-updated', activeTask.value)
+        return
+      }
+    }
     const task = await getTask(uuid)
     if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid
       || activeTask.value?.task_uuid !== uuid || detailRefreshing.value || actionBusy.value) return
@@ -820,7 +832,7 @@ watch(
     if (!open || !uuid || uuid !== activeUuid || status !== 'running') return
     clockNow.value = Date.now()
     if (startedAt) clockTimer = window.setInterval(() => { clockNow.value = Date.now() }, 1000)
-    statusRefreshTimer = window.setInterval(() => { void refreshRunningTaskStatus() }, TASK_STATUS_REFRESH_MS)
+    statusRefreshTimer = window.setInterval(() => { void refreshRunningTaskStatus() }, activeTask.value?.task_type === 'backup' ? 5000 : TASK_STATUS_REFRESH_MS)
   },
   { immediate: true },
 )

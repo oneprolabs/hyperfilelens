@@ -125,10 +125,8 @@ func TestPreparedSnapshotReturnsPolicyNotFoundToBackendWithoutRetry(t *testing.T
 
 func TestPreparedSnapshotKeepsSingleBoundedCommandSummary(t *testing.T) {
 	originalRunner := runManagedSnapshotCommand
-	originalStatsRunner := runManagedSnapshotStorageStatsCommand
 	t.Cleanup(func() {
 		runManagedSnapshotCommand = originalRunner
-		runManagedSnapshotStorageStatsCommand = originalStatsRunner
 	})
 	runManagedSnapshotCommand = func(
 		context.Context,
@@ -139,24 +137,13 @@ func TestPreparedSnapshotKeepsSingleBoundedCommandSummary(t *testing.T) {
 		process.OutputLineHandler,
 	) (process.Result, error) {
 		return process.Result{
-			Stdout:           `{"id":"snapshot-bounded","stats":{"totalSize":42}}`,
+			Stdout:           `{"id":"snapshot-bounded","rootEntry":{"summ":{"size":42,"files":2,"dirs":1,"symlinks":0}},"hflCreateStats":{"version":1,"basis":"creation_session_data_v1","originalBytes":21,"packedBytes":7}}`,
 			Stderr:           "latest progress",
 			StdoutTotalBytes: 512 * 1024,
 			StderrTotalBytes: 2 * 1024 * 1024,
 			StdoutTruncated:  true,
 			StderrTruncated:  true,
 		}, nil
-	}
-	runManagedSnapshotStorageStatsCommand = func(
-		_ context.Context,
-		_ string,
-		_ []string,
-		_ map[string]string,
-		_ string,
-		onLine process.OutputLineHandler,
-	) (process.Result, error) {
-		onLine(` {"id":"snapshot-bounded","rootEntry":{"summ":{"size":42,"files":2,"dirs":1,"symlinks":0}},"storageStats":{"newData":{"originalContentBytes":21,"packedContentBytes":7}}}`, false)
-		return process.Result{}, nil
 	}
 
 	status, result, message := runPreparedManagedSnapshot(
@@ -187,12 +174,10 @@ func TestPreparedSnapshotKeepsSingleBoundedCommandSummary(t *testing.T) {
 	}
 }
 
-func TestPreparedSnapshotKeepsSuccessWhenStorageStatsFail(t *testing.T) {
+func TestPreparedSnapshotKeepsSuccessWhenCreationStatsUnavailable(t *testing.T) {
 	originalRunner := runManagedSnapshotCommand
-	originalStatsRunner := runManagedSnapshotStorageStatsCommand
 	t.Cleanup(func() {
 		runManagedSnapshotCommand = originalRunner
-		runManagedSnapshotStorageStatsCommand = originalStatsRunner
 	})
 	runManagedSnapshotCommand = func(
 		context.Context,
@@ -203,16 +188,6 @@ func TestPreparedSnapshotKeepsSuccessWhenStorageStatsFail(t *testing.T) {
 		process.OutputLineHandler,
 	) (process.Result, error) {
 		return process.Result{Stdout: `{"id":"snapshot-created","rootEntry":{"summ":{"size":42}}}`}, nil
-	}
-	runManagedSnapshotStorageStatsCommand = func(
-		context.Context,
-		string,
-		[]string,
-		map[string]string,
-		string,
-		process.OutputLineHandler,
-	) (process.Result, error) {
-		return process.Result{Stderr: "storage statistics unavailable"}, errors.New("exit status 1")
 	}
 
 	status, result, message := runPreparedManagedSnapshot(
@@ -225,7 +200,7 @@ func TestPreparedSnapshotKeepsSuccessWhenStorageStatsFail(t *testing.T) {
 	if result["storage_stats_available"] != false {
 		t.Fatalf("expected unavailable reference metrics: %#v", result)
 	}
-	if result["storage_stats_error"] != "storage statistics unavailable" {
+	if result["storage_stats_basis"] != "unavailable" {
 		t.Fatalf("expected bounded diagnostic: %#v", result)
 	}
 }
@@ -245,7 +220,7 @@ func TestPreparedSnapshotAdoptsExistingOperationBeforeCreating(t *testing.T) {
 		string,
 	) (process.Result, error) {
 		return process.Result{Stdout: `[
-			{"id":"snapshot-existing","endTime":"2026-08-20T10:00:00Z","stats":{"totalSize":42,"fileCount":3,"dirCount":1},"tags":{"tag:hfl-operation":"operation-123"}}
+			{"id":"snapshot-existing","endTime":"2026-08-20T10:00:00Z","stats":{"totalSize":42,"fileCount":3,"dirCount":1},"hflCreateStats":{"version":1,"basis":"creation_session_data_v1","originalBytes":12,"packedBytes":8},"tags":{"tag:hfl-operation":"operation-123"}}
 		]`}, nil
 	}
 	snapshotCalls := 0
@@ -277,6 +252,12 @@ func TestPreparedSnapshotAdoptsExistingOperationBeforeCreating(t *testing.T) {
 	}
 	if result["size_bytes"] != int64(42) || result["file_count"] != int64(3) {
 		t.Fatalf("existing snapshot metrics were not adopted: %#v", result)
+	}
+	if result["storage_stats_available"] != true ||
+		result["storage_stats_basis"] != "creation_session_data_v1" ||
+		result["new_original_content_bytes"] != int64(12) ||
+		result["new_packed_content_bytes"] != int64(8) {
+		t.Fatalf("persisted creation metrics were not reconciled: %#v", result)
 	}
 }
 

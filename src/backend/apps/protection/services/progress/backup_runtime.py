@@ -28,6 +28,10 @@ _DIRECTORY_ACTIVE = {
 }
 
 _SUBSTANTIVE_PROGRESS_FIELDS = (
+    "processed_bytes",
+    "processed_entry_count",
+    "cached_count",
+    "completed_directory_count",
     "hashed_bytes",
     "uploaded_bytes",
     "hashed_count",
@@ -288,6 +292,10 @@ def _lane_from_directory(directory: BackupSourceSnapshotDirectory) -> dict[str, 
     status = str(directory.status or "").lower()
     if directory.status in _DIRECTORY_DONE:
         status = "success"
+        stats = directory.stats if isinstance(directory.stats, dict) else {}
+        final_counters = stats.get("backup_run_counters")
+        if isinstance(final_counters, dict):
+            raw = {**raw, **final_counters}
     sample = directory.last_progress_sample if isinstance(directory.last_progress_sample, dict) else {}
     normalized = normalize_lane_progress(
         progress=raw,
@@ -325,6 +333,13 @@ def _public_lane(row: dict[str, Any]) -> dict[str, Any]:
         "upload_speed_bps": progress.get("upload_speed_bps"),
         "eta_seconds": progress.get("eta_seconds"),
         "kopia_eta_seconds": progress.get("kopia_eta_seconds"),
+        "hashed_bytes": progress.get("hashed_bytes"),
+        "cached_bytes": progress.get("cached_bytes"),
+        "hashed_count": progress.get("hashed_count"),
+        "cached_count": progress.get("cached_count"),
+        "processed_entry_count": progress.get("processed_entry_count"),
+        "estimated_file_count": progress.get("estimated_file_count"),
+        "completed_directory_count": progress.get("completed_directory_count"),
         "progress_text": progress.get("progress_text"),
         "path_index": progress.get("path_index"),
         "path_total": progress.get("path_total"),

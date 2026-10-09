@@ -10,6 +10,93 @@ source "${ROOT_REPO}/dev/stack.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
+# Only the explicit consent failure gets one Bake retry. Normal builds, other
+# errors, cancellation and unsupported Compose versions retain the old path.
+(
+	calls="${tmp}/build-calls"
+	hint='additional privileges requested: pass "--allow=network.host" to grant requested privileges'
+	prepare_compose_files() { :; }
+	docker() {
+		[[ "$*" == "compose build --help" ]] || return 90
+		printf '%s\n' 'help' >>"${calls}"
+		[[ "${fixture_bake_supported}" == 0 ]] || printf '%s\n' '  --print Print equivalent bake file'
+	}
+	compose_logged() {
+		printf '%s\n' "legacy:$*" >>"${calls}"
+		if [[ "${fixture_native_log}" == 1 ]]; then
+			printf '%s\n' "${fixture_message}" >>"${HFL_LOG_FILE}"
+		else
+			printf '%s\n' "${fixture_message}"
+		fi
+		return "${fixture_status}"
+	}
+	compose() {
+		printf '%s\n' "definition:$*" >>"${calls}"
+		[[ "${fixture_definition_status}" == 0 ]] || return "${fixture_definition_status}"
+		printf '%s\n' '{"group":{"default":{"targets":["worker"]}}}'
+	}
+	hfl_run_native_command() {
+		[[ "$1 $2 $3 $4 $5" == "docker buildx bake --allow=network.host --file" ]]
+		[[ -s "$6" ]]
+		printf '%s\n' "bake-file:$6" >>"${calls}"
+		return "${fixture_bake_status}"
+	}
+	fixture_bake_supported=1
+	fixture_definition_status=0
+	fixture_bake_status=0
+	fixture_native_log=0
+	HFL_LOG_FILE="${tmp}/build-session.log"
+	for fixture_status in 0 7 130; do
+		# Even a stale consent error or successful output containing the hint
+		# must not change the original build result or invoke Bake.
+		printf '%s\n' "${hint}" >"${HFL_LOG_FILE}"
+		fixture_message="${hint}"
+		: >"${calls}"
+		actual=0
+		build_dev_image --no-cache worker || actual=$?
+		[[ "${actual}" -eq "${fixture_status}" ]]
+		[[ "$(wc -l <"${calls}")" -eq 1 ]]
+	done
+	fixture_status=1
+	fixture_message="dependency download failed"
+	: >"${calls}"
+	actual=0
+	build_dev_image web || actual=$?
+	[[ "${actual}" -eq 1 && "$(wc -l <"${calls}")" -eq 1 ]]
+	fixture_message="${hint}"
+	for fixture_bake_supported in 0 1; do
+		for fixture_native_log in 0 1; do
+			: >"${calls}"
+			actual=0
+			build_dev_image --no-cache worker || actual=$?
+			grep -Fx 'legacy:build --no-cache worker' "${calls}" >/dev/null
+			if [[ "${fixture_bake_supported}" == 0 ]]; then
+				[[ "${actual}" -eq 1 ]]
+				[[ "$(wc -l <"${calls}")" -eq 2 ]]
+				continue
+			fi
+			[[ "${actual}" -eq 0 ]]
+			grep -Fx 'definition:--progress=plain build --print --no-cache worker' "${calls}" >/dev/null
+			bake_file="$(sed -n 's/^bake-file://p' "${calls}")"
+			[[ -n "${bake_file}" && ! -e "${bake_file}" ]]
+		done
+	done
+	fixture_definition_status=7
+	: >"${calls}"
+	actual=0
+	build_dev_image web || actual=$?
+	[[ "${actual}" -eq 7 ]]
+	! grep -q '^bake-file:' "${calls}"
+	fixture_definition_status=0
+	fixture_bake_status=9
+	: >"${calls}"
+	actual=0
+	build_dev_image web || actual=$?
+	[[ "${actual}" -eq 9 && "$(grep -c '^bake-file:' "${calls}")" -eq 1 ]]
+	bake_file="$(sed -n 's/^bake-file://p' "${calls}")"
+	[[ ! -e "${bake_file}" ]]
+)
+
 # An OSS worktree changes only the runtime source bind mounts; the current
 # repository remains the Compose/configuration and data root.
 grep -F '${WORKTREE_DIR:-.}/src/backend:/opt/hyperfilelens/backend' \

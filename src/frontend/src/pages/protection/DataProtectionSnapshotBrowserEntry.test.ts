@@ -150,6 +150,8 @@ describe('Standalone backup data browser', () => {
     expect(browserPage).not.toContain('backup-data-drawer-section--paths')
     expect(browserPage).toContain('backup-data-drawer-section--contents')
     expect(browserPage).toContain("t('protection.backupsPage.snapshotStorageEfficiencyTitle')")
+    expect(browserPage.match(/class="backup-data-snapshot-metrics__item"/g)).toHaveLength(6)
+    expect(browserPage).not.toContain('snapshotStatsBasis')
     expect(browserPage).not.toContain("t('protection.backupsPage.snapshotBrowserProtectedPath')")
     const fileBrowserTitle = sourceBetween(
       browserPage,

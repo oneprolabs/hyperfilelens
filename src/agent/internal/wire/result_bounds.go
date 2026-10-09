@@ -26,6 +26,7 @@ var essentialResultKeys = map[string]struct{}{
 	"kopia_snapshot_id": {}, "snapshot_id": {}, "source_path": {},
 	"size_bytes": {}, "file_count": {}, "dir_count": {}, "directory_count": {},
 	"bytes_done": {}, "bytes_total": {}, "bytes_total_known": {},
+	"new_original_content_bytes": {}, "new_packed_content_bytes": {}, "storage_stats_available": {}, "storage_stats_basis": {},
 	"hashed_bytes": {}, "uploaded_bytes": {}, "kopia_percent": {}, "percent": {},
 	"last_progress": {}, "execution_state": {}, "result_reported": {},
 	"path": {}, "target_path": {}, "filename": {}, "content_type": {},

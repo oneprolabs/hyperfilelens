@@ -2000,6 +2000,12 @@ def _finalize_backup_task(
         "skipped_directory_count": skipped_directory_count,
         "skipped_special_count": skipped_special_count,
     }
+    from apps.protection.services.progress.backup_runtime import build_backup_kopia_progress
+
+    # complete_task replaces the result payload; preserve final per-lane counters.
+    task_result["transfer_progress"] = build_backup_kopia_progress(
+        task=task, source_snapshot=source_snapshot,
+    ).get("transfer_progress")
     if skipped_items:
         task_result["skipped_details"] = {
             "category": "source_items_skipped",
