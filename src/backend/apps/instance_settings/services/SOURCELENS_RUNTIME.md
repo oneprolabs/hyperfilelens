@@ -95,6 +95,11 @@ on requests; broker/database/credential changes alter both cache keys without
 restarting API or changing its environment. An empty tombstone overrides stale
 process environment; an invalid, non-private, symlinked, or unreadable file
 fails closed. Explicit URL overrides still win; external mode ignores this file.
+The authoritative hot file is published before the compatibility `.env` update.
+If hot publication fails, the old `.env`/hot state stays intact and only this
+invocation's new attachment is rolled back. If hot publication succeeds but
+the compatibility update fails, the published endpoint and its attachment stay
+active; the running API uses the hot file, not the old environment.
 
 It records only attachment ownership (not credentials) in
 `deploy/sl-queue-monitor.json`. Configuration/marker writes are atomic with

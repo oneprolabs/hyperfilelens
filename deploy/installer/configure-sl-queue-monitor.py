@@ -289,7 +289,6 @@ def configure(root: pathlib.Path, remove: bool = False) -> None:
         atomic_write(
             marker, json.dumps({"container": redis["Id"], "created": created}) + "\n"
         )
-        write_auto_url(env, url)
         write_runtime_url(root, url)
     except Exception:
         if requested_new_connection:
@@ -298,6 +297,9 @@ def configure(root: pathlib.Path, remove: bool = False) -> None:
             except Exception:
                 pass
         raise
+    # Hot configuration is authoritative. A compatibility-env write failure
+    # must not roll back an attachment backing an already published endpoint.
+    write_auto_url(env, url)
 
 
 def main() -> None:

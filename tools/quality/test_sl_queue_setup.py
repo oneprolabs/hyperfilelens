@@ -307,6 +307,72 @@ class QueueSetupTests(unittest.TestCase):
         self.assertIn("existing setup retained", output.getvalue())
         self.assertNotIn("secret", output.getvalue())
 
+    def test_hot_publication_failure_keeps_existing_env_and_runtime_unchanged(self):
+        self.configure()
+        env_before = (self.root / ".env").read_bytes()
+        runtime_before = setup.runtime_config_path(self.root).read_bytes()
+        marker_before = (self.root / "deploy/sl-queue-monitor.json").read_bytes()
+        self.items["b" * 64]["Config"]["Env"] = [
+            "CELERY_BROKER_URL=redis://redis:6379/2",
+        ]
+        with (
+            patch.object(setup, "docker", side_effect=self.docker),
+            patch.object(
+                setup,
+                "write_runtime_url",
+                side_effect=OSError("temporary publication failure"),
+            ),
+        ):
+            with self.assertRaises(OSError):
+                setup.configure(self.root)
+        self.assertEqual((self.root / ".env").read_bytes(), env_before)
+        self.assertEqual(
+            setup.runtime_config_path(self.root).read_bytes(), runtime_before
+        )
+        self.assertEqual(
+            (self.root / "deploy/sl-queue-monitor.json").read_bytes(), marker_before
+        )
+        self.assertIn("a" * 64, self.members)
+
+    def test_first_hot_publication_failure_rolls_back_new_connection_without_env_change(
+        self,
+    ):
+        env_before = (self.root / ".env").read_bytes()
+        with (
+            patch.object(setup, "docker", side_effect=self.docker),
+            patch.object(
+                setup,
+                "write_runtime_url",
+                side_effect=OSError("temporary publication failure"),
+            ),
+        ):
+            with self.assertRaises(OSError):
+                setup.configure(self.root)
+        self.assertEqual((self.root / ".env").read_bytes(), env_before)
+        self.assertFalse(setup.runtime_config_path(self.root).exists())
+        self.assertFalse(self.members)
+        self.assertIn("private-sl", self.items["a" * 64]["NetworkSettings"]["Networks"])
+        self.assertFalse((self.root / "deploy/sl-queue-monitor.json").exists())
+
+    def test_compatibility_env_failure_keeps_successfully_published_hot_endpoint(self):
+        with (
+            patch.object(setup, "docker", side_effect=self.docker),
+            patch.object(
+                setup,
+                "write_auto_url",
+                side_effect=OSError("temporary env-file failure"),
+            ),
+        ):
+            with self.assertRaises(OSError):
+                setup.configure(self.root)
+        self.assertEqual(
+            json.loads(setup.runtime_config_path(self.root).read_text())["url"],
+            "redis://hfl-sourcelens-redis:6379/0",
+        )
+        self.assertIn("a" * 64, self.members)
+        self.assertTrue((self.root / "deploy/sl-queue-monitor.json").exists())
+        self.assertEqual(setup.env_value(self.root / ".env", setup.AUTO_KEY), "")
+
     def test_failed_new_attachment_rolls_back_without_tearing_down_private_network(
         self,
     ):
