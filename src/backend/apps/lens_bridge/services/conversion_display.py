@@ -6,6 +6,7 @@ for display and keeps format-matrix product expectations in one place.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -81,7 +82,7 @@ def warning_label(code: str | None) -> str:
 def _int(value: Any) -> int:
     try:
         return int(value or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 
@@ -109,13 +110,81 @@ def _item_view(row: dict[str, Any]) -> dict[str, Any]:
     reason = str(row.get("reason") or "").strip()
     name = str(row.get("name") or row.get("path") or row.get("source_path") or "").strip()
     path = str(row.get("path") or row.get("source_path") or "").strip()
+    status = str(row.get("status") or "").strip().lower()
+    outcome = (
+        "skipped" if reason == "UNSUPPORTED_TYPE" or status in {"skipped", "unsupported"}
+        else "failed" if status in {"failed", "failure"}
+        else None
+    )
     return {
         "name": name or path or "Unknown file",
         "path": path,
         "reason": reason,
         "reason_label": reason_label(reason) if reason else "",
         "is_problem": _is_problem_reason(reason),
+        "outcome": outcome,
     }
+
+
+def conversion_progress_view(state: dict[str, Any]) -> dict[str, Any]:
+    """Normalize aggregate progress without using parallel file ordinals."""
+    summary = state.get("summary")
+    summary = summary if isinstance(summary, dict) else {}
+    raw_counts = state.get("progress_counts")
+    counts = (
+        {
+            key: max(0, _int(raw_counts.get(key)))
+            for key in (
+                "total", "candidates", "processed", "converted",
+                "failed", "skipped", "unsupported",
+            )
+        }
+        if isinstance(raw_counts, dict) else None
+    )
+    percent = state.get("overall_progress_percent")
+    if percent is None:
+        percent = state.get("progress_percent")
+    try:
+        percent = None if isinstance(percent, bool) else float(percent)
+    except (TypeError, ValueError, OverflowError):
+        percent = None
+    if percent is not None and (
+        not math.isfinite(percent) or not 0 <= percent <= 100
+    ):
+        percent = None
+
+    if str(state.get("status") or "").upper() == "SUCCESS":
+        total = max(0, _int(summary.get("total")))
+        unsupported = max(0, _int(summary.get("unsupported")))
+        counts = {
+            "total": total,
+            "candidates": max(0, _int(summary.get("candidates", total - unsupported))),
+            "processed": total,
+            "converted": max(0, _int(summary.get("converted", summary.get("success")))),
+            "failed": max(0, _int(summary.get("failed"))),
+            "skipped": max(0, _int(summary.get("skipped"))),
+            "unsupported": unsupported,
+        }
+        percent = 100
+    elif (
+        counts is not None
+        and counts["candidates"] > 0
+        and all(key in raw_counts for key in ("converted", "failed", "skipped"))
+        and (
+            state.get("progress_phase") in {"PARSING_DOCUMENTS", "PROCESSING_EMBEDDED_IMAGES", "FINALIZING"}
+            or str(state.get("progress_step") or "").startswith("conversion_")
+        )
+    ):
+        completed = min(
+            counts["candidates"],
+            counts["converted"] + counts["failed"] + counts["skipped"],
+        )
+        counts["processed"] = counts["unsupported"] + completed
+        percent = (
+            99 if state.get("progress_phase") == "FINALIZING"
+            else 10 + int(80 * completed / counts["candidates"])
+        )
+    return {"progress_percent": percent, "progress_counts": counts}
 
 
 def document_conversion_view(conversion_state: Any) -> dict[str, Any] | None:
@@ -151,13 +220,7 @@ def document_conversion_view(conversion_state: Any) -> dict[str, Any] | None:
 
     status = str(conversion_state.get("status") or "").strip()
     phase = _conversion_phase(status)
-    progress_percent = conversion_state.get("progress_percent")
-    try:
-        progress_percent = (
-            float(progress_percent) if progress_percent is not None else None
-        )
-    except (TypeError, ValueError):
-        progress_percent = None
+    progress = conversion_progress_view(conversion_state)
 
     error = str(conversion_state.get("error") or "").strip()
     recovery_raw = conversion_state.get("recovery")
@@ -206,7 +269,7 @@ def document_conversion_view(conversion_state: Any) -> dict[str, Any] | None:
         "empty_result": empty_result,
         "progress_step": str(conversion_state.get("progress_step") or ""),
         "progress_message": str(conversion_state.get("progress_message") or ""),
-        "progress_percent": progress_percent,
+        **progress,
         "error": error,
         "recovery": recovery,
         "finished_at": str(conversion_state.get("finished_at") or ""),
@@ -220,6 +283,7 @@ def document_conversion_view(conversion_state: Any) -> dict[str, Any] | None:
             "unchanged": unchanged,
         },
         "items": items,
+        "items_truncated": max(0, _int(summary.get("items_truncated"))),
         "problem_items": problem_items,
         "warnings": [
             {"code": code, "label": warning_label(code)}

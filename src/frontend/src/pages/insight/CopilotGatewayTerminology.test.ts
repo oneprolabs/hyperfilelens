@@ -47,7 +47,8 @@ describe('Copilot Data Gateway product terminology', () => {
   })
 
   it('shows the selected Gateway name for both Chat detail types', () => {
-    expect(contextBar).toContain("<dl><dt>{{ t('insight.copilot.gatewayNameLabel') }}</dt>")
+    expect(contextBar).toContain("t('insight.copilot.detailsGatewayName')")
+    expect(contextBar).toContain("{{ gatewayName || '—' }}")
     expect(contextBar).not.toContain('v-if="session.gateway_selection_mode === \'manual\'"')
   })
 
@@ -61,13 +62,15 @@ describe('Copilot Data Gateway product terminology', () => {
       'sessionAnswering',
       'sessionReady',
       'backupSourceFallback',
-      'contextNoFilesSelected',
       'contextCreatedAt',
+      'contextSnapshotLabel',
+      'contextGatewayLabel',
       'visualUnderstandingUnavailable',
     ]) {
       expect(contextBar).toContain(`t('insight.copilot.${key}'`)
     }
-    expect(contextBar).toContain('new Intl.DateTimeFormat(locale.value')
+    expect(contextBar).toContain('formatLocalDateTime(timestamp)')
+    expect(contextBar).not.toContain('new Intl.DateTimeFormat')
   })
 
   it('uses Public terminology for Platform Ops service actions', () => {

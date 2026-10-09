@@ -631,6 +631,12 @@ async function pollSessionLifecycle(sessionId: number) {
           current.provision_phase,
           current.provision_detail,
           current.cleanup_status,
+          current.preparation_progress?.restore?.progress_percent,
+          current.preparation_progress?.restore?.bytes_done,
+          current.document_conversion?.status,
+          current.document_conversion?.progress_percent,
+          current.document_conversion?.progress_counts?.processed,
+          current.preparation_progress?.assistant_state,
         ].join(':')
         unchangedPolls = fingerprint === previousFingerprint ? unchangedPolls + 1 : 0
         previousFingerprint = fingerprint

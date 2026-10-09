@@ -25,6 +25,52 @@ from apps.node.models import Node
 
 
 class KnowledgeSourceSyncLeaseTests(TransactionTestCase):
+    @patch("apps.lens_bridge.services.chat_lifecycle.wake_chats_for_ready_knowledge_source")
+    @patch(
+        "apps.lens_bridge.services.knowledge_source_sync._run_sync_pipeline",
+        side_effect=ManagedDatasourcePending("conversion pending"),
+    )
+    def test_pending_conversion_does_not_wake_chat(self, _run, wake):
+        result = knowledge_source_sync.run_knowledge_source_sync(
+            organization_id=self.organization.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+        self.assertEqual(result["status"], "waiting")
+        wake.assert_not_called()
+
+    @patch("django.db.close_old_connections")
+    @patch("apps.lens_bridge.services.chat_lifecycle.wake_chats_for_ready_knowledge_source")
+    @patch("apps.lens_bridge.services.knowledge_source_sync._run_sync_pipeline")
+    def test_background_ready_sync_notifies_chat_after_commit(self, run, wake, _close):
+        run.return_value = {
+            "knowledge_source_id": self.knowledge_source.id,
+            "status": LensKnowledgeSource.Status.READY,
+        }
+        with transaction.atomic():
+            knowledge_source_sync.run_knowledge_source_sync(
+                organization_id=self.organization.id,
+                knowledge_source_id=self.knowledge_source.id,
+            )
+            wake.assert_not_called()
+        wake.assert_called_once_with(
+            organization_id=self.organization.id,
+            knowledge_source_id=self.knowledge_source.id,
+        )
+
+    @patch("django.db.close_old_connections")
+    @patch("apps.lens_bridge.services.chat_lifecycle.wake_chats_for_ready_knowledge_source")
+    @patch("apps.lens_bridge.services.knowledge_source_sync._run_sync_pipeline")
+    def test_rolled_back_sync_does_not_wake_chat(self, run, wake, _close):
+        run.return_value = {"status": LensKnowledgeSource.Status.READY}
+        with self.assertRaisesRegex(RuntimeError, "rollback"):
+            with transaction.atomic():
+                knowledge_source_sync.run_knowledge_source_sync(
+                    organization_id=self.organization.id,
+                    knowledge_source_id=self.knowledge_source.id,
+                )
+                raise RuntimeError("rollback")
+        wake.assert_not_called()
+
     def setUp(self):
         self.organization = Organization.objects.create(
             key="sync-lease",

@@ -455,13 +455,15 @@ require_service_manager() {
 					# service unit, and all lifecycle commands remain user-scoped.
 					command -v sudo >/dev/null 2>&1 \
 						|| log_fail "Administrator authorization is required once to enable systemd user lingering (sudo is not available)." 2
-					log_step "Enabling systemd user lingering for $(id -un)."
+					log_step "Administrator authorization via sudo is needed to keep the Agent running after you sign out."
+					log_step "This does not make the Agent run as root or expand the files it can back up. The Agent will still use the current user's permissions to read files."
 					sudo loginctl enable-linger "$(id -un)" \
 						|| log_fail "Could not enable systemd user lingering. Ask an administrator to run: sudo loginctl enable-linger $(id -un)" 2
 					user_linger="$(user_linger_state)" \
 						|| log_fail "Unable to verify the current user's systemd linger state after authorization." 2
 					[[ "${user_linger}" == "yes" ]] \
 						|| log_fail "systemd user lingering is still disabled after administrator authorization." 2
+					log_ok "The Agent can now continue running after you sign out, using the current user's permissions."
 				else
 					log_warn "systemd user lingering is not enabled; the Agent may stop after sign-out until an administrator runs: sudo loginctl enable-linger $(id -un)"
 				fi

@@ -53,9 +53,9 @@ def execute_copilot_chat_provision_task(
             expected_poll_sequence=expected_poll_sequence,
         )
         next_poll = result.get("next_poll")
-        if result.get("status") == "waiting" and isinstance(next_poll, dict):
+        if result.get("status") in {"waiting", "scheduled"} and isinstance(next_poll, dict):
             retry_after_seconds = max(
-                _CHAT_PROVISION_WAIT_SECONDS,
+                1 if result.get("status") == "scheduled" else _CHAT_PROVISION_WAIT_SECONDS,
                 int(next_poll.get("retry_after_seconds") or 0),
             )
             try:

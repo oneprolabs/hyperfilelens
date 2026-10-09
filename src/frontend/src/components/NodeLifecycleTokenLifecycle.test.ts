@@ -87,19 +87,29 @@ describe('Node lifecycle enrollment token ownership', () => {
     const wrapper = mountWizard()
     await flushPromises()
     expect(wrapper.get('.agent-install-wizard__command-lead').text()).toContain(
-      'target Linux host',
+      'Linux host you want to back up',
+    )
+    expect(wrapper.get('.agent-install-wizard__command-lead').text()).toContain(
+      'This does not expand the files it can back up',
     )
 
     await wrapper.setProps({ os: 'windows' })
     await flushPromises()
     expect(wrapper.get('.agent-install-wizard__command-lead').text()).toContain(
-      'target Windows host',
+      'Windows host you want to back up',
     )
+    expect(wrapper.get('.agent-install-wizard__command-lead').text()).toContain(
+      'select and copy the command manually',
+    )
+    expect(wrapper.findAll('.agent-install-wizard__command-lead')).toHaveLength(1)
 
     await wrapper.setProps({ os: 'macos' })
     await flushPromises()
     expect(wrapper.get('.agent-install-wizard__command-lead').text()).toContain(
-      'target Mac',
+      'Mac you want to back up',
+    )
+    expect(wrapper.get('.agent-install-wizard__command-lead').text()).toContain(
+      'This is also required when installing as root',
     )
   })
 

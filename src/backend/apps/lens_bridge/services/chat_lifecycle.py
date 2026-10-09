@@ -1460,7 +1460,16 @@ def run_copilot_chat_provision(
         expected_poll_sequence=expected_poll_sequence,
     )
     if claim_token is None:
-        return {"session_link_id": session_link_id, "status": claim_status}
+        result = {"session_link_id": session_link_id, "status": claim_status}
+        if claim_status == "scheduled":
+            next_poll = _scheduled_provision_poll(
+                session_link_id,
+                expected_generation=expected_generation,
+                expected_poll_sequence=expected_poll_sequence,
+            )
+            if next_poll is not None:
+                result["next_poll"] = next_poll
+        return result
     try:
         result = _run_copilot_chat_provision(
             session_link_id=session_link_id,
@@ -1634,12 +1643,15 @@ def _run_copilot_chat_provision(
         generation=link.provision_generation,
     )
 
-    _set_phase(
-        link,
-        claim_token,
-        LensSessionLink.ProvisionPhase.RESTORING,
-        "Restoring selected backup data.",
-    )
+    # Resume the existing pipeline without flashing back to restoring on
+    # every conversion poll, especially when sync returns busy/scheduled.
+    if link.knowledge_source_id is None:
+        _set_phase(
+            link,
+            claim_token,
+            LensSessionLink.ProvisionPhase.RESTORING,
+            "Restoring selected backup data.",
+        )
     sl_user_link = chat_user_provisioning.ensure_sl_chat_user(user)
 
     # 1) Always create a fresh KS for this chat (no reuse).
@@ -2259,6 +2271,117 @@ def _require_provision_claim(link_id: int, claim_token: str) -> None:
         provision_claim_token=claim_token,
     ).exists():
         raise ChatProvisionLeaseLostError("Chat provisioning lease was lost.")
+
+
+def _scheduled_provision_poll(
+    link_id: int,
+    *,
+    expected_generation: int | None,
+    expected_poll_sequence: int | None,
+) -> dict[str, int] | None:
+    """Reschedule an early delivery without changing its durable poll identity."""
+    if expected_generation is None and expected_poll_sequence is None:
+        expected_generation, expected_poll_sequence = 1, 0
+    if expected_generation is None or expected_poll_sequence is None:
+        return None
+    now = timezone.now()
+    link = LensSessionLink.objects.filter(
+        pk=link_id,
+        lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+        provision_generation=expected_generation,
+        provision_poll_sequence=expected_poll_sequence,
+    ).filter(
+        Q(provision_claimed_at__isnull=True)
+        | Q(provision_claimed_at__lte=now - timedelta(seconds=PROVISION_CLAIM_TTL_SECONDS))
+    ).first()
+    if link is None:
+        return None
+    remaining = (
+        (link.provision_next_retry_at - now).total_seconds()
+        if link.provision_next_retry_at else 0
+    )
+    return {
+        "generation": int(link.provision_generation),
+        "sequence": int(link.provision_poll_sequence),
+        "retry_after_seconds": max(1, math.ceil(remaining)),
+    }
+
+
+@transaction.atomic
+def wake_chats_for_ready_knowledge_source(
+    *, organization_id: int, knowledge_source_id: int,
+) -> int:
+    """Wake idle Chat continuations once per completed sync, after commit."""
+    ks = LensKnowledgeSource.objects.filter(
+        pk=knowledge_source_id,
+        organization_id=organization_id,
+        lifecycle_status=LensKnowledgeSource.LifecycleStatus.READY,
+        status__in=(LensKnowledgeSource.Status.READY, LensKnowledgeSource.Status.DEGRADED),
+    ).first()
+    if ks is None:
+        return 0
+    now = timezone.now()
+    completed_at = str((ks.sync_state_json or {}).get("last_sync_at") or ks.updated_at.isoformat())
+    sessions = LensSessionLink.objects.select_for_update().filter(
+        organization_id=organization_id,
+        knowledge_source_id=ks.id,
+        lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+        provision_phase__in=(
+            LensSessionLink.ProvisionPhase.RESTORING,
+            LensSessionLink.ProvisionPhase.CONVERTING,
+            LensSessionLink.ProvisionPhase.CREATING_KNOWLEDGE_SOURCE,
+        ),
+    ).filter(
+        Q(provision_claimed_at__isnull=True)
+        | Q(provision_claimed_at__lte=now - timedelta(seconds=PROVISION_CLAIM_TTL_SECONDS))
+    ).order_by("id")
+    awakened = 0
+    for link in sessions:
+        state = dict(link.provision_state_json or {})
+        if state.get("source_lens_transient") and link.provision_next_retry_at and link.provision_next_retry_at > now:
+            continue
+        marker = {
+            "knowledge_source_id": ks.id,
+            "completed_at": completed_at,
+            "generation": link.provision_generation,
+        }
+        if state.get("knowledge_source_ready_wakeup") == marker:
+            continue
+        state["knowledge_source_ready_wakeup"] = marker
+        link.provision_state_json = state
+        link.provision_poll_sequence += 1
+        link.provision_claim_token = None
+        link.provision_claimed_at = None
+        link.provision_next_retry_at = now
+        link.save(update_fields=[
+            "provision_state_json", "provision_poll_sequence", "provision_claim_token",
+            "provision_claimed_at", "provision_next_retry_at", "updated_at",
+        ])
+        tokens = (link.id, link.provision_generation, link.provision_poll_sequence)
+        transaction.on_commit(lambda tokens=tokens: _dispatch_ready_chat_continuation(*tokens))
+        awakened += 1
+    return awakened
+
+
+def _dispatch_ready_chat_continuation(link_id: int, generation: int, sequence: int) -> None:
+    """Publish a fenced wakeup while keeping broker failures recoverable."""
+    from apps.lens_bridge.services.sync_queue import queue_copilot_chat_provision
+
+    if not LensSessionLink.objects.filter(
+        pk=link_id,
+        lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+        provision_generation=generation,
+        provision_poll_sequence=sequence,
+    ).exists():
+        return
+    try:
+        queue_copilot_chat_provision(
+            session_link_id=link_id,
+            expected_generation=generation,
+            expected_poll_sequence=sequence,
+        )
+    except Exception:
+        logger.exception("ready knowledge source Chat wakeup failed session_link_id=%s", link_id)
 
 
 @transaction.atomic

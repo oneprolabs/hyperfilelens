@@ -12,6 +12,7 @@ from apps.lens_bridge.services import (
     gateway_readiness,
     ingest_policy,
     provisioning,
+    preparation_progress,
 )
 from apps.lens_bridge.services.chat_lifecycle_errors import (
     classify_chat_lifecycle_error,
@@ -535,6 +536,7 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
     has_unread = serializers.SerializerMethodField()
     document_conversion = serializers.SerializerMethodField()
     data_context = serializers.SerializerMethodField()
+    preparation_progress = serializers.SerializerMethodField()
     lifecycle_error = serializers.SerializerMethodField()
     lifecycle_error_code = serializers.SerializerMethodField()
     lifecycle_error_message = serializers.SerializerMethodField()
@@ -582,6 +584,7 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             "force_delete_available",
             "force_delete_reason",
             "document_conversion",
+            "preparation_progress",
             "data_context",
             "data_update",
             "lifecycle_error",
@@ -767,6 +770,9 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
         return conversion_display.document_conversion_view(
             conversion_display.conversion_state_from_knowledge_source(ks)
         )
+
+    def get_preparation_progress(self, obj: LensSessionLink) -> dict | None:
+        return preparation_progress.preparation_progress_for_session(obj)
 
     def get_data_update(self, obj: LensSessionLink) -> dict | None:
         ks = obj.knowledge_source
