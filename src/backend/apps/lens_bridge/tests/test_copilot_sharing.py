@@ -1,9 +1,12 @@
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import call, patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.db import connection, transaction
+from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -113,7 +116,47 @@ class CopilotSharingTests(TestCase):
         self.assertEqual(result["answer"], "Completed answer")
 
     @patch("apps.lens_bridge.services.copilot_sharing.sl_client.request_json")
-    def test_existing_share_recovers_and_revokes_other_chat_share_identities(
+    def test_create_share_pins_an_older_turn_even_when_a_newer_answer_exists(self, request_json):
+        messages = self._messages()
+        older_run = messages[1]["run"]
+        request_json.side_effect = [
+            messages,
+            {"results": [], "next": None},
+            {
+                "uuid": str(self.share_uuid),
+                "run_uuid": older_run,
+                "token": "older-turn-token",
+            },
+        ]
+        share = copilot_sharing.create_share(self.session, run_uuid=older_run, title="Older answer")
+        self.assertEqual(share["run_uuid"], older_run)
+        self.assertEqual(
+            request_json.call_args_list[-1],
+            call("POST", f"/api/lens/runs/{older_run}/share/",
+                 json_body={"title": "Older answer"}, hfl_user=self.user),
+        )
+
+    @patch("apps.lens_bridge.services.copilot_sharing.sl_client.request_json")
+    def test_specified_run_must_be_a_completed_answer_in_this_session(self, request_json):
+        messages = self._messages()
+        running_run = str(uuid.uuid4())
+        messages.append({
+            "role": "assistant", "run": running_run,
+            "content": "Still running", "completed_at": None,
+        })
+        for run_uuid in (str(uuid.uuid4()), running_run):
+            with self.subTest(run_uuid=run_uuid):
+                request_json.reset_mock()
+                request_json.return_value = messages
+                with self.assertRaises(copilot_sharing.CopilotShareNotFoundError):
+                    copilot_sharing.create_share(self.session, run_uuid=run_uuid)
+                request_json.assert_called_once_with(
+                    "GET", f"/api/lens/sessions/{self.session.sl_session_uuid}/messages/",
+                    hfl_user=self.user,
+                )
+
+    @patch("apps.lens_bridge.services.copilot_sharing.sl_client.request_json")
+    def test_existing_share_recovers_and_preserves_other_chat_share_identities(
         self,
         request_json,
     ):
@@ -155,25 +198,19 @@ class CopilotSharingTests(TestCase):
             None,
         ]
 
-        share = copilot_sharing.create_share(self.session)
+        share = copilot_sharing.create_share(self.session, run_uuid=str(self.run_uuid))
 
         self.assertEqual(share["uuid"], str(self.share_uuid))
-        self.assertIn(
-            call(
-                "DELETE",
-                f"/api/lens/shares/{old_share_uuid}/",
-                hfl_user=self.user,
-            ),
-            request_json.call_args_list,
-        )
+        self.assertEqual(request_json.call_count, 2)
+        self.assertFalse(any(item.args[0] == "DELETE" for item in request_json.call_args_list))
         self.session.refresh_from_db()
         self.assertEqual(
             [row["uuid"] for row in self.session.share_state_json["shares"]],
-            [str(self.share_uuid)],
+            [str(self.share_uuid), str(old_share_uuid)],
         )
 
     @patch("apps.lens_bridge.services.copilot_sharing.sl_client.request_json")
-    def test_candidate_lookup_alone_converges_to_one_current_share(
+    def test_candidate_lookup_preserves_all_shared_turns(
         self,
         request_json,
     ):
@@ -218,18 +255,11 @@ class CopilotSharingTests(TestCase):
         candidate = copilot_sharing.get_share_candidate(self.session)
 
         self.assertEqual(candidate["share"]["uuid"], str(self.share_uuid))
-        self.assertIn(
-            call(
-                "DELETE",
-                f"/api/lens/shares/{old_share_uuid}/",
-                hfl_user=self.user,
-            ),
-            request_json.call_args_list,
-        )
+        self.assertFalse(any(item.args[0] == "DELETE" for item in request_json.call_args_list))
         self.session.refresh_from_db()
         self.assertEqual(
             [row["uuid"] for row in self.session.share_state_json["shares"]],
-            [str(self.share_uuid)],
+            [str(self.share_uuid), str(old_share_uuid)],
         )
 
     @patch("apps.lens_bridge.services.copilot_sharing.sl_client.request_json")
@@ -250,6 +280,7 @@ class CopilotSharingTests(TestCase):
 
         share = copilot_sharing.create_share(
             self.session,
+            run_uuid=str(self.run_uuid),
             title="Latest question",
         )
 
@@ -279,7 +310,7 @@ class CopilotSharingTests(TestCase):
                 raw_token=access,
             )
 
-    def test_share_access_fails_closed_while_replacement_is_incomplete(self):
+    def test_share_access_allows_multiple_independent_turns(self):
         old_share_uuid = uuid.uuid4()
         current_share = {
             "uuid": str(self.share_uuid),
@@ -303,14 +334,20 @@ class CopilotSharingTests(TestCase):
             current_share,
         )
 
-        with self.assertRaises(copilot_sharing.CopilotShareNotFoundError):
-            copilot_sharing.require_active_share_access(
-                organization_id=self.org.id,
-                raw_token=access,
-            )
+        _, resolved = copilot_sharing.require_active_share_access(
+            organization_id=self.org.id,
+            raw_token=access,
+        )
+        self.assertEqual(resolved["share_token"], "current-share-token")
+        old_share = self.session.share_state_json["shares"][1]
+        _, old_access = copilot_sharing.require_active_share_access(
+            organization_id=self.org.id,
+            raw_token=copilot_sharing.make_share_access_token(self.session, old_share),
+        )
+        self.assertEqual(old_access["share_token"], "old-share-token")
 
     @patch("apps.lens_bridge.services.copilot_sharing.sl_client.request_json")
-    def test_create_share_replaces_the_previous_chat_share(
+    def test_create_share_preserves_the_previous_chat_share(
         self,
         request_json,
     ):
@@ -339,26 +376,13 @@ class CopilotSharingTests(TestCase):
             None,
         ]
 
-        copilot_sharing.create_share(self.session, title="Latest question")
+        copilot_sharing.create_share(self.session, run_uuid=str(self.run_uuid), title="Latest question")
 
-        self.assertEqual(
-            request_json.call_args_list[-1],
-            call(
-                "DELETE",
-                f"/api/lens/shares/{old_share_uuid}/",
-                hfl_user=self.user,
-            ),
-        )
+        self.assertFalse(any(item.args[0] == "DELETE" for item in request_json.call_args_list))
         self.session.refresh_from_db()
         self.assertEqual(
-            self.session.share_state_json["shares"],
-            [
-                {
-                    "uuid": str(self.share_uuid),
-                    "run_uuid": str(self.run_uuid),
-                    "token": "new-share-token",
-                }
-            ],
+            {row["uuid"] for row in self.session.share_state_json["shares"]},
+            {str(old_share_uuid), str(self.share_uuid)},
         )
 
     @patch(
@@ -386,6 +410,7 @@ class CopilotSharingTests(TestCase):
         with self.assertRaisesRegex(RuntimeError, "database write failed"):
             copilot_sharing.create_share(
                 self.session,
+                run_uuid=str(self.run_uuid),
                 title="Latest question",
             )
 
@@ -425,6 +450,7 @@ class CopilotSharingTests(TestCase):
         with self.assertRaises(copilot_sharing.CopilotShareNotFoundError):
             copilot_sharing.create_share(
                 self.session,
+                run_uuid=str(self.run_uuid),
                 title="Latest question",
             )
 
@@ -437,13 +463,14 @@ class CopilotSharingTests(TestCase):
             request_json.call_args_list,
         )
         self.session.refresh_from_db()
-        self.assertEqual(self.session.share_state_json["shares"], [])
+        self.assertEqual(self.session.share_state_json.get("shares", []), [])
 
     @patch("apps.lens_bridge.services.copilot_sharing.sl_client.request_json")
     def test_teardown_revokes_known_shares_without_deleting_hfl_content(
         self,
         request_json,
     ):
+        other_share_uuid = str(uuid.uuid4())
         self.session.share_state_json = {
             "version": 1,
             "shares": [
@@ -451,17 +478,20 @@ class CopilotSharingTests(TestCase):
                     "uuid": str(self.share_uuid),
                     "run_uuid": str(self.run_uuid),
                     "token": "share-token",
-                }
+                },
+                {"uuid": other_share_uuid, "run_uuid": str(uuid.uuid4()), "token": "other-token"},
             ],
         }
         self.session.save(update_fields=["share_state_json", "updated_at"])
         revoked = copilot_sharing.revoke_session_shares(self.session)
 
-        self.assertEqual(revoked, 1)
-        request_json.assert_called_once_with(
-            "DELETE",
-            f"/api/lens/shares/{self.share_uuid}/",
-            hfl_user=self.user,
+        self.assertEqual(revoked, 2)
+        request_json.assert_has_calls(
+            [
+                call("DELETE", f"/api/lens/shares/{self.share_uuid}/", hfl_user=self.user),
+                call("DELETE", f"/api/lens/shares/{other_share_uuid}/", hfl_user=self.user),
+            ],
+            any_order=True,
         )
         self.session.refresh_from_db()
         self.assertEqual(self.session.share_state_json["shares"], [])
@@ -491,7 +521,7 @@ class CopilotSharingTests(TestCase):
         self.assertEqual(len(self.session.share_state_json["shares"]), 1)
 
     @patch("apps.lens_bridge.services.copilot_sharing.sl_client.request_json")
-    def test_revoke_share_cleans_every_known_link_for_the_chat(
+    def test_revoke_share_only_removes_the_requested_turn(
         self,
         request_json,
     ):
@@ -515,26 +545,28 @@ class CopilotSharingTests(TestCase):
 
         copilot_sharing.revoke_share(self.session, str(self.share_uuid))
 
-        request_json.assert_has_calls(
-            [
-                call(
-                    "DELETE",
-                    f"/api/lens/shares/{self.share_uuid}/",
-                    hfl_user=self.user,
-                ),
-                call(
-                    "DELETE",
-                    f"/api/lens/shares/{other_share_uuid}/",
-                    hfl_user=self.user,
-                ),
-            ],
-            any_order=True,
+        request_json.assert_called_once_with(
+            "DELETE", f"/api/lens/shares/{self.share_uuid}/", hfl_user=self.user,
         )
         self.session.refresh_from_db()
-        self.assertEqual(self.session.share_state_json["shares"], [])
+        self.assertEqual(
+            [row["uuid"] for row in self.session.share_state_json["shares"]],
+            [str(other_share_uuid)],
+        )
+        revoked = {"uuid": str(self.share_uuid), "run_uuid": str(self.run_uuid), "token": "share-token"}
+        with self.assertRaises(copilot_sharing.CopilotShareNotFoundError):
+            copilot_sharing.require_active_share_access(
+                organization_id=self.org.id,
+                raw_token=copilot_sharing.make_share_access_token(self.session, revoked),
+            )
+        remaining = self.session.share_state_json["shares"][0]
+        copilot_sharing.require_active_share_access(
+            organization_id=self.org.id,
+            raw_token=copilot_sharing.make_share_access_token(self.session, remaining),
+        )
 
     @patch("apps.lens_bridge.services.copilot_sharing.sl_client.request_json")
-    def test_update_share_title_replaces_other_known_chat_shares(
+    def test_update_share_title_preserves_other_known_chat_shares(
         self,
         request_json,
     ):
@@ -580,25 +612,140 @@ class CopilotSharingTests(TestCase):
         )
 
         self.assertEqual(updated["title"], "Renamed title")
-        self.assertIn(
-            call(
-                "DELETE",
-                f"/api/lens/shares/{stale_share_uuid}/",
-                hfl_user=self.user,
-            ),
-            request_json.call_args_list,
-        )
+        self.assertFalse(any(item.args[0] == "DELETE" for item in request_json.call_args_list))
         self.session.refresh_from_db()
         self.assertEqual(
-            self.session.share_state_json["shares"],
-            [
-                {
-                    "uuid": str(self.share_uuid),
-                    "run_uuid": str(self.run_uuid),
-                    "token": "current-share-token",
-                }
-            ],
+            {row["uuid"] for row in self.session.share_state_json["shares"]},
+            {str(stale_share_uuid), str(self.share_uuid)},
         )
+
+
+class CopilotSharingConcurrencyTests(TransactionTestCase):
+    def setUp(self):
+        user = get_user_model().objects.create_user(username="concurrent-share@example.test")
+        org, _membership = provision_registered_user_tenant(user)
+        self.session = LensSessionLink.objects.create(
+            organization=org, hfl_user=user, sl_session_uuid=uuid.uuid4(),
+            lifecycle_status=LensSessionLink.LifecycleStatus.READY,
+        )
+        self.run_uuid = str(uuid.uuid4())
+        self.share_uuid = str(uuid.uuid4())
+
+    @patch("apps.lens_bridge.services.copilot_sharing.sl_client.request_json")
+    def test_concurrent_creates_preserve_both_turns(self, request_json):
+        other_run = str(uuid.uuid4())
+        shares = {
+            run_uuid: {
+                "uuid": str(uuid.uuid4()), "run_uuid": run_uuid,
+                "token": f"test-{run_uuid}",
+            }
+            for run_uuid in (self.run_uuid, other_run)
+        }
+        started = Event()
+
+        def request(method, path, **kwargs):
+            if path.endswith("/messages/"):
+                return [
+                    message
+                    for run_uuid in shares
+                    for message in (
+                        {"role": "user", "content": "Question", "run": run_uuid},
+                        {"role": "assistant", "content": "Answer", "run": run_uuid,
+                         "completed_at": "2026-10-08T07:00:00Z"},
+                    )
+                ]
+            if method == "GET":
+                return {"results": [], "next": None}
+            run_uuid = path.split("/")[-3]
+            return shares[run_uuid]
+
+        def create(run_uuid):
+            try:
+                link = LensSessionLink.objects.get(pk=self.session.pk)
+                started.wait(10)
+                return copilot_sharing.create_share(link, run_uuid=run_uuid)
+            finally:
+                connection.close()
+
+        request_json.side_effect = request
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(create, self.run_uuid)
+            second = pool.submit(create, other_run)
+            started.set()
+            self.assertEqual(first.result(timeout=15)["run_uuid"], self.run_uuid)
+            self.assertEqual(second.result(timeout=15)["run_uuid"], other_run)
+        self.session.refresh_from_db()
+        self.assertEqual(
+            {row["run_uuid"] for row in self.session.share_state_json["shares"]},
+            set(shares),
+        )
+        for share in shares.values():
+            copilot_sharing.require_active_share_access(
+                organization_id=self.session.organization_id,
+                raw_token=copilot_sharing.make_share_access_token(self.session, share),
+            )
+
+    @patch("apps.lens_bridge.services.copilot_sharing.sl_client.request_json")
+    def test_chat_cleanup_waits_for_share_create_then_revokes_the_recorded_link(self, request_json):
+        creating = Event()
+        release = Event()
+        cleaning = Event()
+
+        def request(method, path, **kwargs):
+            if path.endswith("/messages/"):
+                return [
+                    {"role": "user", "content": "Question"},
+                    {"role": "assistant", "content": "Answer", "run": self.run_uuid,
+                     "completed_at": "2026-10-08T07:00:00Z"},
+                ]
+            if method == "GET":
+                return {"results": [], "next": None}
+            if method == "POST":
+                creating.set()
+                if not release.wait(10):
+                    raise RuntimeError("Timed out waiting to finish share creation")
+                return {"uuid": self.share_uuid, "run_uuid": self.run_uuid, "token": "test-token"}
+            return None
+
+        def create():
+            try:
+                link = LensSessionLink.objects.get(pk=self.session.pk)
+                return copilot_sharing.create_share(link, run_uuid=self.run_uuid)
+            finally:
+                connection.close()
+
+        def cleanup():
+            try:
+                cleaning.set()
+                with transaction.atomic():
+                    link = LensSessionLink.objects.select_for_update().get(pk=self.session.pk)
+                    link.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION
+                    link.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+                    link.save(update_fields=["cleanup_intent", "lifecycle_status"])
+                    return copilot_sharing.revoke_session_shares(link)
+            finally:
+                connection.close()
+
+        request_json.side_effect = request
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(create)
+            try:
+                self.assertTrue(creating.wait(10))
+                second = pool.submit(cleanup)
+                self.assertTrue(cleaning.wait(10))
+                self.assertFalse(second.done())
+            finally:
+                release.set()
+            self.assertEqual(first.result(timeout=10)["uuid"], self.share_uuid)
+            self.assertEqual(second.result(timeout=10), 1)
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.share_state_json["shares"], [])
+        self.assertIn(
+            call("DELETE", f"/api/lens/shares/{self.share_uuid}/", hfl_user=self.session.hfl_user),
+            request_json.call_args_list,
+        )
+        with self.assertRaises(copilot_sharing.CopilotShareNotFoundError):
+            copilot_sharing.create_share(self.session, run_uuid=self.run_uuid)
 
 
 class CopilotSharingApiTests(TestCase):
@@ -699,15 +846,75 @@ class CopilotSharingApiTests(TestCase):
                 "lens-copilot-session-share",
                 kwargs={"pk": self.session.pk},
             ),
-            {"title": "Shared answer"},
+            {"title": "Shared answer", "run_uuid": str(self.run_uuid)},
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
         )
 
         self.assertEqual(response.status_code, 201)
-        create_share.assert_called_once_with(self.session, title="Shared answer")
+        create_share.assert_called_once_with(self.session, run_uuid=str(self.run_uuid), title="Shared answer")
         self.assertIn("share_path", response.data)
         self.assertNotIn("token", response.data)
+
+    @patch("apps.lens_bridge.services.copilot_sharing.create_share")
+    def test_create_requires_a_valid_explicit_run_uuid(self, create_share):
+        url = reverse("lens-copilot-session-share", kwargs={"pk": self.session.pk})
+        for body in ({"title": "Missing Run"}, {"run_uuid": "invalid"}):
+            response = self.client.post(
+                url, body, format="json", HTTP_X_ORG_KEY=self.org.key,
+            )
+            self.assertEqual(response.status_code, 400)
+        create_share.assert_not_called()
+
+    @patch("apps.lens_bridge.services.copilot_sharing.get_share_candidate")
+    def test_candidate_accepts_a_specific_run_and_rejects_invalid_ids(self, get_share_candidate):
+        get_share_candidate.return_value = {"shareable": False, "share": None}
+        url = reverse("lens-copilot-session-share", kwargs={"pk": self.session.pk})
+        response = self.client.get(url, {"run_uuid": str(self.run_uuid)}, HTTP_X_ORG_KEY=self.org.key)
+        self.assertEqual(response.status_code, 200)
+        get_share_candidate.assert_called_once_with(self.session, run_uuid=str(self.run_uuid))
+        response = self.client.get(url, {"run_uuid": "invalid"}, HTTP_X_ORG_KEY=self.org.key)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(get_share_candidate.call_count, 1)
+
+    @patch("apps.lens_bridge.services.copilot_sharing.create_share")
+    def test_another_user_in_the_same_organization_cannot_manage_this_chat(self, create_share):
+        user = get_user_model().objects.create_user(username="other-chat-owner@example.test")
+        from apps.iam.models import Membership
+
+        Membership.objects.create(organization=self.org, user=user, role=Membership.Role.AUDITOR)
+        self.client.force_authenticate(user=user)
+        response = self.client.post(
+            reverse("lens-copilot-session-share", kwargs={"pk": self.session.pk}),
+            {"run_uuid": str(self.run_uuid)}, format="json", HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(response.status_code, 404)
+        create_share.assert_not_called()
+
+    @patch("apps.lens_bridge.api.views.sl_client.request_json")
+    def test_same_organization_member_can_read_snapshot_but_anonymous_cannot(self, request_json):
+        from apps.iam.models import Membership
+
+        self.session.share_state_json = {"version": 1, "shares": [self.share]}
+        self.session.save(update_fields=["share_state_json", "updated_at"])
+        access = copilot_sharing.make_share_access_token(self.session, self.share)
+        user = get_user_model().objects.create_user(username="share-viewer@example.test")
+        Membership.objects.create(organization=self.org, user=user, role=Membership.Role.AUDITOR)
+        self.client.force_authenticate(user=user)
+        request_json.return_value = {**self.share, "question": "Shared question", "answer": "Shared answer"}
+        with patch("apps.iam.permissions_org.get_effective_role", return_value=Membership.Role.AUDITOR):
+            response = self.client.get(
+                reverse("lens-copilot-shared-qa"), {"access": access}, HTTP_X_ORG_KEY=self.org.key,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["answer"], "Shared answer")
+        self.client.force_authenticate(user=None)
+        request_json.reset_mock()
+        response = self.client.get(
+            reverse("lens-copilot-shared-qa"), {"access": access}, HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertIn(response.status_code, (401, 403))
+        request_json.assert_not_called()
 
     @patch("apps.lens_bridge.services.copilot_sharing.revoke_share")
     def test_delete_share_uses_the_same_hfl_chat_owner(self, revoke_share):

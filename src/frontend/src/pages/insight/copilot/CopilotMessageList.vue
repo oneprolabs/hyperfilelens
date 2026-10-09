@@ -39,7 +39,7 @@ const props = defineProps<{
   bubbleTag?: string
   starterDisabled?: boolean
   clarificationResetToken?: number
-  sharedRunId?: string | null
+  sharedRunIds?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -146,20 +146,6 @@ function hasThinkingContent(message: CopilotDisplayMessage) {
 
 function showAssistantActions(message: CopilotDisplayMessage) {
   return message.role === 'assistant' && Boolean(message.text) && !message.isWelcome && !message.isError
-}
-
-function isLatestShareableAnswer(message: CopilotDisplayMessage) {
-  const latest = [...props.messages]
-    .reverse()
-    .find((row) => (
-      row.role === 'assistant'
-      && !row.isWelcome
-      && !row.isError
-      && Boolean(row.runId)
-      && Boolean(row.completedAt)
-      && Boolean(row.text?.trim())
-    ))
-  return latest?.id === message.id
 }
 
 function thinkingOutcomeFor(message: CopilotDisplayMessage) {
@@ -553,10 +539,10 @@ const displayMessages = computed(() =>
                   <ThumbsDown :size="16" />
                 </button>
                 <button
-                  v-if="msg.runId && msg.completedAt && isLatestShareableAnswer(msg)"
+                  v-if="msg.runId && msg.completedAt && msg.text?.trim()"
                   type="button"
                   class="message-action-btn"
-                  :class="{ 'is-shared': Boolean(msg.runId && sharedRunId && msg.runId === sharedRunId) }"
+                  :class="{ 'is-shared': Boolean(msg.runId && sharedRunIds?.includes(msg.runId)) }"
                   :title="t('insight.copilot.share')"
                   :aria-label="t('insight.copilot.share')"
                   @click="emit('shareAnswer', msg)"

@@ -2,10 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Download, FileText, Sparkles } from 'lucide-vue-next'
+import { ArrowLeft, Download, FileText, Share2 } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import CopilotMarkdown from '../../components/copilot/CopilotMarkdown.vue'
 import { apiErrorMessage } from '../../lib/api'
+import { formatLocalDateTime } from '../../lib/dateTime'
 import {
   fetchSharedCopilotFile,
   fetchSharedCopilotQA,
@@ -26,13 +27,6 @@ const downloading = ref<Set<string>>(new Set())
 let loadGeneration = 0
 
 const access = computed(() => String(route.query.access || ''))
-
-function formattedPublishedAt(value?: string) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString()
-}
 
 function formatBytes(value?: number) {
   const bytes = Number(value || 0)
@@ -103,17 +97,17 @@ watch(access, load)
 <template>
   <main class="shared-qa-page">
     <div class="shared-qa-page__shell">
-      <button
-        class="shared-qa-page__back"
-        type="button"
+      <ElButton
+        class="hfl-btn-with-icon shared-qa-page__back"
+        text
         @click="router.push('/insight/copilot')"
       >
         <ArrowLeft
           :size="17"
           aria-hidden="true"
         />
-        {{ t('insight.copilot.sharedBackToChats') }}
-      </button>
+        <span>{{ t('insight.copilot.sharedBackToChats') }}</span>
+      </ElButton>
 
       <div
         v-if="loading"
@@ -143,20 +137,15 @@ watch(access, load)
       >
         <header class="shared-qa-card__header">
           <span class="shared-qa-card__icon">
-            <Sparkles
+            <Share2
               :size="20"
               aria-hidden="true"
             />
           </span>
-          <div>
-            <p>{{ share.assistant_name || t('insight.copilot.shareGenericAssistant') }}</p>
-            <h1>{{ share.title || t('insight.copilot.shareTitle') }}</h1>
-            <time v-if="share.published_at">{{ formattedPublishedAt(share.published_at) }}</time>
-          </div>
+          <h1>{{ share.title || t('insight.copilot.shareTitle') }}</h1>
           <ElButton
             v-if="share.pdf_url"
-            class="shared-qa-card__pdf"
-            plain
+            class="hfl-btn-with-icon shared-qa-card__pdf"
             :loading="downloading.has('pdf')"
             @click="download(share.pdf_url, 'shared-answer.pdf', 'pdf')"
           >
@@ -164,8 +153,20 @@ watch(access, load)
               :size="16"
               aria-hidden="true"
             />
-            {{ t('insight.copilot.downloadPdf') }}
+            <span>{{ t('insight.copilot.downloadPdf') }}</span>
           </ElButton>
+          <dl class="shared-qa-card__meta">
+            <div>
+              <dt>{{ t('insight.copilot.sharedSource') }}</dt>
+              <dd>{{ share.assistant_name || t('insight.copilot.shareGenericAssistant') }}</dd>
+            </div>
+            <div v-if="share.published_at">
+              <dt>{{ t('insight.copilot.sharedAt') }}</dt>
+              <dd>
+                <time :datetime="share.published_at">{{ formatLocalDateTime(share.published_at) }}</time>
+              </dd>
+            </div>
+          </dl>
         </header>
 
         <section class="shared-qa-card__question">
@@ -229,18 +230,23 @@ watch(access, load)
 <style scoped>
 .shared-qa-page { width: 100%; min-height: 100%; padding: 28px 20px 56px; overflow-y: auto; background: var(--color-grey-2); }
 .shared-qa-page__shell { width: min(900px, 100%); margin: 0 auto; }
-.shared-qa-page__back { display: inline-flex; min-height: 40px; align-items: center; gap: 7px; margin-bottom: 16px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--color-text-secondary); cursor: pointer; font: inherit; }
-.shared-qa-page__back:hover { background: var(--color-card-bg); color: var(--color-primary); }
+.shared-qa-page__back { min-height: 40px; margin: 0 0 16px; padding: 0 10px; }
+.shared-qa-page__back :deep(> span), .shared-qa-card__pdf :deep(> span) { display: inline-flex; align-items: center; gap: 8px; }
+.shared-qa-page__back :deep(svg), .shared-qa-card__pdf :deep(svg) { flex-shrink: 0; }
 .shared-qa-page__state { min-height: 360px; }
 .shared-qa-card { overflow: hidden; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-card-bg); box-shadow: 0 12px 36px rgb(15 23 42 / 7%); }
-.shared-qa-card__header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 14px; padding: 24px 28px; border-bottom: 1px solid var(--color-border); }
-.shared-qa-card__icon { display: inline-flex; width: 42px; height: 42px; align-items: center; justify-content: center; border-radius: 12px; background: color-mix(in srgb, var(--color-primary) 10%, var(--color-card-bg)); color: var(--color-primary); }
-.shared-qa-card__header p { margin: 0 0 4px; color: var(--color-primary); font-size: 12px; font-weight: 600; }
-.shared-qa-card__header h1 { margin: 0; color: var(--color-text-title); font-size: clamp(20px, 3vw, 28px); line-height: 1.3; }
-.shared-qa-card__header time { display: block; margin-top: 7px; color: var(--color-text-tertiary); font-size: 12px; }
+.shared-qa-card__header { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; column-gap: 14px; row-gap: 10px; padding: 24px 28px; border-bottom: 1px solid var(--color-border); }
+.shared-qa-card__icon { display: inline-flex; grid-column: 1; grid-row: 1 / span 2; align-self: start; width: 42px; height: 42px; align-items: center; justify-content: center; border-radius: 12px; background: color-mix(in srgb, var(--color-primary) 10%, var(--color-card-bg)); color: var(--color-primary); }
+.shared-qa-card__header h1 { grid-column: 2; grid-row: 1; margin: 0; color: var(--color-text-title); font-size: clamp(22px, 2.5vw, 24px); font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.shared-qa-card__pdf { grid-column: 3; grid-row: 1; justify-self: end; margin: 0; }
+.shared-qa-card__meta { display: grid; grid-column: 2 / -1; grid-row: 2; min-width: 0; gap: 5px; margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.6; }
+.shared-qa-card__meta > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.shared-qa-card__meta dt { flex-shrink: 0; color: var(--color-text-tertiary); }
+.shared-qa-card__meta dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.shared-qa-card__meta time { font-variant-numeric: tabular-nums; }
 .shared-qa-card__question,.shared-qa-card__answer { padding: 24px 28px; }
 .shared-qa-card__question { border-bottom: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-primary) 3%, var(--color-card-bg)); }
-.shared-qa-card__question > span,.shared-qa-card__answer > span { display: block; margin-bottom: 10px; color: var(--color-text-tertiary); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.shared-qa-card__question > span,.shared-qa-card__answer > span { display: block; margin-bottom: 10px; color: var(--color-text-secondary); font-size: 13px; font-weight: 600; }
 .shared-qa-card__question > p { margin: 0; color: var(--color-text-title); font-size: 16px; font-weight: 600; line-height: 1.65; white-space: pre-wrap; }
 .shared-qa-card__answer :deep(.copilot-markdown) { color: var(--color-text-primary); font-size: 15px; line-height: 1.75; }
 .shared-qa-card footer { padding: 12px 28px 18px; color: var(--color-text-tertiary); font-size: 12px; text-align: center; }
@@ -248,12 +254,12 @@ watch(access, load)
 .shared-qa-files button { display: inline-flex; max-width: 100%; min-height: 42px; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-card-bg); color: var(--color-text-secondary); cursor: pointer; }
 .shared-qa-files button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shared-qa-files button:hover { border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border)); color: var(--color-primary); }
-.shared-qa-page__back:focus-visible,.shared-qa-files button:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent); outline-offset: 2px; }
+.shared-qa-files button:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent); outline-offset: 2px; }
 .shared-qa-files--output { margin-top: 20px; }
 @media (max-width: 767.98px) {
   .shared-qa-page { padding: 14px 10px 32px; }
-  .shared-qa-card__header { grid-template-columns: auto minmax(0, 1fr); padding: 18px; }
-  .shared-qa-card__pdf { grid-column: 1 / -1; width: 100%; min-height: 44px; }
+  .shared-qa-card__header { grid-template-columns: 42px minmax(0, 1fr); padding: 18px; }
+  .shared-qa-card__pdf { grid-column: 1 / -1; grid-row: 3; width: 100%; min-height: 44px; }
   .shared-qa-card__question,.shared-qa-card__answer { padding: 20px 18px; }
   .shared-qa-files button { width: 100%; min-height: 48px; }
 }

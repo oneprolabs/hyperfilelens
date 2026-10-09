@@ -332,7 +332,7 @@ describe('CopilotMessageList welcome message and live feedback', () => {
     wrapper.unmount()
   })
 
-  it('offers Chat sharing for the latest completed answer', async () => {
+  it('offers independent sharing for every completed answer', async () => {
     const wrapper = mountList({
       messages: [
         {
@@ -352,10 +352,16 @@ describe('CopilotMessageList welcome message and live feedback', () => {
       ],
     })
 
-    expect(wrapper.findAll('button[aria-label="Share"]')).toHaveLength(1)
-    await wrapper.get('button[aria-label="Share"]').trigger('click')
+    const buttons = wrapper.findAll('button[aria-label="Share"]')
+    expect(buttons).toHaveLength(2)
+    await buttons[0].trigger('click')
+    await buttons[1].trigger('click')
 
     expect(wrapper.emitted('shareAnswer')?.[0]).toEqual([expect.objectContaining({
+      id: 'assistant-1',
+      runId: 'run-1',
+    })])
+    expect(wrapper.emitted('shareAnswer')?.[1]).toEqual([expect.objectContaining({
       id: 'assistant-2',
       runId: 'run-2',
     })])
@@ -364,7 +370,7 @@ describe('CopilotMessageList welcome message and live feedback', () => {
 
   it('colors like, dislike, and shared actions like SourceLens', () => {
     const wrapper = mountList({
-      sharedRunId: 'run-2',
+      sharedRunIds: ['run-2'],
       messages: [
         {
           id: 'assistant-2',

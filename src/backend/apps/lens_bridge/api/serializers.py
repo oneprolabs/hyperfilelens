@@ -928,6 +928,14 @@ class LensShareTitleSerializer(serializers.Serializer):
     )
 
 
+class LensShareCreateSerializer(LensShareTitleSerializer):
+    run_uuid = serializers.UUIDField()
+
+
+class LensShareCandidateSerializer(serializers.Serializer):
+    run_uuid = serializers.UUIDField(required=False)
+
+
 class LensRunCreateSerializer(serializers.Serializer):
     question = serializers.CharField(required=False, allow_blank=True)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)

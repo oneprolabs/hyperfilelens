@@ -136,6 +136,38 @@ describe('CopilotShareDialog', () => {
     expect(wrapper.get('input').element.value).toBe('Summarize the latest backup.')
   })
 
+  it('explains read-only organization access before creation and renders a Markdown preview', async () => {
+    mocks.fetchCandidate.mockResolvedValue({
+      shareable: true,
+      run_uuid: '56ed8b87-b754-45d1-aaaf-e9134d52b756',
+      question: 'Summarize the backup.',
+      answer: '## Backup Summary\n\n**Completed**\n\n- Seven files\n\n<script>alert(1)</script>',
+      share: null,
+    })
+    const wrapper = mountDialog()
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+
+    const intro = wrapper.get('.copilot-share-dialog__intro')
+    expect(intro.find('.hfl-flow-action-dialog__lead-title').exists()).toBe(false)
+    expect(intro.text()).toContain('Quarterly review')
+    expect(intro.text()).not.toContain('Backup Analyst')
+    expect(intro.text()).toContain(en.insight.copilot.shareOrgOnly)
+    expect(wrapper.text().split(en.insight.copilot.shareOrgOnly)).toHaveLength(2)
+    expect(wrapper.get('.copilot-share-dialog__notice').text()).toBe(en.insight.copilot.shareWarning)
+    expect(wrapper.find('.copilot-share-dialog__warning').exists()).toBe(false)
+    expect(wrapper.get('.copilot-share-dialog__notice').find('svg').exists()).toBe(false)
+    expect(wrapper.find('.copilot-share-dialog__link-block').exists()).toBe(false)
+    const preview = wrapper.get('.copilot-share-dialog__preview-content')
+    expect(preview.attributes('tabindex')).toBe('0')
+    expect(preview.get('h2').text()).toBe('Backup Summary')
+    expect(preview.get('strong').text()).toBe('Completed')
+    expect(preview.get('li').text()).toBe('Seven files')
+    expect(preview.find('script').exists()).toBe(false)
+    expect(wrapper.get('footer').text()).toContain('Create Link')
+    wrapper.unmount()
+  })
+
   it('ignores a stale candidate after switching the selected Chat', async () => {
     let resolveFirst!: (value: {
       shareable: boolean
@@ -199,8 +231,53 @@ describe('CopilotShareDialog', () => {
     await createButton!.trigger('click')
     await flushPromises()
 
-    expect(mocks.createShare).toHaveBeenCalledWith(7, 'Summarize the latest backup.')
+    expect(mocks.createShare).toHaveBeenCalledWith(7, 'Summarize the latest backup.', '56ed8b87-b754-45d1-aaaf-e9134d52b756')
     expect(wrapper.text()).toContain('signed')
+  })
+
+  it('loads and creates the specific older answer rather than switching to the latest Run', async () => {
+    const runUuid = '56ed8b87-b754-45d1-aaaf-e9134d52b756'
+    mocks.fetchCandidate.mockResolvedValue({
+      shareable: true, run_uuid: runUuid,
+      question: 'Older question', answer: 'Older answer', share: null,
+      shared_run_uuids: ['already-shared-other-run'],
+    })
+    mocks.createShare.mockResolvedValue({
+      uuid: 'older-share', run_uuid: runUuid, title: 'Older question',
+      share_path: '/insight/copilot/shared?access=older',
+    })
+    const wrapper = mountDialog()
+    await wrapper.setProps({ modelValue: true, runUuid })
+    await flushPromises()
+    expect(mocks.fetchCandidate).toHaveBeenCalledWith(7, runUuid)
+    expect(wrapper.text()).toContain('Older answer')
+    expect(wrapper.emitted('shareState')?.[0]).toEqual([expect.objectContaining({
+      sessionId: 7, sharedRunUuids: ['already-shared-other-run'],
+    })])
+    await wrapper.findAll('button').find((button) => button.text().includes('Create Link'))!.trigger('click')
+    await flushPromises()
+    expect(mocks.createShare).toHaveBeenCalledWith(7, 'Older question', runUuid)
+    wrapper.unmount()
+  })
+
+  it('ignores an older candidate request when switching answers in the same Chat', async () => {
+    const first = deferred<Record<string, unknown>>()
+    mocks.fetchCandidate.mockReturnValueOnce(first.promise).mockResolvedValueOnce({
+      shareable: true, run_uuid: 'new-run',
+      question: 'New question', answer: 'New answer', share: null,
+    })
+    const wrapper = mountDialog()
+    await wrapper.setProps({ modelValue: true, runUuid: 'old-run' })
+    await wrapper.setProps({ runUuid: 'new-run' })
+    await flushPromises()
+    first.resolve({
+      shareable: true, run_uuid: 'old-run',
+      question: 'Old question', answer: 'Old answer', share: null,
+    })
+    await flushPromises()
+    expect(wrapper.get('input').element.value).toBe('New question')
+    expect(wrapper.text()).not.toContain('Old answer')
+    wrapper.unmount()
   })
 
   it('does not apply a completed share request to a newly selected Chat', async () => {
@@ -284,6 +361,9 @@ describe('CopilotShareDialog', () => {
       7,
       'a05bce34-1199-4a5e-8917-d61e541ca71b',
     )
+    expect(wrapper.emitted('shareState')?.at(-1)).toEqual([expect.objectContaining({
+      sessionId: 7, runUuid: '56ed8b87-b754-45d1-aaaf-e9134d52b756', isShared: false,
+    })])
     expect(wrapper.emitted('update:modelValue')).toContainEqual([false])
   })
 
@@ -311,11 +391,20 @@ describe('CopilotShareDialog', () => {
       await wrapper.setProps({ modelValue: true })
       await flushPromises()
 
-      expect(wrapper.get('.copilot-share-dialog__native-share-action').text()).toBe('Share via Another App')
+      const shareButton = wrapper.get('.copilot-share-dialog__native-share-action')
+      expect(shareButton.text()).toBe('Share Link')
+      expect(shareButton.classes()).toContain('hfl-btn-with-icon')
+      await shareButton.trigger('click')
+      await flushPromises()
+      expect(navigator.share).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Shared answer',
+        url: expect.stringContaining('/insight/copilot/shared?access=signed'),
+      }))
       expect(wrapper.get('footer').findAll('button').map((button) => button.text().trim())).toEqual([
         'Stop Sharing',
         'Done',
       ])
+      wrapper.unmount()
     } finally {
       Object.defineProperty(navigator, 'share', {
         configurable: true,

@@ -36,14 +36,14 @@ class BackupSourceSnapshotPagination(ProtectionPagination):
 
 def picker_source_queryset(*, organization_id: int, search: str = ""):
     """One row per source/config with at least one usable snapshot."""
-    available = BackupSourceSnapshot.objects.filter(
+    usable_snapshots = BackupSourceSnapshot.objects.filter(
         organization_id=organization_id,
         backup_config_id=OuterRef("pk"),
-        status=BackupSourceSnapshot.Status.AVAILABLE,
+        status__in=(BackupSourceSnapshot.Status.AVAILABLE, BackupSourceSnapshot.Status.PARTIAL),
         deleted_at__isnull=True,
     )
     queryset = BackupConfig.objects.filter(organization_id=organization_id).filter(
-        Exists(available)
+        Exists(usable_snapshots)
     )
     query = search.strip()
     if query:
@@ -256,6 +256,9 @@ class BackupSourceSnapshotViewSet(
         snapshot_id = _int_query_param(params.get("snapshot_id"), "snapshot_id")
         if snapshot_id is not None:
             queryset = queryset.filter(id=snapshot_id)
+        exclude_snapshot_id = _int_query_param(params.get("exclude_snapshot_id"), "exclude_snapshot_id")
+        if exclude_snapshot_id is not None:
+            queryset = queryset.exclude(id=exclude_snapshot_id)
         if get_authz_provider() is not None:
             config_ids = list(queryset.order_by().values_list("backup_config_id", flat=True).distinct())
             visible = visible_resource_refs(

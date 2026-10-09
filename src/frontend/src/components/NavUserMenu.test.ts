@@ -83,7 +83,7 @@ describe('NavUserMenu product identity', () => {
     expect(wrapper.get('.nav-user-product__name').text()).toBe(
       'HyperFileLens v0.2.1 · Enterprise',
     )
-    expect(wrapper.get('.nav-user-menu__email').attributes('title')).toBe('owner@example.test')
+    expect(wrapper.get('.nav-user-menu__email').text()).toBe('owner@example.test')
     expect(wrapper.get('.nav-user-menu__role').text()).toBe('Owner')
   })
 
@@ -120,7 +120,32 @@ describe('NavUserMenu product identity', () => {
   })
 })
 
+describe('NavUserMenu hover behavior', () => {
+  it('does not add native title tooltips to the user trigger or dropdown', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue({
+      product_version: '0.3.0',
+      edition: 'enterprise',
+    })
+
+    const wrapper = mountMenu()
+    await flushPromises()
+
+    expect(wrapper.get('.nav-user-trigger').attributes('title')).toBeUndefined()
+    expect(wrapper.get('.nav-user-menu__email').attributes('title')).toBeUndefined()
+    expect(wrapper.find('.nav-dropdown-panel [title]').exists()).toBe(false)
+  })
+})
+
 describe('NavUserMenu responsive trigger', () => {
+  it('uses a 360px dropdown width', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue(null)
+
+    const wrapper = mountMenu()
+    await flushPromises()
+
+    expect(wrapper.findComponent(HflPopoverStub).attributes('width')).toBe('360')
+  })
+
   it('allows the trigger and label to shrink without clipping the page', () => {
     expect(navUserMenuSource).toMatch(
       /\.nav-user-trigger\s*{[\s\S]*?min-width:\s*0[\s\S]*?max-width:\s*100%[\s\S]*?flex:\s*0 1 auto/,
