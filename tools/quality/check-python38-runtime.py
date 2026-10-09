@@ -17,6 +17,7 @@ SHELL_FILES = [
 ]
 PYTHON_FILES = [
     ROOT / "deploy/installer/apply-runtime-config.py",
+    ROOT / "deploy/installer/configure-sl-queue-monitor.py",
     ROOT / "tools/config/sync_env.py",
 ]
 PYTHON_FILES.extend(sorted((ROOT / "deploy/installer/sourcelens").glob("*.py")))

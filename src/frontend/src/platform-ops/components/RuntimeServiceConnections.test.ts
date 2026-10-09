@@ -158,6 +158,41 @@ describe('SourceLens Runtime Environment presentation', () => {
     wrapper.unmount()
   })
 
+  it('shows actual queue counts and collection time in existing Details below the threshold', async () => {
+    const snapshot = monitor()
+    snapshot.status = 'ok'
+    snapshot.health_status = 'ok'
+    snapshot.components = {
+      redis: {
+        health_status: 'ok', availability_status: 'unknown',
+        queue_lengths: { lens: 12, sourcelens: 0 }, checked_at: '2026-10-09T02:00:00+00:00',
+        notices: [],
+      },
+    }
+    const wrapper = await render(integration(snapshot))
+    const redis = wrapper.findAll('.runtime-status-table__row').find(
+      row => row.get('.runtime-status-table__service').text() === 'Redis',
+    )!
+    expect(redis.get('.runtime-status-table__details').text()).toContain('Queue "lens": 12 pending messages.')
+    expect(redis.get('.runtime-status-table__details').text()).toContain('Queue "sourcelens": 0 pending messages.')
+    expect(redis.text()).toContain(en.platformOps.settings.environment.checkedAt)
+    expect(redis.find('.runtime-status-table__notice--warning').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('does not repeat backlog counts in ordinary Details and the same warning', async () => {
+    const snapshot = monitor()
+    snapshot.components.redis!.queue_lengths = { lens: 144307 }
+    snapshot.components.redis!.checked_at = '2026-10-09T02:00:00+00:00'
+    const wrapper = await render(integration(snapshot))
+    const redis = wrapper.findAll('.runtime-status-table__row').find(
+      row => row.get('.runtime-status-table__service').text() === 'Redis',
+    )!
+    expect(redis.text().match(/144307/g)).toHaveLength(1)
+    expect(redis.get('.runtime-status-table__notice--warning').text()).toContain('144307')
+    wrapper.unmount()
+  })
+
   it('shows unconfirmed recovery as an existing warning instead of an all-green summary', async () => {
     const snapshot = monitor()
     snapshot.health_status = 'degraded'

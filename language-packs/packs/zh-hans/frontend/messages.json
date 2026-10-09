@@ -8172,6 +8172,8 @@
         "runtimeRunning": "运行中",
         "runtimeStopped": "已停止",
         "sourceLensMonitor": {
+          "queueSummary": "队列“{queue}”：{count} 条待处理消息。",
+          "queueAutoUnavailable": "内置 SourceLens 队列监控不可用；自动部署接入尚未完成。",
           "indexCorruption": "检测到数据库索引损坏错误。最近发生时间：{last_seen_at}。",
           "indexCorruptionHistory": "发现历史数据库索引损坏错误（{last_seen_at}）；当前完整性尚未确认。",
           "indexCorruptionUndated": "发现数据库索引损坏错误，但无法确认发生时间；当前完整性尚未确认。",

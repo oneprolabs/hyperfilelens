@@ -5874,6 +5874,8 @@ export const en = {
         runtimeRunning: 'Running',
         runtimeStopped: 'Stopped',
         sourceLensMonitor: {
+          queueSummary: 'Queue "{queue}": {count} pending messages.',
+          queueAutoUnavailable: 'Bundled SourceLens queue monitoring is unavailable; automatic deployment setup is incomplete.',
           indexCorruption: 'Database index corruption errors detected. Last seen: {last_seen_at}.',
           indexCorruptionHistory: 'Historical database index corruption errors found ({last_seen_at}); current integrity is not confirmed.',
           indexCorruptionUndated: 'Database index corruption errors found without a reliable timestamp; current integrity is not confirmed.',

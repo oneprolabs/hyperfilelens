@@ -458,6 +458,7 @@ recover_upgrade_services() {
 		fi
 	fi
 	if [[ "${UPGRADE_HFL_WAS_RUNNING}" == "1" && -f "${ROOT}/.env" ]]; then
+		configure_sl_queue_monitor
 		local recovery_color
 		if [[ "${UPGRADE_HFL_COMMITTED}" == "1" ]]; then
 			recovery_color="${UPGRADE_TARGET_COLOR}"
@@ -3836,6 +3837,7 @@ apply_upgrade_files() {
 	[[ -f "${from_root}/.env.example" ]] && cp "${from_root}/.env.example" "${ROOT}/.env.example"
 	[[ -f "${from_root}/sync-env.py" ]] && cp "${from_root}/sync-env.py" "${ROOT}/sync-env.py" && chmod +x "${ROOT}/sync-env.py"
 	[[ -f "${from_root}/apply-runtime-config.py" ]] && cp "${from_root}/apply-runtime-config.py" "${ROOT}/apply-runtime-config.py" && chmod +x "${ROOT}/apply-runtime-config.py"
+	[[ -f "${from_root}/configure-sl-queue-monitor.py" ]] && cp "${from_root}/configure-sl-queue-monitor.py" "${ROOT}/configure-sl-queue-monitor.py"
 	[[ -f "${from_root}/LICENSE" ]] && cp "${from_root}/LICENSE" "${ROOT}/LICENSE"
 	[[ -f "${from_root}/install.sh" ]] && cp "${from_root}/install.sh" "${ROOT}/install.sh" && chmod +x "${ROOT}/install.sh"
 	if [[ -d "${from_root}/host" ]]; then
@@ -5119,6 +5121,18 @@ should_remove_sourcelens() {
 	sourcelens_installed
 }
 
+configure_sl_queue_monitor() {
+	local helper="${ROOT}/configure-sl-queue-monitor.py"
+	[[ -f "${helper}" ]] || helper="${INSTALLER_SCRIPT_DIR}/configure-sl-queue-monitor.py"
+	if [[ ! -f "${helper}" ]]; then
+		warn "Bundled queue-monitor helper is unavailable; core services are unaffected"
+		return 0
+	fi
+	python3 "${helper}" --root "${ROOT}" "$@" \
+		|| warn "Bundled queue-monitor setup failed; core services are unaffected"
+	return 0
+}
+
 configure_lens_bridge_env() {
 	local host tenant_port build_info
 	host="$(resolve_console_host)"
@@ -5985,6 +5999,7 @@ cmd_install() {
 	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] && sourcelens_installed; then
 		configure_lens_bridge_env
 	fi
+	configure_sl_queue_monitor
 
 	print_section "[6/8] Installing and starting HyperFileLens"
 	if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
@@ -6121,6 +6136,7 @@ cmd_start() {
 		sourcelens_compose_with_lifecycle_recovery \
 			up -d --no-build --pull never --remove-orphans
 	fi
+	configure_sl_queue_monitor
 	step "Starting services (docker compose up -d --no-build) ..."
 	start_hfl_stack || die "HyperFileLens active color failed to start"
 	wait_for_hfl_health || die "HyperFileLens failed its startup health gate"
@@ -7425,6 +7441,7 @@ cmd_uninstall() {
 		platform_gateway_removed=1
 	fi
 
+	configure_sl_queue_monitor --remove
 	if ! uninstall_hfl_runtime; then
 		die "HyperFileLens runtime uninstall did not complete; application data was preserved"
 	fi
@@ -7778,6 +7795,11 @@ cmd_upgrade() {
 	fi
 	apply_runtime_configuration
 	validate_tls_pair "${ROOT}/deploy/nginx/certs"
+	if [[ "${remove_sourcelens}" -eq 1 ]]; then
+		configure_sl_queue_monitor --remove
+	else
+		configure_sl_queue_monitor
+	fi
 	if [[ "${UPGRADE_HFL_WAS_RUNNING}" == "1" ]]; then
 		assert_upgrade_shared_images_compatible
 		if [[ "${UPGRADE_PREVIOUS_COLOR}" != "legacy" ]]; then
@@ -7860,6 +7882,9 @@ cmd_upgrade() {
 	fi
 	if [[ "${SOURCELENS_MAINTENANCE_ARMED}" == "1" ]]; then
 		clear_sourcelens_maintenance_gate
+	fi
+	if [[ "${remove_sourcelens}" -eq 0 ]]; then
+		configure_sl_queue_monitor
 	fi
 	if [[ "${SOURCELENS_PROXY_GATE_ARMED}" == "1" ]]; then
 		clear_sourcelens_proxy_gate

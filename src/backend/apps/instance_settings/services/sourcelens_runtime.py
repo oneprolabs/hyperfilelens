@@ -28,6 +28,8 @@ from apps.lens_bridge import deploy
 from apps.lens_bridge.services import sl_client
 
 CACHE_SECONDS = 30
+QUEUE_CACHE_SECONDS = 300
+QUEUE_FAILURE_CACHE_SECONDS = 60
 MAX_FILES_PER_DIRECTORY = 4
 MAX_DIRECTORY_ENTRIES = 512
 MAX_SCAN_BYTES = 256 * 1024
@@ -71,6 +73,8 @@ def _atomic_scan_update(
     lock_key: str,
     owner: str,
     payload: dict[str, Any] | None = None,
+    *,
+    timeout: int = SCAN_STATE_SECONDS,
 ) -> bool:
     """Conditionally save/release this probe's lease in one backend operation.
 
@@ -94,7 +98,7 @@ def _atomic_scan_update(
                 backend.make_and_validate_key(key),
                 serialized_owner,
                 factory._serializer.dumps(payload),
-                SCAN_STATE_SECONDS,
+                timeout,
             )
         )
     if isinstance(backend, LocMemCache):
@@ -113,7 +117,7 @@ def _atomic_scan_update(
                 return False
             if payload is None:
                 return backend._delete(namespaced_lock)
-            backend._set(namespaced_key, serialized_payload, SCAN_STATE_SECONDS)
+            backend._set(namespaced_key, serialized_payload, timeout)
             return True
     return False
 
@@ -494,6 +498,63 @@ def probe_queue_backlog(url: str) -> dict[str, Any]:
     return result
 
 
+def cached_queue_backlog(url: str) -> dict[str, Any]:
+    """Single-flight queue measurement; never poll just because the page opens."""
+    if not url:
+        return probe_queue_backlog(url)
+    config = "\0".join(
+        [
+            url,
+            os.getenv("HFL_SL_RUNTIME_QUEUES", ""),
+            os.getenv("HFL_SL_RUNTIME_QUEUE_WARNING", ""),
+        ]
+    )
+    key = "runtime:sl:queues:v1:" + hashlib.sha256(config.encode()).hexdigest()
+    lock_key = key + ":lease"
+    owner = uuid.uuid4().hex
+    acquired = False
+    unavailable = {
+        "health_status": "unknown",
+        "availability_status": "unknown",
+        "notices": [_notice("queue_probe_failed", "warning")],
+    }
+    try:
+        saved = _read_scan_checkpoint(key)
+        if saved and saved.get("expires_at", 0) > time.time():
+            return saved
+        acquired = cache.add(lock_key, owner, SCAN_LOCK_SECONDS)
+        if not acquired:
+            # A concurrent request may have completed between read and add.
+            saved = _read_scan_checkpoint(key)
+            return (
+                saved
+                if saved and saved.get("expires_at", 0) > time.time()
+                else unavailable
+            )
+        saved = _read_scan_checkpoint(key)
+        if saved and saved.get("expires_at", 0) > time.time():
+            return saved
+        result = probe_queue_backlog(url)
+        failed = result["health_status"] != "ok" or any(
+            notice["code"] != "queue_backlog" for notice in result["notices"]
+        )
+        ttl = QUEUE_FAILURE_CACHE_SECONDS if failed else QUEUE_CACHE_SECONDS
+        result["checked_at"] = datetime.now(timezone.utc).isoformat()
+        result["expires_at"] = time.time() + ttl
+        if not _atomic_scan_update(key, lock_key, owner, result, timeout=ttl):
+            result["notices"].append(_notice("queue_probe_failed", "warning"))
+        return result
+    except Exception:
+        # No retry storm or unlocked upstream query on cache/lease failure.
+        return unavailable
+    finally:
+        if acquired:
+            try:
+                _atomic_scan_update(key, lock_key, owner)
+            except Exception:
+                pass
+
+
 def _collect_health(*, timeout: int) -> dict[str, Any]:
     health = dict(sl_client.ping(timeout=timeout))
     now = datetime.now(timezone.utc)
@@ -505,8 +566,14 @@ def _collect_health(*, timeout: int) -> dict[str, Any]:
             now=now,
         )
     url = os.getenv("HFL_SL_RUNTIME_REDIS_URL", "").strip()
+    if deploy.sourcelens_mode() == "bundled" and not url:
+        url = os.getenv("HFL_SL_RUNTIME_AUTO_REDIS_URL", "").strip()
     if deploy.sourcelens_mode() == "bundled" or url:
-        components["redis"] = probe_queue_backlog(url)
+        components["redis"] = cached_queue_backlog(url)
+        if not url and deploy.sourcelens_mode() == "bundled":
+            components["redis"]["notices"] = [
+                _notice("queue_auto_unavailable", "warning")
+            ]
     notices = [notice for probe in components.values() for notice in probe["notices"]]
     api_status = (
         "unknown"
@@ -544,6 +611,7 @@ def sourcelens_health_payload(*, timeout: int = 3) -> dict[str, Any]:
             deploy.lens_bridge_password(),
             os.getenv("HFL_SL_RUNTIME_LOG_DIR", ""),
             os.getenv("HFL_SL_RUNTIME_REDIS_URL", ""),
+            os.getenv("HFL_SL_RUNTIME_AUTO_REDIS_URL", ""),
             os.getenv("HFL_SL_RUNTIME_QUEUES", ""),
             os.getenv("HFL_SL_RUNTIME_QUEUE_WARNING", ""),
         ]
@@ -557,7 +625,13 @@ def sourcelens_health_payload(*, timeout: int = 3) -> dict[str, Any]:
         return cached
     payload = _collect_health(timeout=timeout)
     try:
-        cache.set(key, payload, CACHE_SECONDS)
+        queue_expiry = (
+            payload["runtime_monitor"]["components"].get("redis", {}).get("expires_at")
+        )
+        ttl = CACHE_SECONDS
+        if queue_expiry:
+            ttl = max(1, min(ttl, int(queue_expiry - time.time())))
+        cache.set(key, payload, ttl)
     except Exception:
         pass
     return payload

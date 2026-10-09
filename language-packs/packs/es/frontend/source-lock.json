@@ -7715,6 +7715,8 @@
   "platformOps.settings.environment.detailsColumn": "c39fc0bfdd3e4d0fa44b4539ded5a8ec17bf1a77eb1e00f96a00a84dd1e046f5",
   "platformOps.settings.environment.runtimeRunning": "15ce6468cd8f7458f52541e6498a50165e519d5c3cc14abb274d337670d73417",
   "platformOps.settings.environment.runtimeStopped": "f4a4aa0438cc11500bb38e0cb6f096ef9c576fb4dafa51a5e9b3283a50d5f36e",
+  "platformOps.settings.environment.sourceLensMonitor.queueSummary": "19130ca46cc0b9558afbf633694ce968d4ead77c31b4e4d99802f667862fc068",
+  "platformOps.settings.environment.sourceLensMonitor.queueAutoUnavailable": "6db38cb3f2a10e52752d2981ea001e2d99c9e5ad7bfe4f815620b00b85f27372",
   "platformOps.settings.environment.sourceLensMonitor.indexCorruption": "0ca96890924325c9af28d3f2503e51adea00491746790a1317a768a9cc2cd296",
   "platformOps.settings.environment.sourceLensMonitor.indexCorruptionHistory": "f0c5511dcc2c4bef4dd256e0e67fb9650270f7619620010fa13e618652d456b9",
   "platformOps.settings.environment.sourceLensMonitor.indexCorruptionUndated": "bc8f311b877680dffbaab110a4001626a4dddc05ef594991a698f72f5b4c756f",
