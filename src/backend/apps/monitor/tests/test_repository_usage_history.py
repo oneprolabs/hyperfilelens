@@ -51,6 +51,20 @@ class RepositoryUsageHistoryTests(TestCase):
         self.assertEqual(row.usage_source, RepositoryUsageMetric.UsageSource.ESTIMATED)
         self.assertIsNone(row.object_count)
 
+    def test_failed_attempt_cannot_erase_successful_sample_in_same_slot(self):
+        recorded_at = datetime(2026, 8, 21, 10, 30, tzinfo=UTC)
+        record_repository_usage_result(
+            self.repository, recorded_at=recorded_at, usage_bytes=0,
+        )
+        record_repository_usage_result(
+            self.repository,
+            recorded_at=recorded_at + timedelta(minutes=5),
+            usage_bytes=None,
+        )
+        row = RepositoryUsageMetric.objects.get()
+        self.assertEqual(row.usage_bytes, 0)
+        self.assertEqual(row.usage_source, RepositoryUsageMetric.UsageSource.ESTIMATED)
+
     def test_failed_result_is_null_and_retry_can_recover(self):
         recorded_at = datetime(2026, 8, 21, 10, 30, tzinfo=UTC)
         record_repository_usage_result(

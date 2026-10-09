@@ -226,8 +226,8 @@ def _storage_usage_bytes(repositories) -> int:
 
     Repository rows are created before their asynchronous provisioning and
     usage probes finish.  Those rows are not usable storage yet and must not
-    block an organization's storage quota check.  A completed repository with
-    an unknown probe remains fail-closed below.
+    block an organization's storage quota check. Failed attempts retain the
+    last successful observation; never-measured storage remains fail-closed.
     """
     from apps.storage.repositories.models import Repository
 
@@ -268,6 +268,8 @@ def _storage_usage_unknown_repositories(repositories):
 
     unknown = repositories.exclude(
         usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+    ).filter(
+        usage_last_success_at__isnull=True,
     ).annotate(
         has_backup_config=Exists(
             BackupConfig.objects.filter(repository_id=OuterRef("pk"))

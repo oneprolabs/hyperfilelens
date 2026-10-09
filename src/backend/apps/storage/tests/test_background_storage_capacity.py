@@ -8,7 +8,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase
 from redis.exceptions import RedisError
 
-from apps.storage.conf import background_storage_concurrency
+from apps.storage.conf import background_storage_concurrency, maintenance_storage_concurrency
 from apps.storage.services.internal.background_capacity import (
     BackgroundStorageLease,
     try_acquire_background_storage_capacity,
@@ -18,6 +18,17 @@ from apps.storage.tasks import _controller_execution_control
 
 
 class BackgroundStorageConfigurationTests(SimpleTestCase):
+    def test_maintenance_budget_preserves_observation_capacity(self):
+        with mock.patch.dict(os.environ, {
+            "CELERY_WORKER_CONCURRENCY": "4",
+            "CELERY_BACKGROUND_STORAGE_CONCURRENCY": "2",
+            "CELERY_STORAGE_MAINTENANCE_CONCURRENCY": "1",
+        }):
+            self.assertEqual(maintenance_storage_concurrency(), 1)
+            os.environ["CELERY_STORAGE_MAINTENANCE_CONCURRENCY"] = "3"
+            with self.assertRaises(ImproperlyConfigured):
+                maintenance_storage_concurrency()
+
     def _configured_capacity(self, *, worker: str, background: str | None) -> int:
         with mock.patch.dict(
             os.environ,
@@ -52,6 +63,27 @@ class BackgroundStorageConfigurationTests(SimpleTestCase):
 
 
 class BackgroundStorageLeaseTests(SimpleTestCase):
+    @mock.patch(
+        "apps.storage.services.internal.background_capacity.maintenance_storage_concurrency",
+        return_value=1,
+    )
+    @mock.patch("apps.storage.services.internal.background_capacity._redis_client")
+    def test_maintenance_uses_separate_pool_through_renewal_and_release(
+        self, redis_client, _capacity,
+    ):
+        client = redis_client.return_value
+        client.eval.return_value = 1
+        client.zrem.return_value = 1
+        lease = try_acquire_background_storage_capacity(
+            operation="repository-maintenance", identity="7",
+        )
+        self.assertIsNotNone(lease)
+        self.assertEqual(client.eval.call_args.args[2], "hfl:storage:background-capacity:maintenance")
+        self.assertTrue(lease.refresh())
+        self.assertEqual(client.eval.call_args.args[2], lease.capacity_key)
+        self.assertTrue(lease.release())
+        client.zrem.assert_called_once_with(lease.capacity_key, lease.token)
+
     @mock.patch(
         "apps.storage.services.internal.background_capacity."
         "background_storage_concurrency",

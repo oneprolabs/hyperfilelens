@@ -109,6 +109,27 @@ def background_storage_concurrency() -> int:
     return background_concurrency
 
 
+def maintenance_storage_concurrency() -> int:
+    """Reserve observation capacity independently from long maintenance.
+
+    A business process is also reserved when the worker count permits it.
+    Two-process installations need more workers for business isolation.
+    """
+    worker = _positive_int_setting(
+        CELERY_WORKER_CONCURRENCY_ENV, DEFAULT_CELERY_WORKER_CONCURRENCY,
+    )
+    observations = background_storage_concurrency()
+    available = max(1, worker - observations - 1)
+    value = _positive_int_setting("CELERY_STORAGE_MAINTENANCE_CONCURRENCY", available)
+    if value > worker - observations:
+        raise ImproperlyConfigured(
+            "CELERY_STORAGE_MAINTENANCE_CONCURRENCY plus "
+            "CELERY_BACKGROUND_STORAGE_CONCURRENCY must not exceed "
+            "CELERY_WORKER_CONCURRENCY."
+        )
+    return value
+
+
 def kopia_config_lock_timeout_seconds() -> int:
     """Return the finite wait for one Controller-local Kopia config lock."""
 

@@ -24,6 +24,7 @@ from apps.storage.services.internal.kopia_cli import (
     KopiaRepositoryBusyError,
     connect_s3_repository,
     content_stats as kopia_content_stats,
+    usage_config_file,
 )
 from common.errors import AppError
 
@@ -249,8 +250,9 @@ def kopia_repository_estimated_usage_bytes(repository: Repository) -> int | None
     if repository.status != Repository.Status.CREATED:
         return None
     try:
-        connect_s3_repository(repository)
-        result = kopia_content_stats(repository)
+        config_file = usage_config_file(repository)
+        connect_s3_repository(repository, config_file=config_file)
+        result = kopia_content_stats(repository, config_file=config_file)
         packed = parse_kopia_content_stats(result.stdout)
         return kopia_estimated_usage_from_packed(packed)
     except KopiaRepositoryBusyError:
@@ -1334,7 +1336,7 @@ def enqueue_repository_usage_refresh(
                 "limit": max(1, int(limit or 1)),
                 "force": bool(force),
                 "stale_after_seconds": stale_after_seconds,
-                "background": False,
+                "background": True,
             }
         )
     except Exception as exc:

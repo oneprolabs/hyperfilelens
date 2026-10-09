@@ -38,6 +38,34 @@ from apps.task.services.interface import start_task
 
 
 class RepositoryTaskTests(TestCase):
+    @patch("apps.storage.tasks.enqueue_repository_usage_refresh")
+    @patch("apps.storage.tasks.sync_organization_repositories")
+    @patch("apps.storage.tasks.run_maintenance", return_value=KopiaResult(stdout="", stderr=""))
+    @patch("apps.storage.tasks.try_acquire_background_storage_capacity")
+    def test_successful_maintenance_queues_usage_only_after_commit(
+        self, acquire_capacity, _run, sync_repositories, enqueue,
+    ):
+        discover_repository_execution_targets()
+        repository_task = create_repository_operation_task(
+            target_id=self.repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_FULL,
+        )
+        lease = MagicMock(valid=True)
+        lease.__enter__.return_value = lease
+        acquire_capacity.return_value = lease
+        with self.captureOnCommitCallbacks(execute=True):
+            result = execute_repository_operation.run(repository_task_id=repository_task.id)
+            enqueue.assert_not_called()
+        self.assertEqual(result["status"], Task.Status.SUCCESS)
+        sync_repositories.assert_not_called()
+        enqueue.assert_called_once_with(
+            organization_id=self.repository.organization_id,
+            repository_ids=[self.repository.id],
+            limit=1,
+            force=True,
+            trigger="storage.maintenance.completed",
+        )
+
     @patch("apps.storage.tasks.sync_organization_repositories")
     @patch("apps.storage.tasks.run_maintenance")
     @patch("apps.storage.tasks.try_acquire_background_storage_capacity")
@@ -75,7 +103,7 @@ class RepositoryTaskTests(TestCase):
         self.assertEqual(task.events.count(), count)
         self.assertEqual(run_maintenance.call_count, 1)
 
-    @patch("apps.storage.tasks.sync_organization_repositories", side_effect=RuntimeError("usage refresh failed"))
+    @patch("apps.storage.tasks.enqueue_repository_usage_refresh", side_effect=RuntimeError("usage refresh failed"))
     @patch("apps.storage.tasks.run_maintenance", return_value=KopiaResult(stdout="", stderr=""))
     @patch("apps.storage.tasks.try_acquire_background_storage_capacity")
     def test_usage_failure_preserves_successful_maintenance(self, acquire_capacity, _run, _sync):
@@ -87,13 +115,16 @@ class RepositoryTaskTests(TestCase):
         lease = MagicMock(valid=True)
         lease.__enter__.return_value = lease
         acquire_capacity.return_value = lease
-        execute_repository_operation.run(repository_task_id=repository_task.id)
+        with self.captureOnCommitCallbacks(execute=True):
+            execute_repository_operation.run(repository_task_id=repository_task.id)
         task = repository_task.task
         task.refresh_from_db()
-        self.assertEqual(task.current_step, "refresh_repository_usage")
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertEqual(task.current_step, "finalize_repository_operation")
         self.assertEqual(list(task.steps.values_list("status", flat=True)), [
-            "success", "success", "success", "failed", "skipped",
+            "success", "success", "success", "skipped", "success",
         ])
+        _sync.assert_called_once()
 
     def test_maintenance_error_messages_are_actionable(self):
         from apps.storage.tasks import _repository_operation_error_message
