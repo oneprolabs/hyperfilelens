@@ -143,6 +143,72 @@ class UsageStatsTests(TestCase):
             1,
         )
 
+    def test_storage_meter_retains_last_success_after_failed_refresh(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        Repository.objects.create(
+            organization_id=self.org.id,
+            name="previously-measured-storage",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            estimated_usage_bytes=4096,
+            usage_probe_status=Repository.MetricProbeStatus.FAILED,
+            usage_last_success_at=timezone.now() - timedelta(days=7),
+        )
+        self.assertEqual(
+            collect_meter_usage(
+                organization_id=self.org.id, usage_key="storage_used_bytes",
+            ),
+            4096,
+        )
+        self.assertEqual(
+            collect_instance_meter_usage(usage_key="storage_used_bytes"), 4096,
+        )
+        batch, incomplete = collect_usage_stats_by_organization(
+            organization_ids=[self.org.id],
+        )
+        self.assertEqual(batch[self.org.id]["storage_used_bytes"], 4096)
+        self.assertNotIn("storage_used_bytes", incomplete[self.org.id])
+
+    def test_enterprise_storage_admission_uses_last_success_and_enforces_limits(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        from common.extension_spi import get_quota_provider
+        from common.errors import AppError
+
+        provider = get_quota_provider()
+        if provider is None:
+            self.skipTest("Enterprise quota provider is not loaded in Community")
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="last-valid-admission",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            estimated_usage_bytes=4095,
+            usage_probe_status=Repository.MetricProbeStatus.FAILED,
+            usage_last_success_at=timezone.now() - timedelta(days=7),
+        )
+        module = "apps.subscription.services.quota_provider"
+        with (
+            patch.object(provider, "feature_enabled", return_value=True),
+            patch(f"{module}.get_effective_limits", return_value={"max_storage_bytes": 4096}),
+            patch(f"{module}.platform_cap_for_quota_key", return_value=-1),
+        ):
+            provider.check_quota(self.org, "max_storage_bytes", additional=0)
+            repository.estimated_usage_bytes = 4096
+            repository.save(update_fields=["estimated_usage_bytes"])
+            with self.assertRaises(AppError) as raised:
+                provider.check_quota(self.org, "max_storage_bytes", additional=0)
+            self.assertEqual(raised.exception.code, "SUBSCRIPTION.QUOTA_EXCEEDED")
+            self.assertEqual(raised.exception.meta["scope"], "organization")
+        with patch(f"{module}.platform_cap_for_quota_key", return_value=4096):
+            with self.assertRaises(AppError) as raised:
+                provider.check_quota(self.org, "max_storage_bytes", additional=0)
+            self.assertEqual(raised.exception.code, "SUBSCRIPTION.QUOTA_EXCEEDED")
+            self.assertEqual(raised.exception.meta["scope"], "instance")
+
     def test_storage_meter_fails_closed_for_completed_repository(self):
         Repository.objects.create(
             organization_id=self.org.id,

@@ -177,7 +177,7 @@ class RepositoryOperationRecoveryTests(TestCase):
             operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
         )
 
-    @mock.patch("apps.storage.tasks.sync_organization_repositories")
+    @mock.patch("apps.storage.tasks.enqueue_repository_usage_refresh")
     @mock.patch(
         "apps.storage.services.internal.repository_agent_operation.run_agent_task_async"
     )
@@ -202,7 +202,8 @@ class RepositoryOperationRecoveryTests(TestCase):
             watchdog_deadline_at=timezone.now(),
         )
 
-        result = execute_repository_operation.run(repository_task_id=repository_task.id)
+        with self.captureOnCommitCallbacks(execute=True):
+            result = execute_repository_operation.run(repository_task_id=repository_task.id)
 
         repository_task.refresh_from_db()
         repository_task.task.refresh_from_db()

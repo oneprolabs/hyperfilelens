@@ -8,6 +8,7 @@ from celery import shared_task
 from celery.signals import worker_ready
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import CharField, Exists, OuterRef, Q
 from django.db.models.functions import Cast
 from django.utils import timezone
@@ -45,6 +46,7 @@ from apps.storage.services.internal.s3_validation_errors import (
     classify_s3_validation_error,
 )
 from apps.storage.services.internal.repository_usage import (
+    enqueue_repository_usage_refresh,
     sync_all_repositories,
     sync_organization_repositories,
 )
@@ -870,30 +872,15 @@ def _execute_repository_operation(
                 progress=80,
             )
         )
+        # Observation is not a maintenance success condition. Keep the legacy
+        # step for existing task readers, but do not execute it synchronously.
         _raise_for_control_decision(
             _set_repository_operation_step(
                 repository_task,
                 execution_token,
                 "refresh_repository_usage",
-                status=TaskStep.Status.RUNNING,
-                progress=85,
-            )
-        )
-        sync_organization_repositories(
-            organization_id=repository_task.repository.organization_id,
-            repository_ids=[repository_task.repository_id],
-            limit=1,
-            force=True,
-            stale_after_seconds=None,
-            async_agent_probes=True,
-        )
-        _raise_for_control_decision(
-            _set_repository_operation_step(
-                repository_task,
-                execution_token,
-                "refresh_repository_usage",
-                status=TaskStep.Status.SUCCESS,
-                progress=95,
+                status=TaskStep.Status.SKIPPED,
+                progress=0,
             )
         )
         _raise_for_control_decision(
@@ -911,6 +898,10 @@ def _execute_repository_operation(
             result_payload=scrub_secrets(result),
             expected_execution_token=execution_token,
         )
+        if completed_task.status == Task.Status.SUCCESS:
+            transaction.on_commit(
+                lambda: _enqueue_post_maintenance_usage(repository_task)
+            )
         return {
             "status": completed_task.status,
             "repository_task_id": repository_task.id,
@@ -991,6 +982,24 @@ def _execute_repository_operation(
             expected_execution_token=execution_token,
         )
         return {"status": failed_task.status, "repository_task_id": repository_task.id}
+
+
+def _enqueue_post_maintenance_usage(repository_task: RepositoryTask) -> None:
+    """A broker outage must not relabel an already successful maintenance."""
+    try:
+        enqueue_repository_usage_refresh(
+            organization_id=repository_task.repository.organization_id,
+            repository_ids=[repository_task.repository_id],
+            limit=1,
+            force=True,
+            trigger="storage.maintenance.completed",
+        )
+    except Exception:
+        # Scheduled collection remains the fallback. Do not log broker secrets.
+        logger.warning(
+            "post-maintenance usage refresh could not be queued repository_id=%s",
+            repository_task.repository_id,
+        )
 
 
 def _recover_controller_repository_operation(repository_task: RepositoryTask) -> dict:

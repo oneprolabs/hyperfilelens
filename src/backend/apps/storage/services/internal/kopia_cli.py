@@ -100,11 +100,15 @@ def create_s3_repository(repository: Repository, *, timeout_seconds: int | None 
     raise KopiaCliError(_format_failure("Kopia S3 repository create failed", result))
 
 
-def connect_s3_repository(repository: Repository, *, timeout_seconds: int | None = None) -> KopiaResult:
+def connect_s3_repository(
+    repository: Repository, *, timeout_seconds: int | None = None,
+    config_file: Path | None = None,
+) -> KopiaResult:
     result = _run_repository_command(
         repository,
         ["repository", "connect", "s3", *_s3_flags(repository)],
         timeout_seconds=timeout_seconds,
+        config_file=config_file,
     )
     if result.returncode != 0:
         raise KopiaCliError(_format_failure("Kopia S3 repository connect failed", result))
@@ -122,17 +126,22 @@ def status(repository: Repository, *, timeout_seconds: int | None = None) -> Kop
     return KopiaResult(stdout=result.stdout, stderr=result.stderr)
 
 
-def content_stats(repository: Repository, *, timeout_seconds: int | None = None) -> KopiaResult:
+def content_stats(
+    repository: Repository, *, timeout_seconds: int | None = None,
+    config_file: Path | None = None,
+) -> KopiaResult:
     result = _run_repository_command(
         repository,
         ["content", "stats", "--json"],
         timeout_seconds=timeout_seconds,
+        config_file=config_file,
     )
     if result.returncode != 0 and "unknown long flag '--json'" in f"{result.stdout}\n{result.stderr}":
         result = _run_repository_command(
             repository,
             ["content", "stats"],
             timeout_seconds=timeout_seconds,
+            config_file=config_file,
         )
     if result.returncode != 0:
         raise KopiaCliError(_format_failure("Kopia content stats failed", result))
@@ -355,7 +364,13 @@ def _run_repository_command(
     control: KopiaControlCallback | None = None,
 ) -> subprocess.CompletedProcess[str]:
     resolved_config_file = config_file or _config_file(repository)
-    with _repository_config_lock(resolved_config_file):
+    # Normal maintenance and usage collection have independent client configs.
+    # They share a read fence against unsafe/configuration operations, while
+    # each client config remains exclusively locked against duplicate commands.
+    compatible = resolved_config_file.name in {
+        "maintenance.repository.config", "usage.repository.config",
+    }
+    with _repository_config_lock(resolved_config_file, shared=compatible):
         return _run_repository_command_unlocked(
             repository,
             args,
@@ -576,15 +591,26 @@ def _kopia_path() -> str:
 
 
 @contextmanager
-def _repository_config_lock(config_file: Path):
+def _repository_config_lock(config_file: Path, *, shared: bool = False):
     lock_file = config_file.parent / ".repository.lock"
+    with _file_lock(lock_file, shared=shared):
+        if shared:
+            with _file_lock(config_file.with_suffix(config_file.suffix + ".lock")):
+                yield
+        else:
+            yield
+
+
+@contextmanager
+def _file_lock(lock_file: Path, *, shared: bool = False):
     lock_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with lock_file.open("a+", encoding="utf-8") as handle:
         timeout_seconds = kopia_config_lock_timeout_seconds()
         deadline = time.monotonic() + timeout_seconds
         while True:
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+                fcntl.flock(handle.fileno(), mode | fcntl.LOCK_NB)
                 break
             except BlockingIOError as exc:
                 if time.monotonic() >= deadline:
@@ -593,9 +619,10 @@ def _repository_config_lock(config_file: Path):
                         "Please retry after it finishes."
                     ) from exc
                 time.sleep(0.1)
-        handle.truncate(0)
-        handle.write(f"{os.getpid()}\n")
-        handle.flush()
+        if not shared:
+            handle.truncate(0)
+            handle.write(f"{os.getpid()}\n")
+            handle.flush()
         try:
             yield
         finally:
@@ -611,6 +638,11 @@ def _config_file(repository: Repository) -> Path:
 
 def _maintenance_config_file(repository: Repository) -> Path:
     return _config_file(repository).with_name("maintenance.repository.config")
+
+
+def usage_config_file(repository: Repository) -> Path:
+    """Return the isolated read-only observation client's connection config."""
+    return _config_file(repository).with_name("usage.repository.config")
 
 
 def _snapshot_delete_config_file(repository: Repository) -> Path:

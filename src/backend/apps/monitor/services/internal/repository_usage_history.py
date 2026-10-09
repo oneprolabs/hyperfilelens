@@ -35,19 +35,25 @@ def record_repository_usage_result(
     """Upsert one repository result into its logical 15-minute slot."""
     slot = floor_time(recorded_at, RAW_INTERVAL)
     normalized_usage = max(0, int(usage_bytes)) if usage_bytes is not None else None
-    metric, _ = RepositoryUsageMetric.objects.update_or_create(
-        repository=repository,
-        recorded_at=slot,
-        defaults={
-            "usage_bytes": normalized_usage,
-            "usage_source": (
-                RepositoryUsageMetric.UsageSource.ESTIMATED
-                if normalized_usage is not None
-                else None
-            ),
-            "object_count": None,
-        },
-    )
+    defaults = {
+        "usage_bytes": normalized_usage,
+        "usage_source": (
+            RepositoryUsageMetric.UsageSource.ESTIMATED
+            if normalized_usage is not None
+            else None
+        ),
+        "object_count": None,
+    }
+    if normalized_usage is None:
+        # A failed attempt must not erase an observation, even when another
+        # collector writes the successful sample concurrently.
+        metric, _ = RepositoryUsageMetric.objects.get_or_create(
+            repository=repository, recorded_at=slot, defaults=defaults,
+        )
+    else:
+        metric, _ = RepositoryUsageMetric.objects.update_or_create(
+            repository=repository, recorded_at=slot, defaults=defaults,
+        )
     return metric
 
 

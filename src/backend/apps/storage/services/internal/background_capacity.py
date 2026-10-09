@@ -12,7 +12,7 @@ from django.conf import settings
 from redis import Redis
 from redis.exceptions import RedisError
 
-from apps.storage.conf import background_storage_concurrency
+from apps.storage.conf import background_storage_concurrency, maintenance_storage_concurrency
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +70,11 @@ class BackgroundStorageLease:
         token: str,
         operation: str,
         confirmed_at: float | None = None,
+        capacity_key: str = _CAPACITY_KEY,
     ) -> None:
         self.token = token
         self.operation = operation
+        self.capacity_key = capacity_key
         self._stop = threading.Event()
         self._lost = threading.Event()
         self._thread: threading.Thread | None = None
@@ -127,7 +129,7 @@ class BackgroundStorageLease:
                     _redis_client().eval(
                         _REFRESH_SCRIPT,
                         1,
-                        _CAPACITY_KEY,
+                    self.capacity_key,
                         self.token,
                         _LEASE_SECONDS,
                     )
@@ -156,7 +158,7 @@ class BackgroundStorageLease:
 
     def release(self) -> bool:
         try:
-            return bool(_redis_client().zrem(_CAPACITY_KEY, self.token))
+            return bool(_redis_client().zrem(self.capacity_key, self.token))
         except RedisError:
             logger.warning(
                 "background storage capacity lease release failed operation=%s",
@@ -171,15 +173,23 @@ def try_acquire_background_storage_capacity(
     """Acquire without blocking; unavailable coordination fails closed."""
 
     token = f"{operation}:{identity}:{uuid.uuid4().hex}"
+    maintenance = operation == "repository-maintenance"
+    capacity_key = (
+        f"{_CAPACITY_KEY}:maintenance" if maintenance else _CAPACITY_KEY
+    )
+    capacity = (
+        maintenance_storage_concurrency()
+        if maintenance else background_storage_concurrency()
+    )
     acquire_started_at = time.monotonic()
     try:
         acquired = int(
             _redis_client().eval(
                 _ACQUIRE_SCRIPT,
                 1,
-                _CAPACITY_KEY,
+                capacity_key,
                 token,
-                background_storage_concurrency(),
+                capacity,
                 _LEASE_SECONDS,
             )
             or 0
@@ -202,4 +212,5 @@ def try_acquire_background_storage_capacity(
         token=token,
         operation=operation,
         confirmed_at=acquire_started_at,
+        capacity_key=capacity_key,
     )
