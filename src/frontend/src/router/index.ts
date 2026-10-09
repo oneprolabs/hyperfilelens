@@ -43,6 +43,7 @@ const ProtectionDataPage = lazyRoute(() => import('../pages/protection/DataProte
 const ProtectionSnapshotRestorePage = lazyRoute(() => import('../pages/protection/SnapshotRestorePage.vue'))
 const ProtectionBackupCreateWizardPage = lazyRoute(() => import('../pages/protection/BackupCreateWizard.vue'))
 const ProtectionBackupSourcesPage = lazyRoute(() => import('../pages/protection/BackupSources.vue'))
+const ProtectionSourceTagsPage = lazyRoute(() => import('../pages/protection/SourceTags.vue'))
 const ProtectionBackupDataBrowserPage = lazyRoute(() => import('../pages/protection/BackupDataBrowser.vue'))
 const ProtectionBackupDetailPage = lazyRoute(() => import('../pages/protection/BackupDetail.vue'))
 const ProtectionSnapshotDetailPage = lazyRoute(() => import('../pages/protection/SnapshotDetail.vue'))
@@ -96,6 +97,7 @@ export const router = createRouter({
           meta: fullscreenRouteMeta,
         },
         { path: 'protection/backup-sources', component: ProtectionBackupSourcesPage },
+        { path: 'protection/source-tags', component: ProtectionSourceTagsPage },
         {
           path: 'protection/backups/browse/:sourceType/:sourceRefId',
           name: 'protection-backup-data-browser',

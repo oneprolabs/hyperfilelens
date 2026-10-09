@@ -7,7 +7,10 @@ from rest_framework.views import APIView
 from apps.iam.org_context import require_org
 from apps.iam.resource_access import visible_resource_refs
 from apps.iam.permissions_org import IsOrgOperator, IsOrgStaffReader
+from apps.node.models import Node
 from apps.source.constants import PipelineStep
+from apps.source.constants import ResourceType
+from apps.source.models import SourceResource
 from common.errors import AppError
 from apps.source.services.internal.backup_source_directory import (
     BackupSourceDirectoryError,
@@ -39,6 +42,7 @@ from apps.source.services.internal.source_pipeline import (
     set_pipeline_steps,
 )
 from apps.source.services.internal.selectable_ids import parse_selectable_id
+from apps.source.models import SourceTag, SourceTagAssignment
 
 
 def _query_bool(value: object) -> bool:
@@ -95,6 +99,27 @@ def _optional_positive_int(params, name: str) -> int | None:
     return parsed
 
 
+def _optional_positive_int_list(params, name: str, *, maximum: int = 50) -> list[int]:
+    raw = str(params.get(name) or "").strip()
+    if not raw:
+        return []
+    values = raw.split(",")
+    if len(values) > maximum:
+        raise ValidationError({name: f"Select at most {maximum} values."})
+    parsed = []
+    for value in values:
+        try:
+            item = int(value.strip())
+        except ValueError as exc:
+            raise ValidationError({name: "Must contain positive integers."}) from exc
+        if item <= 0:
+            raise ValidationError({name: "Must contain positive integers."})
+        parsed.append(item)
+    if len(set(parsed)) != len(parsed):
+        raise ValidationError({name: "Values must be unique."})
+    return parsed
+
+
 def _optional_choice(params, name: str, choices: set[str]) -> str | None:
     value = str(params.get(name) or "").strip().lower()
     if not value:
@@ -144,14 +169,42 @@ def _filter_selectable_results(request, results: list[dict]) -> list[dict]:
     ids = [str(row.get("id") or "") for row in results]
     refs = _selectable_refs(ids)
     allowed = visible_resource_refs(request, refs)
-    if allowed is None:
+    if allowed is not None:
+        allowed_ids = {
+            f"agent:{resource_id}" if resource_type == "node" else f"nas:{resource_id}"
+            for resource_type, resource_id in allowed
+            if resource_type in {"node", "source_resource"}
+        }
+        results = [row for row in results if str(row.get("id") or "") in allowed_ids]
+    by_id = {str(row["id"]): row for row in results}
+    for row in results:
+        row["tags"] = []
+    kinds = {"agent": [], "nas": []}
+    for source_id in by_id:
+        parsed = parse_selectable_id(source_id)
+        if parsed and parsed[0] in kinds:
+            kinds[parsed[0]].append(parsed[1])
+    if not any(kinds.values()):
         return results
-    allowed_ids = {
-        f"agent:{resource_id}" if resource_type == "node" else f"nas:{resource_id}"
-        for resource_type, resource_id in allowed
-        if resource_type in {"node", "source_resource"}
-    }
-    return [row for row in results if str(row.get("id") or "") in allowed_ids]
+    from django.db.models import Q
+
+    assignments = SourceTagAssignment.objects.filter(
+        organization_id=require_org(request).id,
+        tag__organization_id=require_org(request).id,
+    ).filter(
+        Q(source_kind="agent", ref_id__in=kinds["agent"])
+        | Q(source_kind="nas", ref_id__in=kinds["nas"])
+    ).select_related("tag").order_by("tag__name", "tag_id")
+    for assignment in assignments:
+        by_id[f"{assignment.source_kind}:{assignment.ref_id}"]["tags"].append(
+            {
+                "id": assignment.tag_id,
+                "name": assignment.tag.name,
+                "description": assignment.tag.description,
+                "color": assignment.tag.color,
+            }
+        )
+    return results
 
 
 class BackupSelectableListView(APIView):
@@ -222,6 +275,56 @@ class BackupSelectableListView(APIView):
             request.query_params, "file_filter_rule_id"
         )
         repository_id = _optional_positive_int(request.query_params, "repository_id")
+        tag_id = _optional_positive_int(request.query_params, "tag_id")
+        tag_ids = _optional_positive_int_list(request.query_params, "tag_ids")
+        if tag_id is not None and tag_ids:
+            raise ValidationError({"tag_ids": "Use either tag_id or tag_ids, not both."})
+        if tag_id is not None:
+            tag_ids = [tag_id]
+        untagged = _optional_query_bool(request.query_params, "untagged") is True
+        if tag_ids and SourceTag.objects.filter(organization_id=org.id, id__in=tag_ids).count() != len(tag_ids):
+            raise ValidationError({"tag_ids": "Unknown tag."})
+        visible_tag_sources = None
+        if tag_ids or untagged:
+            tagged_rows = list(SourceTagAssignment.objects.filter(
+                organization_id=org.id,
+                tag_id__in=tag_ids if tag_ids else [],
+                source_kind__in=("agent", "nas"),
+            ).values_list("source_kind", "ref_id"))
+            candidate_sources = set(tagged_rows)
+            if untagged:
+                all_tagged = set(SourceTagAssignment.objects.filter(
+                    organization_id=org.id,
+                    source_kind__in=("agent", "nas"),
+                ).values_list("source_kind", "ref_id"))
+                agent_ids = Node.objects.filter(
+                    organization_id=org.id,
+                    role=Node.Role.AGENT,
+                    is_deleted=False,
+                ).values_list("id", flat=True)
+                nas_ids = SourceResource.objects.filter(
+                    organization_id=org.id,
+                    resource_type=ResourceType.NAS,
+                    is_deleted=False,
+                ).values_list("id", flat=True)
+                candidate_sources |= {
+                    ("agent", ref_id) for ref_id in agent_ids
+                    if ("agent", ref_id) not in all_tagged
+                }
+                candidate_sources |= {
+                    ("nas", ref_id) for ref_id in nas_ids
+                    if ("nas", ref_id) not in all_tagged
+                }
+            refs = [
+                ("node" if kind == "agent" else "source_resource", ref_id)
+                for kind, ref_id in candidate_sources
+            ]
+            allowed = visible_resource_refs(request, refs)
+            if allowed is not None:
+                visible_tag_sources = {
+                    "agent": [ref for kind, ref in allowed if kind == "node"],
+                    "nas": [ref for kind, ref in allowed if kind == "source_resource"],
+                }
         source_type = _optional_choice(request.query_params, "type", {"host", "nas"})
         exclude_param = (request.query_params.get("exclude") or "").strip()
         exclude_ids = [
@@ -270,6 +373,10 @@ class BackupSelectableListView(APIView):
             backup_policy_id=backup_policy_id,
             file_filter_rule_id=file_filter_rule_id,
             repository_id=repository_id,
+            tag_id=None,
+            tag_ids=tag_ids,
+            untagged=untagged,
+            allowed_source_ids=visible_tag_sources,
             expand=expand,
         )
         results = _filter_selectable_results(request, results)

@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from apps.source.api.views import SourceResourceViewSet, health
+from apps.source.api.views.source_tag import SourceTagListView, SourceTagDetailView, SourceTagAssignmentView, SourceTagAssignmentListView, SourceTagBulkAssignmentView, SourceTagSourceListView
 from apps.source.api.views.backup_selectable import (
     BackupSelectableBulkDeleteView,
     BackupSelectableDeletePreflightView,
@@ -19,6 +20,12 @@ router.register(r"resources", SourceResourceViewSet, basename="source-resource")
 
 urlpatterns = [
     path("health", health, name="source-health"),
+    path("tags/", SourceTagListView.as_view(), name="source-tags"),
+    path("tags/<int:pk>/", SourceTagDetailView.as_view(), name="source-tag-detail"),
+    path("tags/<int:pk>/sources/", SourceTagSourceListView.as_view(), name="source-tag-sources"),
+    path("tags/assignments/", SourceTagAssignmentListView.as_view(), name="source-tag-assignments"),
+    path("tags/assignments/bulk/", SourceTagBulkAssignmentView.as_view(), name="source-tag-bulk-assignments"),
+    path("tags/sources/<str:kind>/<int:ref_id>/", SourceTagAssignmentView.as_view(), name="source-tag-assignment"),
     path("backup-selectable/", BackupSelectableListView.as_view(), name="source-backup-selectable"),
     path("backup-selectable/directories/", BackupSelectableDirectoryView.as_view(), name="source-backup-selectable-directories"),
     path("backup-selectable/directories/create/", BackupSelectableDirectoryCreateView.as_view(), name="source-backup-selectable-directory-create"),

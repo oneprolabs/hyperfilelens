@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { compactSourceText } from '../../test/sourceText'
+import { en } from '../../locales/en'
 
 
 const page = readFileSync(resolve(process.cwd(), 'src/pages/protection/DataProtection.vue'), 'utf8')
@@ -17,6 +18,65 @@ function sourceBetween(startMarker: string, endMarker: string) {
 }
 
 describe('Backup Wizard Step 3 server filters', () => {
+  it('separates filter rules and per-tag counts into localized help sections', () => {
+    const help = sourceBetween('<div class="source-tag-filter-help">', '</HflHelpTip>')
+    expect(help.match(/class="source-tag-filter-help__section"/g)).toHaveLength(2)
+    const keys = [
+      'filterRulesTitle', 'filterAnyHint', 'filterUntaggedHint',
+      'filterOtherConditionsHint', 'filterCountsTitle',
+      'filterCountScope', 'filterCountUnfilteredHint',
+    ]
+    const english = readFileSync(resolve(process.cwd(), 'src/locales/en.ts'), 'utf8')
+    for (const key of keys) {
+      expect(help).toContain(`t('protection.tags.${key}')`)
+      expect(english).toContain(`${key}:`)
+    }
+    for (const language of ['zh-hans', 'es']) {
+      const catalog = JSON.parse(readFileSync(resolve(process.cwd(), `../../language-packs/packs/${language}/frontend/messages.json`), 'utf8'))
+      for (const key of keys) expect(catalog.protection.tags[key]).toBeTruthy()
+    }
+    const chinese = JSON.parse(readFileSync(resolve(process.cwd(), '../../language-packs/packs/zh-hans/frontend/messages.json'), 'utf8'))
+    expect(chinese.protection.tags.filterOtherConditionsHint).not.toBe(en.protection.tags.filterOtherConditionsHint)
+    expect(chinese.protection.tags.filterCountUnfilteredHint).not.toBe(en.protection.tags.filterCountUnfilteredHint)
+  })
+
+  it('shows and filters tags throughout all three steps, with bulk actions on selected sources', () => {
+    expect(page).toContain('tag_ids: params.tagIds.length ? params.tagIds : undefined')
+    expect(page).toContain('tag_ids: step3TagIds.value.length ? step3TagIds.value : undefined')
+    expect(page).toContain('untagged: step3Untagged.value || undefined')
+    expect(page.split("t('protection.tags.column')").length - 1).toBe(3)
+    expect(page.split("openWizardTagAction('add')").length - 1).toBe(3)
+    expect(page.split("openWizardTagAction('remove')").length - 1).toBe(3)
+    expect(page.split(':disabled="wizardTagUnbindDisabled"').length - 1).toBe(3)
+    expect(page).toContain('canUnbindSelectedSources(selected.map((source) => source.id), assignments)')
+    expect(page).toContain('bulkUpdateSourceTags({')
+  })
+
+  it('groups bind/unbind tag actions before dangerous actions in all steps', () => {
+    const bindRows = page.match(/<ElDropdownItem divided :disabled="!wizardSelectedTagSources\.length \|\| wizardTagSaving" @click="openWizardTagAction\('add'\)">[\s\S]*?<\/ElDropdownItem>\s*<ElDropdownItem :disabled="wizardTagUnbindDisabled" @click="openWizardTagAction\('remove'\)">[\s\S]*?<\/ElDropdownItem>/g) || []
+    expect(bindRows).toHaveLength(3)
+    const bindPositions = Array.from(page.matchAll(/openWizardTagAction\('add'\)/g), (match) => match.index ?? -1)
+    const dangerPositions = Array.from(page.matchAll(/class="el-dropdown-menu__item--danger"/g), (match) => match.index ?? -1)
+    expect(bindPositions).toHaveLength(3)
+    expect(bindPositions.every((position) => dangerPositions.some((dangerPosition) => dangerPosition > position))).toBe(true)
+  })
+
+  it('places tag columns after primary source details in all three steps', () => {
+    const step1 = sourceBetween('<el-table\n                    ref="sourceTableRef"', '<template #empty>')
+    const step2 = sourceBetween('<el-table\n                    ref="step2TableRef"', '<template #empty>')
+    const step3 = sourceBetween('<el-table\n                    ref="step3TableRef"', '<template #empty>')
+
+    for (const table of [step1, step2]) {
+      expect(table.indexOf("protection.backupsPage.colConnectionAddress")).toBeLessThan(table.indexOf("protection.tags.column"))
+      expect(table.indexOf("protection.sourceResources.colCapacity")).toBeLessThan(table.indexOf("protection.tags.column"))
+      expect(table.indexOf("protection.tags.column")).toBeLessThan(table.indexOf("protection.sourceResources.colRegisteredAt"))
+    }
+    expect(step3.indexOf("protection.backupsPage.flowBackupColBackupDirs")).toBeLessThan(step3.indexOf("protection.tags.column"))
+    expect(step3.indexOf("protection.backupsPage.flowBackupColTargetRepo")).toBeLessThan(step3.indexOf("protection.tags.column"))
+    expect(step3.indexOf("protection.backupsPage.flowBackupColBoundFileFilter")).toBeLessThan(step3.indexOf("protection.tags.column"))
+    expect(step3.indexOf("protection.tags.column")).toBeLessThan(step3.indexOf("protection.sourceResources.colCpu"))
+    expect(step3).toContain(':show-icon="false"')
+  })
   it('keeps hover tooltips enterable while crossing the trigger gap', () => {
     expect(page).not.toContain(':hide-after="0"')
     expect(page).toContain('const FLOW_DETAIL_POPOVER_HIDE_AFTER_MS = 350')
@@ -89,6 +149,7 @@ describe('Backup Wizard Step 3 server filters', () => {
       "t('protection.backupsPage.labelCompressionStrategy')",
       "t('protection.backupsPage.flowBackupColBoundBackupPolicy')",
       "t('protection.backupsPage.flowBackupColBoundFileFilter')",
+      "t('protection.tags.column')",
       "t('protection.sourceResources.colCpu')",
       "t('protection.sourceResources.colMemory')",
       "t('protection.sourceResources.colDiskCount')",
@@ -115,6 +176,50 @@ describe('Backup Wizard Step 3 server filters', () => {
     expect(load).toContain('backup_policy_id: step3BackupPolicyId.value || undefined')
     expect(load).toContain('file_filter_rule_id: step3FileFilterRuleId.value || undefined')
     expect(load).toContain('repository_id: step3RepositoryId.value || undefined')
+    expect(load).toContain('tag_ids: step3TagIds.value.length ? step3TagIds.value : undefined')
+    expect(load).toContain('untagged: step3Untagged.value || undefined')
+    expect(page).toContain('v-model:visible="tagFilterOpen"')
+    expect(page).toContain('v-model="tagFilterSearch"')
+    expect(page).toContain("t('protection.tags.untagged')")
+    expect(page).toContain("t('protection.tags.filterAnyHint')")
+    expect(page).toContain("t('protection.tags.filterCountScope')")
+    expect(page).toContain("t('protection.tags.filterHelp')")
+    expect(page).toContain('<HflHelpTip')
+    expect(page).toContain('class="source-tag-filter-label"')
+    const filterOptions = page.split('class="source-tag-filter-options"')[1]?.split('class="source-tag-filter-footer"')[0] || ''
+    expect(compactSourceText(filterOptions)).toContain('<SourceTagBadge :tag="tag" :interactive="false" :show-icon="false" />')
+    expect(filterOptions).not.toContain('tag.description')
+    expect(page).toContain('tag.name.toLocaleLowerCase().includes(query)')
+    expect(page).toContain('n: tagFilterDraftIds.length + Number(tagFilterDraftUntagged)')
+    const tagFilterPosition = page.indexOf('v-model:visible="tagFilterOpen"')
+    const advancedFilterPosition = page.indexOf('@click="openAdvancedFilters"')
+    expect(page.slice(tagFilterPosition, advancedFilterPosition)).toContain('<Tag :size="16" />')
+    expect(page.slice(tagFilterPosition, advancedFilterPosition)).toContain('class="source-tag-filter-trigger"')
+    expect(tagFilterPosition).toBeLessThan(advancedFilterPosition)
+    expect(page).not.toContain('if (tagFilterDraftUntagged.value) tagFilterDraftIds.value = []')
+    expect(page).not.toContain('if (ids.length) tagFilterDraftUntagged.value = false')
+    expect(page).toContain('void clearStep3TableSelection()')
+    expect(page).toContain('sourceTableRef.value?.clearSelection()')
+    expect(page).toContain('step2TableRef.value?.clearSelection()')
+  })
+
+  it('refreshes the tag catalog on open and save, limits selection, and offers retry on failure', () => {
+    expect(sourceBetween('function openTagFilter()', 'function onTagFilterDraftChange')).toContain('void refreshTagFilterOptions()')
+    expect(sourceBetween('async function saveWizardTagAction(', 'let syncingStep3Selection')).toContain('await refreshTagFilterOptions()')
+    expect(page).toContain('v-model="wizardTagUnbindOpen"')
+    expect(page).toContain('@confirm="saveWizardTagAction(true)"')
+    expect(page).toContain(':max="SOURCE_TAG_FILTER_LIMIT"')
+    expect(page).toContain('tagFilterDraftIds.length >= SOURCE_TAG_FILTER_LIMIT && !tagFilterDraftIds.includes(tag.id)')
+    expect(page).toContain('v-if="tagFilterError"')
+    expect(page).toContain('@click="refreshTagFilterOptions"')
+    expect(page).toContain('v-loading="tagFilterLoading"')
+    expect(page).toContain('tagFilterLoading || tagFilterError || tagFilterDraftIds.length > SOURCE_TAG_FILTER_LIMIT')
+  })
+
+  it('refreshes tag counts when asynchronous source deregistration finishes', () => {
+    const monitor = sourceBetween('function monitorPendingUnregister(', 'function resumePendingUnregisterMonitors()')
+    expect(monitor).toContain('refreshTagFilterOptions()')
+    expect(monitor.indexOf('refreshTagFilterOptions()')).toBeGreaterThan(monitor.indexOf('const outcomes = tasks.map(sourceUnregisterTaskOutcome)'))
   })
 
   it('does not filter the active Step 3 server page in the frontend', () => {
