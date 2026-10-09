@@ -4743,8 +4743,43 @@ def _queue_provision_or_mark_failed(
         )
 
 
+def _manually_revoked_slot_release_allowed(
+    session: LensSessionLink,
+    ks: LensKnowledgeSource,
+    task: dict[str, Any],
+) -> bool:
+    """Allow logical slot release, not executor-stop or workspace cleanup."""
+
+    metadata = task.get("metadata")
+    return bool(
+        session.lifecycle_status == LensSessionLink.LifecycleStatus.FAILED
+        and session.cleanup_intent == LensSessionLink.CleanupIntent.NONE
+        and session.cleanup_status
+        not in {
+            LensSessionLink.CleanupStatus.PENDING,
+            LensSessionLink.CleanupStatus.RUNNING,
+            LensSessionLink.CleanupStatus.BLOCKED,
+        }
+        and not (session.provision_state_json or {}).get(_REUSE_RESOURCE_STATE_KEY)
+        and ks.lifecycle_status == LensKnowledgeSource.LifecycleStatus.READY
+        and ks.organization_id == session.organization_id
+        and ks.gateway_link_id == session.gateway_link_id
+        and ks.sl_datasource_uuid
+        and ks.sl_lensnode_uuid
+        and isinstance(metadata, dict)
+        and str(task.get("status") or "").upper() == "REVOKED"
+        and metadata.get("stop_confirmation_source") == "manual_immediate"
+        and str(metadata.get("datasource_uuid") or "") == str(ks.sl_datasource_uuid)
+        and str(metadata.get("lensnode_uuid") or "") == str(ks.sl_lensnode_uuid)
+    )
+
+
 def release_stopped_failed_chat_slots(*, limit: int = 100) -> int:
-    """Release failed Chat slots only after SL proves the conversion stopped."""
+    """Recover failed slots, including identity-verified immediate revocations.
+
+    The revocation exception releases only HFL admission capacity. It does not
+    acknowledge executor shutdown or authorize destructive workspace cleanup.
+    """
 
     from apps.lens_bridge.services import managed_datasource
 
@@ -4782,6 +4817,17 @@ def release_stopped_failed_chat_slots(*, limit: int = 100) -> int:
             )
             if not task_id:
                 continue
+            generation = session.provision_generation
+            poll_sequence = session.provision_poll_sequence
+            datasource_uuid = ks.sl_datasource_uuid
+            lensnode_uuid = ks.sl_lensnode_uuid
+            slot = LensGatewayChatSlot.objects.filter(
+                session_link_id=session_id,
+                session_generation=generation,
+            ).first()
+            if slot is None:
+                continue
+            slot_id = slot.id
             journal = dict(session.provision_state_json or {})
             journal["failed_slot_stop_probe_after"] = (
                 now + timedelta(minutes=10)
@@ -4791,7 +4837,17 @@ def release_stopped_failed_chat_slots(*, limit: int = 100) -> int:
         if ks is None:
             continue
         try:
-            if not managed_datasource.conversion_stop_confirmed(ks):
+            task = sl_client.get_task_by_id(task_id)
+            if not isinstance(task, dict) or str(task.get("task_id") or "") != task_id:
+                continue
+            stopped = managed_datasource.conversion_stop_confirmed(
+                ks, task_response=task
+            )
+            immediate_revocation = (
+                not stopped
+                and _manually_revoked_slot_release_allowed(session, ks, task)
+            )
+            if not stopped and not immediate_revocation:
                 continue
         except sl_client.LensBridgeError:
             continue
@@ -4801,26 +4857,56 @@ def release_stopped_failed_chat_slots(*, limit: int = 100) -> int:
                 lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
                 cleanup_intent=LensSessionLink.CleanupIntent.NONE,
                 knowledge_source_id=ks.id,
+                provision_generation=generation,
+                provision_poll_sequence=poll_sequence,
             ).first()
             if locked is None:
                 continue
-            current_state = (
-                LensKnowledgeSource.objects.filter(pk=ks.id)
-                .values_list("sync_state_json", flat=True)
-                .first()
-                or {}
-            )
-            current_conversion = current_state.get("conversion") or {}
-            if str(current_conversion.get("task_id") or "") != task_id:
+            current_ks = LensKnowledgeSource.objects.filter(pk=ks.id).first()
+            if current_ks is None:
                 continue
-            slot = LensGatewayChatSlot.objects.filter(session_link_id=session_id).first()
-            if slot is None or slot.session_generation != locked.provision_generation:
+            current_state = current_ks.sync_state_json or {}
+            current_conversion = current_state.get("conversion") or {}
+            if (
+                not isinstance(current_conversion, dict)
+                or str(current_conversion.get("task_id") or "") != task_id
+            ):
+                continue
+            if immediate_revocation and (
+                current_ks.sl_datasource_uuid != datasource_uuid
+                or current_ks.sl_lensnode_uuid != lensnode_uuid
+                or not _manually_revoked_slot_release_allowed(locked, current_ks, task)
+            ):
+                continue
+            slot = LensGatewayChatSlot.objects.select_for_update().filter(
+                pk=slot_id,
+                session_link_id=session_id,
+                session_generation=generation,
+            ).first()
+            if slot is None:
                 continue
             if gateway_chat_queue.release_chat_prepare_slot(
                 session_link_id=session_id,
-                expected_generation=locked.provision_generation,
-            ) is not None:
-                released += 1
+                expected_generation=generation,
+            ) is None:
+                continue
+            if immediate_revocation:
+                journal = dict(locked.provision_state_json or {})
+                journal["failed_prepare_slot_release"] = {
+                    "reason": "sl_manual_immediate_revocation",
+                    "task_id": task_id,
+                    "datasource_uuid": str(datasource_uuid),
+                    "lensnode_uuid": str(lensnode_uuid),
+                    "session_generation": generation,
+                    "poll_sequence": poll_sequence,
+                    "remote_status": "REVOKED",
+                    "stop_confirmation_source": "manual_immediate",
+                    "executor_stop_confirmed": False,
+                    "released_at": timezone.now().isoformat(),
+                }
+                locked.provision_state_json = journal
+                locked.save(update_fields=["provision_state_json", "updated_at"])
+            released += 1
     return released
 
 

@@ -3641,10 +3641,9 @@ class CopilotChatTeardownTests(TestCase):
         self.assertEqual(self.session.knowledge_source_id, self.knowledge_source.id)
 
     @mock.patch(
-        "apps.lens_bridge.services.managed_datasource.conversion_stop_confirmed",
-        return_value=True,
+        "apps.lens_bridge.services.sl_client.get_task_by_id",
     )
-    def test_failed_chat_releases_slot_after_remote_stop_is_confirmed(self, _stop):
+    def test_failed_chat_releases_slot_after_remote_stop_is_confirmed(self, get_task):
         self.knowledge_source.status = LensKnowledgeSource.Status.ERROR
         self.knowledge_source.sync_state_json = {
             "conversion": {"task_id": "orphan-1", "status": "FAILURE"}
@@ -3665,11 +3664,13 @@ class CopilotChatTeardownTests(TestCase):
             heartbeat_at=timezone.now(),
         )
 
-        _stop.return_value = False
+        get_task.return_value = {
+            "task_id": "orphan-1", "status": "FAILURE", "metadata": {},
+        }
         self.assertEqual(chat_lifecycle.release_stopped_failed_chat_slots(), 0)
         self.assertTrue(LensGatewayChatSlot.objects.filter(pk=slot.pk).exists())
         self.assertEqual(chat_lifecycle.release_stopped_failed_chat_slots(), 0)
-        self.assertEqual(_stop.call_count, 1)
+        self.assertEqual(get_task.call_count, 1)
         self.session.refresh_from_db()
         journal = dict(self.session.provision_state_json or {})
         journal["failed_slot_stop_probe_after"] = (
@@ -3677,7 +3678,7 @@ class CopilotChatTeardownTests(TestCase):
         ).isoformat()
         self.session.provision_state_json = journal
         self.session.save(update_fields=["provision_state_json", "updated_at"])
-        _stop.return_value = True
+        get_task.return_value["metadata"]["conversion_summary"] = {}
         released = chat_lifecycle.release_stopped_failed_chat_slots()
 
         self.assertEqual(released, 1)
