@@ -22,6 +22,7 @@ import {
   Trash2,
   Undo2,
   Unlink,
+  Link2,
   ClipboardCheck,
   Archive,
   Camera,
@@ -30,6 +31,7 @@ import {
   FolderPlus,
   FolderTree,
   Filter,
+  Tag,
   MoreHorizontal,
   FolderOpen,
   TextCursorInput,
@@ -57,6 +59,8 @@ import {
 } from '../../lib/sourceTypeIcons'
 import FlowSourceSummaryCell from './components/FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './components/FlowSourceConnectionCell.vue'
+import SourceTagBadge from '../../components/SourceTagBadge.vue'
+import SourceTagActionContent from '../../components/SourceTagActionContent.vue'
 import FlowSourceReadyStatusCell from './components/FlowSourceReadyStatusCell.vue'
 import HflCapacityCell from '../../components/HflCapacityCell.vue'
 import TaskProgressCell from './components/TaskProgressCell.vue'
@@ -67,6 +71,8 @@ import { isTransferProgress, type TransferProgress } from '../../lib/kopiaProgre
 import TargetRepositoryDetailCard from './components/TargetRepositoryDetailCard.vue'
 import type { TargetRepositoryItem } from './components/TargetRepositoryPicker.vue'
 import { useBackupWizardSourcePendingOps } from './composables/useBackupWizardSourcePendingOps'
+import { bulkTagOptions, canUnbindSelectedSources, countBulkTagChanges } from '../../lib/sourceTagBulk'
+import { SOURCE_TAG_FILTER_LIMIT, useSourceTagFilter } from './composables/useSourceTagFilter'
 import { useNodeLifecycleOps } from '../../composables/useNodeLifecycleOps'
 import { flowSourceReadyStatus } from '../../lib/flowSourceDisplay'
 import { backupSourceLifecycleDisplay } from '../../lib/backupSourceLifecycleDisplay'
@@ -93,6 +99,10 @@ import {
   createBackupSourceDirectory,
   getBackupSourcePathInfo,
   listBackupSelectableSources,
+  listSourceTags,
+  listSourceTagAssignments,
+  bulkUpdateSourceTags,
+  type SourceTag,
   listBackupSourceDirectories,
   updateSourceResource,
   type BackupSelectableAvailability,
@@ -927,6 +937,47 @@ const step3AdvancedIp = ref('')
 const step3BackupPolicyId = ref<number | ''>('')
 const step3FileFilterRuleId = ref<number | ''>('')
 const step3RepositoryId = ref<number | ''>('')
+const step3TagIds = ref<number[]>([])
+const step3Untagged = ref(false)
+const tagFilterOpen = ref(false)
+const tagFilterSearch = ref('')
+const tagFilterDraftIds = ref<number[]>([])
+const tagFilterDraftUntagged = ref(false)
+const {
+  availableSourceTags, untaggedSourceCount, tagFilterLoading, tagFilterError,
+  refreshTagFilterOptions, setTagFilterDraftIds, applyTagFilterIds,
+} = useSourceTagFilter(step3TagIds, tagFilterDraftIds)
+const filteredTagFilterOptions = computed(() => {
+  const query = tagFilterSearch.value.trim().toLocaleLowerCase()
+  if (!query) return availableSourceTags.value
+  return availableSourceTags.value.filter((tag) => tag.name.toLocaleLowerCase().includes(query))
+})
+
+function openTagFilter() {
+  tagFilterDraftIds.value = [...step3TagIds.value]
+  tagFilterDraftUntagged.value = step3Untagged.value
+  tagFilterSearch.value = ''
+  void refreshTagFilterOptions()
+}
+
+function onTagFilterDraftChange(ids: number[]) {
+  setTagFilterDraftIds(ids)
+}
+
+function onTagFilterUntaggedChange(value: string | number | boolean) {
+  tagFilterDraftUntagged.value = Boolean(value)
+}
+
+function clearTagFilterDraft() {
+  tagFilterDraftIds.value = []
+  tagFilterDraftUntagged.value = false
+}
+
+function applyTagFilter() {
+  if (!applyTagFilterIds()) return
+  step3Untagged.value = tagFilterDraftUntagged.value
+  tagFilterOpen.value = false
+}
 const draftStep3SourceType = ref<'host' | 'nas' | ''>('')
 const draftStep3SourceStatus = ref<'' | 'active' | 'error' | 'inactive' | 'remove_failed' | 'removing'>('')
 const draftStep3Availability = ref<BackupSelectableAvailability | ''>('')
@@ -1163,6 +1214,7 @@ const backupSelectableById = ref(new Map<string, FlowSourceRow>())
 function mapBackupSelectableToFlowRow(item: BackupSelectableSource): FlowSourceRow {
   return {
     id: item.id,
+    tags: item.tags,
     name: item.name,
     hostname: item.hostname || item.name,
     nodeName: item.node_name || item.name,
@@ -1548,6 +1600,8 @@ function backupSelectableRequestParams() {
     sourceIp: step3AdvancedIp.value,
     sourceType: step3SourceType.value,
     sourceStatus: step3SourceStatus.value,
+    tagIds: [...step3TagIds.value],
+    untagged: step3Untagged.value,
   }
 }
 
@@ -1563,7 +1617,9 @@ function step1ServerFiltersActive(params = backupSelectableRequestParams()) {
     || params.sourceHostname.trim()
     || params.sourceIp.trim()
     || params.sourceType
-    || params.sourceStatus,
+    || params.sourceStatus
+    || params.tagIds.length > 0
+    || params.untagged,
   )
 }
 
@@ -1575,7 +1631,9 @@ function step2ServerFiltersActive() {
     || step3AdvancedIp.value.trim()
     || step3SourceType.value
     || step3SourceStatus.value
-    || step3Availability.value,
+    || step3Availability.value
+    || step3TagIds.value.length > 0
+    || step3Untagged.value,
   )
 }
 
@@ -1585,7 +1643,9 @@ function step3ServerFiltersActive() {
     || step3RestoreTaskStatus.value
     || step3BackupPolicyId.value
     || step3FileFilterRuleId.value
-    || step3RepositoryId.value,
+    || step3RepositoryId.value
+    || step3TagIds.value.length > 0
+    || step3Untagged.value,
   )
 }
 
@@ -1663,6 +1723,8 @@ async function loadBackupSelectable(options: { silent?: boolean; showError?: boo
         type: step3SourceType.value || undefined,
         source_status: step3SourceStatus.value || undefined,
         availability: params.availability || undefined,
+        tag_ids: params.tagIds.length ? params.tagIds : undefined,
+        untagged: params.untagged || undefined,
         step: 1,
       }, { signal })
       if (latestBackupSelectableRequestKey !== key) return
@@ -1706,6 +1768,8 @@ async function loadStep2Selectable(options: { signal?: AbortSignal } = {}) {
     type: step3SourceType.value || undefined,
     source_status: step3SourceStatus.value || undefined,
     availability: step3Availability.value || undefined,
+    tag_ids: step3TagIds.value.length ? step3TagIds.value : undefined,
+    untagged: step3Untagged.value || undefined,
     step: 2,
   }, signal ? { signal } : undefined)
   const rows = list.results.map(mapBackupSelectableToFlowRow)
@@ -1735,6 +1799,8 @@ async function loadStep3Selectable(options: { signal?: AbortSignal; syncExpanded
     backup_policy_id: step3BackupPolicyId.value || undefined,
     file_filter_rule_id: step3FileFilterRuleId.value || undefined,
     repository_id: step3RepositoryId.value || undefined,
+    tag_ids: step3TagIds.value.length ? step3TagIds.value : undefined,
+    untagged: step3Untagged.value || undefined,
     step: 3,
     expand: STEP3_EXPAND,
   }, signal ? { signal } : undefined)
@@ -1939,6 +2005,143 @@ const step2AllSourcesConfigured = computed(() => step2GlobalPendingCount.value =
 
 const step3TableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const step3SourceSelection = ref<FlowSourceRow[]>([])
+const wizardTagActionOpen = ref(false)
+const wizardTagAction = ref<'add' | 'remove'>('add')
+const wizardTagSourceRows = ref<Array<{ id: string; name: string }>>([])
+const wizardTagAssignments = ref<Record<string, SourceTag[]>>({})
+const wizardTagCatalog = ref<SourceTag[]>([])
+const wizardTagIds = ref<number[]>([])
+const wizardTagSearch = ref('')
+const wizardTagLoading = ref(false)
+const wizardTagSaving = ref(false)
+let wizardTagRequest = 0
+
+const wizardSelectedTagSources = computed(() => {
+  const ids = flowMainStep.value === 0
+    ? selectedSourceIds.value
+    : flowMainStep.value === 1
+      ? step1Selection.value
+      : step3SourceSelection.value.map((row) => row.id)
+  return ids.map((id) => ({ id, name: backupSelectableById.value.get(id)?.name || id }))
+})
+
+const wizardTagOptions = computed(() => bulkTagOptions(
+  wizardTagAction.value, wizardTagCatalog.value,
+  wizardTagSourceRows.value.map((source) => source.id), wizardTagAssignments.value,
+))
+const filteredWizardTagOptions = computed(() => {
+  const query = wizardTagSearch.value.trim().toLocaleLowerCase()
+  if (!query) return wizardTagOptions.value
+  return wizardTagOptions.value.filter((tag) =>
+    `${tag.name} ${tag.description}`.toLocaleLowerCase().includes(query),
+  )
+})
+const wizardTagAffected = computed(() => countBulkTagChanges(
+  wizardTagAction.value, wizardTagSourceRows.value.map((source) => source.id),
+  wizardTagIds.value, wizardTagAssignments.value,
+))
+const wizardTagUnbindDisabled = computed(() => {
+  const selected = wizardSelectedTagSources.value
+  const assignments = Object.fromEntries(selected.flatMap((source) => {
+    const tags = backupSelectableById.value.get(source.id)?.tags
+    return tags ? [[source.id, tags]] : []
+  }))
+  return wizardTagSaving.value
+    || !canUnbindSelectedSources(selected.map((source) => source.id), assignments)
+})
+
+async function openWizardTagAction(action: 'add' | 'remove') {
+  const selected = wizardSelectedTagSources.value
+  if (!selected.length || wizardTagSaving.value) return
+  if (selected.some((source) => !/^(agent|nas):\d+$/.test(source.id))) {
+    ElMessage.warning({ message: t('protection.tags.invalidSelection'), grouping: true })
+    return
+  }
+  if (selected.length > 100) {
+    ElMessage.warning({ message: t('protection.tags.tooManySources'), grouping: true })
+    return
+  }
+  wizardTagAction.value = action
+  wizardTagSourceRows.value = [...selected]
+  wizardTagIds.value = []
+  wizardTagSearch.value = ''
+  wizardTagLoading.value = true
+  wizardTagActionOpen.value = true
+  const request = ++wizardTagRequest
+  try {
+    const [tags, assignments] = await Promise.all([
+      listSourceTags(),
+      listSourceTagAssignments(selected.map((source) => source.id)),
+    ])
+    if (!wizardTagActionOpen.value || request !== wizardTagRequest) return
+    wizardTagCatalog.value = tags
+    wizardTagAssignments.value = assignments
+    const refreshedSources = new Map(backupSelectableById.value)
+    for (const source of selected) {
+      const row = refreshedSources.get(source.id)
+      if (row) refreshedSources.set(source.id, { ...row, tags: assignments[source.id] || [] })
+    }
+    backupSelectableById.value = refreshedSources
+    if (action === 'remove' && !selected.some((source) => (assignments[source.id] || []).length)) {
+      wizardTagActionOpen.value = false
+      ElMessage.info({ message: t('protection.tags.noBoundTags'), grouping: true })
+    }
+  } catch (e) {
+    if (!wizardTagActionOpen.value || request !== wizardTagRequest) return
+    wizardTagActionOpen.value = false
+    showApiError(e)
+  } finally {
+    if (request === wizardTagRequest) wizardTagLoading.value = false
+  }
+}
+
+const wizardTagUnbindOpen = ref(false)
+
+async function saveWizardTagAction(confirmed = false) {
+  if (wizardTagSaving.value || wizardTagLoading.value || !wizardTagAffected.value) return
+  const sources = [...wizardTagSourceRows.value]
+  const action = wizardTagAction.value
+  const tagIds = [...wizardTagIds.value]
+  if (action === 'remove' && !confirmed) {
+    wizardTagUnbindOpen.value = true
+    return
+  }
+  wizardTagUnbindOpen.value = false
+  wizardTagSaving.value = true
+  try {
+    const result = await bulkUpdateSourceTags({
+      operation: action,
+      source_ids: sources.map((source) => source.id),
+      tag_ids: tagIds,
+    })
+    wizardTagActionOpen.value = false
+    ElMessage.success({
+      message: t('protection.tags.updatedAssociations', { n: action === 'add' ? result.added : result.removed }),
+      grouping: true,
+    })
+    selectedSourceIds.value = []
+    step1Selection.value = []
+    step3SourceSelection.value = []
+    sourceTableRef.value?.clearSelection()
+    step2TableRef.value?.clearSelection()
+    step3TableRef.value?.clearSelection()
+    cancelFlowStepRequests(flowMainStep.value)
+    await nextTick()
+    sourceTableRef.value?.clearSelection()
+    step2TableRef.value?.clearSelection()
+    step3TableRef.value?.clearSelection()
+    try {
+      await refreshTagFilterOptions()
+      await refreshFlowStepData()
+    } catch (e) {
+      showApiError(e)
+    }
+  } catch (e) {
+    showApiError(e)
+  } finally {
+    wizardTagSaving.value = false
+  }
+}
 let syncingStep3Selection = false
 
 const flowSourceDetailOpen = ref(false)
@@ -4417,8 +4620,19 @@ watch(
     step3BackupPolicyId.value,
     step3FileFilterRuleId.value,
     step3RepositoryId.value,
+    step3TagIds.value.join(','),
+    step3Untagged.value,
   ],
   () => {
+    if (flowMainStep.value === 0) {
+      selectedSourceIds.value = []
+      sourceTableRef.value?.clearSelection()
+    } else if (flowMainStep.value === 1) {
+      step1Selection.value = []
+      step2TableRef.value?.clearSelection()
+    } else {
+      void clearStep3TableSelection()
+    }
     if (flowMainStep.value === 0) {
       flowStep0Pager.page = 1
       void loadBackupSelectable()
@@ -5537,6 +5751,7 @@ function monitorPendingUnregister(
       await Promise.all([
         loadBackupSelectable({ silent: true }),
         refreshStep3AfterMoreAction({ preserveSelection: false }),
+        refreshTagFilterOptions(),
       ])
     } catch (err) {
       if (!pageRequests.isAbortError(err)) showApiError(err)
@@ -5916,12 +6131,14 @@ async function onBackupSourcesDeleted(payload: {
       await Promise.all([
         loadBackupSelectable({ silent: !!payload.pending_removals?.length }),
         refreshStep3AfterMoreAction({ preserveSelection: false }),
+        refreshTagFilterOptions(),
       ])
     } else {
       await Promise.all([
         loadBackupSelectable({ silent: !!payload.pending_removals?.length }),
         refreshPipelineCounts(),
         refreshBackupConfigs(),
+        refreshTagFilterOptions(),
       ])
     }
     if (payload.pending_removals?.length) {
@@ -10366,8 +10583,14 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                               :size="14"
                               class="shrink-0"
                             />
-                            <span>{{ t('protection.backupsPage.flowActionEditDisplayName') }}</span>
+                          <span>{{ t('protection.backupsPage.flowActionEditDisplayName') }}</span>
                           </span>
+                        </ElDropdownItem>
+                        <ElDropdownItem divided :disabled="!wizardSelectedTagSources.length || wizardTagSaving" @click="openWizardTagAction('add')">
+                          <span class="el-dropdown-menu__item-content"><Link2 :size="14" /><span>{{ t('protection.tags.bind') }}</span></span>
+                        </ElDropdownItem>
+                        <ElDropdownItem :disabled="wizardTagUnbindDisabled" @click="openWizardTagAction('remove')">
+                          <span class="el-dropdown-menu__item-content"><Unlink :size="14" /><span>{{ t('protection.tags.unbind') }}</span></span>
                         </ElDropdownItem>
                         <ElDropdownItem
                           divided
@@ -10428,6 +10651,12 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                             />
                             <span>{{ t('protection.backupsPage.flowActionEditDisplayName') }}</span>
                           </span>
+                        </ElDropdownItem>
+                        <ElDropdownItem divided :disabled="!wizardSelectedTagSources.length || wizardTagSaving" @click="openWizardTagAction('add')">
+                          <span class="el-dropdown-menu__item-content"><Link2 :size="14" /><span>{{ t('protection.tags.bind') }}</span></span>
+                        </ElDropdownItem>
+                        <ElDropdownItem :disabled="wizardTagUnbindDisabled" @click="openWizardTagAction('remove')">
+                          <span class="el-dropdown-menu__item-content"><Unlink :size="14" /><span>{{ t('protection.tags.unbind') }}</span></span>
                         </ElDropdownItem>
                         <ElDropdownItem
                           divided
@@ -10604,6 +10833,12 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                             <span>{{ t('protection.backupsPage.flowActionStopRestore') }}</span>
                           </span>
                         </ElDropdownItem>
+                        <ElDropdownItem divided :disabled="!wizardSelectedTagSources.length || wizardTagSaving" @click="openWizardTagAction('add')">
+                          <span class="el-dropdown-menu__item-content"><Link2 :size="14" /><span>{{ t('protection.tags.bind') }}</span></span>
+                        </ElDropdownItem>
+                        <ElDropdownItem :disabled="wizardTagUnbindDisabled" @click="openWizardTagAction('remove')">
+                          <span class="el-dropdown-menu__item-content"><Unlink :size="14" /><span>{{ t('protection.tags.unbind') }}</span></span>
+                        </ElDropdownItem>
                         <ElDropdownItem
                           divided
                           class="el-dropdown-menu__item--danger"
@@ -10721,6 +10956,140 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   />
                 </ElSelect>
                 <div class="hfl-list-toolbar__utility">
+                  <HflPopover
+                    v-model:visible="tagFilterOpen"
+                    trigger="click"
+                    placement="bottom-end"
+                    :width="300"
+                    popper-class="source-tag-filter-popper"
+                    @show="openTagFilter"
+                  >
+                    <template #reference>
+                      <ElButton
+                        class="source-tag-filter-trigger"
+                        :class="{ 'source-tag-filter-trigger--active': step3TagIds.length || step3Untagged }"
+                        :aria-label="t('protection.tags.filter')"
+                        :title="t('protection.tags.filter')"
+                      >
+                        <ElBadge
+                          v-if="step3TagIds.length || step3Untagged"
+                          :value="step3TagIds.length + Number(step3Untagged)"
+                          :max="9"
+                          class="source-tag-filter-badge"
+                        >
+                          <Tag :size="16" />
+                        </ElBadge>
+                        <Tag v-else :size="16" />
+                      </ElButton>
+                    </template>
+                    <div class="source-tag-filter-panel">
+                      <div class="source-tag-filter-search">
+                        <ElInput
+                          v-model="tagFilterSearch"
+                          size="small"
+                          clearable
+                          :placeholder="t('protection.tags.filter')"
+                        />
+                        <HflHelpTip
+                          :aria-label="t('protection.tags.filterHelp')"
+                          placement="top"
+                          :size="16"
+                        >
+                          <template #content>
+                            <div class="source-tag-filter-help">
+                              <div class="source-tag-filter-help__section">
+                                <strong>{{ t('protection.tags.filterRulesTitle') }}</strong>
+                                <p>{{ t('protection.tags.filterAnyHint') }}</p>
+                                <p>{{ t('protection.tags.filterUntaggedHint') }}</p>
+                                <p>{{ t('protection.tags.filterOtherConditionsHint') }}</p>
+                              </div>
+                              <div class="source-tag-filter-help__section">
+                                <strong>{{ t('protection.tags.filterCountsTitle') }}</strong>
+                                <p>{{ t('protection.tags.filterCountScope') }}</p>
+                                <p>{{ t('protection.tags.filterCountUnfilteredHint') }}</p>
+                              </div>
+                            </div>
+                          </template>
+                        </HflHelpTip>
+                      </div>
+                      <div
+                        v-loading="tagFilterLoading"
+                        class="source-tag-filter-options"
+                        :aria-busy="tagFilterLoading"
+                      >
+                        <ElAlert
+                          v-if="tagFilterError"
+                          :title="t('errors.pageLoad.loadFailed.title')"
+                          type="error"
+                          :closable="false"
+                          show-icon
+                        >
+                          <ElButton
+                            :disabled="tagFilterLoading"
+                            @click="refreshTagFilterOptions"
+                          >
+                            {{ t('common.retry') }}
+                          </ElButton>
+                        </ElAlert>
+                        <template v-else>
+                          <div class="source-tag-picker__row">
+                            <ElCheckbox
+                              :model-value="tagFilterDraftUntagged"
+                              :aria-label="t('protection.tags.untagged')"
+                              :disabled="tagFilterLoading"
+                              @change="onTagFilterUntaggedChange"
+                            />
+                            <span class="source-tag-filter-label">{{ t('protection.tags.untagged') }}</span>
+                            <span class="source-tag-filter-count">{{ untaggedSourceCount }}</span>
+                          </div>
+                          <ElCheckboxGroup
+                            :model-value="tagFilterDraftIds"
+                            :disabled="tagFilterLoading"
+                            :max="SOURCE_TAG_FILTER_LIMIT"
+                            @change="onTagFilterDraftChange"
+                          >
+                            <div
+                              v-for="tag in filteredTagFilterOptions"
+                              :key="tag.id"
+                              class="source-tag-picker__row"
+                            >
+                              <ElCheckbox
+                                :value="tag.id"
+                                :aria-label="tag.name"
+                                :disabled="tagFilterDraftIds.length >= SOURCE_TAG_FILTER_LIMIT && !tagFilterDraftIds.includes(tag.id)"
+                              />
+                              <SourceTagBadge
+                                :tag="tag"
+                                :interactive="false"
+                                :show-icon="false"
+                              />
+                              <span class="source-tag-filter-count">{{ tag.source_count || 0 }}</span>
+                            </div>
+                          </ElCheckboxGroup>
+                          <ElEmpty
+                            v-if="!tagFilterLoading && !filteredTagFilterOptions.length"
+                            :description="t('protection.tags.noMatchingTags')"
+                            :image-size="48"
+                          />
+                        </template>
+                      </div>
+                      <div class="source-tag-filter-footer">
+                        <span>{{ t('protection.tags.selectedCount', { n: tagFilterDraftIds.length + Number(tagFilterDraftUntagged) }) }}</span>
+                        <div>
+                          <ElButton text size="small" @click="clearTagFilterDraft">{{ t('protection.backupsPage.flowFilterReset') }}</ElButton>
+                          <ElButton
+                            type="primary"
+                            text
+                            size="small"
+                            :disabled="tagFilterLoading || tagFilterError || tagFilterDraftIds.length > SOURCE_TAG_FILTER_LIMIT"
+                            @click="applyTagFilter"
+                          >
+                            {{ t('protection.backupsPage.flowFilterApply') }}
+                          </ElButton>
+                        </div>
+                      </div>
+                    </div>
+                  </HflPopover>
                   <ElButton
                     :title="t('protection.backupsPage.flowFilterAdvanced')"
                     class="hfl-filter-button"
@@ -10947,6 +11316,14 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         <span v-else class="hfl-empty-mark">—</span>
                       </template>
                     </el-table-column>
+                    <el-table-column :label="t('protection.tags.column')" min-width="150">
+                      <template #default="{ row }">
+                        <div class="hfl-table-no-tooltip source-tag-list">
+                          <SourceTagBadge v-for="tag in row.tags || []" :key="tag.id" :tag="tag" :show-icon="false" />
+                          <span v-if="!row.tags?.length">—</span>
+                        </div>
+                      </template>
+                    </el-table-column>
                     <el-table-column
                       :label="t('protection.sourceResources.colRegisteredAt')"
                       width="154"
@@ -11171,6 +11548,14 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           :format-bytes="formatNodeBytes"
                         />
                         <span v-else class="hfl-empty-mark">—</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column :label="t('protection.tags.column')" min-width="150">
+                      <template #default="{ row }">
+                        <div class="hfl-table-no-tooltip source-tag-list">
+                          <SourceTagBadge v-for="tag in row.tags || []" :key="tag.id" :tag="tag" :show-icon="false" />
+                          <span v-if="!row.tags?.length">—</span>
+                        </div>
                       </template>
                     </el-table-column>
                     <el-table-column
@@ -12030,6 +12415,19 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                             />
                             {{ t('protection.backupsPage.flowBackupColPolicyNone') }}
                           </span>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column :label="t('protection.tags.column')" min-width="145">
+                      <template #default="{ row }">
+                        <div class="hfl-table-no-tooltip source-tag-list">
+                          <SourceTagBadge
+                            v-for="tag in row.tags || []"
+                            :key="tag.id"
+                            :tag="tag"
+                            :show-icon="false"
+                          />
+                          <span v-if="!row.tags?.length">—</span>
                         </div>
                       </template>
                     </el-table-column>
@@ -15077,6 +15475,50 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
         </div>
       </div>
     </Teleport>
+    <DangerConfirmDialog
+      v-model="wizardTagUnbindOpen"
+      :title="t('protection.tags.unbind')"
+      :message="t('protection.tags.unbindConfirm', { sources: wizardTagSourceRows.length, associations: wizardTagAffected })"
+      :warning="t('protection.tags.unbindPreservesHint')"
+      :cancel-text="t('common.cancel')"
+      :confirm-text="t('protection.tags.unbind')"
+      :loading="wizardTagSaving"
+      :confirm-disabled="wizardTagLoading || !wizardTagAffected"
+      level="low"
+      @confirm="saveWizardTagAction(true)"
+      @cancel="wizardTagUnbindOpen = false"
+    />
+    <el-dialog
+      v-model="wizardTagActionOpen"
+      :title="t(wizardTagAction === 'add' ? 'protection.tags.bind' : 'protection.tags.unbind')"
+      width="520px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="!wizardTagSaving"
+      :show-close="!wizardTagSaving"
+    >
+      <SourceTagActionContent
+        v-model:ids="wizardTagIds"
+        v-model:search="wizardTagSearch"
+        :sources="wizardTagSourceRows"
+        :options="filteredWizardTagOptions"
+        :operation="wizardTagAction"
+        :affected="wizardTagAffected"
+        :loading="wizardTagLoading"
+        :saving="wizardTagSaving"
+        wizard
+      />
+      <template #footer>
+        <ElButton :disabled="wizardTagSaving" @click="wizardTagActionOpen = false">{{ t('common.cancel') }}</ElButton>
+        <ElButton
+          type="primary"
+          :loading="wizardTagSaving"
+          :disabled="wizardTagLoading || !wizardTagAffected"
+          @click="saveWizardTagAction()"
+        >
+          {{ t(wizardTagAction === 'add' ? 'protection.tags.bind' : 'protection.tags.unbind') }}
+        </ElButton>
+      </template>
+    </el-dialog>
   </ModulePage>
 </template>
 

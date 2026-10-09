@@ -11,6 +11,11 @@ const dataGatewaysPage = readFileSync(resolve(process.cwd(), 'src/pages/insight/
 const dataProtectionPage = readFileSync(resolve(process.cwd(), 'src/pages/protection/DataProtection.vue'), 'utf8')
 
 describe('responsive list toolbar controls', () => {
+  it('uses equal 34px square targets for filter and refresh toolbar icons', () => {
+    expect(styles).toMatch(/\.hfl-refresh-button\.el-button,[\s\S]*?width:\s*34px;[\s\S]*?height:\s*34px;/)
+    expect(styles).toMatch(/\.hfl-filter-button\.el-button,[\s\S]*?width:\s*34px;[\s\S]*?height:\s*34px;/)
+  })
+
   it('leaves text input line height to Element Plus while preserving control height', () => {
     const inputInnerRule = tableStyles.match(/(?:^|\n)\.el-input__inner\s*{([^}]*)}/s)?.[1]
 

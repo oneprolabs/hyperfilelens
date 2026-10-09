@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Route, CalendarDays, HardDrive, Cloud, Filter } from 'lucide-vue-next'
+import { Route, CalendarDays, HardDrive, Cloud, Filter, Tags } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 import { sourceAgentSidebarIcon, targetNasSidebarIcon } from '../lib/resourceIcons'
 import { sourceHostIcon, sourceNasIcon } from '../lib/sourceTypeIcons'
@@ -35,6 +35,7 @@ export function useProtectionSideNav() {
           pageTitle: t('protection.side.sourceAgents'),
           icon: sourceAgentSidebarIcon,
         },
+        { label: t('protection.side.sourceTags'), to: '/protection/source-tags', icon: Tags },
       ],
     },
     {

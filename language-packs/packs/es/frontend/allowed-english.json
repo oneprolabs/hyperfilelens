@@ -280,6 +280,7 @@
   "protection.sourceResources.uptimeDay",
   "protection.sourceResources.uptimeHour",
   "protection.sourceResources.uptimeMinute",
+  "protection.tags.color",
   "protection.taskProgress.bytesCapacity",
   "register.sendCodeCountdown",
   "repairNasRepo.nodeRoleAgent",

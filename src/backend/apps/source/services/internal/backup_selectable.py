@@ -1287,11 +1287,39 @@ def _pipeline_queryset(
     backup_policy_id: int | None,
     file_filter_rule_id: int | None,
     repository_id: int | None,
+    tag_id: int | None = None,
+    tag_ids: list[int] | None = None,
+    untagged: bool = False,
+    allowed_source_ids: dict[str, list[int]] | None = None,
 ) -> QuerySet[SourceBackupPipelineEntry]:
     queryset = SourceBackupPipelineEntry.objects.filter(
         organization_id=organization_id,
         is_deleted=False,
     )
+    effective_tag_ids = list(dict.fromkeys([*(tag_ids or []), *([tag_id] if tag_id is not None else [])]))
+    if effective_tag_ids or untagged:
+        from apps.source.models import SourceTagAssignment
+
+        assignment_query = SourceTagAssignment.objects.filter(
+            organization_id=organization_id,
+            source_kind=OuterRef("source_kind"),
+            ref_id=OuterRef("ref_id"),
+        )
+        matching_selected_tag = Exists(
+            assignment_query.filter(tag_id__in=effective_tag_ids)
+        ) if effective_tag_ids else None
+        has_any_tag = Exists(assignment_query)
+        if untagged and matching_selected_tag is not None:
+            queryset = queryset.filter(Q(matching_selected_tag) | ~Q(has_any_tag))
+        elif untagged:
+            queryset = queryset.filter(~has_any_tag)
+        elif matching_selected_tag is not None:
+            queryset = queryset.filter(matching_selected_tag)
+    if allowed_source_ids is not None:
+        queryset = queryset.filter(
+            Q(source_kind="agent", ref_id__in=allowed_source_ids["agent"])
+            | Q(source_kind="nas", ref_id__in=allowed_source_ids["nas"])
+        )
     if pipeline_step in PipelineStep.VALID:
         queryset = queryset.filter(step=pipeline_step)
     if source_type:
@@ -1500,6 +1528,38 @@ def _list_legacy_backup_selectable_sources(
     items = _build_catalog(organization_id=organization_id)
     pipeline_map = load_pipeline_step_map(organization_id=organization_id)
     items = attach_pipeline_steps(items, pipeline_map=pipeline_map)
+    if filters.get("allowed_source_ids") is not None:
+        allowed = filters["allowed_source_ids"]
+        items = [item for item in items if item["ref_id"] in allowed.get(item["kind"], [])]
+    effective_tag_ids = list(dict.fromkeys([
+        *(filters.get("tag_ids") or []),
+        *([filters["tag_id"]] if filters.get("tag_id") is not None else []),
+    ]))
+    if effective_tag_ids or filters.get("untagged"):
+        from apps.source.models import SourceTagAssignment
+
+        matching_rows = list(SourceTagAssignment.objects.filter(
+            organization_id=organization_id,
+            tag_id__in=effective_tag_ids,
+        ).values_list("tag_id", "source_kind", "ref_id"))
+        matching = {
+            _source_key(kind, ref_id)
+            for _, kind, ref_id in matching_rows
+        }
+        if filters.get("untagged"):
+            any_tagged_sources = {
+                _source_key(kind, ref_id)
+                for kind, ref_id in SourceTagAssignment.objects.filter(
+                    organization_id=organization_id,
+                ).values_list("source_kind", "ref_id")
+            }
+            untagged_sources = {
+                str(item["id"]) for item in items
+                if item["kind"] in ("agent", "nas")
+                and str(item["id"]) not in any_tagged_sources
+            }
+            matching |= untagged_sources
+        items = [item for item in items if str(item["id"]) in matching]
 
     if pipeline_step is not None and pipeline_step in PipelineStep.VALID:
         if pipeline_step == PipelineStep.READY:
@@ -1596,6 +1656,10 @@ def list_backup_selectable_sources(
     backup_policy_id: int | None = None,
     file_filter_rule_id: int | None = None,
     repository_id: int | None = None,
+    tag_id: int | None = None,
+    tag_ids: list[int] | None = None,
+    untagged: bool = False,
+    allowed_source_ids: dict[str, list[int]] | None = None,
     expand: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     page = max(1, page)
@@ -1620,6 +1684,10 @@ def list_backup_selectable_sources(
         "backup_policy_id": backup_policy_id,
         "file_filter_rule_id": file_filter_rule_id,
         "repository_id": repository_id,
+        "tag_id": tag_id,
+        "tag_ids": tag_ids,
+        "untagged": untagged,
+        "allowed_source_ids": allowed_source_ids,
     }
     mode = _query_mode()
     BACKUP_SELECTABLE_QUERY_REQUESTS.labels(mode=mode).inc()

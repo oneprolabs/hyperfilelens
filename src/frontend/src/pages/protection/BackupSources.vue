@@ -3,7 +3,7 @@ import '../../styles/fullscreen-form-styles'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, toRef, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Plus, RefreshCw, Search, ChevronDown, Pencil, Trash2, TriangleAlert, ArrowUpCircle, Link2, Wrench } from 'lucide-vue-next'
+import { ArrowLeft, Plus, RefreshCw, Search, ChevronDown, Pencil, Trash2, TriangleAlert, ArrowUpCircle, Link2, Unlink, Wrench } from 'lucide-vue-next'
 import { ElMessage, ElTooltip, type ElTable } from 'element-plus'
 import ModulePage from '../../components/ModulePage.vue'
 import BackupSourceDeleteDialog from '../../components/BackupSourceDeleteDialog.vue'
@@ -25,6 +25,9 @@ import NodeLifecycleWizard from '../../components/NodeLifecycleWizard.vue'
 import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformBrandIcon.vue'
 import HostSourceDetailDrawer from '../../components/HostSourceDetailDrawer.vue'
 import HflCapacityCell from '../../components/HflCapacityCell.vue'
+import SourceTagBadge from '../../components/SourceTagBadge.vue'
+import SourceTagActionContent from '../../components/SourceTagActionContent.vue'
+import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import HflHelpTip from '../../components/HflHelpTip.vue'
 import NasAddForm from './components/NasAddForm.vue'
 import NasSourceDetailDrawer from './components/NasSourceDetailDrawer.vue'
@@ -35,11 +38,12 @@ import { useListSearch } from '../../composables/useListSearch'
 import { sourceAgentSidebarIcon, nasMountProtocolIcon } from '../../lib/resourceIcons'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { getEffectiveOrgKey } from '../../composables/useAuth'
+import { applyBulkTagChanges, bulkTagOptions, canUnbindSelectedSources, countBulkTagChanges } from '../../lib/sourceTagBulk'
 import { apiErrorMessage, isAbortError } from '../../lib/api'
 import { formatAppDateTime } from '../../lib/dateTime'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import { openErrorDetails, type ErrorDetailsPayload, type ErrorEntity } from '../../lib/errors/details'
-import { notifyInfo, notifySuccess } from '../../lib/notify'
+import { notifyInfo, notifySuccess, notifyWarning } from '../../lib/notify'
 import { getTask, type TaskErrorContract } from '../../lib/taskApi'
 import {
   sourceUnregisterPendingKind,
@@ -80,6 +84,7 @@ import {
   type SourceResource,
   type SourceStats,
 } from '../../lib/sourceApi'
+import { bulkUpdateSourceTags, listSourceTagAssignments, listSourceTags, type SourceTag } from '../../lib/sourceApi'
 import {
   nasMountProtocol,
   nasPathKindLabelKey,
@@ -136,6 +141,120 @@ const rows = ref<SourceResource[]>([])
 const latestAgentVersion = ref<string | null>(null)
 const stats = ref<SourceStats | null>(null)
 const agentNodes = ref<ApiNode[]>([])
+const tagCatalog = ref<SourceTag[]>([])
+const sourceTags = ref<Record<string, SourceTag[]>>({})
+const tagAction = ref<'add' | 'remove'>('add')
+const tagActionOpen = ref(false)
+const tagActionLoading = ref(false)
+const tagActionIds = ref<number[]>([])
+const tagActionSearch = ref('')
+const tagActionSources = ref<Array<{ id: string; name: string }>>([])
+const tagActionAssignments = ref<Record<string, SourceTag[]>>({})
+const tagSaving = ref(false)
+let tagsRequest = 0
+let tagActionRequest = 0
+
+const tagActionOptions = computed(() => bulkTagOptions(
+  tagAction.value, tagCatalog.value, tagActionSources.value.map((source) => source.id), tagActionAssignments.value,
+))
+const filteredTagActionOptions = computed(() => {
+  const query = tagActionSearch.value.trim().toLocaleLowerCase()
+  if (!query) return tagActionOptions.value
+  return tagActionOptions.value.filter((tag) =>
+    `${tag.name} ${tag.description}`.toLocaleLowerCase().includes(query),
+  )
+})
+const tagActionAffected = computed(() => countBulkTagChanges(
+  tagAction.value, tagActionSources.value.map((source) => source.id), tagActionIds.value, tagActionAssignments.value,
+))
+const hostTagUnbindDisabled = computed(() =>
+  hostBatchDisabled.value || tagSaving.value || busy.value
+  || !canUnbindSelectedSources(selectedHostAgents.value.map(hostSelectableId), sourceTags.value),
+)
+const nasTagUnbindDisabled = computed(() =>
+  nasBatchDisabled.value || tagSaving.value || busy.value
+  || !canUnbindSelectedSources(selectedNas.value.map(nasSelectableId), sourceTags.value),
+)
+
+async function openTagAction(action: 'add' | 'remove') {
+  const selected = activeTab.value === 'hostFileSystem'
+    ? selectedHostAgents.value.map((node) => ({ id: hostSelectableId(node), name: node.name }))
+    : selectedNas.value.map((row) => ({ id: nasSelectableId(row), name: row.name }))
+  if (!selected.length || tagSaving.value) return
+  if (selected.length > 100) {
+    notifyWarning(t('protection.tags.tooManySources'))
+    return
+  }
+  tagAction.value = action
+  tagActionSources.value = selected
+  tagActionIds.value = []
+  tagActionSearch.value = ''
+  tagActionLoading.value = true
+  tagActionOpen.value = true
+  const request = ++tagActionRequest
+  try {
+    const [catalog, assignments] = await Promise.all([
+      listSourceTags(),
+      listSourceTagAssignments(selected.map((source) => source.id)),
+    ])
+    if (!tagActionOpen.value || request !== tagActionRequest) return
+    tagCatalog.value = catalog
+    tagActionAssignments.value = assignments
+    sourceTags.value = { ...sourceTags.value, ...assignments }
+    if (action === 'remove' && !selected.some((source) => (assignments[source.id] || []).length)) {
+      tagActionOpen.value = false
+      notifyInfo(t('protection.tags.noBoundTags'))
+    }
+  } catch (e) {
+    if (request !== tagActionRequest || !tagActionOpen.value) return
+    tagActionOpen.value = false
+    ElMessage.error(apiErrorMessage(e, t('errors.pageLoad.loadFailed.title')))
+  } finally {
+    if (request === tagActionRequest) tagActionLoading.value = false
+  }
+}
+
+const tagUnbindOpen = ref(false)
+
+async function saveTagAction(confirmed = false) {
+  if (tagSaving.value || tagActionLoading.value || !tagActionAffected.value) return
+  const sources = [...tagActionSources.value]
+  const action = tagAction.value
+  const tagIds = [...tagActionIds.value]
+  if (action === 'remove' && !confirmed) {
+    tagUnbindOpen.value = true
+    return
+  }
+  tagUnbindOpen.value = false
+  tagSaving.value = true
+  try {
+    const outcome = await bulkUpdateSourceTags({
+      operation: action,
+      source_ids: sources.map((source) => source.id),
+      tag_ids: tagIds,
+    })
+    tagActionOpen.value = false
+    if (activeTab.value === 'hostFileSystem') clearHostTableSelection()
+    else clearNasTableSelection()
+    const updatedTags = applyBulkTagChanges(
+      action, sources.map((source) => source.id), tagIds, tagActionAssignments.value, tagCatalog.value,
+    )
+    sourceTags.value = { ...sourceTags.value, ...updatedTags }
+    try {
+      sourceTags.value = {
+        ...sourceTags.value,
+        ...await listSourceTagAssignments(sources.map((source) => source.id)),
+      }
+    } catch {
+      // Keep the local incremental result until the next successful refresh.
+    }
+    notifySuccess(t('protection.tags.updatedAssociations', { n: action === 'add' ? outcome.added : outcome.removed }))
+  } catch (e) {
+    ElMessage.error(apiErrorMessage(e, t('errors.pageLoad.loadFailed.title')))
+  } finally {
+    tagSaving.value = false
+  }
+}
 /** Published agent release from media/agent-releases (upgrade target). */
 /** Local source rows keyed by agent node — enrichment only (capacity), not host list data. */
 const hostSourceRows = ref<SourceResource[]>([])
@@ -215,6 +334,24 @@ const filteredHostAgents = computed(() => {
 const pagedHostAgents = computed(() => {
   return filteredHostAgents.value
 })
+
+async function refreshSourceTagRows(ids: string[]) {
+  const request = ++tagsRequest
+  if (!ids.length) return
+  try {
+    const chunks = await Promise.all(Array.from({ length: Math.ceil(ids.length / 100) }, (_, index) =>
+      listSourceTagAssignments(ids.slice(index * 100, (index + 1) * 100))))
+    if (request === tagsRequest) sourceTags.value = { ...sourceTags.value, ...Object.assign({}, ...chunks) }
+  } catch (e) {
+    if (request === tagsRequest) {
+      ElMessage.error({ message: apiErrorMessage(e, t('errors.pageLoad.loadFailed.title')), grouping: true })
+    }
+  }
+}
+
+watch(() => [...pagedHostAgents.value.map((row) => hostSelectableId(row)), ...nasRows.value.map((row) => nasSelectableId(row))].join(','), (keys) => {
+  void refreshSourceTagRows(keys.split(',').filter(Boolean))
+}, { immediate: true })
 
 /* ---------- edit / detail ---------- */
 const dialogOpen = ref(false)
@@ -585,9 +722,11 @@ async function load() {
   try {
     if (loadingTab === 'hostFileSystem') {
       await loadHostTab(signal)
+      await refreshSourceTagRows(agentNodes.value.map(hostSelectableId))
       return
     }
     await loadNasTab(signal)
+    await refreshSourceTagRows(nasRows.value.map(nasSelectableId))
   } catch (e) {
     if (pageRequests.isAbortError(e)) return
     pagination.page = 1
@@ -2194,6 +2333,31 @@ onUnmounted(() => {
                 </ElDropdownItem>
                 <ElDropdownItem
                   divided
+                  :disabled="hostBatchDisabled || tagSaving || busy"
+                  @click="openTagAction('add')"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Link2
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('protection.tags.bind') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  :disabled="hostTagUnbindDisabled"
+                  @click="openTagAction('remove')"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Unlink
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('protection.tags.unbind') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  divided
                   class="el-dropdown-menu__item--danger"
                   :disabled="hostDeleteDisabled"
                   @click="onRemoveSelectedHosts()"
@@ -2261,6 +2425,31 @@ onUnmounted(() => {
                       class="shrink-0"
                     />
                     <span>{{ t('protection.sourceResources.testConnection') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  divided
+                  :disabled="nasBatchDisabled || tagSaving || busy"
+                  @click="openTagAction('add')"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Link2
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('protection.tags.bind') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem
+                  :disabled="nasTagUnbindDisabled"
+                  @click="openTagAction('remove')"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <Unlink
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('protection.tags.unbind') }}</span>
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
@@ -2378,7 +2567,7 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column
               :label="t('protection.sourceResources.colLifecycleStatus')"
-              min-width="155"
+              min-width="130"
               align="center"
               header-align="center"
             >
@@ -2407,7 +2596,7 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column
               label="OS"
-              min-width="105"
+              min-width="95"
             >
               <template #default="{ row }">
                 <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
@@ -2436,7 +2625,7 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column
               :label="t('protection.sourceResources.colDiskCount')"
-              min-width="78"
+              min-width="74"
             >
               <template #default="{ row }">
                 <span :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }">{{ nodeDiskCount(row) ?? '—' }}</span>
@@ -2444,7 +2633,7 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column
               :label="t('protection.sourceResources.colCapacity')"
-              min-width="170"
+              min-width="140"
             >
               <template #default="{ row }">
                 <HflCapacityCell
@@ -2457,7 +2646,7 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column
               :label="t('protection.sourceResources.colConnectivity')"
-              min-width="110"
+              min-width="95"
               align="center"
               header-align="center"
             >
@@ -2486,9 +2675,22 @@ onUnmounted(() => {
                 />
               </template>
             </el-table-column>
+            <el-table-column :label="t('protection.tags.column')" min-width="130">
+              <template #default="{ row }">
+                <div class="hfl-table-no-tooltip source-tag-list">
+                  <SourceTagBadge
+                    v-for="tag in sourceTags[hostSelectableId(row)] || []"
+                    :key="tag.id"
+                    :tag="tag"
+                    :show-icon="false"
+                  />
+                  <span v-if="!(sourceTags[hostSelectableId(row)] || []).length">—</span>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column
               :label="t('protection.sourceResources.colRegisteredAt')"
-              min-width="145"
+              min-width="130"
             >
               <template #default="{ row }">
                 <span
@@ -2549,7 +2751,7 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column
               :label="t('protection.sourceResources.colLifecycleStatus')"
-              min-width="165"
+              min-width="130"
               align="center"
               header-align="center"
             >
@@ -2644,7 +2846,7 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column
               :label="t('protection.sourceResources.colProxyMountPoint')"
-              min-width="165"
+              min-width="130"
             >
               <template #default="{ row }">
                 <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ nasProxyMountPoint(row) }}</span>
@@ -2652,7 +2854,7 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column
               :label="t('protection.sourceResources.colCapacity')"
-              min-width="170"
+              min-width="140"
             >
               <template #default="{ row }">
                 <HflCapacityCell
@@ -2676,7 +2878,7 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column
               :label="t('protection.sourceResources.colConnectivity')"
-              min-width="110"
+              min-width="95"
               align="center"
               header-align="center"
             >
@@ -2691,9 +2893,22 @@ onUnmounted(() => {
                 </div>
               </template>
             </el-table-column>
+            <el-table-column :label="t('protection.tags.column')" min-width="130">
+              <template #default="{ row }">
+                <div class="hfl-table-no-tooltip source-tag-list">
+                  <SourceTagBadge
+                    v-for="tag in sourceTags[nasSelectableId(row)] || []"
+                    :key="tag.id"
+                    :tag="tag"
+                    :show-icon="false"
+                  />
+                  <span v-if="!(sourceTags[nasSelectableId(row)] || []).length">—</span>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column
               :label="t('protection.sourceResources.colRegisteredAt')"
-              min-width="145"
+              min-width="130"
             >
               <template #default="{ row }">
                 <span
@@ -3207,6 +3422,49 @@ onUnmounted(() => {
       @confirm="lifecycleOps.resolveUpgradeConfirm()"
       @cancel="lifecycleOps.cancelUpgradeConfirm()"
     />
+    <DangerConfirmDialog
+      v-model="tagUnbindOpen"
+      :title="t('protection.tags.unbind')"
+      :message="t('protection.tags.unbindConfirm', { sources: tagActionSources.length, associations: tagActionAffected })"
+      :warning="t('protection.tags.unbindPreservesHint')"
+      :cancel-text="t('common.cancel')"
+      :confirm-text="t('protection.tags.unbind')"
+      :loading="tagSaving"
+      :confirm-disabled="tagActionLoading || !tagActionAffected"
+      level="low"
+      @confirm="saveTagAction(true)"
+      @cancel="tagUnbindOpen = false"
+    />
+    <el-dialog
+      v-model="tagActionOpen"
+      :title="t(tagAction === 'add' ? 'protection.tags.bind' : 'protection.tags.unbind')"
+      width="520px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="!tagSaving"
+      :show-close="!tagSaving"
+    >
+      <SourceTagActionContent
+        v-model:ids="tagActionIds"
+        v-model:search="tagActionSearch"
+        :sources="tagActionSources"
+        :options="filteredTagActionOptions"
+        :operation="tagAction"
+        :affected="tagActionAffected"
+        :loading="tagActionLoading"
+        :saving="tagSaving"
+      />
+      <template #footer>
+        <ElButton :disabled="tagSaving" @click="tagActionOpen = false">{{ t('common.cancel') }}</ElButton>
+        <ElButton
+          type="primary"
+          :loading="tagSaving"
+          :disabled="tagActionLoading || !tagActionAffected"
+          @click="saveTagAction()"
+        >
+          {{ t(tagAction === 'add' ? 'protection.tags.bind' : 'protection.tags.unbind') }}
+        </ElButton>
+      </template>
+    </el-dialog>
   </ModulePage>
 </template>
 

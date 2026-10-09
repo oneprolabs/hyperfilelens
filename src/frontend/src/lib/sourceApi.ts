@@ -5,6 +5,7 @@ import type { BackupConfigDetail } from './protectionBackupConfigApi'
 import type { BackupPolicy, FileFilterRule } from './protectionPolicyApi'
 import type { NodeInstallationMode } from '../types/node'
 import type { TaskErrorContract } from './taskApi'
+import type { SourceTagColor } from './sourceTagColor'
 
 export const SOURCE_DEREGISTER_CONFIRMATION = 'DEREGISTER'
 export const SOURCE_FORCE_DEREGISTER_CONFIRMATION = 'FORCE DEREGISTER'
@@ -118,6 +119,7 @@ export type ProductionSourceSummary = ProductionSourceSummaryPart & {
 /** Unified backup wizard catalog item (agent + NAS). */
 export type BackupSelectableSource = {
   id: string
+  tags?: SourceTag[]
   kind: 'agent' | 'nas'
   ref_id: number
   type: 'host' | 'nas'
@@ -192,6 +194,9 @@ export type BackupSelectableQueryParams = {
   backup_policy_id?: number
   file_filter_rule_id?: number
   repository_id?: number
+  tag_id?: number
+  tag_ids?: number[]
+  untagged?: boolean
   exclude?: string
   ids?: string
   step?: BackupPipelineStep
@@ -244,6 +249,111 @@ export type BackupSourceDirectoryCreatePayload = {
 
 const base = '/api/v1/source/resources'
 const backupSelectableBase = '/api/v1/source/backup-selectable'
+const tagsBase = '/api/v1/source/tags'
+
+export type SourceTag = {
+  id: number
+  name: string
+  description: string
+  color: SourceTagColor
+  created_at?: string
+  source_count?: number
+}
+
+export type SourceTagInput = Pick<SourceTag, 'name' | 'description' | 'color'>
+
+export async function listSourceTags(init?: RequestInit): Promise<SourceTag[]> {
+  const data = unwrapApiPayload<{ results: SourceTag[] }>(
+    await api<unknown>(`${tagsBase}/`, { ...init, headers: orgHeaders() }),
+  )
+  return data.results
+}
+
+export async function listSourceTagFilterOptions(init?: RequestInit): Promise<{
+  tags: SourceTag[]
+  untaggedSourceCount: number
+}> {
+  const data = unwrapApiPayload<{
+    results: SourceTag[]
+    untagged_source_count?: number
+  }>(await api<unknown>(`${tagsBase}/`, { ...init, headers: orgHeaders() }))
+  return {
+    tags: data.results,
+    untaggedSourceCount: data.untagged_source_count || 0,
+  }
+}
+
+export async function createSourceTag(input: SourceTagInput): Promise<SourceTag> {
+  return unwrapApiPayload<SourceTag>(await api<unknown>(`${tagsBase}/`, {
+    method: 'POST', body: JSON.stringify(input), headers: orgHeaders(),
+  }))
+}
+
+export async function updateSourceTag(id: number, input: SourceTagInput): Promise<SourceTag> {
+  return unwrapApiPayload<SourceTag>(await api<unknown>(`${tagsBase}/${id}/`, {
+    method: 'PATCH', body: JSON.stringify(input), headers: orgHeaders(),
+  }))
+}
+
+export async function deleteSourceTag(id: number): Promise<void> {
+  await api<unknown>(`${tagsBase}/${id}/`, { method: 'DELETE', headers: orgHeaders() })
+}
+
+export async function getSourceTagsForSource(kind: 'agent' | 'nas', id: number): Promise<SourceTag[]> {
+  const data = unwrapApiPayload<{ results: SourceTag[] }>(
+    await api<unknown>(`${tagsBase}/sources/${kind}/${id}/`, { headers: orgHeaders() }),
+  )
+  return data.results
+}
+
+export async function listSourceTagAssignments(ids: string[], init?: RequestInit): Promise<Record<string, SourceTag[]>> {
+  const data = unwrapApiPayload<{ results: Record<string, SourceTag[]> }>(
+    await api<unknown>(`${tagsBase}/assignments/?ids=${encodeURIComponent(ids.join(','))}`, {
+      ...init, headers: orgHeaders(),
+    }),
+  )
+  return data.results
+}
+
+export async function bulkUpdateSourceTags(input: {
+  operation: 'add' | 'remove'
+  source_ids: string[]
+  tag_ids: number[]
+}): Promise<{ sources: number; added: number; removed: number }> {
+  return unwrapApiPayload(await api<unknown>(`${tagsBase}/assignments/bulk/`, {
+    method: 'POST', body: JSON.stringify(input), headers: orgHeaders(),
+  }))
+}
+
+export type TaggedSource = {
+  id: string
+  name: string
+  type: 'host' | 'nas'
+  availability: 'online' | 'offline'
+}
+
+export async function listSourcesForTag(
+  tagId: number,
+  params: { page: number; page_size: number; search?: string },
+  init?: RequestInit,
+): Promise<{ count: number; results: TaggedSource[] }> {
+  const qs = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') qs.set(key, String(value))
+  }
+  return paged<TaggedSource>(await api<unknown>(
+    `${tagsBase}/${tagId}/sources/?${qs}`, { ...init, headers: orgHeaders() },
+  ))
+}
+
+export async function setSourceTagsForSource(kind: 'agent' | 'nas', id: number, tag_ids: number[]): Promise<SourceTag[]> {
+  const data = unwrapApiPayload<{ results: SourceTag[] }>(
+    await api<unknown>(`${tagsBase}/sources/${kind}/${id}/`, {
+      method: 'PUT', body: JSON.stringify({ tag_ids }), headers: orgHeaders(),
+    }),
+  )
+  return data.results
+}
 
 function orgHeaders(): Record<string, string> {
   return { 'X-Org-Key': getEffectiveOrgKey() || '' }
@@ -306,7 +416,12 @@ export async function listBackupSelectableSources(params?: BackupSelectableQuery
   const qs = new URLSearchParams()
   if (params) {
     for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && v !== '') qs.set(k, String(v))
+      if (v === undefined || v === '') continue
+      if (Array.isArray(v)) {
+        if (v.length) qs.set(k, v.join(','))
+      } else {
+        qs.set(k, String(v))
+      }
     }
   }
   const path = qs.toString() ? `${backupSelectableBase}/?${qs}` : `${backupSelectableBase}/`

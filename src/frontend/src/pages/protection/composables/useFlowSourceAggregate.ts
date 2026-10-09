@@ -1,4 +1,5 @@
 import { type Ref } from 'vue'
+import type { SourceTag } from '../../../lib/sourceApi'
 import { useI18n } from 'vue-i18n'
 import {
   useProtectionDemoStore,
@@ -14,6 +15,7 @@ import { taskStatusTone } from '../../../lib/taskStatusDisplay'
 
 export type FlowSourceRow = {
   id: string
+  tags?: SourceTag[]
   name: string
   hostname: string
   nodeName: string

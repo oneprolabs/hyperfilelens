@@ -5,6 +5,11 @@ import {
   bulkDeleteBackupSources,
   createBackupSourceDirectory,
   listBackupSelectableSources,
+  listSourcesForTag,
+  listSourceTagFilterOptions,
+  createSourceTag,
+  bulkUpdateSourceTags,
+  updateSourceTag,
   productionSourceSummary,
   testSourceDraft,
 } from './sourceApi'
@@ -15,7 +20,82 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('source tag editing', () => {
+  it('loads tag totals and the visible untagged source count for filters', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      results: [{ id: 2, name: 'Production', description: '', color: 'blue', source_count: 5 }],
+      untagged_source_count: 12,
+    }), { headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(listSourceTagFilterOptions()).resolves.toEqual({
+      tags: [{ id: 2, name: 'Production', description: '', color: 'blue', source_count: 5 }],
+      untaggedSourceCount: 12,
+    })
+  })
+
+  it('submits name, description, and palette color in both add and edit', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({
+      id: 7, name: 'Production', description: 'Critical services', color: 'purple',
+    }), { headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const input = { name: 'Production', description: 'Critical services', color: 'purple' as const }
+
+    await createSourceTag(input)
+    await updateSourceTag(7, input)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/source/tags/',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(input) }),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/source/tags/7/',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify(input) }),
+    )
+  })
+
+  it('sends incremental tag operations without replacing other labels', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      sources: 2, added: 2, removed: 0,
+    }), { headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const payload = { operation: 'add' as const, source_ids: ['agent:1', 'nas:2'], tag_ids: [7] }
+    await expect(bulkUpdateSourceTags(payload)).resolves.toEqual({ sources: 2, added: 2, removed: 0 })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/source/tags/assignments/bulk/',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(payload) }),
+    )
+  })
+
+  it('loads the server-paginated sources bound to a tag', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      count: 1, results: [{ id: 'agent:9', name: 'Host', type: 'host', availability: 'online' }],
+    }), { headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(listSourcesForTag(7, { page: 2, page_size: 30, search: 'Host' }))
+      .resolves.toMatchObject({ count: 1, results: [{ id: 'agent:9' }] })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/source/tags/7/sources/?page=2&page_size=30&search=Host',
+      expect.anything(),
+    )
+  })
+})
+
 describe('createBackupSourceDirectory', () => {
+  it('serializes multiple tag filters as comma-separated IDs and untagged state', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      count: 0, results: [],
+    }), { headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await listBackupSelectableSources({ tag_ids: [3, 8], untagged: false })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/source/backup-selectable/?tag_ids=3%2C8&untagged=false',
+      expect.anything(),
+    )
+  })
+
   it('posts the selected parent and one child folder name', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       source_id: 'agent:12',

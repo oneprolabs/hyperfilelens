@@ -5,7 +5,8 @@ from django.dispatch import receiver
 
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
-from apps.source.constants import SelectableSourceKind
+from apps.source.constants import ResourceType, SelectableSourceKind
+from apps.source.models import SourceResource, SourceTagAssignment
 from apps.source.services.internal.source_pipeline import sync_task_pipeline_projection
 from apps.source.services.internal.source_pipeline import (
     delete_pipeline_entry,
@@ -31,6 +32,11 @@ def sync_node_pipeline_projection(sender, instance: Node, created: bool, **kwarg
         if created:
             return
         if instance.is_deleted:
+            SourceTagAssignment.objects.filter(
+                organization_id=instance.organization_id,
+                source_kind=SelectableSourceKind.AGENT,
+                ref_id=instance.id,
+            ).delete()
             delete_pipeline_entry(
                 organization_id=instance.organization_id,
                 source_kind=SelectableSourceKind.AGENT,
@@ -44,3 +50,13 @@ def sync_node_pipeline_projection(sender, instance: Node, created: bool, **kwarg
             )
     elif instance.role == NodeRole.PROXY:
         sync_bound_proxy_pipeline_projections(proxy_id=instance.id)
+
+
+@receiver(post_save, sender=SourceResource)
+def clear_deleted_nas_tags(sender, instance: SourceResource, **kwargs) -> None:
+    if instance.resource_type == ResourceType.NAS and instance.is_deleted:
+        SourceTagAssignment.objects.filter(
+            organization_id=instance.organization_id,
+            source_kind=SelectableSourceKind.NAS,
+            ref_id=instance.id,
+        ).delete()
