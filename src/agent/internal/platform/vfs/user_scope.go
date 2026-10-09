@@ -11,6 +11,10 @@ import (
 // It remains a permission error for callers that do not need the distinction.
 var ErrOutsideUserHome = fmt.Errorf("%w: path is outside the user Home directory", os.ErrPermission)
 
+// ErrLocalFixedDriveRequired is a Windows path policy, not a filesystem ACL failure.
+// Keep permission-error compatibility while allowing neutral access-scope guidance.
+var ErrLocalFixedDriveRequired = fmt.Errorf("%w: user-level Agent paths must use a local fixed drive", os.ErrPermission)
+
 // UserHome returns the canonical Home directory used by a user-level Agent.
 func UserHome() (string, error) {
 	_, canonical, err := userHomePaths()

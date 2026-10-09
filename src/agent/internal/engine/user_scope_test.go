@@ -91,6 +91,8 @@ func TestPathAccessErrorsDistinguishScopeFromFilesystemPermission(t *testing.T) 
 		code string
 	}{
 		{"outside Home", fmt.Errorf("resolve path: %w", vfs.ErrOutsideUserHome), scopeCode},
+		{"Windows drive policy", vfs.ErrLocalFixedDriveRequired, pathPermissionDeniedErrorCode},
+		{"wrapped Windows drive policy", fmt.Errorf("resolve path: %w", vfs.ErrLocalFixedDriveRequired), pathPermissionDeniedErrorCode},
 		{"filesystem permission", &os.PathError{Op: "open", Path: "/restricted", Err: os.ErrPermission}, pathReadPermissionErrorCode},
 		{"not found", os.ErrNotExist, ""},
 		{"unsupported task", fmt.Errorf("task is unavailable"), ""},

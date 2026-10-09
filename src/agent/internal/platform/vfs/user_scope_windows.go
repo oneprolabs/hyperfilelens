@@ -57,12 +57,19 @@ func resolveUserScopedPath(path string, allowMissing bool) (string, error) {
 func requireLocalFixedDrive(path string) error {
 	volume := filepath.VolumeName(path)
 	if len(volume) != 2 || volume[1] != ':' {
-		return fmt.Errorf("%w: user-level Agent paths must use a local fixed drive", os.ErrPermission)
+		return ErrLocalFixedDriveRequired
 	}
 	root := volume + `\`
 	rootPtr, err := windows.UTF16PtrFromString(root)
-	if err != nil || windows.GetDriveType(rootPtr) != windows.DRIVE_FIXED {
-		return fmt.Errorf("%w: user-level Agent paths must use a local fixed drive", os.ErrPermission)
+	if err != nil {
+		return ErrLocalFixedDriveRequired
+	}
+	return requireFixedDriveType(windows.GetDriveType(rootPtr))
+}
+
+func requireFixedDriveType(driveType uint32) error {
+	if driveType != windows.DRIVE_FIXED {
+		return ErrLocalFixedDriveRequired
 	}
 	return nil
 }

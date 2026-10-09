@@ -868,7 +868,9 @@ func pathPermissionDeniedResult(err error, path string) map[string]any {
 		return nil
 	}
 	code := pathReadPermissionErrorCode
-	if errors.Is(err, vfs.ErrOutsideUserHome) {
+	if errors.Is(err, vfs.ErrLocalFixedDriveRequired) {
+		code = pathPermissionDeniedErrorCode
+	} else if errors.Is(err, vfs.ErrOutsideUserHome) {
 		// Only Linux Home-scoped installations use the root-reinstall guidance.
 		code = pathPermissionDeniedErrorCode
 		if runtime.GOOS == "linux" {
