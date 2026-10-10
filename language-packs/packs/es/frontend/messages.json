@@ -8620,5 +8620,7 @@
   "feedback.errorDetails.taskReplaced": "Esta tarea fue reemplazada. Se muestra el estado actual de la tarea de reemplazo.",
   "feedback.errorDetails.taskUnavailable": "Esta tarea ya no es accesible. Los detalles guardados no confirman su estado actual.",
   "feedback.errorDetails.batchTitle": "La operación requiere atención",
-  "feedback.errorDetails.batchSummary": "{n} destinos requieren atención."
+  "feedback.errorDetails.batchSummary": "{n} destinos requieren atención.",
+  "feedback.errorDetails.relatedTasks": "Tareas relacionadas",
+  "feedback.errorDetails.openTaskNewTab": "Abrir la tarea {taskUuid} en una nueva pestaña"
 }

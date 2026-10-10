@@ -8620,5 +8620,7 @@
   "feedback.errorDetails.taskReplaced": "此任务已被替换，正在显示替代任务的当前状态。",
   "feedback.errorDetails.taskUnavailable": "当前无法访问此任务，保存的详情不能确认其当前状态。",
   "feedback.errorDetails.batchTitle": "操作需要关注",
-  "feedback.errorDetails.batchSummary": "{n} 个目标需要关注。"
+  "feedback.errorDetails.batchSummary": "{n} 个目标需要关注。",
+  "feedback.errorDetails.relatedTasks": "关联任务",
+  "feedback.errorDetails.openTaskNewTab": "在新标签页打开任务 {taskUuid}"
 }

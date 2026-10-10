@@ -163,6 +163,8 @@ export const en = {
       technical: 'Technical details',
       copy: 'Copy error details',
       openTask: 'Open task',
+      relatedTasks: "Related tasks",
+      openTaskNewTab: "Open task {taskUuid} in a new tab",
       batchTitle: "Operation needs attention",
       batchSummary: "{n} targets need attention.",
       taskReplaced: "This task was replaced. Showing the replacement task’s current status.",

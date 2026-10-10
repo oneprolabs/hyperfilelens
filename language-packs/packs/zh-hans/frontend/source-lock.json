@@ -8163,5 +8163,7 @@
   "feedback.errorDetails.taskReplaced": "31ad1db4804914622f975409b3d673fcc850ee8e0eac64499f1f2f7bf4819e18",
   "feedback.errorDetails.batchTitle": "0308a79a0242219501b43da00fb19248accf420c5f4d657703885e90652e973c",
   "feedback.errorDetails.snapshotExpired": "e95e7829399eec2cb94293814ae3d528f95e3210d0de9e517c96de1191437c22",
-  "feedback.errorDetails.batchSummary": "b94d16287c3eac9d53e9b3e858d4513ebf1837b8bbe6266497b494a2102b6089"
+  "feedback.errorDetails.batchSummary": "b94d16287c3eac9d53e9b3e858d4513ebf1837b8bbe6266497b494a2102b6089",
+  "feedback.errorDetails.relatedTasks": "fb9be44fd71b47c625059f22580e00e1539a6e5dc37826399e4428322679fd76",
+  "feedback.errorDetails.openTaskNewTab": "88d0ede1a7f7018ada7e459b8ba1464f87005324cc6f261b92dab4e762539fc1"
 }
