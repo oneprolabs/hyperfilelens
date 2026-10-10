@@ -6,6 +6,7 @@ import type { ErrorDetailsPayload } from './errors/details'
 import { openErrorDetails } from './errors/details'
 import { toApiError } from './errors/normalizer'
 import { notifyError, notifyWarning } from './notify'
+import { asyncNoticeScope, claimTaskNotice } from './asyncNoticeLedger'
 import { retryTask } from './taskApi'
 import {
   parseBackupSourceDeleteError,
@@ -273,6 +274,7 @@ export function unregisterFailureToErrorDetails(input: {
     severity: contract?.severity || (isResidue ? 'warning' : 'error'),
     traceId: contract?.correlation_id || undefined,
     taskUuid: taskUuid || undefined,
+    taskAttempt: task?.retry_count,
     taskType: task?.task_type || undefined,
     failedStep: failedStep || undefined,
     entities: contract?.entities?.length
@@ -402,7 +404,7 @@ export function notifyUnregisterCleanupWarning(input: {
 }
 
 export function openUnregisterFailureDetails(details: ErrorDetailsPayload) {
-  openErrorDetails(details)
+  openErrorDetails({ ...details, taskType: details.taskType || (details.taskUuid ? 'source_unregister' : undefined) })
 }
 
 export function unregisterFailureSummaryLine(details?: ErrorDetailsPayload | null): string {
@@ -455,10 +457,14 @@ export function mergeUnregisterDetails(
     issue: summary,
     reasons: uniqueDetailList(items.flatMap((item) => item.reasons || [])),
     severity: isWarning ? 'warning' : 'error',
+    relatedTasks: [...new Map(items.flatMap(item => item.relatedTasks || (item.taskUuid ? [{ taskUuid: item.taskUuid, taskType: item.taskType, traceId: item.traceId }] : [])).map(task => [task.taskUuid, task])).values()],
+    lifecycleMessage: uniqueDetailList(items.map(item => item.lifecycleMessage)).join(' ') || undefined,
     entities: items.flatMap((item) => item.entities || []),
     cleanupResidue: isWarning ? {
-      hasResidue: true,
+      hasResidue: items.some(item => item.cleanupResidue?.hasResidue),
       retainedResources: uniqueDetailList(items.flatMap((item) => item.cleanupResidue?.retainedResources || [])),
+      failures: uniqueDetailList(items.flatMap(item => item.cleanupResidue?.failures || [])),
+      skippedItems: uniqueDetailList(items.flatMap(item => item.cleanupResidue?.skippedItems || [])),
     } : undefined,
     resolutions: uniqueDetailList(items.flatMap((item) => item.resolutions || [])),
     rawDetail: {
@@ -466,6 +472,44 @@ export function mergeUnregisterDetails(
       sources: items.map((item) => item.rawDetail),
     },
   }
+}
+
+function unseenTaskNotices<T extends { details: ErrorDetailsPayload }>(items: T[]): T[] {
+  return items.filter(item => claimTaskNotice(item.details))
+}
+
+type BatchNoticeItem = { sourceId?: string; sourceName?: string; details: ErrorDetailsPayload }
+const successfulOperations = new Set<string>()
+const operationNotices = new Map<string, Map<string, BatchNoticeItem>>()
+
+/** One operation keeps one notice even when targets finish on different polls. */
+export function notifyUnregisterOperation(input: {
+  t: ComposerTranslation
+  operationId: string
+  items: BatchNoticeItem[]
+  partialSuccess?: boolean
+}) {
+  const scope = `${asyncNoticeScope()}:${input.operationId}`
+  const newlySuccessful = input.partialSuccess && !successfulOperations.has(scope)
+  if (input.partialSuccess) {
+    successfulOperations.add(scope)
+    if (successfulOperations.size > 100) successfulOperations.delete(successfulOperations.values().next().value!)
+  }
+  const fresh = unseenTaskNotices(input.items)
+  if (!fresh.length && (!newlySuccessful || !operationNotices.has(scope))) return
+  const key = scope
+  const items = operationNotices.get(key) || new Map<string, BatchNoticeItem>()
+  fresh.forEach(item => items.set(`${item.sourceId || ''}:${item.details.taskUuid || item.details.summary}`, item))
+  operationNotices.set(key, items)
+  if (operationNotices.size > 100) operationNotices.delete(operationNotices.keys().next().value!)
+  const all = [...items.values()]
+  const warning = successfulOperations.has(scope) || all.some(item => item.details.severity === 'warning')
+  const details = mergeUnregisterDetails(input.t, all.map(item => item.details), warning ? 'cleanup_warning' : 'failure')
+  details.title = input.t('feedback.errorDetails.batchTitle')
+  details.summary = input.t('feedback.errorDetails.batchSummary', { n: all.length })
+  details.issue = details.summary
+  if (warning) details.severity = 'warning'
+  return (warning ? notifyWarning : notifyError)({ title: details.title, message: details.summary, showDetails: true, details, dedupeKey: `unregister-operation:${key}` })
 }
 
 export function notifyUnregisterFailureBatch(input: {
@@ -477,6 +521,7 @@ export function notifyUnregisterFailureBatch(input: {
   }>
   dedupeKey?: string
 }) {
+  input = { ...input, items: unseenTaskNotices(input.items) }
   if (!input.items.length) return { close: () => undefined }
   if (input.items.length === 1) {
     const only = input.items[0]
@@ -510,6 +555,7 @@ export function notifyUnregisterCleanupWarningBatch(input: {
   }>
   dedupeKey?: string
 }) {
+  input = { ...input, items: unseenTaskNotices(input.items) }
   if (!input.items.length) return { close: () => undefined }
   if (input.items.length === 1) {
     const only = input.items[0]

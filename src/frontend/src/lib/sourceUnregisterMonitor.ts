@@ -95,7 +95,7 @@ export function sourceUnregisterTaskBindings(
 
 export function sourceUnregisterTaskOutcome(task: TaskRow): SourceUnregisterTaskOutcome {
   const status = String(task.status || '').toLowerCase()
-  const terminal = ['success', 'failed', 'cancelled', 'timeout'].includes(status)
+  const terminal = ['success', 'partial', 'failed', 'cancelled', 'timeout'].includes(status)
   const payload = record(task.result_payload)
   const rawRemovals = Array.isArray(payload.pending_removals) ? payload.pending_removals : []
   const result = String(payload.result || '').toLowerCase()
@@ -120,8 +120,8 @@ export function sourceUnregisterTaskOutcome(task: TaskRow): SourceUnregisterTask
   const hint = String(payload.hint || '').trim() || undefined
   return {
     terminal,
-    success: status === 'success',
-    partialSuccess: status === 'success' && (result === 'partial_success' || !cleanupComplete),
+    success: status === 'success' || status === 'partial',
+    partialSuccess: status === 'partial' || (status === 'success' && (task.error_details?.severity === 'warning' || result === 'partial_success' || !cleanupComplete)),
     cleanupComplete,
     status,
     pendingRemovals,

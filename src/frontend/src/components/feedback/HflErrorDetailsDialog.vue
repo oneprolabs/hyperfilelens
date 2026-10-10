@@ -1,24 +1,58 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { AlertTriangle, Check, ChevronDown, Copy, X, Folder, Database, Monitor, ListTodo } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import { AlertTriangle, Check, ChevronDown, Copy, X, Folder, Database, Monitor, ListTodo, ExternalLink } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import {
   closeErrorDetails,
+  replaceErrorDetails,
   errorDetailsCopyText,
   errorDetailsState,
   safeErrorDetailText,
+  sanitizeErrorDetails,
 } from '../../lib/errors/details'
+import { refreshTaskDetails } from '../../lib/taskDetailsLifecycle'
 import type { ErrorEntity } from '../../lib/errors/details'
 
 const { t } = useI18n()
 const router = useRouter()
 const copied = ref(false)
+const refreshing = ref(false)
 const details = computed(() => errorDetailsState.current)
+watch(() => errorDetailsState.revision, async (revision) => {
+  const snapshot = errorDetailsState.current ? sanitizeErrorDetails(errorDetailsState.current) : null
+  if (!snapshot) { refreshing.value = false; return }
+  refreshing.value = Boolean(snapshot.taskUuid && snapshot.taskType || snapshot.relatedTasks?.length)
+  if (snapshot.relatedTasks?.length) {
+    const results = await Promise.all(snapshot.relatedTasks.map(task => refreshTaskDetails({ ...snapshot, relatedTasks: undefined, ...task }, t)))
+    const { mergeUnregisterDetails } = await import('../../lib/unregisterFailureDetails')
+    const merged = mergeUnregisterDetails(t, results, (snapshot.severity === 'warning' || results.every(item => item.severity === 'warning')) ? 'cleanup_warning' : 'failure')
+    if (results.every(item => !item.reasons?.length && !item.resolutions?.length && !item.cleanupResidue?.hasResidue)) {
+      merged.title = results.map(item => item.title).join(' / ')
+      merged.summary = results.map(item => item.summary).join(' / ')
+      merged.issue = undefined
+    }
+    replaceErrorDetails(merged, revision)
+  } else {
+    replaceErrorDetails(await refreshTaskDetails(snapshot, t), revision)
+  }
+  if (errorDetailsState.revision === revision) refreshing.value = false
+}, { immediate: true })
 const rawText = computed(() => safeErrorDetailText(details.value?.rawDetail))
 const isWarning = computed(() => details.value?.severity === 'warning')
 const hasEntities = computed(() => (details.value?.entities?.length ?? 0) > 0)
+
+const taskLinks = computed(() => {
+  const payload = details.value
+  const tasks = [...(payload?.taskUuid ? [{ taskUuid: payload.taskUuid }] : []), ...(payload?.relatedTasks || [])]
+  return [...new Map(tasks.filter(task => task.taskUuid && task.taskUuid !== errorDetailsState.currentTaskUuid)
+    .map(task => [task.taskUuid, task])).values()]
+})
+
+function taskHref(taskUuid: string) {
+  return router.resolve({ path: '/ops/tasks', query: { taskUuid } }).href
+}
 
 async function copyDetails() {
   if (!details.value) return
@@ -79,7 +113,19 @@ function entityIcon(type: ErrorEntity['type']) {
       </div>
     </template>
 
-    <template v-if="details">
+    <p
+      v-if="refreshing"
+      role="status"
+    >
+      {{ t('common.loading') }}
+    </p>
+    <template v-if="details && !refreshing">
+      <p
+        v-if="details.lifecycleMessage"
+        role="status"
+      >
+        {{ details.lifecycleMessage }}
+      </p>
       <section
         v-if="details.issue"
         class="hfl-error-details__section"
@@ -185,6 +231,41 @@ function entityIcon(type: ErrorEntity['type']) {
         </ul>
       </section>
 
+      <section
+        v-if="taskLinks.length > 1"
+        class="hfl-error-details__section"
+      >
+        <h3>{{ t('feedback.errorDetails.relatedTasks') }}</h3>
+        <ul class="hfl-error-details__tasks">
+          <li
+            v-for="task in taskLinks"
+            :key="task.taskUuid"
+          >
+            <a
+              class="hfl-error-details__task-row"
+              :href="taskHref(task.taskUuid)"
+              target="_blank"
+              rel="noopener noreferrer"
+              :aria-label="t('feedback.errorDetails.openTaskNewTab', { taskUuid: task.taskUuid })"
+            >
+              <ListTodo
+                :size="18"
+                class="hfl-error-details__task-icon"
+                aria-hidden="true"
+              />
+              <code class="hfl-error-details__task-id">{{ task.taskUuid }}</code>
+              <span class="hfl-error-details__task-action">
+                {{ t('feedback.errorDetails.openTask') }}
+                <ExternalLink
+                  :size="14"
+                  aria-hidden="true"
+                />
+              </span>
+            </a>
+          </li>
+        </ul>
+      </section>
+
       <details
         v-if="details.traceId || rawText"
         class="hfl-error-details__section hfl-error-details__technical-disclosure"
@@ -232,12 +313,20 @@ function entityIcon(type: ErrorEntity['type']) {
           />
           {{ copied ? t('feedback.toast.copied') : t('feedback.errorDetails.copy') }}
         </button>
-        <ElButton
-          v-if="details.taskUuid && details.taskUuid !== errorDetailsState.currentTaskUuid"
-          @click="router.push({ path: '/ops/jobs', query: { taskUuid: details.taskUuid } }); closeErrorDetails()"
+        <a
+          v-if="taskLinks.length === 1"
+          class="hfl-error-details__task-link"
+          :href="taskHref(taskLinks[0].taskUuid)"
+          target="_blank"
+          rel="noopener noreferrer"
+          :aria-label="t('feedback.errorDetails.openTaskNewTab', { taskUuid: taskLinks[0].taskUuid })"
         >
           {{ t('feedback.errorDetails.openTask') }}
-        </ElButton>
+          <ExternalLink
+            :size="14"
+            aria-hidden="true"
+          />
+        </a>
         <ElButton
           type="primary"
           @click="closeErrorDetails"
@@ -450,6 +539,68 @@ function entityIcon(type: ErrorEntity['type']) {
   overflow-wrap: anywhere;
   user-select: text;
 }
+
+.hfl-error-details__tasks {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.hfl-error-details__task-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  min-height: 44px;
+  gap: 10px;
+  padding: 10px 12px;
+  align-items: center;
+  color: var(--color-text-primary);
+  background: var(--color-grey-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: 9px;
+  text-decoration: none;
+}
+.hfl-error-details__task-row:hover {
+  background: var(--color-grey-1);
+  border-color: var(--color-primary);
+}
+.hfl-error-details__task-icon {
+  color: var(--color-text-tertiary);
+}
+.hfl-error-details__task-id {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.hfl-error-details__task-action,
+.hfl-error-details__task-link {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.hfl-error-details__task-link {
+  min-height: 36px;
+  margin-left: auto;
+  padding: 0 12px;
+  background: var(--color-grey-1);
+  border: 1px solid var(--color-border-light);
+  border-radius: 8px;
+  text-decoration: none;
+}
+.hfl-error-details__task-link:hover {
+  border-color: var(--color-primary);
+}
+.hfl-error-details__task-row:focus-visible,
+.hfl-error-details__task-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
 .hfl-error-details__footer {
   display: flex;
   width: 100%;
@@ -552,6 +703,18 @@ function entityIcon(type: ErrorEntity['type']) {
 
 
 @media (max-width: 640px) {
+  .hfl-error-details__task-row {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .hfl-error-details__task-action {
+    grid-column: 2;
+  }
+
+  .hfl-error-details__task-link {
+    min-height: 44px;
+  }
+
   .hfl-error-details-overlay .el-overlay-dialog {
     display: flex;
     align-items: flex-end;

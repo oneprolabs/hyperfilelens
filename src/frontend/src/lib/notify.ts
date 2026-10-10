@@ -1,5 +1,6 @@
 import type { ErrorDetailsOverrides, ErrorDetailsPayload } from './errors/details'
 import { errorDetailsCopyText, openErrorDetails, toErrorDetails } from './errors/details'
+import { claimTaskNotice } from './asyncNoticeLedger'
 import { pushToast, type ToastOptions, type ToastType } from './toast/store'
 
 export type NotifyOptions = Omit<ToastOptions, 'type' | 'message' | 'details'> & {
@@ -33,6 +34,9 @@ function notify(type: ToastType, input: NotifyInput = ''): NotifyHandler {
     openErrorDetails(details)
     return { close: () => undefined }
   }
+
+  // Source unregister batches claim their per-target identities before merging.
+  if (details?.taskUuid && details.taskType && details.taskType !== 'source_unregister' && !claimTaskNotice(details)) return { close: () => undefined }
 
   return pushToast({
     type,
