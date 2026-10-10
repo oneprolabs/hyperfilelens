@@ -4,13 +4,16 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Mail, Key, Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-vue-next'
-import { api } from '../../lib/api'
+import { api, apiErrorMessageI18n } from '../../lib/api'
+import { safeErrorDetailText } from '../../lib/errors/details'
 import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
 import AuthTurnstileField from './AuthTurnstileField.vue'
 
 const props = withDefaults(
   defineProps<{
     initialEmail?: string
+    lockEmail?: boolean
+    embedded?: boolean
   }>(),
   {
     initialEmail: '',
@@ -20,6 +23,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   'back-to-login': [email?: string]
   'update:step': [step: 'request' | 'reset']
+  'password-reset': []
 }>()
 
 const { t, locale } = useI18n()
@@ -71,6 +75,7 @@ type AuthErrorPayload = {
   message?: string
   error_code?: string
   fields?: Record<string, string[]>
+  reason?: string
 }
 
 type AuthResponse<T = undefined> = {
@@ -116,11 +121,9 @@ const confirmPasswordError = computed(() => {
 
 const canUpdatePassword = computed(() => {
   if (resetLoading.value || resetSuccess.value) return false
-  if (!resetCode.value || resetCode.value.length !== 6) return false
+  if (!/^\d{6}$/.test(resetCode.value.trim())) return false
   if (checkPassword(newPassword.value)) return false
-  if (!confirmPassword.value) return false
-  if (newPassword.value !== confirmPassword.value) return false
-  return true
+  return Boolean(confirmPassword.value) && newPassword.value === confirmPassword.value
 })
 
 function maskEmail(email: string): string {
@@ -373,7 +376,8 @@ function goRegister() {
 function validateResetForm() {
   resetError.value = ''
 
-  if (!resetCode.value || resetCode.value.length !== 6) {
+  resetCode.value = resetCode.value.trim()
+  if (!/^\d{6}$/.test(resetCode.value)) {
     resetError.value = t('findPwd.verificationCodeErr')
     return false
   }
@@ -390,6 +394,26 @@ function validateResetForm() {
   }
 
   return true
+}
+
+function passwordResetErrorMessage(error: unknown): string {
+  const err = error && typeof error === 'object'
+    ? error as { status?: number; errorCode?: string; detail?: { error?: AuthErrorPayload; data?: { error?: AuthErrorPayload } }; fields?: Record<string, string[]> }
+    : undefined
+  const payload = err?.detail?.error ?? err?.detail?.data?.error
+  const errorCode = err?.errorCode ?? payload?.error_code
+  if (errorCode === 'INVALID_CODE') {
+    if (payload?.reason === 'EXPIRED') return t('account.passwordCodeExpired')
+    if (payload?.reason === 'TOO_MANY_ATTEMPTS') return t('account.passwordCodeAttemptsExceeded')
+    return t('account.passwordCodeInvalid')
+  }
+  if (errorCode === 'PASSWORD_RESET_RATE_LIMITED' || err?.status === 429) {
+    return t('account.passwordResetRateLimited')
+  }
+  if (err?.status && err.status >= 500) return t('account.passwordResetServiceUnavailable')
+  const fields = err?.fields ?? payload?.fields
+  const fieldMessage = fields?.password?.[0] ?? fields?.code?.[0] ?? fields?.email?.[0]
+  return safeErrorDetailText(fieldMessage || apiErrorMessageI18n(error, t, t('findPwd.resetFailed')))
 }
 
 async function handleUpdatePassword() {
@@ -411,15 +435,22 @@ async function handleUpdatePassword() {
 
     if (res.code === '0000') {
       resetSuccess.value = true
+      emit('password-reset')
       successTimer = setTimeout(() => {
         emit('back-to-login', savedEmail.value)
       }, 1000)
     } else {
-      resetError.value = res.error?.message || t('findPwd.resetFailed')
+      resetError.value = passwordResetErrorMessage({
+        message: res.error?.message,
+        errorCode: res.error?.error_code,
+        fields: res.error?.fields,
+        detail: res,
+      })
     }
-  } catch {
-    resetError.value = t('findPwd.resetFailed')
+  } catch (error: unknown) {
+    resetError.value = passwordResetErrorMessage(error)
   } finally {
+    // Always release the request lock; form validity still controls availability.
     resetLoading.value = false
   }
 }
@@ -444,7 +475,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="reset-password-card">
+  <div
+    class="reset-password-card"
+    :class="{ 'reset-password-card--embedded': props.embedded }"
+  >
     <Transition
       name="reset-view-fade"
       mode="out-in"
@@ -458,15 +492,39 @@ onUnmounted(() => {
         @submit.prevent="sendResetCode"
       >
         <p class="reset-subtitle">
-          {{ t('findPwd.requestSubtitle') }}
+          {{ t(props.embedded && props.lockEmail ? 'account.passwordCodeDestinationHint' : 'findPwd.requestSubtitle') }}
         </p>
 
+        <dl
+          v-if="props.embedded && props.lockEmail"
+          class="account-email-summary"
+        >
+          <dt class="field-label">
+            {{ t('account.fieldEmail') }}
+          </dt>
+          <dd class="account-email-summary__value">
+            <Mail
+              class="input-icon"
+              :size="18"
+              aria-hidden="true"
+            />
+            <span>{{ props.initialEmail }}</span>
+          </dd>
+          <dd
+            v-if="formItems.email.showError"
+            class="error-msg"
+            role="alert"
+          >
+            {{ formItems.email.errorMsg }}
+          </dd>
+        </dl>
         <div
+          v-else
           class="input-wrapper"
           :class="{ 'has-error': formItems.email.showError }"
         >
           <label
-            class="sr-only"
+            :class="props.embedded ? 'field-label' : 'sr-only'"
             for="reset-request-email"
           >{{ t('findPwd.emailPlaceholder') }}</label>
           <div class="input-row">
@@ -481,6 +539,7 @@ onUnmounted(() => {
               type="email"
               :placeholder="t('findPwd.emailPlaceholder')"
               autocomplete="email"
+              :readonly="props.lockEmail"
               :aria-invalid="formItems.email.showError"
               :aria-describedby="formItems.email.showError ? 'reset-request-email-error' : undefined"
               @blur="validateEmailOnInput"
@@ -536,7 +595,7 @@ onUnmounted(() => {
           :loading="submitLoading"
           @click="sendResetCode"
         >
-          {{ submitLoading ? t('findPwd.btnSubmitLoading') : t('findPwd.sendResetCode') }}
+          {{ submitLoading ? t('findPwd.btnSubmitLoading') : t(props.embedded ? 'account.sendPasswordCode' : 'findPwd.sendResetCode') }}
         </ElButton>
       </form>
 
@@ -554,7 +613,7 @@ onUnmounted(() => {
 
         <div class="input-wrapper">
           <label
-            class="sr-only"
+            :class="props.embedded ? 'field-label' : 'sr-only'"
             for="reset-verification-code"
           >{{ t('findPwd.digitCodePh') }}</label>
           <div class="captcha-row">
@@ -595,7 +654,7 @@ onUnmounted(() => {
 
         <div class="input-wrapper">
           <label
-            class="sr-only"
+            :class="props.embedded ? 'field-label' : 'sr-only'"
             for="reset-new-password"
           >{{ t('findPwd.newPasswordPlaceholder') }}</label>
           <div class="input-row">
@@ -631,11 +690,14 @@ onUnmounted(() => {
               />
             </button>
           </div>
+          <p class="reset-subtitle">
+            {{ t('account.securityPwdRule') }}
+          </p>
         </div>
 
         <div class="input-wrapper">
           <label
-            class="sr-only"
+            :class="props.embedded ? 'field-label' : 'sr-only'"
             for="reset-confirm-password"
           >{{ t('findPwd.confirmPasswordPlaceholder') }}</label>
           <div class="input-row">
@@ -727,7 +789,10 @@ onUnmounted(() => {
       </form>
     </Transition>
 
-    <div class="reset-footer">
+    <div
+      v-if="!props.embedded"
+      class="reset-footer"
+    >
       <span class="footer-text">{{ t('findPwd.alreadyHaveAccount') }}</span>
       <a
         href="#"
@@ -745,6 +810,128 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.reset-password-card--embedded {
+  width: 100%;
+  max-width: 520px;
+  margin-top: 16px;
+  color: var(--color-text-primary);
+}
+
+.reset-password-card--embedded .reset-view {
+  gap: 16px;
+}
+
+.reset-password-card--embedded .reset-subtitle,
+.reset-password-card--embedded .reset-email-hint,
+.reset-password-card--embedded .register-hint {
+  color: var(--color-text-secondary);
+}
+
+.field-label {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.account-email-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+
+.account-email-summary__value {
+  display: flex;
+  align-items: flex-start;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--el-border-radius-base);
+  background: var(--color-grey-2);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.account-email-summary__value .input-icon {
+  margin-top: 2px;
+}
+
+.account-email-summary__value span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.reset-password-card--embedded .input-row {
+  background: var(--color-card-bg);
+  border-color: var(--color-border);
+  border-radius: var(--el-border-radius-base);
+}
+
+.reset-password-card--embedded .input-row:has(input[readonly]) {
+  background: var(--color-grey-2);
+}
+
+.reset-password-card--embedded .input-row:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+.reset-password-card--embedded .input-row input {
+  color: var(--color-text-primary);
+}
+
+.reset-password-card--embedded .input-row input::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+.reset-password-card--embedded .input-icon,
+.reset-password-card--embedded .eye-btn {
+  color: var(--color-text-secondary);
+}
+
+.reset-password-card--embedded .eye-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-grey-2);
+}
+
+.reset-password-card--embedded .resend-btn {
+  border-color: var(--color-primary-border);
+  color: var(--color-primary);
+}
+
+.reset-password-card--embedded .resend-btn:hover:not(:disabled) {
+  background: var(--color-primary-light);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.reset-password-card--embedded .input-wrapper.has-error .input-row {
+  background: var(--color-error-light);
+  border-color: var(--color-error);
+}
+
+.reset-password-card--embedded .error-msg {
+  color: var(--color-error-text);
+}
+
+.reset-password-card--embedded .reset-error {
+  text-align: left;
+}
+
+.reset-password-card--embedded .strength-bar {
+  background: var(--color-grey-3);
+}
+
+.reset-password-card--embedded .submit-btn {
+  width: fit-content;
+  max-width: 100%;
+  min-width: 160px;
+  border-radius: var(--el-border-radius-base);
+  align-self: flex-start;
 }
 
 .reset-view {

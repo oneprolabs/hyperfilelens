@@ -1,11 +1,14 @@
 """Email login with optional Turnstile and HttpOnly cookie authentication."""
 
 import logging
+import secrets
+import time
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth import logout as django_logout
 from django.core.cache import cache
+from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiResponse, extend_schema
@@ -327,6 +330,8 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
 
         # Store user_id in session for org selection
         request.session['pending_user_id'] = user_obj.id
+        request.session['pending_password_fingerprint'] = user_obj.get_session_auth_hash()
+        request.session['pending_login_at'] = time.time()
         # Explicitly save session to ensure it's persisted before returning response
         request.session.save()
 
@@ -381,6 +386,7 @@ class OrgSelectView(AnonymousPublicViewMixin, APIView):
         },
         responses={200: OpenApiTypes.OBJECT},
     )
+    @transaction.atomic
     def post(self, request):
         from apps.iam.models import Membership
 
@@ -397,8 +403,19 @@ class OrgSelectView(AnonymousPublicViewMixin, APIView):
             )
 
         # Get user
-        user_obj = User.objects.filter(id=pending_user_id).first()
-        if not user_obj:
+        user_obj = User.objects.select_for_update().filter(id=pending_user_id).first()
+        if (
+            not user_obj
+            or not user_obj.is_active
+            or not secrets.compare_digest(
+                request.session.get("pending_password_fingerprint", ""),
+                user_obj.get_session_auth_hash() if user_obj else "invalid",
+            )
+            or time.time() - request.session.get("pending_login_at", 0) > 600
+        ):
+            request.session.pop("pending_user_id", None)
+            request.session.pop("pending_password_fingerprint", None)
+            request.session.pop("pending_login_at", None)
             return Response(
                 {
                     "code": "1001",
@@ -439,6 +456,8 @@ class OrgSelectView(AnonymousPublicViewMixin, APIView):
         # Generate tokens and complete login
         # Clear pending_user_id from session
         request.session.pop('pending_user_id', None)
+        request.session.pop('pending_password_fingerprint', None)
+        request.session.pop('pending_login_at', None)
 
         # Build response with cookies
         response = Response(

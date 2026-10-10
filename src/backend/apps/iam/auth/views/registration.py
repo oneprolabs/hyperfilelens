@@ -8,6 +8,8 @@ import re
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth import logout as django_logout
+from django.db import transaction
+from django.utils import timezone
 from django.utils.translation import gettext as _
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
@@ -37,6 +39,12 @@ from apps.iam.services.registration_service import (
     validate_password_format,
 )
 from apps.iam.services.token_service import blacklist_all_user_tokens
+from apps.iam.services.email_code_login_service import (
+    CODE_MAX_ATTEMPTS,
+    check_send_rate_limit,
+    check_verify_rate_limit,
+)
+from apps.iam.services.turnstile_service import get_client_ip
 from apps.configuration.services import runtime_settings as runtime_settings_svc
 from apps.configuration.services.runtime_settings import (
     email_delivery_configured,
@@ -47,6 +55,51 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 DEBUG_MODE = getattr(settings, 'DEBUG', False)
+
+
+def _reset_rate_error(rate):
+    if rate.allowed:
+        return None
+    response = _build_error_response(
+        "PASSWORD_RESET_RATE_LIMITED",
+        _("Too many verification-code requests. Please try again later."),
+        http_status=status.HTTP_429_TOO_MANY_REQUESTS,
+    )
+    response["Retry-After"] = str(max(1, rate.retry_after))
+    return response
+
+
+def _unique_email_user(email, *, lock=False):
+    queryset = User.objects.select_for_update() if lock else User.objects.all()
+    users = list(queryset.filter(email__iexact=email).order_by("id")[:2])
+    return users[0] if len(users) == 1 else None
+
+
+def _save_password_and_revoke(user, password):
+    """Caller holds the user lock and transaction covering code consumption."""
+    from apps.iam.email_verification_models import EmailVerificationCode
+
+    user.set_password(password)
+    user.save(update_fields=["password"])
+    EmailVerificationCode.objects.filter(user=user, is_used=False).update(
+        is_used=True, used_at=timezone.now(), invalidated_at=timezone.now(),
+    )
+    # A cache failure raises and rolls back the password/code database changes.
+    blacklist_all_user_tokens(user.id, "password_changed")
+
+
+def _clear_password_auth(request, response):
+    cookie_settings = getattr(settings, "COOKIE_AUTH", {})
+    response.delete_cookie(cookie_settings.get("ACCESS_TOKEN_COOKIE_NAME", "access_token"), path="/")
+    response.delete_cookie(
+        cookie_settings.get("REFRESH_TOKEN_COOKIE_NAME", "refresh_token"),
+        path="/api/v1/auth/token/refresh",
+    )
+    response.delete_cookie("token_family", path="/")
+    django_logout(request)
+    request.session.flush()
+    response.delete_cookie(settings.SESSION_COOKIE_NAME, path="/")
+    return response
 
 
 def _build_error_response(
@@ -597,7 +650,13 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
         if not email_delivery_configured():
             return _email_service_unavailable_response()
 
-        user = User.objects.filter(email=email).first()
+        rate_error = _reset_rate_error(check_send_rate_limit(
+            email=email, client_ip=get_client_ip(request) or "", purpose="password_reset",
+        ))
+        if rate_error is not None:
+            return rate_error
+
+        user = _unique_email_user(email)
 
         if user is None:
             msg = _("This email is not registered")
@@ -635,7 +694,11 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
                 return Response(response_data, status=status.HTTP_200_OK)
             return _forgot_password_generic_success(email)
 
-        code, error = generate_password_reset_code(user)
+        with transaction.atomic():
+            user = User.objects.select_for_update().get(pk=user.pk)
+            if not user.is_active or user.email.lower() != email:
+                return _forgot_password_generic_success(email)
+            code, error = generate_password_reset_code(user)
 
         if error:
             return _email_service_unavailable_response()
@@ -647,11 +710,6 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
                 "email": mask_email(email),
             },
         }
-
-        # DEBUG: Return code in response so it can be seen in browser console
-        if DEBUG_MODE:
-            response_data["data"]["_debug_code"] = code
-            logger.info(f"[DEBUG] Password reset code for {email}: {code}")
 
         return Response(response_data, status=status.HTTP_200_OK)
 
@@ -678,6 +736,7 @@ class ForgotPasswordConfirmView(AnonymousPublicViewMixin, APIView):
         },
         responses={200: OpenApiTypes.OBJECT},
     )
+    @transaction.atomic
     def post(self, request):
         if not runtime_settings_svc.enterprise_identity_enabled():
             return _password_reset_disabled_response()
@@ -717,7 +776,13 @@ class ForgotPasswordConfirmView(AnonymousPublicViewMixin, APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        user = User.objects.filter(email=email).first()
+        rate_error = _reset_rate_error(check_verify_rate_limit(
+            email=email, client_ip=get_client_ip(request) or "", purpose="password_reset",
+        ))
+        if rate_error is not None:
+            return rate_error
+
+        user = _unique_email_user(email, lock=True)
         if user is None or not user.is_active:
             return Response(
                 {
@@ -736,6 +801,9 @@ class ForgotPasswordConfirmView(AnonymousPublicViewMixin, APIView):
             user,
             code,
             purpose=EmailVerificationCode.Purpose.PASSWORD_RESET,
+            max_attempts=CODE_MAX_ATTEMPTS,
+            allow_legacy=False,
+            recipient_email=user.email,
         )
 
         if not is_valid:
@@ -751,18 +819,18 @@ class ForgotPasswordConfirmView(AnonymousPublicViewMixin, APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        user.set_password(password)
-        user.save(update_fields=["password"])
+        _save_password_and_revoke(user, password)
 
-        return Response(
+        return _clear_password_auth(request, Response(
             {
                 "code": "0000",
                 "data": {
+                    "requires_relogin": True,
                     "message": _("Password has been reset successfully"),
                 },
             },
             status=status.HTTP_200_OK,
-        )
+        ))
 
 
 class ChangePasswordView(APIView):
@@ -789,6 +857,7 @@ class ChangePasswordView(APIView):
         },
         responses={200: OpenApiTypes.OBJECT},
     )
+    @transaction.atomic
     def post(self, request):
         auth_error = getattr(request, "auth_error", None)
         if auth_error:
@@ -799,6 +868,7 @@ class ChangePasswordView(APIView):
                 code=error_code.lower(),
             )
 
+        user = User.objects.select_for_update().get(pk=request.user.pk)
         current_password = request.data.get("current_password") or ""
         new_password = request.data.get("new_password") or ""
         confirm_password = request.data.get("confirm_password") or ""
@@ -817,7 +887,7 @@ class ChangePasswordView(APIView):
                 fields=fields,
             )
 
-        if not request.user.check_password(current_password):
+        if not user.check_password(current_password):
             return _build_error_response(
                 "CURRENT_PASSWORD_INCORRECT",
                 _("Current password is incorrect"),
@@ -848,9 +918,7 @@ class ChangePasswordView(APIView):
                 },
             )
 
-        request.user.set_password(new_password)
-        request.user.save(update_fields=["password"])
-        blacklist_all_user_tokens(request.user.id, "password_changed")
+        _save_password_and_revoke(user, new_password)
 
         response = Response(
             {
@@ -862,14 +930,4 @@ class ChangePasswordView(APIView):
             },
             status=status.HTTP_200_OK,
         )
-        cookie_settings = getattr(settings, "COOKIE_AUTH", {})
-        response.delete_cookie(cookie_settings.get("ACCESS_TOKEN_COOKIE_NAME", "access_token"), path="/")
-        response.delete_cookie(
-            cookie_settings.get("REFRESH_TOKEN_COOKIE_NAME", "refresh_token"),
-            path="/api/v1/auth/token/refresh",
-        )
-        response.delete_cookie("token_family", path="/")
-        django_logout(request)
-        request.session.flush()
-        response.delete_cookie(settings.SESSION_COOKIE_NAME, path="/")
-        return response
+        return _clear_password_auth(request, response)

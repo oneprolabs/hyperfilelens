@@ -22,7 +22,12 @@ const mocks = vi.hoisted(() => ({
   fetchDeployProfile: vi.fn(),
 }))
 
-vi.mock('../../lib/api', () => ({ api: mocks.api }))
+vi.mock('../../lib/api', () => ({
+  api: mocks.api,
+  apiErrorMessageI18n: (error: unknown, _t: unknown, fallback: string) => {
+    return (error as { message?: string })?.message || fallback
+  },
+}))
 
 vi.mock('../../composables/useDeployProfile', () => ({
   fetchDeployProfile: mocks.fetchDeployProfile,
@@ -109,9 +114,9 @@ function mountRegister() {
   })
 }
 
-function mountResetPasswordCard() {
+function mountResetPasswordCard(embedded = false) {
   return mount(ResetPasswordCard, {
-    props: { initialEmail: 'person@example.com' },
+    props: { initialEmail: 'person@example.com', embedded, lockEmail: embedded },
     global: {
       plugins: [createI18nPlugin(), ElementPlus],
       stubs: {
@@ -146,6 +151,171 @@ describe('authentication Turnstile retry flows', () => {
 
   afterEach(() => {
     localStorage.clear()
+  })
+
+  it('shows the account email as read-only information instead of an input', async () => {
+    mocks.api.mockResolvedValue({ code: '0000', data: {} })
+    const wrapper = mountResetPasswordCard(true)
+    await flushPromises()
+    expect(wrapper.classes()).toContain('reset-password-card--embedded')
+    expect(wrapper.get('.account-email-summary dt').text()).toBe(en.account.fieldEmail)
+    expect(wrapper.get('.account-email-summary__value').text()).toContain('person@example.com')
+    expect(wrapper.find('#reset-request-email').exists()).toBe(false)
+    expect(wrapper.get('.reset-subtitle').text()).toBe(en.account.passwordCodeDestinationHint)
+    expect(wrapper.text()).not.toContain(en.findPwd.requestSubtitle)
+    expect(wrapper.get('button.submit-btn').text()).toBe(en.account.sendPasswordCode)
+    expect(wrapper.find('.reset-footer').exists()).toBe(false)
+    wrapper.getComponent(AuthTurnstileFieldStub).vm.$emit('success', 'embedded-reset-token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+    expect(submittedBody(mocks.api.mock.calls[0]).email).toBe('person@example.com')
+    expect(wrapper.findAll('label.field-label').map(label => label.attributes('for'))).toEqual([
+      'reset-verification-code', 'reset-new-password', 'reset-confirm-password',
+    ])
+    wrapper.unmount()
+  })
+
+  it('keeps the standalone login form layout unchanged', async () => {
+    const wrapper = mountResetPasswordCard()
+    await flushPromises()
+    expect(wrapper.classes()).not.toContain('reset-password-card--embedded')
+    expect(wrapper.get('label[for="reset-request-email"]').classes()).toContain('sr-only')
+    expect(wrapper.get('#reset-request-email').attributes('readonly')).toBeUndefined()
+    expect(wrapper.find('.reset-footer').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it.each([
+    [
+      { errorCode: 'INVALID_CODE', detail: { error: { reason: 'EXPIRED' } } },
+      en.account.passwordCodeExpired,
+    ],
+    [
+      { errorCode: 'INVALID_CODE', detail: { data: { error: { reason: 'TOO_MANY_ATTEMPTS' } } } },
+      en.account.passwordCodeAttemptsExceeded,
+    ],
+    [{ errorCode: 'INVALID_CODE' }, en.account.passwordCodeInvalid],
+    [{ status: 429 }, en.account.passwordResetRateLimited],
+    [{ status: 503, message: 'Private provider failure' }, en.account.passwordResetServiceUnavailable],
+    [{ fields: { password: ['Password must contain uppercase letters'] } }, 'Password must contain uppercase letters'],
+    [{ message: 'Network unavailable. Please retry.' }, 'Network unavailable. Please retry.'],
+    [new Error(''), en.findPwd.resetFailed],
+  ])('displays the reason for a rejected password reset', async (failure, expected) => {
+    mocks.api.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/auth/forgot-password') return { code: '0000', data: {} }
+      throw failure
+    })
+    const wrapper = mountResetPasswordCard(true)
+    await flushPromises()
+    wrapper.getComponent(AuthTurnstileFieldStub).vm.$emit('success', 'reset-error-test-token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+    await wrapper.get('#reset-verification-code').setValue('123456')
+    await wrapper.get('#reset-new-password').setValue('NewPass123')
+    await wrapper.get('#reset-confirm-password').setValue('NewPass123')
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('#reset-form-error').text()).toBe(expected)
+    expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeUndefined()
+    expect(wrapper.emitted('password-reset')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('allows retrying after correcting a rejected verification code', async () => {
+    let confirmations = 0
+    mocks.api.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/auth/forgot-password') return { code: '0000', data: {} }
+      confirmations += 1
+      if (confirmations === 1) throw { errorCode: 'INVALID_CODE' }
+      return { code: '0000' }
+    })
+    const wrapper = mountResetPasswordCard(true)
+    await flushPromises()
+    wrapper.getComponent(AuthTurnstileFieldStub).vm.$emit('success', 'retry-test-token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+    await wrapper.get('#reset-verification-code').setValue('123456')
+    await wrapper.get('#reset-new-password').setValue('NewPass123')
+    await wrapper.get('#reset-confirm-password').setValue('NewPass123')
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('#reset-form-error').text()).toBe(en.account.passwordCodeInvalid)
+    await wrapper.get('#reset-verification-code').setValue('654321')
+    expect(wrapper.find('#reset-form-error').exists()).toBe(false)
+    expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeUndefined()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+    expect(confirmations).toBe(2)
+    expect(submittedBody(mocks.api.mock.calls[2]).code).toBe('654321')
+    expect(wrapper.emitted('password-reset')).toHaveLength(1)
+    expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('releases the submission lock after catch without bypassing form validation', async () => {
+    let rejectRequest!: (reason: unknown) => void
+    mocks.api.mockImplementation((path: string) => {
+      if (path === '/api/v1/auth/forgot-password') return Promise.resolve({ code: '0000', data: {} })
+      return new Promise((_resolve, reject) => { rejectRequest = reject })
+    })
+    const wrapper = mountResetPasswordCard(true)
+    await flushPromises()
+    wrapper.getComponent(AuthTurnstileFieldStub).vm.$emit('success', 'request-lock-test-token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+    await wrapper.get('#reset-verification-code').setValue('123456')
+    await wrapper.get('#reset-new-password').setValue('NewPass123')
+    await wrapper.get('#reset-confirm-password').setValue('NewPass123')
+    const button = wrapper.get('button.submit-btn')
+    expect(button.attributes('disabled')).toBeUndefined()
+    await button.trigger('click')
+    expect(button.attributes('disabled')).toBeDefined()
+    rejectRequest({ errorCode: 'INVALID_CODE' })
+    await flushPromises()
+    expect(wrapper.get('#reset-form-error').text()).toBe(en.account.passwordCodeInvalid)
+    expect(button.attributes('disabled')).toBeUndefined()
+    await wrapper.get('#reset-verification-code').setValue('')
+    expect(button.attributes('disabled')).toBeDefined()
+    await wrapper.get('#reset-verification-code').setValue('654321')
+    expect(button.attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('disables submission until all fields are complete and valid', async () => {
+    mocks.api.mockResolvedValue({ code: '0000', data: {} })
+    const wrapper = mountResetPasswordCard(true)
+    await flushPromises()
+    wrapper.getComponent(AuthTurnstileFieldStub).vm.$emit('success', 'validation-test-token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('button.submit-btn').trigger('click')
+    await flushPromises()
+    const button = wrapper.get('button.submit-btn')
+    expect(button.attributes('disabled')).toBeDefined()
+    await wrapper.get('#reset-verification-code').setValue('abcdef')
+    expect(button.attributes('disabled')).toBeDefined()
+    await wrapper.get('#reset-verification-code').setValue('123456')
+    await wrapper.get('#reset-new-password').setValue('lowercase123')
+    await wrapper.get('#reset-confirm-password').setValue('lowercase123')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain(en.account.securityPwdRule)
+    await wrapper.get('#reset-new-password').setValue('NewPass123')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('#reset-confirm-password-error').text()).toBe(en.findPwd.passwordNotMatch)
+    await wrapper.get('#reset-confirm-password').setValue('NewPass123')
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('#reset-confirm-password-error').exists()).toBe(false)
+    await wrapper.get('#reset-verification-code').setValue('')
+    expect(button.attributes('disabled')).toBeDefined()
+    await wrapper.get('#reset-verification-code').setValue('654321')
+    expect(button.attributes('disabled')).toBeUndefined()
+    await wrapper.get('#reset-confirm-password').setValue('')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(mocks.api).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 
   it.each([
