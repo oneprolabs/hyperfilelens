@@ -19,6 +19,8 @@ def verify_email_verification_code(
     *,
     purpose: str,
     max_attempts: int | None = None,
+    allow_legacy: bool = True,
+    recipient_email: str | None = None,
 ) -> tuple[bool, str | None]:
     """
     Verify a 6-digit email verification code.
@@ -31,7 +33,7 @@ def verify_email_verification_code(
         return False, "INVALID_FORMAT"
 
     accepted_purposes = [purpose]
-    if purpose != EmailVerificationCode.Purpose.LOGIN:
+    if allow_legacy and purpose != EmailVerificationCode.Purpose.LOGIN:
         accepted_purposes.append(EmailVerificationCode.Purpose.LEGACY)
 
     email_code = (
@@ -61,6 +63,7 @@ def verify_email_verification_code(
             code,
             user_id=user.id,
             purpose=email_code.purpose,
+            recipient_email=recipient_email,
         )
 
     if not secrets.compare_digest(email_code.code_hash, expected_hash):

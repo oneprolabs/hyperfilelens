@@ -267,6 +267,7 @@ def generate_password_reset_code(user: User) -> tuple[str, str | None]:
         plain_code,
         user_id=user.id,
         purpose=purpose,
+        recipient_email=user.email,
     )
 
     EmailVerificationCode.objects.filter(

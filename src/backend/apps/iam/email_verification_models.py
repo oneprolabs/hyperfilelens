@@ -58,8 +58,11 @@ class EmailVerificationCode(models.Model):
         *,
         user_id: int,
         purpose: str,
+        recipient_email: str | None = None,
     ) -> str:
         value = f"{user_id}:{purpose}:{plain_code}"
+        if recipient_email is not None:
+            value += f":{recipient_email.strip().lower()}"
         return salted_hmac(
             "iam.email_verification_code",
             value,

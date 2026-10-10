@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core import mail
+from django.core.cache import cache
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
@@ -49,6 +50,7 @@ class ForgotPasswordCommunityDisabledTests(APITestCase):
 @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
 class ForgotPasswordApiTests(APITestCase):
     def setUp(self):
+        cache.clear()
         patcher = patch(
             "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
             return_value=True,

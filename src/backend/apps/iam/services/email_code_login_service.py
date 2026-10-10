@@ -59,9 +59,9 @@ def _increment_fixed_window(key: str, *, limit: int, seconds: int) -> RateLimitR
     return RateLimitResult(count <= limit, 0 if count <= limit else timeout)
 
 
-def check_send_rate_limit(*, email: str, client_ip: str) -> RateLimitResult:
-    email_key = _identity_digest(email)
-    ip_key = _identity_digest(client_ip or "unknown")
+def check_send_rate_limit(*, email: str, client_ip: str, purpose: str = "login") -> RateLimitResult:
+    email_key = _identity_digest(email if purpose == "login" else f"{purpose}:{email}")
+    ip_key = _identity_digest((client_ip or "unknown") if purpose == "login" else f"{purpose}:{client_ip or 'unknown'}")
     now = int(time.time())
     cooldown_key = f"email_code_login:cooldown:{email_key}"
     cooldown_until = int(cache.get(cooldown_key, 0) or 0)
@@ -88,9 +88,9 @@ def check_send_rate_limit(*, email: str, client_ip: str) -> RateLimitResult:
     return RateLimitResult(True)
 
 
-def check_verify_rate_limit(*, email: str, client_ip: str) -> RateLimitResult:
-    email_key = _identity_digest(email)
-    ip_key = _identity_digest(client_ip or "unknown")
+def check_verify_rate_limit(*, email: str, client_ip: str, purpose: str = "login") -> RateLimitResult:
+    email_key = _identity_digest(email if purpose == "login" else f"{purpose}:{email}")
+    ip_key = _identity_digest((client_ip or "unknown") if purpose == "login" else f"{purpose}:{client_ip or 'unknown'}")
     results = (
         _increment_fixed_window(
             f"verify-email:{email_key}",

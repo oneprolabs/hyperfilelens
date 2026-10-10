@@ -8,6 +8,7 @@ import { useAuth } from '../../composables/useAuth'
 import { api, apiErrorMessage } from '../../lib/api'
 import { unwrapApiPayload } from '../../lib/parse'
 import { formatAppDateTime } from '../../lib/dateTime'
+import ResetPasswordCard from '../../components/auth/ResetPasswordCard.vue'
 
 type SecurityAudit = {
   last_login_at?: string | null
@@ -19,6 +20,8 @@ type SecurityAudit = {
 }
 
 type AccountUserDetails = {
+  has_usable_password?: boolean
+  password_reset_available?: boolean
   registered_at?: string | null
   registeredAt?: string | null
   security_audit?: SecurityAudit | null
@@ -68,6 +71,18 @@ const currentPasswordTouched = ref(false)
 const newPasswordTouched = ref(false)
 const confirmPasswordTouched = ref(false)
 const passwordSubmitting = ref(false)
+const hasUsablePassword = ref<boolean | null>(null)
+const passwordResetAvailable = ref(false)
+const passwordRecoveryOpen = ref(false)
+const accountDetailsLoading = ref(true)
+const accountDetailsFailed = ref(false)
+let accountDetailsRequest = 0
+
+async function onPasswordReset() {
+  resetPasswordFormState()
+  clearAuth()
+  await router.replace('/login')
+}
 
 const lastLoginAt = ref('')
 const lastLoginIp = ref('')
@@ -206,6 +221,11 @@ function formatLoginLocation(value?: string | null) {
 }
 
 async function loadAccountDetails() {
+  const requestId = ++accountDetailsRequest
+  accountDetailsLoading.value = true
+  accountDetailsFailed.value = false
+  hasUsablePassword.value = null
+  passwordResetAvailable.value = false
   registeredAt.value = emptyValue.value
   lastLoginAt.value = emptyValue.value
   lastLoginIp.value = emptyValue.value
@@ -213,6 +233,9 @@ async function loadAccountDetails() {
 
   try {
     const data = unwrapApiPayload<AccountUserDetails>(await api<unknown>('/api/v1/auth/user'))
+    if (requestId !== accountDetailsRequest) return
+    hasUsablePassword.value = data.has_usable_password ?? null
+    passwordResetAvailable.value = data.password_reset_available === true
     const tz = data.timezone || userTimezone.value
     registeredAt.value = displayValue(formatDateTime(pickRegisteredAt(data), tz))
     const audit = pickAudit(data)
@@ -220,10 +243,14 @@ async function loadAccountDetails() {
     lastLoginIp.value = displayValue(pickAuditValue(audit, 'last_login_ip', 'lastLoginIp'))
     lastLoginLocationRaw.value = pickAuditValue(audit, 'last_login_location', 'lastLoginLocation')
   } catch {
+    if (requestId !== accountDetailsRequest) return
+    accountDetailsFailed.value = true
     registeredAt.value = emptyValue.value
     lastLoginAt.value = emptyValue.value
     lastLoginIp.value = emptyValue.value
     lastLoginLocationRaw.value = ''
+  } finally {
+    if (requestId === accountDetailsRequest) accountDetailsLoading.value = false
   }
 }
 
@@ -306,6 +333,8 @@ watch(
   () => user.value?.id,
   (id, prev) => {
     if (id && id !== prev) {
+      passwordRecoveryOpen.value = false
+      resetPasswordFormState()
       loadAccountDetails()
     }
   },
@@ -369,111 +398,164 @@ watch(
           <KeyRound :size="16" />
         </span>
         <h2 class="account-settings-section__title">
-          {{ t('account.securitySectionPwd') }}
+          {{ t(hasUsablePassword === false ? 'account.setPassword' : 'account.securitySectionPwd') }}
         </h2>
       </header>
-      <ElForm
-        label-position="top"
-        class="account-password-form"
-        @submit.prevent
+      <p
+        v-if="accountDetailsLoading"
+        role="status"
       >
-        <div class="account-settings-row account-settings-row--form">
-          <span class="account-settings-row__label">{{ t('account.fieldCurrentPassword') }}</span>
-          <div class="account-settings-row__control">
-            <ElInput
-              v-model="currentPassword"
-              type="password"
-              show-password
-              autocomplete="current-password"
-              :class="{ 'account-password-input--error': currentPasswordError }"
-              @input="onCurrentPasswordInput"
-              @blur="currentPasswordTouched = true; validateCurrentPassword(true)"
-            />
-            <p
-              v-if="currentPasswordError"
-              class="account-settings-row__error"
-            >
-              {{ currentPasswordError }}
-            </p>
-          </div>
-        </div>
-        <div class="account-settings-row account-settings-row--form">
-          <span class="account-settings-row__label">{{ t('account.fieldNewPassword') }}</span>
-          <div class="account-settings-row__control">
-            <ElInput
-              v-model="newPassword"
-              type="password"
-              show-password
-              autocomplete="new-password"
-              :class="{ 'account-password-input--error': newPasswordError }"
-              @input="onNewPasswordInput"
-              @blur="newPasswordTouched = true; validateNewPassword(true)"
-            />
-            <div
-              v-if="newPassword"
-              class="account-password-strength"
-            >
-              <div class="account-password-strength__bar">
-                <div
-                  class="account-password-strength__fill"
-                  :style="{ width: `${(passwordStrength.level / 3) * 100}%`, background: passwordStrength.color }"
-                />
-              </div>
-              <span
-                class="account-password-strength__text"
-                :style="{ color: passwordStrength.color }"
-              >
-                {{ passwordStrength.text }}
-              </span>
-            </div>
-            <p class="account-settings-row__hint">
-              {{ t('account.securityPwdHint') }}
-            </p>
-            <p
-              v-if="newPasswordError"
-              class="account-settings-row__error"
-            >
-              {{ newPasswordError }}
-            </p>
-          </div>
-        </div>
-        <div class="account-settings-row account-settings-row--form">
-          <span class="account-settings-row__label">{{ t('account.fieldConfirmPassword') }}</span>
-          <div class="account-settings-row__control">
-            <ElInput
-              v-model="confirmPassword"
-              type="password"
-              show-password
-              autocomplete="new-password"
-              :class="{ 'account-password-input--error': confirmPasswordError }"
-              @input="onConfirmPasswordInput"
-              @blur="confirmPasswordTouched = true; validateConfirmPassword(true)"
-            />
-            <p
-              v-if="confirmPasswordError"
-              class="account-settings-row__error"
-            >
-              {{ confirmPasswordError }}
-            </p>
-          </div>
-        </div>
-        <div class="account-settings-row account-settings-row--form account-settings-row--actions">
-          <span
-            class="account-settings-row__label"
-            aria-hidden="true"
+        {{ t('account.passwordDetailsLoading') }}
+      </p>
+      <div v-else-if="accountDetailsFailed || hasUsablePassword === null">
+        <p role="alert">
+          {{ t('account.passwordDetailsFailed') }}
+        </p>
+        <ElButton @click="loadAccountDetails">
+          {{ t('account.passwordDetailsRetry') }}
+        </ElButton>
+      </div>
+      <template v-else>
+        <p class="account-password-description">
+          {{ t('account.passwordAccountScope') }}
+        </p>
+        <template v-if="passwordRecoveryOpen || !hasUsablePassword">
+          <p
+            v-if="!hasUsablePassword"
+            class="account-password-description"
+          >
+            {{ t('account.noPasswordHint') }}
+          </p>
+          <ResetPasswordCard
+            v-if="passwordResetAvailable"
+            :initial-email="user?.email || ''"
+            lock-email
+            embedded
+            @password-reset="onPasswordReset"
           />
-          <div class="account-settings-row__control">
-            <ElButton
-              type="primary"
-              :loading="passwordSubmitting"
-              :disabled="passwordSubmitting"
-              @click="updatePassword"
-            >
-              {{ t('account.btnUpdatePassword') }}
-            </ElButton>
+          <p
+            v-else
+            role="status"
+          >
+            {{ t('account.passwordRecoveryUnavailable') }}
+          </p>
+          <ElButton
+            v-if="hasUsablePassword"
+            @click="passwordRecoveryOpen = false"
+          >
+            {{ t('account.passwordRecoveryBack') }}
+          </ElButton>
+        </template>
+        <ElForm
+          v-else
+          label-position="top"
+          class="account-password-form"
+          @submit.prevent
+        >
+          <div class="account-settings-row account-settings-row--form">
+            <span class="account-settings-row__label">{{ t('account.fieldCurrentPassword') }}</span>
+            <div class="account-settings-row__control">
+              <ElInput
+                v-model="currentPassword"
+                type="password"
+                show-password
+                autocomplete="current-password"
+                :class="{ 'account-password-input--error': currentPasswordError }"
+                @input="onCurrentPasswordInput"
+                @blur="currentPasswordTouched = true; validateCurrentPassword(true)"
+              />
+              <p
+                v-if="currentPasswordError"
+                class="account-settings-row__error"
+              >
+                {{ currentPasswordError }}
+              </p>
+            </div>
           </div>
-        </div>
-      </ElForm>
+          <div class="account-settings-row account-settings-row--form">
+            <span class="account-settings-row__label">{{ t('account.fieldNewPassword') }}</span>
+            <div class="account-settings-row__control">
+              <ElInput
+                v-model="newPassword"
+                type="password"
+                show-password
+                autocomplete="new-password"
+                :class="{ 'account-password-input--error': newPasswordError }"
+                @input="onNewPasswordInput"
+                @blur="newPasswordTouched = true; validateNewPassword(true)"
+              />
+              <div
+                v-if="newPassword"
+                class="account-password-strength"
+              >
+                <div class="account-password-strength__bar">
+                  <div
+                    class="account-password-strength__fill"
+                    :style="{ width: `${(passwordStrength.level / 3) * 100}%`, background: passwordStrength.color }"
+                  />
+                </div>
+                <span
+                  class="account-password-strength__text"
+                  :style="{ color: passwordStrength.color }"
+                >
+                  {{ passwordStrength.text }}
+                </span>
+              </div>
+              <p class="account-settings-row__hint">
+                {{ t('account.securityPwdHint') }}
+              </p>
+              <p
+                v-if="newPasswordError"
+                class="account-settings-row__error"
+              >
+                {{ newPasswordError }}
+              </p>
+            </div>
+          </div>
+          <div class="account-settings-row account-settings-row--form">
+            <span class="account-settings-row__label">{{ t('account.fieldConfirmPassword') }}</span>
+            <div class="account-settings-row__control">
+              <ElInput
+                v-model="confirmPassword"
+                type="password"
+                show-password
+                autocomplete="new-password"
+                :class="{ 'account-password-input--error': confirmPasswordError }"
+                @input="onConfirmPasswordInput"
+                @blur="confirmPasswordTouched = true; validateConfirmPassword(true)"
+              />
+              <p
+                v-if="confirmPasswordError"
+                class="account-settings-row__error"
+              >
+                {{ confirmPasswordError }}
+              </p>
+            </div>
+          </div>
+          <div class="account-settings-row account-settings-row--form account-settings-row--actions">
+            <span
+              class="account-settings-row__label"
+              aria-hidden="true"
+            />
+            <div class="account-settings-row__control">
+              <ElButton
+                type="primary"
+                :loading="passwordSubmitting"
+                :disabled="passwordSubmitting"
+                @click="updatePassword"
+              >
+                {{ t('account.btnUpdatePassword') }}
+              </ElButton>
+            </div>
+          </div>
+        </ElForm>
+        <ElButton
+          v-if="hasUsablePassword && !passwordRecoveryOpen && passwordResetAvailable"
+          @click="resetPasswordFormState(); passwordRecoveryOpen = true"
+        >
+          {{ t('account.passwordRecoveryAction') }}
+        </ElButton>
+      </template>
     </section>
 
     <section class="account-settings-section">
@@ -706,6 +788,13 @@ watch(
   background: color-mix(in srgb, var(--color-primary, var(--el-color-primary)) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-primary, var(--el-color-primary)) 24%, transparent);
   border-radius: var(--radius-card, 10px);
+}
+
+.account-password-description {
+  margin: 8px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .account-settings-row__control {

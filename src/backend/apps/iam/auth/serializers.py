@@ -10,6 +10,7 @@ from rest_framework import serializers
 from apps.iam.profile_models import Profile
 from apps.iam.access import get_access_profile
 from apps.iam.services.login_audit import get_security_audit, serialize_security_audit
+from apps.configuration.services.runtime_settings import password_reset_available
 
 
 def get_registered_at(user):
@@ -36,6 +37,8 @@ class UserDetailsSerializer(serializers.ModelSerializer):
     access_profile = serializers.SerializerMethodField()
     registered_at = serializers.SerializerMethodField()
     security_audit = serializers.SerializerMethodField()
+    has_usable_password = serializers.SerializerMethodField()
+    password_reset_available = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -51,8 +54,25 @@ class UserDetailsSerializer(serializers.ModelSerializer):
             "access_profile",
             "registered_at",
             "security_audit",
+            "has_usable_password",
+            "password_reset_available",
         ]
         read_only_fields = ["is_staff"]
+
+    @staticmethod
+    def get_has_usable_password(obj):
+        return obj.has_usable_password()
+
+    @staticmethod
+    def get_password_reset_available(obj):
+        return bool(obj.email and obj.is_active and password_reset_available())
+
+    def validate_email(self, value):
+        if self.instance is not None and value != self.instance.email:
+            raise serializers.ValidationError(
+                "The sign-in email cannot be changed through profile updates."
+            )
+        return value
 
     @staticmethod
     def validate_language(value):

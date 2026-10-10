@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -303,6 +304,8 @@ class EmailCodeLoginVerifyView(AnonymousPublicViewMixin, APIView):
             )
 
         request.session["pending_user_id"] = user.id
+        request.session["pending_password_fingerprint"] = user.get_session_auth_hash()
+        request.session["pending_login_at"] = time.time()
         request.session.save()
         from apps.iam.services.membership_service import authoritative_role
 
