@@ -8,10 +8,12 @@ import os
 import re
 import stat
 import sys
+import subprocess
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ENV_ASSIGNMENT_RE = re.compile(
     r"^[ \t]*(?P<key>[A-Z_][A-Z0-9_]*)=(?P<value>[^\r\n]*)$",
@@ -133,7 +135,46 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--env-file", type=Path, required=True)
     parser.add_argument("--example", type=Path, required=True)
+    parser.add_argument("--maintenance-defaults", action="store_true")
     return parser
+
+
+def configure_maintenance_defaults(env_path: Path) -> None:
+    """Resolve the host timezone before Docker masks it with a UTC image default."""
+    text = _read_text(env_path)
+    values = _assignments(text)
+    zone = values.get("STORAGE_MAINTENANCE_TIMEZONE", "").strip().strip("\"'")
+    if not zone:
+        zone_file = Path("/etc/timezone")
+        if zone_file.exists():
+            zone = zone_file.read_text().strip()
+        localtime = str(Path("/etc/localtime").resolve())
+        if not zone and "/zoneinfo/" in localtime:
+            zone = localtime.split("/zoneinfo/", 1)[1]
+        if not zone and sys.platform == "darwin":
+            detected = subprocess.run(
+                ["/usr/sbin/systemsetup", "-gettimezone"], capture_output=True,
+                text=True, check=True,
+            )
+            zone = detected.stdout.strip().removeprefix("Time Zone: ")
+    ZoneInfo(zone)  # Invalid/unknown host timezone must not silently schedule in UTC.
+    updates = {"STORAGE_MAINTENANCE_TIMEZONE": zone}
+    # Migrate previous shipped defaults; preserve non-default operator overrides.
+    defaults = {
+        "STORAGE_MAINTENANCE_FULL_INTERVAL_SECONDS": ("86400", "172800"),
+        "STORAGE_MAINTENANCE_FULL_WINDOW_START": ("00:00", "01:00"),
+        "STORAGE_MAINTENANCE_FULL_WINDOW_END": ("06:00", "05:00"),
+        "STORAGE_MAINTENANCE_GLOBAL_CONCURRENCY": ("4", "1"),
+    }
+    for key, (old, new) in defaults.items():
+        if key not in values or values[key].strip().strip("\"'") == old:
+            updates[key] = new
+    for key, value in updates.items():
+        if key in values:
+            text = re.sub(rf"^{key}=.*$", f"{key}={value}", text, flags=re.MULTILINE)
+        else:
+            text = _append_lines(text, [f"{key}={value}"])
+    _atomic_write(env_path, text)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -141,7 +182,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         result = sync_env_file(args.env_file, args.example)
-    except OSError as exc:
+        if args.maintenance_defaults:
+            configure_maintenance_defaults(args.env_file)
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         print(f"ERROR: failed to synchronize environment file: {exc}", file=sys.stderr)
         return 1
 

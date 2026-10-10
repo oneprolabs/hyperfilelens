@@ -233,6 +233,34 @@ python3 -m unittest tools/quality/test_check_english_source.py
 
 For additional development and build options, run the relevant repository scripts with `--help`.
 
+## Repository Maintenance and Orphan Snapshots
+
+Full Maintenance uses persistent, balanced two-day calendar assignments in the
+Controller server's local 01:00–05:00 window. Automatic retries obey that window;
+work already running at 05:00 can finish. The installer and development startup
+persist the host IANA timezone as `STORAGE_MAINTENANCE_TIMEZONE`. Quick Maintenance
+remains on a six-hour interval. Existing custom maintenance configuration is
+preserved; previous shipped daily defaults are migrated to two days.
+
+Orphan reconciliation runs every two days, including owned repositories with no
+remaining backup sources. In a repository's Tasks tab, **Reconcile orphan
+snapshots** starts a manual scan. First discovery only marks the snapshot. A later
+scan may delete it after a 24-hour discovery grace period and a fresh safety
+check. Discovery and successful deletion are separate audit entries containing
+the backup source, directory, and full snapshot ID. Actual storage reclamation
+still requires subsequent maintenance and Kopia's normal safety delays.
+For an observation-only rollout, set
+`STORAGE_ORPHAN_SNAPSHOT_DELETE_ENABLED=false`; discovery continues, but deletion
+is deferred until an operator enables it.
+
+Active backups, pending result registration, snapshot usage, uncertain Agent
+termination, and unverified ownership prevent automatic deletion. An interrupted
+deletion retains a persistent repository gate rather than assuming that a lease
+expiry proves process termination. Confirm the original execution has stopped
+and reconcile its result before releasing such a gate. Node-owned repositories
+require Agents advertising `orphan_snapshot_reconcile_v1`; older Agents fail
+closed without deleting snapshots.
+
 ## Contributing
 
 Pull requests and issues are both welcome. Found a bug, hit a rough edge, or want a capability that is

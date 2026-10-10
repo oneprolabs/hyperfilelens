@@ -375,6 +375,13 @@ class CopilotRetryTests(TestCase):
         self.organization = Organization.objects.create(
             key="copilot-retry", name="Copilot Retry"
         )
+        self.repository = Repository.objects.create(
+            organization_id=self.organization.id,
+            name="copilot-retry-repository",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+        )
         self.user = get_user_model().objects.create_user(
             username="copilot-retry",
             email="copilot-retry@example.com",
@@ -628,7 +635,7 @@ class CopilotRetryTests(TestCase):
             source_type="agent",
             source_ref_id=source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )

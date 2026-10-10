@@ -645,12 +645,38 @@ def reconcile_repository_operations(*, limit: int = 100):
     }
 
 
-@shared_task(name="apps.storage.tasks.execute_repository_operation")
+@shared_task(
+    name="apps.storage.tasks.execute_repository_operation",
+    soft_time_limit=maintenance_settings().execution_timeout_seconds + 60,
+    time_limit=maintenance_settings().execution_timeout_seconds + 120,
+)
 @logged_celery_task(
     name="apps.storage.tasks.execute_repository_operation",
     trace_keys=("repository_task_id",),
 )
 def execute_repository_operation(*, repository_task_id: int):
+    row = RepositoryTask.objects.select_related("task").get(pk=repository_task_id)
+    if row.operation_type == RepositoryTask.OperationType.SNAPSHOT_RECONCILE:
+        from apps.storage.services.internal.orphan_snapshots import run_orphan_reconciliation
+        # Reuse the durable advance lock, but never treat its expiry as remote completion.
+        key = f"storage:orphan:advance:{row.id}"
+        token = str(uuid4())
+        if not cache.add(key, token, timeout=21660):
+            return {"status": "already_advancing"}
+        try:
+            return run_orphan_reconciliation(row.id)
+        finally:
+            if cache.get(key) == token:
+                cache.delete(key)
+    if (
+        row.operation_type == RepositoryTask.OperationType.MAINTENANCE_FULL
+        and row.task.status == Task.Status.PENDING
+        and row.task.trigger_type in {Task.TriggerType.SYSTEM, Task.TriggerType.RETRY}
+        and row.due_at is not None
+    ):
+        from apps.storage.services.internal.repository_operations import _inside_full_window
+        if not _inside_full_window(timezone.now(), maintenance_settings()):
+            return {"status": "deferred_maintenance_window"}
     task_identity = (
         RepositoryTask.objects.filter(pk=repository_task_id)
         .values_list("owner_type", "operation_type", "task__status")

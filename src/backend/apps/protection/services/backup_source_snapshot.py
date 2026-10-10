@@ -203,28 +203,36 @@ def record_source_snapshot_directory_result(
     ):
         raise ValidationError({"error_message": "Failed directory results require an error message."})
 
-    row, _created = BackupSourceSnapshotDirectory.objects.update_or_create(
-        source_snapshot=source_snapshot,
-        backup_config_dir_id=int(backup_config_dir_id),
-        defaults={
-            "organization_id": source_snapshot.organization_id,
-            "backup_config_id": source_snapshot.backup_config_id,
-            "source_path": str(source_path).strip(),
-            "path_type": path_type_value,
-            "display_name": str(display_name or "").strip(),
-            "repository_id": int(repository_id),
-            "kopia_snapshot_id": normalized_kopia_snapshot_id or None,
-            "status": status_value,
-            "size_bytes": max(0, int(size_bytes or 0)),
-            "new_original_content_bytes": new_original_content_bytes,
-            "new_packed_content_bytes": new_packed_content_bytes,
-            "file_count": max(0, int(file_count or 0)),
-            "dir_count": max(0, int(dir_count or 0)),
-            "stats": normalized_stats,
-            "error_code": str(error_code or "").strip(),
-            "error_message": str(error_message or "").strip(),
-        },
-    )
+    from apps.storage.repositories.models import Repository
+    from apps.storage.services.internal.orphan_snapshot_fence import assert_no_orphan_cleanup
+
+    # Result registration participates in the same fence as cleanup admission.
+    with transaction.atomic():
+        BackupSourceSnapshot.objects.select_for_update().get(pk=source_snapshot.pk)
+        Repository.objects.select_for_update().get(id=repository_id)
+        assert_no_orphan_cleanup(repository_id)
+        row, _created = BackupSourceSnapshotDirectory.objects.update_or_create(
+            source_snapshot=source_snapshot,
+            backup_config_dir_id=int(backup_config_dir_id),
+            defaults={
+                "organization_id": source_snapshot.organization_id,
+                "backup_config_id": source_snapshot.backup_config_id,
+                "source_path": str(source_path).strip(),
+                "path_type": path_type_value,
+                "display_name": str(display_name or "").strip(),
+                "repository_id": int(repository_id),
+                "kopia_snapshot_id": normalized_kopia_snapshot_id or None,
+                "status": status_value,
+                "size_bytes": max(0, int(size_bytes or 0)),
+                "new_original_content_bytes": new_original_content_bytes,
+                "new_packed_content_bytes": new_packed_content_bytes,
+                "file_count": max(0, int(file_count or 0)),
+                "dir_count": max(0, int(dir_count or 0)),
+                "stats": normalized_stats,
+                "error_code": str(error_code or "").strip(),
+                "error_message": str(error_message or "").strip(),
+            },
+        )
     refresh_source_snapshot_summary(source_snapshot=source_snapshot)
     return row
 

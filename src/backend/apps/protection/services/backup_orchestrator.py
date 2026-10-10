@@ -980,6 +980,12 @@ def _dispatch_directory_backup(
     task_kind: str = "backup.run",
     allow_new_task: bool = True,
 ) -> bool:
+    from apps.storage.repositories.models import Repository
+    from apps.storage.services.internal.orphan_snapshot_fence import assert_no_orphan_cleanup
+
+    with transaction.atomic():
+        Repository.objects.select_for_update().get(pk=repository.id)
+        assert_no_orphan_cleanup(repository.id)
     bt = _bt()
     operation_id = f"{task.task_uuid}-{directory_row.backup_config_dir_id}"
     operation_attempt = int(directory_row.retry_count or 0) + 1

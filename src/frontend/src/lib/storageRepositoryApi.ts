@@ -39,6 +39,7 @@ export type StorageRepositoryCrossProxyAccess = {
 }
 
 export type StorageRepository = {
+  maintenance_schedule?: Array<{ target: string, timezone: string, next_full_due_at: string | null, next_reconcile_due_at: string | null }>
   id: number
   organization_id: number
   name: string

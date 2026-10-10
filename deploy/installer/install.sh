@@ -2629,6 +2629,7 @@ PY
 	chmod 600 "${env_file}"
 	reconcile_hfl_extensions_env "${env_file}" "${example}"
 	log ".env created (fixed login credentials, generated internal secrets, DJANGO_DEBUG=false)"
+	sync_env_from_example "${example}"
 }
 
 apply_runtime_configuration() {
@@ -3018,7 +3019,7 @@ sync_env_from_example() {
 	[[ -f "${sync_script}" ]] || die "missing environment sync script: ${sync_script}"
 	[[ -f "${env_file}" ]] && chmod 600 "${env_file}"
 	step "Merging missing keys from .env.example into .env ..."
-	python3 "${sync_script}" --env-file "${env_file}" --example "${example}"
+	python3 "${sync_script}" --env-file "${env_file}" --example "${example}" --maintenance-defaults
 	chmod 600 "${env_file}"
 	reconcile_hfl_extensions_env "${env_file}" "${example}"
 }

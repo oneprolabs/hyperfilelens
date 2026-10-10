@@ -6219,6 +6219,21 @@
         "taskFinished": "Tarea terminada",
         "stepStatusUpdated": "{step}: {status}"
       },
+      "orphanSnapshots": {
+        "scanned": "Instantáneas físicas examinadas",
+        "discovered": "Instantáneas huérfanas detectadas",
+        "deleted": "Instantáneas huérfanas eliminadas",
+        "grace": "Esperando el período de gracia de 24 horas",
+        "deferred": "Eliminación aplazada",
+        "failed": "Error al eliminar",
+        "absent": "La instantánea ya no existe",
+        "managed": "Relación de gestión restaurada",
+        "source": "Origen de copia de seguridad",
+        "path": "Directorio",
+        "snapshotId": "ID de instantánea",
+        "reconcile": "Conciliar instantáneas huérfanas",
+        "queued": "Conciliación de instantáneas en cola"
+      },
       "maintenanceSummary": {
         "contentGc": "GC de contenido lógico",
         "contentRemoved": "Eliminado del índice",

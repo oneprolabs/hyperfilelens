@@ -4,13 +4,13 @@ import hashlib
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone as datetime_timezone
+from datetime import datetime, time, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from common.errors import AppError
 from django.core.exceptions import ImproperlyConfigured, ValidationError
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.storage.repositories.models import (
@@ -19,10 +19,12 @@ from apps.storage.repositories.models import (
     RepositoryLocationClaim,
     RepositoryMaintenanceState,
     RepositoryTask,
-    RepositoryUsageShard,
 )
 from apps.storage.services.internal.repository_task_naming import (
     repository_operation_display_name,
+)
+from apps.storage.services.internal.maintenance_schedule import (
+    assign_full_slots, next_full_slot, server_timezone,
 )
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import (
@@ -75,7 +77,7 @@ def maintenance_settings() -> MaintenanceSettings:
         except ValueError as exc:
             raise ImproperlyConfigured(f"{name} must use HH:MM format") from exc
 
-    timezone_name = os.getenv("STORAGE_MAINTENANCE_TIMEZONE", "UTC").strip() or "UTC"
+    timezone_name = server_timezone()
     try:
         configured_timezone = ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError as exc:
@@ -84,10 +86,10 @@ def maintenance_settings() -> MaintenanceSettings:
     if enabled_raw not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
         raise ImproperlyConfigured("STORAGE_MAINTENANCE_ENABLED must be a boolean")
     enabled = enabled_raw in {"1", "true", "yes", "on"}
-    window_start = clock("STORAGE_MAINTENANCE_FULL_WINDOW_START", "00:00")
-    window_end = clock("STORAGE_MAINTENANCE_FULL_WINDOW_END", "06:00")
-    if window_start == window_end:
-        raise ImproperlyConfigured("Maintenance full window start and end must differ")
+    window_start = clock("STORAGE_MAINTENANCE_FULL_WINDOW_START", "01:00")
+    window_end = clock("STORAGE_MAINTENANCE_FULL_WINDOW_END", "05:00")
+    if window_start >= window_end:
+        raise ImproperlyConfigured("Maintenance window must start before it ends")
     heartbeat_interval_seconds = positive_int(
         "STORAGE_MAINTENANCE_HEARTBEAT_INTERVAL_SECONDS", 10
     )
@@ -106,12 +108,12 @@ def maintenance_settings() -> MaintenanceSettings:
         quick_interval=timedelta(
             seconds=positive_int("STORAGE_MAINTENANCE_QUICK_INTERVAL_SECONDS", 21600)
         ),
-        full_interval=timedelta(seconds=positive_int("STORAGE_MAINTENANCE_FULL_INTERVAL_SECONDS", 86400)),
+        full_interval=timedelta(seconds=positive_int("STORAGE_MAINTENANCE_FULL_INTERVAL_SECONDS", 172800)),
         scan_interval=timedelta(seconds=positive_int("STORAGE_MAINTENANCE_SCAN_INTERVAL_SECONDS", 60)),
         window_start=window_start,
         window_end=window_end,
         timezone=configured_timezone,
-        global_concurrency=positive_int("STORAGE_MAINTENANCE_GLOBAL_CONCURRENCY", 4),
+        global_concurrency=positive_int("STORAGE_MAINTENANCE_GLOBAL_CONCURRENCY", 1),
         per_node_concurrency=positive_int("STORAGE_MAINTENANCE_PER_NODE_CONCURRENCY", 1),
         execution_timeout_seconds=positive_int("STORAGE_MAINTENANCE_EXECUTION_TIMEOUT_SECONDS", 21600),
         heartbeat_interval_seconds=heartbeat_interval_seconds,
@@ -170,17 +172,10 @@ def discover_repository_execution_targets(*, now: datetime | None = None) -> int
                     owner_node_id__isnull=False,
                 ).values_list("owner_node_id", "root_path")
             )
-            shards = RepositoryUsageShard.objects.filter(
-                organization_id=repository.organization_id,
-                repository_id=repository.id,
-                usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
-                is_active=True,
-            )
-            for shard in shards:
-                if (shard.node_id, shard.repository_subdir) not in owned_keys:
-                    continue
-                key = f"repository:{repository.id}:node:{shard.node_id}:subdir:{shard.repository_subdir}"
-                definitions.append((key, RepositoryExecutionTarget.OwnerType.NODE, int(shard.node_id), shard.repository_subdir))
+            # Physical claims survive source/shard removal and must still be maintained.
+            for node_id, subdir in sorted(owned_keys):
+                key = f"repository:{repository.id}:node:{node_id}:subdir:{subdir}"
+                definitions.append((key, RepositoryExecutionTarget.OwnerType.NODE, int(node_id), subdir))
         for key, owner_type, node_id, subdir in definitions:
             seen.add(key)
             target, _created = RepositoryExecutionTarget.objects.update_or_create(
@@ -222,8 +217,16 @@ def _stable_full_delay(target_key: str, settings: MaintenanceSettings) -> timede
 
 
 def _concurrency_available(target: RepositoryExecutionTarget, settings: MaintenanceSettings) -> bool:
-    active = RepositoryExecutionTarget.objects.filter(active_task__status__in=[Task.Status.PENDING, Task.Status.RUNNING])
-    if active.count() >= settings.global_concurrency:
+    active = RepositoryExecutionTarget.objects.filter(
+        active_task__isnull=False,
+    )
+    # An uncertain remote deletion holds its own repository fence, not the
+    # entire installation's maintenance capacity indefinitely.
+    executing = active.exclude(
+        active_task__repository_operation__operation_type="snapshot.reconcile",
+        active_task__status=Task.Status.WAITING,
+    )
+    if executing.count() >= settings.global_concurrency:
         return False
     if target.owner_node_id and active.filter(owner_node_id=target.owner_node_id).count() >= settings.per_node_concurrency:
         return False
@@ -255,6 +258,15 @@ def create_repository_operation_task(
     )
     if not target.is_active or target.active_task_id:
         return None
+    # Admission is serialized by the Repository lock, including concurrent schedulers.
+    siblings = RepositoryExecutionTarget.objects.filter(
+        repository=repository, active_task__isnull=False,
+    )
+    if (
+        operation_type == RepositoryTask.OperationType.SNAPSHOT_RECONCILE
+        and siblings.exists()
+    ) or siblings.filter(active_task__repository_operation__operation_type="snapshot.reconcile").exists():
+        return None
     if repository.status != Repository.Status.CREATED:
         target.is_active = False
         target.save(update_fields=["is_active", "updated_at"])
@@ -263,6 +275,13 @@ def create_repository_operation_task(
         target.is_active = False
         target.save(update_fields=["is_active", "updated_at"])
         return None
+    if operation_type == RepositoryTask.OperationType.SNAPSHOT_RECONCILE:
+        from apps.storage.services.internal.orphan_snapshot_fence import backup_blocker
+        if backup_blocker(repository):
+            return None
+    state = target.maintenance_state
+    if state.full_day_group is None:
+        assign_full_slots([target], maintenance_settings(), timezone.now())
     operation_label = dict(RepositoryTask.OperationType.choices)[operation_type]
     task = create_task(
         organization_id=target.organization_id,
@@ -305,6 +324,11 @@ def create_repository_operation_task(
 
 @transaction.atomic
 def schedule_due_maintenance(*, now: datetime | None = None) -> list[int]:
+    # One scheduler transaction owns assignment and global admission accounting.
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_try_advisory_xact_lock(%s)", [1386001])
+        if not cursor.fetchone()[0]:
+            return []
     settings = maintenance_settings()
     if not settings.enabled:
         return []
@@ -314,8 +338,9 @@ def schedule_due_maintenance(*, now: datetime | None = None) -> list[int]:
     # Each accepted operation takes its Repository and Target locks in
     # create_repository_operation_task(). Do not pre-lock every Target here;
     # doing so would reverse the cleanup path's lock order.
-    targets = RepositoryExecutionTarget.objects.filter(is_active=True)
-    for target in targets.order_by("target_key"):
+    targets = list(RepositoryExecutionTarget.objects.filter(is_active=True).select_related("maintenance_state"))
+    assign_full_slots(targets, settings, current)
+    for target in sorted(targets, key=lambda item: (item.maintenance_state.next_full_due_at, item.target_key)):
         state = target.maintenance_state
         if target.active_task_id or (state.next_retry_at and state.next_retry_at > current):
             continue
@@ -324,18 +349,12 @@ def schedule_due_maintenance(*, now: datetime | None = None) -> list[int]:
         operation = None
         full_window_due = full_due and _inside_full_window(current, settings)
         if full_window_due:
-            window_open = current.astimezone(settings.timezone).replace(
-                hour=settings.window_start.hour,
-                minute=settings.window_start.minute,
-                second=0,
-                microsecond=0,
-            )
-            if settings.window_start > settings.window_end and current.astimezone(settings.timezone).time().replace(tzinfo=None) < settings.window_end:
-                window_open -= timedelta(days=1)
-            if current >= (window_open + _stable_full_delay(target.target_key, settings)).astimezone(
-                datetime_timezone.utc
-            ):
-                operation = RepositoryTask.OperationType.MAINTENANCE_FULL
+            operation = RepositoryTask.OperationType.MAINTENANCE_FULL
+        if (
+            operation is None and state.next_reconcile_due_at
+            and state.next_reconcile_due_at <= current
+        ):
+            operation = RepositoryTask.OperationType.SNAPSHOT_RECONCILE
         if operation is None and quick_due and not full_window_due:
             operation = RepositoryTask.OperationType.MAINTENANCE_QUICK
         if operation is None or not _concurrency_available(target, settings):
@@ -559,7 +578,7 @@ def finalize_repository_operation(
         if repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_QUICK:
             state.next_quick_due_at = now + settings.quick_interval
         elif repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_FULL:
-            state.next_full_due_at = now + settings.full_interval
+            state.next_full_due_at = next_full_slot(state, now, settings)
             state.next_quick_due_at = now + settings.quick_interval
         state.consecutive_failures = 0
         state.next_retry_at = None
@@ -570,8 +589,10 @@ def finalize_repository_operation(
             state.next_quick_due_at = now + settings.quick_interval
         elif repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_FULL:
             state.last_full_success_at = now
-            state.next_full_due_at = now + settings.full_interval
+            state.next_full_due_at = next_full_slot(state, now, settings)
             state.next_quick_due_at = now + settings.quick_interval
+        elif repository_task.operation_type == RepositoryTask.OperationType.SNAPSHOT_RECONCILE:
+            state.next_reconcile_due_at = now + timedelta(days=2)
         state.consecutive_failures = 0
         state.next_retry_at = None
         status = Task.Status.SUCCESS

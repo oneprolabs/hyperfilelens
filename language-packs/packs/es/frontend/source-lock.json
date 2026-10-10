@@ -8126,5 +8126,18 @@
   "protection.tags.saved": "a872aa0f39ff51f52e3368849ecc6f1c087f21f10be10520c6f4da5713859dba",
   "protection.tags.filter": "cce209736d2c9240a0fa1e07a5c8bd88e9c59b4ded30cdcdddfd345bdb039831",
   "protection.tags.editSource": "002043a35fbe7b4a3eec413d3b20922015312415dbbf901fbcfce3dce53ad9bc",
-  "protection.side.sourceTags": "c98823a163e81611b89e1557a0d2892e7bc799379dbaca5cebd0ce1c28175960"
+  "protection.side.sourceTags": "c98823a163e81611b89e1557a0d2892e7bc799379dbaca5cebd0ce1c28175960",
+  "ops.task.orphanSnapshots.absent": "b9936a21d437766aac950ad2864b1ca076cfa5a79822ccc970696be81e1425b2",
+  "ops.task.orphanSnapshots.deferred": "2e61faeabd0ef6c6234473a2663773af5b558866a9b05500745f87f7cda32108",
+  "ops.task.orphanSnapshots.deleted": "c3dadf407762c1b96b1053296692a0e9e0bb277846340170aa908d361c388b9e",
+  "ops.task.orphanSnapshots.discovered": "6be2a285ab656b4aebcd9f528e164f6ee5dc0f90f63f90ce4e49659523f929d7",
+  "ops.task.orphanSnapshots.failed": "27f64caa1aa5511dacb7f4008c1276a1723e4f93d38a2d114ee4cf9cb686385e",
+  "ops.task.orphanSnapshots.grace": "6f2f8fcb4235a66360638da1bee12918c8d6096c2575456c76abcdb1ba96dbec",
+  "ops.task.orphanSnapshots.managed": "8e5fe92a5e9444d2effdccfffda230614301e1a036e8cce383be40560d0a956e",
+  "ops.task.orphanSnapshots.path": "8c214aae9670fcbab820bcc7c206cd32b45c916080751feb80801b3df4019d90",
+  "ops.task.orphanSnapshots.queued": "cdaa56775bf41c4aabf53fcc78e7456fa3ca96c1a0978829a6528be30a38f53f",
+  "ops.task.orphanSnapshots.reconcile": "d5547478b993f23207811a58ad62d189e3353677bce38012ef2e067923bb51e9",
+  "ops.task.orphanSnapshots.snapshotId": "82eaebd4abf64bdaad74b3a835cc63920b51073b9d9c90721d7c442fdd126b1e",
+  "ops.task.orphanSnapshots.source": "fac303b1000df67488aaf8f014ccf942b15982a206528a385ac16a437ec854c3",
+  "ops.task.orphanSnapshots.scanned": "4c4b27df68d42a841d12ea8d0b1c3b382151de672eec924b902b97f8b568e1bf"
 }

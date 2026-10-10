@@ -753,6 +753,31 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, **result}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
+    def reconcile_snapshots(self, request, pk=None):
+        from django.db import transaction
+        from apps.storage.repositories.models import RepositoryTask
+        from apps.storage.services.internal.repository_operations import (
+            create_repository_operation_task, discover_repository_execution_targets,
+        )
+        repository = self.get_object()
+        discover_repository_execution_targets()
+        accepted = []
+        for target in repository.execution_targets.filter(is_active=True):
+            operation = create_repository_operation_task(
+                target_id=target.id, operation_type=RepositoryTask.OperationType.SNAPSHOT_RECONCILE,
+                trigger_type=Task.TriggerType.MANUAL,
+            )
+            if operation:
+                from apps.storage.tasks import execute_repository_operation
+                transaction.on_commit(
+                    lambda task_id=operation.id: execute_repository_operation.delay(repository_task_id=task_id)
+                )
+                accepted.append(TaskSerializer(operation.task).data)
+        if not accepted:
+            raise ValidationError({"detail": "Repository is busy or ownership is not verified."})
+        return Response({"tasks": accepted}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=["post"])
     def check(self, request, pk=None):
         repository = self.get_object()
         try:

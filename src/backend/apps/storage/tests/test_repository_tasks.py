@@ -775,7 +775,14 @@ class RepositoryTaskTests(TestCase):
     )
     def test_scheduler_runs_full_inside_full_window(self):
         now = timezone.make_aware(datetime(2026, 7, 14, 5, 59, 59))
-
+        # A fresh target is assigned a future balanced slot, not immediately due.
+        discover_repository_execution_targets(now=now)
+        state = self.repository.execution_targets.get().maintenance_state
+        state.full_day_group = 0
+        state.full_slot_seconds = 3600
+        state.schedule_timezone = "UTC"
+        state.next_full_due_at = now
+        state.save()
         scheduled = schedule_due_maintenance(now=now)
 
         self.assertEqual(len(scheduled), 1)
