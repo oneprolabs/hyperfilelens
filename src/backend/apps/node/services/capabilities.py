@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from apps.node.models import Node
 
 REPOSITORY_OWNERSHIP_CAPABILITY = "repository_ownership_v1"
+REPOSITORY_LIGHTWEIGHT_HEALTH_CAPABILITY = "repository_lightweight_health_v1"
 NAS_MOUNT_LIFECYCLE_CAPABILITY = "nas_mount_lifecycle_v1"
 INSIGHT_SAFE_RESTORE_CAPABILITY = "insight_safe_restore_v1"
 RESTORE_TARGET_DIRECTORY_CREATE_CAPABILITY = "restore_target_directory_create_v1"
@@ -52,6 +53,7 @@ __all__ = [
     "INSIGHT_SAFE_RESTORE_CAPABILITY",
     "NAS_MOUNT_LIFECYCLE_CAPABILITY",
     "REPOSITORY_OWNERSHIP_CAPABILITY",
+    "REPOSITORY_LIGHTWEIGHT_HEALTH_CAPABILITY",
     "RESTORE_TARGET_DIRECTORY_CREATE_CAPABILITY",
     "missing_node_capabilities",
     "node_capabilities",

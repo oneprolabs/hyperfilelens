@@ -37,6 +37,7 @@ func SupportedCapabilities() []string {
 		"repository_cleanup_s3_v1",
 		"repository_cleanup_s3_md5_v2",
 		"repository_ownership_v1",
+		"repository_lightweight_health_v1",
 		"backup_prepared_snapshot_v1",
 		"backup_operation_reconcile_v1",
 		"snapshot_browse_v1",

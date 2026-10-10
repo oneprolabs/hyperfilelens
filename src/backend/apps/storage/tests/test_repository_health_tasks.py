@@ -132,6 +132,7 @@ class RepositoryHealthConfigurationTests(SimpleTestCase):
         self.assertTrue(recovery_call.kwargs["enabled"])
 
 
+@mock.patch.dict(os.environ, {"STORAGE_REPOSITORY_HEALTH_CHECK_MODE": "legacy"})
 class RepositoryHealthPathTests(TestCase):
     def test_bound_proxy_payload_uses_node_inventory_root(self):
         node = SimpleNamespace(
@@ -171,6 +172,7 @@ class RepositoryHealthPathTests(TestCase):
         )
 
 
+@mock.patch.dict(os.environ, {"STORAGE_REPOSITORY_HEALTH_CHECK_MODE": "legacy"})
 class RepositoryHealthTaskTests(TestCase):
     def setUp(self):
         self.organization = Organization.objects.create(
@@ -596,6 +598,7 @@ class RepositoryHealthTaskTests(TestCase):
         cache_add.assert_called_once()
 
 
+@mock.patch.dict(os.environ, {"STORAGE_REPOSITORY_HEALTH_CHECK_MODE": "legacy"})
 class UnboundNASRepositoryHealthTests(TestCase):
     def setUp(self):
         self.organization = Organization.objects.create(
@@ -925,6 +928,7 @@ class UnboundNASRepositoryHealthTests(TestCase):
         run_agent.assert_not_called()
 
 
+@mock.patch.dict(os.environ, {"STORAGE_REPOSITORY_HEALTH_CHECK_MODE": "legacy"})
 class RepositoryHealthResultProjectionTests(TestCase):
     def setUp(self):
         self.organization = Organization.objects.create(
@@ -1265,6 +1269,7 @@ class RepositoryHealthResultProjectionTests(TestCase):
         )
 
 
+@mock.patch.dict(os.environ, {"STORAGE_REPOSITORY_HEALTH_CHECK_MODE": "legacy"})
 class AutomaticDirectNASObservationTests(TestCase):
     def setUp(self):
         self.organization = Organization.objects.create(
@@ -1319,6 +1324,59 @@ class AutomaticDirectNASObservationTests(TestCase):
             repository_subdir=subdir,
         )
         return node
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_async")
+    def test_lightweight_direct_nas_requires_capability_without_dispatch(self, run_async):
+        self._node("old-agent")
+        with mock.patch.dict(os.environ, {"STORAGE_REPOSITORY_HEALTH_CHECK_MODE": "lightweight"}):
+            with self.assertRaisesMessage(Exception, "does not support lightweight"):
+                dispatch_automatic_repository_observation(repository=self.repository)
+        run_async.assert_not_called()
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health, Repository.Health.UNVERIFIED)
+        self.assertEqual(self.repository.health_failures, 0)
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_async")
+    def test_lightweight_direct_nas_dispatches_read_only_budget(self, run_async):
+        node = self._node("lightweight-agent")
+        node.metadata = {"capabilities": ["repository_lightweight_health_v1"]}
+        node.save(update_fields=["metadata"])
+
+        def create_handle(**kwargs):
+            task = NodeTask.objects.create(
+                organization=self.organization, node_id=kwargs["node_id"],
+                kind=kwargs["kind"], correlation_type=kwargs["correlation_type"],
+                correlation_id=kwargs["correlation_id"], payload=kwargs["persisted_payload"],
+                status=NodeTask.Status.RUNNING, watchdog_deadline_at=timezone.now(),
+            )
+            return SimpleNamespace(task=task)
+
+        run_async.side_effect = create_handle
+        with mock.patch.dict(os.environ, {"STORAGE_REPOSITORY_HEALTH_CHECK_MODE": "lightweight"}):
+            tasks = dispatch_automatic_repository_observation(repository=self.repository)
+        self.assertEqual(len(tasks), 1)
+        payload = run_async.call_args.kwargs["payload"]
+        self.assertEqual(payload["health_check_mode"], "lightweight")
+        self.assertEqual(payload["health_timeout_seconds"], 60)
+        self.assertTrue(payload["health_only"])
+        self.assertFalse(payload["allow_ownership_adoption"])
+        self.assertEqual(tasks[0].payload["health_check_mode"], "lightweight")
+        tasks[0].status = NodeTask.Status.SUCCESS
+        tasks[0].accepted_at = timezone.now()
+        tasks[0].result = {"ownership_verified": True}
+        tasks[0].save(update_fields=["status", "accepted_at", "result", "updated_at"])
+        with (
+            mock.patch.dict(os.environ, {"STORAGE_REPOSITORY_HEALTH_CHECK_MODE": "lightweight"}),
+            mock.patch("apps.storage.services.internal.repository_health.mark_repository_location_ownership_verified") as mark,
+            mock.patch("apps.storage.services.internal.repository_health.recover_repository_location_ownership") as recover,
+        ):
+            self.assertTrue(project_repository_health_from_agent_result(node_task=tasks[0]))
+            mark.assert_not_called()
+            recover.assert_not_called()
+        self.repository.refresh_from_db()
+        self.assertEqual(self.repository.health, Repository.Health.ONLINE)
+        # The enclosing legacy configuration rejects results from the old mode.
+        self.assertFalse(project_repository_health_from_agent_result(node_task=tasks[0]))
 
     @mock.patch(
         "apps.storage.services.internal.repository_health.run_agent_task_async"
@@ -1705,6 +1763,7 @@ class AutomaticDirectNASObservationTests(TestCase):
         )
 
 
+@mock.patch.dict(os.environ, {"STORAGE_REPOSITORY_HEALTH_CHECK_MODE": "legacy"})
 class RepositoryHealthProbeTests(TestCase):
     def setUp(self):
         self.organization = Organization.objects.create(

@@ -6,11 +6,15 @@ from celery.schedules import crontab, schedule
 
 from common.scheduling.registry import TASK_REGISTRY
 
-from apps.storage.conf import repository_health_interval_seconds
+from apps.storage.conf import (
+    repository_health_interval_seconds,
+    repository_health_timeout_seconds,
+)
 from apps.storage.services.internal.repository_operations import maintenance_settings
 
 
 def register_periodic_tasks():
+    repository_health_timeout_seconds()  # Validate health configuration at startup.
     settings = maintenance_settings()
     TASK_REGISTRY.add(
         name="storage_cleanup_provider_validations",

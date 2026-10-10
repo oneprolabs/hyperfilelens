@@ -417,6 +417,7 @@ def read_s3_object(
     s3_url_style: str | None = None,
     use_tls: bool = True,
     timeout_seconds: float = 15,
+    max_bytes: int | None = None,
 ) -> bytes | None:
     client = _client(
         endpoint=endpoint,
@@ -433,7 +434,39 @@ def read_s3_object(
         if body is None:
             return b""
         try:
-            return body.read()
+            if max_bytes is None:
+                return body.read()
+            content_length = response.get("ContentLength")
+            if content_length is not None:
+                content_length = int(content_length)
+            if content_length is not None and content_length > max_bytes:
+                raise S3ClientError("Repository metadata exceeds the size limit.")
+            from .repository_health_budget import remaining_health_seconds
+
+            chunks = []
+            size = 0
+            while size <= max_bytes:
+                if content_length is not None and size == content_length:
+                    break
+                remaining = remaining_health_seconds(timeout_seconds)
+                set_timeout = getattr(body, "set_socket_timeout", None)
+                if callable(set_timeout):
+                    try:
+                        set_timeout(remaining)
+                    except AttributeError:
+                        # urllib3 releases the socket at EOF (including unknown
+                        # length responses). Timeout adjustment is best effort;
+                        # the client timeout and shared deadline still apply.
+                        pass
+                chunk = body.read(min(16384, max_bytes + 1 - size))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+            data = b"".join(chunks)
+            if len(data) > max_bytes:
+                raise S3ClientError("Repository metadata exceeds the size limit.")
+            return data
         finally:
             close = getattr(body, "close", None)
             if callable(close):
@@ -1681,12 +1714,15 @@ def _client(
         address_style = boto3_s3_addressing_style(s3_url_style)
     except ValueError as exc:
         raise S3ClientError(str(exc)) from exc
+    from .repository_health_budget import health_budget_active, remaining_health_seconds
+
+    timeout_seconds = remaining_health_seconds(timeout_seconds)
     config = Config(
         signature_version="s3v4",
         connect_timeout=timeout_seconds,
         read_timeout=timeout_seconds,
         max_pool_connections=BUCKET_REGION_LOOKUP_WORKERS,
-        retries={"max_attempts": 1},
+        retries={"max_attempts": 0 if health_budget_active() else 1},
         s3={"addressing_style": address_style},
         # Some S3-compatible endpoints reject botocore's optional checksum
         # headers on multi-object deletion. Keep checksums for operations whose

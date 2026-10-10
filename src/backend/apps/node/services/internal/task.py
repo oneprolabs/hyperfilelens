@@ -316,7 +316,18 @@ def _initial_watchdog_deadline(
     correlation_type: str,
     from_time: datetime | None = None,
     kind: str = "",
+    payload: dict | None = None,
 ) -> datetime:
+    health_budget = (payload or {}).get("health_timeout_seconds")
+    if (
+        correlation_type in {"storage.repository_health", "storage_repository"}
+        and kind == "repo.status"
+        and isinstance(health_budget, int)
+        and health_budget > 0
+    ):
+        return (from_time or timezone.now()) + timezone.timedelta(
+            seconds=max(node_conf.TASK_WATCHDOG_SECONDS, health_budget + 60),
+        )
     if _is_insight_snapshot_operation(
         correlation_type=correlation_type,
         kind=kind,
@@ -913,6 +924,7 @@ def create_agent_task(
             correlation_type=correlation_type or "",
             from_time=now,
             kind=kind,
+            payload=payload,
         ),
     )
     logger.info(
@@ -1081,6 +1093,7 @@ def _deliver_agent_task(
                     correlation_type=task.correlation_type,
                     from_time=dispatched_at,
                     kind=task.kind,
+                    payload=task.payload,
                 ),
                 result=completed_delivery_result,
             )
@@ -1126,6 +1139,7 @@ def accept_task(*, task_id: uuid.UUID | str, node_id: int) -> NodeTask:
         correlation_type=task.correlation_type,
         from_time=now,
         kind=task.kind,
+        payload=task.payload,
     )
     task.last_error = ""
     task.result = _without_delivery_runtime_state(task.result)
@@ -1398,7 +1412,20 @@ def record_task_progress(
     task.accepted_at = task.accepted_at or now
     task.last_progress_at = now
     task.result = _without_delivery_runtime_state(task.result)
-    if _is_protection_backup_task(task):
+    if (
+        task.correlation_type in {"storage.repository_health", "storage_repository"}
+        and task.kind == "repo.status"
+        and task.payload.get("health_timeout_seconds")
+    ):
+        task.watchdog_deadline_at = _initial_watchdog_deadline(
+            correlation_type=task.correlation_type, kind=task.kind, payload=task.payload,
+            from_time=task.accepted_at,
+        )
+        update_fields = [
+            "status", "accepted_at", "last_progress_at",
+            "watchdog_deadline_at", "result", "updated_at",
+        ]
+    elif _is_protection_backup_task(task):
         # task.alive and generic task.progress frames prove that the Agent's
         # execution goroutine is still running. Renew the activity lease even
         # when Kopia's byte counters or percentage have not changed.
@@ -1438,6 +1465,7 @@ def record_task_progress(
             correlation_type=task.correlation_type,
             from_time=repository_initialize_started_at or now,
             kind=task.kind,
+            payload=task.payload,
         )
         update_fields = [
             "status",
@@ -1457,6 +1485,7 @@ def record_task_progress(
             correlation_type=task.correlation_type,
             from_time=task.accepted_at or now,
             kind=task.kind,
+            payload=task.payload,
         )
         update_fields = [
             "status",
@@ -1477,6 +1506,7 @@ def record_task_progress(
             correlation_type=task.correlation_type,
             from_time=task.accepted_at or now,
             kind=task.kind,
+            payload=task.payload,
         )
         update_fields = [
             "status",
@@ -1513,6 +1543,7 @@ def record_task_progress(
             correlation_type=task.correlation_type,
             from_time=now,
             kind=task.kind,
+            payload=task.payload,
         )
         update_fields = [
             "status",

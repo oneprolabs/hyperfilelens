@@ -261,6 +261,41 @@ and reconcile its result before releasing such a gate. Node-owned repositories
 require Agents advertising `orphan_snapshot_reconcile_v1`; older Agents fail
 closed without deleting snapshots.
 
+## Repository Health Monitoring
+
+Daily health monitoring defaults to `lightweight` for object storage, NAS and
+local-disk repositories. It reads only `kopia.repository` and
+`.hyperfilelens/repository-owner-v1.json`, validates their basic structure and
+expected ownership, and never opens Kopia, loads indexes, adopts ownership or
+writes repository objects. Object storage is checked by the Controller;
+filesystem repositories retain their existing execution nodes and locations.
+On NAS and local disks, the logical `kopia.repository` blob is physically
+stored as `kopia.repository.f` by Kopia's filesystem provider. The ownership
+marker path is the same for all storage types.
+Online status confirms metadata accessibility and ownership, not full data
+integrity, the repository password or write/delete permissions.
+
+Configure the deployment `.env` and restart the backend services to apply:
+
+```dotenv
+STORAGE_REPOSITORY_HEALTH_CHECK_MODE=lightweight
+STORAGE_REPOSITORY_HEALTH_LIGHTWEIGHT_TIMEOUT_SECONDS=60
+STORAGE_REPOSITORY_HEALTH_LEGACY_TIMEOUT_SECONDS=900
+```
+
+Set the mode to `legacy` to retain the previous Kopia-based probe. Each timeout
+is an execution budget per repository location, shared across stages and
+excluding queue time. Health budgets do not change backup, restore, usage
+collection or maintenance timeouts. Existing status decisions, retries and
+notifications remain unchanged.
+
+Lightweight filesystem checks require Agents advertising
+`repository_lightweight_health_v1`. Upgrade those Agents before rollout, or
+explicitly select `legacy`. Unsupported Agents do not silently fall back to
+Kopia and do not provide a confirmed storage-failure result. Legacy Agents
+retain their own built-in command limits; the extended Agent-side legacy
+budget requires an updated Agent.
+
 ## Contributing
 
 Pull requests and issues are both welcome. Found a bug, hit a rough edge, or want a capability that is
