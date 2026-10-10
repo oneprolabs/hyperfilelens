@@ -10,6 +10,10 @@ export type ErrorEntity = {
 }
 
 export type ErrorDetailsPayload = {
+  capturedAt?: number
+  taskAttempt?: number
+  lifecycleMessage?: string
+  relatedTasks?: Array<{ taskUuid: string; taskType?: string; traceId?: string }>
   title: string
   summary: string
   errorCode?: string
@@ -96,10 +100,12 @@ export function toErrorDetails(error: unknown, overrides: ErrorDetailsOverrides 
   })
 }
 
-function sanitizeErrorDetails(payload: ErrorDetailsPayload): ErrorDetailsPayload {
+export function sanitizeErrorDetails(payload: ErrorDetailsPayload | DeepReadonly<ErrorDetailsPayload>): ErrorDetailsPayload {
   return {
     ...payload,
     rawDetail: redactValue(payload.rawDetail),
+    lifecycleMessage: payload.lifecycleMessage ? redactSensitiveText(payload.lifecycleMessage) : undefined,
+    relatedTasks: payload.relatedTasks?.map(task => ({ ...task, taskUuid: redactSensitiveText(task.taskUuid), traceId: task.traceId ? redactSensitiveText(task.traceId) : undefined })),
     errorCode: payload.errorCode ? redactSensitiveText(payload.errorCode) : undefined,
     traceId: payload.traceId ? redactSensitiveText(payload.traceId) : undefined,
     failedStep: payload.failedStep ? redactSensitiveText(payload.failedStep) : undefined,
@@ -123,7 +129,7 @@ function sanitizeErrorDetails(payload: ErrorDetailsPayload): ErrorDetailsPayload
   }
 }
 
-const detailsState = reactive<{ current: ErrorDetailsPayload | null; currentTaskUuid?: string }>({ current: null })
+const detailsState = reactive<{ current: ErrorDetailsPayload | null; currentTaskUuid?: string; revision: number }>({ current: null, revision: 0 })
 
 export const errorDetailsState = readonly(detailsState)
 
@@ -131,13 +137,19 @@ export function openErrorDetails(
   payload: ErrorDetailsPayload | { error: unknown; overrides?: ErrorDetailsOverrides },
   context: { currentTaskUuid?: string } = {},
 ) {
+  detailsState.revision += 1
   detailsState.currentTaskUuid = context.currentTaskUuid
   detailsState.current = 'error' in payload
     ? toErrorDetails(payload.error, payload.overrides)
     : sanitizeErrorDetails(payload)
 }
 
+export function replaceErrorDetails(payload: ErrorDetailsPayload, revision: number) {
+  if (detailsState.revision === revision && detailsState.current) detailsState.current = sanitizeErrorDetails(payload)
+}
+
 export function closeErrorDetails() {
+  detailsState.revision += 1
   detailsState.current = null
   detailsState.currentTaskUuid = undefined
 }
@@ -146,6 +158,8 @@ export function errorDetailsCopyText(payload: ErrorDetailsPayload | DeepReadonly
   const sections = [
     payload.title,
     payload.summary,
+    payload.lifecycleMessage || '',
+    payload.relatedTasks?.map(task => `Task UUID: ${task.taskUuid}${task.traceId ? ` / Error ID: ${task.traceId}` : ''}`).join("\n") || '',
     payload.severity ? `Severity: ${payload.severity}` : '',
     payload.errorCode ? `Error code: ${payload.errorCode}` : '',
     payload.traceId ? `Error ID: ${payload.traceId}` : '',

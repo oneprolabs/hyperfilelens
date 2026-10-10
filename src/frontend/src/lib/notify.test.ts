@@ -82,3 +82,18 @@ describe('notify error presentation', () => {
     expect(toastState.items[0]?.details?.rawDetail).toEqual({ task_uuid: 'task-1' })
   })
 })
+
+describe('persisted async notice identity', () => {
+  it('deduplicates a backup result after closing its toast, but not its retry', () => {
+    sessionStorage.clear()
+    resetToastStoreForTests()
+    const details = { title: 'Backup failed', summary: 'Backup failed', taskUuid: 'backup-ledger', taskType: 'backup', taskAttempt: 0 }
+    notifyError({ message: details.summary, showDetails: true, details })
+    resetToastStoreForTests()
+    notifyError({ message: details.summary, showDetails: true, details })
+    expect(toastState.items).toHaveLength(0)
+    notifyError({ message: details.summary, showDetails: true, details: { ...details, taskAttempt: 1 } })
+    expect(toastState.items).toHaveLength(1)
+    resetToastStoreForTests()
+  })
+})

@@ -186,6 +186,7 @@ import {
   notifyUnregisterCleanupWarning,
   notifyUnregisterCleanupWarningBatch,
   notifyUnregisterFailureBatch,
+  notifyUnregisterOperation,
   openUnregisterFailureDetails,
   previousUnregisterFailureDetails,
   unregisterFailureSummaryLine,
@@ -5532,16 +5533,16 @@ function openSourcePendingFailureDetails(sourceId: string) {
     return
   }
   if (op.failureDetails) {
-    openUnregisterFailureDetails(op.failureDetails)
+    openUnregisterFailureDetails({ ...op.failureDetails, taskUuid: op.taskUuid || op.failureDetails.taskUuid, taskType: 'source_unregister' })
     return
   }
   const row = flowRowsForSourceIds([sourceId])[0]
-  openUnregisterFailureDetails(unregisterFailureToErrorDetails({
+  openUnregisterFailureDetails({ ...unregisterFailureToErrorDetails({
     t,
     sourceId,
     sourceName: row?.name || sourceId,
     fallbackMessage: op.errorMessage || t('protection.backupsPage.msgDeleteSourceFailed'),
-  }))
+  }), taskUuid: op.taskUuid, taskType: 'source_unregister' })
 }
 
 const backupSourceDeleteDialogOpen = ref(false)
@@ -5589,26 +5590,32 @@ function monitorPendingUnregister(
     .map((taskUuid, index) => ({ taskUuid, sourceId: sourceIds[index] || '' }))
     .filter((item) => item.taskUuid && item.sourceId)
   if (!pairs.length) return
-  if (pairs.length > 1) {
-    pairs.forEach((pair) => {
-      monitorPendingUnregister([pair.sourceId], [pair.taskUuid], monitorStartedAt)
-    })
-    return
-  }
   const startedAt = monitorStartedAt
+  const generationStartedAt = Math.max(startedAt, ...pairs.map(pair => sourcePendingOps.getOp(pair.sourceId)?.startedAt || 0))
+  const observedTasks = new Map<string, TaskRow>()
+  let unavailableSourceIds = sourceIds
+  const operationId = [...taskUuids].sort().join(',')
 
   const poll = async () => {
     if (unregisterTaskPollingStopped) return
     let tasks: TaskRow[]
     try {
-      tasks = await Promise.all(pairs.map(({ taskUuid }) => getTask(taskUuid)))
+      const observations = await Promise.allSettled(pairs.map(({ taskUuid }) => getTask(taskUuid)))
+      unavailableSourceIds = []
+      observations.forEach((result, index) => {
+        if (result.status === 'fulfilled') observedTasks.set(pairs[index].taskUuid, result.value)
+        else unavailableSourceIds.push(pairs[index].sourceId)
+      })
+      if (unavailableSourceIds.length) throw new Error('Task visibility unavailable')
+      tasks = pairs.map(pair => observedTasks.get(pair.taskUuid)!)
     } catch {
       if (unregisterTaskPollingStopped) return
       if (Date.now() - startedAt < UNREGISTER_TASK_POLL_TIMEOUT_MS) {
         scheduleUnregisterTaskPoll(() => { void poll() })
         return
       }
-      const timeoutNotices = sourceIds.map((sourceId) => {
+      if (pairs.some(pair => sourcePendingOps.getOp(pair.sourceId)?.taskUuid !== pair.taskUuid || (sourcePendingOps.getOp(pair.sourceId)?.startedAt || 0) > generationStartedAt)) return
+      const timeoutNotices = unavailableSourceIds.map((sourceId) => {
         const sourceName = flowRowsForSourceIds([sourceId])[0]?.name || sourceId
         const details: ErrorDetailsPayload = {
           title: t('feedback.errorDetails.monitorUnavailable'),
@@ -5616,6 +5623,7 @@ function monitorPendingUnregister(
           severity: 'warning',
           errorCode: 'TASK_MONITOR_UNAVAILABLE',
           taskUuid: pairs.find((pair) => pair.sourceId === sourceId)?.taskUuid,
+          taskType: 'source_unregister',
           reasons: [t('feedback.errorDetails.monitorReason')],
           resolutions: [t('feedback.errorDetails.monitorSuggestion')],
           entities: [{ id: sourceId, name: sourceName, type: 'source' }],
@@ -5627,6 +5635,7 @@ function monitorPendingUnregister(
             errorMessage: unregisterFailureSummaryLine(details),
             failureDetails: details,
             taskUuid: pairs.find((pair) => pair.sourceId === sourceId)?.taskUuid,
+            startedAt, operationId,
           },
           flowRowsForSourceIds([sourceId]),
         )
@@ -5635,18 +5644,28 @@ function monitorPendingUnregister(
       notifyUnregisterFailureBatch({
         t,
         items: timeoutNotices,
-        dedupeKey: `unregister-timeout-batch:${sourceIds.join(',')}`,
+        dedupeKey: `unregister-operation:${operationId}`,
       })
+      scheduleUnregisterTaskPoll(() => { void poll() })
       return
     }
 
     if (unregisterTaskPollingStopped) return
+    if (pairs.some(pair => sourcePendingOps.getOp(pair.sourceId)?.taskUuid !== pair.taskUuid || (sourcePendingOps.getOp(pair.sourceId)?.startedAt || 0) > generationStartedAt)) return
 
-    const terminalStatuses = new Set(['success', 'failed', 'cancelled', 'timeout'])
+    const terminalStatuses = new Set(['success', 'partial', 'failed', 'cancelled', 'timeout'])
     const nonTerminalTasks = tasks.filter(
       (task) => !terminalStatuses.has(String(task.status || '').toLowerCase()),
     )
     if (nonTerminalTasks.length) {
+      const terminalNotices = tasks.flatMap((task, index) => {
+        const outcome = sourceUnregisterTaskOutcome(task)
+        if (!outcome.terminal || outcome.status === 'cancelled' || (outcome.success && !outcome.partialSuccess)) return []
+        const sourceId = pairs[index].sourceId
+        const sourceName = flowRowsForSourceIds([sourceId])[0]?.name || sourceId
+        return [{ sourceId, sourceName, details: unregisterFailureToErrorDetails({ t, sourceId, sourceName, task, outcome, partialSuccess: outcome.partialSuccess }) }]
+      })
+      notifyUnregisterOperation({ t, operationId, items: terminalNotices, partialSuccess: tasks.some(task => sourceUnregisterTaskOutcome(task).success) })
       pairs.forEach((pair, index) => {
         const task = tasks[index]
         sourcePendingOps.mark(
@@ -5656,6 +5675,7 @@ function monitorPendingUnregister(
             taskId: task.id,
             taskUuid: task.task_uuid,
             startedAt,
+            operationId,
           },
           flowRowsForSourceIds([pair.sourceId]),
         )
@@ -5731,22 +5751,17 @@ function monitorPendingUnregister(
             errorMessage: unregisterFailureSummaryLine(details),
             failureDetails: details,
             taskUuid: task.task_uuid,
+            operationId,
+            startedAt,
           },
           flowRowsForSourceIds([sourceId]),
         )
         failureNotices.push({ sourceId, sourceName, details })
       })
     }
-    notifyUnregisterFailureBatch({
-      t,
-      items: failureNotices,
-      dedupeKey: `unregister-failure-batch:${failureNotices.map((item) => item.sourceId).join(',')}`,
-    })
-    notifyUnregisterCleanupWarningBatch({
-      t,
-      items: cleanupNotices,
-      dedupeKey: `unregister-cleanup-warning-batch:${cleanupNotices.map((item) => item.sourceId).join(',')}`,
-    })
+    const notices = [...failureNotices, ...cleanupNotices]
+    const mixed = completedSourceIds.length > 0 || cleanupNotices.length > 0
+    notifyUnregisterOperation({ t, operationId, items: notices, partialSuccess: mixed })
     try {
       await Promise.all([
         loadBackupSelectable({ silent: true }),
@@ -5762,9 +5777,12 @@ function monitorPendingUnregister(
 }
 
 function resumePendingUnregisterMonitors() {
-  for (const { sourceId, taskUuid, startedAt } of sourcePendingOps.pendingDeleteTasks()) {
-    monitorPendingUnregister([sourceId], [taskUuid], startedAt || Date.now())
+  const groups = new Map<string, Array<{ sourceId: string; taskUuid: string; startedAt?: number }>>()
+  for (const entry of sourcePendingOps.pendingDeleteTasks()) {
+    const key = sourcePendingOps.getOp(entry.sourceId)?.operationId || entry.taskUuid
+    groups.set(key, [...(groups.get(key) || []), entry])
   }
+  for (const entries of groups.values()) monitorPendingUnregister(entries.map(item => item.sourceId), entries.map(item => item.taskUuid), entries[0].startedAt || Date.now())
 }
 
 function affectedBackupIdsForSources(sourceIds: string[]): Set<string> {
@@ -6050,6 +6068,7 @@ async function onBackupSourcesDeleted(payload: {
               kind: sourceUnregisterPendingKind(binding.status),
               taskId: binding.taskId,
               taskUuid: binding.taskUuid,
+              operationId: monitoredTaskUuids.slice().sort().join(','),
               startedAt: Date.now(),
             },
             flowRowsForSourceIds([sourceId]),

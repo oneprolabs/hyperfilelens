@@ -93,3 +93,14 @@ describe('backup wizard pending source storage', () => {
     }])
   })
 })
+
+describe('pending detail scope and snapshot age', () => {
+  it('does not restore another organization’s saved details', () => {
+    localStorage.setItem('hfl_org_key', 'org-a')
+    markWizardPendingBySourceIds(['agent:99'], { kind: 'delete_failed', failureDetails: { title: 'Failed', summary: 'Failed' } })
+    expect(readWizardPendingSourceOps().get('agent:99')?.failureDetails?.capturedAt).toBeTypeOf('number')
+    localStorage.setItem('hfl_org_key', 'org-b')
+    expect(readWizardPendingSourceOps().size).toBe(0)
+    localStorage.removeItem('hfl_org_key')
+  })
+})

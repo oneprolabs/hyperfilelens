@@ -347,7 +347,7 @@ describe('backup wizard step 3 More Actions refresh', () => {
     const unregister = functionSource('onBackupSourcesDeleted', 'deleteSelectedSourcesFromStep1')
 
     expect(monitor).toContain('getTask(taskUuid)')
-    expect(monitor).toContain("new Set(['success', 'failed', 'cancelled', 'timeout'])")
+    expect(monitor).toContain("new Set(['success', 'partial', 'failed', 'cancelled', 'timeout'])")
     expect(monitor).toContain('sourceUnregisterPendingKind(task.status)')
     expect(monitor).toContain('UNREGISTER_BLOCKED_TASK_POLL_MS')
     expect(monitor).toContain('if (nonTerminalTasks.length)')

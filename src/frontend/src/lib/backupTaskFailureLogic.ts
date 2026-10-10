@@ -290,6 +290,7 @@ export function buildTaskFailureErrorDetails(params: {
       summary: contract.summary || taskSummary(task, t),
       severity: contract.severity,
       taskUuid: contract.task_uuid || task.task_uuid,
+      taskAttempt: task.retry_count,
       traceId: contract.correlation_id || undefined,
       issue: contract.limited
         ? (t ? t('feedback.errorDetails.limited') : 'Detailed diagnostic information is unavailable for this task.')
@@ -430,6 +431,7 @@ export function buildTaskFailureErrorDetails(params: {
     summary: taskSummary(task, t),
     severity,
     taskUuid: task.task_uuid,
+    taskAttempt: task.retry_count,
     taskType: task.task_type,
     failedStep: task.current_step || undefined,
     issue: !extractFailureDetails(meta) && !skippedDetails && !backupSummary
@@ -540,6 +542,7 @@ export function buildProvisionFailureErrorDetails(params: {
     summary,
     severity: 'error',
     taskUuid: task.task_uuid,
+    taskAttempt: task.retry_count,
     taskType: task.task_type,
     errorCode: code || undefined,
     reasons: reasons.length ? reasons : undefined,
