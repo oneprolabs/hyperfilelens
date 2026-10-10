@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
 import { flushPromises, mount } from '@vue/test-utils'
+import { defineComponent, ref } from 'vue'
 import ElementPlus from 'element-plus'
 import { createI18n } from 'vue-i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../../locales/en'
 import EmailCodeLoginForm from './EmailCodeLoginForm.vue'
+import AuthTurnstileField from './AuthTurnstileField.vue'
 
 const mocks = vi.hoisted(() => ({
   notifyError: vi.fn(),
@@ -14,7 +16,39 @@ const mocks = vi.hoisted(() => ({
   notifyWarning: vi.fn(),
   send: vi.fn(),
   verify: vi.fn(),
+  turnstileState: 'disabled',
+  loadConfig: vi.fn(),
+  retryConfig: vi.fn(),
+  blockTurnstile: vi.fn(),
+  resetWidget: vi.fn(),
 }))
+
+vi.mock('../../composables/useTurnstileConfig', () => ({
+  useTurnstileConfig: () => ({
+    isTurnstilePending: ref(mocks.turnstileState === 'pending'),
+    isTurnstileReady: ref(mocks.turnstileState === 'ready'),
+    isTurnstileBlocked: ref(mocks.turnstileState === 'blocked'),
+    isTurnstileConfigLoaded: ref(false),
+    turnstileSiteKey: ref('test-site-key'),
+    authTurnstileMountGeneration: ref(0),
+    loadTurnstileConfig: mocks.loadConfig,
+    retryTurnstileConfig: mocks.retryConfig,
+    blockTurnstile: mocks.blockTurnstile,
+    buildTurnstilePayload: (token: string) => (
+      mocks.turnstileState === 'ready' ? { turnstile_token: token } : {}
+    ),
+  }),
+}))
+
+const TurnstileStub = defineComponent({
+  name: 'AuthTurnstileField',
+  props: ['ready', 'blocked', 'verified', 'action', 'errorCodeLabel'],
+  emits: ['success', 'expire', 'invalidate', 'error', 'retry', 'load-failed'],
+  setup(_, { expose }) {
+    expose({ reset: mocks.resetWidget })
+    return () => null
+  },
+})
 
 vi.mock('../../lib/emailCodeLoginApi', () => ({
   sendEmailLoginCode: mocks.send,
@@ -35,12 +69,17 @@ function mountForm(initialEmail = '') {
   })
   return mount(EmailCodeLoginForm, {
     props: { initialEmail },
-    global: { plugins: [i18n, ElementPlus] },
+    global: { plugins: [i18n, ElementPlus], stubs: { AuthTurnstileField: TurnstileStub } },
   })
 }
 
 describe('EmailCodeLoginForm', () => {
   beforeEach(() => {
+    mocks.turnstileState = 'disabled'
+    mocks.loadConfig.mockReset()
+    mocks.retryConfig.mockReset()
+    mocks.blockTurnstile.mockReset()
+    mocks.resetWidget.mockReset()
     vi.spyOn(globalThis.crypto.subtle, 'digest').mockImplementation(async (_algorithm, data) => {
       const input = new Uint8Array(data as ArrayBuffer)
       const digest = new Uint8Array(32)
@@ -81,6 +120,7 @@ describe('EmailCodeLoginForm', () => {
     expect(mocks.send).toHaveBeenCalledWith(
       'person@example.com',
       expect.any(AbortSignal),
+      {},
     )
     expect(wrapper.get('#email-code-login-email').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('.email-code-login-form__change').exists()).toBe(false)
@@ -92,6 +132,116 @@ describe('EmailCodeLoginForm', () => {
       duration: 6000,
     }))
 
+    wrapper.unmount()
+  })
+
+  it.each(['pending', 'blocked', 'ready'])('blocks sending in the %s state without a token', async (state) => {
+    mocks.turnstileState = state
+    const wrapper = mountForm('person@example.com')
+    expect(wrapper.get('.email-code-login-form__send').attributes('disabled')).toBeDefined()
+    await wrapper.get('#email-code-login-email').trigger('keyup.enter')
+    expect(mocks.send).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('sends the token with a dedicated action and clears it even after a failed request', async () => {
+    mocks.turnstileState = 'ready'
+    mocks.send.mockRejectedValueOnce({ errorCode: 'EMAIL_SERVICE_UNAVAILABLE' })
+    const wrapper = mountForm('person@example.com')
+    const field = wrapper.getComponent(AuthTurnstileField)
+    expect(field.props('action')).toBe('email_login_send_code')
+    field.vm.$emit('success', 'email-send-token')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.email-code-login-form__send').attributes('disabled')).toBeUndefined()
+    await wrapper.get('.email-code-login-form__send').trigger('click')
+    await flushPromises()
+    expect(mocks.send).toHaveBeenCalledWith(
+      'person@example.com', expect.any(AbortSignal), { turnstile_token: 'email-send-token' },
+    )
+    expect(field.props('verified')).toBe(false)
+    expect(wrapper.get('.email-code-login-form__send').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it.each(['expire', 'invalidate'])('disables sending when the widget emits %s', async (event) => {
+    mocks.turnstileState = 'ready'
+    const wrapper = mountForm('person@example.com')
+    const field = wrapper.getComponent(AuthTurnstileField)
+    field.vm.$emit('success', 'token')
+    await wrapper.vm.$nextTick()
+    field.vm.$emit(event)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.email-code-login-form__send').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('blocks widget errors and offers a configuration retry', async () => {
+    mocks.turnstileState = 'ready'
+    const wrapper = mountForm('person@example.com')
+    const field = wrapper.getComponent(AuthTurnstileField)
+    field.vm.$emit('error', '300030')
+    await wrapper.vm.$nextTick()
+    expect(mocks.blockTurnstile).toHaveBeenCalled()
+    expect(field.props('errorCodeLabel')).toContain('300030')
+    field.vm.$emit('retry')
+    await flushPromises()
+    expect(mocks.retryConfig).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('blocks sending when the server reports incomplete Turnstile configuration', async () => {
+    mocks.send.mockRejectedValueOnce({ errorCode: 'TURNSTILE_MISCONFIGURED' })
+    const wrapper = mountForm('person@example.com')
+    await wrapper.get('.email-code-login-form__send').trigger('click')
+    await flushPromises()
+    expect(wrapper.getComponent(AuthTurnstileField).props('blocked')).toBe(true)
+    expect(mocks.notifySuccess).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('does not require another human verification to submit the received email code', async () => {
+    mocks.turnstileState = 'ready'
+    mocks.verify.mockResolvedValue({ code: '0000', data: { available_orgs: [] } })
+    const wrapper = mountForm('person@example.com')
+    const field = wrapper.getComponent(AuthTurnstileField)
+    field.vm.$emit('success', 'token')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.email-code-login-form__send').trigger('click')
+    await flushPromises()
+    expect(field.props('verified')).toBe(false)
+    expect(mocks.resetWidget).toHaveBeenCalled()
+    await wrapper.get('#email-code-login-code').setValue('123456')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.verify).toHaveBeenCalledWith(
+      'person@example.com', '123456', expect.any(AbortSignal),
+    )
+    expect(wrapper.emitted('verified')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('requires a fresh human verification after remounting the email form', async () => {
+    mocks.turnstileState = 'ready'
+    const first = mountForm('person@example.com')
+    first.getComponent(AuthTurnstileField).vm.$emit('success', 'old-token')
+    await first.vm.$nextTick()
+    first.unmount()
+    const second = mountForm('person@example.com')
+    expect(second.getComponent(AuthTurnstileField).props('verified')).toBe(false)
+    expect(second.get('.email-code-login-form__send').attributes('disabled')).toBeDefined()
+    second.unmount()
+  })
+
+  it.each([
+    { errorCode: 'TURNSTILE_INVALID' },
+    { errorCode: 'VALIDATION_ERROR', fields: { turnstile_token: ['Required'] } },
+  ])('reloads configuration after a server verification rejection', async (error) => {
+    mocks.send.mockRejectedValueOnce(error)
+    const wrapper = mountForm('person@example.com')
+    await wrapper.get('.email-code-login-form__send').trigger('click')
+    await flushPromises()
+    expect(mocks.retryConfig).toHaveBeenCalled()
+    expect(mocks.notifySuccess).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

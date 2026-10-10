@@ -53,6 +53,7 @@ vi.mock('../../composables/useTurnstileConfig', () => ({
     isTurnstilePending: ref(false),
     isTurnstileReady: ref(true),
     isTurnstileBlocked: ref(mocks.turnstileBlocked),
+    isTurnstileConfigLoaded: ref(true),
     authTurnstileMountGeneration: ref(0),
     loadTurnstileConfig: mocks.loadTurnstileConfig,
     retryTurnstileConfig: mocks.retryTurnstileConfig,
@@ -360,6 +361,23 @@ describe('Login Turnstile lifecycle', () => {
     expect(tabs[1].attributes('aria-selected')).toBe('true')
     expect(wrapper.get('#login-method-panel').attributes('aria-labelledby')).toBe('login-method-tab-email-code')
     expect(wrapper.findComponent({ name: 'EmailCodeLoginForm' }).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('discards the password token when switching login methods', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue({
+      email_signup_enabled: false,
+      email_code_login_available: true,
+      password_reset_available: false,
+    })
+    const wrapper = await mountLogin(1440)
+    wrapper.getComponent(AuthTurnstileFieldStub).vm.$emit('success', 'password-token')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.getComponent(AuthTurnstileFieldStub).props('verified')).toBe(true)
+    const tabs = wrapper.findAll('.login-method-tabs__tab')
+    await tabs[1].trigger('click')
+    await tabs[0].trigger('click')
+    expect(wrapper.getComponent(AuthTurnstileFieldStub).props('verified')).toBe(false)
     wrapper.unmount()
   })
 

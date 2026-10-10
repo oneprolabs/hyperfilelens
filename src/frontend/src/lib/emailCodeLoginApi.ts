@@ -21,10 +21,14 @@ interface EmailCodeVerifyResponse {
   data: EmailCodeLoginData
 }
 
-export function sendEmailLoginCode(email: string, signal?: AbortSignal) {
+export function sendEmailLoginCode(
+  email: string,
+  signal?: AbortSignal,
+  turnstilePayload: Record<string, string> = {},
+) {
   return api<EmailCodeSendResponse>('/api/v1/auth/email-code-login/send-code', {
     method: 'POST',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, ...turnstilePayload }),
     signal,
   })
 }

@@ -3,6 +3,7 @@ import re
 from datetime import timedelta
 from unittest.mock import patch
 
+import requests
 from django.contrib.auth.models import User
 from django.core import mail
 from django.core.cache import cache
@@ -57,10 +58,16 @@ class EmailCodeLoginApiTests(APITestCase):
     def tearDown(self):
         cache.clear()
 
-    def _send(self, email: str | None = None, *, site_role: str = "tenant"):
+    def _send(
+        self, email: str | None = None, *, site_role: str = "tenant",
+        token: str | None = None,
+    ):
+        data = {"email": email or self.email}
+        if token is not None:
+            data["turnstile_token"] = token
         return self.client.post(
             reverse("email_code_login_send"),
-            {"email": email or self.email},
+            data,
             format="json",
             HTTP_X_HFL_SITE_ROLE=site_role,
             HTTP_X_FORWARDED_PROTO="https",
@@ -84,6 +91,86 @@ class EmailCodeLoginApiTests(APITestCase):
         match = re.search(r"\b(\d{6})\b", mail.outbox[-1].body)
         assert match is not None
         return match.group(1)
+
+    @override_settings(
+        TURNSTILE_ENABLED=True,
+        TURNSTILE_SITE_KEY="test-site-key",
+        TURNSTILE_SECRET_KEY="test-secret-key",
+        FRONTEND_URL="https://testserver",
+    )
+    @patch("apps.iam.services.turnstile_verification.validate_turnstile")
+    def test_send_requires_turnstile_without_consuming_cooldown_on_rejection(self, verify):
+        response = self._send()
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("turnstile_token", response.data["error"]["fields"])
+        verify.assert_not_called()
+
+        verify.return_value = False
+        response = self._send(token="invalid-token")
+        self.assertEqual(response.data["error"]["error_code"], "TURNSTILE_INVALID")
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertFalse(EmailVerificationCode.objects.exists())
+
+        verify.return_value = True
+        response = self._send(token="valid-token")
+        self.assertEqual(response.status_code, 200)
+        verify.assert_called_with(
+            "valid-token", "192.0.2.10",
+            expected_action="email_login_send_code",
+            expected_hostname="testserver",
+        )
+        self.assertEqual(len(mail.outbox), 1)
+
+        # The email code is the credential; no second Turnstile token is needed.
+        verify.reset_mock()
+        response = self._verify(self._outbox_code())
+        self.assertEqual(response.status_code, 200)
+        verify.assert_not_called()
+
+    @override_settings(
+        TURNSTILE_ENABLED=True,
+        TURNSTILE_SITE_KEY="test-site-key",
+        TURNSTILE_SECRET_KEY="",
+    )
+    def test_send_fails_closed_when_turnstile_is_misconfigured(self):
+        response = self._send(token="token")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data["error"]["error_code"], "TURNSTILE_MISCONFIGURED")
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertFalse(EmailVerificationCode.objects.exists())
+
+    @override_settings(
+        TURNSTILE_ENABLED=True,
+        TURNSTILE_SITE_KEY="test-site-key",
+        TURNSTILE_SECRET_KEY="test-secret-key",
+        FRONTEND_URL="https://testserver",
+    )
+    @patch("apps.iam.services.turnstile_service._get_http_session")
+    def test_siteverify_failure_action_and_hostname_never_issue_codes(self, session):
+        response = session.return_value.post.return_value
+        for result in [
+            {"success": False, "error-codes": ["timeout-or-duplicate"]},
+            {"success": True, "action": "login", "hostname": "testserver"},
+            {"success": True, "action": "email_login_send_code", "hostname": "other.example"},
+        ]:
+            with self.subTest(result=result):
+                response.json.return_value = result
+                rejected = self._send(token="token")
+                self.assertEqual(rejected.data["error"]["error_code"], "TURNSTILE_INVALID")
+                self.assertEqual(len(mail.outbox), 0)
+                self.assertFalse(EmailVerificationCode.objects.exists())
+
+        session.return_value.post.side_effect = requests.Timeout()
+        rejected = self._send(token="token")
+        self.assertEqual(rejected.data["error"]["error_code"], "TURNSTILE_INVALID")
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertFalse(EmailVerificationCode.objects.exists())
+
+    @override_settings(TURNSTILE_ENABLED=False)
+    @patch("apps.iam.services.turnstile_verification.validate_turnstile")
+    def test_disabled_turnstile_does_not_verify(self, verify):
+        self.assertEqual(self._send().status_code, 200)
+        verify.assert_not_called()
 
     def test_send_and_verify_hands_off_to_existing_org_selection(self):
         response = self._send()

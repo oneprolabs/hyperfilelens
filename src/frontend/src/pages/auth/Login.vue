@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -286,6 +286,13 @@ function resetTurnstile() {
   turnstileErrorCode.value = ''
   turnstileFieldRef.value?.reset()
 }
+
+watch(authMode, () => {
+  // The password widget is unmounted when switching methods; its token must
+  // not survive and be submitted after a different widget has been mounted.
+  resetTurnstile()
+  turnstileError.value = ''
+})
 
 function onTurnstileSuccess(token: string) {
   turnstileToken.value = token
