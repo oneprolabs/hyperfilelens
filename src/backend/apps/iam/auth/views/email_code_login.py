@@ -24,6 +24,13 @@ from apps.iam.services.email_code_login_service import (
     verify_login_code,
 )
 from apps.iam.services.turnstile_service import get_client_ip
+from apps.iam.services.turnstile_verification import (
+    invalid_turnstile_fields,
+    missing_turnstile_fields,
+    turnstile_configured,
+    turnstile_required,
+    verify_turnstile_for_action,
+)
 from apps.configuration.services.runtime_settings import (
     email_code_login_enabled,
     email_delivery_configured,
@@ -119,7 +126,7 @@ def _rate_limited_response(retry_after: int) -> Response:
 
 
 class EmailCodeLoginSendView(AnonymousPublicViewMixin, APIView):
-    """Send a purpose-bound sign-in code without depending on Turnstile."""
+    """Send a purpose-bound sign-in code with deployment-controlled Turnstile."""
 
     @extend_schema(
         tags=["auth"],
@@ -127,7 +134,13 @@ class EmailCodeLoginSendView(AnonymousPublicViewMixin, APIView):
         request={
             "application/json": {
                 "type": "object",
-                "properties": {"email": {"type": "string"}},
+                "properties": {
+                    "email": {"type": "string"},
+                    "turnstile_token": {
+                        "type": "string",
+                        "description": "Required when Turnstile is enabled",
+                    },
+                },
                 "required": ["email"],
             }
         },
@@ -144,6 +157,28 @@ class EmailCodeLoginSendView(AnonymousPublicViewMixin, APIView):
                 "INVALID_EMAIL",
                 _("Invalid email format"),
                 fields={"email": [_('Invalid email format')]},
+            )
+
+        if turnstile_required(request) and not turnstile_configured():
+            return _error_response(
+                "TURNSTILE_MISCONFIGURED",
+                _("Human verification is temporarily unavailable"),
+                http_status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        missing = missing_turnstile_fields(request.data, request)
+        if missing:
+            return _error_response(
+                "VALIDATION_ERROR",
+                _("Missing required fields"),
+                fields=missing,
+            )
+        if not verify_turnstile_for_action(
+            request.data, request, action="email_login_send_code"
+        ):
+            return _error_response(
+                "TURNSTILE_INVALID",
+                _("Invalid or expired human verification"),
+                fields=invalid_turnstile_fields(),
             )
 
         rate = check_send_rate_limit(

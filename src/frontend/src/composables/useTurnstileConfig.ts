@@ -113,6 +113,7 @@ export function useTurnstileConfig() {
   }
 
   return {
+    isTurnstileConfigLoaded: computed(() => configLoaded.value),
     turnstileState: state,
     turnstileSiteKey: siteKey,
     authTurnstileMountGeneration,

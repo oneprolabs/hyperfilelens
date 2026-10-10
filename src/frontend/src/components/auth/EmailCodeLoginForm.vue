@@ -5,6 +5,8 @@ import { useI18n } from 'vue-i18n'
 
 import { isAbortError, type ApiError } from '../../lib/api'
 import { notifyError, notifySuccess, notifyWarning } from '../../lib/notify'
+import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
+import AuthTurnstileField from './AuthTurnstileField.vue'
 import {
   sendEmailLoginCode,
   verifyEmailLoginCode,
@@ -24,6 +26,66 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
+const {
+  turnstileSiteKey,
+  isTurnstilePending,
+  isTurnstileReady,
+  isTurnstileBlocked,
+  isTurnstileConfigLoaded,
+  authTurnstileMountGeneration,
+  loadTurnstileConfig,
+  retryTurnstileConfig,
+  buildTurnstilePayload,
+  blockTurnstile,
+} = useTurnstileConfig()
+const turnstileToken = ref('')
+const turnstileError = ref('')
+const turnstileErrorCode = ref('')
+const turnstileFieldRef = ref<InstanceType<typeof AuthTurnstileField> | null>(null)
+// A server rejection establishes that verification is required even when the
+// config request failed and the shared state temporarily reports "disabled".
+const serverVerificationBlocked = ref(false)
+const verificationBlocked = computed(() => (
+  isTurnstileBlocked.value || serverVerificationBlocked.value
+))
+
+function resetTurnstile() {
+  turnstileToken.value = ''
+  turnstileErrorCode.value = ''
+  turnstileFieldRef.value?.reset()
+}
+
+function onTurnstileSuccess(token: string) {
+  turnstileToken.value = token
+  turnstileError.value = ''
+  turnstileErrorCode.value = ''
+}
+
+function onTurnstileExpire() {
+  turnstileToken.value = ''
+  turnstileError.value = t('login.captchaExpired')
+}
+
+function onTurnstileInvalidate() {
+  turnstileToken.value = ''
+}
+
+function onTurnstileError(code = '') {
+  turnstileToken.value = ''
+  turnstileErrorCode.value = code
+  turnstileError.value = t('login.captchaUnavailable')
+  blockTurnstile()
+}
+
+async function retryTurnstile() {
+  resetTurnstile()
+  turnstileError.value = ''
+  await retryTurnstileConfig()
+  // A failed request is not evidence that verification was disabled. Only
+  // clear the local rejection after an authoritative configuration response.
+  if (isTurnstileConfigLoaded.value) serverVerificationBlocked.value = false
+}
+
 const COOLDOWN_STORAGE_KEY = 'hfl.email_code_login.cooldowns'
 const DEFAULT_COOLDOWN_SECONDS = 60
 const DEFAULT_CODE_TTL_MS = 10 * 60 * 1000
@@ -62,6 +124,9 @@ const sendDisabled = computed(() => (
   || props.disabled
   || !emailValid.value
   || cooldownSeconds.value > 0
+  || isTurnstilePending.value
+  || verificationBlocked.value
+  || (isTurnstileReady.value && !turnstileToken.value)
 ))
 const canVerify = computed(() => (
   hasUsableCode.value
@@ -207,7 +272,11 @@ async function sendCode() {
   sendController = new AbortController()
   const requestedEmail = normalizedEmail.value
   try {
-    const response = await sendEmailLoginCode(requestedEmail, sendController.signal)
+    const response = await sendEmailLoginCode(
+      requestedEmail,
+      sendController.signal,
+      buildTurnstilePayload(turnstileToken.value),
+    )
     if (normalizedEmail.value !== requestedEmail) return
     issuedEmail.value = requestedEmail
     codeIssued.value = true
@@ -228,7 +297,20 @@ async function sendCode() {
   } catch (error) {
     if (isAbortError(error)) return
     const apiCode = errorCode(error)
-    if (apiCode === 'EMAIL_CODE_RATE_LIMITED') {
+    if (apiCode === 'TURNSTILE_MISCONFIGURED') {
+      serverVerificationBlocked.value = true
+      turnstileError.value = t('login.captchaUnavailable')
+      await retryTurnstile()
+    } else if (
+      apiCode === 'TURNSTILE_INVALID'
+      || (apiCode === 'VALIDATION_ERROR' && (error as ApiError)?.fields?.turnstile_token)
+    ) {
+      turnstileError.value = t('login.captchaExpired')
+      // Refresh configuration too: the deployment may have enabled Turnstile
+      // after this page loaded, or the initial config request may have failed.
+      serverVerificationBlocked.value = true
+      await retryTurnstile()
+    } else if (apiCode === 'EMAIL_CODE_RATE_LIMITED') {
       await persistCooldown(errorRetryAfter(error), false)
       issuedEmail.value = ''
       codeIssued.value = false
@@ -246,6 +328,7 @@ async function sendCode() {
       })
     }
   } finally {
+    resetTurnstile()
     sending.value = false
   }
 }
@@ -311,9 +394,11 @@ watch(() => props.initialEmail, value => {
 watch(locale, () => {
   emailError.value = ''
   codeError.value = ''
+  turnstileError.value = ''
 })
 
 onMounted(() => {
+  void loadTurnstileConfig()
   void restoreCooldown()
   timer = window.setInterval(() => {
     refreshCountdown(activeCooldown.value)
@@ -418,6 +503,27 @@ onBeforeUnmount(() => {
         {{ codeError }}
       </p>
     </div>
+
+    <AuthTurnstileField
+      :key="authTurnstileMountGeneration"
+      ref="turnstileFieldRef"
+      :ready="isTurnstileReady && !verificationBlocked"
+      :blocked="verificationBlocked"
+      :verified="Boolean(turnstileToken)"
+      :site-key="turnstileSiteKey"
+      action="email_login_send_code"
+      :blocked-message="t('login.captchaUnavailable')"
+      :retry-label="t('login.captchaRetry')"
+      :manual-retry-label="t('login.captchaManualRetry')"
+      :error-code-label="turnstileErrorCode ? t('login.captchaReferenceCode', { code: turnstileErrorCode }) : ''"
+      :error-message="turnstileError"
+      @retry="retryTurnstile"
+      @success="onTurnstileSuccess"
+      @expire="onTurnstileExpire"
+      @invalidate="onTurnstileInvalidate"
+      @error="onTurnstileError"
+      @load-failed="onTurnstileError()"
+    />
 
     <ElButton
       type="primary"
