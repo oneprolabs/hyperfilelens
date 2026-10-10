@@ -392,7 +392,11 @@ def _run_repository_command_unlocked(
     config_file = config_file or _config_file(repository)
     _invalidate_changed_s3_connection(repository, config_file)
     env = _environment(repository)
+    from .repository_health_budget import health_budget_active, remaining_health_seconds
+
     timeout = timeout_seconds or int(os.environ.get("HFL_KOPIA_TIMEOUT_SECONDS", "120"))
+    if health_budget_active():
+        timeout = remaining_health_seconds(float("inf"))
     command = [
         kopia_path,
         f"--config-file={config_file}",

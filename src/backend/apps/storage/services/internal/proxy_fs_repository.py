@@ -227,7 +227,10 @@ def _run_proxy_fs_repository_task(
         "repository": proxy_fs_repository_payload(repository),
     }
     if health_only:
+        from .repository_health_policy import repository_health_options
+
         payload["health_only"] = True
+        payload.update(repository_health_options(node))
     payload["allow_ownership_adoption"] = (
         adopt_legacy_ownership
         and RepositoryLocationClaim.objects.filter(
@@ -238,6 +241,8 @@ def _run_proxy_fs_repository_task(
             legacy_adoption_required=True,
         ).exists()
     )
+    if health_only and payload.get("health_check_mode") == "lightweight":
+        payload["allow_ownership_adoption"] = False
     log_agent_dispatch(
         log_scope,
         node_id=node.id,
@@ -269,7 +274,7 @@ def _run_proxy_fs_repository_task(
                 payload=payload,
                 correlation_type="storage_repository",
                 correlation_id=str(repository.id),
-                wait_timeout_seconds=180,
+                wait_timeout_seconds=(payload["health_timeout_seconds"] + 60 if health_only else 180),
             )
     except Exception as exc:
         log_agent_exception(

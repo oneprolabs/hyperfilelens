@@ -25,6 +25,23 @@ REPOSITORY_HEALTH_INTERVAL_ENV = "STORAGE_REPOSITORY_HEALTH_INTERVAL_SECONDS"
 DEFAULT_REPOSITORY_HEALTH_INTERVAL_SECONDS = 300
 MIN_REPOSITORY_HEALTH_INTERVAL_SECONDS = 60
 
+
+def repository_health_check_mode() -> str:
+    value = os.getenv("STORAGE_REPOSITORY_HEALTH_CHECK_MODE", "lightweight").strip()
+    if value not in {"lightweight", "legacy"}:
+        raise ImproperlyConfigured(
+            "STORAGE_REPOSITORY_HEALTH_CHECK_MODE must be lightweight or legacy."
+        )
+    return value
+
+
+def repository_health_timeout_seconds() -> int:
+    mode = repository_health_check_mode()
+    return _positive_int_setting(
+        f"STORAGE_REPOSITORY_HEALTH_{mode.upper()}_TIMEOUT_SECONDS",
+        60 if mode == "lightweight" else 900,
+    )
+
 CELERY_WORKER_CONCURRENCY_ENV = "CELERY_WORKER_CONCURRENCY"
 BACKGROUND_STORAGE_CONCURRENCY_ENV = "CELERY_BACKGROUND_STORAGE_CONCURRENCY"
 DEFAULT_CELERY_WORKER_CONCURRENCY = 2

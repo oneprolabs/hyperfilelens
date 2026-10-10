@@ -18,6 +18,11 @@ from common.observability.celery_context import logged_celery_task
 
 from apps.monitor.services.events import schedule_repository_health_event
 from apps.node.models import Node, NodeTask
+from apps.storage.conf import (
+    repository_health_check_mode,
+    repository_health_timeout_seconds,
+)
+from apps.storage.services.internal.repository_health_budget import repository_health_budget
 from apps.storage.repositories.models import (
     Repository,
     RepositoryExecutionTarget,
@@ -328,7 +333,13 @@ def dispatch_repository_health_checks(*, startup: bool = False):
 def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 0):
     """Probe one repository; two consecutive failures confirm it as offline."""
     lock_key = _repository_health_lock(repository_id)
-    if not cache.add(lock_key, "1", timeout=_REPOSITORY_HEALTH_LOCK_TIMEOUT_SECONDS):
+    budget = repository_health_timeout_seconds()
+    mode = repository_health_check_mode()
+    logger.info("repository health probe repository_id=%s mode=%s timeout_seconds=%s",
+                repository_id, mode, budget)
+    if not cache.add(
+        lock_key, "1", timeout=max(_REPOSITORY_HEALTH_LOCK_TIMEOUT_SECONDS, budget + 60),
+    ):
         return {"repository_id": repository_id, "status": "skipped", "locked": True}
 
     try:
@@ -392,12 +403,15 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                     probe_status="deferred_background_capacity",
                 )
         try:
-            if background_lease is None:
-                health = probe_repository_health(repository)
-            else:
-                with background_lease:
+            with repository_health_budget(budget):
+                if background_lease is None:
                     health = probe_repository_health(repository)
+                else:
+                    with background_lease:
+                        health = probe_repository_health(repository)
         except Exception as exc:
+            if repository_health_check_mode() != mode:
+                return {"repository_id": repository_id, "status": "skipped", "stale": True}
             if _exception_chain_contains(exc, KopiaRepositoryBusyError):
                 return _deferred_repository_health_result(
                     repository,
@@ -432,6 +446,8 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                 error_code=error_code,
                 error_message=error_message,
             )
+        if repository_health_check_mode() != mode:
+            return {"repository_id": repository_id, "status": "skipped", "stale": True}
         current_scope = Repository.objects.filter(
             pk=repository_id,
             status=Repository.Status.CREATED,

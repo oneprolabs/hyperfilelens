@@ -14,6 +14,7 @@ from django.utils.dateparse import parse_datetime
 
 from apps.node.models import Node, NodeTask
 from apps.node.services.capabilities import (
+    REPOSITORY_LIGHTWEIGHT_HEALTH_CAPABILITY,
     REPOSITORY_OWNERSHIP_CAPABILITY,
     node_supports_capability,
 )
@@ -72,6 +73,9 @@ from apps.storage.services.internal.repository_usage import (
     repository_usage_probe_from_agent_result,
 )
 
+
+from apps.storage.conf import repository_health_check_mode, repository_health_timeout_seconds
+from .repository_lightweight_health import check_s3_repository_lightweight
 
 logger = logging.getLogger(__name__)
 
@@ -450,6 +454,10 @@ def _dispatch_automatic_repository_observation_locked(
             )
     if not expected_node_ids:
         return []
+    if not include_usage and repository_health_check_mode() == "lightweight":
+        for node in online_nodes:
+            if not node_supports_capability(node, REPOSITORY_LIGHTWEIGHT_HEALTH_CAPABILITY):
+                raise ValidationError("Execution node does not support lightweight repository health.")
     tasks: list[NodeTask] = []
     for node in online_nodes:
         repository_subdir = nas_agent_repository_subdir(node.id)
@@ -547,6 +555,16 @@ def _dispatch_repository_observation_task(
     claim_id: int | None = None,
     claim_updated_at=None,
 ) -> NodeTask:
+    mode = repository_health_check_mode() if not include_usage else ""
+    budget = repository_health_timeout_seconds() if not include_usage else None
+    if mode == "lightweight" and not node_supports_capability(
+        node, REPOSITORY_LIGHTWEIGHT_HEALTH_CAPABILITY,
+    ):
+        raise ValidationError("Execution node does not support lightweight repository health.")
+    health_payload = (
+        {"health_check_mode": mode, "health_timeout_seconds": budget}
+        if not include_usage else {}
+    )
     handle = run_agent_task_async(
         organization_id=repository.organization_id,
         node_id=node.id,
@@ -554,10 +572,12 @@ def _dispatch_repository_observation_task(
         payload={
             "repository": repository_payload,
             "health_only": not include_usage,
-            "allow_ownership_adoption": allow_ownership_adoption,
+            "allow_ownership_adoption": allow_ownership_adoption if mode != "lightweight" else False,
+            **health_payload,
         },
         persisted_payload={
             "automatic_health_probe": True,
+            **health_payload,
             "repository_id": int(repository.id),
             "repository_revision": revision,
             "retry_attempt": retry_attempt,
@@ -597,6 +617,14 @@ def _project_automatic_repository_health(
     }:
         return False
     persisted = node_task.payload if isinstance(node_task.payload, dict) else {}
+    if persisted.get("include_usage") is not True and (
+        persisted.get("health_check_mode")
+        and (
+            persisted["health_check_mode"] != repository_health_check_mode()
+            or persisted.get("health_timeout_seconds") != repository_health_timeout_seconds()
+        )
+    ):
+        return False
     repository_id = int(persisted.get("repository_id") or 0)
     repository = Repository.objects.filter(
         pk=repository_id,
@@ -655,7 +683,7 @@ def _project_automatic_repository_health(
                 persisted=persisted,
                 fail_immediately=True,
             )
-        if ownership_verified:
+        if ownership_verified and persisted.get("health_check_mode") != "lightweight":
             if persisted.get("residual_recovery") is True:
                 recovered = recover_repository_location_ownership(
                     repository,
@@ -1150,7 +1178,10 @@ def _record_automatic_repository_health_failure(
 def probe_repository_health(repository: Repository) -> str:
     """Probe a repository without persisting health, timestamps, or usage."""
     if repository.repo_type == Repository.Type.S3:
-        check_s3_repository(repository)
+        if repository_health_check_mode() == "lightweight":
+            check_s3_repository_lightweight(repository)
+        else:
+            check_s3_repository(repository)
         return Repository.Health.ONLINE
 
     if repository.repo_type == Repository.Type.PROXY_FS:
@@ -1328,7 +1359,14 @@ def _probe_unbound_nas_from_node(
     adopt_legacy_ownership: bool = True,
 ) -> _AgentProbeState:
     log_scope = "storage direct nas health probe"
+    from .repository_health_policy import repository_health_options
+
+    try:
+        health_options = repository_health_options(node)
+    except RepositoryHealthTransportUnconfirmed:
+        return _AgentProbeState.TRANSPORT_UNKNOWN
     payload = {
+        **health_options,
         "repository": nas_repository_payload(
             repository=repository,
             subdir=nas_agent_repository_subdir(node.id),
@@ -1336,7 +1374,8 @@ def _probe_unbound_nas_from_node(
         ),
         "health_only": True,
         "allow_ownership_adoption": (
-            adopt_legacy_ownership
+            health_options["health_check_mode"] != "lightweight"
+            and adopt_legacy_ownership
             and RepositoryLocationClaim.objects.filter(
                 repository=repository,
                 scope=RepositoryLocationClaim.Scope.DIRECT_NAS_AGENT,
@@ -1365,7 +1404,7 @@ def _probe_unbound_nas_from_node(
             payload=payload,
             correlation_type="storage_repository",
             correlation_id=str(repository.id),
-            wait_timeout_seconds=180,
+            wait_timeout_seconds=health_options["health_timeout_seconds"] + 60,
         )
     except Exception as exc:
         log_agent_exception(

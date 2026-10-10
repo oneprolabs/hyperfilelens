@@ -722,11 +722,17 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		return "", nil, result, spec, "kopia_server repositories cannot be initialized"
 	}
 	statusArgs := []string{"--config-file=" + configFile, "repository", "status"}
+	commandTimeout := managedRepositoryKopiaCommandTimeout
+	if p.Extra["health_check_mode"] == "legacy" {
+		if seconds := intValue(p.Extra["health_timeout_seconds"]); seconds > 0 {
+			commandTimeout = time.Duration(seconds) * time.Second
+		}
+	}
 	runStatus := func(event string) (process.Result, error) {
 		started := time.Now()
 		slog.Info("managed_repository", "event", event+"_begin", "task_id", taskID, "repo_type", spec.Type)
 		statusRes, statusErr := runProcessWithTimeout(
-			ctx, managedRepositoryKopiaCommandTimeout, bin, statusArgs, env, "",
+			ctx, commandTimeout, bin, statusArgs, env, "",
 		)
 		result["repository_status"] = redactedRepositoryCommandResult(statusRes, spec, p)
 		slog.Info("managed_repository", "event", event+"_finished", "task_id", taskID, "repo_type", spec.Type, "duration_ms", time.Since(started).Milliseconds(), "ok", statusErr == nil)
@@ -737,7 +743,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		connectArgs := append(repositoryArgs(configFile, spec, false), cacheArgs...)
 		slog.Info("managed_repository", "event", event+"_begin", "task_id", taskID, "repo_type", spec.Type)
 		connectRes, connectErr := runProcessWithTimeout(
-			ctx, managedRepositoryKopiaCommandTimeout, bin, connectArgs, env, "",
+			ctx, commandTimeout, bin, connectArgs, env, "",
 		)
 		result["repository_connect"] = redactedRepositoryCommandResult(connectRes, spec, p)
 		slog.Info("managed_repository", "event", event+"_finished", "task_id", taskID, "repo_type", spec.Type, "duration_ms", time.Since(started).Milliseconds(), "ok", connectErr == nil)
@@ -920,6 +926,23 @@ func (e *Engine) runManagedRepositoryStatus(
 	taskID string,
 	p Payload,
 ) (string, map[string]any, string) {
+	healthOnly, _ := payloadBoolValue(p.Extra["health_only"])
+	healthMode := payloadStringValue(p.Extra["health_check_mode"])
+	if healthOnly && healthMode != "" {
+		if healthMode != "lightweight" && healthMode != "legacy" {
+			return "failed", nil, "unsupported repository health check mode"
+		}
+		seconds := intValue(p.Extra["health_timeout_seconds"])
+		if seconds <= 0 {
+			return "failed", nil, "repository health timeout must be positive"
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+		defer cancel()
+		if healthMode == "lightweight" {
+			return e.runLightweightRepositoryHealth(ctx, p)
+		}
+	}
 	configFile, env, result, spec, errMsg := e.prepareManagedRepository(ctx, rep, taskID, p, repositoryPrepareConnect)
 	if errMsg != "" {
 		if result == nil {
@@ -938,7 +961,6 @@ func (e *Engine) runManagedRepositoryStatus(
 	if spec.Path != "" {
 		result["repository_path"] = spec.Path
 	}
-	healthOnly, _ := payloadBoolValue(p.Extra["health_only"])
 	if configFile != "" && !healthOnly {
 		if bin, err := e.kopiaBin(ctx); err == nil {
 			appendRepositoryUsageMetrics(ctx, bin, configFile, env, spec, result)
