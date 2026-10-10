@@ -14,6 +14,14 @@ from apps.iam.services.turnstile_verification import (
 
 
 class TurnstileVerificationTests(SimpleTestCase):
+    def setUp(self):
+        patcher = patch(
+            "apps.configuration.services.runtime_settings.turnstile_ip_allowlist",
+            return_value=[],
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @staticmethod
     def _request(site_role: str = "tenant") -> MagicMock:
         request = MagicMock()

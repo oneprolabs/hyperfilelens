@@ -239,8 +239,11 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
             request.data,
             ["email", "password"],
             request,
+            action="login",
         ):
-            missing_fields = missing_turnstile_fields(request.data, request)
+            missing_fields = missing_turnstile_fields(
+                request.data, request, action="login",
+            )
             return _build_error_response(
                 "VALIDATION_ERROR",
                 _("Missing required fields"),
@@ -251,7 +254,7 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
                 },
             )
 
-        if turnstile_required(request) and not turnstile_configured():
+        if turnstile_required(request, action="login") and not turnstile_configured():
             return _build_error_response(
                 "TURNSTILE_MISCONFIGURED",
                 _("Human verification is temporarily unavailable"),

@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   setUser: vi.fn(),
   syncAuthenticatedLocale: vi.fn(),
   turnstileBlocked: false,
+  turnstileDisabled: false,
 }))
 
 vi.mock('../../lib/api', () => ({ api: mocks.api }))
@@ -48,18 +49,27 @@ vi.mock('../../composables/useLocaleSwitch', () => ({
 }))
 
 vi.mock('../../composables/useTurnstileConfig', () => ({
-  useTurnstileConfig: () => ({
-    turnstileSiteKey: ref('test-site-key'),
-    isTurnstilePending: ref(false),
-    isTurnstileReady: ref(true),
-    isTurnstileBlocked: ref(mocks.turnstileBlocked),
-    isTurnstileConfigLoaded: ref(true),
-    authTurnstileMountGeneration: ref(0),
-    loadTurnstileConfig: mocks.loadTurnstileConfig,
-    retryTurnstileConfig: mocks.retryTurnstileConfig,
-    buildTurnstilePayload: mocks.buildTurnstilePayload,
-    blockTurnstile: mocks.blockTurnstile,
-  }),
+  useTurnstileConfig: () => {
+    const disabled = ref(mocks.turnstileDisabled)
+    const ready = ref(!mocks.turnstileDisabled)
+    return {
+      turnstileSiteKey: ref('test-site-key'),
+      isTurnstilePending: ref(false),
+      isTurnstileReady: ready,
+      isTurnstileDisabled: disabled,
+      isTurnstileBlocked: ref(mocks.turnstileBlocked),
+      isTurnstileConfigLoaded: ref(true),
+      authTurnstileMountGeneration: ref(0),
+      loadTurnstileConfig: async (force = false) => {
+        await mocks.loadTurnstileConfig(force)
+        disabled.value = mocks.turnstileDisabled
+        ready.value = !mocks.turnstileDisabled
+      },
+      retryTurnstileConfig: mocks.retryTurnstileConfig,
+      buildTurnstilePayload: mocks.buildTurnstilePayload,
+      blockTurnstile: mocks.blockTurnstile,
+    }
+  },
 }))
 
 vi.mock('../../composables/useDeployProfile', () => ({
@@ -83,6 +93,7 @@ const AuthTurnstileFieldStub = defineComponent({
     errorCodeLabel: { type: String, default: '' },
     verified: { type: Boolean, default: false },
     manualRetryLabel: { type: String, default: '' },
+    ready: { type: Boolean, default: false },
   },
   emits: ['retry', 'success', 'expire', 'invalidate', 'error', 'load-failed'],
   setup(props, { expose }) {
@@ -195,6 +206,7 @@ describe('Login Turnstile lifecycle', () => {
       admin_console_landing_path: '/platform-ops/overview',
     })
     mocks.turnstileBlocked = false
+    mocks.turnstileDisabled = false
     mocks.loadTurnstileConfig.mockResolvedValue(undefined)
     mocks.retryTurnstileConfig.mockResolvedValue(undefined)
     mocks.buildTurnstilePayload.mockImplementation((token: string) => (
@@ -213,6 +225,43 @@ describe('Login Turnstile lifecycle', () => {
     expect(wrapper.find('.session-alert').exists()).toBe(false)
     wrapper.unmount()
   })
+
+  it.each(['response', 'exception'])(
+    'restores verification after an exemption is revoked (%s)',
+    async (mode) => {
+      mocks.turnstileDisabled = true
+      mocks.buildTurnstilePayload.mockReturnValue({})
+      mocks.loadTurnstileConfig.mockImplementation(async (force: boolean) => {
+        if (force) mocks.turnstileDisabled = false
+      })
+      mocks.api.mockImplementation(async (path: string) => {
+        if (path === '/api/v1/auth/google/config') {
+          return { code: '0000', data: { enabled: false } }
+        }
+        if (path === '/api/v1/auth/email-login') {
+          const fields = { turnstile_token: ['Required'] }
+          if (mode === 'exception') {
+            throw { status: 400, errorCode: 'VALIDATION_ERROR', fields }
+          }
+          return { code: '1001', data: {}, error: { error_code: 'VALIDATION_ERROR', fields } }
+        }
+        throw new Error(`Unexpected API path: ${path}`)
+      })
+      const wrapper = await mountLogin(1440)
+      const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+      expect(turnstile.props('ready')).toBe(false)
+      await fillCredentials(wrapper)
+      await wrapper.get('button.submit-btn').trigger('click')
+      await flushPromises()
+      expect(emailLoginCalls()).toHaveLength(1)
+      expect(submittedBody(emailLoginCalls()[0])).not.toHaveProperty('turnstile_token')
+      expect(mocks.loadTurnstileConfig).toHaveBeenLastCalledWith(true)
+      expect(turnstile.props('ready')).toBe(true)
+      expect(mocks.resetWidget).toHaveBeenCalledTimes(1)
+      // Do not silently retry authentication after refreshing the policy.
+      wrapper.unmount()
+    },
+  )
 
   it('restores an existing cookie session before showing the login form', async () => {
     mocks.confirmCurrentSession.mockResolvedValue({

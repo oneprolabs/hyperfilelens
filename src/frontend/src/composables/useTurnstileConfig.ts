@@ -13,12 +13,14 @@ interface TurnstileConfigResponse {
     enabled: boolean
     configured: boolean
     site_key?: string
+    login_exempt?: boolean
   }
 }
 
 const state = ref<TurnstileState>('pending')
 const siteKey = ref('')
 const configLoaded = ref(false)
+const loginExempt = ref(false)
 let configLoadPromise: Promise<void> | null = null
 let configRetryPromise: Promise<void> | null = null
 const authTurnstileMountGeneration = ref(0)
@@ -33,6 +35,7 @@ async function loadTurnstileConfig(force = false): Promise<void> {
       if (res.code !== '0000' || !res.data) {
         throw new Error('Invalid Turnstile configuration response')
       }
+      loginExempt.value = res.data.login_exempt === true
       if (!res.data.enabled) {
         state.value = 'disabled'
         siteKey.value = ''
@@ -51,12 +54,15 @@ async function loadTurnstileConfig(force = false): Promise<void> {
       // The mounted widget owns user-visible load failure handling. Prefetch
       // failures are intentionally swallowed here to avoid an unhandled
       // rejection before the lazy authentication page finishes mounting.
-      void preloadTurnstileScript().catch(() => undefined)
+      if (!loginExempt.value) {
+        void preloadTurnstileScript().catch(() => undefined)
+      }
       configLoaded.value = true
     } catch {
       // A failed request does not establish that Turnstile is enabled. Keep
       // the optional field hidden; auth endpoints remain the security boundary.
       state.value = 'disabled'
+      loginExempt.value = false
       siteKey.value = ''
       configLoaded.value = false
     } finally {
@@ -95,14 +101,21 @@ export function resetAuthTurnstileSession(): void {
 
 export function prefetchAuthTurnstile(): void {
   resetAuthTurnstileSession()
-  void loadTurnstileConfig()
+  // Re-evaluate IP-specific exemptions on each new authentication navigation.
+  void loadTurnstileConfig(true)
 }
 
-export function useTurnstileConfig() {
-  const isTurnstilePending = computed(() => state.value === 'pending')
-  const isTurnstileDisabled = computed(() => state.value === 'disabled')
-  const isTurnstileReady = computed(() => state.value === 'ready')
-  const isTurnstileBlocked = computed(() => state.value === 'blocked')
+export function useTurnstileConfig(action = '') {
+  // Registration/reset share the configuration but never the login exemption.
+  const effectiveState = computed<TurnstileState>(() =>
+    action === 'login' && loginExempt.value && state.value !== 'pending'
+      ? 'disabled'
+      : state.value,
+  )
+  const isTurnstilePending = computed(() => effectiveState.value === 'pending')
+  const isTurnstileDisabled = computed(() => effectiveState.value === 'disabled')
+  const isTurnstileReady = computed(() => effectiveState.value === 'ready')
+  const isTurnstileBlocked = computed(() => effectiveState.value === 'blocked')
 
   function blockTurnstile(): void {
     if (state.value !== 'disabled') state.value = 'blocked'
@@ -114,8 +127,8 @@ export function useTurnstileConfig() {
 
   return {
     isTurnstileConfigLoaded: computed(() => configLoaded.value),
-    turnstileState: state,
-    turnstileSiteKey: siteKey,
+    turnstileState: effectiveState,
+    turnstileSiteKey: computed(() => isTurnstileDisabled.value ? '' : siteKey.value),
     authTurnstileMountGeneration,
     isTurnstilePending,
     isTurnstileDisabled,

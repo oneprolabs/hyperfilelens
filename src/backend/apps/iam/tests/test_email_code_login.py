@@ -15,6 +15,10 @@ from rest_framework.test import APITestCase
 
 from apps.iam.email_verification_models import EmailVerificationCode
 from apps.iam.models import Membership, Organization
+from apps.configuration.services.runtime_settings import (
+    KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST,
+    set_str_list,
+)
 
 
 @override_settings(
@@ -91,6 +95,17 @@ class EmailCodeLoginApiTests(APITestCase):
         match = re.search(r"\b(\d{6})\b", mail.outbox[-1].body)
         assert match is not None
         return match.group(1)
+
+    @override_settings(
+        TURNSTILE_ENABLED=True, TRUSTED_PROXY=False,
+        TURNSTILE_SITE_KEY="test-site-key", TURNSTILE_SECRET_KEY="test-secret-key",
+    )
+    def test_password_login_allowlist_does_not_exempt_email_code_sending(self):
+        set_str_list(KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST, ["192.0.2.10"])
+        response = self._send()
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("turnstile_token", response.data["error"]["fields"])
+        self.assertFalse(EmailVerificationCode.objects.exists())
 
     @override_settings(
         TURNSTILE_ENABLED=True,

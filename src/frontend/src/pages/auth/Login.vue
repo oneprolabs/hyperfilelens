@@ -48,6 +48,7 @@ const sessionNoticeReason = ref(consumeSessionNotice())
 const {
   turnstileSiteKey,
   isTurnstilePending,
+  isTurnstileDisabled,
   isTurnstileReady,
   isTurnstileBlocked,
   authTurnstileMountGeneration,
@@ -55,7 +56,7 @@ const {
   retryTurnstileConfig,
   buildTurnstilePayload,
   blockTurnstile,
-} = useTurnstileConfig()
+} = useTurnstileConfig('login')
 
 const { setUser } = useAuth()
 setAuthenticatedLocaleApplicationSuppressed(true)
@@ -552,7 +553,7 @@ async function handleSubmit() {
       } else if (errorCode === 'INVALID_PASSWORD') {
         showInvalidPasswordError()
       } else if (fields && Object.keys(fields).length > 0) {
-        handleFieldsError(fields)
+        await handleFieldsError(fields)
       } else {
         loginNotice.value = {
           tone: 'error',
@@ -601,7 +602,7 @@ async function handleSubmit() {
       resetTurnstile()
     } else if (errObj.errorCode === 'INVALID_PASSWORD') {
       showInvalidPasswordError()
-    } else if (fields && Object.keys(fields).length > 0) handleFieldsError(fields)
+    } else if (fields && Object.keys(fields).length > 0) await handleFieldsError(fields)
     else {
       resetTurnstile()
       loginNotice.value = {
@@ -707,10 +708,13 @@ function showInvalidPasswordError() {
   }
 }
 
-function handleFieldsError(fields?: Record<string, string[]>) {
+async function handleFieldsError(fields?: Record<string, string[]>) {
   if (!fields) return
 
   if (fields.turnstile_token) {
+    // The IP may have left the allowlist while this login page was open.
+    // Re-read the server policy rather than keeping verification hidden.
+    if (isTurnstileDisabled.value) await loadTurnstileConfig(true)
     resetTurnstile()
   } else if (fields.password && isTurnstileReady.value) {
     // Turnstile tokens are single-use; refresh while the user corrects their password.

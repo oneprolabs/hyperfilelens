@@ -40,6 +40,7 @@ export interface PlatformIdentitySettings {
   turnstile_enabled: boolean
   turnstile_site_key: string
   turnstile_secret_configured: boolean
+  turnstile_ip_allowlist?: string[]
   google_client_id: string
   google_client_secret_configured: boolean
   google_oauth_enabled: boolean

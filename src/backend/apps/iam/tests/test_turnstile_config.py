@@ -3,9 +3,33 @@
 from unittest.mock import patch
 
 from django.test import TestCase, override_settings
+from apps.configuration.services.runtime_settings import (
+    KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST,
+    invalidate_runtime_settings_cache,
+    set_str_list,
+)
 
 
 class TurnstileConfigViewTests(TestCase):
+    def setUp(self):
+        invalidate_runtime_settings_cache()
+        self.addCleanup(invalidate_runtime_settings_cache)
+
+    @override_settings(TURNSTILE_ENABLED=True, TRUSTED_PROXY=False)
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=True,
+    )
+    def test_exemption_is_login_only_ip_specific_and_not_cacheable(self, _identity):
+        set_str_list(KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST, ["203.0.113.10"])
+        for ip, exempt in (("203.0.113.10", True), ("203.0.113.20", False)):
+            with self.subTest(ip=ip):
+                response = self.client.get("/api/v1/auth/turnstile/config", REMOTE_ADDR=ip)
+                self.assertTrue(response.json()["data"]["enabled"])
+                self.assertEqual(response.json()["data"]["login_exempt"], exempt)
+                self.assertEqual(response["Cache-Control"], "private, no-store")
+                self.assertNotIn("203.0.113.10", response.content.decode())
+
     @override_settings(TURNSTILE_ENABLED=False)
     def test_disabled_config(self):
         response = self.client.get("/api/v1/auth/turnstile/config")
