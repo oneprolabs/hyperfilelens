@@ -17,6 +17,7 @@ from apps.configuration.services.interface import delete_global_config
 from apps.configuration.services.internal.registry import registry_by_key
 from apps.configuration.services.internal.validation import validate_config_key
 from apps.iam import conf as iam_conf
+from apps.iam.services.turnstile_allowlist import normalize_allowlist
 from apps.iam.config import (
     get_login_verification_code_minutes,
     get_password_reset_timeout_minutes,
@@ -57,6 +58,7 @@ from apps.configuration.services.runtime_settings import (
     KEY_IDENTITY_OPS_CIDRS,
     KEY_IDENTITY_PLATFORM_OPS,
     KEY_IDENTITY_TURNSTILE_SITE,
+    KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST,
     SECRET_KEY_AZURE,
     SECRET_KEY_EMAIL_PASSWORD,
     SECRET_KEY_GEMINI,
@@ -88,6 +90,7 @@ from apps.configuration.services.runtime_settings import (
     set_value,
     sync_google_social_app,
     turnstile_enabled,
+    turnstile_ip_allowlist,
     turnstile_site_key,
     validate_email_connection_config,
 )
@@ -283,6 +286,7 @@ _EE_IDENTITY_PATCH_FIELDS = frozenset(
         "google_client_secret",
         "turnstile_site_key",
         "turnstile_secret_key",
+        "turnstile_ip_allowlist",
         "iam",
     }
 )
@@ -352,6 +356,7 @@ class PlatformOpsSettingsIdentityView(APIView):
                 ),
                 "turnstile_enabled": turnstile_enabled() if identity_enabled else False,
                 "turnstile_site_key": turnstile_site_key() if identity_enabled else "",
+                "turnstile_ip_allowlist": turnstile_ip_allowlist(),
                 "turnstile_secret_configured": (
                     secret_configured(
                         SECRET_KEY_TURNSTILE,
@@ -403,6 +408,15 @@ class PlatformOpsSettingsIdentityView(APIView):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
+        allowlist = None
+        if "turnstile_ip_allowlist" in data:
+            try:
+                allowlist = normalize_allowlist(data["turnstile_ip_allowlist"])
+            except ValueError as exc:
+                return Response(
+                    {"detail": str(exc), "turnstile_ip_allowlist": [str(exc)]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         if "platform_ops_enabled" in data:
             # Deployment may set the initial value; Console Runtime may still
             # override. Disabling requires an explicit confirmation token.
@@ -431,6 +445,10 @@ class PlatformOpsSettingsIdentityView(APIView):
             set_str_list(KEY_IDENTITY_OPS_CIDRS, list(cidrs or []), user=request.user)
         if "turnstile_site_key" in data:
             set_value(key=KEY_IDENTITY_TURNSTILE_SITE, value=str(data["turnstile_site_key"] or ""), user=request.user)
+        if allowlist is not None:
+            set_str_list(
+                KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST, allowlist, user=request.user,
+            )
         if "turnstile_secret_key" in data and str(data["turnstile_secret_key"] or "").strip():
             set_value(key=SECRET_KEY_TURNSTILE, secret=str(data["turnstile_secret_key"]), user=request.user)
         if "google_client_id" in data:

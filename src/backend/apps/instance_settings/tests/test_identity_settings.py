@@ -9,8 +9,10 @@ from rest_framework.test import APIClient
 
 from apps.configuration.services.runtime_settings import (
     KEY_IDENTITY_EMAIL_SIGNUP,
+    KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST,
     get_source,
     invalidate_runtime_settings_cache,
+    turnstile_ip_allowlist,
 )
 from apps.instance_settings.tests.helpers import (
     ensure_ops_staff_role,
@@ -65,6 +67,12 @@ class PlatformIdentitySettingsCommunityTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(response.data["code"], "IDENTITY_EXTENSION_REQUIRED")
         self.assertNotEqual(get_source(KEY_IDENTITY_EMAIL_SIGNUP), "runtime")
+
+    def test_community_cannot_configure_turnstile_allowlist(self):
+        response = self._patch({"turnstile_ip_allowlist": ["203.0.113.10"]})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertNotEqual(get_source(KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST), "runtime")
+        self.assertEqual(self._get().data["turnstile_ip_allowlist"], [])
 
     def test_patch_rejects_non_empty_iam_without_extension(self):
         response = self._patch(
@@ -133,6 +141,56 @@ class PlatformIdentitySettingsEnterpriseTests(TestCase):
 
     def tearDown(self):
         invalidate_runtime_settings_cache()
+
+    def _patch(self, payload):
+        return self.client.patch(
+            self.path, payload, format="json", HTTP_X_HFL_SITE_ROLE="ops",
+        )
+
+    def test_allowlist_defaults_empty_and_round_trips_normalized_values(self):
+        response = self.client.get(self.path, HTTP_X_HFL_SITE_ROLE="ops")
+        self.assertEqual(response.data["turnstile_ip_allowlist"], [])
+        response = self._patch({
+            "turnstile_ip_allowlist": ["203.0.113.10", " 2001:0db8::1 ", "203.0.113.10"],
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["turnstile_ip_allowlist"], ["203.0.113.10", "2001:db8::1"])
+        self.assertTrue(response.data["has_runtime_override"])
+        response = self.client.get(self.path, HTTP_X_HFL_SITE_ROLE="ops")
+        self.assertEqual(response.data["turnstile_ip_allowlist"], turnstile_ip_allowlist())
+
+    def test_omitted_field_preserves_allowlist_and_empty_array_clears_it(self):
+        self._patch({"turnstile_ip_allowlist": ["203.0.113.10"]})
+        response = self._patch({"email_signup_enabled": True})
+        self.assertEqual(response.data["turnstile_ip_allowlist"], ["203.0.113.10"])
+        response = self._patch({"turnstile_ip_allowlist": []})
+        self.assertEqual(response.data["turnstile_ip_allowlist"], [])
+        self.assertEqual(turnstile_ip_allowlist(), [])
+
+    def test_restore_defaults_clears_allowlist(self):
+        self._patch({"turnstile_ip_allowlist": ["203.0.113.10"]})
+        response = self._patch({"clear_runtime": True})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["turnstile_ip_allowlist"], [])
+        self.assertFalse(response.data["has_runtime_override"])
+
+    def test_invalid_allowlist_does_not_partially_save_other_settings(self):
+        for value in (["bad-ip"], ["203.0.113.0/24"], "203.0.113.10", None):
+            with self.subTest(value=value):
+                response = self._patch({
+                    "email_signup_enabled": True, "turnstile_ip_allowlist": value,
+                })
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertIn("turnstile_ip_allowlist", response.data)
+                self.assertNotEqual(get_source(KEY_IDENTITY_EMAIL_SIGNUP), "runtime")
+                self.assertEqual(turnstile_ip_allowlist(), [])
+
+    def test_non_staff_cannot_change_allowlist(self):
+        user = User.objects.create_user(username="ordinary", password="Pass1234")
+        self.client.force_authenticate(user=user)
+        response = self._patch({"turnstile_ip_allowlist": ["203.0.113.10"]})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(turnstile_ip_allowlist(), [])
 
     def test_patch_persists_email_signup_when_extension_loaded(self):
         response = self.client.patch(

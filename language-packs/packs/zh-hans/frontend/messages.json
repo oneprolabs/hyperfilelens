@@ -8224,7 +8224,10 @@
       "turnstile": {
         "intro": "配置 Cloudflare Turnstile 凭据以实现受保护的身份验证流程。",
         "enabled": "已启用",
-        "secretHint": "留空则保留已保存的密钥。"
+        "secretHint": "留空则保留已保存的密钥。",
+        "ipAllowlist": "免验证 IP 白名单",
+        "ipAllowlistPlaceholder": "每行一个 IPv4 或 IPv6 地址",
+        "ipAllowlistHelp": "这些 IP 的账号密码登录无需人机验证，但仍需验证账号密码。留空表示不豁免任何 IP。最多 100 个地址，不支持网段。"
       },
       "defaultsTitle": "平台默认值",
       "externalAccessTitle": "外部访问",

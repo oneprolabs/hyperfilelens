@@ -76,6 +76,17 @@ describe('email login Turnstile configuration recovery', () => {
     wrapper = undefined
   })
 
+  it('still displays verification when the IP is exempt only from password login', async () => {
+    mocks.api.mockResolvedValue({
+      code: '0000',
+      data: { enabled: true, configured: true, site_key: 'test-key', login_exempt: true },
+    })
+    const form = await mountForm()
+    expect(form.find('.auth-turnstile-field').exists()).toBe(true)
+    expect(form.get('.email-code-login-form__send').attributes('disabled')).toBeDefined()
+    expect(mocks.send).not.toHaveBeenCalled()
+  })
+
   it('shows an actionable error even if both initial and recovery config requests fail', async () => {
     mocks.api.mockRejectedValue(new Error('offline'))
     const form = await mountForm()

@@ -86,6 +86,61 @@ describe('Turnstile configuration visibility', () => {
     expect(mocks.preloadTurnstileScript).not.toHaveBeenCalled()
   })
 
+  it('hides verification and omits tokens only for an exempt password login', async () => {
+    mocks.api.mockResolvedValue({
+      code: '0000',
+      data: {
+        enabled: true, configured: true, site_key: 'test-site-key', login_exempt: true,
+      },
+    })
+    const { useTurnstileConfig } = await import('./useTurnstileConfig')
+    const login = useTurnstileConfig('login')
+    await login.loadTurnstileConfig()
+    expect(login.isTurnstileDisabled.value).toBe(true)
+    expect(login.isTurnstileReady.value).toBe(false)
+    expect(login.turnstileSiteKey.value).toBe('')
+    expect(login.buildTurnstilePayload('')).toEqual({})
+    expect(mocks.preloadTurnstileScript).not.toHaveBeenCalled()
+    const registration = useTurnstileConfig()
+    expect(registration.isTurnstileReady.value).toBe(true)
+    expect(registration.turnstileSiteKey.value).toBe('test-site-key')
+    expect(registration.buildTurnstilePayload('register-token')).toEqual({
+      turnstile_token: 'register-token',
+    })
+  })
+
+  it('keeps verification for a non-exempt password login', async () => {
+    mocks.api.mockResolvedValue({
+      code: '0000',
+      data: { enabled: true, configured: true, site_key: 'test-site-key', login_exempt: false },
+    })
+    const { useTurnstileConfig } = await import('./useTurnstileConfig')
+    const login = useTurnstileConfig('login')
+    await login.loadTurnstileConfig()
+    expect(login.isTurnstileReady.value).toBe(true)
+    expect(login.buildTurnstilePayload('login-token')).toEqual({ turnstile_token: 'login-token' })
+  })
+
+  it('re-evaluates an exemption when navigating back to authentication', async () => {
+    mocks.api
+      .mockResolvedValueOnce({
+        code: '0000',
+        data: { enabled: true, configured: true, site_key: 'key', login_exempt: true },
+      })
+      .mockResolvedValueOnce({
+        code: '0000',
+        data: { enabled: true, configured: true, site_key: 'key', login_exempt: false },
+      })
+    const { useTurnstileConfig, prefetchAuthTurnstile } = await import('./useTurnstileConfig')
+    const login = useTurnstileConfig('login')
+    await login.loadTurnstileConfig()
+    expect(login.isTurnstileDisabled.value).toBe(true)
+    prefetchAuthTurnstile()
+    await login.loadTurnstileConfig()
+    expect(mocks.api).toHaveBeenCalledTimes(2)
+    expect(login.isTurnstileReady.value).toBe(true)
+  })
+
   it('retries a failed request only when configuration is requested again', async () => {
     mocks.api
       .mockRejectedValueOnce(new Error('network unavailable'))

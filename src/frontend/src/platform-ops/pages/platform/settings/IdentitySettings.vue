@@ -29,6 +29,7 @@ const form = reactive({
   google_client_secret: '',
   turnstile_site_key: '',
   turnstile_secret_key: '',
+  turnstile_ip_allowlist: '',
   registration_verification_code_minutes: 15,
   registration_token_expiry_minutes: 1440,
   password_reset_verification_code_minutes: 10,
@@ -47,6 +48,7 @@ function applyPayload(data: PlatformIdentitySettings) {
   form.google_client_secret = ''
   form.turnstile_site_key = data.turnstile_site_key || ''
   form.turnstile_secret_key = ''
+  form.turnstile_ip_allowlist = (data.turnstile_ip_allowlist || []).join('\n')
   form.registration_verification_code_minutes = data.iam.registration_verification_code_minutes
   form.registration_token_expiry_minutes = data.iam.registration_token_expiry_minutes
   form.password_reset_verification_code_minutes = data.iam.password_reset_verification_code_minutes
@@ -78,6 +80,10 @@ async function save() {
       body.google_client_id = form.google_client_id
       if (form.google_client_secret.trim()) body.google_client_secret = form.google_client_secret
       body.turnstile_site_key = form.turnstile_site_key
+      body.turnstile_ip_allowlist = form.turnstile_ip_allowlist
+        .split(/\r?\n/)
+        .map(value => value.trim())
+        .filter(Boolean)
       if (form.turnstile_secret_key.trim()) body.turnstile_secret_key = form.turnstile_secret_key
       body.iam = {
         registration_verification_code_minutes: form.registration_verification_code_minutes,
@@ -309,6 +315,30 @@ onMounted(load)
                   />
                   <p class="platform-settings__hint">
                     {{ t('platformOps.settings.turnstile.secretHint') }}
+                  </p>
+                </div>
+              </div>
+              <div class="platform-settings__setting-row">
+                <div class="platform-settings__setting-label">
+                  <label for="turnstile-ip-allowlist">
+                    {{ t('platformOps.settings.turnstile.ipAllowlist') }}
+                  </label>
+                </div>
+                <div class="platform-settings__setting-control">
+                  <el-input
+                    id="turnstile-ip-allowlist"
+                    v-model="form.turnstile_ip_allowlist"
+                    type="textarea"
+                    :rows="4"
+                    :disabled="saving"
+                    :placeholder="t('platformOps.settings.turnstile.ipAllowlistPlaceholder')"
+                    aria-describedby="turnstile-ip-allowlist-help"
+                  />
+                  <p
+                    id="turnstile-ip-allowlist-help"
+                    class="platform-settings__hint"
+                  >
+                    {{ t('platformOps.settings.turnstile.ipAllowlistHelp') }}
                   </p>
                 </div>
               </div>

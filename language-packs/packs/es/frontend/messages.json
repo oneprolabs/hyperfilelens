@@ -8224,7 +8224,10 @@
       "turnstile": {
         "intro": "Configure las credenciales de Cloudflare Turnstile para proteger los flujos de autenticación.",
         "enabled": "Activado",
-        "secretHint": "Déjelo vacío para conservar el secreto guardado."
+        "secretHint": "Déjelo vacío para conservar el secreto guardado.",
+        "ipAllowlist": "Direcciones IP exentas de verificación",
+        "ipAllowlistPlaceholder": "Una dirección IPv4 o IPv6 por línea",
+        "ipAllowlistHelp": "El inicio de sesión con contraseña desde estas IP omite la verificación humana, pero sigue requiriendo credenciales válidas. Déjelo vacío para no eximir ninguna IP. Máximo 100 direcciones; no se admiten rangos de red."
       },
       "defaultsTitle": "Predeterminados de la plataforma",
       "externalAccessTitle": "Acceso externo",

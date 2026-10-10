@@ -32,6 +32,7 @@ KEY_IDENTITY_EMAIL_CODE_LOGIN = "identity.email_code_login_enabled"
 KEY_IDENTITY_PLATFORM_OPS = "identity.platform_ops_enabled"
 KEY_IDENTITY_OPS_CIDRS = "identity.platform_ops_allowed_cidrs"
 KEY_IDENTITY_TURNSTILE_SITE = "identity.turnstile_site_key"
+KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST = "identity.turnstile_ip_allowlist"
 KEY_IDENTITY_GOOGLE_CLIENT_ID = "identity.google_client_id"
 KEY_IDENTITY_GOOGLE_OAUTH = "identity.google_oauth_enabled"
 
@@ -88,6 +89,7 @@ IDENTITY_RUNTIME_KEYS = (
     KEY_IDENTITY_PLATFORM_OPS,
     KEY_IDENTITY_OPS_CIDRS,
     KEY_IDENTITY_TURNSTILE_SITE,
+    KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST,
     KEY_IDENTITY_GOOGLE_CLIENT_ID,
     KEY_IDENTITY_GOOGLE_OAUTH,
     SECRET_KEY_TURNSTILE,
@@ -402,6 +404,13 @@ def turnstile_site_key() -> str:
         env_name="TURNSTILE_SITE_KEY",
         settings_attr="TURNSTILE_SITE_KEY",
     )
+
+
+def turnstile_ip_allowlist() -> list[str]:
+    """Return the EE password-login exemption list; default is empty."""
+    if not enterprise_identity_enabled():
+        return []
+    return get_str_list(KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST)
 
 
 def turnstile_secret_key() -> str:

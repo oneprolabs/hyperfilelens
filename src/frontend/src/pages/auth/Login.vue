@@ -55,7 +55,7 @@ const {
   retryTurnstileConfig,
   buildTurnstilePayload,
   blockTurnstile,
-} = useTurnstileConfig()
+} = useTurnstileConfig('login')
 
 const { setUser } = useAuth()
 setAuthenticatedLocaleApplicationSuppressed(true)

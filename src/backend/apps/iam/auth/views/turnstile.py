@@ -31,10 +31,14 @@ class TurnstileConfigView(AnonymousPublicViewMixin, APIView):
         data: dict[str, str | bool] = {
             "enabled": enabled,
             "configured": configured,
+            "login_exempt": enabled and not turnstile_required(request, action="login"),
         }
         if enabled and configured:
             data["site_key"] = turnstile_site_key()
-        return Response(
+        response = Response(
             {"code": "0000", "data": data},
             status=status.HTTP_200_OK,
         )
+        # The password-login exemption is request/IP specific, never public data.
+        response["Cache-Control"] = "private, no-store"
+        return response
