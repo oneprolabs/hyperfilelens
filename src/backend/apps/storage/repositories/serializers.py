@@ -144,6 +144,7 @@ class RepositoryListSerializer(serializers.ListSerializer):
 
 
 class RepositorySerializer(serializers.ModelSerializer):
+    maintenance_schedule = serializers.SerializerMethodField()
     config = serializers.SerializerMethodField()
     credential_hint = serializers.SerializerMethodField()
     bind_node_display_name = serializers.SerializerMethodField()
@@ -209,8 +210,25 @@ class RepositorySerializer(serializers.ModelSerializer):
             "quota_alert",
             "associated_source_count",
             "associated_source_online_count",
+            "maintenance_schedule",
         ]
         read_only_fields = fields
+
+    def get_maintenance_schedule(self, obj):
+        from apps.storage.services.internal.repository_operations import maintenance_settings
+        settings = maintenance_settings()
+        return [
+            {
+                "target": target.target_key,
+                "timezone": str(settings.timezone),
+                "next_full_due_at": target.maintenance_state.next_full_due_at,
+                "next_reconcile_due_at": target.maintenance_state.next_reconcile_due_at,
+                "day_group": target.maintenance_state.full_day_group,
+                "slot_seconds": target.maintenance_state.full_slot_seconds,
+            }
+            for target in obj.execution_targets.filter(is_active=True).select_related("maintenance_state")
+            if hasattr(target, "maintenance_state")
+        ]
 
     def get_associated_source_online_count(self, obj: Repository) -> int:
         configs = BackupConfig.objects.filter(

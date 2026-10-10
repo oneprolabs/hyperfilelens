@@ -79,6 +79,8 @@ def _repositories_for_workload(
     ordered = [by_id[repository_id] for repository_id in ordered_ids]
     for repository in ordered:
         _require_repository_capability(repository, workload=workload)
+        from apps.storage.services.internal.orphan_snapshot_fence import assert_no_orphan_cleanup
+        assert_no_orphan_cleanup(repository.id)
     return ordered
 
 

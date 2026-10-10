@@ -6219,6 +6219,21 @@
         "taskFinished": "任务执行完成",
         "stepStatusUpdated": "{step}：{status}"
       },
+      "orphanSnapshots": {
+        "scanned": "扫描的物理快照",
+        "discovered": "发现的孤立快照",
+        "deleted": "删除的孤立快照",
+        "grace": "等待 24 小时宽限期",
+        "deferred": "暂缓删除",
+        "failed": "删除失败",
+        "absent": "快照已不存在",
+        "managed": "管理关系已恢复",
+        "source": "备份源",
+        "path": "目录",
+        "snapshotId": "快照 ID",
+        "reconcile": "对账孤立快照",
+        "queued": "快照对账任务已排队"
+      },
       "maintenanceSummary": {
         "contentGc": "逻辑 Content GC",
         "contentRemoved": "已从索引移除",

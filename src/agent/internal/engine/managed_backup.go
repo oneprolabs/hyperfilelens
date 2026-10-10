@@ -1114,6 +1114,9 @@ func (e *Engine) runManagedRepositoryOperation(
 	p Payload,
 ) (string, map[string]any, string) {
 	operationType := strings.ToLower(strings.TrimSpace(payloadStringValue(p.Extra["operation_type"])))
+	if operationType == "snapshot.inventory" || operationType == "snapshot.orphan_delete" {
+		return e.runOrphanSnapshotOperation(ctx, rep, taskID, p)
+	}
 	if operationType == "cleanup.target" || operationType == "cleanup.repository" {
 		return e.runManagedRepositoryCleanup(ctx, rep, taskID, p)
 	}

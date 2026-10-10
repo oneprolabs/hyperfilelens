@@ -124,6 +124,12 @@ export type BindNodeType = 'agent' | 'proxy'
 export type RepoScope = 'private' | 'shared'
 
 export type RepositoryRow = {
+  maintenance_schedule?: Array<{
+    target: string
+    timezone: string
+    next_full_due_at: string | null
+    next_reconcile_due_at: string | null
+  }>
   id: number
   organization_id: number
   name: string
@@ -522,6 +528,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       storage_available_bytes: r.storage_available_bytes ?? 0,
       storage_pool_key: r.storage_pool_key || '',
       storage_mount_point: r.storage_mount_point || '',
+      maintenance_schedule: r.maintenance_schedule,
       last_checked_at: r.last_checked_at ?? null,
       health_error_code: r.health_error_code || '',
       health_error_message: r.health_error_message || '',
@@ -577,6 +584,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       storage_available_bytes: r.storage_available_bytes ?? 0,
       storage_pool_key: r.storage_pool_key || '',
       storage_mount_point: r.storage_mount_point || '',
+      maintenance_schedule: r.maintenance_schedule,
       last_checked_at: r.last_checked_at ?? null,
       health_error_code: r.health_error_code || '',
       health_error_message: r.health_error_message || '',
@@ -626,7 +634,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
     storage_available_bytes: r.storage_available_bytes ?? 0,
     storage_pool_key: r.storage_pool_key || '',
     storage_mount_point: r.storage_mount_point || '',
-    last_checked_at: r.last_checked_at ?? null,
+    maintenance_schedule: r.maintenance_schedule,
+      last_checked_at: r.last_checked_at ?? null,
     health_error_code: r.health_error_code || '',
     health_error_message: r.health_error_message || '',
     usage_probe_status: r.usage_probe_status || 'pending',
@@ -1605,6 +1614,7 @@ function repositoryTaskLabel(scope: 'operation' | 'status' | 'trigger', value?: 
     'operation:repair.bind': 'repositoriesPage.taskOperationRepairBind',
     'operation:repair.remount': 'repositoriesPage.taskOperationRepairRemount',
     'operation:check': 'repositoriesPage.taskOperationCheck',
+    'operation:snapshot.reconcile': 'ops.task.orphanSnapshots.reconcile',
     'status:pending': 'repositoriesPage.taskStatusPending',
     'status:running': 'repositoriesPage.taskStatusRunning',
     'status:success': 'repositoriesPage.taskStatusSuccess',
@@ -2043,6 +2053,25 @@ function applySearch() {
     return
   }
   void load()
+}
+
+async function reconcileOrphanSnapshots(row: RepositoryRow) {
+  try {
+    await api(`/api/v1/storage/repositories/${row.id}/reconcile_snapshots/`, { method: 'POST' })
+    ElMessage.success(t('ops.task.orphanSnapshots.queued'))
+    detailActiveTab.value = 'tasks'
+    await loadRepositoryTasks()
+  } catch (error) {
+    ElMessage.error({ message: apiErrorMessage(error), grouping: true })
+  }
+}
+
+function maintenanceLocalTime(schedule: NonNullable<RepositoryRow['maintenance_schedule']>[number]) {
+  if (!schedule.next_full_due_at) return DETAIL_EMPTY
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: schedule.timezone,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(schedule.next_full_due_at))
 }
 
 watch(
@@ -4072,6 +4101,21 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             name="tasks"
           >
             <div class="repo-tasks">
+              <div class="hfl-list-toolbar">
+                <ElButton
+                  v-if="detailRow.status === 'created'"
+                  @click="reconcileOrphanSnapshots(detailRow)"
+                >
+                  {{ t('ops.task.orphanSnapshots.reconcile') }}
+                </ElButton>
+              </div>
+              <p
+                v-for="schedule in detailRow.maintenance_schedule || []"
+                :key="schedule.target"
+              >
+                {{ t('repositoriesPage.taskOperationFull') }} ·
+                {{ schedule.timezone }} · {{ maintenanceLocalTime(schedule) }}
+              </p>
               <div class="hfl-list-toolbar repo-tasks__filters">
                 <ElInput
                   v-model="repositoryTaskSearch"
@@ -4103,6 +4147,10 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   clearable
                   :placeholder="t('repositoriesPage.tasksOperation')"
                 >
+                  <ElOption
+                    :label="t('ops.task.orphanSnapshots.reconcile')"
+                    value="snapshot.reconcile"
+                  />
                   <ElOption
                     :label="t('repositoriesPage.taskOperationQuick')"
                     value="maintenance.quick"

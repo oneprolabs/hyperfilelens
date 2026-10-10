@@ -30,6 +30,7 @@ func SupportedCapabilities() []string {
 	return []string{
 		"task_command_ack_v1",
 		"repository_operation_v1",
+		"orphan_snapshot_reconcile_v1",
 		"repository_cleanup_v1",
 		"repository_cleanup_v2",
 		"repository_cleanup_ownership_v1",

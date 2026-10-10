@@ -37,6 +37,7 @@ import { useDrawerTableMaxHeight } from '../../../composables/useDrawerTableMaxH
 import { useRepositoryTaskCancellation } from '../../../composables/useRepositoryTaskCancellation'
 import ProtectionStopConfirmDialog from '../../../components/ProtectionStopConfirmDialog.vue'
 import RepositoryMaintenanceSummary from '../../../components/RepositoryMaintenanceSummary.vue'
+import OrphanSnapshotResult from '../../../components/OrphanSnapshotResult.vue'
 import { getSourceResource } from '../../../lib/sourceApi'
 import {
   cancelStorageRepositoryTask,
@@ -1299,6 +1300,7 @@ watch(
                           :class="eventMessageClass(event)"
                         >{{ eventDisplayMessage(event) }}</span>
                         <RepositoryMaintenanceSummary :metadata="taskEventMetadata(event)" />
+                        <OrphanSnapshotResult :metadata="taskEventMetadata(event)" />
                         <span
                           v-if="eventObjectText(event)"
                           class="hfl-task-drawer__event-object"
@@ -1388,6 +1390,7 @@ watch(
                       :class="eventMessageClass(event)"
                     >{{ eventDisplayMessage(event) }}</span>
                     <RepositoryMaintenanceSummary :metadata="taskEventMetadata(event)" />
+                    <OrphanSnapshotResult :metadata="taskEventMetadata(event)" />
                     <div v-if="eventErrorText(event)" class="hfl-task-drawer__event-failure-panel">
                         <div class="hfl-task-drawer__failure-panel-head">
                           <span class="hfl-task-drawer__failure-panel-icon"><X :size="10" aria-hidden="true" /></span>

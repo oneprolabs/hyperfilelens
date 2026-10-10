@@ -629,6 +629,7 @@ ensure_env_file() {
 		chmod 600 "${env_file}"
 		log "Created .env from .env.example"
 	fi
+	python3 "${sync_script}" --env-file "${env_file}" --example "${example}" --maintenance-defaults
 }
 
 apply_dev_public_urls() {

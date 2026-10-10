@@ -84,10 +84,13 @@ def queue_repository_agent_result_followup(*, node_task: NodeTask) -> bool:
         "repository_cleanup",
         "repository_operation",
         "repository_create",
+        "repository_orphan",
     }:
         return False
 
     relation = Q(remote_task_id=node_task.id)
+    if node_task.correlation_type == "repository_orphan":
+        relation |= Q(task_id=node_task.parent_task_id)
     try:
         correlation_uuid = UUID(str(node_task.correlation_id))
     except (TypeError, ValueError):

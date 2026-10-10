@@ -435,6 +435,7 @@ class RepositoryTask(models.Model):
     class OperationType(models.TextChoices):
         MAINTENANCE_QUICK = "maintenance.quick", "Quick maintenance"
         MAINTENANCE_FULL = "maintenance.full", "Full maintenance"
+        SNAPSHOT_RECONCILE = "snapshot.reconcile", "Orphan snapshot reconciliation"
         CLEANUP_TARGET = "cleanup.target", "Delete subrepository"
         CLEANUP_REPOSITORY = "cleanup.repository", "Delete repository"
         CHECK = "check", "Check"
@@ -517,6 +518,10 @@ class RepositoryMaintenanceState(models.Model):
     next_quick_due_at = models.DateTimeField(blank=True, null=True, db_index=True)
     last_full_success_at = models.DateTimeField(blank=True, null=True)
     next_full_due_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    full_day_group = models.PositiveSmallIntegerField(blank=True, null=True)
+    full_slot_seconds = models.PositiveIntegerField(blank=True, null=True)
+    schedule_timezone = models.CharField(max_length=100, blank=True, default="")
+    next_reconcile_due_at = models.DateTimeField(blank=True, null=True, db_index=True)
     last_failure_at = models.DateTimeField(blank=True, null=True)
     consecutive_failures = models.PositiveIntegerField(default=0)
     next_retry_at = models.DateTimeField(blank=True, null=True, db_index=True)
@@ -525,3 +530,29 @@ class RepositoryMaintenanceState(models.Model):
 
     class Meta:
         db_table = "storage_repository_maintenance_state"
+
+
+class RepositoryOrphanSnapshot(models.Model):
+    """Durable candidate; task events retain immutable discovery/deletion history."""
+
+    target = models.ForeignKey(RepositoryExecutionTarget, on_delete=models.PROTECT)
+    snapshot_id = models.CharField(max_length=128)
+    source = models.JSONField(default=dict)
+    operation_id = models.CharField(max_length=200, blank=True, default="")
+    first_seen_at = models.DateTimeField()
+    last_seen_at = models.DateTimeField()
+    status = models.CharField(max_length=30, default="candidate", db_index=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    delete_node_task_id = models.UUIDField(null=True, blank=True)
+
+    class Meta:
+        db_table = "storage_orphan_snapshot"
+        indexes = [
+            models.Index(fields=["target", "status"], name="storage_orphan_target_status"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["target", "snapshot_id"], name="storage_orphan_target_snapshot"
+            ),
+        ]

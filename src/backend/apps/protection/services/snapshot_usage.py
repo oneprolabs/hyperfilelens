@@ -107,6 +107,10 @@ def acquire_snapshot_usage(
         )
         if snapshot is None:
             raise ValidationError({"source_snapshot_id": "Snapshot not found."})
+        from apps.storage.repositories.models import Repository
+        from apps.storage.services.internal.orphan_snapshot_fence import assert_no_orphan_cleanup
+        Repository.objects.select_for_update().get(pk=snapshot.repository_id)
+        assert_no_orphan_cleanup(snapshot.repository_id)
         if snapshot.status not in {
             BackupSourceSnapshot.Status.AVAILABLE,
             BackupSourceSnapshot.Status.PARTIAL,
