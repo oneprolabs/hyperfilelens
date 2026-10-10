@@ -54,6 +54,7 @@ import {
   notifyUnregisterCleanupWarning,
   notifyUnregisterCleanupWarningBatch,
   notifyUnregisterFailureBatch,
+  notifyUnregisterOperation,
   openUnregisterFailureDetails,
   previousUnregisterFailureDetails,
   unregisterFailureSummaryLine,
@@ -1188,7 +1189,7 @@ function sourceDeleteTaskNeedsReconcile(op: SourcePendingOp) {
     op.taskUuid
     && (
       ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind)
-      || (op.kind === 'delete_failed' && !op.failureDetails)
+      || op.kind === 'delete_failed'
     ),
   )
 }
@@ -1239,15 +1240,15 @@ function openSourcePendingFailureDetails(sourceId: string) {
     return
   }
   if (op.failureDetails) {
-    openUnregisterFailureDetails(op.failureDetails)
+    openUnregisterFailureDetails({ ...op.failureDetails, taskUuid: op.taskUuid || op.failureDetails.taskUuid, taskType: 'source_unregister' })
     return
   }
-  openUnregisterFailureDetails(unregisterFailureToErrorDetails({
+  openUnregisterFailureDetails({ ...unregisterFailureToErrorDetails({
     t,
     sourceId,
     sourceName: sourcePendingDisplayName(sourceId),
     fallbackMessage: op.errorMessage || t('protection.backupsPage.msgDeleteSourceFailed'),
-  }))
+  }), taskUuid: op.taskUuid, taskType: 'source_unregister' })
 }
 
 async function reconcilePendingSourceDeleteTasks() {
@@ -1268,15 +1269,17 @@ async function reconcilePendingSourceDeleteTasks() {
     const now = Date.now()
     tasks.forEach((settled, index) => {
       const { sourceId, op } = pending[index]
+      const current = readWizardPendingSourceOps().get(sourceId)
+      if (current?.taskUuid !== op.taskUuid || current?.startedAt !== op.startedAt) return
       const sourceName = sourcePendingDisplayName(sourceId)
       if (settled.status === 'rejected') {
         if (op.startedAt && now - op.startedAt >= SOURCE_DELETE_TASK_TIMEOUT_MS) {
-          const details = unregisterFailureToErrorDetails({
-            t,
-            sourceId,
-            sourceName,
-            fallbackMessage: t('protection.backupsPage.msgDeleteSourceFailed'),
-          })
+          const details: ErrorDetailsPayload = {
+            title: t('feedback.errorDetails.monitorUnavailable'), summary: t('feedback.errorDetails.monitorUnavailable'),
+            severity: 'warning', errorCode: 'TASK_MONITOR_UNAVAILABLE', taskUuid: op.taskUuid, taskType: 'source_unregister',
+            reasons: [t('feedback.errorDetails.monitorReason')], resolutions: [t('feedback.errorDetails.monitorSuggestion')],
+            entities: [{ id: sourceId, name: sourceName, type: 'source' }],
+          }
           markSourceDeleteFailed(sourceId, op, details)
           failureNotices.push({ sourceId, sourceName, details })
           changed = true
@@ -1323,16 +1326,24 @@ async function reconcilePendingSourceDeleteTasks() {
         changed = true
       }
     })
-    notifyUnregisterFailureBatch({
-      t,
-      items: failureNotices,
-      dedupeKey: `unregister-failure-batch:${failureNotices.map((item) => item.sourceId).join(',')}`,
-    })
-    notifyUnregisterCleanupWarningBatch({
-      t,
-      items: cleanupNotices,
-      dedupeKey: `unregister-cleanup-warning-batch:${cleanupNotices.map((item) => item.sourceId).join(',')}`,
-    })
+    const groups = new Map<string, typeof failureNotices>()
+    for (const item of [...failureNotices, ...cleanupNotices]) {
+      const op = pending.find(entry => entry.sourceId === item.sourceId)?.op
+      const key = op?.operationId || op?.taskUuid || item.sourceId
+      groups.set(key, [...(groups.get(key) || []), item])
+    }
+    for (const entry of pending) {
+      const key = entry.op.operationId || entry.op.taskUuid || entry.sourceId
+      if (!groups.has(key)) groups.set(key, [])
+    }
+    for (const [operationId, items] of groups) {
+      const members = pending.filter(entry => (entry.op.operationId || entry.op.taskUuid) === operationId)
+      const partialSuccess = members.some(entry => {
+        const observed = tasks[pending.indexOf(entry)]
+        return observed.status === 'fulfilled' && sourceUnregisterTaskOutcome(observed.value).success
+      })
+      notifyUnregisterOperation({ t, operationId, items, partialSuccess })
+    }
     refreshPendingSourceOps()
     if (changed) await load()
   } finally {
@@ -1344,7 +1355,7 @@ async function reconcilePendingSourceDeleteTasks() {
     const onlyBlocked = trackedDeleteOps.length > 0
       && trackedDeleteOps.every((op) => op.kind === 'delete_blocked')
     schedulePendingSourceDeletePoll(
-      onlyBlocked ? SOURCE_DELETE_BLOCKED_TASK_POLL_MS : SOURCE_DELETE_TASK_POLL_MS,
+      (onlyBlocked || trackedDeleteOps.every(op => op.kind === 'delete_failed')) ? SOURCE_DELETE_BLOCKED_TASK_POLL_MS : SOURCE_DELETE_TASK_POLL_MS,
     )
   }
 }
@@ -1383,8 +1394,8 @@ function resolveSourcePendingStatus(selectableId: string): SourcePendingDisplayS
   }
   if (op.kind === 'delete_failed') {
     return {
-      label: t('protection.backupsPage.sourcePendingDeleteFailed'),
-      tag: 'danger',
+      label: op.failureDetails?.errorCode === 'TASK_MONITOR_UNAVAILABLE' ? t('feedback.errorDetails.monitorUnavailable') : t('protection.backupsPage.sourcePendingDeleteFailed'),
+      tag: op.failureDetails?.errorCode === 'TASK_MONITOR_UNAVAILABLE' ? 'warning' : 'danger',
       clickable: true,
     }
   }
@@ -1517,6 +1528,7 @@ async function onBackupSourcesDeleted(payload: {
         kind: sourceUnregisterPendingKind(binding.status),
         taskId: binding.taskId,
         taskUuid: binding.taskUuid,
+        operationId: bindings.map(item => item.taskUuid).sort().join(','),
         startedAt: Date.now(),
       })
     })

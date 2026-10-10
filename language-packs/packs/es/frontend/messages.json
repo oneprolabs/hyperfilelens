@@ -8615,5 +8615,10 @@
     "emptyTargetNas": "Ningún repositorio NAS objetivo",
     "emptyStandaloneDisk": "No hay repositorios de disco local",
     "emptySourceNas": "Sin fuente NAS recursos"
-  }
+  },
+  "feedback.errorDetails.snapshotExpired": "Este detalle guardado está desactualizado. Vuelva a abrir la tarea para confirmar su estado actual antes de reintentar.",
+  "feedback.errorDetails.taskReplaced": "Esta tarea fue reemplazada. Se muestra el estado actual de la tarea de reemplazo.",
+  "feedback.errorDetails.taskUnavailable": "Esta tarea ya no es accesible. Los detalles guardados no confirman su estado actual.",
+  "feedback.errorDetails.batchTitle": "La operación requiere atención",
+  "feedback.errorDetails.batchSummary": "{n} destinos requieren atención."
 }

@@ -8615,5 +8615,10 @@
     "emptyTargetNas": "暂无目标 NAS 仓库",
     "emptyStandaloneDisk": "暂无本地磁盘仓库",
     "emptySourceNas": "暂无源端 NAS"
-  }
+  },
+  "feedback.errorDetails.snapshotExpired": "此保存的详情已过期。请重新打开任务确认当前状态，再决定是否重试。",
+  "feedback.errorDetails.taskReplaced": "此任务已被替换，正在显示替代任务的当前状态。",
+  "feedback.errorDetails.taskUnavailable": "当前无法访问此任务，保存的详情不能确认其当前状态。",
+  "feedback.errorDetails.batchTitle": "操作需要关注",
+  "feedback.errorDetails.batchSummary": "{n} 个目标需要关注。"
 }

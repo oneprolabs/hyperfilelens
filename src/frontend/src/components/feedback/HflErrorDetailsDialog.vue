@@ -1,21 +1,44 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { AlertTriangle, Check, ChevronDown, Copy, X, Folder, Database, Monitor, ListTodo } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import {
   closeErrorDetails,
+  replaceErrorDetails,
   errorDetailsCopyText,
   errorDetailsState,
   safeErrorDetailText,
+  sanitizeErrorDetails,
 } from '../../lib/errors/details'
+import { refreshTaskDetails } from '../../lib/taskDetailsLifecycle'
 import type { ErrorEntity } from '../../lib/errors/details'
 
 const { t } = useI18n()
 const router = useRouter()
 const copied = ref(false)
+const refreshing = ref(false)
 const details = computed(() => errorDetailsState.current)
+watch(() => errorDetailsState.revision, async (revision) => {
+  const snapshot = errorDetailsState.current ? sanitizeErrorDetails(errorDetailsState.current) : null
+  if (!snapshot) { refreshing.value = false; return }
+  refreshing.value = Boolean(snapshot.taskUuid && snapshot.taskType || snapshot.relatedTasks?.length)
+  if (snapshot.relatedTasks?.length) {
+    const results = await Promise.all(snapshot.relatedTasks.map(task => refreshTaskDetails({ ...snapshot, relatedTasks: undefined, ...task }, t)))
+    const { mergeUnregisterDetails } = await import('../../lib/unregisterFailureDetails')
+    const merged = mergeUnregisterDetails(t, results, (snapshot.severity === 'warning' || results.every(item => item.severity === 'warning')) ? 'cleanup_warning' : 'failure')
+    if (results.every(item => !item.reasons?.length && !item.resolutions?.length && !item.cleanupResidue?.hasResidue)) {
+      merged.title = results.map(item => item.title).join(' / ')
+      merged.summary = results.map(item => item.summary).join(' / ')
+      merged.issue = undefined
+    }
+    replaceErrorDetails(merged, revision)
+  } else {
+    replaceErrorDetails(await refreshTaskDetails(snapshot, t), revision)
+  }
+  if (errorDetailsState.revision === revision) refreshing.value = false
+}, { immediate: true })
 const rawText = computed(() => safeErrorDetailText(details.value?.rawDetail))
 const isWarning = computed(() => details.value?.severity === 'warning')
 const hasEntities = computed(() => (details.value?.entities?.length ?? 0) > 0)
@@ -79,7 +102,19 @@ function entityIcon(type: ErrorEntity['type']) {
       </div>
     </template>
 
-    <template v-if="details">
+    <p
+      v-if="refreshing"
+      role="status"
+    >
+      {{ t('common.loading') }}
+    </p>
+    <template v-if="details && !refreshing">
+      <p
+        v-if="details.lifecycleMessage"
+        role="status"
+      >
+        {{ details.lifecycleMessage }}
+      </p>
       <section
         v-if="details.issue"
         class="hfl-error-details__section"
@@ -237,6 +272,13 @@ function entityIcon(type: ErrorEntity['type']) {
           @click="router.push({ path: '/ops/jobs', query: { taskUuid: details.taskUuid } }); closeErrorDetails()"
         >
           {{ t('feedback.errorDetails.openTask') }}
+        </ElButton>
+        <ElButton
+          v-for="task in details.relatedTasks?.filter(item => item.taskUuid !== errorDetailsState.currentTaskUuid)"
+          :key="task.taskUuid"
+          @click="router.push({ path: '/ops/jobs', query: { taskUuid: task.taskUuid } }); closeErrorDetails()"
+        >
+          {{ t('feedback.errorDetails.openTask') }}: {{ task.taskUuid }}
         </ElButton>
         <ElButton
           type="primary"

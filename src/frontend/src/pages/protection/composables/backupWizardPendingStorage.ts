@@ -11,6 +11,7 @@ export type SourcePendingKind =
   | 'delete_failed'
 
 export type SourcePendingOp = {
+  operationId?: string
   kind: SourcePendingKind
   targetStep?: 1 | 2
   nodeId?: number
@@ -25,6 +26,7 @@ export type SourcePendingOp = {
 export const WIZARD_PENDING_STORAGE_KEY = 'hfl-backup-wizard-source-pending'
 
 export type PersistedWizardPending = {
+  organizationKey?: string
   ops: Array<[string, SourcePendingOp]>
   snapshots: Array<[string, FlowSourceRow]>
 }
@@ -33,7 +35,9 @@ export function readWizardPendingStorage(): PersistedWizardPending | null {
   try {
     const raw = sessionStorage.getItem(WIZARD_PENDING_STORAGE_KEY)
     if (!raw) return null
-    return JSON.parse(raw) as PersistedWizardPending
+    const saved = JSON.parse(raw) as PersistedWizardPending
+    if (saved.organizationKey !== undefined && saved.organizationKey !== (localStorage.getItem('hfl_org_key') || '')) return null
+    return saved
   } catch {
     return null
   }
@@ -50,7 +54,8 @@ export function writeWizardPendingStorage(
   sessionStorage.setItem(
     WIZARD_PENDING_STORAGE_KEY,
     safeErrorDetailText({
-      ops: [...ops.entries()],
+      organizationKey: localStorage.getItem('hfl_org_key') || '',
+      ops: [...ops.entries()].map(([id, op]) => [id, { ...op, failureDetails: op.failureDetails ? { ...op.failureDetails, capturedAt: op.failureDetails.capturedAt || Date.now() } : undefined }]),
       snapshots: [...snapshots.entries()],
     }),
   )
