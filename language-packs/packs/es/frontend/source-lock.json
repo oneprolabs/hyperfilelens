@@ -8165,5 +8165,10 @@
   "feedback.errorDetails.snapshotExpired": "e95e7829399eec2cb94293814ae3d528f95e3210d0de9e517c96de1191437c22",
   "feedback.errorDetails.batchSummary": "b94d16287c3eac9d53e9b3e858d4513ebf1837b8bbe6266497b494a2102b6089",
   "feedback.errorDetails.relatedTasks": "fb9be44fd71b47c625059f22580e00e1539a6e5dc37826399e4428322679fd76",
-  "feedback.errorDetails.openTaskNewTab": "88d0ede1a7f7018ada7e459b8ba1464f87005324cc6f261b92dab4e762539fc1"
+  "feedback.errorDetails.openTaskNewTab": "88d0ede1a7f7018ada7e459b8ba1464f87005324cc6f261b92dab4e762539fc1",
+  "ops.task.failureDetails.reason.SOURCE_PATH_NOT_FOUND": "ca0d58a6ca541b30e8b4e5d4ca2333e929d11972ab0a70c967dde46a6752fc18",
+  "ops.task.failureDetails.suggestion.restore_backup_source_path": "b9333f3d08c229f9f357ef9d111726e7d4081cc9e271cbb21efedec0e0d1dd1e",
+  "ops.task.failureDetails.suggestion.remove_obsolete_backup_source": "5bc47bb59a97cb9b08242f152014aad9a5cbc8a4563661f77ec6167264e281ea",
+  "ops.task.failureDetails.suggestion.retry_after_source_path_fixed": "306f131dfbce0d35898397daea16e592013d25ab54e7c87eed9f1fdac80762ce",
+  "ops.task.failureDetails.partialBackupSummary": "47559fa132a667657fd6d82998f871fda47b73a7f2b97b6f331d3450069a38da"
 }

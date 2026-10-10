@@ -46,6 +46,41 @@ def _list(value):
     return value if isinstance(value, list) else []
 
 
+def backup_source_failure_projection(value):
+    """Explain missing roots from durable diagnostics without changing stored data."""
+    payload = _record(value)
+    terminal = _record(payload.get("terminal_failure"))
+    diagnostic = str(terminal.get("technical_detail") or "")
+    path = str(payload.get("source_path") or terminal.get("path") or "")
+    # Historical task aggregates have no source_path. Kopia's source heading
+    # identifies the root, unlike ENOENT on a repository file or a child entry.
+    if not path:
+        heading = re.search(r"^Snapshotting [^\n]*?@[^:\n]+:(.+) \.\.\.$", diagnostic, re.M)
+        if heading:
+            path = heading.group(1)
+    if not path:
+        return payload
+    missing_root = any(
+        "failed to prepare source:" in line
+        and "unable to get local filesystem entry:" in line
+        and any(f"{operation} {path}: no such file or directory" in line for operation in ("lstat", "stat"))
+        for line in diagnostic.splitlines()
+    )
+    if not missing_root:
+        return payload
+    return {
+        **payload,
+        "terminal_failure": {
+            **terminal,
+            "error_code": "SOURCE_PATH_NOT_FOUND",
+            "message": "The backup source directory does not exist. It may have been removed or moved, or the backup configuration may reference an old path.",
+            "path": path,
+            "side": "source",
+            "confidence": "exact",
+        },
+    }
+
+
 def _reasons(value, code="TASK_FAILED"):
     return [
         {
@@ -126,6 +161,8 @@ def task_error_contract(task, resources=()):
     if status not in {"failed", "timeout", "success", "partial", "cancelled"}:
         return None
     result = _record(task.result_payload)
+    projected = backup_source_failure_projection(result) if str(task.task_type) == "backup" else result
+    missing_source = _record(projected.get("terminal_failure")).get("error_code") == "SOURCE_PATH_NOT_FOUND"
     failure = _record(result.get("failure_details"))
     skipped = _record(result.get("skipped_details"))
     summary = _record(result.get("backup_summary"))
@@ -152,7 +189,7 @@ def task_error_contract(task, resources=()):
     code = str(task.error_code or failure.get("category") or "TASK_FAILED")
     reasons = _reasons(result.get("reasons"), code) + _reasons(cleanup) + _reasons(warnings)
     if task.error_message:
-        detail = str(task.error_message)
+        detail = str(projected["terminal_failure"]["message"]) if missing_source else str(task.error_message)
         if (
             str(task.task_type) == "repository_operation"
             and code == "REPOSITORY_OPERATION_TIMEOUT"
@@ -162,7 +199,7 @@ def task_error_contract(task, resources=()):
             )
         ):
             detail = "Repository maintenance did not finish within the execution time limit."
-        reason_code = code
+        reason_code = "SOURCE_PATH_NOT_FOUND" if missing_source else code
         if _repository_agent_unreachable(task):
             role = _repository_connection_role(task)
             reason_code = f"repository_{role}_unreachable"
@@ -203,6 +240,12 @@ def task_error_contract(task, resources=()):
         suggestions.append({"code": "review_cleanup", "detail": "Review retained resources and complete any remaining cleanup before retrying."})
     if not suggestions:
         suggestions.append({"code": default_suggestion_code, "detail": default_suggestion_code})
+    if missing_source:
+        suggestions = [
+            {"code": "restore_backup_source_path", "detail": "If this directory is still needed, restore it or correct its path in the backup configuration."},
+            {"code": "remove_obsolete_backup_source", "detail": "If this directory is no longer needed, remove it from the backup configuration."},
+            {"code": "retry_after_source_path_fixed", "detail": "Retry the backup only after restoring the directory or correcting the configuration."},
+        ]
     entities = []
     for resource in resources:
         kind = str(resource.resource_type)
@@ -242,6 +285,10 @@ def task_error_contract(task, resources=()):
             entities.append({"id": str(item["path"]), "name": str(item["path"]), "type": "source", "error": str(item.get("error") or "")})
     for item in children:
         entities.append({"id": str(item.get("task_uuid") or ""), "name": str(item.get("task_uuid") or ""), "type": "child_task", "error": str(item.get("error_message") or item.get("error_code") or item["status"])})
+    if missing_source:
+        path = projected["terminal_failure"]["path"]
+        if not any(entity["id"] == path for entity in entities):
+            entities.append({"id": path, "name": path, "type": "source", "error": projected["terminal_failure"]["message"]})
     return sanitize_task_detail({
         "version": 1,
         "severity": severity,
@@ -257,7 +304,7 @@ def task_error_contract(task, resources=()):
         "skipped_items": skipped or {"count": result.get("skipped_item_count", 0)},
         "task_uuid": str(task.task_uuid),
         "correlation_id": str(result.get("correlation_id") or task.task_uuid),
-        "error_code": task.error_code or failure.get("category"),
+        "error_code": "SOURCE_PATH_NOT_FOUND" if missing_source else task.error_code or failure.get("category"),
         "limited": not any((failure, skipped, cleanup, warnings, retained, children, result.get("reasons"), summary)),
         "technical_detail": result,
     })

@@ -23,6 +23,7 @@ const i18n = createI18n({
             cancelled: 'Cancelled',
           },
           failureDetails: {
+            reason: { SOURCE_PATH_NOT_FOUND: 'The backup source directory does not exist.' },
             summary: {
               mixed_source_errors: '{count} source items could not be processed.',
               source_read_failed: '{count} files could not be read from the backup source.',
@@ -43,6 +44,18 @@ function mountCell(task: Record<string, unknown>, fallback?: Record<string, unkn
 }
 
 describe('TaskTerminalOutcomeCell', () => {
+  it('uses the projected missing-root diagnosis instead of the persisted secondary error', () => {
+    const wrapper = mountCell({
+      status: 'failed',
+      error_code: 'KOPIA_PROCESS_DIED',
+      error_message: 'upload error: unsupported source',
+      error_details: { error_code: 'SOURCE_PATH_NOT_FOUND' },
+    })
+    expect(wrapper.get('.task-terminal-outcome__diagnostic').text()).toContain('The backup source directory does not exist.')
+    expect(wrapper.text()).not.toContain('unsupported source')
+    expect(wrapper.text()).not.toContain('KOPIA_PROCESS_DIED')
+  })
+
   it.each([
     ['success', 'Succeeded', 'success', false],
     ['failed', 'Failed', 'danger', true],

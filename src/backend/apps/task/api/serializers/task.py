@@ -6,7 +6,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
 from apps.task.constants import RESTORE_TASK_TYPES
-from apps.task.error_contract import sanitize_task_detail, task_error_contract
+from apps.task.error_contract import backup_source_failure_projection, sanitize_task_detail, task_error_contract
 from apps.task.models import Task, TaskDependency, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import create_task
 
@@ -28,7 +28,10 @@ class TaskEventSerializer(serializers.ModelSerializer):
     step_id = serializers.IntegerField(read_only=True)
 
     def to_representation(self, instance):
-        return sanitize_task_detail(super().to_representation(instance))
+        data = super().to_representation(instance)
+        if instance.message == "Directory backup failed":
+            data["metadata"] = backup_source_failure_projection(data.get("metadata"))
+        return sanitize_task_detail(data)
 
     class Meta:
         model = TaskEvent

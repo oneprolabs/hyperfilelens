@@ -86,6 +86,9 @@ const exactSourceBusy = computed(() =>
 )
 const terminalFailure = computed(() => {
   if (!props.showTerminalFailure) return ''
+  if (terminalContext.value.error_code === 'SOURCE_PATH_NOT_FOUND') {
+    return t('ops.task.failureDetails.reason.SOURCE_PATH_NOT_FOUND')
+  }
   if (exactSourceBusy.value) return t('ops.task.failureDetails.sourceBusyTitle')
   const terminal = metadataRecord.value.terminal_failure
   if (terminal && typeof terminal === 'object' && !Array.isArray(terminal)) {
@@ -110,7 +113,13 @@ const terminalFilterRule = computed(() =>
   exactSourceBusy.value ? String(terminalContext.value.filter_rule || '') : '',
 )
 const effectiveTerminalResolutions = computed(() =>
-  exactSourceBusy.value
+  terminalContext.value.error_code === 'SOURCE_PATH_NOT_FOUND'
+    ? [
+        t('ops.task.failureDetails.suggestion.restore_backup_source_path'),
+        t('ops.task.failureDetails.suggestion.remove_obsolete_backup_source'),
+        t('ops.task.failureDetails.suggestion.retry_after_source_path_fixed'),
+      ]
+    : exactSourceBusy.value
     ? [
         t('ops.task.failureDetails.sourceBusyCheck'),
         t('ops.task.failureDetails.sourceBusyRetry'),
@@ -149,6 +158,13 @@ const technicalDetail = computed(() => {
 
 const summarySnapshotId = computed(() => structuredSummary.value?.snapshot_id || '')
 const summaryRestoreRecordId = computed(() => structuredSummary.value?.restore_record_id || '')
+const partialBackupSummary = computed(() => {
+  const successful = Number(metadataRecord.value.successful_directory_count)
+  const failed = Number(metadataRecord.value.failed_directory_count)
+  if (!summarySnapshotId.value || !Number.isInteger(successful) || successful <= 0
+    || !Number.isInteger(failed) || failed <= 0) return ''
+  return t('ops.task.failureDetails.partialBackupSummary', { successful, failed })
+})
 const failedDirectories = computed(() => structuredSummary.value?.failed_directories || [])
 
 const hasDetails = computed(() => (
@@ -228,6 +244,9 @@ function remediationText(code: string) {
       </details>
     </template>
     <template v-if="(summarySnapshotId || summaryRestoreRecordId) && failedDirectories.length">
+      <p v-if="partialBackupSummary">
+        {{ partialBackupSummary }}
+      </p>
       <div class="task-event-failure__summary task-event-failure__summary--neutral">
         <span>{{ t(summaryRestoreRecordId ? 'ops.task.failureDetails.restoreRecordId' : 'ops.task.failureDetails.snapshotId') }}:</span>
         <code>{{ summaryRestoreRecordId || summarySnapshotId }}</code>
