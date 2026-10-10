@@ -4014,8 +4014,10 @@ export const en = {
           lensnode_sidecar: 'LensNode Sidecar',
         },
         reasons: 'Reasons',
+        partialBackupSummary: 'Completed directories: {successful}; failed directories: {failed}. Successful snapshots were retained. Failed directories have no new snapshot from this backup.',
         suggestions: 'Suggested next steps',
         reason: {
+          SOURCE_PATH_NOT_FOUND: 'The backup source directory does not exist. It may have been removed or moved, or the backup configuration may reference an old path.',
           TASK_CANCELLED: 'The task was cancelled by the user or system.',
           TASK_QUEUE_TIMEOUT: 'The task was cancelled because it could not be scheduled for execution.',
           REPOSITORY_CREATE_AUTH_FAILED: 'The configured repository credentials were rejected.',
@@ -4039,6 +4041,9 @@ export const en = {
           cleanup_failed: 'The cleanup operation failed.',
         },
         suggestion: {
+          restore_backup_source_path: 'If this directory is still needed, check its actual path on the source host. Restore the directory or correct its path in the backup configuration.',
+          remove_obsolete_backup_source: 'If this directory is no longer needed, remove it from the backup configuration.',
+          retry_after_source_path_fixed: 'Retry the backup only after restoring the directory or correcting the configuration.',
           resolve_snapshot_usage: 'Wait for restore or Chat preparation to finish. For a failed Chat, retry until preparation succeeds, or delete the Chat and wait for cleanup to complete, then submit a new source deregistration request. Force Cleanup cannot bypass this protection.',
           review_task: 'Review the repository credentials and retry the creation task.',
           review_backup_diagnostics: 'Review the affected backup source, target repository, and technical details, then retry the backup.',

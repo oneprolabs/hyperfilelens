@@ -6330,8 +6330,10 @@
           "lensnode_sidecar": "Sidecar de LensNode"
         },
         "reasons": "Motivos",
+        "partialBackupSummary": "Se completaron {successful} directorios y se conservaron sus instantáneas; fallaron {failed} directorios. Los directorios fallidos no tienen una instantánea nueva de esta copia.",
         "suggestions": "Siguientes pasos sugeridos",
         "reason": {
+          "SOURCE_PATH_NOT_FOUND": "El directorio de origen de la copia no existe. Puede haberse eliminado o movido, o la configuración de la copia puede hacer referencia a una ruta antigua.",
           "TASK_CANCELLED": "La tarea fue cancelada por el usuario o el sistema.",
           "TASK_QUEUE_TIMEOUT": "La tarea fue cancelada porque no se pudo programar para su ejecución.",
           "REPOSITORY_CREATE_AUTH_FAILED": "Las credenciales configuradas del repositorio fueron rechazadas.",
@@ -6355,6 +6357,9 @@
           "cleanup_failed": "La operación de limpieza falló."
         },
         "suggestion": {
+          "restore_backup_source_path": "Si todavía necesita este directorio, compruebe su ruta real en el equipo de origen. Restaure el directorio o corrija su ruta en la configuración de la copia.",
+          "remove_obsolete_backup_source": "Si ya no necesita este directorio, elimínelo de la configuración de la copia.",
+          "retry_after_source_path_fixed": "Vuelva a intentar la copia solo después de restaurar el directorio o corregir la configuración.",
           "resolve_snapshot_usage": "Espere a que termine la restauración o la preparación del Chat. Si la preparación falló, reinténtela hasta que finalice correctamente, o elimine el Chat y espere a que termine la limpieza; después, vuelva a solicitar la baja del origen. La limpieza forzada tampoco puede omitir esta protección.",
           "review_task": "Revise las credenciales del repositorio y vuelva a intentar la creación.",
           "review_backup_diagnostics": "Revise el origen de la copia, el repositorio de destino y los detalles técnicos afectados; después vuelva a intentar la copia.",

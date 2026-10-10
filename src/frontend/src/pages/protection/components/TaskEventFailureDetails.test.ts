@@ -7,6 +7,48 @@ import { en } from '../../../locales/en'
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 
 describe('TaskEventFailureDetails', () => {
+  it('explains a projected missing root while keeping the secondary error in technical details', () => {
+    const diagnostic = 'failed to prepare source: lstat /missing root: no such file or directory\nupload error: unsupported source'
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        metadata: {
+          error_code: 'REPOSITORY_PROCESS_DIED',
+          error_message: 'upload error: unsupported source',
+          terminal_failure: {
+            error_code: 'SOURCE_PATH_NOT_FOUND',
+            message: 'Server-side English fallback',
+            path: '/missing root',
+          },
+        },
+        technicalDetail: diagnostic,
+        terminalResolutions: ['Generic repository advice'],
+      },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    const box = wrapper.get('.task-event-failure__terminal-box')
+    expect(box.text()).toContain(en.ops.task.failureDetails.reason.SOURCE_PATH_NOT_FOUND)
+    expect(box.text()).toContain('/missing root')
+    expect(box.text()).toContain(en.ops.task.failureDetails.suggestion.restore_backup_source_path)
+    expect(box.text()).toContain(en.ops.task.failureDetails.suggestion.remove_obsolete_backup_source)
+    expect(box.text()).toContain(en.ops.task.failureDetails.suggestion.retry_after_source_path_fixed)
+    expect(box.get('.task-event-failure__summary--terminal').text()).not.toContain('unsupported source')
+    expect(box.text()).not.toContain('Generic repository advice')
+    expect(wrapper.get('.task-event-failure__technical').text()).toContain(diagnostic)
+  })
+
+  it('explains retained successful snapshots using the existing partial-result counts', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: { metadata: {
+        successful_directory_count: 18,
+        failed_directory_count: 1,
+        backup_summary: { snapshot_id: 'bss-test', failed_directories: [{ path: '/missing' }] },
+      } },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    expect(wrapper.text()).toContain('Completed directories: 18; failed directories: 1. Successful snapshots were retained.')
+    expect(wrapper.text()).toContain('Failed directories have no new snapshot')
+  })
+
   it.each(['AGENT_ACK_TIMEOUT', 'RESULT_ACK_TIMEOUT'])('renders localized communication guidance for %s', (code) => {
     const wrapper = mount(TaskEventFailureDetails, {
       props: { metadata: {

@@ -14,7 +14,7 @@ type TaskOutcomeSource = {
   started_at?: string | null
   created_at?: string | null
   result_payload?: unknown
-  error_details?: { technical_detail?: unknown } | null
+  error_details?: { error_code?: string | null; technical_detail?: unknown } | null
   recent_events?: Array<{ metadata?: unknown }>
 }
 
@@ -80,7 +80,8 @@ const outcome = computed(() => {
   if (!source || !status) return null
 
   const diagnosticFallback = source === props.task ? props.fallback : null
-  const code = String(source.error_code || diagnosticFallback?.error_code || '').trim()
+  const missingSource = (source.error_details || diagnosticFallback?.error_details)?.error_code === 'SOURCE_PATH_NOT_FOUND'
+  const code = missingSource ? 'SOURCE_PATH_NOT_FOUND' : String(source.error_code || diagnosticFallback?.error_code || '').trim()
   const reason = String(source.error_message || diagnosticFallback?.error_message || '').trim()
   const details = structuredFailureDetails(source) || structuredFailureDetails(diagnosticFallback)
   const detailCount = Number(details?.total_count ?? details?.count)
@@ -98,7 +99,9 @@ const outcome = computed(() => {
   const friendlyReason = friendlyCategory === 'backup_communication_timeout'
     ? t('ops.task.failureDetails.communicationTimeoutReason')
     : friendly?.reason
-  const displayReason = friendlyReason || structuredReason || (/agent|source_ref_id|^\s*(?:\[|\{)/i.test(reason) ? 'The task failed. Open task details for troubleshooting.' : reason)
+  const displayReason = missingSource
+    ? t('ops.task.failureDetails.reason.SOURCE_PATH_NOT_FOUND')
+    : friendlyReason || structuredReason || (/agent|source_ref_id|^\s*(?:\[|\{)/i.test(reason) ? 'The task failed. Open task details for troubleshooting.' : reason)
   const showDiagnostic = diagnosticStatuses.has(status) && Boolean(code || displayReason)
   const diagnostic = showDiagnostic
     ? [code && !friendly ? `[${code}]` : '', displayReason].filter(Boolean).join(' ')

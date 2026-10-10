@@ -8158,5 +8158,10 @@
   "ops.task.orphanSnapshots.scanned": "4c4b27df68d42a841d12ea8d0b1c3b382151de672eec924b902b97f8b568e1bf",
   "platformOps.settings.turnstile.ipAllowlist": "1e136546c99cb9891bf75a3a79ee627fe26f4cb58d6c7bd99657dfe1c9d1fe76",
   "platformOps.settings.turnstile.ipAllowlistPlaceholder": "0a8ea8cfe6c380255f288821d5ae014779b2504569767469bb93e731b0bf863f",
-  "platformOps.settings.turnstile.ipAllowlistHelp": "fadceb8ba08014c48755119a01848868ad87451ccaf6f254603c01e4a55c7e3a"
+  "platformOps.settings.turnstile.ipAllowlistHelp": "fadceb8ba08014c48755119a01848868ad87451ccaf6f254603c01e4a55c7e3a",
+  "ops.task.failureDetails.reason.SOURCE_PATH_NOT_FOUND": "ca0d58a6ca541b30e8b4e5d4ca2333e929d11972ab0a70c967dde46a6752fc18",
+  "ops.task.failureDetails.suggestion.restore_backup_source_path": "b9333f3d08c229f9f357ef9d111726e7d4081cc9e271cbb21efedec0e0d1dd1e",
+  "ops.task.failureDetails.suggestion.remove_obsolete_backup_source": "5bc47bb59a97cb9b08242f152014aad9a5cbc8a4563661f77ec6167264e281ea",
+  "ops.task.failureDetails.suggestion.retry_after_source_path_fixed": "306f131dfbce0d35898397daea16e592013d25ab54e7c87eed9f1fdac80762ce",
+  "ops.task.failureDetails.partialBackupSummary": "47559fa132a667657fd6d82998f871fda47b73a7f2b97b6f331d3450069a38da"
 }
