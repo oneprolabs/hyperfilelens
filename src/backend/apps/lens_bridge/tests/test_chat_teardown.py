@@ -46,6 +46,7 @@ from apps.protection.services.snapshot_usage import (
     reconcile_snapshot_usage_leases,
 )
 from apps.restore.models import RestoreRecord, RestoreRecordItem
+from apps.storage.repositories.models import Repository
 
 
 class CopilotChatTeardownTests(TestCase):
@@ -54,6 +55,13 @@ class CopilotChatTeardownTests(TestCase):
         self.platform_org = Organization.objects.create(
             key="__platform_lens__",
             name="Platform Lens",
+        )
+        self.repository = Repository.objects.create(
+            organization_id=self.tenant.id,
+            name="chat-teardown-repository",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
         )
         self.user = get_user_model().objects.create_user(
             username="teardown@example.test",
@@ -123,7 +131,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -191,7 +199,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -202,7 +210,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -212,7 +220,7 @@ class CopilotChatTeardownTests(TestCase):
             backup_config_id=1,
             backup_config_dir_id=1,
             source_path="/data",
-            repository_id=1,
+            repository_id=self.repository.id,
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
         self.knowledge_source.backup_source_snapshot_id = old.id
@@ -264,7 +272,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -274,7 +282,7 @@ class CopilotChatTeardownTests(TestCase):
             backup_config_id=1,
             backup_config_dir_id=1,
             source_path="/data",
-            repository_id=1,
+            repository_id=self.repository.id,
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
         with self.assertRaisesMessage(ValidationError, "Another Chat data update"):
@@ -295,7 +303,7 @@ class CopilotChatTeardownTests(TestCase):
             backup_config_id=1,
             backup_config_dir_id=2,
             source_path="/DATA",
-            repository_id=1,
+            repository_id=self.repository.id,
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
         BackupSourceSnapshotDirectory.objects.create(
@@ -304,7 +312,7 @@ class CopilotChatTeardownTests(TestCase):
             backup_config_id=1,
             backup_config_dir_id=3,
             source_path="/DATA/reports",
-            repository_id=1,
+            repository_id=self.repository.id,
             status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
         )
         exact_snapshot, exact_scopes = chat_data_update.resolve_update_scopes(
@@ -362,7 +370,7 @@ class CopilotChatTeardownTests(TestCase):
             restore_record=previous,
             source_snapshot_directory_id=12,
             backup_config_dir_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             kopia_snapshot_id="old-snapshot",
             source_path="/data",
             target_path=f"{workspace}/reports",
@@ -403,7 +411,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -439,7 +447,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -499,7 +507,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -540,7 +548,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -574,7 +582,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -616,7 +624,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -718,7 +726,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -765,7 +773,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -1056,7 +1064,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -1110,7 +1118,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -1645,7 +1653,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -1687,7 +1695,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -1726,7 +1734,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -1766,7 +1774,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -1777,7 +1785,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -2638,7 +2646,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
@@ -3069,7 +3077,7 @@ class CopilotChatTeardownTests(TestCase):
             source_type="agent",
             source_ref_id=self.source_agent.id,
             backup_config_id=1,
-            repository_id=1,
+            repository_id=self.repository.id,
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
