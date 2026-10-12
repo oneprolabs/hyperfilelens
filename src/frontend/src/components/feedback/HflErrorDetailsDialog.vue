@@ -13,6 +13,7 @@ import {
   sanitizeErrorDetails,
 } from '../../lib/errors/details'
 import { refreshTaskDetails } from '../../lib/taskDetailsLifecycle'
+import { unregisterRetainedResourceLabel } from '../../lib/unregisterCleanupDisplay'
 import type { ErrorEntity } from '../../lib/errors/details'
 
 const { t } = useI18n()
@@ -226,7 +227,7 @@ function entityIcon(type: ErrorEntity['type']) {
             v-for="item in details.cleanupResidue.retainedResources"
             :key="`retained:${item}`"
           >
-            {{ item }}
+            {{ unregisterRetainedResourceLabel(item, t) }}
           </li>
         </ul>
       </section>

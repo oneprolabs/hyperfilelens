@@ -2,6 +2,11 @@ import type { ComposerTranslation } from 'vue-i18n'
 
 import { apiErrorMessageI18n } from './api'
 import { unregisterReasonLabel } from './backupSourceUnregisterDialog'
+import {
+  unregisterCleanupSuggestion,
+  unregisterCleanupText,
+  unregisterRetainedResourceLabel,
+} from './unregisterCleanupDisplay'
 import type { ErrorDetailsPayload } from './errors/details'
 import { openErrorDetails } from './errors/details'
 import { toApiError } from './errors/normalizer'
@@ -135,7 +140,7 @@ export function unregisterFailureToErrorDetails(input: {
       scopedReasons.length ? '' : displayMessage,
     ])
     const resolutions = uniqueStrings([
-      parsed.hint,
+      unregisterCleanupText(parsed.hint || '', t),
       t('protection.backupsPage.unregisterFailureRetryHint'),
     ])
     let summary = source
@@ -239,15 +244,15 @@ export function unregisterFailureToErrorDetails(input: {
 
   const residueLines = uniqueStrings([
     ...warningDetailLines(syncWarnings, t),
-    ...cleanupWarnings.map((item) => item.detail),
+    ...cleanupWarnings.map((item) => unregisterCleanupText(item.detail, t)),
     ...retained.map((item) =>
-      t('protection.backupsPage.unregisterFailureRetainedResource', { resource: item }),
+      t('protection.backupsPage.unregisterFailureRetainedResource', { resource: unregisterRetainedResourceLabel(item, t) }),
     ),
   ])
 
   const resolutions = uniqueStrings([
-    ...(contract?.suggestions || []).map((item) => item.detail),
-    hint,
+    ...(contract?.suggestions || []).map((item) => unregisterCleanupSuggestion(item, t)),
+    unregisterCleanupText(hint, t),
     residueLines.length || isResidue
       ? t('protection.backupsPage.unregisterFailureResidueHint')
       : '',
@@ -257,18 +262,25 @@ export function unregisterFailureToErrorDetails(input: {
     isResidue ? '' : t('protection.backupsPage.unregisterFailureRetryHint'),
   ])
 
+  const hasRetainedResources = retained.length > 0
   const summary = isResidue
     ? (source
-      ? t('protection.backupsPage.unregisterCleanupWarningSummaryNamed', { name: source })
-      : t('protection.backupsPage.msgDeleteSourcePartialSuccess'))
+      ? t(hasRetainedResources
+        ? 'protection.backupsPage.unregisterCleanupPendingSummaryNamed'
+        : 'protection.backupsPage.unregisterCleanupWarningSummaryNamed', { name: source })
+      : t(hasRetainedResources
+        ? 'protection.backupsPage.unregisterCleanupPendingSummary'
+        : 'protection.backupsPage.msgDeleteSourcePartialSuccess'))
     : (source
       ? t('protection.backupsPage.unregisterFailureSummaryNamed', { name: source })
       : (reasons[0] || fallback))
 
-  const combinedReasons = uniqueStrings([...reasons, ...residueLines])
+  const combinedReasons = uniqueStrings([...reasons, ...residueLines].map((item) => unregisterCleanupText(item, t)))
   return {
     title: isResidue
-      ? t('protection.backupsPage.unregisterCleanupWarningTitle')
+      ? t(hasRetainedResources
+        ? 'protection.backupsPage.unregisterCleanupPendingTitle'
+        : 'protection.backupsPage.unregisterCleanupWarningTitle')
       : t('protection.backupsPage.unregisterFailureTitle'),
     summary,
     severity: contract?.severity || (isResidue ? 'warning' : 'error'),
@@ -282,7 +294,7 @@ export function unregisterFailureToErrorDetails(input: {
         id: entity.id,
         name: entity.name,
         type: (['source', 'repository', 'node', 'child_task'].includes(entity.type) ? entity.type : 'source') as 'source' | 'repository' | 'node' | 'child_task',
-        error: entity.error,
+        error: entity.error ? unregisterCleanupText(entity.error, t) : entity.error,
       }))
       : source ? [{ id: input.sourceId || source, name: source, type: 'source' as const }] : undefined,
     cleanupResidue: isResidue
@@ -291,7 +303,7 @@ export function unregisterFailureToErrorDetails(input: {
         retainedResources: retained,
         failures: contract?.cleanup_failures?.map((item) => {
           const value = record(item)
-          return String(value.detail || value.message || value.code || item)
+          return unregisterCleanupText(String(value.detail || value.message || value.code || item), t)
         }).filter(Boolean),
       }
       : undefined,
@@ -316,6 +328,7 @@ export function unregisterFailureToErrorDetails(input: {
       failed_children: failedChildren,
       warnings: syncWarnings,
       reasons: structuredReasons,
+      error_details: contract,
       partial_success: isResidue || undefined,
     },
   }
@@ -446,12 +459,17 @@ export function mergeUnregisterDetails(
     }
   }
   if (items.length === 1) return items[0]
+  const hasRetainedResources = items.some(item => item.cleanupResidue?.retainedResources?.length)
   const summary = isWarning
-    ? t('protection.backupsPage.unregisterCleanupWarningSummaryCount', { n: items.length })
+    ? t(hasRetainedResources
+      ? 'protection.backupsPage.unregisterCleanupPendingSummaryCount'
+      : 'protection.backupsPage.unregisterCleanupWarningSummaryCount', { n: items.length })
     : t('protection.backupsPage.unregisterFailureSummaryCount', { n: items.length })
   return {
     title: isWarning
-      ? t('protection.backupsPage.unregisterCleanupWarningTitle')
+      ? t(hasRetainedResources
+        ? 'protection.backupsPage.unregisterCleanupPendingTitle'
+        : 'protection.backupsPage.unregisterCleanupWarningTitle')
       : t('protection.backupsPage.unregisterFailureTitle'),
     summary,
     issue: summary,

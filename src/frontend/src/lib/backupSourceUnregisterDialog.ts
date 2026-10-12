@@ -2,6 +2,7 @@ import type { ComposerTranslation } from 'vue-i18n'
 import type { BackupSourceDeletePreflight, BackupSourceDeleteReason } from './sourceApi'
 import { humanizeLegacyErrorMessage } from './errors'
 import { snapshotUsageFailureText } from './snapshotUsageFailureDisplay'
+import { unregisterCleanupText } from './unregisterCleanupDisplay'
 
 export function mergeUnregisterSubmitRisks(
   preflight: BackupSourceDeletePreflight | null,
@@ -57,6 +58,8 @@ export function unregisterReasonLabel(
   reason: BackupSourceDeleteReason,
   t: ComposerTranslation,
 ): string {
+  const cleanupText = unregisterCleanupText(reason.detail || '', t)
+  if (cleanupText !== (reason.detail || '')) return cleanupText
   const name = reason.source_name || reason.source_id || ''
   switch (reason.code) {
     case 'snapshot_in_use':
