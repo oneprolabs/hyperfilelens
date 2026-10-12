@@ -1,6 +1,7 @@
-import { nextTick, onMounted, onUnmounted, ref, type Ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, onUpdated, ref, type Ref } from 'vue'
 import type { TableInstance } from 'element-plus'
 import { layoutElTable, syncTableHeaderScroll } from '../lib/tableScrollSync'
+import { listTableMaxHeight } from '../lib/listTableHeight'
 
 function syncTableElementScroll(tableRef: TableInstance | null, event?: Event) {
   const el = tableRef?.$el as HTMLElement | undefined
@@ -21,7 +22,7 @@ function syncTableElementScroll(tableRef: TableInstance | null, event?: Event) {
   syncTableHeaderScroll(tableRef as Parameters<typeof syncTableHeaderScroll>[0], event)
 }
 
-const DEFAULT_FOOTER_RESERVE = 64
+const DEFAULT_FOOTER_RESERVE = 48
 
 export function useListTableLayout(
   tableRef: Ref<TableInstance | null>,
@@ -43,11 +44,12 @@ export function useListTableLayout(
 
     const panel = block.closest('.hfl-list-panel') as HTMLElement | null
     const footer = panel?.querySelector<HTMLElement>('.hfl-list-footer')
-    const footerHeight = footer?.offsetHeight ?? footerReserve
-    const pageBody = block.closest('.page-body') as HTMLElement | null
-    const top = block.getBoundingClientRect().top
-    const bottom = pageBody?.getBoundingClientRect().bottom ?? window.visualViewport?.height ?? window.innerHeight
-    const next = Math.max(280, Math.floor(bottom - top - footerHeight - 8))
+    if (observedFooter !== (footer ?? null)) {
+      if (observedFooter) resizeObserver?.unobserve(observedFooter)
+      observedFooter = footer ?? null
+      if (observedFooter) resizeObserver?.observe(observedFooter)
+    }
+    const next = listTableMaxHeight(block, footer, footerReserve)
 
     if (tableMaxHeight.value !== next) {
       tableMaxHeight.value = next
@@ -60,6 +62,9 @@ export function useListTableLayout(
   }
 
   let resizeObserver: ResizeObserver | null = null
+  let observedFooter: HTMLElement | null = null
+
+  onUpdated(updateTableMaxHeight)
 
   onMounted(() => {
     resizeObserver = new ResizeObserver(() => updateTableMaxHeight())
