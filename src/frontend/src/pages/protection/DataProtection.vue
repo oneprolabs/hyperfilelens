@@ -181,6 +181,7 @@ import {
   sourceUnregisterTaskBindings,
   sourceUnregisterTaskOutcome,
 } from '../../lib/sourceUnregisterMonitor'
+import { listTableMaxHeight } from '../../lib/listTableHeight'
 import { openErrorDetails, type ErrorDetailsPayload } from '../../lib/errors/details'
 import {
   notifyUnregisterCleanupWarning,
@@ -1131,7 +1132,8 @@ function applyRequestedFlowStep(value: unknown) {
 const flowToolbarRef = ref<HTMLElement | null>(null)
 const flowTableZoneRef = ref<HTMLElement | null>(null)
 const flowTableMaxHeight = ref(400)
-const FLOW_TABLE_FOOTER_RESERVE = 64
+const FLOW_TABLE_FOOTER_RESERVE = 48
+let flowObservedFooter: HTMLElement | null = null
 
 let flowTableZoneObserver: ResizeObserver | null = null
 let flowTableResizeFrame = 0
@@ -1140,15 +1142,16 @@ function updateFlowTableMaxHeight() {
   const zone = flowTableZoneRef.value
   if (!zone) return
 
-  const pageBody = zone.closest('.page-body') as HTMLElement | null
-  const zoneTop = zone.getBoundingClientRect().top
-  const pageBottom = pageBody?.getBoundingClientRect().bottom ?? window.visualViewport?.height ?? window.innerHeight
   const visibleFooter = zone
     ? Array.from(zone.querySelectorAll<HTMLElement>('.hfl-list-footer'))
       .find((footer) => footer.offsetParent !== null)
     : null
-  const footerHeight = visibleFooter?.offsetHeight || FLOW_TABLE_FOOTER_RESERVE
-  const nextHeight = Math.max(280, Math.floor(pageBottom - zoneTop - footerHeight))
+  if (flowObservedFooter !== (visibleFooter ?? null)) {
+    if (flowObservedFooter) flowTableZoneObserver?.unobserve(flowObservedFooter)
+    flowObservedFooter = visibleFooter ?? null
+    if (flowObservedFooter) flowTableZoneObserver?.observe(flowObservedFooter)
+  }
+  const nextHeight = listTableMaxHeight(zone, visibleFooter, FLOW_TABLE_FOOTER_RESERVE)
 
   if (flowTableMaxHeight.value !== nextHeight) {
     flowTableMaxHeight.value = nextHeight
@@ -3124,6 +3127,11 @@ onMounted(async () => {
         scheduleFlowTableMaxHeightUpdate()
       })
       flowTableZoneObserver.observe(toolbar)
+      const pageBody = toolbar.closest('.page-body')
+      if (pageBody) flowTableZoneObserver.observe(pageBody)
+      const workspace = toolbar.closest('.protection-flow-workspace')
+      if (workspace) flowTableZoneObserver.observe(workspace)
+      if (flowObservedFooter) flowTableZoneObserver.observe(flowObservedFooter)
     }
     window.addEventListener('resize', scheduleFlowTableMaxHeightUpdate)
     window.addEventListener('resize', updateDrawerWidth)
@@ -10362,6 +10370,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
     :title="t('protection.moduleTitle')"
     :menus="protectionMenus"
     :body-flush="inlineEditorMode === null"
+    :body-fill="inlineEditorMode === null"
   >
     <template v-if="inlineEditorMode === null">
       <div class="protection-flow-workspace">

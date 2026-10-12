@@ -468,7 +468,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  padding: 16px;
+  flex: 0 0 auto;
+  /* The enclosing page/card owns side and bottom gutters. */
+  padding: 16px 0 0;
 }
 
 .hfl-list-footer__selected {
@@ -652,7 +654,7 @@ html[data-theme='dark'] {
 
   .hfl-list-footer {
     gap: 8px;
-    padding: 12px 0 4px;
+    padding: 12px 0 0;
   }
 
   .hfl-list-footer__pagination {

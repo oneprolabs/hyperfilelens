@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, onUpdated, ref } from 'vue'
+import { listTableMaxHeight } from '../lib/listTableHeight'
 
 withDefaults(
   defineProps<{
@@ -20,14 +21,10 @@ function updateTableMaxHeight() {
   const tableViewport = tableViewportRef.value
   if (!tableViewport) return
 
-  const pageBody = tableViewport.closest('.page-body') as HTMLElement | null
   const panel = panelRef.value
   const footer = panel?.querySelector<HTMLElement>('.hfl-list-footer')
-  const footerHeight = footer?.offsetHeight ?? 0
-  const pageBottom = pageBody?.getBoundingClientRect().bottom ?? window.visualViewport?.height ?? window.innerHeight
-  const tableTop = tableViewport.getBoundingClientRect().top
-  const scrollbarReserve = 12
-  const next = Math.max(280, Math.floor(pageBottom - tableTop - footerHeight - scrollbarReserve - 8))
+  observeFooter(footer)
+  const next = listTableMaxHeight(tableViewport, footer)
 
   if (tableMaxHeight.value !== next) {
     tableMaxHeight.value = next
@@ -35,6 +32,16 @@ function updateTableMaxHeight() {
 }
 
 let resizeObserver: ResizeObserver | null = null
+let observedFooter: HTMLElement | null = null
+
+function observeFooter(footer?: HTMLElement | null) {
+  if (observedFooter === (footer ?? null)) return
+  if (observedFooter) resizeObserver?.unobserve(observedFooter)
+  observedFooter = footer ?? null
+  if (observedFooter) resizeObserver?.observe(observedFooter)
+}
+
+onUpdated(updateTableMaxHeight)
 
 onMounted(() => {
   resizeObserver = new ResizeObserver(() => updateTableMaxHeight())
