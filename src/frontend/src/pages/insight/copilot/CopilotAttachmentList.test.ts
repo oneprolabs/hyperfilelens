@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { flushPromises, mount } from '@vue/test-utils'
+import { ElImage } from 'element-plus'
 import { createI18n } from 'vue-i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -16,6 +17,7 @@ vi.mock('../../../lib/lensApi', () => ({
 }))
 
 let intersectionCallback: IntersectionObserverCallback
+const previewWrappers: ReturnType<typeof mount>[] = []
 
 class IntersectionObserverMock {
   constructor(callback: IntersectionObserverCallback) {
@@ -31,7 +33,7 @@ class IntersectionObserverMock {
   readonly thresholds = [0]
 }
 
-function mountAttachments() {
+function mountAttachments(realImage = false) {
   const i18n = createI18n({
     legacy: false,
     locale: 'en',
@@ -39,7 +41,8 @@ function mountAttachments() {
     missingWarn: false,
     fallbackWarn: false,
   })
-  return mount(CopilotAttachmentList, {
+  const wrapper = mount(CopilotAttachmentList, {
+    attachTo: realImage ? document.body : undefined,
     props: {
       sessionId: 7,
       attachments: [{
@@ -52,9 +55,11 @@ function mountAttachments() {
     },
     global: {
       plugins: [i18n],
-      stubs: { ElImage: true },
+      stubs: { ElImage: !realImage },
     },
   })
+  if (realImage) previewWrappers.push(wrapper)
+  return wrapper
 }
 
 function abortError() {
@@ -76,6 +81,8 @@ describe('CopilotAttachmentList image loading', () => {
   })
 
   afterEach(() => {
+    for (const wrapper of previewWrappers.splice(0)) wrapper.unmount()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
@@ -131,5 +138,112 @@ describe('CopilotAttachmentList image loading', () => {
     await flushPromises()
 
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:preview')
+  })
+
+  it('renders a real historical image and opens and closes its teleported preview', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const wrapper = mountAttachments(true)
+
+    expect(mocks.fetchAttachment).not.toHaveBeenCalled()
+    intersectionCallback(
+      [{ isIntersecting: true } as IntersectionObserverEntry],
+      {} as IntersectionObserver,
+    )
+    await flushPromises()
+
+    expect(wrapper.findComponent(ElImage).exists()).toBe(true)
+    const image = wrapper.get('img')
+    expect(image.attributes('src')).toBe('blob:preview')
+    expect(image.attributes('alt')).toBe('diagram.png')
+    await image.trigger('load')
+    await image.trigger('click')
+    await flushPromises()
+
+    const viewer = document.querySelector('.el-image-viewer__wrapper')
+    expect(viewer).not.toBeNull()
+    expect(wrapper.element.contains(viewer)).toBe(false)
+    expect(viewer?.querySelector('img')?.getAttribute('src')).toBe('blob:preview')
+    const close = viewer?.querySelector<HTMLElement>('.el-image-viewer__close')
+    expect(close).not.toBeNull()
+    close?.click()
+    await flushPromises()
+
+    expect(document.querySelector('.el-image-viewer__wrapper')).toBeNull()
+    expect(wrapper.get('img').attributes('src')).toBe('blob:preview')
+    expect(mocks.fetchAttachment).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls.some(([message]) =>
+      String(message).includes('Failed to resolve component: ElImage'),
+    )).toBe(false)
+  })
+
+  it('previews a newly added image and cleans up its viewer and blob on unmount', async () => {
+    const wrapper = mountAttachments(true)
+    await wrapper.setProps({ attachments: [] })
+    intersectionCallback(
+      [{ isIntersecting: true } as IntersectionObserverEntry],
+      {} as IntersectionObserver,
+    )
+    await flushPromises()
+    expect(mocks.fetchAttachment).not.toHaveBeenCalled()
+
+    await wrapper.setProps({
+      attachments: [{
+        uuid: '00000000-0000-4000-8000-000000000002',
+        kind: 'image',
+        mime_type: 'image/png',
+        original_name: 'new-screenshot.png',
+        url: '/api/v1/lens/copilot/sessions/7/attachments/new/?token=signed',
+      }],
+    })
+    await flushPromises()
+    await wrapper.get('img').trigger('load')
+    await wrapper.get('img').trigger('click')
+    await flushPromises()
+    expect(document.querySelector('.el-image-viewer__wrapper')).not.toBeNull()
+    expect(mocks.fetchAttachment).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+    previewWrappers.splice(previewWrappers.indexOf(wrapper), 1)
+    await flushPromises()
+    expect(document.querySelector('.el-image-viewer__wrapper')).toBeNull()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:preview')
+    expect(mocks.fetchAttachment.mock.calls[0]?.[3].aborted).toBe(true)
+  })
+
+  it('disposes the old preview and reloads images when switching Chats', async () => {
+    vi.mocked(URL.createObjectURL)
+      .mockReturnValueOnce('blob:first-chat')
+      .mockReturnValueOnce('blob:second-chat')
+    const wrapper = mountAttachments(true)
+    intersectionCallback(
+      [{ isIntersecting: true } as IntersectionObserverEntry],
+      {} as IntersectionObserver,
+    )
+    await flushPromises()
+    await wrapper.get('img').trigger('click')
+    await flushPromises()
+    expect(document.querySelector('.el-image-viewer__wrapper')).not.toBeNull()
+
+    await wrapper.setProps({
+      sessionId: 8,
+      attachments: [{
+        uuid: '00000000-0000-4000-8000-000000000002',
+        kind: 'image',
+        mime_type: 'image/png',
+        original_name: 'second-chat.png',
+        url: '/api/v1/lens/copilot/sessions/8/attachments/image/?token=signed',
+      }],
+    })
+    await flushPromises()
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:first-chat')
+    expect(mocks.fetchAttachment.mock.calls[0]?.[3].aborted).toBe(true)
+    expect(mocks.fetchAttachment.mock.calls[1]?.[0]).toBe(8)
+    expect(wrapper.get('img').attributes('src')).toBe('blob:second-chat')
+    expect(document.querySelector('.el-image-viewer__wrapper')).toBeNull()
+    await wrapper.get('img').trigger('click')
+    await flushPromises()
+    expect(document.querySelector('.el-image-viewer__wrapper img')?.getAttribute('src'))
+      .toBe('blob:second-chat')
   })
 })
