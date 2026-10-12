@@ -383,4 +383,163 @@ grep -F 'server web:8080 resolve;' "${dev_upstreams}" >/dev/null
 grep -F 'server web:8081 resolve;' "${dev_upstreams}" >/dev/null
 grep -F 'server web:8082 resolve;' "${dev_upstreams}" >/dev/null
 
+# Explicit Agent test versions must not alter the default release resolver.
+(
+	config="$("${ROOT_REPO}/dev/stack.sh" up --agent-version v0.3.6 --print-config)"
+	grep -Fx 'agent_version=0.3.6' <<<"${config}" >/dev/null
+	config="$("${ROOT_REPO}/dev/stack.sh" up --print-config)"
+	grep -Fx 'agent_version=<default>' <<<"${config}" >/dev/null
+	# Joining extension inputs must not leak comma IFS into command dispatch.
+	(
+		print_config() {
+			[[ "${IFS}" == $' \t\n' ]]
+			[[ "${EXTENSION_SOURCES_CSV}" == "../ee-one,../ee-two" ]]
+			[[ "${OPT_AGENT_VERSION}" == "0.3.6" ]]
+		}
+		main up --agent-version 0.3.6 \
+			--extension-source ../ee-one --extension-source ../ee-two --print-config
+	)
+	for args in '--agent-version' '--agent-version invalid' '--agent-version 0.3.6-dev.1'; do
+		if "${ROOT_REPO}/dev/stack.sh" up ${args} --print-config >"${tmp}/invalid-agent.log" 2>&1; then
+			echo "Invalid Agent option accepted: ${args}" >&2
+			exit 1
+		fi
+	done
+	if "${ROOT_REPO}/dev/stack.sh" down --agent-version 0.3.6 --print-config \
+		>"${tmp}/invalid-agent.log" 2>&1; then
+		exit 1
+	fi
+	# Explicit publisher versions already take precedence over RELEASE_VERSION.
+	config="$(RELEASE_VERSION=9.9.9 "${ROOT_REPO}/tools/agent/publish.sh" \
+		--version 0.3.6 --print-config)"
+	grep -Fx 'version=0.3.6' <<<"${config}" >/dev/null
+)
+
+# Use isolated fixtures: never build packages or recreate development services.
+(
+	ROOT="${tmp}/agent-repo"
+	STATE_FILE="${ROOT}/build/state/dev-stack.json"
+	mkdir -p "${ROOT}/tools/dev" "${ROOT}/tools/agent" "${ROOT}/src/agent"
+	cp "${ROOT_REPO}/tools/dev/cache_state.py" "${ROOT}/tools/dev/"
+	printf 'original source\n' >"${ROOT}/src/agent/source.go"
+	git -C "${ROOT}" init -q
+	git -C "${ROOT}" -c user.name=Test -c user.email=test@example.invalid \
+		commit --allow-empty -qm fixture
+	git -C "${ROOT}" tag v0.3.4
+	cat >"${ROOT}/tools/agent/publish.sh" <<'PUBLISH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${FIXTURE_CALLS}"
+[[ "${FIXTURE_FAIL:-0}" == 0 ]] || exit 7
+version=0.3.4
+while (($#)); do
+	if [[ "$1" == --version ]]; then version="$2"; shift; fi
+	shift
+done
+release="${FIXTURE_ROOT}/data/media/agent-releases/${version}"
+mkdir -p "${release}"
+printf '{}\n' >"${release}/RELEASE_MANIFEST.json"
+for suffix in linux-amd64.tar.gz windows-amd64.zip \
+	linux-amd64-ubuntu2004.tar.gz linux-amd64-ubuntu2204.tar.gz linux-amd64-ubuntu2404.tar.gz; do
+	printf 'archive\n' >"${release}/hfl-agent-${version}-${suffix}"
+done
+PUBLISH
+	chmod +x "${ROOT}/tools/agent/publish.sh"
+	export FIXTURE_ROOT="${ROOT}" FIXTURE_CALLS="${tmp}/agent-publish-calls"
+	export AGENT_MATRIX="linux:amd64 windows:amd64"
+	KOPIA_GIT_REF=v0.23.1
+	KOPIA_ARTIFACT_MODE=build
+	KOPIA_GIT_URL=https://github.com/kopia/kopia.git
+	UBUNTU2404_ARCH=amd64
+	DEV_OFFLINE=0
+	OPT_AGENT_VERSION=""
+	AGENT_VERSION_READY=0
+	AGENT_COMPOSE_OVERLAY=""
+	TMPDIR="${tmp}/agent-overlays"
+	mkdir -p "${TMPDIR}"
+	export TMPDIR
+	EXTENSION_SOURCES_CSV=""
+	# Default invocation still forwards no version argument.
+	publish_agent 0
+	! grep -q -- '--version' "${FIXTURE_CALLS}"
+	prepare_compose_files
+	[[ "${#COMPOSE_FILES[@]}" -eq 2 && -z "${AGENT_COMPOSE_OVERLAY}" ]]
+
+	OPT_AGENT_VERSION=0.3.6
+	AGENT_VERSION_READY=0
+	prepare_compose_files
+	[[ "${#COMPOSE_FILES[@]}" -eq 2 ]]
+	publish_agent 0
+	grep -q -- '--version 0.3.6' "${FIXTURE_CALLS}"
+	# Artifact matrix parsing must also be robust to an inherited comma IFS.
+	(IFS=','; agent_test_artifacts_present)
+	[[ "${AGENT_VERSION_READY}" -eq 1 ]]
+	prepare_agent_compose_overlay
+	prepare_compose_files
+	[[ "${#COMPOSE_FILES[@]}" -eq 4 && -f "${AGENT_COMPOSE_OVERLAY}" ]]
+	[[ "$(grep -c 'AGENT_VERSION: "0.3.6"' "${AGENT_COMPOSE_OVERLAY}")" -eq 4 ]]
+	overlay="${AGENT_COMPOSE_OVERLAY}"
+	prepare_compose_files
+	[[ "${AGENT_COMPOSE_OVERLAY}" == "${overlay}" && "${#COMPOSE_FILES[@]}" -eq 4 ]]
+	publish_agent 0
+	[[ "$(wc -l <"${FIXTURE_CALLS}")" -eq 2 ]]
+	# Compose command substitutions and pipelines must share the parent file.
+	COMPOSE=(true)
+	output="$(compose config)"
+	compose config | cat
+	[[ "$(find "${TMPDIR}" -name 'hfl-agent-compose.*' | wc -l)" -eq 1 ]]
+	[[ "${AGENT_COMPOSE_OVERLAY}" == "${overlay}" ]]
+	# Explicit publication must not replace the original default cache.
+	OPT_AGENT_VERSION=""
+	DEV_OFFLINE=1
+	publish_agent 0
+	[[ "$(wc -l <"${FIXTURE_CALLS}")" -eq 2 ]]
+	OPT_AGENT_VERSION=0.3.6
+	publish_agent 0
+	[[ "$(wc -l <"${FIXTURE_CALLS}")" -eq 2 ]]
+	DEV_OFFLINE=0
+
+	# Source changes and missing required bundles invalidate the explicit cache.
+	printf 'changed source\n' >"${ROOT}/src/agent/source.go"
+	publish_agent 0
+	[[ "$(wc -l <"${FIXTURE_CALLS}")" -eq 3 ]]
+	rm -- "${ROOT}/data/media/agent-releases/0.3.6/hfl-agent-0.3.6-linux-amd64-ubuntu2204.tar.gz"
+	publish_agent 0
+	[[ "$(wc -l <"${FIXTURE_CALLS}")" -eq 4 ]]
+	cleanup_agent_compose_overlay
+	[[ ! -f "${overlay}" ]]
+	[[ "$(find "${TMPDIR}" -name 'hfl-agent-compose.*' | wc -l)" -eq 0 ]]
+
+	# Other published versions cannot satisfy a new test-version request.
+	OPT_AGENT_VERSION=0.3.7
+	AGENT_VERSION_READY=0
+	export FIXTURE_FAIL=1
+	result=0
+	publish_agent 0 || result=$?
+	[[ "${result}" -eq 7 && "${AGENT_VERSION_READY}" -eq 0 ]]
+	prepare_compose_files
+	[[ "${#COMPOSE_FILES[@]}" -eq 2 && -z "${AGENT_COMPOSE_OVERLAY}" ]]
+	unset FIXTURE_FAIL
+	publish_agent 0
+	grep -q -- '--version 0.3.7' "${FIXTURE_CALLS}"
+	prepare_agent_compose_overlay
+	prepare_compose_files
+	grep -q 'AGENT_VERSION: "0.3.7"' "${AGENT_COMPOSE_OVERLAY}"
+	cleanup_agent_compose_overlay
+	# Publishing another test version must preserve the previous version cache.
+	OPT_AGENT_VERSION=0.3.6
+	DEV_OFFLINE=1
+	publish_agent 0
+	[[ "$(wc -l <"${FIXTURE_CALLS}")" -eq 6 ]]
+	DEV_OFFLINE=0
+
+	# A plain invocation ignores any previous test-version override.
+	OPT_AGENT_VERSION=""
+	prepare_agent_compose_overlay
+	prepare_compose_files
+	[[ "${#COMPOSE_FILES[@]}" -eq 2 && -z "${AGENT_COMPOSE_OVERLAY}" ]]
+	publish_agent 0
+	! tail -1 "${FIXTURE_CALLS}" | grep -q -- '--version'
+)
+
 printf 'Development stack upgrade regression checks passed.\n'

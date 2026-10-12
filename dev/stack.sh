@@ -71,6 +71,9 @@ OPT_GO_SUMDB=""
 OPT_PIP_INDEX_URL=""
 OPT_PIP_TRUSTED_HOST=""
 OPT_NPM_REGISTRY=""
+OPT_AGENT_VERSION=""
+AGENT_VERSION_READY=0
+AGENT_COMPOSE_OVERLAY=""
 WITH_SOURCELENS=""
 SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-}"
 SOURCELENS_GIT_URL="${SOURCELENS_GIT_URL:-}"
@@ -153,6 +156,15 @@ SourceLens options (enabled by default for up/restart):
   --sourcelens-git-url URL    Override the SourceLens repository URL
                               (env: SOURCELENS_GIT_URL)
 
+Agent upgrade testing (up/restart only):
+  --agent-version VERSION     Build and select an explicit X.Y.Z Agent test
+                              version, independently of the HEAD release tag.
+                              Overrides RELEASE_VERSION for Agent publishing
+                              only. Without this option, existing version
+                              resolution and runtime settings are unchanged.
+                              The runtime override lasts for this invocation;
+                              .env and the Host product version are unchanged.
+
 Extensions (optional overlay; Community default: no extensions):
   --extension-source SRC      Local path or Git/HTTPS URL[@REF]. Repeatable.
                               Not read from .env (prepare/packaging input only).
@@ -228,6 +240,8 @@ Examples:
     --admin-public-url https://192.168.8.66:11444
 
   ./dev/stack.sh up --ubuntu2404-arch amd64
+
+  ./dev/stack.sh up --agent-version 0.3.6
 
   ./dev/stack.sh down
 
@@ -374,6 +388,7 @@ sourcelens_git_fallback_timeout=${SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS}
 sourcelens_upstream_image_prefix=${SOURCELENS_UPSTREAM_IMAGE_PREFIX}
 sourcelens_image_registry=${SOURCELENS_IMAGE_REGISTRY:-<local>}
 ubuntu2404_arch=${UBUNTU2404_ARCH}
+agent_version=${OPT_AGENT_VERSION:-<default>}
 kopia_mode=${KOPIA_ARTIFACT_MODE}
 kopia_git_url=${KOPIA_GIT_URL}
 kopia_ref=${KOPIA_GIT_REF}
@@ -483,6 +498,41 @@ prepare_compose_files() {
 	elif [[ -f "${compose_overlay}" ]]; then
 		rm -f "${compose_overlay}"
 	fi
+	if [[ -n "${OPT_AGENT_VERSION}" && "${AGENT_VERSION_READY}" -eq 1 ]]; then
+		[[ -n "${AGENT_COMPOSE_OVERLAY}" && -f "${AGENT_COMPOSE_OVERLAY}" ]] \
+			|| die "Agent Compose override was not prepared after publication"
+		COMPOSE_FILES+=(-f "${AGENT_COMPOSE_OVERLAY}")
+	fi
+}
+
+prepare_agent_compose_overlay() {
+	[[ -n "${OPT_AGENT_VERSION}" ]] || return 0
+	[[ "${AGENT_VERSION_READY}" -eq 1 ]] \
+		|| die "Cannot prepare Agent Compose override before successful publication"
+	[[ -z "${AGENT_COMPOSE_OVERLAY}" ]] || return 0
+	# Create once in the main preparation flow, not in Compose subprocesses.
+	AGENT_COMPOSE_OVERLAY="$(mktemp "${TMPDIR:-/tmp}/hfl-agent-compose.XXXXXX")" \
+		|| return 1
+	cat >"${AGENT_COMPOSE_OVERLAY}" <<EOF
+services:
+  migration:
+    environment:
+      AGENT_VERSION: "${OPT_AGENT_VERSION}"
+  api:
+    environment:
+      AGENT_VERSION: "${OPT_AGENT_VERSION}"
+  worker:
+    environment:
+      AGENT_VERSION: "${OPT_AGENT_VERSION}"
+  scheduler:
+    environment:
+      AGENT_VERSION: "${OPT_AGENT_VERSION}"
+EOF
+}
+
+cleanup_agent_compose_overlay() {
+	[[ -z "${AGENT_COMPOSE_OVERLAY}" ]] || rm -f -- "${AGENT_COMPOSE_OVERLAY}"
+	AGENT_COMPOSE_OVERLAY=""
 }
 
 compose() {
@@ -1085,21 +1135,58 @@ verify_sl_queue_config_dev() {
 		|| die "SourceLens default queue is not verified against worker subscriptions"
 }
 
+agent_test_artifacts_present() {
+	local releases="${ROOT}/data/media/agent-releases/${OPT_AGENT_VERSION}"
+	local item goos goarch ext flavor
+	# The matrix is whitespace-separated, regardless of caller shell settings.
+	local IFS=$' \t\n'
+	[[ -f "${releases}/RELEASE_MANIFEST.json" ]] || return 1
+	for item in ${AGENT_MATRIX:-linux:amd64 linux:arm64 darwin:amd64 darwin:arm64 windows:amd64}; do
+		IFS=: read -r goos goarch <<<"${item}"
+		ext=tar.gz
+		[[ "${goos}" != "windows" ]] || ext=zip
+		[[ -s "${releases}/hfl-agent-${OPT_AGENT_VERSION}-${goos}-${goarch}.${ext}" ]] \
+			|| return 1
+		if [[ "${goos}" == "linux" \
+			&& ( "${UBUNTU2404_ARCH}" == "all" || "${UBUNTU2404_ARCH}" == "${goarch}" ) ]]; then
+			for flavor in ubuntu2004 ubuntu2204 ubuntu2404; do
+				[[ -s "${releases}/hfl-agent-${OPT_AGENT_VERSION}-linux-${goarch}-${flavor}.tar.gz" ]] \
+					|| return 1
+			done
+		fi
+	done
+}
+
+agent_publish_cache_present() {
+	if [[ -n "${OPT_AGENT_VERSION}" ]]; then
+		agent_test_artifacts_present
+	else
+		find "${ROOT}/data/media/agent-releases" -type f \
+			\( -name '*.tar.gz' -o -name '*.zip' \) -print -quit 2>/dev/null | grep -q .
+	fi
+}
+
 publish_agent() {
 	local force=$1
-	local fingerprint
+	local fingerprint cache_key=agent-publish
+	local -a version_inputs=()
+	if [[ -n "${OPT_AGENT_VERSION}" ]]; then
+		cache_key="agent-publish-version-${OPT_AGENT_VERSION}"
+		version_inputs+=("agent_version=${OPT_AGENT_VERSION}" \
+			"agent_matrix=${AGENT_MATRIX:-linux:amd64 linux:arm64 darwin:amd64 darwin:arm64 windows:amd64}")
+	fi
 	fingerprint="$(cache_fingerprint src/agent tools/agent tools/kopia deploy/bootstrap \
 		tools/lib/version.sh tools/lib/logging.sh -- \
 		"arch=${UBUNTU2404_ARCH}" "kopia=${KOPIA_GIT_REF}" "kopia_mode=${KOPIA_ARTIFACT_MODE}" \
 		"commit=$(git -C "${ROOT}" rev-parse HEAD)" \
 		"github_mirror=${MIRROR_GITHUB_DOWNLOAD}" \
 		"docker_mirror=${MIRROR_DOCKER_DOWNLOAD}" "apt=${MIRROR_APT}" \
-		"goproxy=${OPT_GO_PROXY}" "gosumdb=${OPT_GO_SUMDB}")"
+		"goproxy=${OPT_GO_PROXY}" "gosumdb=${OPT_GO_SUMDB}" "${version_inputs[@]}")"
 	if [[ "${force}" -eq 0 ]] \
-		&& cache_matches agent-publish "${fingerprint}" \
-		&& find "${ROOT}/data/media/agent-releases" -type f \
-			\( -name '*.tar.gz' -o -name '*.zip' \) -print -quit 2>/dev/null | grep -q .; then
+		&& cache_matches "${cache_key}" "${fingerprint}" \
+		&& agent_publish_cache_present; then
 		log "Agent publish fingerprint unchanged; reusing published packages"
+		AGENT_VERSION_READY=1
 		return 0
 	fi
 	if [[ "${DEV_OFFLINE}" -eq 1 ]]; then
@@ -1110,6 +1197,7 @@ publish_agent() {
 		"${ROOT}/src/agent/scripts/build.sh" --clean
 	fi
 	local args=(--bundle all --ubuntu2404-arch "${UBUNTU2404_ARCH}")
+	[[ -z "${OPT_AGENT_VERSION}" ]] || args+=(--version "${OPT_AGENT_VERSION}")
 	args+=(--kopia-mode "${KOPIA_ARTIFACT_MODE}")
 	args+=(--kopia-git-url "${KOPIA_GIT_URL}")
 	args+=(--kopia-ref "${KOPIA_GIT_REF}")
@@ -1121,8 +1209,13 @@ publish_agent() {
 	[[ -n "${OPT_GO_PROXY}" ]] && args+=(--go-proxy "${OPT_GO_PROXY}")
 	[[ -n "${OPT_GO_SUMDB}" ]] && args+=(--go-sumdb "${OPT_GO_SUMDB}")
 	log "Publishing Agent packages (bundle=all, ubuntu2404-arch=${UBUNTU2404_ARCH}, force_fetch=${force})"
-	HFL_PARENT_SESSION=1 "${ROOT}/tools/agent/publish.sh" "${args[@]}"
-	cache_update agent-publish "${fingerprint}"
+	HFL_PARENT_SESSION=1 "${ROOT}/tools/agent/publish.sh" "${args[@]}" || return $?
+	if [[ -n "${OPT_AGENT_VERSION}" ]]; then
+		agent_test_artifacts_present \
+			|| die "Agent publication is incomplete for requested version ${OPT_AGENT_VERSION}"
+	fi
+	cache_update "${cache_key}" "${fingerprint}" || return $?
+	AGENT_VERSION_READY=1
 }
 
 prepare_dev() {
@@ -1152,6 +1245,7 @@ prepare_dev() {
 	prepare_kopia_artifacts "${force}"
 	strip_bundled_lang_packs "${ROOT}/src/frontend"
 	publish_agent "${force}"
+	prepare_agent_compose_overlay
 	prepare_website_static "${force}"
 	build_dev_images "${force}"
 	prepare_dev_language_packs "${force}"
@@ -2319,6 +2413,13 @@ main() {
 			resolve_worktree_dir "$2"
 			shift 2
 			;;
+		--agent-version)
+			require_value "$1" "${2:-}"
+			# Reuse the release format without resolving or checking HEAD.
+			source "${ROOT}/tools/lib/version.sh"
+			OPT_AGENT_VERSION="$(normalize_release_version "$2")" || return $?
+			shift 2
+			;;
 		--public-url)
 			require_value "$1" "${2:-}"
 			DEV_PUBLIC_URL="$2"
@@ -2344,12 +2445,15 @@ main() {
 		esac
 	done
 	if [[ ${#EXTENSION_SOURCES[@]} -gt 0 ]]; then
-		local IFS=','
-		EXTENSION_SOURCES_CSV="${EXTENSION_SOURCES[*]}"
+		EXTENSION_SOURCES_CSV="$(IFS=','; printf '%s' "${EXTENSION_SOURCES[*]}")"
 	else
 		EXTENSION_SOURCES_CSV=""
 	fi
 	CMD="${cmd}"
+	if [[ -n "${OPT_AGENT_VERSION}" && -n "${cmd}" \
+		&& "${cmd}" != "up" && "${cmd}" != "restart" ]]; then
+		die "--agent-version is only valid with up or restart" 2
+	fi
 	if [[ -z "${LOG_FILE}" ]]; then
 		LOG_FILE="${ROOT}/build/logs/dev-${cmd:-command}-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
 	fi
@@ -2413,7 +2517,7 @@ main() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-	trap 'rc=$?; hfl_logging_finish "${rc}"' EXIT
+	trap 'rc=$?; cleanup_agent_compose_overlay; hfl_logging_finish "${rc}"' EXIT
 	trap 'exit 130' INT TERM
 	main "$@"
 fi
