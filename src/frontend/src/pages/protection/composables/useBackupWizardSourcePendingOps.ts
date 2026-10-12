@@ -34,6 +34,11 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
     let changed = false
     for (const [id, op] of ops.value) {
       if (apiSourceIds.has(id)) continue
+      // Catalog disappearance is not a task outcome. Keep monitoring until the
+      // authoritative unregister task finishes, including after a reload.
+      if (op.taskUuid && ['deleting', 'delete_waiting', 'delete_blocked', 'delete_failed'].includes(op.kind)) {
+        continue
+      }
       if (op.kind === 'removing' && op.nodeId != null && activeRemovalNodeIds.has(op.nodeId)) {
         continue
       }
@@ -177,6 +182,10 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
           seen.add(id)
         }
         continue
+      }
+      if (['deleting', 'delete_waiting', 'delete_blocked', 'delete_failed'].includes(op.kind)) {
+        merged.push(snap)
+        seen.add(id)
       }
     }
     return merged
