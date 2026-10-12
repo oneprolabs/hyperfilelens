@@ -11,6 +11,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.node.models import Node
+from apps.monitor.services.event_targets import source_event_target
 from apps.source.constants import (
     ConnectionTestStatus,
     MountStatus,
@@ -306,7 +307,7 @@ def apply_connection_test_result(resource: SourceResource, result: dict) -> None
             resource_type="source",
             resource_id=str(resource.id),
             resource_name=resource.name,
-            target_path="/protection/backup-sources?tab=host",
+            target_path=source_event_target(resource.id, resource.resource_type),
             details=resource.status_message or "",
             metadata={"source_type": resource.resource_type},
         )

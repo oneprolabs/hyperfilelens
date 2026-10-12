@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from apps.node import agent_paths
+from apps.monitor.services.event_targets import source_event_target
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_log import task_log_context
@@ -349,7 +350,7 @@ def _record_source_availability_event(
         resource_type="source",
         resource_id=str(resource.id),
         resource_name=resource.name,
-        target_path="/protection/backup-sources?tab=host",
+        target_path=source_event_target(resource.id, resource.resource_type),
         details=resource.mount_error or "",
         metadata={"source_type": resource.resource_type},
     )

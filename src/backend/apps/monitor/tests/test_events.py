@@ -20,6 +20,12 @@ from apps.monitor.services.events import (
 from apps.task.models import Task
 from apps.task.services.interface import complete_task
 from apps.task.signals import task_failed, task_timed_out
+from apps.source.models import SourceResource
+from apps.storage.models import Repository
+from apps.monitor.services.event_targets import source_event_target
+from apps.node.models import Node
+from apps.source.services.internal.connection import apply_connection_test_result
+from apps.source.services.internal.nas_agent import _record_source_availability_event
 
 
 class OperationalEventApiTests(TestCase):
@@ -123,6 +129,117 @@ class OperationalEventApiTests(TestCase):
         self.assertEqual(
             response.data["results"][0]["target_path"],
             "/protection/backup-sources?tab=host&openNode=42",
+        )
+
+    def test_legacy_nas_event_opens_source_detail_without_rewriting_history(self):
+        resource = SourceResource.objects.create(
+            organization=self.org, name="NAS source", resource_type="nas",
+        )
+        event = self.create_event(
+            source="source", resource_type="source", resource_id=str(resource.id),
+            target_path="/protection/backup-sources?tab=host",
+        )
+        response = self.client.get(
+            "/api/v1/monitors/events/", HTTP_X_ORG_KEY=self.org.key, secure=True,
+        )
+        self.assertEqual(
+            response.data["results"][0]["target_path"],
+            f"/protection/backup-sources?tab=nas&openSource={resource.id}",
+        )
+        event.refresh_from_db()
+        self.assertEqual(event.target_path, "/protection/backup-sources?tab=host")
+
+    def test_deleted_nas_event_uses_recorded_type(self):
+        self.create_event(
+            source="source", resource_type="source", resource_id="42",
+            target_path="/protection/backup-sources?tab=host",
+            metadata={"source_type": "nas"},
+        )
+        response = self.client.get(
+            "/api/v1/monitors/events/", HTTP_X_ORG_KEY=self.org.key, secure=True,
+        )
+        self.assertEqual(
+            response.data["results"][0]["target_path"],
+            "/protection/backup-sources?tab=nas&openSource=42",
+        )
+
+    def test_legacy_repository_links_select_type_and_open_detail(self):
+        for kind in Repository.Type.values:
+            with self.subTest(kind=kind):
+                OperationalEvent.objects.all().delete()
+                repository = Repository.objects.create(
+                    organization_id=self.org.id, name=f"{kind} repo", repo_type=kind,
+                )
+                self.create_event(
+                    source="storage", resource_type="repository",
+                    resource_id=str(repository.id), target_path="/node/repositories",
+                )
+                response = self.client.get(
+                    "/api/v1/monitors/events/", HTTP_X_ORG_KEY=self.org.key, secure=True,
+                )
+                self.assertEqual(
+                    response.data["results"][0]["target_path"],
+                    f"/node/repositories?tab={kind}&focus={repository.id}",
+                )
+
+    def test_resource_type_lookup_does_not_cross_tenants(self):
+        repository = Repository.objects.create(
+            organization_id=self.other_org.id, name="Other NAS", repo_type="nas",
+        )
+        self.create_event(
+            source="storage", resource_type="repository",
+            resource_id=str(repository.id), target_path="/node/repositories",
+        )
+        response = self.client.get(
+            "/api/v1/monitors/events/", HTTP_X_ORG_KEY=self.org.key, secure=True,
+        )
+        self.assertEqual(
+            response.data["results"][0]["target_path"],
+            f"/node/repositories?focus={repository.id}",
+        )
+
+    def test_explicit_resource_targets_are_preserved(self):
+        target = "/protection/backup-sources?tab=nas&openSource=42"
+        self.create_event(
+            source="source", resource_type="source", resource_id="42", target_path=target,
+        )
+        response = self.client.get(
+            "/api/v1/monitors/events/", HTTP_X_ORG_KEY=self.org.key, secure=True,
+        )
+        self.assertEqual(response.data["results"][0]["target_path"], target)
+
+    def test_new_source_targets_select_nas_for_mountable_types(self):
+        for kind in ("nas", "nfs", "cifs"):
+            self.assertEqual(
+                source_event_target(42, kind),
+                "/protection/backup-sources?tab=nas&openSource=42",
+            )
+        self.assertEqual(source_event_target(42, "local"), "/protection/backup-sources?tab=host")
+
+    def test_connection_and_mount_events_include_nas_detail_target(self):
+        proxy = Node.objects.create(
+            organization=self.org, name="Proxy", role="proxy", availability="online",
+        )
+        resource = SourceResource.objects.create(
+            organization=self.org, name="NAS", resource_type="nas", bound_node=proxy,
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            apply_connection_test_result(resource, {
+                "success": True, "message": "Connection test successful",
+                "details": {"mount_status": "unmounted"},
+            })
+        event = OperationalEvent.objects.get(source="source")
+        self.assertEqual(
+            event.target_path,
+            f"/protection/backup-sources?tab=nas&openSource={resource.id}",
+        )
+        resource.availability = "offline"
+        resource.availability_updated_at = timezone.now()
+        with self.captureOnCommitCallbacks(execute=True):
+            _record_source_availability_event(resource, "online")
+        self.assertEqual(
+            OperationalEvent.objects.get(event_type="source.offline").target_path,
+            f"/protection/backup-sources?tab=nas&openSource={resource.id}",
         )
 
     def test_events_support_period_search_category_and_severity_filters(self):
@@ -261,7 +378,22 @@ class OperationalEventApiTests(TestCase):
         event = OperationalEvent.objects.get()
         self.assertEqual(event.event_type, "repository.offline")
         self.assertEqual(event.severity, OperationalEvent.Severity.CRITICAL)
-        self.assertEqual(event.target_path, "/node/repositories")
+        self.assertEqual(event.target_path, "/node/repositories?focus=7")
+
+    def test_new_repository_event_records_type_and_detail_target(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id, name="NAS repository", repo_type="nas",
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            schedule_repository_health_event(
+                organization_id=self.org.id, repository_id=repository.id,
+                repository_name=repository.name, previous_health="online", health="offline",
+            )
+        event = OperationalEvent.objects.get()
+        self.assertEqual(
+            event.target_path, f"/node/repositories?tab=nas&focus={repository.id}",
+        )
+        self.assertEqual(event.metadata["repo_type"], "nas")
 
 
 class TaskEventProjectionTests(TestCase):
