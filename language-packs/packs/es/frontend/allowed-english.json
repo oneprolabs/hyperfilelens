@@ -232,6 +232,7 @@
   "protection.backupsPage.step3StatusError",
   "protection.backupsPage.targetDetailBindNodeFmt",
   "protection.backupsPage.targetDetailS3Bucket",
+  "protection.backupsPage.unregisterCleanupDiagnosticNamed",
   "protection.filtersPage.colOs",
   "protection.listSearchFields.bucket",
   "protection.listSearchFields.ip",

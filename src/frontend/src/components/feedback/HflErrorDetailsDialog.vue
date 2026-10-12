@@ -13,6 +13,7 @@ import {
   sanitizeErrorDetails,
 } from '../../lib/errors/details'
 import { refreshTaskDetails } from '../../lib/taskDetailsLifecycle'
+import { unregisterRetainedResourceLabel } from '../../lib/unregisterCleanupDisplay'
 import type { ErrorEntity } from '../../lib/errors/details'
 
 const { t } = useI18n()
@@ -41,6 +42,7 @@ watch(() => errorDetailsState.revision, async (revision) => {
 }, { immediate: true })
 const rawText = computed(() => safeErrorDetailText(details.value?.rawDetail))
 const isWarning = computed(() => details.value?.severity === 'warning')
+const isUnregisterWarning = computed(() => isWarning.value && details.value?.taskType === 'source_unregister')
 const hasEntities = computed(() => (details.value?.entities?.length ?? 0) > 0)
 
 const taskLinks = computed(() => {
@@ -155,7 +157,7 @@ function entityIcon(type: ErrorEntity['type']) {
         v-if="details.resolutions?.length"
         class="hfl-error-details__section"
       >
-        <h3>{{ t('feedback.errorDetails.resolutions') }}</h3>
+        <h3>{{ t(isUnregisterWarning ? 'protection.backupsPage.unregisterSuggestedActions' : 'feedback.errorDetails.resolutions') }}</h3>
         <ul class="hfl-error-details__list hfl-error-details__list--resolve">
           <li
             v-for="resolution in details.resolutions"
@@ -214,7 +216,7 @@ function entityIcon(type: ErrorEntity['type']) {
         v-if="details.cleanupResidue?.failures?.length || details.cleanupResidue?.retainedResources?.length"
         class="hfl-error-details__section"
       >
-        <h3>{{ t('feedback.errorDetails.cleanup') }}</h3>
+        <h3>{{ t(isUnregisterWarning ? 'protection.backupsPage.unregisterPendingResources' : 'feedback.errorDetails.cleanup') }}</h3>
         <ul class="hfl-error-details__list">
           <li
             v-for="item in details.cleanupResidue.failures"
@@ -226,7 +228,10 @@ function entityIcon(type: ErrorEntity['type']) {
             v-for="item in details.cleanupResidue.retainedResources"
             :key="`retained:${item}`"
           >
-            {{ item }}
+            {{ unregisterRetainedResourceLabel(item, t) }}
+            <p v-if="isUnregisterWarning && item === 'agent_installation'">
+              {{ t('protection.backupsPage.unregisterAgentInstallationNote') }}
+            </p>
           </li>
         </ul>
       </section>

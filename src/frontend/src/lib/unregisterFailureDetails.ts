@@ -2,6 +2,12 @@ import type { ComposerTranslation } from 'vue-i18n'
 
 import { apiErrorMessageI18n } from './api'
 import { unregisterReasonLabel } from './backupSourceUnregisterDialog'
+import {
+  unregisterCleanupSuggestion,
+  unregisterCleanupText,
+  unregisterRetainedResourceLabel,
+} from './unregisterCleanupDisplay'
+import { summarizeUnregisterCleanup } from './unregisterCleanupSummary'
 import type { ErrorDetailsPayload } from './errors/details'
 import { openErrorDetails } from './errors/details'
 import { toApiError } from './errors/normalizer'
@@ -135,7 +141,7 @@ export function unregisterFailureToErrorDetails(input: {
       scopedReasons.length ? '' : displayMessage,
     ])
     const resolutions = uniqueStrings([
-      parsed.hint,
+      unregisterCleanupText(parsed.hint || '', t),
       t('protection.backupsPage.unregisterFailureRetryHint'),
     ])
     let summary = source
@@ -214,6 +220,25 @@ export function unregisterFailureToErrorDetails(input: {
     || syncWarnings.length
     || syncRetained.length,
   )
+  const cleanupSummary = summarizeUnregisterCleanup([
+    ...structuredReasons.map(item => ({ detail: item.detail || item.code, code: item.code, sourceId: item.source_id, sourceName: item.source_name })),
+    ...syncWarnings.map(item => ({ detail: item.detail || item.code, code: item.code, sourceId: item.source_id, sourceName: item.source_name })),
+    ...cleanupFailures,
+    ...cleanupWarnings,
+    ...reasonObjects(contract?.cleanup_failures).map(item => ({ detail: item.detail || item.code, code: item.code, sourceId: item.source_id, sourceName: item.source_name })),
+    ...(contract?.entities || []).flatMap(entity => entity.error
+      ? [{ detail: entity.error, sourceId: entity.id, sourceName: entity.name }]
+      : []),
+    ...(task?.recent_events || []).flatMap(event => [
+      ...reasonObjects(record(event.metadata).reasons).map(item => ({ detail: item.detail || item.code, sourceId: item.source_id, sourceName: item.source_name })),
+      ...(event.level === 'error' && event.message ? [{ detail: event.message }] : []),
+    ]),
+  ].map(item => item.sourceId || item.sourceName
+    || !/Remote uninstall was skipped because the Agent was offline\.|Agent "[^"]+" is offline — uninstall was skipped\./.test(item.detail) ? item : {
+    ...item,
+    sourceId: input.sourceId || (contract?.entities?.length === 1 ? contract.entities[0]?.id : undefined),
+    sourceName: source || (contract?.entities?.length === 1 ? contract.entities[0]?.name : undefined),
+  }), t)
 
   const reasons = uniqueStrings([
     !isResidue && failedStep
@@ -239,15 +264,32 @@ export function unregisterFailureToErrorDetails(input: {
 
   const residueLines = uniqueStrings([
     ...warningDetailLines(syncWarnings, t),
-    ...cleanupWarnings.map((item) => item.detail),
+    ...cleanupWarnings.map((item) => unregisterCleanupText(item.detail, t)),
     ...retained.map((item) =>
-      t('protection.backupsPage.unregisterFailureRetainedResource', { resource: item }),
+      t('protection.backupsPage.unregisterFailureRetainedResource', { resource: unregisterRetainedResourceLabel(item, t) }),
     ),
   ])
 
-  const resolutions = uniqueStrings([
-    ...(contract?.suggestions || []).map((item) => item.detail),
-    hint,
+  const resolutions = isResidue ? uniqueStrings([
+    ...(contract?.suggestions || [])
+      .filter(item => !['review_cleanup', 'check_agent', 'force_cleanup', 'retry'].includes(item.code))
+      .map(item => unregisterCleanupSuggestion(item, t)),
+    hint && ![
+      'Review retained resources and complete any remaining cleanup before retrying.',
+      t('protection.backupsPage.unregisterFailureResidueHint'),
+      t('protection.backupsPage.unregisterFailureForceCleanupHint'),
+    ].includes(hint)
+      ? unregisterCleanupText(hint, t) : '',
+    cleanupSummary.hasOfflineUninstall && retained.includes('agent_installation')
+      ? t('protection.backupsPage.unregisterOfflineCleanupAdvice')
+      : t('protection.backupsPage.unregisterManualCleanupAdvice'),
+    cleanupSummary.hasOfflineUninstall && retained.includes('agent_installation')
+      && retained.some(resource => resource !== 'agent_installation')
+      ? t('protection.backupsPage.unregisterManualCleanupAdvice') : '',
+    // Generic retry hints describe the completed operation, not a supported follow-up action.
+  ]) : uniqueStrings([
+    ...(contract?.suggestions || []).map((item) => unregisterCleanupSuggestion(item, t)),
+    unregisterCleanupText(hint, t),
     residueLines.length || isResidue
       ? t('protection.backupsPage.unregisterFailureResidueHint')
       : '',
@@ -257,42 +299,60 @@ export function unregisterFailureToErrorDetails(input: {
     isResidue ? '' : t('protection.backupsPage.unregisterFailureRetryHint'),
   ])
 
+  const hasRetainedResources = retained.length > 0
   const summary = isResidue
     ? (source
-      ? t('protection.backupsPage.unregisterCleanupWarningSummaryNamed', { name: source })
-      : t('protection.backupsPage.msgDeleteSourcePartialSuccess'))
+      ? t(hasRetainedResources
+        ? 'protection.backupsPage.unregisterCleanupPendingSummaryNamed'
+        : 'protection.backupsPage.unregisterCleanupWarningSummaryNamed', { name: source })
+      : t(hasRetainedResources
+        ? 'protection.backupsPage.unregisterCleanupPendingSummary'
+        : 'protection.backupsPage.msgDeleteSourcePartialSuccess'))
     : (source
       ? t('protection.backupsPage.unregisterFailureSummaryNamed', { name: source })
       : (reasons[0] || fallback))
 
-  const combinedReasons = uniqueStrings([...reasons, ...residueLines])
+  const combinedReasons = isResidue
+    ? cleanupSummary.reasons
+    : uniqueStrings([...reasons, ...residueLines].map((item) => unregisterCleanupText(item, t)))
   return {
     title: isResidue
-      ? t('protection.backupsPage.unregisterCleanupWarningTitle')
+      ? t(hasRetainedResources
+        ? 'protection.backupsPage.unregisterCleanupPendingTitle'
+        : 'protection.backupsPage.unregisterCleanupWarningTitle')
       : t('protection.backupsPage.unregisterFailureTitle'),
     summary,
     severity: contract?.severity || (isResidue ? 'warning' : 'error'),
     traceId: contract?.correlation_id || undefined,
     taskUuid: taskUuid || undefined,
     taskAttempt: task?.retry_count,
-    taskType: task?.task_type || undefined,
+    taskType: task?.task_type || (isResidue ? 'source_unregister' : undefined),
     failedStep: failedStep || undefined,
     entities: contract?.entities?.length
       ? contract.entities.map((entity) => ({
         id: entity.id,
         name: entity.name,
         type: (['source', 'repository', 'node', 'child_task'].includes(entity.type) ? entity.type : 'source') as 'source' | 'repository' | 'node' | 'child_task',
-        error: entity.error,
+        error: isResidue && (cleanupSummary.offlineTargets.has(entity.id)
+          || cleanupSummary.offlineTargets.has(entity.name)
+            && contract.entities.filter(item => item.name === entity.name).length === 1)
+          ? uniqueStrings([
+            t('protection.backupsPage.unregisterRemoteUninstallSkipped'),
+            ...summarizeUnregisterCleanup(entity.error ? [{ detail: entity.error }] : [], t).failures,
+          ]).join(' ')
+          : entity.error ? unregisterCleanupText(entity.error, t) : entity.error,
       }))
-      : source ? [{ id: input.sourceId || source, name: source, type: 'source' as const }] : undefined,
+      : source ? [{
+        id: input.sourceId || source, name: source, type: 'source' as const,
+        error: isResidue && cleanupSummary.hasOfflineUninstall
+          && (cleanupSummary.offlineTargets.has(input.sourceId || '') || cleanupSummary.offlineTargets.has(source))
+          ? t('protection.backupsPage.unregisterRemoteUninstallSkipped') : undefined,
+      }] : undefined,
     cleanupResidue: isResidue
       ? {
         hasResidue: true,
         retainedResources: retained,
-        failures: contract?.cleanup_failures?.map((item) => {
-          const value = record(item)
-          return String(value.detail || value.message || value.code || item)
-        }).filter(Boolean),
+        failures: cleanupSummary.failures,
       }
       : undefined,
     issue: summary,
@@ -316,6 +376,8 @@ export function unregisterFailureToErrorDetails(input: {
       failed_children: failedChildren,
       warnings: syncWarnings,
       reasons: structuredReasons,
+      error_details: contract,
+      recent_events: task?.recent_events,
       partial_success: isResidue || undefined,
     },
   }
@@ -446,12 +508,17 @@ export function mergeUnregisterDetails(
     }
   }
   if (items.length === 1) return items[0]
+  const hasRetainedResources = items.some(item => item.cleanupResidue?.retainedResources?.length)
   const summary = isWarning
-    ? t('protection.backupsPage.unregisterCleanupWarningSummaryCount', { n: items.length })
+    ? t(hasRetainedResources
+      ? 'protection.backupsPage.unregisterCleanupPendingSummaryCount'
+      : 'protection.backupsPage.unregisterCleanupWarningSummaryCount', { n: items.length })
     : t('protection.backupsPage.unregisterFailureSummaryCount', { n: items.length })
   return {
     title: isWarning
-      ? t('protection.backupsPage.unregisterCleanupWarningTitle')
+      ? t(hasRetainedResources
+        ? 'protection.backupsPage.unregisterCleanupPendingTitle'
+        : 'protection.backupsPage.unregisterCleanupWarningTitle')
       : t('protection.backupsPage.unregisterFailureTitle'),
     summary,
     issue: summary,
