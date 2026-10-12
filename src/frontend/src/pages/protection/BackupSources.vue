@@ -50,6 +50,7 @@ import {
   sourceUnregisterTaskBindings,
   sourceUnregisterTaskOutcome,
 } from '../../lib/sourceUnregisterMonitor'
+import { notifyUnregisterTaskSuccess } from '../../lib/sourceUnregisterFeedback'
 import {
   notifyUnregisterCleanupWarning,
   notifyUnregisterCleanupWarningBatch,
@@ -1265,12 +1266,21 @@ async function reconcilePendingSourceDeleteTasks() {
   const failureNotices: Array<{ sourceId: string; sourceName: string; details: ErrorDetailsPayload }> = []
   const cleanupNotices: Array<{ sourceId: string; sourceName: string; details: ErrorDetailsPayload }> = []
   try {
-    const tasks = await Promise.allSettled(pending.map(({ op }) => getTask(op.taskUuid!)))
+    // Retain the whole operation's outcome even when earlier successful rows
+    // have already been cleared on a previous poll.
+    const operationTaskUuids = [...new Set(pending.flatMap(({ op }) =>
+      (op.operationId || op.taskUuid!).split(','),
+    ))]
+    const observations = await Promise.allSettled(operationTaskUuids.map(uuid => getTask(uuid)))
+    const observedByUuid = new Map(operationTaskUuids.map((uuid, index) => [uuid, observations[index]]))
+    const tasks = pending.map(({ op }) => observedByUuid.get(op.taskUuid!)!)
     const now = Date.now()
+    const reconciledSourceIds = new Set<string>()
     tasks.forEach((settled, index) => {
       const { sourceId, op } = pending[index]
       const current = readWizardPendingSourceOps().get(sourceId)
       if (current?.taskUuid !== op.taskUuid || current?.startedAt !== op.startedAt) return
+      reconciledSourceIds.add(sourceId)
       const sourceName = sourcePendingDisplayName(sourceId)
       if (settled.status === 'rejected') {
         if (op.startedAt && now - op.startedAt >= SOURCE_DELETE_TASK_TIMEOUT_MS) {
@@ -1343,6 +1353,19 @@ async function reconcilePendingSourceDeleteTasks() {
         return observed.status === 'fulfilled' && sourceUnregisterTaskOutcome(observed.value).success
       })
       notifyUnregisterOperation({ t, operationId, items, partialSuccess })
+      const operationTasks = operationId.split(',').flatMap(uuid => {
+        const observed = observedByUuid.get(uuid)
+        return observed?.status === 'fulfilled' ? [observed.value] : []
+      })
+      if (members.every(entry => reconciledSourceIds.has(entry.sourceId))
+        && operationTasks.length === operationId.split(',').length) {
+        notifyUnregisterTaskSuccess({
+          t,
+          tasks: operationTasks,
+          sourceName: members.length === 1 ? sourcePendingDisplayName(members[0].sourceId) : undefined,
+          hasRejections: members.some(entry => entry.op.operationHasRejections),
+        })
+      }
     }
     refreshPendingSourceOps()
     if (changed) await load()
@@ -1529,6 +1552,7 @@ async function onBackupSourcesDeleted(payload: {
         taskId: binding.taskId,
         taskUuid: binding.taskUuid,
         operationId: bindings.map(item => item.taskUuid).sort().join(','),
+        operationHasRejections: bindings.length !== sourceIds.length || rejectedBySourceId.size > 0,
         startedAt: Date.now(),
       })
     })
@@ -1558,10 +1582,13 @@ async function onBackupSourcesDeleted(payload: {
     refreshPendingSourceOps()
     schedulePendingSourceDeletePoll(0)
     backupSourceDeleteIds.value = []
-    await load()
     if (payload.result === 'pending') {
-      ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })
+      notifyInfo({
+        message: t('protection.backupsPage.msgDeleteSourcePending'),
+        dedupeKey: `unregister-accepted:${bindings.map(item => item.taskUuid).sort().join(',')}`,
+      })
     }
+    await load()
     return
   }
   const rejectedBySourceId = new Map(
@@ -1639,7 +1666,10 @@ async function onBackupSourcesDeleted(payload: {
       })
     }
   } else if (!rejectedNotices.length) {
-    ElMessage.success({ message: t('protection.backupsPage.msgDeleteSourceSuccess'), grouping: true })
+    notifySuccess({
+      message: t('protection.backupsPage.msgDeleteSourceSuccessCount', { n: deletingIds.size }),
+      dedupeKey: `unregister-success:${payload.task_uuids?.slice().sort().join(',') || payload.task_uuid || [...deletingIds].join(',')}`,
+    })
   }
 }
 const renameDialogOpen = ref(false)

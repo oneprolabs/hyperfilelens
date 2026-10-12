@@ -12,6 +12,7 @@ export type SourcePendingKind =
 
 export type SourcePendingOp = {
   operationId?: string
+  operationHasRejections?: boolean
   kind: SourcePendingKind
   targetStep?: 1 | 2
   nodeId?: number

@@ -182,6 +182,7 @@ import {
   sourceUnregisterTaskOutcome,
 } from '../../lib/sourceUnregisterMonitor'
 import { listTableMaxHeight } from '../../lib/listTableHeight'
+import { notifyUnregisterTaskSuccess } from '../../lib/sourceUnregisterFeedback'
 import { openErrorDetails, type ErrorDetailsPayload } from '../../lib/errors/details'
 import {
   notifyUnregisterCleanupWarning,
@@ -212,7 +213,7 @@ import {
   backupTargetValidationFailureSummary,
 } from '../../lib/protectionBackupTargetValidationDetails'
 import type { BackupTargetValidationResult } from '../../lib/protectionBackupTargetValidationApi'
-import { notifySuccess, notifyWarning } from '../../lib/notify'
+import { notifyInfo, notifySuccess, notifyWarning } from '../../lib/notify'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
 import type { ApiNode } from '../../types/node'
 import Modal from '../../components/Modal.vue'
@@ -5602,17 +5603,23 @@ function monitorPendingUnregister(
   const generationStartedAt = Math.max(startedAt, ...pairs.map(pair => sourcePendingOps.getOp(pair.sourceId)?.startedAt || 0))
   const observedTasks = new Map<string, TaskRow>()
   let unavailableSourceIds = sourceIds
-  const operationId = [...taskUuids].sort().join(',')
+  const operationId = sourcePendingOps.getOp(pairs[0].sourceId)?.operationId || [...taskUuids].sort().join(',')
+  const operationTaskUuids = operationId.split(',')
+  const hasRejections = pairs.some(pair => sourcePendingOps.getOp(pair.sourceId)?.operationHasRejections)
+  const sourceName = sourceIds.length === 1 ? flowRowsForSourceIds(sourceIds)[0]?.name : undefined
 
   const poll = async () => {
     if (unregisterTaskPollingStopped) return
     let tasks: TaskRow[]
     try {
-      const observations = await Promise.allSettled(pairs.map(({ taskUuid }) => getTask(taskUuid)))
+      const observations = await Promise.allSettled(operationTaskUuids.map(taskUuid => getTask(taskUuid)))
       unavailableSourceIds = []
       observations.forEach((result, index) => {
-        if (result.status === 'fulfilled') observedTasks.set(pairs[index].taskUuid, result.value)
-        else unavailableSourceIds.push(pairs[index].sourceId)
+        if (result.status === 'fulfilled') observedTasks.set(operationTaskUuids[index], result.value)
+        else {
+          const sourceId = pairs.find(pair => pair.taskUuid === operationTaskUuids[index])?.sourceId
+          unavailableSourceIds.push(...(sourceId ? [sourceId] : sourceIds))
+        }
       })
       if (unavailableSourceIds.length) throw new Error('Task visibility unavailable')
       tasks = pairs.map(pair => observedTasks.get(pair.taskUuid)!)
@@ -5643,7 +5650,7 @@ function monitorPendingUnregister(
             errorMessage: unregisterFailureSummaryLine(details),
             failureDetails: details,
             taskUuid: pairs.find((pair) => pair.sourceId === sourceId)?.taskUuid,
-            startedAt, operationId,
+            startedAt, operationId, operationHasRejections: hasRejections,
           },
           flowRowsForSourceIds([sourceId]),
         )
@@ -5679,6 +5686,7 @@ function monitorPendingUnregister(
         sourcePendingOps.mark(
           [pair.sourceId],
           {
+            ...sourcePendingOps.getOp(pair.sourceId),
             kind: sourceUnregisterPendingKind(task.status),
             taskId: task.id,
             taskUuid: task.task_uuid,
@@ -5701,6 +5709,12 @@ function monitorPendingUnregister(
     }
 
     const outcomes = tasks.map(sourceUnregisterTaskOutcome)
+    notifyUnregisterTaskSuccess({
+      t,
+      tasks: operationTaskUuids.map(taskUuid => observedTasks.get(taskUuid)!),
+      sourceName,
+      hasRejections,
+    })
     const cancelledSourceIds = pairs.flatMap((pair, index) =>
       outcomes[index]?.status === 'cancelled' ? [pair.sourceId] : [],
     )
@@ -5760,6 +5774,7 @@ function monitorPendingUnregister(
             failureDetails: details,
             taskUuid: task.task_uuid,
             operationId,
+            operationHasRejections: hasRejections,
             startedAt,
           },
           flowRowsForSourceIds([sourceId]),
@@ -6045,19 +6060,6 @@ async function onBackupSourcesDeleted(payload: {
     || ['failed', 'partial_failure'].includes(payload.result)
   ) {
     try {
-      if (fromStep3) {
-        await clearStep3TableSelection()
-        await Promise.all([
-          loadBackupSelectable({ silent: true }),
-          refreshStep3AfterMoreAction({ preserveSelection: false }),
-        ])
-      } else {
-        await Promise.all([
-          refreshPipelineCounts(),
-          refreshBackupConfigs(),
-        ])
-        if (flowMainStep.value === 0) void loadBackupSelectable()
-      }
       const sourceIds = Array.from(idSet)
       const bindings = sourceUnregisterTaskBindings(sourceIds, payload)
       const monitoredSourceIds = bindings.map((binding) => binding.sourceId)
@@ -6077,9 +6079,10 @@ async function onBackupSourcesDeleted(payload: {
               taskId: binding.taskId,
               taskUuid: binding.taskUuid,
               operationId: monitoredTaskUuids.slice().sort().join(','),
+              operationHasRejections: bindings.length !== sourceIds.length || rejectedBySourceId.size > 0,
               startedAt: Date.now(),
             },
-            flowRowsForSourceIds([sourceId]),
+            deletedRows.filter(row => row.id === sourceId),
           )
           return
         }
@@ -6112,11 +6115,27 @@ async function onBackupSourcesDeleted(payload: {
       })
       monitorPendingUnregister(monitoredSourceIds, monitoredTaskUuids)
       if (payload.result === 'pending') {
-        ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })
+        notifyInfo({
+          message: t('protection.backupsPage.msgDeleteSourcePending'),
+          dedupeKey: `unregister-accepted:${monitoredTaskUuids.slice().sort().join(',')}`,
+        })
+      }
+      if (fromStep3) {
+        await clearStep3TableSelection()
+        await Promise.all([
+          loadBackupSelectable({ silent: true }),
+          refreshStep3AfterMoreAction({ preserveSelection: false }),
+        ])
+      } else {
+        await Promise.all([
+          refreshPipelineCounts(),
+          refreshBackupConfigs(),
+        ])
+        if (flowMainStep.value === 0) await loadBackupSelectable()
       }
     } catch (err) {
-      sourcePendingOps.clear(Array.from(idSet))
-      showApiError(err, t('protection.backupsPage.msgDeleteSourceFailed'))
+      // The mutation was accepted; a failed refresh must not discard its monitor.
+      showApiError(err, t('protection.backupsPage.msgDeleteSourceRefreshFailed'))
     } finally {
       backupSourceDeleteIds.value = []
       backupSourceDeleteRows.value = []
@@ -6223,7 +6242,10 @@ async function onBackupSourcesDeleted(payload: {
           })
         }
       } else if (!rejectedNotices.length) {
-        ElMessage.success({ message: t('protection.backupsPage.msgDeleteSourceSuccess'), grouping: true })
+        notifySuccess({
+          message: t('protection.backupsPage.msgDeleteSourceSuccessCount', { n: acceptedIdSet.size }),
+          dedupeKey: `unregister-success:${payload.task_uuids?.slice().sort().join(',') || payload.task_uuid || [...acceptedIdSet].join(',')}`,
+        })
       }
     }
   } catch (err) {
