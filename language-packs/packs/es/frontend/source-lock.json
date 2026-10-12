@@ -8176,5 +8176,13 @@
   "protection.backupsPage.unregisterCleanupPendingSummaryNamed": "31b35aae31a93b19ef2b43ce4cd83308f061bf1a9363914ed15cec6817142f4c",
   "protection.backupsPage.unregisterCleanupPendingSummaryCount": "6fda19c7e4d90f8966099e5dbd4bf72c02727d68c3fb6f3eae7fb0c9124e9e30",
   "protection.backupsPage.unregisterOfflineUninstallSkipped": "dc6d869e990c9385d8bbacb2cb6416f85ada8c685d9ca853d7b1592ac8acede6",
-  "protection.backupsPage.unregisterOfflineUninstallSkippedNamed": "fa7fafd2c00d5db4868899c4c5d19c7f7c97181d7ed96f1882843eaa3b45e01c"
+  "protection.backupsPage.unregisterOfflineUninstallSkippedNamed": "fa7fafd2c00d5db4868899c4c5d19c7f7c97181d7ed96f1882843eaa3b45e01c",
+  "protection.backupsPage.unregisterOfflineCleanupCause": "36ed6c2c2ca866098e1e590488b0356731fc880f1e801fa5b0c0440c638b4f55",
+  "protection.backupsPage.unregisterRemoteUninstallSkipped": "2205202683b4feea4b147b2e826fddae59b60fdcd87d51aa549cecc716d6942a",
+  "protection.backupsPage.unregisterOfflineCleanupAdvice": "95dca22eb3aa80f3caa6587e716c81e81d51e69d6360a5dd6312129ba2c3c9ee",
+  "protection.backupsPage.unregisterManualCleanupAdvice": "469db44e0a1bd1ab83a466d2819f00dbc02a35c37d6d4dd939dbd3cf7b00dddf",
+  "protection.backupsPage.unregisterCleanupDiagnosticNamed": "7d66f1421efb4fbf3afa1414ec1f43d1411223ca80aed1c11f6d0c6b39625f83",
+  "protection.backupsPage.unregisterSuggestedActions": "09b7a768f47e4a33f08c9b3ba42510a99c6e19741365c68f554f6ed72523fc8f",
+  "protection.backupsPage.unregisterPendingResources": "770937c1f58ffc868cef4a88af43723c86849d145fcfab5c50986cbe0110bfd5",
+  "protection.backupsPage.unregisterAgentInstallationNote": "57ba7cd9e3f2e1524108259d5ecd9df840414b702530cfb910e9fd495c18ef62"
 }

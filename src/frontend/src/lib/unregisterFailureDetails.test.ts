@@ -53,14 +53,13 @@ describe('unregisterFailureToErrorDetails', () => {
     })
     expect(details.title).toBe(zh.protection.backupsPage.unregisterCleanupPendingTitle)
     expect(details.summary).toContain(name)
-    expect(details.reasons).toEqual(expect.arrayContaining([
-      expect.stringContaining(zh.protection.backupsPage.unregisterOfflineUninstallSkipped),
-      expect.stringContaining(zh.ops.task.failureDetails.retainedResource.agent_installation),
-    ]))
-    expect(details.resolutions).toContain(zh.ops.task.failureDetails.suggestion.review_cleanup)
-    expect(details.entities?.[0]?.error).toContain(name)
+    expect(details.reasons).toEqual([
+      zh.protection.backupsPage.unregisterOfflineCleanupCause,
+    ])
+    expect(details.resolutions).toEqual([zh.protection.backupsPage.unregisterOfflineCleanupAdvice])
+    expect(details.entities?.[0]?.error).toBe(zh.protection.backupsPage.unregisterRemoteUninstallSkipped)
     expect(details.entities?.[0]?.error).not.toContain('uninstall was skipped')
-    expect(details.cleanupResidue?.failures).toEqual([zhT('protection.backupsPage.unregisterOfflineUninstallSkippedNamed', { name })])
+    expect(details.cleanupResidue?.failures).toEqual([])
     expect(details.cleanupResidue?.retainedResources).toEqual(['agent_installation'])
     expect(details.rawDetail).toMatchObject({
       error_details: { cleanup_failures: [{ detail: diagnostic }] },
@@ -79,9 +78,9 @@ describe('unregisterFailureToErrorDetails', () => {
       ],
       retainedResources: ['agent_installation', 'unknown_resource'],
     })
-    expect(details.reasons).toContain(zhT('protection.backupsPage.unregisterOfflineUninstallSkippedNamed', { name: 'My English Host' }))
+    expect(details.reasons).toContain(zh.protection.backupsPage.unregisterOfflineCleanupCause)
     expect(details.reasons).toContain('Custom diagnostic: /my/path')
-    expect(details.reasons).toContain(zhT('protection.backupsPage.unregisterFailureRetainedResource', { resource: 'unknown_resource' }))
+    expect(details.cleanupResidue?.retainedResources).toContain('unknown_resource')
     expect(details.title).toBe(zh.protection.backupsPage.unregisterCleanupPendingTitle)
   })
 
@@ -92,6 +91,34 @@ describe('unregisterFailureToErrorDetails', () => {
     })
     expect(details.title).toBe('Backup source removed; cleanup reported warnings')
     expect(details.summary).not.toContain('retained resources')
+  })
+
+  it('keeps different object outcomes and preserves unrelated diagnostics', () => {
+    const details = unregisterFailureToErrorDetails({
+      t,
+      task: {
+        status: 'success', task_type: 'source_unregister',
+        result_payload: { result: 'partial_success', cleanup_complete: false },
+        error_details: {
+          severity: 'warning', cleanup_complete: false,
+          entities: [
+            { id: 'agent:1', name: 'Shared name', type: 'source', error: 'Agent "Shared name" is offline — uninstall was skipped.' },
+            { id: 'agent:2', name: 'Shared name', type: 'source', error: 'Custom cleanup failure' },
+            { id: 'repository:3', name: 'Repository C', type: 'repository', error: 'Snapshot cleanup failed' },
+          ],
+          retained_resources: ['agent_installation', 'unknown_resource'],
+        },
+      } as never,
+    })
+    expect(details.reasons?.filter(item => item === en.protection.backupsPage.unregisterOfflineCleanupCause)).toHaveLength(1)
+    expect(details.entities?.[0]?.error).toBe(en.protection.backupsPage.unregisterRemoteUninstallSkipped)
+    expect(details.entities?.[1]?.error).toBe('Custom cleanup failure')
+    expect(details.entities?.[2]?.error).toBe('Snapshot cleanup failed')
+    expect(details.reasons).toContain('Repository C: Snapshot cleanup failed')
+    expect(details.cleanupResidue?.retainedResources).toContain('unknown_resource')
+    expect(details.rawDetail).toMatchObject({
+      error_details: { entities: expect.arrayContaining([expect.objectContaining({ error: 'Custom cleanup failure' })]) },
+    })
   })
 
   it('keeps outstanding cleanup explicit when merging source warnings', () => {
@@ -215,7 +242,6 @@ describe('unregisterFailureToErrorDetails', () => {
     expect(details.summary).toContain('nas-share')
     expect(details.reasons).toEqual(expect.arrayContaining([
       expect.stringContaining('Repository leftover remains'),
-      expect.stringContaining('Agent Installation'),
     ]))
     expect((details.rawDetail as { task_uuid?: string }).task_uuid).toBe('task-uuid-9')
   })
@@ -311,7 +337,7 @@ describe('unregisterFailureToErrorDetails', () => {
     expect(details.title).toBe('Backup source removed; resource cleanup remains')
     expect(details.summary).toContain('nas-a')
     expect(details.reasons?.some((item) => /Share unmounted with warning/i.test(item))).toBe(true)
-    expect(details.reasons?.some((item) => /mount_residue/i.test(item))).toBe(true)
+    expect(details.cleanupResidue?.retainedResources).toContain('mount_residue')
     expect(details.reasons?.some((item) => /Failed to deregister/i.test(item))).toBe(false)
   })
 })
@@ -377,7 +403,7 @@ describe('notifyUnregisterFailure presentation', () => {
 
     expect(toastState.items[0]?.type).toBe('warning')
     expect(toastState.items[0]?.title).toBe('Backup source removed; resource cleanup remains')
-    expect(toastState.items[0]?.details?.reasons?.some((item) => /mount_residue/i.test(item))).toBe(true)
+    expect(toastState.items[0]?.details?.cleanupResidue?.retainedResources).toContain('mount_residue')
 
     resetToastStoreForTests()
     vi.useRealTimers()
