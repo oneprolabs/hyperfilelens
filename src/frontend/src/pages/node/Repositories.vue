@@ -37,8 +37,10 @@ import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
+import { useRouteResourceDetail } from '../../composables/useRouteResourceDetail'
 import {
   createStorageRepository,
+  getStorageRepository,
   listStorageRepositories,
   listStorageRepositoryAssociatedSources,
   listStorageRepositoryTasks,
@@ -805,7 +807,7 @@ const repositoryTaskDetailDrawerSize = computed(() => {
 
 let mounted = false
 
-const repositoryTableLoading = computed(() => busy.value || !repositoryListLoaded.value)
+const repositoryTableLoading = computed(() => busy.value || repositoryRouteDetailLoading.value || !repositoryListLoaded.value)
 
 const form = ref({
   source_node_id: undefined as number | undefined,
@@ -2084,24 +2086,17 @@ watch(
   { immediate: true },
 )
 
-watch(
-  () => [route.query.tab, route.query.focus, repositoryListLoaded.value] as const,
-  () => {
-    if (!repositoryListLoaded.value) return
-    const focusId = Number(route.query.focus || 0)
-    if (!focusId) return
-    const target = (rows.value || []).find((row) => Number(row.id) === focusId)
-    if (target) {
-      openDetail(target)
-      if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
-        const url = new URL(window.location.href)
-        url.searchParams.delete('focus')
-        window.history.replaceState({}, '', url.toString())
-      }
-    }
+const { loading: repositoryRouteDetailLoading } = useRouteResourceDetail({
+  queryKey: 'focus',
+  enabled: () => route.path === '/node/repositories',
+  load: (id, signal) => getStorageRepository(id, { signal }),
+  reset: () => { drawerDetailOpen.value = false },
+  queryForResource: (resource) => ({ tab: resource.repo_type }),
+  open: (resource) => {
+    const target = mapApiToRow(resource)
+    openDetail(target)
   },
-  { immediate: true },
-)
+})
 
 watch(activeTab, (tab) => {
   resetSearch()

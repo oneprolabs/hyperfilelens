@@ -9,6 +9,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.monitor.models import OperationalEvent
+from apps.monitor.services.event_targets import repository_event_target
 
 
 def record_operational_event(
@@ -127,6 +128,11 @@ def schedule_repository_health_event(
     elif health == "offline":
         severity = OperationalEvent.Severity.CRITICAL
     event_time = occurred_at or timezone.now()
+    from apps.storage.models import Repository
+
+    repo_type = Repository.objects.filter(
+        pk=repository_id, organization_id=organization_id,
+    ).values_list("repo_type", flat=True).first() or ""
 
     def _record_event() -> None:
         record_operational_event(
@@ -140,9 +146,9 @@ def schedule_repository_health_event(
             resource_id=str(repository_id),
             resource_name=repository_name,
             source="storage",
-            target_path="/node/repositories",
+            target_path=repository_event_target(repository_id, repo_type),
             dedup_key=(f"repository:{repository_id}:{health}:{event_time.isoformat()}"),
-            metadata={"health": health, "previous_health": previous_health},
+            metadata={"health": health, "previous_health": previous_health, "repo_type": repo_type},
         )
 
     transaction.on_commit(_record_event, robust=True)

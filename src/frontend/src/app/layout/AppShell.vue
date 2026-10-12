@@ -492,6 +492,8 @@ function applyThemeVars(t: string) {
         <Suspense
           :key="
             matchedRoute.path === '/protection/backups'
+              || matchedRoute.path === '/protection/backup-sources'
+              || matchedRoute.path === '/node/repositories'
               || matchedRoute.path === '/ops/tasks'
               || matchedRoute.name === 'protection-backup-data-browser'
               ? matchedRoute.path

@@ -31,6 +31,7 @@ import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import HflHelpTip from '../../components/HflHelpTip.vue'
 import NasAddForm from './components/NasAddForm.vue'
 import NasSourceDetailDrawer from './components/NasSourceDetailDrawer.vue'
+import { useRouteResourceDetail } from '../../composables/useRouteResourceDetail'
 import FlowSourceReadyStatusCell from './components/FlowSourceReadyStatusCell.vue'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useListTableLayout } from '../../composables/useListTableLayout'
@@ -316,7 +317,7 @@ const hostTableLoading = computed(() =>
   !sourceTabLoaded.hostFileSystem || (busy.value && activeTab.value === 'hostFileSystem'),
 )
 const nasTableLoading = computed(() =>
-  !sourceTabLoaded.nas || (busy.value && activeTab.value === 'nas'),
+  !sourceTabLoaded.nas || nasRouteDetailLoading.value || (busy.value && activeTab.value === 'nas'),
 )
 
 const localSourceByNodeId = computed(() => {
@@ -446,6 +447,17 @@ function applyFilters() {
 }
 
 const isNasDetail = computed(() => detail.value?.resource_type === 'nas')
+const { loading: nasRouteDetailLoading } = useRouteResourceDetail({
+  queryKey: 'openSource',
+  enabled: () => route.path === '/protection/backup-sources' && route.query.tab === 'nas',
+  load: (id, signal) => getSourceResource(id, { signal }),
+  reset: () => { detailOpen.value = false },
+  open: (resource) => {
+    if (resource.resource_type !== 'nas') return
+    detail.value = resource
+    detailOpen.value = true
+  },
+})
 
 /* ---------- Edit dialog helpers ---------- */
 function buildPayload() {
@@ -939,6 +951,7 @@ function onHostDetailDrawerSaved() {
 }
 
 function tryOpenHostFromQuery() {
+  if (route.query.tab === 'nas') return
   const raw = route.query.openNode
   if (raw == null || Array.isArray(raw)) return
   const id = Number(raw)
