@@ -16,19 +16,66 @@ import (
 
 	"github.com/shirou/gopsutil/v4/process"
 	"hyperfilelens/agent/internal/infra/config"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
+var errRuntimeLayout = errors.New("configure requires the installed lifecycle entry point and a unified Agent Root; split/custom installation and data directories are not supported")
+
+func sameRuntimePath(left, right string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
+}
+
+func installedRuntimePaths(root, currentExe string) (string, string, error) {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", "", errRuntimeLayout
+	}
+	expectedRoot, err := filepath.EvalSymlinks(filepath.Dir(vfs.DefaultInstallDir()))
+	if err != nil || !sameRuntimePath(resolvedRoot, expectedRoot) {
+		return "", "", errRuntimeLayout
+	}
+	exe := filepath.Join(root, "bin", "hfl-agent")
+	script := filepath.Join(root, "bin", "install.sh")
+	if runtime.GOOS == "windows" {
+		exe += ".exe"
+		script = filepath.Join(root, "bin", "install.ps1")
+	}
+	for _, path := range []string{exe, script} {
+		st, err := os.Stat(path)
+		if err != nil || !st.Mode().IsRegular() {
+			return "", "", errRuntimeLayout
+		}
+	}
+	resolvedExe, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return "", "", errRuntimeLayout
+	}
+	resolvedCurrent, err := filepath.EvalSymlinks(currentExe)
+	if err != nil || !sameRuntimePath(resolvedExe, resolvedCurrent) {
+		return "", "", errRuntimeLayout
+	}
+	return resolvedExe, script, nil
+}
+
+func runtimePaths(root string) (string, string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", "", errRuntimeLayout
+	}
+	return installedRuntimePaths(root, exe)
+}
+
 func agentRunning(root string) (bool, error) {
-	ps, e := process.Processes()
+	exe, _, e := runtimePaths(root)
 	if e != nil {
 		return false, e
 	}
-	exe := filepath.Join(root, "bin", "hfl-agent")
-	if runtime.GOOS == "windows" {
-		exe += ".exe"
-	}
-	if resolved, e := filepath.EvalSymlinks(exe); e == nil {
-		exe = resolved
+	ps, e := process.Processes()
+	if e != nil {
+		return false, e
 	}
 	for _, p := range ps {
 		if p.Pid == int32(os.Getpid()) {
@@ -56,11 +103,15 @@ func agentRunning(root string) (bool, error) {
 	return false, nil
 }
 func agentService(ctx context.Context, root, action string) error {
+	_, script, err := runtimePaths(root)
+	if err != nil {
+		return err
+	}
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(root, "bin", "install.ps1"), action, "-QuietFooter")
+		cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, action, "-QuietFooter")
 	} else {
-		cmd = exec.CommandContext(ctx, filepath.Join(root, "bin", "install.sh"), action)
+		cmd = exec.CommandContext(ctx, script, action)
 	}
 	installed, parseErr := config.ParseEnvFile(filepath.Join(root, "config", "agent.env"))
 	if parseErr != nil {

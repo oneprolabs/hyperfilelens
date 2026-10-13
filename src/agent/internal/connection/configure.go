@@ -465,6 +465,9 @@ type runtimeHooks struct {
 }
 
 func Configure(ctx context.Context, rawURL string) error {
+	if _, _, err := runtimePaths(vfs.DefaultAgentDataDir()); err != nil {
+		return err
+	}
 	err := configure(ctx, rawURL, installedRuntime())
 	root := vfs.DefaultAgentDataDir()
 	if _, check := os.Stat(filepath.Join(root, "config", "agent.env")); check == nil {
