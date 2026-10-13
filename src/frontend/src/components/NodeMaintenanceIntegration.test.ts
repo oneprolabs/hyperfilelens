@@ -30,7 +30,7 @@ describe('node maintenance UI integration', () => {
   it('keeps install out of the maintenance command tabs', () => {
     const wizard = source('src/components/NodeLifecycleWizard.vue')
 
-    expect(wizard).toContain("if (props.maintenanceOnly) return ['upgrade', 'uninstall', 'service']")
+    expect(wizard).toContain("if (props.maintenanceOnly) return ['upgrade', 'configure', 'uninstall', 'service']")
     expect(wizard).toContain("'agent-install-wizard--maintenance': maintenanceOnly")
     expect(wizard).toContain('.agent-install-wizard--maintenance .agent-install-wizard__body-grid')
     expect(wizard).toContain('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)')

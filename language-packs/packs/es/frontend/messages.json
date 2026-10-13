@@ -4767,15 +4767,22 @@
     "linuxOnlyRoleHint": "Proxy / Gateway son sólo Linux. Las opciones OS están restringidas.",
     "linuxOnlyRoleBlocked": "Proxy / Gateway no se puede desplegar en Windows o macOS. Seleccione Linux.",
     "consoleTitle": "{role} · consola",
+    "configure": {
+      "label": "Nueva dirección del servidor",
+      "placeholder": "Ejemplo: https://console.example:11443",
+      "requirements": "Requiere una versión del Agent compatible con configure. Actualice versiones antiguas. Use la dirección de la aplicación, no de Admin Console. Ejecute solo con el nodo inactivo."
+    },
     "tab": {
       "install": "Instala",
       "upgrade": "Actualización",
+      "configure": "Dirección del servidor",
       "uninstall": "Desinstalación",
       "service": "Servicio"
     },
     "tabHint": {
       "install": "Copiar y ejecutar en el host de destino como root / Administrador para instalar y inscribirse.",
       "upgrade": "Descargar el nuevo paquete y ejecutar la actualización en un host instalado (preserves agent.env y agent.db).",
+      "configure": "Cambie la dirección del mismo servidor sin registrar de nuevo. Los Data Gateways también actualizan la conexión del motor de IA existente.",
       "uninstall": "Ejecute en el host objetivo para detener el servicio y eliminar binarios; el dir de datos se mantiene por defecto.",
       "service": "Compruebe el estado, inicie o detenga hyperfilelens-agent en el host de destino."
     },
@@ -4787,6 +4794,7 @@
     "footnote": {
       "install": "Descarga el paquete → escribe la configuración → registra el nodo",
       "upgrade": "Descargue el paquete de liberación y actualice los componentes instalados.",
+      "configure": "Conserva identidad, credenciales, datos y versiones. Verifica la conexión y restaura la configuración si falla.",
       "uninstall": "Después de que el comando host complete, utilice Eliminar en la lista para borrar el registro de la consola.",
       "service": "Ejecute la acción de servicio seleccionada en el host objetivo."
     },

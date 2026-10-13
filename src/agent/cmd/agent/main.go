@@ -11,6 +11,7 @@ import (
 
 	"hyperfilelens/agent/internal/app"
 	"hyperfilelens/agent/internal/cli"
+	"hyperfilelens/agent/internal/connection"
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/infra/observability"
 	"hyperfilelens/agent/internal/model"
@@ -80,6 +81,13 @@ func runDaemon(args []string) error {
 		return err
 	}
 
+	root, err := config.ResolveDataDir(overrides)
+	if err != nil {
+		return err
+	}
+	if err := connection.Recover(root); err != nil {
+		return fmt.Errorf("recover server configuration: %w", err)
+	}
 	store, err := config.NewStore(context.Background(), config.LoadOptions{Overrides: overrides})
 	if err != nil {
 		return fmt.Errorf("config: %w", err)

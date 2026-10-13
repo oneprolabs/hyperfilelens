@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, useId } from 'vue'
 import { I18nT, useI18n } from 'vue-i18n'
 import {
   Copy,
@@ -16,6 +16,7 @@ import AgentPlatformBrandIcon from './agent-deploy/AgentPlatformBrandIcon.vue'
 import UbuntuBrandIcon from './agent-deploy/UbuntuBrandIcon.vue'
 import {
   buildLocalServiceCommand,
+  buildLocalConfigureCommand,
   buildLocalUninstallCommand,
   buildLocalUpgradeCommand,
   defaultPackagePath,
@@ -87,6 +88,11 @@ const installCommand = ref('')
 const upgradeCommand = ref('')
 const uninstallCommand = ref('')
 const serviceCommand = ref('')
+const serverUrl = ref('')
+const configureInputId = useId()
+const configureCommand = computed(() =>
+  buildLocalConfigureCommand(props.os, serverUrl.value, props.role, effectiveInstallationMode.value),
+)
 const loading = ref(false)
 const releaseVersion = ref('')
 const upgradeError = ref('')
@@ -115,8 +121,8 @@ const LINUX_DISTROS = {
 
 const visibleTabs = computed((): NodeLifecycleTab[] => {
   if (props.installOnly) return ['install']
-  if (props.maintenanceOnly) return ['upgrade', 'uninstall', 'service']
-  return ['install', 'upgrade', 'uninstall', 'service']
+  if (props.maintenanceOnly) return ['upgrade', 'configure', 'uninstall', 'service']
+  return ['install', 'upgrade', 'configure', 'uninstall', 'service']
 })
 
 const tokenIsUsable = computed(() => {
@@ -264,6 +270,8 @@ const displayCommand = computed(() => {
       return uninstallCommand.value
     case 'service':
       return serviceCommand.value
+    case 'configure':
+      return configureCommand.value
     default:
       if (installCommand.value) return installCommand.value
       return props.generateOnDemand
@@ -273,14 +281,14 @@ const displayCommand = computed(() => {
 })
 
 const tabHint = computed(() => {
-  if (props.role === 'gateway' && activeTab.value !== 'install') {
+  if (props.role === 'gateway' && activeTab.value !== 'install' && activeTab.value !== 'configure') {
     return t(`nodeLifecycle.gatewayTabHint.${activeTab.value}`)
   }
   return t(`nodeLifecycle.tabHint.${activeTab.value}`)
 })
 
 const footnote = computed(() => {
-  if (props.role === 'gateway' && activeTab.value !== 'install') {
+  if (props.role === 'gateway' && activeTab.value !== 'install' && activeTab.value !== 'configure') {
     return t(`nodeLifecycle.gatewayFootnote.${activeTab.value}`)
   }
   return t(`nodeLifecycle.footnote.${activeTab.value}`)
@@ -1085,6 +1093,21 @@ defineExpose({ clearInstallCommand })
                   show-icon
                   :title="upgradeError"
                 />
+
+                <div
+                  v-if="activeTab === 'configure'"
+                  class="node-lifecycle-wizard__options"
+                >
+                  <label :for="configureInputId">{{ t('nodeLifecycle.configure.label') }}</label>
+                  <ElInput
+                    :id="configureInputId"
+                    v-model="serverUrl"
+                    :placeholder="t('nodeLifecycle.configure.placeholder')"
+                  />
+                  <p class="fullscreen-form-field__hint">
+                    {{ t('nodeLifecycle.configure.requirements') }}
+                  </p>
+                </div>
 
                 <div
                   v-if="activeTab === 'uninstall'"

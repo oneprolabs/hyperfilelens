@@ -2418,15 +2418,22 @@ export const en = {
     linuxOnlyRoleHint: 'Proxy / Gateway are Linux-only. OS options are restricted.',
     linuxOnlyRoleBlocked: 'Proxy / Gateway cannot be deployed on Windows or macOS. Select Linux.',
     consoleTitle: '{role} · shell',
+    configure: {
+      label: 'New server address',
+      placeholder: 'https://console.example:11443',
+      requirements: 'Requires an Agent version supporting configure. Upgrade older Agents first. Use the application address, not Admin Console. Run only when the node is idle.',
+    },
     tab: {
       install: 'Install',
       upgrade: 'Upgrade',
+      configure: 'Server address',
       uninstall: 'Uninstall',
       service: 'Service',
     },
     tabHint: {
       install: 'Copy and run on the target host as root / Administrator to install and enroll.',
       upgrade: 'Download the new package and run upgrade on an installed host (preserves agent.env and agent.db).',
+      configure: 'Change the same server’s access address without re-enrolling. Data Gateways also update their existing AI engine connection.',
       uninstall: 'Run on the target host to stop the service and remove binaries; data dir is kept by default.',
       service: 'Check status or start/stop hyperfilelens-agent on the target host.',
     },
@@ -2438,6 +2445,7 @@ export const en = {
     footnote: {
       install: 'Downloads bundle → writes config → registers node',
       upgrade: 'Downloads the release package and upgrades the installed components.',
+      configure: 'Preserves identity, credentials, data, and versions. The command verifies the new connection and restores configuration on failure.',
       uninstall: 'After the host command completes, use Remove in the list to clear the console record.',
       service: 'Runs the selected service action on the target host.',
     },

@@ -1,6 +1,7 @@
 """REST routes for nodes, tokens, tasks, and enrollment."""
 
 from django.urls import include, path
+from .views.connection_info import NodeConnectionInfoView
 from rest_framework.routers import DefaultRouter
 
 from apps.node.api.views import (
@@ -31,6 +32,7 @@ router.register(r"node-tokens", NodeTokenViewSet, basename="node-token")
 router.register(r"node-tasks", NodeTaskViewSet, basename="node-task")
 
 urlpatterns = [
+    path("enrollment/connection-info", NodeConnectionInfoView.as_view(), name="node-connection-info"),
     path("health", health, name="node-health"),
     path("enrollment/health", enrollment_health, name="enrollment-health"),
     path(

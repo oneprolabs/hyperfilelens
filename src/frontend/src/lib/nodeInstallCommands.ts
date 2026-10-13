@@ -10,7 +10,28 @@ const MAC_LAUNCHD_LABEL = 'com.hyperfilelens.agent'
 const WIN_INSTALL_CMD = '& "$env:ProgramData\\HyperFileLens\\Agent\\bin\\install.cmd"'
 const WIN_USER_INSTALL_CMD = '& "$env:LOCALAPPDATA\\HyperFileLens\\Agent\\bin\\install.cmd"'
 
-export type NodeLifecycleTab = 'install' | 'upgrade' | 'uninstall' | 'service'
+export type NodeLifecycleTab = 'install' | 'upgrade' | 'configure' | 'uninstall' | 'service'
+
+export function buildLocalConfigureCommand(
+  os: EnrollmentOs,
+  serverUrl: string,
+  role: NodeRole,
+  installationMode: NodeInstallationMode = 'system',
+): string {
+  if (!roleSupportedOnOs(role, os)) return ''
+  let url: URL
+  try { url = new URL(serverUrl.trim()) } catch { return '' }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash
+    || (url.pathname !== '' && url.pathname !== '/') || /[\r\n]/.test(serverUrl)) return ''
+  const origin = url.origin
+  if (os === 'windows') {
+    if (/[`"$]/.test(origin)) return ''
+    return `${installationMode === 'user' ? WIN_USER_INSTALL_CMD : WIN_INSTALL_CMD} configure -ServerUrl "${origin}"`
+  }
+  if (origin.includes("'")) return ''
+  const privilege = installationMode === 'user' || installationMode === 'user_continuous' ? '' : 'sudo '
+  return `${privilege}${installScriptPath(os, installationMode)} configure --server-url '${origin}'`
+}
 export type MaintenanceExecutionKind =
   | 'windows-administrator'
   | 'windows-user'

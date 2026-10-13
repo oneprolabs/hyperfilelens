@@ -261,3 +261,25 @@ describe('manual node maintenance commands', () => {
     expect(commands.join('\n')).not.toMatch(/(?:Start|Stop|Restart)-Service/)
   })
 })
+
+describe('installed server configuration commands', () => {
+  it('uses the installed entry point for all Linux roles', async () => {
+    const { buildLocalConfigureCommand } = await import('./nodeInstallCommands')
+    for (const role of ['agent', 'proxy', 'gateway'] as const) {
+      expect(buildLocalConfigureCommand('linux', 'https://10.0.100.74:11443/', role))
+        .toBe("sudo /opt/hyperfilelens-agent/bin/install.sh configure --server-url 'https://10.0.100.74:11443'")
+    }
+  })
+  it('handles user mode and Windows without root elevation', async () => {
+    const { buildLocalConfigureCommand } = await import('./nodeInstallCommands')
+    expect(buildLocalConfigureCommand('linux', 'https://server', 'agent', 'user')).not.toContain('sudo')
+    expect(buildLocalConfigureCommand('windows', 'https://server', 'agent', 'user')).toContain('LOCALAPPDATA')
+    expect(buildLocalConfigureCommand('windows', 'https://server', 'gateway')).toBe('')
+  })
+  it('rejects paths, credentials and shell injection instead of emitting a command', async () => {
+    const { buildLocalConfigureCommand } = await import('./nodeInstallCommands')
+    for (const value of ['https://server/api/', 'https://user:pass@server', 'https://server?token=x', "https://bad'host", 'https://server\n']) {
+      expect(buildLocalConfigureCommand('linux', value, 'agent')).toBe('')
+    }
+  })
+})

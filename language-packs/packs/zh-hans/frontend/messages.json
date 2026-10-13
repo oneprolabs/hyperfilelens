@@ -4767,15 +4767,22 @@
     "linuxOnlyRoleHint": "Proxy / Gateway 仅支持 Linux。已限制操作系统选项。",
     "linuxOnlyRoleBlocked": "Proxy / Gateway 无法在 Windows 或 macOS 上部署，请选择 Linux。",
     "consoleTitle": "{role} · 命令行",
+    "configure": {
+      "label": "新服务器地址",
+      "placeholder": "例如：https://console.example:11443",
+      "requirements": "需要支持 configure 的 Agent 版本；旧版本请先升级。填写应用入口而非管理控制台地址，仅在节点空闲时执行。"
+    },
     "tab": {
       "install": "安装",
       "upgrade": "升级",
+      "configure": "服务器地址",
       "uninstall": "卸载",
       "service": "服务"
     },
     "tabHint": {
       "install": "复制并在目标主机以 root / 管理员执行，完成首次安装与入网。",
       "upgrade": "下载新版本包并在已安装主机执行 upgrade（保留 agent.env 与 agent.db）。",
+      "configure": "修改同一服务器的访问地址，无需重新注册；数据网关同时更新已有 AI 引擎连接。",
       "uninstall": "在目标主机执行以停止服务并移除程序；默认保留数据目录。",
       "service": "在目标主机查看状态或启停 hyperfilelens-agent 服务。"
     },
@@ -4787,6 +4794,7 @@
     "footnote": {
       "install": "自动完成：下载安装包 → 写入配置 → 注册节点",
       "upgrade": "下载发布包并升级已安装的组件。",
+      "configure": "保留身份、凭据、数据和版本。命令验证新连接，失败时恢复配置。",
       "uninstall": "主机命令完成后，使用列表中的删除来清除控制台记录。",
       "service": "在目标主机上运行选定的服务操作。"
     },

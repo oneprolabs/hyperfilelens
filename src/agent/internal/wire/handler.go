@@ -2,7 +2,10 @@ package wire
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -192,6 +195,11 @@ func (h *Handler) Handle(ctx context.Context, raw []byte, sink Sender) error {
 			return nil
 		}
 		cmd := dl.TaskCommand
+		if h.provider != nil {
+			if _, err := os.Stat(filepath.Join(h.provider.Current().DataDir, "lifecycle", "connection-state.json")); err == nil {
+				return SendTaskResult(ctx, sink, cmd.TaskID, "failed", nil, "Node connection maintenance is in progress; retry after it completes.")
+			}
+		}
 		logging.InfoTask(ctx, "task.command received", cmd.NodeID, cmd.TaskID, cmd.Kind,
 			"trace_id", cmd.TraceID,
 			"correlation_id", cmd.CorrelationID,
@@ -204,6 +212,9 @@ func (h *Handler) Handle(ctx context.Context, raw []byte, sink Sender) error {
 				Source: string(engine.SourceWebSocket), StartedAt: &now,
 			})
 			if acceptErr != nil {
+				if errors.Is(acceptErr, database.ErrConnectionMaintenance) {
+					return SendTaskResult(ctx, sink, cmd.TaskID, "failed", nil, "Node connection maintenance is in progress; retry after it completes.")
+				}
 				slog.Warn("persist task.command acceptance failed", "task_id", cmd.TaskID, "err", acceptErr)
 				return nil
 			}

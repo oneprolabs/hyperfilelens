@@ -6,12 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/install"
 )
+
+var ErrConnectionMaintenance = errors.New("node connection maintenance is in progress")
 
 const repairError = "agent restarted before task completed"
 
@@ -43,6 +47,17 @@ func (r *TaskRepo) AcceptCommand(ctx context.Context, cmd RecordInput) (model.Ta
 	var task model.Task
 	inserted := false
 	err = r.db.WithTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET status=status WHERE 0"); err != nil {
+			return err
+		}
+		if filepath.Base(filepath.Dir(r.db.path)) == "data" {
+			marker := filepath.Join(filepath.Dir(filepath.Dir(r.db.path)), "lifecycle", "connection-state.json")
+			if _, err := os.Stat(marker); err == nil {
+				return ErrConnectionMaintenance
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+		}
 		result, execErr := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO tasks (
   id, job_id, kind, payload, status, result, error,
