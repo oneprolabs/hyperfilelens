@@ -7,6 +7,10 @@ import (
 	"syscall"
 )
 
+func pidStillExists(pid int32) bool {
+	return syscall.Kill(int(pid), 0) != syscall.ESRCH
+}
+
 func fileOwner(info os.FileInfo) (int, int) {
 	if st, ok := info.Sys().(*syscall.Stat_t); ok {
 		return int(st.Uid), int(st.Gid)

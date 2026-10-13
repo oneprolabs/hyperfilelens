@@ -12,6 +12,7 @@ import (
 	"hyperfilelens/agent/internal/infra/database"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/atomicfile"
+	"hyperfilelens/agent/internal/platform/lensenv"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -98,6 +99,17 @@ func serve(t *testing.T, target *serverInfo) *httptest.Server {
 	t.Cleanup(server.Close)
 	return server
 }
+
+func markFixtureApplied(t *testing.T, root string) {
+	t.Helper()
+	values, err := config.ParseEnvFile(filepath.Join(root, "config", "lensnode.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicfile.Write(lensAppliedPath(root), []byte(lensenv.Fingerprint(values)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
 func TestConfigurePersistsBothLayers(t *testing.T) {
 	root, target, ops := fixture(t, model.RoleAgent)
 	server := serve(t, target)
@@ -144,11 +156,13 @@ func TestUnsafeTargetsDoNotWrite(t *testing.T) {
 }
 func TestRollbackOnRestartFailure(t *testing.T) {
 	root, target, ops := fixture(t, model.RoleAgent)
-	ops.agentRunning = func(string) (bool, error) { return true, nil }
+	running := true
+	ops.agentRunning = func(string) (bool, error) { return running, nil }
 	ops.agentService = func(_ context.Context, _ string, action string) error {
 		if action == "start" {
 			return errors.New("cannot start")
 		}
+		running = false
 		return nil
 	}
 	before, _ := os.ReadFile(filepath.Join(root, "config", "agent.env"))
@@ -182,6 +196,7 @@ func TestGatewayPreservesImageAndCredentials(t *testing.T) {
 	cp := filepath.Join(root, "runtime", "lensnode", "docker-compose.yml")
 	_ = atomicfile.Write(lp, []byte("LENSNODE_UUID=lens-1\nLENSNODE_TOKEN=lens-secret\nLENS_BASE_URL=http://old.invalid/sourcelens\n"), 0600)
 	_ = atomicfile.Write(cp, []byte("services:\n  lensnode:\n    image: pinned:0.61.3\n    environment:\n      LENSNODE_SERVER_URL: http://old.invalid/sourcelens\n      LENSNODE_TOKEN: lens-secret\n"), 0600)
+	markFixtureApplied(t, root)
 	server := serve(t, target)
 	if e := configure(context.Background(), server.URL, ops); e != nil {
 		t.Fatal(e)
@@ -217,6 +232,11 @@ func TestGatewayLoopbackRollbackRestoresOriginalRouting(t *testing.T) {
 	if err := atomicfile.Write(cp, oldCompose, 0600); err != nil {
 		t.Fatal(err)
 	}
+	markFixtureApplied(t, root)
+	oldMarker, err := os.ReadFile(lensAppliedPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := serve(t, target)
 	calls := 0
 	ops.applyLens = func(_ context.Context, _ string, running bool) error {
@@ -240,7 +260,7 @@ func TestGatewayLoopbackRollbackRestoresOriginalRouting(t *testing.T) {
 	if err := configure(context.Background(), server.URL, ops); err == nil {
 		t.Fatal("expected Compose apply failure")
 	}
-	for path, before := range map[string][]byte{lp: oldLens, cp: oldCompose} {
+	for path, before := range map[string][]byte{lp: oldLens, cp: oldCompose, lensAppliedPath(root): oldMarker} {
 		after, err := os.ReadFile(path)
 		if err != nil || string(after) != string(before) {
 			t.Fatal("rollback did not restore original routing", path, err)
@@ -288,8 +308,10 @@ func TestOldConnectionObservationRejected(t *testing.T) {
 func TestRunningAgentMustConfirmNewConnection(t *testing.T) {
 	root, target, ops := fixture(t, model.RoleProxy)
 	server := serve(t, target)
-	ops.agentRunning = func(string) (bool, error) { return true, nil }
+	running := true
+	ops.agentRunning = func(string) (bool, error) { return running, nil }
 	ops.agentService = func(_ context.Context, _ string, action string) error {
+		running = action == "start"
 		if action == "start" {
 			_, wss, e := NormalizeServer(server.URL)
 			if e != nil {
@@ -313,7 +335,12 @@ func TestRunningAgentMustConfirmNewConnection(t *testing.T) {
 func TestVerificationFailureRestoresOldAddress(t *testing.T) {
 	root, target, ops := fixture(t, model.RoleAgent)
 	server := serve(t, target)
-	ops.agentRunning = func(string) (bool, error) { return true, nil }
+	running := true
+	ops.agentRunning = func(string) (bool, error) { return running, nil }
+	ops.agentService = func(_ context.Context, _ string, action string) error {
+		running = action == "start"
+		return nil
+	}
 	before, _ := os.ReadFile(filepath.Join(root, "config", "agent.env"))
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
@@ -332,6 +359,7 @@ func TestExternalSLAddressAndBindingArePreserved(t *testing.T) {
 	cp := filepath.Join(root, "runtime", "lensnode", "docker-compose.yml")
 	_ = atomicfile.Write(lp, []byte("LENSNODE_UUID=external-lens\nLENSNODE_TOKEN=unchanged\nLENS_BASE_URL=https://external-sl.example:11445\n"), 0600)
 	_ = atomicfile.Write(cp, []byte("services:\n  lensnode:\n    image: pinned\n    environment:\n      LENSNODE_SERVER_URL: https://external-sl.example:11445\n"), 0600)
+	markFixtureApplied(t, root)
 	if e := configure(context.Background(), serve(t, target).URL, ops); e != nil {
 		t.Fatal(e)
 	}

@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"hyperfilelens/agent/internal/infra/config"
+	"hyperfilelens/agent/internal/platform/lensenv"
 )
 
 func TestWriteLensEnvFileAtAppliesPlatformPolicyIdempotently(t *testing.T) {
@@ -58,6 +61,51 @@ func TestWriteLensEnvFileAtAppliesPlatformPolicyIdempotently(t *testing.T) {
 	}
 	if secondFingerprint != fingerprint {
 		t.Fatalf("fingerprint changed: %q != %q", secondFingerprint, fingerprint)
+	}
+}
+
+func TestAddressMaintenanceAppliedStatePreventsBackgroundReinstallation(t *testing.T) {
+	for _, policy := range []ObservabilityPolicy{{}, platformObservabilityPolicy()} {
+		root := t.TempDir()
+		runtime := lensSidecarRuntime{
+			envPath: filepath.Join(root, "lensnode.env"), appliedPath: filepath.Join(root, "applied.sha256"),
+			lockPath: filepath.Join(root, "sidecar.lock"), healthy: func() bool { return true },
+			installSidecar: func(context.Context, Config, bool) error {
+				t.Fatal("background refresh reinstalled an already-applied address change")
+				return nil
+			},
+		}
+		lens := LensSidecarConfig{
+			LensBaseURL: "https://old.example/sourcelens", LensnodeUUID: "existing-lens",
+			LensnodeToken: "unchanged-token", WorkspaceRoot: "/backup workspace", Observability: policy,
+		}
+		if _, _, err := writeLensEnvFileAt(runtime.envPath, lens); err != nil {
+			t.Fatal(err)
+		}
+		values, err := config.ParseEnvFile(runtime.envPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lens.LensBaseURL = "https://new.example/sourcelens"
+		values["LENS_BASE_URL"] = lens.LensBaseURL
+		// Address maintenance preserves local text/fields but uses the exact
+		// enrollment fingerprint, not a hash of that noncanonical env text.
+		raw, err := os.ReadFile(runtime.envPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = []byte(strings.Replace(string(raw), "https://old.example/sourcelens", `"https://new.example/sourcelens"`, 1) + "UNKNOWN_LOCAL_FIELD=keep\n")
+		if err := os.WriteFile(runtime.envPath, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := markLensConfigurationApplied(runtime.appliedPath, lensenv.Fingerprint(values)); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			if _, err := runtime.convergeObservability(context.Background(), Config{}, lens); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 }
 

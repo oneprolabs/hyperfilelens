@@ -27,6 +27,7 @@ import (
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/atomicfile"
+	"hyperfilelens/agent/internal/platform/lensenv"
 	"hyperfilelens/agent/internal/platform/vfs"
 	_ "modernc.org/sqlite"
 )
@@ -284,6 +285,24 @@ func prepareWhenIdle(root string, t transaction) error {
 func statePath(root string) string {
 	return filepath.Join(vfs.AgentLifecycleDir(root), "connection-state.json")
 }
+func lensAppliedPath(root string) string {
+	return filepath.Join(root, "runtime", "lensnode", ".hfl-applied-config.sha256")
+}
+
+func shareLockOwnership(root, lock string) error {
+	st, err := os.Stat(filepath.Join(root, "config", "agent.env"))
+	if err != nil {
+		return err
+	}
+	uid, gid := fileOwner(st)
+	for _, path := range []string{lock, filepath.Join(lock, "pid"), filepath.Join(lock, "operation")} {
+		if err := restoreOwner(path, uid, gid); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func configureLockPath(root string) string {
 	// User enrollment keeps install.lock as a flock file. Do not unlink or
 	// replace that inode: the CLI holds it for the entire configure operation.
@@ -296,7 +315,9 @@ func configureLockPath(root string) string {
 func ownerAlive(t transaction) bool {
 	p, e := process.NewProcess(t.PID)
 	if e != nil {
-		return false
+		// Account-mode recovery may not see the privileged owner in procfs.
+		// Permission/visibility failures must not be treated as owner death.
+		return pidStillExists(t.PID)
 	}
 	born, e := p.CreateTime()
 	if e != nil {
@@ -307,6 +328,30 @@ func ownerAlive(t transaction) bool {
 
 // Recover restores a previously interrupted change before the daemon loads config.
 func Recover(root string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	return recoverConnection(ctx, root, installedRuntime())
+}
+
+func decodeRecovery(root string, raw []byte) (transaction, error) {
+	var t transaction
+	if json.Unmarshal(raw, &t) != nil || t.PID <= 0 || t.Born <= 0 || (t.Phase != "prepared" && t.Phase != "applying") || len(t.Files) != len(configPaths(root, t.Gateway)) {
+		return t, errors.New("invalid connection recovery state; contact support")
+	}
+	allowed := map[string]bool{}
+	for _, path := range configPaths(root, t.Gateway) {
+		allowed[path] = true
+	}
+	for _, f := range t.Files {
+		if !allowed[f.Path] {
+			return t, errors.New("connection recovery contains an unexpected or duplicate path")
+		}
+		delete(allowed, f.Path)
+	}
+	return t, nil
+}
+
+func recoverConnection(ctx context.Context, root string, ops runtimeHooks) error {
 	raw, e := os.ReadFile(statePath(root))
 	if os.IsNotExist(e) {
 		return nil
@@ -314,39 +359,45 @@ func Recover(root string) error {
 	if e != nil {
 		return e
 	}
-	var t transaction
-	if json.Unmarshal(raw, &t) != nil || t.PID <= 0 || t.Born <= 0 || (t.Phase != "prepared" && t.Phase != "applying") || len(t.Files) != len(configPaths(root, t.Gateway)) {
-		return errors.New("invalid connection recovery state; contact support")
+	t, e := decodeRecovery(root, raw)
+	if e != nil {
+		return e
 	}
 	if ownerAlive(t) {
 		return nil
 	}
-	allowed := map[string]bool{}
-	for _, p := range configPaths(root, t.Gateway) {
-		allowed[p] = true
-	}
-	for _, f := range t.Files {
-		if !allowed[f.Path] {
-			return errors.New("connection recovery contains an unexpected path")
+	if t.Gateway && ops.lockLens != nil {
+		release, err := ops.lockLens(ctx)
+		if err != nil {
+			return err
 		}
+		defer release()
 	}
 	if e = restore(t); e != nil {
 		return e
 	}
 	if t.Gateway && t.Phase != "prepared" {
-		recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer recoveryCancel()
-		if e = applyLens(recoveryCtx, root, t.LensRunning); e != nil {
+		if e = ops.applyLens(ctx, root, t.LensRunning); e != nil {
 			return fmt.Errorf("old AI engine configuration restored but container recovery failed: %w", e)
 		}
 	}
 	lock := configureLockPath(root)
-	pid, _ := os.ReadFile(filepath.Join(lock, "pid"))
-	operation, _ := os.ReadFile(filepath.Join(lock, "operation"))
-	if strings.TrimSpace(string(pid)) == strconv.Itoa(int(t.PID)) && strings.TrimSpace(string(operation)) == "configure" {
-		if err := os.RemoveAll(lock); err != nil {
-			return err
+	if _, err := os.Stat(lock); err == nil {
+		pid, err := os.ReadFile(filepath.Join(lock, "pid"))
+		if err != nil {
+			return fmt.Errorf("recovery lock could not be verified; recovery state retained: %w", err)
 		}
+		operation, err := os.ReadFile(filepath.Join(lock, "operation"))
+		if err != nil {
+			return fmt.Errorf("recovery lock could not be verified; recovery state retained: %w", err)
+		}
+		if strings.TrimSpace(string(pid)) == strconv.Itoa(int(t.PID)) && strings.TrimSpace(string(operation)) == "configure" {
+			if err := os.RemoveAll(lock); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	return os.Remove(statePath(root))
 }
@@ -354,7 +405,7 @@ func Recover(root string) error {
 func configPaths(root string, gateway bool) []string {
 	paths := []string{filepath.Join(root, "config", "agent.env"), filepath.Join(root, "config", "config.json")}
 	if gateway {
-		paths = append(paths, filepath.Join(root, "config", "lensnode.env"), filepath.Join(root, "runtime", "lensnode", "docker-compose.yml"))
+		paths = append(paths, filepath.Join(root, "config", "lensnode.env"), filepath.Join(root, "runtime", "lensnode", "docker-compose.yml"), lensAppliedPath(root))
 	}
 	return paths
 }
@@ -367,14 +418,26 @@ func recoverForCommand(ctx context.Context, root string, ops runtimeHooks) error
 	if err != nil {
 		return err
 	}
-	var previous transaction
-	if json.Unmarshal(raw, &previous) != nil {
-		return errors.New("invalid interrupted connection state")
+	previous, err := decodeRecovery(root, raw)
+	if err != nil {
+		return err
 	}
 	if ownerAlive(previous) {
 		return nil
 	}
-	if err = Recover(root); err != nil {
+	if previous.Phase != "prepared" {
+		if previous.AgentRunning {
+			if err = ops.stopAgent(ctx, root); err != nil {
+				return err
+			}
+		}
+		if previous.LensRunning {
+			if err = ops.stopAIEngine(ctx, root); err != nil {
+				return err
+			}
+		}
+	}
+	if err = recoverConnection(ctx, root, ops); err != nil {
 		return err
 	}
 	if previous.AgentRunning && previous.Phase != "prepared" {
@@ -398,10 +461,11 @@ type runtimeHooks struct {
 	agentService func(context.Context, string, string) error
 	stopLens     func(context.Context, string) error
 	applyLens    func(context.Context, string, bool) error
+	lockLens     func(context.Context) (func(), error)
 }
 
 func Configure(ctx context.Context, rawURL string) error {
-	err := configure(ctx, rawURL, runtimeHooks{agentRunning, lensRunning, agentService, stopLens, applyLens})
+	err := configure(ctx, rawURL, installedRuntime())
 	root := vfs.DefaultAgentDataDir()
 	if _, check := os.Stat(filepath.Join(root, "config", "agent.env")); check == nil {
 		path := filepath.Join(root, "logs", "configure.log")
@@ -460,6 +524,9 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 	if e = os.WriteFile(filepath.Join(lock, "pid"), []byte(strconv.Itoa(os.Getpid())), 0600); e != nil {
 		return e
 	}
+	if e = shareLockOwnership(root, lock); e != nil {
+		return e
+	}
 	if _, e = os.Stat(filepath.Join(vfs.AgentLifecycleDir(root), "upgrade-state.json")); e == nil {
 		return errors.New("pending upgrade must finish before changing server")
 	}
@@ -482,8 +549,16 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 		return e
 	}
 	gateway := cfg.Role == model.RoleGateway
+	if gateway && ops.lockLens != nil {
+		release, err := ops.lockLens(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	paths := configPaths(root, gateway)
 	updates := map[string][]byte{}
+	var appliedFingerprint []byte
 	t := transaction{PID: int32(os.Getpid()), Gateway: gateway, Phase: "prepared"}
 	p, e := process.NewProcess(t.PID)
 	if e != nil {
@@ -508,12 +583,15 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 		}
 	}
 	if gateway {
-		if target.Lens == nil || !t.Files[2].Exists || !t.Files[3].Exists {
+		if target.Lens == nil || !t.Files[2].Exists || !t.Files[3].Exists || !t.Files[4].Exists {
 			return errors.New("existing AI engine configuration is incomplete; no install will be attempted")
 		}
 		lensEnv, e := config.ParseEnvFile(paths[2])
 		if e != nil {
 			return e
+		}
+		if strings.TrimSpace(string(t.Files[4].Data)) != lensenv.Fingerprint(lensEnv) {
+			return errors.New("AI engine has an unapplied configuration; complete existing maintenance before changing server")
 		}
 		if target.Lens.UUID != lensEnv["LENSNODE_UUID"] || lensEnv["LENSNODE_TOKEN"] == "" {
 			return errors.New("AI engine identity mismatch")
@@ -530,6 +608,8 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 			return errors.New("invalid AI engine address")
 		}
 		updates[paths[2]] = patchEnv(t.Files[2].Data, map[string]string{"LENS_BASE_URL": lensBase})
+		lensEnv["LENS_BASE_URL"] = lensBase
+		appliedFingerprint = []byte(lensenv.Fingerprint(lensEnv) + "\n")
 		updates[paths[3]], e = patchLensCompose(t.Files[3].Data, lensBase)
 		if e != nil {
 			return e
@@ -565,6 +645,7 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 	if e = prepareWhenIdle(root, t); e != nil {
 		return e
 	}
+	filesChanged := false
 	defer func() {
 		if err == nil {
 			return
@@ -572,28 +653,40 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 		rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer rollbackCancel()
 		var rollbackErr error
+		if !filesChanged {
+			rollbackErr = ops.resumeOriginal(rollbackCtx, root, t)
+			if rollbackErr == nil {
+				rollbackErr = os.Remove(statePath(root))
+			}
+			if rollbackErr != nil {
+				err = errors.Join(err, fmt.Errorf("runtime recovery incomplete; recovery state retained: %w", rollbackErr))
+			}
+			return
+		}
 		if t.AgentRunning {
-			rollbackErr = ops.agentService(rollbackCtx, root, "stop")
+			rollbackErr = ops.stopAgent(rollbackCtx, root)
 		}
 		if gateway && t.LensRunning {
-			rollbackErr = errors.Join(rollbackErr, ops.stopLens(rollbackCtx, root))
+			rollbackErr = errors.Join(rollbackErr, ops.stopAIEngine(rollbackCtx, root))
 		}
 		if rollbackErr != nil {
 			err = errors.Join(err, errors.New("could not quiesce components for recovery; backup and recovery state retained"))
 			return
 		}
 		rollbackErr = restore(t)
-		if gateway {
-			rollbackErr = errors.Join(rollbackErr, ops.applyLens(rollbackCtx, root, t.LensRunning))
+		if rollbackErr == nil && gateway {
+			rollbackErr = ops.applyLens(rollbackCtx, root, t.LensRunning)
 		}
-		if t.AgentRunning {
-			rollbackErr = errors.Join(rollbackErr, ops.agentService(rollbackCtx, root, "start"))
+		if rollbackErr == nil && t.AgentRunning {
+			rollbackErr = ops.agentService(rollbackCtx, root, "start")
 		}
 		if rollbackErr == nil {
-			_ = os.Remove(statePath(root))
-			err = fmt.Errorf("%w; original configuration restored (original connectivity is not guaranteed)", err)
-		} else {
+			rollbackErr = os.Remove(statePath(root))
+		}
+		if rollbackErr != nil {
 			err = errors.Join(err, fmt.Errorf("recovery incomplete; backup retained at %s: %w", backup, rollbackErr))
+		} else {
+			err = fmt.Errorf("%w; original configuration restored (original connectivity is not guaranteed)", err)
 		}
 	}()
 	t.Phase = "applying"
@@ -601,7 +694,7 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 		return e
 	}
 	if t.AgentRunning {
-		if e = ops.agentService(ctx, root, "stop"); e != nil {
+		if e = ops.stopAgent(ctx, root); e != nil {
 			return e
 		}
 	}
@@ -613,7 +706,7 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 		if fresh.Busy {
 			return errors.New("work started during preflight; configuration will not be applied")
 		}
-		if e = ops.stopLens(ctx, root); e != nil {
+		if e = ops.stopAIEngine(ctx, root); e != nil {
 			return e
 		}
 	}
@@ -622,6 +715,7 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 	}
 	for _, f := range t.Files {
 		if b, ok := updates[f.Path]; ok {
+			filesChanged = true
 			if e = atomicfile.Write(f.Path, b, os.FileMode(f.Mode)); e != nil {
 				return e
 			}
@@ -641,6 +735,13 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 	started := time.Now().UTC()
 	if gateway {
 		if e = ops.applyLens(ctx, root, t.LensRunning); e != nil {
+			return e
+		}
+		f := t.Files[4]
+		if e = atomicfile.Write(f.Path, appliedFingerprint, os.FileMode(f.Mode)); e != nil {
+			return e
+		}
+		if e = restoreOwner(f.Path, f.UID, f.GID); e != nil {
 			return e
 		}
 	}

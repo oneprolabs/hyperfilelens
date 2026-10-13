@@ -5,7 +5,6 @@ package enroll
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"hyperfilelens/agent/internal/platform/install"
+	"hyperfilelens/agent/internal/platform/lensenv"
 	"hyperfilelens/agent/internal/platform/tlsclient"
 	"hyperfilelens/agent/internal/platform/vfs"
 )
@@ -455,15 +455,14 @@ func writeLensEnvFileAt(path string, lens LensSidecarConfig) (bool, string, erro
 		return false, "", fmt.Errorf("create %s: %w", dir, err)
 	}
 
-	lines := []string{
-		"# HyperFileLens SourceLens LensNode sidecar (managed by hfl-enroll gateway-install)",
-		"LENS_BASE_URL=" + quoteEnv(lens.LensBaseURL),
-		"LENSNODE_TOKEN=" + quoteEnv(lens.LensnodeToken),
-		"LENSNODE_UUID=" + quoteEnv(lens.LensnodeUUID),
-		"HFL_WORKSPACE_ROOT=" + quoteEnv(lens.WorkspaceRoot),
+	values := map[string]string{
+		"LENS_BASE_URL":      lens.LensBaseURL,
+		"LENSNODE_TOKEN":     lens.LensnodeToken,
+		"LENSNODE_UUID":      lens.LensnodeUUID,
+		"HFL_WORKSPACE_ROOT": lens.WorkspaceRoot,
 	}
 	if lens.LensnodeName != "" {
-		lines = append(lines, "LENSNODE_NAME="+quoteEnv(lens.LensnodeName))
+		values["LENSNODE_NAME"] = lens.LensnodeName
 	}
 	policyValues := lens.Observability.lensnodeEnvValues()
 	for _, name := range []string{
@@ -474,19 +473,19 @@ func writeLensEnvFileAt(path string, lens LensSidecarConfig) (bool, string, erro
 		"HFL_SENTRY_LENSNODE_RELEASE",
 	} {
 		if value, present := policyValues[name]; present {
-			lines = append(lines, name+"="+quoteEnv(value))
+			values[name] = value
 		}
 	}
-	content := strings.Join(lines, "\n") + "\n"
-	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+	content := lensenv.Content(values)
+	fingerprint := lensenv.Fingerprint(values)
 	current, err := os.ReadFile(path)
-	if err == nil && bytes.Equal(current, []byte(content)) {
+	if err == nil && bytes.Equal(current, content) {
 		return false, fingerprint, nil
 	}
 	if err != nil && !os.IsNotExist(err) {
 		return false, "", fmt.Errorf("read %s: %w", path, err)
 	}
-	if err := writePrivateEnvAtomically(path, []byte(content)); err != nil {
+	if err := writePrivateEnvAtomically(path, content); err != nil {
 		return false, "", fmt.Errorf("write %s: %w", path, err)
 	}
 	return true, fingerprint, nil
@@ -614,14 +613,7 @@ func runLensSidecarInstaller(ctx context.Context, cfg Config, legacyLayoutAdopte
 }
 
 func quoteEnv(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return `""`
-	}
-	if !strings.ContainsAny(value, " \t$\"'\\") {
-		return value
-	}
-	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
+	return lensenv.Quote(value)
 }
 
 func ensureLensnodeImage(ctx context.Context, cfg Config) error {
