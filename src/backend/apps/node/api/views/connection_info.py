@@ -60,11 +60,11 @@ class NodeConnectionInfoView(APIView):
                 return Response({"detail": "AI engine state cannot be verified."}, status=503)
             if not isinstance(snapshot, dict) or str(snapshot.get("uuid", "")) != str(link.sl_lensnode_uuid) or not isinstance(
                 snapshot.get("active_datasource_operations"), list,
-            ) or not isinstance(snapshot.get("tasks"), list):
+            ):
                 return Response({"detail": "AI engine activity state is unavailable."}, status=503)
+            # SL's "tasks" describes supported capabilities, not active work.
             data["busy"] = busy or bool(
                 snapshot["active_datasource_operations"]
-                or snapshot["tasks"]
                 or snapshot.get("active_run_count")
                 or snapshot.get("queued_run_count")
                 or snapshot.get("awaiting_resume_count")

@@ -93,8 +93,10 @@ class NodeConnectionInfoTests(TestCase):
             sl_lensnode_uuid=lens_uuid,
         )
         snapshot = {
-            "uuid": str(lens_uuid), "status": "offline", "tasks": [],
+            "uuid": str(lens_uuid), "status": "offline",
+            "tasks": [{"name": "knowledge_qa", "title": "Knowledge Q&A"}],
             "active_datasource_operations": [], "active_run_count": 0,
+            "queued_run_count": 0, "awaiting_resume_count": 0,
         }
         with patch("apps.lens_bridge.services.sl_client.request_json", return_value=snapshot), patch(
             "apps.lens_bridge.services.provisioning.provision_gateway_lens_on_register",
@@ -102,8 +104,31 @@ class NodeConnectionInfoTests(TestCase):
             response = self.get()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["lens"]["uuid"], str(lens_uuid))
+        self.assertFalse(response.data["busy"])
         provision.assert_not_called()
         self.assertNotIn("token", response.data["lens"])
+        for field, active in (
+            ("active_datasource_operations", [{"task_id": "converting"}]),
+            ("active_run_count", 1),
+            ("queued_run_count", 1),
+            ("awaiting_resume_count", 1),
+        ):
+            with self.subTest(field=field), patch(
+                "apps.lens_bridge.services.sl_client.request_json",
+                return_value={**snapshot, field: active},
+            ):
+                self.assertTrue(self.get().data["busy"])
+        with patch(
+            "apps.lens_bridge.services.sl_client.request_json",
+            return_value={key: value for key, value in snapshot.items() if key != "tasks"},
+        ):
+            self.assertFalse(self.get().data["busy"])
+        for operations in (None, {}):
+            with self.subTest(operations=operations), patch(
+                "apps.lens_bridge.services.sl_client.request_json",
+                return_value={**snapshot, "active_datasource_operations": operations},
+            ):
+                self.assertEqual(self.get().status_code, 503)
 
     @patch("apps.node.api.views.connection_info.agent_ws_routable", return_value=False)
     def test_missing_gateway_binding_not_created(self, _routable):

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -29,12 +28,6 @@ func Run(args []string) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
-		mode := os.Getenv("HFL_INSTALLATION_MODE")
-		// Unix user enrollment uses a flock file at the lifecycle directory-lock
-		// path. Configure owns that directory itself; do not recursively acquire it.
-		if goruntime.GOOS != "windows" && (mode == "user" || mode == "user_continuous") {
-			return connection.Configure(ctx, args[2])
-		}
 		return enroll.WithInstallLock(ctx, func() error { return connection.Configure(ctx, args[2]) })
 	case "version":
 		if len(args) != 1 {

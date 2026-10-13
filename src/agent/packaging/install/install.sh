@@ -773,6 +773,11 @@ process_start_marker() {
 acquire_lifecycle_lock() {
 	local data_dir="$1" operation="$2" pid_file
 	local lock_dir="$(agent_lifecycle_dir "${data_dir}")/install.lock"
+	# User enrollment owns install.lock as a persistent flock file. Keep local
+	# lifecycle directory locking separate, including nested configure actions.
+	if is_user_mode; then
+		lock_dir="$(agent_lifecycle_dir "${data_dir}")/operation.lock"
+	fi
 	if [[ "${HFL_CONFIGURE_OWNER_PID:-}" =~ ^[0-9]+$ \
 		&& ("${operation}" == "start" || "${operation}" == "stop") \
 		&& "$(cat "${lock_dir}/pid" 2>/dev/null || true)" == "${HFL_CONFIGURE_OWNER_PID}" \

@@ -57,7 +57,10 @@ func TestPatchPreservesIdentity(t *testing.T) {
 }
 func fixture(t *testing.T, role model.Role) (string, *serverInfo, runtimeHooks) {
 	t.Helper()
-	root := t.TempDir()
+	return fixtureAtRoot(t, role, t.TempDir())
+}
+func fixtureAtRoot(t *testing.T, role model.Role, root string) (string, *serverInfo, runtimeHooks) {
+	t.Helper()
 	t.Setenv("HFL_DATA_DIR", root)
 	t.Setenv("HFL_AGENT_ROOT", root)
 	t.Setenv("HFL_INSTALLATION_MODE", "system")
@@ -185,15 +188,72 @@ func TestGatewayPreservesImageAndCredentials(t *testing.T) {
 	}
 	for _, path := range []string{lp, cp} {
 		b, _ := os.ReadFile(path)
-		if !strings.Contains(string(b), server.URL+"/sourcelens") || !strings.Contains(string(b), "lens-secret") {
+		if !strings.Contains(string(b), "lens-secret") {
 			t.Fatal("lost Lens identity")
 		}
 	}
+	env, e := config.ParseEnvFile(lp)
+	if e != nil || env["LENS_BASE_URL"] != server.URL+"/sourcelens" {
+		t.Fatal("host-side AI engine URL did not follow Agent", e)
+	}
 	b, _ := os.ReadFile(cp)
-	if !strings.Contains(string(b), "pinned:0.61.3") {
-		t.Fatal("changed version")
+	if !strings.Contains(string(b), "pinned:0.61.3") ||
+		!strings.Contains(string(b), strings.Replace(server.URL, "127.0.0.1", "host.docker.internal", 1)+"/sourcelens") ||
+		!strings.Contains(string(b), `"host.docker.internal:host-gateway"`) {
+		t.Fatal("changed version or lost container-side host routing")
 	}
 }
+
+func TestGatewayLoopbackRollbackRestoresOriginalRouting(t *testing.T) {
+	root, target, ops := fixture(t, model.RoleGateway)
+	target.Lens = &lensInfo{UUID: "lens-1", BasePath: "/sourcelens"}
+	lp := filepath.Join(root, "config", "lensnode.env")
+	cp := filepath.Join(root, "runtime", "lensnode", "docker-compose.yml")
+	oldLens := []byte("LENSNODE_UUID=lens-1\nLENSNODE_TOKEN=lens-secret\nLENS_BASE_URL=http://old.invalid/sourcelens\n")
+	oldCompose := []byte(strings.Replace(managedCompose, "unchanged-secret", "lens-secret", 1))
+	if err := atomicfile.Write(lp, oldLens, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicfile.Write(cp, oldCompose, 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := serve(t, target)
+	calls := 0
+	ops.applyLens = func(_ context.Context, _ string, running bool) error {
+		calls++
+		if running {
+			t.Fatal("originally stopped LensNode was started")
+		}
+		if calls == 1 {
+			raw, err := os.ReadFile(cp)
+			if err != nil || !strings.Contains(string(raw), "host.docker.internal:host-gateway") {
+				t.Fatal("missing container routing before apply", err)
+			}
+			return errors.New("simulated Compose apply failure")
+		}
+		return nil
+	}
+	ops.agentService = func(context.Context, string, string) error {
+		t.Fatal("originally stopped Agent was restarted")
+		return nil
+	}
+	if err := configure(context.Background(), server.URL, ops); err == nil {
+		t.Fatal("expected Compose apply failure")
+	}
+	for path, before := range map[string][]byte{lp: oldLens, cp: oldCompose} {
+		after, err := os.ReadFile(path)
+		if err != nil || string(after) != string(before) {
+			t.Fatal("rollback did not restore original routing", path, err)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("previous LensNode configuration was not reapplied: %d calls", calls)
+	}
+	if _, err := os.Stat(statePath(root)); !os.IsNotExist(err) {
+		t.Fatal("successful rollback retained maintenance marker", err)
+	}
+}
+
 func TestRecoverInterruptedChange(t *testing.T) {
 	root, _, _ := fixture(t, model.RoleAgent)
 	var files []savedFile

@@ -18,7 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -284,6 +284,15 @@ func prepareWhenIdle(root string, t transaction) error {
 func statePath(root string) string {
 	return filepath.Join(vfs.AgentLifecycleDir(root), "connection-state.json")
 }
+func configureLockPath(root string) string {
+	// User enrollment keeps install.lock as a flock file. Do not unlink or
+	// replace that inode: the CLI holds it for the entire configure operation.
+	name := "install.lock"
+	if runtime.GOOS != "windows" && vfs.UserInstallation() {
+		name = "operation.lock"
+	}
+	return filepath.Join(vfs.AgentLifecycleDir(root), name)
+}
 func ownerAlive(t transaction) bool {
 	p, e := process.NewProcess(t.PID)
 	if e != nil {
@@ -331,7 +340,7 @@ func Recover(root string) error {
 			return fmt.Errorf("old AI engine configuration restored but container recovery failed: %w", e)
 		}
 	}
-	lock := filepath.Join(vfs.AgentLifecycleDir(root), "install.lock")
+	lock := configureLockPath(root)
 	pid, _ := os.ReadFile(filepath.Join(lock, "pid"))
 	operation, _ := os.ReadFile(filepath.Join(lock, "operation"))
 	if strings.TrimSpace(string(pid)) == strconv.Itoa(int(t.PID)) && strings.TrimSpace(string(operation)) == "configure" {
@@ -437,7 +446,7 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 	if strings.HasPrefix(cfg.APIBaseURL, "https:") && strings.HasPrefix(base, "http:") {
 		return errors.New("changing from HTTPS to HTTP is not allowed")
 	}
-	lock := filepath.Join(vfs.AgentLifecycleDir(root), "install.lock")
+	lock := configureLockPath(root)
 	if e = os.MkdirAll(filepath.Dir(lock), 0700); e != nil {
 		return e
 	}
@@ -521,11 +530,10 @@ func configure(ctx context.Context, rawURL string, ops runtimeHooks) (err error)
 			return errors.New("invalid AI engine address")
 		}
 		updates[paths[2]] = patchEnv(t.Files[2].Data, map[string]string{"LENS_BASE_URL": lensBase})
-		re := regexp.MustCompile(`(?m)^([ \t]*LENSNODE_SERVER_URL:)[^\r\n]*`)
-		if len(re.FindAll(t.Files[3].Data, -1)) != 1 {
-			return errors.New("unsupported AI engine Compose configuration")
+		updates[paths[3]], e = patchLensCompose(t.Files[3].Data, lensBase)
+		if e != nil {
+			return e
 		}
-		updates[paths[3]] = re.ReplaceAll(t.Files[3].Data, []byte("${1} "+strconv.Quote(lensBase)))
 		t.LensRunning, e = ops.lensRunning(ctx, root)
 		if e != nil {
 			return e
