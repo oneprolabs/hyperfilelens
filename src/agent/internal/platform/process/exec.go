@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"fmt"
+	"hyperfilelens/agent/internal/performance"
 	"os"
 	"os/exec"
 	"strings"
@@ -31,6 +32,7 @@ func Run(
 	if bin == "" {
 		return Result{}, fmt.Errorf("empty binary path")
 	}
+	performance.BeforeWork(ctx)
 	cmd := exec.Command(bin, args...)
 	configureProcessGroup(cmd)
 	if workDir != "" {
@@ -46,6 +48,7 @@ func Run(
 	if err := cmd.Start(); err != nil {
 		return Result{}, err
 	}
+	performance.ProcessStarted(cmd.Process.Pid)
 	stopKill, err := startContextProcessGroupKill(ctx, cmd)
 	if err != nil {
 		_ = killProcessGroup(context.Background(), cmd.Process)

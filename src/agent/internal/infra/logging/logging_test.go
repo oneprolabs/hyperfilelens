@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUnifiedHandlerRendersStandardPrefix(t *testing.T) {
@@ -65,6 +66,13 @@ func TestSetupCreatesAgentLog(t *testing.T) {
 		t.Fatalf("agent.log missing: %v", err)
 	}
 	slog.Info("setup test line")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat after log: %v", err)

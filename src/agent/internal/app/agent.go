@@ -18,6 +18,7 @@ import (
 	"hyperfilelens/agent/internal/infra/monitor"
 	"hyperfilelens/agent/internal/infra/observability"
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/performance"
 	"hyperfilelens/agent/internal/remote"
 	"hyperfilelens/agent/internal/selfupdate"
 	"hyperfilelens/agent/internal/wire"
@@ -147,6 +148,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	go a.storageInventoryLoop(ctx)
 	go a.networkStorageInventoryLoop(ctx)
 	go a.monitorCollectionLoop(ctx)
+	// Optional policies are never part of Startup or the control-connection
+	// success path. An unavailable endpoint or governor cannot stop work.
+	performanceManager := performance.New(a.store.Current().DataDir)
+	go performanceManager.Run(ctx, a.store)
 
 	for {
 		if err := ctx.Err(); err != nil {

@@ -2395,6 +2395,10 @@ configure_gateway_resource_policy() {
 		rm -f "${GATEWAY_RESOURCE_DROPIN}"
 		return 0
 	fi
+	if [[ -f "${DATA_DIR}/runtime/performance-policy.json" ]]; then
+		log_ok "retaining explicitly configured runtime resource policy"
+		return 0
+	fi
 	install -d -m 755 "$(dirname "${GATEWAY_RESOURCE_DROPIN}")"
 	cat >"${GATEWAY_RESOURCE_DROPIN}" <<'EOF'
 [Service]

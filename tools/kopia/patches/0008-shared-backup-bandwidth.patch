@@ -1,0 +1,399 @@
+diff --git a/cli/app.go b/cli/app.go
+--- a/cli/app.go
++++ b/cli/app.go
+@@ -247,6 +247,7 @@
+ }
+ 
+ func (c *App) setup(app *kingpin.Application) {
++	app.Flag("hfl-backup-quota-v1", "Managed fail-open shared backup upload pacing capability.").Bool()
+ 	app.PreAction(func(pc *kingpin.ParseContext) error {
+ 		if sc := pc.SelectedCommand; sc != nil {
+ 			c.currentAction = sc.FullCommand()
+diff --git a/repo/open.go b/repo/open.go
+--- a/repo/open.go
++++ b/repo/open.go
+@@ -3,6 +3,7 @@
+ import (
+ 	"context"
+ 	"encoding/json"
++	"github.com/kopia/kopia/internal/hflquota"
+ 	"io"
+ 	"os"
+ 	"path/filepath"
+@@ -220,6 +221,7 @@
+ 	if err != nil {
+ 		return nil, errors.Wrap(err, "cannot open storage")
+ 	}
++	st = hflquota.Wrap(st)
+ 
+ 	if lc.ReadOnly {
+ 		st = readonly.NewWrapper(st)
+diff --git a/repo/grpc_repository_client.go b/repo/grpc_repository_client.go
+--- a/repo/grpc_repository_client.go
++++ b/repo/grpc_repository_client.go
+@@ -3,6 +3,7 @@
+ import (
+ 	"context"
+ 	"encoding/json"
++	"github.com/kopia/kopia/internal/hflquota"
+ 	"io"
+ 	"net"
+ 	"net/url"
+@@ -930,7 +932,7 @@
+ 		r.innerSessionAttemptCount++
+ 
+ 		v, err := retry.WithExponentialBackoff(ctx, "establishing session", func() (*grpcInnerSession, error) {
+-			sess, err := cli.Session(context.WithoutCancel(ctx))
++			sess, err := cli.Session(hflquota.BackupContext(context.WithoutCancel(ctx)))
+ 			if err != nil {
+ 				return nil, errors.Wrap(err, "Session()")
+ 			}
+diff --git a/internal/server/grpc_session.go b/internal/server/grpc_session.go
+--- a/internal/server/grpc_session.go
++++ b/internal/server/grpc_session.go
+@@ -3,6 +3,7 @@
+ import (
+ 	"context"
+ 	"encoding/json"
++	"github.com/kopia/kopia/internal/hflquota"
+ 	"net/http"
+ 	"runtime"
+ 	"strings"
+@@ -289,6 +290,7 @@
+ 		return accessDeniedResponse()
+ 	}
+ 
++	hflquota.ServerWrite(ctx, len(req.GetData()))
+ 	contentID, err := dw.ContentManager().WriteContent(ctx, gather.FromSlice(req.GetData()), content.IDPrefix(req.GetPrefix()), compression.HeaderID(req.GetCompression()))
+ 	if err != nil {
+ 		return errorResponse(err)
+diff --git a/internal/logfile/logfile.go b/internal/logfile/logfile.go
+--- a/internal/logfile/logfile.go
++++ b/internal/logfile/logfile.go
+@@ -3,6 +3,7 @@
+ 
+ import (
+ 	"context"
++	"encoding/json"
+ 	"fmt"
+ 	"io"
+ 	"math"
+@@ -101,6 +102,29 @@
+ 
+ // initialize is invoked as part of command execution to create log file just before it's needed.
+ func (c *loggingFlags) initialize(ctx *kingpin.ParseContext) error {
++	var managed struct {
++		Level  string `json:"level"`
++		Dir    string `json:"dir"`
++		Days   int    `json:"days"`
++		Budget int    `json:"budget_mb"`
++	}
++	if raw := os.Getenv("HFL_RUNTIME_LOG_POLICY"); len(raw) > 0 && len(raw) < 4096 &&
++		json.Unmarshal([]byte(raw), &managed) == nil && filepath.IsAbs(managed.Dir) &&
++		(managed.Level == "debug" || managed.Level == "info" || managed.Level == "warning" || managed.Level == "error") &&
++		managed.Days >= 1 && managed.Days <= 365 && managed.Budget >= 32 && managed.Budget <= 8192 {
++		c.logDir = managed.Dir
++		c.logLevel, c.fileLogLevel = managed.Level, managed.Level
++		c.logDirMaxAge = time.Duration(managed.Days) * 24 * time.Hour
++		c.contentLogDirMaxAge = c.logDirMaxAge
++		c.logDirMaxTotalSizeMB = float64(managed.Budget) / 2
++		c.contentLogDirMaxTotalSizeMB = c.logDirMaxTotalSizeMB
++		c.logFileMaxSegmentSize = 1_000_000
++		c.waitForLogSweep = false // Optional cleanup cannot hold a command open.
++		// Agent-owned cleanup checks live PIDs and file identity. Do not let
++		// independent CLI processes remove one another's active log segments.
++		c.logDirMaxFiles, c.contentLogDirMaxFiles = 0, 0
++		c.logDirMaxAge, c.contentLogDirMaxAge = 0, 0
++	}
+ 	if c.logDir == "" {
+ 		return nil
+ 	}
+diff --git a/internal/hflquota/quota.go b/internal/hflquota/quota.go
+new file mode 100644
+--- /dev/null
++++ b/internal/hflquota/quota.go
+@@ -0,0 +1,162 @@
++// Package hflquota implements optional managed backup upload pacing. It has no
++// effect without Agent-supplied process environment, and fails open.
++package hflquota
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++	"net/url"
++	"os"
++	"sync"
++	"time"
++
++	"github.com/kopia/kopia/repo/blob"
++	"google.golang.org/grpc/metadata"
++)
++
++const chunk = 64 * 1024
++
++var warningOnce sync.Once
++
++func degraded() {
++	warningOnce.Do(func() {
++		fmt.Fprintln(os.Stderr, "HFL_QUOTA_DEGRADED: optional pacing unavailable; backup transfer continues unrestricted")
++	})
++}
++
++var client = &http.Client{
++	Timeout:       250 * time.Millisecond,
++	Transport:     &http.Transport{Proxy: nil, MaxIdleConnsPerHost: 32},
++	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
++}
++
++// Wait is not allowed to introduce a transfer error. Healthy quota exhaustion
++// is retried; IPC failures immediately allow the original operation to proceed.
++func Wait(ctx context.Context, count int) {
++	// Governance must not turn a storage operation into an indefinite wait.
++	// Keep a margin below repository-operation deadlines, and fail open.
++	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
++	defer cancel()
++	endpoint := os.Getenv("HFL_BACKUP_QUOTA_URL")
++	if endpoint == "" {
++		return
++	}
++	token := os.Getenv("HFL_BACKUP_QUOTA_TOKEN")
++	u, err := url.Parse(endpoint)
++	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Port() == "" ||
++		u.User != nil || u.Path != "" || u.RawQuery != "" || len(token) != 64 {
++		degraded()
++		return
++	}
++	for count > 0 {
++		n := min(count, chunk)
++		payload, _ := json.Marshal(map[string]any{"bytes": n, "task": os.Getenv("HFL_BACKUP_QUOTA_TASK")})
++		for {
++			req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/quota", bytes.NewReader(payload))
++			if err != nil {
++				degraded()
++				return
++			}
++			req.Header.Set("X-HFL-Quota-Token", token)
++			req.Header.Set("Content-Type", "application/json")
++			response, err := client.Do(req)
++			if err != nil {
++				degraded()
++				return
++			}
++			var result struct {
++				Granted int `json:"granted"`
++				Retry   int `json:"retry_ms"`
++			}
++			decodeErr := json.NewDecoder(io.LimitReader(response.Body, 1024)).Decode(&result)
++			_ = response.Body.Close()
++			if response.StatusCode != http.StatusOK || decodeErr != nil {
++				degraded()
++				return
++			}
++			if result.Granted == n {
++				break
++			}
++			if result.Granted != 0 {
++				degraded()
++				return
++			}
++			timer := time.NewTimer(time.Duration(min(100, max(10, result.Retry))) * time.Millisecond)
++			select {
++			case <-ctx.Done():
++				timer.Stop()
++				degraded()
++				return
++			case <-timer.C:
++			}
++		}
++		count -= n
++	}
++}
++
++func BackupContext(ctx context.Context) context.Context {
++	if os.Getenv("HFL_BACKUP_DATA") != "1" {
++		return ctx
++	}
++	return metadata.AppendToOutgoingContext(ctx, "hfl-backup-data", "1")
++}
++
++func ServerWrite(ctx context.Context, count int) {
++	if os.Getenv("HFL_BACKUP_QUOTA_MODE") != "server" {
++		return
++	}
++	metadataValues, ok := metadata.FromIncomingContext(ctx)
++	if !ok {
++		return
++	}
++	for _, value := range metadataValues.Get("hfl-backup-data") {
++		if value == "1" {
++			// Only an explicitly marked managed backup upload is data-plane
++			// traffic. Repository control and maintenance writes remain
++			// unrestricted, including requests from older clients.
++			Wait(ctx, count)
++			return
++		}
++	}
++}
++
++type storage struct{ blob.Storage }
++
++func Wrap(original blob.Storage) blob.Storage {
++	if os.Getenv("HFL_BACKUP_DATA") != "1" || os.Getenv("HFL_BACKUP_QUOTA_MODE") == "server" {
++		return original
++	}
++	return &storage{original}
++}
++func (s *storage) PutBlob(ctx context.Context, id blob.ID, data blob.Bytes, options blob.PutOptions) error {
++	return s.Storage.PutBlob(ctx, id, quotaBytes{data, ctx}, options)
++}
++
++type quotaBytes struct {
++	blob.Bytes
++	ctx context.Context
++}
++
++func (b quotaBytes) Reader() io.ReadSeekCloser { return &quotaReader{b.Bytes.Reader(), b.ctx} }
++func (b quotaBytes) WriteTo(w io.Writer) (int64, error) {
++	r := b.Reader()
++	defer r.Close()
++	return io.CopyBuffer(w, r, make([]byte, chunk))
++}
++
++type quotaReader struct {
++	io.ReadSeekCloser
++	ctx context.Context
++}
++
++func (r *quotaReader) Read(data []byte) (int, error) {
++	n, err := r.ReadSeekCloser.Read(data[:min(len(data), chunk)])
++	if n > 0 {
++		Wait(r.ctx, n)
++	}
++	return n, err
++}
+diff --git a/internal/hflquota/quota_test.go b/internal/hflquota/quota_test.go
+new file mode 100644
+--- /dev/null
++++ b/internal/hflquota/quota_test.go
+@@ -0,0 +1,117 @@
++package hflquota
++
++import (
++	"context"
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/kopia/kopia/internal/gather"
++	"github.com/kopia/kopia/repo/blob"
++	"google.golang.org/grpc/metadata"
++)
++
++func configure(t *testing.T, handler http.HandlerFunc) *httptest.Server {
++	t.Helper()
++	server := httptest.NewServer(handler)
++	t.Cleanup(server.Close)
++	t.Setenv("HFL_BACKUP_QUOTA_URL", server.URL)
++	t.Setenv("HFL_BACKUP_QUOTA_TOKEN", strings.Repeat("a", 64))
++	t.Setenv("HFL_BACKUP_QUOTA_TASK", "backup")
++	return server
++}
++
++func TestQuotaRetriesExhaustionAndFailsOpenOnFailure(t *testing.T) {
++	calls := 0
++	configure(t, func(w http.ResponseWriter, r *http.Request) {
++		if r.Header.Get("X-HFL-Quota-Token") != strings.Repeat("a", 64) {
++			t.Error("missing local auth")
++		}
++		calls++
++		var request struct {
++			Bytes int `json:"bytes"`
++		}
++		_ = json.NewDecoder(r.Body).Decode(&request)
++		grant := request.Bytes
++		if calls < 3 {
++			grant = 0
++		}
++		_ = json.NewEncoder(w).Encode(map[string]int{"granted": grant, "retry_ms": 10})
++	})
++	Wait(context.Background(), chunk+10)
++	if calls != 4 {
++		t.Fatalf("calls=%d", calls)
++	}
++	configure(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) })
++	start := time.Now()
++	Wait(context.Background(), chunk)
++	if time.Since(start) > time.Second {
++		t.Fatal("failure blocked backup")
++	}
++	t.Setenv("HFL_BACKUP_QUOTA_URL", "https://external.example")
++	Wait(context.Background(), chunk) // Never sends Agent IPC credentials off-host.
++}
++
++type storageSink struct {
++	blob.Storage
++	data []byte
++}
++
++func (s *storageSink) PutBlob(_ context.Context, _ blob.ID, data blob.Bytes, _ blob.PutOptions) error {
++	r := data.Reader()
++	defer r.Close()
++	s.data, _ = io.ReadAll(r)
++	return nil
++}
++
++func TestStoragePacingPreservesDataAndUnmanagedBehavior(t *testing.T) {
++	bytes := 0
++	configure(t, func(w http.ResponseWriter, r *http.Request) {
++		var request struct {
++			Bytes int `json:"bytes"`
++		}
++		_ = json.NewDecoder(r.Body).Decode(&request)
++		bytes += request.Bytes
++		_ = json.NewEncoder(w).Encode(map[string]int{"granted": request.Bytes})
++	})
++	t.Setenv("HFL_BACKUP_DATA", "1")
++	sink := &storageSink{}
++	data := []byte(strings.Repeat("backup", 20000))
++	if err := Wrap(sink).PutBlob(context.Background(), "p1", gather.FromSlice(data), blob.PutOptions{}); err != nil {
++		t.Fatal(err)
++	}
++	if string(sink.data) != string(data) || bytes != len(data) {
++		t.Fatal("changed backup bytes or accounting")
++	}
++	t.Setenv("HFL_BACKUP_DATA", "")
++	if Wrap(sink) != sink {
++		t.Fatal("unmanaged storage wrapped")
++	}
++}
++
++func TestProxyPacesOnlyMarkedRepositoryDataWrites(t *testing.T) {
++	calls := 0
++	configure(t, func(w http.ResponseWriter, r *http.Request) {
++		calls++
++		_ = json.NewEncoder(w).Encode(map[string]int{"granted": 10})
++	})
++	t.Setenv("HFL_BACKUP_QUOTA_MODE", "server")
++	ServerWrite(context.Background(), 10)
++	if calls != 0 {
++		t.Fatal("unmarked repository control write was throttled")
++	}
++	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("hfl-backup-data", "1"))
++	ServerWrite(ctx, 10)
++	if calls != 1 {
++		t.Fatal("marked repository backup write was not throttled")
++	}
++	t.Setenv("HFL_BACKUP_QUOTA_MODE", "")
++	ServerWrite(ctx, 10)
++	if calls != 1 {
++		t.Fatal("non-server process changed")
++	}
++}

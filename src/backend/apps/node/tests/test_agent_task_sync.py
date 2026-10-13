@@ -59,7 +59,12 @@ class AgentTaskSyncWaitTests(TestCase):
         self.assertEqual(payload["kopia_cache_size_mb"], 1024)
 
     def test_repository_task_preserves_explicit_zero_cache_policy(self):
-        self.node.metadata = {"perf_settings": {"kopiaCacheMb": 0}}
+        self.node.metadata = {
+            "performance_policy": {
+                "revision": 1,
+                "settings": {"kopiaCacheMb": 0},
+            }
+        }
         payload = _attach_node_kopia_cache_policy(
             node=self.node,
             payload={"repository": {"id": 9, "type": "s3"}},
@@ -69,13 +74,27 @@ class AgentTaskSyncWaitTests(TestCase):
 
     def test_invalid_repository_cache_policy_uses_safe_default(self):
         for value in (True, "2048", -1, 65537):
-            self.node.metadata = {"perf_settings": {"kopiaCacheMb": value}}
+            self.node.metadata = {
+                "performance_policy": {
+                    "revision": 1,
+                    "settings": {"kopiaCacheMb": value},
+                }
+            }
             payload = _attach_node_kopia_cache_policy(
                 node=self.node,
                 payload={"repository": {"id": 9, "type": "s3"}},
             )
 
             self.assertEqual(payload["kopia_cache_size_mb"], 1024)
+
+    def test_legacy_settings_are_not_activated_without_a_policy(self):
+        self.node.metadata = {"perf_settings": {"kopiaCacheMb": 0}}
+        payload = _attach_node_kopia_cache_policy(
+            node=self.node,
+            payload={"repository": {"id": 9, "type": "s3"}},
+        )
+
+        self.assertEqual(payload["kopia_cache_size_mb"], 1024)
 
     def test_payload_without_repository_is_not_modified(self):
         payload = {"path": "/tmp"}

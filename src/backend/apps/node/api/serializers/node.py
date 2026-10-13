@@ -1,6 +1,8 @@
 """Serializers for ``Node``."""
 
 from rest_framework import serializers
+from django.db import transaction
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from apps.node.models import Node
 from apps.node.services.internal.node_registry import agent_ws_routable
@@ -22,6 +24,48 @@ class NodeSerializer(serializers.ModelSerializer):
         read_only=True
     )
     repository_server_address_source = serializers.SerializerMethodField(read_only=True)
+
+    def update(self, instance, validated_data):
+        if "metadata" not in validated_data:
+            return super().update(instance, validated_data)
+        from apps.node.services.internal.performance_policy import merge_performance_metadata
+
+        incoming = validated_data["metadata"]
+        if not isinstance(incoming, dict):
+            raise serializers.ValidationError({"metadata": "Must be an object."})
+        with transaction.atomic():
+            locked = Node.objects.select_for_update().get(pk=instance.pk)
+            try:
+                validated_data["metadata"] = merge_performance_metadata(
+                    locked.metadata, incoming, role=locked.role,
+                )
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(
+                    {"metadata": exc.message_dict if hasattr(exc, "message_dict") else exc.messages}
+                ) from exc
+            previous = (locked.metadata or {}).get("performance_policy") if isinstance(locked.metadata, dict) else None
+            updated = super().update(locked, validated_data)
+            policy = updated.metadata.get("performance_policy")
+            if policy != previous:
+                from apps.audit.services.interface import write_audit_log
+
+                request = self.context.get("request")
+                write_audit_log(
+                    organization=updated.organization,
+                    user=getattr(request, "user", None),
+                    action="node.performance.configure",
+                    target_type="node",
+                    target_id=str(updated.pk),
+                    metadata={"revision": policy["revision"], "settings": policy["settings"]},
+                )
+            # DRF and the EE platform-gateway view serialize the original
+            # instance after save(). Keep that instance in sync with the
+            # locked row; returning the separate locked object would make the
+            # PATCH response expose stale metadata and revert the console UI.
+            for field in validated_data:
+                setattr(instance, field, getattr(updated, field))
+            instance.updated_at = updated.updated_at
+            return instance
 
     class Meta:
         model = Node

@@ -56,12 +56,12 @@ export function readNodePerfSettings(
   const log = asLogLevel(obj.log)
   return {
     bandwidth: asPositiveInt(obj.bandwidth) ?? defaults.bandwidth,
-    cpuCores: asPositiveInt(obj.cpuCores) ?? defaults.cpuCores,
-    memCapMb: asPositiveInt(obj.memCapMb) ?? defaults.memCapMb,
-    kopiaCacheMb: asCacheSizeMb(obj.kopiaCacheMb) ?? defaults.kopiaCacheMb,
+    cpuCores: asPositiveInt(obj.cpuCores ?? obj.cpu_cores) ?? defaults.cpuCores,
+    memCapMb: asPositiveInt(obj.memCapMb ?? obj.mem_cap_mb) ?? defaults.memCapMb,
+    kopiaCacheMb: asCacheSizeMb(obj.kopiaCacheMb ?? obj.kopia_cache_mb) ?? defaults.kopiaCacheMb,
     log: log ?? defaults.log,
-    logRetention: asPositiveInt(obj.logRetention) ?? defaults.logRetention,
-    logSpaceMb: asPositiveInt(obj.logSpaceMb) ?? defaults.logSpaceMb,
+    logRetention: asPositiveInt(obj.logRetention ?? obj.log_retention) ?? defaults.logRetention,
+    logSpaceMb: asPositiveInt(obj.logSpaceMb ?? obj.log_space_mb) ?? defaults.logSpaceMb,
   }
 }
 
