@@ -8187,5 +8187,11 @@
   "protection.backupsPage.unregisterCleanupDiagnosticNamed": "7d66f1421efb4fbf3afa1414ec1f43d1411223ca80aed1c11f6d0c6b39625f83",
   "protection.backupsPage.unregisterSuggestedActions": "09b7a768f47e4a33f08c9b3ba42510a99c6e19741365c68f554f6ed72523fc8f",
   "protection.backupsPage.unregisterPendingResources": "770937c1f58ffc868cef4a88af43723c86849d145fcfab5c50986cbe0110bfd5",
-  "protection.backupsPage.unregisterAgentInstallationNote": "57ba7cd9e3f2e1524108259d5ecd9df840414b702530cfb910e9fd495c18ef62"
+  "protection.backupsPage.unregisterAgentInstallationNote": "57ba7cd9e3f2e1524108259d5ecd9df840414b702530cfb910e9fd495c18ef62",
+  "nodeLifecycle.configure.label": "e84f072b21240fcd095afbcafa3305c02d61705d1565f16dd3940b12dd7db113",
+  "nodeLifecycle.configure.placeholder": "a941687bf42702df7f4d0bee6c232dc63174f5a4aef8bfeb46fbdf6222d2a7b9",
+  "nodeLifecycle.configure.requirements": "e0b21efd50276065fa490ebc57d7c368df18229bfb877b77a8561c11aca110e2",
+  "nodeLifecycle.tab.configure": "9b24de03d98f8d13d2363a2fe5f4bf4dd6ef2f3d203cdb8421e8f45194798887",
+  "nodeLifecycle.tabHint.configure": "0d29598a61181b7d1f497697bf89d3acf78bda8b2382852554eaed2cad6a53a6",
+  "nodeLifecycle.footnote.configure": "bc2a0a67f02dcfe10493c0590075ee3564cef77ffa6a059afb506a6ed701664d"
 }

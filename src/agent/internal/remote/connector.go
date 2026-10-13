@@ -12,6 +12,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +21,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"hyperfilelens/agent/internal/infra/config"
+	"hyperfilelens/agent/internal/platform/atomicfile"
 	"hyperfilelens/agent/internal/platform/tlsclient"
 	"hyperfilelens/agent/internal/wire"
 )
@@ -287,6 +290,19 @@ func (c *Connector) connectOnce(
 		nodeID = c.provider.Current().NodeID
 	}
 	slog.Info("websocket connected", "node_id", nodeID, "url", redactDialURL(dialURL))
+	if c.provider != nil {
+		cfg := c.provider.Current()
+		if cfg.DataDir != "" {
+			record, _ := json.Marshal(struct {
+				URL         string
+				ConnectedAt time.Time
+				PID         int
+			}{cfg.WSSURL, time.Now().UTC(), os.Getpid()})
+			if err := atomicfile.Write(filepath.Join(cfg.DataDir, "runtime", "connection.json"), record, 0600); err != nil {
+				slog.Warn("connection observation could not be saved", "err", err)
+			}
+		}
+	}
 	if reconnected {
 		slog.Info("websocket reconnected", "node_id", nodeID)
 	}

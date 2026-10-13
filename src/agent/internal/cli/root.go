@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	"hyperfilelens/agent/internal/connection"
 	"hyperfilelens/agent/internal/enroll"
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/infra/database"
@@ -20,6 +22,13 @@ func Run(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "configure":
+		if len(args) != 3 || args[1] != "--server-url" {
+			return fmt.Errorf("usage: hfl-agent configure --server-url URL")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		return enroll.WithInstallLock(ctx, func() error { return connection.Configure(ctx, args[2]) })
 	case "version":
 		if len(args) != 1 {
 			return fmt.Errorf("version does not accept arguments")
@@ -119,6 +128,8 @@ Usage:
   hfl-agent database backup         Create a consistent local database backup
   hfl-agent help                    Show this help
   hfl-agent config show|set|paths   Manage hot-reloadable configuration
+  hfl-agent configure --server-url URL
+                                   Change this installed node's server connection
   hfl-agent fs ls [path]            List local directory entries
   hfl-agent snapshot list|create    Kopia snapshot operations
   hfl-agent restore <path>          Restore from Kopia snapshot
@@ -197,7 +208,7 @@ func parseWireStatus(s string) (string, error) {
 // IsSubcommand reports whether arg is a CLI subcommand (not daemon flags).
 func IsSubcommand(arg string) bool {
 	switch arg {
-	case "help", "-h", "--help", "version", "package", "database", "config", "tasks", "fs", "snapshot", "restore", "repo":
+	case "help", "-h", "--help", "version", "package", "database", "config", "configure", "tasks", "fs", "snapshot", "restore", "repo":
 		return true
 	default:
 		return false

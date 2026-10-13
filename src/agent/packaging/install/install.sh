@@ -251,14 +251,15 @@ Usage: install.sh [command] [options]
 When no command is given, equivalent to: install.sh install
 
 Commands:
-  install       Install agent binaries and configuration (${INSTALL_DIR})
-  start         Start ${lifecycle}
-  stop          Stop ${lifecycle}
-  restart       Stop then start ${lifecycle}
-  status        Show installed version, paths, and service state
-  upgrade       In-place upgrade from another release package directory or .tar.gz
+  install           Install agent binaries and configuration (${INSTALL_DIR})
+  configure         Change this installed node's server connection
+  start             Start ${lifecycle}
+  stop              Stop ${lifecycle}
+  restart           Stop then start ${lifecycle}
+  status            Show installed version, paths, and service state
+  upgrade           In-place upgrade from another release package directory or .tar.gz
   reconcile-legacy  Complete a pending legacy-layout cleanup after an upgrade
-  uninstall     Stop service and remove the complete Agent installation
+  uninstall         Stop service and remove the complete Agent installation
 
 Options:
   install:
@@ -271,14 +272,17 @@ Options:
     --role ROLE         Node role (default: agent)
     --no-start          Do not start any service after install
 
+  configure:
+    --server-url URL    New HyperFileLens application address
+
   upgrade:
     --from PATH         Path to new package directory or hfl-agent-*.tar.gz (required)
-						Extracts to DATA_DIR/runtime/workspace, merges missing config/agent.env keys,
+                        Extracts to DATA_DIR/runtime/workspace, merges missing config/agent.env keys,
                         migrates agent.db schema, overwrites binaries; removes workspace on success
     --yes               Non-interactive: continue when target version equals installed version
 
   uninstall:
-    --keep-data                  Preserve local configuration, data, and logs
+    --keep-data         Preserve local configuration, data, and logs
 
 Install paths:
   ${INSTALL_DIR}  Binaries and installer scripts
@@ -290,6 +294,7 @@ Examples:
   ${command_prefix}./install.sh install --wss-url 'wss://console.example/ws/node/agent/' --api-base 'https://console.example' --org-key 'org_xxx' --node-token 'tok_xxx'
   ${command_prefix}./install.sh start
   ${command_prefix}./install.sh status
+  ${command_prefix}./install.sh configure --server-url 'https://console.example:11443'
   ${command_prefix}./install.sh upgrade --from /path/to/hfl-agent-0.1.0.tar.gz
   ${command_prefix}./install.sh uninstall
   ${command_prefix}./install.sh uninstall --keep-data
@@ -768,6 +773,18 @@ process_start_marker() {
 acquire_lifecycle_lock() {
 	local data_dir="$1" operation="$2" pid_file
 	local lock_dir="$(agent_lifecycle_dir "${data_dir}")/install.lock"
+	# User enrollment owns install.lock as a persistent flock file. Keep local
+	# lifecycle directory locking separate, including nested configure actions.
+	if is_user_mode; then
+		lock_dir="$(agent_lifecycle_dir "${data_dir}")/operation.lock"
+	fi
+	if [[ "${HFL_CONFIGURE_OWNER_PID:-}" =~ ^[0-9]+$ \
+		&& ("${operation}" == "start" || "${operation}" == "stop") \
+		&& "$(cat "${lock_dir}/pid" 2>/dev/null || true)" == "${HFL_CONFIGURE_OWNER_PID}" \
+		&& "$(cat "${lock_dir}/operation" 2>/dev/null || true)" == "configure" ]] \
+		&& kill -0 "${HFL_CONFIGURE_OWNER_PID}" 2>/dev/null; then
+		return 0
+	fi
 	local owner_pid="" recorded_start="" actual_start="" attempt
 	mkdir -p "$(agent_lifecycle_dir "${data_dir}")"
 	if ! mkdir "${lock_dir}" 2>/dev/null; then
@@ -3399,6 +3416,14 @@ cmd_restart() {
 }
 
 case "$CMD" in
+	configure)
+		require_root
+		require_agent_installed
+		[[ $# -eq 2 && "$1" == "--server-url" ]] \
+			|| log_fail "Usage: install.sh configure --server-url URL" 2
+		HFL_INSTALLATION_MODE="${INSTALLATION_MODE}" HFL_DATA_DIR="$(resolve_data_dir)" \
+			"${INSTALL_DIR}/hfl-agent" configure --server-url "$2"
+		;;
 	install) cmd_install "$@" ;;
 	reconcile-legacy) cmd_reconcile_legacy "$@" ;;
 	start) cmd_start "$@" ;;

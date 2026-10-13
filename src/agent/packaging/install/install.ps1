@@ -12,13 +12,15 @@
   install.cmd upgrade -From C:\path\to\package.zip
   install.cmd uninstall
   install.cmd status
+  install.cmd configure -ServerUrl 'https://console.example:11443'
 #>
 param(
   [Parameter(Position = 0)]
-  [ValidateSet("install", "start", "stop", "restart", "status", "upgrade", "uninstall")]
+  [ValidateSet("install", "configure", "start", "stop", "restart", "status", "upgrade", "uninstall")]
   [string]$Command = "install",
   [string]$WssUrl = "",
   [string]$ApiBase = "",
+  [string]$ServerUrl = "",
   [string]$OrgKey = "",
   [string]$NodeToken = "",
   [string]$NodeId = "",
@@ -171,6 +173,16 @@ function Ensure-HflAgentLayout {
 function Acquire-HflLifecycleLock {
   param([Parameter(Mandatory = $true)][string]$DataRoot, [Parameter(Mandatory = $true)][string]$Operation)
   $lock = Join-Path (Get-HflLifecycleRoot $DataRoot) "install.lock"
+  if ($env:HFL_CONFIGURE_OWNER_PID -match '^\d+$' -and $Operation -in @("start", "stop")) {
+    $ownerFile = Join-Path $lock "pid"
+    $operationFile = Join-Path $lock "operation"
+    if ((Test-Path $ownerFile) -and (Test-Path $operationFile) -and
+        (Get-Content $ownerFile -Raw).Trim() -eq $env:HFL_CONFIGURE_OWNER_PID -and
+        (Get-Content $operationFile -Raw).Trim() -eq "configure" -and
+        (Get-Process -Id ([int]$env:HFL_CONFIGURE_OWNER_PID) -ErrorAction SilentlyContinue)) {
+      return
+    }
+  }
   New-Item -ItemType Directory -Force -Path (Get-HflLifecycleRoot $DataRoot) | Out-Null
   try {
     New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null
@@ -296,34 +308,37 @@ Usage: install.cmd [command] [options]
 When no command is given, equivalent to: install.cmd install
 
 Commands:
-  install       Install agent binaries and configuration
-  start         Start HyperFileLensAgent managed startup
-  stop          Stop HyperFileLensAgent managed startup
-  restart       Stop then start HyperFileLensAgent managed startup
-  status        Show installed version, paths, and lifecycle state
-  upgrade       In-place upgrade from another release package directory or .zip
-  uninstall     Stop managed startup and remove the complete Agent installation
+  install           Install agent binaries and configuration
+  configure         Change this installed node's server connection
+  start             Start HyperFileLensAgent managed startup
+  stop              Stop HyperFileLensAgent managed startup
+  restart           Stop then start HyperFileLensAgent managed startup
+  status            Show installed version, paths, and lifecycle state
+  upgrade           In-place upgrade from another release package directory or .zip
+  uninstall         Stop managed startup and remove the complete Agent installation
 
 Options:
   install:
     -WssUrl URL         WebSocket control plane URL
     -ApiBase URL        HyperFileLens API base URL
-    -OrgKey KEY          Organization key
-    -NodeToken TOKEN     Node enrollment token
-    -NodeId ID           Node ID (usually set after enrollment heartbeat)
-    -DataDir PATH        Data directory (default: $DefaultDataRoot)
-    -Role ROLE           Node role (default: agent)
-    -NoStart             Do not start managed startup after install
+    -OrgKey KEY         Organization key
+    -NodeToken TOKEN    Node enrollment token
+    -NodeId ID          Node ID (usually set after enrollment heartbeat)
+    -DataDir PATH       Data directory (default: $DefaultDataRoot)
+    -Role ROLE          Node role (default: agent)
+    -NoStart            Do not start managed startup after install
+
+  configure:
+    -ServerUrl URL      New HyperFileLens application address
 
   upgrade:
-    -From PATH           Path to new package directory or hfl-agent-*.zip (required)
-    -Yes                  Non-interactive: continue when target version equals installed version
-                          Extracts to DATA_DIR/runtime/workspace, merges missing config/agent.env keys,
-                          migrates agent.db schema, overwrites binaries; removes workspace on success
+    -From PATH          Path to new package directory or hfl-agent-*.zip (required)
+    -Yes                Non-interactive: continue when target version equals installed version
+                        Extracts to DATA_DIR/runtime/workspace, merges missing config/agent.env keys,
+                        migrates agent.db schema, overwrites binaries; removes workspace on success
 
   uninstall:
-    -KeepData                   Preserve local configuration, data, and logs
-
+    -KeepData           Preserve local configuration, data, and logs
 Install paths:
   $InstallRoot         Binaries and installer scripts
   $DefaultDataRoot     Unified Agent Root (config/, data/, logs/, cache/, mounts/, runtime/, lifecycle/, backup/)
@@ -2811,6 +2826,13 @@ function Invoke-Status {
 Assert-HflInstallationIdentity
 
 switch ($Command) {
+  "configure" {
+    if (-not $ServerUrl) { throw "Usage: install.cmd configure -ServerUrl URL" }
+    $env:HFL_DATA_DIR = $AgentRoot
+    $env:HFL_INSTALLATION_MODE = $InstallationMode
+    & (Join-Path $InstallRoot "hfl-agent.exe") configure --server-url $ServerUrl
+    if ($LASTEXITCODE -ne 0) { throw "Server configuration failed." }
+  }
   "install" { Invoke-Install }
   "start" { Invoke-Start }
   "stop" { Invoke-Stop }
