@@ -229,7 +229,7 @@ describe('Shared dialog resource table styling', () => {
       props: {
         modelValue: true,
         title: 'Delete proxy',
-        items: [{ name: 'proxy-01', status: { label: 'Offline', tone: 'danger' } }],
+        items: [{ name: 'proxy-01', description: 'Hidden-column regression detail', status: { label: 'Offline', tone: 'danger' } }],
       },
       global: {
       plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
@@ -247,6 +247,14 @@ describe('Shared dialog resource table styling', () => {
     expect(tag.props('size')).toBe('small')
     expect(tag.props('effect')).toBe('light')
     expect(tag.props('type')).toBe('danger')
+    await wrapper.setProps({ showItemDetails: false })
+    await flushPromises()
+    expect(table.findAll('.el-table__header th .cell').map(cell => cell.text())).toEqual(['Name', 'Status'])
+    expect(wrapper.text()).not.toContain('Hidden-column regression detail')
+    await wrapper.setProps({ showItemDetails: true })
+    await flushPromises()
+    expect(table.findAll('.el-table__header th .cell').map(cell => cell.text())).toEqual(['Name', 'Status', 'Details'])
+    expect(wrapper.text()).toContain('Hidden-column regression detail')
     wrapper.unmount()
   })
 
