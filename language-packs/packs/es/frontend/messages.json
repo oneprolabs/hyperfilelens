@@ -3156,7 +3156,7 @@
         "scopes": "Ámbitos",
         "answer": "Respuesta",
         "answerUnavailable": "La respuesta no está disponible o aún no se ha generado.",
-        "error": "Error",
+        "error": "Error de solicitud",
         "loadFailed": "No se pudieron cargar los detalles de la solicitud."
       }
     },
