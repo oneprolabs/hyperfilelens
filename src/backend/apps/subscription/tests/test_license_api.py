@@ -100,10 +100,13 @@ class LicenseApiTests(TestCase):
             self.assertEqual(resp.data["limits"]["max_source_hosts"], -1)
             self.assertTrue(resp.data.get("enforcement_enabled"))
         else:
-            # EE: built-in entitlement + default organization plan are unlimited.
+            # The instance entitlement is unlimited, but the organization
+            # inherits its effective plan (new organizations default to Trial).
             self.assertTrue(resp.data["is_valid"])
             self.assertEqual(resp.data.get("entitlement_source"), "builtin_unlimited")
-            self.assertEqual(resp.data["limits"]["max_users"], -1)
+            self.assertEqual(
+                resp.data["limits"]["max_users"], provider.get_limits(self.org)["max_users"],
+            )
             self.assertTrue(resp.data.get("enforcement_enabled"))
 
     def test_community_ignores_legacy_enterprise_license_row(self):
@@ -606,7 +609,7 @@ class LicenseApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(License.objects.get(organization=self.org).features, ["*"])
 
-    def test_validate_always_allows_in_dev(self):
+    def test_validate_respects_effective_limits_when_enterprise_enforces_quotas(self):
         from common.extension_spi import get_quota_provider
 
         resp = self.client.get(
@@ -620,9 +623,13 @@ class LicenseApiTests(TestCase):
         if provider is None:
             self.assertTrue(payload["is_valid"])
             return
-        # EE enforces both boundaries; current built-in entitlement and default
-        # organization plan are unlimited.
-        self.assertTrue(payload["is_valid"])
+        # Development mode does not bypass an installed EE quota provider.
+        # Unlimited instance grants do not erase finite organization ceilings.
+        limit = provider.get_limits(self.org)["max_users"]
+        self.assertEqual(payload["limit"], limit)
+        self.assertEqual(
+            payload["is_valid"], limit < 0 or payload["used"] + 9999 <= limit,
+        )
         self.assertTrue(payload.get("enforcement_enabled"))
 
     def test_validate_rejects_non_numeric_amount(self):

@@ -8,6 +8,8 @@ from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.iam.resource_api import GovernedResourceMixin
+from apps.iam.resource_access import record_resource_owner
 from apps.iam.org_context import require_org
 from apps.iam.permissions_org import IsOrgOperator, IsOrgReader
 from apps.protection.api.pagination import ProtectionPagination
@@ -24,6 +26,7 @@ from apps.protection.selectors import (
     get_backup_policy,
 )
 from apps.protection import services
+from apps.protection.api.execution_access import assert_scheduled_policy_write
 
 
 class Conflict(APIException):
@@ -42,7 +45,9 @@ def _validation_error(exc: DjangoValidationError) -> ValidationError:
     return ValidationError({"detail": exc.messages})
 
 
-class BackupPolicyViewSet(viewsets.ModelViewSet):
+class _BackupPolicyViewSetBase(viewsets.ModelViewSet):
+    governance_resource_type = "backup_policy"
+    governance_manage_action = "protection.manage"
     serializer_class = BackupPolicySerializer
     permission_classes = [IsAuthenticated, IsOrgOperator]
     pagination_class = ProtectionPagination
@@ -82,6 +87,10 @@ class BackupPolicyViewSet(viewsets.ModelViewSet):
             )
         except DjangoValidationError as exc:
             raise _validation_error(exc) from exc
+        record_resource_owner(
+            organization_id=org.id, resource_type="backup_policy",
+            resource_id=policy.id, owner_id=request.user.id,
+        )
         return Response(
             BackupPolicySerializer(policy).data,
             status=status.HTTP_201_CREATED,
@@ -92,6 +101,7 @@ class BackupPolicyViewSet(viewsets.ModelViewSet):
         policy = self.get_object()
         serializer = BackupPolicyWriteSerializer(data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
+        assert_scheduled_policy_write(request, policy, serializer.validated_data)
         try:
             policy = services.update_backup_policy(
                 policy=policy,
@@ -118,6 +128,11 @@ class BackupPolicyViewSet(viewsets.ModelViewSet):
         org = require_org(request)
         serializer = BulkStateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if serializer.validated_data["is_active"]:
+            for policy in BackupPolicy.objects.filter(
+                organization_id=org.id, pk__in=serializer.validated_data["ids"]
+            ):
+                assert_scheduled_policy_write(request, policy, {"is_active": True})
         try:
             result = services.bulk_set_backup_policy_state(
                 organization_id=org.id,
@@ -141,3 +156,10 @@ class BackupPolicyViewSet(viewsets.ModelViewSet):
         except DjangoValidationError as exc:
             raise _validation_error(exc) from exc
         return Response(result)
+
+
+class BackupPolicyViewSet(GovernedResourceMixin, _BackupPolicyViewSetBase):
+    """Resource-aware adapter over the unchanged business implementation."""
+
+    governance_resource_type = "backup_policy"
+    governance_manage_action = "protection.manage"

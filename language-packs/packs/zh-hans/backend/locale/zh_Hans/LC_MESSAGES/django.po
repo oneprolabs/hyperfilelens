@@ -243,6 +243,14 @@ msgstr "组织标识不能为空"
 msgid "Owner role cannot be assigned via membership API."
 msgstr "不能通过成员管理接口分配所有者角色。"
 
+#: src/backend/apps/iam/services/membership_service.py:99
+msgid "Unsupported organization role."
+msgstr "不支持的组织角色。"
+
+#: src/backend/apps/iam/services/membership_service.py:104
+msgid "This organization Role is inactive."
+msgstr "此组织角色已停用。"
+
 #: src/backend/apps/iam/auth/views/registration.py:860
 msgid "Password changed. Please sign in again."
 msgstr "密码已修改，请重新登录。"
@@ -603,3 +611,55 @@ msgstr "© %(year)s HyperFileLens。%(tagline)s"
 
 #~ msgid "Virtual email username (will become username@domain)"
 #~ msgstr "虚拟邮箱用户名（将成为 username@domain）"
+
+#: apps/iam/member-onboarding
+msgid "Set your own password before using this account."
+msgstr "使用此账号前，请先设置自己的密码。"
+
+#: apps/iam/member-onboarding
+msgid "Multiple accounts use this email. Contact your platform administrator."
+msgstr "多个账号使用此邮箱，请联系平台管理员。"
+
+#: apps/iam/member-onboarding
+msgid "Account not found."
+msgstr "未找到账号。"
+
+#: apps/iam/member-onboarding
+msgid "New account creation by organization administrators is disabled."
+msgstr "组织管理员创建新账号的功能已关闭。"
+
+#: apps/iam/member-onboarding
+msgid "New accounts must reserve an active membership seat."
+msgstr "新账号必须占用一个启用的成员席位。"
+
+#: apps/iam/member-onboarding
+msgid "This member is disabled in this organization. Enable the existing membership instead."
+msgstr "此成员在当前组织中已禁用，请启用已有成员关系。"
+
+#: apps/iam/member-onboarding
+msgid "This account is already a member of this organization."
+msgstr "此账号已是当前组织的成员。"
+
+#: apps/iam/member-onboarding
+msgid "Organization creation is unavailable or the account limit has been reached."
+msgstr "创建组织功能不可用，或已达到账号限制。"
+
+#: apps/iam/member-onboarding
+msgid "Enter an organization name of at most 200 characters."
+msgstr "请输入不超过 200 个字符的组织名称。"
+
+#: apps/iam/member-onboarding
+msgid "Only an organization name may be provided."
+msgstr "只能提供组织名称。"
+
+#: apps/iam/member-onboarding
+msgid "Provide an email or an existing user ID, not both."
+msgstr "请提供邮箱或已有用户 ID，不能同时提供。"
+
+#: apps/iam/member-onboarding
+msgid "Choose a password different from the temporary password."
+msgstr "请选择与临时密码不同的新密码。"
+
+#: apps/iam/member-onboarding
+msgid "An account already uses this email. Sign in to that account first."
+msgstr "已有账号使用此邮箱，请先登录该账号。"

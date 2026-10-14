@@ -7,6 +7,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.iam.resource_api import GovernedResourceMixin
 from apps.iam.org_context import require_org
 from apps.iam.permissions_org import IsOrgOperator, IsOrgStaffReader
 from apps.iam.resource_access import assert_resource_access, filter_resource_queryset
@@ -27,7 +28,9 @@ def health(_request):
     return JsonResponse({"app": "source", "status": "ok"})
 
 
-class SourceResourceViewSet(viewsets.ModelViewSet):
+class _SourceResourceViewSetBase(viewsets.ModelViewSet):
+    governance_resource_type = "source_resource"
+    governance_manage_action = "protection.manage"
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
     pagination_class = SourcePagination
     queryset = SourceResource.objects.none()
@@ -73,7 +76,7 @@ class SourceResourceViewSet(viewsets.ModelViewSet):
             self.request,
             queryset,
             "source_resource",
-            action="resources.view",
+            action=self._resource_action(),
         )
 
     def get_object(self):
@@ -87,11 +90,7 @@ class SourceResourceViewSet(viewsets.ModelViewSet):
             self.request,
             "source_resource",
             obj.id,
-            action=(
-                "resources.view"
-                if self.request.method in ("GET", "HEAD", "OPTIONS")
-                else "resources.manage"
-            ),
+            action=self._resource_action(),
         )
         return obj
 
@@ -158,12 +157,26 @@ class SourceResourceViewSet(viewsets.ModelViewSet):
     def statistics(self, request):
         org = require_org(request)
         sync_agent_source_hosts_for_org(organization_id=org.id)
-        return Response(services.resource_statistics(organization_id=org.id))
+        return Response(services.resource_statistics(
+            organization_id=org.id, queryset=self.get_queryset(),
+        ))
 
     @action(detail=False, methods=["get"], url_path="production-summary")
     def production_summary(self, request):
         org = require_org(request)
-        return Response(services.production_source_summary(organization_id=org.id))
+        from apps.node.models import Node
+
+        agents = filter_resource_queryset(
+            request, Node.objects.filter(organization_id=org.pk, role=Node.Role.AGENT),
+            "node", action="protection.source_hosts.view",
+        )
+        nas = filter_resource_queryset(
+            request, SourceResource.objects.filter(organization_id=org.pk, resource_type="nas"),
+            "source_resource", action="protection.source_nas.view",
+        )
+        return Response(services.production_source_summary(
+            organization_id=org.id, agent_queryset=agents, nas_queryset=nas,
+        ))
 
     @action(detail=True, methods=["post"], url_path="test-connection")
     def test_connection(self, request, pk=None):
@@ -241,3 +254,10 @@ class SourceResourceViewSet(viewsets.ModelViewSet):
                 "message": "Directory scan will be available when proxy channel is connected.",
             }
         )
+
+
+class SourceResourceViewSet(GovernedResourceMixin, _SourceResourceViewSetBase):
+    """Resource-aware adapter over the unchanged business implementation."""
+
+    governance_resource_type = "source_resource"
+    governance_manage_action = "protection.manage"

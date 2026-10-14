@@ -6,7 +6,8 @@ from rest_framework.views import APIView
 
 from apps.iam.org_context import require_org
 from apps.iam.resource_access import visible_resource_refs
-from apps.iam.permissions_org import IsOrgOperator, IsOrgStaffReader
+from apps.iam.permissions_org import IsOrgAuthorizedMember, IsOrgOperator, IsOrgStaffReader
+from common.extension_spi import get_authz_provider
 from apps.node.models import Node
 from apps.source.constants import PipelineStep
 from apps.source.constants import ResourceType
@@ -38,6 +39,7 @@ from apps.source.services.internal.backup_source_revert import (
     preflight_revert_backup_sources,
     revert_backup_sources,
 )
+from apps.protection.api.execution_access import assert_source_cleanup
 from apps.source.services.internal.source_pipeline import (
     set_pipeline_steps,
 )
@@ -168,7 +170,7 @@ def _assert_selectable_access(request, ids: list[str], *, action: str) -> None:
 def _filter_selectable_results(request, results: list[dict]) -> list[dict]:
     ids = [str(row.get("id") or "") for row in results]
     refs = _selectable_refs(ids)
-    allowed = visible_resource_refs(request, refs)
+    allowed = visible_resource_refs(request, refs, action="resource.view")
     if allowed is not None:
         allowed_ids = {
             f"agent:{resource_id}" if resource_type == "node" else f"nas:{resource_id}"
@@ -207,13 +209,33 @@ def _filter_selectable_results(request, results: list[dict]) -> list[dict]:
     return results
 
 
-class BackupSelectableListView(APIView):
+class ScopedSelectableView(APIView):
+    """Let Group grants reach the existing per-reference checks, not old role gates."""
+
+    def get_permissions(self):
+        if get_authz_provider() is not None:
+            return [IsAuthenticated(), IsOrgAuthorizedMember()]
+        return super().get_permissions()
+
+
+class BackupSelectableListView(ScopedSelectableView):
     """Unified paginated Agent/NAS catalog for Backup Wizard source steps."""
 
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
     def get(self, request):
         org = require_org(request)
+        from apps.iam.query_authorization import request_authorization
+
+        context = request_authorization(request)
+        if context is not None and not getattr(request, "hfl_support_readonly", False):
+            if not (
+                context.has_action("node", "protection.source_hosts.view")
+                or context.has_action("source_resource", "protection.source_nas.view")
+            ):
+                from rest_framework.exceptions import PermissionDenied
+
+                raise PermissionDenied("Source viewing permission is required.")
         ids_param = (request.query_params.get("ids") or "").strip()
         expand = (request.query_params.get("expand") or "").strip() or None
         if ids_param:
@@ -285,7 +307,7 @@ class BackupSelectableListView(APIView):
         if tag_ids and SourceTag.objects.filter(organization_id=org.id, id__in=tag_ids).count() != len(tag_ids):
             raise ValidationError({"tag_ids": "Unknown tag."})
         visible_tag_sources = None
-        if tag_ids or untagged:
+        if (tag_ids or untagged) and context is None:
             tagged_rows = list(SourceTagAssignment.objects.filter(
                 organization_id=org.id,
                 tag_id__in=tag_ids if tag_ids else [],
@@ -350,6 +372,18 @@ class BackupSelectableListView(APIView):
         except ValueError:
             page_size = 10
 
+        # SQL subqueries apply authorization before count and pagination in
+        # both pipeline and legacy backends, including tag-filtered requests.
+        if context is not None and not getattr(request, "hfl_support_readonly", False):
+            visible_tag_sources = {
+                "agent": context.filter_queryset(
+                    Node.objects.filter(role=Node.Role.AGENT), "node", action="resource.view",
+                ).values_list("pk", flat=True),
+                "nas": context.filter_queryset(
+                    SourceResource.objects.filter(resource_type=ResourceType.NAS),
+                    "source_resource", action="resource.view",
+                ).values_list("pk", flat=True),
+            }
         results, total = list_backup_selectable_sources(
             organization_id=org.id,
             page=page,
@@ -385,7 +419,7 @@ class BackupSelectableListView(APIView):
         )
 
 
-class BackupSelectablePipelineView(APIView):
+class BackupSelectablePipelineView(ScopedSelectableView):
     """Advance real backup-selectable sources through protection wizard steps."""
 
     permission_classes = [IsAuthenticated, IsOrgOperator]
@@ -427,7 +461,7 @@ class BackupSelectablePipelineView(APIView):
         return Response({"updated": updated, "step": step})
 
 
-class BackupSelectablePipelineRevertView(APIView):
+class BackupSelectablePipelineRevertView(ScopedSelectableView):
     """Revert real backup-selectable sources to an earlier protection wizard step."""
 
     permission_classes = [IsAuthenticated, IsOrgOperator]
@@ -461,6 +495,8 @@ class BackupSelectablePipelineRevertView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if target_step == PipelineStep.CONFIG:
+            assert_source_cleanup(request, ids)
         try:
             force = _query_bool(request.data.get("force"))
             updated = revert_backup_sources(
@@ -485,7 +521,7 @@ class BackupSelectablePipelineRevertView(APIView):
         return Response(updated)
 
 
-class BackupSelectableDeletePreflightView(APIView):
+class BackupSelectableDeletePreflightView(ScopedSelectableView):
     permission_classes = [IsAuthenticated, IsOrgOperator]
 
     def post(self, request):
@@ -496,7 +532,8 @@ class BackupSelectableDeletePreflightView(APIView):
                 {"detail": "ids must be a list of agent:/nas: keys."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        _assert_selectable_access(request, ids, action="resources.manage")
+        _assert_selectable_access(request, ids, action="resource.delete")
+        assert_source_cleanup(request, ids, source_action="resource.delete")
         return Response(
             preflight_delete_backup_sources(
                 organization_id=org.id,
@@ -506,7 +543,7 @@ class BackupSelectableDeletePreflightView(APIView):
         )
 
 
-class BackupSelectableBulkDeleteView(APIView):
+class BackupSelectableBulkDeleteView(ScopedSelectableView):
     permission_classes = [IsAuthenticated, IsOrgOperator]
 
     def post(self, request):
@@ -517,7 +554,8 @@ class BackupSelectableBulkDeleteView(APIView):
                 {"detail": "ids must be a list of agent:/nas: keys."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        _assert_selectable_access(request, ids, action="resources.manage")
+        _assert_selectable_access(request, ids, action="resource.delete")
+        assert_source_cleanup(request, ids, source_action="resource.delete")
         force = _query_bool(request.data.get("force"))
         confirmation_keyword = "FORCE DEREGISTER" if force else "DEREGISTER"
         if request.data.get("confirmation") != confirmation_keyword:
@@ -553,7 +591,7 @@ class BackupSelectableBulkDeleteView(APIView):
         return Response(result, status=status.HTTP_202_ACCEPTED)
 
 
-class BackupSelectableRevertPreflightView(APIView):
+class BackupSelectableRevertPreflightView(ScopedSelectableView):
     permission_classes = [IsAuthenticated, IsOrgOperator]
 
     def post(self, request):
@@ -577,6 +615,8 @@ class BackupSelectableRevertPreflightView(APIView):
                 {"detail": "target_step must be 1 or 2."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if target_step == PipelineStep.CONFIG:
+            assert_source_cleanup(request, ids)
         return Response(
             preflight_revert_backup_sources(
                 organization_id=org.id,
@@ -593,7 +633,7 @@ def _parse_id_list(raw) -> list[str] | None:
     return ids if ids else None
 
 
-class BackupSelectableDirectoryView(APIView):
+class BackupSelectableDirectoryView(ScopedSelectableView):
     """Browse a backup-selectable source directory through the Agent/Proxy WSS task channel."""
 
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
@@ -699,7 +739,7 @@ class BackupSelectableDirectoryView(APIView):
         return Response(result)
 
 
-class BackupSelectableDirectoryCreateView(APIView):
+class BackupSelectableDirectoryCreateView(ScopedSelectableView):
     """Create one child directory on the selected restore target."""
 
     permission_classes = [IsAuthenticated, IsOrgOperator]
@@ -774,7 +814,7 @@ class BackupSelectableDirectoryCreateView(APIView):
         return Response(result, status=status.HTTP_201_CREATED)
 
 
-class BackupSelectablePathInfoView(APIView):
+class BackupSelectablePathInfoView(ScopedSelectableView):
     """Validate a manually entered backup source path and identify file/folder type."""
 
     permission_classes = [IsAuthenticated, IsOrgStaffReader]

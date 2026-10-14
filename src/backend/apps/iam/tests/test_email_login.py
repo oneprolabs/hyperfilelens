@@ -43,7 +43,9 @@ class AllowlistedEmailLoginTests(APITestCase):
             response = self._login()
             self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
             self.assertEqual(response.data["data"]["user"]["id"], self.user.id)
-            self.assertEqual(self.client.session["pending_user_id"], self.user.id)
+            # An active account without memberships can authenticate at
+            # account level and create its own organization.
+            self.assertIn("access_token", response.cookies)
             verify.assert_not_called()
 
     def test_allowlisted_login_does_not_bypass_password_or_account_status(self):

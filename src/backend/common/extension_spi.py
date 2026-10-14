@@ -41,6 +41,14 @@ class AuthzProvider(Protocol):
         """Filter resource references the user may access."""
         ...
 
+    def authorization_context(self, user: Any, org_key: str) -> Any:
+        """Optional live query adapter; Host discovers it via callable checks.
+
+        Contexts must never be shared across requests. Query predicates and
+        individual checks must implement identical resource authorization.
+        """
+        ...
+
     def record_resource_owner(
         self,
         *,

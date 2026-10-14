@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
@@ -21,7 +21,7 @@ import { isAbortError } from '../../lib/api'
 
 const FALLBACK_LIMITS = SUBSCRIPTION_QUOTA_FALLBACK_LIMITS
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const loading = ref(false)
 const quotaAvailable = ref(false)
@@ -30,6 +30,10 @@ const instanceShared = ref(false)
 const usage = ref<LicenseUsage>({})
 const limits = ref<Record<string, number>>({ ...FALLBACK_LIMITS })
 const effectiveQuotaByKey = ref<Record<string, EffectiveQuotaUsage>>({})
+const quotaWarning = ref('')
+const quotaGrid = ref<HTMLElement | null>(null)
+const statusWidth = ref(0)
+let statusResizeObserver: ResizeObserver | null = null
 
 const limitItems = computed(() =>
   quotaDefsForSubscription().map((def) => {
@@ -44,17 +48,17 @@ const limitItems = computed(() =>
     )
     const overLimit = effective?.usage_status === 'exceeded' || (limit >= 0 && used > limit)
     const unlimitedLabel = t('settings.subscription.unlimited')
+    const formatValue = def.formatBytes
+      ? (value: number) => formatQuotaBytes(value, unlimitedLabel)
+      : def.limitKey === 'ai_tokens' ? formatTokenCount : formatNumber
     return {
       key: def.key,
       label: t(def.labelKey),
       used,
       limit,
-      displayUsed: def.formatBytes
-        ? formatQuotaBytes(used, unlimitedLabel)
-        : `${used}${def.suffix ? ` ${def.suffix}` : ''}`,
-      displayLimit: def.formatBytes
-        ? formatQuotaBytes(limit, unlimitedLabel)
-        : `${formatLimit(limit)}${def.suffix && limit >= 0 ? ` ${def.suffix}` : ''}`,
+      displayUsed: formatValue(used),
+      displayLimit: limit < 0 ? unlimitedLabel : formatValue(limit),
+      suffix: def.suffix,
       usagePercent: effective?.usage_percent,
       usageStatus: effective?.usage_status,
       overLimit,
@@ -62,10 +66,37 @@ const limitItems = computed(() =>
   }),
 )
 
-function formatLimit(value?: number) {
-  if (value === undefined || value === null) return '—'
-  if (value < 0) return t('settings.subscription.unlimited')
-  return String(value)
+function measureStatusWidth() {
+  const labels = quotaGrid.value?.querySelectorAll<HTMLElement>('.subscription-quota-item__status-text')
+  statusWidth.value = Math.ceil(Math.max(
+    0,
+    ...Array.from(labels ?? [], (label) => label.getBoundingClientRect().width),
+  ))
+}
+
+watch([quotaGrid, limitItems, locale], () => {
+  statusResizeObserver?.disconnect()
+  measureStatusWidth()
+  if (typeof ResizeObserver === 'undefined' || !quotaGrid.value) return
+  // Observe intrinsic text widths, not their shared column, to avoid a resize
+  // feedback loop. This also responds to font loading and translated labels.
+  statusResizeObserver ??= new ResizeObserver(measureStatusWidth)
+  quotaGrid.value.querySelectorAll('.subscription-quota-item__status-text')
+    .forEach((label) => statusResizeObserver!.observe(label))
+}, { flush: 'post' })
+
+onBeforeUnmount(() => statusResizeObserver?.disconnect())
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat(locale.value, { maximumFractionDigits: 2 }).format(value)
+}
+
+function formatTokenCount(value: number) {
+  // Keep decimal K/M/B notation consistent across locales; this is display-only.
+  return new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 2,
+  }).format(value)
 }
 
 function getLimit(key: string): number {
@@ -91,17 +122,27 @@ function progressToneClass(item: (typeof limitItems.value)[number]) {
 }
 
 function effectiveProgressPercent(item: (typeof limitItems.value)[number]) {
-  if (item.usageStatus === 'unknown') return 0
-  if (item.usagePercent == null) return quotaUsagePercent(item.used, item.limit)
-  return Math.min(100, Math.max(0, Math.round(item.usagePercent)))
+  if (item.usageStatus === 'unknown' || item.limit < 0) return 0
+  // Preserve small nonzero usage rather than rounding the fill down to zero.
+  const percentage = item.limit > 0
+    ? (item.used / item.limit) * 100
+    : item.usagePercent ?? quotaUsagePercent(item.used, item.limit)
+  return Math.min(100, Math.max(0, percentage))
 }
 
-function progressLabel(item: (typeof limitItems.value)[number], percentage: number) {
-  return item.overLimit ? t('settings.subscription.overLimit') : `${percentage}%`
+function progressLabel(item: (typeof limitItems.value)[number]) {
+  if (item.usageStatus === 'unknown') return t('platformOps.quotaUsage.usageStatus.unknown')
+  if (item.limit < 0) return t('settings.subscription.unlimited')
+  if (item.overLimit) return t('settings.subscription.overLimit')
+  const percentage = effectiveProgressPercent(item)
+  if (percentage > 0 && percentage < 0.1) return `<${formatNumber(0.1)}%`
+  return `${formatNumber(percentage < 1 ? Math.round(percentage * 10) / 10 : Math.round(percentage))}%`
 }
 
 async function loadAll() {
+  if (loading.value) return
   loading.value = true
+  quotaWarning.value = ''
   try {
     const current = await fetchCurrentLicense()
     quotaAvailable.value = true
@@ -121,7 +162,15 @@ async function loadAll() {
         )
       } catch (error: unknown) {
         if (isAbortError(error)) throw error
-        // Keep the compatible limits and usage returned by the base endpoint.
+        const status = error && typeof error === 'object' && 'status' in error
+          ? Number(error.status) : 0
+        if (status === 404 || status === 405) {
+          // Only an absent older endpoint is a compatibility fallback.
+          quotaWarning.value = t('settings.subscription.compatibleQuotaHint')
+        } else {
+          quotaAvailable.value = false
+          quotaWarning.value = t('settings.subscription.effectiveQuotaFailed')
+        }
       }
     }
   } catch (error: unknown) {
@@ -171,10 +220,19 @@ onMounted(loadAll)
           />
         </ElButton>
       </header>
+      <el-alert
+        v-if="quotaWarning"
+        :title="quotaWarning"
+        type="warning"
+        :closable="false"
+        show-icon
+      />
 
       <div
         v-if="quotaAvailable"
+        ref="quotaGrid"
         class="subscription-quota-grid"
+        :style="{ '--quota-status-width': statusWidth > 0 ? `${statusWidth}px` : 'max-content' }"
       >
         <div
           v-for="item in limitItems"
@@ -185,15 +243,26 @@ onMounted(loadAll)
             {{ item.label }}
           </span>
           <span class="subscription-quota-item__numbers">
-            {{ item.displayUsed }} / {{ item.displayLimit }}
+            {{ item.displayUsed }}<template v-if="item.limit >= 0"> / {{ item.displayLimit }}</template><template v-if="item.suffix">{{ ` ${item.suffix}` }}</template>
           </span>
-          <ElProgress
+          <div
             class="subscription-quota-item__progress"
             :class="progressToneClass(item)"
-            :percentage="effectiveProgressPercent(item)"
-            :format="(percentage) => progressLabel(item, percentage)"
-            :show-text="item.limit >= 0 && item.usageStatus !== 'unknown'"
-          />
+          >
+            <ElProgress
+              class="subscription-quota-item__track"
+              :percentage="effectiveProgressPercent(item)"
+              :show-text="false"
+              :aria-label="item.label"
+              :aria-hidden="item.limit < 0 || item.usageStatus === 'unknown' ? true : undefined"
+            />
+            <span
+              class="subscription-quota-item__status"
+              :title="progressLabel(item)"
+            >
+              <span class="subscription-quota-item__status-text">{{ progressLabel(item) }}</span>
+            </span>
+          </div>
         </div>
       </div>
       <div
@@ -294,6 +363,7 @@ onMounted(loadAll)
   grid-column: 1;
   grid-row: 1;
   font-size: 12px;
+  min-width: 0;
   color: var(--color-text-secondary, #606266);
 }
 
@@ -304,33 +374,44 @@ onMounted(loadAll)
   color: var(--color-text-primary, #303133);
   white-space: nowrap;
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .subscription-quota-item__progress {
   grid-column: 1 / -1;
   grid-row: 2;
   display: grid;
-  grid-template-columns: subgrid;
+  /* Independent of the header's variable-width usage values. */
+  grid-template-columns: minmax(0, 1fr) var(--quota-status-width, max-content);
+  column-gap: 12px;
   align-items: center;
 }
 
-.subscription-quota-item__progress :deep(.el-progress-bar) {
-  grid-column: 1;
+.subscription-quota-item__track {
   min-width: 0;
-  flex-grow: unset;
+}
+
+.subscription-quota-item__progress :deep(.el-progress-bar) {
+  min-width: 0;
   margin-right: 0;
   padding-right: 0;
 }
 
-.subscription-quota-item__progress :deep(.el-progress__text) {
-  grid-column: 2;
-  justify-self: end;
+.subscription-quota-item__status {
   min-width: 0;
-  width: auto;
-  margin-left: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
   font-size: 12px;
   line-height: 1;
-  text-align: right;
+  color: var(--color-text-secondary, #606266);
+}
+
+.subscription-quota-item__status-text {
+  display: inline-block;
+  width: max-content;
 }
 
 .subscription-quota-item__progress.is-over-limit :deep(.el-progress-bar__inner) {
@@ -341,17 +422,14 @@ onMounted(loadAll)
   background-color: var(--el-color-warning);
 }
 
-.subscription-quota-item__progress.is-over-limit :deep(.el-progress__text) {
+.subscription-quota-item__progress.is-over-limit .subscription-quota-item__status {
   color: var(--el-color-warning);
   font-weight: 600;
 }
 
-.subscription-quota-item__progress.is-warning :deep(.el-progress__text) {
+.subscription-quota-item__progress.is-warning .subscription-quota-item__status {
   color: var(--el-color-warning);
   font-weight: 600;
 }
 
-.subscription-quota-item__progress :deep(.el-progress--without-text .el-progress-bar) {
-  grid-column: 1 / -1;
-}
 </style>

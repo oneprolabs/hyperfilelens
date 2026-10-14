@@ -13,7 +13,9 @@ const mocks = vi.hoisted(() => ({
   fetchCurrentUser: vi.fn(),
   getEffectiveOrgKey: vi.fn(() => 'org-a'),
   setStoredOrgKey: vi.fn(),
+  push: vi.fn(),
 }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
 
 vi.mock('../lib/api', () => ({ api: mocks.api }))
 vi.mock('./useAuth', () => ({
@@ -32,6 +34,7 @@ describe('useOrganizationSwitcher', () => {
         resolveOrganizations = resolve
       }),
     )
+    mocks.api.mockResolvedValueOnce({ can_create: true })
 
     const Host = defineComponent({
       setup() {
@@ -46,8 +49,9 @@ describe('useOrganizationSwitcher', () => {
     const second = mount(Host)
     await nextTick()
 
-    expect(mocks.api).toHaveBeenCalledTimes(1)
-    expect(mocks.api).toHaveBeenCalledWith('/api/v1/iam/orgs/')
+    expect(mocks.api).toHaveBeenCalledTimes(2)
+    expect(mocks.api).toHaveBeenCalledWith('/api/v1/iam/my-organizations/')
+    expect(mocks.api).toHaveBeenCalledWith('/api/v1/iam/organization-creation-options/')
 
     resolveOrganizations([
       { id: 1, key: 'org-a', name: 'Organization A' },
@@ -65,10 +69,11 @@ describe('useOrganizationSwitcher', () => {
         resolveReload = resolve
       }),
     )
+    mocks.api.mockResolvedValueOnce({ can_create: true })
 
     const firstReload = loadOrganizations?.(true)
     const secondReload = loadOrganizations?.(true)
-    expect(mocks.api).toHaveBeenCalledTimes(2)
+    expect(mocks.api).toHaveBeenCalledTimes(4)
 
     resolveReload([
       { id: 3, key: 'org-c', name: 'Organization C' },
@@ -79,7 +84,7 @@ describe('useOrganizationSwitcher', () => {
     const i18n = createI18n({
       legacy: false,
       locale: 'en',
-      messages: { en: { nav: { orgSwitcher: 'Organization' } } },
+      messages: { en: { nav: { orgSwitcher: 'Organization' }, organizationCreation: { title: 'Create Organization' } } },
     })
     const switchers = mount(
       defineComponent({
@@ -96,6 +101,9 @@ describe('useOrganizationSwitcher', () => {
     expect(switchers.findAll('label').map((label) => label.attributes('for'))).toEqual(
       selects.map((select) => select.attributes('id')),
     )
+    expect(selects[0].find('option[value="__create__"]').text()).toBe('Create Organization')
+    await selects[0].setValue('__create__')
+    expect(mocks.push).toHaveBeenCalledWith('/account/organizations/new')
 
     first.unmount()
     second.unmount()

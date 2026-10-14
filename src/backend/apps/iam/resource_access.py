@@ -11,6 +11,30 @@ from apps.iam.permissions_org import resolve_org_key
 from common.extension_spi import get_authz_provider
 
 
+def resolve_resource_reference(
+    *, organization_id: int, resource_type: str, source_id: Any
+) -> int:
+    """Use the optional governance projection for non-integer Host resource IDs."""
+    if isinstance(source_id, int) or (
+        resource_type != "alert_policy" and str(source_id).isdigit()
+    ):
+        return int(source_id)
+    provider = get_authz_provider()
+    resolver = getattr(provider, "resolve_resource_reference", None)
+    if resolver is None:
+        raise PermissionDenied("This resource identifier is not supported.")
+    try:
+        return int(
+            resolver(
+                organization_id=organization_id,
+                resource_type=resource_type,
+                source_id=source_id,
+            )
+        )
+    except (ValueError, TypeError):
+        raise PermissionDenied("Invalid resource identifier.") from None
+
+
 def visible_resource_refs(
     request: Any,
     refs: list[tuple[str, int]] | tuple[tuple[str, int], ...],
@@ -27,9 +51,26 @@ def visible_resource_refs(
     org_key = resolve_org_key(request)
     if not org_key:
         return set()
-    normalized = tuple((str(resource_type), int(resource_id)) for resource_type, resource_id in refs)
+    normalized = tuple(
+        (str(resource_type), int(resource_id)) for resource_type, resource_id in refs
+    )
     if not normalized:
         return set()
+    if getattr(request, "hfl_support_readonly", False):
+        if request.method in ("GET", "HEAD", "OPTIONS") and (
+            action
+            in ("resources.view", "resource.view", "protection.view", "operations.view")
+            or action.endswith(".view")
+        ):
+            return set(normalized)
+        return set()
+    from apps.iam.query_authorization import request_authorization
+
+    context = request_authorization(
+        request, fresh=request.method not in ("GET", "HEAD", "OPTIONS"),
+    )
+    if context is not None:
+        return context.visible_refs(normalized, action=action)
     return {
         (str(resource_type), int(resource_id))
         for resource_type, resource_id in visible_resource_refs_fn(
@@ -55,19 +96,47 @@ def filter_resource_queryset(
     role and resource scope. An authenticated Enterprise request without an
     organization context fails closed.
     """
+    if get_authz_provider() is None:
+        return queryset
+    from apps.iam.query_authorization import request_authorization
+
+    context = request_authorization(
+        request, fresh=request.method not in ("GET", "HEAD", "OPTIONS"),
+    )
+    if context is not None and not getattr(request, "hfl_support_readonly", False):
+        return context.filter_queryset(queryset, resource_type, action=action)
+    from apps.iam.org_context import require_org
+
+    org = require_org(request)
     resource_ids = list(queryset.values_list("pk", flat=True))
     if not resource_ids:
         return queryset
+    references = {
+        source_id: resolve_resource_reference(
+            organization_id=org.id,
+            resource_type=resource_type,
+            source_id=source_id,
+        )
+        for source_id in resource_ids
+    }
     visible_refs = visible_resource_refs(
         request,
-        [(resource_type, int(resource_id)) for resource_id in resource_ids],
+        [(resource_type, references[source_id]) for source_id in resource_ids],
         action=action,
     )
     if visible_refs is None:
         return queryset
-    visible_ids = [resource_id for resource_type_key, resource_id in visible_refs
-                   if resource_type_key == resource_type]
-    return queryset.filter(pk__in=visible_ids)
+    visible_ids = [
+        resource_id
+        for resource_type_key, resource_id in visible_refs
+        if resource_type_key == resource_type
+    ]
+    allowed = set(visible_ids)
+    return queryset.filter(
+        pk__in=[
+            source_id for source_id in resource_ids if references[source_id] in allowed
+        ]
+    )
 
 
 def filter_queryset_by_resource_field(
@@ -79,12 +148,23 @@ def filter_queryset_by_resource_field(
     action: str = "resources.view",
 ) -> QuerySet:
     """Filter derived rows through the owner of a referenced Host resource."""
-    resource_ids = list(
-        queryset.values_list(resource_id_field, flat=True).distinct()
-    )
+    from apps.iam.query_authorization import request_authorization
+
+    context = request_authorization(request)
+    if context is not None and not getattr(request, "hfl_support_readonly", False):
+        model = context.resource_model(resource_type)
+        if model is None:
+            return queryset.none()
+        allowed = context.filter_queryset(model.objects.all(), resource_type, action=action)
+        return queryset.filter(**{f"{resource_id_field}__in": allowed.values("pk")})
+    resource_ids = list(queryset.values_list(resource_id_field, flat=True).distinct())
     visible = visible_resource_refs(
         request,
-        [(resource_type, int(resource_id)) for resource_id in resource_ids if resource_id],
+        [
+            (resource_type, int(resource_id))
+            for resource_id in resource_ids
+            if resource_id
+        ],
         action=action,
     )
     if visible is None:
@@ -101,7 +181,7 @@ def record_resource_owner(
     *,
     organization_id: int,
     resource_type: str,
-    resource_id: int,
+    resource_id: Any,
     owner_id: int | None,
 ) -> None:
     """Forward Host resource ownership to EE when the extension is active."""
@@ -114,7 +194,11 @@ def record_resource_owner(
     record_owner(
         organization_id=organization_id,
         resource_type=resource_type,
-        resource_id=int(resource_id),
+        resource_id=resolve_resource_reference(
+            organization_id=organization_id,
+            resource_type=resource_type,
+            source_id=resource_id,
+        ),
         owner_id=owner_id,
     )
 
@@ -164,6 +248,11 @@ def filter_task_queryset(request: Any, queryset: QuerySet) -> QuerySet:
     provider = get_authz_provider()
     if provider is None or getattr(provider, "visible_resource_refs", None) is None:
         return queryset
+    from apps.iam.query_authorization import request_authorization
+
+    context = request_authorization(request)
+    if context is not None and not getattr(request, "hfl_support_readonly", False):
+        return _filter_task_sql(queryset, context)
 
     from apps.task.models import TaskResource
 
@@ -188,7 +277,9 @@ def filter_task_queryset(request: Any, queryset: QuerySet) -> QuerySet:
             else:
                 continue
         elif resource_type in {"backup_config", "repository", "target_repository"}:
-            mapped_type = "repository" if resource_type != "backup_config" else resource_type
+            mapped_type = (
+                "repository" if resource_type != "backup_config" else resource_type
+            )
         elif resource_type == "host":
             mapped_type = "node"
         else:
@@ -218,7 +309,7 @@ def filter_task_queryset(request: Any, queryset: QuerySet) -> QuerySet:
         if fallback_ref is not None:
             refs.append(fallback_ref)
             refs_by_task.setdefault(int(task_id), []).append(fallback_ref)
-    allowed = visible(request, refs)
+    allowed = visible(request, refs, action="operations.tasks.view")
     if allowed is None:
         return queryset
     allowed_task_ids = {
@@ -233,6 +324,7 @@ def filter_task_queryset(request: Any, queryset: QuerySet) -> QuerySet:
     org_key = resolve_org_key(request)
     can_see_organization = bool(
         org_key
+        and provider.has_org_action(request.user, org_key, "operations.tasks.view")
         and getattr(provider, "resource_scope_for_role", None)
         and provider.resource_scope_for_role(request.user, org_key) == "organization"
     )
@@ -240,3 +332,68 @@ def filter_task_queryset(request: Any, queryset: QuerySet) -> QuerySet:
         unscoped_task_ids = set(task_ids) - set(refs_by_task)
         allowed_task_ids.update(unscoped_task_ids)
     return queryset.filter(id__in=allowed_task_ids)
+
+
+def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
+    """Operational rows use correlated live-resource authorization, not ID scans."""
+    from django.db.models import BigIntegerField, Case, Exists, F, OuterRef, Q, Value, When
+    from django.db.models.fields.json import KeyTextTransform
+    from django.db.models.functions import Cast
+    from apps.task.models import TaskResource
+
+    action = "operations.tasks.view"
+    if not context.has_action("backup_config", action):
+        return queryset.none()
+    fence = getattr(context, "fence_queryset", None)
+    if not callable(fence):
+        return queryset.none()
+    queryset = fence(queryset)
+    queryset = queryset.filter(organization_id=context.org.pk)
+    mapping = (
+        ("node", Q(resource_type="host") | Q(resource_type="backup_source", resource_subtype="agent")),
+        ("source_resource", Q(resource_type="backup_source", resource_subtype="nas")),
+        ("backup_config", Q(resource_type="backup_config")),
+        ("repository", Q(resource_type__in=("repository", "target_repository"))),
+    )
+    references = TaskResource.objects.filter(task_id=OuterRef("pk"))
+    recognized = Q(pk__in=[])
+    allowed_bindings = Q(pk__in=[])
+    for kind, types in mapping:
+        recognized |= types
+        model = context.resource_model(kind)
+        allowed = context.filter_queryset(model.objects.all(), kind, action=action)
+        allowed_bindings |= types & Q(Exists(allowed.filter(pk=OuterRef("resource_id"))))
+    queryset = queryset.annotate(
+        _hfl_has_refs=Exists(references.filter(recognized)),
+        _hfl_allowed_refs=Exists(references.filter(allowed_bindings)),
+        _hfl_config_text=KeyTextTransform("backup_config_id", "request_payload"),
+        _hfl_source_text=KeyTextTransform("source_ref_id", "request_payload"),
+    )
+    for name in ("config", "source"):
+        field = f"_hfl_{name}_text"
+        numeric = Q(**{f"{field}__regex": r"^[0-9]{1,18}$"}) | (
+            Q(**{f"{field}__regex": r"^[0-9]{19}$"})
+            & Q(**{f"{field}__lte": "9223372036854775807"})
+        )
+        queryset = queryset.annotate(**{f"_hfl_{name}_ref": Case(
+            When(numeric, then=Cast(F(field), BigIntegerField())),
+            default=Value(None), output_field=BigIntegerField(),
+        )})
+    condition = Q(_hfl_allowed_refs=True)
+    config = context.filter_queryset(
+        context.resource_model("backup_config").objects.all(), "backup_config", action=action,
+    )
+    fallback = Q(Exists(config.filter(pk=OuterRef("_hfl_config_ref"))))
+    for kind, source_type in (("node", "agent"), ("source_resource", "nas")):
+        allowed = context.filter_queryset(context.resource_model(kind).objects.all(), kind, action=action)
+        fallback |= Q(_hfl_config_ref__isnull=True, request_payload__source_type=source_type) & Q(
+            Exists(allowed.filter(pk=OuterRef("_hfl_source_ref"))),
+        )
+    condition |= Q(_hfl_has_refs=False) & fallback
+    if context.has_org_action(action) and context.has_org_action("configuration.resources.access_all"):
+        # Truly unscoped maintenance tasks remain visible to organization ops.
+        condition |= Q(_hfl_has_refs=False, _hfl_config_ref__isnull=True) & (
+            Q(_hfl_source_ref__isnull=True)
+            | ~Q(request_payload__source_type__in=("agent", "nas"))
+        )
+    return queryset.filter(condition)

@@ -38,7 +38,11 @@ class OrgApiScopingTests(APITestCase):
     def test_orgs_list_is_scoped_to_current_user(self):
         self.client.force_authenticate(user=self.tenant_user)
 
-        response = self.client.get(reverse("org-list"))
+        # The governance Organization page requires a current organization.
+        self.assertEqual(self.client.get(reverse("org-list")).status_code, 403)
+        response = self.client.get(
+            reverse("org-list"), HTTP_X_ORG_KEY=self.tenant_org.key,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         org_keys = [item["key"] for item in response.data["data"]["list"]]
@@ -76,5 +80,13 @@ class OrgApiScopingTests(APITestCase):
             reverse("org-list"),
             HTTP_X_ORG_KEY=self.seed_org.key,
         )
-        self.assertEqual(wrong_org_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(wrong_org_response.data["data"]["list"], [])
+        self.assertEqual(wrong_org_response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_account_directory_does_not_require_a_current_organization(self):
+        self.client.force_authenticate(user=self.tenant_user)
+        response = self.client.get("/api/v1/iam/my-organizations/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [item["key"] for item in response.data],
+            [self.tenant_org.key],
+        )

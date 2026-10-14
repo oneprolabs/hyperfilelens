@@ -158,13 +158,14 @@ def count_proxy_repository_bindings(
     *,
     organization_id: int,
     proxy_ids: list[int],
+    queryset=None,
 ) -> dict[int, int]:
     """Return repository counts for Proxy nodes without per-node queries."""
 
     if not proxy_ids:
         return {}
     rows = (
-        Repository.objects.filter(
+        (queryset if queryset is not None else Repository.objects.all()).filter(
             organization_id=organization_id,
             bind_node_id__in=proxy_ids,
         )

@@ -355,7 +355,7 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
             },
             status=status.HTTP_200_OK,
         )
-        if user_obj.is_staff and not available_orgs:
+        if not available_orgs:
             response.data["data"]["message"] = _("Login successful")
             return _complete_token_login(
                 request=request,

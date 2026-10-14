@@ -6,6 +6,7 @@ from rest_framework.response import Response
 
 from apps.audit.services.interface import write_audit_log
 from apps.iam.permissions_org import IsOrgReader, IsOrgWriter
+from apps.iam.activity_access import filter_activity_queryset
 from apps.notification.channel_push import push_to_org
 
 from apps.alert.api.pagination import AlertPagination
@@ -34,7 +35,7 @@ class AlertRecordViewSet(viewsets.ReadOnlyModelViewSet):
         org = require_org(self.request)
         qs = records_for_org(organization_id=org.id)
         params = self.request.query_params
-        return filter_records(
+        queryset = filter_records(
             qs,
             status=params.get("status", ""),
             alert_type=params.get("type", ""),
@@ -42,6 +43,12 @@ class AlertRecordViewSet(viewsets.ReadOnlyModelViewSet):
             resource_type=params.get("resource_type", ""),
             resource_id=params.get("resource_id", ""),
             search=params.get("search", ""),
+        )
+        action_key = (
+            self.action if self.action in ("acknowledge", "resolve") else "view"
+        )
+        return filter_activity_queryset(
+            self.request, queryset, action=f"operations.alerts.{action_key}"
         )
 
     @action(detail=True, methods=["post"])
@@ -123,5 +130,6 @@ class AlertRecordViewSet(viewsets.ReadOnlyModelViewSet):
                 alert_type=params.get("type", ""),
                 resource_type=params.get("resource_type", ""),
                 resource_id=params.get("resource_id", ""),
+                queryset=self.get_queryset(),
             )
         )

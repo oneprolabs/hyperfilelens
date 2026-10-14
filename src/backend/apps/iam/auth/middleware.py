@@ -23,7 +23,7 @@ class AdminJWTSessionMiddleware:
         ):
             try:
                 authenticated = JWTAuthenticationFromCookies().authenticate(request)
-            except exceptions.AuthenticationFailed:
+            except (exceptions.AuthenticationFailed, exceptions.PermissionDenied):
                 authenticated = None
             if authenticated is not None:
                 user, _token = authenticated

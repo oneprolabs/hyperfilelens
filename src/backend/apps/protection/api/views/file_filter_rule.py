@@ -7,6 +7,8 @@ from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.iam.resource_api import GovernedResourceMixin
+from apps.iam.resource_access import record_resource_owner
 from apps.iam.org_context import require_org
 from apps.iam.permissions_org import IsOrgStaffReader, IsOrgWriter
 from apps.protection import services
@@ -26,7 +28,9 @@ from apps.protection.selectors import (
 )
 
 
-class FileFilterRuleViewSet(viewsets.ModelViewSet):
+class _FileFilterRuleViewSetBase(viewsets.ModelViewSet):
+    governance_resource_type = "file_filter_rule"
+    governance_manage_action = "protection.manage"
     serializer_class = FileFilterRuleSerializer
     permission_classes = [IsAuthenticated, IsOrgWriter]
     pagination_class = ProtectionPagination
@@ -66,6 +70,10 @@ class FileFilterRuleViewSet(viewsets.ModelViewSet):
             )
         except DjangoValidationError as exc:
             raise _validation_error(exc) from exc
+        record_resource_owner(
+            organization_id=org.id, resource_type="file_filter_rule",
+            resource_id=rule.id, owner_id=request.user.id,
+        )
         return Response(
             FileFilterRuleSerializer(rule).data,
             status=status.HTTP_201_CREATED,
@@ -125,3 +133,10 @@ class FileFilterRuleViewSet(viewsets.ModelViewSet):
         except DjangoValidationError as exc:
             raise _validation_error(exc) from exc
         return Response(result)
+
+
+class FileFilterRuleViewSet(GovernedResourceMixin, _FileFilterRuleViewSetBase):
+    """Resource-aware adapter over the unchanged business implementation."""
+
+    governance_resource_type = "file_filter_rule"
+    governance_manage_action = "protection.manage"

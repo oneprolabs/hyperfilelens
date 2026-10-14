@@ -35,6 +35,15 @@ class Organization(models.Model):
         return f"{self.name} ({self.key})"
 
 
+class IdentityProvisioningLock(models.Model):
+    """Serialize local email identity creation without changing legacy users."""
+
+    key = models.CharField(max_length=32, primary_key=True)
+
+    class Meta:
+        db_table = "iam_identity_provisioning_lock"
+
+
 class MembershipQuerySet(models.QuerySet):
     """Affiliation rows only. ``role=`` on create is forwarded to AuthzProvider sync."""
 

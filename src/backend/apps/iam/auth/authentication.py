@@ -48,6 +48,16 @@ class JWTAuthenticationFromCookies(DefaultJWTAuthentication):
         )
 
     def authenticate(
+        self, request: Request,
+    ) -> tuple[AbstractBaseUser, Token] | None:
+        from apps.iam.services.account_setup import assert_setup_request_allowed
+
+        result = self._authenticate(request)
+        if result is not None:
+            assert_setup_request_allowed(request, result[0])
+        return result
+
+    def _authenticate(
         self,
         request: Request,
     ) -> tuple[AbstractBaseUser, Token] | None:
@@ -173,7 +183,10 @@ class JWTAuthenticationFromCookies(DefaultJWTAuthentication):
     def get_user(self, validated_token: Token) -> AbstractBaseUser:
         try:
             user_id = validated_token.get("user_id")
-            return User.objects.get(pk=user_id)
+            user = User.objects.get(pk=user_id)
+            if not user.is_active:
+                self._raise_token_lifecycle_error(TokenErrorCode.ACCOUNT_DISABLED)
+            return user
         except User.DoesNotExist as exc:
             raise exceptions.AuthenticationFailed(
                 {
@@ -193,5 +206,5 @@ class OptionalJWTAuthenticationFromCookies(JWTAuthenticationFromCookies):
     ) -> tuple[AbstractBaseUser, Token] | None:
         try:
             return super().authenticate(request)
-        except exceptions.AuthenticationFailed:
+        except (exceptions.AuthenticationFailed, exceptions.PermissionDenied):
             return None

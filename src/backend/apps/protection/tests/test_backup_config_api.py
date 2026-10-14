@@ -59,6 +59,13 @@ from common.errors import AppError
 
 class ProtectionBackupConfigApiTests(TestCase):
     def setUp(self):
+        from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests
+
+        # Host business lifecycle tests run with Community semantics. EE
+        # authorization and incomplete-usage rejection are tested explicitly
+        # by the Enterprise governance/quota suites, not implicitly by a dev stack.
+        previous = clear_providers_for_tests()
+        self.addCleanup(restore_providers_for_tests, previous)
         self.client = APIClient()
         user_model = get_user_model()
         self.user = user_model.objects.create_user(
@@ -88,6 +95,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             repo_type=Repository.Type.S3,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             s3_platform=Repository.S3Platform.CUSTOM,
             s3_bucket="backup-config-bucket",
             config={
@@ -145,6 +154,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             nas_protocol=Repository.NasProtocol.NFS,
             status=Repository.Status.CREATED,
             health=Repository.Health.UNVERIFIED,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             config={
                 "server_address": "10.0.0.15",
                 "share_path": "/volume1/backup",
@@ -163,6 +174,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             repo_type=Repository.Type.S3,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             s3_platform=Repository.S3Platform.ALIYUN,
             s3_bucket=f"{name}-bucket",
             config={
@@ -271,6 +284,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             repo_type=Repository.Type.PROXY_FS,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
             config={"proxy_node_dir": "/repo"},
@@ -323,6 +338,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             nas_protocol=Repository.NasProtocol.NFS,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
             config={
@@ -625,6 +642,8 @@ class ProtectionBackupConfigApiTests(TestCase):
             repo_type=Repository.Type.S3,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             s3_platform=Repository.S3Platform.CUSTOM,
             s3_bucket="other-backup-config-bucket",
             config={

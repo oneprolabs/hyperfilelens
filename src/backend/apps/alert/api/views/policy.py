@@ -7,6 +7,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.audit.services.interface import write_audit_log
+from apps.iam.resource_api import GovernedResourceMixin
+from apps.iam.resource_access import record_resource_owner
 from apps.iam.permissions_org import IsOrgReader, IsOrgWriter
 
 from apps.alert.api.pagination import AlertPagination
@@ -21,7 +23,9 @@ from apps.alert.selectors.stats import policy_statistics
 from apps.alert.services.internal.policy_bulk import bulk_delete_policies, bulk_set_policy_state
 
 
-class AlertPolicyViewSet(viewsets.ModelViewSet):
+class _AlertPolicyViewSetBase(viewsets.ModelViewSet):
+    governance_resource_type = "alert_policy"
+    governance_manage_action = "operations.manage"
     serializer_class = AlertPolicySerializer
     permission_classes = [IsAuthenticated, IsOrgWriter]
     pagination_class = AlertPagination
@@ -150,6 +154,10 @@ class AlertPolicyViewSet(viewsets.ModelViewSet):
             if request.user.is_authenticated:
                 policy.created_by = request.user.id
             policy.save()
+            record_resource_owner(
+                organization_id=org.id, resource_type="alert_policy",
+                resource_id=policy.id, owner_id=request.user.id,
+            )
             write_audit_log(
                 organization=org,
                 user=request.user,
@@ -169,6 +177,7 @@ class AlertPolicyViewSet(viewsets.ModelViewSet):
         return Response(
             policy_statistics(
                 organization_id=org.id,
+                queryset=self.get_queryset(),
                 search=params.get("search", ""),
                 alert_type=params.get("type", ""),
                 severity=params.get("severity", ""),
@@ -176,3 +185,10 @@ class AlertPolicyViewSet(viewsets.ModelViewSet):
                 enabled=params.get("enabled", ""),
             )
         )
+
+
+class AlertPolicyViewSet(GovernedResourceMixin, _AlertPolicyViewSetBase):
+    """Resource-aware adapter over the unchanged business implementation."""
+
+    governance_resource_type = "alert_policy"
+    governance_manage_action = "operations.manage"

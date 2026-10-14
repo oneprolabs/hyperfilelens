@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../lib/api'
 import { getEffectiveOrgKey } from '../../composables/useAuth'
@@ -18,33 +18,42 @@ interface Org {
   name: string
   created_at?: string
   owner_email?: string
+  member_count?: number
 }
 
 const organization = ref<Org | null>(null)
 const busy = ref(false)
+const failed = ref(false)
+let controller: AbortController | null = null
 
 function formatCreatedAt(iso?: string): string {
   return formatLocalDateTime(iso, '—')
 }
 
 async function load() {
+  controller?.abort()
+  controller = new AbortController()
+  const signal = controller.signal
   busy.value = true
+  failed.value = false
   try {
-    const orgsData = await api<unknown>('/api/v1/iam/orgs/')
+    const orgsData = await api<unknown>('/api/v1/iam/orgs/', { signal })
+    if (signal.aborted) return
     const list = asList<Org>(orgsData)
     const orgKey = getEffectiveOrgKey()
     const current = orgKey ? list.find(o => o.key === orgKey) : undefined
-    organization.value = current ?? list[0] ?? null
+    organization.value = orgKey ? current ?? null : list[0] ?? null
   } catch {
-    organization.value = null
+    if (!signal.aborted) { organization.value = null; failed.value = true }
   } finally {
-    busy.value = false
+    if (!signal.aborted) busy.value = false
   }
 }
 
 onMounted(() => {
   load()
 })
+onUnmounted(() => controller?.abort())
 </script>
 
 <template>
@@ -73,14 +82,41 @@ onMounted(() => {
         </div>
         <dl class="organization-overview__details">
           <div class="organization-overview__detail">
-            <dt>{{ t('settings.org.colOwner') }}</dt>
-            <dd :class="{ 'hfl-empty-mark': !organization.owner_email }">
+            <dt>
+              {{ t('settings.org.colKey') }}
+            </dt>
+            <dd
+              :title="t('settings.org.keyHint')"
+              tabindex="0"
+            >
+              {{ organization.key }}
+            </dd>
+          </div>
+          <div class="organization-overview__detail">
+            <dt>
+              {{ t('settings.org.colMembers') }}
+            </dt>
+            <dd>
+              {{ organization.member_count ?? '—' }}
+            </dd>
+          </div>
+          <div class="organization-overview__detail">
+            <dt>
+              {{ t('settings.org.colOwner') }}
+            </dt>
+            <dd
+              :class="{ 'hfl-empty-mark': !organization.owner_email }"
+            >
               {{ organization.owner_email || '—' }}
             </dd>
           </div>
           <div class="organization-overview__detail">
-            <dt>{{ t('settings.org.colCreated') }}</dt>
-            <dd :class="{ 'hfl-empty-mark': !organization.created_at }">
+            <dt>
+              {{ t('settings.org.colCreated') }}
+            </dt>
+            <dd
+              :class="{ 'hfl-empty-mark': !organization.created_at }"
+            >
               {{ formatCreatedAt(organization.created_at) }}
             </dd>
           </div>
@@ -88,8 +124,15 @@ onMounted(() => {
       </el-card>
       <el-empty
         v-else
-        :description="t('settings.org.empty')"
-      />
+        :description="t(failed ? 'settings.org.loadFailed' : 'settings.org.empty')"
+      >
+        <el-button
+          :disabled="busy"
+          @click="load"
+        >
+          {{ t(failed ? 'common.retry' : 'common.refresh') }}
+        </el-button>
+      </el-empty>
     </section>
   </ModulePage>
 </template>

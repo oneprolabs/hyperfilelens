@@ -389,6 +389,17 @@ class CopilotSessionApiTests(TestCase):
     )
     def test_update_data_only_targets_current_users_chat(self, prepare_update):
         self._mark_session_ready()
+        from apps.protection.models import BackupConfig, BackupSourceSnapshot
+        config = BackupConfig.objects.create(
+            organization_id=self.org.id, name="Chat update data",
+            source_type="agent", source_ref_id=1, repository_id=1,
+        )
+        BackupSourceSnapshot.objects.create(
+            id=19, organization_id=self.org.id, backup_config_id=config.id,
+            snapshot_uid="chat-update-19", idempotency_key="chat-update-19",
+            source_type="agent", source_ref_id=1, repository_id=1,
+            task_id=1, status="available",
+        )
         url = reverse(
             "lens-copilot-session-update-data", kwargs={"pk": self.session.id}
         )

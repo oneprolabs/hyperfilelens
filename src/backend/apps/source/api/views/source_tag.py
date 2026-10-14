@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.iam.org_context import require_org
-from apps.iam.permissions_org import IsOrgOperator, IsOrgStaffReader
+from apps.iam.permissions_org import IsOrgOperator, IsOrgStaffReader, IsOrgAuthorizedMember
 from apps.iam.resource_access import assert_resource_access, visible_resource_refs
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
@@ -228,6 +228,9 @@ class SourceTagAssignmentView(APIView):
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
     def get_permissions(self):
+        if get_authz_provider() is not None:
+            # Binding existing Tags edits the Source, not organization Tag definitions.
+            return [IsAuthenticated(), IsOrgAuthorizedMember()]
         if self.request.method == "PUT":
             return [IsAuthenticated(), IsOrgOperator()]
         return super().get_permissions()
@@ -326,6 +329,11 @@ class SourceTagBulkAssignmentView(APIView):
     """Add/remove selected associations without replacing sources' other tags."""
 
     permission_classes = [IsAuthenticated, IsOrgOperator]
+
+    def get_permissions(self):
+        if get_authz_provider() is not None:
+            return [IsAuthenticated(), IsOrgAuthorizedMember()]
+        return super().get_permissions()
 
     def post(self, request):
         org = require_org(request)

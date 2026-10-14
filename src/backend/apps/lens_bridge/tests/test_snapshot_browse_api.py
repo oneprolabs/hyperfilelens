@@ -16,6 +16,11 @@ from apps.node.models import Node, NodeTask
 
 class SnapshotBrowseApiTests(TestCase):
     def setUp(self):
+        # Fake legacy Role hierarchy below; keep the installed quota provider
+        # so this two-organization fixture does not become a one-org deployment.
+        authz = patch("common.extension_spi._authz_provider", None)
+        authz.start()
+        self.addCleanup(authz.stop)
         self.owner = get_user_model().objects.create_user(
             username="snapshot-browse-owner@example.test",
             email="snapshot-browse-owner@example.test",

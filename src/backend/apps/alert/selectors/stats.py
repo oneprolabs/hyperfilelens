@@ -6,10 +6,17 @@ from django.db.models import Count, Q, QuerySet
 
 from apps.alert.constants import AlertSeverity, AlertStatus
 from apps.alert.models import AlertRecord
-from apps.alert.selectors.interface import filter_policies, filter_records, policies_for_org, records_for_org
+from apps.alert.selectors.interface import (
+    filter_policies,
+    filter_records,
+    policies_for_org,
+    records_for_org,
+)
 
 
-def _record_base_queryset(*, organization_id: int, **filter_kwargs) -> QuerySet[AlertRecord]:
+def _record_base_queryset(
+    *, organization_id: int, **filter_kwargs
+) -> QuerySet[AlertRecord]:
     qs = records_for_org(organization_id=organization_id)
     return filter_records(
         qs,
@@ -30,14 +37,19 @@ def record_statistics(
     alert_type: str = "",
     resource_type: str = "",
     resource_id: str = "",
+    queryset=None,
 ) -> dict:
-    base = _record_base_queryset(
-        organization_id=organization_id,
-        search=search,
-        severity=severity,
-        alert_type=alert_type,
-        resource_type=resource_type,
-        resource_id=resource_id,
+    base = (
+        queryset
+        if queryset is not None
+        else _record_base_queryset(
+            organization_id=organization_id,
+            search=search,
+            severity=severity,
+            alert_type=alert_type,
+            resource_type=resource_type,
+            resource_id=resource_id,
+        )
     )
     active = base.exclude(status=AlertStatus.RESOLVED)
     return {
@@ -59,9 +71,12 @@ def policy_statistics(
     severity: str = "",
     resource_type: str = "",
     enabled: str = "",
+    queryset=None,
 ) -> dict:
     qs = filter_policies(
-        policies_for_org(organization_id=organization_id),
+        policies_for_org(organization_id=organization_id)
+        if queryset is None
+        else queryset,
         search=search,
         alert_type=alert_type,
         severity=severity,

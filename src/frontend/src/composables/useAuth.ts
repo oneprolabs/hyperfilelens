@@ -28,9 +28,12 @@ export interface User {
   is_staff?: boolean
   language?: string
   timezone?: string
+  requires_password_change?: boolean
   access_profile?: {
     org_key: string
     role: string
+    permissions?: string[]
+    group_permissions?: string[]
     visible_features: string[]
     available_platforms: Array<{ key: string; default_path: string }>
     landing_path: string
@@ -419,6 +422,12 @@ export function useAuth() {
 }
 
 function hasRequiredRouteRole(to: { meta: Record<string, unknown> }): boolean {
+  const requiredPermissions = to.meta.requiredPermissions
+  if (Array.isArray(requiredPermissions) && requiredPermissions.length) {
+    const profile = currentUser.value?.access_profile
+    const grants = [...(profile?.permissions || []), ...(profile?.group_permissions || [])]
+    return requiredPermissions.every((key) => grants.includes(key))
+  }
   const requiredRoles = to.meta.requiredRoles
   if (!Array.isArray(requiredRoles) || requiredRoles.length === 0) return true
   const role = currentUser.value?.access_profile?.role?.trim() || ''
@@ -438,6 +447,10 @@ export function setupAuthGuard() {
         : await confirmCurrentSession()
 
       if (confirmation.state === 'authenticated') {
+        if (confirmation.user?.requires_password_change) {
+          next('/account/setup')
+          return
+        }
         const profile = await fetchDeployProfile(true)
         if (!profile) {
           next()
@@ -469,6 +482,20 @@ export function setupAuthGuard() {
 
     // Check auth state for non-public paths
     if (!isPublicPath) {
+      const setupUser = currentUser.value || await fetchCurrentUser()
+      if (setupUser?.requires_password_change) {
+        if (to.path === '/account/setup') next()
+        else next('/account/setup')
+        return
+      }
+      if (to.path === '/account/setup') {
+        next(setupUser ? '/' : '/login')
+        return
+      }
+      if (to.path === '/account/organizations/new' && setupUser) {
+        next()
+        return
+      }
       // Refresh incomplete session state (e.g. missing role after login)
       if (isLoggedIn.value && !isPlatformOpsPath && !hasCompleteAccessProfile(currentUser.value)) {
         const refreshed = await fetchCurrentUser()

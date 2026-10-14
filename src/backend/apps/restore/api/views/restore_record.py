@@ -13,8 +13,10 @@ from apps.iam.resource_access import (
     assert_resource_access,
     filter_queryset_by_resource_field,
 )
-from apps.iam.permissions_org import IsOrgOperator, IsOrgReader
+from apps.iam.permissions_org import IsOrgOperator, IsOrgReader, IsOrgAuthorizedMember
+from common.extension_spi import get_authz_provider
 from apps.protection.models import BackupSourceSnapshot
+from apps.protection.api.execution_access import assert_backup_config_execution
 from apps.protection.services.progress.restore_runtime import (
     build_restore_kopia_progress,
     sync_restore_task_progress,
@@ -92,6 +94,8 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.request.method in SAFE_METHODS:
             return [IsAuthenticated(), IsOrgReader()]
+        if get_authz_provider() is not None:
+            return [IsAuthenticated(), IsOrgAuthorizedMember()]
         return super().get_permissions()
 
     def get_queryset(self):
@@ -145,6 +149,15 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
                     else "resources.view"
                 ),
             )
+        else:
+            assert_resource_access(
+                self.request,
+                "node" if record.source_type == "agent" else "source_resource",
+                record.source_ref_id,
+                action="protection.manage"
+                if self.request.method not in SAFE_METHODS
+                else "resources.view",
+            )
         return record
 
     @staticmethod
@@ -173,7 +186,9 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
             organization_id=organization_id,
             id__in=snapshot_ids,
         ).values_list("id", "snapshot_uid")
-        return {int(snapshot_id): str(snapshot_uid) for snapshot_id, snapshot_uid in rows}
+        return {
+            int(snapshot_id): str(snapshot_uid) for snapshot_id, snapshot_uid in rows
+        }
 
     @staticmethod
     def _nas_share_root_by_record_id(records) -> dict[int, str]:
@@ -181,7 +196,11 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         if not records:
             return {}
         organization_id = records[0].organization_id
-        nas_ids = {record.target_ref_id for record in records if record.target_type == RestoreRecord.EndpointType.NAS}
+        nas_ids = {
+            record.target_ref_id
+            for record in records
+            if record.target_type == RestoreRecord.EndpointType.NAS
+        }
         resources = SourceResource.objects.filter(
             organization_id=organization_id,
             resource_type=ResourceType.NAS,
@@ -208,7 +227,9 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         context = self.get_serializer_context()
         context["task_by_uuid"] = self._task_by_uuid(records)
         context["snapshot_uid_by_id"] = self._snapshot_uid_by_id(records)
-        context["nas_share_root_by_record_id"] = self._nas_share_root_by_record_id(records)
+        context["nas_share_root_by_record_id"] = self._nas_share_root_by_record_id(
+            records
+        )
         serializer = self.get_serializer(records, many=True, context=context)
         if page is not None:
             return self.get_paginated_response(serializer.data)
@@ -219,7 +240,9 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         context = self.get_serializer_context()
         context["task_by_uuid"] = self._task_by_uuid([record])
         context["snapshot_uid_by_id"] = self._snapshot_uid_by_id([record])
-        context["nas_share_root_by_record_id"] = self._nas_share_root_by_record_id([record])
+        context["nas_share_root_by_record_id"] = self._nas_share_root_by_record_id(
+            [record]
+        )
         serializer = self.get_serializer(record, context=context)
         return Response(serializer.data)
 
@@ -232,26 +255,34 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         target_type = data["target_type"]
         assert_resource_access(
             request,
-            "node" if source_type == RestoreRecord.EndpointType.AGENT else "source_resource",
+            "node"
+            if source_type == RestoreRecord.EndpointType.AGENT
+            else "source_resource",
             data["source_ref_id"],
-            action="resources.manage",
+            action="protection.restore_plans.run",
         )
         assert_resource_access(
             request,
-            "node" if target_type == RestoreRecord.EndpointType.AGENT else "source_resource",
+            "node"
+            if target_type == RestoreRecord.EndpointType.AGENT
+            else "source_resource",
             data["target_ref_id"],
-            action="resources.manage",
+            action="protection.restore_plans.run",
         )
-        snapshot_config_id = BackupSourceSnapshot.objects.filter(
-            pk=data["source_snapshot_id"],
-        ).values_list("backup_config_id", flat=True).first()
-        if snapshot_config_id:
-            assert_resource_access(
-                request,
-                "backup_config",
-                snapshot_config_id,
-                action="resources.manage",
+        snapshot_config_id = (
+            BackupSourceSnapshot.objects.filter(
+                organization_id=org.id, pk=data["source_snapshot_id"],
             )
+            .values_list("backup_config_id", flat=True)
+            .first()
+        )
+        if snapshot_config_id:
+            assert_backup_config_execution(
+                request, snapshot_config_id,
+                action="protection.restore_plans.run",
+            )
+        elif get_authz_provider() is not None:
+            raise NotFound("Snapshot not found.")
         try:
             record = restore_services.create_manual_restore_record(
                 organization_id=org.id,
@@ -269,12 +300,17 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
             organization_id=record.organization_id,
             task_uuid=record.task_uuid,
         ).first()
-        if task is not None and task.status in {Task.Status.PENDING, Task.Status.RUNNING}:
+        if task is not None and task.status in {
+            Task.Status.PENDING,
+            Task.Status.RUNNING,
+        }:
             payload = sync_restore_task_progress(record=record, task=task)
         else:
             payload = build_restore_kopia_progress(record=record, task=task)
             if task is not None:
-                result_payload = task.result_payload if isinstance(task.result_payload, dict) else {}
+                result_payload = (
+                    task.result_payload if isinstance(task.result_payload, dict) else {}
+                )
                 transfer = result_payload.get("transfer_progress")
                 if isinstance(transfer, dict):
                     derived = payload.get("transfer_progress")
@@ -283,8 +319,10 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
                         **(derived if isinstance(derived, dict) else {}),
                     }
         progress = float(task.progress or 0) if task is not None else 0.0
-        return Response({
-            "progress": progress,
-            "transfer_progress": payload.get("transfer_progress"),
-            "kopia_progress": payload,
-        })
+        return Response(
+            {
+                "progress": progress,
+                "transfer_progress": payload.get("transfer_progress"),
+                "kopia_progress": payload,
+            }
+        )

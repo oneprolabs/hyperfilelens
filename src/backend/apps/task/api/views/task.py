@@ -5,11 +5,11 @@ from django.http import JsonResponse
 from django.utils.dateparse import parse_datetime
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.response import Response
 
-from apps.iam.permissions_org import IsOrgOperator, IsOrgReader, get_membership
+from apps.iam.permissions_org import IsOrgAuthorizedMember, IsOrgOperator, IsOrgReader, get_membership
 from apps.iam.resource_access import filter_task_queryset
 from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.api.serializers import (
@@ -45,7 +45,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.request.method in SAFE_METHODS:
             return [IsAuthenticated(), IsOrgReader()]
-        return super().get_permissions()
+        return [IsAuthenticated(), IsOrgAuthorizedMember()]
 
     def _membership(self):
         membership = get_membership(self.request)
@@ -121,6 +121,9 @@ class TaskViewSet(viewsets.ModelViewSet):
         return context
 
     def create(self, request, *args, **kwargs):
+        from common.extension_spi import get_authz_provider
+        if get_authz_provider() is not None:
+            raise PermissionDenied("Create tasks through the governed business workflow.")
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         task = serializer.save()
@@ -140,6 +143,12 @@ class TaskViewSet(viewsets.ModelViewSet):
         serializer = TaskCancelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         task = self.get_object()
+        from common.extension_spi import get_authz_provider
+        if get_authz_provider() is not None:
+            if task.task_type != Task.Type.BACKUP:
+                raise PermissionDenied("Use the governed business workflow to cancel this task.")
+            from apps.protection.api.views.backup_task import _assert_task_resource_access
+            _assert_task_resource_access(request, task, action="protection.backup_configurations.cancel")
         task_type = task.task_type
         if task_type in RESTORE_TASK_TYPES:
             raise ValidationError(
@@ -179,6 +188,12 @@ class TaskViewSet(viewsets.ModelViewSet):
         serializer = TaskRetrySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         current_task = self.get_object()
+        from common.extension_spi import get_authz_provider
+        if get_authz_provider() is not None:
+            if current_task.task_type != Task.Type.BACKUP:
+                raise PermissionDenied("Use the governed business workflow to retry this task.")
+            from apps.protection.api.views.backup_task import _assert_task_resource_access
+            _assert_task_resource_access(request, current_task, action="protection.backup_configurations.run")
         if current_task.task_type in RESTORE_TASK_TYPES:
             raise ValidationError(
                 {

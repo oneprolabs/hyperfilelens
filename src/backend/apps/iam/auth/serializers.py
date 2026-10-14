@@ -39,6 +39,7 @@ class UserDetailsSerializer(serializers.ModelSerializer):
     security_audit = serializers.SerializerMethodField()
     has_usable_password = serializers.SerializerMethodField()
     password_reset_available = serializers.SerializerMethodField()
+    requires_password_change = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -56,8 +57,15 @@ class UserDetailsSerializer(serializers.ModelSerializer):
             "security_audit",
             "has_usable_password",
             "password_reset_available",
+            "requires_password_change",
         ]
         read_only_fields = ["is_staff"]
+
+    @staticmethod
+    def get_requires_password_change(obj):
+        from apps.iam.services.account_setup import requires_password_change
+
+        return requires_password_change(obj)
 
     @staticmethod
     def get_has_usable_password(obj):

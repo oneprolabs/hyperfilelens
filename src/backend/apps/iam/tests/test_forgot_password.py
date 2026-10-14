@@ -16,6 +16,15 @@ from apps.iam.email_verification_models import EmailVerificationCode
 class ForgotPasswordCommunityDisabledTests(APITestCase):
     """Community empty socket: self-serve reset stays off even with SMTP."""
 
+    def setUp(self):
+        super().setUp()
+        identity = patch(
+            "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+            return_value=False,
+        )
+        identity.start()
+        self.addCleanup(identity.stop)
+
     def test_password_reset_is_forbidden_without_extension(self):
         response = self.client.post(
             reverse("forgot_password"),

@@ -1,4 +1,4 @@
-import { Building2, Layers3, ShieldUser, Users } from 'lucide-vue-next'
+import { Building2, Layers3, ShieldUser, UserRound, UsersRound } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 import { governanceMenuItems } from '@ext/platform/governance/menu'
 import { currentUser } from '../composables/useAuth'
@@ -7,13 +7,18 @@ type GovernanceMenuItem = {
   id: string
   labelKey: string
   to: string
-  icon: 'organization' | 'members' | 'roles' | 'resources'
+  icon: 'organization' | 'members' | 'groups' | 'roles' | 'resources'
   requiredRoles?: readonly string[]
+  requiredPermissions?: readonly string[]
 }
 
-const icons = { organization: Building2, members: Users, roles: ShieldUser, resources: Layers3 } as const
+const icons = { organization: Building2, members: UserRound, groups: UsersRound, roles: ShieldUser, resources: Layers3 } as const
 
 export function isGovernanceMenuItemVisible(item: GovernanceMenuItem, role: string): boolean {
+  if (item.requiredPermissions?.length) {
+    const profile = currentUser.value?.access_profile
+    return item.requiredPermissions.every((key) => [...(profile?.permissions || []), ...(profile?.group_permissions || [])].includes(key))
+  }
   return !item.requiredRoles || item.requiredRoles.includes(role.trim())
 }
 

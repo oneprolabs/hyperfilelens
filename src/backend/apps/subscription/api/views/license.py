@@ -64,6 +64,10 @@ class LicenseViewSet(viewsets.GenericViewSet):
     queryset = License.objects.none()
 
     def get_permissions(self):
+        if getattr(self, "action", None) in ("current", "validate"):
+            from apps.iam.permissions_org import IsOrgSubscriptionReader
+
+            return [IsAuthenticated(), IsOrgSubscriptionReader()]
         # Enterprise uses the Platform Console permission. Community keeps the
         # legacy organization-admin path while no AuthzProvider is installed.
         if getattr(self, "action", None) == "activate":

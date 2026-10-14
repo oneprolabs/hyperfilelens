@@ -39,6 +39,7 @@ describe('fullscreen form style ownership', () => {
       .sort()
 
     expect(consumers).toEqual([
+      'pages/account/CreateOrganization.vue',
       'pages/insight/AiModelFormPage.vue',
       'pages/insight/KnowledgeSourceFormPage.vue',
       'pages/insight/McpServerFormPage.vue',

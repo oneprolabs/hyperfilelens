@@ -21,6 +21,7 @@ import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformB
 import HflCapacityCell from '../../components/HflCapacityCell.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import { useNodeLifecycleOps } from '../../composables/useNodeLifecycleOps'
+import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
@@ -216,8 +217,13 @@ const upgradeConfirmPreview = lifecycleOps.upgradeConfirmPreview
 
 const tableLoading = computed(() => !listLoaded.value)
 const singleSelected = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0]! : null))
-const batchDisabled = computed(() => selectedRows.value.length === 0)
-const batchRenameDisabled = computed(() => selectedRows.value.length !== 1)
+const resourcePermissions = useResourceCapabilities(computed(() => isPlatformEngine.value ? [] : rows.value
+  .filter((row) => row.origin !== 'platform')
+  .map((row) => ({ resource_type: 'node' as const, resource_id: row.id }))))
+const batchDisabled = computed(() => selectedRows.value.length === 0 || !selectedRows.value.every((row) =>
+  isPlatformEngine.value || resourcePermissions.permitted('node', row.id, 'delete'),
+))
+const batchRenameDisabled = computed(() => selectedRows.value.length !== 1 || !selectedRows.value.every(canManageGateway))
 const batchUpgradeDisabled = computed(() => {
   const upgradable = selectedRows.value.filter((row) => lifecycleOps.canUpgradeNode(row, canUpgrade))
   return upgradable.length === 0
@@ -225,6 +231,7 @@ const batchUpgradeDisabled = computed(() => {
 
 function canUpgrade(row: ApiNode) {
   if ((row as InsightGatewayRow).managed_by_hfl === false) return false
+  if (!isPlatformEngine.value && !resourcePermissions.permitted('node', row.id, 'upgrade')) return false
   return row.agent_release?.upgrade_version_allowed
     ?? canRemoteAgentUpgrade(row.version, latestAgentVersion.value)
 }
@@ -544,6 +551,7 @@ function openSelectedMaintenance() {
 
 function canManageGateway(row: InsightGatewayRow) {
   return row.managed_by_hfl !== false && row.id > 0
+    && (isPlatformEngine.value || resourcePermissions.permitted('node', row.id, 'manage'))
 }
 
 function readinessLabel(row: InsightGatewayRow) {
@@ -599,7 +607,7 @@ async function handleMoreAction(command: MoreAction) {
 
 function openRenameDialog() {
   const node = singleSelected.value
-  if (!node) return
+  if (!node || !canManageGateway(node)) return
   renameTarget.value = node
   renameInput.value = node.name
   renameDialogOpen.value = true
@@ -607,7 +615,7 @@ function openRenameDialog() {
 
 async function submitRename() {
   const node = renameTarget.value
-  if (!node) return
+  if (!node || !canManageGateway(node)) return
   const name = renameInput.value.trim()
   if (!name) {
     ElMessage.warning({ message: t('nodesPage.renamePlaceholder'), grouping: true })
@@ -916,7 +924,7 @@ onUnmounted(() => {
             type="selection"
             width="35"
             fixed="left"
-            :selectable="canManageGateway"
+            :selectable="(row: InsightGatewayRow) => row.managed_by_hfl !== false && row.id > 0 && (isPlatformEngine || ['manage', 'delete', 'upgrade'].some((action) => resourcePermissions.permitted('node', row.id, action as 'manage' | 'delete' | 'upgrade')))"
             :reserve-selection="true"
           />
           <el-table-column

@@ -8,11 +8,15 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.iam.resource_api import GovernedResourceMixin
 from apps.iam.org_context import require_org
 from apps.iam.permissions_org import IsOrgOperator, IsOrgReader
 from apps.iam.resource_access import assert_resource_access, filter_resource_queryset
 from apps.iam.resource_access import record_resource_owner
 from apps.protection.api.pagination import ProtectionPagination
+from apps.protection.api.execution_access import (
+    assert_source_cleanup, assert_scheduled_config_write,
+)
 from apps.protection.api.serializers import (
     BackupConfigDetailSerializer,
     BackupConfigListSerializer,
@@ -74,7 +78,9 @@ def _idempotency_key(request) -> str:
     return raw
 
 
-class BackupConfigViewSet(viewsets.ModelViewSet):
+class _BackupConfigViewSetBase(viewsets.ModelViewSet):
+    governance_resource_type = "backup_config"
+    governance_manage_action = "protection.manage"
     serializer_class = BackupConfigListSerializer
     permission_classes = [IsAuthenticated, IsOrgOperator]
     pagination_class = ProtectionPagination
@@ -100,7 +106,7 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
             self.request,
             queryset,
             "backup_config",
-            action="resources.view",
+            action=self._resource_action(),
         )
 
     def get_object(self):
@@ -112,11 +118,7 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
             self.request,
             "backup_config",
             config.id,
-            action=(
-                "resources.view"
-                if self.request.method in ("GET", "HEAD", "OPTIONS")
-                else "resources.manage"
-            ),
+            action=self._resource_action(),
         )
         return config
 
@@ -133,6 +135,7 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
         org = require_org(request)
         serializer = BackupConfigWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        assert_scheduled_config_write(request, serializer.validated_data)
         idempotency_key = _idempotency_key(request)
 
         def create_result() -> tuple[BackupConfig, dict, int]:
@@ -195,6 +198,7 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
         config = self.get_object()
         serializer = BackupConfigWriteSerializer(data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
+        assert_scheduled_config_write(request, serializer.validated_data, config)
         try:
             config = protection_services.backup_config.update_backup_config(
                 config=config,
@@ -230,6 +234,10 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
         org = require_org(request)
         serializer = BackupConfigResetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        assert_source_cleanup(
+            request, serializer.validated_data["source_ids"],
+            config_action="protection.backup_configurations.manage",
+        )
         try:
             result = protection_services.backup_config_reset.create_reset_tasks_for_sources(
                 organization_id=org.id,
@@ -259,3 +267,10 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_202_ACCEPTED,
         )
+
+
+class BackupConfigViewSet(GovernedResourceMixin, _BackupConfigViewSetBase):
+    """Resource-aware adapter over the unchanged business implementation."""
+
+    governance_resource_type = "backup_config"
+    governance_manage_action = "protection.manage"

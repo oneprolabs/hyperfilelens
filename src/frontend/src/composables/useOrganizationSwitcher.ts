@@ -1,6 +1,6 @@
 import { computed, onMounted, readonly, ref, watch } from 'vue'
 import { api } from '../lib/api'
-import { asList } from '../lib/parse'
+import { asList, unwrapApiPayload } from '../lib/parse'
 import {
   currentUser,
   fetchCurrentUser,
@@ -16,6 +16,7 @@ export type OrganizationOption = {
 
 const organizations = ref<OrganizationOption[]>([])
 const loading = ref(false)
+const canCreate = ref(false)
 
 let loadedUserId: number | null | undefined
 let inflight: { userId: number | null; promise: Promise<void> } | null = null
@@ -34,11 +35,16 @@ async function loadOrganizations(force = false): Promise<void> {
   loading.value = true
   const promise = (async () => {
     try {
-      const data = await api<unknown>('/api/v1/iam/orgs/')
+      const [directory, policy] = await Promise.allSettled([
+        api<unknown>('/api/v1/iam/my-organizations/'),
+        api<unknown>('/api/v1/iam/organization-creation-options/'),
+      ])
       if ((currentUser.value?.id ?? null) !== userId) return
-      organizations.value = asList<OrganizationOption>(data)
+      organizations.value = directory.status === 'fulfilled' ? asList<OrganizationOption>(directory.value) : []
+      canCreate.value = policy.status === 'fulfilled'
+        && unwrapApiPayload<{ can_create: boolean }>(policy.value)?.can_create === true
     } catch {
-      if ((currentUser.value?.id ?? null) === userId) organizations.value = []
+      if ((currentUser.value?.id ?? null) === userId) { organizations.value = []; canCreate.value = false }
     } finally {
       if ((currentUser.value?.id ?? null) === userId) loadedUserId = userId
     }
@@ -64,7 +70,7 @@ async function switchOrganization(orgKey: string) {
 
 export function useOrganizationSwitcher() {
   const currentKey = computed(() => getEffectiveOrgKey())
-  const showSwitcher = computed(() => organizations.value.length > 1)
+  const showSwitcher = computed(() => organizations.value.length > 1 || canCreate.value)
 
   onMounted(() => {
     void loadOrganizations()
@@ -84,5 +90,6 @@ export function useOrganizationSwitcher() {
     showSwitcher,
     loadOrganizations,
     switchOrganization,
+    canCreate: readonly(canCreate),
   }
 }

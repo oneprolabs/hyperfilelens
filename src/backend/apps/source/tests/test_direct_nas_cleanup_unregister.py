@@ -1329,7 +1329,13 @@ class DirectNasCleanupUnregisterTests(TestCase):
             "apps.source.tasks.source_unregister."
             "execute_source_unregister_task.delay"
         ) as queue_unregister:
-            with self.captureOnCommitCallbacks(execute=True):
+            # This Host lifecycle assertion exercises Community Task retry.
+            # Enterprise's generic retry fence is tested separately; do not
+            # relax production authorization to satisfy a Community fixture.
+            with (
+                mock.patch("common.extension_spi._authz_provider", None),
+                self.captureOnCommitCallbacks(execute=True),
+            ):
                 retry_response = client.post(
                     f"/api/v1/tasks/{cleanup_task.triggered_by_task.task_uuid}/retry/",
                     {},

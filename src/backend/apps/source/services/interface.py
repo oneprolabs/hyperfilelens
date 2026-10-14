@@ -4,7 +4,7 @@ import logging
 from uuid import uuid4
 
 from django.db import IntegrityError, transaction
-from django.db.models import Sum
+from django.db.models import Count, Q, QuerySet, Sum
 from django.utils import timezone
 
 from apps.audit.constants import AuditAction, AuditResult
@@ -590,42 +590,71 @@ def unbind_node(*, resource: SourceResource) -> dict:
     return {"success": True, "message": "Resource unbound."}
 
 
-def resource_statistics(*, organization_id: int) -> dict:
-    qs = source_resources_queryset(organization_id=organization_id)
-    by_type = {}
-    for code, _ in SourceResource._meta.get_field("resource_type").choices:
-        by_type[code] = qs.filter(resource_type=code).count()
-    agg = SourceResource.objects.filter(
-        organization_id=organization_id,
-        is_deleted=False,
-    ).aggregate(total_size=Sum("total_size"), total_files=Sum("file_count"))
+def resource_statistics(
+    *, organization_id: int, queryset: QuerySet[SourceResource] | None = None,
+) -> dict:
+    """Aggregate the supplied authorized scope in a single SQL snapshot."""
+    qs = (
+        source_resources_queryset(organization_id=organization_id)
+        if queryset is None else queryset
+    ).filter(organization_id=organization_id, is_deleted=False)
+    types = [code for code, _ in SourceResource._meta.get_field("resource_type").choices]
+    agg = qs.aggregate(
+        total=Count("pk"),
+        active=Count("pk", filter=Q(status="active")),
+        inactive=Count("pk", filter=Q(status="inactive")),
+        error=Count("pk", filter=Q(status="error")),
+        mounted=Count("pk", filter=Q(mount_status="mounted")),
+        total_size=Sum("total_size"), total_files=Sum("file_count"),
+        **{f"type_{code}": Count("pk", filter=Q(resource_type=code)) for code in types},
+    )
     return {
-        "total": qs.count(),
-        "active": qs.filter(status="active").count(),
-        "inactive": qs.filter(status="inactive").count(),
-        "error": qs.filter(status="error").count(),
-        "mounted": qs.filter(mount_status="mounted").count(),
-        "by_type": by_type,
+        **{key: agg[key] for key in ("total", "active", "inactive", "error", "mounted")},
+        "by_type": {code: agg[f"type_{code}"] for code in types},
         "total_size": int(agg["total_size"] or 0),
         "total_files": int(agg["total_files"] or 0),
     }
 
 
-def production_source_summary(*, organization_id: int) -> dict:
+def production_source_summary(
+    *, organization_id: int,
+    agent_queryset: QuerySet[Node] | None = None,
+    nas_queryset: QuerySet[SourceResource] | None = None,
+) -> dict:
     """Return the Dashboard's canonical Agent + Source NAS inventory summary."""
-    agent_qs = Node.objects.filter(
+    agent_qs = (Node.objects.all() if agent_queryset is None else agent_queryset).filter(
         organization_id=organization_id,
         role=NodeRole.AGENT,
+        is_deleted=False,
     )
-    nas_qs = SourceResource.objects.filter(
+    nas_qs = (SourceResource.objects.all() if nas_queryset is None else nas_queryset).filter(
         organization_id=organization_id,
         resource_type=ResourceType.NAS,
+        is_deleted=False,
     )
 
-    hosts_total = agent_qs.count()
-    hosts_available = agent_qs.filter(availability="online").count()
-    nas_total = nas_qs.count()
-    nas_available = nas_qs.filter(availability="online").count()
+    # A scalar subquery keeps Host/NAS totals on the same database snapshot.
+    from django.db.models import IntegerField, OuterRef, Subquery, Value
+    from django.db.models.functions import Coalesce
+
+    host_counts = agent_qs.order_by().values("organization_id").annotate(
+        total=Count("pk"), available=Count("pk", filter=Q(availability="online")),
+    )
+    nas_counts = nas_qs.order_by().values("organization_id").annotate(
+        total=Count("pk"), available=Count("pk", filter=Q(availability="online")),
+    )
+    summary = Organization.objects.filter(pk=organization_id).annotate(**{
+        f"{kind}_{field}": Coalesce(Subquery(
+            counts.filter(organization_id=OuterRef("pk")).values(field)[:1],
+            output_field=IntegerField(),
+        ), Value(0))
+        for kind, counts in (("hosts", host_counts), ("nas", nas_counts))
+        for field in ("total", "available")
+    }).values("hosts_total", "hosts_available", "nas_total", "nas_available").first() or {}
+    hosts_total = summary.get("hosts_total", 0)
+    hosts_available = summary.get("hosts_available", 0)
+    nas_total = summary.get("nas_total", 0)
+    nas_available = summary.get("nas_available", 0)
     total = hosts_total + nas_total
     available = hosts_available + nas_available
 

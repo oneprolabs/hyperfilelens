@@ -90,11 +90,25 @@ def active_owner_count(
     return qs.count()
 
 
-def assert_role_assignable(role: str) -> None:
+def assert_role_assignable(role: str, organization: Organization | None = None) -> None:
     if role == Membership.Role.OWNER:
         raise MembershipPolicyError(
             {"role": [_("Owner role cannot be assigned via membership API.")]}
         )
+    provider = get_authz_provider()
+    if role in Membership.Role.values and provider is not None and organization is not None:
+        resolver = getattr(provider, "is_org_role_active", None)
+        if callable(resolver) and not resolver(
+            organization_id=organization.id, role=role,
+        ):
+            raise MembershipPolicyError({"role": [_("This organization Role is inactive.")]})
+    if role not in Membership.Role.values:
+        resolver = getattr(provider, "is_custom_org_role", None) if provider is not None else None
+        if organization is not None and callable(resolver) and resolver(
+            organization_id=organization.id, role=role,
+        ):
+            return
+        raise MembershipPolicyError({"role": [_("Unsupported organization role.")]})
 
 
 def assert_can_deactivate(membership: Membership) -> None:
@@ -128,7 +142,7 @@ def create_org_membership(
     role: str,
     is_active: bool = True,
 ) -> Membership:
-    assert_role_assignable(role)
+    assert_role_assignable(role, organization=organization)
     if Membership.objects.filter(user=user, organization=organization).exists():
         raise MembershipPolicyError(
             {"user": [_("User is already a member of this organization.")]}
@@ -175,7 +189,7 @@ def update_org_membership(membership: Membership, **fields) -> Membership:
     )
     new_role = fields.get("role")
     if new_role is not None:
-        assert_role_assignable(new_role)
+        assert_role_assignable(new_role, organization=membership.organization)
 
     was_active = membership.is_active
     if "is_active" in fields and fields["is_active"] is not None:

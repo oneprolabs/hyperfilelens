@@ -57,6 +57,9 @@ class PersonalApiKeyAuthentication(authentication.BaseAuthentication):
                     "API key user is not a member of the requested organization"
                 )
 
+        from apps.iam.services.account_setup import assert_account_ready
+
+        assert_account_ready(key.user)
         return key.user, key
 
     @staticmethod

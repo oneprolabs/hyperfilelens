@@ -10,6 +10,12 @@ from apps.protection.selectors.interface import policy_display_name
 
 class ProtectionPolicyApiTests(TestCase):
     def setUp(self):
+        from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests
+
+        # Community/domain contract. Enterprise authority and instance quotas
+        # have independent positive/negative integration tests.
+        providers = clear_providers_for_tests()
+        self.addCleanup(restore_providers_for_tests, providers)
         self.client = APIClient()
         user_model = get_user_model()
         self.user = user_model.objects.create_user(

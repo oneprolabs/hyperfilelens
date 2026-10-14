@@ -74,6 +74,7 @@ class HostQuotaFacadeTests(TestCase):
     def tearDown(self):
         restore_providers_for_tests(self._spi_previous)
 
+    @override_settings(HFL_QUOTA_ENFORCEMENT_ENABLED=False)
     def test_helpers_noop_without_provider(self):
         self.assertIsNone(enforce_license_quota(self.org, "max_users", additional=1))
         self.assertIsNone(enforce_node_role_quota(organization=self.org, role="agent"))
@@ -102,6 +103,7 @@ class HostQuotaFacadeTests(TestCase):
         self.assertEqual(result["limit_source"], "builtin_community")
         self.assertTrue(result["enforcement_enabled"])
 
+    @override_settings(HFL_QUOTA_ENFORCEMENT_ENABLED=False)
     def test_validate_quota_informational_without_provider(self):
         result = validate_quota(self.org, "max_users", amount=1)
         self.assertTrue(result["is_valid"])

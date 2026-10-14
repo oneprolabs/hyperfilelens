@@ -39,6 +39,7 @@ declare module '@ext/platform/governance/menu' {
     to: string
     icon: 'organization' | 'members' | 'roles' | 'resources'
     requiredRoles?: readonly string[]
+    requiredPermissions?: readonly string[]
   }>
 }
 

@@ -55,6 +55,13 @@ from apps.task.models import Task, TaskEvent, TaskResource
 
 class RestoreApiTests(TestCase):
     def setUp(self):
+        from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests
+
+        # Host business lifecycle tests run with Community semantics. EE
+        # authorization and incomplete-usage rejection are tested explicitly
+        # by the Enterprise governance/quota suites, not implicitly by a dev stack.
+        previous = clear_providers_for_tests()
+        self.addCleanup(restore_providers_for_tests, previous)
         self.client = APIClient()
         user_model = get_user_model()
         self.user = user_model.objects.create_user(

@@ -9,12 +9,16 @@ from rest_framework.views import APIView
 
 from apps.iam.org_context import require_org
 from apps.iam.resource_access import assert_resource_access
-from apps.iam.permissions_org import IsOrgOperator
+from apps.iam.permissions_org import IsOrgMember
+from apps.protection.api.execution_access import assert_backup_config_execution
 from apps.protection.api.serializers.backup_task import (
     RetryBackupDirectorySerializer,
     StartBackupTaskSerializer,
 )
-from apps.protection.services.backup_orchestrator import cancel_backup, retry_backup_directory
+from apps.protection.services.backup_orchestrator import (
+    cancel_backup,
+    retry_backup_directory,
+)
 from apps.protection.services.backup_task import start_backup_tasks
 from apps.task.models import Task
 from apps.source.services.internal.selectable_ids import parse_selectable_id
@@ -28,6 +32,12 @@ def _validation_error(exc: DjangoValidationError) -> ValidationError:
 
 def _assert_backup_request_access(request, *, sources, source_ids, config_ids):
     """Check every source/config before a backup operation is admitted."""
+    from apps.protection.models import BackupConfig
+    from common.extension_spi import get_authz_provider
+
+    if get_authz_provider() is None:
+        return
+    source_refs = set()
     for source in sources or []:
         resource_type = (
             "node" if source["source_type"] == "agent" else "source_resource"
@@ -36,38 +46,46 @@ def _assert_backup_request_access(request, *, sources, source_ids, config_ids):
             request,
             resource_type,
             source["source_ref_id"],
-            action="resources.manage",
+            action="protection.backup_configurations.run",
         )
+        source_refs.add((source["source_type"], int(source["source_ref_id"])))
     for raw_id in source_ids or []:
         parsed = parse_selectable_id(str(raw_id))
         if parsed is None or parsed[0] == "proxy":
-            continue
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("Invalid backup source reference.")
         resource_type = "node" if parsed[0] == "agent" else "source_resource"
         assert_resource_access(
             request,
             resource_type,
             parsed[1],
-            action="resources.manage",
+            action="protection.backup_configurations.run",
         )
+        source_refs.add(parsed)
+    org = require_org(request)
+    for source_type, pk in source_refs:
+        for config_id in BackupConfig.objects.filter(
+            organization_id=org.id, source_type=source_type, source_ref_id=pk
+        ).values_list("pk", flat=True):
+            assert_backup_config_execution(request, config_id)
     for config_id in config_ids or []:
-        assert_resource_access(
-            request,
-            "backup_config",
-            config_id,
-            action="resources.manage",
-        )
+        assert_backup_config_execution(request, config_id)
 
 
-def _assert_task_resource_access(request, task: Task) -> None:
+def _assert_task_resource_access(
+    request, task: Task, *, action="protection.backup_configurations.run"
+) -> None:
+    from common.extension_spi import get_authz_provider
+    if get_authz_provider() is None:
+        return
     payload = task.request_payload if isinstance(task.request_payload, dict) else {}
     config_id = payload.get("backup_config_id")
     if config_id:
-        assert_resource_access(
-            request,
-            "backup_config",
-            int(config_id),
-            action="resources.manage",
-        )
+        if action == "protection.backup_configurations.run":
+            assert_backup_config_execution(request, int(config_id))
+        else:
+            assert_resource_access(request, "backup_config", int(config_id), action=action)
         return
     source_type = str(payload.get("source_type") or "")
     source_ref_id = payload.get("source_ref_id")
@@ -76,12 +94,16 @@ def _assert_task_resource_access(request, task: Task) -> None:
             request,
             "node" if source_type == "agent" else "source_resource",
             int(source_ref_id),
-            action="resources.manage",
+            action=action,
         )
+        return
+    from rest_framework.exceptions import PermissionDenied
+
+    raise PermissionDenied("This task has no authorized resource reference.")
 
 
 class BackupTaskStartView(APIView):
-    permission_classes = [IsAuthenticated, IsOrgOperator]
+    permission_classes = [IsAuthenticated, IsOrgMember]
 
     def post(self, request):
         org = require_org(request)
@@ -108,7 +130,7 @@ class BackupTaskStartView(APIView):
 
 
 class BackupTaskCancelView(APIView):
-    permission_classes = [IsAuthenticated, IsOrgOperator]
+    permission_classes = [IsAuthenticated, IsOrgMember]
 
     def post(self, request, task_uuid: str):
         org = require_org(request)
@@ -120,7 +142,9 @@ class BackupTaskCancelView(APIView):
             from rest_framework.exceptions import NotFound
 
             raise NotFound("task not found")
-        _assert_task_resource_access(request, task)
+        _assert_task_resource_access(
+            request, task, action="protection.backup_configurations.cancel"
+        )
         try:
             result = cancel_backup(organization_id=org.id, task_uuid=str(task_uuid))
         except DjangoValidationError as exc:
@@ -129,7 +153,7 @@ class BackupTaskCancelView(APIView):
 
 
 class BackupTaskRetryDirectoryView(APIView):
-    permission_classes = [IsAuthenticated, IsOrgOperator]
+    permission_classes = [IsAuthenticated, IsOrgMember]
 
     def post(self, request, task_uuid: str):
         org = require_org(request)
@@ -148,7 +172,9 @@ class BackupTaskRetryDirectoryView(APIView):
             result = retry_backup_directory(
                 organization_id=org.id,
                 task_uuid=str(task_uuid),
-                backup_config_dir_id=int(serializer.validated_data["backup_config_dir_id"]),
+                backup_config_dir_id=int(
+                    serializer.validated_data["backup_config_dir_id"]
+                ),
             )
         except DjangoValidationError as exc:
             raise _validation_error(exc) from exc

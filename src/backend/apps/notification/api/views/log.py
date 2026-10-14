@@ -6,6 +6,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.iam.permissions_org import IsOrgReader
+from apps.iam.resource_access import filter_queryset_by_resource_field
+from common.extension_spi import get_authz_provider
 
 from apps.notification.api.pagination import NotificationPagination
 from apps.notification.api.views._org import require_org
@@ -50,7 +52,26 @@ class NotificationLogViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(sent_at__gte=start)
         if end:
             qs = qs.filter(sent_at__lte=end)
-        return qs
+        provider = get_authz_provider()
+        if (
+            provider is not None
+            and provider.has_org_action(
+                self.request.user,
+                org.key,
+                "configuration.resources.access_all",
+            )
+            and provider.has_org_action(
+                self.request.user, org.key, "operations.notification_records.view"
+            )
+        ):
+            return qs
+        return filter_queryset_by_resource_field(
+            self.request,
+            qs,
+            "notification_channel",
+            "channel_id",
+            action="operations.notification_records.view",
+        )
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -81,7 +102,9 @@ class NotificationLogViewSet(viewsets.ReadOnlyModelViewSet):
                 "success": success,
                 "failed": failed,
                 "success_rate": round((success / total) * 100, 2) if total else 0,
-                "channels": NotificationChannel.objects.filter(id__in=channel_ids).count(),
+                "channels": NotificationChannel.objects.filter(
+                    id__in=channel_ids
+                ).count(),
                 "recent_failed": notification_log_details(list(recent_failed)),
             }
         )

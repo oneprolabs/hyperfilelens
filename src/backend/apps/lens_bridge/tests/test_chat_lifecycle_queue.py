@@ -1102,6 +1102,12 @@ class CopilotReadyWakeupConcurrencyTests(TransactionTestCase):
 
 class CopilotCapacityReservationTests(TestCase):
     def setUp(self):
+        from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests
+
+        # Community/domain contract. Enterprise authority and instance quotas
+        # have independent positive/negative integration tests.
+        providers = clear_providers_for_tests()
+        self.addCleanup(restore_providers_for_tests, providers)
         self.organization = Organization.objects.create(
             key="copilot-capacity-reservation",
             name="Copilot Capacity Reservation",
@@ -1210,6 +1216,14 @@ class CopilotCapacityReservationTests(TestCase):
 
 
 class CopilotCapacityReservationConcurrencyTests(TransactionTestCase):
+    def setUp(self):
+        from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests
+
+        # Community/domain contract. Enterprise authority and instance quotas
+        # have independent positive/negative integration tests.
+        providers = clear_providers_for_tests()
+        self.addCleanup(restore_providers_for_tests, providers)
+
     reset_sequences = True
 
     def test_same_public_gateway_capacity_cannot_be_oversubscribed(self):
@@ -1310,6 +1324,12 @@ class CopilotCapacityReservationConcurrencyTests(TransactionTestCase):
 
 class CopilotChatModelBindingTests(TestCase):
     def setUp(self):
+        from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests
+
+        # Community/domain contract. Enterprise authority and instance quotas
+        # have independent positive/negative integration tests.
+        providers = clear_providers_for_tests()
+        self.addCleanup(restore_providers_for_tests, providers)
         self.organization = Organization.objects.create(
             key="copilot-model-binding",
             name="Copilot Model Binding",

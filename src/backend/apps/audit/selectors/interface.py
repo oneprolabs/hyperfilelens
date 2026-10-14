@@ -48,8 +48,8 @@ def list_audit_logs(
     )
 
 
-def audit_statistics(*, org_key: str | None) -> dict:
-    qs = audit_logs_queryset(org_key=org_key)
+def audit_statistics(*, org_key: str | None, queryset=None) -> dict:
+    qs = audit_logs_queryset(org_key=org_key) if queryset is None else queryset
     total = qs.count()
     today = timezone.now().date()
     today_count = qs.filter(created_at__date=today).count()

@@ -32,10 +32,88 @@ from apps.storage.services.internal.repository_usage import (
     sync_all_repositories,
     sync_organization_repositories,
     sync_repository_usage,
+    enqueue_repository_usage_refresh,
+    select_repository_usage_ids,
 )
 
 
 class RepositoryUsageTests(TestCase):
+    def test_explicit_empty_selection_does_not_expand_to_all(self):
+        org = Organization.objects.create(key="empty-usage-scope", name="Empty usage scope")
+        Repository.objects.create(organization_id=org.pk, name="must-not-refresh", repo_type="s3")
+        with mock.patch(
+            "apps.storage.services.internal.repository_usage.sync_repository_usage",
+        ) as probe:
+            for result in (
+                sync_organization_repositories(organization_id=org.pk, repository_ids=[], force=True),
+                sync_all_repositories(repository_ids=[], force=True),
+            ):
+                self.assertEqual(result["repositories_attempted"], 0)
+            probe.assert_not_called()
+
+    def test_enqueue_empty_or_fully_invalid_ids_does_not_touch_queue_or_dedup_key(self):
+        with (
+            mock.patch("apps.storage.tasks.reconcile_storage_repositories.apply_async") as queue,
+            mock.patch("apps.storage.services.internal.repository_usage.cache.add") as dedup,
+        ):
+            for ids in ([], ["invalid", False, 0, 2**63]):
+                result = enqueue_repository_usage_refresh(organization_id=1, repository_ids=ids)
+                self.assertFalse(result["queued"])
+                self.assertEqual(result["repository_ids"], [])
+            queue.assert_not_called()
+            dedup.assert_not_called()
+
+    def test_unspecified_internal_refresh_preserves_none_for_periodic_work(self):
+        org = Organization.objects.create(key="unspecified-usage-scope", name="Unspecified usage scope")
+        repository = Repository.objects.create(
+            organization_id=org.pk, name="periodic-refresh", repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+        )
+        with (
+            mock.patch("apps.storage.tasks.reconcile_storage_repositories.apply_async") as queue,
+            mock.patch("apps.storage.services.internal.repository_usage.cache.add", return_value=True),
+        ):
+            result = enqueue_repository_usage_refresh(organization_id=org.pk)
+            self.assertTrue(result["queued"])
+            self.assertEqual(queue.call_args.kwargs["kwargs"]["repository_ids"], [repository.pk])
+
+    def test_worker_never_turns_empty_ids_into_an_organization_or_global_refresh(self):
+        from apps.storage.tasks import reconcile_storage_repositories
+
+        with (
+            mock.patch("apps.storage.tasks.sync_organization_repositories") as org_sync,
+            mock.patch("apps.storage.tasks.sync_all_repositories") as global_sync,
+            mock.patch("apps.storage.tasks.try_acquire_background_storage_capacity") as lease,
+        ):
+            for org_id in (None, 1):
+                result = reconcile_storage_repositories.run(
+                    organization_id=org_id, repository_ids=[], background=True,
+                )
+                self.assertEqual(result["repositories_scanned"], 0)
+            org_sync.assert_not_called()
+            global_sync.assert_not_called()
+            lease.assert_not_called()
+
+    def test_worker_only_refreshes_the_frozen_selection_not_new_repositories(self):
+        from apps.storage.tasks import reconcile_storage_repositories
+
+        org = Organization.objects.create(key="frozen-usage-scope", name="Frozen usage scope")
+        selected = Repository.objects.create(organization_id=org.pk, name="selected", repo_type="s3")
+        ids = select_repository_usage_ids(
+            queryset=Repository.objects.filter(pk=selected.pk),
+            organization_id=org.pk, force=True,
+        )
+        Repository.objects.create(organization_id=org.pk, name="created-later", repo_type="s3")
+        with mock.patch(
+            "apps.storage.services.internal.repository_usage.sync_repository_usage",
+        ) as probe:
+            result = reconcile_storage_repositories.run(
+                organization_id=org.pk, repository_ids=ids, force=True,
+            )
+        self.assertEqual(result["repositories_scanned"], 1)
+        probe.assert_called_once()
+        self.assertEqual(probe.call_args.args[0].pk, selected.pk)
+
     def _mark_direct_nas_location_owned(
         self,
         *,

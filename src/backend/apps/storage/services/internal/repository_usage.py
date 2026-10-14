@@ -12,7 +12,7 @@ from django.apps import apps
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import F, Q, QuerySet
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
 
@@ -1098,11 +1098,13 @@ def _valid_repo_type(value: str | None) -> str | None:
 def _normalize_repository_ids(repository_ids: list[int] | tuple[int, ...] | None) -> list[int]:
     normalized: list[int] = []
     for value in repository_ids or []:
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            continue
         try:
             repository_id = int(value)
         except (TypeError, ValueError):
             continue
-        if repository_id > 0 and repository_id not in normalized:
+        if 0 < repository_id <= 2**63 - 1 and repository_id not in normalized:
             normalized.append(repository_id)
     return normalized
 
@@ -1124,12 +1126,15 @@ def _repository_usage_queryset(
     limit: int = 200,
     force: bool = False,
     stale_after_seconds: int | None = None,
+    queryset: QuerySet[Repository] | None = None,
 ):
-    qs = Repository.objects.exclude(status=Repository.Status.REMOVED)
+    qs = (Repository.objects.all() if queryset is None else queryset).exclude(
+        status=Repository.Status.REMOVED,
+    )
     if organization_id is not None:
         qs = qs.filter(organization_id=organization_id)
-    ids = _normalize_repository_ids(repository_ids)
-    if ids:
+    ids = None if repository_ids is None else _normalize_repository_ids(repository_ids)
+    if repository_ids is not None:
         qs = qs.filter(id__in=ids)
     clean_repo_type = _valid_repo_type(repo_type)
     if clean_repo_type:
@@ -1140,6 +1145,19 @@ def _repository_usage_queryset(
     return qs.order_by(F("last_checked_at").asc(nulls_first=True), "id")[
         : max(1, int(limit or 1))
     ]
+
+
+def select_repository_usage_ids(
+    *, queryset: QuerySet[Repository], organization_id: int,
+    repository_ids: list[int] | None = None, repo_type: str | None = None,
+    limit: int = 200, force: bool = False, stale_after_seconds: int | None = None,
+) -> list[int]:
+    """Freeze a bounded authorized selection before sending work to Celery."""
+    return list(_repository_usage_queryset(
+        queryset=queryset, organization_id=organization_id,
+        repository_ids=repository_ids, repo_type=repo_type, limit=limit,
+        force=force, stale_after_seconds=stale_after_seconds,
+    ).values_list("pk", flat=True))
 
 
 def _sync_repository_usage_candidates(
@@ -1224,7 +1242,7 @@ def sync_organization_repositories(
     async_agent_probes: bool = False,
     should_continue: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
-    ids = _normalize_repository_ids(repository_ids)
+    ids = None if repository_ids is None else _normalize_repository_ids(repository_ids)
     logger.info(
         "repository usage sync org started org_id=%s limit=%s repo_type=%s repository_ids=%s force=%s stale_after_seconds=%s",
         organization_id,
@@ -1262,6 +1280,7 @@ def sync_organization_repositories(
 def sync_all_repositories(
     *,
     limit: int = 500,
+    repository_ids: list[int] | tuple[int, ...] | None = None,
     repo_type: str | None = None,
     force: bool = False,
     stale_after_seconds: int | None = None,
@@ -1277,6 +1296,7 @@ def sync_all_repositories(
         stale_after_seconds,
     )
     qs = _repository_usage_queryset(
+        repository_ids=repository_ids,
         repo_type=repo_type,
         limit=limit,
         force=force,
@@ -1308,7 +1328,7 @@ def enqueue_repository_usage_refresh(
     stale_after_seconds: int | None = _DEFAULT_STALE_AFTER_SECONDS,
     trigger: str = "api",
 ) -> dict[str, Any]:
-    ids = _normalize_repository_ids(repository_ids)
+    ids = None if repository_ids is None else _normalize_repository_ids(repository_ids)
     clean_repo_type = _valid_repo_type(repo_type)
     repositories = _repository_usage_queryset(
         organization_id=organization_id, repository_ids=ids,

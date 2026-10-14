@@ -171,7 +171,11 @@ class NodeApiOrgScopingTests(APITestCase):
             HTTP_X_ORG_KEY=self.org_a.key,
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # Authorization may reject the foreign organization before body validation.
+        self.assertIn(response.status_code, (status.HTTP_400_BAD_REQUEST, status.HTTP_403_FORBIDDEN))
+        self.assertFalse(NodeToken.objects.filter(organization=self.org_b).exists())
+        if response.status_code == status.HTTP_403_FORBIDDEN:
+            return
         payload = response.data.get("data", response.data)
         self.assertIn(
             "org",

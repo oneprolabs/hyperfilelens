@@ -310,7 +310,9 @@ def _nas_item(resource: SourceResource) -> dict[str, Any]:
     }
 
 
-def _build_catalog(*, organization_id: int) -> list[dict[str, Any]]:
+def _build_catalog(
+    *, organization_id: int, allowed_source_ids=None,
+) -> list[dict[str, Any]]:
     agents = Node.objects.filter(
         organization_id=organization_id, role=NodeRole.AGENT, is_deleted=False
     ).order_by("-created_at", "-id")
@@ -323,6 +325,9 @@ def _build_catalog(*, organization_id: int) -> list[dict[str, Any]]:
         .select_related("bound_node")
         .order_by("-created_at", "-id")
     )
+    if allowed_source_ids is not None:
+        agents = agents.filter(pk__in=allowed_source_ids.get("agent", []))
+        nas_resources = nas_resources.filter(pk__in=allowed_source_ids.get("nas", []))
     items = [_agent_item(node) for node in agents]
     items.extend(_nas_item(resource) for resource in nas_resources)
     _attach_agent_lifecycle_status(organization_id=organization_id, items=items)
@@ -1476,9 +1481,14 @@ def _list_pipeline_backup_selectable_sources(
     **filters: Any,
 ) -> tuple[list[dict[str, Any]], int]:
     queryset = _pipeline_queryset(organization_id=organization_id, **filters)
-    total = queryset.count()
-    start = (page - 1) * page_size
-    entries = list(queryset[start : start + page_size])
+    from common.drf.query_page import snapshot_page
+    from types import SimpleNamespace
+
+    rows, total = snapshot_page(
+        queryset, fields=("id", "source_kind", "ref_id", "step"),
+        page=page, page_size=page_size,
+    )
+    entries = [SimpleNamespace(**row) for row in rows]
     return _materialize_pipeline_page(
         organization_id=organization_id,
         entries=entries,
@@ -1525,11 +1535,16 @@ def _list_legacy_backup_selectable_sources(
     exclude = {
         value.strip() for value in (exclude_ids or []) if value and value.strip()
     }
-    items = _build_catalog(organization_id=organization_id)
+    items = _build_catalog(
+        organization_id=organization_id,
+        allowed_source_ids=filters.get("allowed_source_ids"),
+    )
     pipeline_map = load_pipeline_step_map(organization_id=organization_id)
     items = attach_pipeline_steps(items, pipeline_map=pipeline_map)
     if filters.get("allowed_source_ids") is not None:
-        allowed = filters["allowed_source_ids"]
+        allowed = {
+            kind: set(ids) for kind, ids in filters["allowed_source_ids"].items()
+        }
         items = [item for item in items if item["ref_id"] in allowed.get(item["kind"], [])]
     effective_tag_ids = list(dict.fromkeys([
         *(filters.get("tag_ids") or []),

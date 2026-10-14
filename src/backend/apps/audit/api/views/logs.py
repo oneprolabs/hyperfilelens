@@ -15,6 +15,7 @@ from apps.audit.models import AuditLog
 from apps.audit.selectors.interface import audit_statistics, list_audit_logs
 from apps.audit.services.internal.export_format import format_audit_export_row
 from apps.iam.permissions_org import resolve_org_key
+from apps.iam.activity_access import filter_activity_queryset
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
@@ -31,8 +32,8 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         params = self.request.query_params
         user_id_raw = (params.get("user_id") or params.get("user") or "").strip()
         user_id = int(user_id_raw) if user_id_raw.isdigit() else None
-        org_key = (params.get("org") or resolve_org_key(self.request) or "").strip()
-        return list_audit_logs(
+        org_key = resolve_org_key(self.request)
+        queryset = list_audit_logs(
             org_key=org_key or None,
             action=(params.get("action") or "").strip() or None,
             correlation_id=(params.get("correlation_id") or "").strip() or None,
@@ -49,11 +50,15 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
             search_field=(params.get("search_field") or "").strip() or None,
             ip_address=(params.get("ip_address") or "").strip() or None,
         )
+        return filter_activity_queryset(self.request, queryset, actor_field="user_id")
 
     @action(detail=False, methods=["get"])
     def statistics(self, request):
-        org_key = (request.query_params.get("org") or resolve_org_key(request) or "").strip()
-        return Response(audit_statistics(org_key=org_key or None))
+        org_key = resolve_org_key(request)
+        visible = filter_activity_queryset(
+            request, list_audit_logs(org_key=org_key or None), actor_field="user_id",
+        )
+        return Response(audit_statistics(org_key=org_key or None, queryset=visible))
 
     @action(detail=False, methods=["get"], url_path="export")
     def export_logs(self, request):

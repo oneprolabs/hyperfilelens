@@ -244,6 +244,7 @@ import {
   flowSourceMemoryText,
 } from '../../lib/flowSourceDisplay'
 import { formatOfflineBackupPlanMessage } from './lib/offlineBackupPlanMessage'
+import { useResourceCapabilities, type ResourceAction } from '../../composables/useResourceCapabilities'
 
 const loadFlowBackupSourceDetailDrawer = () => import('./components/FlowBackupSourceDetailDrawer.vue')
 const loadBackupCreateWizard = () => import('./BackupCreateWizard.vue')
@@ -1943,7 +1944,13 @@ const step2AvailableSourceIds = computed(() => step2PipelineSourceIds.value)
 const step3AvailableSourceIds = computed(() => step3PipelineSourceIds.value)
 
 
-const step2ToolbarActionsEnabled = computed(() => step1Selection.value.length > 0)
+const step2ToolbarActionsEnabled = computed(() =>
+  step1Selection.value.length > 0
+  && step1Selection.value.every((id) => {
+    const row = backupSelectableById.value.get(id)
+    return row ? sourceCanManage(row) : false
+  }),
+)
 
 const step2SourceList = computed(() => {
   if (flowMainStep.value === 1) return step2SelectableRows.value
@@ -2010,6 +2017,43 @@ const step2AllSourcesConfigured = computed(() => step2GlobalPendingCount.value =
 
 const step3TableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const step3SourceSelection = ref<FlowSourceRow[]>([])
+function sourceCapabilityReference(row: FlowSourceRow) {
+  const [kind, rawId] = row.id.split(':')
+  return {
+    resource_type: (kind === 'nas' ? 'source_resource' : 'node') as 'source_resource' | 'node',
+    resource_id: Number(rawId),
+  }
+}
+const resourcePermissions = useResourceCapabilities(computed(() => [
+  ...[...step3SourceSelection.value, ...backupSelectableRows.value, ...step2SelectableRows.value]
+    .filter((row) => sourceCapabilityReference(row).resource_id > 0)
+    .map(sourceCapabilityReference),
+  ...backupConfigRows.value.map((row) => ({ resource_type: 'backup_config' as const, resource_id: row.id })),
+  ...backupConfigRows.value.map((row) => ({ resource_type: 'repository' as const, resource_id: row.repository_id })),
+]))
+const sourceCanAct = (row: FlowSourceRow, action: ResourceAction) => {
+  const ref = sourceCapabilityReference(row)
+  return resourcePermissions.permitted(ref.resource_type, ref.resource_id, action)
+}
+const sourceCanManage = (row: FlowSourceRow) => {
+  return sourceCanAct(row, 'manage')
+}
+const sourceConfigsCanAct = (row: FlowSourceRow, action: ResourceAction) => {
+  const configs = sourceBackupConfigs(row.id)
+  return configs.length > 0 && configs.every((config) =>
+    resourcePermissions.permitted('backup_config', config.id, action),
+  )
+}
+const sourceCanRunBackup = (row: FlowSourceRow) => sourceCanAct(row, 'run_backup')
+  && sourceConfigsCanAct(row, 'run')
+  && sourceBackupConfigs(row.id).every((config) =>
+    resourcePermissions.permitted('repository', config.repository_id, 'run_backup'),
+  )
+const sourceCanCleanup = (row: FlowSourceRow, configAction: 'manage' | 'delete') =>
+  sourceBackupConfigs(row.id).every((config) =>
+    resourcePermissions.permitted('backup_config', config.id, configAction)
+    && resourcePermissions.permitted('backup_config', config.id, 'delete_data'),
+  )
 const wizardTagActionOpen = ref(false)
 const wizardTagAction = ref<'add' | 'remove'>('add')
 const wizardTagSourceRows = ref<Array<{ id: string; name: string }>>([])
@@ -2052,6 +2096,10 @@ const wizardTagUnbindDisabled = computed(() => {
     return tags ? [[source.id, tags]] : []
   }))
   return wizardTagSaving.value
+    || selected.some((source) => {
+      const row = backupSelectableById.value.get(source.id)
+      return row ? !sourceCanManage(row) : true
+    })
     || !canUnbindSelectedSources(selected.map((source) => source.id), assignments)
 })
 
@@ -4926,7 +4974,7 @@ const displayNameEditCanSubmit = computed(() => {
 })
 
 function sourceCanEditDisplayName(row: FlowSourceRow | undefined) {
-  return Boolean(row && flowSourceRowSelectable(row) && !sourceResetRunning(row.id))
+  return Boolean(row && sourceCanManage(row) && flowSourceRowSelectable(row) && !sourceResetRunning(row.id))
 }
 
 const step1DisplayNameEditEnabled = computed(() =>
@@ -5122,6 +5170,7 @@ const step3SelectionHasActiveBackup = computed(() =>
 
 const step3SourceActionsEnabled = computed(() => {
   if (!step3SourceSelection.value.length) return false
+  if (step3SourceSelection.value.some((row) => !sourceCanRunBackup(row))) return false
   if (step3SourceSelection.value.some((row) => sourceResetRunning(row.id))) return false
   if (step3SelectionHasActiveBackup.value) return false
   return step3SourceSelection.value.some((row) => flowSourceCanOperate(row))
@@ -5132,6 +5181,7 @@ const step3StartBackupEnabled = computed(() =>
 )
 const step3LifecycleActionsEnabled = computed(() => {
   if (!step3SourceSelection.value.length) return false
+  if (step3SourceSelection.value.some((row) => !sourceCanManage(row))) return false
   if (step3SourceSelection.value.some((row) => sourceResetRunning(row.id))) return false
   // Failed / blocked deregistration stays actionable so Force Deregister and
   // Reset Config can retry, matching step3UnregisterEnabled semantics.
@@ -5157,21 +5207,31 @@ function selectionHasRunningBackupOrRestore(sourceIds: string[]) {
 
 const step3ResetEnabled = computed(() =>
   step3SelectionEditable.value
+  && step3SourceSelection.value.every((row) => sourceCanCleanup(row, 'manage'))
   && !step3SourceSelection.value.some((row) => sourceHasRunningBackupOrRestore(row.id)),
 )
 
 const step1UnregisterEnabled = computed(() => {
   if (selectedSourceIds.value.length === 0) return false
+  if (selectedSourceIds.value.some((id) => {
+    const row = backupSelectableRows.value.find((item) => item.id === id)
+    return row ? !sourceCanAct(row, 'delete') || !sourceCanCleanup(row, 'delete') : true
+  })) return false
   return !selectionHasRunningBackupOrRestore(selectedSourceIds.value)
 })
 
 const step2UnregisterEnabled = computed(() => {
   if (step1Selection.value.length === 0) return false
+  if (step1Selection.value.some((id) => {
+    const row = step2SelectableRows.value.find((item) => item.id === id)
+    return row ? !sourceCanAct(row, 'delete') || !sourceCanCleanup(row, 'delete') : true
+  })) return false
   return !selectionHasRunningBackupOrRestore(step1Selection.value)
 })
 
 const step3UnregisterEnabled = computed(() => {
   if (!step3SourceSelection.value.length) return false
+  if (!step3SourceSelection.value.every((row) => sourceCanAct(row, 'delete') && sourceCanCleanup(row, 'delete'))) return false
   if (step3SourceSelection.value.some((row) => sourceResetRunning(row.id))) return false
   // Failed / blocked deregistration stays selectable so Force Deregister can retry.
   // Edit and reset remain locked by step3SelectionEditable.
@@ -5183,12 +5243,15 @@ const step3UnregisterEnabled = computed(() => {
   return !step3SourceSelection.value.some((row) => sourceHasRunningBackupOrRestore(row.id))
 })
 const step3CanStopBackup = computed(() =>
-  step3SourceSelection.value.some((row) => sourceBackupRuntime(row.id).running),
+  step3SourceSelection.value.some((row) => sourceBackupRuntime(row.id).running)
+  && step3SourceSelection.value.filter((row) => sourceBackupRuntime(row.id).running)
+    .every((row) => sourceConfigsCanAct(row, 'cancel')),
 )
 const step3CanStopRestore = computed(() =>
   step3SourceSelection.value.some((row) =>
     sourceRestoreRuntime(row.id).running && !runtimeStopping(row.id, 'restore'),
-  ),
+  ) && step3SourceSelection.value.filter((row) => sourceRestoreRuntime(row.id).running)
+    .every((row) => sourceConfigsCanAct(row, 'cancel_restore')),
 )
 const step3StopActionBusy = ref(false)
 const selectedRecoverableSourceRows = computed(() =>
@@ -5196,6 +5259,7 @@ const selectedRecoverableSourceRows = computed(() =>
 )
 const recoveryToolbarEnabled = computed(() => {
   if (selectedRecoverableSourceRows.value.length === 0) return false
+  if (!selectedRecoverableSourceRows.value.every((row) => sourceConfigsCanAct(row, 'run_restore'))) return false
   return !selectedRecoverableSourceRows.value.some((row) =>
     sourceRestoreRuntime(row.id).running || runtimeStopping(row.id, 'restore'),
   )
@@ -10633,13 +10697,20 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                               :size="14"
                               class="shrink-0"
                             />
-                          <span>{{ t('protection.backupsPage.flowActionEditDisplayName') }}</span>
+                            <span>{{ t('protection.backupsPage.flowActionEditDisplayName') }}</span>
                           </span>
                         </ElDropdownItem>
-                        <ElDropdownItem divided :disabled="!wizardSelectedTagSources.length || wizardTagSaving" @click="openWizardTagAction('add')">
+                        <ElDropdownItem
+                          divided
+                          :disabled="!wizardSelectedTagSources.length || wizardTagSaving"
+                          @click="openWizardTagAction('add')"
+                        >
                           <span class="el-dropdown-menu__item-content"><Link2 :size="14" /><span>{{ t('protection.tags.bind') }}</span></span>
                         </ElDropdownItem>
-                        <ElDropdownItem :disabled="wizardTagUnbindDisabled" @click="openWizardTagAction('remove')">
+                        <ElDropdownItem
+                          :disabled="wizardTagUnbindDisabled"
+                          @click="openWizardTagAction('remove')"
+                        >
                           <span class="el-dropdown-menu__item-content"><Unlink :size="14" /><span>{{ t('protection.tags.unbind') }}</span></span>
                         </ElDropdownItem>
                         <ElDropdownItem
@@ -10702,10 +10773,17 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                             <span>{{ t('protection.backupsPage.flowActionEditDisplayName') }}</span>
                           </span>
                         </ElDropdownItem>
-                        <ElDropdownItem divided :disabled="!wizardSelectedTagSources.length || wizardTagSaving" @click="openWizardTagAction('add')">
+                        <ElDropdownItem
+                          divided
+                          :disabled="!wizardSelectedTagSources.length || wizardTagSaving"
+                          @click="openWizardTagAction('add')"
+                        >
                           <span class="el-dropdown-menu__item-content"><Link2 :size="14" /><span>{{ t('protection.tags.bind') }}</span></span>
                         </ElDropdownItem>
-                        <ElDropdownItem :disabled="wizardTagUnbindDisabled" @click="openWizardTagAction('remove')">
+                        <ElDropdownItem
+                          :disabled="wizardTagUnbindDisabled"
+                          @click="openWizardTagAction('remove')"
+                        >
                           <span class="el-dropdown-menu__item-content"><Unlink :size="14" /><span>{{ t('protection.tags.unbind') }}</span></span>
                         </ElDropdownItem>
                         <ElDropdownItem
@@ -10883,10 +10961,17 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                             <span>{{ t('protection.backupsPage.flowActionStopRestore') }}</span>
                           </span>
                         </ElDropdownItem>
-                        <ElDropdownItem divided :disabled="!wizardSelectedTagSources.length || wizardTagSaving" @click="openWizardTagAction('add')">
+                        <ElDropdownItem
+                          divided
+                          :disabled="!wizardSelectedTagSources.length || wizardTagSaving"
+                          @click="openWizardTagAction('add')"
+                        >
                           <span class="el-dropdown-menu__item-content"><Link2 :size="14" /><span>{{ t('protection.tags.bind') }}</span></span>
                         </ElDropdownItem>
-                        <ElDropdownItem :disabled="wizardTagUnbindDisabled" @click="openWizardTagAction('remove')">
+                        <ElDropdownItem
+                          :disabled="wizardTagUnbindDisabled"
+                          @click="openWizardTagAction('remove')"
+                        >
                           <span class="el-dropdown-menu__item-content"><Unlink :size="14" /><span>{{ t('protection.tags.unbind') }}</span></span>
                         </ElDropdownItem>
                         <ElDropdownItem
@@ -11029,7 +11114,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         >
                           <Tag :size="16" />
                         </ElBadge>
-                        <Tag v-else :size="16" />
+                        <Tag
+                          v-else
+                          :size="16"
+                        />
                       </ElButton>
                     </template>
                     <div class="source-tag-filter-panel">
@@ -11126,7 +11214,13 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       <div class="source-tag-filter-footer">
                         <span>{{ t('protection.tags.selectedCount', { n: tagFilterDraftIds.length + Number(tagFilterDraftUntagged) }) }}</span>
                         <div>
-                          <ElButton text size="small" @click="clearTagFilterDraft">{{ t('protection.backupsPage.flowFilterReset') }}</ElButton>
+                          <ElButton
+                            text
+                            size="small"
+                            @click="clearTagFilterDraft"
+                          >
+                            {{ t('protection.backupsPage.flowFilterReset') }}
+                          </ElButton>
                           <ElButton
                             type="primary"
                             text
@@ -11363,13 +11457,24 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           variant="compact"
                           :format-bytes="formatNodeBytes"
                         />
-                        <span v-else class="hfl-empty-mark">—</span>
+                        <span
+                          v-else
+                          class="hfl-empty-mark"
+                        >—</span>
                       </template>
                     </el-table-column>
-                    <el-table-column :label="t('protection.tags.column')" min-width="150">
+                    <el-table-column
+                      :label="t('protection.tags.column')"
+                      min-width="150"
+                    >
                       <template #default="{ row }">
                         <div class="hfl-table-no-tooltip source-tag-list">
-                          <SourceTagBadge v-for="tag in row.tags || []" :key="tag.id" :tag="tag" :show-icon="false" />
+                          <SourceTagBadge
+                            v-for="tag in row.tags || []"
+                            :key="tag.id"
+                            :tag="tag"
+                            :show-icon="false"
+                          />
                           <span v-if="!row.tags?.length">—</span>
                         </div>
                       </template>
@@ -11597,13 +11702,24 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           variant="compact"
                           :format-bytes="formatNodeBytes"
                         />
-                        <span v-else class="hfl-empty-mark">—</span>
+                        <span
+                          v-else
+                          class="hfl-empty-mark"
+                        >—</span>
                       </template>
                     </el-table-column>
-                    <el-table-column :label="t('protection.tags.column')" min-width="150">
+                    <el-table-column
+                      :label="t('protection.tags.column')"
+                      min-width="150"
+                    >
                       <template #default="{ row }">
                         <div class="hfl-table-no-tooltip source-tag-list">
-                          <SourceTagBadge v-for="tag in row.tags || []" :key="tag.id" :tag="tag" :show-icon="false" />
+                          <SourceTagBadge
+                            v-for="tag in row.tags || []"
+                            :key="tag.id"
+                            :tag="tag"
+                            :show-icon="false"
+                          />
                           <span v-if="!row.tags?.length">—</span>
                         </div>
                       </template>
@@ -12204,79 +12320,79 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                   </span>
                                 </span>
                               </template>
-                            <div class="create-confirm-binding-popover-stack">
-                              <div
-                                v-for="policy in sourceBoundPolicyRows(row.id)"
-                                :key="policy.id"
-                                class="create-policy-detail-popover"
-                              >
-                                <div class="create-policy-detail-popover__head">
-                                  <div class="create-policy-detail-popover__title">
-                                    {{ policy.name }}
-                                  </div>
-                                  <span
-                                    v-if="policy.isActive !== null"
-                                    :class="flowBindingStatePillClass(policy.isActive)"
-                                  >
-                                    {{ flowBindingStateLabel(policy.isActive) }}
-                                  </span>
-                                </div>
+                              <div class="create-confirm-binding-popover-stack">
                                 <div
-                                  v-if="policy.isActive !== null"
-                                  class="create-policy-detail-popover__sections"
+                                  v-for="policy in sourceBoundPolicyRows(row.id)"
+                                  :key="policy.id"
+                                  class="create-policy-detail-popover"
                                 >
-                                  <section
-                                    v-for="detailRow in policy.detailRows"
-                                    :key="detailRow.label"
-                                    class="create-policy-detail-popover__section create-policy-detail-popover__section--line"
-                                  >
-                                    <span class="create-policy-detail-popover__section-title">{{ detailRow.label }}:</span>
-                                    <span class="create-policy-detail-popover__value">{{ detailRow.value }}</span>
-                                  </section>
-                                  <section class="create-policy-detail-popover__section">
-                                    <div class="create-policy-detail-popover__section-title">
-                                      {{ t('protection.policiesPage.fieldRetention') }}:
+                                  <div class="create-policy-detail-popover__head">
+                                    <div class="create-policy-detail-popover__title">
+                                      {{ policy.name }}
                                     </div>
-                                    <div class="create-policy-detail-popover__retention-box">
-                                      <div class="policy-retention-detail-list">
-                                        <div
-                                          v-for="line in policy.retentionLines"
-                                          :key="`${line.label || ''}${line.text}`"
-                                          class="policy-retention-detail-list__line"
-                                          :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
-                                        >
-                                          <span
-                                            v-if="line.label"
-                                            class="policy-retention-detail-list__label"
-                                          >{{ line.label }}</span>
-                                          <span class="policy-retention-detail-list__text">{{ line.text }}</span>
+                                    <span
+                                      v-if="policy.isActive !== null"
+                                      :class="flowBindingStatePillClass(policy.isActive)"
+                                    >
+                                      {{ flowBindingStateLabel(policy.isActive) }}
+                                    </span>
+                                  </div>
+                                  <div
+                                    v-if="policy.isActive !== null"
+                                    class="create-policy-detail-popover__sections"
+                                  >
+                                    <section
+                                      v-for="detailRow in policy.detailRows"
+                                      :key="detailRow.label"
+                                      class="create-policy-detail-popover__section create-policy-detail-popover__section--line"
+                                    >
+                                      <span class="create-policy-detail-popover__section-title">{{ detailRow.label }}:</span>
+                                      <span class="create-policy-detail-popover__value">{{ detailRow.value }}</span>
+                                    </section>
+                                    <section class="create-policy-detail-popover__section">
+                                      <div class="create-policy-detail-popover__section-title">
+                                        {{ t('protection.policiesPage.fieldRetention') }}:
+                                      </div>
+                                      <div class="create-policy-detail-popover__retention-box">
+                                        <div class="policy-retention-detail-list">
+                                          <div
+                                            v-for="line in policy.retentionLines"
+                                            :key="`${line.label || ''}${line.text}`"
+                                            class="policy-retention-detail-list__line"
+                                            :class="{ 'policy-retention-detail-list__line--summary': !line.label }"
+                                          >
+                                            <span
+                                              v-if="line.label"
+                                              class="policy-retention-detail-list__label"
+                                            >{{ line.label }}</span>
+                                            <span class="policy-retention-detail-list__text">{{ line.text }}</span>
+                                          </div>
                                         </div>
                                       </div>
-                                    </div>
-                                  </section>
-                                  <section class="create-policy-detail-popover__section">
-                                    <div class="create-policy-detail-popover__section-title">
-                                      {{ t('protection.policiesPage.sectionAdvancedSettings') }}:
-                                    </div>
-                                    <div class="create-policy-detail-popover__advanced-box">
-                                      <div
-                                        v-for="advancedRow in policy.advancedRows"
-                                        :key="advancedRow.label"
-                                        class="create-policy-detail-popover__advanced-row"
-                                      >
-                                        <span>{{ advancedRow.label }}</span>
-                                        <el-tag
-                                          size="small"
-                                          v-bind="booleanStatusTag(advancedRow.enabled)"
-                                        >
-                                          {{ flowBindingStateLabel(advancedRow.enabled) }}
-                                        </el-tag>
+                                    </section>
+                                    <section class="create-policy-detail-popover__section">
+                                      <div class="create-policy-detail-popover__section-title">
+                                        {{ t('protection.policiesPage.sectionAdvancedSettings') }}:
                                       </div>
-                                    </div>
-                                  </section>
+                                      <div class="create-policy-detail-popover__advanced-box">
+                                        <div
+                                          v-for="advancedRow in policy.advancedRows"
+                                          :key="advancedRow.label"
+                                          class="create-policy-detail-popover__advanced-row"
+                                        >
+                                          <span>{{ advancedRow.label }}</span>
+                                          <el-tag
+                                            size="small"
+                                            v-bind="booleanStatusTag(advancedRow.enabled)"
+                                          >
+                                            {{ flowBindingStateLabel(advancedRow.enabled) }}
+                                          </el-tag>
+                                        </div>
+                                      </div>
+                                    </section>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
                             </HflPopover>
                           </template>
                           <span
@@ -12388,69 +12504,69 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                   </span>
                                 </span>
                               </template>
-                            <div class="create-confirm-binding-popover-stack">
-                              <div
-                                v-for="filter in sourceBoundFilterRows(row.id)"
-                                :key="filter.id"
-                                class="create-policy-detail-popover"
-                              >
-                                <div class="create-policy-detail-popover__head">
-                                  <div class="create-policy-detail-popover__title">
-                                    {{ filter.name }}
-                                  </div>
-                                  <span
-                                    v-if="filter.isActive !== null"
-                                    :class="flowBindingStatePillClass(filter.isActive)"
-                                  >
-                                    {{ flowBindingStateLabel(filter.isActive) }}
-                                  </span>
-                                </div>
+                              <div class="create-confirm-binding-popover-stack">
                                 <div
-                                  v-if="filter.isActive !== null"
-                                  class="create-policy-detail-popover__sections"
+                                  v-for="filter in sourceBoundFilterRows(row.id)"
+                                  :key="filter.id"
+                                  class="create-policy-detail-popover"
                                 >
-                                  <section
-                                    v-for="detailRow in filter.hoverRows"
-                                    :key="detailRow.label"
-                                    class="create-policy-detail-popover__section create-policy-detail-popover__section--filter-line"
-                                  >
-                                    <span class="create-policy-detail-popover__section-title">{{ detailRow.label }}:</span>
+                                  <div class="create-policy-detail-popover__head">
+                                    <div class="create-policy-detail-popover__title">
+                                      {{ filter.name }}
+                                    </div>
                                     <span
-                                      v-if="detailRow.enabled"
-                                      :class="flowBindingStatePillClass(true)"
+                                      v-if="filter.isActive !== null"
+                                      :class="flowBindingStatePillClass(filter.isActive)"
                                     >
-                                      {{ detailRow.value }}
+                                      {{ flowBindingStateLabel(filter.isActive) }}
                                     </span>
-                                    <span
-                                      v-else
-                                      class="create-policy-detail-popover__value"
-                                    >{{ detailRow.value }}</span>
-                                  </section>
-                                  <section class="create-policy-detail-popover__section">
-                                    <div class="create-policy-detail-popover__section-title">
-                                      {{ t('protection.policiesPage.filterRulesPreviewTitle') }}:
-                                    </div>
-                                    <div class="create-filter-rules-preview">
-                                      <template v-if="filter.compiledRules.length">
-                                        <code
-                                          v-for="(line, index) in filter.compiledRules"
-                                          :key="`${index}-${line}`"
-                                          class="create-filter-rules-preview__line"
-                                        >
-                                          {{ line }}
-                                        </code>
-                                      </template>
-                                      <p
-                                        v-else
-                                        class="create-filter-rules-preview__empty"
+                                  </div>
+                                  <div
+                                    v-if="filter.isActive !== null"
+                                    class="create-policy-detail-popover__sections"
+                                  >
+                                    <section
+                                      v-for="detailRow in filter.hoverRows"
+                                      :key="detailRow.label"
+                                      class="create-policy-detail-popover__section create-policy-detail-popover__section--filter-line"
+                                    >
+                                      <span class="create-policy-detail-popover__section-title">{{ detailRow.label }}:</span>
+                                      <span
+                                        v-if="detailRow.enabled"
+                                        :class="flowBindingStatePillClass(true)"
                                       >
-                                        {{ t('protection.policiesPage.filterNoActiveRules') }}
-                                      </p>
-                                    </div>
-                                  </section>
+                                        {{ detailRow.value }}
+                                      </span>
+                                      <span
+                                        v-else
+                                        class="create-policy-detail-popover__value"
+                                      >{{ detailRow.value }}</span>
+                                    </section>
+                                    <section class="create-policy-detail-popover__section">
+                                      <div class="create-policy-detail-popover__section-title">
+                                        {{ t('protection.policiesPage.filterRulesPreviewTitle') }}:
+                                      </div>
+                                      <div class="create-filter-rules-preview">
+                                        <template v-if="filter.compiledRules.length">
+                                          <code
+                                            v-for="(line, index) in filter.compiledRules"
+                                            :key="`${index}-${line}`"
+                                            class="create-filter-rules-preview__line"
+                                          >
+                                            {{ line }}
+                                          </code>
+                                        </template>
+                                        <p
+                                          v-else
+                                          class="create-filter-rules-preview__empty"
+                                        >
+                                          {{ t('protection.policiesPage.filterNoActiveRules') }}
+                                        </p>
+                                      </div>
+                                    </section>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
                             </HflPopover>
                           </template>
                           <span
@@ -12468,7 +12584,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </div>
                       </template>
                     </el-table-column>
-                    <el-table-column :label="t('protection.tags.column')" min-width="145">
+                    <el-table-column
+                      :label="t('protection.tags.column')"
+                      min-width="145"
+                    >
                       <template #default="{ row }">
                         <div class="hfl-table-no-tooltip source-tag-list">
                           <SourceTagBadge
@@ -12521,7 +12640,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                           variant="compact"
                           :format-bytes="formatNodeBytes"
                         />
-                        <span v-else class="hfl-empty-mark">—</span>
+                        <span
+                          v-else
+                          class="hfl-empty-mark"
+                        >—</span>
                       </template>
                     </el-table-column>
                     <el-table-column
@@ -14424,7 +14546,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                               :disabled="!recoveryTargetDirPendingPath(sourceRow.hostId, entry)"
                                               @click.stop="setRecoveryTargetDirCreateName(sourceRow.hostId, entry, recoveryTargetDirPendingPath(sourceRow.hostId, entry), '')"
                                             >
-                                              <FolderPlus :size="15" :stroke-width="2.2" />
+                                              <FolderPlus
+                                                :size="15"
+                                                :stroke-width="2.2"
+                                              />
                                               {{ t('protection.backupsPage.restoreCreateFolder') }}
                                             </ElButton>
                                           </div>
@@ -14511,7 +14636,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                                             </template>
                                           </el-tree>
                                           <div class="create-recovery-tree-actions">
-                                            <ElButton size="small" @click.stop="cancelRecoveryTargetDirPicker(sourceRow.hostId, entry)">
+                                            <ElButton
+                                              size="small"
+                                              @click.stop="cancelRecoveryTargetDirPicker(sourceRow.hostId, entry)"
+                                            >
                                               {{ t('common.cancel') }}
                                             </ElButton>
                                             <ElButton
@@ -15558,7 +15686,12 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
         wizard
       />
       <template #footer>
-        <ElButton :disabled="wizardTagSaving" @click="wizardTagActionOpen = false">{{ t('common.cancel') }}</ElButton>
+        <ElButton
+          :disabled="wizardTagSaving"
+          @click="wizardTagActionOpen = false"
+        >
+          {{ t('common.cancel') }}
+        </ElButton>
         <ElButton
           type="primary"
           :loading="wizardTagSaving"

@@ -44,15 +44,19 @@ def _required_int_query(value: str | None, field_name: str) -> int:
 
 def _assert_directory_access(request, directory_id: int) -> None:
     directory = BackupSourceSnapshotDirectory.objects.filter(
-        pk=directory_id,
+        pk=directory_id, source_snapshot__organization_id=require_org(request).id,
     ).values("source_snapshot_id").first()
     if directory is None:
         raise NotFound("snapshot directory not found")
     config_id = BackupSourceSnapshot.objects.filter(
-        pk=directory["source_snapshot_id"],
+        pk=directory["source_snapshot_id"], organization_id=require_org(request).id,
     ).values_list("backup_config_id", flat=True).first()
     if config_id:
-        assert_resource_access(request, "backup_config", config_id)
+        assert_resource_access(
+            request, "backup_config", config_id, action="protection.backup_data.browse"
+        )
+    target_id = _required_int_query(request.query_params.get("target_node_id"), "target_node_id")
+    assert_resource_access(request, "node", target_id, action="resource.view")
 
 
 class RestoreSnapshotDirectoryBrowseView(APIView):

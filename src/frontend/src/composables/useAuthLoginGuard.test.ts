@@ -81,6 +81,21 @@ describe('login route authentication guard', () => {
     clearAuth()
   })
 
+  it('redirects a pending account to password setup before any business route', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      code: '0000', data: { user: {
+        id: 91, email: 'pending@test.local', requires_password_change: true,
+        access_profile: { org_key: 'tenant-a', role: 'member', visible_features: [], landing_path: '/' },
+      } },
+    })))
+    const next = vi.fn()
+    await mocks.guard?.({ path: '/protection/backups', query: {}, meta: {} }, { path: '/login' }, next)
+    expect(next).toHaveBeenCalledWith('/account/setup')
+    next.mockClear()
+    await mocks.guard?.({ path: '/account/setup', query: {}, meta: {} }, { path: '/' }, next)
+    expect(next).toHaveBeenCalledExactlyOnceWith()
+  })
+
   it('holds the login route until session inspection redirects an authenticated user', async () => {
     let resolveSession!: (response: Response) => void
     const sessionResponse = new Promise<Response>((resolve) => {

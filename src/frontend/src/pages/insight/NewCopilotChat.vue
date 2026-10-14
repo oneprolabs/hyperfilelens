@@ -22,6 +22,7 @@ import { ElMessage, ElTag } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import HflPopover from '../../components/HflPopover.vue'
 import { useCopilotSelectionPreview } from '../../composables/useCopilotSelectionPreview'
+import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
 import { useKnowledgeSourceForm, type BackupScopePickerNode, type KnowledgeSourceType } from '../../composables/useKnowledgeSourceForm'
 import { apiErrorMessage } from '../../lib/api'
 import { formatBytes } from '../../lib/kopiaProgress'
@@ -223,6 +224,11 @@ const selectedGateway = computed(() => gatewayMode.value === 'auto'
 const selectedBackupSource = computed(() => backupSourceOptions.value.find(
   (row) => row.backupConfigId === selectedBackupConfigId.value,
 ) ?? null)
+const resourcePermissions = useResourceCapabilities(computed(() => (
+  selectedBackupConfigId.value
+    ? [{ resource_type: 'backup_config' as const, resource_id: selectedBackupConfigId.value }]
+    : []
+)))
 watch(selectedBackupConfigId, () => {
   snapshotSearchText.value = ''
 })
@@ -240,6 +246,7 @@ const canCreate = computed(() => Boolean(
   && selectedGateway.value
   && agentModelReady.value
   && selectionPreviewReady.value
+  && resourcePermissions.permitted('backup_config', selectedBackupConfigId.value, 'use_insights')
   && !submitting.value,
 ))
 const submitBlocker = computed<SubmitBlocker | null>(() => {
@@ -859,7 +866,13 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                           'is-waiting': ['calculating', 'waiting'].includes(selectionStateForScope(scopeEntry.id).status),
                           'is-error': selectionStateForScope(scopeEntry.id).status === 'error',
                         }"
-                      ><LoaderCircle v-if="['calculating', 'waiting'].includes(selectionStateForScope(scopeEntry.id).status)" class="new-chat-loading-icon" :class="{ 'is-waiting': selectionStateForScope(scopeEntry.id).status === 'waiting' }" :size="13" aria-hidden="true" />{{ scopeDataSummary(scopeEntry.id) }}</span>
+                      ><LoaderCircle
+                        v-if="['calculating', 'waiting'].includes(selectionStateForScope(scopeEntry.id).status)"
+                        class="new-chat-loading-icon"
+                        :class="{ 'is-waiting': selectionStateForScope(scopeEntry.id).status === 'waiting' }"
+                        :size="13"
+                        aria-hidden="true"
+                      />{{ scopeDataSummary(scopeEntry.id) }}</span>
                       <ElButton
                         type="danger"
                         text
@@ -950,7 +963,13 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       :class="{ 'is-error': selectionCalculationStatus === 'error' || Boolean(selectionAdmissionError) || Boolean(selectionAdmission?.admission.reasons.length), 'is-waiting': selectionCalculationStatus === 'waiting' }"
                       aria-live="polite"
                     >
-                      <LoaderCircle v-if="['calculating', 'waiting'].includes(selectionCalculationStatus) || selectionAdmissionLoading" class="new-chat-loading-icon" :class="{ 'is-waiting': selectionCalculationStatus === 'waiting' }" :size="14" aria-hidden="true" />
+                      <LoaderCircle
+                        v-if="['calculating', 'waiting'].includes(selectionCalculationStatus) || selectionAdmissionLoading"
+                        class="new-chat-loading-icon"
+                        :class="{ 'is-waiting': selectionCalculationStatus === 'waiting' }"
+                        :size="14"
+                        aria-hidden="true"
+                      />
                       {{ submitBlocker.message }}
                     </p>
                   </div>

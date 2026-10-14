@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, CirclePlay, CircleStop, Plus, RefreshCw, Search, SquarePen, Trash2 } from 'lucide-vue-next'
 import PolicyDetailBasicPanel from './components/PolicyDetailBasicPanel.vue'
@@ -267,6 +268,17 @@ const protectionMenus = useProtectionSideNav()
 
 const policyRows = ref<PolicyRow[]>([])
 const filterRows = ref<FilterRow[]>([])
+const resourcePermissions = useResourceCapabilities(computed(() => [
+  ...policyRows.value.map((row) => ({ resource_type: 'backup_policy' as const, resource_id: row.apiId })),
+  ...filterRows.value.map((row) => ({ resource_type: 'file_filter_rule' as const, resource_id: row.apiId })),
+]))
+const policyWritable = (row: PolicyRow) => resourcePermissions.permitted('backup_policy', row.apiId)
+const filterWritable = (row: FilterRow) => resourcePermissions.permitted('file_filter_rule', row.apiId)
+const selectedWritable = computed(() => listTab.value === 'backup'
+  ? selectedPolicies.value.every(policyWritable) : selectedFilters.value.every(filterWritable))
+const selectedDeletable = computed(() => listTab.value === 'backup'
+  ? selectedPolicies.value.every((row) => resourcePermissions.permitted('backup_policy', row.apiId, 'delete'))
+  : selectedFilters.value.every((row) => resourcePermissions.permitted('file_filter_rule', row.apiId, 'delete')))
 const policyTotal = ref(0)
 const filterTotal = ref(0)
 const listLoading = ref(false)
@@ -510,6 +522,7 @@ watch(messageLocale, () => {
 })
 
 function openAddDialog() {
+  if (!resourcePermissions.canCreate(listTab.value === 'filter' ? 'file_filter_rule' : 'backup_policy')) return
   void router.push({
     path: '/protection/policies/create',
     query: { kind: listTab.value === 'filter' ? 'filter' : 'backup' },
@@ -822,6 +835,7 @@ function onPolicySelectionChange(rows: PolicyRow[]) {
 }
 
 function openEditPolicy(row: PolicyRow) {
+  if (!policyWritable(row)) return
   void router.push({
     path: `/protection/policies/${row.apiId}/edit`,
     query: { kind: 'backup' },
@@ -838,6 +852,7 @@ function editSelectedPolicy() {
 
 async function updateSelectedPoliciesActive(isActive: boolean) {
   const rows = selectedPolicies.value
+  if (!rows.every(policyWritable)) return
   if (!rows.length) {
     ElMessage.warning({ message: t('protection.policiesPage.msgSelectPolicy'), grouping: true })
     return
@@ -944,6 +959,7 @@ function onFilterDetailClosed() {
 }
 
 function openEditFilter(row: FilterRow) {
+  if (!filterWritable(row)) return
   void router.push({
     path: `/protection/policies/${row.apiId}/edit`,
     query: { kind: 'filter' },
@@ -960,6 +976,7 @@ function editSelectedFilter() {
 
 async function updateSelectedFiltersActive(isActive: boolean) {
   const rows = selectedFilters.value
+  if (!rows.every(filterWritable)) return
   if (!rows.length) {
     ElMessage.warning({ message: t('protection.policiesPage.msgSelectFilter'), grouping: true })
     return
@@ -1042,6 +1059,8 @@ async function executeDeleteFilters() {
 }
 
 function executeDeleteConfirm() {
+  if (deleteConfirmKind.value === 'policy'
+    ? !deleteConfirmPolicies.value.every((row) => resourcePermissions.permitted('backup_policy', row.apiId, 'delete')) : !deleteConfirmFilters.value.every((row) => resourcePermissions.permitted('file_filter_rule', row.apiId, 'delete'))) return
   if (deleteConfirmKind.value === 'policy') {
     void executeDeletePolicies()
   } else {
@@ -1055,6 +1074,8 @@ function closeDeleteConfirm() {
 }
 
 function executeStateConfirm() {
+  if (stateConfirmKind.value === 'policy'
+    ? !stateConfirmPolicies.value.every(policyWritable) : !stateConfirmFilters.value.every(filterWritable)) return
   if (stateConfirmKind.value === 'policy') {
     void executePolicyStateChange()
   } else {
@@ -1068,20 +1089,20 @@ function closeStateConfirm() {
 }
 
 const moreEditDisabled = computed(() =>
-  listActionLoading.value || (listTab.value === 'backup' ? selectedPolicyCount.value !== 1 : selectedFilterCount.value !== 1),
+  listActionLoading.value || !selectedWritable.value || (listTab.value === 'backup' ? selectedPolicyCount.value !== 1 : selectedFilterCount.value !== 1),
 )
 const moreBatchDisabled = computed(() =>
-  listActionLoading.value || (listTab.value === 'backup' ? selectedPolicyCount.value === 0 : selectedFilterCount.value === 0),
+  listActionLoading.value || !selectedDeletable.value || (listTab.value === 'backup' ? selectedPolicyCount.value === 0 : selectedFilterCount.value === 0),
 )
 const batchEnableDisabled = computed(() =>
-  listActionLoading.value || (
+  listActionLoading.value || !selectedWritable.value || (
     listTab.value === 'backup'
       ? !selectedPolicies.value.some((row) => !row.is_active)
       : !selectedFilters.value.some((row) => !row.is_active)
   ),
 )
 const batchDisableDisabled = computed(() =>
-  listActionLoading.value || (
+  listActionLoading.value || !selectedWritable.value || (
     listTab.value === 'backup'
       ? !selectedPolicies.value.some((row) => row.is_active)
       : !selectedFilters.value.some((row) => row.is_active)
@@ -1122,6 +1143,7 @@ function onMoreDisable() {
         <template #toolbar>
           <ElButton
             type="primary"
+            :disabled="!resourcePermissions.canCreate(listTab === 'filter' ? 'file_filter_rule' : 'backup_policy')"
             @click="openAddDialog"
           >
             <Plus :size="16" />

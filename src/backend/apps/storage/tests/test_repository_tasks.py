@@ -795,6 +795,12 @@ class RepositoryTaskTests(TestCase):
 
 class RepositoryTasksApiTests(TestCase):
     def setUp(self):
+        from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests
+
+        # Community/domain contract. Enterprise authority and instance quotas
+        # have independent positive/negative integration tests.
+        providers = clear_providers_for_tests()
+        self.addCleanup(restore_providers_for_tests, providers)
         self.client = APIClient()
         user = get_user_model().objects.create_user(
             username="repository-tasks@test.local",

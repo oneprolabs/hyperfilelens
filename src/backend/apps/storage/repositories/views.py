@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from apps.iam.resource_access import assert_resource_access
 from uuid import UUID
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import JsonResponse
@@ -13,6 +14,7 @@ from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.iam.resource_api import GovernedResourceMixin
 from apps.iam.permissions_org import (
     IsOrgOperator,
     IsOrgStaffReader,
@@ -62,6 +64,7 @@ from apps.storage.services.internal.nas_repository import (
 )
 from apps.storage.services.internal.repository_usage import (
     enqueue_repository_usage_refresh,
+    select_repository_usage_ids,
 )
 from apps.monitor.services.internal.repository_usage_history import (
     repository_usage_history_payload,
@@ -134,16 +137,19 @@ def _bool_param(value, *, default: bool = False) -> bool:
 
 
 def _int_list_param(value) -> list[int]:
-    if value is None:
-        return []
-    values = value if isinstance(value, list) else [value]
+    if not isinstance(value, list) or len(value) > 500:
+        raise ValidationError({"repository_ids": "Provide an array of at most 500 repository IDs."})
     ids: list[int] = []
-    for item in values:
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, str)):
+            raise ValidationError({"repository_ids": "Repository IDs must be positive integers."})
         try:
             parsed = int(item)
         except (TypeError, ValueError):
-            continue
-        if parsed > 0 and parsed not in ids:
+            raise ValidationError({"repository_ids": "Repository IDs must be positive integers."}) from None
+        if not 0 < parsed <= 2**63 - 1:
+            raise ValidationError({"repository_ids": "Repository IDs must be positive integers."})
+        if parsed not in ids:
             ids.append(parsed)
     return ids
 
@@ -346,19 +352,67 @@ def _repository_mount_point_for_source(
     return ""
 
 
+def _can_view_associated_sources(request) -> bool:
+    from apps.iam.query_authorization import request_authorization
+    from common.extension_spi import get_authz_provider
+
+    if getattr(request, "hfl_support_readonly", False):
+        return True
+    context = request_authorization(request)
+    if context is None:
+        return get_authz_provider() is None
+    return context.has_action("backup_config", "resource.view") and (
+        context.has_action("node", "protection.source_hosts.view")
+        or context.has_action("source_resource", "protection.source_nas.view")
+    )
+
+
+def _associated_sources_queryset(request, *, organization_id, repository_id):
+    queryset = BackupConfig.objects.filter(
+        organization_id=organization_id, repository_id=repository_id,
+    )
+    if request is None:
+        return queryset
+    queryset = filter_resource_queryset(request, queryset, "backup_config", action="resource.view")
+    from common.extension_spi import get_authz_provider
+    if get_authz_provider() is None or getattr(request, "hfl_support_readonly", False):
+        return queryset
+    agents = filter_resource_queryset(
+        request, Node.objects.filter(organization_id=organization_id, role=NodeRole.AGENT),
+        "node", action="resource.view",
+    )
+    nas = filter_resource_queryset(
+        request, SourceResource.objects.filter(organization_id=organization_id, resource_type=ResourceType.NAS),
+        "source_resource", action="resource.view",
+    )
+    from apps.iam.query_authorization import request_authorization
+    context = request_authorization(request)
+    all_scope = bool(context and context.has_org_action("configuration.resources.access_all"))
+    # Organization-wide readers may inspect retained configuration references
+    # even after the live source disappeared. Scoped readers need a live grant.
+    host_condition = Q(source_type="agent")
+    if not (all_scope and context.has_org_action("protection.source_hosts.view")):
+        host_condition &= Q(source_ref_id__in=agents.values("pk"))
+    nas_condition = Q(source_type="nas")
+    if not (all_scope and context.has_org_action("protection.source_nas.view")):
+        nas_condition &= Q(source_ref_id__in=nas.values("pk"))
+    return queryset.filter(host_condition | nas_condition)
+
+
 def _associated_sources_payload(
     repository: Repository,
     *,
     page: int = 1,
     page_size: int = 10,
+    request=None,
 ) -> tuple[int, list[dict]]:
-    queryset = BackupConfig.objects.filter(
-        organization_id=repository.organization_id,
-        repository_id=repository.id,
+    queryset = _associated_sources_queryset(
+        request, organization_id=repository.organization_id, repository_id=repository.id,
     ).order_by("source_type", "source_ref_id", "id")
-    total = queryset.count()
-    offset = (page - 1) * page_size
-    configs = list(queryset[offset : offset + page_size])
+    from common.drf.query_page import snapshot_page
+    selected, total = snapshot_page(queryset, fields=("id",), page=page, page_size=page_size)
+    # Reapply live scope when hydrating selected IDs; never scan all bindings.
+    configs = list(queryset.filter(pk__in=[row["id"] for row in selected]))
     agent_ids = [
         config.source_ref_id for config in configs if config.source_type == "agent"
     ]
@@ -383,6 +437,9 @@ def _associated_sources_payload(
             is_deleted=False,
         ).select_related("bound_node")
     }
+    page_node_ids = set(agent_ids) | {
+        resource.bound_node_id for resource in nas_sources.values() if resource.bound_node_id
+    }
     shards = {
         (int(shard.node_id), str(shard.repository_subdir)): shard
         for shard in RepositoryUsageShard.objects.filter(
@@ -390,6 +447,8 @@ def _associated_sources_payload(
             repository_id=repository.id,
             usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
             is_active=True,
+            node_id__in=page_node_ids,
+            repository_subdir__in=[nas_agent_repository_subdir(node_id) for node_id in page_node_ids],
         )
     }
     location = _repository_nas_location(repository)
@@ -496,7 +555,9 @@ def _associated_sources_payload(
     return total, rows
 
 
-class RepositoryViewSet(viewsets.ModelViewSet):
+class _RepositoryViewSetBase(viewsets.ModelViewSet):
+    governance_resource_type = "repository"
+    governance_manage_action = "protection.manage"
     permission_classes = [IsAuthenticated, IsOrgWriter]
     serializer_class = RepositorySerializer
 
@@ -513,10 +574,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         organization_id = self._membership().organization_id
-        if self.action != "list":
-            queryset = list_repositories(organization_id=organization_id)
-            return filter_resource_queryset(self.request, queryset, "repository")
-        queryset = list_repositories(
+        queryset = list_repositories(organization_id=organization_id) if self.action != "list" else list_repositories(
             organization_id=organization_id,
             repo_type=self.request.query_params.get("repo_type") or None,
             status=self.request.query_params.get("status") or None,
@@ -525,7 +583,8 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             search_field=self.request.query_params.get("search_field") or None,
         )
         associated_sources = (
-            BackupConfig.objects.filter(
+            _associated_sources_queryset(
+                self.request,
                 organization_id=organization_id,
                 repository_id=OuterRef("pk"),
             )
@@ -536,14 +595,16 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         queryset = queryset.annotate(
             associated_source_count=Coalesce(
                 Subquery(associated_sources, output_field=IntegerField()), Value(0)
-            )
+            ) if _can_view_associated_sources(self.request) else Value(None, output_field=IntegerField())
         )
         if not self.request.query_params.get("status"):
             queryset = queryset.filter(
                 ~Q(status=Repository.Status.REMOVED)
                 | Q(location_claims__state="residual")
             ).distinct()
-        return filter_resource_queryset(self.request, queryset, "repository")
+        return filter_resource_queryset(
+            self.request, queryset, "repository", action=self._resource_action(),
+        )
 
     def get_serializer_class(self):
         if self.action in {"create", "update", "partial_update"}:
@@ -598,6 +659,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         serializer = RepositoryCleanupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         repository = self.get_object()
+        assert_resource_access(request, "repository", repository.pk, action="protection.backup_data.delete")
         try:
             repository_task = create_repository_cleanup_task(
                 repository=repository,
@@ -858,12 +920,14 @@ class RepositoryViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="associated-sources")
     def associated_sources(self, request, pk=None):
         repository = self.get_object()
+        if not _can_view_associated_sources(request):
+            raise PermissionDenied("Associated source information is not permitted.")
         page = _positive_int_param(request.query_params.get("page"), default=1)
         page_size = _positive_int_param(
             request.query_params.get("page_size"), default=10, max_value=100
         )
         count, rows = _associated_sources_payload(
-            repository, page=page, page_size=page_size
+            repository, page=page, page_size=page_size, request=request,
         )
         return Response({"count": count, "results": rows}, status=status.HTTP_200_OK)
 
@@ -987,12 +1051,37 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         stale_after_seconds = _optional_int_param(
             data.get("stale_after_seconds"), "stale_after_seconds"
         )
+        requested_ids = (
+            _int_list_param(data["repository_ids"]) if "repository_ids" in data else None
+        )
+        allowed = filter_resource_queryset(
+            request, Repository.objects.filter(
+                organization_id=membership.organization_id,
+            ).exclude(status=Repository.Status.REMOVED),
+            "repository", action="resource.manage",
+        )
+        if requested_ids is not None:
+            authorized_ids = set(allowed.filter(pk__in=requested_ids).values_list("pk", flat=True))
+            if set(requested_ids) - authorized_ids:
+                raise PermissionDenied("One or more repositories are outside your authorized scope.")
+        force = _bool_param(data.get("force"), default=False)
+        selected_ids = select_repository_usage_ids(
+            queryset=allowed, organization_id=membership.organization_id,
+            repository_ids=requested_ids, repo_type=repo_type, limit=limit,
+            force=force, stale_after_seconds=stale_after_seconds,
+        )
+        if not selected_ids:
+            return Response({
+                "queued": False, "deduplicated": False,
+                "organization_id": membership.organization_id,
+                "repository_ids": [], "repo_type": repo_type, "limit": limit,
+            }, status=status.HTTP_202_ACCEPTED)
         result = enqueue_repository_usage_refresh(
             organization_id=membership.organization_id,
-            repository_ids=_int_list_param(data.get("repository_ids")),
+            repository_ids=selected_ids,
             repo_type=repo_type,
             limit=limit,
-            force=_bool_param(data.get("force"), default=False),
+            force=force,
             stale_after_seconds=stale_after_seconds,
             trigger="api.repositories.sync_usage",
         )
@@ -1055,3 +1144,10 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         )
         preflight.pop("recovery_claim_ids", None)
         return Response(preflight, status=status.HTTP_200_OK)
+
+
+class RepositoryViewSet(GovernedResourceMixin, _RepositoryViewSetBase):
+    """Resource-aware adapter over the unchanged business implementation."""
+
+    governance_resource_type = "repository"
+    governance_manage_action = "protection.manage"

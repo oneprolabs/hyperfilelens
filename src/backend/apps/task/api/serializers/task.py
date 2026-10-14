@@ -161,7 +161,7 @@ class TaskSerializer(serializers.ModelSerializer):
             and isinstance(obj.result_payload, dict)
             and obj.result_payload.get("backup_config_discarded") is True
         )
-        return {
+        actions = {
             "can_cancel": False
             if obj.task_type
             in {Task.Type.SOURCE_UNREGISTER, Task.Type.BACKUP_CONFIG_PROVISION}
@@ -188,6 +188,38 @@ class TaskSerializer(serializers.ModelSerializer):
             ),
             "can_force": False,
         }
+        from common.extension_spi import get_authz_provider
+        if get_authz_provider() is not None:
+            request = self.context.get("request")
+            can_cancel = False
+            can_retry = False
+            if request is not None and obj.task_type == Task.Type.BACKUP:
+                from rest_framework.exceptions import PermissionDenied
+                from apps.protection.api.views.backup_task import _assert_task_resource_access
+                for action, permission in (
+                    ("cancel", "protection.backup_configurations.cancel"),
+                    ("retry", "protection.backup_configurations.run"),
+                ):
+                    try:
+                        _assert_task_resource_access(request, obj, action=permission)
+                    except PermissionDenied:
+                        continue
+                    if action == "cancel":
+                        can_cancel = True
+                    else:
+                        can_retry = True
+            elif request is not None and obj.task_type in RESTORE_TASK_TYPES:
+                from rest_framework.exceptions import PermissionDenied
+                from apps.restore.api.views.restore_task import assert_restore_task_access
+                try:
+                    assert_restore_task_access(request, obj)
+                except PermissionDenied:
+                    pass
+                else:
+                    can_cancel = True
+            actions["can_cancel"] &= can_cancel
+            actions["can_retry"] &= can_retry
+        return actions
 
     def get_transfer_progress(self, obj: Task) -> dict | None:
         payload = obj.result_payload if isinstance(obj.result_payload, dict) else {}

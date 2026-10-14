@@ -46,7 +46,11 @@ class TurnstileConfigViewTests(TestCase):
         TURNSTILE_SITE_KEY="test-site-key",
         TURNSTILE_SECRET_KEY="test-secret-key",
     )
-    def test_community_empty_socket_keeps_turnstile_off(self):
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=False,
+    )
+    def test_community_empty_socket_keeps_turnstile_off(self, _identity):
         response = self.client.get("/api/v1/auth/turnstile/config")
 
         self.assertEqual(response.status_code, 200)

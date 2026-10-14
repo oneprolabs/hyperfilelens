@@ -47,6 +47,12 @@ class TaskStepInputSerializerTests(SimpleTestCase):
 
 class TaskApiTests(TestCase):
     def setUp(self):
+        from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests
+
+        # These exercise the Community generic task API. Enterprise grants
+        # and business-specific task gates have separate governance tests.
+        previous = clear_providers_for_tests()
+        self.addCleanup(restore_providers_for_tests, previous)
         self.client = APIClient()
         user_model = get_user_model()
         self.user = user_model.objects.create_user(

@@ -4,11 +4,15 @@ import logging
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from apps.audit.services.interface import write_audit_log
-from apps.iam.permissions_org import resolve_org_key
+from apps.iam.permissions_org import IsOrgAuthorizedMember, resolve_org_key
+from apps.iam.resource_access import (
+    assert_resource_access,
+    filter_queryset_by_resource_field,
+)
 from apps.node.api import permissions as node_permissions
 from apps.node.api.serializers import NodeTaskDispatchSerializer, NodeTaskSerializer
 from apps.node.exceptions import AgentUpgradeError
@@ -39,18 +43,19 @@ class NodeTaskViewSet(OrgScopedMixin, viewsets.ModelViewSet):
     http_method_names = ["get", "post", "head", "options"]
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve", "wait"):
-            return [
-                node_permissions.IsAuthenticated(),
-                node_permissions.IsOrgStaffReader(),
-            ]
         return [
             node_permissions.IsAuthenticated(),
-            node_permissions.IsOrgOperator(),
+            IsOrgAuthorizedMember(),
         ]
 
     def get_org_scoped_queryset(self):
-        return self.queryset.order_by("-created_at", "-id")
+        return filter_queryset_by_resource_field(
+            self.request,
+            self.queryset.filter(organization=self.org).order_by("-created_at", "-id"),
+            "node",
+            "node_id",
+            action="operations.tasks.view",
+        )
 
     def create(self, request, *args, **kwargs):
         ser = NodeTaskDispatchSerializer(data=request.data)
@@ -66,7 +71,9 @@ class NodeTaskViewSet(OrgScopedMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if body_org_key and body_org_key != org.key:
-            raise ValidationError({"org_key": "Organization key does not match active context."})
+            raise ValidationError(
+                {"org_key": "Organization key does not match active context."}
+            )
 
         node = get_node_for_org(org=org, node_id=body["node_id"])
         if node is None:
@@ -76,6 +83,14 @@ class NodeTaskViewSet(OrgScopedMixin, viewsets.ModelViewSet):
             )
 
         kind = str(body["kind"] or "").strip()
+        from common.extension_spi import get_authz_provider
+
+        if get_authz_provider() is not None:
+            if not is_agent_upgrade_kind(kind):
+                raise PermissionDenied(
+                    "Use the governed business API to dispatch this task."
+                )
+            assert_resource_access(request, "node", node.id, action="resource.upgrade")
         if is_agent_upgrade_kind(kind):
             try:
                 validate_agent_upgrade(node=node)
@@ -142,13 +157,25 @@ class NodeTaskViewSet(OrgScopedMixin, viewsets.ModelViewSet):
                 "timed_out": outcome.timed_out,
                 "message": scrub_secrets(outcome.stream_message),
                 "result": scrub_secrets(outcome.result),
-                "error_details": NodeTaskSerializer(outcome.task).data.get("error_details"),
+                "error_details": NodeTaskSerializer(outcome.task).data.get(
+                    "error_details"
+                ),
             }
         )
 
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):
         task = self.get_object()
+        from common.extension_spi import get_authz_provider
+
+        if get_authz_provider() is not None:
+            if not is_agent_upgrade_kind(task.kind):
+                raise PermissionDenied(
+                    "Use the governed business API to cancel this task."
+                )
+            assert_resource_access(
+                request, "node", task.node_id, action="resource.upgrade"
+            )
         reason = str(request.data.get("reason") or "canceled by operator")
         canceled = cancel_agent_task(task_id=task.id, reason=reason)
         return Response(

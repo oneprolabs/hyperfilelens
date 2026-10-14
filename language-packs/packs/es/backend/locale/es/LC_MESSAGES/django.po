@@ -262,6 +262,13 @@ msgid "Organization key is required"
 msgstr "Se requiere la clave de la organización"
 
 #: src/backend/apps/iam/services/membership_service.py:94
+msgid "Unsupported organization role."
+msgstr "Rol de organización no compatible."
+
+#: src/backend/apps/iam/services/membership_service.py:104
+msgid "This organization Role is inactive."
+msgstr "Este rol de organización está inactivo."
+
 msgid "Owner role cannot be assigned via membership API."
 msgstr ""
 "El rol de propietario no se puede asignar mediante la API de membresías."
@@ -669,3 +676,55 @@ msgstr "© %(year)s HyperFileLens. %(tagline)s"
 #~ msgstr ""
 #~ "Nombre de usuario virtual de correo electrónico (se convertirá en "
 #~ "usuario@domain)"
+
+#: apps/iam/member-onboarding
+msgid "Set your own password before using this account."
+msgstr "Establece tu propia contraseña antes de usar esta cuenta."
+
+#: apps/iam/member-onboarding
+msgid "Multiple accounts use this email. Contact your platform administrator."
+msgstr "Varias cuentas usan este correo. Contacta con el administrador de la plataforma."
+
+#: apps/iam/member-onboarding
+msgid "Account not found."
+msgstr "No se encontró la cuenta."
+
+#: apps/iam/member-onboarding
+msgid "New account creation by organization administrators is disabled."
+msgstr "La creación de cuentas nuevas por administradores de organizaciones está deshabilitada."
+
+#: apps/iam/member-onboarding
+msgid "New accounts must reserve an active membership seat."
+msgstr "Las cuentas nuevas deben reservar una plaza de miembro activa."
+
+#: apps/iam/member-onboarding
+msgid "This member is disabled in this organization. Enable the existing membership instead."
+msgstr "Este miembro está deshabilitado en esta organización. Habilita su pertenencia existente."
+
+#: apps/iam/member-onboarding
+msgid "This account is already a member of this organization."
+msgstr "Esta cuenta ya pertenece a esta organización."
+
+#: apps/iam/member-onboarding
+msgid "Organization creation is unavailable or the account limit has been reached."
+msgstr "La creación de organizaciones no está disponible o se alcanzó el límite de la cuenta."
+
+#: apps/iam/member-onboarding
+msgid "Enter an organization name of at most 200 characters."
+msgstr "Introduce un nombre de organización de hasta 200 caracteres."
+
+#: apps/iam/member-onboarding
+msgid "Only an organization name may be provided."
+msgstr "Solo se puede proporcionar el nombre de la organización."
+
+#: apps/iam/member-onboarding
+msgid "Provide an email or an existing user ID, not both."
+msgstr "Proporciona un correo o un ID de usuario existente, no ambos."
+
+#: apps/iam/member-onboarding
+msgid "Choose a password different from the temporary password."
+msgstr "Elige una contraseña distinta de la contraseña temporal."
+
+#: apps/iam/member-onboarding
+msgid "An account already uses this email. Sign in to that account first."
+msgstr "Ya existe una cuenta con este correo. Inicia sesión en esa cuenta primero."
