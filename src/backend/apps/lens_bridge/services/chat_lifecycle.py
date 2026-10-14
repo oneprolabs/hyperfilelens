@@ -559,6 +559,11 @@ def create_copilot_chat(
         raise ValidationError(
             {"backup_source_snapshot_id": "Snapshot is no longer available."}
         )
+    from apps.lens_bridge.services.insight_access import assert_insight_access
+    assert_insight_access(
+        organization=org, user=user,
+        snapshot_id=snapshot.id, gateway_link_id=gateway_link_id,
+    )
 
     normalized_scopes: list[dict[str, Any]] = []
     from apps.subscription.services.quota import (

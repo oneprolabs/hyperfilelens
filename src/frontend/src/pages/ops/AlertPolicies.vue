@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
 import { useI18n } from 'vue-i18n'
 import {
   ChevronDown,
@@ -66,6 +67,10 @@ const moreActionsOpen = ref(false)
 const alertPoliciesTableRef = ref()
 const policies = ref<AlertPolicy[]>([])
 const selectedPolicies = ref<AlertPolicy[]>([])
+const resourcePermissions = useResourceCapabilities(computed(() => [...policies.value, ...(detailPolicy.value ? [detailPolicy.value] : [])]
+  .map((row) => ({ resource_type: 'alert_policy' as const, resource_id: row.id }))))
+const policyWritable = (row: AlertPolicy) => resourcePermissions.permitted('alert_policy', row.id)
+const selectedWritable = computed(() => selectedPolicies.value.every(policyWritable))
 const skipNextSearchWatch = ref(false)
 const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
 const filters = reactive({ search: '', type: '', severity: '', enabled: '' })
@@ -81,10 +86,10 @@ const emptyDescription = computed(() => (
   hasActiveFilters.value ? t('ops.alerts.rules.emptyFiltered') : t('ops.alerts.rules.emptyNoRules')
 ))
 const hasSelectedPolicies = computed(() => selectedPolicies.value.length > 0)
-const moreEditDisabled = computed(() => selectedPolicies.value.length !== 1 || batchActionLoading.value)
-const moreBatchDisabled = computed(() => !selectedPolicies.value.length || batchActionLoading.value)
-const batchEnableDisabled = computed(() => batchActionLoading.value || !selectedPolicies.value.some((row) => !row.enabled))
-const batchDisableDisabled = computed(() => batchActionLoading.value || !selectedPolicies.value.some((row) => row.enabled))
+const moreEditDisabled = computed(() => selectedPolicies.value.length !== 1 || !selectedWritable.value || batchActionLoading.value)
+const moreBatchDisabled = computed(() => !selectedPolicies.value.length || !selectedPolicies.value.every((row) => resourcePermissions.permitted('alert_policy', row.id, 'delete')) || batchActionLoading.value)
+const batchEnableDisabled = computed(() => batchActionLoading.value || !selectedWritable.value || !selectedPolicies.value.some((row) => !row.enabled))
+const batchDisableDisabled = computed(() => batchActionLoading.value || !selectedWritable.value || !selectedPolicies.value.some((row) => row.enabled))
 
 type PolicyDangerKind = 'single-delete' | 'batch-enable' | 'batch-disable' | 'batch-delete'
 
@@ -210,10 +215,12 @@ async function loadPolicies() {
 }
 
 function openCreate() {
+  if (!resourcePermissions.canCreate('alert_policy')) return
   router.push('/ops/alerts/rules/create')
 }
 
 function openEdit(row: AlertPolicy) {
+  if (!policyWritable(row)) return
   router.push(`/ops/alerts/rules/${row.id}/edit`)
 }
 
@@ -247,7 +254,7 @@ function isPolicyInlineEditing(field: PolicyInlineField) {
 }
 
 function beginPolicyInlineEdit(field: PolicyInlineField) {
-  if (!detailPolicy.value || policyInlineSaving.value) return
+  if (!detailPolicy.value || !policyWritable(detailPolicy.value) || policyInlineSaving.value) return
   policyInlineEditing.value = field
   policyInlineDraft.value = policyInlineValue(detailPolicy.value, field)
 }
@@ -260,7 +267,7 @@ function cancelPolicyInlineEdit() {
 async function savePolicyInlineEdit() {
   const row = detailPolicy.value
   const field = policyInlineEditing.value
-  if (!row || !field || policyInlineSaving.value) return
+  if (!row || !field || !policyWritable(row) || policyInlineSaving.value) return
 
   const payload: Record<string, unknown> = {}
   if (field === 'name') {
@@ -466,7 +473,7 @@ async function runBatchDelete() {
 
 async function executePolicyDangerAction() {
   const action = pendingDangerAction.value
-  if (!action) return
+  if (!action || !action.rows.every((row) => resourcePermissions.permitted('alert_policy', row.id, action.kind.includes('delete') ? 'delete' : 'manage'))) return
   dangerDialogLoading.value = true
   batchActionLoading.value = true
   let ok = 0
@@ -612,6 +619,7 @@ watch(
           <el-button
             type="primary"
             :icon="Plus"
+            :disabled="!resourcePermissions.canCreate('alert_policy')"
             @click="openCreate"
           >
             {{ t('common.add') }}

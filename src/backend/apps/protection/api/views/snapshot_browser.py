@@ -43,7 +43,9 @@ from apps.protection.models import (
 from apps.task.api.serializers import TaskSerializer
 
 
-def _int_query(value: str | None, default: int, *, min_value: int, max_value: int) -> int:
+def _int_query(
+    value: str | None, default: int, *, min_value: int, max_value: int
+) -> int:
     if value in (None, ""):
         return default
     try:
@@ -80,22 +82,34 @@ def _assert_directory_access(request, directory_id: int, *, action: str) -> None
     ).values("backup_config_id")
     backup_config_id = snapshot.values_list("backup_config_id", flat=True).first()
     if backup_config_id:
-        assert_resource_access(request, "backup_config", backup_config_id, action=action)
+        assert_resource_access(
+            request, "backup_config", backup_config_id, action=action
+        )
 
 
 def _assert_snapshot_access(request, snapshot_id: int, *, action: str) -> None:
-    backup_config_id = BackupSourceSnapshot.objects.filter(
-        pk=snapshot_id,
-    ).values_list("backup_config_id", flat=True).first()
+    backup_config_id = (
+        BackupSourceSnapshot.objects.filter(
+            pk=snapshot_id,
+        )
+        .values_list("backup_config_id", flat=True)
+        .first()
+    )
     if backup_config_id:
-        assert_resource_access(request, "backup_config", backup_config_id, action=action)
+        assert_resource_access(
+            request, "backup_config", backup_config_id, action=action
+        )
 
 
 def _assert_artifact_access(request, artifact_id: int) -> None:
     artifact = SnapshotDownloadArtifact.objects.filter(pk=artifact_id).first()
     if artifact is None:
         raise NotFound("snapshot download artifact not found")
-    _assert_directory_access(request, artifact.source_snapshot_directory_id, action="resources.view")
+    _assert_directory_access(
+        request,
+        artifact.source_snapshot_directory_id,
+        action="protection.backup_data.download",
+    )
 
 
 class SnapshotDirectoryBrowseView(APIView):
@@ -103,7 +117,9 @@ class SnapshotDirectoryBrowseView(APIView):
 
     def get(self, request, directory_id: int):
         org = require_org(request)
-        _assert_directory_access(request, int(directory_id), action="resources.view")
+        _assert_directory_access(
+            request, int(directory_id), action="protection.backup_data.browse"
+        )
         try:
             data = browse_snapshot_directory(
                 organization_id=org.id,
@@ -132,7 +148,9 @@ class SnapshotDirectoryDownloadView(APIView):
 
     def get(self, request, directory_id: int):
         org = require_org(request)
-        _assert_directory_access(request, int(directory_id), action="resources.view")
+        _assert_directory_access(
+            request, int(directory_id), action="protection.backup_data.download"
+        )
         try:
             download = download_snapshot_file(
                 organization_id=org.id,
@@ -159,7 +177,9 @@ class SnapshotDirectoryDownloadTaskView(APIView):
 
     def post(self, request, directory_id: int):
         org = require_org(request)
-        _assert_directory_access(request, int(directory_id), action="resources.manage")
+        _assert_directory_access(
+            request, int(directory_id), action="protection.backup_data.download"
+        )
         try:
             task = create_snapshot_download_task(
                 organization_id=org.id,
@@ -183,7 +203,9 @@ class SnapshotDirectoryBatchDownloadTaskView(APIView):
 
     def post(self, request, directory_id: int):
         org = require_org(request)
-        _assert_directory_access(request, int(directory_id), action="resources.manage")
+        _assert_directory_access(
+            request, int(directory_id), action="protection.backup_data.download"
+        )
         paths = request.data.get("paths")
         if not isinstance(paths, list):
             raise ValidationError({"paths": "Must be a list."})
@@ -210,7 +232,9 @@ class SnapshotGroupDownloadTaskView(APIView):
 
     def post(self, request, snapshot_id: int):
         org = require_org(request)
-        _assert_snapshot_access(request, int(snapshot_id), action="resources.manage")
+        _assert_snapshot_access(
+            request, int(snapshot_id), action="protection.backup_data.download"
+        )
         groups = request.data.get("groups")
         if not isinstance(groups, list):
             raise ValidationError({"groups": "Must be a list."})
@@ -241,7 +265,11 @@ class SnapshotGroupDownloadTaskView(APIView):
                 },
             ) from exc
         except DjangoValidationError as exc:
-            detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
+            detail = (
+                exc.message_dict
+                if hasattr(exc, "message_dict")
+                else {"detail": exc.messages}
+            )
             raise ValidationError(detail) from exc
         except (SnapshotBrowserError, ValueError) as exc:
             message = str(exc)
@@ -268,7 +296,9 @@ class SnapshotDownloadArtifactFileView(APIView):
             except SnapshotArtifactUploadError as exc:
                 raise PermissionDenied(str(exc)) from exc
             if token_organization_id != org.id:
-                raise PermissionDenied("snapshot download link does not match the organization")
+                raise PermissionDenied(
+                    "snapshot download link does not match the organization"
+                )
         artifact = get_snapshot_download_artifact(
             organization_id=org.id,
             artifact_id=int(artifact_id),
@@ -276,7 +306,9 @@ class SnapshotDownloadArtifactFileView(APIView):
         if artifact is None:
             raise NotFound("snapshot download artifact not found")
         if artifact.status != SnapshotDownloadArtifact.Status.READY:
-            raise ValidationError({"detail": "snapshot download artifact is not available"})
+            raise ValidationError(
+                {"detail": "snapshot download artifact is not available"}
+            )
         if artifact.expires_at <= timezone.now():
             raise ValidationError({"detail": "snapshot download artifact expired"})
         path = Path(artifact.storage_path)
@@ -307,14 +339,21 @@ class SnapshotDownloadArtifactDownloadUrlView(APIView):
         )
         if artifact is None:
             raise NotFound("snapshot download artifact not found")
-        if artifact.status != SnapshotDownloadArtifact.Status.READY or artifact.expires_at <= timezone.now():
-            raise ValidationError({"detail": "snapshot download artifact is not available"})
+        if (
+            artifact.status != SnapshotDownloadArtifact.Status.READY
+            or artifact.expires_at <= timezone.now()
+        ):
+            raise ValidationError(
+                {"detail": "snapshot download artifact is not available"}
+            )
         token = create_snapshot_artifact_file_token(
             artifact=artifact,
             user_id=int(request.user.id),
         )
         path = f"/api/v1/protection/snapshot-download-artifacts/{artifact.id}/file/"
-        return Response({"url": f"{path}?{urlencode({'token': token, 'org': org.key})}"})
+        return Response(
+            {"url": f"{path}?{urlencode({'token': token, 'org': org.key})}"}
+        )
 
 
 class SnapshotDownloadArtifactContentView(APIView):

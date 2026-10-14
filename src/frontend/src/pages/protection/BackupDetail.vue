@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
 import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
@@ -60,6 +61,8 @@ const store = useProtectionDemoStore()
 
 const backupId = computed(() => String(route.params.backupId || ''))
 const realBackupConfig = ref<BackupConfigDetail | null>(null)
+const resourcePermissions = useResourceCapabilities(computed(() => realBackupConfig.value
+  ? [{ resource_type: 'backup_config' as const, resource_id: realBackupConfig.value.id }] : []))
 const realSnapshots = ref<BackupSourceSnapshot[]>([])
 const realTasks = ref<TaskRow[]>([])
 const sourceInfo = ref<BackupSelectableSource | null>(null)
@@ -194,11 +197,11 @@ function snapshotDirIcon(row: DetailSnapshotDir) {
 }
 
 function canRestoreSnapshot(row: DetailSnapshot) {
-  return row.status === 'available' || row.status === 'partial'
+  return resourcePermissions.permitted('backup_config', realBackupConfig.value?.id, 'run_restore') && (row.status === 'available' || row.status === 'partial')
 }
 
 function canDeleteSnapshot(row: DetailSnapshot) {
-  return row.status !== 'deleting' && row.status !== 'deleted'
+  return resourcePermissions.permitted('backup_config', realBackupConfig.value?.id, 'delete_data') && row.status !== 'deleting' && row.status !== 'deleted'
 }
 
 function repositoryLabel(repo?: StorageRepository) {
@@ -983,6 +986,7 @@ function prevRec() {
 }
 
 function runRecovery() {
+  if (!resourcePermissions.permitted('backup_config', realBackupConfig.value?.id, 'run_restore')) return
   ElMessage.success({ message: t('protection.backupsPage.msgRecoverySubmitted'), grouping: true })
   closeRecoveryWizard()
 }

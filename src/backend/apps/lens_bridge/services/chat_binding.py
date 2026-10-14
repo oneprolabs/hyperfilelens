@@ -200,6 +200,12 @@ def list_gateway_options(org: Organization, *, user) -> list[dict[str, Any]]:
     for link in gateway_ownership.organization_gateway_links(
         organization=org,
     ).select_related("gateway"):
+        from common.extension_spi import get_authz_provider
+        provider = get_authz_provider()
+        if provider is not None and ("node", link.gateway_id) not in provider.visible_resource_refs(
+            user, org.key, [("node", link.gateway_id)], action="insight.use",
+        ):
+            continue
         if not link.sl_lensnode_uuid or link.id in seen:
             continue
         provisioning.sync_gateway_lensnode_status(link)

@@ -46,7 +46,8 @@ describe('Spanish language pack', () => {
   })
 
   it('covers the complete English message contract', () => {
-    expect([...flatten(spanish).keys()]).toEqual([...flatten(en).keys()])
+    // Flat overrides and nested translations have no meaningful key ordering.
+    expect([...flatten(spanish).keys()].sort()).toEqual([...flatten(en).keys()].sort())
   })
 
   it('ships reviewed labels for authentication, protection, and Insight', () => {
@@ -143,7 +144,25 @@ describe('Spanish language pack', () => {
     expect(serialized).not.toMatch(/HFLPROTECTED|ZXQ|QXZ|[⟦⟧]/)
     expect(containsUnrelatedWritingSystem).toBe(false)
     expect(allowedEnglish).toContain('insight.aiSettings.topP')
-    expect(allowedEnglish.length).toBeLessThanOrEqual(326)
+    // These are also valid Spanish terms or product module names, not
+    // untranslated governance descriptions.
+    const sharedGovernanceTerms = [
+      'settings.groupsPage.general',
+      'settings.membersPage.general',
+      'settings.resourcesPage.general',
+      'settings.rolesPage.general',
+      'settings.rolesPage.groups.insights',
+      'settings.rolesPage.names.auditor',
+      'settings.rolesPage.resourceLabels.configuration_roles',
+      'settings.rolesPage.resourceLabels.insights_chats',
+    ]
+    expect(allowedEnglish.length).toBeLessThanOrEqual(326 + sharedGovernanceTerms.length)
+    const englishFlat = flatten(en)
+    const spanishFlat = flatten(spanish)
+    for (const key of sharedGovernanceTerms) {
+      expect(allowedEnglish).toContain(key)
+      expect(spanishFlat.get(key)).toBe(englishFlat.get(key))
+    }
     expect(serialized).not.toMatch(
       /Failed to|\bDefault\b|\bRefresh\b|Disfraces|&quot;|&amp;/,
     )

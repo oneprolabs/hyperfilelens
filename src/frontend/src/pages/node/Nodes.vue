@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
 import { useI18n } from 'vue-i18n'
 import { ArrowUpCircle, Plus, RefreshCw, Pencil, ChevronDown, Trash2, Search, Wrench } from 'lucide-vue-next'
 import { ElCheckbox, ElMessage, type ElTable } from 'element-plus'
@@ -41,6 +42,8 @@ import {
 import type { ApiNode, NodeRole, NodeStatus } from '../../types/node'
 
 const rows = ref<ApiNode[]>([])
+const resourcePermissions = useResourceCapabilities(computed(() => rows.value.map((row) => ({ resource_type: 'node' as const, resource_id: row.id }))))
+const nodeWritable = (row: ApiNode) => resourcePermissions.permitted('node', row.id)
 const latestAgentVersion = ref<string | null>(null)
 const busy = ref(false)
 const nodeListLoaded = ref(false)
@@ -308,8 +311,8 @@ function roleTagType(role: NodeRole | string): 'primary' | 'success' | 'warning'
 }
 
 function canUpgrade(row: ApiNode): boolean {
-  return row.agent_release?.upgrade_version_allowed
-    ?? canRemoteAgentUpgrade(row.version, latestAgentVersion.value)
+  return resourcePermissions.permitted('node', row.id, 'upgrade') && (row.agent_release?.upgrade_version_allowed
+    ?? canRemoteAgentUpgrade(row.version, latestAgentVersion.value))
 }
 
 function statusTagType(status: NodeStatus): 'success' | 'info' | 'danger' {
@@ -427,9 +430,9 @@ function onSelectionChange(selection: ApiNode[]) {
   selectedNodes.value = selection
 }
 
-const batchDisabled = computed(() => selectedNodes.value.length === 0)
+const batchDisabled = computed(() => selectedNodes.value.length === 0 || !selectedNodes.value.every((row) => resourcePermissions.permitted('node', row.id, 'delete')))
 
-const batchRenameDisabled = computed(() => selectedNodes.value.length !== 1)
+const batchRenameDisabled = computed(() => selectedNodes.value.length !== 1 || !selectedNodes.value.every(nodeWritable))
 
 const batchUpgradeDisabled = computed(() => {
   if (!usesRealNodeList.value) return true
@@ -498,6 +501,7 @@ function nodeDeleteDialogItem(row: ApiNode) {
 }
 
 async function deleteSelectedNodes() {
+  if (!selectedNodes.value.every((row) => resourcePermissions.permitted('node', row.id, 'delete'))) return
   if (batchDisabled.value) return
   await afterOverlayDismiss()
   const targets = selectedNodes.value
@@ -616,10 +620,13 @@ async function submitRename() {
       <div class="hfl-list-panel hfl-list-panel--fill">
         <div class="hfl-list-toolbar">
           <RouterLink
-            :to="deployTarget"
+            :to="resourcePermissions.canCreate('node:proxy') ? deployTarget : ''"
             class="inline-flex"
           >
-            <ElButton type="primary">
+            <ElButton
+              type="primary"
+              :disabled="!resourcePermissions.canCreate('node:proxy')"
+            >
               <Plus :size="16" />
               {{ deployButtonLabel }}
             </ElButton>
@@ -880,7 +887,7 @@ async function submitRename() {
                 header-align="center"
               >
                 <template #default="{ row }">
-                  <span>{{ row.associated_repository_count ?? 0 }}</span>
+                  <span>{{ row.associated_repository_count ?? '—' }}</span>
                 </template>
               </el-table-column>
               <el-table-column

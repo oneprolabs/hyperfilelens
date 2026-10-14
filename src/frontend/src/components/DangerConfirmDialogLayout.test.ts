@@ -64,6 +64,22 @@ function functionSource(source: string, start: string, end: string) {
 }
 
 describe('Danger confirmation item layout', () => {
+  it('can hide the details column without changing the default three-column layout', async () => {
+    const wrapper = mountDialog([{
+      name: '123@123.com', description: 'Should not be duplicated',
+      status: { label: 'Active', tone: 'success' },
+    }])
+    await wrapper.setProps({ showItemDetails: false, itemNameLabel: 'Member' })
+    expect(wrapper.findAll('th').map((cell) => cell.text())).toEqual(['Member', 'Status'])
+    expect(wrapper.findAll('col')).toHaveLength(2)
+    expect(wrapper.find('tbody tr').findAll('td')).toHaveLength(2)
+    expect(wrapper.text()).not.toContain('Should not be duplicated')
+    await wrapper.setProps({ showItemDetails: true })
+    expect(wrapper.findAll('th').map((cell) => cell.text())).toEqual(['Member', 'Status', 'Details'])
+    expect(wrapper.text()).toContain('Should not be duplicated')
+    wrapper.unmount()
+  })
+
   it('preserves built-in labels when optional copy is omitted', async () => {
     const wrapper = mountDialog([{ name: 'proxy-01' }])
 

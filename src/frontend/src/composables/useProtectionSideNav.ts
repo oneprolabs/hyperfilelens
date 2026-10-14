@@ -3,11 +3,25 @@ import { useI18n } from 'vue-i18n'
 import { Route, CalendarDays, HardDrive, Cloud, Filter, Tags } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 import { sourceAgentSidebarIcon, targetNasSidebarIcon } from '../lib/resourceIcons'
+import { useTenantPermissions } from './useTenantPermissions'
 import { sourceHostIcon, sourceNasIcon } from '../lib/sourceTypeIcons'
 
 export function useProtectionSideNav() {
   const { t } = useI18n()
-  return computed<MenuItem[]>(() => [
+  const { has } = useTenantPermissions()
+  const required: Record<string, string> = {
+    '/protection/backups': 'protection.backup_configurations.view',
+    '/protection/backup-sources?tab=host': 'protection.source_hosts.view',
+    '/protection/backup-sources?tab=nas': 'protection.source_nas.view',
+    '/node/agents': 'protection.proxy_hosts.view',
+    '/protection/source-tags': 'protection.tags.view',
+    '/node/repositories?tab=s3': 'protection.object_storage_repositories.view',
+    '/node/repositories?tab=nas': 'protection.target_nas_repositories.view',
+    '/node/repositories?tab=proxy_fs': 'protection.local_disk_repositories.view',
+    '/protection/policies?tab=backup': 'protection.backup_policies.view',
+    '/protection/policies?tab=filter': 'protection.file_filters.view',
+  }
+  return computed<MenuItem[]>(() => ([
     {
       label: t('protection.side.groupDataSecurity'),
       children: [
@@ -63,5 +77,7 @@ export function useProtectionSideNav() {
         },
       ],
     },
-  ])
+  ] as MenuItem[]).map((section) => ({
+    ...section, children: section.children?.filter((item) => !required[item.to || ''] || has(required[item.to || '']!)),
+  })).filter((section) => section.children?.length))
 }

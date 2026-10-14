@@ -78,6 +78,7 @@ const NotificationsPage = lazyRoute(() => import('../pages/Notifications.vue'))
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/account/setup', component: lazyRoute(() => import('../pages/auth/FirstPasswordSetup.vue')) },
     { path: '/login', name: LOGIN_ROUTE_NAME, component: LoginPage, beforeEnter: authTurnstilePrefetch },
     { path: '/register', component: RegisterPage, beforeEnter: authTurnstilePrefetch },
     { path: '/auth/oauth/callback', component: OAuthCallbackPage },
@@ -87,6 +88,7 @@ export const router = createRouter({
       component: AppShell,
       children: [
         { path: '', component: DashboardPage },
+        { path: 'account/organizations/new', component: lazyRoute(() => import('../pages/account/CreateOrganization.vue')), meta: fullscreenRouteMeta },
         { path: 'protection', redirect: '/protection/backups' },
         { path: 'protection/backups', component: ProtectionDataPage },
         { path: 'protection/backups/create', component: ProtectionBackupCreateWizardPage, meta: fullscreenRouteMeta },

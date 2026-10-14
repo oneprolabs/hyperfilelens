@@ -52,6 +52,8 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
             repo_type=Repository.Type.S3,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             s3_platform=Repository.S3Platform.CUSTOM,
             s3_bucket="backup-concurrency-bucket",
             config={
@@ -104,6 +106,8 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
             repo_type=Repository.Type.NAS,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             nas_protocol=Repository.NasProtocol.NFS,
             config={
                 "server_address": "10.0.0.72",

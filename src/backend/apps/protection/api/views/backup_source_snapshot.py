@@ -10,8 +10,17 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.iam.org_context import require_org
-from apps.iam.resource_access import assert_resource_access, filter_resource_queryset, visible_resource_refs
-from apps.iam.permissions_org import IsOrgOperator, IsOrgReader, IsOrgStaffReader
+from apps.iam.resource_access import (
+    assert_resource_access,
+    filter_resource_queryset,
+    visible_resource_refs,
+)
+from apps.iam.permissions_org import (
+    IsOrgAuthorizedMember,
+    IsOrgOperator,
+    IsOrgReader,
+    IsOrgStaffReader,
+)
 from apps.node.models import Node
 from apps.protection.api.pagination import ProtectionPagination
 from apps.protection.api.serializers.backup_source_snapshot import (
@@ -24,7 +33,9 @@ from apps.protection.selectors.backup_source_snapshot import (
     filter_backup_source_snapshots,
     get_backup_source_snapshot,
 )
-from apps.protection.services.snapshot_delete import create_and_queue_snapshot_delete_task
+from apps.protection.services.snapshot_delete import (
+    create_and_queue_snapshot_delete_task,
+)
 from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
 from common.extension_spi import get_authz_provider
@@ -39,7 +50,10 @@ def picker_source_queryset(*, organization_id: int, search: str = ""):
     usable_snapshots = BackupSourceSnapshot.objects.filter(
         organization_id=organization_id,
         backup_config_id=OuterRef("pk"),
-        status__in=(BackupSourceSnapshot.Status.AVAILABLE, BackupSourceSnapshot.Status.PARTIAL),
+        status__in=(
+            BackupSourceSnapshot.Status.AVAILABLE,
+            BackupSourceSnapshot.Status.PARTIAL,
+        ),
         deleted_at__isnull=True,
     )
     queryset = BackupConfig.objects.filter(organization_id=organization_id).filter(
@@ -47,12 +61,16 @@ def picker_source_queryset(*, organization_id: int, search: str = ""):
     )
     query = search.strip()
     if query:
-        agent_ids = Node.objects.filter(
-            organization_id=organization_id
-        ).filter(Q(name__icontains=query) | Q(ip_address__icontains=query)).values("id")
-        nas_ids = SourceResource.objects.filter(
-            organization_id=organization_id
-        ).filter(Q(name__icontains=query) | Q(config__server__icontains=query)).values("id")
+        agent_ids = (
+            Node.objects.filter(organization_id=organization_id)
+            .filter(Q(name__icontains=query) | Q(ip_address__icontains=query))
+            .values("id")
+        )
+        nas_ids = (
+            SourceResource.objects.filter(organization_id=organization_id)
+            .filter(Q(name__icontains=query) | Q(config__server__icontains=query))
+            .values("id")
+        )
         queryset = queryset.filter(
             Q(name__icontains=query)
             | Q(source_type="agent", source_ref_id__in=agent_ids)
@@ -61,32 +79,40 @@ def picker_source_queryset(*, organization_id: int, search: str = ""):
     return queryset.order_by("name", "id")
 
 
-def picker_source_data(*, organization_id: int, configs: list[BackupConfig]) -> list[dict]:
+def picker_source_data(
+    *, organization_id: int, configs: list[BackupConfig]
+) -> list[dict]:
     agent_ids = [row.source_ref_id for row in configs if row.source_type == "agent"]
     nas_ids = [row.source_ref_id for row in configs if row.source_type == "nas"]
     agents = {
         row["id"]: row
-        for row in Node.objects.filter(organization_id=organization_id, id__in=agent_ids)
-        .values("id", "name", "ip_address")
+        for row in Node.objects.filter(
+            organization_id=organization_id, id__in=agent_ids
+        ).values("id", "name", "ip_address")
     }
     nas = {
         row["id"]: row
-        for row in SourceResource.objects.filter(organization_id=organization_id, id__in=nas_ids)
-        .values("id", "name", "config")
+        for row in SourceResource.objects.filter(
+            organization_id=organization_id, id__in=nas_ids
+        ).values("id", "name", "config")
     }
     result = []
     for config in configs:
-        source = (agents if config.source_type == "agent" else nas).get(config.source_ref_id, {})
+        source = (agents if config.source_type == "agent" else nas).get(
+            config.source_ref_id, {}
+        )
         nas_config = source.get("config")
         server = nas_config.get("server") if isinstance(nas_config, dict) else None
         address = source.get("ip_address") if config.source_type == "agent" else server
-        result.append({
-            "backup_config_id": config.id,
-            "source_type": config.source_type,
-            "source_ref_id": config.source_ref_id,
-            "source_display_name": source.get("name") or config.name,
-            "source_address": address.strip() if isinstance(address, str) else "",
-        })
+        result.append(
+            {
+                "backup_config_id": config.id,
+                "source_type": config.source_type,
+                "source_ref_id": config.source_ref_id,
+                "source_display_name": source.get("name") or config.name,
+                "source_address": address.strip() if isinstance(address, str) else "",
+            }
+        )
     return result
 
 
@@ -123,13 +149,17 @@ def _snapshot_context(
     include_directory_snapshots: bool = False,
     include_source_addresses: bool = True,
 ) -> dict[str, dict]:
-    source_keys = {(snapshot.source_type, snapshot.source_ref_id) for snapshot in snapshots}
+    source_keys = {
+        (snapshot.source_type, snapshot.source_ref_id) for snapshot in snapshots
+    }
     backup_config_ids = {snapshot.backup_config_id for snapshot in snapshots}
     repository_ids = {snapshot.repository_id for snapshot in snapshots}
 
     source_names: dict[tuple[str, int], str] = {}
     source_addresses: dict[tuple[str, int], str] = {}
-    agent_ids = [ref_id for source_type, ref_id in source_keys if source_type == "agent"]
+    agent_ids = [
+        ref_id for source_type, ref_id in source_keys if source_type == "agent"
+    ]
     nas_ids = [ref_id for source_type, ref_id in source_keys if source_type == "nas"]
     if agent_ids:
         for row in Node.objects.filter(
@@ -150,7 +180,9 @@ def _snapshot_context(
             if include_source_addresses:
                 config = row["config"] if isinstance(row["config"], dict) else {}
                 server = config.get("server")
-                source_addresses[key] = server.strip() if isinstance(server, str) else ""
+                source_addresses[key] = (
+                    server.strip() if isinstance(server, str) else ""
+                )
 
     backup_config_names = {
         int(row["id"]): str(row["name"] or "")
@@ -187,6 +219,8 @@ class BackupSourceSnapshotViewSet(
     serializer_class = BackupSourceSnapshotListSerializer
 
     def get_permissions(self):
+        if get_authz_provider() is not None:
+            return [IsAuthenticated(), IsOrgAuthorizedMember()]
         if self.action == "picker_sources":
             return [IsAuthenticated(), IsOrgStaffReader()]
         if self.action in ("list", "retrieve"):
@@ -201,27 +235,49 @@ class BackupSourceSnapshotViewSet(
             search=request.query_params.get("search") or "",
         )
         if get_authz_provider() is not None:
-            queryset = filter_resource_queryset(request, queryset, "backup_config")
+            queryset = filter_resource_queryset(
+                request, queryset, "backup_config", action="resource.view"
+            )
         page = self.paginate_queryset(queryset)
         if page is not None:
             return self.get_paginated_response(
                 picker_source_data(organization_id=org.id, configs=list(page))
             )
-        return Response(picker_source_data(organization_id=org.id, configs=list(queryset)))
+        return Response(
+            picker_source_data(organization_id=org.id, configs=list(queryset))
+        )
 
     def get_queryset(self):
         org = require_org(self.request)
         params = self.request.query_params
         requested_statuses = _csv_query_param(params.get("status"))
-        invalid_statuses = sorted(set(requested_statuses) - set(BackupSourceSnapshot.Status.values))
+        invalid_statuses = sorted(
+            set(requested_statuses) - set(BackupSourceSnapshot.Status.values)
+        )
         if invalid_statuses:
-            raise ValidationError({"status": f"Unsupported snapshot statuses: {', '.join(invalid_statuses)}."})
-        requested_status = requested_statuses[0] if len(requested_statuses) == 1 else None
+            raise ValidationError(
+                {
+                    "status": f"Unsupported snapshot statuses: {', '.join(invalid_statuses)}."
+                }
+            )
+        requested_status = (
+            requested_statuses[0] if len(requested_statuses) == 1 else None
+        )
         source_ref_id = _int_query_param(params.get("source_ref_id"), "source_ref_id")
-        backup_config_id = _int_query_param(params.get("backup_config_id"), "backup_config_id")
+        backup_config_id = _int_query_param(
+            params.get("backup_config_id"), "backup_config_id"
+        )
         repository_id = _int_query_param(params.get("repository_id"), "repository_id")
-        created_from = parse_datetime(params.get("created_from", "")) if params.get("created_from") else None
-        created_to = parse_datetime(params.get("created_to", "")) if params.get("created_to") else None
+        created_from = (
+            parse_datetime(params.get("created_from", ""))
+            if params.get("created_from")
+            else None
+        )
+        created_to = (
+            parse_datetime(params.get("created_to", ""))
+            if params.get("created_to")
+            else None
+        )
         started_from = _datetime_query_param(params.get("started_from"), "started_from")
         started_to = _datetime_query_param(params.get("started_to"), "started_to")
         exclude_statuses = _csv_query_param(params.get("exclude_status"))
@@ -256,14 +312,25 @@ class BackupSourceSnapshotViewSet(
         snapshot_id = _int_query_param(params.get("snapshot_id"), "snapshot_id")
         if snapshot_id is not None:
             queryset = queryset.filter(id=snapshot_id)
-        exclude_snapshot_id = _int_query_param(params.get("exclude_snapshot_id"), "exclude_snapshot_id")
+        exclude_snapshot_id = _int_query_param(
+            params.get("exclude_snapshot_id"), "exclude_snapshot_id"
+        )
         if exclude_snapshot_id is not None:
             queryset = queryset.exclude(id=exclude_snapshot_id)
         if get_authz_provider() is not None:
-            config_ids = list(queryset.order_by().values_list("backup_config_id", flat=True).distinct())
+            config_ids = list(
+                queryset.order_by()
+                .values_list("backup_config_id", flat=True)
+                .distinct()
+            )
             visible = visible_resource_refs(
                 self.request,
                 [("backup_config", int(config_id)) for config_id in config_ids],
+                action=(
+                    "protection.backup_data.browse"
+                    if _truthy_query_param(params.get("include_directory_snapshots"))
+                    else "resource.view"
+                ),
             )
             if visible is not None:
                 allowed_config_ids = {
@@ -286,7 +353,11 @@ class BackupSourceSnapshotViewSet(
             self.request,
             "backup_config",
             snapshot.backup_config_id,
-            action=("resources.manage" if self.action == "destroy" else "resources.view"),
+            action=(
+                "protection.backup_data.delete"
+                if self.action == "destroy"
+                else "protection.backup_data.browse"
+            ),
         )
         return snapshot
 
@@ -330,7 +401,9 @@ class BackupSourceSnapshotViewSet(
             context=_snapshot_context(
                 organization_id=require_org(request).id,
                 snapshots=[snapshot],
-                include_source_addresses=IsOrgStaffReader().has_permission(request, self),
+                include_source_addresses=IsOrgStaffReader().has_permission(
+                    request, self
+                ),
             ),
         )
         return Response(serializer.data)

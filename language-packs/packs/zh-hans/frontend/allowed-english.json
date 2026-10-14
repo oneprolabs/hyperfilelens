@@ -98,6 +98,7 @@
   "ops.notification.smsApiKey",
   "ops.notification.typeWebhook",
   "ops.task.emptyMark",
+  "ops.task.failureDetails.retainedResource.lensnode_sidecar",
   "ops.task.nodeRole.agent",
   "ops.task.nodeRole.gateway",
   "ops.task.nodeRole.proxy",
@@ -214,6 +215,5 @@
   "repositoriesPage.protocolNfs",
   "repositoriesPage.protocolSmb",
   "repositoriesPage.storageTypeNas",
-  "searchPage.colId",
-  "ops.task.failureDetails.retainedResource.lensnode_sidecar"
+  "searchPage.colId"
 ]

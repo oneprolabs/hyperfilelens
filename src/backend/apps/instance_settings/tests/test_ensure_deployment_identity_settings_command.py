@@ -107,7 +107,11 @@ class EnsureDeploymentIdentitySettingsCommandTests(TestCase):
             6,
         )
         # Community empty socket: stored credentials stay off until EE loads.
-        self.assertFalse(google_oauth_enabled())
+        with patch(
+            "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+            return_value=False,
+        ):
+            self.assertFalse(google_oauth_enabled())
         with patch(
             "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
             return_value=True,

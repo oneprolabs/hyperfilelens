@@ -244,8 +244,13 @@ class GatewayDirectoryTests(TestCase):
                         self.refresh([self.links[0].gateway_id]).status_code, 200
                     )
             role.return_value = "auditor"
-            self.assertEqual(self.get_page().status_code, 403)
-            self.assertEqual(self.refresh([self.links[0].gateway_id]).status_code, 403)
+            # Resource-scoped readers are admitted independently of the old
+            # staff-role gate in EE; Community retains the legacy staff gate.
+            from common.extension_spi import get_authz_provider
+
+            expected = 403 if get_authz_provider() is None else 200
+            self.assertEqual(self.get_page().status_code, expected)
+            self.assertEqual(self.refresh([self.links[0].gateway_id]).status_code, expected)
 
     def test_client_uuid_cannot_override_the_server_binding(self):
         link = self.links[1]

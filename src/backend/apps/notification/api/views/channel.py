@@ -7,6 +7,8 @@ from rest_framework.response import Response
 
 from apps.alert.models import AlertPolicy, AlertRecord
 from apps.audit.services.interface import write_audit_log
+from apps.iam.resource_api import GovernedResourceMixin
+from apps.iam.resource_access import filter_resource_queryset, filter_queryset_by_resource_field
 from apps.iam.permissions_org import IsOrgStaffReader, IsOrgWriter
 
 from apps.notification.api.pagination import NotificationPagination
@@ -46,7 +48,9 @@ def _test_failure_response(exc: Exception) -> Response:
     )
 
 
-class NotificationChannelViewSet(viewsets.ModelViewSet):
+class _NotificationChannelViewSetBase(viewsets.ModelViewSet):
+    governance_resource_type = "notification_channel"
+    governance_manage_action = "operations.manage"
     serializer_class = NotificationChannelSerializer
     permission_classes = [IsAuthenticated, IsOrgWriter]
     pagination_class = NotificationPagination
@@ -95,23 +99,34 @@ class NotificationChannelViewSet(viewsets.ModelViewSet):
 
         channel_id_strs = {str(i) for i in ids}
         policies_count_by_channel = {int(i): 0 for i in ids}
+        from apps.iam.query_authorization import request_authorization
+
+        authority = request_authorization(self.request)
+        if (
+            authority is not None and not getattr(self.request, "hfl_support_readonly", False)
+            and not authority.has_action("alert_policy", "resource.view")
+        ):
+            policies_count_by_channel = {int(i): None for i in ids}
         org_id = int(channels[0].organization_id)
-        policies = AlertPolicy.objects.filter(organization_id=org_id).only(
-            "notification_channel_ids"
-        )
+        policies = filter_resource_queryset(
+            self.request, AlertPolicy.objects.filter(organization_id=org_id),
+            "alert_policy", action="resource.view",
+        ).only("notification_channel_ids")
         for policy in policies:
             for raw_id in policy.notification_channel_ids or []:
                 if str(raw_id) not in channel_id_strs:
                     continue
                 try:
+                    if policies_count_by_channel[int(raw_id)] is None:
+                        continue
                     policies_count_by_channel[int(raw_id)] += 1
                 except (TypeError, ValueError, KeyError):
                     continue
 
         last_delivery_by_channel: dict[int, dict] = {}
-        logs = NotificationLog.objects.filter(
-            organization_id=org_id,
-            channel_id__in=ids,
+        logs = filter_queryset_by_resource_field(
+            self.request, NotificationLog.objects.filter(organization_id=org_id, channel_id__in=ids),
+            "notification_channel", "channel_id", action="operations.notification_records.view",
         ).only("channel_id", "status", "sent_at").order_by("-sent_at", "-id")
         for log in logs:
             channel_id = int(log.channel_id)
@@ -244,12 +259,14 @@ class NotificationChannelViewSet(viewsets.ModelViewSet):
         channel_id_str = str(channel.id)
         policies = [
             p
-            for p in AlertPolicy.objects.filter(organization=channel.organization)
+            for p in filter_resource_queryset(
+                request, AlertPolicy.objects.filter(organization=channel.organization), "alert_policy", action="resource.view",
+            )
             if channel_id_str in [str(x) for x in (p.notification_channel_ids or [])]
         ]
-        all_logs = NotificationLog.objects.filter(
-            organization=channel.organization,
-            channel_id=channel.id,
+        all_logs = filter_queryset_by_resource_field(
+            request, NotificationLog.objects.filter(organization=channel.organization, channel_id=channel.id),
+            "notification_channel", "channel_id", action="operations.notification_records.view",
         ).order_by("-sent_at")
         recent_logs = list(all_logs[:20])
         success_count = all_logs.filter(status="success").count()
@@ -260,8 +277,20 @@ class NotificationChannelViewSet(viewsets.ModelViewSet):
 
         alert_ids = list(all_logs.values_list("alert_record_id", flat=True).distinct())
         recent_alert_ids = [log.alert_record_id for log in recent_logs if log.alert_record_id]
-        recent_records = list(
-            AlertRecord.objects.filter(id__in=recent_alert_ids).order_by("-created_at")[:10]
+        from apps.iam.activity_access import filter_activity_queryset
+        visible_alerts = filter_activity_queryset(
+            request, AlertRecord.objects.filter(organization=channel.organization),
+            action="operations.alerts.view",
+        )
+        recent_records = list(visible_alerts.filter(id__in=recent_alert_ids).order_by("-created_at")[:10])
+        from apps.iam.query_authorization import request_authorization
+
+        authority = request_authorization(request)
+        support = getattr(request, "hfl_support_readonly", False)
+        may_read_policies = support or authority is None or authority.has_action("alert_policy", "resource.view")
+        may_read_alerts = support or authority is None or authority.has_action("node", "operations.alerts.view")
+        may_read_logs = support or authority is None or authority.has_action(
+            "notification_channel", "operations.notification_records.view",
         )
 
         return Response(
@@ -290,16 +319,16 @@ class NotificationChannelViewSet(viewsets.ModelViewSet):
                 ],
                 "notification_logs": notification_log_details(recent_logs),
                 "stats": {
-                    "policies_count": len(policies),
-                    "alerts_count": AlertRecord.objects.filter(id__in=alert_ids).count()
-                    if alert_ids
-                    else 0,
-                    "logs_count": logs_count,
-                    "logs_success": success_count,
-                    "logs_failed": failed_count,
+                    "policies_count": len(policies) if may_read_policies else None,
+                    "alerts_count": (
+                        visible_alerts.filter(id__in=alert_ids).count() if alert_ids else 0
+                    ) if may_read_alerts else None,
+                    "logs_count": logs_count if may_read_logs else None,
+                    "logs_success": success_count if may_read_logs else None,
+                    "logs_failed": failed_count if may_read_logs else None,
                     "success_rate": round((success_count / logs_count) * 100, 2)
                     if logs_count
-                    else 0,
+                    else (0 if may_read_logs else None),
                     "last_success_at": last_success.sent_at.isoformat()
                     if last_success
                     else None,
@@ -317,6 +346,7 @@ class NotificationChannelViewSet(viewsets.ModelViewSet):
         return Response(
             channel_statistics(
                 organization_id=org.id,
+                queryset=self.get_queryset(),
                 search=params.get("search", ""),
                 channel_type=params.get("type", ""),
                 enabled=params.get("enabled", ""),
@@ -365,19 +395,16 @@ class NotificationChannelViewSet(viewsets.ModelViewSet):
             return Response({"items": [], "missing": []})
 
         channels = list(
-            NotificationChannel.objects.filter(
-                organization_id=org.id,
-                id__in=ids,
-            ).only("id", "name", "channel_type")
+            self.get_queryset().filter(id__in=ids).only("id", "name", "channel_type")
         )
         existing_ids = {int(ch.id) for ch in channels}
         missing = [int(i) for i in ids if i not in existing_ids]
 
         channel_id_strs = {str(ch.id) for ch in channels}
         policies = list(
-            AlertPolicy.objects.filter(organization=org).only(
-                "id", "name", "enabled", "notification_channel_ids"
-            )
+            filter_resource_queryset(
+                request, AlertPolicy.objects.filter(organization=org), "alert_policy", action="resource.view",
+            ).only("id", "name", "enabled", "notification_channel_ids")
         )
         # Build reverse index: channel_id_str -> [policy, ...]
         channel_to_policies: dict[str, list] = {cid: [] for cid in channel_id_strs}
@@ -518,3 +545,10 @@ def _write_bulk_delete_audit(
             "count": len(ids),
         },
     )
+
+
+class NotificationChannelViewSet(GovernedResourceMixin, _NotificationChannelViewSetBase):
+    """Resource-aware adapter over the unchanged business implementation."""
+
+    governance_resource_type = "notification_channel"
+    governance_manage_action = "operations.manage"

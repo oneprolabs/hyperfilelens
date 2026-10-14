@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { useId } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { useOrganizationSwitcher } from '../composables/useOrganizationSwitcher'
 
 const { t } = useI18n()
+const router = useRouter()
 const props = withDefaults(defineProps<{ variant?: 'desktop' | 'mobile' }>(), {
   variant: 'desktop',
 })
@@ -14,7 +16,12 @@ const {
   currentKey,
   showSwitcher,
   switchOrganization,
+  canCreate,
 } = useOrganizationSwitcher()
+function chooseOrganization(value: string) {
+  if (value === '__create__') void router.push('/account/organizations/new')
+  else void switchOrganization(value)
+}
 </script>
 
 <template>
@@ -32,7 +39,7 @@ const {
       class="org-switcher__select"
       :disabled="loading"
       :value="currentKey"
-      @change="switchOrganization(($event.target as HTMLSelectElement).value)"
+      @change="chooseOrganization(($event.target as HTMLSelectElement).value)"
     >
       <option
         v-for="org in organizations"
@@ -40,6 +47,12 @@ const {
         :value="org.key"
       >
         {{ org.name }}
+      </option>
+      <option
+        v-if="canCreate"
+        value="__create__"
+      >
+        {{ t('organizationCreation.title') }}
       </option>
     </select>
   </div>

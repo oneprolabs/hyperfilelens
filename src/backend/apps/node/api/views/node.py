@@ -12,6 +12,7 @@ from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.response import Response
 
 from apps.audit.services.interface import write_audit_log
+from apps.iam.resource_api import GovernedResourceMixin
 from apps.iam.models import Organization
 from apps.iam.resource_access import filter_resource_queryset
 from apps.iam.resource_access import record_resource_owner
@@ -138,7 +139,9 @@ def health(_request):
     return JsonResponse({"app": "node", "status": "ok"})
 
 
-class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet):
+class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet):
+    governance_resource_type = "node"
+    governance_manage_action = "protection.manage"
     org_scoped_skip_actions = ("heartbeat",)
 
     serializer_class = NodeSerializer
@@ -181,7 +184,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         return super().get_permissions()
 
     def get_org_scoped_queryset(self):
-        queryset = Node.objects.select_related("organization").all()
+        queryset = Node.objects.select_related("organization").filter(organization=self.org)
         role = (self.request.query_params.get("role") or "").strip()
         if role:
             queryset = queryset.filter(role=role)
@@ -192,7 +195,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
             self.request,
             queryset,
             "node",
-            action="resources.view",
+            action=self._resource_action(),
         )
         if role == NodeRole.AGENT:
             return queryset.order_by("-created_at", "-id")
@@ -213,14 +216,27 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 node,
                 target_cache=release_targets,
             )
+        from apps.iam.query_authorization import request_authorization
+        from apps.storage.repositories.models import Repository
+
+        context = request_authorization(self.request)
+        may_read_repositories = (
+            context is None or getattr(self.request, "hfl_support_readonly", False)
+            or context.has_action("repository", "resource.view")
+        )
+        repositories = filter_resource_queryset(
+            self.request, Repository.objects.filter(organization_id=self.org.pk),
+            "repository", action="resource.view",
+        )
         repository_counts = count_proxy_repository_bindings(
             organization_id=self.org.id,
             proxy_ids=[node.id for node in nodes if node.role == NodeRole.PROXY],
+            queryset=repositories,
         )
         for node in nodes:
             enrichments[node.id]["associated_repository_count"] = repository_counts.get(
                 node.id, 0
-            )
+            ) if may_read_repositories else None
         return enrichments
 
     def get_serializer_context(self):
@@ -877,3 +893,10 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 response_payload["lens"] = lens
 
         return Response(response_payload)
+
+
+class NodeViewSet(GovernedResourceMixin, _NodeViewSetBase):
+    """Resource-aware adapter over the unchanged business implementation."""
+
+    governance_resource_type = "node"
+    governance_manage_action = "protection.manage"

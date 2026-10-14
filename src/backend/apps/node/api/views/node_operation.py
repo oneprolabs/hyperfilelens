@@ -7,6 +7,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.audit.services.interface import write_audit_log
+from apps.iam.permissions_org import IsOrgAuthorizedMember
+from apps.iam.resource_access import assert_resource_access
 from apps.node.api import permissions as node_permissions
 from apps.node.api.serializers.node_operation import (
     NodeOperationBatchPreviewSerializer,
@@ -54,13 +56,22 @@ def _lifecycle_error_response(exc: Exception) -> Response:
 class NodeOperationBatchPreviewView(OrgScopedMixin, APIView):
     permission_classes = [
         node_permissions.IsAuthenticated,
-        node_permissions.IsOrgOperator,
+        IsOrgAuthorizedMember,
     ]
 
     def post(self, request):
         ser = NodeOperationBatchPreviewSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         body = ser.validated_data
+        for node_id in body["node_ids"]:
+            assert_resource_access(
+                request,
+                "node",
+                node_id,
+                action="resource.upgrade"
+                if body["kind"] == "upgrade"
+                else "resource.delete",
+            )
         preview = preview_batch_operations(
             org=self.org,
             node_ids=body["node_ids"],
@@ -72,13 +83,22 @@ class NodeOperationBatchPreviewView(OrgScopedMixin, APIView):
 class NodeOperationBatchStartView(OrgScopedMixin, APIView):
     permission_classes = [
         node_permissions.IsAuthenticated,
-        node_permissions.IsOrgOperator,
+        IsOrgAuthorizedMember,
     ]
 
     def post(self, request):
         ser = NodeOperationBatchStartSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         body = ser.validated_data
+        for node_id in body["node_ids"]:
+            assert_resource_access(
+                request,
+                "node",
+                node_id,
+                action="resource.upgrade"
+                if body["kind"] == "upgrade"
+                else "resource.delete",
+            )
         preview = preview_batch_operations(
             org=self.org,
             node_ids=body["node_ids"],
@@ -98,7 +118,9 @@ class NodeOperationBatchStartView(OrgScopedMixin, APIView):
                 continue
             try:
                 if body["kind"] == LIFECYCLE_KIND_UPGRADE:
-                    result = start_node_upgrade(org=self.org, node=node, user=request.user)
+                    result = start_node_upgrade(
+                        org=self.org, node=node, user=request.user
+                    )
                 else:
                     result = start_node_remove(
                         org=self.org,

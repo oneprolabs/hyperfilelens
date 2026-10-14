@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, nextTick } from 'vue'
+import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus, RefreshCw, Search, Filter, ChevronDown, Pencil, Trash2, Copy, HardDrive, Folder, Unlink, Info } from 'lucide-vue-next'
@@ -140,7 +141,7 @@ export type RepositoryRow = {
   health: RepoHealth
   initialization_state: RepositoryInitializationState
   initialized_target_count: number
-  associated_source_count: number
+  associated_source_count: number | null
   associated_source_online_count: number
   capacity_bytes: number
   estimated_usage_bytes: number
@@ -235,7 +236,7 @@ type ApiRepository = {
   health_failures?: number
   initialization_state?: RepositoryInitializationState
   initialized_target_count?: number
-  associated_source_count?: number
+  associated_source_count?: number | null
   associated_source_online_count?: number
   credential_id?: number | null
   s3_platform?: string | null
@@ -461,7 +462,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
   const organizationId = r.organization_id ?? r.organization ?? 0
   const initializationState = r.initialization_state || 'unverified'
   const initializedTargetCount = Number(r.initialized_target_count || 0)
-  const associatedSourceCount = Number(r.associated_source_count || 0)
+  const associatedSourceCount = r.associated_source_count == null ? null : Number(r.associated_source_count)
   const associatedSourceOnlineCount = Number(r.associated_source_online_count || 0)
   const bucket = r.s3_bucket || configString(config, 'bucket') || r.name
   const prefix = configString(config, 'prefix')
@@ -688,6 +689,8 @@ function normalizeTabParam(tab: unknown): RepoKind {
 }
 
 const rows = ref<RepositoryRow[]>([])
+const resourcePermissions = useResourceCapabilities(computed(() => rows.value.map((row) => ({ resource_type: 'repository' as const, resource_id: row.id }))))
+const repositoryWritable = (row: RepositoryRow) => resourcePermissions.permitted('repository', row.id)
 const sourceNodes = ref<ApiNode[]>([])
 const busy = ref(false)
 const repositoryListLoaded = ref(false)
@@ -889,7 +892,7 @@ function repoHealthLabel(row: RepositoryRow) {
   // connectivity value.
   const k = normalizeHealth(String(row.health), row.status)
   if (k === 'unverified') {
-    if (row.kind === 'nas' && !isRepositoryBoundToProxy(row) && row.associated_source_count > 0) {
+    if (row.kind === 'nas' && !isRepositoryBoundToProxy(row) && (row.associated_source_count ?? 0) > 0) {
       return row.associated_source_online_count > 0
         ? t('repositoriesPage.healthOffline')
         : t('repositoriesPage.healthUnableToCheck')
@@ -916,7 +919,7 @@ function repositoryHealthError(row: RepositoryRow) {
 }
 
 function repositoryConnectivityHelpKey(row: RepositoryRow) {
-  if (row.kind === 'nas' && !isRepositoryBoundToProxy(row) && row.associated_source_count > 0) {
+  if (row.kind === 'nas' && !isRepositoryBoundToProxy(row) && (row.associated_source_count ?? 0) > 0) {
     return row.associated_source_online_count > 0
       ? 'repositoriesPage.healthOfflineHelp'
       : 'repositoriesPage.healthUnableToCheckHelp'
@@ -1366,13 +1369,13 @@ const totalFiltered = computed(() => repositoryTotal.value)
 const canDeleteSelectedRows = computed(() => (
   selectedRows.value.length > 0
   && selectedRows.value.every(
-    row => row.status !== 'removed' && row.status !== 'removing',
+    row => resourcePermissions.permitted('repository', row.id, 'delete') && resourcePermissions.permitted('repository', row.id, 'delete_data') && row.status !== 'removed' && row.status !== 'removing',
   )
 ))
 const selectedEditableRow = computed(() => {
   if (selectedRows.value.length !== 1) return null
   const row = selectedRows.value[0]!
-  if (row.status === 'removed' || row.status === 'removing') return null
+  if (!repositoryWritable(row) || row.status === 'removed' || row.status === 'removing') return null
   return row.kind === 's3' || row.kind === 'nas' || row.kind === 'proxy_fs'
     ? row
     : null
@@ -1380,7 +1383,7 @@ const selectedEditableRow = computed(() => {
 const canEditSelectedRow = computed(() => selectedEditableRow.value !== null)
 const selectedRetryableRow = computed(() => {
   if (selectedRows.value.length !== 1) return null
-  return selectedRows.value[0]?.status === 'create_failed'
+  return selectedRows.value[0] && repositoryWritable(selectedRows.value[0]) && selectedRows.value[0]?.status === 'create_failed'
     ? selectedRows.value[0]!
     : null
 })
@@ -1673,7 +1676,7 @@ function associatedSourceCountForRow(row: RepositoryRow) {
 
 function proxyBindTipItems(row: RepositoryRow) {
   const count = associatedSourceCountForRow(row)
-  if (row.kind === 'nas' && !hasBoundProxy(row) && count > 0) {
+  if (row.kind === 'nas' && !hasBoundProxy(row) && count != null && count > 0) {
     return [
       t('repositoriesPage.proxyBindBlockedByAssociatedSources', { n: count }),
       t('repositoriesPage.proxyBindBlockedByAssociatedSourcesDetail'),
@@ -2166,16 +2169,19 @@ async function ensureSourceNodes(signal?: AbortSignal) {
 }
 
 function goEditS3(row: RepositoryRow) {
+  if (!repositoryWritable(row)) return
   drawerDetailOpen.value = false
   router.push({ path: `/node/repositories/s3/${row.id}/edit` })
 }
 
 function goEditProxyFs(row: RepositoryRow) {
+  if (!repositoryWritable(row)) return
   drawerDetailOpen.value = false
   router.push({ path: `/node/repositories/proxy-fs/${row.id}/edit` })
 }
 
 function goRepairNas(row: RepositoryRow) {
+  if (!repositoryWritable(row)) return
   drawerDetailOpen.value = false
   router.push({ path: `/node/repositories/nas/${row.id}/repair` })
 }
@@ -2588,6 +2594,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
         <div class="hfl-list-toolbar">
           <ElButton
             type="primary"
+            :disabled="!resourcePermissions.canCreate(activeTab === 'nas' ? 'repository:nas' : activeTab === 'proxy_fs' ? 'repository:proxy_fs' : 'repository:s3')"
             @click="activeTab === 'nas' ? router.push('/node/repositories/nas/add') : activeTab === 'proxy_fs' ? router.push('/node/repositories/proxy-fs/add') : router.push('/node/repositories/s3/add')"
           >
             <Plus :size="16" />
@@ -2747,7 +2754,10 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   :width="280"
                 >
                   <template #reference>
-                    <span class="repository-quota-alert-icon" aria-label="Quota warning">⚠</span>
+                    <span
+                      class="repository-quota-alert-icon"
+                      aria-label="Quota warning"
+                    >⚠</span>
                   </template>
                   <div>
                     <strong>{{ row.quota_alert.title }}</strong>
@@ -2755,7 +2765,9 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <div v-if="row.quota_alert.current_value != null">
                       Usage: {{ row.quota_alert.current_value }}% / {{ row.quota_alert.threshold_value }}%
                     </div>
-                    <div v-if="(row.quota_alert.repeat_count || 0) >= 5">Repeated notifications stopped after 5 reminders.</div>
+                    <div v-if="(row.quota_alert.repeat_count || 0) >= 5">
+                      Repeated notifications stopped after 5 reminders.
+                    </div>
                   </div>
                 </ElPopover>
               </template>

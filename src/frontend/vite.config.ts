@@ -237,6 +237,7 @@ export default defineConfig(() => ({
     include: frontendTestScope === 'extension'
       ? extensionFrontendSrcs.flatMap((e) => [
           `${e.src}/ops/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}`,
+          `${e.src}/governance/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}`,
           `${e.src}/platform-ops/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}`,
         ])
       : ['src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],

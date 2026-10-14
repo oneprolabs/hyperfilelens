@@ -62,8 +62,16 @@ class CollectionConnectionTests(SimpleTestCase):
     def test_matching_readonly_config_skips_connect(self, command, invalidate):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "usage.repository.config"
-            config.write_text(json.dumps({"readonly": True, "storage": {"type": "s3"}, "caching": {"cacheDirectory": "cache"}}))
-            kopia_cli.ensure_usage_connection(SimpleNamespace(id=7), config_file=config)
+            cache_root = Path(directory) / "cache"
+            config.write_text(json.dumps({
+                "readonly": True,
+                "storage": {"type": "s3"},
+                "caching": {"cacheDirectory": str(cache_root / "7")},
+            }))
+            with mock.patch.dict(
+                os.environ, {"HFL_KOPIA_USAGE_CACHE_DIR": str(cache_root)},
+            ):
+                kopia_cli.ensure_usage_connection(SimpleNamespace(id=7), config_file=config)
         invalidate.assert_called_once()
         command.assert_not_called()
 

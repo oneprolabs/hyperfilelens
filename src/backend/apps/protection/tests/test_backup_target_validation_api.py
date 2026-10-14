@@ -1206,6 +1206,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         secret = "result-password-value"
         node_task = SimpleNamespace(
             pk="validation-task-id",
+            id="validation-task-id",
             status=NodeTask.Status.RUNNING,
             result={"password": secret, "detail": f"password={secret}"},
             last_error=f"password={secret}",

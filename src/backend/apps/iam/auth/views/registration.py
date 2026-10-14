@@ -81,6 +81,7 @@ def _save_password_and_revoke(user, password):
 
     user.set_password(password)
     user.save(update_fields=["password"])
+    Profile.objects.filter(user=user).update(requires_password_change=False)
     EmailVerificationCode.objects.filter(user=user, is_used=False).update(
         is_used=True, used_at=timezone.now(), invalidated_at=timezone.now(),
     )
@@ -200,12 +201,18 @@ def _forgot_password_generic_success(email: str) -> Response:
         status=status.HTTP_200_OK,
     )
 
+@transaction.atomic
 def _get_or_create_pending_user(email: str) -> tuple[User | None, str | None, bool]:
     """
     Return an inactive pending user for registration, or an error message.
     The third value indicates whether a new user was created.
     """
-    existing = User.objects.filter(email=email).first()
+    from apps.iam.services.member_onboarding import lock_identity_provisioning
+    lock_identity_provisioning()
+    matches = list(User.objects.filter(email__iexact=email).order_by("id")[:2])
+    if len(matches) > 1:
+        return None, "EMAIL_EXISTS", False
+    existing = matches[0] if matches else None
     if existing is not None:
         if existing.is_active:
             return None, "EMAIL_EXISTS", False
@@ -362,6 +369,7 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
         },
         responses={200: OpenApiTypes.OBJECT},
     )
+    @transaction.atomic
     def post(self, request):
         if not email_signup_enabled():
             return _email_signup_disabled_response()
@@ -413,7 +421,9 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if User.objects.filter(email=email).exists():
+        from apps.iam.services.member_onboarding import lock_identity_provisioning
+        lock_identity_provisioning()
+        if User.objects.filter(email__iexact=email).exists():
             return Response(
                 {
                     "code": "1001",
@@ -918,7 +928,27 @@ class ChangePasswordView(APIView):
                 },
             )
 
+        from apps.iam.services.account_setup import requires_password_change
+        first_setup = requires_password_change(user)
+        if first_setup and user.check_password(new_password):
+            return _build_error_response(
+                "INVALID_PASSWORD",
+                _("Choose a password different from the temporary password."),
+                fields={"new_password": [_("Choose a password different from the temporary password.")]},
+            )
         _save_password_and_revoke(user, new_password)
+        if first_setup:
+            from apps.audit.services.interface import write_audit_log_from_request
+            from apps.iam.models import Membership
+
+            affiliation = Membership.objects.filter(user=user, is_active=True).select_related("organization").first()
+            if affiliation:
+                write_audit_log_from_request(
+                    request, organization=affiliation.organization,
+                    action="account.password_setup", resource_type="user",
+                    resource_id=str(user.pk), resource_name=user.email,
+                    changes={"requires_password_change": False},
+                )
 
         response = Response(
             {

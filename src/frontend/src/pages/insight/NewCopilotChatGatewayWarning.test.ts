@@ -48,6 +48,9 @@ vi.mock('../../composables/useKnowledgeSourceForm', () => ({
 vi.mock('../../composables/useCopilotSelectionPreview', () => ({
   useCopilotSelectionPreview: mocks.useCopilotSelectionPreview,
 }))
+vi.mock('../../composables/useResourceCapabilities', () => ({
+  useResourceCapabilities: () => ({ permitted: () => true }),
+}))
 
 vi.mock('../../lib/api', () => ({
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,

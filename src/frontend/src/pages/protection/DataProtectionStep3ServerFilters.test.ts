@@ -53,7 +53,7 @@ describe('Backup Wizard Step 3 server filters', () => {
   })
 
   it('groups bind/unbind tag actions before dangerous actions in all steps', () => {
-    const bindRows = page.match(/<ElDropdownItem divided :disabled="!wizardSelectedTagSources\.length \|\| wizardTagSaving" @click="openWizardTagAction\('add'\)">[\s\S]*?<\/ElDropdownItem>\s*<ElDropdownItem :disabled="wizardTagUnbindDisabled" @click="openWizardTagAction\('remove'\)">[\s\S]*?<\/ElDropdownItem>/g) || []
+    const bindRows = page.match(/<ElDropdownItem\s+divided\s+:disabled="!wizardSelectedTagSources\.length \|\| wizardTagSaving"\s+@click="openWizardTagAction\('add'\)"\s*>[\s\S]*?<\/ElDropdownItem>\s*<ElDropdownItem\s+:disabled="wizardTagUnbindDisabled"\s+@click="openWizardTagAction\('remove'\)"\s*>[\s\S]*?<\/ElDropdownItem>/g) || []
     expect(bindRows).toHaveLength(3)
     const bindPositions = Array.from(page.matchAll(/openWizardTagAction\('add'\)/g), (match) => match.index ?? -1)
     const dangerPositions = Array.from(page.matchAll(/class="el-dropdown-menu__item--danger"/g), (match) => match.index ?? -1)

@@ -677,8 +677,10 @@ describe('CopilotMessageList welcome message and live feedback', () => {
 
     await wrapper.get('.scroll-to-latest').trigger('click')
     await nextTick()
-    expect(scroll.scrollTop).toBe(1200)
-    expect(wrapper.find('.scroll-to-latest').exists()).toBe(false)
+    await vi.waitFor(() => {
+      expect(scroll.scrollTop).toBe(1200)
+      expect(wrapper.find('.scroll-to-latest').exists()).toBe(false)
+    })
     wrapper.unmount()
   })
 

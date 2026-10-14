@@ -3,7 +3,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus, { ElInputNumber, ElMessage } from 'element-plus'
 import { createI18n } from 'vue-i18n'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../../locales/en'
 import EditS3Repo from './EditS3Repo.vue'
@@ -74,6 +74,7 @@ async function mountForm() {
     },
   })
   await flushPromises()
+  await vi.waitFor(() => expect(saveButton(wrapper).attributes('disabled')).toBeUndefined())
   return wrapper
 }
 
@@ -90,6 +91,7 @@ describe('EditS3Repo save behavior', () => {
     mocks.getStorageRepository.mockResolvedValue(repository)
     mocks.updateStorageRepository.mockResolvedValue(repository)
   })
+  afterEach(() => vi.useRealTimers())
 
   it('submits only quota configuration and skips authentication verification for a quota-only edit', async () => {
     const wrapper = await mountForm()
@@ -182,6 +184,7 @@ describe('EditS3Repo save behavior', () => {
     vi.useFakeTimers()
 
     await saveButton(wrapper).trigger('click')
+    await flushPromises()
     await vi.advanceTimersByTimeAsync(180_000)
     await flushPromises()
 
@@ -208,6 +211,7 @@ describe('EditS3Repo save behavior', () => {
     vi.useFakeTimers()
 
     await saveButton(wrapper).trigger('click')
+    await flushPromises()
     await vi.advanceTimersByTimeAsync(1_000)
     await flushPromises()
 

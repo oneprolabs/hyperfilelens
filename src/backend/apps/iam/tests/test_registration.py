@@ -235,11 +235,12 @@ class EmailSignupCommunityEmptySocketTests(APITestCase):
     """Env may enable signup, but empty socket still forbids it."""
 
     def test_email_signup_stays_off_without_platform_extension(self):
-        response = self.client.post(
-            reverse("email_register_send_code"),
-            {"email": "community-signup@example.com"},
-            format="json",
-        )
+        with patch("apps.configuration.services.runtime_settings.enterprise_identity_enabled", return_value=False):
+            response = self.client.post(
+                reverse("email_register_send_code"),
+                {"email": "community-signup@example.com"},
+                format="json",
+            )
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(

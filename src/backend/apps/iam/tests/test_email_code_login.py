@@ -416,6 +416,15 @@ class EmailCodeLoginApiTests(APITestCase):
 class EmailCodeLoginCommunityEmptySocketTests(APITestCase):
     """Env may enable code login; empty socket still forbids it."""
 
+    def setUp(self):
+        super().setUp()
+        identity = patch(
+            "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+            return_value=False,
+        )
+        identity.start()
+        self.addCleanup(identity.stop)
+
     def test_send_code_stays_off_without_platform_extension(self):
         response = self.client.post(
             reverse("email_code_login_send"),

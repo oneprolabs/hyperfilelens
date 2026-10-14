@@ -13,7 +13,9 @@ from rest_framework.views import APIView
 from apps.alert.constants import AlertStatus
 from apps.alert.models import AlertRecord
 from apps.iam.org_context import require_org
-from apps.iam.permissions_org import IsOrgReader
+from apps.iam.permissions_org import IsOrgAuthorizedMember
+from apps.iam.resource_access import filter_resource_queryset, filter_task_queryset
+from apps.iam.activity_access import filter_activity_queryset
 from apps.node.models import Node
 from apps.source.constants import ResourceStatus
 from apps.source.models import SourceResource
@@ -28,7 +30,7 @@ def _iso(value):
 
 
 class AttentionView(APIView):
-    permission_classes = [IsAuthenticated, IsOrgReader]
+    permission_classes = [IsAuthenticated, IsOrgAuthorizedMember]
 
     def get(self, request):
         org = require_org(request)
@@ -54,6 +56,7 @@ class AttentionView(APIView):
                 status__in=[Task.Status.FAILED, Task.Status.TIMEOUT],
                 finished_at__gte=since,
             ).order_by("-finished_at", "-id")
+            qs = filter_task_queryset(request, qs)
             streams.append(
                 (
                     qs.count(),
@@ -80,12 +83,15 @@ class AttentionView(APIView):
                 organization_id=org.id,
                 status__in=[AlertStatus.FIRING, AlertStatus.ACKNOWLEDGED],
             ).order_by("-last_triggered_at", "-created_at")
+            qs = filter_activity_queryset(request, qs, action="operations.alerts.view")
             streams.append((qs.count(), [{"id": f"alert-{row.id}", "kind": "alert", "title": row.title, "detail": row.message, "occurred_at": _iso(row.last_triggered_at or row.created_at), "to": "/ops/alerts"} for row in qs[:end]]))
         if not kind or kind == "node":
             qs = Node.objects.filter(organization_id=org.id, availability=Node.Availability.OFFLINE).order_by("-availability_updated_at", "-id")
+            qs = filter_resource_queryset(request, qs, "node", action="operations.host_monitoring.view")
             streams.append((qs.count(), [{"id": f"node-{row.id}", "kind": "node", "title": f"Offline node: {row.name}", "detail": row.role, "occurred_at": _iso(row.availability_updated_at), "to": "/node/agents"} for row in qs[:end]]))
         if not kind or kind == "source":
             qs = SourceResource.objects.filter(organization_id=org.id, status=ResourceStatus.ERROR).order_by("-updated_at", "-id")
+            qs = filter_resource_queryset(request, qs, "source_resource", action="resource.view")
             streams.append((qs.count(), [{"id": f"source-{row.id}", "kind": "source", "title": f"Source error: {row.name}", "detail": row.status_message, "occurred_at": _iso(row.updated_at), "to": "/protection/backup-sources?tab=host"} for row in qs[:end]]))
         rows = sorted((row for _, stream in streams for row in stream), key=lambda row: row["occurred_at"] or "", reverse=True)
         if preview == "diverse":

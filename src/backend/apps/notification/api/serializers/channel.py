@@ -29,6 +29,8 @@ class NotificationChannelSerializer(serializers.ModelSerializer):
 
     def get_policies_count(self, obj):
         by_channel = self.context.get("policies_count_by_channel") or {}
+        if int(obj.id) in by_channel and by_channel[int(obj.id)] is None:
+            return None
         return int(by_channel.get(int(obj.id), 0) or 0)
 
     def get_last_delivery_status(self, obj):

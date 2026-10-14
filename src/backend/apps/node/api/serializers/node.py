@@ -140,10 +140,12 @@ class NodeSerializer(serializers.ModelSerializer):
             return row.get("workload")
         return None
 
-    def get_associated_repository_count(self, obj: Node) -> int:
+    def get_associated_repository_count(self, obj: Node) -> int | None:
         enrichments = self.context.get("enrichments") or {}
         row = enrichments.get(obj.id)
         if isinstance(row, dict):
+            if row.get("associated_repository_count") is None:
+                return None
             return int(row.get("associated_repository_count") or 0)
         return 0
 

@@ -17,6 +17,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.iam.resource_api import GovernedResourceMixin
+from apps.iam.permissions_org import IsOrgAuthorizedMember
+from common.extension_spi import get_authz_provider
 from apps.iam.permissions_org import (
     IsOrgOperator,
     IsOrgReader,
@@ -26,6 +29,10 @@ from apps.iam.permissions_org import (
 )
 from apps.iam.models import Organization
 from apps.lens_bridge.api.negotiation import PDFDownloadContentNegotiation
+from apps.lens_bridge.api.permissions import (
+    CanUseInsights, KnowledgeSourcePermission, OrganizationModelPermission,
+    knowledge_source_action, lock_model_authority,
+)
 from apps.lens_bridge.api.serializers import (
     LensAdmissionPreviewSerializer,
     LensChatBindingEnsureSerializer,
@@ -132,11 +139,19 @@ def _source_lens_contract_error(resource: str) -> sl_client.LensBridgeError:
 class LensCopilotSnapshotBrowseView(OrgScopedMixin, APIView):
     """Dispatch and inspect snapshot browsing for Insight without blocking API."""
 
-    permission_classes = [IsAuthenticated, IsOrgOperator]
+    permission_classes = [IsAuthenticated, IsOrgAuthorizedMember]
 
     def post(self, request):
         body = LensSnapshotBrowseCreateSerializer(data=request.data)
         body.is_valid(raise_exception=True)
+        from apps.lens_bridge.services.insight_access import assert_insight_access
+
+        assert_insight_access(
+            organization=self.org,
+            user=request.user,
+            snapshot_id=body.validated_data["backup_source_snapshot_id"],
+            gateway_link_id=body.validated_data["gateway_link_id"],
+        )
         from apps.lens_bridge.services import snapshot_scope_tasks
 
         limit = body.validated_data["limit"]
@@ -183,7 +198,7 @@ class LensCopilotSnapshotBrowseView(OrgScopedMixin, APIView):
 class LensCopilotSnapshotBrowseTaskView(OrgScopedMixin, APIView):
     """Return only Insight browse tasks owned by the active organization."""
 
-    permission_classes = [IsAuthenticated, IsOrgStaffReader]
+    permission_classes = [IsAuthenticated, IsOrgAuthorizedMember]
 
     def get(self, request, task_id):
         from apps.lens_bridge.services import snapshot_scope_tasks
@@ -236,11 +251,19 @@ class LensCopilotSnapshotBrowseTaskView(OrgScopedMixin, APIView):
 class LensCopilotScopePreviewView(OrgScopedMixin, APIView):
     """Summarize one selected snapshot path without blocking the API worker."""
 
-    permission_classes = [IsAuthenticated, IsOrgOperator]
+    permission_classes = [IsAuthenticated, IsOrgAuthorizedMember]
 
     def post(self, request):
         body = LensScopePreviewCreateSerializer(data=request.data)
         body.is_valid(raise_exception=True)
+        from apps.lens_bridge.services.insight_access import assert_insight_access
+
+        assert_insight_access(
+            organization=self.org,
+            user=request.user,
+            snapshot_id=body.validated_data["backup_source_snapshot_id"],
+            gateway_link_id=body.validated_data["gateway_link_id"],
+        )
         from apps.lens_bridge.services import chat_selection_preview
 
         payload = chat_selection_preview.start_scope_preview(
@@ -264,7 +287,7 @@ class LensCopilotScopePreviewView(OrgScopedMixin, APIView):
 class LensCopilotScopePreviewTaskView(OrgScopedMixin, APIView):
     """Inspect or cancel one current-user selection summary task."""
 
-    permission_classes = [IsAuthenticated, IsOrgOperator]
+    permission_classes = [IsAuthenticated, IsOrgAuthorizedMember]
 
     def get(self, request, task_id):
         from apps.lens_bridge.services import chat_selection_preview
@@ -290,11 +313,18 @@ class LensCopilotScopePreviewTaskView(OrgScopedMixin, APIView):
 class LensCopilotAdmissionPreviewView(OrgScopedMixin, APIView):
     """Return the current organization's safe Chat quota projection."""
 
-    permission_classes = [IsAuthenticated, IsOrgOperator]
+    permission_classes = [IsAuthenticated, IsOrgAuthorizedMember]
 
     def post(self, request):
         body = LensAdmissionPreviewSerializer(data=request.data)
         body.is_valid(raise_exception=True)
+        from apps.lens_bridge.services.insight_access import assert_insight_access
+
+        assert_insight_access(
+            organization=self.org,
+            user=request.user,
+            gateway_link_id=body.validated_data.get("gateway_link_id"),
+        )
         from apps.lens_bridge.services import chat_selection_preview
 
         return Response(
@@ -498,7 +528,9 @@ def _require_article_media_proxy_token(
         raise NotFound()
 
 
-def _shared_article_media_proxy_url(access: str, article_uuid: str, filename: str) -> str:
+def _shared_article_media_proxy_url(
+    access: str, article_uuid: str, filename: str
+) -> str:
     """Build a signed media URL for an organization-authorized shared answer."""
 
     article_uuid = str(article_uuid).strip()
@@ -532,7 +564,10 @@ def _require_shared_article_media_proxy_token(
         payload = signing.loads(token, salt=_SHARED_ARTICLE_MEDIA_PROXY_SIGNING_SALT)
     except signing.BadSignature as exc:
         raise NotFound() from exc
-    if payload.get("article_uuid") != str(article_uuid) or payload.get("filename") != filename:
+    if (
+        payload.get("article_uuid") != str(article_uuid)
+        or payload.get("filename") != filename
+    ):
         raise NotFound()
     access = str(payload.get("access") or "")
     if not access:
@@ -591,7 +626,10 @@ def _rewrite_article_media_value(value, *, session_id: int):
             for key, child in value.items()
         }
     if isinstance(value, list):
-        return [_rewrite_article_media_value(child, session_id=session_id) for child in value]
+        return [
+            _rewrite_article_media_value(child, session_id=session_id)
+            for child in value
+        ]
     if not isinstance(value, str):
         return value
 
@@ -613,7 +651,9 @@ def _rewrite_shared_article_media_value(value, *, access: str):
             for key, child in value.items()
         }
     if isinstance(value, list):
-        return [_rewrite_shared_article_media_value(child, access=access) for child in value]
+        return [
+            _rewrite_shared_article_media_value(child, access=access) for child in value
+        ]
     if not isinstance(value, str):
         return value
 
@@ -679,12 +719,14 @@ def health(request):
 class LensModelProxyView(OrgScopedMixin, APIView):
     """Proxy SourceLens LLM config admin API (organization-scoped ownership)."""
 
-    permission_classes = [IsAuthenticated, IsOrgStaffReader]
+    permission_classes = [IsAuthenticated, OrganizationModelPermission]
 
     def get_permissions(self):
-        if self.request.method not in ("GET", "HEAD", "OPTIONS"):
-            return [IsAuthenticated(), IsOrgWriter()]
         return super().get_permissions()
+
+    def _response(self, data, *, status=status.HTTP_200_OK):
+        from apps.audit.services.internal.sanitize import sanitize_request_body
+        return Response(sanitize_request_body(data), status=status)
 
     def get(self, request, config_uuid=None):
         url_name = getattr(request.resolver_match, "url_name", "")
@@ -700,9 +742,11 @@ class LensModelProxyView(OrgScopedMixin, APIView):
             data = org_models.merge_model_display_name(data, link)
         else:
             data = org_models.list_org_model_configs(self.org)
-        return Response(data)
+        return self._response(data)
 
+    @transaction.atomic
     def post(self, request, config_uuid=None):
+        lock_model_authority(request, self)
         url_name = getattr(request.resolver_match, "url_name", "")
         if url_name == "lens-models-test":
             if "config_uuid" in request.data or "config_id" in request.data:
@@ -714,7 +758,7 @@ class LensModelProxyView(OrgScopedMixin, APIView):
                 "/api/v1/admin/llm-config/test/",
                 json_body=request.data,
             )
-            return Response(data)
+            return self._response(data)
         if url_name == "lens-models-test-call" and config_uuid:
             org_models.require_org_model(self.org, config_uuid)
             data = sl_client.request_json(
@@ -722,7 +766,7 @@ class LensModelProxyView(OrgScopedMixin, APIView):
                 f"/api/v1/admin/llm-config/{config_uuid}/test-call/",
                 json_body=request.data,
             )
-            return Response(data)
+            return self._response(data)
         body, display_name = _tenant_model_payload(request.data)
         data = sl_client.request_json(
             "POST", "/api/v1/admin/llm-config/", json_body=body
@@ -736,9 +780,11 @@ class LensModelProxyView(OrgScopedMixin, APIView):
             )
             org_models.set_model_display_name(link, display_name)
             data = org_models.merge_model_display_name(data, link)
-        return Response(data, status=status.HTTP_201_CREATED)
+        return self._response(data, status=status.HTTP_201_CREATED)
 
+    @transaction.atomic
     def put(self, request, config_uuid):
+        lock_model_authority(request, self)
         link = org_models.require_org_model(self.org, config_uuid)
         body, display_name = _tenant_model_payload(request.data)
         data = sl_client.request_json(
@@ -747,10 +793,12 @@ class LensModelProxyView(OrgScopedMixin, APIView):
             json_body=body,
         )
         org_models.set_model_display_name(link, display_name)
-        return Response(org_models.merge_model_display_name(data, link))
+        return self._response(org_models.merge_model_display_name(data, link))
 
+    @transaction.atomic
     def patch(self, request, config_uuid):
         """Partial update — SourceLens admin API accepts PUT, not PATCH."""
+        lock_model_authority(request, self)
         link = org_models.require_org_model(self.org, config_uuid)
         body, display_name = _tenant_model_payload(request.data)
         if body:
@@ -765,9 +813,11 @@ class LensModelProxyView(OrgScopedMixin, APIView):
             )
         org_models.set_model_display_name(link, display_name)
         link.refresh_from_db(fields=["display_name"])
-        return Response(org_models.merge_model_display_name(data, link))
+        return self._response(org_models.merge_model_display_name(data, link))
 
+    @transaction.atomic
     def delete(self, request, config_uuid):
+        lock_model_authority(request, self)
         org_models.delete_org_model(self.org, config_uuid)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -776,9 +826,7 @@ class LensOrgSettingsView(OrgScopedMixin, APIView):
     """Per-organization SourceLens defaults (e.g. default agent model for new Assistants)."""
 
     def get_permissions(self):
-        if self.request.method in ("GET", "HEAD", "OPTIONS"):
-            return [IsAuthenticated(), IsOrgStaffReader()]
-        return [IsAuthenticated(), IsOrgWriter()]
+        return [IsAuthenticated(), OrganizationModelPermission()]
 
     def get(self, request):
         link = provisioning.get_or_create_org_link(self.org)
@@ -786,14 +834,14 @@ class LensOrgSettingsView(OrgScopedMixin, APIView):
             LensOrgSettingsSerializer(
                 {
                     "default_agent_model_ref": link.default_agent_model_ref,
-                    "default_multimodal_model_ref": (
-                        link.default_multimodal_model_ref
-                    ),
+                    "default_multimodal_model_ref": (link.default_multimodal_model_ref),
                 }
             ).data
         )
 
+    @transaction.atomic
     def patch(self, request):
+        lock_model_authority(request, self)
         body = LensOrgSettingsSerializer(data=request.data, partial=True)
         body.is_valid(raise_exception=True)
         link = provisioning.get_or_create_org_link(self.org)
@@ -820,9 +868,7 @@ class LensOrgSettingsView(OrgScopedMixin, APIView):
             LensOrgSettingsSerializer(
                 {
                     "default_agent_model_ref": link.default_agent_model_ref,
-                    "default_multimodal_model_ref": (
-                        link.default_multimodal_model_ref
-                    ),
+                    "default_multimodal_model_ref": (link.default_multimodal_model_ref),
                 }
             ).data
         )
@@ -831,7 +877,7 @@ class LensOrgSettingsView(OrgScopedMixin, APIView):
 class LensCopilotReadinessView(OrgScopedMixin, APIView):
     """Return sanitized platform AI models available to Copilot."""
 
-    permission_classes = [IsAuthenticated, IsOrgStaffReader]
+    permission_classes = [IsAuthenticated, CanUseInsights]
 
     def get(self, request):
         active_models = org_models.active_llm_configs_available_to_org(self.org)
@@ -851,12 +897,8 @@ class LensCopilotReadinessView(OrgScopedMixin, APIView):
                     "provider": str(model.get("provider") or ""),
                     "config": {"model": str(config.get("model") or "")},
                     "is_active": True,
-                    "is_default_agent": bool(
-                        model.get("is_default_agent")
-                    ),
-                    "is_default_multimodal": bool(
-                        model.get("is_default_multimodal")
-                    ),
+                    "is_default_agent": bool(model.get("is_default_agent")),
+                    "is_default_multimodal": bool(model.get("is_default_multimodal")),
                 }
             )
         return Response(
@@ -869,13 +911,20 @@ class LensCopilotReadinessView(OrgScopedMixin, APIView):
 
 
 class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
-    queryset = LensKnowledgeSource.objects.select_related("gateway", "organization").all()
-    permission_classes = [IsAuthenticated, IsOrgWriter]
+    queryset = LensKnowledgeSource.objects.select_related(
+        "gateway", "organization"
+    ).all()
+    permission_classes = [IsAuthenticated, KnowledgeSourcePermission]
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve"):
-            return [IsAuthenticated(), IsOrgStaffReader()]
         return super().get_permissions()
+
+    def get_org_scoped_queryset(self):
+        from apps.lens_bridge.services.insight_access import filter_knowledge_sources
+        return filter_knowledge_sources(
+            self.request, self.queryset.filter(organization=self.org),
+            action=knowledge_source_action(self.request),
+        )
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -890,12 +939,33 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
         ctx["gateway_scope"] = LensGatewayLink.GatewayScope.ORGANIZATION
         return ctx
 
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        Organization.objects.select_for_update(no_key=True).get(pk=self.org.pk)
+        return super().update(request, *args, **kwargs)
+
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        for ks in queryset:
+        queryset = self.filter_queryset(self.get_queryset()).order_by("name", "id")
+        from common.drf.query_page import snapshot_page
+        paged = "page" in request.query_params or "page_size" in request.query_params
+        try:
+            page = int(request.query_params.get("page", 1))
+            size = int(request.query_params.get("page_size", 30))
+            if page < 1 or not 1 <= size <= 100 or (page - 1) * size > 2**63 - 1:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValidationError("Invalid page or page_size.") from None
+        if paged:
+            refs, count = snapshot_page(queryset, fields=("id",), page=page, page_size=size)
+            rows = list(queryset.filter(pk__in=[row["id"] for row in refs]))
+        else:
+            rows = list(queryset[:1001])
+            if len(rows) > 1000:
+                raise ValidationError("Use page and page_size for large knowledge source lists.")
+        for ks in rows:
             knowledge_source_sync.maybe_refresh_degraded_status(ks=ks)
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        serializer = self.get_serializer(rows, many=True)
+        return Response({"count": count, "results": serializer.data} if paged else serializer.data)
 
     def retrieve(self, request, *args, **kwargs):
         ks = self.get_object()
@@ -909,10 +979,17 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
         )
 
         with transaction.atomic():
+            Organization.objects.select_for_update(no_key=True).get(pk=self.org.pk)
             gateway_link = require_organization_gateway_link(
                 tenant_organization=self.org,
                 gateway_id=serializer.validated_data["gateway"].id,
                 lock=True,
+            )
+            from apps.lens_bridge.services.insight_access import assert_knowledge_source_inputs
+            assert_knowledge_source_inputs(
+                self.request, organization=self.org, gateway_link=gateway_link,
+                snapshot_id=serializer.validated_data.get("backup_source_snapshot_id"),
+                pinned_id=serializer.validated_data.get("pinned_snapshot_id"),
             )
             ks = serializer.save(
                 organization=self.org,
@@ -935,9 +1012,17 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
             )
 
     def perform_update(self, serializer):
-        if LensSessionLink.objects.filter(
-            knowledge_source_id=serializer.instance.id
-        ).exclude(lifecycle_status=LensSessionLink.LifecycleStatus.DELETED).exists():
+        from apps.lens_bridge.services.insight_access import assert_knowledge_source_inputs
+        assert_knowledge_source_inputs(
+            self.request, organization=self.org, gateway_link=serializer.instance.gateway_link,
+            snapshot_id=serializer.instance.backup_source_snapshot_id,
+            pinned_id=serializer.validated_data.get("pinned_snapshot_id"),
+        )
+        if (
+            LensSessionLink.objects.filter(knowledge_source_id=serializer.instance.id)
+            .exclude(lifecycle_status=LensSessionLink.LifecycleStatus.DELETED)
+            .exists()
+        ):
             raise ValidationError(
                 {"knowledge_source": "Manage this workspace through its Chat."}
             )
@@ -954,20 +1039,24 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
             ks.status = LensKnowledgeSource.Status.PAUSED
             ks.save(update_fields=["status", "updated_at"])
 
+    @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         from apps.lens_bridge.services.knowledge_source_teardown import (
             request_knowledge_source_teardown,
         )
 
+        Organization.objects.select_for_update(no_key=True).get(pk=self.org.pk)
         instance = self.get_object()
-        if LensSessionLink.objects.filter(
-            knowledge_source_id=instance.id
-        ).exclude(
-            lifecycle_status__in=(
-                LensSessionLink.LifecycleStatus.DELETING,
-                LensSessionLink.LifecycleStatus.DELETED,
+        if (
+            LensSessionLink.objects.filter(knowledge_source_id=instance.id)
+            .exclude(
+                lifecycle_status__in=(
+                    LensSessionLink.LifecycleStatus.DELETING,
+                    LensSessionLink.LifecycleStatus.DELETED,
+                )
             )
-        ).exists():
+            .exists()
+        ):
             raise ValidationError(
                 {"knowledge_source": "Delete the Chat to remove its workspace."}
             )
@@ -978,7 +1067,9 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def sync(self, request, pk=None):
+        Organization.objects.select_for_update(no_key=True).get(pk=self.org.pk)
         ks = self.get_object()
         try:
             ks = knowledge_source_sync.request_knowledge_source_sync(
@@ -1008,7 +1099,7 @@ class IsGatewayDirectoryStatusReader(IsOrgWriter):
     allowed_roles = IsOrgStaffReader.allowed_roles
 
 
-class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
+class _LensGatewayViewSetBase(OrgScopedMixin, viewsets.ViewSet):
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
     def get_permissions(self):
@@ -1145,9 +1236,7 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
                     resource_id=str(link.id),
                     resource_name=gateway.name,
                     changes={
-                        "chat_prepare_concurrency": int(
-                            link.chat_prepare_concurrency
-                        ),
+                        "chat_prepare_concurrency": int(link.chat_prepare_concurrency),
                         "chat_queue_capacity": int(link.chat_queue_capacity),
                     },
                 )
@@ -1169,11 +1258,11 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
 
 
 class LensCopilotBindingView(OrgScopedMixin, APIView):
-    permission_classes = [IsAuthenticated, IsOrgStaffReader]
+    permission_classes = [IsAuthenticated, IsOrgAuthorizedMember]
 
     def get_permissions(self):
         if self.request.method in ("POST",):
-            return [IsAuthenticated(), IsOrgOperator()]
+            return [IsAuthenticated(), IsOrgAuthorizedMember()]
         return super().get_permissions()
 
     def get(self, request):
@@ -1189,6 +1278,14 @@ class LensCopilotBindingView(OrgScopedMixin, APIView):
     def post(self, request):
         body = LensChatBindingEnsureSerializer(data=request.data)
         body.is_valid(raise_exception=True)
+        from apps.lens_bridge.services.insight_access import assert_insight_access
+
+        assert_insight_access(
+            organization=self.org,
+            user=request.user,
+            snapshot_id=body.validated_data["backup_source_snapshot_id"],
+            gateway_link_id=body.validated_data.get("gateway_link_id"),
+        )
         try:
             binding = chat_binding_service.ensure_chat_binding(
                 self.org,
@@ -1214,7 +1311,7 @@ class LensCopilotBindingView(OrgScopedMixin, APIView):
 
 
 class LensCopilotGatewayOptionsView(OrgScopedMixin, APIView):
-    permission_classes = [IsAuthenticated, IsOrgStaffReader]
+    permission_classes = [IsAuthenticated, IsOrgAuthorizedMember]
 
     def get(self, request):
         rows = chat_binding_service.list_gateway_options(self.org, user=request.user)
@@ -1222,7 +1319,7 @@ class LensCopilotGatewayOptionsView(OrgScopedMixin, APIView):
 
 
 class LensCopilotAssistantView(OrgScopedMixin, APIView):
-    permission_classes = [IsAuthenticated, IsOrgStaffReader]
+    permission_classes = [IsAuthenticated, CanUseInsights]
 
     def get(self, request):
         membership = get_membership(request)
@@ -1238,20 +1335,37 @@ class LensCopilotAssistantView(OrgScopedMixin, APIView):
 
 
 class LensCopilotKnowledgeSourceView(OrgScopedMixin, APIView):
-    permission_classes = [IsAuthenticated, IsOrgStaffReader]
+    permission_classes = [IsAuthenticated, KnowledgeSourcePermission]
 
     def get(self, request):
-        qs = LensKnowledgeSource.objects.filter(
+        from apps.lens_bridge.services.insight_access import filter_knowledge_sources
+        from common.drf.query_page import snapshot_page
+
+        qs = filter_knowledge_sources(request, LensKnowledgeSource.objects.filter(
             organization=self.org,
             scan_enabled=True,
             status__in=[
                 LensKnowledgeSource.Status.READY,
                 LensKnowledgeSource.Status.DEGRADED,
             ],
-        ).select_related("gateway")
-        return Response(
-            LensKnowledgeSourceSerializer(qs, many=True, context={"view": self}).data
-        )
+        ).select_related("gateway"), action="insights.chats.view").order_by("name", "id")
+        paged = "page" in request.query_params or "page_size" in request.query_params
+        if paged:
+            try:
+                page = int(request.query_params.get("page", 1))
+                size = int(request.query_params.get("page_size", 30))
+                if page < 1 or not 1 <= size <= 100 or (page - 1) * size > 2**63 - 1:
+                    raise ValueError
+            except (ValueError, TypeError):
+                raise ValidationError("Invalid page or page_size.") from None
+            refs, count = snapshot_page(qs, fields=("id",), page=page, page_size=size)
+            rows = list(qs.filter(pk__in=[row["id"] for row in refs]))
+        else:
+            rows = list(qs[:1001])
+            if len(rows) > 1000:
+                raise ValidationError("Use page and page_size for large knowledge source lists.")
+        data = LensKnowledgeSourceSerializer(rows, many=True, context={"view": self}).data
+        return Response({"count": count, "results": data} if paged else data)
 
 
 class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
@@ -1458,7 +1572,7 @@ class LensMcpServerViewSet(OrgScopedMixin, viewsets.ViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
+class _LensCopilotSessionViewSetBase(OrgScopedMixin, viewsets.ViewSet):
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
     def get_permissions(self):
@@ -1490,19 +1604,23 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         return super().get_permissions()
 
     def _user_sessions(self):
-        return LensSessionLink.objects.filter(
-            organization=self.org,
-            hfl_user=self.request.user,
-        ).filter(
-            Q(status=LensSessionLink.Status.ACTIVE)
-            | Q(
-                lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
-                cleanup_intent=LensSessionLink.CleanupIntent.DELETE_SESSION,
+        return (
+            LensSessionLink.objects.filter(
+                organization=self.org,
+                hfl_user=self.request.user,
             )
-        ).select_related(
-            "knowledge_source",
-            "knowledge_source__workspace_binding",
-            "gateway_link__gateway",
+            .filter(
+                Q(status=LensSessionLink.Status.ACTIVE)
+                | Q(
+                    lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+                    cleanup_intent=LensSessionLink.CleanupIntent.DELETE_SESSION,
+                )
+            )
+            .select_related(
+                "knowledge_source",
+                "knowledge_source__workspace_binding",
+                "gateway_link__gateway",
+            )
         )
 
     def list(self, request):
@@ -1579,8 +1697,8 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             )
             if field in share
         }
-        payload["share_path"] = (
-            "/insight/copilot/shared?" + urlencode({"access": access})
+        payload["share_path"] = "/insight/copilot/shared?" + urlencode(
+            {"access": access}
         )
         return payload
 
@@ -1766,13 +1884,20 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             or ks.lifecycle_status != LensKnowledgeSource.LifecycleStatus.READY
         ):
             raise ValidationError({field: "Chat resources are no longer ready."})
-        if LensSessionLink.objects.filter(
-            knowledge_source_id=ks.id,
-        ).exclude(pk=locked_link.pk).exclude(
-            lifecycle_status=LensSessionLink.LifecycleStatus.DELETED,
-        ).exists():
+        if (
+            LensSessionLink.objects.filter(
+                knowledge_source_id=ks.id,
+            )
+            .exclude(pk=locked_link.pk)
+            .exclude(
+                lifecycle_status=LensSessionLink.LifecycleStatus.DELETED,
+            )
+            .exists()
+        ):
             raise ValidationError(
-                {field: "Chats sharing prepared data cannot change their shared settings."}
+                {
+                    field: "Chats sharing prepared data cannot change their shared settings."
+                }
             )
         return locked_link, ks
 
@@ -1894,10 +2019,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             or "pinned_at" not in data
             or (
                 pinned
-                and (
-                    not isinstance(data["pinned_at"], str)
-                    or not data["pinned_at"]
-                )
+                and (not isinstance(data["pinned_at"], str) or not data["pinned_at"])
             )
             or (not pinned and data["pinned_at"] is not None)
         ):
@@ -1921,12 +2043,16 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
 
     @action(detail=True, methods=["post"], url_path="force-delete")
     def force_delete(self, request, pk=None):
-        link = LensSessionLink.objects.filter(
-            pk=pk,
-            organization=self.org,
-            hfl_user=request.user,
-            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
-        ).select_related("knowledge_source", "gateway_link__gateway").first()
+        link = (
+            LensSessionLink.objects.filter(
+                pk=pk,
+                organization=self.org,
+                hfl_user=request.user,
+                lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+            )
+            .select_related("knowledge_source", "gateway_link__gateway")
+            .first()
+        )
         if link is None:
             raise NotFound()
         from apps.lens_bridge.services import chat_lifecycle
@@ -2086,9 +2212,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         methods=["get"],
         url_path=r"article-media/(?P<article_uuid>[^/]+)/(?P<filename>[^/]+)",
     )
-    def article_media_content(
-        self, request, pk=None, article_uuid=None, filename=None
-    ):
+    def article_media_content(self, request, pk=None, article_uuid=None, filename=None):
         link = self._get_user_link(pk)
         self._require_ready_session(link)
         article_id = str(article_uuid or "").strip()
@@ -2394,9 +2518,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             return _lens_error_response(exc)
         return Response(
             {
-                "active_run": _rewrite_article_media_value(
-                    payload, session_id=link.id
-                )
+                "active_run": _rewrite_article_media_value(payload, session_id=link.id)
                 if isinstance(payload, dict)
                 else payload
             }
@@ -2467,12 +2589,11 @@ class LensCopilotSharedQAView(OrgScopedMixin, APIView):
             raise NotFound() from exc
         except sl_client.LensBridgeError as exc:
             return _lens_error_response(exc)
-        if not isinstance(payload, dict) or str(payload.get("token") or "") != access[
-            "share_token"
-        ]:
-            return _lens_error_response(
-                _source_lens_contract_error("shared Q&A")
-            )
+        if (
+            not isinstance(payload, dict)
+            or str(payload.get("token") or "") != access["share_token"]
+        ):
+            return _lens_error_response(_source_lens_contract_error("shared Q&A"))
         result = {
             field: payload[field]
             for field in (
@@ -2573,10 +2694,7 @@ class _LensCopilotSharedQABinaryView(OrgScopedMixin, APIView):
 
 class LensCopilotSharedQAFileView(_LensCopilotSharedQABinaryView):
     def _upstream_path(self, share_token: str, **kwargs) -> str:
-        return (
-            f"/api/lens/public/qa/{share_token}/files/"
-            f"{kwargs['file_uuid']}/"
-        )
+        return f"/api/lens/public/qa/{share_token}/files/{kwargs['file_uuid']}/"
 
 
 class LensCopilotSharedQAArticleMediaView(OrgScopedMixin, APIView):
@@ -2625,9 +2743,11 @@ class LensCopilotSharedQAPdfView(_LensCopilotSharedQABinaryView):
 
 
 class LensCopilotUsageView(OrgScopedMixin, APIView):
+    governance_read_action = "insights.usage.view"
     """Current user's HFL-contextualized SourceLens usage and Q&A costs."""
 
-    permission_classes = [IsAuthenticated, IsOrgStaffReader]
+    # Historical personal results remain readable after resource grants change.
+    permission_classes = [IsAuthenticated, IsOrgReader]
 
     def get(self, request, run_uuid=None):
         try:
@@ -2641,7 +2761,7 @@ class LensCopilotUsageView(OrgScopedMixin, APIView):
 
 
 class LensCopilotRunStreamView(APIView):
-    permission_classes = [IsAuthenticated, IsOrgOperator]
+    permission_classes = [IsAuthenticated, IsOrgAuthorizedMember]
     renderer_classes = [ServerSentEventsRenderer]
 
     def get(self, request, run_uuid, session_id=None):
@@ -2674,3 +2794,91 @@ class LensCopilotRunStreamView(APIView):
         response["X-Accel-Buffering"] = "no"
         response["Connection"] = "keep-alive"
         return response
+
+
+class LensGatewayViewSet(GovernedResourceMixin, _LensGatewayViewSetBase):
+    """Private Gateway operations follow resource-scoped Group grants."""
+
+    governance_resource_type = "node"
+    governance_manage_action = "insight.manage"
+    governance_check_pk_in_initial = True
+
+    def _resource_action(self):
+        if self.action == "directory_status":
+            return "insights.private_data_gateways.view"
+        action_name = super()._resource_action().split(".")[-1]
+        return f"insights.private_data_gateways.{action_name}"
+
+
+class LensCopilotSessionViewSet(_LensCopilotSessionViewSetBase):
+    """Chat remains personal; new data operations re-check current Group grants."""
+
+    def get_permissions(self):
+        if get_authz_provider() is None:
+            return super().get_permissions()
+        return [IsAuthenticated(), IsOrgAuthorizedMember()]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        provider = get_authz_provider()
+        if provider is None:
+            return
+        from rest_framework.exceptions import NotFound, PermissionDenied
+
+        # Personal identity is checked before capability details. Do not
+        # reveal another user's Chat by returning a different permission code.
+        target = kwargs.get("pk") or (
+            request.data.get("source_session_id") if isinstance(request.data, dict) else None
+        )
+        if target is not None:
+            try:
+                target_id = int(target)
+            except (TypeError, ValueError):
+                raise NotFound("Chat not found.") from None
+            if not 0 < target_id <= 2**63 - 1 or not LensSessionLink.objects.filter(organization=self.org, hfl_user=request.user, pk=target_id).exists():
+                raise NotFound("Chat not found.")
+
+        if self.action in ("share", "share_detail"):
+            required = "insights.chats.share"
+        elif self.action in ("destroy", "force_delete"):
+            required = "insights.chats.delete"
+        elif request.method in ("GET", "HEAD", "OPTIONS"):
+            required = "insights.chats.view"
+        else:
+            required = "insights.chats.use"
+        if not provider.has_resource_action(
+            request.user, self.org.key, "backup_config", required
+        ):
+            raise PermissionDenied("The required Chat permission is not granted.")
+        if request.method in ("GET", "HEAD", "OPTIONS") or self.action not in (
+            "create",
+            "new_from",
+            "update_data",
+            "create_run",
+            "set_execution",
+            "retry",
+            "clarification",
+        ):
+            return
+        from apps.lens_bridge.services.insight_access import assert_insight_access
+
+        snapshot_id = request.data.get("backup_source_snapshot_id") or request.data.get(
+            "snapshot_id"
+        )
+        gateway_id = request.data.get("gateway_link_id")
+        source_session_id = kwargs.get("pk") or request.data.get("source_session_id")
+        if source_session_id:
+            try:
+                source_session_id = int(source_session_id)
+            except (ValueError, TypeError):
+                raise NotFound("Chat not found.") from None
+            session = self._user_sessions().filter(pk=source_session_id).first()
+            if session is not None:
+                snapshot_id = snapshot_id or session.backup_source_snapshot_id
+                gateway_id = gateway_id or session.gateway_link_id
+        assert_insight_access(
+            organization=self.org,
+            user=request.user,
+            snapshot_id=snapshot_id,
+            gateway_link_id=gateway_id,
+        )

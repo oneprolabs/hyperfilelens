@@ -7,12 +7,16 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.response import Response
 
+from apps.iam.resource_api import GovernedResourceMixin
+from apps.iam.permission_catalog import resource_action_permission
 from apps.iam.org_context import require_org
 from apps.iam.resource_access import (
     assert_resource_access,
-    filter_queryset_by_resource_field,
+    filter_resource_queryset,
+    record_resource_owner,
 )
 from apps.protection.models import BackupSourceSnapshot
+from apps.protection.api.execution_access import assert_backup_config_execution
 from apps.iam.permissions_org import IsOrgOperator, IsOrgReader
 from apps.restore.api.pagination import RestorePagination
 from apps.restore.api.serializers import (
@@ -30,6 +34,7 @@ from apps.restore.selectors.interface import (
     restore_plans_queryset,
 )
 from apps.restore.services import interface as restore_services
+from common.extension_spi import get_authz_provider
 
 
 def _validation_error(exc: DjangoValidationError) -> ValidationError:
@@ -60,26 +65,46 @@ def _source_run_result(records: list[RestoreRecord]) -> dict:
     }
 
 
-def _assert_endpoint_access(request, endpoint_type: str, endpoint_id: int) -> None:
+def _assert_endpoint_access(
+    request, endpoint_type: str, endpoint_id: int, *, action: str = "resource.view"
+) -> None:
     assert_resource_access(
         request,
         "node" if endpoint_type == RestorePlan.EndpointType.AGENT else "source_resource",
         endpoint_id,
-        action="resources.manage",
+        action=action,
     )
 
 
-def _assert_snapshot_access(request, snapshot_id: int | None) -> None:
+def _assert_snapshot_access(
+    request, snapshot_id: int | None, *, action: str = "protection.restore_plans.run"
+) -> None:
     if not snapshot_id:
         return
     config_id = BackupSourceSnapshot.objects.filter(
-        pk=snapshot_id,
+        organization_id=require_org(request).id, pk=snapshot_id,
     ).values_list("backup_config_id", flat=True).first()
     if config_id:
-        assert_resource_access(request, "backup_config", config_id, action="resources.manage")
+        assert_resource_access(request, "backup_config", config_id, action=action)
+    elif get_authz_provider() is not None:
+        raise NotFound("Snapshot not found.")
 
 
-class RestorePlanViewSet(viewsets.ModelViewSet):
+def _assert_plan_execution(request, plan: RestorePlan) -> None:
+    action_name = "protection.restore_plans.run"
+    assert_resource_access(request, "restore_plan", plan.pk, action=action_name)
+    assert_backup_config_execution(request, plan.backup_config_id, action=action_name)
+    _assert_endpoint_access(
+        request, plan.source_type, plan.source_ref_id, action=action_name
+    )
+    _assert_endpoint_access(
+        request, plan.target_type, plan.target_ref_id, action=action_name
+    )
+
+
+class _RestorePlanViewSetBase(viewsets.ModelViewSet):
+    governance_resource_type = "restore_plan"
+    governance_manage_action = "protection.manage"
     serializer_class = RestorePlanSerializer
     permission_classes = [IsAuthenticated, IsOrgOperator]
     pagination_class = RestorePagination
@@ -106,11 +131,11 @@ class RestorePlanViewSet(viewsets.ModelViewSet):
             source_ref_id=int(source_ref_id) if source_ref_id else None,
             enabled=enabled_bool,
         )
-        return filter_queryset_by_resource_field(
+        return filter_resource_queryset(
             self.request,
             queryset,
-            "backup_config",
-            "backup_config_id",
+            "restore_plan",
+            action=self._resource_action(),
         )
 
     def get_object(self):
@@ -120,13 +145,9 @@ class RestorePlanViewSet(viewsets.ModelViewSet):
             raise NotFound("restore plan not found")
         assert_resource_access(
             self.request,
-            "backup_config",
-            plan.backup_config_id,
-            action=(
-                "resources.manage"
-                if self.request.method not in SAFE_METHODS
-                else "resources.view"
-            ),
+            "restore_plan",
+            plan.id,
+            action=self._resource_action(),
         )
         return plan
 
@@ -139,7 +160,7 @@ class RestorePlanViewSet(viewsets.ModelViewSet):
             request,
             "backup_config",
             data["backup_config_id"],
-            action="resources.manage",
+            action="resource.view",
         )
         _assert_endpoint_access(request, data["source_type"], data["source_ref_id"])
         _assert_endpoint_access(request, data["target_type"], data["target_ref_id"])
@@ -150,6 +171,10 @@ class RestorePlanViewSet(viewsets.ModelViewSet):
             )
         except DjangoValidationError as exc:
             raise _validation_error(exc) from exc
+        record_resource_owner(
+            organization_id=org.id, resource_type="restore_plan", resource_id=plan.id,
+            owner_id=request.user.id,
+        )
         return Response(RestorePlanSerializer(plan).data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -162,7 +187,7 @@ class RestorePlanViewSet(viewsets.ModelViewSet):
             request,
             "backup_config",
             data.get("backup_config_id", plan.backup_config_id),
-            action="resources.manage",
+            action="resource.view",
         )
         _assert_endpoint_access(
             request,
@@ -192,6 +217,7 @@ class RestorePlanViewSet(viewsets.ModelViewSet):
     def run(self, request, pk=None):
         org = require_org(request)
         plan = self.get_object()
+        _assert_plan_execution(request, plan)
         serializer = RestorePlanRunSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         _assert_snapshot_access(
@@ -215,11 +241,9 @@ class RestorePlanViewSet(viewsets.ModelViewSet):
         org = require_org(request)
         serializer = RestorePlanBatchRunSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        assert_resource_access(
-            request,
-            "backup_config",
-            serializer.validated_data["backup_config_id"],
-            action="resources.manage",
+        assert_backup_config_execution(
+            request, serializer.validated_data["backup_config_id"],
+            action="protection.restore_plans.run",
         )
         _assert_snapshot_access(
             request,
@@ -229,6 +253,7 @@ class RestorePlanViewSet(viewsets.ModelViewSet):
             request,
             serializer.validated_data["target_type"],
             serializer.validated_data["target_ref_id"],
+            action="protection.restore_plans.run",
         )
         try:
             record = restore_services.run_restore_plan_batch(
@@ -249,7 +274,16 @@ class RestorePlanViewSet(viewsets.ModelViewSet):
             request,
             serializer.validated_data["source_type"],
             serializer.validated_data["source_ref_id"],
+            action="protection.restore_plans.run",
         )
+        plans = RestorePlan.objects.filter(
+            organization_id=org.id,
+            source_type=serializer.validated_data["source_type"],
+            source_ref_id=serializer.validated_data["source_ref_id"],
+            enabled=True,
+        )
+        for plan in plans:
+            _assert_plan_execution(request, plan)
         _assert_snapshot_access(
             request,
             serializer.validated_data.get("source_snapshot_id"),
@@ -266,3 +300,16 @@ class RestorePlanViewSet(viewsets.ModelViewSet):
         except DjangoValidationError as exc:
             raise _validation_error(exc) from exc
         return Response(_source_run_result(records), status=status.HTTP_201_CREATED)
+
+
+class RestorePlanViewSet(GovernedResourceMixin, _RestorePlanViewSetBase):
+    """Resource-aware adapter over the unchanged business implementation."""
+
+    governance_resource_type = "restore_plan"
+    governance_manage_action = "protection.manage"
+
+    def _resource_action(self) -> str:
+        # Keep the same Restore Plan intent at the coarse entry gate, direct
+        # scope check and inherited parent scope check.
+        action = super()._resource_action()
+        return resource_action_permission("restore_plan", action) or action

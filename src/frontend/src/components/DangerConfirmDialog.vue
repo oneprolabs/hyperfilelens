@@ -38,6 +38,7 @@ const props = withDefaults(
     itemNameLabel?: string
     itemStatusLabel?: string
     itemDetailsLabel?: string
+    showItemDetails?: boolean
     confirmMode?: DangerConfirmMode
     confirmKeyword?: string
     confirmKeywordHint?: string
@@ -66,6 +67,7 @@ const props = withDefaults(
     itemNameLabel: undefined,
     itemStatusLabel: undefined,
     itemDetailsLabel: undefined,
+    showItemDetails: true,
     confirmMode: 'single',
     confirmKeyword: 'DELETE',
     confirmKeywordHint: '',
@@ -268,7 +270,10 @@ async function onDialogBeforeClose(done: () => void) {
               <colgroup>
                 <col class="hfl-danger-confirm__item-col-name">
                 <col class="hfl-danger-confirm__item-col-status">
-                <col class="hfl-danger-confirm__item-col-details">
+                <col
+                  v-if="showItemDetails"
+                  class="hfl-danger-confirm__item-col-details"
+                >
               </colgroup>
               <thead>
                 <tr>
@@ -278,7 +283,10 @@ async function onDialogBeforeClose(done: () => void) {
                   <th scope="col">
                     {{ itemStatusLabel ?? 'Status' }}
                   </th>
-                  <th scope="col">
+                  <th
+                    v-if="showItemDetails"
+                    scope="col"
+                  >
                     {{ itemDetailsLabel ?? 'Details' }}
                   </th>
                 </tr>
@@ -306,6 +314,7 @@ async function onDialogBeforeClose(done: () => void) {
                     >{{ item.status.label }}</span>
                   </td>
                   <td
+                    v-if="showItemDetails"
                     class="hfl-danger-confirm__item-details-cell"
                     :class="{
                       'hfl-danger-confirm__item-details-cell--empty':

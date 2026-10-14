@@ -110,11 +110,12 @@ def channel_statistics(
     search: str = "",
     channel_type: str = "",
     enabled: str = "",
+    queryset=None,
 ) -> dict:
     from django.db.models import Q
 
     qs = filter_channels(
-        channels_for_org(organization_id=organization_id),
+        channels_for_org(organization_id=organization_id) if queryset is None else queryset,
         search=search,
         channel_type=channel_type,
         enabled=enabled,

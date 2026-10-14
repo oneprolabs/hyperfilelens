@@ -51,18 +51,25 @@ ROLE_FEATURES: dict[str, list[str]] = {
         "storage",
         "backup",
         "alerts",
+        "settings",
+        "audit",
     ],
     Membership.Role.AUDITOR: [
         "dashboard",
+        "node",
+        "storage",
         "task",
         "backup",
         "alerts",
         "audit",
+        "settings",
     ],
 }
 
 
-def get_effective_feature_keys(*, membership: Membership | None, role: str | None = None) -> list[str]:
+def get_effective_feature_keys(
+    *, membership: Membership | None, role: str | None = None, authorization=None,
+) -> list[str]:
     if membership is None:
         return ["dashboard"]
     from common.extension_spi import get_authz_provider
@@ -70,6 +77,36 @@ def get_effective_feature_keys(*, membership: Membership | None, role: str | Non
     # Community (no EE authz): full feature surface for any active member.
     if get_authz_provider() is None:
         return normalize_feature_keys(list(FEATURE_KEYS))
+    provider = get_authz_provider()
+    resolver = getattr(provider, "effective_permissions", None)
+    if callable(resolver) or authorization is not None:
+        keys = (
+            set(authorization.organization_permissions)
+            if authorization is not None else set(resolver(membership.user, membership.organization.key))
+        )
+        group_resolver = getattr(provider, "effective_group_permissions", None)
+        if authorization is not None:
+            keys.update(set().union(*authorization.group_permissions.values()))
+        elif callable(group_resolver):
+            keys.update(group_resolver(membership.user, membership.organization.key))
+        features = ["dashboard"]
+        if any(key.startswith("configuration.") for key in keys):
+            features.extend(["node", "settings"])
+        if any(key.startswith("protection.") for key in keys):
+            features.extend(["node", "storage", "backup"])
+        if any(key.startswith("insights.") for key in keys):
+            features.append("node")
+        if "operations.tasks.view" in keys:
+            features.append("task")
+        if any(
+            key.startswith("operations.alert")
+            or key.startswith("operations.notification")
+            for key in keys
+        ):
+            features.append("alerts")
+        if "operations.audit_logs.view" in keys:
+            features.append("audit")
+        return normalize_feature_keys(features)
     effective = role
     if not effective:
         from apps.iam.services.membership_service import authoritative_role
@@ -104,7 +141,9 @@ def serialize_available_platforms(feature_keys: list[str]) -> list[dict[str, str
 def resolve_membership_for_org(user, org_key: str | None) -> Membership | None:
     if not getattr(user, "is_authenticated", False):
         return None
-    qs = Membership.objects.select_related("organization").filter(user=user, is_active=True)
+    qs = Membership.objects.select_related("organization").filter(
+        user=user, is_active=True
+    )
     if org_key:
         membership = qs.filter(organization__key=org_key).first()
         if membership is not None:
@@ -115,20 +154,49 @@ def resolve_membership_for_org(user, org_key: str | None) -> Membership | None:
 def get_access_profile(user, *, org_key: str | None = None) -> dict[str, object]:
     membership = resolve_membership_for_org(user, org_key)
     role = ""
+    authorization = None
     if membership is not None:
         from common.extension_spi import get_authz_provider
 
         provider = get_authz_provider()
         if provider is not None:
-            role = provider.get_org_role(user, membership.organization.key) or ""
+            factory = getattr(provider, "authorization_context", None)
+            if callable(factory):
+                authorization = factory(user, membership.organization.key)
+            if authorization is not None:
+                role = authorization.role or ""
+            else:
+                role = provider.get_org_role(user, membership.organization.key) or ""
         else:
             # Community: affiliation ⇒ owner-equivalent access profile.
             role = Membership.Role.OWNER
-    feature_keys = get_effective_feature_keys(membership=membership, role=role or None)
+    feature_keys = get_effective_feature_keys(
+        membership=membership, role=role or None, authorization=authorization,
+    )
     preferred_feature = ""
     if membership is not None:
         preferred_feature = str(membership.preferred_feature or "").strip()
+    grants = []
+    group_grants = []
+    if authorization is not None:
+        grants = sorted(authorization.organization_permissions)
+        group_grants = sorted(set().union(*authorization.group_permissions.values()))
+    elif membership and provider is not None:
+        resolver = getattr(provider, "effective_permissions", None)
+        group_resolver = getattr(provider, "effective_group_permissions", None)
+        grants = (
+            list(resolver(user, membership.organization.key))
+            if callable(resolver)
+            else []
+        )
+        group_grants = (
+            list(group_resolver(user, membership.organization.key))
+            if callable(group_resolver)
+            else []
+        )
     return {
+        "permissions": grants,
+        "group_permissions": group_grants,
         "org_key": getattr(membership.organization, "key", "") if membership else "",
         "role": role,
         "visible_features": feature_keys,

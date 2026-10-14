@@ -63,6 +63,12 @@ from common.errors import AppError
 
 class ProtectionBackupTaskApiTests(TestCase):
     def setUp(self):
+        from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests
+
+        # This suite exercises Community orchestration and explicit quota mocks.
+        # Enterprise permission/instance-quota behavior is covered separately.
+        providers = clear_providers_for_tests()
+        self.addCleanup(restore_providers_for_tests, providers)
         self.client = APIClient()
         user_model = get_user_model()
         self.user = user_model.objects.create_user(
@@ -92,6 +98,8 @@ class ProtectionBackupTaskApiTests(TestCase):
             repo_type=Repository.Type.S3,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             s3_platform=Repository.S3Platform.CUSTOM,
             s3_bucket="backup-task-bucket",
             config={
@@ -683,6 +691,8 @@ class ProtectionBackupTaskApiTests(TestCase):
             repo_type=Repository.Type.PROXY_FS,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
             config={"proxy_node_dir": "/repo"},
@@ -756,6 +766,8 @@ class ProtectionBackupTaskApiTests(TestCase):
             repo_type=Repository.Type.NAS,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             nas_protocol=Repository.NasProtocol.SMB,
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
@@ -2463,7 +2475,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(scheduled["orchestrator"], "policy_prepare")
         self.assertEqual(final["status"], Task.Status.FAILED)
         self.assertEqual(row.status, BackupSourceSnapshotDirectory.Status.FAILED)
-        self.assertEqual(row.error_code, "POLICY_APPLY_FAILED")
+        self.assertEqual(row.error_code, "BACKUP_TARGET_STORAGE_FULL")
         expected_message = (
             "The underlying storage rejected the backup because its capacity "
             "or provider-side quota was reached. Free space or increase the "
@@ -2861,6 +2873,8 @@ class ProtectionBackupTaskApiTests(TestCase):
             repo_type=Repository.Type.NAS,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             nas_protocol=Repository.NasProtocol.NFS,
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
@@ -2898,6 +2912,8 @@ class ProtectionBackupTaskApiTests(TestCase):
             repo_type=Repository.Type.NAS,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             nas_protocol=Repository.NasProtocol.NFS,
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
@@ -2940,6 +2956,8 @@ class ProtectionBackupTaskApiTests(TestCase):
             repo_type=Repository.Type.NAS,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             nas_protocol=Repository.NasProtocol.NFS,
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
@@ -3138,6 +3156,8 @@ class ProtectionBackupTaskApiTests(TestCase):
             repo_type=Repository.Type.NAS,
             status=Repository.Status.CREATED,
             health=Repository.Health.ONLINE,
+            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+            usage_last_success_at=timezone.now(),
             nas_protocol=Repository.NasProtocol.NFS,
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=proxy.id,
@@ -3509,11 +3529,21 @@ class ProtectionBackupTaskApiTests(TestCase):
                                         {
                                             "path": "cache/locked.txt",
                                             "error": "sharing violation",
+                                            "disposition": "skipped",
                                         }
                                     ],
-                                }
-                            }
-                        }
+                                },
+                            },
+                        },
+                        "snapshot_skipped_summary": {
+                            "total_count": 1,
+                            "item_type_counts": {"file": 1},
+                            "items": [{
+                                "path": "cache/locked.txt",
+                                "error": "sharing violation",
+                                "disposition": "skipped",
+                            }],
+                        },
                     },
                 ),
                 {
@@ -3530,6 +3560,12 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
 
         result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+        # The node dispatch budget admits two directories per tick. Advance
+        # the asynchronous workflow; do not assume all three finish in one call.
+        for _ in range(3):
+            if result["status"] != Task.Status.RUNNING:
+                break
+            result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
 
         task.refresh_from_db()
         snapshot.refresh_from_db()

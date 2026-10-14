@@ -11,8 +11,8 @@ export type NotificationChannel = {
   type: string
   enabled: boolean
   config?: NotificationChannelConfig
-  policiesCount?: number
-  policies_count?: number
+  policiesCount?: number | null
+  policies_count?: number | null
   lastDeliveryStatus?: string | null
   last_delivery_status?: string | null
   lastDeliveryAt?: string | null
@@ -57,12 +57,12 @@ export type NotificationChannelRecentAlert = {
 }
 
 export type NotificationChannelDetailsStats = {
-  policies_count?: number
-  alerts_count?: number
-  logs_count?: number
-  logs_success?: number
-  logs_failed?: number
-  success_rate?: number
+  policies_count?: number | null
+  alerts_count?: number | null
+  logs_count?: number | null
+  logs_success?: number | null
+  logs_failed?: number | null
+  success_rate?: number | null
   last_success_at?: string | null
   last_failed_at?: string | null
 }

@@ -63,7 +63,9 @@ def get_effective_role(request: Request, membership=None) -> str | None:
         return None
     if getattr(request, "hfl_support_readonly", False):
         return Membership.Role.AUDITOR
-    org_key = getattr(getattr(membership, "organization", None), "key", "") or resolve_org_key(request)
+    org_key = getattr(
+        getattr(membership, "organization", None), "key", ""
+    ) or resolve_org_key(request)
     provider = get_authz_provider()
     if provider is not None:
         role = provider.get_org_role(request.user, org_key)
@@ -72,24 +74,224 @@ def get_effective_role(request: Request, membership=None) -> str | None:
     return Membership.Role.OWNER
 
 
+def is_custom_role_member(request, membership=None) -> bool:
+    """Optional EE capability; never infer authority from an unknown role key."""
+    membership = membership if membership is not None else get_membership(request)
+    if membership is None or getattr(request, "hfl_support_readonly", False):
+        return False
+    provider = get_authz_provider()
+    resolver = getattr(provider, "is_custom_org_role", None)
+    role = get_effective_role(request, membership)
+    return bool(
+        role
+        and callable(resolver)
+        and resolver(
+            organization_id=membership.organization.id,
+            role=role,
+        )
+    )
+
+
 class IsOrgMember(permissions.BasePermission):
     def has_permission(self, request, view) -> bool:
         return get_membership(request) is not None
 
 
+class IsOrgAuthorizedMember(IsOrgMember):
+    """Active affiliation with an authoritative role (Community stays owner-like)."""
+
+    def has_permission(self, request, view) -> bool:
+        membership = get_membership(request)
+        return (
+            membership is not None
+            and get_effective_role(request, membership) is not None
+        )
+
+
 class _RoleMixin:
     allowed_roles: tuple[str, ...] = ()
+    custom_permission_action: str = ""
 
     def has_permission(self, request, view) -> bool:  # type: ignore[override]
-        if getattr(request, "hfl_support_readonly", False) and request.method not in permissions.SAFE_METHODS:
+        if (
+            getattr(request, "hfl_support_readonly", False)
+            and request.method not in permissions.SAFE_METHODS
+        ):
             return False
         membership = get_membership(request)
         if membership is None:
             return False
+        provider = get_authz_provider()
+        if provider is not None and not getattr(request, "hfl_support_readonly", False):
+            from apps.iam.query_authorization import request_authorization
+
+            context = request_authorization(
+                request, fresh=request.method not in permissions.SAFE_METHODS,
+            )
+            def resource_gate(kind, action):
+                if context is not None:
+                    return context.has_action(kind, action)
+                gate = getattr(provider, "has_resource_action", None)
+                return bool(callable(gate) and gate(
+                    request.user, membership.organization.key, kind, action,
+                ))
+            action = getattr(view, "governance_actions", {}).get(
+                getattr(view, "action", "")
+            )
+            if not action:
+                action = self.custom_permission_action or (
+                    getattr(view, "governance_read_action", "")
+                    if request.method in permissions.SAFE_METHODS
+                    else getattr(view, "governance_org_action", "")
+                )
+            if not action:
+                action = request_permission(request, view)
+            if not action and getattr(view, "governance_resource_type", ""):
+                action = (
+                    "resource.view"
+                    if request.method in permissions.SAFE_METHODS
+                    else "resource.manage"
+                )
+                return resource_gate(view.governance_resource_type, action)
+            if action and action.startswith(
+                ("configuration.groups.", "configuration.resources.view")
+            ):
+                return resource_gate("resource_group", action)
+            if action and action.startswith(
+                ("protection.", "insights.", "operations.")
+            ):
+                return resource_gate(
+                    getattr(view, "governance_resource_type", "backup_config"), action,
+                )
+            if context is not None:
+                return bool(action and context.has_org_action(action))
+            return bool(
+                action
+                and provider.has_org_action(
+                    request.user,
+                    membership.organization.key,
+                    action,
+                )
+            )
         if not self.allowed_roles:
             return True
         role = get_effective_role(request, membership)
-        return role in self.allowed_roles
+        if role in self.allowed_roles:
+            return True
+        if not is_custom_role_member(request, membership):
+            return False
+        action = self.custom_permission_action
+        if not action:
+            if getattr(view, "governance_resource_type", ""):
+                action = (
+                    "resources.view"
+                    if request.method in permissions.SAFE_METHODS
+                    else (
+                        getattr(view, "governance_manage_action", "protection.manage")
+                    )
+                )
+            else:
+                action = (
+                    getattr(view, "governance_read_action", "")
+                    if (request.method in permissions.SAFE_METHODS)
+                    else getattr(view, "governance_org_action", "")
+                )
+        provider = get_authz_provider()
+        return bool(
+            action
+            and provider
+            and provider.has_org_action(
+                request.user,
+                membership.organization.key,
+                action,
+            )
+        )
+
+
+def request_permission(request, view) -> str | None:
+    """Explicit module/API fallback for older Host views, without role bypass."""
+    path = request.path.lower()
+    read = request.method in permissions.SAFE_METHODS
+    operation = getattr(view, "action", "")
+    verb = (
+        "view"
+        if read
+        else "delete"
+        if request.method == "DELETE" or operation == "bulk_delete"
+        else "manage"
+    )
+    if "/node-tokens" in path or "/enrollment/token" in path:
+        from types import SimpleNamespace
+        from apps.iam.permission_catalog import resource_permission
+
+        role = (
+            request.data.get("role", "agent")
+            if not read and isinstance(request.data, dict)
+            else request.query_params.get("role", "agent")
+        )
+        return resource_permission(
+            "node", "view" if read else "manage", SimpleNamespace(role=role)
+        )
+    roots = (
+        ("/iam/orgs", "configuration.organizations"),
+        ("/iam/memberships", "configuration.members"),
+        ("/subscription/roles", "configuration.roles"),
+        ("/subscription/resource-groups", "configuration.groups"),
+        ("/subscription/resources", "configuration.resources"),
+        ("/subscription/", "configuration.subscriptions"),
+        ("/protection/source-tags", "protection.tags"),
+        ("/protection/tags", "protection.tags"),
+        ("/source/tags", "protection.tags"),
+        ("/protection/policies", "protection.backup_policies"),
+        ("/protection/filters", "protection.file_filters"),
+        ("/protection/snapshot", "protection.backup_data"),
+        ("/protection/backup-source-snapshot", "protection.backup_data"),
+        ("/protection/backup-target", "protection.backup_configurations"),
+        ("/restore/snapshot-directories", "protection.backup_data"),
+        ("/restore/records", "protection.restore_plans"),
+        ("/restore/tasks", "protection.restore_plans"),
+        ("/restore/target", "protection.restore_plans"),
+        ("/alerts/records", "operations.alerts"),
+        ("/alert/records", "operations.alerts"),
+        ("/alerts/policies", "operations.alert_rules"),
+        ("/alerts/rules", "operations.alert_rules"),
+        ("/notification/channels", "operations.notification_channels"),
+        ("/notification/records", "operations.notification_records"),
+        ("/notification/logs", "operations.notification_records"),
+        ("/audit", "operations.audit_logs"),
+        ("/monitor/events", "operations.events"),
+        ("/task", "operations.tasks"),
+        ("/lens/copilot", "insights.chats"),
+    )
+    for root, prefix in roots:
+        if root in path:
+            if prefix == "insights.chats":
+                verb = (
+                    "view"
+                    if read
+                    else "share"
+                    if "share" in path
+                    else "delete"
+                    if request.method == "DELETE"
+                    else "use"
+                )
+            elif prefix == "protection.backup_data":
+                verb = (
+                    "download"
+                    if "download" in path or "/content" in path or "/file" in path
+                    else "browse"
+                )
+            elif prefix == "protection.backup_configurations":
+                verb = "manage"
+            elif prefix == "protection.restore_plans":
+                verb = "view" if read else "cancel" if "cancel" in path else "run"
+            elif prefix == "operations.alerts" and operation in (
+                "acknowledge",
+                "resolve",
+            ):
+                verb = operation
+            return f"{prefix}.{verb}"
+    return None
 
 
 class IsOrgReader(_RoleMixin, permissions.BasePermission):
@@ -118,11 +320,30 @@ class IsOrgMemberReader(_RoleMixin, permissions.BasePermission):
         Membership.Role.MANAGER,
         Membership.Role.AUDITOR,
     )
+    custom_permission_action = "members.view"
 
     def has_permission(self, request, view) -> bool:  # type: ignore[override]
         if request.method in permissions.SAFE_METHODS:
             return super().has_permission(request, view)
         return False
+
+
+class IsOrgSubscriptionReader(IsOrgReader):
+    """Organization quota visibility is never granted by a Group role."""
+
+    custom_permission_action = "subscription.view"
+
+    def has_permission(self, request, view) -> bool:
+        if not super().has_permission(request, view):
+            return False
+        provider = get_authz_provider()
+        if provider is None or getattr(request, "hfl_support_readonly", False):
+            return True
+        return provider.has_org_action(
+            request.user,
+            resolve_org_key(request),
+            "subscription.view",
+        )
 
 
 class IsOrgStaffReader(_RoleMixin, permissions.BasePermission):

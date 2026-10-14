@@ -47,6 +47,21 @@ _SL_STATUS_SLOTS = threading.BoundedSemaphore(100)
 logger = logging.getLogger(__name__)
 
 
+def _filter_user_gateways(queryset, *, organization, user):
+    """Tenant directory visibility follows the shared Node governance reference."""
+    if user is None:
+        return queryset
+    from common.extension_spi import get_authz_provider
+    provider = get_authz_provider()
+    if provider is None:
+        return queryset
+    ids = list(queryset.values_list("gateway_id", flat=True))
+    allowed = provider.visible_resource_refs(
+        user, organization.key, [("node", pk) for pk in ids],
+    )
+    return queryset.filter(gateway_id__in=[pk for kind, pk in allowed if kind == "node"])
+
+
 @dataclass(frozen=True)
 class LensNodeSnapshot:
     """Successful observation, retaining its original time through caching."""
@@ -261,10 +276,11 @@ def _serialize_organization_links(
     ]
 
 
-def _organization_gateway_queryset(*, organization, search: str = ""):
+def _organization_gateway_queryset(*, organization, search: str = "", user=None):
     queryset = gateway_ownership.organization_gateway_links(
         organization=organization,
     ).filter(gateway__is_deleted=False)
+    queryset = _filter_user_gateways(queryset, organization=organization, user=user)
     term = str(search or "").strip()
     if term:
         queryset = queryset.filter(
@@ -306,6 +322,7 @@ def list_organization_gateway_directory_page(
     queryset = _organization_gateway_queryset(
         organization=organization,
         search=search,
+        user=user,
     )
     count = queryset.count()
     start = (page - 1) * page_size
@@ -483,8 +500,9 @@ def refresh_organization_gateway_directory_status(
             {"gateway_ids": "At most 100 Data Gateways can be refreshed at once."}
         )
     links = list(
-        gateway_ownership.organization_gateway_links(
-            organization=organization,
+        _filter_user_gateways(
+            gateway_ownership.organization_gateway_links(organization=organization),
+            organization=organization, user=user,
         )
         .filter(gateway_id__in=requested_ids, gateway__is_deleted=False)
         .order_by("gateway__name", "gateway_id", "id")
@@ -602,6 +620,11 @@ def list_organization_gateway_insight_rows(
     """Private Data Gateways in one organization, with live SL status."""
 
     links = _link_index(organization=organization)
+    visible_ids = set(_filter_user_gateways(
+        gateway_ownership.organization_gateway_links(organization=organization),
+        organization=organization, user=user,
+    ).values_list("gateway_id", flat=True))
+    links = {key: link for key, link in links.items() if link.gateway_id in visible_ids}
     if not links:
         return []
     release_targets: dict[tuple[str, str, str, str], str] = {}

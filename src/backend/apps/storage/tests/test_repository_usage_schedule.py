@@ -33,6 +33,18 @@ class RepositoryUsageScheduleTests(SimpleTestCase):
 
 
 class RepositoryUsageCapacityTests(SimpleTestCase):
+    @mock.patch("apps.storage.tasks.reconcile_storage_repositories.apply_async")
+    @mock.patch("apps.storage.tasks.try_acquire_background_storage_capacity", return_value=None)
+    def test_capacity_retry_preserves_explicit_repository_selection(self, _lease, queue):
+        result = reconcile_storage_repositories.run(
+            organization_id=17, repository_ids=[31, 37], background=True, limit=2,
+        )
+        self.assertTrue(result["retry_scheduled"])
+        payload = queue.call_args.kwargs["kwargs"]
+        self.assertEqual(payload["organization_id"], 17)
+        self.assertEqual(payload["repository_ids"], [31, 37])
+        self.assertEqual(payload["limit"], 2)
+
     @mock.patch(
         "apps.storage.tasks.reconcile_storage_repositories.apply_async"
     )

@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 
 from apps.iam.org_context import require_org
 from apps.iam.permissions_org import IsOrgReader
+from apps.iam.activity_access import filter_activity_queryset
 from apps.monitor.models import OperationalEvent
 from apps.monitor.services.event_targets import repository_event_target, source_event_target
 from apps.source.models import SourceResource
@@ -80,6 +81,7 @@ class EventView(APIView):
     """Return filtered events and matching severity totals for one organization."""
 
     permission_classes = [IsAuthenticated, IsOrgReader]
+    governance_read_action = "operations.events.view"
 
     def get(self, request):
         org = require_org(request)
@@ -104,7 +106,9 @@ class EventView(APIView):
                 {"page": "page and page_size must be integers"}
             ) from exc
 
-        queryset = OperationalEvent.objects.filter(organization=org)
+        queryset = filter_activity_queryset(
+            request, OperationalEvent.objects.filter(organization=org),
+        )
         if period != "all":
             queryset = queryset.filter(
                 occurred_at__gte=timezone.now() - PERIODS[period]

@@ -9,6 +9,7 @@ stable even when a local stack has extensions loaded.
 """
 
 from django.contrib.auth.models import User
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -97,6 +98,13 @@ class MembershipApiPermissionTests(_CommunitySpiMixin, APITestCase):
             def get_org_role(self, user, _org_key):
                 return role_by_user.get(user.pk)
 
+            def has_org_action(self, user, org_key, action):
+                return action in ("members.view", "configuration.members.view") and (
+                    self.get_org_role(user, org_key) in (
+                        Membership.Role.OWNER, Membership.Role.AUDITOR,
+                    )
+                )
+
         register_authz_provider(_RoleProvider())
 
         self.client.force_authenticate(user=self.auditor)
@@ -127,7 +135,9 @@ class MembershipApiPermissionTests(_CommunitySpiMixin, APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    @override_settings(HFL_QUOTA_ENFORCEMENT_ENABLED=False)
     def test_can_add_member_and_authoritative_role_is_owner(self):
+        # This fixture exercises Community authority, not its single-user quota.
         self.client.force_authenticate(user=self.owner)
         response = self.client.post(
             reverse("membership-list"),

@@ -155,7 +155,7 @@ class RepositorySerializer(serializers.ModelSerializer):
     initialization_state = serializers.SerializerMethodField()
     initialized_target_count = serializers.SerializerMethodField()
     quota_alert = serializers.SerializerMethodField()
-    associated_source_count = serializers.IntegerField(read_only=True, default=0)
+    associated_source_count = serializers.IntegerField(read_only=True, allow_null=True, default=None)
     associated_source_online_count = serializers.SerializerMethodField()
 
     class Meta:

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
 import { useI18n } from 'vue-i18n'
 import {
   ChevronDown,
@@ -62,6 +63,7 @@ const { tableMaxHeight: policyTableMaxHeight, containerRef: policyTableRef } = u
 const { tableMaxHeight: deliveryTableMaxHeight, containerRef: deliveryTableRef } = useDrawerTableMaxHeight()
 const detailsLoading = ref(false)
 const detailsError = ref<string | null>(null)
+const details = ref<NotificationChannelDetails | null>(null)
 const channelInlineEditing = ref<ChannelInlineField | null>(null)
 const channelInlineDraft = ref<string | boolean>('')
 const channelInlineSaving = ref(false)
@@ -70,6 +72,9 @@ const { schedule: scheduleFilterSearch, runNow: runFilterSearch } = useDebounced
 })
 
 const channels = ref<NotificationChannel[]>([])
+const resourcePermissions = useResourceCapabilities(computed(() => [...channels.value, ...(details.value?.channel ? [details.value.channel] : [])]
+  .map((row) => ({ resource_type: 'notification_channel' as const, resource_id: row.id }))))
+const channelWritable = (row: NotificationChannel) => resourcePermissions.permitted('notification_channel', row.id)
 const loading = ref(false)
 const listError = ref('')
 const testing = ref(false)
@@ -86,7 +91,6 @@ const emptyDescription = computed(() => (
 ))
 
 const showDetails = ref(false)
-const details = ref<NotificationChannelDetails | null>(null)
 const detailTab = ref<'overview' | 'policies' | 'deliveries'>('overview')
 
 const configPatchKeyMap: Record<string, string> = {
@@ -149,7 +153,7 @@ function isChannelInlineEditing(field: ChannelInlineField) {
 
 function beginChannelInlineEdit(field: ChannelInlineField) {
   const ch = detailChannel(details.value)
-  if (!ch || channelInlineSaving.value) return
+  if (!ch || !channelWritable(ch) || channelInlineSaving.value) return
   channelInlineEditing.value = field
   channelInlineDraft.value = channelInlineValue(ch, field)
 }
@@ -162,7 +166,7 @@ function cancelChannelInlineEdit() {
 async function saveChannelInlineEdit() {
   const ch = detailChannel(details.value)
   const field = channelInlineEditing.value
-  if (!ch || !field || channelInlineSaving.value) return
+  if (!ch || !field || !channelWritable(ch) || channelInlineSaving.value) return
 
   const payload: Record<string, unknown> = {}
   if (field === 'name') {
@@ -204,7 +208,7 @@ function logStatusLabel(status?: string) {
 }
 
 function channelPoliciesCount(ch: NotificationChannel) {
-  return ch.policiesCount ?? ch.policies_count ?? 0
+  return ch.policiesCount ?? ch.policies_count ?? '—'
 }
 
 function channelLastDeliveryStatus(ch: NotificationChannel) {
@@ -373,10 +377,12 @@ function clearSearch() {
 }
 
 function openCreate() {
+  if (!resourcePermissions.canCreate('notification_channel')) return
   router.push('/ops/channels/create')
 }
 
 function openEdit(row: NotificationChannel) {
+  if (!channelWritable(row)) return
   router.push(`/ops/channels/${row.id}/edit`)
 }
 
@@ -607,12 +613,13 @@ const selectedChannels = ref<NotificationChannel[]>([])
 const moreActionsOpen = ref(false)
 const batchActionLoading = ref(false)
 
+const selectedWritable = computed(() => selectedChannels.value.every(channelWritable))
 const hasSelectedChannels = computed(() => selectedChannels.value.length > 0)
-const moreBatchDisabled = computed(() => !hasSelectedChannels.value || batchActionLoading.value)
-const moreEditDisabled = computed(() => selectedChannels.value.length !== 1 || batchActionLoading.value)
-const moreTestDisabled = computed(() => selectedChannels.value.length !== 1 || batchActionLoading.value || testing.value)
-const batchEnableDisabled = computed(() => batchActionLoading.value || !selectedChannels.value.some((row) => !row.enabled))
-const batchDisableDisabled = computed(() => batchActionLoading.value || !selectedChannels.value.some((row) => row.enabled))
+const moreBatchDisabled = computed(() => !hasSelectedChannels.value || !selectedChannels.value.every((row) => resourcePermissions.permitted('notification_channel', row.id, 'delete')) || batchActionLoading.value)
+const moreEditDisabled = computed(() => selectedChannels.value.length !== 1 || !selectedWritable.value || batchActionLoading.value)
+const moreTestDisabled = computed(() => selectedChannels.value.length !== 1 || !selectedChannels.value.every((row) => resourcePermissions.permitted('notification_channel', row.id, 'test')) || batchActionLoading.value || testing.value)
+const batchEnableDisabled = computed(() => batchActionLoading.value || !selectedWritable.value || !selectedChannels.value.some((row) => !row.enabled))
+const batchDisableDisabled = computed(() => batchActionLoading.value || !selectedWritable.value || !selectedChannels.value.some((row) => row.enabled))
 
 function onChannelSelectionChange(rows: NotificationChannel[]) {
   selectedChannels.value = rows
@@ -876,6 +883,7 @@ async function openBatchDialog(
 ) {
   const rows = rowsOverride ? [...rowsOverride] : [...selectedChannels.value]
   if (!rows.length) return
+  if (!rows.every((row) => resourcePermissions.permitted('notification_channel', row.id, kind === 'delete' ? 'delete' : 'manage'))) return
   const selectedCount = selectedCountOverride ?? rows.length
   moreActionsOpen.value = false
   batchAssociationError.value = ''
@@ -941,6 +949,7 @@ function closeBatchDialog() {
 async function executeBatchAction() {
   const batch = pendingBatch.value
   if (!batch || batchAssociationLoading.value || batchAssociationError.value) return
+  if (!batch.summaries.every((item) => resourcePermissions.permitted('notification_channel', item.channel.id, batch.kind === 'delete' ? 'delete' : 'manage'))) return
   batchDialogLoading.value = true
   batchActionLoading.value = true
   const ids = batch.summaries.map((s) => s.channel.id)
@@ -1073,6 +1082,7 @@ watch(
           <el-button
             type="primary"
             :icon="Plus"
+            :disabled="!resourcePermissions.canCreate('notification_channel')"
             @click="openCreate"
           >
             {{ t('common.add') }}
@@ -1427,25 +1437,25 @@ watch(
                 >
                   <OpsStatCard
                     :label="t('ops.notification.logsCount')"
-                    :value="details.stats.logs_count ?? 0"
+                    :value="details.stats.logs_count ?? '—'"
                     tone="primary"
                     accent-side="left"
                   />
                   <OpsStatCard
                     :label="t('ops.notification.successRate')"
-                    :value="`${details.stats.success_rate ?? 0}%`"
+                    :value="details.stats.success_rate == null ? '—' : `${details.stats.success_rate}%`"
                     tone="success"
                     accent-side="left"
                   />
                   <OpsStatCard
                     :label="t('ops.notification.policiesCount')"
-                    :value="details.stats.policies_count ?? 0"
+                    :value="details.stats.policies_count ?? '—'"
                     tone="info"
                     accent-side="left"
                   />
                   <OpsStatCard
                     :label="t('ops.notification.alertsCount')"
-                    :value="details.stats.alerts_count ?? 0"
+                    :value="details.stats.alerts_count ?? '—'"
                     tone="warning"
                     accent-side="left"
                   />

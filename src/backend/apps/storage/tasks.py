@@ -206,6 +206,14 @@ def reconcile_storage_repositories(
     )
     if recorded_at is None:
         raise ValueError("sample_recorded_at must be an ISO 8601 datetime.")
+    if repository_ids is not None and len(repository_ids) == 0:
+        return {
+            "repositories_scanned": 0, "repositories_synced": 0,
+            "repositories_failed": 0, "failed_repository_ids": [],
+            "repositories_deferred": 0, "deferred_repository_ids": [],
+            "stopped_early": False, "snapshots_upserted": 0,
+            "snapshots_marked_deleted": 0, "observations_dispatched": 0,
+        }
     if periodic:
         queued = 0
         # A due-check only enqueues bounded individual scopes; it never opens Kopia.
@@ -289,7 +297,7 @@ def reconcile_storage_repositories(
         if organization_id is not None:
             return sync_organization_repositories(
                 organization_id=int(organization_id),
-                repository_ids=repository_ids or None,
+                repository_ids=repository_ids,
                 repo_type=repo_type,
                 limit=limit,
                 force=force,
@@ -303,6 +311,7 @@ def reconcile_storage_repositories(
                 ),
             )
         return sync_all_repositories(
+            repository_ids=repository_ids,
             repo_type=repo_type,
             limit=limit,
             force=force,

@@ -7,8 +7,11 @@ from __future__ import annotations
 import logging
 import uuid
 
+from django.utils.translation import gettext as _
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.core.exceptions import MultipleObjectsReturned, ObjectDoesNotExist, PermissionDenied
 from django.shortcuts import redirect
 
@@ -113,7 +116,14 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
         if sociallogin.user.pk:
             complete_social_user_registration(sociallogin.user)
 
+    @transaction.atomic
     def save_user(self, request, sociallogin, form=None):
+        from apps.iam.services.member_onboarding import lock_identity_provisioning
+
+        lock_identity_provisioning()
+        email = str(sociallogin.user.email or "").strip().lower()
+        if email and User.objects.filter(email__iexact=email).exists():
+            raise PermissionDenied(_("An account already uses this email. Sign in to that account first."))
         user = super().save_user(request, sociallogin, form)
         complete_social_user_registration(user)
         return user
