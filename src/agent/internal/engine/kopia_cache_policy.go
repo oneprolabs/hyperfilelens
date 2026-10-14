@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -88,9 +89,22 @@ func cacheSizeMatchesMB(value int64, sizeMB int64) bool {
 }
 
 func kopiaConfigMatchesCachePolicy(configFile string, policy managedKopiaCachePolicy) (bool, error) {
-	raw, err := os.ReadFile(configFile)
+	stat, err := os.Lstat(configFile)
+	if err != nil || !stat.Mode().IsRegular() || stat.Size() > 1024*1024 {
+		return false, fmt.Errorf("cache policy configuration is unavailable or too large")
+	}
+	file, err := os.Open(configFile)
 	if err != nil {
 		return false, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1024*1024 {
+		return false, fmt.Errorf("cache policy configuration is unavailable or too large")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, 1024*1024+1))
+	if err != nil || len(raw) > 1024*1024 {
+		return false, fmt.Errorf("cache policy configuration exceeds the safe read bound")
 	}
 	var config kopiaConfigCachePolicy
 	if err := json.Unmarshal(raw, &config); err != nil {

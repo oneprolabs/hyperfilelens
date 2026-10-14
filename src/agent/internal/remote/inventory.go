@@ -28,6 +28,7 @@ const RestoreTargetDirectoryCreateCapability = "restore_target_directory_create_
 // without requiring an Agent reconnect.
 func SupportedCapabilities() []string {
 	return []string{
+		"performance_policy_v1",
 		"task_command_ack_v1",
 		"repository_operation_v1",
 		"orphan_snapshot_reconcile_v1",

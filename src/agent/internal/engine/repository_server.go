@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"hyperfilelens/agent/internal/infra/logging"
+	"hyperfilelens/agent/internal/performance"
 	"hyperfilelens/agent/internal/platform/process"
 	"hyperfilelens/agent/internal/platform/vfs"
 )
@@ -63,6 +65,7 @@ type repositoryServerProcess struct {
 	listenHost  string
 	automatic   bool
 	logFile     string
+	logTail     func() string
 }
 
 var repositoryServerPortState = struct {
@@ -203,11 +206,7 @@ func (e *Engine) runRepositoryServerStart(
 		"--server-username=" + username,
 		"--server-password=" + password,
 	}
-	logHandle, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return "failed", result, err.Error()
-	}
-	defer logHandle.Close()
+	logHandle := logging.RuntimeLog(logFile)
 
 	cmd := exec.Command(bin, args...)
 	if err := process.Configure(ctx, cmd, process.Options{}); err != nil {
@@ -215,14 +214,19 @@ func (e *Engine) runRepositoryServerStart(
 		_ = os.Remove(keyFile)
 		return "failed", result, "REPOSITORY_SERVER_PROCESS_START_FAILED: " + err.Error()
 	}
-	cmd.Env = append(os.Environ(), envMapToList(env)...)
+	serverEnv := performance.ServerEnv(sessionID, env)
+	serverEnv = performance.KopiaLogEnv(serverEnv)
+	cmd.Env = append(os.Environ(), envMapToList(serverEnv)...)
 	cmd.Stdout = logHandle
 	cmd.Stderr = logHandle
 	if err := cmd.Start(); err != nil {
+		_ = logHandle.Close()
 		return "failed", result, "REPOSITORY_SERVER_PROCESS_START_FAILED: " + err.Error()
 	}
 	releaseLifetime, err := process.BindLifetime(cmd)
+	performance.ProcessStarted(cmd.Process.Pid)
 	if err != nil {
+		_ = logHandle.Close()
 		stopDeadline := time.Now().Add(repositoryServerStopTimeout)
 		waitDone := make(chan struct{})
 		go func() {
@@ -255,10 +259,12 @@ func (e *Engine) runRepositoryServerStart(
 		cmd: cmd, done: make(chan struct{}), release: releaseLifetime,
 		url: url, username: username, password: password, fingerprint: fingerprint,
 		port: port, listenHost: listenHost, automatic: automaticPort, logFile: logFile,
+		logTail: func() string { return logging.RuntimeLogTail(logHandle) },
 	}
 	repositoryServerProcesses.Store(sessionID, managedProcess)
 	go func() {
 		err := cmd.Wait()
+		_ = logHandle.Close()
 		managedProcess.mu.Lock()
 		managedProcess.waitErr = err
 		managedProcess.mu.Unlock()
@@ -491,6 +497,14 @@ func ensureKopiaServerUser(
 }
 
 func waitForRepositoryServerReady(ctx context.Context, listenHost string, port int, expectedFingerprint string, logFile string, managed *repositoryServerProcess) (string, error) {
+	failureTail := func() string {
+		if managed != nil && managed.logTail != nil {
+			if tail := managed.logTail(); tail != "" {
+				return tail
+			}
+		}
+		return tailFile(logFile, 20)
+	}
 	deadline := time.NewTimer(repositoryServerStartupTimeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -504,11 +518,11 @@ func waitForRepositoryServerReady(ctx context.Context, listenHost string, port i
 			err := managed.waitErr
 			managed.mu.Unlock()
 			if err == nil {
-				return "", fmt.Errorf("REPOSITORY_SERVER_PROCESS_EXITED: Kopia Repository Server exited before becoming ready: %s", tailFile(logFile, 20))
+				return "", fmt.Errorf("REPOSITORY_SERVER_PROCESS_EXITED: Kopia Repository Server exited before becoming ready: %s", failureTail())
 			}
-			return "", fmt.Errorf("REPOSITORY_SERVER_PROCESS_EXITED: Kopia Repository Server exited before becoming ready: %w; %s", err, tailFile(logFile, 20))
+			return "", fmt.Errorf("REPOSITORY_SERVER_PROCESS_EXITED: Kopia Repository Server exited before becoming ready: %w; %s", err, failureTail())
 		case <-deadline.C:
-			return "", fmt.Errorf("REPOSITORY_SERVER_READY_TIMEOUT: Kopia Repository Server did not become ready within %s: %s", repositoryServerStartupTimeout, tailFile(logFile, 20))
+			return "", fmt.Errorf("REPOSITORY_SERVER_READY_TIMEOUT: Kopia Repository Server did not become ready within %s: %s", repositoryServerStartupTimeout, failureTail())
 		case <-ticker.C:
 			if repositoryServerTLSReady(listenHost, port, expectedFingerprint) {
 				return expectedFingerprint, nil

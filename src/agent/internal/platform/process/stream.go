@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"hyperfilelens/agent/internal/performance"
 	"io"
 	"os"
 	"os/exec"
@@ -107,6 +108,7 @@ func runStreaming(
 	if bin == "" {
 		return Result{}, fmt.Errorf("empty binary path")
 	}
+	performance.BeforeWork(ctx)
 	cmd := exec.Command(bin, args...)
 	configureProcessGroup(cmd)
 	if workDir != "" {
@@ -132,6 +134,7 @@ func runStreaming(
 		_ = stderrWriter.Close()
 		return Result{}, err
 	}
+	performance.ProcessStarted(cmd.Process.Pid)
 
 	stdoutLimit := streamStdoutLimit
 	if !captureStdout {

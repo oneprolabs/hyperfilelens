@@ -1,13 +1,10 @@
 package logging
 
 import (
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
-
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 const (
@@ -34,22 +31,17 @@ func Setup(logDir string, orgKey string) error {
 	hostPID = hostnamePID()
 
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		return err
+		slog.SetDefault(slog.New(newUnifiedHandler(stderrWriter{}, &slog.HandlerOptions{Level: &runtimeLevel})))
+		return nil
 	}
 	logPath := filepath.Join(logDir, logFileName)
 	if err := touchLogFile(logPath); err != nil {
-		return err
+		slog.SetDefault(slog.New(newUnifiedHandler(stderrWriter{}, &slog.HandlerOptions{Level: &runtimeLevel})))
+		return nil
 	}
-	lj := &lumberjack.Logger{
-		Filename:   logPath,
-		MaxSize:    maxLogSizeMB,
-		MaxBackups: maxLogBackups,
-		LocalTime:  false,
-		Compress:   false,
-	}
-	mw := io.MultiWriter(lj, stderrWriter{})
+	mw := runtimeLogWriter(logPath, true)
 	h := newUnifiedHandler(mw, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: &runtimeLevel,
 	})
 	slog.SetDefault(slog.New(h))
 	return nil

@@ -122,6 +122,12 @@ def registration_metadata(
 ) -> dict:
     """Preserve trusted build and installer metadata across Agent heartbeats."""
     metadata = dict(payload_metadata) if isinstance(payload_metadata, dict) else {}
+    # Console-owned policies must survive durable re-registration, and must
+    # never be overwritten by an Agent inventory or enrollment payload.
+    for key in ("perf_settings", "performance_policy", "performance_status"):
+        metadata.pop(key, None)
+        if isinstance(existing_metadata, dict) and key in existing_metadata:
+            metadata[key] = existing_metadata[key]
     incoming_version, incoming_commit = _metadata_build_identity(metadata)
     existing_version, existing_commit = _metadata_build_identity(existing_metadata)
     incoming_capabilities_present, incoming_capabilities = _metadata_capabilities(

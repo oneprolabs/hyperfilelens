@@ -52,7 +52,8 @@ _KOPIA_CACHE_MAX_MB = 65536
 def _node_kopia_cache_size_mb(node: Node) -> int:
     """Read the optional node cache target without trusting arbitrary metadata."""
     metadata = node.metadata if isinstance(node.metadata, dict) else {}
-    settings = metadata.get("perf_settings")
+    policy = metadata.get("performance_policy")
+    settings = policy.get("settings") if isinstance(policy, dict) else None
     raw = settings.get("kopiaCacheMb") if isinstance(settings, dict) else None
     if not isinstance(raw, int) or isinstance(raw, bool):
         return _KOPIA_CACHE_DEFAULT_MB

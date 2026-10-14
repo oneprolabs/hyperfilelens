@@ -476,6 +476,8 @@ payload = {
         "hfl_managed_dot_ignore_v1": os.environ["MODE"] == "build",
         "hfl_entry_summary_v1": os.environ["MODE"] == "build",
         "hfl_creation_session_data_v1": os.environ["MODE"] == "build",
+        "hfl_shared_backup_quota_v1": os.environ["MODE"] == "build",
+        "hfl_managed_log_policy_v1": os.environ["MODE"] == "build",
     },
     "files": files,
     "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -512,7 +514,7 @@ EOF
 		KOPIA_PATCH_SHA256="$(patch_set_sha256)"
 		KOPIA_PATCH_NAMES="$(patch_names)"
 		KOPIA_PATCH_DIGESTS="$(patch_digests)"
-		KOPIA_BUILD_PROFILE="cgo-disabled,trimpath,strip,embedded-html-ui,hfl-buildinfo-v2,s3-patch-tests-v1,structured-progress-v2-tests-v1,managed-dot-ignore-v1,entry-summary-v1,creation-session-data-v1"
+		KOPIA_BUILD_PROFILE="cgo-disabled,trimpath,strip,embedded-html-ui,hfl-buildinfo-v2,s3-patch-tests-v1,structured-progress-v2-tests-v1,managed-dot-ignore-v1,entry-summary-v1,creation-session-data-v1,shared-backup-quota-v1,managed-log-policy-v1"
 	else
 		KOPIA_PATCH_SHA256=""
 		KOPIA_PATCH_NAMES=""

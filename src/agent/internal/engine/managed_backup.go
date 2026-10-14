@@ -27,6 +27,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"hyperfilelens/agent/internal/performance"
 	agentdisk "hyperfilelens/agent/internal/platform/disk"
 	"hyperfilelens/agent/internal/platform/kopia"
 	"hyperfilelens/agent/internal/platform/process"
@@ -561,6 +562,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	for key, value := range p.Env {
 		env[key] = value
 	}
+	env = performance.KopiaLogEnv(env)
 	// A shared Kopia cache can retain an encrypted format blob from another
 	// repository. Creating a repository with a different password then writes
 	// the new format but fails to reopen it with "invalid repository password".
@@ -572,10 +574,12 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		return "", nil, nil, repositorySpec{}, envErr.Error()
 	}
 	cachePolicy, cachePolicyErr := kopiaCachePolicyFromPayload(p)
-	if cachePolicyErr != nil {
-		return "", nil, nil, spec, cachePolicyErr.Error()
-	}
 	cacheArgs := cachePolicy.flags()
+	if cachePolicyErr != nil {
+		cacheArgs = nil
+		performance.CacheApplied(0, false)
+		slog.Warn("optional cache policy invalid; existing repository behavior continues", "task_id", taskID)
+	}
 	if spec.Type == "s3" {
 		env["AWS_ACCESS_KEY_ID"] = spec.AccessKeyID
 		env["AWS_SECRET_ACCESS_KEY"] = spec.SecretAccessKey
@@ -688,12 +692,21 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		"repository_create":  nil,
 		"repository_connect": nil,
 	}
-	if cacheErr := applyManagedKopiaCachePolicy(ctx, bin, configFile, env, cachePolicy); cacheErr != nil {
+	if cachePolicyErr != nil {
+		result["kopia_cache_policy_error"] = cachePolicyErr.Error()
+	} else if cacheErr := applyManagedKopiaCachePolicy(ctx, bin, configFile, env, cachePolicy); cacheErr != nil {
 		// A running repository operation must not be made unavailable solely
 		// because its cache policy could not be refreshed. Keep the last valid
 		// config and report the deferred application in the task result.
 		result["kopia_cache_policy_error"] = cacheErr.Error()
+		performance.CacheApplied(int(cachePolicy.ContentMB+cachePolicy.MetadataMB), false)
 		slog.Warn("managed_repository", "event", "cache_policy_apply_deferred", "task_id", taskID, "err", cacheErr.Error())
+	} else {
+		if performance.CacheConfigured() {
+			if matched, err := kopiaConfigMatchesCachePolicy(configFile, cachePolicy); err == nil && matched {
+				performance.CacheApplied(int(cachePolicy.ContentMB+cachePolicy.MetadataMB), true)
+			}
+		}
 	}
 	if spec.Type == "s3" && mode != repositoryPrepareInitialize && !skipOwnershipCheck {
 		client, ownershipErr := newS3CleanupClient(spec)
@@ -1034,12 +1047,14 @@ func (e *Engine) runManagedRepositoryMaintenance(
 		return "failed", result, err.Error()
 	}
 	maintenanceConfigFile := strings.TrimSuffix(configFile, filepath.Ext(configFile)) + ".maintenance.config"
-	cachePolicy, cacheErr := kopiaCachePolicyFromPayload(p)
-	if cacheErr != nil {
-		return "failed", result, cacheErr.Error()
-	}
+	cachePolicy, cachePolicyErr := kopiaCachePolicyFromPayload(p)
 	cacheArgs := cachePolicy.flags()
-	if cacheErr := applyManagedKopiaCachePolicy(ctx, bin, maintenanceConfigFile, env, cachePolicy); cacheErr != nil {
+	if cachePolicyErr != nil {
+		cacheArgs = nil
+	}
+	if cachePolicyErr != nil {
+		result["maintenance_kopia_cache_policy_error"] = cachePolicyErr.Error()
+	} else if cacheErr := applyManagedKopiaCachePolicy(ctx, bin, maintenanceConfigFile, env, cachePolicy); cacheErr != nil {
 		result["maintenance_kopia_cache_policy_error"] = cacheErr.Error()
 		slog.Warn(
 			"managed_repository",
@@ -1621,7 +1636,7 @@ func runPreparedManagedSnapshot(
 	runCtx, cancelRun := context.WithCancel(ctx)
 	stallSeconds := kopiaProgressStallSeconds()
 	stallDone := make(chan struct{})
-	go monitorKopiaProgressStall(runCtx, cancelRun, progressState, stallSeconds, stallDone)
+	go monitorKopiaProgressStall(runCtx, cancelRun, progressState, stallSeconds, stallDone, taskID)
 	progressDone := make(chan struct{})
 	go func() {
 		defer close(progressDone)
@@ -1641,6 +1656,10 @@ func runPreparedManagedSnapshot(
 		}
 	}()
 	onProgressLine := func(line string, stderr bool) {
+		if strings.HasPrefix(strings.TrimSpace(line), "HFL_QUOTA_DEGRADED:") {
+			performance.BandwidthDegraded()
+			return
+		}
 		failureCollector.observe(line)
 		if isIgnoredSnapshotFailureLine(line) {
 			skippedCollector.observe(line)
@@ -1651,13 +1670,14 @@ func runPreparedManagedSnapshot(
 		}
 		progressState.maybeSend(runCtx, rep, taskID, snapshot)
 	}
-	res, runErr := runManagedSnapshotCommand(runCtx, bin, snapshotArgs, env, "", onProgressLine)
+	backupEnv := performance.KopiaLogEnv(performance.BackupEnv(taskID, env))
+	res, runErr := runManagedSnapshotCommand(runCtx, bin, snapshotArgs, backupEnv, "", onProgressLine)
 	if runErr != nil && managedSnapshotStructuredProgressUnsupported(res) {
 		res, runErr = runManagedSnapshotCommand(
 			runCtx,
 			bin,
 			managedBackupLegacySnapshotArgs(configFile, sourcePath),
-			env,
+			backupEnv,
 			"",
 			onProgressLine,
 		)
@@ -5081,6 +5101,7 @@ func monitorKopiaProgressStall(
 	reporter *kopiaProgressReporter,
 	stallSeconds int,
 	done <-chan struct{},
+	backupTasks ...string,
 ) {
 	if stallSeconds <= 0 {
 		return
@@ -5094,6 +5115,9 @@ func monitorKopiaProgressStall(
 		case <-done:
 			return
 		case <-ticker.C:
+			if len(backupTasks) > 0 && performance.Throttling(backupTasks[0]) {
+				continue // A live quota wait, not an unrelated task heartbeat.
+			}
 			if reporter.stallExceeded(stallSeconds) {
 				cancel()
 				return

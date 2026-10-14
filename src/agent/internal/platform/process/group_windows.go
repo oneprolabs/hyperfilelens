@@ -25,6 +25,25 @@ func bindProcessLifetime(proc *os.Process) (func(), error) {
 	if proc == nil {
 		return nil, fmt.Errorf("child process is not started")
 	}
+	// A child of the Agent may already inherit the Agent's optional CPU Job.
+	// Windows processes cannot be assigned to an unrelated second Job on all
+	// supported versions. The inherited Job already owns the child's lifetime;
+	// taskkill still handles context cancellation below.
+	processHandle, err := windows.OpenProcess(
+		windows.PROCESS_QUERY_LIMITED_INFORMATION,
+		false,
+		uint32(proc.Pid),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("open child process: %w", err)
+	}
+	inJob := windows.NewLazySystemDLL("kernel32.dll").NewProc("IsProcessInJob")
+	var result uint32
+	if ok, _, _ := inJob.Call(uintptr(processHandle), 0, uintptr(unsafe.Pointer(&result))); ok != 0 && result != 0 {
+		_ = windows.CloseHandle(processHandle)
+		return func() {}, nil
+	}
+	_ = windows.CloseHandle(processHandle)
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create job object: %w", err)
@@ -43,7 +62,7 @@ func bindProcessLifetime(proc *os.Process) (func(), error) {
 		release()
 		return nil, fmt.Errorf("configure job object: %w", err)
 	}
-	processHandle, err := windows.OpenProcess(
+	processHandle, err = windows.OpenProcess(
 		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE,
 		false,
 		uint32(proc.Pid),
