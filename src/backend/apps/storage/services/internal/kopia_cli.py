@@ -3,12 +3,15 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import signal
 import shutil
 import subprocess
+import tempfile
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -35,6 +38,140 @@ from apps.storage.services.internal.s3_url_style import (
     kopia_s3_url_style,
     normalize_s3_url_style,
 )
+
+logger = logging.getLogger(__name__)
+_usage_deadline = ContextVar("repository_usage_deadline", default=None)
+_usage_valid = ContextVar("repository_usage_valid", default=None)
+
+
+@contextmanager
+def usage_collection_execution(valid: Callable[[], bool]):
+    """Fence Controller usage CLI work against admission-lease loss."""
+    validity = _usage_valid.set(valid)
+    try:
+        yield
+    finally:
+        _usage_valid.reset(validity)
+
+
+@contextmanager
+def usage_repository_budget(*, enabled: bool = True):
+    """One overall deadline per repository, including reused legacy batches."""
+    budget = 2 * max(1, int(os.getenv("HFL_KOPIA_TIMEOUT_SECONDS", "120")))
+    deadline = _usage_deadline.set(
+        time.monotonic() + budget + kopia_config_lock_timeout_seconds() if enabled else None,
+    )
+    try:
+        yield
+    finally:
+        _usage_deadline.reset(deadline)
+
+
+def assert_usage_collection_active() -> None:
+    valid = _usage_valid.get()
+    if valid is not None and not valid():
+        raise KopiaExecutionLeaseLost("Repository usage admission lease was lost.")
+    deadline = _usage_deadline.get()
+    if deadline is not None and time.monotonic() >= deadline:
+        raise KopiaCliError("Repository usage execution budget exhausted.")
+
+
+def _publish_usage_config(config_file: Path, config: dict) -> None:
+    """Use the per-command environment for S3 credentials, not cached JSON."""
+    options = config["storage"].get("config")
+    if isinstance(options, dict):
+        for name in ("accessKeyID", "secretAccessKey", "sessionToken", "webIdentityToken"):
+            options.pop(name, None)
+    with tempfile.NamedTemporaryFile(mode="w", dir=config_file.parent, delete=False) as temporary:
+        path = Path(temporary.name)
+        try:
+            json.dump(config, temporary)
+            temporary.flush()
+            path.chmod(0o600)
+            path.replace(config_file)
+        finally:
+            path.unlink(missing_ok=True)
+
+
+def ensure_usage_connection(repository: Repository, *, config_file: Path) -> None:
+    """Reuse only a matching read-only observation client under its file fence."""
+    started = time.monotonic()
+    with _repository_config_lock(config_file, shared=True):
+        logger.info("repository usage config lock repository_id=%s seconds=%.3f",
+                    repository.id, time.monotonic() - started)
+        _invalidate_changed_s3_connection(repository, config_file)
+        try:
+            config = json.loads(config_file.read_text())
+        except (OSError, ValueError):
+            config = {}
+        mounted_cache = Path("/var/cache/hyperfilelens/usage")
+        cache_root = Path(os.environ.get(
+            "HFL_KOPIA_USAGE_CACHE_DIR",
+            str(mounted_cache) if mounted_cache.is_dir() else str(config_file.parent / "cache"),
+        ))
+        cache_directory = cache_root / str(repository.id) if cache_root == mounted_cache or os.getenv(
+            "HFL_KOPIA_USAGE_CACHE_DIR",
+        ) else cache_root
+        cache_directory = cache_directory.resolve()
+        cache_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        caching = config.get("caching") if isinstance(config, dict) else None
+        stored_cache = caching.get("cacheDirectory") if isinstance(caching, dict) else None
+        same_cache = isinstance(stored_cache, str) and bool(stored_cache) and (
+            (config_file.parent / stored_cache).resolve() == cache_directory.resolve()
+        )
+        if (
+            isinstance(config, dict) and config.get("readonly") is True
+            and isinstance(config.get("storage"), dict)
+            and config["storage"].get("type") == "s3"
+            and same_cache
+        ):
+            options = config["storage"].get("config") or {}
+            if any(name in options for name in ("accessKeyID", "secretAccessKey", "sessionToken", "webIdentityToken")):
+                _publish_usage_config(config_file, config)
+            logger.debug("repository usage connection reused repository_id=%s", repository.id)
+            return
+        command_started = time.monotonic()
+        # Failed Kopia connect can remove its cache. Verify in disposable local
+        # storage so credential/connection failures cannot erase the warm cache.
+        with tempfile.TemporaryDirectory(prefix=".usage-connect-", dir=config_file.parent) as staging:
+            staged_config = Path(staging) / "repository.config"
+            result = _run_repository_command_unlocked(
+                repository,
+                ["repository", "connect", "s3", *_s3_flags(repository), "--readonly",
+                 f"--cache-directory={Path(staging) / 'cache'}"],
+                timeout_seconds=None,
+                config_file=staged_config,
+            )
+            if result.returncode:
+                raise KopiaCliError(str(scrub_secrets(
+                    _format_failure("Kopia usage connection failed", result),
+                    extra_values=secret_values_for_scrub(
+                        repository, resolve_repository_secrets(repository),
+                    ),
+                )))
+            try:
+                connected = json.loads(staged_config.read_text())
+                if connected.get("readonly") is not True or connected["storage"]["type"] != "s3":
+                    raise ValueError("Unexpected observation configuration.")
+                connected.setdefault("caching", {})["cacheDirectory"] = str(cache_directory.resolve())
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                raise KopiaCliError("Kopia did not produce a valid read-only observation config.") from exc
+            _publish_usage_config(config_file, connected)
+            _write_s3_connection_fingerprint(repository, config_file)
+    logger.info("repository usage connect repository_id=%s seconds=%.3f",
+                repository.id, time.monotonic() - command_started)
+
+
+@lru_cache(maxsize=8)
+def _content_stats_supports_json(path: str, modified_ns: int) -> bool:
+    """Probe help once per installed binary; no repository is opened."""
+    result = subprocess.run(
+        [path, "content", "stats", "--help"],
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    if result.returncode:
+        raise KopiaCliError("Unable to inspect Kopia statistics capabilities.")
+    return "--json" in result.stdout + result.stderr
 
 
 class KopiaCliError(Exception):
@@ -130,9 +267,11 @@ def content_stats(
     repository: Repository, *, timeout_seconds: int | None = None,
     config_file: Path | None = None,
 ) -> KopiaResult:
+    path = _kopia_path()
+    json_supported = _content_stats_supports_json(path, os.stat(path).st_mtime_ns)
     result = _run_repository_command(
         repository,
-        ["content", "stats", "--json"],
+        ["content", "stats", *(["--json"] if json_supported else [])],
         timeout_seconds=timeout_seconds,
         config_file=config_file,
     )
@@ -395,6 +534,17 @@ def _run_repository_command_unlocked(
     from .repository_health_budget import health_budget_active, remaining_health_seconds
 
     timeout = timeout_seconds or int(os.environ.get("HFL_KOPIA_TIMEOUT_SECONDS", "120"))
+    assert_usage_collection_active()
+    usage_deadline = _usage_deadline.get()
+    if usage_deadline is not None:
+        timeout = min(timeout, usage_deadline - time.monotonic())
+        if control is None and _usage_valid.get() is not None:
+            def usage_control():
+                return (
+                    KopiaControlDecision.CONTINUE if _usage_valid.get()()
+                    else KopiaControlDecision.LOST_LEASE
+                )
+            control = usage_control
     if health_budget_active():
         timeout = remaining_health_seconds(float("inf"))
     command = [

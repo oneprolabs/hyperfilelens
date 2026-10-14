@@ -3,7 +3,7 @@ from django.db.models import Q
 
 
 class RepositoryUsageMetric(models.Model):
-    """A logical 15-minute occupied-capacity sample for a storage repository."""
+    """A half-hour bucket with the real time of its latest valid observation."""
 
     class UsageSource(models.TextChoices):
         ESTIMATED = "estimated", "Estimated"
@@ -15,6 +15,7 @@ class RepositoryUsageMetric(models.Model):
         related_name="usage_metrics",
     )
     recorded_at = models.DateTimeField()
+    observed_at = models.DateTimeField(blank=True, null=True)
     usage_bytes = models.BigIntegerField(blank=True, null=True)
     usage_source = models.CharField(
         max_length=20,

@@ -40,8 +40,8 @@ class BackgroundStorageConfigurationTests(SimpleTestCase):
                 os.environ["CELERY_BACKGROUND_STORAGE_CONCURRENCY"] = background
             return background_storage_concurrency()
 
-    def test_defaults_to_half_of_worker_concurrency(self):
-        self.assertEqual(self._configured_capacity(worker="4", background=None), 2)
+    def test_defaults_to_one_usage_operation(self):
+        self.assertEqual(self._configured_capacity(worker="4", background=None), 1)
         self.assertEqual(self._configured_capacity(worker="3", background=None), 1)
 
     def test_default_worker_configuration_reserves_one_process(self):

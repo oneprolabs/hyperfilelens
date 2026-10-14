@@ -22,8 +22,25 @@ DEFAULT_FILTERS = {
 
 
 REPOSITORY_HEALTH_INTERVAL_ENV = "STORAGE_REPOSITORY_HEALTH_INTERVAL_SECONDS"
-DEFAULT_REPOSITORY_HEALTH_INTERVAL_SECONDS = 300
+DEFAULT_REPOSITORY_HEALTH_INTERVAL_SECONDS = 1800
 MIN_REPOSITORY_HEALTH_INTERVAL_SECONDS = 60
+REPOSITORY_USAGE_INTERVAL_ENV = "STORAGE_REPOSITORY_USAGE_INTERVAL_SECONDS"
+
+
+def repository_usage_interval_seconds() -> int:
+    value = _positive_int_setting(REPOSITORY_USAGE_INTERVAL_ENV, 1800)
+    if value < 60:
+        raise ImproperlyConfigured(f"{REPOSITORY_USAGE_INTERVAL_ENV} must be at least 60 seconds.")
+    return value
+
+
+def health_storage_concurrency() -> int:
+    """Health has its own admission pool; legacy overrides map to usage only."""
+    value = _positive_int_setting("CELERY_STORAGE_HEALTH_CONCURRENCY", 1)
+    worker = _positive_int_setting("CELERY_WORKER_CONCURRENCY", 2)
+    if value >= worker:
+        raise ImproperlyConfigured("CELERY_STORAGE_HEALTH_CONCURRENCY must be less than Worker concurrency.")
+    return value
 
 
 def repository_health_check_mode() -> str:
@@ -101,7 +118,7 @@ def repository_health_interval_seconds() -> int:
 
 
 def background_storage_concurrency() -> int:
-    """Return the shared Controller background-storage execution budget."""
+    """Return the usage budget, retaining the legacy setting as a fallback."""
 
     worker_concurrency = _positive_int_setting(
         CELERY_WORKER_CONCURRENCY_ENV,
@@ -112,14 +129,16 @@ def background_storage_concurrency() -> int:
             f"{CELERY_WORKER_CONCURRENCY_ENV} must be at least 2 when "
             "background storage work is enabled."
         )
-    default_background = max(1, worker_concurrency // 2)
-    background_concurrency = _positive_int_setting(
-        BACKGROUND_STORAGE_CONCURRENCY_ENV,
-        default_background,
+    default_background = 1
+    setting = (
+        "CELERY_STORAGE_USAGE_CONCURRENCY"
+        if os.getenv("CELERY_STORAGE_USAGE_CONCURRENCY", "").strip()
+        else BACKGROUND_STORAGE_CONCURRENCY_ENV
     )
+    background_concurrency = _positive_int_setting(setting, default_background)
     if background_concurrency >= worker_concurrency:
         raise ImproperlyConfigured(
-            f"{BACKGROUND_STORAGE_CONCURRENCY_ENV} must be less than "
+            f"{setting} must be less than "
             f"{CELERY_WORKER_CONCURRENCY_ENV}: background="
             f"{background_concurrency}, worker={worker_concurrency}."
         )
@@ -136,7 +155,8 @@ def maintenance_storage_concurrency() -> int:
         CELERY_WORKER_CONCURRENCY_ENV, DEFAULT_CELERY_WORKER_CONCURRENCY,
     )
     observations = background_storage_concurrency()
-    available = max(1, worker - observations - 1)
+    health = health_storage_concurrency()
+    available = max(1, worker - observations - health - 1)
     value = _positive_int_setting("CELERY_STORAGE_MAINTENANCE_CONCURRENCY", available)
     if value > worker - observations:
         raise ImproperlyConfigured(

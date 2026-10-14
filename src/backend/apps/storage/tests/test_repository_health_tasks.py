@@ -14,6 +14,7 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from apps.iam.models import Organization
 from apps.monitor.models import RepositoryUsageMetric
+from apps.monitor.services.internal.repository_usage_history import floor_time
 from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.protection.models import BackupConfig
@@ -72,7 +73,7 @@ class RepositoryHealthConfigurationTests(SimpleTestCase):
     def test_defaults_to_five_minutes(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("STORAGE_REPOSITORY_HEALTH_INTERVAL_SECONDS", None)
-            self.assertEqual(repository_health_interval_seconds(), 300)
+            self.assertEqual(repository_health_interval_seconds(), 1800)
 
     def test_accepts_configured_interval(self):
         with mock.patch.dict(
@@ -118,7 +119,7 @@ class RepositoryHealthConfigurationTests(SimpleTestCase):
         )
         self.assertEqual(
             health_call.kwargs["schedule"].run_every,
-            timedelta(seconds=420),
+            timedelta(seconds=60),
         )
         recovery_call = next(
             call
@@ -226,7 +227,7 @@ class RepositoryHealthTaskTests(TestCase):
             bind_node_id=10,
         )
 
-        result = dispatch_repository_health_checks.run()
+        result = dispatch_repository_health_checks.run(startup=True)
 
         self.assertEqual(result["dispatched"], 4)
         dispatched_ids = {
@@ -1071,7 +1072,9 @@ class RepositoryHealthResultProjectionTests(TestCase):
             RepositoryUsageMetric.objects.get(
                 repository=self.repository,
             ).recorded_at,
-            sample_recorded_at,
+            floor_time(
+                Repository.objects.get(pk=self.repository.pk).metrics_last_attempt_at, timedelta(minutes=30),
+            ),
         )
 
     def test_automatic_probe_failure_projects_usage_at_original_sample_time(self):
@@ -1120,7 +1123,9 @@ class RepositoryHealthResultProjectionTests(TestCase):
             RepositoryUsageMetric.objects.get(
                 repository=self.repository,
             ).recorded_at,
-            sample_recorded_at,
+            floor_time(
+                Repository.objects.get(pk=self.repository.pk).metrics_last_attempt_at, timedelta(minutes=30),
+            ),
         )
         self.repository.refresh_from_db()
         self.assertEqual(
@@ -1607,7 +1612,9 @@ class AutomaticDirectNASObservationTests(TestCase):
             RepositoryUsageMetric.objects.get(
                 repository=self.repository,
             ).recorded_at,
-            sample_recorded_at,
+            floor_time(
+                Repository.objects.get(pk=self.repository.pk).metrics_last_attempt_at, timedelta(minutes=30),
+            ),
         )
 
     @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")

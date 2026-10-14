@@ -3,13 +3,47 @@
 import json
 
 from django.test import TestCase
-from django_celery_beat.models import PeriodicTask
+from django_celery_beat.models import CrontabSchedule, IntervalSchedule, PeriodicTask
 
 from common.scheduling.periodic_wakeup import PERIODIC_WAKEUP_COALESCE_HEADER
 from common.scheduling.registry import TaskRegistry
 
 
 class TaskRegistryTests(TestCase):
+    def test_storage_upgrade_migrates_legacy_schedule_once(self):
+        cron = CrontabSchedule.objects.create(minute="*/15")
+        PeriodicTask.objects.create(
+            name="storage_reconcile_repositories", task="apps.storage.tasks.reconcile_storage_repositories",
+            crontab=cron, queue="operator-queue",
+        )
+        registry = TaskRegistry()
+        registry.add(
+            name="storage_reconcile_repositories", task="apps.storage.tasks.reconcile_storage_repositories",
+            schedule=60, kwargs={"periodic": True}, managed_schedule=True, sync_existing_kwargs=True,
+        )
+        registry.apply()
+        registry.apply()
+        task = PeriodicTask.objects.get(name="storage_reconcile_repositories")
+        self.assertIsNone(task.crontab_id)
+        self.assertEqual(task.interval.every, 60)
+        self.assertEqual(task.queue, "operator-queue")
+        self.assertEqual(PeriodicTask.objects.filter(name=task.name).count(), 1)
+
+    def test_storage_upgrade_preserves_operator_interval_and_collection_cadence(self):
+        interval = IntervalSchedule.objects.create(every=45, period="minutes")
+        PeriodicTask.objects.create(
+            name="storage_dispatch_repository_health_checks", task="tests.health", interval=interval,
+        )
+        registry = TaskRegistry()
+        registry.add(
+            name="storage_dispatch_repository_health_checks", task="tests.health",
+            schedule=60, managed_schedule=True, sync_existing_kwargs=True,
+        )
+        registry.apply()
+        task = PeriodicTask.objects.get(name="storage_dispatch_repository_health_checks")
+        self.assertEqual(task.interval_id, interval.id)
+        self.assertEqual(json.loads(task.kwargs)["sampling_interval_seconds"], 2700)
+
     def test_expiry_is_applied_to_new_periodic_task(self) -> None:
         registry = TaskRegistry()
         registry.add(

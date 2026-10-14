@@ -19,43 +19,43 @@ function point(recordedAt: string, usageBytes: number | null): StorageRepository
 describe('repository usage history', () => {
   const points = [
     point('2026-08-21T10:00:00Z', 100),
-    point('2026-08-21T10:15:00Z', null),
-    point('2026-08-21T10:30:00Z', 160),
+    point('2026-08-21T10:30:00Z', null),
+    point('2026-08-21T11:00:00Z', 160),
   ]
 
   it('keeps missing values as disconnected chart points', () => {
     expect(repositoryCapacitySeries(points)).toEqual([
       ['2026-08-21T10:00:00Z', 100],
-      ['2026-08-21T10:15:00Z', null],
-      ['2026-08-21T10:30:00Z', 160],
+      ['2026-08-21T10:30:00Z', null],
+      ['2026-08-21T11:00:00Z', 160],
     ])
   })
 
   it('moves isolated valid samples out of the line and into the point series', () => {
     expect(repositoryCapacityLineSeries(points)).toEqual([
       ['2026-08-21T10:00:00Z', null],
-      ['2026-08-21T10:15:00Z', null],
       ['2026-08-21T10:30:00Z', null],
+      ['2026-08-21T11:00:00Z', null],
     ])
     expect(repositoryCapacityIsolatedSeries(points)).toEqual([
       ['2026-08-21T10:00:00Z', 100],
-      ['2026-08-21T10:30:00Z', 160],
+      ['2026-08-21T11:00:00Z', 160],
     ])
   })
 
   it('keeps adjacent samples in the line and excludes them from isolated points', () => {
     const adjacent = [
       point('2026-08-21T10:00:00Z', null),
-      point('2026-08-21T10:15:00Z', 100),
-      point('2026-08-21T10:30:00Z', 120),
-      point('2026-08-21T10:45:00Z', null),
+      point('2026-08-21T10:30:00Z', 100),
+      point('2026-08-21T11:00:00Z', 120),
+      point('2026-08-21T11:30:00Z', null),
     ]
 
     expect(repositoryCapacityLineSeries(adjacent)).toEqual([
       ['2026-08-21T10:00:00Z', null],
-      ['2026-08-21T10:15:00Z', 100],
-      ['2026-08-21T10:30:00Z', 120],
-      ['2026-08-21T10:45:00Z', null],
+      ['2026-08-21T10:30:00Z', 100],
+      ['2026-08-21T11:00:00Z', 120],
+      ['2026-08-21T11:30:00Z', null],
     ])
     expect(repositoryCapacityIsolatedSeries(adjacent)).toEqual([])
   })

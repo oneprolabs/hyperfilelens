@@ -134,6 +134,7 @@ class RepositoryUsageTests(TestCase):
         "apps.storage.services.internal.repository_usage.sync_repository_usage"
     )
     def test_scheduled_usage_prioritizes_oldest_repository(self, sync_usage):
+        sync_usage.return_value.usage_probe_status = Repository.MetricProbeStatus.SUCCESS
         org = Organization.objects.create(
             key="scheduled-usage-priority-org",
             name="Scheduled Usage Priority Org",
@@ -161,6 +162,20 @@ class RepositoryUsageTests(TestCase):
         sync_usage.assert_called_once()
         self.assertEqual(sync_usage.call_args.args[0].id, older.id)
         self.assertNotEqual(sync_usage.call_args.args[0].id, newer.id)
+
+    @mock.patch("apps.storage.services.internal.repository_usage.sync_repository_usage")
+    def test_persisted_failed_probe_is_not_counted_as_success(self, sync_usage):
+        org = Organization.objects.create(key="failed-probe-count", name="Failed Probe Count")
+        repository = Repository.objects.create(
+            organization_id=org.id, name="failed-statistics",
+            repo_type=Repository.Type.S3, status=Repository.Status.CREATED,
+        )
+        sync_usage.return_value.usage_probe_status = Repository.MetricProbeStatus.FAILED
+        result = sync_all_repositories(force=True)
+        self.assertEqual(result["repositories_synced"], 0)
+        self.assertEqual(result["repositories_failed"], 1)
+        self.assertEqual(result["failed_repository_ids"], [repository.id])
+        self.assertEqual(result["snapshots_upserted"], 0)
 
     @mock.patch(
         "apps.storage.services.internal.repository_health."
@@ -214,6 +229,7 @@ class RepositoryUsageTests(TestCase):
         sync_usage,
         dispatch_observation,
     ):
+        sync_usage.return_value.usage_probe_status = Repository.MetricProbeStatus.SUCCESS
         org = Organization.objects.create(
             key="scheduled-usage-isolation-org",
             name="Scheduled Usage Isolation Org",
@@ -276,7 +292,7 @@ class RepositoryUsageTests(TestCase):
         self.assertEqual(kopia_estimated_usage_from_packed(100), 105)
 
     @mock.patch(
-        "apps.storage.services.internal.repository_usage.connect_s3_repository",
+        "apps.storage.services.internal.repository_usage.ensure_usage_connection",
         side_effect=KopiaRepositoryBusyError("repository busy"),
     )
     def test_s3_usage_preserves_repository_busy_signal(self, _connect):

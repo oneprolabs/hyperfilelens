@@ -83,6 +83,7 @@ class TaskRegistry:
         expire_seconds: int | None = None,
         coalesce_wakeup: bool = True,
         sync_existing_kwargs: bool = False,
+        managed_schedule: bool = False,
     ) -> None:
         if expire_seconds is not None and int(expire_seconds) < 1:
             raise ValueError("expire_seconds must be positive when configured")
@@ -98,6 +99,7 @@ class TaskRegistry:
             ),
             "coalesce_wakeup": bool(coalesce_wakeup),
             "sync_existing_kwargs": bool(sync_existing_kwargs),
+            "managed_schedule": bool(managed_schedule),
         }
 
     def _apply_one(self, name: str, entry: dict) -> bool:
@@ -138,14 +140,59 @@ class TaskRegistry:
         else:
             defaults["interval"] = interval_schedule
             defaults["crontab"] = None
+        if entry["managed_schedule"] and interval_schedule is not None:
+            new_headers = json.loads(defaults["headers"])
+            new_headers["hfl_managed_schedule"] = {
+                "interval": interval_schedule.every, "period": interval_schedule.period,
+            }
+            defaults["headers"] = json.dumps(new_headers)
 
         obj, created = PeriodicTask.objects.get_or_create(
             name=name, defaults=defaults
         )
         if not created:
             headers = json.loads(obj.headers or "{}")
+            schedule_changed = False
+            if entry["managed_schedule"]:
+                current = (
+                    {"interval": obj.interval.every, "period": obj.interval.period}
+                    if obj.interval_id else
+                    {"minute": obj.crontab.minute, "hour": obj.crontab.hour,
+                     "day_of_week": obj.crontab.day_of_week,
+                     "day_of_month": obj.crontab.day_of_month,
+                     "month_of_year": obj.crontab.month_of_year}
+                    if obj.crontab_id else {}
+                )
+                legacy = (
+                    name == "storage_reconcile_repositories"
+                    and current == {"minute": "*/15", "hour": "*", "day_of_week": "*",
+                                    "day_of_month": "*", "month_of_year": "*"}
+                ) or (
+                    name == "storage_dispatch_repository_health_checks"
+                    and current == {"interval": 300, "period": "seconds"}
+                )
+                previously_managed = headers.get("hfl_managed_schedule") == current
+                if legacy or previously_managed:
+                    schedule_changed = obj.interval_id != defaults["interval"].id or obj.crontab_id is not None
+                    obj.interval = defaults["interval"]
+                    obj.crontab = None
+                    headers["hfl_managed_schedule"] = {"interval": defaults["interval"].every,
+                                                       "period": defaults["interval"].period}
+                elif obj.interval_id:
+                    # Preserve an operator's cadence, while making the due-check cheap.
+                    factors = {"seconds": 1, "minutes": 60, "hours": 3600,
+                               "days": 86400, "microseconds": 0.000001}
+                    cadence = max(60, int(obj.interval.every * factors[obj.interval.period]))
+                    desired_kwargs = json.loads(defaults["kwargs"])
+                    desired_kwargs["sampling_interval_seconds"] = cadence
+                    defaults["kwargs"] = json.dumps(desired_kwargs)
+                elif obj.crontab_id:
+                    desired_kwargs = json.loads(defaults["kwargs"])
+                    # The operator's cron already determines when collection is due.
+                    desired_kwargs["sampling_interval_seconds"] = 60
+                    defaults["kwargs"] = json.dumps(desired_kwargs)
             expected_coalescing = entry["coalesce_wakeup"]
-            headers_changed = (
+            headers_changed = headers != json.loads(obj.headers or "{}") or (
                 headers.get(PERIODIC_WAKEUP_COALESCE_HEADER)
                 is not expected_coalescing
             )
@@ -163,7 +210,7 @@ class TaskRegistry:
                 expire_seconds is not None
                 and obj.expire_seconds != expire_seconds
             )
-            if not headers_changed and not expiry_changed and not kwargs_changed:
+            if not headers_changed and not expiry_changed and not kwargs_changed and not schedule_changed:
                 logger.debug("Periodic task exists, skipping update: %s", name)
                 return False
             update_fields = ["headers"] if headers_changed else []
@@ -172,6 +219,8 @@ class TaskRegistry:
             if expiry_changed:
                 obj.expire_seconds = expire_seconds
                 update_fields.append("expire_seconds")
+            if schedule_changed:
+                update_fields.extend(["interval", "crontab"])
             obj.save(update_fields=update_fields)
             logger.info(
                 "Updated periodic task delivery contract: %s "
