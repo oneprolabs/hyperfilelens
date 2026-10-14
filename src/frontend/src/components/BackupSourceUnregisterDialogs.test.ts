@@ -57,6 +57,7 @@ const ElButtonStub = defineComponent({
 const BodyStub = defineComponent({
   name: 'BackupSourceUnregisterDialogBody',
   props: {
+    expanded: Boolean,
     force: Boolean,
     confirmText: String,
     preflight: Object,
@@ -64,9 +65,12 @@ const BodyStub = defineComponent({
     preflightError: Boolean,
     sourceIds: Array,
   },
-  emits: ['update:force', 'update:confirmText', 'retry-preflight', 'confirm'],
+  emits: ['update:expanded', 'update:force', 'update:confirmText', 'retry-preflight', 'confirm'],
   template: `
     <div data-test="body">
+      <button data-test="expand" @click="$emit('update:expanded', !expanded)">expand</button>
+      <span data-test="expanded">{{ expanded }}</span>
+      <span data-test="force">{{ force }}</span>
       <span data-test="preflight-loading">{{ preflightLoading }}</span>
       <span data-test="preflight-error">{{ preflightError }}</span>
       <span data-test="preflight-disabled">{{ preflight?.delete_disabled }}</span>
@@ -132,6 +136,28 @@ describe.each([
   beforeEach(() => {
     preflightDeleteBackupSources.mockReset()
     bulkDeleteBackupSources.mockReset()
+  })
+
+  it('resets expansion and force on reopen without treating disclosure as a mode change', async () => {
+    preflightDeleteBackupSources.mockResolvedValue(successfulPreflight)
+    const wrapper = mountDialog(component)
+    await flushPromises()
+    expect(wrapper.get('[data-test="expanded"]').text()).toBe('false')
+    await wrapper.get('[data-test="expand"]').trigger('click')
+    expect(wrapper.get('[data-test="expanded"]').text()).toBe('true')
+    expect(preflightDeleteBackupSources).toHaveBeenCalledTimes(1)
+    await wrapper.get('[data-test="select-force"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="expand"]').trigger('click')
+    expect(wrapper.get('[data-test="force"]').text()).toBe('true')
+    expect(preflightDeleteBackupSources).toHaveBeenCalledTimes(2)
+    await wrapper.setProps({ modelValue: false })
+    await flushPromises()
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    expect(wrapper.get('[data-test="expanded"]').text()).toBe('false')
+    expect(wrapper.get('[data-test="force"]').text()).toBe('false')
+    wrapper.unmount()
   })
 
   it('runs preflight immediately when dynamically mounted open', async () => {

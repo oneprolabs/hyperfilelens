@@ -19,12 +19,16 @@ import NodeLifecycleBanner from '../../components/node-lifecycle/NodeLifecycleBa
 import NodeLifecycleUpgradeConfirmDialog from '../../components/NodeLifecycleUpgradeConfirmDialog.vue'
 import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformBrandIcon.vue'
 import HflCapacityCell from '../../components/HflCapacityCell.vue'
+import DangerOperationHint from '../../components/DangerOperationHint.vue'
+import DangerForceOption from '../../components/DangerForceOption.vue'
+import DangerAdvancedOptions from '../../components/DangerAdvancedOptions.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import { useNodeLifecycleOps } from '../../composables/useNodeLifecycleOps'
 import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
+import { sanitizeErrorDetails } from '../../lib/errors/details'
 import { apiErrorMessage } from '../../lib/api'
 import { applyGatewayDirectoryStatus } from '../../lib/gatewayDirectory'
 import { afterOverlayDismiss } from '../../lib/uiDefer'
@@ -98,8 +102,12 @@ const latestAgentVersion = ref<string | null>(null)
 const selectedRows = ref<InsightGatewayRow[]>([])
 const deleteOpen = ref(false)
 const deleteLoading = ref(false)
+const advancedExpanded = ref(false)
 const deleteForce = ref(false)
+watch(() => deleteOpen.value, () => { advancedExpanded.value = false })
 const pendingDelete = ref<InsightGatewayRow[]>([])
+const deleteStartErrors = ref<Array<{ nodeId: number; name: string; message: string; suggestForce: boolean }>>([])
+watch(deleteOpen, () => { deleteStartErrors.value = [] })
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
 const detailNodeId = ref<number | null>(null)
@@ -662,26 +670,22 @@ function gatewayDeleteDialogItem(row: InsightGatewayRow) {
   }
 }
 
-function gatewayDeleteCanRetryWithForce() {
-  return lifecycleOps.lastStartErrors.value.some((item) =>
-    ['node_offline', 'agent_uninstall_failed', 'completion_callback_timeout']
-      .includes(String(item.code || '')),
-  )
-}
-
 function cancelDelete() {
   pendingDelete.value = []
   deleteForce.value = false
+  deleteStartErrors.value = []
 }
 
 async function confirmDelete() {
   const targets = [...pendingDelete.value]
-  if (!targets.length) return
+  if (!targets.length || deleteLoading.value) return
+  const force = deleteForce.value
+  deleteStartErrors.value = []
   deleteLoading.value = true
   try {
     const started = await lifecycleOps.runBatch('remove', targets, {
       skipConfirm: true,
-      force: deleteForce.value,
+      force,
     })
     if (started) {
       clearSelection()
@@ -693,9 +697,22 @@ async function confirmDelete() {
         lifecycleOps.lastStartErrors.value.map((item) => Number(item.node_id || 0)),
       )
       pendingDelete.value = targets.filter((node) => failedIds.has(node.id))
-      if (!deleteForce.value && gatewayDeleteCanRetryWithForce()) {
-        deleteForce.value = true
-      }
+      deleteStartErrors.value = lifecycleOps.lastStartErrors.value.flatMap((item) => {
+        const nodeId = Number(item.node_id || 0)
+        const target = targets.find(row => row.id === nodeId)
+        if (!target) return []
+        const message = sanitizeErrorDetails({
+          title: '',
+          summary: apiErrorMessage(new Error(String(item.error || item.code || '')), t('errors.generic.loadFailed')),
+        }).summary
+        return [{
+          nodeId,
+          name: target.name,
+          message,
+          suggestForce: !force && ['node_offline', 'agent_uninstall_failed', 'completion_callback_timeout']
+            .includes(String(item.code || '')),
+        }]
+      })
     }
   } finally {
     deleteLoading.value = false
@@ -1330,41 +1347,58 @@ onUnmounted(() => {
     />
     <DangerConfirmDialog
       v-model="deleteOpen"
-      :title="deleteForce ? t('insight.dataGateway.deleteForceTitle') : t('nodesPage.deleteTitle')"
+      :title="deleteForce ? t('insight.dataGateway.deleteForceTitle') : t('insight.dataGateway.deleteTitle')"
       :message="deleteForce ? t('insight.dataGateway.deleteForceConfirm', { n: pendingDelete.length }) : deleteConfirmationMessage"
       :items="pendingDelete.map(gatewayDeleteDialogItem)"
+      :confirmation-context="pendingDelete.map(row => row.id).sort((a, b) => a - b).join(',')"
       confirm-mode="keyword"
-      :confirm-keyword="deleteForce ? 'FORCE CLEANUP' : t('common.deleteKeyword')"
+      :confirm-keyword="deleteForce ? 'FORCE DELETE' : t('common.deleteKeyword')"
+      :confirm-keyword-placeholder="deleteForce ? 'FORCE DELETE' : t('common.deleteKeyword')"
+      :confirm-keyword-hint="t('common.dangerConfirmKeywordHint', { keyword: deleteForce ? 'FORCE DELETE' : t('common.deleteKeyword') })"
       :cancel-text="t('common.cancel')"
       :confirm-text="deleteForce ? t('nodesPage.proxyDeleteForceAction') : t('nodesPage.actionDelete')"
       :loading="deleteLoading"
       @confirm="confirmDelete"
       @cancel="cancelDelete"
     >
-      <div class="gateway-delete-force-option">
-        <ElCheckbox v-model="deleteForce">
-          {{ t('nodesPage.proxyDeleteForceAction') }}
-        </ElCheckbox>
-        <p>{{ t('insight.dataGateway.deleteForceHint') }}</p>
+      <div
+        v-if="deleteStartErrors.length"
+        class="gateway-delete-errors"
+        role="alert"
+      >
+        <div
+          v-for="(error, index) in deleteStartErrors"
+          :key="`${error.nodeId}-${index}`"
+        >
+          <p><strong>{{ error.name }}</strong>: {{ error.message }}</p>
+          <p v-if="error.suggestForce">
+            {{ t('common.gatewayForceRetryHint') }}
+          </p>
+        </div>
       </div>
+      <DangerOperationHint :text="t('common.gatewayRemovalLimits')" />
+      <DangerAdvancedOptions
+        v-model:expanded="advancedExpanded"
+        :enabled="deleteForce"
+        :enabled-label="t('common.forceCleanupEnabled')"
+      >
+        <DangerForceOption
+          v-model="deleteForce"
+          :disabled="deleteLoading"
+          :label="t('nodesPage.proxyDeleteForceAction')"
+          :hint="t('common.gatewayForceExplanation')"
+        />
+      </DangerAdvancedOptions>
     </DangerConfirmDialog>
   </div>
 </template>
 
 <style scoped>
-.gateway-delete-force-option {
+.gateway-delete-errors {
   margin-top: 16px;
-  padding: 12px 14px;
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 8px;
-  background: var(--el-fill-color-lighter);
+  color: var(--el-color-danger);
 }
 
-.gateway-delete-force-option p {
-  margin: 4px 0 0 24px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
 
 .dg-capacity-cell {
   display: flex;

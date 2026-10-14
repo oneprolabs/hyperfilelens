@@ -96,7 +96,7 @@ describe('repository cleanup requests', () => {
 
     expect(api).toHaveBeenCalledWith('/api/v1/storage/repositories/23/', {
       method: 'DELETE',
-      body: JSON.stringify({ force: true, confirmation: 'FORCE CLEANUP' }),
+      body: JSON.stringify({ force: true, confirmation: 'FORCE DELETE' }),
       headers: { 'X-Org-Key': '' },
     })
   })

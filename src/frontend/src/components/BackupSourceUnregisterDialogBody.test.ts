@@ -61,8 +61,11 @@ function mountBody(props: Record<string, unknown> = {}) {
 }
 
 describe('BackupSourceUnregisterDialogBody', () => {
-  it('renders the Force Deregister option independently', () => {
+  it('hides Force Deregister by default without changing its availability rules', async () => {
     const wrapper = mountBody({ preflightLoading: true })
+    expect(wrapper.get('.danger-advanced-options__content').attributes('style')).toContain('display: none')
+    await wrapper.get('.danger-advanced-options__toggle').trigger('click')
+    expect(wrapper.get('.danger-advanced-options__content').attributes('style') || '').not.toContain('display: none')
     expect(wrapper.find('.hfl-flow-action-dialog__force-panel').exists()).toBe(true)
     expect(wrapper.find('.hfl-flow-action-dialog__force-label').text()).toBe('Force Deregister')
     expect(wrapper.get('[data-test="force-checkbox"]').attributes('disabled')).toBeUndefined()

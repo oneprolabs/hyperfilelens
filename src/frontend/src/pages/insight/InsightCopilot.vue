@@ -1531,6 +1531,11 @@ onUnmounted(() => {
       :message="deleteMode === 'force'
         ? t('insight.copilot.forceDeleteConfirmMessage')
         : t('insight.copilot.deleteConfirmMessage')"
+      confirm-mode="keyword"
+      :confirmation-context="`${deleteTarget?.id ?? ''}:${deleteMode}`"
+      :confirm-keyword="deleteMode === 'force' ? 'FORCE DELETE' : 'DELETE'"
+      :confirm-keyword-placeholder="deleteMode === 'force' ? 'FORCE DELETE' : 'DELETE'"
+      :confirm-keyword-hint="t('common.dangerConfirmKeywordHint', { keyword: deleteMode === 'force' ? 'FORCE DELETE' : 'DELETE' })"
       :cancel-text="t('insight.copilot.btnCancel')"
       :confirm-text="deleteMode === 'force'
         ? t('insight.copilot.forceDelete')
@@ -1568,6 +1573,7 @@ onUnmounted(() => {
   background: var(--color-warning-bg, rgba(245, 158, 11, 0.1));
   font-size: 13px;
 }
+
 .copilot-root {
   display: flex;
   flex-direction: row;

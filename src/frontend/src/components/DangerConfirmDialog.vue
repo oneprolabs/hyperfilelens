@@ -4,9 +4,11 @@
  *
  */
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { AlertTriangle, LoaderCircle, ShieldAlert, X } from 'lucide-vue-next'
-import { ElButton, ElDialog } from 'element-plus'
+import { ElButton, ElDialog, ElTable, ElTableColumn, ElTag } from 'element-plus'
 import ExactKeywordConfirmInput from './ExactKeywordConfirmInput.vue'
+import './backupSourceFlowActionDialog.css'
 
 export type DangerLevel = 'low' | 'medium' | 'high'
 
@@ -39,6 +41,7 @@ const props = withDefaults(
     itemStatusLabel?: string
     itemDetailsLabel?: string
     showItemDetails?: boolean
+    confirmationContext?: string
     confirmMode?: DangerConfirmMode
     confirmKeyword?: string
     confirmKeywordHint?: string
@@ -69,6 +72,7 @@ const props = withDefaults(
     itemDetailsLabel: undefined,
     showItemDetails: true,
     confirmMode: 'single',
+    confirmationContext: undefined,
     confirmKeyword: 'DELETE',
     confirmKeywordHint: '',
     confirmKeywordPlaceholder: '',
@@ -95,6 +99,7 @@ const visible = computed({
   set: (v: boolean) => emit('update:modelValue', v),
 })
 const confirmInput = ref('')
+const { t } = useI18n()
 
 const accentClass = computed(() => `hfl-danger-confirm--${props.level}`)
 const Icon = computed(() => (props.level === 'high' ? ShieldAlert : AlertTriangle))
@@ -129,25 +134,14 @@ const confirmDisabled = computed(() => (
 ))
 
 watch(
-  () => [props.modelValue, props.confirmKeyword, props.confirmMode],
+  () => [props.modelValue, props.confirmKeyword, props.confirmMode, props.confirmationContext],
   () => {
     confirmInput.value = ''
   },
 )
 
-function statusClass(tone?: DangerConfirmStatusTone) {
-  switch (tone) {
-    case 'success':
-      return 'hfl-danger-confirm__status--success'
-    case 'warning':
-      return 'hfl-danger-confirm__status--warning'
-    case 'danger':
-      return 'hfl-danger-confirm__status--danger'
-    case 'info':
-      return 'hfl-danger-confirm__status--info'
-    default:
-      return 'hfl-danger-confirm__status--neutral'
-  }
+function statusTagType(tone?: DangerConfirmStatusTone): 'success' | 'warning' | 'danger' | 'info' | undefined {
+  return tone === 'neutral' ? undefined : (tone || 'info')
 }
 
 function close() {
@@ -265,8 +259,80 @@ async function onDialogBeforeClose(done: () => void) {
           >
             {{ itemsHeading }}
           </header>
-          <div class="hfl-danger-confirm__item-table-scroll">
-            <table class="hyper-table hfl-danger-confirm__item-table">
+          <ElTable
+            v-table-overflow-title
+            :data="shownItems"
+            size="small"
+            class="hfl-flow-action-dialog__table hfl-dialog-resource-table hfl-table hfl-danger-confirm__desktop-items"
+            max-height="260"
+          >
+            <ElTableColumn
+              :label="itemNameLabel ?? t('common.dangerItemName')"
+              min-width="180"
+            >
+              <template #default="{ row: item }">
+                <span
+                  class="hfl-danger-confirm__item-name"
+                  :data-table-overflow-title="item.name"
+                  data-table-overflow-explicit-only
+                >{{ item.name }}</span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn
+              :label="itemStatusLabel ?? t('common.dangerItemStatus')"
+              width="120"
+            >
+              <template #default="{ row: item }">
+                <ElTag
+                  v-if="item.status"
+                  size="small"
+                  effect="light"
+                  class="hfl-danger-confirm__status"
+                  :type="statusTagType(item.status.tone)"
+                  :class="{ 'hfl-tag--neutral': item.status.tone === 'neutral' }"
+                  data-table-overflow-explicit-only
+                >
+                  <span
+                    class="hfl-danger-confirm__status-text"
+                    data-table-overflow-ellipsis-only
+                    :data-table-overflow-title="item.status.label"
+                  >{{ item.status.label }}</span>
+                </ElTag>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn
+              v-if="showItemDetails"
+              :label="itemDetailsLabel ?? t('common.dangerItemDetails')"
+              min-width="180"
+            >
+              <template #default="{ row: item }">
+                <div class="hfl-danger-confirm__item-details">
+                  <span
+                    v-if="item.description || item.hint"
+                    class="hfl-danger-confirm__item-desc"
+                    :data-table-overflow-title="item.description || item.hint"
+                    data-table-overflow-explicit-only
+                  >{{ item.description || item.hint }}</span>
+                  <span
+                    v-if="item.warning"
+                    class="hfl-danger-confirm__item-warning"
+                  >
+                    <AlertTriangle
+                      :size="12"
+                      aria-hidden="true"
+                    />
+                    <span>{{ item.warning }}</span>
+                  </span>
+                  <span
+                    v-if="!item.description && !item.hint && !item.warning"
+                    class="hfl-danger-confirm__item-desc hfl-empty-mark"
+                  >—</span>
+                </div>
+              </template>
+            </ElTableColumn>
+          </ElTable>
+          <div class="hfl-danger-confirm__item-table-scroll hfl-danger-confirm__mobile-items">
+            <table class="hfl-dialog-resource-table hfl-danger-confirm__item-table">
               <colgroup>
                 <col class="hfl-danger-confirm__item-col-name">
                 <col class="hfl-danger-confirm__item-col-status">
@@ -278,16 +344,16 @@ async function onDialogBeforeClose(done: () => void) {
               <thead>
                 <tr>
                   <th scope="col">
-                    {{ itemNameLabel ?? 'Name' }}
+                    {{ itemNameLabel ?? t('common.dangerItemName') }}
                   </th>
                   <th scope="col">
-                    {{ itemStatusLabel ?? 'Status' }}
+                    {{ itemStatusLabel ?? t('common.dangerItemStatus') }}
                   </th>
                   <th
                     v-if="showItemDetails"
                     scope="col"
                   >
-                    {{ itemDetailsLabel ?? 'Details' }}
+                    {{ itemDetailsLabel ?? t('common.dangerItemDetails') }}
                   </th>
                 </tr>
               </thead>
@@ -302,16 +368,26 @@ async function onDialogBeforeClose(done: () => void) {
                   >
                     <span
                       class="hfl-danger-confirm__item-name"
-                      :title="item.name"
+                      :data-table-overflow-title="item.name"
+                      data-table-overflow-explicit-only
                     >{{ item.name }}</span>
                   </td>
                   <td class="hfl-danger-confirm__item-status-cell">
-                    <span
+                    <ElTag
                       v-if="item.status"
+                      size="small"
+                      effect="light"
                       class="hfl-danger-confirm__status"
-                      :class="statusClass(item.status.tone)"
-                      :title="item.status.label"
-                    >{{ item.status.label }}</span>
+                      :type="statusTagType(item.status.tone)"
+                      :class="{ 'hfl-tag--neutral': item.status.tone === 'neutral' }"
+                      data-table-overflow-explicit-only
+                    >
+                      <span
+                        class="hfl-danger-confirm__status-text"
+                        data-table-overflow-ellipsis-only
+                        :data-table-overflow-title="item.status.label"
+                      >{{ item.status.label }}</span>
+                    </ElTag>
                   </td>
                   <td
                     v-if="showItemDetails"
@@ -325,7 +401,8 @@ async function onDialogBeforeClose(done: () => void) {
                       <span
                         v-if="item.description || item.hint"
                         class="hfl-danger-confirm__item-desc"
-                        :title="item.description || item.hint"
+                        :data-table-overflow-title="item.description || item.hint"
+                        data-table-overflow-explicit-only
                       >{{ item.description || item.hint }}</span>
                       <span
                         v-if="item.warning"
@@ -436,7 +513,7 @@ async function onDialogBeforeClose(done: () => void) {
 /* ===== header ===== */
 .hfl-danger-confirm__header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   padding: var(--dcf-pad-y-header) var(--dcf-pad-x);
 }
@@ -460,6 +537,11 @@ async function onDialogBeforeClose(done: () => void) {
   background: #dc2626;
 }
 .hfl-danger-confirm__titles {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-self: center;
+  min-height: 34px;
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -469,6 +551,7 @@ async function onDialogBeforeClose(done: () => void) {
   line-height: 1.4;
   margin: 0;
   color: var(--el-text-color-primary, #111827);
+  overflow-wrap: anywhere;
 }
 .hfl-danger-confirm__subtitle {
   margin: 4px 0 0;
@@ -477,6 +560,8 @@ async function onDialogBeforeClose(done: () => void) {
   color: var(--el-text-color-secondary, #6b7280);
 }
 .hfl-danger-confirm__close {
+  align-self: center;
+  flex-shrink: 0;
   appearance: none;
   background: transparent;
   border: 0;
@@ -579,7 +664,7 @@ async function onDialogBeforeClose(done: () => void) {
   margin-top: 2px;
 }
 .hfl-danger-confirm__items {
-  border-radius: 8px;
+  border-radius: var(--radius-card, 10px);
   background: var(--el-fill-color-blank, #fafafa);
   overflow: hidden;
 }
@@ -591,7 +676,7 @@ async function onDialogBeforeClose(done: () => void) {
   color: var(--el-text-color-secondary, #4b5563);
 }
 .hfl-danger-confirm__item-table-scroll {
-  max-height: 208px;
+  max-height: 260px;
   overflow: auto;
 }
 .hfl-danger-confirm__item-table {
@@ -611,20 +696,20 @@ async function onDialogBeforeClose(done: () => void) {
 .hfl-danger-confirm__item-table td {
   min-width: 0;
   overflow: hidden;
-  vertical-align: top;
+  vertical-align: middle;
 }
 .hfl-danger-confirm__item-col-name {
   width: 36%;
 }
 .hfl-danger-confirm__item-col-status {
-  width: 110px;
+  width: 120px;
 }
 .hfl-danger-confirm__item-col-details {
   width: auto;
 }
 .hfl-danger-confirm__item-name {
   display: block;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--el-text-color-primary, #111827);
   min-width: 0;
   overflow: hidden;
@@ -634,7 +719,7 @@ async function onDialogBeforeClose(done: () => void) {
 .hfl-danger-confirm__item-desc {
   display: block;
   min-width: 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--el-text-color-secondary, #6b7280);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -665,26 +750,27 @@ async function onDialogBeforeClose(done: () => void) {
   overflow-wrap: anywhere;
 }
 .hfl-danger-confirm__status {
-  display: inline-block;
-  box-sizing: border-box;
   max-width: 100%;
-  overflow: hidden;
-  font-size: 11px;
-  line-height: 1;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.05);
-  text-overflow: ellipsis;
   vertical-align: middle;
+}
+.hfl-danger-confirm__status :deep(.el-tag__content) {
+  min-width: 0;
+  max-width: 100%;
+  line-height: 18px;
+}
+.hfl-danger-confirm__status-text {
+  display: block;
+  min-width: 0;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.hfl-danger-confirm__status--success { background: var(--color-success-light); color: var(--color-success); }
-.hfl-danger-confirm__status--warning { background: var(--color-warning-light); color: var(--color-warning); }
-.hfl-danger-confirm__status--danger  { background: var(--color-error-light); color: var(--color-error); }
-.hfl-danger-confirm__status--info    { background: var(--color-info-light); color: var(--color-info); }
-.hfl-danger-confirm__status--neutral { background: #f3f4f6; color: #4b5563; }
+.hfl-danger-confirm__mobile-items { display: none; }
 
 @media (max-width: 560px) {
+  .hfl-danger-confirm__desktop-items { display: none; }
+  .hfl-danger-confirm__mobile-items { display: block; }
   .hfl-danger-confirm__item-table-scroll {
     overflow-x: hidden;
   }
@@ -745,17 +831,14 @@ async function onDialogBeforeClose(done: () => void) {
   }
 
   .hfl-danger-confirm__item-name,
-  .hfl-danger-confirm__status {
+  .hfl-danger-confirm__status,
+  .hfl-danger-confirm__status-text {
     overflow: visible;
     text-overflow: clip;
     white-space: normal;
     overflow-wrap: anywhere;
   }
 
-  .hfl-danger-confirm__status {
-    line-height: 1.3;
-    text-align: right;
-  }
 
   .hfl-danger-confirm__item-details-cell {
     grid-column: 1 / -1;

@@ -56,6 +56,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const advancedExpanded = ref(false)
 const force = ref(false)
 const loading = ref(false)
 const preflightLoading = ref(false)
@@ -134,6 +135,7 @@ async function loadPreflight() {
 }
 
 function resetDialogState() {
+  advancedExpanded.value = false
   preflightRequestSeq += 1
   force.value = false
   confirmText.value = ''
@@ -266,6 +268,7 @@ async function confirmDelete() {
     @close="close"
   >
     <BackupSourceUnregisterDialogBody
+      v-model:expanded="advancedExpanded"
       v-model:force="force"
       v-model:confirm-text="confirmText"
       :source-ids="dialogSourceIds"

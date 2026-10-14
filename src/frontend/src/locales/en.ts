@@ -40,6 +40,20 @@ export const en = {
     },
   },
   common: {
+    dangerConfirmKeywordHint: 'Type {keyword} to confirm this deletion.',
+    dangerItemName: "Name",
+    dangerItemStatus: "Status",
+    dangerItemDetails: "Details",
+
+    proxyRemovalLimits: "Remove or rebind Source NAS, Target NAS, and Local Disk relationships before deletion. Force Delete cannot bypass these restrictions.",
+    proxyForceExplanation: "Agent uninstall will still be attempted. Cleanup failures are recorded as retained resources while control-plane removal continues.",
+    gatewayRemovalLimits: "Resolve active tasks and Knowledge Source bindings before deletion. Force Delete cannot bypass these restrictions.",
+    gatewayForceExplanation: "Agent and LensNode cleanup will still be attempted. Cleanup failures are recorded as retained resources while control-plane removal continues.",
+
+    dangerAdvancedOptions: 'Advanced Options',
+    forceCleanupEnabled: 'Force Delete enabled',
+    forceDeregisterEnabled: 'Force Deregister enabled',
+    gatewayForceRetryHint: 'Fix the issue and retry, or expand Advanced Options to select Force Delete if retained resources are acceptable. Active tasks and resource bindings still block cleanup.',
     confirm: 'OK',
     confirmDelete: 'Confirm Delete',
     delete: 'Delete',
@@ -1664,6 +1678,7 @@ export const en = {
       connectionTestReady: 'Configuration verified in {duration} and ready to save.',
     },
     dataGateway: {
+      deleteTitle: 'Delete Data Gateway',
       colOrigin: 'Source',
       colOwner: 'HFL Owner',
       colDefault: 'Public Default',
@@ -1674,11 +1689,11 @@ export const en = {
         'Remove {n} data gateway(s)? {offline} gateway(s) are offline, so only their console records can be removed; Agent and LensNode files may remain on those hosts.',
       deleteInstallerManagedConfirm:
         'Remove {n} Data Gateway(s)? Installer-managed Public Data Gateways are recreated by the next deployment while auto-deploy remains enabled. Offline hosts may retain Agent and LensNode files.',
-      deleteForceTitle: 'Force Cleanup Data Gateway',
+      deleteForceTitle: 'Force Delete Data Gateway',
       deleteForceConfirm:
-        'Force Cleanup {n} data gateway(s)? Agent and LensNode cleanup will still be attempted. Failures are recorded as retained resources while control-plane removal continues.',
+        'Force Delete {n} data gateway(s)? Agent and LensNode cleanup will still be attempted. Failures are recorded as retained resources while control-plane removal continues.',
       deleteForceHint:
-        'Force Cleanup cannot bypass active tasks or Knowledge Source bindings. It only changes how physical cleanup failures are handled.',
+        'Force Delete cannot bypass active tasks or Knowledge Source bindings. It only changes how physical cleanup failures are handled.',
       origin: {
         user: 'User',
         platform: 'Platform',
@@ -2034,19 +2049,19 @@ export const en = {
     proxyDeleteBlockedHintForce:
       'Remove or rebind every Source NAS, Target NAS, and Local Disk relationship before deleting this Proxy.',
     proxyDeleteBlockedTitleForce: 'Proxy Host Has Bindings',
-    proxyDeleteForceTitle: 'Force Cleanup Proxy Host',
-    proxyDeleteForceAction: 'Force Cleanup',
+    proxyDeleteForceTitle: 'Force Delete Proxy Host',
+    proxyDeleteForceAction: 'Force Delete',
     proxyDeleteForceConfirm:
-      'Force Cleanup proxy host "{name}"? The Agent uninstall will still be attempted. Any physical cleanup failure is recorded as residue, but configured resource bindings can never be bypassed.',
+      'Force Delete proxy host "{name}"? The Agent uninstall will still be attempted. Any physical cleanup failure is recorded as residue, but configured resource bindings can never be bypassed.',
     proxyDeleteForceNote:
-      'Force Cleanup cannot bypass Source NAS, Target NAS, or Local Disk bindings.',
+      'Force Delete cannot bypass Source NAS, Target NAS, or Local Disk bindings.',
     proxyDeleteBlockedGoNas: 'Source NAS',
     proxyDeleteBlockedGoRepos: 'Repositories',
     proxyDeleteBindingsFailed: 'Could not check proxy bindings.',
     deletePreflightBlocked:
       'This host cannot be deleted while work is running, a lifecycle operation is active, or required bindings remain.',
     deleteUpgradeRequired:
-      'Upgrade the Agent before Strict Cleanup. Force Cleanup removes only control-plane records and reports the Agent installation as retained.',
+      'Upgrade the Agent before Strict Cleanup. Force Delete removes only control-plane records and reports the Agent installation as retained.',
     versionUpgradeAvailable: 'New version',
     latestVersionTip: 'Latest version: {version}',
     proxyDetailTitle: 'Proxy · {name}',
@@ -2535,6 +2550,33 @@ export const en = {
     viewFullLogs: 'View full audit logs',
   },
   repositoriesPage: {
+    cleanupLegacyLocalDiskPreserved: "This repository uses a legacy directory layout. Deleting its record does not delete disk data. To free space, an administrator must review the repository path on the owning Proxy Host and manually clean up data only after confirming it is no longer needed or used by other resources. Force Delete also preserves this directory.",
+    deleteSingleTitle: "Delete Storage Repository",
+    batchDeleteProxyFsTitle: "Delete Local Disk Repositories",
+    batchDeleteProxyFsConfirm: "Delete the selected {n} Local Disk repository/repositories? Cleanup will follow the repository directory layout. Data that cannot be safely removed may be retained; review the preflight warnings below.",
+
+    cleanupResourceSummary: "Associated resources: {resources}",
+    cleanupResourceSeparator: " \u00b7 ",
+    cleanupResourceSources: "{n} backup source(s)",
+    cleanupResourceSnapshots: "{n} snapshot record(s)",
+    cleanupResourceRestorePlans: "{n} restore plan(s)",
+    cleanupViewAssociations: "View associated backup configurations",
+    cleanupViewAssociationsCount: "View associated backup configurations ({n})",
+
+    cleanupBlockedAssociationEmpty: "No associated backup configurations remain. The preflight blockers still apply; close this dialog and retry to refresh the checks.",
+    cleanupBlockedSourceName: "Source: {name}",
+
+    cleanupBlockedSources: "This repository is associated with {n} backup source(s).",
+    cleanupBlockedSnapshots: "This repository contains {n} snapshot record(s).",
+    cleanupBlockedRestorePlans: "This repository is associated with {n} restore plan(s).",
+    cleanupRetainedRestoreHistory: "The {n} historical restore record(s) will be retained for audit and do not block deletion.",
+    cleanupBlockedAssociations: "Associated backup configurations ({n})",
+    cleanupBlockedAssociationPreview: "Showing {shown} of {total} associated configurations.",
+    cleanupBlockedAssociationUnavailable: "Associated configuration details could not be loaded. The blocking checks still apply.",
+    cleanupBlockedSummary: "Resolve the blockers for these {n} repositories, then retry deletion.",
+
+    forceDeleteTitle: 'Force Delete Storage Repository',
+    forceDeleteMessage: 'Force Delete this repository? Every cleanup step will still be attempted. Resources that cannot be safely removed are recorded as retained while repository removal continues.',
     tabS3: 'Object Storage',
     tabNas: 'Target NAS',
     tabProxyFs: 'Local Disks',
@@ -2640,8 +2682,8 @@ export const en = {
     cleanupBlocked: 'Repository cleanup is blocked.',
     cleanupBlockedTitle: 'Repository cannot be deleted',
     cleanupBlockedForceHint:
-      'Force Cleanup cannot bypass active tasks or live resource relationships. Resolve the blockers below before deleting this repository.',
-    cleanupBlockedAssociations: '{n} linked backup configuration(s):',
+      'Force Delete cannot bypass active tasks or live resource relationships. Resolve the blockers below before deleting this repository.',
+
     cleanupInitializationInProgress:
       'Repository data setup is still in progress for {n} backup source connection(s). Wait for setup to finish or retry it before deleting the repository.',
     cleanupOwnershipUnverified:
@@ -2653,9 +2695,9 @@ export const en = {
     cleanupFailed: 'Repository cleanup failed. Review the task details and retry.',
     cleanupAcceptedCount: '{accepted} cleanup task(s) accepted; {failed} failed.',
     cleanupForcePrompt:
-      'Every repository data cleanup step will be attempted. Data that cannot be safely deleted is retained for review while repository removal continues. Type FORCE CLEANUP to confirm.',
-    cleanupForceConfirm: 'Force Cleanup',
-    cleanupForceOption: 'Use Force Cleanup for this repository',
+      'Every repository data cleanup step will be attempted. Data that cannot be safely deleted is retained for review while repository removal continues. To confirm Force Delete, type FORCE DELETE.',
+    cleanupForceConfirm: 'Force Delete',
+    cleanupForceOption: "Force Delete",
     cleanupForceOptionHint:
       'Continue through all cleanup steps, record any retained repository data, and finalize repository removal.',
     retryInitialization: 'Retry Initialization',
@@ -4938,7 +4980,7 @@ export const en = {
         confirmBatchDeleteTitle: 'Delete Alert Rules',
         confirmDeleteTitle: 'Delete Alert Rule "{name}"',
         confirmDeleteMessage: 'You are about to delete alert rule "{name}". It will stop evaluating matching resources and no longer send notifications.',
-        confirmDeleteWarning: 'Deleting this rule removes its configuration. Existing alerts are kept as history.',
+        confirmDeleteWarning: "Deleting this rule and its configuration cannot be undone. Existing alerts are kept as history.",
         confirmBatchEnableTitle: 'Enable Alert Rules',
         confirmBatchDisableTitle: 'Disable Alert Rules',
         confirmBatchEnableMessage: 'You are about to enable {n} alert rules. They may resume evaluation and notification delivery immediately.',
@@ -4946,7 +4988,7 @@ export const en = {
         confirmBatchDeleteMessage: 'You are about to delete {n} alert rules. Deleted rules cannot be restored.',
         confirmBatchEnableWarning: 'Enabling rules can trigger notifications as soon as matching conditions are evaluated.',
         confirmBatchDisableWarning: 'Disabling rules suppresses alert detection and notification delivery.',
-        confirmBatchDeleteWarning: 'Deleting rules removes their configuration immediately.',
+        confirmBatchDeleteWarning: "Deleting the selected alert rules and their configuration cannot be undone.",
         singlePolicySubtitle: 'Rule ID: {id}',
         batchPolicySubtitle: '{n} rules selected',
         affectedPoliciesHeading: 'Affected rules ({n})',
@@ -5225,6 +5267,10 @@ export const en = {
       },
     },
     notification: {
+      deleteMergedWarning: "Deleting the selected notification channels, their configuration, and historical delivery records cannot be undone.",
+      deleteMergedLinkedWarning: "Deleting the selected channels, their configuration, and historical delivery records cannot be undone. Alert rules referencing these channels will no longer send notifications through them.",
+      deleteNoLinkedRules: "No alert rules currently reference this channel.",
+
       channelsTitle: 'Total Channels',
       listLoadFailed: 'Failed to load notification channels.',
       secretConfigured: 'Configured (hidden)',
@@ -5439,8 +5485,8 @@ export const en = {
       associationCheckFailed: 'Could not check linked alert rules. Retry before continuing. {error}',
       confirmBatchDelete: 'Are you sure you want to delete the {n} selected channels? This action cannot be undone.',
       confirmBatchDeleteTitle: 'Delete Notification Channels',
-      confirmBatchDeleteSummary: 'You are about to delete {n} channels; {linked} of them are still referenced by {policy} alert rules. Linked alert rules will stop receiving notifications. Please confirm before continuing.',
-      confirmBatchDeleteNoLinkSummary: 'You are about to delete {n} channels. No alert rules are currently referencing them. This action cannot be undone.',
+      confirmBatchDeleteSummary: "{linked} of the {n} selected channels are referenced by {policy} alert rule association(s).",
+      confirmBatchDeleteNoLinkSummary: "No alert rules currently reference the selected channels.",
       confirmBatchEnableTitle: 'Enable Notification Channels',
       confirmBatchDisableTitle: 'Disable Notification Channels',
       confirmBatchEnableSummary: 'You are about to enable {n} channels, resuming real-time delivery for {policy} alert rules. Please confirm before continuing.',
@@ -5478,7 +5524,7 @@ export const en = {
       deleteChannelLinkedTitle: 'Delete Notification Channel',
       deleteChannelConfirmTitle: 'Delete Notification Channel "{name}"?',
       deleteChannelSubtitle: 'Channel ID: {id} · Type: {type}',
-      deleteChannelLinkedMessage: 'This channel is still referenced by {n} alert rules. After deletion those rules will stop receiving notifications.',
+      deleteChannelLinkedMessage: "This channel is referenced by {n} alert rules.",
       deleteChannelLinkedWarning: 'Continuing will immediately stop live delivery for the rules above. Adjust the references in Alert Rules first.',
       deleteChannelLinkedHeading: 'Referenced by {n} alert rules',
       deleteChannelOverflowPolicies: '{n} more rules not listed',

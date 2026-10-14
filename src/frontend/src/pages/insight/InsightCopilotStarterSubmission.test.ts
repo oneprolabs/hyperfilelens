@@ -103,6 +103,9 @@ const DangerConfirmDialogStub = defineComponent({
     items: Array,
     cancelText: String,
     confirmText: String,
+    confirmMode: String,
+    confirmKeyword: String,
+    confirmationContext: String,
   },
   emits: ['update:modelValue', 'confirm', 'cancel'],
   template: '<section v-if="modelValue" class="delete-chat-dialog">{{ title }} {{ message }} {{ cancelText }} {{ confirmText }}</section>',
@@ -373,6 +376,9 @@ describe('InsightCopilot question submission', () => {
     expect(dialog.props('items')).toBeUndefined()
     expect(dialog.props('cancelText')).toBe('Cancel')
     expect(dialog.props('confirmText')).toBe('Delete Chat')
+    expect(dialog.props('confirmMode')).toBe('keyword')
+    expect(dialog.props('confirmKeyword')).toBe('DELETE')
+    expect(dialog.props('confirmationContext')).toBe('444:normal')
     wrapper.unmount()
   })
 
@@ -442,6 +448,9 @@ describe('InsightCopilot question submission', () => {
     const dialog = wrapper.findComponent(DangerConfirmDialogStub)
     expect(dialog.props('title')).toBe('Force Delete “Chat”?')
     expect(dialog.props('confirmText')).toBe('Force Delete')
+    expect(dialog.props('confirmMode')).toBe('keyword')
+    expect(dialog.props('confirmKeyword')).toBe('FORCE DELETE')
+    expect(dialog.props('confirmationContext')).toBe('444:force')
     expect(dialog.props('message')).toBe(en.insight.copilot.forceDeleteConfirmMessage)
 
     dialog.vm.$emit('confirm')

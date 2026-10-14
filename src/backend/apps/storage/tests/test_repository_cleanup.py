@@ -2653,16 +2653,28 @@ class RepositoryCleanupApiTests(TestCase):
             f"/api/v1/storage/repositories/{self.repository.id}/",
             {
                 "force": True,
-                "confirmation": "force cleanup",
+                "confirmation": "force delete",
             },
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
         )
+        for invalid_confirmation in ("FORCE CLEANUP", " FORCE DELETE", "FORCE DELETE ", ""):
+            with self.subTest(confirmation=invalid_confirmation):
+                rejected = self.client.delete(
+                    f"/api/v1/storage/repositories/{self.repository.id}/",
+                    {"force": True, "confirmation": invalid_confirmation},
+                    format="json",
+                    HTTP_X_ORG_KEY=self.org.key,
+                )
+                self.assertEqual(rejected.status_code, 400, rejected.content)
+                self.assertIn("FORCE DELETE", str(rejected.data))
+                self.assertFalse(RepositoryTask.objects.filter(repository=self.repository).exists())
+
         accepted = self.client.delete(
             f"/api/v1/storage/repositories/{self.repository.id}/",
             {
                 "force": True,
-                "confirmation": "FORCE CLEANUP",
+                "confirmation": "FORCE DELETE",
             },
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
