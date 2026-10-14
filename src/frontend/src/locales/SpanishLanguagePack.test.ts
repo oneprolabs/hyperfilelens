@@ -94,7 +94,7 @@ describe('Spanish language pack', () => {
       'Las habilidades desactivadas',
     )
     expect(spanish.insight.dataGateway.deleteForceTitle).toBe(
-      'Limpieza forzada de la puerta de enlace de datos',
+      'Eliminación forzada de la puerta de enlace de datos',
     )
     expect(spanish.protection.side.sourceAgents).toBe('Hosts proxy')
     expect(spanish.insight.side.copilot).toBe('Copiloto de IA')
@@ -144,6 +144,8 @@ describe('Spanish language pack', () => {
     expect(serialized).not.toMatch(/HFLPROTECTED|ZXQ|QXZ|[⟦⟧]/)
     expect(containsUnrelatedWritingSystem).toBe(false)
     expect(allowedEnglish).toContain('insight.aiSettings.topP')
+    expect(allowedEnglish).toContain('repositoriesPage.cleanupResourceSeparator')
+    expect(spanish.repositoriesPage.cleanupResourceSeparator).toBe(en.repositoriesPage.cleanupResourceSeparator)
     // These are also valid Spanish terms or product module names, not
     // untranslated governance descriptions.
     const sharedGovernanceTerms = [
@@ -156,7 +158,7 @@ describe('Spanish language pack', () => {
       'settings.rolesPage.resourceLabels.configuration_roles',
       'settings.rolesPage.resourceLabels.insights_chats',
     ]
-    expect(allowedEnglish.length).toBeLessThanOrEqual(326 + sharedGovernanceTerms.length)
+    expect(allowedEnglish.filter(key => key !== 'repositoriesPage.cleanupResourceSeparator').length).toBeLessThanOrEqual(326 + sharedGovernanceTerms.length)
     const englishFlat = flatten(en)
     const spanishFlat = flatten(spanish)
     for (const key of sharedGovernanceTerms) {

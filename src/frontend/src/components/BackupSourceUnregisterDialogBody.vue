@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElAlert, ElButton, ElCheckbox, ElTable, ElTableColumn, ElTag } from 'element-plus'
+import { ElAlert, ElButton, ElTable, ElTableColumn, ElTag } from 'element-plus'
 import AgentPlatformBrandIcon from './agent-deploy/AgentPlatformBrandIcon.vue'
+import DangerForceOption from './DangerForceOption.vue'
+import DangerAdvancedOptions from './DangerAdvancedOptions.vue'
 import ExactKeywordConfirmInput from './ExactKeywordConfirmInput.vue'
 import {
   buildUnregisterImpactItems,
@@ -46,6 +48,7 @@ const props = withDefaults(defineProps<{
   previousFailureClickable: false,
 })
 
+const expanded = defineModel<boolean>('expanded', { default: false })
 const force = defineModel<boolean>('force', { default: false })
 const confirmText = defineModel<string>('confirmText', { default: '' })
 
@@ -165,7 +168,7 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
           v-table-overflow-title
           :data="displaySources"
           size="small"
-          class="hfl-flow-action-dialog__table hfl-table"
+          class="hfl-flow-action-dialog__table hfl-dialog-resource-table hfl-table"
           max-height="260"
         >
           <ElTableColumn
@@ -321,20 +324,18 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
         </div>
       </ElAlert>
 
-      <div
-        class="hfl-flow-action-dialog__force-panel"
+      <DangerAdvancedOptions
+        v-model:expanded="expanded"
+        :enabled="force"
+        :enabled-label="t('common.forceDeregisterEnabled')"
       >
-        <label class="hfl-flow-action-dialog__force">
-          <ElCheckbox
-            v-model="force"
-            :disabled="loading"
-          />
-          <span class="hfl-flow-action-dialog__force-copy">
-            <span class="hfl-flow-action-dialog__force-label">{{ t('protection.backupsPage.deleteForceLabel') }}</span>
-            <span class="hfl-flow-action-dialog__force-hint">{{ t('protection.backupsPage.deleteForceHint') }}</span>
-          </span>
-        </label>
-      </div>
+        <DangerForceOption
+          v-model="force"
+          :disabled="loading"
+          :label="t('protection.backupsPage.deleteForceLabel')"
+          :hint="t('protection.backupsPage.deleteForceHint')"
+        />
+      </DangerAdvancedOptions>
 
       <ExactKeywordConfirmInput
         v-model="confirmText"

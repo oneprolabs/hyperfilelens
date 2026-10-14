@@ -33,7 +33,7 @@ import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import { remainingLimitExceedsAvailableStorage, repositoryCapacityParts, repositoryStorageParts } from '../../lib/repositoryCapacityDisplay'
 import { repositoryQuotaDisplay } from '../../lib/repositoryQuota'
 import { isRemovedRepositoryWithResidualLocation } from '../../lib/repositoryResidualState'
-import { repositoryCleanupMessage } from '../../lib/repositoryCleanupPresentation'
+import { repositoryCleanupMessage, repositoryCleanupBlockerSummary } from '../../lib/repositoryCleanupPresentation'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
@@ -57,6 +57,10 @@ import type { ErrorDetailsPayload, ErrorEntity } from '../../lib/errors/details'
 import type { ApiNode } from '../../types/node'
 import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformBrandIcon.vue'
 import HflHelpTip from '../../components/HflHelpTip.vue'
+import RepositoryBlockedAssociations from '../../components/RepositoryBlockedAssociations.vue'
+import DangerOperationHint from '../../components/DangerOperationHint.vue'
+import DangerForceOption from '../../components/DangerForceOption.vue'
+import DangerAdvancedOptions from '../../components/DangerAdvancedOptions.vue'
 import DangerConfirmDialog, { type DangerConfirmItem } from '../../components/DangerConfirmDialog.vue'
 import TaskDetailDrawer from '../protection/components/TaskDetailDrawer.vue'
 import FlowSourceConnectionCell from '../protection/components/FlowSourceConnectionCell.vue'
@@ -722,10 +726,12 @@ const repositoryCleanupBlockedDialogOpen = ref(false)
 const repositoryCleanupBlockedRows = ref<Array<{
   repository: RepositoryRow
   blockers: string[]
-  associations: StorageRepositoryAssociatedSource[]
+  associationSummary: string
   associationCount: number
 }>>([])
+const advancedExpanded = ref(false)
 const forceDeleteRepository = ref(false)
+watch(() => deleteRepositoriesDialogOpen.value, () => { advancedExpanded.value = false })
 const normalDeletePreflight = ref<StorageRepositoryCleanupPreflight | null>(null)
 const forceDeletePreflight = ref<StorageRepositoryCleanupPreflight | null>(null)
 const moreActionsOpen = ref(false)
@@ -930,17 +936,21 @@ function repositoryConnectivityHelpKey(row: RepositoryRow) {
   return 'repositoriesPage.healthBoundUnverifiedGenericHelp'
 }
 
-const deleteRepositoriesTitle = computed(() =>
-  activeTab.value === 's3'
-    ? t('repositoriesPage.batchDeleteS3Title')
-    : t('repositoriesPage.batchDeleteTitle'),
-)
+const deleteRepositoriesTitle = computed(() => {
+  if (pendingDeleteRepositories.value.length === 1) return t('repositoriesPage.deleteSingleTitle')
+  if (activeTab.value === 's3') return t('repositoriesPage.batchDeleteS3Title')
+  if (activeTab.value === 'proxy_fs') return t('repositoriesPage.batchDeleteProxyFsTitle')
+  return t('repositoriesPage.batchDeleteTitle')
+})
 
-const deleteRepositoriesMessage = computed(() =>
-  activeTab.value === 's3'
-    ? t('repositoriesPage.batchDeleteS3Confirm', { n: pendingDeleteRepositories.value.length })
-    : t('repositoriesPage.batchDeleteConfirm', { n: pendingDeleteRepositories.value.length }),
-)
+const deleteRepositoriesMessage = computed(() => {
+  const key = activeTab.value === 's3'
+    ? 'repositoriesPage.batchDeleteS3Confirm'
+    : activeTab.value === 'proxy_fs'
+      ? 'repositoriesPage.batchDeleteProxyFsConfirm'
+      : 'repositoriesPage.batchDeleteConfirm'
+  return t(key, { n: pendingDeleteRepositories.value.length })
+})
 
 const deleteRepositoriesItems = computed<DangerConfirmItem[]>(() =>
   pendingDeleteRepositories.value.map((row) => ({
@@ -959,7 +969,7 @@ const activeDeletePreflight = computed(() => (
   forceDeleteRepository.value ? forceDeletePreflight.value : normalDeletePreflight.value
 ))
 const deleteConfirmKeyword = computed(() => (
-  forceDeleteRepository.value ? 'FORCE CLEANUP' : t('common.deleteKeyword')
+  forceDeleteRepository.value ? 'FORCE DELETE' : t('common.deleteKeyword')
 ))
 const deletePreflightMessages = computed(() => {
   const preflight = activeDeletePreflight.value
@@ -1180,29 +1190,14 @@ async function reconcileRepositoryCreateTasks() {
   }
 }
 
-async function showRepositoryCleanupBlocked(
+function showRepositoryCleanupBlocked(
   blocked: Array<{ row: RepositoryRow; preflight: StorageRepositoryCleanupPreflight }>,
 ) {
-  const rowsWithAssociations = await Promise.all(blocked.map(async ({ row, preflight }) => {
-    let associations: StorageRepositoryAssociatedSource[] = []
-    let associationCount = preflight.associated_source_count
-    if (associationCount > 0) {
-      try {
-        const result = await listStorageRepositoryAssociatedSources(row.id, { page: 1, page_size: 50 })
-        associations = result.results
-        associationCount = result.count
-      } catch {
-        // The authoritative preflight blockers still make the dialog useful.
-      }
-    }
-    return {
-      repository: row,
-      blockers: preflight.blockers.map((item) => repositoryCleanupMessage(item, t)),
-      associations,
-      associationCount,
-    }
+  repositoryCleanupBlockedRows.value = blocked.map(({ row, preflight }) => ({
+    repository: row,
+    ...repositoryCleanupBlockerSummary(preflight.blockers, t),
+    associationCount: preflight.associated_source_count,
   }))
-  repositoryCleanupBlockedRows.value = rowsWithAssociations
   repositoryCleanupBlockedDialogOpen.value = true
 }
 
@@ -2343,8 +2338,8 @@ async function batchDeleteSelected() {
 }
 
 async function confirmDeleteRepositories() {
-  const sel = pendingDeleteRepositories.value
-  if (!sel.length) return
+  const sel = [...pendingDeleteRepositories.value]
+  if (!sel.length || busy.value) return
   const force = canForceDeleteRepository.value && forceDeleteRepository.value
   if (sel.length === 1 && !activeDeletePreflight.value?.allowed) return
   busy.value = true
@@ -4550,23 +4545,37 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
     <ElDialog
       v-model="repositoryCleanupBlockedDialogOpen"
       :title="t('repositoriesPage.cleanupBlockedTitle')"
-      width="680px"
+      width="min(680px, calc(100vw - 32px))"
+      class="repo-cleanup-blocked-dialog"
+      align-center
       destroy-on-close
     >
-      <ElAlert
-        type="error"
-        :title="t('repositoriesPage.cleanupBlockedForceHint')"
-        :closable="false"
-        show-icon
-      />
-      <div class="repo-cleanup-blocked-list">
+      <p class="repo-cleanup-blocked-summary">
+        {{ t('repositoriesPage.cleanupBlockedSummary', { n: repositoryCleanupBlockedRows.length }) }}
+      </p>
+      <DangerOperationHint :text="t('repositoriesPage.cleanupBlockedForceHint')" />
+      <div
+        v-if="repositoryCleanupBlockedDialogOpen"
+        class="repo-cleanup-blocked-list"
+      >
         <section
           v-for="entry in repositoryCleanupBlockedRows"
           :key="entry.repository.id"
           class="repo-cleanup-blocked-item"
         >
-          <strong>{{ entry.repository.name }}</strong>
-          <ul>
+          <h3 class="repo-cleanup-blocked-name">
+            {{ entry.repository.name }}
+          </h3>
+          <p
+            v-if="entry.associationSummary"
+            class="repo-cleanup-blocked-association-summary"
+          >
+            {{ entry.associationSummary }}
+          </p>
+          <ul
+            v-if="entry.blockers.length"
+            class="repo-cleanup-blocked-reasons"
+          >
             <li
               v-for="reason in entry.blockers"
               :key="reason"
@@ -4574,20 +4583,11 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               {{ reason }}
             </li>
           </ul>
-          <div
+          <RepositoryBlockedAssociations
             v-if="entry.associationCount"
-            class="repo-cleanup-blocked-associations"
-          >
-            <span>{{ t('repositoriesPage.cleanupBlockedAssociations', { n: entry.associationCount }) }}</span>
-            <ul>
-              <li
-                v-for="association in entry.associations"
-                :key="association.backup_config_id"
-              >
-                {{ association.backup_config_name }} — {{ association.source_name }}
-              </li>
-            </ul>
-          </div>
+            :key="entry.repository.id"
+            :repository-id="entry.repository.id"
+          />
         </section>
       </div>
       <template #footer>
@@ -4601,8 +4601,8 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
     </ElDialog>
     <DangerConfirmDialog
       v-model="deleteRepositoriesDialogOpen"
-      :title="deleteRepositoriesTitle"
-      :message="deleteRepositoriesMessage"
+      :title="forceDeleteRepository ? t('repositoriesPage.forceDeleteTitle') : deleteRepositoriesTitle"
+      :message="forceDeleteRepository ? t('repositoriesPage.forceDeleteMessage') : deleteRepositoriesMessage"
       :items="deleteRepositoriesItems"
       :items-heading="t('repositoriesPage.batchDelete')"
       :item-name-label="t('repositoriesPage.colListName')"
@@ -4621,22 +4621,27 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
       @confirm="confirmDeleteRepositories"
       @cancel="closeDeleteRepositoriesDialog"
     >
-      <div
-        v-if="canForceDeleteRepository"
-        class="repo-delete-force-option"
-      >
-        <ElCheckbox v-model="forceDeleteRepository">
-          {{ t('repositoriesPage.cleanupForceOption') }}
-        </ElCheckbox>
-        <p>{{ t('repositoriesPage.cleanupForceOptionHint') }}</p>
-      </div>
       <ElAlert
         v-if="deletePreflightMessages.length"
+        class="repo-delete-preflight-alert"
         :type="activeDeletePreflight?.allowed ? 'warning' : 'error'"
         :title="deletePreflightMessages.join('; ')"
         :closable="false"
         show-icon
       />
+      <DangerAdvancedOptions
+        v-if="canForceDeleteRepository"
+        v-model:expanded="advancedExpanded"
+        :enabled="forceDeleteRepository"
+        :enabled-label="t('common.forceCleanupEnabled')"
+      >
+        <DangerForceOption
+          v-model="forceDeleteRepository"
+          :disabled="busy"
+          :label="t('repositoriesPage.cleanupForceOption')"
+          :hint="t('repositoriesPage.cleanupForceOptionHint')"
+        />
+      </DangerAdvancedOptions>
     </DangerConfirmDialog>
   </ModulePage>
 </template>
@@ -4708,39 +4713,73 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
   justify-content: flex-end;
 }
 
+:global(.el-dialog.repo-cleanup-blocked-dialog) {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(var(--app-viewport-height, 100dvh) - var(--app-safe-top, 0px) - var(--app-safe-bottom, 0px) - 32px);
+  overflow: hidden;
+}
+:global(.repo-cleanup-blocked-dialog > .el-dialog__header),
+:global(.repo-cleanup-blocked-dialog > .el-dialog__footer) {
+  flex: 0 0 auto;
+}
+:global(.repo-cleanup-blocked-dialog > .el-dialog__body) {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.repo-cleanup-blocked-summary {
+  margin: 0 0 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
 .repo-cleanup-blocked-list {
   display: grid;
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.repo-cleanup-blocked-item {
-  padding: 12px 14px;
-  border: 1px solid var(--el-border-color-light);
+  gap: 0;
+  margin-top: 14px;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
+  background: var(--el-fill-color-blank);
+  overflow: hidden;
 }
-
-.repo-cleanup-blocked-item ul {
-  margin: 8px 0 0;
-  padding-left: 20px;
+.repo-cleanup-blocked-item {
+  min-width: 0;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
-
-.repo-cleanup-blocked-associations {
-  margin-top: 10px;
-  color: var(--el-text-color-regular);
-}
-
-.repo-delete-force-option {
-  display: grid;
-  gap: 4px;
-  margin: 14px 0;
-}
-
-.repo-delete-force-option p {
+.repo-cleanup-blocked-name {
   margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 12px;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-weight: 600;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.repo-cleanup-blocked-association-summary {
+  margin: 6px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.repo-cleanup-blocked-reasons {
+  display: grid;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.repo-cleanup-blocked-item:last-child { border-bottom: 0; }
+
+.repo-delete-preflight-alert {
+  margin-top: 12px;
 }
 
 .repo-form-inline {

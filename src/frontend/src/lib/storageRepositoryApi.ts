@@ -432,7 +432,7 @@ export async function deleteStorageRepository(id: number, force = false) {
       method: 'DELETE',
       body: JSON.stringify({
         force,
-        confirmation: force ? 'FORCE CLEANUP' : '',
+        confirmation: force ? 'FORCE DELETE' : '',
       }),
       headers: orgHeaders(),
     }),

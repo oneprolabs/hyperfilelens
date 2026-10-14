@@ -17,7 +17,7 @@ import {
   Trash2,
   X,
 } from 'lucide-vue-next'
-import { ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessage, ElTable, ElTableColumn } from 'element-plus'
+import { ElAlert, ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessage, ElTable, ElTableColumn } from 'element-plus'
 import ModulePage from '../../components/ModulePage.vue'
 import OpsStatCard from '../../components/ops/OpsStatCard.vue'
 import HflTablePanel from '../../components/HflTablePanel.vue'
@@ -436,26 +436,19 @@ const deleteDialogMessage = computed(() => {
     ? t('ops.notification.deleteChannelLinkedMessage', {
       n: state.totalPolicies,
     })
-    : t('ops.notification.deleteConfirm', { name: state.row.name })
+    : t('ops.notification.deleteNoLinkedRules')
 })
 const deleteDialogWarning = computed(() => {
   const state = deleteDialogState.value
-  if (!state?.hasLinkedPolicies || state.associationStatus !== 'ready') return ''
-  return t('ops.notification.deleteChannelLinkedWarning', {
-    n: state.totalPolicies,
-  })
+  if (!state || state.associationStatus !== 'ready') return ''
+  return t(state.hasLinkedPolicies
+    ? 'ops.notification.deleteMergedLinkedWarning'
+    : 'ops.notification.deleteMergedWarning')
 })
 const deleteDialogItemsHeading = computed(() => {
   const state = deleteDialogState.value
   if (!state?.hasLinkedPolicies || state.associationStatus !== 'ready') return ''
   return t('ops.notification.deleteChannelLinkedHeading', { n: state.totalPolicies })
-})
-const deleteDialogIrreversible = computed(() => {
-  const state = deleteDialogState.value
-  if (!state || state.associationStatus !== 'ready') return ''
-  return state.hasLinkedPolicies
-    ? t('ops.notification.deleteChannelIrreversible')
-    : t('ops.notification.deleteChannelIrreversible')
 })
 const deleteDialogMode = computed(() => {
   const state = deleteDialogState.value
@@ -784,7 +777,9 @@ function buildPendingBatch(
 
   const level = kind === 'delete' ? 'high' : 'medium'
 
-  const warning = hasLinks
+  const warning = kind === 'delete'
+    ? t(hasLinks ? 'ops.notification.deleteMergedLinkedWarning' : 'ops.notification.deleteMergedWarning')
+    : hasLinks
     ? t({
         enable: 'ops.notification.batchEnableWarning',
         disable: 'ops.notification.batchDisableWarning',
@@ -816,7 +811,7 @@ function buildPendingBatch(
     warning,
     itemsHeading: t(itemsHeadingKey, { n: summaries.length }),
     impactItemsHeading: hasLinks ? t('ops.notification.batchReferencedPoliciesHeading', { n: totalPolicies }) : '',
-    irreversible: t('ops.notification.batchIrreversible'),
+    irreversible: kind === 'delete' ? '' : t('ops.notification.batchIrreversible'),
     keyword: t(keywordKey),
     keywordHint: t(keywordHintKey, { n: summaries.length }),
     level,
@@ -1817,10 +1812,8 @@ watch(
       :title="deleteDialogTitle"
       :subtitle="deleteDialogSubtitle"
       :message="deleteDialogMessage"
-      :warning="deleteDialogWarning"
       :items="deleteDialogState.items"
       :items-heading="deleteDialogItemsHeading"
-      :irreversible-hint="deleteDialogIrreversible"
       :confirm-mode="deleteDialogMode"
       :confirm-keyword="t('ops.notification.deleteChannelKeyword')"
       :confirm-keyword-hint="deleteDialogConfirmKeywordHint"
@@ -1840,6 +1833,14 @@ watch(
       @confirm="executeDelete"
       @cancel="closeDeleteDialog"
     >
+      <ElAlert
+        v-if="deleteDialogWarning"
+        class="notification-delete-warning"
+        type="warning"
+        :title="deleteDialogWarning"
+        :closable="false"
+        show-icon
+      />
       <template
         v-if="deleteDialogState.associationStatus === 'error'"
         #extra
@@ -1859,7 +1860,7 @@ watch(
       :title="pendingBatch.title"
       :subtitle="pendingBatch.subtitle"
       :message="pendingBatch.message"
-      :warning="pendingBatch.warning"
+      :warning="pendingBatch.kind === 'delete' ? '' : pendingBatch.warning"
       :items="pendingBatch.items"
       :items-heading="pendingBatch.itemsHeading"
       :irreversible-hint="pendingBatch.irreversible"
@@ -1880,6 +1881,14 @@ watch(
       @confirm="executeBatchAction"
       @cancel="closeBatchDialog"
     >
+      <ElAlert
+        v-if="pendingBatch.kind === 'delete'"
+        class="notification-delete-warning"
+        type="warning"
+        :title="pendingBatch.warning"
+        :closable="false"
+        show-icon
+      />
       <template #extra>
         <section
           v-if="pendingBatch.impactItems.length"
@@ -1896,12 +1905,12 @@ watch(
           >
             <ElTableColumn
               prop="name"
-              label="Name"
+              :label="t('common.dangerItemName')"
               min-width="220"
               show-overflow-tooltip
             />
             <ElTableColumn
-              label="Status"
+              :label="t('common.dangerItemStatus')"
               width="140"
             >
               <template #default="{ row }">
@@ -1926,6 +1935,7 @@ watch(
 </template>
 
 <style scoped>
+.notification-delete-warning { margin-top: 12px; }
 .hfl-ops-channel-detail-drawer__loading,
 .hfl-ops-channel-detail-drawer__error {
   padding: 12px 14px;

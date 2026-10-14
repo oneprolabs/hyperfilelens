@@ -17,7 +17,7 @@ import {
   Trash2,
   X,
 } from 'lucide-vue-next'
-import { ElMessage } from 'element-plus'
+import { ElAlert, ElMessage } from 'element-plus'
 import ModulePage from '../../components/ModulePage.vue'
 import OpsStatCard from '../../components/ops/OpsStatCard.vue'
 import HflTablePanel from '../../components/HflTablePanel.vue'
@@ -383,10 +383,10 @@ function buildPolicyDangerAction(
     subtitle: isBatch
       ? t('ops.alertsCenter.common.batchPolicySubtitle', { n: count })
       : t('ops.alertsCenter.common.singlePolicySubtitle', { id: rows[0]?.id ?? '' }),
-    message: skipNotice ? `${skipNotice}\n\n${baseMessage}` : baseMessage,
+    message: isDelete ? '' : (skipNotice ? `${skipNotice}\n\n${baseMessage}` : baseMessage),
     warning: t(warningKey, { n: count }),
     irreversible: isDelete
-      ? t('ops.alertsCenter.common.deleteIrreversible')
+      ? ''
       : t('ops.alertsCenter.common.stateChangeIrreversible'),
     items: buildPolicyDangerItems(rows),
     keyword,
@@ -1295,7 +1295,7 @@ watch(
       :title="pendingDangerAction.title"
       :subtitle="pendingDangerAction.subtitle"
       :message="pendingDangerAction.message"
-      :warning="pendingDangerAction.warning"
+      :warning="pendingDangerAction.level === 'high' ? '' : pendingDangerAction.warning"
       :items="pendingDangerAction.items"
       :items-heading="t('ops.alertsCenter.common.affectedPoliciesHeading', {
         n: pendingDangerAction.rows.length,
@@ -1313,11 +1313,21 @@ watch(
       :irreversible-tone="pendingDangerAction.level === 'high' ? 'danger' : 'neutral'"
       @confirm="executePolicyDangerAction"
       @cancel="closePolicyDangerDialog"
-    />
+    >
+      <ElAlert
+        v-if="pendingDangerAction.kind === 'single-delete' || pendingDangerAction.kind === 'batch-delete'"
+        class="alert-policy-delete-warning"
+        type="warning"
+        :title="pendingDangerAction.warning"
+        :closable="false"
+        show-icon
+      />
+    </DangerConfirmDialog>
   </ModulePage>
 </template>
 
 <style scoped>
+.alert-policy-delete-warning { margin-top: 12px; }
 .hfl-alert-policy-table :deep(.el-table__body td.el-table__cell > .cell) {
   display: flex;
   min-height: 34px;

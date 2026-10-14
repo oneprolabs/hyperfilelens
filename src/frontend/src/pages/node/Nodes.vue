@@ -4,7 +4,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
 import { useI18n } from 'vue-i18n'
 import { ArrowUpCircle, Plus, RefreshCw, Pencil, ChevronDown, Trash2, Search, Wrench } from 'lucide-vue-next'
-import { ElCheckbox, ElMessage, type ElTable } from 'element-plus'
+import { ElMessage, type ElTable } from 'element-plus'
 import NodeLifecycleStatusCell from '../../components/node-lifecycle/NodeLifecycleStatusCell.vue'
 import NodeVersionCell from '../../components/node-lifecycle/NodeVersionCell.vue'
 import NodeLifecycleBanner from '../../components/node-lifecycle/NodeLifecycleBanner.vue'
@@ -13,6 +13,9 @@ import { debouncedNodeStatus } from '../../composables/useNodeConnectionDisplay'
 import ModulePage from '../../components/ModulePage.vue'
 import ProxyNodeDetailDrawer from '../../components/ProxyNodeDetailDrawer.vue'
 import ProxyHostDeleteBlockedDialog from '../../components/ProxyHostDeleteBlockedDialog.vue'
+import DangerOperationHint from '../../components/DangerOperationHint.vue'
+import DangerForceOption from '../../components/DangerForceOption.vue'
+import DangerAdvancedOptions from '../../components/DangerAdvancedOptions.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import NodeLifecycleUpgradeConfirmDialog from '../../components/NodeLifecycleUpgradeConfirmDialog.vue'
 import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformBrandIcon.vue'
@@ -470,7 +473,9 @@ const proxyDeleteBlockedBindings = ref<NodeBindings | null>(null)
 const deleteOpen = ref(false)
 const deleteLoading = ref(false)
 const pendingDeleteNodes = ref<ApiNode[]>([])
+const advancedExpanded = ref(false)
 const pendingDeleteForce = ref(false)
+watch(() => deleteOpen.value, () => { advancedExpanded.value = false })
 const pendingDeleteAuthoritativeOffline = ref(new Map<number, boolean>())
 const pendingDeleteUpgradeRequired = ref(new Set<number>())
 
@@ -555,12 +560,13 @@ async function deleteSelectedNodes() {
 
 async function executeNodeDelete() {
   const targets = [...pendingDeleteNodes.value]
-  if (!targets.length) return
+  if (!targets.length || deleteLoading.value) return
+  const force = pendingDeleteForce.value
   deleteLoading.value = true
   try {
     const started = await lifecycleOps.runBatch('remove', targets, {
       skipConfirm: true,
-      force: pendingDeleteForce.value,
+      force,
     })
     if (started) {
       clearNodeTableSelection()
@@ -1116,23 +1122,32 @@ async function submitRename() {
             ? t('nodesPage.proxyDeleteSelectedConfirm', { n: pendingDeleteNodes.length })
             : t('nodesPage.deleteSelectedConfirm', { n: pendingDeleteNodes.length }))"
       :items="pendingDeleteNodes.map(nodeDeleteDialogItem)"
+      :confirmation-context="pendingDeleteNodes.map(row => row.id).sort((a, b) => a - b).join(',')"
       confirm-mode="keyword"
-      :confirm-keyword="pendingDeleteForce ? 'FORCE CLEANUP' : t('common.deleteKeyword')"
+      :confirm-keyword="pendingDeleteForce ? 'FORCE DELETE' : t('common.deleteKeyword')"
       :cancel-text="t('common.cancel')"
       :confirm-text="pendingDeleteForce ? t('nodesPage.proxyDeleteForceAction') : t('common.delete')"
       :loading="deleteLoading"
       @confirm="executeNodeDelete"
       @cancel="cancelNodeDelete"
     >
-      <div
+      <DangerOperationHint
         v-if="isProxyNodesPage"
-        class="node-delete-force-option"
+        :text="t('common.proxyRemovalLimits')"
+      />
+      <DangerAdvancedOptions
+        v-if="isProxyNodesPage"
+        v-model:expanded="advancedExpanded"
+        :enabled="pendingDeleteForce"
+        :enabled-label="t('common.forceCleanupEnabled')"
       >
-        <ElCheckbox v-model="pendingDeleteForce">
-          {{ t('nodesPage.proxyDeleteForceAction') }}
-        </ElCheckbox>
-        <p>{{ t('nodesPage.proxyDeleteForceNote') }}</p>
-      </div>
+        <DangerForceOption
+          v-model="pendingDeleteForce"
+          :disabled="deleteLoading"
+          :label="t('nodesPage.proxyDeleteForceAction')"
+          :hint="t('common.proxyForceExplanation')"
+        />
+      </DangerAdvancedOptions>
     </DangerConfirmDialog>
   </ModulePage>
 </template>
@@ -1142,19 +1157,7 @@ async function submitRename() {
   font-weight: 600;
 }
 
-.node-delete-force-option {
-  margin-top: 16px;
-  padding: 12px 14px;
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 8px;
-  background: var(--el-fill-color-lighter);
-}
 
-.node-delete-force-option p {
-  margin: 4px 0 0 24px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
 
 .proxy-host-edit-form {
   display: grid;

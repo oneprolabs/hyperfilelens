@@ -165,10 +165,23 @@ function titleTextForCell(cell: HTMLElement) {
   if (alwaysExplicitTitle) return alwaysExplicitTitle
 
   const overflowingExplicitTarget = explicitTargets.find((target) => {
-    return Boolean(target.dataset.tableOverflowTitle?.trim()) && isOverflowing(target)
+    if (!target.dataset.tableOverflowTitle?.trim()) return false
+    if (!target.hasAttribute('data-table-overflow-ellipsis-only')) return isOverflowing(target)
+    // Status tags only need a tooltip for horizontally clipped text, not
+    // line-height/border overflow or a surrounding cell's dimensions.
+    if (target.scrollWidth > target.clientWidth) return true
+    const rect = target.getBoundingClientRect()
+    if (rect.width <= 0) return false
+    const range = document.createRange()
+    range.selectNodeContents(target)
+    const textRect = range.getBoundingClientRect()
+    return textRect.right > rect.right || textRect.left < rect.left
   })
   const explicitTitle = overflowingExplicitTarget?.dataset.tableOverflowTitle?.trim()
   if (explicitTitle) return explicitTitle
+  if (explicitTargets.length && explicitTargets.every(target =>
+    target.hasAttribute('data-table-overflow-ellipsis-only'),
+  )) return ''
 
   // If the table cell itself is clipped but its explicitly titled child does
   // not report overflow independently (common with flex layouts), preserve

@@ -1,0 +1,37 @@
+/* Shared resource table presentation, based on source deregistration dialogs. */
+.hfl-flow-action-dialog__table,
+.hfl-dialog-resource-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.hfl-flow-action-dialog__table th,
+.hfl-dialog-resource-table th,
+.hfl-flow-action-dialog__table td,
+.hfl-dialog-resource-table td {
+  text-align: left;
+  vertical-align: middle;
+}
+
+.hfl-flow-action-dialog__table th,
+.hfl-dialog-resource-table th {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-text-color-secondary, rgb(100 116 139));
+  background: var(--el-fill-color-light, rgb(250 250 250));
+  border-bottom: 1px solid var(--el-border-color-lighter, rgb(226 232 240));
+  white-space: nowrap;
+}
+
+.hfl-flow-action-dialog__table td,
+.hfl-dialog-resource-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--el-border-color-extra-light, rgb(241 245 249));
+}
+
+.hfl-flow-action-dialog__table tr:last-child td,
+.hfl-dialog-resource-table tr:last-child td {
+  border-bottom: none;
+}

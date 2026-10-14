@@ -987,12 +987,14 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
 
 class RepositoryCleanupSerializer(serializers.Serializer):
     force = serializers.BooleanField(required=False, default=False)
-    confirmation = serializers.CharField(required=False, allow_blank=True, default="")
+    confirmation = serializers.CharField(
+        required=False, allow_blank=True, default="", trim_whitespace=False
+    )
 
     def validate(self, attrs):
-        if attrs["force"] and attrs["confirmation"] != "FORCE CLEANUP":
+        if attrs["force"] and attrs["confirmation"] != "FORCE DELETE":
             raise serializers.ValidationError(
-                {"confirmation": 'Type "FORCE CLEANUP" exactly to confirm.'}
+                {"confirmation": 'Type "FORCE DELETE" exactly to confirm.'}
             )
         return attrs
 
