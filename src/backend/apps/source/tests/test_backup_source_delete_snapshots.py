@@ -310,13 +310,13 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
         self.assertEqual(
             pending.payload["snapshot_locations"][0]["source_snapshot_id"], self.snapshot.pk,
         )
-        for status, age in (
+        for child_status, age in (
             (Task.Status.PENDING, timezone.timedelta(minutes=6)),
             (Task.Status.RUNNING, timezone.timedelta(hours=3)),
         ):
-            with self.subTest(child_status=status):
+            with self.subTest(child_status=child_status):
                 Task.objects.filter(pk=child.pk).update(
-                    status=status,
+                    status=child_status,
                     error_code=None,
                     result_payload=None,
                     finished_at=None,

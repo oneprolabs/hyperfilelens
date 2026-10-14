@@ -4226,31 +4226,10 @@ function restorePhaseLabel(idx: number) {
 }
 
 
-const flowSourceTypeFilterOptions = computed(() => [
-  { text: t('protection.backupsPage.sourceTypeHost'), value: 'host' },
-  { text: t('protection.backupsPage.sourceTypeNas'), value: 'nas' },
-  { text: t('protection.backupsPage.sourceTypeNasSmb'), value: 'nas_smb' },
-  { text: t('protection.backupsPage.sourceTypeNasNfs'), value: 'nas_nfs' },
-])
-
 const flowSourceStatusFilterOptions = computed(() => [
   { text: t('protection.backupsPage.nodeStatusOnline'), value: 'online' },
   { text: t('protection.backupsPage.nodeStatusOffline'), value: 'offline' },
 ])
-
-const flowBindingFilterOptions = computed(() => [
-  { text: t('protection.backupsPage.flowFilterBound'), value: 'bound' },
-  { text: t('protection.backupsPage.flowFilterUnbound'), value: 'unbound' },
-])
-
-
-
-const flowRepoHealthFilterOptions = computed(() => [
-  { text: t('protection.backupsPage.targetStatusOnline'), value: 'online' },
-  { text: t('protection.backupsPage.targetStatusOffline'), value: 'offline' },
-  { text: t('protection.backupsPage.targetStatusUnknown'), value: 'unknown' },
-])
-
 
 const step3SearchFieldOptions = computed(() => [
   { label: t('protection.backupsPage.step3SearchSourceName'), value: 'source_name' as const },
