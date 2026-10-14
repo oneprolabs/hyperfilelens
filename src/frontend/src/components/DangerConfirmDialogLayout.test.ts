@@ -276,7 +276,7 @@ describe('Localized danger dialog column headers', () => {
   it('translates default headers and preserves explicitly supplied business labels', async () => {
     const zh = JSON.parse(readFileSync(resolve(process.cwd(), '../../language-packs/packs/zh-hans/frontend/messages.json'), 'utf8'))
     const wrapper = mount(DangerConfirmDialog, {
-      props: { modelValue: true, title: '删除', items: [{ name: 'proxy' }] },
+      props: { modelValue: true, title: zh.common.delete, items: [{ name: 'proxy' }] },
       global: {
         plugins: [createI18n({ legacy: false, locale: 'zh-hans', messages: { en, 'zh-hans': zh } })],
         directives: { tableOverflowTitle: {} },
@@ -285,11 +285,11 @@ describe('Localized danger dialog column headers', () => {
     })
     await flushPromises()
     const table = wrapper.findComponent(ElTable)
-    expect(table.findAll('.el-table__header th .cell').map(cell => cell.text())).toEqual(['名称', '状态', '详情'])
-    expect(wrapper.findAll('.hfl-danger-confirm__mobile-items th').map(cell => cell.text())).toEqual(['名称', '状态', '详情'])
-    await wrapper.setProps({ itemNameLabel: '备份源', itemDetailsLabel: '存储路径' })
+    expect(table.findAll('.el-table__header th .cell').map(cell => cell.text())).toEqual([zh.common.dangerItemName, zh.common.dangerItemStatus, zh.common.dangerItemDetails])
+    expect(wrapper.findAll('.hfl-danger-confirm__mobile-items th').map(cell => cell.text())).toEqual([zh.common.dangerItemName, zh.common.dangerItemStatus, zh.common.dangerItemDetails])
+    await wrapper.setProps({ itemNameLabel: 'Custom source', itemDetailsLabel: 'Custom path' })
     await flushPromises()
-    expect(table.findAll('.el-table__header th .cell').map(cell => cell.text())).toEqual(['备份源', '状态', '存储路径'])
+    expect(table.findAll('.el-table__header th .cell').map(cell => cell.text())).toEqual(['Custom source', zh.common.dangerItemStatus, 'Custom path'])
     wrapper.unmount()
   })
 })

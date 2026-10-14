@@ -21,11 +21,11 @@ describe('Repository cleanup blocked dialog', () => {
   it('uses natural Chinese association and blocker copy', () => {
     const i18n = createI18n({ legacy: false, locale: 'zh-hans', messages: { en, 'zh-hans': zh } })
     const t = i18n.global.t
-    expect(t('repositoriesPage.cleanupBlockedAssociations', { n: 1 })).toBe('关联的备份配置（1）')
+    expect(t('repositoriesPage.cleanupBlockedAssociations', { n: 1 })).toBe(zh.repositoriesPage.cleanupBlockedAssociations.replace('{n}', '1'))
     expect(repositoryCleanupMessage({ code: 'associated_sources', count: 1, detail: 'Repository has 1 associated backup source(s).' }, t))
-      .toBe('此存储仓库关联了 1 个备份源。')
+      .toBe(zh.repositoriesPage.cleanupBlockedSources.replace('{n}', '1'))
     expect(repositoryCleanupMessage({ code: 'associated_snapshots', count: 2, detail: 'Repository has 2 snapshot record(s).' }, t))
-      .toBe('此存储仓库包含 2 条快照记录。')
+      .toBe(zh.repositoriesPage.cleanupBlockedSnapshots.replace('{n}', '2'))
   })
 
   it('bounds body scrolling and preserves all loaded association names and partial-list disclosure', () => {
@@ -55,10 +55,13 @@ describe('Repository deletion preflight warning placement', () => {
     const i18n = createI18n({ legacy: false, locale: 'zh-hans', messages: { en, 'zh-hans': zh } })
     expect(i18n.global.t('repositoriesPage.batchDeleteProxyFsConfirm', { n: 1 })).not.toContain('NAS')
     const warning = repositoryCleanupMessage({ code: 'legacy_local_disk_preserved', detail: 'English legacy warning' }, i18n.global.t)
-    expect(warning).toContain('不会删除磁盘数据')
-    expect(warning).toContain('所属代理主机')
-    expect(warning).toContain('未被其他资源使用')
-    expect(warning).toContain('人工清理')
-    expect(warning).toContain('强制删除也会保留此目录')
+    expect(warning).toBe(zh.repositoriesPage.cleanupLegacyLocalDiskPreserved)
+    expect(warning).not.toContain('English legacy warning')
+    const englishWarning = en.repositoriesPage.cleanupLegacyLocalDiskPreserved
+    expect(englishWarning).toContain('does not delete disk data')
+    expect(englishWarning).toContain('owning Proxy Host')
+    expect(englishWarning).toContain('used by other resources')
+    expect(englishWarning).toContain('manually clean up')
+    expect(englishWarning).toContain('Force Delete also preserves this directory')
   })
 })

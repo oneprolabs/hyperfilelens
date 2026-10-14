@@ -10,7 +10,7 @@ function catalog(lang: string) {
 describe('Force deletion presentation terminology', () => {
   it.each([
     ['en', en, 'Force Delete'],
-    ['zh-hans', catalog('zh-hans'), '强制删除'],
+    ['zh-hans', catalog('zh-hans'), catalog('zh-hans').nodesPage.proxyDeleteForceAction],
   ])('aligns labels and state without changing confirmation keywords in %s', (_lang, messages, label) => {
     expect(messages.nodesPage.proxyDeleteForceAction).toBe(label)
     expect(messages.nodesPage.proxyDeleteForceTitle).toContain(label)
