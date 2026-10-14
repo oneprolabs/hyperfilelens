@@ -1165,7 +1165,10 @@ def usage_overview(org, user, params) -> dict[str, Any]:
     }
 
 
-def usage_detail(org, user, run_uuid: uuid.UUID) -> dict[str, Any]:
+def usage_detail(
+    org, user, run_uuid: uuid.UUID, *, include_content: bool = False,
+) -> dict[str, Any]:
+    """Read an owned ledger; optionally retrieve the user-authorized answer."""
     row = (
         LensUsageLedger.objects.select_related("session_link")
         .filter(
@@ -1190,4 +1193,27 @@ def usage_detail(org, user, run_uuid: uuid.UUID) -> dict[str, Any]:
             "call_details": list(row.call_details_json or []),
         }
     )
+    if include_content:
+        payload.update({"answer": "", "models_used": [], "content_available": False})
+        # Never expose internal provider diagnostics in the tenant drawer.
+        payload["error"] = (
+            _public_run_failure(row.run_status, row.run_error)[1]
+            if row.run_error or row.run_status in {"failed", "cancelled"}
+            else ""
+        )
+        try:
+            run = sl_client.request_json(
+                "GET", f"/api/lens/runs/{row.sl_run_uuid}/",
+                hfl_user=user, timeout=10,
+            )
+        except sl_client.LensBridgeError:
+            return payload
+        if not isinstance(run, dict) or str(run.get("uuid", "")) != str(row.sl_run_uuid):
+            return payload
+        payload["content_available"] = True
+        payload["answer"] = run["answer"] if isinstance(run.get("answer"), str) else ""
+        if isinstance(run.get("models_used"), list):
+            payload["models_used"] = [
+                item for item in run["models_used"] if isinstance(item, str)
+            ]
     return payload

@@ -72,6 +72,7 @@ const OpsAuditPage = lazyRoute(() => import('../pages/ops/Audit.vue'))
 const AccountSettingsLayout = lazyRoute(() => import('../pages/account/AccountSettingsLayout.vue'))
 const AccountProfilePage = lazyRoute(() => import('../pages/account/AccountProfile.vue'))
 const InsightPage = lazyRoute(() => import('../pages/insight/Insight.vue'))
+const InsightUsagePage = lazyRoute(() => import('../pages/insight/InsightUsage.vue'))
 const GlobalSearchPage = lazyRoute(() => import('../pages/Search.vue'))
 const NotificationsPage = lazyRoute(() => import('../pages/Notifications.vue'))
 
@@ -130,8 +131,7 @@ export const router = createRouter({
           component: lazyRoute(() => import('../pages/insight/NewCopilotChat.vue')),
           meta: fullscreenRouteMeta,
         },
-        // Insight Usage is temporarily hidden. Keep InsightUsage.vue and its API implementation.
-        // To restore it, register /insight/usage here and restore its side-navigation item.
+        { path: 'insight/usage', component: InsightUsagePage },
         {
           path: 'insight/gateways',
           component: lazyRoute(() => import('../pages/insight/InsightGateways.vue')),

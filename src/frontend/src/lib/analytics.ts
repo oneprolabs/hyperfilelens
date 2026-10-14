@@ -167,7 +167,7 @@ export function analyticsPageMetadata(
     '/insight/copilot/new': ['insight.ai_copilot', 'insights', 'insight.side.copilot'],
     '/insight/copilot/shared': ['insight.ai_copilot', 'insights', 'insight.side.copilot'],
     '/insight/gateways': ['insight.data_gateways', 'insights', 'insight.side.dataGateway'],
-    '/insight/usage': ['insight.usage', 'insights', 'insight.side.usage'],
+    '/insight/usage': ['insight.usage', 'insights', 'insight.side.requestHistory'],
     '/node/organization': ['configuration.organization', 'configuration', 'settings.nav.organizationHub'],
     '/node/members': ['configuration.members', 'configuration', 'settings.nav.members'],
     '/node/subscription': ['configuration.subscription', 'configuration', 'settings.nav.subscription'],

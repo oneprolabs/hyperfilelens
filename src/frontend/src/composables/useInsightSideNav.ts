@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare } from 'lucide-vue-next'
+import { History, MessageSquare } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 import { useTenantPermissions } from './useTenantPermissions'
 import { dataGatewaySidebarIcon } from '../lib/resourceIcons'
@@ -19,8 +19,11 @@ export function useInsightSideNav() {
     {
       label: t('insight.side.groupDataGateways'),
       children: [
-        // Insight Usage is temporarily hidden. Do not delete its page or API implementation.
-        // To restore it, add the /insight/usage menu item here and re-enable its route.
+        {
+          label: t('insight.side.requestHistory'),
+          to: '/insight/usage',
+          icon: History,
+        },
         {
           label: t('insight.side.dataGateway'),
           to: '/insight/gateways',
@@ -29,7 +32,12 @@ export function useInsightSideNav() {
       ],
     },
   ] as MenuItem[]).map((section) => ({
-    ...section, children: section.children?.filter((item) => has(item.to === '/insight/copilot'
-      ? 'insights.chats.view' : 'insights.private_data_gateways.view')),
+    ...section, children: section.children?.filter((item) => has(
+      item.to === '/insight/copilot'
+        ? 'insights.chats.view'
+        : item.to === '/insight/usage'
+          ? 'insights.usage.view'
+          : 'insights.private_data_gateways.view',
+    )),
   })).filter((section) => section.children?.length))
 }

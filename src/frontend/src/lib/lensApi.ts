@@ -164,6 +164,9 @@ export type LensCopilotUsageOverview = {
 }
 
 export type LensCopilotUsageDetail = LensCopilotUsageItem & {
+  answer?: string
+  models_used?: string[]
+  content_available?: boolean
   snapshot_created_at: string | null
   source_scopes: Array<{
     source_path: string
@@ -1246,8 +1249,13 @@ export async function fetchCopilotUsage(
   return lensPayload<LensCopilotUsageOverview>(raw)
 }
 
-export async function fetchCopilotUsageDetail(runUuid: string): Promise<LensCopilotUsageDetail> {
-  const raw = await api(lensUrl(`copilot/usage/${runUuid}/`), { headers: lensHeaders() })
+export async function fetchCopilotUsageDetail(
+  runUuid: string,
+  includeContent = false,
+): Promise<LensCopilotUsageDetail> {
+  const suffix = includeContent ? '?include_content=1' : ''
+  // Request history is personal; never route detail reads through Admin APIs.
+  const raw = await api(`/api/v1/lens/copilot/usage/${runUuid}/${suffix}`, { headers: orgHeaders() })
   return lensPayload<LensCopilotUsageDetail>(raw)
 }
 

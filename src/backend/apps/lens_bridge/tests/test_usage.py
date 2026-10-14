@@ -9,7 +9,7 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.iam.models import Membership
+from apps.iam.models import Membership, Organization
 from apps.iam.services.registration_service import provision_registered_user_tenant
 from apps.lens_bridge.models import LensSessionLink, LensSlUserLink, LensUsageLedger
 from apps.lens_bridge.services import usage
@@ -445,16 +445,19 @@ class UsageApiIsolationTests(TestCase):
         self.assertNotIn("Private question", str(payload))
         request_json.assert_not_called()
 
-    def test_detail_does_not_expose_another_users_ledger(self):
+    @patch("apps.lens_bridge.services.usage.sl_client.request_json")
+    def test_detail_does_not_expose_another_users_ledger(self, request_json):
         response = self.client.get(
             reverse(
                 "lens-copilot-usage-detail",
                 kwargs={"run_uuid": self.other_row.sl_run_uuid},
             ),
+            {"include_content": "1"},
             HTTP_X_ORG_KEY=self.org.key,
         )
 
         self.assertEqual(response.status_code, 404)
+        request_json.assert_not_called()
 
     @patch("apps.lens_bridge.services.usage.sl_client.request_json")
     def test_detail_is_also_a_pure_ledger_read(self, request_json):
@@ -475,6 +478,73 @@ class UsageApiIsolationTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         request_json.assert_not_called()
+
+    @patch("apps.lens_bridge.services.usage.sl_client.request_json")
+    def test_content_cannot_read_current_users_record_in_another_organization(self, request_json):
+        other_org = Organization.objects.create(key="usage-another-org", name="Another org")
+        row = LensUsageLedger.objects.create(
+            organization=other_org, hfl_user=self.user, sl_user_id=23,
+            sl_run_uuid=uuid.uuid4(), question="Another organization",
+            occurred_at=timezone.now(),
+        )
+        response = self.client.get(
+            reverse("lens-copilot-usage-detail", kwargs={"run_uuid": row.sl_run_uuid}),
+            {"include_content": "1"}, HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(response.status_code, 404)
+        request_json.assert_not_called()
+
+    @patch("apps.lens_bridge.services.usage.sl_client.request_json")
+    def test_drawer_content_uses_tenant_credentials_and_sanitizes_errors(self, request_json):
+        row = LensUsageLedger.objects.create(
+            organization=self.org, hfl_user=self.user, sl_user_id=23,
+            sl_run_uuid=uuid.uuid4(), question="My request", run_status="failed",
+            run_error="PROVIDER_ERROR api_key=do-not-leak",
+            occurred_at=timezone.now(),
+        )
+        request_json.return_value = {
+            "uuid": str(row.sl_run_uuid), "answer": "My answer",
+            "models_used": ["model-a", {"secret": "do-not-leak"}],
+        }
+        response = self.client.get(
+            reverse("lens-copilot-usage-detail", kwargs={"run_uuid": row.sl_run_uuid}),
+            {"include_content": "1"}, HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        payload = payload.get("data", payload)
+        self.assertEqual(payload["answer"], "My answer")
+        self.assertEqual(payload["models_used"], ["model-a"])
+        self.assertTrue(payload["content_available"])
+        self.assertNotIn("do-not-leak", str(payload))
+        request_json.assert_called_once_with(
+            "GET", f"/api/lens/runs/{row.sl_run_uuid}/",
+            hfl_user=self.user, timeout=10,
+        )
+
+    @patch("apps.lens_bridge.services.usage.sl_client.request_json")
+    def test_unavailable_or_mismatched_answer_keeps_owned_ledger(self, request_json):
+        from apps.lens_bridge.services.sl_client import LensBridgeError
+
+        row = LensUsageLedger.objects.create(
+            organization=self.org, hfl_user=self.user, sl_user_id=23,
+            sl_run_uuid=uuid.uuid4(), question="Preserved request",
+            occurred_at=timezone.now(),
+        )
+        for result in (
+            LensBridgeError("unavailable"),
+            {"uuid": str(uuid.uuid4()), "answer": "another request"},
+            [],
+        ):
+            with self.subTest(result=type(result).__name__):
+                request_json.side_effect = result if isinstance(result, Exception) else None
+                request_json.return_value = result
+                payload = usage.usage_detail(
+                    self.org, self.user, row.sl_run_uuid, include_content=True,
+                )
+                self.assertEqual(payload["question"], "Preserved request")
+                self.assertEqual(payload["answer"], "")
+                self.assertFalse(payload["content_available"])
 
     def test_today_overview_aggregates_model_calls_and_hourly_trend(self):
         now = timezone.localtime()

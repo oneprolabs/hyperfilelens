@@ -33,17 +33,14 @@
     "dangerItemName": "Nombre",
     "dangerItemStatus": "Estado",
     "dangerItemDetails": "Detalles",
-
     "proxyRemovalLimits": "Elimine o reasigne los vínculos de NAS de origen, NAS de destino y disco local antes de eliminar. La eliminación forzada no puede omitir estas restricciones.",
     "proxyForceExplanation": "Se seguirá intentando desinstalar el Agent. Los fallos de limpieza se registran como recursos retenidos mientras continúa la eliminación del plano de control.",
     "gatewayRemovalLimits": "Resuelva las tareas activas y los vínculos de fuentes de conocimiento antes de eliminar. La eliminación forzada no puede omitir estas restricciones.",
     "gatewayForceExplanation": "Se seguirá intentando limpiar el Agent y LensNode. Los fallos de limpieza se registran como recursos retenidos mientras continúa la eliminación del plano de control.",
-
     "dangerAdvancedOptions": "Opciones avanzadas",
     "forceCleanupEnabled": "Eliminación forzada activada",
     "forceDeregisterEnabled": "Baja forzada activada",
     "gatewayForceRetryHint": "Corrija el problema y reintente, o abra las opciones avanzadas y seleccione la eliminación forzada si acepta los recursos retenidos. Las tareas activas y los vínculos de recursos siguen bloqueando la limpieza.",
-
     "confirm": "Aceptar",
     "confirmDelete": "Confirmar eliminación",
     "delete": "Eliminar",
@@ -3093,7 +3090,7 @@
       "skills": "Habilidades",
       "mcpServers": "Servidores MCP",
       "dataGateway": "Puertas de enlace de datos",
-      "usage": "Uso"
+      "requestHistory": "Historial de solicitudes"
     },
     "usage": {
       "periodAria": "Período de utilización",
@@ -3136,8 +3133,8 @@
       "time": "Tiempo",
       "chat": "Chat",
       "status": "Estado",
-      "noFilteredQuestions": "Ninguna pregunta coincide con los filtros actuales",
-      "noQuestionHistory": "No hay preguntas registradas en este período",
+      "noFilteredQuestions": "Ninguna solicitud de chat coincide con los filtros.",
+      "noQuestionHistory": "No hay solicitudes de chat en este intervalo de fechas.",
       "freshnessPending": "{n} en curso · se actualiza automáticamente",
       "freshnessUpdatedAt": "Uso actualizado {time}",
       "freshnessRecorded": "Uso registrado · se actualiza automáticamente",
@@ -3147,7 +3144,21 @@
       "statusCancelled": "Cancelado",
       "statusQueued": "En cola",
       "statusInProgress": "En progreso",
-      "statusUnknown": "Desconocido"
+      "statusUnknown": "Desconocido",
+      "detail": {
+        "title": "Solicitud",
+        "overview": "Resumen",
+        "started": "Inicio",
+        "finished": "Finalización",
+        "gateway": "Puerta de enlace",
+        "automaticGateway": "Automática",
+        "models": "Modelos",
+        "scopes": "Ámbitos",
+        "answer": "Respuesta",
+        "answerUnavailable": "La respuesta no está disponible o aún no se ha generado.",
+        "error": "Error",
+        "loadFailed": "No se pudieron cargar los detalles de la solicitud."
+      }
     },
     "assistants": {
       "btnAdd": "Añadir",
@@ -3373,9 +3384,6 @@
       "addConfigRow": "Añadir parámetro"
     },
     "copilot": {
-
-
-
       "groupPinned": "Fijado",
       "groupToday": "Hoy",
       "groupYesterday": "Ayer",
@@ -4899,7 +4907,6 @@
     "deleteSingleTitle": "Eliminar repositorio de almacenamiento",
     "batchDeleteProxyFsTitle": "Eliminar repositorios de disco local",
     "batchDeleteProxyFsConfirm": "¿Eliminar los {n} repositorios de disco local seleccionados? La limpieza seguirá la estructura de directorios del repositorio. Los datos que no puedan eliminarse de forma segura pueden conservarse; revise las advertencias de la comprobación previa.",
-
     "cleanupResourceSummary": "Recursos asociados: {resources}",
     "cleanupResourceSeparator": " · ",
     "cleanupResourceSources": "{n} fuentes de copia de seguridad",
@@ -4907,10 +4914,8 @@
     "cleanupResourceRestorePlans": "{n} planes de restauración",
     "cleanupViewAssociations": "Ver configuraciones de copia de seguridad asociadas",
     "cleanupViewAssociationsCount": "Ver configuraciones de copia de seguridad asociadas ({n})",
-
     "cleanupBlockedAssociationEmpty": "Ya no hay configuraciones de copia de seguridad asociadas. Los bloqueos de la comprobación siguen siendo válidos; cierre este diálogo y reintente para actualizar las comprobaciones.",
     "cleanupBlockedSourceName": "Origen: {name}",
-
     "cleanupBlockedSources": "Este repositorio está asociado a {n} fuentes de copia de seguridad.",
     "cleanupBlockedSnapshots": "Este repositorio contiene {n} registros de instantáneas.",
     "cleanupBlockedRestorePlans": "Este repositorio está asociado a {n} planes de restauración.",
@@ -4919,7 +4924,6 @@
     "cleanupBlockedAssociationPreview": "Se muestran {shown} de {total} configuraciones asociadas.",
     "cleanupBlockedAssociationUnavailable": "No se pudieron cargar los detalles de las configuraciones asociadas. Las comprobaciones de bloqueo siguen siendo válidas.",
     "cleanupBlockedSummary": "Resuelva los bloqueos de estos {n} repositorios y vuelva a intentar eliminarlos.",
-
     "forceDeleteTitle": "Eliminar repositorio de almacenamiento de forma forzada",
     "forceDeleteMessage": "¿Eliminar este repositorio de forma forzada? Se seguirá intentando cada paso de limpieza. Los recursos que no puedan eliminarse de forma segura se registran como retenidos mientras continúa la eliminación del repositorio.",
     "tabS3": "Almacenamiento de objetos",
@@ -7305,7 +7309,6 @@
       "deleteMergedWarning": "Eliminar los canales de notificación seleccionados, su configuración y sus registros históricos de entrega es irreversible.",
       "deleteMergedLinkedWarning": "Eliminar los canales seleccionados, su configuración y sus registros históricos de entrega es irreversible. Las reglas de alerta que los utilizan ya no podrán enviar notificaciones a través de ellos.",
       "deleteNoLinkedRules": "Ninguna regla de alerta utiliza actualmente este canal.",
-
       "channelsTitle": "Total de canales",
       "listLoadFailed": "No se pudieron cargar los canales de notificación.",
       "secretConfigured": "Configurado (oculto)",

@@ -2752,7 +2752,10 @@ class LensCopilotUsageView(OrgScopedMixin, APIView):
     def get(self, request, run_uuid=None):
         try:
             if run_uuid is not None:
-                return Response(usage.usage_detail(self.org, request.user, run_uuid))
+                return Response(usage.usage_detail(
+                    self.org, request.user, run_uuid,
+                    include_content=request.query_params.get("include_content") == "1",
+                ))
             return Response(
                 usage.usage_overview(self.org, request.user, request.query_params)
             )

@@ -8,6 +8,7 @@ import {
   createCopilotShare,
   createKnowledgeSource,
   fetchCopilotShareCandidate,
+  fetchCopilotUsageDetail,
   fetchSharedCopilotQA,
   listLensGatewayDirectory,
   patchKnowledgeSource,
@@ -52,6 +53,26 @@ vi.mock('../composables/useAuth', () => ({
 afterEach(() => {
   setLensApiScope('tenant')
   vi.clearAllMocks()
+})
+
+describe('personal Usage request detail API', () => {
+  it('always uses the tenant endpoint and org header for drawer content', async () => {
+    setLensApiScope('platform')
+    vi.mocked(api).mockResolvedValueOnce({ code: 0, data: { run_uuid: 'run-a', answer: 'Answer' } })
+    await expect(fetchCopilotUsageDetail('run-a', true))
+      .resolves.toEqual({ run_uuid: 'run-a', answer: 'Answer' })
+    expect(api).toHaveBeenCalledWith('/api/v1/lens/copilot/usage/run-a/?include_content=1', {
+      headers: { 'X-Org-Key': 'tenant-a' },
+    })
+  })
+
+  it('preserves the default ledger-only request', async () => {
+    vi.mocked(api).mockResolvedValueOnce({ run_uuid: 'run-a' })
+    await fetchCopilotUsageDetail('run-a')
+    expect(api).toHaveBeenCalledWith('/api/v1/lens/copilot/usage/run-a/', {
+      headers: { 'X-Org-Key': 'tenant-a' },
+    })
+  })
 })
 
 describe('HFL-authoritative private Gateway directory API', () => {
