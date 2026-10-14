@@ -33,17 +33,14 @@
     "dangerItemName": "名称",
     "dangerItemStatus": "状态",
     "dangerItemDetails": "详情",
-
     "proxyRemovalLimits": "删除前需解除或重新绑定源 NAS、目标 NAS 及本地磁盘关系。强制删除也不能绕过这些限制。",
     "proxyForceExplanation": "仍会尝试卸载 Agent；清理失败时记录保留资源，并继续移除控制面记录。",
     "gatewayRemovalLimits": "删除前需处理活动任务并解除知识源绑定。强制删除也不能绕过这些限制。",
     "gatewayForceExplanation": "仍会尝试清理 Agent 和 LensNode；清理失败时记录保留资源，并继续移除控制面记录。",
-
     "dangerAdvancedOptions": "高级选项",
     "forceCleanupEnabled": "强制删除已启用",
     "forceDeregisterEnabled": "强制注销已启用",
     "gatewayForceRetryHint": "修复问题后重试；如接受资源残留，可展开高级选项选择强制删除。活动任务和资源绑定仍会阻止清理。",
-
     "confirm": "确定",
     "confirmDelete": "确认删除",
     "delete": "删除",
@@ -3093,7 +3090,7 @@
       "skills": "技能",
       "mcpServers": "MCP 服务",
       "dataGateway": "数据网关",
-      "usage": "用量"
+      "requestHistory": "请求记录"
     },
     "usage": {
       "periodAria": "用量统计时间范围",
@@ -3136,8 +3133,8 @@
       "time": "时间",
       "chat": "对话",
       "status": "状态",
-      "noFilteredQuestions": "没有符合当前筛选条件的问题",
-      "noQuestionHistory": "此时间段暂无问题记录",
+      "noFilteredQuestions": "没有符合当前筛选条件的对话请求记录。",
+      "noQuestionHistory": "此时间范围内暂无对话请求记录。",
       "freshnessPending": "{n} 项进行中 · 自动更新",
       "freshnessUpdatedAt": "用量更新于 {time}",
       "freshnessRecorded": "已记录用量 · 自动更新",
@@ -3147,7 +3144,21 @@
       "statusCancelled": "已取消",
       "statusQueued": "排队中",
       "statusInProgress": "进行中",
-      "statusUnknown": "未知"
+      "statusUnknown": "未知",
+      "detail": {
+        "title": "请求详情",
+        "overview": "概览",
+        "started": "开始时间",
+        "finished": "结束时间",
+        "gateway": "网关",
+        "automaticGateway": "自动选择",
+        "models": "模型",
+        "scopes": "内容范围",
+        "answer": "回答",
+        "answerUnavailable": "回答暂不可用，或尚未生成。",
+        "error": "错误",
+        "loadFailed": "无法加载请求详情。"
+      }
     },
     "assistants": {
       "btnAdd": "添加",
@@ -3373,9 +3384,6 @@
       "addConfigRow": "添加参数"
     },
     "copilot": {
-
-
-
       "groupPinned": "置顶",
       "groupToday": "今天",
       "groupYesterday": "昨天",
@@ -4899,7 +4907,6 @@
     "deleteSingleTitle": "删除存储仓库",
     "batchDeleteProxyFsTitle": "批量删除本地磁盘仓库",
     "batchDeleteProxyFsConfirm": "删除所选的 {n} 个本地磁盘仓库？系统将根据仓库目录结构执行清理；无法安全移除的数据可能保留，请查看下方预检提示。",
-
     "cleanupResourceSummary": "关联资源：{resources}",
     "cleanupResourceSeparator": " · ",
     "cleanupResourceSources": "{n} 个备份源",
@@ -4907,10 +4914,8 @@
     "cleanupResourceRestorePlans": "{n} 个恢复计划",
     "cleanupViewAssociations": "查看关联备份配置",
     "cleanupViewAssociationsCount": "查看关联备份配置（{n}）",
-
     "cleanupBlockedAssociationEmpty": "当前没有关联的备份配置。预检阻塞结果仍然有效，请关闭弹窗并重试以刷新检查结果。",
     "cleanupBlockedSourceName": "源：{name}",
-
     "cleanupBlockedSources": "此存储仓库关联了 {n} 个备份源。",
     "cleanupBlockedSnapshots": "此存储仓库包含 {n} 条快照记录。",
     "cleanupBlockedRestorePlans": "此存储仓库关联了 {n} 个恢复计划。",
@@ -4919,7 +4924,6 @@
     "cleanupBlockedAssociationPreview": "当前显示 {shown} 条，共 {total} 条关联配置。",
     "cleanupBlockedAssociationUnavailable": "未能加载关联配置详情，以上阻塞检查结果仍然有效。",
     "cleanupBlockedSummary": "请处理以下 {n} 个存储仓库的阻塞原因，再重试删除。",
-
     "forceDeleteTitle": "强制删除存储仓库",
     "forceDeleteMessage": "强制删除此存储仓库？仍会尝试每个清理步骤；无法安全移除的资源将记录为保留资源，并继续移除仓库。",
     "tabS3": "对象存储",
@@ -7305,7 +7309,6 @@
       "deleteMergedWarning": "删除所选通知渠道及其配置、历史投递记录后无法恢复。",
       "deleteMergedLinkedWarning": "删除所选渠道及其配置、历史投递记录后无法恢复。引用这些渠道的告警规则将无法再通过这些渠道发送通知。",
       "deleteNoLinkedRules": "当前没有告警规则引用此渠道。",
-
       "channelsTitle": "渠道总数",
       "listLoadFailed": "无法加载通知渠道。",
       "secretConfigured": "配置（隐藏）",

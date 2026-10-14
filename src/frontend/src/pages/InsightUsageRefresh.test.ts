@@ -9,20 +9,22 @@ const usagePage = readFileSync(
 )
 
 
-describe('Insight usage refresh semantics', () => {
-  it('reloads the HFL ledger without claiming that upstream data was synchronized', () => {
-    expect(usagePage).toContain('@click="loadUsage"')
-    expect(usagePage).toContain(':disabled="loading"')
-    expect(usagePage).toContain("'is-spinning': loading")
+describe('Insight usage history controls', () => {
+  it('loads on mount and filter changes without a manual refresh button', () => {
+    expect(usagePage).toContain('onMounted(() =>')
+    expect(usagePage).toContain('watch(statusFilter,')
+    expect(usagePage).toContain('watch(searchQuery,')
+    expect(usagePage).not.toContain('usage-icon-button')
+    expect(usagePage).not.toContain('RefreshCw')
     expect(usagePage).not.toContain('Usage refreshed.')
     expect(usagePage).not.toContain('ElMessage.success')
   })
 
-  it('shows persisted freshness and preserves unknown cost semantics', () => {
-    expect(usagePage).toContain('usage.value?.data_freshness')
-    expect(usagePage).toContain("t('insight.usage.freshnessPending'")
-    expect(usagePage).toContain("t('insight.usage.freshnessRecorded')")
-    expect(usagePage).toContain("if (value == null) return t('insight.usage.unavailable')")
-    expect(usagePage).toContain('costMode ? row.total_cost')
+  it('removes usage metrics without reintroducing dashboard content', () => {
+    expect(usagePage).not.toContain('formatCost(')
+    expect(usagePage).not.toContain('formatCompact(')
+    expect(usagePage).not.toContain('usageFreshness')
+    expect(usagePage).not.toContain('usage.value?.summary')
+    expect(usagePage).not.toContain('usage.value?.trend')
   })
 })
