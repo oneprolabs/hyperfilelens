@@ -215,5 +215,6 @@
   "repositoriesPage.protocolNfs",
   "repositoriesPage.protocolSmb",
   "repositoriesPage.storageTypeNas",
-  "searchPage.colId"
+  "searchPage.colId",
+  "repositoriesPage.cleanupResourceSeparator"
 ]
