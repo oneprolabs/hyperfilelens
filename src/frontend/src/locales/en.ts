@@ -3376,6 +3376,7 @@ export const en = {
       },
     },
     membersPage: {
+      createRoleFirst: 'Create a Role before adding members.',
       member: 'Member',
       organizationRole: 'Organization Role',
       groups: 'Groups',

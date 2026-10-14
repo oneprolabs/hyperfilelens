@@ -1,4 +1,5 @@
 {
+  "settings.membersPage.createRoleFirst": "Cree un rol antes de añadir miembros.",
   "settings.governanceActions.organizationChanged": "La organización ha cambiado. Cierra este diálogo y actualiza la página antes de volver a intentarlo.",
   "settings.governanceActions.selectItems": "Selecciona uno o varios elementos.",
   "settings.governanceActions.selectionLimit": "Selecciona un máximo de 200 elementos cada vez.",

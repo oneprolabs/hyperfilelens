@@ -3,7 +3,7 @@
 import os
 
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
@@ -39,6 +39,17 @@ class Command(BaseCommand):
         admin_password = str(opts["admin_password"])
 
         User = get_user_model()
+        from apps.iam.services.member_onboarding import lock_identity_provisioning
+
+        lock_identity_provisioning()
+        existing = User.objects.filter(username=admin_email).first()
+        if existing is not None and not existing.is_staff:
+            raise CommandError("The installation administrator conflicts with an existing ordinary account.")
+        duplicates = User.objects.filter(email__iexact=admin_email)
+        if existing is not None:
+            duplicates = duplicates.exclude(pk=existing.pk)
+        if duplicates.exists():
+            raise CommandError("The installation administrator email is already used by another account.")
         user, created = User.objects.get_or_create(
             username=admin_email,
             defaults={
@@ -61,6 +72,7 @@ class Command(BaseCommand):
             user=user,
             defaults={
                 "registration_completed": True,
+                "is_installation_admin": True,
                 "registered_at": timezone.now(),
                 "language": "en",
                 "timezone": "UTC",
@@ -124,6 +136,9 @@ class Command(BaseCommand):
             is_active=True,
         )
 
+        from apps.iam.services.role_seeding import seed_organization_roles
+
+        seed_organization_roles(org)
         seed_global_config()
 
         self.stdout.write(

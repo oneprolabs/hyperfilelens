@@ -222,6 +222,10 @@ class MemberOnboardingSerializer(serializers.Serializer):
     def validate(self, attrs):
         if bool(attrs.get("email")) == bool(attrs.get("user")):
             raise serializers.ValidationError({"email": _("Provide an email or an existing user ID, not both.")})
+        from common.extension_spi import get_authz_provider
+
+        if get_authz_provider() is not None and not attrs.get("role"):
+            raise serializers.ValidationError({"role": "Select an allowed organization role."})
         if attrs.get("role") is not None:
             MembershipSerializer(context=self.context).validate_role(attrs["role"])
         return attrs

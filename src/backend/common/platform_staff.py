@@ -19,3 +19,16 @@ def platform_staff_update_fields(*, include_password: bool = False) -> list[str]
     if include_password:
         fields.append("password")
     return fields
+
+
+def is_installation_admin(user: AbstractBaseUser) -> bool:
+    """Recognize a live trusted bootstrap identity, not an email or staff flag."""
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    if not getattr(user, "is_active", False) or not getattr(user, "is_staff", False):
+        return False
+    from apps.iam.profile_models import Profile
+
+    return Profile.objects.filter(
+        user_id=user.pk, is_installation_admin=True,
+    ).exists()

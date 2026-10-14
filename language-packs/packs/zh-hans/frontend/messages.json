@@ -1,4 +1,5 @@
 {
+  "settings.membersPage.createRoleFirst": "请先创建角色，再添加成员。",
   "settings.governanceActions.organizationChanged": "当前组织已切换。请关闭此弹窗，刷新后重试。",
   "settings.governanceActions.selectItems": "请选择一项或多项。",
   "settings.governanceActions.selectionLimit": "每次最多选择 200 项。",

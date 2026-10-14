@@ -80,6 +80,9 @@ def create_user_organization(request: Any, *, name: str) -> Organization:
     Membership.objects.create(
         user=request.user, organization=org, role="owner", is_active=True
     )
+    from apps.iam.services.role_seeding import seed_organization_roles
+
+    seed_organization_roles(org)
     audit_services.write_audit_log_from_request(
         request,
         organization=org,
