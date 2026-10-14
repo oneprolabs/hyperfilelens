@@ -253,6 +253,16 @@ def filter_task_queryset(request: Any, queryset: QuerySet) -> QuerySet:
     context = request_authorization(request)
     if context is not None and not getattr(request, "hfl_support_readonly", False):
         return _filter_task_sql(queryset, context)
+    if getattr(request, "hfl_support_readonly", False) and request.method in {
+        "GET", "HEAD", "OPTIONS",
+    }:
+        # Platform support sessions are explicitly read-only and tenant-bound
+        # by get_membership(); keep their historical task view consistent
+        # after the source's live identity has been removed.
+        from apps.iam.models import Organization
+
+        org = Organization.objects.filter(key=resolve_org_key(request)).first()
+        return queryset.filter(organization_id=org.pk) if org is not None else queryset.none()
 
     from apps.task.models import TaskResource
 
@@ -335,7 +345,7 @@ def filter_task_queryset(request: Any, queryset: QuerySet) -> QuerySet:
 
 
 def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
-    """Operational rows use correlated live-resource authorization, not ID scans."""
+    """Task reads use correlated current grants, including retained identities."""
     from django.db.models import BigIntegerField, Case, Exists, F, OuterRef, Q, Value, When
     from django.db.models.fields.json import KeyTextTransform
     from django.db.models.functions import Cast
@@ -349,6 +359,13 @@ def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
         return queryset.none()
     queryset = fence(queryset)
     queryset = queryset.filter(organization_id=context.org.pk)
+    if context.has_org_action(action) and context.has_org_action("configuration.resources.access_all"):
+        # History belongs to the organization, even after its live target is
+        # removed. The actor/Role fence above still observes revocation.
+        return queryset
+    history_scope = getattr(context, "filter_task_resource_queryset", None)
+    if not callable(history_scope):
+        history_scope = context.filter_queryset
     mapping = (
         ("node", Q(resource_type="host") | Q(resource_type="backup_source", resource_subtype="agent")),
         ("source_resource", Q(resource_type="backup_source", resource_subtype="nas")),
@@ -361,7 +378,8 @@ def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
     for kind, types in mapping:
         recognized |= types
         model = context.resource_model(kind)
-        allowed = context.filter_queryset(model.objects.all(), kind, action=action)
+        manager = getattr(model, "all_objects", model.objects)
+        allowed = history_scope(manager.all(), kind, action=action)
         allowed_bindings |= types & Q(Exists(allowed.filter(pk=OuterRef("resource_id"))))
     queryset = queryset.annotate(
         _hfl_has_refs=Exists(references.filter(recognized)),
@@ -380,20 +398,16 @@ def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
             default=Value(None), output_field=BigIntegerField(),
         )})
     condition = Q(_hfl_allowed_refs=True)
-    config = context.filter_queryset(
+    config = history_scope(
         context.resource_model("backup_config").objects.all(), "backup_config", action=action,
     )
     fallback = Q(Exists(config.filter(pk=OuterRef("_hfl_config_ref"))))
     for kind, source_type in (("node", "agent"), ("source_resource", "nas")):
-        allowed = context.filter_queryset(context.resource_model(kind).objects.all(), kind, action=action)
+        model = context.resource_model(kind)
+        manager = getattr(model, "all_objects", model.objects)
+        allowed = history_scope(manager.all(), kind, action=action)
         fallback |= Q(_hfl_config_ref__isnull=True, request_payload__source_type=source_type) & Q(
             Exists(allowed.filter(pk=OuterRef("_hfl_source_ref"))),
         )
     condition |= Q(_hfl_has_refs=False) & fallback
-    if context.has_org_action(action) and context.has_org_action("configuration.resources.access_all"):
-        # Truly unscoped maintenance tasks remain visible to organization ops.
-        condition |= Q(_hfl_has_refs=False, _hfl_config_ref__isnull=True) & (
-            Q(_hfl_source_ref__isnull=True)
-            | ~Q(request_payload__source_type__in=("agent", "nas"))
-        )
     return queryset.filter(condition)

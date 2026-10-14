@@ -88,7 +88,9 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
       op.taskUuid
         && (
           ['deleting', 'delete_waiting', 'delete_blocked'].includes(op.kind)
-          || op.kind === 'delete_failed'
+          || (op.kind === 'delete_failed' && (
+            !op.failureDetails || op.failureDetails.errorCode === 'TASK_MONITOR_UNAVAILABLE'
+          ))
         )
         ? [{ sourceId, taskUuid: op.taskUuid, startedAt: op.startedAt }]
         : [],
@@ -106,7 +108,10 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
 
   function isRowSelectable(sourceId: string) {
     const op = getOp(sourceId)
-    if (op?.kind === 'delete_failed' || op?.kind === 'delete_blocked') return true
+    if (op?.kind === 'delete_failed') {
+      return op.failureDetails?.errorCode !== 'TASK_MONITOR_UNAVAILABLE'
+    }
+    if (op?.kind === 'delete_blocked') return true
     return !isPending(sourceId)
   }
 
@@ -164,32 +169,6 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
     clear(ids)
   }
 
-  function injectPendingRows(
-    rows: FlowSourceRow[],
-    ctx?: { activeRemovalNodeIds?: Set<number> },
-  ): FlowSourceRow[] {
-    if (!ops.value.size) return rows
-    const activeRemoval = ctx?.activeRemovalNodeIds ?? new Set<number>()
-    const seen = new Set(rows.map((row) => row.id))
-    const merged = [...rows]
-    for (const [id, snap] of snapshots.value.entries()) {
-      if (!ops.value.has(id) || seen.has(id)) continue
-      const op = ops.value.get(id)
-      if (!op) continue
-      if (op.kind === 'removing') {
-        if (op.nodeId != null && activeRemoval.has(op.nodeId)) {
-          merged.push(snap)
-          seen.add(id)
-        }
-        continue
-      }
-      if (['deleting', 'delete_waiting', 'delete_blocked', 'delete_failed'].includes(op.kind)) {
-        merged.push(snap)
-        seen.add(id)
-      }
-    }
-    return merged
-  }
 
   restorePersisted()
 
@@ -204,7 +183,6 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
     transitionToRemoving,
     clear,
     clearByNodeId,
-    injectPendingRows,
     restorePersisted,
     reconcileWithCatalog,
   }

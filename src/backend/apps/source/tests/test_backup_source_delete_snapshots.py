@@ -25,9 +25,11 @@ from apps.protection.models import (
 )
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
 from apps.protection.services.snapshot_delete import (
+    _finish_transferred_source_cleanup,
     create_snapshot_delete_task,
     fail_snapshot_delete_task,
     reconcile_snapshot_delete_tasks,
+    run_snapshot_delete_task,
 )
 from apps.source.models import BackupSourceRepositoryPurgePending, SourceResource
 from apps.source.services.internal.backup_source_delete import (
@@ -209,6 +211,180 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
             watchdog_deadline_at=timezone.now() + timezone.timedelta(minutes=5),
         )
         return agent, parent, child, node_task
+
+    @override_settings(SOURCE_FORCE_UNREGISTER_CLEANUP_WAIT_SECONDS=0)
+    def test_force_snapshot_wait_becomes_durable_residue_before_control_purge(self):
+        from apps.source.services.internal.backup_source_delete import _delete_repository_snapshots
+
+        BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot=self.snapshot,
+        ).update(repository_locator={
+            "version": 1,
+            "repository_type": "s3",
+            "repository_subdir": "hfl/source",
+            "writer_node_id": 7,
+            "access_node_id": 8,
+            "secret_token": "must-not-persist",
+        })
+        parent = self._create_unregister_parent()
+        ctx = _resolve_context(organization_id=self.org.pk, selectable_id=f"nas:{self.resource.pk}")
+        warnings, reasons = [], []
+        with (
+            patch("apps.source.services.internal.backup_source_delete._renew_unregister_execution_lease"),
+            patch("apps.source.services.internal.backup_source_delete._snapshot_delete_for_unregister",
+                  return_value=(None, None, {"task_uuid": "pending-child", "status": "running"})),
+        ):
+            result = _delete_repository_snapshots(
+                organization_id=self.org.pk, ctx=ctx, force=True,
+                warnings=warnings, reasons=reasons, unregister_task=parent, lease_owner_token="lease",
+            )
+        self.assertFalse(result["_snapshot_cleanup_waiting"])
+        self.assertEqual(result["repository_purge_pending"], 1)
+        self.assertEqual(reasons, [])
+        pending = BackupSourceRepositoryPurgePending.objects.get()
+        self.assertEqual(pending.payload["source_snapshot_ids"], [self.snapshot.pk])
+        self.assertEqual(pending.payload["kopia_snapshot_ids"], ["kopia-delete-fail"])
+        locator = pending.payload["snapshot_locations"][0]["repository_locator"]
+        self.assertEqual(
+            set(locator), {
+                "version", "repository_id", "repository_type", "repository_subdir",
+                "writer_node_id", "access_node_id",
+            },
+        )
+        self.assertNotIn("secret_token", str(pending.payload))
+        self.assertIn(f"repository_cleanup_record:{pending.pk}", warnings[0].retained_resources)
+        # Recording residue alone must not prematurely purge any live control rows.
+        self.assertTrue(BackupConfig.objects.filter(pk=self.config.pk).exists())
+
+    @override_settings(SOURCE_UNREGISTER_CLEANUP_WAIT_SECONDS=0)
+    def test_strict_snapshot_wait_times_out_without_discarding_control_records(self):
+        from apps.source.services.internal.backup_source_delete import _delete_repository_snapshots
+
+        parent = self._create_unregister_parent()
+        ctx = _resolve_context(organization_id=self.org.pk, selectable_id=f"nas:{self.resource.pk}")
+        warnings, reasons = [], []
+        with (
+            patch("apps.source.services.internal.backup_source_delete._renew_unregister_execution_lease"),
+            patch("apps.source.services.internal.backup_source_delete._snapshot_delete_for_unregister",
+                  return_value=(None, None, {"task_uuid": "pending-child", "status": "running"})),
+        ):
+            result = _delete_repository_snapshots(
+                organization_id=self.org.pk, ctx=ctx, force=False,
+                warnings=warnings, reasons=reasons, unregister_task=parent, lease_owner_token="lease",
+            )
+        self.assertFalse(result["_snapshot_cleanup_waiting"])
+        self.assertEqual(reasons[0].code, "repository_snapshot_delete_failed")
+        self.assertEqual(warnings, [])
+        self.assertFalse(BackupSourceRepositoryPurgePending.objects.exists())
+        self.assertTrue(BackupConfig.objects.filter(pk=self.config.pk).exists())
+
+    @override_settings(SOURCE_FORCE_UNREGISTER_CLEANUP_WAIT_SECONDS=0)
+    def test_force_unregister_finalizes_control_plane_with_pending_snapshot_child(self):
+        parent = _create_source_unregister_task(
+            org=self.org, selectable_id=f"nas:{self.resource.pk}", force=True,
+        )
+        parent = start_task(task_uuid=parent.task_uuid, organization_id=self.org.pk)
+        child = create_snapshot_delete_task(
+            source_snapshot=self.snapshot, source_unregister_task=parent,
+        )
+        with (
+            patch("apps.source.services.internal.backup_source_delete._renew_unregister_execution_lease"),
+            patch("apps.source.services.internal.backup_source_delete._snapshot_delete_for_unregister",
+                  return_value=(None, None, {"task_uuid": "pending-child", "status": "running"})),
+            patch("apps.source.services.internal.backup_source_delete._strict_nas_umount",
+                  return_value={"failed": False}),
+        ):
+            result = run_source_unregister_task(
+                organization_id=self.org.pk, task_uuid=str(parent.task_uuid), lease_owner_token="lease",
+            )
+        parent.refresh_from_db()
+        self.assertEqual(parent.status, Task.Status.SUCCESS)
+        self.assertEqual(result["control_plane_status"], "completed")
+        self.assertEqual(result["physical_cleanup_status"], "partial")
+        self.assertEqual(result["result"], "partial_success")
+        self.assertFalse(result["cleanup_complete"])
+        self.assertFalse(SourceResource.objects.filter(pk=self.resource.pk).exists())
+        self.assertFalse(BackupConfig.objects.filter(pk=self.config.pk).exists())
+        pending = BackupSourceRepositoryPurgePending.objects.get()
+        self.assertEqual(pending.payload["kopia_snapshot_ids"], ["kopia-delete-fail"])
+        self.assertEqual(
+            pending.payload["snapshot_locations"][0]["source_snapshot_id"], self.snapshot.pk,
+        )
+        for status, age in (
+            (Task.Status.PENDING, timezone.timedelta(minutes=6)),
+            (Task.Status.RUNNING, timezone.timedelta(hours=3)),
+        ):
+            with self.subTest(child_status=status):
+                Task.objects.filter(pk=child.pk).update(
+                    status=status,
+                    error_code=None,
+                    result_payload=None,
+                    finished_at=None,
+                    updated_at=timezone.now() - age,
+                )
+                with patch(
+                    "apps.protection.services.snapshot_delete.queue_snapshot_delete_task"
+                ) as queue_child:
+                    reconciled = reconcile_snapshot_delete_tasks()
+                child.refresh_from_db()
+                self.assertEqual(child.status, Task.Status.FAILED)
+                self.assertEqual(child.error_code, "SNAPSHOT_CLEANUP_RETAINED")
+                self.assertEqual(reconciled["transferred_residue"], 1)
+                self.assertEqual(reconciled["recovered_running"], 0)
+                queue_child.assert_not_called()
+        # Redelivery is idempotent and does not duplicate residue or revive the source.
+        self.assertEqual(run_source_unregister_task(
+            organization_id=self.org.pk, task_uuid=str(parent.task_uuid),
+        ), parent.result_payload)
+        self.assertEqual(BackupSourceRepositoryPurgePending.objects.count(), 1)
+        child.request_payload["source_unregister_attempt"] = parent.retry_count + 1
+        self.assertIsNone(_finish_transferred_source_cleanup(
+            task=child, source_snapshot_id=self.snapshot.pk,
+        ))
+        child.request_payload["source_unregister_attempt"] = parent.retry_count
+        # A queued/late child sees a trusted transfer, not an INTERNAL_ERROR,
+        # and cannot recreate the removed protection rows.
+        late_result = run_snapshot_delete_task(
+            organization_id=self.org.pk, task_uuid=str(child.task_uuid),
+            source_snapshot_id=self.snapshot.pk,
+        )
+        child.refresh_from_db()
+        self.assertEqual(child.error_code, "SNAPSHOT_CLEANUP_RETAINED")
+        self.assertFalse(late_result["cleanup_complete"])
+        self.assertFalse(BackupConfig.objects.filter(pk=self.config.pk).exists())
+
+    @override_settings(SOURCE_FORCE_UNREGISTER_CLEANUP_WAIT_SECONDS=0)
+    def test_control_plane_transaction_failure_never_reports_completed(self):
+        from apps.source.services.internal.backup_source_delete import _purge_source_control_plane
+
+        parent = _create_source_unregister_task(
+            org=self.org, selectable_id=f"nas:{self.resource.pk}", force=True,
+        )
+        parent = start_task(task_uuid=parent.task_uuid, organization_id=self.org.pk)
+
+        def fail_after_purge(**kwargs):
+            _purge_source_control_plane(**kwargs)
+            raise RuntimeError("Simulated control-plane transaction failure")
+
+        with (
+            patch("apps.source.services.internal.backup_source_delete._renew_unregister_execution_lease"),
+            patch("apps.source.services.internal.backup_source_delete._snapshot_delete_for_unregister",
+                  return_value=(None, None, {"task_uuid": "pending-child", "status": "running"})),
+            patch("apps.source.services.internal.backup_source_delete._strict_nas_umount",
+                  return_value={"failed": False}),
+            patch("apps.source.services.internal.backup_source_delete._purge_source_control_plane",
+                  side_effect=fail_after_purge),
+            self.assertRaisesRegex(RuntimeError, "transaction failure"),
+        ):
+            run_source_unregister_task(
+                organization_id=self.org.pk, task_uuid=str(parent.task_uuid), lease_owner_token="lease",
+            )
+        parent.refresh_from_db()
+        self.assertEqual(parent.status, Task.Status.RUNNING)
+        self.assertNotEqual((parent.result_payload or {}).get("control_plane_status"), "completed")
+        self.assertTrue(SourceResource.objects.filter(pk=self.resource.pk).exists())
+        self.assertTrue(BackupConfig.objects.filter(pk=self.config.pk).exists())
+        self.assertTrue(BackupSourceRepositoryPurgePending.objects.exists())
 
     def test_checkpoint_uses_latest_snapshot_child_state(self):
         previous = {

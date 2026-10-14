@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
@@ -108,6 +110,16 @@ _UNREGISTER_NOT_STARTED_ERROR_CODES = {
 }
 
 
+def _unregister_cleanup_wait_expired(task: Task, *, force: bool) -> bool:
+    """Bound physical cleanup waits across worker restarts and checkpoints."""
+    setting = (
+        "SOURCE_FORCE_UNREGISTER_CLEANUP_WAIT_SECONDS"
+        if force else "SOURCE_UNREGISTER_CLEANUP_WAIT_SECONDS"
+    )
+    seconds = max(0, int(getattr(settings, setting, 120 if force else 900)))
+    return timezone.now() >= (task.started_at or task.created_at) + timedelta(seconds=seconds)
+
+
 @dataclass
 class DeleteReason:
     code: str
@@ -201,6 +213,7 @@ class DirectNasCleanupOutcome:
     warnings: tuple[DeleteWarning, ...] = ()
     retained_resources: tuple[str, ...] = ()
     waiting: bool = False
+    waiting_for: str = "repository_cleanup"
 
 
 class BackupSourceDeleteFailed(Exception):
@@ -736,6 +749,32 @@ def _sanitize_cleanup_value(value: Any) -> Any:
     return value
 
 
+def _safe_snapshot_locator(
+    value: Any,
+    *,
+    repository_id: int | None = None,
+) -> dict[str, Any]:
+    """Persist only non-secret locator fields in durable cleanup residue."""
+    if not isinstance(value, dict):
+        return {}
+    allowed = (
+        "version",
+        "repository_id",
+        "repository_type",
+        "repository_subdir",
+        "writer_node_id",
+        "access_node_id",
+    )
+    safe = {
+        key: value[key]
+        for key in allowed
+        if key in value and value[key] not in (None, "")
+    }
+    if repository_id is not None:
+        safe.setdefault("repository_id", int(repository_id))
+    return safe
+
+
 def _set_unregister_step(
     *,
     task: Task | None,
@@ -776,6 +815,10 @@ def _complete_unregister_task(
 ) -> None:
     if task is None:
         return
+    result_payload = dict(result_payload or {})
+    if status in {Task.Status.FAILED, Task.Status.TIMEOUT, Task.Status.CANCELLED}:
+        result_payload.setdefault("control_plane_status", "failed")
+        result_payload.setdefault("physical_cleanup_status", "partial")
     complete_task(
         task_uuid=task.task_uuid,
         organization_id=task.organization_id,
@@ -1646,12 +1689,26 @@ def _cleanup_direct_nas_for_unregister(
             # to the durable warning/failure lists: those lists intentionally
             # survive retries and would otherwise turn a later successful
             # cleanup into a permanent partial-success result.
+            if _unregister_cleanup_wait_expired(unregister_task, force=force):
+                raise BackupSourceDeleteFailed(
+                    message="Backup source is still in use.",
+                    reasons=[
+                        DeleteReason(
+                            code="snapshot_in_use",
+                            detail="Snapshot usage leases did not drain before the deregistration deadline.",
+                            source_id=ctx.selectable_id,
+                            source_name=ctx.display_name,
+                            repository_id=repository.id,
+                        )
+                    ],
+                )
             return DirectNasCleanupOutcome(
                 cleaned_repository_ids=cleaned_repository_ids,
                 cleanup_tasks=cleanup_tasks,
                 warnings=tuple(warnings),
                 retained_resources=tuple(dict.fromkeys(retained_resources)),
                 waiting=True,
+                waiting_for="snapshot_usage_lease_release",
             )
         target_ids = direct_nas_cleanup_target_ids(
             repository=repository,
@@ -1759,6 +1816,29 @@ def _cleanup_direct_nas_for_unregister(
             )
             cleanup_tasks.append(repository_cleanup_task_payload(repository_task))
             if repository_task.task.status in _ACTIVE_TASK_STATUSES:
+                if _unregister_cleanup_wait_expired(unregister_task, force=force):
+                    if not force:
+                        raise BackupSourceDeleteFailed(
+                            message="Direct NAS repository cleanup timed out.",
+                            reasons=[
+                                DeleteReason(
+                                    code="repository_cleanup_timeout",
+                                    detail="The physical cleanup task is still pending; control-plane records were retained.",
+                                    source_id=ctx.selectable_id,
+                                    repository_id=repository.id,
+                                )
+                            ],
+                        )
+                    # The durable child and target/location claims retain the
+                    # cleanup identity. Do not remove shared repository state.
+                    cleanup_failure(
+                        repository=repository,
+                        target_id=target_id,
+                        code="repository_cleanup_pending",
+                        detail="Physical target cleanup remains pending after control-plane deregistration.",
+                    )
+                    repository_failed = True
+                    continue
                 return DirectNasCleanupOutcome(
                     cleaned_repository_ids=cleaned_repository_ids,
                     cleanup_tasks=cleanup_tasks,
@@ -2150,6 +2230,8 @@ def _save_source_unregister_checkpoint(
         response,
     )
     checkpoint["result"] = "waiting"
+    checkpoint["control_plane_status"] = "running"
+    checkpoint["physical_cleanup_status"] = "running"
     Task.objects.filter(pk=task.pk, status=Task.Status.RUNNING).update(
         result_payload=checkpoint,
         updated_at=timezone.now(),
@@ -2353,6 +2435,12 @@ def _complete_source_unregister_transaction(
             "task_uuid": str(locked_task.task_uuid),
         },
     )
+    # These are result dimensions, not new Task statuses. They are written in
+    # the same transaction as identity removal and terminal task completion.
+    response["control_plane_status"] = "completed"
+    response["physical_cleanup_status"] = (
+        "completed" if response.get("cleanup_complete", True) else "partial"
+    )
     result = str(response.get("result") or "success")
     deleted = [str(value) for value in response.get("deleted") or []]
     warnings = [
@@ -2444,7 +2532,7 @@ def _execute_source_unregister_work(
         step_name="cleanup_direct_nas_repositories",
         status=TaskStep.Status.RUNNING,
         progress=20,
-        message="Cleaning Direct NAS physical repositories",
+        message="Cleaning backup data",
     )
 
     deleted: list[str] = []
@@ -2501,7 +2589,10 @@ def _execute_source_unregister_work(
                     status=TaskStep.Status.RUNNING,
                     progress=20,
                     message="Waiting for Direct NAS repository cleanup",
-                    metadata={"cleanup_tasks": direct_cleanup_by_source},
+                    metadata={
+                        "cleanup_tasks": direct_cleanup_by_source,
+                        "waiting_for": cleanup_outcome.waiting_for,
+                    },
                 )
                 waiting_failures = [
                     warning.as_dict() for warning in cleanup_outcome.warnings
@@ -2542,7 +2633,7 @@ def _execute_source_unregister_work(
                     "task_id": unregister_task.id,
                     "task_uuid": str(unregister_task.task_uuid),
                     "status": Task.Status.RUNNING,
-                    "waiting_for": "snapshot_usage_lease_release",
+                    "waiting_for": cleanup_outcome.waiting_for,
                 }
                 return _save_source_unregister_checkpoint(
                     task=unregister_task,
@@ -2573,7 +2664,10 @@ def _execute_source_unregister_work(
                     status=TaskStep.Status.RUNNING,
                     progress=25,
                     message="Waiting for backup snapshot cleanup",
-                    metadata={"snapshot_cleanup_tasks": snapshot_cleanup_by_source},
+                    metadata={
+                        "snapshot_cleanup_tasks": snapshot_cleanup_by_source,
+                        "waiting_for": "snapshot_cleanup",
+                    },
                 )
                 waiting_failures = [warning.as_dict() for warning in warnings]
                 response = {
@@ -2619,6 +2713,7 @@ def _execute_source_unregister_work(
                     "task_id": unregister_task.id,
                     "task_uuid": str(unregister_task.task_uuid),
                     "status": Task.Status.RUNNING,
+                    "waiting_for": "snapshot_cleanup",
                 }
                 return _save_source_unregister_checkpoint(
                     task=unregister_task,
@@ -2779,6 +2874,60 @@ def _execute_source_unregister_work(
     )
 
     pending_removals: list[dict[str, Any]] = []
+
+    def retain_pending_endpoint(selectable_id: str, node: Node) -> bool:
+        """A fenced force operation need not wait forever for uninstall ACK."""
+        if not force or not _unregister_cleanup_wait_expired(unregister_task, force=True):
+            return False
+        from apps.node.services.internal.task import complete_task as complete_node_task
+
+        owned_remove = NodeTask.objects.filter(
+            organization_id=org.id,
+            node_id=node.pk,
+            kind="agent.uninstall",
+            correlation_type="node.lifecycle",
+            correlation_id=f"remove:{node.pk}",
+            payload__source_unregister_task_id=unregister_task.pk,
+            payload__source_unregister_attempt=int(unregister_task.retry_count or 0),
+            status__in={NodeTask.Status.PENDING, NodeTask.Status.RUNNING},
+        ).first()
+        if owned_remove is None:
+            # Never infer completion from a dispatch response without the
+            # durable task/attempt identity needed to fence a late callback.
+            return False
+        failure = {
+            "code": "agent_uninstall_pending",
+            "detail": "Remote uninstall was not confirmed before the force deregistration deadline.",
+            "source_id": selectable_id,
+        }
+        complete_node_task(
+            task_id=owned_remove.pk,
+            node_id=node.pk,
+            status=NodeTask.Status.FAILED,
+            error=failure["detail"],
+            result={
+                # Keep the detached marker so a late signed Agent callback is
+                # retained as diagnostics instead of reopening this terminal
+                # lifecycle result.
+                "mode": "local_detached",
+                "cleanup_complete": False,
+                "cleanup_failures": [failure],
+                "retained_resources": ["agent_installation"],
+                "control_plane_finalize_by": str(unregister_task.task_uuid),
+            },
+        )
+        all_warnings.append(failure)
+        for source in per_source:
+            if source.get("source_id") == selectable_id:
+                _merge_source_cleanup_outcome(
+                    source, cleanup_complete=False, cleanup_failures=[failure],
+                    retained_resources=["agent_installation"],
+                )
+                source.pop("pending_removal", None)
+                source.pop("node_id", None)
+        deleted.append(selectable_id)
+        return True
+
     if pending_after_commit:
         from apps.node.services.internal.node_lifecycle import (
             NodeLifecycleError,
@@ -2823,6 +2972,8 @@ def _execute_source_unregister_work(
                 and int(existing_payload.get("source_unregister_attempt") or 0)
                 == int(unregister_task.retry_count or 0)
             ):
+                if retain_pending_endpoint(selectable_id, node):
+                    continue
                 pending_removals.append(
                     {
                         "source_id": selectable_id,
@@ -2897,6 +3048,8 @@ def _execute_source_unregister_work(
                         }
                         for failure in removal_failures
                     )
+                    continue
+                if retain_pending_endpoint(selectable_id, node):
                     continue
                 pending_removals.append(
                     {
@@ -3753,6 +3906,9 @@ def _snapshot_delete_for_unregister(
         "status": task.status,
         "error_code": task.error_code,
         "error_message": task.error_message,
+        "current_step": task.current_step,
+        "created_at": task.created_at.isoformat(),
+        "updated_at": task.updated_at.isoformat(),
     }
     if task.status in _ACTIVE_TASK_STATUSES:
         return None, None, payload
@@ -3808,6 +3964,7 @@ def _enqueue_repository_purge_pending(
     snapshot_ids: list[int],
     kopia_snapshot_ids: list[str],
     error: str,
+    unregister_task: Task | None = None,
 ) -> int:
     normalized_snapshot_ids = _normalize_pending_snapshot_ids(snapshot_ids)
     idempotency_key = _repository_purge_idempotency_key(
@@ -3884,6 +4041,37 @@ def _enqueue_repository_purge_pending(
         "kopia_snapshot_ids": merged_kopia_snapshot_ids,
         "error": error[:2000],
     }
+    if unregister_task is not None:
+        payload["source_unregister_task_id"] = unregister_task.pk
+        payload["source_unregister_attempt"] = int(unregister_task.retry_count or 0)
+    # Protection rows are removed at control-plane finalization. Keep their
+    # immutable, non-secret physical locators so residue cannot later be
+    # mistaken for another source's data in the same repository.
+    locations = [
+        location
+        for row in [canonical, *matching_legacy]
+        if row is not None and isinstance(row.payload, dict)
+        for location in row.payload.get("snapshot_locations", [])
+        if isinstance(location, dict)
+    ]
+    locations.extend(
+        {
+            "source_snapshot_id": row.source_snapshot_id,
+            "kopia_snapshot_id": str(row.kopia_snapshot_id or ""),
+            "repository_locator": _safe_snapshot_locator(
+                row.repository_locator,
+                repository_id=repository_id,
+            ),
+        }
+        for row in BackupSourceSnapshotDirectory.objects.filter(
+            organization_id=organization_id,
+            source_snapshot_id__in=normalized_snapshot_ids,
+            repository_id=repository_id,
+        )
+    )
+    payload["snapshot_locations"] = list({
+        json.dumps(location, sort_keys=True): location for location in locations
+    }.values())
 
     if canonical is None:
         canonical = BackupSourceRepositoryPurgePending.objects.create(
@@ -3997,8 +4185,13 @@ def _delete_repository_snapshots(
                 )
                 snapshot_cleanup_tasks.append(child_payload)
                 if ok is None:
-                    snapshot_cleanup_waiting = True
-                    continue
+                    if not _unregister_cleanup_wait_expired(unregister_task, force=force):
+                        snapshot_cleanup_waiting = True
+                        continue
+                    # Preserve the exact frozen snapshot IDs in the existing
+                    # residue ledger before protection rows can be removed.
+                    ok = False
+                    err = "Snapshot cleanup exceeded the deregistration wait deadline."
             else:
                 ok, err = _snapshot_delete_strict(source_snapshot=snapshot)
         except SnapshotUsageConflict as exc:
@@ -4069,6 +4262,7 @@ def _delete_repository_snapshots(
             snapshot_ids=[snapshot.id],
             kopia_snapshot_ids=kopia_ids,
             error=detail,
+            unregister_task=unregister_task,
         )
         pending_count += 1
         warnings.append(
@@ -4995,10 +5189,14 @@ def reconcile_stuck_source_unregister_tasks(
             and isinstance(cleanup_plan, dict)
             else []
         )
-        if planned_snapshot_ids and SnapshotUsageLease.objects.filter(
-            organization_id=row.organization_id,
-            snapshot_id__in=planned_snapshot_ids,
-        ).exists():
+        if (
+            planned_snapshot_ids
+            and not _unregister_cleanup_wait_expired(row, force=bool(request_payload.get("force")))
+            and SnapshotUsageLease.objects.filter(
+                organization_id=row.organization_id,
+                snapshot_id__in=planned_snapshot_ids,
+            ).exists()
+        ):
             # Rotate this durable wait out of the bounded stale batch without
             # repeatedly executing the same physical-cleanup preflight. The
             # next reconciliation after the final lease is released resumes
