@@ -16,6 +16,8 @@ class StorageConfig(AppConfig):
             background_storage_concurrency,
             kopia_config_lock_timeout_seconds,
             repository_health_interval_seconds,
+            repository_usage_interval_seconds,
+            health_storage_concurrency,
         )
         from apps.storage.services.internal.repository_operations import (
             maintenance_settings,
@@ -25,6 +27,8 @@ class StorageConfig(AppConfig):
         background_storage_concurrency()
         kopia_config_lock_timeout_seconds()
         repository_health_interval_seconds()
+        repository_usage_interval_seconds()
+        health_storage_concurrency()
 
         # The release baseline must be valid before this process serves requests.
         from apps.storage.provider_catalog.catalog import load_default_catalog

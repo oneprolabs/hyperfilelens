@@ -9,12 +9,14 @@ from common.scheduling.registry import TASK_REGISTRY
 from apps.storage.conf import (
     repository_health_interval_seconds,
     repository_health_timeout_seconds,
+    repository_usage_interval_seconds,
 )
 from apps.storage.services.internal.repository_operations import maintenance_settings
 
 
 def register_periodic_tasks():
     repository_health_timeout_seconds()  # Validate health configuration at startup.
+    repository_usage_interval_seconds()
     settings = maintenance_settings()
     TASK_REGISTRY.add(
         name="storage_cleanup_provider_validations",
@@ -37,19 +39,19 @@ def register_periodic_tasks():
     TASK_REGISTRY.add(
         name="storage_reconcile_repositories",
         task="apps.storage.tasks.reconcile_storage_repositories",
-        schedule=crontab(minute="*/15"),
+        schedule=schedule(60),
         args=(),
-        # Every run owns a new logical 15-minute history slot. Do not reuse the
-        # interactive refresh staleness gate, which is based on completion time.
         kwargs={
             "limit": 200,
             "force": True,
             "stale_after_seconds": None,
             "background": True,
+            "periodic": True,
         },
         queue=None,
         enabled=True,
         sync_existing_kwargs=True,
+        managed_schedule=True,
     )
     TASK_REGISTRY.add(
         name="storage_reconcile_repository_operations",
@@ -63,9 +65,11 @@ def register_periodic_tasks():
     TASK_REGISTRY.add(
         name="storage_dispatch_repository_health_checks",
         task="apps.storage.tasks.dispatch_repository_health_checks",
-        schedule=schedule(repository_health_interval_seconds()),
+        schedule=schedule(min(60, repository_health_interval_seconds())),
         args=(),
         kwargs={},
         queue=None,
         enabled=True,
+        managed_schedule=True,
+        sync_existing_kwargs=True,
     )

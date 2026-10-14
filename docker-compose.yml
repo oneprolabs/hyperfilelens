@@ -20,6 +20,8 @@ x-backend-volumes: &backend-volumes
   - ./data/logs:/var/log/hyperfilelens
   - ./data/sourcelens/logs:/var/log/sourcelens:ro
   - ./data/runtime:/opt/hyperfilelens/runtime:ro
+  # Persist observation caches only; connection configs/credentials stay separate.
+  - ./data/kopia-usage-cache:/var/cache/hyperfilelens/usage
 
 x-backend-image: &backend-image
   image: hyperfilelens-backend:dev

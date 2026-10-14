@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Callable
@@ -10,6 +11,7 @@ from typing import Any, Callable
 from django.apps import apps
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
@@ -22,9 +24,12 @@ from apps.storage.repositories.models import (
 from apps.storage.services.internal.kopia_cli import (
     KopiaCliError,
     KopiaRepositoryBusyError,
-    connect_s3_repository,
+    ensure_usage_connection,
     content_stats as kopia_content_stats,
     usage_config_file,
+    _file_lock,
+    assert_usage_collection_active,
+    usage_repository_budget,
 )
 from common.errors import AppError
 
@@ -32,7 +37,6 @@ logger = logging.getLogger(__name__)
 
 _GB = 1024**3
 _KOPIA_ESTIMATED_USAGE_FACTOR = 1.05
-_USAGE_REFRESH_DEDUP_TTL_SECONDS = 60
 _DEFAULT_STALE_AFTER_SECONDS = 900
 _REPOSITORY_QUOTA_ERROR_CODE = "BACKUP.REPOSITORY_QUOTA_EXCEEDED"
 _REPOSITORY_QUOTA_MESSAGE = (
@@ -251,8 +255,15 @@ def kopia_repository_estimated_usage_bytes(repository: Repository) -> int | None
         return None
     try:
         config_file = usage_config_file(repository)
-        connect_s3_repository(repository, config_file=config_file)
-        result = kopia_content_stats(repository, config_file=config_file)
+        lock_started = time.monotonic()
+        with _file_lock(config_file.parent / ".usage-collection.lock"):
+            logger.info("repository usage collection lock repository_id=%s seconds=%.3f",
+                        repository.id, time.monotonic() - lock_started)
+            ensure_usage_connection(repository, config_file=config_file)
+            started = time.monotonic()
+            result = kopia_content_stats(repository, config_file=config_file)
+        logger.info("repository usage stats repository_id=%s seconds=%.3f",
+                    repository.id, time.monotonic() - started)
         packed = parse_kopia_content_stats(result.stdout)
         return kopia_estimated_usage_from_packed(packed)
     except KopiaRepositoryBusyError:
@@ -1037,6 +1048,7 @@ def apply_repository_usage_probe(
         ])
     update_fields.append("updated_at")
     if persist:
+        persist_started = time.monotonic()
         repository.save(update_fields=update_fields)
         from apps.monitor.services.internal.repository_usage_history import (
             record_repository_usage_result,
@@ -1044,9 +1056,11 @@ def apply_repository_usage_probe(
 
         record_repository_usage_result(
             repository,
-            recorded_at=recorded_at or checked_at,
+            recorded_at=checked_at,
             usage_bytes=estimated_usage_bytes,
         )
+        logger.info("repository usage persistence repository_id=%s seconds=%.3f",
+                    repository.id, time.monotonic() - persist_started)
     return repository
 
 
@@ -1058,12 +1072,21 @@ def sync_repository_usage(
 ) -> Repository:
     """Collect repository usage synchronously for interactive/local workflows."""
 
-    return apply_repository_usage_probe(
-        repository,
-        collect_usage_candidates(repository),
-        persist=persist,
-        recorded_at=recorded_at,
-    )
+    with usage_repository_budget(enabled=repository.repo_type == Repository.Type.S3):
+        revision = repository_observation_revision(repository)
+        probe = collect_usage_candidates(repository)
+        assert_usage_collection_active()
+        if not persist:
+            return apply_repository_usage_probe(repository, probe, persist=False, recorded_at=recorded_at)
+        # Never hold this transaction during remote I/O. Recheck the target before
+        # saving a result collected using an older config or execution location.
+        with transaction.atomic():
+            current = Repository.objects.select_for_update().get(pk=repository.pk)
+            assert_usage_collection_active()
+            if repository_observation_revision(current) != revision:
+                logger.info("Repository usage result superseded repository_id=%s", repository.id)
+                return current
+            return apply_repository_usage_probe(current, probe, recorded_at=recorded_at)
 
 
 def _valid_repo_type(value: str | None) -> str | None:
@@ -1154,7 +1177,10 @@ def _sync_repository_usage_candidates(
                 )
                 observations_dispatched += len(node_tasks or [])
             else:
-                sync_repository_usage(repository, recorded_at=recorded_at)
+                observed = sync_repository_usage(repository, recorded_at=recorded_at)
+                if observed.usage_probe_status != Repository.MetricProbeStatus.SUCCESS:
+                    failed_repository_ids.append(repository.id)
+                    continue
                 snapshots_upserted += 1
         except KopiaRepositoryBusyError:
             deferred_repository_ids.append(repository.id)
@@ -1272,23 +1298,6 @@ def sync_all_repositories(
     return result
 
 
-def _usage_refresh_lock_key(
-    *,
-    organization_id: int | None,
-    repository_ids: list[int],
-    repo_type: str | None,
-    force: bool,
-) -> str:
-    scope = ",".join(str(i) for i in sorted(repository_ids)) if repository_ids else "all"
-    return (
-        "storage:repository-usage-refresh:"
-        f"org:{organization_id or 'all'}:"
-        f"type:{repo_type or 'all'}:"
-        f"ids:{scope}:"
-        f"force:{int(bool(force))}"
-    )
-
-
 def enqueue_repository_usage_refresh(
     *,
     organization_id: int | None = None,
@@ -1301,78 +1310,43 @@ def enqueue_repository_usage_refresh(
 ) -> dict[str, Any]:
     ids = _normalize_repository_ids(repository_ids)
     clean_repo_type = _valid_repo_type(repo_type)
-    lock_key = _usage_refresh_lock_key(
-        organization_id=organization_id,
-        repository_ids=ids,
-        repo_type=clean_repo_type,
-        force=force,
+    repositories = _repository_usage_queryset(
+        organization_id=organization_id, repository_ids=ids,
+        repo_type=clean_repo_type, limit=limit, force=True,
     )
-    if not cache.add(lock_key, "1", timeout=_USAGE_REFRESH_DEDUP_TTL_SECONDS):
-        logger.info(
-            "repository usage refresh deduplicated trigger=%s org_id=%s repo_type=%s repository_ids=%s force=%s",
-            trigger,
-            organization_id,
-            clean_repo_type or "",
-            ids,
-            force,
-        )
-        return {
-            "queued": False,
-            "deduplicated": True,
-            "organization_id": organization_id,
-            "repo_type": clean_repo_type,
-            "repository_ids": ids,
-            "limit": limit,
-        }
+    from apps.storage.tasks import reconcile_storage_repositories
 
-    try:
-        from apps.storage.tasks import reconcile_storage_repositories
-
-        async_result = reconcile_storage_repositories.apply_async(
-            kwargs={
-                "organization_id": organization_id,
-                "repository_ids": ids,
-                "repo_type": clean_repo_type,
-                "limit": max(1, int(limit or 1)),
-                "force": bool(force),
-                "stale_after_seconds": stale_after_seconds,
-                "background": True,
-            }
-        )
-    except Exception as exc:
-        cache.delete(lock_key)
-        logger.exception(
-            "repository usage refresh enqueue failed trigger=%s org_id=%s repo_type=%s repository_ids=%s force=%s",
-            trigger,
-            organization_id,
-            clean_repo_type or "",
-            ids,
-            force,
-        )
-        return {
-            "queued": False,
-            "error": str(exc),
-            "organization_id": organization_id,
-            "repo_type": clean_repo_type,
-            "repository_ids": ids,
-            "limit": limit,
-        }
-
-    logger.info(
-        "repository usage refresh queued trigger=%s task_id=%s org_id=%s repo_type=%s repository_ids=%s force=%s stale_after_seconds=%s",
-        trigger,
-        getattr(async_result, "id", ""),
-        organization_id,
-        clean_repo_type or "",
-        ids,
-        force,
-        stale_after_seconds,
-    )
+    queued_ids = []
+    deduplicated = 0
+    for repository in repositories:
+        key = f"storage:usage-pending:{repository.organization_id}:{repository.id}"
+        # Scope-based coalescing works across differently shaped API/event batches.
+        if not cache.add(key, True, timeout=600):
+            if trigger not in {"api", "periodic"}:
+                cache.set(f"{key}:followup", True, timeout=600)
+            deduplicated += 1
+            continue
+        delay = 0
+        if trigger not in {"api", "periodic"} and repository.usage_last_success_at:
+            age = (timezone.now() - repository.usage_last_success_at).total_seconds()
+            delay = max(0, int(120 - age))
+        try:
+            task = reconcile_storage_repositories.apply_async(
+                kwargs={
+                    "organization_id": repository.organization_id,
+                    "repository_ids": [repository.id], "limit": 1,
+                    "force": True, "background": True, "refresh_key": key,
+                },
+                countdown=delay,
+            )
+            queued_ids.append(str(task.id))
+        except Exception:
+            cache.delete(key)
+            logger.exception("Repository usage dispatch failed repository_id=%s", repository.id)
     return {
-        "queued": True,
-        "task_id": getattr(async_result, "id", ""),
-        "organization_id": organization_id,
-        "repo_type": clean_repo_type,
-        "repository_ids": ids,
-        "limit": limit,
+        "queued": bool(queued_ids), "deduplicated": bool(deduplicated),
+        "task_id": queued_ids[0] if queued_ids else None,
+        "task_ids": queued_ids, "organization_id": organization_id,
+        "repository_ids": ids, "repo_type": clean_repo_type,
+        "limit": max(1, int(limit or 1)),
     }

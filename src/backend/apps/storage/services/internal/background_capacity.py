@@ -12,7 +12,11 @@ from django.conf import settings
 from redis import Redis
 from redis.exceptions import RedisError
 
-from apps.storage.conf import background_storage_concurrency, maintenance_storage_concurrency
+from apps.storage.conf import (
+    background_storage_concurrency,
+    health_storage_concurrency,
+    maintenance_storage_concurrency,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,12 +178,16 @@ def try_acquire_background_storage_capacity(
 
     token = f"{operation}:{identity}:{uuid.uuid4().hex}"
     maintenance = operation == "repository-maintenance"
+    health = operation == "repository-health"
     capacity_key = (
-        f"{_CAPACITY_KEY}:maintenance" if maintenance else _CAPACITY_KEY
+        f"{_CAPACITY_KEY}:maintenance" if maintenance
+        else f"{_CAPACITY_KEY}:health" if health
+        else _CAPACITY_KEY
     )
     capacity = (
         maintenance_storage_concurrency()
-        if maintenance else background_storage_concurrency()
+        if maintenance else health_storage_concurrency() if health
+        else background_storage_concurrency()
     )
     acquire_started_at = time.monotonic()
     try:

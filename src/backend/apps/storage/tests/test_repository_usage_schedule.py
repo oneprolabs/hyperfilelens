@@ -60,7 +60,8 @@ class RepositoryUsageCapacityTests(SimpleTestCase):
         self.assertEqual(result["capacity_retry_attempt"], 0)
         apply_async.assert_called_once()
         retry = apply_async.call_args
-        self.assertEqual(retry.kwargs["countdown"], 15)
+        self.assertGreaterEqual(retry.kwargs["countdown"], 15)
+        self.assertLessEqual(retry.kwargs["countdown"], 30)
         self.assertEqual(retry.kwargs["kwargs"]["capacity_retry_attempt"], 1)
         self.assertEqual(
             retry.kwargs["kwargs"]["sample_recorded_at"],

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from uuid import UUID, uuid4
 
@@ -21,6 +22,13 @@ from apps.node.models import Node, NodeTask
 from apps.storage.conf import (
     repository_health_check_mode,
     repository_health_timeout_seconds,
+    repository_health_interval_seconds,
+    repository_usage_interval_seconds,
+)
+from apps.storage.services.internal.repository_sampling import (
+    finish_sample,
+    reserve_sample,
+    retry_delay,
 )
 from apps.storage.services.internal.repository_health_budget import repository_health_budget
 from apps.storage.repositories.models import (
@@ -63,6 +71,7 @@ from apps.storage.services.internal.kopia_cli import (
     KopiaProcessTerminatedError,
     KopiaRepositoryBusyError,
     run_maintenance,
+    usage_collection_execution,
 )
 from apps.storage.services.internal.repository_access import repository_payload_for_node
 from apps.storage.services.internal.repository_agent_operation import (
@@ -92,7 +101,6 @@ from apps.task.services.recovery import (
 )
 
 
-_REPOSITORY_USAGE_CAPACITY_RETRY_DELAY_SECONDS = 15
 _REPOSITORY_USAGE_CAPACITY_MAX_RETRIES = 3
 
 
@@ -187,6 +195,10 @@ def reconcile_storage_repositories(
     background: bool = False,
     capacity_retry_attempt: int = 0,
     sample_recorded_at: str | None = None,
+    periodic: bool = False,
+    sample_key: str | None = None,
+    refresh_key: str | None = None,
+    sampling_interval_seconds: int | None = None,
 ):
     """Refresh repository capacity and usage metrics for dashboards and alerts."""
     recorded_at = (
@@ -194,6 +206,38 @@ def reconcile_storage_repositories(
     )
     if recorded_at is None:
         raise ValueError("sample_recorded_at must be an ISO 8601 datetime.")
+    if periodic:
+        queued = 0
+        # A due-check only enqueues bounded individual scopes; it never opens Kopia.
+        for repository in Repository.objects.filter(
+            status=Repository.Status.CREATED,
+        ).order_by("usage_last_success_at", "id").iterator(chunk_size=200):
+            if queued >= limit:
+                break
+            reservation = reserve_sample(
+                repository, "usage", sampling_interval_seconds or repository_usage_interval_seconds(),
+                stagger=sampling_interval_seconds is None,
+            )
+            if reservation is None:
+                continue
+            key, _slot = reservation
+            pending_key = f"storage:usage-pending:{repository.organization_id}:{repository.id}"
+            if not cache.add(pending_key, True, timeout=600):
+                finish_sample(key, successful=False, deferred=True)
+                continue
+            try:
+                reconcile_storage_repositories.apply_async(kwargs={
+                    "organization_id": repository.organization_id,
+                    "repository_ids": [repository.id], "force": True,
+                    "background": True, "sample_key": key,
+                    "refresh_key": pending_key,
+                })
+                queued += 1
+            except Exception:
+                finish_sample(key, successful=False, deferred=True)
+                cache.delete(pending_key)
+                logger.exception("Unable to dispatch usage repository_id=%s", repository.id)
+        return {"queued": queued}
     serialized_recorded_at = recorded_at.isoformat()
     background_lease = None
     if background:
@@ -216,9 +260,15 @@ def reconcile_storage_repositories(
                         "background": True,
                         "capacity_retry_attempt": retry_attempt + 1,
                         "sample_recorded_at": serialized_recorded_at,
+                        "sample_key": sample_key,
+                        "refresh_key": refresh_key,
                     },
-                    countdown=_REPOSITORY_USAGE_CAPACITY_RETRY_DELAY_SECONDS,
+                    countdown=retry_delay(retry_attempt),
                 )
+            if not retry_scheduled:
+                finish_sample(sample_key, successful=False, deferred=True)
+                if refresh_key:
+                    cache.delete(refresh_key)
             return {
                 "repositories_scanned": 0,
                 "repositories_synced": 0,
@@ -266,11 +316,51 @@ def reconcile_storage_repositories(
             ),
         )
 
-    if background_lease is None:
-        result = synchronize()
-    else:
-        with background_lease:
+    active_key = None
+    if repository_ids and len(repository_ids) == 1:
+        active_key = f"storage:usage-active:{organization_id}:{repository_ids[0]}"
+        lifetime = max(600, 2 * int(os.getenv("HFL_KOPIA_TIMEOUT_SECONDS", "120")) + 420)
+        if not cache.add(active_key, True, timeout=lifetime):
+            if background_lease is not None:
+                background_lease.release()
+            if refresh_key:
+                cache.set(f"{refresh_key}:followup", True, timeout=lifetime)
+            finish_sample(sample_key, successful=False, deferred=True)
+            return {"status": "deduplicated", "repositories_synced": 0}
+    try:
+        execution_started = timezone.now()
+        if refresh_key:
+            cache.delete(f"{refresh_key}:followup")
+        if background_lease is None:
             result = synchronize()
+        else:
+            with background_lease, usage_collection_execution(lambda: background_lease.valid):
+                result = synchronize()
+        successful = not result.get("repositories_failed") and not result.get("stopped_early")
+        if repository_ids:
+            successful = successful and not Repository.objects.filter(
+                organization_id=organization_id, id__in=repository_ids,
+            ).exclude(
+                usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
+                usage_last_success_at__gte=execution_started,
+            ).exists()
+        finish_sample(sample_key, successful=successful)
+    except Exception:
+        finish_sample(sample_key, successful=False)
+        raise
+    finally:
+        if active_key:
+            cache.delete(active_key)
+        if refresh_key:
+            if cache.get(f"{refresh_key}:followup"):
+                cache.touch(refresh_key, timeout=600)
+                reconcile_storage_repositories.apply_async(
+                    kwargs={"organization_id": organization_id, "repository_ids": repository_ids,
+                            "force": True, "background": True, "refresh_key": refresh_key},
+                    countdown=120,
+                )
+            else:
+                cache.delete(refresh_key)
     return {
         "repositories_scanned": result.get(
             "repositories_attempted", result.get("repositories_synced", 0)
@@ -289,7 +379,9 @@ def reconcile_storage_repositories(
 
 @shared_task(name="apps.storage.tasks.dispatch_repository_health_checks")
 @logged_celery_task(name="apps.storage.tasks.dispatch_repository_health_checks")
-def dispatch_repository_health_checks(*, startup: bool = False):
+def dispatch_repository_health_checks(
+    *, startup: bool = False, sampling_interval_seconds: int | None = None,
+):
     """Fan out one lightweight health task per eligible repository."""
     if startup and not cache.add(
         _repository_health_startup_dispatch_lock(),
@@ -308,20 +400,28 @@ def dispatch_repository_health_checks(*, startup: bool = False):
             ],
         )
         .order_by("id")
-        .values_list("id", flat=True)
     )
     dispatched = 0
-    for repository_id in repository_ids:
+    for repository in repository_ids:
+        reservation = None if startup else reserve_sample(
+            repository, "health", sampling_interval_seconds or repository_health_interval_seconds(),
+            stagger=sampling_interval_seconds is None,
+        )
+        if not startup and reservation is None:
+            continue
         try:
             check_storage_repository_health.apply_async(
-                kwargs={"repository_id": repository_id}
+                kwargs={"repository_id": repository.id,
+                        "sample_key": reservation[0] if reservation else None}
             )
             dispatched += 1
         except Exception:
             logger.exception(
                 "failed to enqueue repository health check repository_id=%s",
-                repository_id,
+                repository.id,
             )
+            if reservation:
+                finish_sample(reservation[0], successful=False, deferred=True)
     return {"dispatched": dispatched, "startup": startup}
 
 
@@ -330,7 +430,10 @@ def dispatch_repository_health_checks(*, startup: bool = False):
     name="apps.storage.tasks.check_storage_repository_health",
     trace_keys=("repository_id",),
 )
-def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 0):
+def check_storage_repository_health(
+    *, repository_id: int, retry_attempt: int = 0,
+    capacity_retry_attempt: int = 0, sample_key: str | None = None,
+):
     """Probe one repository; two consecutive failures confirm it as offline."""
     lock_key = _repository_health_lock(repository_id)
     budget = repository_health_timeout_seconds()
@@ -342,6 +445,7 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
     ):
         return {"repository_id": repository_id, "status": "skipped", "locked": True}
 
+    observed = False
     try:
         repository = Repository.objects.filter(
             id=repository_id,
@@ -384,6 +488,7 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                 "health_failures": repository.health_failures,
             }
         if node_tasks is not None:
+            observed = bool(node_tasks)
             return {
                 "repository_id": repository_id,
                 "status": repository.health,
@@ -398,11 +503,19 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
                 identity=str(repository.id),
             )
             if background_lease is None:
+                if capacity_retry_attempt < 3:
+                    check_storage_repository_health.apply_async(
+                        kwargs={"repository_id": repository_id, "retry_attempt": retry_attempt,
+                                "capacity_retry_attempt": capacity_retry_attempt + 1,
+                                "sample_key": sample_key},
+                        countdown=retry_delay(capacity_retry_attempt),
+                    )
                 return _deferred_repository_health_result(
                     repository,
                     probe_status="deferred_background_capacity",
                 )
         try:
+            observed = True
             with repository_health_budget(budget):
                 if background_lease is None:
                     health = probe_repository_health(repository)
@@ -413,6 +526,7 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
             if repository_health_check_mode() != mode:
                 return {"repository_id": repository_id, "status": "skipped", "stale": True}
             if _exception_chain_contains(exc, KopiaRepositoryBusyError):
+                observed = False
                 return _deferred_repository_health_result(
                     repository,
                     probe_status="deferred_repository_busy",
@@ -483,6 +597,7 @@ def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 
             }
         return {"repository_id": repository_id, "status": health}
     finally:
+        finish_sample(sample_key, successful=observed, deferred=not observed)
         cache.delete(lock_key)
 
 

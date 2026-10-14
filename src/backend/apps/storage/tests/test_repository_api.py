@@ -2005,6 +2005,11 @@ class StorageRepositoryApiTests(TestCase):
 
     @mock.patch("apps.storage.tasks.reconcile_storage_repositories.apply_async")
     def test_sync_usage_all_queues_async_refresh(self, apply_async):
+        repository = Repository.objects.create(
+            organization_id=self.org.id, name="nas-batch-refresh",
+            repo_type=Repository.Type.NAS, status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE, config={},
+        )
         apply_async.return_value = SimpleNamespace(id="usage-refresh-task")
         response = self.client.post(
             "/api/v1/storage/repositories/sync-usage/",
@@ -2017,12 +2022,12 @@ class StorageRepositoryApiTests(TestCase):
         )
         self.assertEqual(response.data["queued"], True)
         self.assertEqual(response.data["task_id"], "usage-refresh-task")
+        self.assertEqual(response.data["limit"], 200)
         apply_async.assert_called_once()
         kwargs = apply_async.call_args.kwargs["kwargs"]
         self.assertEqual(kwargs["organization_id"], self.org.id)
-        self.assertEqual(kwargs["repo_type"], Repository.Type.NAS)
-        self.assertEqual(kwargs["limit"], 200)
-        self.assertEqual(kwargs["stale_after_seconds"], 900)
+        self.assertEqual(kwargs["repository_ids"], [repository.id])
+        self.assertEqual(kwargs["limit"], 1)
         self.assertTrue(kwargs["background"])
 
     @mock.patch("apps.storage.tasks.reconcile_storage_repositories.apply_async")

@@ -46,10 +46,48 @@ class RepositoryUsageHistoryTests(TestCase):
         )
 
         row = RepositoryUsageMetric.objects.get()
-        self.assertEqual(row.recorded_at, datetime(2026, 8, 21, 10, 15, tzinfo=UTC))
+        self.assertEqual(row.recorded_at, datetime(2026, 8, 21, 10, 0, tzinfo=UTC))
+        self.assertEqual(row.observed_at, first + timedelta(minutes=8))
         self.assertEqual(row.usage_bytes, 2048)
         self.assertEqual(row.usage_source, RepositoryUsageMetric.UsageSource.ESTIMATED)
         self.assertIsNone(row.object_count)
+
+    def test_late_older_result_does_not_overwrite_newer_observation(self):
+        later = datetime(2026, 8, 21, 10, 24, tzinfo=UTC)
+        record_repository_usage_result(self.repository, recorded_at=later, usage_bytes=200)
+        record_repository_usage_result(
+            self.repository, recorded_at=later - timedelta(minutes=10), usage_bytes=100,
+        )
+        row = RepositoryUsageMetric.objects.get()
+        self.assertEqual(row.usage_bytes, 200)
+        self.assertEqual(row.observed_at, later)
+
+    def test_current_staggered_bucket_is_not_prematurely_missing(self):
+        payload = repository_usage_history_payload(
+            self.repository, range_name="24h",
+            now=datetime(2026, 8, 21, 10, 20, tzinfo=UTC),
+        )
+        self.assertEqual(payload["points"][-1]["recorded_at"], "2026-08-21T09:30:00+00:00")
+
+    def test_current_successful_sample_is_visible_immediately(self):
+        observed = datetime(2026, 8, 21, 10, 8, tzinfo=UTC)
+        record_repository_usage_result(self.repository, recorded_at=observed, usage_bytes=0)
+        payload = repository_usage_history_payload(
+            self.repository, range_name="24h", now=observed + timedelta(seconds=1),
+        )
+        self.assertEqual(payload["points"][-1]["recorded_at"], "2026-08-21T10:00:00+00:00")
+        self.assertEqual(payload["points"][-1]["sampled_at"], observed.isoformat())
+        self.assertEqual(payload["points"][-1]["usage_bytes"], 0)
+        self.assertEqual(len(payload["points"]), 48)
+
+    def test_success_in_previous_bucket_is_visible_during_grace(self):
+        observed = datetime(2026, 8, 21, 10, 28, tzinfo=UTC)
+        record_repository_usage_result(self.repository, recorded_at=observed, usage_bytes=100)
+        payload = repository_usage_history_payload(
+            self.repository, range_name="24h",
+            now=datetime(2026, 8, 21, 10, 31, tzinfo=UTC),
+        )
+        self.assertEqual(payload["points"][-1]["sampled_at"], observed.isoformat())
 
     def test_failed_attempt_cannot_erase_successful_sample_in_same_slot(self):
         recorded_at = datetime(2026, 8, 21, 10, 30, tzinfo=UTC)
@@ -110,16 +148,16 @@ class RepositoryUsageHistoryTests(TestCase):
             )
 
     def test_history_keeps_gaps_and_uses_expected_resolution(self):
-        now = datetime(2026, 8, 21, 10, 21, tzinfo=UTC)
+        now = datetime(2026, 8, 21, 10, 36, tzinfo=UTC)
         RepositoryUsageMetric.objects.create(
             repository=self.repository,
-            recorded_at=datetime(2026, 8, 21, 9, 45, tzinfo=UTC),
+            recorded_at=datetime(2026, 8, 21, 9, 0, tzinfo=UTC),
             usage_bytes=100,
             usage_source=RepositoryUsageMetric.UsageSource.ESTIMATED,
         )
         RepositoryUsageMetric.objects.create(
             repository=self.repository,
-            recorded_at=datetime(2026, 8, 21, 10, 0, tzinfo=UTC),
+            recorded_at=datetime(2026, 8, 21, 9, 30, tzinfo=UTC),
             usage_bytes=None,
         )
         RepositoryUsageMetric.objects.create(
@@ -135,21 +173,21 @@ class RepositoryUsageHistoryTests(TestCase):
             now=now,
         )
 
-        self.assertEqual(payload["interval"], "15m")
-        self.assertEqual(len(payload["points"]), 96)
+        self.assertEqual(payload["interval"], "30m")
+        self.assertEqual(len(payload["points"]), 48)
         self.assertEqual(payload["points"][-3]["usage_bytes"], 100)
         self.assertIsNone(payload["points"][-2]["usage_bytes"])
         self.assertEqual(payload["points"][-2]["coverage"], "missing")
         self.assertEqual(payload["points"][-1]["usage_bytes"], 120)
 
-    def test_thirty_days_returns_at_most_720_hourly_points(self):
+    def test_thirty_days_returns_half_hour_points(self):
         payload = repository_usage_history_payload(
             self.repository,
             range_name="30d",
             now=datetime(2026, 8, 21, 10, 21, tzinfo=UTC),
         )
-        self.assertEqual(payload["interval"], "60m")
-        self.assertEqual(len(payload["points"]), 720)
+        self.assertEqual(payload["interval"], "30m")
+        self.assertEqual(len(payload["points"]), 1440)
 
     def test_fourteen_days_returns_672_half_hour_points(self):
         payload = repository_usage_history_payload(
@@ -214,8 +252,8 @@ class RepositoryUsageHistoryApiTests(TestCase):
             HTTP_X_ORG_KEY=self.org.key,
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["interval"], "15m")
-        self.assertEqual(len(response.data["points"]), 672)
+        self.assertEqual(response.data["interval"], "30m")
+        self.assertEqual(len(response.data["points"]), 336)
 
         other_org = Organization.objects.create(key="other-history-org", name="Other History Org")
         other_repository = Repository.objects.create(
@@ -259,4 +297,4 @@ class RepositoryUsageHistoryApiTests(TestCase):
                 HTTP_X_ORG_KEY=self.org.key,
             )
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.data["interval"], "15m")
+            self.assertEqual(response.data["interval"], "30m")
