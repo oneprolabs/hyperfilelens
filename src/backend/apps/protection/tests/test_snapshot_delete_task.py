@@ -1192,6 +1192,29 @@ class SnapshotDeleteTaskTests(TestCase):
             self.snapshot.status, BackupSourceSnapshot.Status.DELETE_FAILED
         )
 
+    def test_reconcile_recovers_stale_running_task_without_snapshot_or_transfer(self):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        snapshot_id = self.snapshot.pk
+        Task.objects.filter(pk=task.pk).update(
+            status=Task.Status.RUNNING,
+            started_at=timezone.now() - timedelta(hours=3),
+            updated_at=timezone.now() - timedelta(hours=3),
+        )
+        self.snapshot.delete()
+
+        with patch(
+            "apps.protection.services.snapshot_delete.queue_snapshot_delete_task"
+        ) as queue_task:
+            result = reconcile_snapshot_delete_tasks(now=timezone.now())
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(task.error_code, "SNAPSHOT_DELETE_INTERRUPTED")
+        self.assertEqual(result["recovered_running"], 1)
+        self.assertEqual(result["transferred_residue"], 0)
+        self.assertFalse(BackupSourceSnapshot.objects.filter(pk=snapshot_id).exists())
+        queue_task.assert_not_called()
+
     @patch("apps.protection.services.snapshot_delete.queue_snapshot_delete_task")
     def test_reconcile_does_not_retry_delete_failed_snapshot_in_use(
         self, queue_task

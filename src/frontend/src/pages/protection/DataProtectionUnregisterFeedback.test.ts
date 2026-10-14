@@ -57,7 +57,7 @@ describe('accepted unregister feedback is independent of refresh', () => {
     expect(deps.showApiError).toHaveBeenCalledWith(expect.any(Error), 'protection.backupsPage.msgDeleteSourceRefreshFailed')
   })
 
-  it('resumes the entire operation when another page already cleared an earlier successful row', async () => {
+  it('does not re-fetch already reconciled siblings or claim an unobserved operation succeeded', async () => {
     const start = page.indexOf('function monitorPendingUnregister(')
     const end = page.indexOf('function resumePendingUnregisterMonitors()', start)
     const monitor = ts.transpileModule(page.slice(start, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
@@ -82,13 +82,13 @@ describe('accepted unregister feedback is independent of refresh', () => {
     const run = new Function(...Object.keys(deps), `${monitor}; return monitorPendingUnregister;`)(...Object.values(deps)) as (ids: string[], tasks: string[], startedAt: number) => void
     run(['nas:2'], ['task-2'], 1)
     await vi.waitFor(() => expect(deps.refreshTagFilterOptions).toHaveBeenCalledOnce())
-    expect(deps.getTask).toHaveBeenCalledWith('task-1')
+    expect(deps.getTask).not.toHaveBeenCalledWith('task-1')
     expect(deps.getTask).toHaveBeenCalledWith('task-2')
     expect(deps.notifyUnregisterTaskSuccess).toHaveBeenCalledWith(expect.objectContaining({
       tasks: [
-        expect.objectContaining({ task_uuid: 'task-1' }),
         expect.objectContaining({ task_uuid: 'task-2' }),
       ],
+      hasRejections: true,
     }))
   })
 })

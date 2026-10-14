@@ -3,7 +3,7 @@ from unittest import mock
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -76,6 +76,82 @@ class DirectNasCleanupUnregisterTests(TestCase):
             source_config_ids=[self.config.id],
             status=RepositoryUsageShard.Status.SUCCESS,
         )
+
+    @override_settings(SOURCE_FORCE_UNREGISTER_CLEANUP_WAIT_SECONDS=0)
+    @mock.patch("apps.source.services.internal.backup_source_delete.agent_connection_status", return_value="offline")
+    @mock.patch("apps.storage.services.internal.repository_cleanup._execute_physical_cleanup")
+    def test_force_pending_target_cleanup_does_not_hold_control_plane(self, execute_cleanup, _status):
+        execute_cleanup.return_value = RepositoryAgentOperationResult(
+            waiting=True, node_task_id=uuid4(), result={},
+        )
+        other = Node.objects.create(organization=self.org, name="Shared repository user", role="agent")
+        other_config = BackupConfig.objects.create(
+            organization_id=self.org.pk, name="Unrelated configuration", source_type="agent",
+            source_ref_id=other.pk, repository_id=self.repository.pk,
+        )
+        result = delete_backup_sources(org=self.org, ids=[f"agent:{self.agent.pk}"], force=True)
+        self.agent.refresh_from_db()
+        self.repository.refresh_from_db()
+        self.assertTrue(self.agent.is_deleted)
+        self.assertEqual(result["control_plane_status"], "completed")
+        self.assertEqual(result["physical_cleanup_status"], "partial")
+        self.assertEqual(self.repository.status, Repository.Status.CREATED)
+        self.assertTrue(BackupConfig.objects.filter(pk=other_config.pk).exists())
+        self.assertTrue(RepositoryTask.objects.filter(
+            repository=self.repository, operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
+        ).exists())
+        self.assertIn("repository_cleanup_pending", [item["code"] for item in result["cleanup_failures"]])
+
+    @override_settings(SOURCE_FORCE_UNREGISTER_CLEANUP_WAIT_SECONDS=0)
+    @mock.patch("apps.source.services.internal.backup_source_delete.agent_connection_status", return_value="online")
+    @mock.patch("apps.storage.services.internal.repository_cleanup._execute_physical_cleanup", return_value={"physical_cleanup": "deleted"})
+    def test_force_endpoint_ack_deadline_retains_uninstall_receipt_not_live_source(self, _cleanup, _status):
+        def start_remove(**kwargs):
+            task = NodeTask.objects.create(
+                organization=self.org, node=self.agent, kind="agent.uninstall",
+                correlation_type="node.lifecycle", correlation_id=f"remove:{self.agent.pk}",
+                status=NodeTask.Status.RUNNING,
+                payload={"source_unregister_task_id": kwargs["triggered_by_task_id"],
+                         "source_unregister_attempt": kwargs["triggered_by_task_attempt"]},
+                watchdog_deadline_at=timezone.now() + timedelta(minutes=10),
+            )
+            return {"state": "removing", "task_id": str(task.pk)}
+
+        with mock.patch("apps.node.services.internal.node_lifecycle.start_node_remove", side_effect=start_remove):
+            result = delete_backup_sources(org=self.org, ids=[f"agent:{self.agent.pk}"], force=True)
+        self.agent.refresh_from_db()
+        self.assertTrue(self.agent.is_deleted)
+        self.assertEqual(result["control_plane_status"], "completed")
+        self.assertEqual(result["physical_cleanup_status"], "partial")
+        self.assertEqual(result["pending_removals"], [])
+        remove = NodeTask.objects.get(node=self.agent, kind="agent.uninstall")
+        self.assertEqual(remove.status, NodeTask.Status.FAILED)
+        self.assertIn("agent_installation", result["retained_resources"])
+        remove.refresh_from_db()
+        self.assertEqual(remove.result.get("mode"), "local_detached")
+
+    @override_settings(SOURCE_FORCE_UNREGISTER_CLEANUP_WAIT_SECONDS=0)
+    @mock.patch("apps.storage.services.internal.repository_cleanup._execute_physical_cleanup")
+    def test_force_deadline_never_bypasses_snapshot_usage_lease(self, execute_cleanup):
+        backup = Task.objects.create(
+            organization_id=self.org.pk, task_type=Task.Type.BACKUP, status=Task.Status.SUCCESS,
+        )
+        snapshot = create_source_snapshot(
+            organization_id=self.org.pk, source_type="agent", source_ref_id=self.agent.pk,
+            backup_config_id=self.config.pk, repository_id=self.repository.pk,
+            task_id=backup.pk, task_uuid=backup.task_uuid, idempotency_key="force-deadline-lease",
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+        )
+        SnapshotUsageLease.objects.create(
+            organization_id=self.org.pk, snapshot=snapshot,
+            consumer_type=SnapshotUsageLease.ConsumerType.CHAT, consumer_id="protected-chat",
+        )
+        with self.assertRaises(BackupSourceDeleteFailed) as raised:
+            delete_backup_sources(org=self.org, ids=[f"agent:{self.agent.pk}"], force=True)
+        self.assertEqual(raised.exception.reasons[0].code, "snapshot_in_use")
+        execute_cleanup.assert_not_called()
+        self.assertTrue(Node.objects.filter(pk=self.agent.pk).exists())
+        self.assertTrue(BackupConfig.objects.filter(pk=self.config.pk).exists())
 
     def test_active_direct_nas_repository_task_blocks_before_unregister_creation(self):
         Task.objects.create(

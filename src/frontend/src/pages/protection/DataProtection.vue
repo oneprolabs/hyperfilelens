@@ -1045,7 +1045,12 @@ type FlowHeaderFilterOption = { text: string; value: string }
 
 const flowAdvancedFilterOpen = ref(false)
 const flowFilterSourceTypes = ref<FlowSourceTypeFilter[]>([])
-const flowFilterSourceStatuses = ref<FlowSourceStatusFilter[]>([])
+// The Online/Offline column filter and advanced filter share one server
+// predicate. Never filter a single page or compare availability to lifecycle.
+const flowFilterSourceStatuses = computed<FlowSourceStatusFilter[]>({
+  get: () => step3Availability.value ? [step3Availability.value] : [],
+  set: values => { step3Availability.value = values.length === 1 ? values[0] : '' },
+})
 const flowFilterPolicyBinding = ref<FlowBindingFilter[]>([])
 const flowFilterFileFilterBinding = ref<FlowBindingFilter[]>([])
 const flowFilterBackupTaskStatuses = ref<FlowBackupTaskStatusFilter[]>([])
@@ -4221,31 +4226,10 @@ function restorePhaseLabel(idx: number) {
 }
 
 
-const flowSourceTypeFilterOptions = computed(() => [
-  { text: t('protection.backupsPage.sourceTypeHost'), value: 'host' },
-  { text: t('protection.backupsPage.sourceTypeNas'), value: 'nas' },
-  { text: t('protection.backupsPage.sourceTypeNasSmb'), value: 'nas_smb' },
-  { text: t('protection.backupsPage.sourceTypeNasNfs'), value: 'nas_nfs' },
-])
-
 const flowSourceStatusFilterOptions = computed(() => [
   { text: t('protection.backupsPage.nodeStatusOnline'), value: 'online' },
   { text: t('protection.backupsPage.nodeStatusOffline'), value: 'offline' },
 ])
-
-const flowBindingFilterOptions = computed(() => [
-  { text: t('protection.backupsPage.flowFilterBound'), value: 'bound' },
-  { text: t('protection.backupsPage.flowFilterUnbound'), value: 'unbound' },
-])
-
-
-
-const flowRepoHealthFilterOptions = computed(() => [
-  { text: t('protection.backupsPage.targetStatusOnline'), value: 'online' },
-  { text: t('protection.backupsPage.targetStatusOffline'), value: 'offline' },
-  { text: t('protection.backupsPage.targetStatusUnknown'), value: 'unknown' },
-])
-
 
 const step3SearchFieldOptions = computed(() => [
   { label: t('protection.backupsPage.step3SearchSourceName'), value: 'source_name' as const },
@@ -4322,7 +4306,6 @@ const flowActiveFilterCount = computed(() => {
   ].filter(Boolean).length
   const buckets = [
     flowFilterSourceTypes.value,
-    flowFilterSourceStatuses.value,
     flowFilterPolicyBinding.value,
     flowFilterFileFilterBinding.value,
     flowFilterBackupTaskStatuses.value,
@@ -4428,7 +4411,7 @@ function flowCommonFiltersMatch(row: FlowSourceRow) {
   const nodeQuery = flowFilterNodeQuery.value.trim().toLowerCase()
   return (
     flowSourceTypeMatches(row, flowFilterSourceTypes.value) &&
-    (!flowFilterSourceStatuses.value.length || flowFilterSourceStatuses.value.includes(row.status)) &&
+    (!flowFilterSourceStatuses.value.length || flowFilterSourceStatuses.value.includes(row.availability as FlowSourceStatusFilter)) &&
     (!nodeQuery || [row.nodeName, row.nodeIp, row.hostname].some((value) => String(value || '').toLowerCase().includes(nodeQuery)))
   )
 }
@@ -4589,35 +4572,23 @@ function applyAdvancedFilters() {
   flowAdvancedFilterOpen.value = false
 }
 
+// Pending-operation snapshots are receipts, not members of a server page.
 const filteredBackupSelectableRows = computed(() =>
-  sourcePendingOps.injectPendingRows(
-    backupSelectableRows.value.filter(flowCommonFiltersMatch),
-    { activeRemovalNodeIds: wizardActiveRemovalNodeIds.value },
-  ),
+  backupSelectableRows.value,
 )
 const filteredStep2SourceList = computed(() => {
+  if (flowMainStep.value === 1) return step2SelectableRows.value
   const q = debouncedTaskSearchQuery.value
-  return sourcePendingOps.injectPendingRows(
-    step2PendingSourceList.value.filter((row) => flowCommonFiltersMatch(row) && flowTaskSearchMatches(row, q)),
-    { activeRemovalNodeIds: wizardActiveRemovalNodeIds.value },
-  )
+  return step2PendingSourceList.value.filter((row) => flowCommonFiltersMatch(row) && flowTaskSearchMatches(row, q))
 })
-const flowStep0DisplayTotal = computed(() => flowActiveFilterCount.value > 0 ? filteredBackupSelectableRows.value.length : backupSelectableCount.value)
+const flowStep0DisplayTotal = computed(() => backupSelectableCount.value)
 
 const filteredStep3SourceList = computed(() => {
-  if (flowMainStep.value === 2) {
-    return sourcePendingOps.injectPendingRows(
-      step3SourceList.value,
-      { activeRemovalNodeIds: wizardActiveRemovalNodeIds.value },
-    )
-  }
+  if (flowMainStep.value === 2) return step3SourceList.value
   const q = debouncedTaskSearchQuery.value
-  return sourcePendingOps.injectPendingRows(
-    step3SourceList.value
-      .filter(flowStep3FiltersMatch)
-      .filter((row) => flowTaskSearchMatches(row, q)),
-    { activeRemovalNodeIds: wizardActiveRemovalNodeIds.value },
-  )
+  return step3SourceList.value
+    .filter(flowStep3FiltersMatch)
+    .filter((row) => flowTaskSearchMatches(row, q))
 })
 
 const paginatedStep2SourceList = computed(() =>
@@ -5638,16 +5609,6 @@ const UNREGISTER_TASK_POLL_TIMEOUT_MS = 15 * 60 * 1000
 const unregisterTaskPollTimers = new Set<number>()
 let unregisterTaskPollingStopped = false
 
-function scheduleUnregisterTaskPoll(callback: () => void) {
-  if (unregisterTaskPollingStopped) return
-  const timer = window.setTimeout(() => {
-    unregisterTaskPollTimers.delete(timer)
-    if (unregisterTaskPollingStopped) return
-    callback()
-  }, UNREGISTER_TASK_POLL_MS)
-  unregisterTaskPollTimers.add(timer)
-}
-
 function stopUnregisterTaskPolls() {
   unregisterTaskPollingStopped = true
   for (const timer of unregisterTaskPollTimers) window.clearTimeout(timer)
@@ -5665,201 +5626,112 @@ function monitorPendingUnregister(
   if (!pairs.length) return
   const startedAt = monitorStartedAt
   const generationStartedAt = Math.max(startedAt, ...pairs.map(pair => sourcePendingOps.getOp(pair.sourceId)?.startedAt || 0))
-  const observedTasks = new Map<string, TaskRow>()
-  let unavailableSourceIds = sourceIds
   const operationId = sourcePendingOps.getOp(pairs[0].sourceId)?.operationId || [...taskUuids].sort().join(',')
-  const operationTaskUuids = operationId.split(',')
   const hasRejections = pairs.some(pair => sourcePendingOps.getOp(pair.sourceId)?.operationHasRejections)
-  const sourceName = sourceIds.length === 1 ? flowRowsForSourceIds(sourceIds)[0]?.name : undefined
+  const sourceName = pairs.length === 1 ? flowRowsForSourceIds(sourceIds)[0]?.name : undefined
+  const finished = new Set<string>()
+  const observedTasks = new Map<string, TaskRow>()
+  const notices = new Map<string, { sourceId: string; sourceName: string; details: ErrorDetailsPayload }>()
 
   const poll = async () => {
     if (unregisterTaskPollingStopped) return
-    let tasks: TaskRow[]
-    try {
-      const observations = await Promise.allSettled(operationTaskUuids.map(taskUuid => getTask(taskUuid)))
-      unavailableSourceIds = []
-      observations.forEach((result, index) => {
-        if (result.status === 'fulfilled') observedTasks.set(operationTaskUuids[index], result.value)
-        else {
-          const sourceId = pairs.find(pair => pair.taskUuid === operationTaskUuids[index])?.sourceId
-          unavailableSourceIds.push(...(sourceId ? [sourceId] : sourceIds))
-        }
-      })
-      if (unavailableSourceIds.length) throw new Error('Task visibility unavailable')
-      tasks = pairs.map(pair => observedTasks.get(pair.taskUuid)!)
-    } catch {
-      if (unregisterTaskPollingStopped) return
-      if (Date.now() - startedAt < UNREGISTER_TASK_POLL_TIMEOUT_MS) {
-        scheduleUnregisterTaskPoll(() => { void poll() })
-        return
+    const active = pairs.filter(pair => !finished.has(pair.sourceId))
+    const observations = await Promise.allSettled(active.map(pair => getTask(pair.taskUuid)))
+    if (unregisterTaskPollingStopped) return
+    let refreshNeeded = false
+    for (const [index, observation] of observations.entries()) {
+      const pair = active[index]
+      const op = sourcePendingOps.getOp(pair.sourceId)
+      // An earlier poll must never overwrite a newer operation or another page's reconciliation.
+      if (op?.taskUuid !== pair.taskUuid || (op.startedAt || 0) > generationStartedAt) {
+        finished.add(pair.sourceId)
+        continue
       }
-      if (pairs.some(pair => sourcePendingOps.getOp(pair.sourceId)?.taskUuid !== pair.taskUuid || (sourcePendingOps.getOp(pair.sourceId)?.startedAt || 0) > generationStartedAt)) return
-      const timeoutNotices = unavailableSourceIds.map((sourceId) => {
-        const sourceName = flowRowsForSourceIds([sourceId])[0]?.name || sourceId
+      const sourceName = flowRowsForSourceIds([pair.sourceId])[0]?.name || pair.sourceId
+      if (observation.status === 'rejected') {
+        if (Date.now() - startedAt < UNREGISTER_TASK_POLL_TIMEOUT_MS) continue
         const details: ErrorDetailsPayload = {
           title: t('feedback.errorDetails.monitorUnavailable'),
           summary: t('feedback.errorDetails.monitorUnavailable'),
           severity: 'warning',
           errorCode: 'TASK_MONITOR_UNAVAILABLE',
-          taskUuid: pairs.find((pair) => pair.sourceId === sourceId)?.taskUuid,
+          taskUuid: pair.taskUuid,
           taskType: 'source_unregister',
           reasons: [t('feedback.errorDetails.monitorReason')],
           resolutions: [t('feedback.errorDetails.monitorSuggestion')],
-          entities: [{ id: sourceId, name: sourceName, type: 'source' }],
+          entities: [{ id: pair.sourceId, name: sourceName, type: 'source' }],
         }
-        sourcePendingOps.mark(
-          [sourceId],
-          {
-            kind: 'delete_failed',
-            errorMessage: unregisterFailureSummaryLine(details),
-            failureDetails: details,
-            taskUuid: pairs.find((pair) => pair.sourceId === sourceId)?.taskUuid,
-            startedAt, operationId, operationHasRejections: hasRejections,
-          },
-          flowRowsForSourceIds([sourceId]),
-        )
-        return { sourceId, sourceName, details }
-      })
-      notifyUnregisterFailureBatch({
-        t,
-        items: timeoutNotices,
-        dedupeKey: `unregister-operation:${operationId}`,
-      })
-      scheduleUnregisterTaskPoll(() => { void poll() })
-      return
+        sourcePendingOps.mark([pair.sourceId], {
+          ...op, kind: 'delete_failed', errorMessage: unregisterFailureSummaryLine(details), failureDetails: details,
+        }, flowRowsForSourceIds([pair.sourceId]))
+        notices.set(pair.sourceId, { sourceId: pair.sourceId, sourceName, details })
+        continue
+      }
+      const task = observation.value
+      observedTasks.set(pair.taskUuid, task)
+      notices.delete(pair.sourceId)
+      const outcome = sourceUnregisterTaskOutcome(task)
+      if (!outcome.terminal) {
+        sourcePendingOps.mark([pair.sourceId], {
+          ...op,
+          kind: sourceUnregisterPendingKind(task.status),
+          taskId: task.id, taskUuid: pair.taskUuid,
+          errorMessage: undefined, failureDetails: undefined,
+        }, flowRowsForSourceIds([pair.sourceId]))
+        continue
+      }
+      finished.add(pair.sourceId)
+      refreshNeeded = true
+      if (outcome.success || outcome.status === 'cancelled') {
+        if (!outcome.pendingRemovals.some(item => item.source_id === pair.sourceId)) {
+          sourcePendingOps.clear([pair.sourceId])
+        }
+        sourcePendingOps.transitionToRemoving(outcome.pendingRemovals)
+      }
+      if (outcome.status !== 'cancelled' && (!outcome.success || outcome.partialSuccess)) {
+        const details = unregisterFailureToErrorDetails({
+          t, sourceId: pair.sourceId, sourceName, task, outcome, partialSuccess: outcome.partialSuccess,
+        })
+        notices.set(pair.sourceId, { sourceId: pair.sourceId, sourceName, details })
+        if (!outcome.success) sourcePendingOps.mark([pair.sourceId], {
+          ...op, kind: 'delete_failed', errorMessage: unregisterFailureSummaryLine(details), failureDetails: details,
+        }, flowRowsForSourceIds([pair.sourceId]))
+      }
     }
-
-    if (unregisterTaskPollingStopped) return
-    if (pairs.some(pair => sourcePendingOps.getOp(pair.sourceId)?.taskUuid !== pair.taskUuid || (sourcePendingOps.getOp(pair.sourceId)?.startedAt || 0) > generationStartedAt)) return
-
-    const terminalStatuses = new Set(['success', 'partial', 'failed', 'cancelled', 'timeout'])
-    const nonTerminalTasks = tasks.filter(
-      (task) => !terminalStatuses.has(String(task.status || '').toLowerCase()),
-    )
-    if (nonTerminalTasks.length) {
-      const terminalNotices = tasks.flatMap((task, index) => {
-        const outcome = sourceUnregisterTaskOutcome(task)
-        if (!outcome.terminal || outcome.status === 'cancelled' || (outcome.success && !outcome.partialSuccess)) return []
-        const sourceId = pairs[index].sourceId
-        const sourceName = flowRowsForSourceIds([sourceId])[0]?.name || sourceId
-        return [{ sourceId, sourceName, details: unregisterFailureToErrorDetails({ t, sourceId, sourceName, task, outcome, partialSuccess: outcome.partialSuccess }) }]
+    if (notices.size) notifyUnregisterOperation({
+      t, operationId, items: [...notices.values()],
+      partialSuccess: [...observedTasks.values()].some(task => sourceUnregisterTaskOutcome(task).success),
+    })
+    if (finished.size === pairs.length) {
+      // Notify only from tasks actually observed, never re-fetch already reconciled siblings.
+      notifyUnregisterTaskSuccess({
+        t, tasks: [...observedTasks.values()], sourceName,
+        hasRejections: hasRejections || observedTasks.size !== operationId.split(',').length,
       })
-      notifyUnregisterOperation({ t, operationId, items: terminalNotices, partialSuccess: tasks.some(task => sourceUnregisterTaskOutcome(task).success) })
-      pairs.forEach((pair, index) => {
-        const task = tasks[index]
-        sourcePendingOps.mark(
-          [pair.sourceId],
-          {
-            ...sourcePendingOps.getOp(pair.sourceId),
-            kind: sourceUnregisterPendingKind(task.status),
-            taskId: task.id,
-            taskUuid: task.task_uuid,
-            startedAt,
-            operationId,
-          },
-          flowRowsForSourceIds([pair.sourceId]),
-        )
-      })
-      const allBlocked = nonTerminalTasks.every(
-        (task) => String(task.status || '').toLowerCase() === 'blocked',
+    }
+    if (refreshNeeded) {
+      try {
+        await Promise.all([
+          loadBackupSelectable({ silent: true }),
+          refreshStep3AfterMoreAction({ preserveSelection: false }),
+          refreshTagFilterOptions(),
+        ])
+      } catch (err) {
+        if (!pageRequests.isAbortError(err)) showApiError(err)
+      }
+    }
+    if (finished.size < pairs.length && !unregisterTaskPollingStopped) {
+      const allBlocked = pairs.filter(pair => !finished.has(pair.sourceId)).every(pair =>
+        String(observedTasks.get(pair.taskUuid)?.status || '').toLowerCase() === 'blocked',
       )
-      const delay = allBlocked ? UNREGISTER_BLOCKED_TASK_POLL_MS : UNREGISTER_TASK_POLL_MS
       const timer = window.setTimeout(() => {
         unregisterTaskPollTimers.delete(timer)
         void poll()
-      }, delay)
+      }, allBlocked || observations.some(item => item.status === 'rejected')
+        ? UNREGISTER_BLOCKED_TASK_POLL_MS : UNREGISTER_TASK_POLL_MS)
       unregisterTaskPollTimers.add(timer)
-      return
-    }
-
-    const outcomes = tasks.map(sourceUnregisterTaskOutcome)
-    notifyUnregisterTaskSuccess({
-      t,
-      tasks: operationTaskUuids.map(taskUuid => observedTasks.get(taskUuid)!),
-      sourceName,
-      hasRejections,
-    })
-    const cancelledSourceIds = pairs.flatMap((pair, index) =>
-      outcomes[index]?.status === 'cancelled' ? [pair.sourceId] : [],
-    )
-    const failedSourceIds = pairs.flatMap((pair, index) =>
-      outcomes[index]?.success || outcomes[index]?.status === 'cancelled'
-        ? []
-        : [pair.sourceId],
-    )
-    const pendingRemovals = outcomes.flatMap((outcome) => outcome.pendingRemovals)
-    const pendingRemovalIds = new Set(pendingRemovals.map((item) => item.source_id))
-    const completedSourceIds = sourceIds.filter((id) => !failedSourceIds.includes(id))
-    const cleanupNotices: Array<{ sourceId: string; sourceName: string; details: ErrorDetailsPayload }> = []
-    completedSourceIds
-      .filter((id) => !pendingRemovalIds.has(id))
-      .forEach((sourceId) => {
-        const index = pairs.findIndex((pair) => pair.sourceId === sourceId)
-        const outcome = outcomes[index]
-        if (!outcome?.partialSuccess) return
-        const sourceName = flowRowsForSourceIds([sourceId])[0]?.name || sourceId
-        cleanupNotices.push({
-          sourceId,
-          sourceName,
-          details: unregisterFailureToErrorDetails({
-            t,
-            sourceId,
-            sourceName,
-            task: tasks[index],
-            outcome,
-            partialSuccess: true,
-          }),
-        })
-      })
-    sourcePendingOps.clear([
-      ...completedSourceIds.filter((id) => !pendingRemovalIds.has(id)),
-      ...cancelledSourceIds,
-    ])
-    sourcePendingOps.transitionToRemoving(pendingRemovals)
-    const failureNotices: Array<{ sourceId: string; sourceName: string; details: ErrorDetailsPayload }> = []
-    if (failedSourceIds.length) {
-      failedSourceIds.forEach((sourceId) => {
-        const index = pairs.findIndex((pair) => pair.sourceId === sourceId)
-        const outcome = outcomes[index]
-        const task = tasks[index]
-        const sourceName = flowRowsForSourceIds([sourceId])[0]?.name || sourceId
-        const details = unregisterFailureToErrorDetails({
-          t,
-          sourceId,
-          sourceName,
-          task,
-          outcome,
-        })
-        sourcePendingOps.mark(
-          [sourceId],
-          {
-            kind: 'delete_failed',
-            errorMessage: unregisterFailureSummaryLine(details),
-            failureDetails: details,
-            taskUuid: task.task_uuid,
-            operationId,
-            operationHasRejections: hasRejections,
-            startedAt,
-          },
-          flowRowsForSourceIds([sourceId]),
-        )
-        failureNotices.push({ sourceId, sourceName, details })
-      })
-    }
-    const notices = [...failureNotices, ...cleanupNotices]
-    const mixed = completedSourceIds.length > 0 || cleanupNotices.length > 0
-    notifyUnregisterOperation({ t, operationId, items: notices, partialSuccess: mixed })
-    try {
-      await Promise.all([
-        loadBackupSelectable({ silent: true }),
-        refreshStep3AfterMoreAction({ preserveSelection: false }),
-        refreshTagFilterOptions(),
-      ])
-    } catch (err) {
-      if (!pageRequests.isAbortError(err)) showApiError(err)
     }
   }
-
   void poll()
 }
 
@@ -11803,64 +11675,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       <template #header>
                         <span class="flow-filterable-header">
                           <span>{{ t('protection.backupsPage.colBackupSource') }}</span>
-                          <HflPopover
-                            v-if="flowMainStep !== 2"
-                            v-model:visible="flowHeaderFilterOpen.sourceType"
-                            trigger="click"
-                            placement="bottom"
-                            :width="224"
-                            popper-class="flow-header-filter-popper"
-                          >
-                            <template #reference>
-                              <button
-                                type="button"
-                                class="flow-header-filter-trigger"
-                                :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('sourceType') }"
-                                @click.stop
-                              >
-                                <Filter :size="14" />
-                              </button>
-                            </template>
-                            <div class="flow-header-filter-panel">
-                              <ElInput
-                                v-model="flowHeaderFilterSearch.sourceType"
-                                size="small"
-                                clearable
-                                :placeholder="t('protection.backupsPage.flowFilterSearchPlaceholder')"
-                              />
-                              <ElCheckboxGroup
-                                v-model="flowFilterSourceTypes"
-                                class="flow-header-filter-options"
-                              >
-                                <ElCheckbox
-                                  v-for="item in visibleFlowHeaderFilterOptions(flowSourceTypeFilterOptions, 'sourceType')"
-                                  :key="item.value"
-                                  :value="item.value"
-                                >
-                                  {{ item.text }}
-                                </ElCheckbox>
-                              </ElCheckboxGroup>
-                              <div
-                                v-if="visibleFlowHeaderFilterOptions(flowSourceTypeFilterOptions, 'sourceType').length === 0"
-                                class="flow-header-filter-empty"
-                              >
-                                {{ t('protection.backupsPage.flowFilterNoOptions') }}
-                              </div>
-                              <div class="flow-header-filter-actions">
-                                <ElButton
-                                  text
-                                  size="small"
-                                  @click="clearFlowHeaderFilter('sourceType')"
-                                >{{ t('protection.backupsPage.flowFilterReset') }}</ElButton>
-                                <ElButton
-                                  text
-                                  size="small"
-                                  type="primary"
-                                  @click="closeFlowHeaderFilter('sourceType')"
-                                >{{ t('protection.backupsPage.flowFilterApply') }}</ElButton>
-                              </div>
-                            </div>
-                          </HflPopover>
+
                         </span>
                       </template>
                       <template #default="{ row }">
@@ -11944,64 +11759,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       <template #header>
                         <span class="flow-filterable-header">
                           <span>{{ t('protection.backupsPage.flowBackupColTargetRepo') }}</span>
-                          <HflPopover
-                            v-if="flowMainStep !== 2"
-                            v-model:visible="flowHeaderFilterOpen.repoHealth"
-                            trigger="click"
-                            placement="bottom"
-                            :width="224"
-                            popper-class="flow-header-filter-popper"
-                          >
-                            <template #reference>
-                              <button
-                                type="button"
-                                class="flow-header-filter-trigger"
-                                :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('repoHealth') }"
-                                @click.stop
-                              >
-                                <Filter :size="14" />
-                              </button>
-                            </template>
-                            <div class="flow-header-filter-panel">
-                              <ElInput
-                                v-model="flowHeaderFilterSearch.repoHealth"
-                                size="small"
-                                clearable
-                                :placeholder="t('protection.backupsPage.flowFilterSearchPlaceholder')"
-                              />
-                              <ElCheckboxGroup
-                                v-model="flowFilterRepoHealth"
-                                class="flow-header-filter-options"
-                              >
-                                <ElCheckbox
-                                  v-for="item in visibleFlowHeaderFilterOptions(flowRepoHealthFilterOptions, 'repoHealth')"
-                                  :key="item.value"
-                                  :value="item.value"
-                                >
-                                  {{ item.text }}
-                                </ElCheckbox>
-                              </ElCheckboxGroup>
-                              <div
-                                v-if="visibleFlowHeaderFilterOptions(flowRepoHealthFilterOptions, 'repoHealth').length === 0"
-                                class="flow-header-filter-empty"
-                              >
-                                {{ t('protection.backupsPage.flowFilterNoOptions') }}
-                              </div>
-                              <div class="flow-header-filter-actions">
-                                <ElButton
-                                  text
-                                  size="small"
-                                  @click="clearFlowHeaderFilter('repoHealth')"
-                                >{{ t('protection.backupsPage.flowFilterReset') }}</ElButton>
-                                <ElButton
-                                  text
-                                  size="small"
-                                  type="primary"
-                                  @click="closeFlowHeaderFilter('repoHealth')"
-                                >{{ t('protection.backupsPage.flowFilterApply') }}</ElButton>
-                              </div>
-                            </div>
-                          </HflPopover>
+
                         </span>
                       </template>
                       <template #default="{ row }">
@@ -12233,64 +11991,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       <template #header>
                         <span class="flow-filterable-header">
                           <span>{{ t('protection.backupsPage.flowBackupColBoundBackupPolicy') }}</span>
-                          <HflPopover
-                            v-if="flowMainStep !== 2"
-                            v-model:visible="flowHeaderFilterOpen.policyBinding"
-                            trigger="click"
-                            placement="bottom"
-                            :width="210"
-                            popper-class="flow-header-filter-popper"
-                          >
-                            <template #reference>
-                              <button
-                                type="button"
-                                class="flow-header-filter-trigger"
-                                :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('policyBinding') }"
-                                @click.stop
-                              >
-                                <Filter :size="14" />
-                              </button>
-                            </template>
-                            <div class="flow-header-filter-panel">
-                              <ElInput
-                                v-model="flowHeaderFilterSearch.policyBinding"
-                                size="small"
-                                clearable
-                                :placeholder="t('protection.backupsPage.flowFilterSearchPlaceholder')"
-                              />
-                              <ElCheckboxGroup
-                                v-model="flowFilterPolicyBinding"
-                                class="flow-header-filter-options"
-                              >
-                                <ElCheckbox
-                                  v-for="item in visibleFlowHeaderFilterOptions(flowBindingFilterOptions, 'policyBinding')"
-                                  :key="item.value"
-                                  :value="item.value"
-                                >
-                                  {{ item.text }}
-                                </ElCheckbox>
-                              </ElCheckboxGroup>
-                              <div
-                                v-if="visibleFlowHeaderFilterOptions(flowBindingFilterOptions, 'policyBinding').length === 0"
-                                class="flow-header-filter-empty"
-                              >
-                                {{ t('protection.backupsPage.flowFilterNoOptions') }}
-                              </div>
-                              <div class="flow-header-filter-actions">
-                                <ElButton
-                                  text
-                                  size="small"
-                                  @click="clearFlowHeaderFilter('policyBinding')"
-                                >{{ t('protection.backupsPage.flowFilterReset') }}</ElButton>
-                                <ElButton
-                                  text
-                                  size="small"
-                                  type="primary"
-                                  @click="closeFlowHeaderFilter('policyBinding')"
-                                >{{ t('protection.backupsPage.flowFilterApply') }}</ElButton>
-                              </div>
-                            </div>
-                          </HflPopover>
+
                         </span>
                       </template>
                       <template #default="{ row }">
@@ -12417,64 +12118,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       <template #header>
                         <span class="flow-filterable-header">
                           <span>{{ t('protection.backupsPage.flowBackupColBoundFileFilter') }}</span>
-                          <HflPopover
-                            v-if="flowMainStep !== 2"
-                            v-model:visible="flowHeaderFilterOpen.fileFilterBinding"
-                            trigger="click"
-                            placement="bottom"
-                            :width="210"
-                            popper-class="flow-header-filter-popper"
-                          >
-                            <template #reference>
-                              <button
-                                type="button"
-                                class="flow-header-filter-trigger"
-                                :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('fileFilterBinding') }"
-                                @click.stop
-                              >
-                                <Filter :size="14" />
-                              </button>
-                            </template>
-                            <div class="flow-header-filter-panel">
-                              <ElInput
-                                v-model="flowHeaderFilterSearch.fileFilterBinding"
-                                size="small"
-                                clearable
-                                :placeholder="t('protection.backupsPage.flowFilterSearchPlaceholder')"
-                              />
-                              <ElCheckboxGroup
-                                v-model="flowFilterFileFilterBinding"
-                                class="flow-header-filter-options"
-                              >
-                                <ElCheckbox
-                                  v-for="item in visibleFlowHeaderFilterOptions(flowBindingFilterOptions, 'fileFilterBinding')"
-                                  :key="item.value"
-                                  :value="item.value"
-                                >
-                                  {{ item.text }}
-                                </ElCheckbox>
-                              </ElCheckboxGroup>
-                              <div
-                                v-if="visibleFlowHeaderFilterOptions(flowBindingFilterOptions, 'fileFilterBinding').length === 0"
-                                class="flow-header-filter-empty"
-                              >
-                                {{ t('protection.backupsPage.flowFilterNoOptions') }}
-                              </div>
-                              <div class="flow-header-filter-actions">
-                                <ElButton
-                                  text
-                                  size="small"
-                                  @click="clearFlowHeaderFilter('fileFilterBinding')"
-                                >{{ t('protection.backupsPage.flowFilterReset') }}</ElButton>
-                                <ElButton
-                                  text
-                                  size="small"
-                                  type="primary"
-                                  @click="closeFlowHeaderFilter('fileFilterBinding')"
-                                >{{ t('protection.backupsPage.flowFilterApply') }}</ElButton>
-                              </div>
-                            </div>
-                          </HflPopover>
+
                         </span>
                       </template>
                       <template #default="{ row }">

@@ -547,6 +547,12 @@ def run_snapshot_delete_task(
             organization_id=organization_id,
             id=source_snapshot_id,
         ).first()
+        if source_snapshot is None:
+            transferred = _finish_transferred_source_cleanup(
+                task=task, source_snapshot_id=source_snapshot_id,
+            )
+            if transferred is not None:
+                return transferred
         error_code = (
             "SNAPSHOT_DELETE_PRECONDITION_FAILED"
             if isinstance(exc, ValidationError)
@@ -568,6 +574,60 @@ def run_snapshot_delete_task(
         )
     finally:
         cache.delete(lock_key)
+
+
+def _finish_transferred_source_cleanup(
+    *, task: Task, source_snapshot_id: int,
+) -> dict[str, Any] | None:
+    """Close a late child only with a committed parent and durable residue.
+
+    A force unregister may remove protection rows while the physical delete is
+    still queued or returning. This is not proof that physical cleanup
+    succeeded, nor an unexpected missing-row error. Never recreate the rows.
+    """
+    from apps.source.models import BackupSourceRepositoryPurgePending
+
+    request = task.request_payload if isinstance(task.request_payload, dict) else {}
+    if (
+        task.task_type != Task.Type.SNAPSHOT_DELETE
+        or request.get("source_snapshot_id") != source_snapshot_id
+    ):
+        return None
+    parent_id = request.get("source_unregister_task_id")
+    attempt = request.get("source_unregister_attempt")
+    if type(parent_id) is not int or type(attempt) is not int or attempt < 0:
+        return None
+    parent = Task.objects.filter(
+        organization_id=task.organization_id, pk=parent_id,
+        task_type=Task.Type.SOURCE_UNREGISTER, status=Task.Status.SUCCESS,
+        retry_count=attempt, result_payload__control_plane_status="completed",
+        request_payload__force=True,
+    ).first()
+    if parent is None:
+        return None
+    residues = BackupSourceRepositoryPurgePending.objects.filter(
+        organization_id=task.organization_id,
+        payload__source_unregister_task_id=parent.pk,
+        payload__source_unregister_attempt=attempt,
+        payload__source_snapshot_ids__contains=[source_snapshot_id],
+    )
+    repository_id = request.get("repository_id")
+    if type(repository_id) is int and repository_id > 0:
+        residues = residues.filter(repository_id=repository_id)
+    residue = residues.first()
+    if residue is None:
+        return None
+    return fail_snapshot_delete_task(
+        task=task, source_snapshot=None,
+        error_code="SNAPSHOT_CLEANUP_RETAINED",
+        error_message="Source deregistration retained this snapshot for physical cleanup.",
+        result_payload={
+            "source_snapshot_id": source_snapshot_id,
+            "cleanup_complete": False,
+            "retained_resources": [f"repository_cleanup_record:{residue.pk}"],
+        },
+        event_message="Physical cleanup retained after source deregistration",
+    )
 
 
 def _defer_snapshot_delete(
@@ -825,6 +885,7 @@ def reconcile_snapshot_delete_tasks(*, now=None, limit: int = 100) -> dict[str, 
     requeued_pending = 0
     recovered_running = 0
     retried_failed = 0
+    transferred_residue = 0
 
     stale_pending = list(
         Task.objects.filter(
@@ -842,11 +903,18 @@ def reconcile_snapshot_delete_tasks(*, now=None, limit: int = 100) -> dict[str, 
             id=snapshot_id,
             status=BackupSourceSnapshot.Status.DELETING,
         ).first()
+        if snapshot is None:
+            if _finish_transferred_source_cleanup(
+                task=task,
+                source_snapshot_id=snapshot_id,
+            ) is not None:
+                transferred_residue += 1
+            continue
         latest = _latest_delete_task(
             organization_id=task.organization_id,
             source_snapshot_id=snapshot_id,
         ) if snapshot_id else None
-        if snapshot is None or latest is None or latest.id != task.id:
+        if latest is None or latest.id != task.id:
             continue
         if snapshot_is_protected(snapshot_id=snapshot.id):
             # Rotate safely blocked rows out of this bounded batch so they do
@@ -881,6 +949,13 @@ def reconcile_snapshot_delete_tasks(*, now=None, limit: int = 100) -> dict[str, 
             organization_id=task.organization_id,
             id=snapshot_id,
         ).first()
+        if snapshot is None:
+            if _finish_transferred_source_cleanup(
+                task=task,
+                source_snapshot_id=snapshot_id,
+            ) is not None:
+                transferred_residue += 1
+                continue
         fail_snapshot_delete_task(
             task=task,
             source_snapshot=snapshot,
@@ -949,4 +1024,5 @@ def reconcile_snapshot_delete_tasks(*, now=None, limit: int = 100) -> dict[str, 
         "requeued_pending": requeued_pending,
         "recovered_running": recovered_running,
         "retried_failed": retried_failed,
+        "transferred_residue": transferred_residue,
     }

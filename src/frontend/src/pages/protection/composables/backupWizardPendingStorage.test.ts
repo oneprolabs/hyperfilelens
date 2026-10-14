@@ -52,7 +52,7 @@ describe('backup wizard pending source storage', () => {
     expect(readWizardPendingSourceOps().get('agent:9')?.kind).toBe('delete_failed')
   })
 
-  it('persists structured failure details across refresh', () => {
+  it('preserves terminal failure details across refresh without resuming polling', () => {
     markWizardPendingBySourceIds(['agent:9'], {
       kind: 'delete_failed',
       taskUuid: 'task-uuid-9',
@@ -70,9 +70,30 @@ describe('backup wizard pending source storage', () => {
     expect(op?.failureDetails?.rawDetail).toEqual({ task_uuid: 'task-uuid-9' })
     expect(op?.failureDetails?.reasons).toEqual(['Agent uninstall callback failed'])
     const pending = useBackupWizardSourcePendingOps({ t: ((key: string) => key) as never })
-    expect(pending.pendingDeleteTasks()).toEqual([
-      { sourceId: 'agent:9', taskUuid: 'task-uuid-9', startedAt: undefined },
-    ])
+    expect(pending.getOp('agent:9')?.failureDetails).toEqual(op?.failureDetails)
+    expect(pending.isPending('agent:9')).toBe(true)
+    expect(pending.isRowSelectable('agent:9')).toBe(true)
+    expect(pending.pendingDeleteTasks()).toEqual([])
+  })
+
+  it('resumes polling after refresh when monitoring is unavailable', () => {
+    markWizardPendingBySourceIds(['agent:9'], {
+      kind: 'delete_failed',
+      taskUuid: 'task-uuid-9',
+      startedAt: 1234,
+      failureDetails: {
+        title: 'Monitoring unavailable',
+        summary: 'The task result could not be read.',
+        errorCode: 'TASK_MONITOR_UNAVAILABLE',
+      },
+    })
+
+    const pending = useBackupWizardSourcePendingOps({ t: ((key: string) => key) as never })
+    expect(pending.pendingDeleteTasks()).toEqual([{
+      sourceId: 'agent:9', taskUuid: 'task-uuid-9', startedAt: 1234,
+    }])
+    expect(pending.isRowSelectable('agent:9')).toBe(false)
+    expect(pending.rowPendingLabel('agent:9')).toBe('feedback.errorDetails.monitorUnavailable')
   })
 
   it('reconciles a failed task whose terminal details were not persisted', () => {

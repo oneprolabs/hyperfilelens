@@ -46,6 +46,9 @@ class AuthzProvider(Protocol):
 
         Contexts must never be shared across requests. Query predicates and
         individual checks must implement identical resource authorization.
+        An optional ``filter_task_resource_queryset`` context hook may
+        authorize task reads through retained source identities with current
+        grants. It must not widen live resource queries or write permissions.
         """
         ...
 

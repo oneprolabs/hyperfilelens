@@ -342,15 +342,16 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(unregister).toContain('refreshStep3AfterMoreAction({ preserveSelection: false })')
   })
 
-  it('waits for an accepted unregister task to reach a terminal state before the final refresh', () => {
+  it('reconciles each accepted unregister task independently before refreshing its rows', () => {
     const monitor = functionSource('monitorPendingUnregister', 'affectedBackupIdsForSources')
     const unregister = functionSource('onBackupSourcesDeleted', 'deleteSelectedSourcesFromStep1')
 
-    expect(monitor).toContain('getTask(taskUuid)')
-    expect(monitor).toContain("new Set(['success', 'partial', 'failed', 'cancelled', 'timeout'])")
+    expect(monitor).toContain('getTask(pair.taskUuid)')
+    expect(monitor).toContain('const outcome = sourceUnregisterTaskOutcome(task)')
     expect(monitor).toContain('sourceUnregisterPendingKind(task.status)')
     expect(monitor).toContain('UNREGISTER_BLOCKED_TASK_POLL_MS')
-    expect(monitor).toContain('if (nonTerminalTasks.length)')
+    expect(monitor).toContain('if (!outcome.terminal)')
+    expect(monitor).toContain('finished.add(pair.sourceId)')
     expect(monitor).toContain('refreshStep3AfterMoreAction({ preserveSelection: false })')
     expect(unregister).toContain('const bindings = sourceUnregisterTaskBindings(sourceIds, payload)')
     expect(unregister).toContain('const monitoredSourceIds = bindings.map((binding) => binding.sourceId)')
