@@ -2814,7 +2814,7 @@ class LensGatewayViewSet(GovernedResourceMixin, _LensGatewayViewSetBase):
 
 
 class LensCopilotSessionViewSet(_LensCopilotSessionViewSetBase):
-    """Chat remains personal; new data operations re-check current Group grants."""
+    """Personal Chat use is independent of its original backup's lifecycle."""
 
     def get_permissions(self):
         if get_authz_provider() is None:
@@ -2865,10 +2865,7 @@ class LensCopilotSessionViewSet(_LensCopilotSessionViewSetBase):
             return
         from apps.lens_bridge.services.insight_access import assert_insight_access
 
-        snapshot_id = request.data.get("backup_source_snapshot_id") or request.data.get(
-            "snapshot_id"
-        )
-        gateway_id = request.data.get("gateway_link_id")
+        session = None
         source_session_id = kwargs.get("pk") or request.data.get("source_session_id")
         if source_session_id:
             try:
@@ -2876,9 +2873,21 @@ class LensCopilotSessionViewSet(_LensCopilotSessionViewSetBase):
             except (ValueError, TypeError):
                 raise NotFound("Chat not found.") from None
             session = self._user_sessions().filter(pk=source_session_id).first()
-            if session is not None:
-                snapshot_id = snapshot_id or session.backup_source_snapshot_id
-                gateway_id = gateway_id or session.gateway_link_id
+        # Existing Chat operations use already-prepared data. Only operations
+        # that read a backup may depend on a live snapshot. Never let unused
+        # request fields substitute another Gateway for the Chat's own link.
+        snapshot_id = None
+        gateway_id = session.gateway_link_id if session is not None else None
+        if self.action == "create":
+            snapshot_id = request.data.get("backup_source_snapshot_id")
+            gateway_id = request.data.get("gateway_link_id")
+        elif self.action == "update_data":
+            snapshot_id = request.data.get("snapshot_id")
+        elif self.action == "retry" and session is not None:
+            # Reused Chats retry only session creation, not snapshot restore.
+            reuse = (session.provision_state_json or {}).get("reuse_existing_resources")
+            if not reuse:
+                snapshot_id = session.backup_source_snapshot_id
         assert_insight_access(
             organization=self.org,
             user=request.user,
