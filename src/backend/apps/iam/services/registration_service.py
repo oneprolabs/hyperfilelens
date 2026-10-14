@@ -107,6 +107,9 @@ def provision_registered_user_tenant(user: User) -> tuple[Organization, Membersh
         role=Membership.Role.OWNER,
         is_active=True,
     )
+    from apps.iam.services.role_seeding import seed_organization_roles
+
+    seed_organization_roles(org)
     return org, membership
 
 

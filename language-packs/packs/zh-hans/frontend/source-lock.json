@@ -8893,5 +8893,6 @@
   "repositoriesPage.cleanupViewAssociationsCount": "9b7959a59c2d10138b0d78740b5a179e19b010118ad4e243a307804d71a9d76f",
   "repositoriesPage.deleteSingleTitle": "55dcf56322efb7006f6f7fa1722fd77bfe8c866a0cca4192deebe98293098b10",
   "repositoriesPage.forceDeleteMessage": "a6fd8fb701ea198faa1edc96fa8e2d8050bf003f4ab628a4f28b9a9f7cd97136",
-  "repositoriesPage.forceDeleteTitle": "bd925e2083c9967a5bd6036f7892c77e92acc92b39ee23b881aec12f29d0cbf7"
+  "repositoriesPage.forceDeleteTitle": "bd925e2083c9967a5bd6036f7892c77e92acc92b39ee23b881aec12f29d0cbf7",
+  "settings.membersPage.createRoleFirst": "19d6366a10a9b912749b3eb5e1886cf68072cca425cde0816b027489b05526d4"
 }

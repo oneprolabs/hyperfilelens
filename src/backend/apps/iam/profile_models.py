@@ -12,6 +12,7 @@ class Profile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     registration_completed = models.BooleanField(default=False)
     requires_password_change = models.BooleanField(default=False)
+    is_installation_admin = models.BooleanField(default=False, editable=False)
     registration_token = models.CharField(
         max_length=255,
         unique=True,

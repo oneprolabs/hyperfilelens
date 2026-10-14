@@ -2,7 +2,7 @@ from io import StringIO
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
-from django.core.management import call_command
+from django.core.management import call_command, CommandError
 from django.test import TestCase
 
 from apps.iam.models import Membership, Organization
@@ -10,6 +10,17 @@ from apps.iam.profile_models import Profile
 
 
 class SeedInitialDataCommandTests(TestCase):
+    def test_existing_ordinary_account_cannot_be_promoted_by_bootstrap_email(self):
+        account = User.objects.create_user(
+            username="admin@hyperfilelens.com", email="admin@hyperfilelens.com",
+        )
+        with self.assertRaises(CommandError):
+            call_command("seed_initial_data", stdout=StringIO())
+        account.refresh_from_db()
+        self.assertFalse(account.is_staff)
+        self.assertFalse(account.is_superuser)
+        self.assertFalse(Profile.objects.filter(user=account, is_installation_admin=True).exists())
+
     @patch("apps.subscription.services.interface.enforce_license_quota")
     @patch(
         "apps.subscription.services.internal.organization_count.assert_organization_count_available"
