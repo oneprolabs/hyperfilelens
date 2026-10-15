@@ -6733,6 +6733,11 @@
         "backupSourceNotDeleted": "备份源未注销。"
       },
       "orphanSnapshots": {
+        "summary": "孤立快照对账汇总",
+        "snapshotCreatedAt": "快照创建时间",
+        "deletionDisabled": "当前运行配置为 STORAGE_ORPHAN_SNAPSHOT_DELETE_ENABLED=false，处于仅检查、不删除模式。该孤立快照已保留，本次未尝试删除；这不表示快照检查失败。",
+        "unlinkedSource": "未关联的 HFL 备份源",
+        "inventoryUnavailable": "无法获取快照清单。本轮没有完整扫描结果，不代表仓库为空。",
         "scanned": "扫描的物理快照",
         "discovered": "发现的孤立快照",
         "deleted": "删除的孤立快照",

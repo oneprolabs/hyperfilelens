@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { en } from '../locales/en'
-import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from './taskEventDisplay'
+import { isOrphanSnapshotAuditEvent, parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from './taskEventDisplay'
 
 describe('task event internationalization', () => {
+  it('localizes all orphan audit titles, including existing stored messages', () => {
+    for (const outcome of ['discovered', 'deleted', 'grace', 'deferred', 'failed', 'absent', 'managed']) {
+      expect(taskEventMessageKey(`Orphan snapshot ${outcome}`)).toBe(`ops.task.orphanSnapshots.${outcome}`)
+    }
+    expect(taskEventMessageKey('Orphan snapshot reconciliation summary')).toBe('ops.task.orphanSnapshots.summary')
+  })
+  it('identifies only orphan audit rows for timestamp suppression', () => {
+    for (const event_type of ['orphan_snapshot_result', 'orphan_snapshot_summary']) {
+      expect(isOrphanSnapshotAuditEvent({ id: 1, seq: 1, level: 'INFO', message: '', metadata: { event_type } })).toBe(true)
+    }
+    expect(isOrphanSnapshotAuditEvent({ id: 2, seq: 2, level: 'INFO', message: 'Task started' })).toBe(false)
+  })
   it('localizes the generic source deregistration failure event', () => {
     expect(taskEventMessageKey('Backup source was not deleted.'))
       .toBe('ops.task.eventMessage.backupSourceNotDeleted')

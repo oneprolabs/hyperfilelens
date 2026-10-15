@@ -53,6 +53,26 @@ describe('current task detail lifecycle', () => {
     expect(result.lifecycleMessage).toBe('feedback.errorDetails.taskReplaced')
     expect(result.reasons).toBeUndefined()
   })
+  it('keeps orphan reconciliation attempts independent without replacement prompts', async () => {
+    getTask.mockResolvedValueOnce({
+      task_uuid: 'task-1',
+      task_type: 'repository_operation',
+      operation_type: 'snapshot.reconcile',
+      replacement_task_uuid: 'task-2',
+      status: 'failed',
+      error_details: {
+        severity: 'error',
+        summary: 'The original inventory attempt failed.',
+        reasons: [],
+        suggestions: [],
+      },
+    })
+    const result = await refreshTaskDetails({ ...snapshot, taskType: 'repository_operation' }, t)
+    expect(getTask).toHaveBeenCalledTimes(1)
+    expect(result.taskUuid).toBe('task-1')
+    expect(result.summary).toBe('The original inventory attempt failed.')
+    expect(result.lifecycleMessage).toBeUndefined()
+  })
   it.each([403, 404, 410])('identifies inaccessible tasks (%s) separately from failures', async status => {
     getTask.mockRejectedValue({ status })
     const result = await refreshTaskDetails(snapshot, t)

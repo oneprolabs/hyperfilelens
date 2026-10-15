@@ -305,6 +305,20 @@ def create_repository_operation_task(
                 "is_primary": True,
             }
         ],
+        steps=(
+            [
+                "prepare_repository_operation",
+                "verify_repository_owner",
+                "run_repository_operation",
+                "finalize_repository_operation",
+            ]
+            if operation_type in {
+                RepositoryTask.OperationType.MAINTENANCE_QUICK,
+                RepositoryTask.OperationType.MAINTENANCE_FULL,
+                RepositoryTask.OperationType.SNAPSHOT_RECONCILE,
+            }
+            else None
+        ),
         normalize_trigger_type=False,
     )
     repository_task = RepositoryTask.objects.create(
@@ -342,27 +356,32 @@ def schedule_due_maintenance(*, now: datetime | None = None) -> list[int]:
     assign_full_slots(targets, settings, current)
     for target in sorted(targets, key=lambda item: (item.maintenance_state.next_full_due_at, item.target_key)):
         state = target.maintenance_state
-        if target.active_task_id or (state.next_retry_at and state.next_retry_at > current):
+        if target.active_task_id:
             continue
         full_due = not state.next_full_due_at or state.next_full_due_at <= current
         quick_due = not state.next_quick_due_at or state.next_quick_due_at <= current
         operation = None
         full_window_due = full_due and _inside_full_window(current, settings)
-        if full_window_due:
+        maintenance_ready = not state.next_retry_at or state.next_retry_at <= current
+        if full_window_due and maintenance_ready:
             operation = RepositoryTask.OperationType.MAINTENANCE_FULL
         if (
             operation is None and state.next_reconcile_due_at
             and state.next_reconcile_due_at <= current
         ):
             operation = RepositoryTask.OperationType.SNAPSHOT_RECONCILE
-        if operation is None and quick_due and not full_window_due:
+        if operation is None and quick_due and not full_window_due and maintenance_ready:
             operation = RepositoryTask.OperationType.MAINTENANCE_QUICK
         if operation is None or not _concurrency_available(target, settings):
             continue
         repository_task = create_repository_operation_task(
             target_id=target.id,
             operation_type=operation,
-            trigger_type=(Task.TriggerType.RETRY if state.consecutive_failures else Task.TriggerType.SYSTEM),
+            trigger_type=(
+                Task.TriggerType.RETRY
+                if operation != RepositoryTask.OperationType.SNAPSHOT_RECONCILE
+                and state.consecutive_failures else Task.TriggerType.SYSTEM
+            ),
             due_at=current,
         )
         if repository_task:
@@ -546,6 +565,7 @@ def finalize_repository_operation(
     error_message: str = "",
     cancelled: bool = False,
     expected_execution_token: UUID | None = None,
+    advance_reconcile_schedule: bool = True,
 ) -> Task:
     # ``execution_target`` is nullable for cleanup operations. Joining it in a
     # ``select_for_update()`` query therefore produces a LEFT OUTER JOIN, which
@@ -574,7 +594,13 @@ def finalize_repository_operation(
         expected_execution_token is not None
         and repository_task.cancel_requested_at is not None
     )
-    if cancelled:
+    if repository_task.operation_type == RepositoryTask.OperationType.SNAPSHOT_RECONCILE:
+        # A failed first attempt can transfer its gate to a delayed replacement.
+        # Only the final attempt advances the normal cadence.
+        if advance_reconcile_schedule:
+            state.next_reconcile_due_at = now + timedelta(days=2)
+        status = Task.Status.CANCELLED if cancelled else Task.Status.SUCCESS if succeeded else Task.Status.FAILED
+    elif cancelled:
         if repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_QUICK:
             state.next_quick_due_at = now + settings.quick_interval
         elif repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_FULL:
@@ -591,8 +617,6 @@ def finalize_repository_operation(
             state.last_full_success_at = now
             state.next_full_due_at = next_full_slot(state, now, settings)
             state.next_quick_due_at = now + settings.quick_interval
-        elif repository_task.operation_type == RepositoryTask.OperationType.SNAPSHOT_RECONCILE:
-            state.next_reconcile_due_at = now + timedelta(days=2)
         state.consecutive_failures = 0
         state.next_retry_at = None
         status = Task.Status.SUCCESS

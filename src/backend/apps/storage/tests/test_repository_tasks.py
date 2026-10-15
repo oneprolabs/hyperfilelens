@@ -57,6 +57,15 @@ class RepositoryTaskTests(TestCase):
             result = execute_repository_operation.run(repository_task_id=repository_task.id)
             enqueue.assert_not_called()
         self.assertEqual(result["status"], Task.Status.SUCCESS)
+        self.assertEqual(
+            list(repository_task.task.steps.values_list("status", flat=True)),
+            ["success", "success", "success", "success"],
+        )
+        self.assertFalse(
+            repository_task.task.events.filter(
+                message__contains="refresh_repository_usage",
+            ).exists()
+        )
         sync_repositories.assert_not_called()
         enqueue.assert_called_once_with(
             organization_id=self.repository.organization_id,
@@ -88,7 +97,7 @@ class RepositoryTaskTests(TestCase):
         self.assertEqual(result["status"], Task.Status.FAILED)
         self.assertEqual(task.current_step, "run_repository_operation")
         self.assertEqual(list(task.steps.values_list("status", flat=True)), [
-            "success", "success", "failed", "skipped", "skipped",
+            "success", "success", "failed", "skipped",
         ])
         self.assertIn("stopped unexpectedly", task.error_message)
         self.assertNotIn("memory", task.error_message.lower())
@@ -122,9 +131,64 @@ class RepositoryTaskTests(TestCase):
         self.assertEqual(task.status, Task.Status.SUCCESS)
         self.assertEqual(task.current_step, "finalize_repository_operation")
         self.assertEqual(list(task.steps.values_list("status", flat=True)), [
-            "success", "success", "success", "skipped", "success",
+            "success", "success", "success", "success",
         ])
         _sync.assert_called_once()
+
+    def test_new_maintenance_and_reconciliation_tasks_have_four_steps(self):
+        discover_repository_execution_targets()
+        target = self.repository.execution_targets.get()
+        for operation in [
+            RepositoryTask.OperationType.MAINTENANCE_QUICK,
+            RepositoryTask.OperationType.MAINTENANCE_FULL,
+            RepositoryTask.OperationType.SNAPSHOT_RECONCILE,
+        ]:
+            with self.subTest(operation=operation):
+                repository_task = create_repository_operation_task(
+                    target_id=target.id,
+                    operation_type=operation,
+                )
+                self.assertEqual(
+                    list(repository_task.task.steps.values_list("step_name", flat=True)),
+                    [
+                        "prepare_repository_operation",
+                        "verify_repository_owner",
+                        "run_repository_operation",
+                        "finalize_repository_operation",
+                    ],
+                )
+                finalize_repository_operation(
+                    repository_task_id=repository_task.id, succeeded=True,
+                )
+
+    @patch("apps.storage.tasks.enqueue_repository_usage_refresh")
+    @patch("apps.storage.tasks.run_maintenance", return_value=KopiaResult(stdout="", stderr=""))
+    @patch("apps.storage.tasks.try_acquire_background_storage_capacity")
+    def test_preexisting_maintenance_task_can_finish_legacy_usage_step(
+        self, acquire_capacity, _run, enqueue,
+    ):
+        discover_repository_execution_targets()
+        repository_task = create_repository_operation_task(
+            target_id=self.repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_FULL,
+        )
+        # Match the five-step layout persisted before the refinement.
+        task = repository_task.task
+        task.steps.filter(step_name="finalize_repository_operation").update(step_index=5)
+        TaskStep.objects.create(
+            task=task, step_index=4, step_name="refresh_repository_usage",
+        )
+        lease = MagicMock(valid=True)
+        lease.__enter__.return_value = lease
+        acquire_capacity.return_value = lease
+        with self.captureOnCommitCallbacks(execute=True):
+            result = execute_repository_operation.run(repository_task_id=repository_task.id)
+        self.assertEqual(result["status"], Task.Status.SUCCESS)
+        self.assertEqual(
+            list(task.steps.values_list("status", flat=True)),
+            ["success", "success", "success", "skipped", "success"],
+        )
+        enqueue.assert_called_once()
 
     def test_maintenance_error_messages_are_actionable(self):
         from apps.storage.tasks import _repository_operation_error_message
