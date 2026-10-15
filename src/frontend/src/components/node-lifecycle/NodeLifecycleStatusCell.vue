@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { LoaderCircle } from 'lucide-vue-next'
+import StatusDetailAction from '../StatusDetailAction.vue'
 import type { ApiNode } from '../../types/node'
 
 const props = defineProps<{
@@ -12,8 +13,11 @@ const props = defineProps<{
     tagClass?: string
     spinning?: boolean
   }
+  clickable?: boolean
+  loading?: boolean
 }>()
 
+const emit = defineEmits<{ (e: 'click'): void }>()
 const { t, te } = useI18n()
 
 const display = computed(() => props.resolveDisplayStatus(props.node))
@@ -22,10 +26,18 @@ const label = computed(() => {
   const key = display.value.labelKey
   return te(key) ? t(key) : key
 })
+
 </script>
 
 <template>
-  <div class="node-lifecycle-status">
+  <StatusDetailAction
+    class="node-lifecycle-status"
+    :label="label"
+    :clickable="clickable"
+    :loading="loading"
+    :failure="display.tagType === 'danger'"
+    @click="emit('click')"
+  >
     <el-tag
       :type="display.tagType"
       size="small"
@@ -39,7 +51,7 @@ const label = computed(() => {
       />
       <span class="node-lifecycle-status__label">{{ label }}</span>
     </el-tag>
-  </div>
+  </StatusDetailAction>
 </template>
 
 <style scoped>

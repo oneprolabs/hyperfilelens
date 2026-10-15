@@ -40,4 +40,40 @@ describe('unregister cleanup summary', () => {
     expect(result.failures).toContain('Custom cleanup problem: /test/path')
     expect(result.offlineTargets.size).toBe(0)
   })
+
+  it('deduplicates an unscoped aggregate when the same failure is source-scoped', () => {
+    const result = summarizeUnregisterCleanup([
+      { code: 'unmount_failed', detail: 'The NAS mount could not be removed.' },
+      { code: 'unmount_failed', detail: 'The NAS mount could not be removed.', sourceName: 'NAS A' },
+    ], t)
+    expect(result.reasons).toEqual(['NAS A: The NAS mount could not be removed.'])
+    expect(result.failures).toEqual(['The NAS mount could not be removed.'])
+  })
+
+  it('keeps identical failures for different sources', () => {
+    const result = summarizeUnregisterCleanup([
+      { code: 'unmount_failed', detail: 'The NAS mount could not be removed.', sourceName: 'NAS A' },
+      { code: 'unmount_failed', detail: 'The NAS mount could not be removed.', sourceName: 'NAS B' },
+    ], t)
+    expect(result.reasons).toEqual([
+      'NAS A: The NAS mount could not be removed.',
+      'NAS B: The NAS mount could not be removed.',
+    ])
+  })
+
+  it('does not merge different source IDs with identical names', () => {
+    const result = summarizeUnregisterCleanup([
+      { detail: 'Unmount failed', sourceName: 'NAS', sourceId: 'nas:1' },
+      { detail: 'Unmount failed', sourceName: 'NAS', sourceId: 'nas:2' },
+    ], t)
+    expect(result.reasons).toEqual(['nas:1: Unmount failed', 'nas:2: Unmount failed'])
+  })
+
+  it('recognizes an unambiguous legacy numeric alias for the same source', () => {
+    const result = summarizeUnregisterCleanup([
+      { detail: 'Unmount failed', sourceName: 'NAS', sourceId: '32' },
+      { detail: 'Unmount failed', sourceName: 'NAS', sourceId: 'nas:32' },
+    ], t)
+    expect(result.reasons).toEqual(['NAS: Unmount failed'])
+  })
 })

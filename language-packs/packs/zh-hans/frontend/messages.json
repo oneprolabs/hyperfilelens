@@ -2086,7 +2086,21 @@
       "backupTaskDrawerFieldTaskId": "任务 ID",
       "backupTaskDrawerFieldCurrentPhase": "当前阶段",
       "backupTaskDrawerFieldBackupDetail": "备份详情",
-      "backupTaskDrawerDemoHint": "这里展示所选备份任务的执行阶段与详情。"
+      "backupTaskDrawerDemoHint": "这里展示所选备份任务的执行阶段与详情。",
+      "sourceFailureDetailsTitle": "失败详情",
+      "sourceFailureDetailsUnavailable": "未找到该源当前失败所关联的任务或诊断信息。",
+      "sourceFailureDetailsLoadFailed": "无法加载失败详情，请重新加载详情。",
+      "sourceFailureDetailsLoading": "正在加载历史注销详情…",
+      "sourceFailureDetailsReload": "重新加载详情",
+      "sourceFailureSummary": "{name}：{status}",
+      "unregisterUnmountFailedRegistered": "卸载失败，源仍保持注册。",
+      "unregisterRetainedNasMount": "NAS 挂载（源 ID：{id}）",
+      "unregisterRetainedNasMountDirectory": "NAS 挂载目录（源 ID：{id}）",
+      "syntheticUnregisterAgentOffline": "Agent 离线，无法完成远程卸载。",
+      "syntheticUnregisterDiagnostic": "诊断信息可在技术详情中查看。",
+      "statusViewDetails": "查看详情",
+      "statusViewTask": "查看任务",
+      "statusDetailActionLabel": "{status}：{action}"
     },
     "backupDetail": {
       "backToList": "返回备份列表",
