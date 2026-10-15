@@ -48,8 +48,6 @@ def onboard_member(
 ) -> OnboardingResult:
     """Only brand-new ordinary accounts receive one-time credentials."""
     from apps.iam.permissions_org import get_membership
-    from apps.configuration.selectors.interface import get_config
-    from apps.configuration.services.runtime_settings import email_signup_enabled, google_oauth_enabled
 
     actor = get_membership(request)
     if actor is None:
@@ -81,19 +79,6 @@ def onboard_member(
     if created:
         if not email:
             raise ValidationError({"user": _("Account not found.")})
-        if not get_config(
-            "iam.members.admin_account_creation_enabled",
-            # Tenant administrators must not silently claim arbitrary global
-            # email identities in a public self-service deployment.
-            default=not (email_signup_enabled() or google_oauth_enabled()),
-        ):
-            raise ValidationError(
-                {
-                    "email": _(
-                        "New account creation by organization administrators is disabled."
-                    )
-                }
-            )
         if not is_active:
             raise ValidationError(
                 {"is_active": _("New accounts must reserve an active membership seat.")}

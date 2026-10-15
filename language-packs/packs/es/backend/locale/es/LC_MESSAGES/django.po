@@ -690,10 +690,6 @@ msgid "Account not found."
 msgstr "No se encontró la cuenta."
 
 #: apps/iam/member-onboarding
-msgid "New account creation by organization administrators is disabled."
-msgstr "La creación de cuentas nuevas por administradores de organizaciones está deshabilitada."
-
-#: apps/iam/member-onboarding
 msgid "New accounts must reserve an active membership seat."
 msgstr "Las cuentas nuevas deben reservar una plaza de miembro activa."
 
