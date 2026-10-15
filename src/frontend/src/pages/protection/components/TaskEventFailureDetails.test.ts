@@ -4,9 +4,32 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { describe, expect, it } from 'vitest'
 import { en } from '../../../locales/en'
+import zh from '../../../../../../language-packs/packs/zh-hans/frontend/messages.json'
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 
 describe('TaskEventFailureDetails', () => {
+  it('renders offline deregistration reasons instead of a generic English error and unrelated advice', () => {
+    const diagnostic = 'Agent "Test Host" is offline — remote uninstall is required in strict mode.'
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: {
+        taskType: 'source_unregister',
+        metadata: {
+          error_code: 'SOURCE_UNREGISTER_PREFLIGHT_FAILED',
+          error_message: 'Backup source was not deleted.',
+        },
+        unregisterReasons: [{ code: 'agent_offline', detail: diagnostic }],
+        technicalDetail: diagnostic,
+        terminalResolutions: ['Review repository credentials.'],
+      },
+      global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh } })] },
+    })
+    const box = wrapper.get('.task-event-failure__terminal-box')
+    expect(box.text()).toContain('Test Host')
+    expect(box.text()).toContain(zh.protection.backupsPage.unregisterStrictOfflineNamed.replace('{name}', 'Test Host'))
+    expect(box.text()).toContain(zh.ops.task.failureDetails.suggestion.reconnect_unregister_agent)
+    expect(box.text()).not.toMatch(/Backup source was not deleted|repository credentials/)
+    wrapper.unmount()
+  })
   it('explains a projected missing root while keeping the secondary error in technical details', () => {
     const diagnostic = 'failed to prepare source: lstat /missing root: no such file or directory\nupload error: unsupported source'
     const wrapper = mount(TaskEventFailureDetails, {

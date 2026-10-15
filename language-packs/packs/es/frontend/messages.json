@@ -2100,7 +2100,8 @@
       "syntheticUnregisterDiagnostic": "La información de diagnóstico está disponible en los detalles técnicos.",
       "statusViewDetails": "Ver detalles",
       "statusViewTask": "Ver tarea",
-      "statusDetailActionLabel": "{status} — {action}"
+      "statusDetailActionLabel": "{status} — {action}",
+      "unregisterStrictOfflineNamed": "El Agent «{name}» está desconectado. La limpieza estricta requiere la desinstalación remota."
     },
     "backupDetail": {
       "backToList": "Volver a copias de seguridad",
@@ -6728,7 +6729,8 @@
         "taskFinishedTimeout": "Tiempo de ejecución agotado",
         "backupQueueRecoveryReenqueued": "La recuperación de la cola de copia de seguridad volvió a poner en cola la tarea original",
         "taskFinished": "Tarea terminada",
-        "stepStatusUpdated": "{step}: {status}"
+        "stepStatusUpdated": "{step}: {status}",
+        "backupSourceNotDeleted": "El origen de copia de seguridad no se dio de baja."
       },
       "orphanSnapshots": {
         "scanned": "Instantáneas físicas examinadas",
@@ -6856,7 +6858,7 @@
           "remove_obsolete_backup_source": "Si ya no necesita este directorio, elimínelo de la configuración de la copia.",
           "retry_after_source_path_fixed": "Vuelva a intentar la copia solo después de restaurar el directorio o corregir la configuración.",
           "resolve_snapshot_usage": "Espere a que termine la restauración o la preparación del Chat. Si la preparación falló, reinténtela hasta que finalice correctamente, o elimine el Chat y espere a que termine la limpieza; después, vuelva a solicitar la baja del origen. La limpieza forzada tampoco puede omitir esta protección.",
-          "review_task": "Revise las credenciales del repositorio y vuelva a intentar la creación.",
+          "review_task": "Revise el fallo indicado y los detalles técnicos antes de reintentar la operación.",
           "review_backup_diagnostics": "Revise el origen de la copia, el repositorio de destino y los detalles técnicos afectados; después vuelva a intentar la copia.",
           "review_restore_diagnostics": "Revise el origen de restauración, la ruta de destino y los detalles técnicos; después vuelva a intentar la restauración.",
           "review_repository_operation": "Revise la configuración del repositorio y los detalles técnicos; después vuelva a intentar la operación.",
@@ -6869,7 +6871,9 @@
           "review_cleanup": "Revise los recursos retenidos y complete la limpieza restante antes de reintentar.",
           "check_agent": "Compruebe la conexión del Agent y vuelva a intentar la limpieza.",
           "retry": "Resuelva el problema de limpieza y vuelva a intentar la operación.",
-          "backup_remediation": "Corrija el problema de origen indicado y vuelva a intentar la operación."
+          "backup_remediation": "Corrija el problema de origen indicado y vuelva a intentar la operación.",
+          "review_source_unregister": "Resuelva los problemas que bloquean la operación y envíe una nueva solicitud de baja del origen.",
+          "reconnect_unregister_agent": "Conecte el Agent y confirme su conexión antes de enviar una nueva solicitud de limpieza estricta."
         },
         "reason_message": {
           "Task timed out": "La tarea expiró",

@@ -88,6 +88,101 @@ afterEach(() => {
 })
 
 describe('TaskDetailDrawer failure placement', () => {
+  for (const locale of ['en', 'zh-hans', 'es']) {
+    it(`localizes offline deregistration in ${locale}, including historical task guidance`, async () => {
+      i18n.global.locale.value = locale
+      const t = i18n.global.t
+      const reason = {
+        code: 'agent_offline',
+        detail: 'Agent "Test Host" is offline — remote uninstall is required in strict mode.',
+      }
+      vi.mocked(getTask).mockResolvedValue({
+        ...task,
+        task_type: 'source_unregister',
+        status: 'failed',
+        steps: [{ ...steps[0], step_name: 'cleanup_source_endpoint', status: 'failed' }],
+        error_details: {
+          ...task.error_details!,
+          severity: 'error', outcome: 'failed',
+          summary: 'Backup source was not deleted.',
+          reasons: [reason],
+          suggestions: [{ code: 'review_task', detail: 'Old English fallback' }],
+        },
+      })
+      vi.mocked(listTaskEvents).mockResolvedValue({ count: 1, results: [{
+        id: 1, step_id: 1, seq: 1, level: 'ERROR',
+        message: 'Backup source was not deleted.',
+        metadata: {
+          error_code: 'SOURCE_UNREGISTER_PREFLIGHT_FAILED',
+          error_message: 'Backup source was not deleted.',
+        },
+      }] })
+      const wrapper = mountDrawer()
+      await flushPromises()
+      const box = wrapper.get('.task-event-failure__terminal-box')
+      expect(box.text()).toContain(t('protection.backupsPage.unregisterStrictOfflineNamed', { name: 'Test Host' }))
+      expect(box.text()).toContain(t('ops.task.failureDetails.suggestion.reconnect_unregister_agent'))
+      expect(wrapper.get('.hfl-task-drawer__event-msg').text())
+        .toBe(t('ops.task.eventMessage.backupSourceNotDeleted'))
+      expect(box.text()).not.toMatch(/credentials|credenciales/)
+      expect(box.get('.task-event-failure__summary--terminal').text())
+        .not.toContain('Backup source was not deleted.')
+      expect(box.text()).toContain('Backup source was not deleted.') // original technical evidence
+      wrapper.unmount()
+    })
+  }
+
+  it('uses structured legacy payload reasons when the task has no error contract or events', async () => {
+    i18n.global.locale.value = 'zh-hans'
+    vi.mocked(getTask).mockResolvedValue({
+      ...task,
+      task_type: 'source_unregister', status: 'failed',
+      steps: [{ ...steps[0], step_name: 'cleanup_source_endpoint', status: 'failed' }],
+      error_details: null,
+      error_message: 'Backup source was not deleted.',
+      result_payload: {
+        reasons: [{ code: 'agent_offline', detail: 'Agent "Test Host" is offline — remote uninstall is required in strict mode.' }],
+      },
+    })
+    const wrapper = mountDrawer()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Test Host')
+    expect(wrapper.text()).toContain(i18n.global.t('protection.backupsPage.unregisterStrictOfflineNamed', { name: 'Test Host' }))
+    expect(wrapper.text()).toContain(i18n.global.t('ops.task.failureDetails.suggestion.reconnect_unregister_agent'))
+    expect(wrapper.get('.hfl-task-drawer__failure-list').text())
+      .not.toMatch(/\[object Object\]|Backup source was not deleted/)
+    wrapper.unmount()
+  })
+
+  it('moves the synthetic aggregate error to collapsed, sanitized technical details', async () => {
+    i18n.global.locale.value = 'zh-hans'
+    const diagnostic = 'Synthetic test failure: Agent offline; remote uninstall could not complete. No real Agent was contacted.'
+    vi.mocked(getTask).mockResolvedValue({
+      ...task, task_type: 'source_unregister', status: 'failed', steps: [],
+      error_code: 'SOURCE_UNREGISTER_FAILED', error_message: diagnostic,
+      error_details: {
+        ...task.error_details!, severity: 'error', outcome: 'failed',
+        error_code: 'SOURCE_UNREGISTER_FAILED', summary: 'Task failed.',
+        reasons: [
+          { code: 'agent_offline', detail: 'Agent offline' },
+          { code: 'SOURCE_UNREGISTER_FAILED', detail: diagnostic },
+        ],
+        suggestions: [{ code: 'review_source_unregister', detail: '' }],
+        technical_detail: { password: 'secret-test-password' },
+      },
+    })
+    const wrapper = mountDrawer()
+    await flushPromises()
+    const panel = wrapper.get('.hfl-task-drawer__event-failure-panel--stacked')
+    expect(panel.text()).toContain(i18n.global.t('ops.task.failureDetails.reason.agent_offline'))
+    expect(panel.text()).toContain(i18n.global.t('ops.task.failureDetails.suggestion.reconnect_unregister_agent'))
+    expect(panel.text()).not.toMatch(/Synthetic test failure|Bring the Agent online/)
+    const technical = wrapper.get('.hfl-error-technical-details')
+    expect(technical.attributes('open')).toBeUndefined()
+    expect(technical.text()).toContain(diagnostic)
+    expect(technical.text()).not.toContain('secret-test-password')
+    wrapper.unmount()
+  })
   it('does not put a successful backup warning into a red Task failed panel', async () => {
     const wrapper = mountDrawer()
     await flushPromises()

@@ -1,6 +1,7 @@
 import type { TaskEventRow } from './taskApi'
 
 const taskEventMessageKeys: Record<string, string> = {
+  'backup source was not deleted.': 'ops.task.eventMessage.backupSourceNotDeleted',
   'task created': 'ops.task.eventMessage.taskCreated',
   'task started': 'ops.task.eventMessage.taskStarted',
   'task cancelled': 'ops.task.eventMessage.taskCancelled',

@@ -26,7 +26,7 @@ describe('unregister cleanup display', () => {
       expect(unregisterCleanupText('Review retained resources and complete any remaining cleanup before retrying.', t))
         .toBe(messages.ops.task.failureDetails.suggestion.review_cleanup)
       expect(unregisterCleanupText('Backup source was not deleted.', t))
-        .toBe(messages.ops.task.failureDetails.reason.SOURCE_UNREGISTER_CLEANUP_FAILED)
+        .toBe(messages.ops.task.eventMessage.backupSourceNotDeleted)
       expect(unregisterCleanupText('Unknown cleanup error: /srv/custom', t))
         .toBe('Unknown cleanup error: /srv/custom')
       for (const detail of ['The NAS mount could not be removed.', 'The NAS mount could not be removed']) {
@@ -51,6 +51,14 @@ describe('unregister cleanup display', () => {
         .toBe(t('protection.backupsPage.syntheticUnregisterDiagnostic'))
       expect(unregisterRetainedResourceLabel('source_nas_mount:32', t))
         .toBe(t('protection.backupsPage.unregisterRetainedNasMount', { id: '32' }))
+      expect(unregisterCleanupText('Agent "Custom Host" is offline — remote uninstall is required in strict mode.', t))
+        .toBe(t('protection.backupsPage.unregisterStrictOfflineNamed', { name: 'Custom Host' }))
+      expect(unregisterCleanupText('Fix the issues above and try again, or use Force Cleanup where allowed.', t))
+        .toBe(messages.ops.task.failureDetails.suggestion.review_source_unregister)
+      expect(unregisterCleanupSuggestion({ code: 'review_task', detail: 'Old fallback' }, t))
+        .toBe(messages.ops.task.failureDetails.suggestion.review_source_unregister)
+      expect(messages.ops.task.failureDetails.suggestion.review_task)
+        .not.toMatch(/credentials|credenciales/i)
     })
   }
 })

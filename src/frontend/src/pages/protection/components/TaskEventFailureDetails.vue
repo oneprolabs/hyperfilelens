@@ -12,6 +12,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { AlertTriangle, ChevronRight, Copy, Lightbulb, LockKeyhole } from 'lucide-vue-next'
 import { copyTextToClipboard } from '../../../lib/clipboard'
+import { unregisterEventFailure, type UnregisterTaskReason } from '../../../lib/unregisterTaskFailureDisplay'
 
 const props = withDefaults(defineProps<{
   metadata?: unknown
@@ -20,12 +21,16 @@ const props = withDefaults(defineProps<{
   technicalDetail?: string
   terminalResolutions?: string[]
   repositoryConnectionReason?: string
+  taskType?: string
+  unregisterReasons?: UnregisterTaskReason[]
 }>(), {
   showTerminalFailure: true,
   showSkippedDetails: true,
   technicalDetail: '',
   terminalResolutions: () => [],
   repositoryConnectionReason: '',
+  taskType: '',
+  unregisterReasons: () => [],
 })
 
 const MAX_SKIPPED_ITEMS = 10
@@ -60,6 +65,9 @@ const restorePermissionRemediationItems = computed(() => restorePermissionRemedi
 const restoreTargetPath = computed(() => String(metadataRecord.value.target_path || '').trim())
 const errorDiagnostic = computed(() => String(metadataRecord.value.error_diagnostic || '').trim())
 const originalError = computed(() => String(metadataRecord.value.error_message || '').trim())
+const unregisterFailure = computed(() => unregisterEventFailure(
+  metadataRecord.value, props.taskType, props.unregisterReasons, t, props.terminalResolutions,
+))
 const repositoryTimeout = computed(() =>
   errorCode.value === 'REPOSITORY_OPERATION_TIMEOUT'
   && (
@@ -86,6 +94,7 @@ const exactSourceBusy = computed(() =>
 )
 const terminalFailure = computed(() => {
   if (!props.showTerminalFailure) return ''
+  if (unregisterFailure.value) return unregisterFailure.value.summary
   if (terminalContext.value.error_code === 'SOURCE_PATH_NOT_FOUND') {
     return t('ops.task.failureDetails.reason.SOURCE_PATH_NOT_FOUND')
   }
@@ -113,7 +122,8 @@ const terminalFilterRule = computed(() =>
   exactSourceBusy.value ? String(terminalContext.value.filter_rule || '') : '',
 )
 const effectiveTerminalResolutions = computed(() =>
-  terminalContext.value.error_code === 'SOURCE_PATH_NOT_FOUND'
+  unregisterFailure.value ? unregisterFailure.value.resolutions
+  : terminalContext.value.error_code === 'SOURCE_PATH_NOT_FOUND'
     ? [
         t('ops.task.failureDetails.suggestion.restore_backup_source_path'),
         t('ops.task.failureDetails.suggestion.remove_obsolete_backup_source'),

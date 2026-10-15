@@ -87,6 +87,32 @@ class SourceUnregisterErrorContractTests(SimpleTestCase):
         )
         self.assertEqual(contract["entities"][0]["id"], 406)
 
+    def test_offline_unregister_uses_deregistration_guidance(self):
+        contract = self._contract(reasons=[{
+            "code": "agent_offline",
+            "detail": 'Agent "test-host" is offline — remote uninstall is required in strict mode.',
+        }])
+        self.assertEqual(contract["reasons"][0]["code"], "agent_offline")
+        self.assertEqual(contract["suggestions"][0]["code"], "review_source_unregister")
+        self.assertNotIn("credentials", str(contract["suggestions"]))
+
+    def test_historical_generic_suggestion_gets_deregistration_code(self):
+        task = SimpleNamespace(
+            task_type="source_unregister",
+            status="failed",
+            result_payload={
+                "suggestions": [{"code": "review_task", "detail": "Old generic hint"}],
+            },
+            error_code="SOURCE_UNREGISTER_PREFLIGHT_FAILED",
+            error_message="Backup source was not deleted.",
+            current_step="cleanup_source_endpoint",
+            task_uuid="historical-task",
+        )
+        contract = task_error_contract(task)
+        self.assertEqual(contract["suggestions"], [{
+            "code": "review_source_unregister", "detail": "review_source_unregister",
+        }])
+
     def test_consumer_projection_ignores_private_fields_and_invalid_entries(self):
         contract = self._contract(reasons=[{
             "code": "snapshot_in_use",

@@ -5931,7 +5931,7 @@
   "ops.task.failureDetails.reason.empty_ids": "134b8e6a223c17240e4a891ac9a6d7c96b8f94c74926f59f50493f14282debf5",
   "ops.task.failureDetails.reason.invalid_id": "2935886cc905d6d52c8062d81bd15a90c185d2e9f772ba6da537036b5ce0868a",
   "ops.task.failureDetails.reason.cleanup_failed": "42a312c012846a12957d14a3b2546eec7ee510aad004d0f293413fdacf2855ec",
-  "ops.task.failureDetails.suggestion.review_task": "0a53372820f82b2a93cfb42734dbe2e8b7e5a8480fb67f48f4413a512def5c87",
+  "ops.task.failureDetails.suggestion.review_task": "d408c8bc074ce11a11f4b2e02429db0d7b64d76b7f05ce84db1218d9947e8585",
   "ops.task.failureDetails.suggestion.review_backup_diagnostics": "179162884ffdaba1d6fdc7b1331e4b845af40042086cf013cb8f3410d20a532e",
   "ops.task.failureDetails.suggestion.review_restore_diagnostics": "2f75447f38b2bb34a5fdbc2d5806e47d5b211a486553ca6e8c9de779ad0a8c42",
   "ops.task.failureDetails.suggestion.review_repository_operation": "7d1335facf60e52ebdfcedd46b496b675952e7c277f214ded8fe0b3b423e074e",
@@ -8920,5 +8920,9 @@
   "protection.backupsPage.syntheticUnregisterDiagnostic": "8929a2f20402d8c732898c785aeeb6f4d3155f3bf494dff1939a76efd14d6bf2",
   "protection.backupsPage.statusViewDetails": "cd3cd146211bff87ad7886cd2699c00dac917a94b95cbd6c6a9be0f7d886e834",
   "protection.backupsPage.statusViewTask": "0383ca89c5bc01e963630f0e69a2940de16110996d5e997ab806009419616223",
-  "protection.backupsPage.statusDetailActionLabel": "0ced8361f69f8aa17dbec9bea7b600fdfe088e43e4bae89754880dec836fb798"
+  "protection.backupsPage.statusDetailActionLabel": "0ced8361f69f8aa17dbec9bea7b600fdfe088e43e4bae89754880dec836fb798",
+  "ops.task.eventMessage.backupSourceNotDeleted": "7b231d299d2262dd27b6317903b18e3f4ff54eefdba9cdcaecf8a5a7ff66b2b7",
+  "ops.task.failureDetails.suggestion.reconnect_unregister_agent": "e05cf0988db1a508b25d57666fa20951a4af8c26223907b679359b5007d2402f",
+  "ops.task.failureDetails.suggestion.review_source_unregister": "f310389fa7a3fea04c611d0cb392c2e72db762a13731965177586fd4b735445c",
+  "protection.backupsPage.unregisterStrictOfflineNamed": "b220a1aca058ea866d405bd36f7eebf5b5e84a7d0142ecb5776a2d59d16ee34c"
 }

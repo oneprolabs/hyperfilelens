@@ -67,6 +67,18 @@ describe('FlowBackupSourceDetailDrawer structured detail layout', () => {
 })
 
 describe('FlowBackupSourceDetailDrawer source status', () => {
+  it('uses shared connectivity colors in the header, overview, and related resources', () => {
+    for (const row of ['source', 'overviewSource', 'row']) {
+      expect(drawer).toContain(`v-bind="lifecycleStatusTagAttrs(${row}.availability)"`)
+    }
+    expect(drawer).not.toContain('flowSourceStatusTagType')
+    expect(drawer).not.toContain('function flowSourceStatusTag(')
+    const labels = sourceBetween('function flowSourceStatusLabel(', 'function flowSourceLifecycleStatusLabel(')
+    expect(labels).toContain("if (status === 'online')")
+    expect(labels).toContain("if (status === 'offline')")
+    expect(labels).toContain("return t('ops.task.unknownValue')")
+  })
+
   it('shows host system specifications in the overview', () => {
     const sourceInfo = sourceBetween(
       "<h4 class=\"hfl-detail-section__title\">{{ t('protection.backupsPage.flowSourceDetailSectionSpecs') }}</h4>",

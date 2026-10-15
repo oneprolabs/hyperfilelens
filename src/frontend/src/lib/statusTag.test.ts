@@ -3,11 +3,21 @@ import {
   booleanStatusTag,
   alertStatusTagAttrs,
   lifecycleStatusTone,
+  lifecycleStatusTagAttrs,
   severityStatusTagAttrs,
   statusTagAttrs,
 } from './statusTag'
 
 describe('lifecycleStatusTone', () => {
+  it.each([
+    ['online', { type: 'success' }],
+    ['offline', { type: 'danger' }],
+    ['unknown', { class: 'hfl-tag--neutral' }],
+    [undefined, { class: 'hfl-tag--neutral' }],
+    [null, { class: 'hfl-tag--neutral' }],
+  ])('provides consistent tag attributes for connectivity %s', (status, attrs) => {
+    expect(lifecycleStatusTagAttrs(status as string | null | undefined)).toEqual(attrs)
+  })
   it.each([
     ['available', 'success'],
     ['online', 'success'],

@@ -153,6 +153,7 @@ def _default_suggestion_code(task) -> str:
         "backup": "review_backup_diagnostics",
         "restore": "review_restore_diagnostics",
         "repository_operation": "review_repository_operation",
+        "source_unregister": "review_source_unregister",
     }.get(task_type, "review_task")
 
 

@@ -69,6 +69,55 @@ describe('unregisterFailureToErrorDetails', () => {
     expect(JSON.stringify(details.rawDetail)).toContain('Unmount failed and the source remains registered.')
   })
 
+  it('localizes a strict offline failure, its step, and named entity without credential advice', () => {
+    const zhT = createI18n({ legacy: false, locale: 'zh', messages: { zh } }).global.t
+    const diagnostic = 'Agent "Test Host" is offline — remote uninstall is required in strict mode.'
+    const details = unregisterFailureToErrorDetails({
+      t: zhT,
+      task: {
+        status: 'failed', task_type: 'source_unregister',
+        error_code: 'SOURCE_UNREGISTER_PREFLIGHT_FAILED',
+        error_message: 'Backup source was not deleted.',
+        current_step: 'cleanup_source_endpoint',
+        result_payload: { hint: 'Fix the issues above and try again, or use Force Cleanup where allowed.' },
+        error_details: {
+          reasons: [{ code: 'agent_offline', detail: diagnostic }],
+          suggestions: [{ code: 'review_task', detail: 'Old fallback' }],
+          entities: [{ id: 'agent:1', name: 'Test Host', type: 'source', error: diagnostic }],
+        },
+      } as never,
+    })
+    expect(details.reasons).toContain(zhT('protection.backupsPage.unregisterFailureFailedStep', {
+      step: zh.ops.task.step.cleanup_source_endpoint,
+    }))
+    expect(details.reasons).not.toContain('Backup source was not deleted.')
+    expect(details.resolutions).toContain(zh.ops.task.failureDetails.suggestion.reconnect_unregister_agent)
+    expect(JSON.stringify(details.resolutions)).not.toMatch(/credentials|Fix the issues/)
+    expect(details.entities?.[0]?.error)
+      .toBe(zhT('protection.backupsPage.unregisterStrictOfflineNamed', { name: 'Test Host' }))
+    expect(details.rawDetail).toMatchObject({ error_message: 'Backup source was not deleted.' })
+  })
+
+  it('keeps an aggregate synthetic diagnostic in raw details rather than business reasons', () => {
+    const diagnostic = 'Synthetic test failure: Agent offline; remote uninstall could not complete. No real Agent was contacted.'
+    const details = unregisterFailureToErrorDetails({
+      t,
+      task: {
+        task_type: 'source_unregister', status: 'failed',
+        error_code: 'SOURCE_UNREGISTER_FAILED', error_message: diagnostic,
+        error_details: {
+          error_code: 'SOURCE_UNREGISTER_FAILED',
+          reasons: [
+            { code: 'agent_offline', detail: 'Agent offline' },
+            { code: 'SOURCE_UNREGISTER_FAILED', detail: diagnostic },
+          ],
+          suggestions: [{ code: 'review_source_unregister', detail: '' }],
+        },
+      } as never,
+    })
+    expect(details.reasons).toEqual([en.ops.task.failureDetails.reason.agent_offline])
+    expect(details.rawDetail).toMatchObject({ error_message: diagnostic })
+  })
   it('localizes offline cleanup across reasons, suggestions, entities and residue', () => {
     const zhT = createI18n({ legacy: false, locale: 'zh', messages: { zh } }).global.t
     const name = '[TEST] DR-Failed Node'
@@ -90,7 +139,10 @@ describe('unregisterFailureToErrorDetails', () => {
           severity: 'warning',
           cleanup_complete: false,
           retained_resources: ['agent_installation'],
-          suggestions: [{ code: 'review_cleanup', detail: 'Review retained resources and complete any remaining cleanup before retrying.' }],
+          suggestions: [
+            { code: 'review_cleanup', detail: 'Review retained resources and complete any remaining cleanup before retrying.' },
+            { code: 'review_source_unregister', detail: 'review_source_unregister' },
+          ],
           entities: [{ id: 'agent:1', name, type: 'source', error: `Remote uninstall was skipped because the Agent was offline. ${diagnostic}` }],
           cleanup_failures: [{ code: 'agent_offline', detail: diagnostic }],
         },

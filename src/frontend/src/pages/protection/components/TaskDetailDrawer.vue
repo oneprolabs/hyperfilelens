@@ -56,6 +56,9 @@ import TaskStatusTag from '../../../components/TaskStatusTag.vue'
 import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
+import { unregisterBusinessReasons, unregisterTaskReasonText, unregisterTaskSuggestionText } from '../../../lib/unregisterTaskFailureDisplay'
+import HflErrorTechnicalDetails from '../../../components/feedback/HflErrorTechnicalDetails.vue'
+import { unregisterCleanupText } from '../../../lib/unregisterCleanupDisplay'
 import { cancelTask, getTask, listTaskEvents, type TaskEventRow, type TaskResourceRow, type TaskRow } from '../../../lib/taskApi'
 import { isRestoreTaskType } from '../../../lib/taskType'
 import { snapshotUsageFailureText, snapshotUsageReasonKey, type SnapshotUsageReason } from '../../../lib/snapshotUsageFailureDisplay'
@@ -143,13 +146,19 @@ const taskErrorDetails = computed(() => {
     ? task.result_payload as Record<string, unknown>
     : {}
   const reasons = Array.isArray(payload.reasons)
-    ? payload.reasons.map((detail) => ({ code: task.error_code || 'TASK_FAILED', detail: String(detail) }))
+    ? payload.reasons.map((detail) => detail && typeof detail === 'object'
+      ? { ...detail, code: String(detail.code || task.error_code || 'TASK_FAILED'), detail: String(detail.detail || detail.code || '') }
+      : { code: task.error_code || 'TASK_FAILED', detail: String(detail) })
     : []
-  const resolutions = Array.isArray(payload.suggestions)
-    ? payload.suggestions.map((detail) => ({ code: 'review_task', detail: String(detail) }))
-    : Array.isArray(payload.resolutions)
-      ? payload.resolutions.map((detail) => ({ code: 'review_task', detail: String(detail) }))
-      : []
+  const suggestionItems = Array.isArray(payload.suggestions)
+    ? payload.suggestions
+    : Array.isArray(payload.resolutions) ? payload.resolutions : []
+  const resolutions = suggestionItems.map((detail) => detail && typeof detail === 'object'
+    ? { code: String(detail.code || 'review_task'), detail: String(detail.detail || detail.code || '') }
+    : { code: 'review_task', detail: String(detail) })
+  if (!resolutions.length && task.task_type === 'source_unregister') {
+    resolutions.push({ code: 'review_source_unregister', detail: String(payload.hint || '') })
+  }
   return {
     version: 1,
     severity: 'error' as const,
@@ -176,6 +185,14 @@ const taskFailureSummary = computed(() => {
   const summary = String(taskErrorDetails.value?.summary || '').trim()
   if (!summary || /^task failed\.?$/i.test(summary) || /^task cancelled\.?$/i.test(summary) || /^task cancelled by user\.?$/i.test(summary) || /^task timed out\.?$/i.test(summary) || /^task partially completed\.?$/i.test(summary)) {
     return ''
+  }
+  if (activeTask.value?.task_type === 'source_unregister') {
+    const reasons = taskErrorDetails.value?.reasons || []
+    if (summary === activeTask.value.error_message && reasons.some(reason =>
+      reason.code && reason.code !== activeTask.value?.error_code
+      && reason.code !== 'TASK_FAILED' && !reason.code.startsWith('SOURCE_UNREGISTER_'),
+    )) return ''
+    return unregisterCleanupText(summary, t)
   }
   return summary
 })
@@ -210,6 +227,11 @@ function silentTranslate(key: string): string | undefined {
 }
 
 function localizedFailureText(item: SnapshotUsageReason, kind: 'reason' | 'suggestion') {
+  if (activeTask.value?.task_type === 'source_unregister') {
+    return kind === 'reason'
+      ? unregisterTaskReasonText(item, t)
+      : unregisterTaskSuggestionText(item, taskErrorDetails.value?.reasons || [], t)
+  }
   const usageText = kind === 'reason' ? snapshotUsageFailureText(item, t) : undefined
   if (usageText) return usageText
   const key = `ops.task.failureDetails.${kind}.${item.code || ''}`
@@ -236,7 +258,11 @@ const repositoryConnectionReason = computed(() => {
 })
 const effectiveReasons = computed(() => {
     const seen = new Set<string>()
-    return (taskErrorDetails.value?.reasons || []).filter(
+    const reasons = taskErrorDetails.value?.reasons || []
+    const businessReasons = activeTask.value?.task_type === 'source_unregister'
+      ? unregisterBusinessReasons(reasons, taskErrorDetails.value?.error_code)
+      : reasons
+    return businessReasons.filter(
       (r) => {
         if (r.code === 'TASK_FAILED') return false
         const dedupe = snapshotUsageReasonKey(r)
@@ -1316,6 +1342,8 @@ watch(
                         </div>
                         <TaskEventFailureDetails
                           :metadata="taskEventMetadata(event)"
+                          :task-type="activeTask?.task_type"
+                          :unregister-reasons="taskErrorDetails?.reasons"
                           :technical-detail="terminalTechnicalDetail(event)"
                           :terminal-resolutions="terminalFailureResolutions"
                           :repository-connection-reason="repositoryConnectionReason"
@@ -1402,6 +1430,8 @@ watch(
                       </div>
                     <TaskEventFailureDetails
                       :metadata="taskEventMetadata(event)"
+                      :task-type="activeTask?.task_type"
+                      :unregister-reasons="taskErrorDetails?.reasons"
                       :technical-detail="terminalTechnicalDetail(event)"
                       :terminal-resolutions="terminalFailureResolutions"
                       :repository-connection-reason="repositoryConnectionReason"
@@ -1445,6 +1475,15 @@ watch(
                 </div>
               </div>
 
+            <HflErrorTechnicalDetails
+              v-if="activeTask.task_type === 'source_unregister' && hasTerminalTaskFailure && !hasLocatedFailureEvent"
+              :detail="{
+                error_code: activeTask.error_code,
+                error_message: activeTask.error_message,
+                reasons: taskErrorDetails?.reasons,
+                technical_detail: taskErrorDetails?.technical_detail,
+              }"
+            />
             </section>
         </ElTabPane>
 

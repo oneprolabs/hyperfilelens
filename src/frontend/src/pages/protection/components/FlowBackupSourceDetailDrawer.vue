@@ -907,18 +907,9 @@ function flowSourceOsType(row: FlowSourceRow) {
 }
 
 function flowSourceStatusLabel(status?: 'online' | 'offline') {
-  return status === 'online'
-    ? t('protection.backupsPage.nodeStatusOnline')
-    : t('protection.backupsPage.nodeStatusOffline')
-}
-
-function flowSourceStatusTag(status?: 'online' | 'offline') {
-  return status === 'online' ? 'success' : 'neutral'
-}
-
-function flowSourceStatusTagType(status?: 'online' | 'offline') {
-  const tag = flowSourceStatusTag(status)
-  return tag === 'neutral' ? undefined : tag
+  if (status === 'online') return t('protection.backupsPage.nodeStatusOnline')
+  if (status === 'offline') return t('protection.backupsPage.nodeStatusOffline')
+  return t('ops.task.unknownValue')
 }
 
 function flowSourceLifecycleStatusLabel(status: FlowSourceRow['status']) {
@@ -1545,6 +1536,8 @@ function eventErrorText(event: TaskEventRow) {
   const message = taskEventMetadataText(event, ['error_message'])
   if (!message) return ''
   const code = taskEventMetadataText(event, ['error_code'])
+  // The shared error card renders deregistration reasons and keeps raw evidence.
+  if (activeTask.value?.task_type === 'source_unregister' || code.startsWith('SOURCE_UNREGISTER_')) return ''
   return code ? `[${code}] ${message}` : message
 }
 
@@ -2754,7 +2747,7 @@ function onClosed() {
           </span>
           <el-tag
             size="small"
-            :type="flowSourceStatusTagType(source.availability)"
+            v-bind="lifecycleStatusTagAttrs(source.availability)"
           >
             {{ flowSourceStatusLabel(source.availability) }}
           </el-tag>
@@ -2817,8 +2810,7 @@ function onClosed() {
                     <span class="hfl-detail-row__value">
                       <el-tag
                         size="small"
-                        :type="flowSourceStatusTagType(overviewSource.availability)"
-                        :class="{ 'hfl-tag--neutral': flowSourceStatusTag(overviewSource.availability) === 'neutral' }"
+                        v-bind="lifecycleStatusTagAttrs(overviewSource.availability)"
                         effect="light"
                       >
                         {{ flowSourceStatusLabel(overviewSource.availability) }}
@@ -5085,7 +5077,11 @@ function onClosed() {
                           v-if="eventErrorText(event)"
                           class="dp-task-detail__event-error"
                         >{{ eventErrorText(event) }}</span>
-                        <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
+                        <TaskEventFailureDetails
+                          :metadata="taskEventMetadata(event)"
+                          :task-type="activeTask?.task_type"
+                          :unregister-reasons="activeTask?.error_details?.reasons"
+                        />
                       </div>
                       <span
                         class="dp-task-detail__event-time"
@@ -5151,7 +5147,11 @@ function onClosed() {
                           v-if="eventErrorText(event)"
                           class="dp-task-detail__event-error"
                         >{{ eventErrorText(event) }}</span>
-                        <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
+                        <TaskEventFailureDetails
+                          :metadata="taskEventMetadata(event)"
+                          :task-type="activeTask?.task_type"
+                          :unregister-reasons="activeTask?.error_details?.reasons"
+                        />
                       </div>
                       <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
                     </div>
@@ -5203,7 +5203,11 @@ function onClosed() {
                     v-if="eventErrorText(event)"
                     class="dp-task-detail__event-error"
                   >{{ eventErrorText(event) }}</span>
-                  <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
+                  <TaskEventFailureDetails
+                    :metadata="taskEventMetadata(event)"
+                    :task-type="activeTask?.task_type"
+                    :unregister-reasons="activeTask?.error_details?.reasons"
+                  />
                 </div>
                 <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
               </div>
@@ -5339,8 +5343,7 @@ function onClosed() {
                   <template #default="{ row }">
                     <ElTag
                       v-if="selectedResourceType === 'backup_source' && row.availability"
-                      :type="flowSourceStatusTagType(row.availability)"
-                      :class="{ 'hfl-tag--neutral': flowSourceStatusTag(row.availability) === 'neutral' }"
+                      v-bind="lifecycleStatusTagAttrs(row.availability)"
                       size="small"
                     >
                       {{ flowSourceStatusLabel(row.availability) }}
