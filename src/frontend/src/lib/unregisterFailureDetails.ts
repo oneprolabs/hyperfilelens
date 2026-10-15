@@ -23,6 +23,7 @@ import {
   type SourceUnregisterTaskOutcome,
 } from './sourceUnregisterMonitor'
 import type { TaskRow } from './taskApi'
+import { taskStepTranslationKey } from './taskStepDisplay'
 import {
   taskCleanupFailures,
   taskCleanupWarnings,
@@ -204,6 +205,13 @@ export function unregisterFailureToErrorDetails(input: {
     || (taskSucceeded ? '' : task?.current_step)
     || '',
   ).trim()
+  const failedStepLabel = failedStep
+    ? (() => {
+        const key = taskStepTranslationKey(failedStep, task?.task_type)
+        const translated = key ? t(key, {}, { missingWarn: false, fallbackWarn: false }) : ''
+        return translated && translated !== key ? translated : failedStep
+      })()
+    : ''
   const hint = String(outcome?.hint || payload.hint || '').trim()
   const errorMessage = String(
     outcome?.errorMessage || task?.error_message || task?.error_code || '',
@@ -220,6 +228,10 @@ export function unregisterFailureToErrorDetails(input: {
     || syncWarnings.length
     || syncRetained.length,
   )
+  // Residue is diagnostic evidence, not proof that deregistration completed.
+  // A failed task may contain legacy partial_success/warning fields.
+  const taskFailed = Boolean(task && ['failed', 'timeout'].includes(String(task.status).toLowerCase()))
+  const removedWithResidue = isResidue && !taskFailed
   const cleanupSummary = summarizeUnregisterCleanup([
     ...structuredReasons.map(item => ({ detail: item.detail || item.code, code: item.code, sourceId: item.source_id, sourceName: item.source_name })),
     ...syncWarnings.map(item => ({ detail: item.detail || item.code, code: item.code, sourceId: item.source_id, sourceName: item.source_name })),
@@ -230,7 +242,7 @@ export function unregisterFailureToErrorDetails(input: {
       ? [{ detail: entity.error, sourceId: entity.id, sourceName: entity.name }]
       : []),
     ...(task?.recent_events || []).flatMap(event => [
-      ...reasonObjects(record(event.metadata).reasons).map(item => ({ detail: item.detail || item.code, sourceId: item.source_id, sourceName: item.source_name })),
+      ...reasonObjects(record(event.metadata).reasons).map(item => ({ code: item.code, detail: item.detail || item.code, sourceId: item.source_id, sourceName: item.source_name })),
       ...(event.level === 'error' && event.message ? [{ detail: event.message }] : []),
     ]),
   ].map(item => item.sourceId || item.sourceName
@@ -242,20 +254,24 @@ export function unregisterFailureToErrorDetails(input: {
 
   const reasons = uniqueStrings([
     !isResidue && failedStep
-      ? t('protection.backupsPage.unregisterFailureFailedStep', { step: failedStep })
+      ? t('protection.backupsPage.unregisterFailureFailedStep', { step: failedStepLabel })
       : '',
     ...structuredReasons.map((reason) => unregisterReasonLabel(reason, t)),
     ...cleanupFailures.map((item) => {
       const target = item.sourceName || item.sourceId || ''
+      const detail = unregisterReasonLabel({
+        code: item.code, detail: item.detail,
+        source_id: item.sourceId, source_name: item.sourceName,
+      }, t)
       return target
-        ? `${item.detail} (${target})`
-        : item.detail
+        ? t('protection.backupsPage.unregisterCleanupDiagnosticNamed', { name: target, detail })
+        : detail
     }),
     ...(!isResidue
       ? failedChildren.map((item) =>
           t('protection.backupsPage.unregisterFailureChildTask', {
             uuid: item.taskUuid,
-            error: item.error,
+            error: unregisterCleanupText(item.error, t),
           }))
       : []),
     ...eventHints,
@@ -264,7 +280,10 @@ export function unregisterFailureToErrorDetails(input: {
 
   const residueLines = uniqueStrings([
     ...warningDetailLines(syncWarnings, t),
-    ...cleanupWarnings.map((item) => unregisterCleanupText(item.detail, t)),
+    ...cleanupWarnings.map((item) => unregisterReasonLabel({
+      code: item.code, detail: item.detail,
+      source_id: item.sourceId, source_name: item.sourceName,
+    }, t)),
     ...retained.map((item) =>
       t('protection.backupsPage.unregisterFailureRetainedResource', { resource: unregisterRetainedResourceLabel(item, t) }),
     ),
@@ -300,7 +319,7 @@ export function unregisterFailureToErrorDetails(input: {
   ])
 
   const hasRetainedResources = retained.length > 0
-  const summary = isResidue
+  const summary = removedWithResidue
     ? (source
       ? t(hasRetainedResources
         ? 'protection.backupsPage.unregisterCleanupPendingSummaryNamed'
@@ -316,18 +335,18 @@ export function unregisterFailureToErrorDetails(input: {
     ? cleanupSummary.reasons
     : uniqueStrings([...reasons, ...residueLines].map((item) => unregisterCleanupText(item, t)))
   return {
-    title: isResidue
+    title: removedWithResidue
       ? t(hasRetainedResources
         ? 'protection.backupsPage.unregisterCleanupPendingTitle'
         : 'protection.backupsPage.unregisterCleanupWarningTitle')
       : t('protection.backupsPage.unregisterFailureTitle'),
     summary,
-    severity: contract?.severity || (isResidue ? 'warning' : 'error'),
+    severity: taskFailed ? 'error' : contract?.severity || (isResidue ? 'warning' : 'error'),
     traceId: contract?.correlation_id || undefined,
     taskUuid: taskUuid || undefined,
     taskAttempt: task?.retry_count,
     taskType: task?.task_type || (isResidue ? 'source_unregister' : undefined),
-    failedStep: failedStep || undefined,
+    failedStep: failedStepLabel || undefined,
     entities: contract?.entities?.length
       ? contract.entities.map((entity) => ({
         id: entity.id,

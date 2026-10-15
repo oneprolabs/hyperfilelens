@@ -42,7 +42,24 @@ watch(() => errorDetailsState.revision, async (revision) => {
 }, { immediate: true })
 const rawText = computed(() => safeErrorDetailText(details.value?.rawDetail))
 const isWarning = computed(() => details.value?.severity === 'warning')
-const isUnregisterWarning = computed(() => isWarning.value && details.value?.taskType === 'source_unregister')
+const isUnregister = computed(() => details.value?.taskType === 'source_unregister'
+  || Boolean(details.value?.relatedTasks?.length
+    && details.value.relatedTasks.every(task => task.taskType === 'source_unregister')))
+const isUnregisterWarning = computed(() => isWarning.value && isUnregister.value)
+// Unregister diagnostics already include cleanup failures in Reasons. Keep the
+// evidence in the payload/copy, but reserve this section for retained objects.
+const cleanupFailures = computed(() => isUnregister.value ? [] : details.value?.cleanupResidue?.failures || [])
+const displayReasons = computed(() => {
+  const reasons = [...(details.value?.reasons || [])]
+  if (!isUnregister.value) return reasons
+  const names = (details.value?.entities || []).flatMap(entity => [entity.name, String(entity.id)])
+  for (const failure of details.value?.cleanupResidue?.failures || []) {
+    const represented = reasons.includes(failure) || names.some(name =>
+      reasons.includes(t('protection.backupsPage.unregisterCleanupDiagnosticNamed', { name, detail: failure })))
+    if (!represented) reasons.push(failure)
+  }
+  return [...new Set(reasons)]
+})
 const hasEntities = computed(() => (details.value?.entities?.length ?? 0) > 0)
 
 const taskLinks = computed(() => {
@@ -139,13 +156,13 @@ function entityIcon(type: ErrorEntity['type']) {
       </section>
 
       <section
-        v-if="details.reasons?.length"
+        v-if="displayReasons.length"
         class="hfl-error-details__section"
       >
         <h3>{{ t('feedback.errorDetails.reasons') }}</h3>
         <ol class="hfl-error-details__list">
           <li
-            v-for="reason in details.reasons"
+            v-for="reason in displayReasons"
             :key="reason"
           >
             {{ reason }}
@@ -213,13 +230,13 @@ function entityIcon(type: ErrorEntity['type']) {
       </section>
 
       <section
-        v-if="details.cleanupResidue?.failures?.length || details.cleanupResidue?.retainedResources?.length"
+        v-if="cleanupFailures.length || details.cleanupResidue?.retainedResources?.length"
         class="hfl-error-details__section"
       >
-        <h3>{{ t(isUnregisterWarning ? 'protection.backupsPage.unregisterPendingResources' : 'feedback.errorDetails.cleanup') }}</h3>
+        <h3>{{ t(isUnregister ? 'protection.backupsPage.unregisterPendingResources' : 'feedback.errorDetails.cleanup') }}</h3>
         <ul class="hfl-error-details__list">
           <li
-            v-for="item in details.cleanupResidue.failures"
+            v-for="item in cleanupFailures"
             :key="`failure:${item}`"
           >
             {{ item }}

@@ -85,3 +85,68 @@ describe('related task navigation', () => {
     wrapper.unmount()
   })
 })
+
+describe('unregister cleanup presentation', () => {
+  afterEach(() => closeErrorDetails())
+
+  it('does not repeat unregister cleanup failures in the retained-resource section', async () => {
+    const wrapper = mountDialog()
+    openErrorDetails({
+      title: 'Deregistration failed',
+      summary: 'Deregistration failed',
+      taskType: 'source_unregister',
+      reasons: ['NAS mount could not be removed'],
+      cleanupResidue: {
+        hasResidue: true,
+        failures: ['NAS mount could not be removed'],
+        retainedResources: ['source_nas_mount:32'],
+      },
+    })
+    await nextTick()
+    expect(wrapper.text()).toContain('NAS mount could not be removed')
+    expect(wrapper.findAll('li').filter(item => item.text() === 'NAS mount could not be removed')).toHaveLength(1)
+    expect(wrapper.text()).toContain('NAS mount (source ID: 32)')
+    wrapper.unmount()
+  })
+
+  it('keeps unique legacy cleanup evidence in reasons rather than dropping it', async () => {
+    const wrapper = mountDialog()
+    openErrorDetails({
+      title: 'Failed', summary: 'Failed', taskType: 'source_unregister',
+      reasons: ['Original reason'],
+      cleanupResidue: { hasResidue: true, failures: ['Different cleanup failure'] },
+    })
+    await flushPromises()
+    const sections = wrapper.findAll('section')
+    expect(sections).toHaveLength(1)
+    expect(sections[0].text()).toContain('Original reason')
+    expect(sections[0].text()).toContain('Different cleanup failure')
+    wrapper.unmount()
+  })
+
+  it('does not add an unscoped duplicate of a source-scoped cleanup reason', async () => {
+    const wrapper = mountDialog()
+    openErrorDetails({
+      title: 'Failed', summary: 'Failed', taskType: 'source_unregister',
+      reasons: ['NAS A: Unmount failed'],
+      entities: [{ id: 'nas:32', name: 'NAS A', type: 'source' }],
+      cleanupResidue: { hasResidue: true, failures: ['Unmount failed'] },
+    })
+    await flushPromises()
+    expect(wrapper.findAll('.hfl-error-details__list li').map(item => item.text())).toEqual(['NAS A: Unmount failed'])
+    wrapper.unmount()
+  })
+
+  it('does not change cleanup presentation for other task types', async () => {
+    const wrapper = mountDialog()
+    openErrorDetails({
+      title: 'Failed', summary: 'Failed', taskType: 'repository_operation',
+      reasons: ['Reason'],
+      cleanupResidue: { hasResidue: true, failures: ['Cleanup failure'] },
+    })
+    await flushPromises()
+    expect(wrapper.findAll('section')).toHaveLength(2)
+    expect(wrapper.text()).toContain('Cleanup failure')
+    wrapper.unmount()
+  })
+})

@@ -87,6 +87,10 @@ export function unregisterReasonLabel(
       return t('protection.backupsPage.deleteReasonLifecycleInProgress', { name })
     case 'node_workload_active':
       return reason.detail || t('protection.backupsPage.deleteReasonNodeWorkload', { name })
+    case 'unmount_failed':
+    case 'SOURCE_UNREGISTER_CLEANUP_FAILED':
+    case 'nas_umount_retained':
+      return t(`ops.task.failureDetails.reason.${reason.code}`)
     case 'nas_umount_failed':
       return t('protection.backupsPage.deleteReasonNasUmountFailed', {
         name,

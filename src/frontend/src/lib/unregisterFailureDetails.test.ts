@@ -24,6 +24,50 @@ const i18n = createI18n({
 const t = i18n.global.t
 
 describe('unregisterFailureToErrorDetails', () => {
+  it('localizes the screenshot NAS failure across reasons, objects and residue without rewriting evidence', () => {
+    const zhT = createI18n({ legacy: false, locale: 'zh', messages: { zh } }).global.t
+    const name = '[TEST] Unregister source 2'
+    const details = unregisterFailureToErrorDetails({
+      t: zhT,
+      task: {
+        task_uuid: 'nas-failure-32',
+        task_type: 'source_unregister', status: 'failed',
+        error_code: 'SOURCE_UNREGISTER_CLEANUP_FAILED',
+        error_message: 'Unmount failed and the source remains registered.',
+        result_payload: {
+          outcome: 'partial_success', cleanup_complete: false,
+          cleanup_failures: [{ source_id: '32', source_name: name, detail: 'Unmount failed' }],
+          retained_resources: ['mount:32'],
+        },
+        error_details: {
+          severity: 'warning', cleanup_complete: false,
+          reasons: [{ code: 'unmount_failed', detail: 'The NAS mount could not be removed.' }],
+          retained_resources: ['mount:32'],
+          entities: [{ id: 'nas:32', name, type: 'source', error: 'Unmount failed' }],
+        },
+        recent_events: [{
+          level: 'error', message: 'Unmount failed and the source remains registered.',
+          metadata: { reasons: [{ code: 'unmount_failed', detail: 'The NAS mount could not be removed.' }] },
+        }],
+      } as never,
+    })
+    expect(details.title).toBe(zh.protection.backupsPage.unregisterFailureTitle)
+    expect(details.summary).not.toContain('已从系统中移除')
+    expect(details.severity).toBe('error')
+    expect(details.reasons).toContain(zh.ops.task.failureDetails.reason.unmount_failed)
+    expect(details.reasons).toContain(zh.protection.backupsPage.unregisterUnmountFailedRegistered)
+    expect(details.reasons?.some(reason => reason.includes(name) && reason.includes('卸载失败'))).toBe(true)
+    expect(details.entities?.[0]?.name).toBe(name)
+    expect(details.entities?.[0]?.error).toBe(zh.ops.task.failureDetails.reason_message['Unmount failed'])
+    expect(details.cleanupResidue?.failures).toContain(zh.ops.task.failureDetails.reason.unmount_failed)
+    expect(details.cleanupResidue?.failures).toContain(zh.protection.backupsPage.unregisterUnmountFailedRegistered)
+    const visible = JSON.stringify({
+      reasons: details.reasons, entities: details.entities, residue: details.cleanupResidue,
+    })
+    expect(visible).not.toMatch(/The NAS mount could not be removed|Unmount failed/)
+    expect(JSON.stringify(details.rawDetail)).toContain('Unmount failed and the source remains registered.')
+  })
+
   it('localizes offline cleanup across reasons, suggestions, entities and residue', () => {
     const zhT = createI18n({ legacy: false, locale: 'zh', messages: { zh } }).global.t
     const name = '[TEST] DR-Failed Node'
