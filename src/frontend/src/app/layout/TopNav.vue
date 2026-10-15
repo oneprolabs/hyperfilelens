@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n'
 import { Menu, Shield } from 'lucide-vue-next'
 import NavNotificationPopover from '../../components/NavNotificationPopover.vue'
 import NavUserMenu from '../../components/NavUserMenu.vue'
-import OrgSwitcher from '../../components/OrgSwitcher.vue'
 import { beginRouteRequestScope } from '../../lib/routeRequestAbort'
 import { beginRouteTransition } from '../../lib/routeTransition'
 import { useAppPrimaryNav } from '../../composables/useAppPrimaryNav'
@@ -97,8 +96,6 @@ function handleNavClick(event: MouseEvent, to: string) {
     </nav>
 
     <div class="right-menu">
-      <span class="desktop-navigation-control"><OrgSwitcher /></span>
-
       <a
         v-if="adminConsoleHref"
         class="platform-ops-entry desktop-navigation-control"

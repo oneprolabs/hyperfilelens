@@ -7,7 +7,6 @@ import { LANG_STORAGE_KEY } from '../../i18n'
 import { useTheme } from '../../composables/useTheme'
 import { platformOpsEntryUrl, fetchDeployProfile } from '../../composables/useDeployProfile'
 import { currentUser } from '../../composables/useAuth'
-import { useOrganizationSwitcher } from '../../composables/useOrganizationSwitcher'
 import Sidebar from '../../components/Sidebar.vue'
 import type { MenuItem } from '../../components/ModulePage.vue'
 import { useInsightSideNav } from '../../composables/useInsightSideNav'
@@ -34,7 +33,6 @@ const opsFallbackMenus = useOpsMenus()
 const accountFallbackMenus = useAccountCenterMenus()
 const mobileNavigationOpen = ref(false)
 const { itemsWithActiveState: primaryNavItems } = useAppPrimaryNav()
-const { showSwitcher: showOrganizationSwitcher } = useOrganizationSwitcher()
 
 const adminConsoleHref = computed(() =>
   platformOpsEntryUrl(adminConsoleUrl.value, adminConsoleLandingPath.value || undefined),
@@ -478,7 +476,6 @@ function applyThemeVars(t: string) {
       :primary-items="primaryNavItems"
       :module-items="fallbackMenuItems"
       :admin-console-href="adminConsoleHref"
-      :show-organization-switcher="showOrganizationSwitcher"
       :timezone-offset-display="timezoneOffsetDisplay"
     />
     <div

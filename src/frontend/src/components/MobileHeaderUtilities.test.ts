@@ -27,16 +27,14 @@ describe('mobile header utilities', () => {
     expect(topNav).not.toContain('fetchDeployProfile')
   })
 
-  it('orders desktop utilities by context, platform, localization, notifications, and user', () => {
-    const organizationIndex = topNav.indexOf('<OrgSwitcher />')
+  it('orders desktop utilities by platform, localization, notifications, and user', () => {
     const adminConsoleIndex = topNav.indexOf('class="platform-ops-entry desktop-navigation-control"')
     const timezoneIndex = topNav.indexOf('class="timezone-display desktop-navigation-control"')
     const notificationsIndex = topNav.indexOf('<NavNotificationPopover />')
     const languageIndex = topNav.indexOf('<LanguageSwitcher variant="navigation" />')
     const userIndex = topNav.indexOf('<NavUserMenu />')
 
-    expect(organizationIndex).toBeGreaterThan(-1)
-    expect(adminConsoleIndex).toBeGreaterThan(organizationIndex)
+    expect(adminConsoleIndex).toBeGreaterThan(-1)
     expect(timezoneIndex).toBeGreaterThan(adminConsoleIndex)
     expect(languageIndex).toBeGreaterThan(timezoneIndex)
     expect(notificationsIndex).toBeGreaterThan(languageIndex)
@@ -96,7 +94,6 @@ describe('mobile header utilities', () => {
   })
 
   it('keeps hidden desktop utilities reachable from mobile surfaces', () => {
-    expect(drawer).toContain('<OrgSwitcher variant="mobile" />')
     expect(drawer).toContain('target="_blank"')
     expect(drawer).toContain("$t('nav.platformOps')")
     expect(drawer).toContain('<LanguageSwitcher')
@@ -105,6 +102,14 @@ describe('mobile header utilities', () => {
     expect(userMenu).not.toContain('nav-user-timezone')
     expect(locale).toContain("timezoneLabel: 'Time Zone'")
     expect(locale).toContain("languageLabel: 'Language'")
+  })
+
+  it('does not mount organization switching or creation in either navigation surface', () => {
+    for (const source of [topNav, drawer, appShell]) {
+      expect(source).not.toContain('OrgSwitcher')
+      expect(source).not.toContain('useOrganizationSwitcher')
+      expect(source).not.toContain('show-organization-switcher')
+    }
   })
 
   it('keeps mobile triggers and popovers within narrow viewports', () => {
