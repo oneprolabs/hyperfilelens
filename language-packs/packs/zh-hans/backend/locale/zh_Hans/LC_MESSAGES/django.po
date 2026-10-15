@@ -625,10 +625,6 @@ msgid "Account not found."
 msgstr "未找到账号。"
 
 #: apps/iam/member-onboarding
-msgid "New account creation by organization administrators is disabled."
-msgstr "组织管理员创建新账号的功能已关闭。"
-
-#: apps/iam/member-onboarding
 msgid "New accounts must reserve an active membership seat."
 msgstr "新账号必须占用一个启用的成员席位。"
 
