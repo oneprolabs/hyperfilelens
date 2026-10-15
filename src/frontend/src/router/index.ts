@@ -7,13 +7,6 @@ import { resolveGovernanceRoutes } from '../governance/resolveRoutes'
 const platformOpsRoutes = resolvePlatformOpsRoutes()
 const tenantOpsRoutes = resolveTenantOpsRoutes()
 const governanceRoutes = resolveGovernanceRoutes()
-// Configuration opens the first governance page available in the current build.
-// Enterprise contributes Organization; Community keeps Subscription as its
-// only governance page.  Avoid routing Community through the EE-only page,
-// which would fall back to the dashboard when the route is not registered.
-const nodeEntryPath = governanceRoutes.some((route) => route.path === 'node/organization')
-  ? '/node/organization'
-  : '/node/subscription'
 const tenantOpsEntryPath = tenantOpsRoutes.some((route) => route.path === 'ops/host-monitor')
   ? '/ops/host-monitor'
   : '/ops/events'
@@ -137,7 +130,18 @@ export const router = createRouter({
           component: lazyRoute(() => import('../pages/insight/InsightGateways.vue')),
         },
         { path: 'insight/:section', redirect: '/insight/copilot' },
-        { path: 'node', redirect: nodeEntryPath },
+        {
+          path: 'node',
+          component: { render: () => null },
+          meta: { configurationEntry: true },
+          // beforeEnter runs after the global auth guard has loaded the profile.
+          // A static redirect runs before authentication and can pick a page
+          // using an empty/stale profile on a direct Configuration visit.
+          beforeEnter: async () => {
+            const { enterConfiguration } = await import('./configurationEntry')
+            return enterConfiguration(governanceRoutes)
+          },
+        },
         { path: 'node/agents', component: AssetsNodesPage },
         { path: 'node/gateways', redirect: '/insight/gateways' },
         { path: 'node/nodes/deploy', component: NodesDeployPage, meta: fullscreenRouteMeta },
@@ -214,6 +218,10 @@ router.beforeEach((to) => {
 })
 
 router.beforeEach((to, from) => {
+  // /node is only a permission-aware intermediate destination. Let its final
+  // target start the transition; a redirect back to the current page must not
+  // cancel that page's in-flight requests.
+  if (to.meta.configurationEntry) return
   if (to.fullPath !== from.fullPath) {
     beginRouteTransition()
     beginRouteRequestScope()

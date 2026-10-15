@@ -2,9 +2,14 @@
 
 import { Layers3, UserRound, UsersRound } from 'lucide-vue-next'
 import { describe, expect, it, vi } from 'vitest'
+import { currentUser } from '../composables/useAuth'
 
 import { isGovernanceMenuItemVisible, resolveGovernanceMenu } from './resolveMenu'
 
+vi.mock('../composables/useAuth', async () => {
+  const { ref } = await import('vue')
+  return { currentUser: ref(null) }
+})
 vi.mock('@ext/platform/governance/menu', () => ({
   governanceMenuItems: [
     { id: 'members', labelKey: 'settings.nav.members', to: '/node/members', icon: 'members' },
@@ -29,6 +34,24 @@ describe('governance menu role filtering', () => {
 
   it('keeps items without a role requirement visible', () => {
     expect(isGovernanceMenuItemVisible({ ...membersItem, requiredRoles: undefined }, 'operator')).toBe(true)
+  })
+
+  it('does not substitute Group grants or Role names for organization-only permissions', () => {
+    const item = {
+      ...membersItem, requiredPermissions: ['configuration.organizations.view'], organizationOnly: true,
+    }
+    currentUser.value = {
+      id: 1, email: 'owner@test.local', username: 'owner',
+      access_profile: {
+        org_key: 'current', role: 'owner', permissions: [],
+        group_permissions: ['configuration.organizations.view'],
+        visible_features: [], available_platforms: [], landing_path: '/',
+      },
+    }
+    expect(isGovernanceMenuItemVisible(item, 'owner')).toBe(false)
+    currentUser.value.access_profile!.permissions = ['configuration.organizations.view']
+    expect(isGovernanceMenuItemVisible(item, 'custom-reader')).toBe(true)
+    currentUser.value = null
   })
 
   it('uses distinct icons for Members, Groups, and Resources', () => {

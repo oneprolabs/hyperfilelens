@@ -9428,5 +9428,7 @@
   "settings.groupsPage.excludedPermissionsTitle": "不通过当前组授予的权限",
   "settings.groupsPage.groupPermissionPreviewHint": "此处仅展示本次组角色分配授予的权限，不代表成员的全部权限。",
   "settings.groupsPage.groupPermissionPreviewUnavailable": "暂时无法获取权限详情，请刷新后重试。",
-  "settings.groupsPage.noGroupPermissions": "当前组角色分配不授予任何权限。"
+  "settings.groupsPage.noGroupPermissions": "当前组角色分配不授予任何权限。",
+  "settings.nav.accessDenied": "你没有查看任何配置页面的权限。",
+  "settings.org.accessDenied": "你没有查看此组织信息的权限。"
 }

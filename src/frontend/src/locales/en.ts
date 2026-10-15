@@ -4019,6 +4019,7 @@ export const en = {
     },
     nav: {
       organizationHub: 'Organization',
+      accessDenied: 'You do not have permission to view any Configuration pages.',
       members: 'Members',
       roles: 'Roles',
       resources: 'Resources',
@@ -4073,6 +4074,7 @@ export const en = {
       statusOff: '⚪ Inactive',
       empty: 'No organizations yet',
       loadFailed: 'Unable to load the organization.',
+      accessDenied: "You do not have permission to view this organization's information.",
       modalTitle: 'New Organization',
       keyLabel: 'Key (slug)',
       nameLabel: 'Name',
