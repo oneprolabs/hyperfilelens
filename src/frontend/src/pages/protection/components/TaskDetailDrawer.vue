@@ -48,7 +48,7 @@ import {
 } from '../../../lib/repositoryTaskCancellation'
 import { taskResourceSnapshot } from '../../../lib/taskOutcomeDisplay'
 import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../../lib/taskBackupSourceResource'
-import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../../lib/taskEventDisplay'
+import { isOrphanSnapshotAuditEvent, parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../../lib/taskStepExpansion'
 import { taskStepTimelineTone, taskStepTranslationKey } from '../../../lib/taskStepDisplay'
 import { nasRepositoryFailureMessage } from '../../../lib/nasMountTroubleshooting'
@@ -613,7 +613,10 @@ function stepDisplayName(stepName?: string | null, taskType?: string | null) {
 function stepDuration(index: number) {
   const step = stepsWithEvents.value[index]
   const next = stepsWithEvents.value[index + 1]
-  const start = step?.events[0]?.created_at || step?.created_at || activeTask.value?.started_at || activeTask.value?.created_at
+  const executionStart = activeTask.value?.operation_type === 'snapshot.reconcile'
+    ? step?.events.find(event => event.message === `Step ${step.step_name} running`)?.created_at
+    : undefined
+  const start = executionStart || step?.events[0]?.created_at || step?.created_at || activeTask.value?.started_at || activeTask.value?.created_at
   const end = next?.events[0]?.created_at || step?.events[step.events.length - 1]?.created_at || activeTask.value?.finished_at
   return elapsedTaskTime(start, end) || t('ops.task.emptyMark')
 }
@@ -1351,7 +1354,7 @@ watch(
                         />
                       </div>
                       <span
-                        class="hfl-task-drawer__event-time"
+                        v-if="!isOrphanSnapshotAuditEvent(event)" class="hfl-task-drawer__event-time"
                         :class="{ 'hfl-empty-mark': !event.created_at }"
                       >{{ formatTime(event.created_at) }}</span>
                     </div>
@@ -1438,7 +1441,7 @@ watch(
                       :show-skipped-details="showTaskSkippedDetails"
                     />
                   </div>
-                  <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
+                  <span v-if="!isOrphanSnapshotAuditEvent(event)" class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
                 </div>
               </div>
             </div>

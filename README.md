@@ -242,6 +242,10 @@ persist the host IANA timezone as `STORAGE_MAINTENANCE_TIMEZONE`. Quick Maintena
 remains on a six-hour interval. Existing custom maintenance configuration is
 preserved; previous shipped daily defaults are migrated to two days.
 
+New Quick Maintenance, Full Maintenance and orphan reconciliation tasks contain
+only preparation, ownership verification, execution and finalization steps.
+Post-maintenance usage refresh remains independent of the task's success.
+
 Orphan reconciliation runs every two days, including owned repositories with no
 remaining backup sources. In a repository's Tasks tab, **Reconcile orphan
 snapshots** starts a manual scan. First discovery only marks the snapshot. A later
@@ -249,7 +253,9 @@ scan may delete it after a 24-hour discovery grace period and a fresh safety
 check. Discovery and successful deletion are separate audit entries containing
 the backup source, directory, and full snapshot ID. Actual storage reclamation
 still requires subsequent maintenance and Kopia's normal safety delays.
-For an observation-only rollout, set
+Automatic orphan deletion is enabled by default; first discovery still only
+marks a snapshot, and the 24-hour grace period starts at discovery, not at
+snapshot creation. For an observation-only rollout, set
 `STORAGE_ORPHAN_SNAPSHOT_DELETE_ENABLED=false`; discovery continues, but deletion
 is deferred until an operator enables it.
 
@@ -260,6 +266,14 @@ expiry proves process termination. Confirm the original execution has stopped
 and reconcile its result before releasing such a gate. Node-owned repositories
 require Agents advertising `orphan_snapshot_reconcile_v1`; older Agents fail
 closed without deleting snapshots.
+
+Reconciliation reports completed, failed, skipped and waiting steps explicitly.
+An unavailable inventory is not reported as an empty repository. A failed scan
+retries once after one minute in a new task. The original task remains failed,
+and each task retains only its own execution history. If the retry also fails,
+this cycle ends and the next scheduled scan starts in two days.
+Unknown remote or deletion executions retain their repository gate and are never
+blindly redispatched. No additional retry-state database fields are required.
 
 ## Repository Health Monitoring
 

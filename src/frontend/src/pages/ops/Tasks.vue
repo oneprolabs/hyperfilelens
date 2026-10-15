@@ -51,7 +51,7 @@ import {
   canCancelRepositoryTask,
 } from '../../lib/repositoryTaskCancellation'
 import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../lib/taskBackupSourceResource'
-import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../lib/taskEventDisplay'
+import { isOrphanSnapshotAuditEvent, parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../lib/taskStepExpansion'
 import { taskStepTimelineTone, taskStepTranslationKey } from '../../lib/taskStepDisplay'
 import {
@@ -1776,7 +1776,7 @@ watch(
                           >{{ eventErrorText(event) }}</span>
                         </span>
                         <span
-                          class="hfl-task-drawer__event-time"
+                          v-if="!isOrphanSnapshotAuditEvent(event)" class="hfl-task-drawer__event-time"
                           :class="{ 'hfl-empty-mark': !event.created_at }"
                         >{{ formatTime(event.created_at) }}</span>
                       </div>
@@ -1839,7 +1839,7 @@ watch(
                           >{{ eventErrorText(event) }}</span>
                         </span>
                         <span
-                          class="hfl-task-drawer__event-time"
+                          v-if="!isOrphanSnapshotAuditEvent(event)" class="hfl-task-drawer__event-time"
                           :class="{ 'hfl-empty-mark': !event.created_at }"
                         >{{ formatTime(event.created_at) }}</span>
                       </div>
@@ -1893,7 +1893,7 @@ watch(
                       class="hfl-task-drawer__event-error"
                     >{{ eventErrorText(event) }}</span>
                   </span>
-                  <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
+                  <span v-if="!isOrphanSnapshotAuditEvent(event)" class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
                 </div>
               </div>
 
