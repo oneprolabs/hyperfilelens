@@ -347,7 +347,25 @@ describe('SubscriptionContent effective quotas', () => {
     wrapper.unmount()
   })
 
-  it.each([403, 500, 0])('does not quietly substitute base values after effective quotas fail with %s', async (status) => {
+  it.each(['current', 'effective'])('shows access denial instead of quota unavailability after %s returns 403', async (endpoint) => {
+    const errorMessage = vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
+    mocks.fetchCurrentLicense.mockResolvedValue({
+      enforcement_enabled: true, instance_shared: true,
+      limits: { max_users: 10 }, usage: { users_count: 3 },
+    })
+    if (endpoint === 'current') mocks.fetchCurrentLicense.mockRejectedValue({ status: 403 })
+    else mocks.fetchEffectiveQuotaUsage.mockRejectedValue({ status: 403 })
+    const wrapper = await mountSubscription()
+    expect(wrapper.text()).toContain("You do not have permission to view this organization's subscription.")
+    expect(wrapper.text()).not.toContain('Quota information is temporarily unavailable.')
+    expect(wrapper.text()).not.toContain('Unable to load effective organization quotas.')
+    expect(wrapper.find('.subscription-quota-grid').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Retry')
+    expect(errorMessage).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it.each([500, 0])('does not quietly substitute base values after effective quotas fail with %s', async (status) => {
     mocks.fetchCurrentLicense.mockResolvedValue({
       enforcement_enabled: true, instance_shared: true,
       limits: { max_users: 10 }, usage: { users_count: 3 },

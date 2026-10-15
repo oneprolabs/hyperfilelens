@@ -1,10 +1,11 @@
 """Seed multi-tenant test data (roles across organizations, no MFA)."""
 
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from apps.iam.models import Membership, Organization
+from common.extension_spi import get_authz_provider
 
 
 class Command(BaseCommand):
@@ -26,6 +27,24 @@ class Command(BaseCommand):
 
         initialize_organization_quota(org_acme)
         initialize_organization_quota(org_beta)
+        # This legacy QA command assigns named Roles, not built-in authority.
+        # Never create accounts pointing at absent/retired Role definitions.
+        provider = get_authz_provider()
+        if provider is not None:
+            is_active = getattr(provider, "is_org_role_active", None)
+            if not callable(is_active):
+                raise CommandError("The authorization provider cannot validate organization Roles.")
+            missing = [
+                f"{org_acme.key}:{role}"
+                for role in ("admin", "operator", "auditor")
+                if not is_active(organization_id=org_acme.pk, role=role)
+            ]
+            if missing:
+                raise CommandError(
+                    "Create active Role definitions before running this legacy QA command: "
+                    + ", ".join(missing)
+                    + ". No Roles or account permissions are created automatically."
+                )
         self.stdout.write(self.style.SUCCESS(f"Organizations: {org_acme.key}, {org_beta.key}"))
 
         def create_user(email: str, password: str):
@@ -51,9 +70,14 @@ class Command(BaseCommand):
                 membership.is_active = True
                 membership.save(update_fields=["is_active"])
             # Role authority is EE MemberRole (or community default).
-            from apps.iam.services.membership_service import sync_member_role
+            from apps.iam.services.membership_service import MembershipPolicyError, sync_member_role
 
-            sync_member_role(user_id=user.id, organization_id=org.id, role=role)
+            try:
+                sync_member_role(user_id=user.id, organization_id=org.id, role=role)
+            except MembershipPolicyError as exc:
+                raise CommandError(
+                    f"Cannot assign {role} to {user.email} in {org.key}: {exc}"
+                ) from exc
             self.stdout.write(f"    -> {org.key} as {role}")
 
         owner = create_user("owner@hyperfilelens.com", "Owner@12345")
@@ -70,7 +94,8 @@ class Command(BaseCommand):
 
         multi = create_user("multi@hyperfilelens.com", "Multi@12345")
         add_membership(multi, org_acme, Membership.Role.OPERATOR)
-        add_membership(multi, org_beta, Membership.Role.ADMIN)
+        # The second fixture organization also needs a real Owner identity.
+        add_membership(multi, org_beta, Membership.Role.OWNER)
 
         staff, _ = User.objects.get_or_create(
             username="staff@hyperfilelens.com",
@@ -88,7 +113,7 @@ class Command(BaseCommand):
             ("admin@hyperfilelens.com", "Admin@12345", "Acme admin"),
             ("operator@hyperfilelens.com", "Operator@12345", "Acme operator"),
             ("auditor@hyperfilelens.com", "Auditor@12345", "Acme auditor (read-only)"),
-            ("multi@hyperfilelens.com", "Multi@12345", "Acme operator + Beta admin"),
+            ("multi@hyperfilelens.com", "Multi@12345", "Acme operator + Beta owner"),
             ("staff@hyperfilelens.com", "Staff@12345", "Platform staff + Acme admin"),
         ]:
             self.stdout.write(f"  {email} / {password} — {note}")

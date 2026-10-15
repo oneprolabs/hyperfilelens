@@ -18,10 +18,16 @@ import {
   SUBSCRIPTION_QUOTA_FALLBACK_LIMITS,
 } from '../../lib/licenseQuotaDisplay'
 import { isAbortError } from '../../lib/api'
+import { currentUser, getEffectiveOrgKey } from '../../composables/useAuth'
+import { useTenantPermissions } from '../../composables/useTenantPermissions'
 
 const FALLBACK_LIMITS = SUBSCRIPTION_QUOTA_FALLBACK_LIMITS
 
 const { t, locale } = useI18n()
+const { has } = useTenantPermissions()
+const canViewSubscription = computed(() => has('configuration.subscriptions.view', true))
+const forbidden = ref(false)
+const accessDenied = computed(() => !canViewSubscription.value || forbidden.value)
 
 const loading = ref(false)
 const quotaAvailable = ref(false)
@@ -34,6 +40,7 @@ const quotaWarning = ref('')
 const quotaGrid = ref<HTMLElement | null>(null)
 const statusWidth = ref(0)
 let statusResizeObserver: ResizeObserver | null = null
+let loadGeneration = 0
 
 const limitItems = computed(() =>
   quotaDefsForSubscription().map((def) => {
@@ -85,7 +92,10 @@ watch([quotaGrid, limitItems, locale], () => {
     .forEach((label) => statusResizeObserver!.observe(label))
 }, { flush: 'post' })
 
-onBeforeUnmount(() => statusResizeObserver?.disconnect())
+onBeforeUnmount(() => {
+  loadGeneration += 1
+  statusResizeObserver?.disconnect()
+})
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat(locale.value, { maximumFractionDigits: 2 }).format(value)
@@ -139,12 +149,32 @@ function progressLabel(item: (typeof limitItems.value)[number]) {
   return `${formatNumber(percentage < 1 ? Math.round(percentage * 10) / 10 : Math.round(percentage))}%`
 }
 
-async function loadAll() {
-  if (loading.value) return
-  loading.value = true
+function clearQuota() {
+  quotaAvailable.value = false
+  currentLicense.value = null
+  instanceShared.value = false
+  usage.value = {}
+  limits.value = { ...FALLBACK_LIMITS }
+  effectiveQuotaByKey.value = {}
   quotaWarning.value = ''
+}
+
+function errorStatus(error: unknown): number {
+  return error && typeof error === 'object' && 'status' in error ? Number(error.status) : 0
+}
+
+async function loadAll() {
+  const generation = ++loadGeneration
+  const orgKey = getEffectiveOrgKey()
+  const isCurrent = () => generation === loadGeneration
+    && canViewSubscription.value && orgKey === getEffectiveOrgKey()
+  forbidden.value = false
+  clearQuota()
+  loading.value = canViewSubscription.value
+  if (!canViewSubscription.value) return
   try {
     const current = await fetchCurrentLicense()
+    if (!isCurrent()) return
     quotaAvailable.value = true
     usage.value = current.usage || {}
     limits.value = { ...FALLBACK_LIMITS, ...(current.limits || {}) }
@@ -157,13 +187,14 @@ async function loadAll() {
     if (current.enforcement_enabled && current.entitlement_source !== 'builtin_community') {
       try {
         const effective = await fetchEffectiveQuotaUsage()
+        if (!isCurrent()) return
         effectiveQuotaByKey.value = Object.fromEntries(
           (effective.quota_usage || []).map((row) => [row.key, row]),
         )
       } catch (error: unknown) {
-        if (isAbortError(error)) throw error
-        const status = error && typeof error === 'object' && 'status' in error
-          ? Number(error.status) : 0
+        if (!isCurrent()) return
+        if (isAbortError(error) || errorStatus(error) === 403) throw error
+        const status = errorStatus(error)
         if (status === 404 || status === 405) {
           // Only an absent older endpoint is a compatibility fallback.
           quotaWarning.value = t('settings.subscription.compatibleQuotaHint')
@@ -174,7 +205,12 @@ async function loadAll() {
       }
     }
   } catch (error: unknown) {
-    if (isAbortError(error)) return
+    if (!isCurrent() || isAbortError(error)) return
+    clearQuota()
+    if (errorStatus(error) === 403) {
+      forbidden.value = true
+      return
+    }
     const message = error && typeof error === 'object' && 'message' in error
       ? String((error as { message?: unknown }).message || '').trim()
       : ''
@@ -182,18 +218,13 @@ async function loadAll() {
       message: message || t('settings.subscription.loadFailed'),
       grouping: true,
     })
-    currentLicense.value = null
-    instanceShared.value = false
-    quotaAvailable.value = false
-    usage.value = {}
-    limits.value = { ...FALLBACK_LIMITS }
-    effectiveQuotaByKey.value = {}
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
 onMounted(loadAll)
+watch([canViewSubscription, () => currentUser.value?.access_profile?.org_key], () => { void loadAll() })
 </script>
 
 <template>
@@ -201,7 +232,17 @@ onMounted(loadAll)
     v-loading="loading"
     class="subscription-page"
   >
-    <section class="subscription-section">
+    <el-alert
+      v-if="accessDenied"
+      :title="t('settings.subscription.accessDenied')"
+      type="warning"
+      :closable="false"
+      show-icon
+    />
+    <section
+      v-else
+      class="subscription-section"
+    >
       <header class="subscription-section__header">
         <h2 class="subscription-section__title">
           {{ t('settings.subscription.limitsAndUsage') }}
@@ -266,7 +307,7 @@ onMounted(loadAll)
         </div>
       </div>
       <div
-        v-else
+        v-else-if="!loading"
         class="subscription-quota-empty"
         role="status"
         aria-live="polite"
