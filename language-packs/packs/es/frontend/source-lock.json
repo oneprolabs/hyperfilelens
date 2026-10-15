@@ -8906,5 +8906,14 @@
   "repositoriesPage.forceDeleteMessage": "a6fd8fb701ea198faa1edc96fa8e2d8050bf003f4ab628a4f28b9a9f7cd97136",
   "repositoriesPage.forceDeleteTitle": "bd925e2083c9967a5bd6036f7892c77e92acc92b39ee23b881aec12f29d0cbf7",
   "settings.membersPage.createRoleFirst": "19d6366a10a9b912749b3eb5e1886cf68072cca425cde0816b027489b05526d4",
-  "insight.side.requestHistory": "e82a9be13479b5c27aeefbdbf9aad5bd8936bc4d93e0f0b961338b4c546009d7"
+  "insight.side.requestHistory": "e82a9be13479b5c27aeefbdbf9aad5bd8936bc4d93e0f0b961338b4c546009d7",
+  "protection.backupsPage.statusDetailActionLabel": "0ced8361f69f8aa17dbec9bea7b600fdfe088e43e4bae89754880dec836fb798",
+  "protection.backupsPage.statusViewDetails": "cd3cd146211bff87ad7886cd2699c00dac917a94b95cbd6c6a9be0f7d886e834",
+  "protection.backupsPage.sourceFailureDetailsLoadFailed": "ae9cb8a8855ad03ac2525cc0a53d7a29c57511e052552923abc270a49ef2b984",
+  "protection.backupsPage.sourceFailureDetailsTitle": "5669059dfa923c470a2f07ddb890b7d80a9a1ad031f72fa1edb09bfdb9eaa740",
+  "protection.backupsPage.statusViewTask": "0383ca89c5bc01e963630f0e69a2940de16110996d5e997ab806009419616223",
+  "protection.backupsPage.sourceFailureSummary": "bfe374307a13e46850afc78abe0573c6186529185a35e24e67f526f4c85caf3b",
+  "protection.backupsPage.sourceFailureDetailsReload": "e6274a80f813feb480c8887e8b0eeb5c60d9da7a0b3cb943c7c608396dfc7ca7",
+  "protection.backupsPage.sourceFailureDetailsLoading": "5c112b8bff7010d791a3643c16e461fcb55b28834b7c113aa36c9b429aebd540",
+  "protection.backupsPage.sourceFailureDetailsUnavailable": "f52c91a1638a543e4b0d8a956683c6822001e8fb9d3ce29a6ae208513efbb4fe"
 }

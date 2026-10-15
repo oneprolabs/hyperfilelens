@@ -27,6 +27,7 @@ import {
   unregisterFailureToErrorDetails,
   unregisterSyncFailuresBySource,
 } from '../lib/unregisterFailureDetails'
+import { useUnregisterFailureHistory } from '../composables/useUnregisterFailureHistory'
 import './backupSourceFlowActionDialog.css'
 
 const props = defineProps<{
@@ -87,8 +88,19 @@ const title = computed(() =>
 
 const displayRisks = computed(() => mergeUnregisterSubmitRisks(preflight.value, submitErrorReasons.value))
 
+const {
+  details: historicalFailure,
+  loading: failureHistoryLoading,
+  failed: failureHistoryFailed,
+  reload: reloadFailureHistory,
+} = useUnregisterFailureHistory(t, visible, dialogSourceIds, sourceLabel)
+
 const activePreviousFailure = computed(() =>
-  lastFailureDetails.value || props.previousFailureDetails || null,
+  lastFailureDetails.value || historicalFailure.value
+  || ((failureHistoryLoading.value || failureHistoryFailed.value
+    || !props.previousFailureDetails?.taskUuid && !props.previousFailureDetails?.relatedTasks?.length)
+    ? props.previousFailureDetails : null)
+  || null,
 )
 
 const previousFailureTitle = computed(() =>
@@ -279,9 +291,12 @@ async function confirmDelete() {
       :preflight-loading="preflightLoading"
       :preflight-error="preflightError"
       :loading="loading"
+      :previous-failure-loading="failureHistoryLoading"
+      :previous-failure-error="failureHistoryFailed"
       :previous-failure-title="previousFailureTitle"
       :previous-failure-summary="previousFailureSummary"
       :previous-failure-clickable="Boolean(activePreviousFailure)"
+      @reload-previous-failure="reloadFailureHistory"
       @retry-preflight="loadPreflight"
       @view-previous-failure="viewPreviousFailure"
       @confirm="confirmDelete"

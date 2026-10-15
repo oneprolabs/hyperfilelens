@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import '../../styles/fullscreen-form-styles'
+import StatusDetailAction from '../../components/StatusDetailAction.vue'
+import { isSourceFailure } from '../../lib/sourceFailureDiagnostics'
+import { useSourceFailureDetails } from '../../composables/useSourceFailureDetails'
 import { computed, defineAsyncComponent, h, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -3531,16 +3534,20 @@ function sourceProvisionStatusLabel(sourceId: string) {
     : t('protection.backupsPage.provisionStatusValidating')
 }
 
-function sourceProvisionStatusDetail(sourceId: string) {
-  const config = sourceProvisionConfigs(sourceId)[0]
-  return config?.provisioning_error_message || t('protection.backupsPage.provisionStatusWaitingDetail')
+
+function canOpenProvisionDetails(sourceId: string) {
+  return sourceProvisionState(sourceId) === 'provision_failed'
+    || sourceProvisionConfigs(sourceId).some(config => Boolean(config.provisioning_task_uuid))
 }
 
 function openProvisionTaskDetail(row: FlowSourceRow) {
   const taskUuid = sourceProvisionConfigs(row.id)
     .map((config) => String(config.provisioning_task_uuid || ''))
     .find(Boolean)
-  if (!taskUuid) return
+  if (!taskUuid) {
+    if (sourceProvisionState(row.id) === 'provision_failed') void sourceFailureDetails.open(row.id, row.name, 'provision_failed')
+    return
+  }
   openFlowSourceDetail(row, {
     tab: 'tasks',
     taskSubTab: 'executions',
@@ -3588,9 +3595,17 @@ function sourceResetStatusLabel(sourceId: string) {
   return t('protection.backupsPage.resetStatusConfigured')
 }
 
+
+function canOpenResetDetails(sourceId: string) {
+  return sourceResetState(sourceId) === 'reset_failed' || Boolean(resetTaskForSource(sourceId)?.task_uuid)
+}
+
 function openResetTaskDetail(row: FlowSourceRow) {
   const task = resetTaskForSource(row.id)
-  if (!task?.task_uuid) return
+  if (!task?.task_uuid) {
+    if (sourceResetState(row.id) === 'reset_failed') void sourceFailureDetails.open(row.id, row.name, 'reset_failed')
+    return
+  }
   openFlowSourceDetail(row, {
     tab: 'tasks',
     taskSubTab: 'executions',
@@ -5495,6 +5510,7 @@ function flowRowToApiNode(row: FlowSourceRow): ApiNode | null {
 }
 
 type FlowSourceDisplayStatus = {
+  loading?: boolean
   label: string
   tag: 'success' | 'warning' | 'danger' | 'info' | 'neutral'
   spinning?: boolean
@@ -5522,6 +5538,7 @@ function resolveFlowSourceDisplayStatus(row: FlowSourceRow): FlowSourceDisplaySt
       label: pendingLabel,
       tag: op?.kind === 'delete_failed' ? 'danger' : 'warning',
       spinning: sourcePendingOps.rowPendingSpinning(row.id),
+      loading: sourceFailureDetails.isLoading(row.id),
       clickable: op?.kind === 'delete_failed' || op?.kind === 'delete_waiting' || op?.kind === 'delete_blocked',
     }
   }
@@ -5533,6 +5550,8 @@ function resolveFlowSourceDisplayStatus(row: FlowSourceRow): FlowSourceDisplaySt
       label: te(lifecycle.labelKey) ? t(lifecycle.labelKey) : lifecycle.labelKey,
       tag: lifecycle.tagType,
       spinning: lifecycle.spinning,
+      loading: sourceFailureDetails.isLoading(row.id),
+      clickable: isSourceFailure(row.status),
     }
   }
 
@@ -5542,7 +5561,7 @@ function resolveFlowSourceDisplayStatus(row: FlowSourceRow): FlowSourceDisplaySt
     removeFailed: t('protection.backupsPage.sourcePendingDeleteFailed'),
     removed: t('protection.backupsPage.sourceRemoved'),
   })
-  return { label: ready.label, tag: ready.tag }
+  return { label: ready.label, tag: ready.tag, clickable: isSourceFailure(row.status), loading: sourceFailureDetails.isLoading(row.id) }
 }
 
 function flowSourceDeleteDisplayRow(row: FlowSourceRow, options: { includeSnapshots?: boolean } = {}): BackupSourceDeleteDisplayRow {
@@ -5570,10 +5589,21 @@ function flowSourceRowSelectable(row: FlowSourceRow) {
   return true
 }
 
+const sourceFailureDetails = useSourceFailureDetails(t)
+
 function openSourcePendingFailureDetails(sourceId: string) {
   const op = sourcePendingOps.getOp(sourceId)
   if (op?.kind !== 'delete_failed') {
     if (op?.taskUuid) openTaskDetail(op.taskUuid)
+    else {
+      const row = flowRowsForSourceIds([sourceId])[0]
+      void sourceFailureDetails.open(sourceId, row?.name || sourceId, row?.status)
+    }
+    return
+  }
+  if (op.taskUuid && op.failureDetails?.errorCode !== 'TASK_MONITOR_UNAVAILABLE') {
+    const row = flowRowsForSourceIds([sourceId])[0]
+    void sourceFailureDetails.open(sourceId, row?.name || sourceId, 'deregistration_failed')
     return
   }
   if (op.failureDetails) {
@@ -11198,8 +11228,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     <el-table-column
                       :label="t('protection.sourceResources.colConnectivity')"
                       width="110"
-                      align="center"
-                      header-align="center"
+                      align="left"
+                      header-align="left"
                     >
                       <template #default="{ row }">
                         <div class="hfl-table-no-tooltip">
@@ -11215,8 +11245,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     <el-table-column
                       :label="t('protection.sourceResources.colLifecycleStatus')"
                       width="168"
-                      align="center"
-                      header-align="center"
+                      align="left"
+                      header-align="left"
                     >
                       <template #header>
                         <span class="flow-filterable-header">
@@ -11443,8 +11473,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     <el-table-column
                       :label="t('protection.sourceResources.colConnectivity')"
                       width="110"
-                      align="center"
-                      header-align="center"
+                      align="left"
+                      header-align="left"
                     >
                       <template #default="{ row }">
                         <div class="hfl-table-no-tooltip">
@@ -11460,8 +11490,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     <el-table-column
                       :label="t('protection.sourceResources.colLifecycleStatus')"
                       width="168"
-                      align="center"
-                      header-align="center"
+                      align="left"
+                      header-align="left"
                     >
                       <template #header>
                         <span class="flow-filterable-header">
@@ -11886,8 +11916,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     <el-table-column
                       :label="t('protection.sourceResources.colConnectivity')"
                       width="110"
-                      align="center"
-                      header-align="center"
+                      align="left"
+                      header-align="left"
                     >
                       <template #default="{ row }">
                         <div class="hfl-table-no-tooltip">
@@ -11903,30 +11933,40 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     <el-table-column
                       :label="t('protection.sourceResources.colLifecycleStatus')"
                       width="168"
-                      align="center"
-                      header-align="center"
+                      align="left"
+                      header-align="left"
                     >
                       <template #default="{ row }">
-                        <button
+                        <StatusDetailAction
                           v-if="sourceProvisionState(row.id)"
-                          type="button"
-                          class="reset-status-cell"
-                          :class="sourceProvisionState(row.id) === 'provision_failed' ? 'reset-status-cell--reset_failed' : 'reset-status-cell--resetting'"
-                          :title="sourceProvisionStatusDetail(row.id)"
-                          @click.stop="openProvisionTaskDetail(row)"
+                          :label="sourceProvisionStatusLabel(row.id)"
+                          :clickable="canOpenProvisionDetails(row.id)"
+                          :loading="sourceFailureDetails.isLoading(row.id)"
+                          :failure="sourceProvisionState(row.id) === 'provision_failed'"
+                          @click="openProvisionTaskDetail(row)"
                         >
-                          <span class="reset-status-cell__label">{{ sourceProvisionStatusLabel(row.id) }}</span>
-                        </button>
-                        <button
+                          <ElTag
+                            :type="sourceProvisionState(row.id) === 'provision_failed' ? 'danger' : 'warning'"
+                            size="small"
+                          >
+                            {{ sourceProvisionStatusLabel(row.id) }}
+                          </ElTag>
+                        </StatusDetailAction>
+                        <StatusDetailAction
                           v-else-if="sourceResetState(row.id)"
-                          type="button"
-                          class="reset-status-cell"
-                          :class="`reset-status-cell--${sourceResetState(row.id)}`"
-                          :title="t('protection.backupsPage.resetStatusClickHint')"
-                          @click.stop="openResetTaskDetail(row)"
+                          :label="sourceResetStatusLabel(row.id)"
+                          :clickable="canOpenResetDetails(row.id)"
+                          :loading="sourceFailureDetails.isLoading(row.id)"
+                          :failure="sourceResetState(row.id) === 'reset_failed'"
+                          @click="openResetTaskDetail(row)"
                         >
-                          <span class="reset-status-cell__label">{{ sourceResetStatusLabel(row.id) }}</span>
-                        </button>
+                          <ElTag
+                            :type="sourceResetState(row.id) === 'reset_failed' ? 'danger' : 'warning'"
+                            size="small"
+                          >
+                            {{ sourceResetStatusLabel(row.id) }}
+                          </ElTag>
+                        </StatusDetailAction>
                         <FlowSourceReadyStatusCell
                           v-else
                           v-bind="resolveFlowSourceDisplayStatus(row)"
@@ -21053,37 +21093,6 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 }
 .add-nas-form-row--pair {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.reset-status-cell {
-  display: inline-flex;
-  width: 92px;
-  min-height: 30px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  border: 0;
-  background: transparent;
-  color: rgb(100 116 139);
-  cursor: pointer;
-}
-
-.reset-status-cell__label {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.reset-status-cell--resetting .reset-status-cell__label {
-  color: rgb(180 83 9);
-}
-
-.reset-status-cell--reset_failed .reset-status-cell__label {
-  color: rgb(185 28 28);
 }
 
 @media (min-width: 1200px) {

@@ -2086,7 +2086,16 @@
       "backupTaskDrawerFieldTaskId": "ID de tarea",
       "backupTaskDrawerFieldCurrentPhase": "Fase actual",
       "backupTaskDrawerFieldBackupDetail": "Copia de seguridad",
-      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada."
+      "backupTaskDrawerDemoHint": "Se muestran las fases de tarea y los detalles para la tarea de copia de seguridad seleccionada.",
+      "sourceFailureDetailsLoadFailed": "No se pudieron cargar los detalles del fallo. Vuelva a cargarlos para intentarlo de nuevo.",
+      "sourceFailureDetailsLoading": "Cargando los detalles de la baja anterior…",
+      "statusViewDetails": "Ver detalles",
+      "sourceFailureDetailsTitle": "Detalles del fallo",
+      "statusViewTask": "Ver tarea",
+      "sourceFailureDetailsUnavailable": "No hay una tarea de fallo actual ni información de diagnóstico disponible para este origen.",
+      "sourceFailureDetailsReload": "Volver a cargar los detalles",
+      "statusDetailActionLabel": "{status} — {action}",
+      "sourceFailureSummary": "{name} — {status}"
     },
     "backupDetail": {
       "backToList": "Volver a copias de seguridad",

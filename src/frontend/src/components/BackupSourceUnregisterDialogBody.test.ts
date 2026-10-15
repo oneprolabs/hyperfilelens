@@ -27,7 +27,8 @@ const ElCheckboxStub = defineComponent({
 })
 
 const ElAlertStub = defineComponent({
-  template: '<section data-test="preflight-alert"><slot name="title" /><slot /></section>',
+  props: { title: String },
+  template: '<section data-test="preflight-alert">{{ title }}<slot name="title" /><slot /></section>',
 })
 
 const ElButtonStub = defineComponent({
@@ -105,6 +106,22 @@ describe('BackupSourceUnregisterDialogBody', () => {
     expect(wrapper.find('[data-test="preflight-alert"]').exists()).toBe(true)
     await wrapper.get('[data-test="retry"]').trigger('click')
     expect(wrapper.emitted('retry-preflight')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('shows historical detail loading independently of preflight', () => {
+    const wrapper = mountBody({ previousFailureLoading: true })
+    expect(wrapper.text()).toContain('Loading previous deregistration details')
+    expect(wrapper.find('.hfl-flow-action-dialog__force-panel').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('reloads history without retrying preflight or submitting deregistration', async () => {
+    const wrapper = mountBody({ previousFailureError: true })
+    expect(wrapper.text()).toContain('Unable to load failure details')
+    await wrapper.get('[data-test="retry"]').trigger('click')
+    expect(wrapper.emitted('reload-previous-failure')).toHaveLength(1)
+    expect(wrapper.emitted('retry-preflight')).toBeUndefined()
     wrapper.unmount()
   })
 })

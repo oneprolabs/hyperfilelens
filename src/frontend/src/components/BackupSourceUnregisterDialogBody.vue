@@ -35,6 +35,8 @@ const props = withDefaults(defineProps<{
   previousFailureTitle?: string
   previousFailureSummary?: string
   previousFailureClickable?: boolean
+  previousFailureLoading?: boolean
+  previousFailureError?: boolean
 }>(), {
   sources: () => [],
   showSnapshots: true,
@@ -46,6 +48,8 @@ const props = withDefaults(defineProps<{
   previousFailureTitle: '',
   previousFailureSummary: '',
   previousFailureClickable: false,
+  previousFailureLoading: false,
+  previousFailureError: false,
 })
 
 const expanded = defineModel<boolean>('expanded', { default: false })
@@ -56,6 +60,7 @@ const emit = defineEmits<{
   (e: 'confirm'): void
   (e: 'retry-preflight'): void
   (e: 'view-previous-failure'): void
+  (e: 'reload-previous-failure'): void
 }>()
 
 const { t } = useI18n()
@@ -136,6 +141,23 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
     </div>
 
     <div class="hfl-flow-action-dialog__extras">
+      <ElAlert
+        v-if="previousFailureLoading || previousFailureError"
+        :type="previousFailureError ? 'warning' : 'info'"
+        :closable="false"
+        :title="t(previousFailureError
+          ? 'protection.backupsPage.sourceFailureDetailsLoadFailed'
+          : 'protection.backupsPage.sourceFailureDetailsLoading')"
+      >
+        <ElButton
+          v-if="previousFailureError"
+          type="primary"
+          link
+          @click="emit('reload-previous-failure')"
+        >
+          {{ t('protection.backupsPage.sourceFailureDetailsReload') }}
+        </ElButton>
+      </ElAlert>
       <ElAlert
         v-if="previousFailureSummary"
         class="hfl-flow-action-dialog__previous-failure"

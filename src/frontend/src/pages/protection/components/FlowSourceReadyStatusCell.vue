@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { LoaderCircle } from 'lucide-vue-next'
+import StatusDetailAction from '../../../components/StatusDetailAction.vue'
 
 const props = defineProps<{
   label: string
@@ -7,24 +8,27 @@ const props = defineProps<{
   spinning?: boolean
   neutralAsDanger?: boolean
   clickable?: boolean
+  loading?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'click', event: MouseEvent): void
 }>()
 
+
 function onActivate(event: MouseEvent) {
-  if (!props.clickable) return
+  if (!props.clickable || props.loading) return
   emit('click', event)
 }
 </script>
 
 <template>
-  <component
-    :is="clickable ? 'button' : 'div'"
+  <StatusDetailAction
     class="flow-source-status-cell hfl-table-no-tooltip"
-    :class="{ 'flow-source-status-cell--clickable': clickable }"
-    :type="clickable ? 'button' : undefined"
+    :label="label"
+    :clickable="clickable"
+    :loading="loading"
+    :failure="tag === 'danger' || tag === 'neutral' && neutralAsDanger"
     @click="onActivate"
   >
     <el-tag
@@ -41,7 +45,7 @@ function onActivate(event: MouseEvent) {
       />
       <span class="flow-source-status-tag__label">{{ label }}</span>
     </el-tag>
-  </component>
+  </StatusDetailAction>
 </template>
 
 <style scoped>
@@ -50,19 +54,6 @@ function onActivate(event: MouseEvent) {
   justify-content: center;
   max-width: 100%;
   overflow: visible;
-}
-
-.flow-source-status-cell--clickable {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
-
-.flow-source-status-cell--clickable:focus-visible {
-  outline: 2px solid rgb(37 99 235);
-  outline-offset: 2px;
-  border-radius: 6px;
 }
 
 .flow-source-status-tag {

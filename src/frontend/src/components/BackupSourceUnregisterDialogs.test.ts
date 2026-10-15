@@ -8,11 +8,15 @@ import { en } from '../locales/en'
 import BackupSourceDeleteDialog from './BackupSourceDeleteDialog.vue'
 import BackupSourceStep3DeleteDialog from './BackupSourceStep3DeleteDialog.vue'
 import type { BackupSourceDeletePreflight } from '../lib/sourceApi'
+import type { TaskRow } from '../lib/taskApi'
 
-const { preflightDeleteBackupSources, bulkDeleteBackupSources } = vi.hoisted(() => ({
+const { preflightDeleteBackupSources, bulkDeleteBackupSources, latestUnregisterFailure } = vi.hoisted(() => ({
   preflightDeleteBackupSources: vi.fn(),
   bulkDeleteBackupSources: vi.fn(),
+  latestUnregisterFailure: vi.fn(),
 }))
+
+vi.mock('../lib/sourceFailureDiagnostics', () => ({ latestUnregisterFailure }))
 
 vi.mock('../lib/sourceApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/sourceApi')>()
@@ -64,6 +68,10 @@ const BodyStub = defineComponent({
     preflightLoading: Boolean,
     preflightError: Boolean,
     sourceIds: Array,
+    previousFailureSummary: String,
+    previousFailureClickable: Boolean,
+    previousFailureLoading: Boolean,
+    previousFailureError: Boolean,
   },
   emits: ['update:expanded', 'update:force', 'update:confirmText', 'retry-preflight', 'confirm'],
   template: `
@@ -76,6 +84,10 @@ const BodyStub = defineComponent({
       <span data-test="preflight-disabled">{{ preflight?.delete_disabled }}</span>
       <span data-test="preflight-risk-count">{{ preflight?.risks?.length || 0 }}</span>
       <span data-test="dialog-source-count">{{ sourceIds?.length || 0 }}</span>
+      <span data-test="history-summary">{{ previousFailureSummary }}</span>
+      <span data-test="history-clickable">{{ previousFailureClickable }}</span>
+      <span data-test="history-loading">{{ previousFailureLoading }}</span>
+      <span data-test="history-error">{{ previousFailureError }}</span>
       <button data-test="select-force" @click="$emit('update:force', true)">force</button>
       <button data-test="strict-confirmation" @click="$emit('update:confirmText', 'DEREGISTER')">strict</button>
       <button data-test="force-confirmation" @click="$emit('update:confirmText', 'FORCE DEREGISTER')">force confirm</button>
@@ -136,6 +148,41 @@ describe.each([
   beforeEach(() => {
     preflightDeleteBackupSources.mockReset()
     bulkDeleteBackupSources.mockReset()
+    latestUnregisterFailure.mockReset()
+    latestUnregisterFailure.mockResolvedValue(null)
+    sessionStorage.clear()
+  })
+
+  it('restores the previous failure banner from the backend without session storage', async () => {
+    preflightDeleteBackupSources.mockResolvedValue(successfulPreflight)
+    latestUnregisterFailure.mockResolvedValue({
+      task_uuid: 'persisted-failure', task_type: 'source_unregister', status: 'failed',
+      error_message: 'Remote uninstall failed',
+    } as TaskRow)
+    const wrapper = mountDialog(component)
+    await flushPromises()
+    expect(wrapper.get('[data-test="history-summary"]').text()).toContain('Deregistration failed')
+    expect(wrapper.get('[data-test="history-clickable"]').text()).toBe('true')
+    expect(sessionStorage.getItem('hfl-backup-wizard-source-pending')).toBeNull()
+    expect(bulkDeleteBackupSources).not.toHaveBeenCalled()
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    expect(latestUnregisterFailure).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-test="history-clickable"]').text()).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('removes a stale cached banner when the backend has no current failed task', async () => {
+    preflightDeleteBackupSources.mockResolvedValue(successfulPreflight)
+    const wrapper = mountDialog(component)
+    await wrapper.setProps({
+      previousFailureDetails: { title: 'Old failure', summary: 'Old failure', taskUuid: 'old-task' },
+    })
+    await flushPromises()
+    expect(wrapper.get('[data-test="history-summary"]').text()).toBe('')
+    expect(wrapper.get('[data-test="history-clickable"]').text()).toBe('false')
+    wrapper.unmount()
   })
 
   it('resets expansion and force on reopen without treating disclosure as a mode change', async () => {

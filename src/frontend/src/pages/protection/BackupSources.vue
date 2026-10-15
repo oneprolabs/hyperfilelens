@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import '../../styles/fullscreen-form-styles'
+import { isSourceFailure } from '../../lib/sourceFailureDiagnostics'
+import { useSourceFailureDetails } from '../../composables/useSourceFailureDetails'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, toRef, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -1245,12 +1247,22 @@ function markSourceDeleteFailed(
   })
 }
 
+const sourceFailureDetails = useSourceFailureDetails(t)
+
 function openSourcePendingFailureDetails(sourceId: string) {
   const op = pendingSourceOps.value.get(sourceId)
   if (op?.kind !== 'delete_failed') {
     if (op?.taskUuid) {
       void router.push({ path: '/ops/tasks', query: { taskUuid: op.taskUuid } })
+    } else {
+      const node = agentNodes.value.find(node => hostSelectableId(node) === sourceId)
+      const nas = nasRows.value.find(row => nasSelectableId(row) === sourceId)
+      void sourceFailureDetails.open(sourceId, sourcePendingDisplayName(sourceId), node?.status || nas?.effective_status || nas?.status)
     }
+    return
+  }
+  if (op.taskUuid && op.failureDetails?.errorCode !== 'TASK_MONITOR_UNAVAILABLE') {
+    void sourceFailureDetails.open(sourceId, sourcePendingDisplayName(sourceId), 'deregistration_failed')
     return
   }
   if (op.failureDetails) {
@@ -1397,6 +1409,7 @@ async function reconcilePendingSourceDeleteTasks() {
 }
 
 type SourcePendingDisplayStatus = {
+  loading?: boolean
   label: string
   tag: 'success' | 'warning' | 'danger' | 'info'
   spinning?: boolean
@@ -1432,6 +1445,7 @@ function resolveSourcePendingStatus(selectableId: string): SourcePendingDisplayS
     return {
       label: op.failureDetails?.errorCode === 'TASK_MONITOR_UNAVAILABLE' ? t('feedback.errorDetails.monitorUnavailable') : t('protection.backupsPage.sourcePendingDeleteFailed'),
       tag: op.failureDetails?.errorCode === 'TASK_MONITOR_UNAVAILABLE' ? 'warning' : 'danger',
+      loading: sourceFailureDetails.isLoading(selectableId),
       clickable: true,
     }
   }
@@ -2623,8 +2637,8 @@ onUnmounted(() => {
             <el-table-column
               :label="t('protection.sourceResources.colLifecycleStatus')"
               min-width="130"
-              align="center"
-              header-align="center"
+              align="left"
+              header-align="left"
             >
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip">
@@ -2637,6 +2651,9 @@ onUnmounted(() => {
                     v-else
                     :node="row"
                     :resolve-display-status="resolveBackupSourceLifecycleStatus"
+                    :clickable="isSourceFailure(row.status) || row.lifecycle?.state === 'failed'"
+                    :loading="sourceFailureDetails.isLoading(hostSelectableId(row))"
+                    @click="openSourcePendingFailureDetails(hostSelectableId(row))"
                   />
                 </div>
               </template>
@@ -2702,8 +2719,8 @@ onUnmounted(() => {
             <el-table-column
               :label="t('protection.sourceResources.colConnectivity')"
               min-width="95"
-              align="center"
-              header-align="center"
+              align="left"
+              header-align="left"
             >
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip">
@@ -2807,22 +2824,24 @@ onUnmounted(() => {
             <el-table-column
               :label="t('protection.sourceResources.colLifecycleStatus')"
               min-width="130"
-              align="center"
-              header-align="center"
+              align="left"
+              header-align="left"
             >
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip">
                   <FlowSourceReadyStatusCell
                     v-if="resolveSourcePendingStatus(nasSelectableId(row))"
                     v-bind="resolveSourcePendingStatus(nasSelectableId(row))!"
+                    @click="openSourcePendingFailureDetails(nasSelectableId(row))"
                   />
-                  <el-tag
+                  <FlowSourceReadyStatusCell
                     v-else
-                    :type="sourceNodeOnlineTagType(row)"
-                    size="small"
-                  >
-                    {{ sourceNodeOnlineLabel(row) }}
-                  </el-tag>
+                    :label="sourceNodeOnlineLabel(row)"
+                    :tag="sourceNodeOnlineTagType(row)"
+                    :clickable="isSourceFailure(sourceNasStatusPresentation(row, sourceNodeOnlineStatus(row)).status)"
+                    :loading="sourceFailureDetails.isLoading(nasSelectableId(row))"
+                    @click="openSourcePendingFailureDetails(nasSelectableId(row))"
+                  />
                 </div>
               </template>
             </el-table-column>
@@ -2934,8 +2953,8 @@ onUnmounted(() => {
             <el-table-column
               :label="t('protection.sourceResources.colConnectivity')"
               min-width="95"
-              align="center"
-              header-align="center"
+              align="left"
+              header-align="left"
             >
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip">

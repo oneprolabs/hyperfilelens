@@ -2086,7 +2086,16 @@
       "backupTaskDrawerFieldTaskId": "任务 ID",
       "backupTaskDrawerFieldCurrentPhase": "当前阶段",
       "backupTaskDrawerFieldBackupDetail": "备份详情",
-      "backupTaskDrawerDemoHint": "这里展示所选备份任务的执行阶段与详情。"
+      "backupTaskDrawerDemoHint": "这里展示所选备份任务的执行阶段与详情。",
+      "sourceFailureDetailsLoadFailed": "无法加载失败详情，请重新加载详情。",
+      "sourceFailureDetailsLoading": "正在加载历史注销详情…",
+      "statusViewDetails": "查看详情",
+      "sourceFailureDetailsTitle": "失败详情",
+      "statusViewTask": "查看任务",
+      "sourceFailureDetailsUnavailable": "未找到该源当前失败所关联的任务或诊断信息。",
+      "sourceFailureDetailsReload": "重新加载详情",
+      "statusDetailActionLabel": "{status}：{action}",
+      "sourceFailureSummary": "{name}：{status}"
     },
     "backupDetail": {
       "backToList": "返回备份列表",
