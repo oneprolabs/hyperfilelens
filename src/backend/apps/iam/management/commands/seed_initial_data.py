@@ -87,7 +87,7 @@ class Command(BaseCommand):
                 .first()
             )
             if membership is None:
-                org = Organization.objects.order_by("id").first()
+                org = Organization.objects.select_for_update(no_key=True).order_by("id").first()
                 from apps.subscription.services.interface import enforce_license_quota
 
                 enforce_license_quota(org, "max_users", additional=1)

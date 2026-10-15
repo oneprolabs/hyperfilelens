@@ -142,6 +142,7 @@ def create_org_membership(
     role: str,
     is_active: bool = True,
 ) -> Membership:
+    Organization.objects.select_for_update(no_key=True).get(pk=organization.pk)
     assert_role_assignable(role, organization=organization)
     if Membership.objects.filter(user=user, organization=organization).exists():
         raise MembershipPolicyError(
@@ -180,6 +181,8 @@ def create_org_membership(
 
 @transaction.atomic
 def update_org_membership(membership: Membership, **fields) -> Membership:
+    # Use the same lock order as member APIs and Role lifecycle mutations.
+    Organization.objects.select_for_update(no_key=True).get(pk=membership.organization_id)
     # Re-read under a row lock so concurrent retries evaluate the committed
     # affiliation state instead of both consuming quota from stale instances.
     membership = (
@@ -192,6 +195,28 @@ def update_org_membership(membership: Membership, **fields) -> Membership:
         assert_role_assignable(new_role, organization=membership.organization)
 
     was_active = membership.is_active
+    if new_role is None and not was_active and fields.get("is_active") and get_authz_provider() is not None:
+        provider = get_authz_provider()
+        peek = getattr(provider, "peek_stored_role", None)
+        stored = (
+            peek(user_id=membership.user_id, organization_id=membership.organization_id)
+            if peek is not None else None
+        )
+        if not stored:
+            raise MembershipPolicyError(
+                {
+                    "role": [
+                        _(
+                            "Cannot activate membership without a role. "
+                            "Set role explicitly or recreate the member."
+                        )
+                    ]
+                }
+            )
+        # Owner is an identity. Every other stored key must still resolve to
+        # a live definition before a dormant affiliation can be reactivated.
+        if stored != Membership.Role.OWNER:
+            assert_role_assignable(stored, organization=membership.organization)
     if "is_active" in fields and fields["is_active"] is not None:
         new_active = bool(fields["is_active"])
         if membership.is_active and not new_active:
@@ -211,27 +236,4 @@ def update_org_membership(membership: Membership, **fields) -> Membership:
             organization_id=membership.organization_id,
             role=new_role,
         )
-    elif not was_active and membership.is_active and get_authz_provider() is not None:
-        # Reactivate without role: require a stored EE row (seeded at create/deactivate).
-        provider = get_authz_provider()
-        peek = getattr(provider, "peek_stored_role", None)
-        stored = (
-            peek(
-                user_id=membership.user_id,
-                organization_id=membership.organization_id,
-            )
-            if peek is not None
-            else None
-        )
-        if not stored:
-            raise MembershipPolicyError(
-                {
-                    "role": [
-                        _(
-                            "Cannot activate membership without a role. "
-                            "Set role explicitly or recreate the member."
-                        )
-                    ]
-                }
-            )
     return membership

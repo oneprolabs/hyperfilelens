@@ -8924,5 +8924,13 @@
   "ops.task.eventMessage.backupSourceNotDeleted": "7b231d299d2262dd27b6317903b18e3f4ff54eefdba9cdcaecf8a5a7ff66b2b7",
   "ops.task.failureDetails.suggestion.reconnect_unregister_agent": "e05cf0988db1a508b25d57666fa20951a4af8c26223907b679359b5007d2402f",
   "ops.task.failureDetails.suggestion.review_source_unregister": "f310389fa7a3fea04c611d0cb392c2e72db762a13731965177586fd4b735445c",
-  "protection.backupsPage.unregisterStrictOfflineNamed": "b220a1aca058ea866d405bd36f7eebf5b5e84a7d0142ecb5776a2d59d16ee34c"
+  "protection.backupsPage.unregisterStrictOfflineNamed": "b220a1aca058ea866d405bd36f7eebf5b5e84a7d0142ecb5776a2d59d16ee34c",
+  "settings.subscription.accessDenied": "ebad6488a7302ac3f35dc722447e52054ba5198b25881519420261e172308b15",
+  "settings.groupsPage.groupRoleScopeHint": "78e8d4c2d2e5a583a7546c74227e58786119aca82ff444c29700d1a9db514116",
+  "settings.groupsPage.viewGroupPermissions": "1d26cd90f97ed5cfdd9417fc5a947fd3f2fe93e9ae8fa4cd99d6f1682202009f",
+  "settings.groupsPage.groupPermissionsTitle": "bd53543f7ebe2a1a756e52da51a70578e32dfe59b35ddc81ec333ec3188ad54b",
+  "settings.groupsPage.excludedPermissionsTitle": "b046a3b71ab55abca8a8d04d3126efba4379f7d315e145858e231e0b838ed5ea",
+  "settings.groupsPage.groupPermissionPreviewHint": "a9cbcd262c87f5797b9c67835d07678446151b1ce709acd83e79b4723361e144",
+  "settings.groupsPage.groupPermissionPreviewUnavailable": "e239da60ab8481c6b4d98ac50b01c6879c908598511ea781fce375d605de2151",
+  "settings.groupsPage.noGroupPermissions": "080e4c107ffb642e66b977cb6fa4c328fbaae81329e8580deb535d07325c3d3e"
 }
