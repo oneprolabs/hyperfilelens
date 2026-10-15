@@ -10,6 +10,7 @@ type GovernanceMenuItem = {
   icon: 'organization' | 'members' | 'groups' | 'roles' | 'resources'
   requiredRoles?: readonly string[]
   requiredPermissions?: readonly string[]
+  organizationOnly?: boolean
 }
 
 const icons = { organization: Building2, members: UserRound, groups: UsersRound, roles: ShieldUser, resources: Layers3 } as const
@@ -17,7 +18,11 @@ const icons = { organization: Building2, members: UserRound, groups: UsersRound,
 export function isGovernanceMenuItemVisible(item: GovernanceMenuItem, role: string): boolean {
   if (item.requiredPermissions?.length) {
     const profile = currentUser.value?.access_profile
-    return item.requiredPermissions.every((key) => [...(profile?.permissions || []), ...(profile?.group_permissions || [])].includes(key))
+    const grants = [
+      ...(profile?.permissions || []),
+      ...(item.organizationOnly ? [] : profile?.group_permissions || []),
+    ]
+    return item.requiredPermissions.every((key) => grants.includes(key))
   }
   return !item.requiredRoles || item.requiredRoles.includes(role.trim())
 }

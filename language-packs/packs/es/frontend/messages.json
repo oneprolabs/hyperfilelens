@@ -9423,5 +9423,7 @@
   "settings.groupsPage.excludedPermissionsTitle": "Permisos no concedidos por este grupo",
   "settings.groupsPage.groupPermissionPreviewHint": "Esta vista muestra los permisos de esta asignación al grupo, no todos los permisos del miembro.",
   "settings.groupsPage.groupPermissionPreviewUnavailable": "Los detalles de los permisos no están disponibles. Actualiza para volver a intentarlo.",
-  "settings.groupsPage.noGroupPermissions": "Esta asignación al grupo no concede ningún permiso."
+  "settings.groupsPage.noGroupPermissions": "Esta asignación al grupo no concede ningún permiso.",
+  "settings.nav.accessDenied": "No tienes permiso para ver ninguna página de Configuración.",
+  "settings.org.accessDenied": "No tienes permiso para ver la información de esta organización."
 }

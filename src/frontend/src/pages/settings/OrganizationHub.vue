@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api } from '../../lib/api'
-import { getEffectiveOrgKey } from '../../composables/useAuth'
+import { api, isAbortError } from '../../lib/api'
+import { currentUser, getEffectiveOrgKey } from '../../composables/useAuth'
+import { useTenantPermissions } from '../../composables/useTenantPermissions'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { asList } from '../../lib/parse'
 import ModulePage from '../../components/ModulePage.vue'
@@ -11,6 +12,8 @@ import { Building2 } from 'lucide-vue-next'
 
 const { t } = useI18n()
 const nodeMenus = useNodeSideNav()
+const { has } = useTenantPermissions()
+const canViewOrganization = computed(() => has('configuration.organizations.view', true))
 
 interface Org {
   id: number
@@ -24,6 +27,8 @@ interface Org {
 const organization = ref<Org | null>(null)
 const busy = ref(false)
 const failed = ref(false)
+const forbidden = ref(false)
+const accessDenied = computed(() => !canViewOrganization.value || forbidden.value)
 let controller: AbortController | null = null
 
 function formatCreatedAt(iso?: string): string {
@@ -32,27 +37,38 @@ function formatCreatedAt(iso?: string): string {
 
 async function load() {
   controller?.abort()
+  organization.value = null
+  failed.value = false
+  forbidden.value = false
+  busy.value = false
+  const orgKey = getEffectiveOrgKey()
+  if (!canViewOrganization.value || !orgKey) return
   controller = new AbortController()
   const signal = controller.signal
+  const isCurrent = () => !signal.aborted
+    && canViewOrganization.value && orgKey === getEffectiveOrgKey()
   busy.value = true
-  failed.value = false
   try {
     const orgsData = await api<unknown>('/api/v1/iam/orgs/', { signal })
-    if (signal.aborted) return
+    if (!isCurrent()) return
     const list = asList<Org>(orgsData)
-    const orgKey = getEffectiveOrgKey()
-    const current = orgKey ? list.find(o => o.key === orgKey) : undefined
-    organization.value = orgKey ? current ?? null : list[0] ?? null
-  } catch {
-    if (!signal.aborted) { organization.value = null; failed.value = true }
+    organization.value = list.find(o => o.key === orgKey) ?? null
+  } catch (error) {
+    if (!isCurrent() || isAbortError(error)) return
+    forbidden.value = (error as { status?: number } | null)?.status === 403
+    failed.value = !forbidden.value
   } finally {
     if (!signal.aborted) busy.value = false
   }
 }
 
-onMounted(() => {
-  load()
-})
+// Clear old data before rendering a scope change. Use the default pre-render
+// flush so setUser can update both the profile and stored org key first.
+watch([
+  canViewOrganization,
+  () => currentUser.value?.access_profile?.org_key,
+  () => getEffectiveOrgKey(),
+], () => { void load() }, { immediate: true })
 onUnmounted(() => controller?.abort())
 </script>
 
@@ -124,9 +140,10 @@ onUnmounted(() => controller?.abort())
       </el-card>
       <el-empty
         v-else
-        :description="t(failed ? 'settings.org.loadFailed' : 'settings.org.empty')"
+        :description="t(accessDenied ? 'settings.org.accessDenied' : failed ? 'settings.org.loadFailed' : 'settings.org.empty')"
       >
         <el-button
+          v-if="!accessDenied"
           :disabled="busy"
           @click="load"
         >

@@ -8932,5 +8932,7 @@
   "settings.groupsPage.excludedPermissionsTitle": "b046a3b71ab55abca8a8d04d3126efba4379f7d315e145858e231e0b838ed5ea",
   "settings.groupsPage.groupPermissionPreviewHint": "a9cbcd262c87f5797b9c67835d07678446151b1ce709acd83e79b4723361e144",
   "settings.groupsPage.groupPermissionPreviewUnavailable": "e239da60ab8481c6b4d98ac50b01c6879c908598511ea781fce375d605de2151",
-  "settings.groupsPage.noGroupPermissions": "080e4c107ffb642e66b977cb6fa4c328fbaae81329e8580deb535d07325c3d3e"
+  "settings.groupsPage.noGroupPermissions": "080e4c107ffb642e66b977cb6fa4c328fbaae81329e8580deb535d07325c3d3e",
+  "settings.nav.accessDenied": "64d0947dc1b99f30b8930bc0a12807d3914b1b99ccf733a30c94f0bcf6dc2bc4",
+  "settings.org.accessDenied": "793dbb24ef0413668efbeeef275a5a3a315f9550c1e00221d63abe9030059f90"
 }
