@@ -70,9 +70,13 @@ describe('two-line status details', () => {
   })
 
   it('localizes both the visible action and its accessible name', () => {
-    const wrapper = setup({ label: '注销失败', clickable: true, failure: true }, 'zh')
-    expect(wrapper.get('button').text()).toBe('查看详情')
-    expect(wrapper.get('button').attributes('aria-label')).toBe('注销失败：查看详情')
+    const status = zh.nodeLifecycle.state.deregistration_failed
+    const action = zh.protection.backupsPage.statusViewDetails
+    const wrapper = setup({ label: status, clickable: true, failure: true }, 'zh')
+    expect(wrapper.get('button').text()).toBe(action)
+    expect(wrapper.get('button').attributes('aria-label')).toBe(
+      zh.protection.backupsPage.statusDetailActionLabel.replace('{status}', status).replace('{action}', action),
+    )
     wrapper.unmount()
   })
 

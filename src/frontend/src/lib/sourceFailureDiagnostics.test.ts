@@ -208,6 +208,6 @@ describe('source failure diagnostics', () => {
       t: i18n.global.t as unknown as typeof t, sourceId: 'nas:55', sourceName: 'fixture', status: 'error',
     })
     expect(details.reasons).toEqual(['Unknown vendor error 7123: /srv/source'])
-    expect(details.summary).toContain('任务失败')
+    expect(details.summary).toContain(zhHans.ops.task.failureDetails.failureTitle)
   })
 })
