@@ -17,7 +17,8 @@ from apps.storage.tests import test_repository_tasks as fixtures
 from apps.task.models import Task
 
 SID = 'a' * 32
-ITEM = {'snapshot_id': SID, 'source': {'host': 'host', 'user': 'user', 'path': '/backup'}, 'operation_id': ''}
+CREATED_AT = '2026-09-21T03:33:44.718163+00:00'
+ITEM = {'snapshot_id': SID, 'source': {'host': 'host', 'user': 'user', 'path': '/backup', 'snapshot_created_at': CREATED_AT}, 'operation_id': ''}
 
 
 class ScheduleTests(SimpleTestCase):
@@ -44,6 +45,16 @@ class ScheduleTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             parse_snapshot_inventory([row, row])
 
+    def test_inventory_preserves_repository_manifest_timestamp(self):
+        row = {'id': SID, 'labels': {'type': 'snapshot'}, 'mtime': '2026-09-21T03:33:44.71816374Z'}
+        item = parse_snapshot_inventory([row])[0]
+        self.assertEqual(item['source']['snapshot_created_at'], CREATED_AT)
+
+    def test_inventory_does_not_invent_missing_or_invalid_creation_times(self):
+        for value in [None, '', 'invalid', '2026-99-99T00:00:00Z', '2026-10-01T00:00:00']:
+            row = {'id': SID, 'labels': {'type': 'snapshot'}, 'mtime': value}
+            self.assertIsNone(parse_snapshot_inventory([row])[0]['source'].get('snapshot_created_at'))
+
 
 @patch.dict('os.environ', {
     'STORAGE_MAINTENANCE_TIMEZONE': 'UTC',
@@ -69,7 +80,37 @@ class OrphanTests(TestCase):
         candidate = RepositoryOrphanSnapshot.objects.get()
         self.assertEqual(candidate.status, 'candidate')
         self.assertEqual(rt.task.events.get(metadata__event_type='orphan_snapshot_result').metadata['outcome'], 'discovered')
+        self.assertEqual(rt.task.events.get(metadata__event_type='orphan_snapshot_result').metadata['snapshot_created_at'], CREATED_AT)
         assert_no_orphan_cleanup(self.repository.id)
+
+    @patch('apps.storage.services.internal.orphan_snapshots.delete_s3_snapshots')
+    @patch('apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory')
+    def test_new_scan_enriches_creation_time_without_rewriting_old_audit(self, inventory, delete):
+        legacy = {**ITEM, 'source': {k: v for k, v in ITEM['source'].items() if k != 'snapshot_created_at'}}
+        inventory.return_value = [legacy]
+        original = self.operation()
+        run_orphan_reconciliation(original.id)
+        old_event = original.task.events.get(metadata__event_type='orphan_snapshot_result')
+        self.assertIsNone(old_event.metadata['snapshot_created_at'])
+        inventory.return_value = [ITEM]
+        following = self.operation()
+        run_orphan_reconciliation(following.id)
+        new_event = following.task.events.get(metadata__event_type='orphan_snapshot_result')
+        self.assertEqual(new_event.metadata['snapshot_created_at'], CREATED_AT)
+        old_event.refresh_from_db()
+        self.assertIsNone(old_event.metadata['snapshot_created_at'])
+        delete.assert_not_called()  # Old snapshot creation time never bypasses discovery grace.
+
+    @patch('apps.storage.services.internal.orphan_snapshots.delete_s3_snapshots', return_value={'results': [{'kopia_snapshot_id': SID, 'status': 'success'}]})
+    @patch('apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory', return_value=[ITEM])
+    def test_automatic_deletion_defaults_to_enabled_when_unset(self, _inventory, delete):
+        with patch.dict('os.environ') as environment:
+            environment.pop('STORAGE_ORPHAN_SNAPSHOT_DELETE_ENABLED', None)
+            run_orphan_reconciliation(self.operation().id)
+            delete.assert_not_called()
+            RepositoryOrphanSnapshot.objects.update(first_seen_at=timezone.now() - timedelta(hours=25))
+            run_orphan_reconciliation(self.operation().id)
+        delete.assert_called_once()
 
     @patch('apps.storage.services.internal.orphan_snapshots.delete_s3_snapshots', return_value={'results': [{'kopia_snapshot_id': SID, 'status': 'success'}]})
     @patch('apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory', return_value=[ITEM])

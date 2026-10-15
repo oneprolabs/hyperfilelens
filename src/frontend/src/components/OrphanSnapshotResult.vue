@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { formatLocalDateTime } from '../lib/dateTime'
 
 const props = defineProps<{ metadata?: unknown }>()
 const { t } = useI18n()
+const unavailable = computed(() => {
+  const data = props.metadata as Record<string, unknown> | undefined
+  if (!data || data.event_type !== 'orphan_snapshot_summary') return false
+  const values = data.summary as Record<string, unknown> | undefined
+  return values?.inventory_available === false
+})
 const summary = computed(() => {
   const data = props.metadata as Record<string, unknown> | undefined
   if (!data || data.event_type !== 'orphan_snapshot_summary' || !data.summary || typeof data.summary !== 'object') return []
@@ -18,18 +25,31 @@ const result = computed(() => {
   const source = data.source && typeof data.source === 'object'
     ? data.source as Record<string, unknown> : {}
   const text = (value: unknown) => typeof value === 'string' && value ? value : '—'
+  const sourceName = source.name === 'Unlinked HFL backup source' && source.linked !== true
+    ? t('ops.task.orphanSnapshots.unlinkedSource')
+    : text(source.name)
+  const createdAt = data.snapshot_created_at || source.snapshot_created_at
   return {
     id: data.snapshot_id,
-    outcome: text(data.outcome),
-    source: [text(source.name), text(source.host), text(source.user)].join(' · '),
+    source: [sourceName, text(source.host), text(source.user)].join(' · '),
     path: text(source.path),
-    reason: text(data.reason),
+    createdAt: typeof createdAt === 'string' && Number.isFinite(Date.parse(createdAt))
+      ? formatLocalDateTime(createdAt) : '—',
+    reason: data.reason === 'Automatic orphan deletion is disabled.'
+      ? t('ops.task.orphanSnapshots.deletionDisabled')
+      : text(data.reason),
   }
 })
 </script>
 
 <template>
-  <dl v-if="summary.length">
+  <p
+    v-if="unavailable"
+    role="status"
+  >
+    {{ t('ops.task.orphanSnapshots.inventoryUnavailable') }}
+  </p>
+  <dl v-else-if="summary.length">
     <template
       v-for="item in summary"
       :key="item.key"
@@ -42,7 +62,6 @@ const result = computed(() => {
     v-if="result"
     class="orphan-snapshot-result"
   >
-    <strong>{{ t(`ops.task.orphanSnapshots.${result.outcome}`) }}</strong>
     <dl>
       <dt>{{ t('ops.task.orphanSnapshots.source') }}</dt>
       <dd>{{ result.source }}</dd>
@@ -50,6 +69,8 @@ const result = computed(() => {
       <dd>{{ result.path }}</dd>
       <dt>{{ t('ops.task.orphanSnapshots.snapshotId') }}</dt>
       <dd><code>{{ result.id }}</code></dd>
+      <dt>{{ t('ops.task.orphanSnapshots.snapshotCreatedAt') }}</dt>
+      <dd>{{ result.createdAt }}</dd>
     </dl>
     <p v-if="result.reason !== '—'">
       {{ result.reason }}

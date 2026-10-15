@@ -64,8 +64,8 @@ function mountDrawer() {
         ElDrawer: { template: '<div><slot name="header" /><slot /></div>' },
         ElButton: true,
         ElTag: true,
-        ElTabs: true,
-        ElTabPane: true,
+        ElTabs: { template: '<div><slot /></div>' },
+        ElTabPane: { template: '<div><slot /></div>' },
         ElTable: true,
         ElTableColumn: true,
         ElAlert: true,
@@ -91,6 +91,37 @@ afterEach(() => {
 })
 
 describe('TaskDetailDrawer live duration', () => {
+  it('excludes the delayed orphan retry queue from execution-step duration', async () => {
+    const at = (seconds: number) => new Date(Date.parse(start) + seconds * 1000).toISOString()
+    const names = ['prepare_repository_operation', 'verify_repository_owner', 'run_repository_operation', 'finalize_repository_operation']
+    vi.mocked(getTask).mockResolvedValue({
+      ...running,
+      task_type: 'repository_operation',
+      operation_type: 'snapshot.reconcile',
+      trigger_type: 'retry',
+      recovery_attempt: 1,
+      status: 'success',
+      started_at: at(60),
+      finished_at: at(62),
+      steps: names.map((step_name, index) => ({
+        id: index + 1, step_index: index + 1, step_name, status: 'success', progress: 100,
+      })),
+    })
+    const events = [
+      { step_id: 1, message: 'Task created', created_at: at(0) },
+      { step_id: 1, message: 'Step prepare_repository_operation running', created_at: at(60) },
+      { step_id: 2, message: 'Step verify_repository_owner running', created_at: at(60) },
+      { step_id: 3, message: 'Step run_repository_operation running', created_at: at(60) },
+      { step_id: 4, message: 'Step finalize_repository_operation success', created_at: at(62) },
+    ].map((event, index) => ({ ...event, id: index + 1, seq: index + 1, level: 'INFO' }))
+    vi.mocked(listTaskEvents).mockResolvedValue({ count: events.length, results: events })
+    const wrapper = mountDrawer()
+    await flushPromises()
+    expect(wrapper.get('.hfl-task-drawer__time-value--strong').text()).toBe('00:00:02')
+    expect(wrapper.findAll('.hfl-task-drawer__step-duration').map(item => item.text())).toEqual(['0s', '0s', '2s', '0s'])
+    wrapper.unmount()
+  })
+
   it('updates locally and polls lightweight backup runtime every five seconds', async () => {
     const wrapper = mountDrawer()
     await flushPromises()

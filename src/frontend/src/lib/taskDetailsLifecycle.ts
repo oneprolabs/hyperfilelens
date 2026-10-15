@@ -9,7 +9,7 @@ export async function refreshTaskDetails(snapshot: ErrorDetailsPayload, t: Compo
     const { getTask } = await import('./taskApi')
     let task = await getTask(snapshot.taskUuid)
     const visited = new Set([task.task_uuid])
-    while (task.replacement_task_uuid && !visited.has(task.replacement_task_uuid) && visited.size < 8) {
+    while (task.operation_type !== 'snapshot.reconcile' && task.replacement_task_uuid && !visited.has(task.replacement_task_uuid) && visited.size < 8) {
       task = await getTask(task.replacement_task_uuid)
       visited.add(task.task_uuid)
     }

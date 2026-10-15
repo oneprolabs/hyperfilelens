@@ -1,6 +1,14 @@
 import type { TaskEventRow } from './taskApi'
 
 const taskEventMessageKeys: Record<string, string> = {
+  'orphan snapshot discovered': 'ops.task.orphanSnapshots.discovered',
+  'orphan snapshot deleted': 'ops.task.orphanSnapshots.deleted',
+  'orphan snapshot grace': 'ops.task.orphanSnapshots.grace',
+  'orphan snapshot deferred': 'ops.task.orphanSnapshots.deferred',
+  'orphan snapshot failed': 'ops.task.orphanSnapshots.failed',
+  'orphan snapshot absent': 'ops.task.orphanSnapshots.absent',
+  'orphan snapshot managed': 'ops.task.orphanSnapshots.managed',
+  'orphan snapshot reconciliation summary': 'ops.task.orphanSnapshots.summary',
   'backup source was not deleted.': 'ops.task.eventMessage.backupSourceNotDeleted',
   'task created': 'ops.task.eventMessage.taskCreated',
   'task started': 'ops.task.eventMessage.taskStarted',
@@ -87,6 +95,11 @@ function metadataRecord(event: TaskEventRow): Record<string, unknown> {
   const metadata = event.metadata
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {}
   return metadata as Record<string, unknown>
+}
+
+export function isOrphanSnapshotAuditEvent(event: TaskEventRow): boolean {
+  const type = metadataRecord(event).event_type
+  return type === 'orphan_snapshot_result' || type === 'orphan_snapshot_summary'
 }
 
 function metadataText(metadata: Record<string, unknown>, key: string): string {

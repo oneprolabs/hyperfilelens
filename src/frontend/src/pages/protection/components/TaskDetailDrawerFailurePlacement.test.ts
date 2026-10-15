@@ -88,6 +88,53 @@ afterEach(() => {
 })
 
 describe('TaskDetailDrawer failure placement', () => {
+  it('renders localized orphan audit details once without event-time badges', async () => {
+    i18n.global.locale.value = 'zh-hans'
+    const snapshotCreatedAt = '2026-09-21T03:33:44.000Z'
+    vi.mocked(getTask).mockResolvedValue({
+      ...task,
+      task_type: 'repository_operation',
+      operation_type: 'snapshot.reconcile',
+      error_details: undefined,
+      steps: ['prepare_repository_operation', 'verify_repository_owner', 'run_repository_operation', 'finalize_repository_operation'].map((step_name, index) => ({
+        id: index + 1, step_index: index + 1, step_name, status: 'success', progress: 100,
+      })),
+    })
+    const events: TaskEventRow[] = [
+      { id: 1, seq: 1, step_id: 1, level: 'INFO', message: 'Task started', created_at: '2026-10-12T01:00:11Z' },
+      {
+        id: 2, seq: 2, level: 'INFO', message: 'Orphan snapshot discovered',
+        created_at: '2026-10-12T01:00:14Z',
+        metadata: {
+          event_type: 'orphan_snapshot_result', outcome: 'discovered', snapshot_id: 'a'.repeat(32),
+          snapshot_created_at: snapshotCreatedAt,
+          source: { name: 'Unlinked HFL backup source', host: 'host', user: 'root', path: '/backup' },
+          reason: 'Automatic orphan deletion is disabled.',
+        },
+      },
+      {
+        id: 3, seq: 3, level: 'INFO', message: 'Orphan snapshot reconciliation summary',
+        created_at: '2026-10-12T01:00:14Z',
+        metadata: { event_type: 'orphan_snapshot_summary', summary: { scanned: 1, discovered: 1 } },
+      },
+    ]
+    vi.mocked(listTaskEvents).mockResolvedValue({ count: events.length, results: events })
+    const wrapper = mountDrawer()
+    await flushPromises()
+    const result = wrapper.get('.orphan-snapshot-result')
+    expect(result.find('strong').exists()).toBe(false)
+    expect(i18n.global.te('ops.task.orphanSnapshots.snapshotCreatedAt', 'zh-hans')).toBe(true)
+    expect(result.text()).toContain(i18n.global.t('ops.task.orphanSnapshots.snapshotCreatedAt'))
+    expect(result.text()).toContain('2026-09-21')
+    expect(result.text()).toContain(i18n.global.t('ops.task.orphanSnapshots.unlinkedSource'))
+    expect(result.text()).toContain(i18n.global.t('ops.task.orphanSnapshots.deletionDisabled'))
+    expect(wrapper.text()).not.toContain('Orphan snapshot discovered')
+    expect(wrapper.text()).not.toContain('Orphan snapshot reconciliation summary')
+    expect(wrapper.text()).toContain(i18n.global.t('ops.task.orphanSnapshots.summary'))
+    expect(wrapper.findAll('.hfl-task-drawer__event-time')).toHaveLength(1) // Normal task event remains timestamped.
+    wrapper.unmount()
+  })
+
   for (const locale of ['en', 'zh-hans', 'es']) {
     it(`localizes offline deregistration in ${locale}, including historical task guidance`, async () => {
       i18n.global.locale.value = locale

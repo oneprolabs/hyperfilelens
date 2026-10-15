@@ -1038,17 +1038,18 @@ def _execute_repository_operation(
                 progress=80,
             )
         )
-        # Observation is not a maintenance success condition. Keep the legacy
-        # step for existing task readers, but do not execute it synchronously.
-        _raise_for_control_decision(
-            _set_repository_operation_step(
-                repository_task,
-                execution_token,
-                "refresh_repository_usage",
-                status=TaskStep.Status.SKIPPED,
-                progress=0,
+        if task.steps.filter(step_name="refresh_repository_usage").exists():
+            # Only pre-existing tasks have this legacy placeholder. New
+            # maintenance tasks refresh usage independently after completion.
+            _raise_for_control_decision(
+                _set_repository_operation_step(
+                    repository_task,
+                    execution_token,
+                    "refresh_repository_usage",
+                    status=TaskStep.Status.SKIPPED,
+                    progress=0,
+                )
             )
-        )
         _raise_for_control_decision(
             _set_repository_operation_step(
                 repository_task,

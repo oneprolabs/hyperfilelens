@@ -4702,6 +4702,11 @@ export const en = {
         stepStatusUpdated: '{step}: {status}',
       },
       orphanSnapshots: {
+        summary: 'Orphan snapshot reconciliation summary',
+        snapshotCreatedAt: 'Snapshot creation time',
+        deletionDisabled: 'This run is in check-only mode (STORAGE_ORPHAN_SNAPSHOT_DELETE_ENABLED=false). This orphan snapshot was retained; no deletion was attempted. This is not a snapshot check failure.',
+        unlinkedSource: 'Unlinked HFL backup source',
+        inventoryUnavailable: 'Snapshot inventory unavailable. No complete scan result was obtained; this does not mean the repository is empty.',
         scanned: 'Physical snapshots scanned',
         discovered: 'Discovered orphan snapshots',
         deleted: 'Deleted orphan snapshots',

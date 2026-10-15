@@ -1,6 +1,7 @@
 """Durable, fail-closed discovery and delayed cleanup of unmanaged snapshots."""
 
 from datetime import timedelta
+import logging
 import os
 from uuid import UUID
 
@@ -13,17 +14,25 @@ from apps.node.services.interface import run_agent_task_async
 from apps.protection.models import BackupSourceSnapshotDirectory, SnapshotUsageLease
 from apps.storage.repositories.models import (
     Repository, RepositoryOrphanSnapshot, RepositoryTask,
+    RepositoryExecutionTarget,
 )
 from apps.storage.services.internal.kopia_cli import delete_s3_snapshots
 from apps.storage.services.internal.orphan_snapshot_fence import backup_blocker
+from apps.storage.services.internal.orphan_reconciliation_errors import (
+    OrphanReconciliationError, classify_reconciliation_error,
+)
 from apps.storage.services.internal.repository_operations import (
     finalize_repository_operation, repository_execution_target_has_owned_location,
+    set_task_step,
 )
 from apps.storage.services.internal.snapshot_inventory import (
     controller_snapshot_inventory, parse_snapshot_inventory,
 )
-from apps.task.models import Task, TaskEvent
-from apps.task.services.interface import append_task_event, start_task
+from apps.task.models import Task, TaskEvent, TaskStep
+from apps.task.services.interface import append_task_event, create_task, start_task
+
+
+logger = logging.getLogger(__name__)
 
 
 def managed_ids(repository):
@@ -114,6 +123,10 @@ def _record(rt, candidate, outcome, reason=""):
     metadata = {
         "event_type": "orphan_snapshot_result", "outcome": outcome,
         "snapshot_id": candidate.snapshot_id, "source": candidate.source,
+        "snapshot_created_at": (
+            candidate.source.get("snapshot_created_at")
+            if isinstance(candidate.source, dict) else None
+        ),
         "first_seen_at": candidate.first_seen_at.isoformat(), "reason": reason,
     }
     if rt.task.events.filter(
@@ -132,17 +145,28 @@ def _remote(rt, operation, snapshot_id=""):
     """Persist child dispatch under a row lock; never redispatch unknown execution."""
     from apps.storage.services.internal.repository_access import repository_payload_for_node
 
-    node = Node.objects.get(pk=rt.owner_node_id)
-    if "orphan_snapshot_reconcile_v1" not in (node.capabilities or []):
-        raise ValueError("Repository owner requires orphan_snapshot_reconcile_v1.")
     identity = f"{rt.task.task_uuid}:{operation}:{snapshot_id}"
+    if rt.task.retry_count:
+        identity += f":retry-{rt.task.retry_count}"
     with transaction.atomic():
         RepositoryTask.objects.select_for_update().get(pk=rt.pk)
         child = NodeTask.objects.filter(
-            organization_id=rt.repository.organization_id, parent_task=rt.task,
-            correlation_id=identity,
+            parent_task=rt.task, correlation_id=identity,
         ).first()
+        if child is not None and (
+            child.organization_id != rt.repository.organization_id
+            or child.node_id != rt.owner_node_id
+            or child.kind != "repository.operation"
+            or child.correlation_type != "repository_orphan"
+            or (child.payload or {}).get("operation_type") != operation
+        ):
+            raise OrphanReconciliationError(
+                "ORPHAN_AGENT_IDENTITY_MISMATCH",
+                "The stored Agent operation does not match this repository task. Confirm the original execution before recovery; no replacement will be dispatched.",
+                execution_unknown=True,
+            )
         if child is None:
+            node = _owner_node(rt)
             payload = repository_payload_for_node(
                 repository=rt.repository, node=node,
                 source_type="proxy" if node.role == "proxy" else "agent",
@@ -171,24 +195,76 @@ def _remote(rt, operation, snapshot_id=""):
         return {"deletion_failed": True}
     if child.accepted_at:
         return None
-    raise ValueError("Agent orphan snapshot operation failed.")
+    raise OrphanReconciliationError(
+        "ORPHAN_AGENT_OPERATION_FAILED",
+        "The Agent rejected the snapshot operation before execution. Check its availability and retry.",
+    )
+
+
+def _owner_node(rt):
+    node = Node.objects.filter(
+        pk=rt.owner_node_id, organization_id=rt.repository.organization_id,
+    ).first()
+    if node is None:
+        raise OrphanReconciliationError(
+            "ORPHAN_OWNER_MISSING",
+            "The repository owner is unavailable. Restore or reassign the owner before manually retrying.",
+        )
+    metadata = node.metadata if isinstance(node.metadata, dict) else {}
+    inventory = metadata.get("inventory")
+    capabilities = (
+        inventory.get("capabilities", metadata.get("capabilities", []))
+        if isinstance(inventory, dict) else metadata.get("capabilities", [])
+    )
+    if not isinstance(capabilities, list) or "orphan_snapshot_reconcile_v1" not in capabilities:
+        raise OrphanReconciliationError(
+            "ORPHAN_CAPABILITY_MISSING",
+            "The owner must advertise orphan_snapshot_reconcile_v1. Upgrade or reconnect the Agent, then manually retry reconciliation.",
+        )
+    return node
+
+
+def _step(rt, name, status, progress):
+    step = rt.task.steps.filter(step_name=name).first()
+    if step is None or step.status == status or step.status in {
+        TaskStep.Status.SUCCESS, TaskStep.Status.SKIPPED,
+    }:
+        return
+    set_task_step(rt.task, name, status=status, progress=progress)
 
 
 def run_orphan_reconciliation(repository_task_id):
     rt = RepositoryTask.objects.select_related(
         "task", "repository", "execution_target",
     ).get(pk=repository_task_id)
-    if rt.task.status in {Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED}:
+    if rt.task.status in {Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED, Task.Status.TIMEOUT}:
         return {"status": rt.task.status}
+    if (
+        rt.task.status == Task.Status.PENDING
+        and rt.due_at and rt.due_at > timezone.now()
+    ):
+        return {"status": "retry_scheduled"}
     if rt.task.status == Task.Status.PENDING:
         start_task(task_uuid=rt.task.task_uuid, organization_id=rt.repository.organization_id)
-    if not repository_execution_target_has_owned_location(rt.execution_target):
-        return _finish(rt, False, "Physical repository ownership is not verified.")
-    blocker = backup_blocker(rt.repository)
-    if blocker:
-        return _finish(rt, False, blocker)
+    _step(rt, "prepare_repository_operation", TaskStep.Status.RUNNING, 5)
+    scanned = None
+    stage = "prepare_repository_operation"
     controller = rt.owner_type == "controller"
     try:
+        _step(rt, stage, TaskStep.Status.SUCCESS, 10)
+        stage = "verify_repository_owner"
+        _step(rt, stage, TaskStep.Status.RUNNING, 15)
+        if not repository_execution_target_has_owned_location(rt.execution_target):
+            raise OrphanReconciliationError(
+                "ORPHAN_OWNERSHIP_UNVERIFIED",
+                "Verify the physical repository ownership before manually retrying reconciliation.",
+            )
+        blocker = backup_blocker(rt.repository)
+        if blocker:
+            raise OrphanReconciliationError("ORPHAN_BACKUP_ACTIVE", blocker)
+        _step(rt, stage, TaskStep.Status.SUCCESS, 20)
+        stage = "run_repository_operation"
+        _step(rt, stage, TaskStep.Status.RUNNING, 25)
         if controller:
             inventory = controller_snapshot_inventory(rt.repository)
         else:
@@ -198,6 +274,7 @@ def run_orphan_reconciliation(repository_task_id):
             if result.get("inventory_complete") is not True:
                 raise ValueError("Agent snapshot inventory is incomplete.")
             inventory = parse_snapshot_inventory(result.get("manifests"))
+        scanned = len(inventory)
         now = timezone.now()
         protected = managed_ids(rt.repository)
         operation_tasks, pending_operations = _operation_index(rt.repository, inventory)
@@ -221,6 +298,12 @@ def run_orphan_reconciliation(repository_task_id):
         for item in inventory:
             sid = item["snapshot_id"]
             candidate = candidates.get(sid)
+            created_at = item["source"].get("snapshot_created_at")
+            if candidate and created_at:
+                source = candidate.source if isinstance(candidate.source, dict) else {}
+                if source.get("snapshot_created_at") != created_at:
+                    candidate.source = {**source, "snapshot_created_at": created_at}
+                    candidate.save(update_fields=["source"])
             operation_uuid = item["operation_id"][:36]
             if sid in protected or operation_uuid in pending_operations:
                 if candidate and candidate.status != "deleting":
@@ -249,7 +332,10 @@ def run_orphan_reconciliation(repository_task_id):
                 _record(rt, candidate, "deferred", "Automatic orphan deletion is disabled.")
                 continue
             # Never act on a candidate discovered by this same logical task.
-            if rt.task.events.filter(metadata__snapshot_id=sid, metadata__outcome="discovered").exists():
+            if TaskEvent.objects.filter(
+                task_id__in=[rt.task_id, rt.task.replaces_task_id],
+                metadata__snapshot_id=sid, metadata__outcome="discovered",
+            ).exists():
                 continue
             if controller and candidate.status == "deleting":
                 return _wait(rt, "Controller delete result unknown; manual execution confirmation required.")
@@ -299,12 +385,25 @@ def run_orphan_reconciliation(repository_task_id):
                 candidate.deleted_at = now if outcome == "deleted" else None
                 candidate.save(update_fields=["status", "deleted_at"])
                 _record(rt, candidate, outcome)
-        return _finish(rt, True, scanned=len(inventory))
-    except Exception:
+        return _finish(rt, True, scanned=scanned)
+    except Exception as error:
+        diagnostic = classify_reconciliation_error(error, stage)
+        append_task_event(
+            task=rt.task, level=TaskEvent.Level.ERROR,
+            message=diagnostic["message"],
+            step=rt.task.steps.filter(step_name=stage).first(),
+            metadata={"event_type": "orphan_snapshot_error", **diagnostic},
+        )
         # A Controller interruption may leave the child process running. Preserve the gate.
+        if diagnostic["execution_unknown"]:
+            return _wait(rt, diagnostic["message"])
         if RepositoryOrphanSnapshot.objects.filter(target=rt.execution_target, status="deleting").exists():
             return _wait(rt, "Deletion completion requires confirmation.")
-        return _finish(rt, False, "Snapshot reconciliation failed; no unconfirmed deletion will be retried.")
+        return _finish(
+            rt, False, diagnostic["message"], scanned=scanned,
+            error_code=diagnostic["error_code"],
+            diagnostic=diagnostic,
+        )
 
 
 def _wait(rt, reason="Waiting for confirmed Agent result."):
@@ -312,7 +411,18 @@ def _wait(rt, reason="Waiting for confirmed Agent result."):
     return {"status": "waiting", "reason": reason}
 
 
-def _finish(rt, succeeded, reason="", scanned=0):
+@transaction.atomic
+def _finish(rt, succeeded, reason="", scanned=None, *, error_code="", diagnostic=None):
+    # Match admission's Repository-before-Target lock order. The failed attempt
+    # and its replacement hand the gate over without exposing an unlocked gap.
+    Repository.objects.select_for_update().get(pk=rt.repository_id)
+    RepositoryTask.objects.select_for_update().get(pk=rt.pk)
+    rt.task = Task.objects.select_for_update().get(pk=rt.task_id)
+    if rt.task.status in {
+        Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED, Task.Status.TIMEOUT,
+    }:
+        return {"status": rt.task.status}
+    target = RepositoryExecutionTarget.objects.select_for_update().get(pk=rt.execution_target_id)
     counts = {}
     for row in rt.task.events.filter(
         metadata__event_type="orphan_snapshot_result",
@@ -320,14 +430,91 @@ def _finish(rt, succeeded, reason="", scanned=0):
         counts[row["metadata__outcome"]] = row["total"]
     if counts.get("failed"):
         succeeded = False
-        reason = "Some orphan snapshot deletions failed and will be retried."
-    summary = {"scanned": scanned, **counts}
+        reason = "Some orphan snapshot deletions failed. They will be checked again in the next scheduled cycle."
+        error_code = "ORPHAN_DELETE_FAILED"
+    if succeeded:
+        _step(rt, "run_repository_operation", TaskStep.Status.SUCCESS, 80)
+        _step(rt, "finalize_repository_operation", TaskStep.Status.SUCCESS, 100)
+    else:
+        # Fail the active step, never leave a completed task with queued successors.
+        for step in rt.task.steps.order_by("step_index"):
+            if step.status == TaskStep.Status.RUNNING:
+                _step(rt, step.step_name, TaskStep.Status.FAILED, int(rt.task.progress))
+            elif step.status == TaskStep.Status.PENDING:
+                step.status = TaskStep.Status.SKIPPED
+                step.save(update_fields=["status"])
+                append_task_event(
+                    task=rt.task, step=step, message=f"Step {step.step_name} skipped",
+                )
+    summary = {"scanned": scanned, "inventory_available": scanned is not None, **counts}
+    result = {"orphan_snapshot_summary": summary}
+    if diagnostic:
+        result["orphan_snapshot_error"] = diagnostic
     append_task_event(
         task=rt.task, message="Orphan snapshot reconciliation summary",
         metadata={"event_type": "orphan_snapshot_summary", "summary": summary},
     )
-    finalize_repository_operation(
-        repository_task_id=rt.id, succeeded=succeeded, error_message=reason,
-        result_payload={"orphan_snapshot_summary": summary},
+    # Retry failed inventory checks only. Never redispatch uncertain remote work
+    # or repeat deletion after a missing/ambiguous completion.
+    retry_scan = (
+        not succeeded and rt.task.retry_count < 1
+        and rt.task.recovery_attempt == 0 and rt.task.replaces_task_id is None
+        and target.active_task_id == rt.task_id
+        and not counts.get("failed") and not counts.get("deleted")
     )
+    if retry_scan:
+        for child in rt.task.node_tasks.filter(correlation_type="repository_orphan"):
+            if child.status in {"pending", "running", "timeout", "canceled"} or (
+                child.status == "failed" and child.accepted_at
+                and (child.result or {}).get("execution_complete") is not True
+            ):
+                return _wait(rt, "Agent execution requires confirmation before retry.")
+    completed = finalize_repository_operation(
+        repository_task_id=rt.id, succeeded=succeeded, error_message=reason,
+        error_code=error_code, result_payload=result,
+        advance_reconcile_schedule=not retry_scan,
+    )
+    if retry_scan and completed.status == Task.Status.FAILED:
+        # Reuse the established replacement-task contract; never reset the
+        # failed attempt's status, timestamps, steps or event history.
+        retried = create_task(
+            organization_id=completed.organization_id,
+            task_type=completed.task_type,
+            display_name=completed.display_name,
+            trigger_type=Task.TriggerType.RETRY,
+            normalize_trigger_type=False,
+            request_payload=completed.request_payload,
+            resources=list(completed.resources.values(
+                "resource_type", "resource_subtype", "resource_id", "is_primary",
+            )),
+            steps=list(completed.steps.exclude(
+                step_name="refresh_repository_usage",
+            ).order_by("step_index").values_list("step_name", flat=True)),
+            replaces_task=completed,
+        )
+        retry = RepositoryTask.objects.create(
+            task=retried, repository_id=rt.repository_id,
+            execution_target_id=rt.execution_target_id,
+            operation_type=rt.operation_type,
+            owner_type=rt.owner_type, owner_node_id=rt.owner_node_id,
+            owner_identity=rt.owner_identity,
+            requested_by_id=rt.requested_by_id,
+            due_at=timezone.now() + timedelta(minutes=1),
+        )
+        target.active_task = retried
+        target.save(update_fields=["active_task", "updated_at"])
+        transaction.on_commit(lambda: _enqueue_retry(retry.id))
+        return {"status": "retry_scheduled"}
     return {"status": "success" if succeeded else "failed"}
+
+
+def _enqueue_retry(repository_task_id):
+    from apps.storage.tasks import execute_repository_operation
+
+    try:
+        execute_repository_operation.apply_async(
+            kwargs={"repository_task_id": repository_task_id}, countdown=60,
+        )
+    except Exception:
+        # The periodic operation reconciler will redispatch the durable pending task.
+        logger.warning("Snapshot reconciliation retry dispatch deferred task_id=%s", repository_task_id)

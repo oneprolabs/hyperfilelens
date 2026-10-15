@@ -6733,6 +6733,11 @@
         "backupSourceNotDeleted": "El origen de copia de seguridad no se dio de baja."
       },
       "orphanSnapshots": {
+        "summary": "Resumen de conciliación de instantáneas huérfanas",
+        "snapshotCreatedAt": "Instantánea creada",
+        "deletionDisabled": "Esta ejecución está en modo de solo comprobación (STORAGE_ORPHAN_SNAPSHOT_DELETE_ENABLED=false). Se ha conservado esta instantánea huérfana y no se ha intentado eliminarla. Esto no indica un fallo de la comprobación.",
+        "unlinkedSource": "Origen de copia de seguridad de HFL sin vincular",
+        "inventoryUnavailable": "Inventario de instantáneas no disponible. No se obtuvo un resultado completo; esto no significa que el repositorio esté vacío.",
         "scanned": "Instantáneas físicas examinadas",
         "discovered": "Instantáneas huérfanas detectadas",
         "deleted": "Instantáneas huérfanas eliminadas",

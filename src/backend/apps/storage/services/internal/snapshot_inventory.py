@@ -3,6 +3,9 @@
 import json
 import re
 
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+
 from apps.storage.services.internal import kopia_cli
 
 
@@ -28,13 +31,24 @@ def parse_snapshot_inventory(raw):
         ):
             raise ValueError("Snapshot inventory identity or labels are invalid.")
         seen.add(snapshot_id)
+        source = {
+            "host": labels.get("hostname", ""),
+            "user": labels.get("username", ""),
+            "path": labels.get("path", ""),
+        }
+        # Kopia's manifest timestamp is repository metadata, never HFL's
+        # discovery/event time. Missing/invalid optional metadata stays unknown.
+        raw_time = row.get("mtime")
+        if isinstance(raw_time, str):
+            try:
+                created_at = parse_datetime(raw_time)
+            except ValueError:
+                created_at = None
+            if created_at is not None and timezone.is_aware(created_at):
+                source["snapshot_created_at"] = created_at.isoformat()
         result.append({
             "snapshot_id": snapshot_id,
-            "source": {
-                "host": labels.get("hostname", ""),
-                "user": labels.get("username", ""),
-                "path": labels.get("path", ""),
-            },
+            "source": source,
             "operation_id": labels.get("tag:hfl-operation", ""),
         })
     return result
