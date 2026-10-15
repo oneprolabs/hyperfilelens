@@ -334,7 +334,8 @@ function formatPhaseTime(at: string | null) {
   justify-content: center;
   width: 26px;
   height: 26px;
-  margin-top: 1px;
+  /* Center the marker on the card heading, below the card's top padding. */
+  margin-top: 12px;
   border: 2px solid #fff;
   border-radius: 999px;
 }

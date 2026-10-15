@@ -2127,6 +2127,7 @@ watch(
 .hfl-task-drawer__step-anchor {
   width: 24px;
   height: 24px;
+  margin-top: 7px;
 }
 
 .hfl-task-drawer__timeline-icon--success {
@@ -2365,7 +2366,8 @@ watch(
   z-index: 1;
   width: 26px;
   height: 26px;
-  margin-top: 1px;
+  /* Align the marker with the heading inside the padded step card. */
+  margin-top: 12px;
   border: 2px solid #fff;
 }
 

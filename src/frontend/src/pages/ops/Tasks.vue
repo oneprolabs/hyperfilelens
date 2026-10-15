@@ -2817,7 +2817,8 @@ watch(
   justify-content: center;
   width: 26px;
   height: 26px;
-  margin-top: 1px;
+  /* Align the marker with the heading inside the padded step card. */
+  margin-top: 12px;
   border: 2px solid var(--color-card-bg);
   border-radius: 999px;
 }
