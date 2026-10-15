@@ -404,7 +404,7 @@ class ProtectionBackupConfigApiTests(TestCase):
         mock_policy_delay.assert_called_once_with(config_id=create.data["id"])
         mock_estimate_delay.assert_called_once_with(config_id=create.data["id"])
 
-    def test_create_backup_config_checks_quota_in_creation_transaction(self):
+    def test_create_backup_config_checks_only_source_quota_in_creation_transaction(self):
         repository_locked = False
         original_lock = backup_config_service._lock_repository_for_backup_config
 
@@ -442,10 +442,7 @@ class ProtectionBackupConfigApiTests(TestCase):
         )
         self.assertEqual(
             quota_checks,
-            [
-                ("max_protected_sources", 1),
-                ("max_storage_bytes", 0),
-            ],
+            [("max_protected_sources", 1)],
         )
 
     def test_create_backup_config_advances_source_pipeline_to_step3(self):
