@@ -2,6 +2,7 @@ import type { ComposerTranslation } from 'vue-i18n'
 
 import { apiErrorMessageI18n } from './api'
 import { unregisterReasonLabel } from './backupSourceUnregisterDialog'
+import { unregisterBusinessReasons, unregisterTaskReasonText, unregisterTaskSuggestionText } from './unregisterTaskFailureDisplay'
 import {
   unregisterCleanupSuggestion,
   unregisterCleanupText,
@@ -132,9 +133,12 @@ export function unregisterFailureToErrorDetails(input: {
     const apiError = toApiError(input.apiError)
     const meta = apiError.meta || {}
     const structuredErrorCode = apiError.status > 0 ? apiError.errorCode : undefined
-    const displayMessage = structuredErrorCode
-      ? apiErrorMessageI18n(input.apiError, t, fallback)
-      : (parsed.message || fallback)
+    const displayMessage = unregisterCleanupText(
+      structuredErrorCode
+        ? apiErrorMessageI18n(input.apiError, t, fallback)
+        : (parsed.message || fallback),
+      t,
+    )
     const scopedReasons = reasonsForUnregisterSource(parsed.reasons, input.sourceId)
     const reasons = uniqueStrings([
       ...scopedReasons.map((reason) => unregisterReasonLabel(reason, t)),
@@ -178,13 +182,16 @@ export function unregisterFailureToErrorDetails(input: {
   const contract = task?.error_details
   const outcome = input.outcome || (task ? sourceUnregisterTaskOutcome(task) : null)
   const payload = record(task?.result_payload)
-  const structuredReasons = reasonObjects(contract?.reasons?.length ? contract.reasons : payload.reasons)
+  const structuredReasons = unregisterBusinessReasons(
+    reasonObjects(contract?.reasons?.length ? contract.reasons : payload.reasons),
+    contract?.error_code || task?.error_code,
+  )
   const eventHints = (task?.recent_events || []).flatMap((event) => {
     const meta = record(event.metadata)
     const hints = [
       ...reasonObjects(meta.reasons).map((reason) => unregisterReasonLabel(reason, t)),
       typeof meta.hint === 'string' ? meta.hint : '',
-      event.level === 'error' ? String(event.message || '').trim() : '',
+      !structuredReasons.length && event.level.toLowerCase() === 'error' ? String(event.message || '').trim() : '',
     ]
     return hints
   })
@@ -256,7 +263,7 @@ export function unregisterFailureToErrorDetails(input: {
     !isResidue && failedStep
       ? t('protection.backupsPage.unregisterFailureFailedStep', { step: failedStepLabel })
       : '',
-    ...structuredReasons.map((reason) => unregisterReasonLabel(reason, t)),
+    ...structuredReasons.map((reason) => unregisterTaskReasonText(reason, t)),
     ...cleanupFailures.map((item) => {
       const target = item.sourceName || item.sourceId || ''
       const detail = unregisterReasonLabel({
@@ -275,7 +282,7 @@ export function unregisterFailureToErrorDetails(input: {
           }))
       : []),
     ...eventHints,
-    isResidue ? '' : errorMessage,
+    isResidue || structuredReasons.length ? '' : errorMessage,
   ])
 
   const residueLines = uniqueStrings([
@@ -291,7 +298,7 @@ export function unregisterFailureToErrorDetails(input: {
 
   const resolutions = isResidue ? uniqueStrings([
     ...(contract?.suggestions || [])
-      .filter(item => !['review_cleanup', 'check_agent', 'force_cleanup', 'retry'].includes(item.code))
+      .filter(item => !['review_task', 'review_source_unregister', 'review_cleanup', 'check_agent', 'force_cleanup', 'retry'].includes(item.code))
       .map(item => unregisterCleanupSuggestion(item, t)),
     hint && ![
       'Review retained resources and complete any remaining cleanup before retrying.',
@@ -307,7 +314,7 @@ export function unregisterFailureToErrorDetails(input: {
       ? t('protection.backupsPage.unregisterManualCleanupAdvice') : '',
     // Generic retry hints describe the completed operation, not a supported follow-up action.
   ]) : uniqueStrings([
-    ...(contract?.suggestions || []).map((item) => unregisterCleanupSuggestion(item, t)),
+    ...(contract?.suggestions || []).map((item) => unregisterTaskSuggestionText(item, structuredReasons, t)),
     unregisterCleanupText(hint, t),
     residueLines.length || isResidue
       ? t('protection.backupsPage.unregisterFailureResidueHint')
@@ -379,7 +386,9 @@ export function unregisterFailureToErrorDetails(input: {
     reasons: combinedReasons.length
       ? combinedReasons
       : [isResidue ? t('protection.backupsPage.msgDeleteSourcePartialSuccess') : fallback],
-    resolutions,
+    resolutions: !isResidue && structuredReasons.some(reason => reason.code === 'snapshot_in_use')
+      ? [t('ops.task.failureDetails.suggestion.resolve_snapshot_usage')]
+      : resolutions,
     rawDetail: {
       source_id: input.sourceId,
       source_name: input.sourceName,

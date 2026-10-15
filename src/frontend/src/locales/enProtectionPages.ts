@@ -1076,6 +1076,7 @@ export const enProtectionPages = {
     unregisterCleanupPendingSummary: 'The backup source was removed, but retained resources still need cleanup.',
     unregisterCleanupPendingSummaryNamed: '{name} was removed, but retained resources still need cleanup.',
     unregisterCleanupPendingSummaryCount: '{n} sources were removed, but some retained resources still need cleanup.',
+    unregisterStrictOfflineNamed: 'Agent "{name}" is offline. Strict Cleanup requires remote uninstall.',
     unregisterOfflineUninstallSkipped: 'The Agent was offline, so remote uninstall was skipped.',
     unregisterOfflineUninstallSkippedNamed: 'Agent "{name}" was offline, so uninstall was skipped.',
     unregisterOfflineCleanupCause: 'The Agent is offline, so remote uninstall cannot run.',

@@ -1545,6 +1545,8 @@ function eventErrorText(event: TaskEventRow) {
   const message = taskEventMetadataText(event, ['error_message'])
   if (!message) return ''
   const code = taskEventMetadataText(event, ['error_code'])
+  // The shared error card renders deregistration reasons and keeps raw evidence.
+  if (activeTask.value?.task_type === 'source_unregister' || code.startsWith('SOURCE_UNREGISTER_')) return ''
   return code ? `[${code}] ${message}` : message
 }
 
@@ -5085,7 +5087,11 @@ function onClosed() {
                           v-if="eventErrorText(event)"
                           class="dp-task-detail__event-error"
                         >{{ eventErrorText(event) }}</span>
-                        <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
+                        <TaskEventFailureDetails
+                          :metadata="taskEventMetadata(event)"
+                          :task-type="activeTask?.task_type"
+                          :unregister-reasons="activeTask?.error_details?.reasons"
+                        />
                       </div>
                       <span
                         class="dp-task-detail__event-time"
@@ -5151,7 +5157,11 @@ function onClosed() {
                           v-if="eventErrorText(event)"
                           class="dp-task-detail__event-error"
                         >{{ eventErrorText(event) }}</span>
-                        <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
+                        <TaskEventFailureDetails
+                          :metadata="taskEventMetadata(event)"
+                          :task-type="activeTask?.task_type"
+                          :unregister-reasons="activeTask?.error_details?.reasons"
+                        />
                       </div>
                       <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
                     </div>
@@ -5203,7 +5213,11 @@ function onClosed() {
                     v-if="eventErrorText(event)"
                     class="dp-task-detail__event-error"
                   >{{ eventErrorText(event) }}</span>
-                  <TaskEventFailureDetails :metadata="taskEventMetadata(event)" />
+                  <TaskEventFailureDetails
+                    :metadata="taskEventMetadata(event)"
+                    :task-type="activeTask?.task_type"
+                    :unregister-reasons="activeTask?.error_details?.reasons"
+                  />
                 </div>
                 <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
               </div>

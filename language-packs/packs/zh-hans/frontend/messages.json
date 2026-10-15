@@ -2100,7 +2100,8 @@
       "syntheticUnregisterDiagnostic": "诊断信息可在技术详情中查看。",
       "statusViewDetails": "查看详情",
       "statusViewTask": "查看任务",
-      "statusDetailActionLabel": "{status}：{action}"
+      "statusDetailActionLabel": "{status}：{action}",
+      "unregisterStrictOfflineNamed": "Agent“{name}”离线。严格清理要求远程卸载 Agent。"
     },
     "backupDetail": {
       "backToList": "返回备份列表",
@@ -6728,7 +6729,8 @@
         "taskFinishedTimeout": "任务执行超时",
         "backupQueueRecoveryReenqueued": "备份队列恢复已重新排队原始任务",
         "taskFinished": "任务执行完成",
-        "stepStatusUpdated": "{step}：{status}"
+        "stepStatusUpdated": "{step}：{status}",
+        "backupSourceNotDeleted": "备份源未注销。"
       },
       "orphanSnapshots": {
         "scanned": "扫描的物理快照",
@@ -6856,7 +6858,7 @@
           "remove_obsolete_backup_source": "如果该目录已不再需要备份，请将它从备份配置中移除。",
           "retry_after_source_path_fixed": "恢复目录或修正配置后，再重试备份。",
           "resolve_snapshot_usage": "请等待恢复或 Chat 准备完成。对于准备失败的 Chat，请重试直至准备成功，或删除 Chat 并等待清理完成，然后重新提交备份源注销请求。强制清理也不能绕过此保护。",
-          "review_task": "检查仓库凭据后重试创建任务。",
+          "review_task": "请检查报告的失败原因和技术详情，然后重试该操作。",
           "review_backup_diagnostics": "请检查受影响的备份源、目标仓库和技术详情，然后重试备份。",
           "review_restore_diagnostics": "请检查恢复源、目标路径和技术详情，然后重试恢复。",
           "review_repository_operation": "请检查仓库配置和技术详情，然后重试该操作。",
@@ -6869,7 +6871,9 @@
           "review_cleanup": "检查保留的资源，并在重试前完成剩余清理。",
           "check_agent": "检查 Agent 连接后重试清理操作。",
           "retry": "解决清理问题后重试此操作。",
-          "backup_remediation": "修正报告的源问题后重试此操作。"
+          "backup_remediation": "修正报告的源问题后重试此操作。",
+          "review_source_unregister": "解决报告的阻塞问题后，重新提交备份源注销请求。",
+          "reconnect_unregister_agent": "请使 Agent 恢复在线并确认连接正常，然后重新提交严格清理请求。"
         },
         "reason_message": {
           "Task timed out": "任务超时",

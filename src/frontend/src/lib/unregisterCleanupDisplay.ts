@@ -22,7 +22,15 @@ export function unregisterCleanupText(text: string, t: ComposerTranslation): str
   return text
     .replace(
       /^Backup source was not deleted\.?$/i,
-      () => t('ops.task.failureDetails.reason.SOURCE_UNREGISTER_CLEANUP_FAILED'),
+      () => t('ops.task.eventMessage.backupSourceNotDeleted'),
+    )
+    .replace(
+      /^Fix the issues above and try again, or use Force Cleanup where allowed\.$/,
+      () => t('ops.task.failureDetails.suggestion.review_source_unregister'),
+    )
+    .replace(
+      /Agent "([^"]+)" is offline — remote uninstall is required in strict mode\./g,
+      (_, name: string) => t('protection.backupsPage.unregisterStrictOfflineNamed', { name }),
     )
     .replace(
       /Remote uninstall was skipped because the Agent was offline\./g,
@@ -42,6 +50,10 @@ export function unregisterCleanupSuggestion(
   item: { code?: string; detail: string },
   t: ComposerTranslation,
 ): string {
+  // Older task contracts used the generic fallback even for deregistration.
+  if (item.code === 'review_task') {
+    return t('ops.task.failureDetails.suggestion.review_source_unregister')
+  }
   return translated(`ops.task.failureDetails.suggestion.${item.code || ''}`, t)
     || unregisterCleanupText(item.detail, t)
 }

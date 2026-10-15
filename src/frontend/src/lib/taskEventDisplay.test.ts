@@ -3,6 +3,11 @@ import { en } from '../locales/en'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from './taskEventDisplay'
 
 describe('task event internationalization', () => {
+  it('localizes the generic source deregistration failure event', () => {
+    expect(taskEventMessageKey('Backup source was not deleted.'))
+      .toBe('ops.task.eventMessage.backupSourceNotDeleted')
+    expect(en.ops.task.eventMessage.backupSourceNotDeleted).toBeTruthy()
+  })
   it('localizes neutral collected events without exposing the engine name', () => {
     const messages = [
       ['Deleting repository engine snapshots for reset', 'deletingKopiaSnapshotsForReset'],
