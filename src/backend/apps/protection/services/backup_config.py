@@ -243,11 +243,11 @@ def create_backup_config(
             organization_id=organization_id,
             repository_id=payload["repository_id"],
         )
-        # Keep admission and the consuming write in one transaction so instance
-        # and organization quota locks remain held until commit.
+        # Creating a configuration consumes a protected-source slot, not backup
+        # storage. Keep count admission in this transaction; storage quota is
+        # checked by start_backup_tasks before admitting a new backup.
         if org is not None:
             enforce_license_quota(org, "max_protected_sources", additional=1)
-            enforce_license_quota(org, "max_storage_bytes", additional=0)
         direct_nas = (
             repository.repo_type == Repository.Type.NAS
             and repository.bind_node_id is None
