@@ -10,6 +10,7 @@ const CLEANUP_MESSAGE_KEYS: Record<string, string> = {
   associated_restore_records: 'repositoriesPage.cleanupRetainedRestoreHistory',
   repository_initialization_in_progress: 'repositoriesPage.cleanupInitializationInProgress',
   repository_ownership_unverified: 'repositoriesPage.cleanupOwnershipUnverified',
+  removed_repository_requires_force: 'repositoriesPage.residualAttentionDescription',
   historical_direct_nas_locations: 'repositoriesPage.cleanupHistoricalDirectNasData',
   physical_targets_to_cleanup: 'repositoriesPage.cleanupDirectNasData',
 }

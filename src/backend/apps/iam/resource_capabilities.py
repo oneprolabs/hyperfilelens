@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from django.db.models import Q
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -123,7 +124,12 @@ def current_objects(org_id: int, references: list[dict]) -> dict[tuple[str, str]
         elif kind == "source_resource":
             rows = rows.filter(is_deleted=False).exclude(status=ResourceStatus.REMOVED)
         elif kind == "repository":
-            rows = rows.exclude(status=Repository.Status.REMOVED)
+            # Match the repository list: legacy residual tombstones still
+            # need the existing, permission-checked Delete action.
+            rows = rows.filter(
+                ~Q(status=Repository.Status.REMOVED)
+                | Q(location_claims__state="residual")
+            ).distinct()
         elif kind == "restore_plan":
             rows = rows.filter(
                 backup_config_id__in=BackupConfig.objects.filter(
