@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import JsonResponse
 from django.utils.dateparse import parse_datetime
@@ -11,8 +13,8 @@ from rest_framework.response import Response
 
 from apps.iam.permissions_org import IsOrgAuthorizedMember, IsOrgOperator, IsOrgReader, get_membership
 from apps.iam.resource_access import filter_task_queryset
-from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.api.serializers import (
+    DashboardTaskStatisticsSerializer,
     TaskCancelSerializer,
     TaskCreateSerializer,
     TaskEventSerializer,
@@ -20,8 +22,10 @@ from apps.task.api.serializers import (
     TaskSerializer,
     TaskStepSerializer,
 )
+from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.models import Task
 from apps.task.selectors.interface import (
+    dashboard_task_statistics,
     get_task,
     list_task_events,
     list_task_steps,
@@ -137,6 +141,26 @@ class TaskViewSet(viewsets.ModelViewSet):
                 queryset=self.get_queryset(),
             )
         )
+
+    @action(detail=False, methods=["get"], url_path="dashboard-statistics")
+    def dashboard_statistics(self, request):
+        raw_windows = request.query_params.get("windows", "")
+        if len(raw_windows) > 4096:
+            raise ValidationError({"windows": "Statistics windows are too large."})
+        try:
+            windows = json.loads(raw_windows)
+        except (TypeError, ValueError):
+            raise ValidationError({"windows": "A JSON array of statistics windows is required."}) from None
+        serializer = DashboardTaskStatisticsSerializer(data={
+            "windows": windows,
+            "recovery_created_after": request.query_params.get("recovery_created_after"),
+        })
+        serializer.is_valid(raise_exception=True)
+        return Response(dashboard_task_statistics(
+            organization_id=self._organization_id(),
+            queryset=self.get_queryset(),
+            **serializer.validated_data,
+        ))
 
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, task_uuid=None):

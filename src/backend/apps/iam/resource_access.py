@@ -345,8 +345,8 @@ def filter_task_queryset(request: Any, queryset: QuerySet) -> QuerySet:
 
 
 def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
-    """Task reads use correlated current grants, including retained identities."""
-    from django.db.models import BigIntegerField, Case, Exists, F, OuterRef, Q, Value, When
+    """Task reads use current grants, including retained resource identities."""
+    from django.db.models import BigIntegerField, Case, F, Q, Value, When
     from django.db.models.fields.json import KeyTextTransform
     from django.db.models.functions import Cast
     from apps.task.models import TaskResource
@@ -372,7 +372,7 @@ def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
         ("backup_config", Q(resource_type="backup_config")),
         ("repository", Q(resource_type__in=("repository", "target_repository"))),
     )
-    references = TaskResource.objects.filter(task_id=OuterRef("pk"))
+    references = TaskResource.objects.filter(task__organization_id=context.org.pk)
     recognized = Q(pk__in=[])
     allowed_bindings = Q(pk__in=[])
     for kind, types in mapping:
@@ -380,10 +380,11 @@ def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
         model = context.resource_model(kind)
         manager = getattr(model, "all_objects", model.objects)
         allowed = history_scope(manager.all(), kind, action=action)
-        allowed_bindings |= types & Q(Exists(allowed.filter(pk=OuterRef("resource_id"))))
-    queryset = queryset.annotate(
-        _hfl_has_refs=Exists(references.filter(recognized)),
-        _hfl_allowed_refs=Exists(references.filter(allowed_bindings)),
+        # Build each authorized resource set independently of the TaskResource
+        # row. Correlating every nested grant to every task causes huge plans
+        # and expensive PostgreSQL JIT compilation for Group-only readers.
+        allowed_bindings |= types & Q(resource_id__in=allowed.order_by().values("pk"))
+    queryset = queryset.alias(
         _hfl_config_text=KeyTextTransform("backup_config_id", "request_payload"),
         _hfl_source_text=KeyTextTransform("source_ref_id", "request_payload"),
     )
@@ -393,21 +394,23 @@ def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
             Q(**{f"{field}__regex": r"^[0-9]{19}$"})
             & Q(**{f"{field}__lte": "9223372036854775807"})
         )
-        queryset = queryset.annotate(**{f"_hfl_{name}_ref": Case(
+        queryset = queryset.alias(**{f"_hfl_{name}_ref": Case(
             When(numeric, then=Cast(F(field), BigIntegerField())),
             default=Value(None), output_field=BigIntegerField(),
         )})
-    condition = Q(_hfl_allowed_refs=True)
+    condition = Q(pk__in=references.filter(allowed_bindings).order_by().values("task_id"))
     config = history_scope(
         context.resource_model("backup_config").objects.all(), "backup_config", action=action,
     )
-    fallback = Q(Exists(config.filter(pk=OuterRef("_hfl_config_ref"))))
+    fallback = Q(_hfl_config_ref__in=config.order_by().values("pk"))
     for kind, source_type in (("node", "agent"), ("source_resource", "nas")):
         model = context.resource_model(kind)
         manager = getattr(model, "all_objects", model.objects)
         allowed = history_scope(manager.all(), kind, action=action)
-        fallback |= Q(_hfl_config_ref__isnull=True, request_payload__source_type=source_type) & Q(
-            Exists(allowed.filter(pk=OuterRef("_hfl_source_ref"))),
+        fallback |= Q(
+            _hfl_config_ref__isnull=True,
+            request_payload__source_type=source_type,
+            _hfl_source_ref__in=allowed.order_by().values("pk"),
         )
-    condition |= Q(_hfl_has_refs=False) & fallback
+    condition |= ~Q(pk__in=references.filter(recognized).order_by().values("task_id")) & fallback
     return queryset.filter(condition)

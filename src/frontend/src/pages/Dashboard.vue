@@ -34,6 +34,13 @@ const router = useRouter()
 const loading = ref(false)
 const loadError = ref<unknown>(null)
 const overview = ref<DashboardOverview | null>(null)
+let refreshGeneration = 0
+const taskStatisticsReady = computed(() => overview.value?.taskStatisticsState === 'ready')
+const taskStatisticsMessage = computed(() => t(
+  overview.value?.taskStatisticsState === 'unavailable'
+    ? 'dashboard.taskStatisticsUnavailable'
+    : 'common.loading',
+))
 const chartHoveredIdx = ref<number | null>(null)
 const capacityPlanAmount = ref(1)
 const capacityPlanUnit = ref<'GB' | 'TB'>('TB')
@@ -467,27 +474,35 @@ function quotaPctClass(pct: number, overLimit: boolean) {
 }
 
 async function refresh() {
+  const generation = ++refreshGeneration
   loading.value = true
   loadError.value = null
   try {
-    overview.value = await loadDashboardOverview(t)
+    const result = await loadDashboardOverview(t, (partial) => {
+      if (generation === refreshGeneration) overview.value = partial
+    })
+    if (generation === refreshGeneration) overview.value = result
   } catch (e) {
+    if (generation !== refreshGeneration) return
     loadError.value = e
     overview.value = null
   } finally {
-    loading.value = false
+    if (generation === refreshGeneration) loading.value = false
   }
 }
 
 onMounted(refresh)
 onMounted(() => window.addEventListener('resize', onAttentionResize))
 onUpdated(measureAttentionTextOverflow)
-onBeforeUnmount(() => window.removeEventListener('resize', onAttentionResize))
+onBeforeUnmount(() => {
+  refreshGeneration += 1
+  window.removeEventListener('resize', onAttentionResize)
+})
 </script>
 
 <template>
   <div
-    v-loading="loading"
+    v-loading="loading && !overview"
     class="dashboard-page"
   >
     <ErrorState
@@ -740,7 +755,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', onAttentionResize))
           </div>
           <div class="ribbon-card__progress-block">
             <div class="ribbon-card__progress-meta">
-              <span>{{ t('dashboard.ribbon.tasks24hSuccessRate') }}</span>
+              <span>{{ taskStatisticsReady ? t('dashboard.ribbon.tasks24hSuccessRate') : taskStatisticsMessage }}</span>
             </div>
             <div class="ribbon-track">
               <div
@@ -749,7 +764,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', onAttentionResize))
               />
             </div>
           </div>
-          <div class="ribbon-card__stats">
+          <div
+            v-if="taskStatisticsReady"
+            class="ribbon-card__stats"
+          >
             <div>
               <span>{{ t('dashboard.ribbon.succeeded') }}</span>
               <strong class="text-emerald-600">
@@ -777,6 +795,13 @@ onBeforeUnmount(() => window.removeEventListener('resize', onAttentionResize))
                 {{ overview?.recoveryDrill24h?.failed ?? 0 }}{{ t('dashboard.unitCount') ? ` ${t('dashboard.unitCount')}` : '' }}
               </strong>
             </div>
+          </div>
+          <div
+            v-else
+            class="ribbon-card__stats"
+            aria-live="polite"
+          >
+            <span class="hfl-empty-mark">—</span>
           </div>
         </RouterLink>
       </div>
@@ -1367,7 +1392,15 @@ onBeforeUnmount(() => window.removeEventListener('resize', onAttentionResize))
             </div>
 
             <div
-              v-if="hasTaskOutcomes"
+              v-if="!taskStatisticsReady"
+              class="dashboard-panel-empty dashboard-task-statistics-state"
+              role="status"
+              aria-live="polite"
+            >
+              {{ taskStatisticsMessage }}
+            </div>
+            <div
+              v-else-if="hasTaskOutcomes"
               class="chart-area"
             >
               <div class="chart-plot">
@@ -2614,6 +2647,16 @@ onBeforeUnmount(() => window.removeEventListener('resize', onAttentionResize))
   align-items: center;
   justify-content: center;
   padding: 1.5rem 0;
+}
+
+.dashboard-task-statistics-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  text-align: center;
 }
 
 .dashboard-panel-empty :deep(.el-empty__image) {

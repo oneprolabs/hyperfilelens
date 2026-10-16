@@ -414,6 +414,7 @@
     "quotaTitle": "资源限制",
     "quotaAllUnlimited": "当前资源均不设上限。",
     "quotaUnavailable": "暂时无法获取额度信息。",
+    "taskStatisticsUnavailable": "暂时无法获取任务统计，请刷新重试。",
     "quotaOverLimit": "已超出上限",
     "quotaAlertPolicies": "告警规则",
     "unlimited": "无限制",

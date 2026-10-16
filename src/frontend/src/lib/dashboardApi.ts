@@ -3,7 +3,8 @@ import { unwrapApiPayload, asList } from './parse'
 import { getEffectiveOrgKey } from '../composables/useAuth'
 import { listRecords, listPolicies as listAlertPolicies, type AlertRecord } from './alertApi'
 import { auditStatistics } from './auditApi'
-import { taskStatistics, listTasks, type TaskRow, type TaskStatistics } from './taskApi'
+import { dashboardTaskStatistics, listTasks, type TaskRow, type TaskStatistics } from './taskApi'
+import { getRouteRequestSignal } from './routeRequestAbort'
 import { listAllNodes } from './nodeApi'
 import { fetchCurrentLicense } from './subscriptionApi'
 import { buildQuotaRows, type QuotaUsageRow } from './licenseQuotaDisplay'
@@ -118,6 +119,7 @@ export type DashboardOverview = {
   licenseKey?: string
   licenseExpiresLabel?: string
   quotaRows: QuotaUsageRow[]
+  taskStatisticsState: 'loading' | 'ready' | 'unavailable'
   taskStats: {
     total: number
     running: number
@@ -128,6 +130,7 @@ export type DashboardOverview = {
   }
   recoveryDrill24h: {
     total: number
+    running: number
     success: number
     failed: number
     successRate: number | null
@@ -479,6 +482,7 @@ function countNodesByRole(nodes: ApiNode[]): Record<string, number> {
 
 export async function loadDashboardOverview(
   t: (key: string, p?: Record<string, unknown>) => string,
+  onProgress?: (overview: DashboardOverview) => void,
 ): Promise<DashboardOverview> {
   const orgKey = getEffectiveOrgKey()
   const recoveryDrillStartedAfter = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
@@ -493,13 +497,30 @@ export async function loadDashboardOverview(
     by_task_type: {},
   }
 
+  // Keep a slow statistics query local to its cards, not the entire Overview.
+  // Explicit signals must also retain the route cancellation lifecycle.
+  const controller = new AbortController()
+  const routeSignal = getRouteRequestSignal()
+  const abort = () => controller.abort()
+  routeSignal.addEventListener('abort', abort, { once: true })
+  if (routeSignal.aborted) abort()
+  const timer = setTimeout(abort, 15_000)
+  const taskSummaryPromise = dashboardTaskStatistics(
+    recoveryDrillStartedAfter,
+    taskOutcomeRanges.map((range) => ({
+      finished_after: range.finishedAfter,
+      finished_before: range.finishedBefore,
+    })),
+    { signal: controller.signal },
+  ).catch(() => null).finally(() => {
+    clearTimeout(timer)
+    routeSignal.removeEventListener('abort', abort)
+  })
+
   let quotaAvailable = true
 
   const [
     license,
-    taskStats,
-    recoveryDrill24hStats,
-    tasks7dStatistics,
     runningTasksPage,
     productionSources,
     nodes,
@@ -525,17 +546,6 @@ export async function loadDashboardOverview(
         usage: {},
       }
     }),
-    taskStatistics().catch(() => emptyTaskStatistics),
-    taskStatistics({
-      task_type: 'restore',
-      created_after: recoveryDrillStartedAfter,
-      exclude_insight_workspace_restores: 'true',
-    }).catch(() => emptyTaskStatistics),
-    Promise.all(taskOutcomeRanges.map((range) => taskStatistics({
-      finished_after: range.finishedAfter,
-      finished_before: range.finishedBefore,
-      terminal_only: 'true',
-    }).catch(() => emptyTaskStatistics))),
     listTasks({ status: 'running', page_size: 8 }).catch(() => ({ count: 0, results: [] })),
     productionSourceSummary().catch(() => ({
       total: 0,
@@ -611,7 +621,6 @@ export async function loadDashboardOverview(
   const isEmpty =
     nodesTotal === 0 &&
     productionSources.total === 0 &&
-    taskStats.total === 0 &&
     protectionPolicies === 0 &&
     reposRaw.length === 0
 
@@ -633,10 +642,11 @@ export async function loadDashboardOverview(
     to: event.target_path || `/ops/events?eventId=${encodeURIComponent(String(event.id ?? ''))}`,
   }))
 
-  return {
+  const result: DashboardOverview = {
     orgName,
     licenseValid: Boolean(license.is_valid),
     quotaAvailable,
+    taskStatisticsState: 'loading',
     licenseKey: license.instance_shared ? undefined : license.license?.license_key,
     licenseExpiresLabel,
     quotaRows: quotaAvailable
@@ -647,15 +657,15 @@ export async function loadDashboardOverview(
       )
       : [],
     taskStats: {
-      total: taskStats.total,
-      running: taskStats.running,
-      completed: taskStats.success,
-      failed: taskStats.failed,
-      cancelled: taskStats.cancelled,
-      byTaskType: taskStats.by_task_type || {},
+      total: 0,
+      running: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+      byTaskType: {},
     },
-    recoveryDrill24h: summarizeRecoveryDrill24h(recoveryDrill24hStats),
-    tasks7dBuckets: buildTasks7dBuckets(taskOutcomeRanges, tasks7dStatistics),
+    recoveryDrill24h: summarizeRecoveryDrill24h(emptyTaskStatistics),
+    tasks7dBuckets: [],
     runningTasks: runningTasksPage.results,
     alertFiring: alertsFiringPage.count || alertsFiringPage.results.length,
     alertAcknowledged: alertsAckPage.count || 0,
@@ -681,6 +691,24 @@ export async function loadDashboardOverview(
     events,
     activeAlertsCount: (alertsFiringPage.count || alertsFiringPage.results.length) + (alertsAckPage.count || alertsAckPage.results.length),
     activeAlerts,
-    isEmpty,
+    isEmpty: false,
+  }
+  onProgress?.(result)
+  const summary = await taskSummaryPromise
+  const taskStats = summary?.total ?? emptyTaskStatistics
+  return {
+    ...result,
+    taskStatisticsState: summary ? 'ready' : 'unavailable',
+    taskStats: {
+      total: taskStats.total,
+      running: taskStats.running,
+      completed: taskStats.success,
+      failed: taskStats.failed,
+      cancelled: taskStats.cancelled,
+      byTaskType: taskStats.by_task_type || {},
+    },
+    recoveryDrill24h: summarizeRecoveryDrill24h(summary?.recovery_24h ?? emptyTaskStatistics),
+    tasks7dBuckets: summary ? buildTasks7dBuckets(taskOutcomeRanges, summary.days) : [],
+    isEmpty: Boolean(summary) && isEmpty && taskStats.total === 0,
   }
 }

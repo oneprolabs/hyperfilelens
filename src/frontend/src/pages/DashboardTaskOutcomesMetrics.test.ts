@@ -11,7 +11,7 @@ describe('Dashboard task outcome metrics', () => {
     expect(dashboardApi).toContain('function taskOutcomeDayRanges()')
     expect(dashboardApi).toContain('finished_after: range.finishedAfter')
     expect(dashboardApi).toContain('finished_before: range.finishedBefore')
-    expect(dashboardApi).toContain("terminal_only: 'true'")
+    expect(dashboardApi).toContain('dashboardTaskStatistics(')
     expect(dashboardApi).not.toContain("listTasks({ time_range: '7d', page_size: 500 })")
   })
 
