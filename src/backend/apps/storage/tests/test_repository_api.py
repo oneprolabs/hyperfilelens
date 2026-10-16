@@ -190,7 +190,23 @@ class StorageRepositoryApiTests(TestCase):
             repository=repository,
             operation_type=operation_type,
         )
-        return run_repository_create_task(repository_task_id=repository_task.id)
+        if repository.bind_node_id:
+            node = Node.objects.get(pk=repository.bind_node_id)
+            metadata = dict(node.metadata or {})
+            inventory = dict(metadata.get("inventory") or {})
+            inventory.setdefault("capabilities", ["repository_ownership_v1"])
+            metadata.update(
+                inventory=inventory,
+                inventory_session_id="api-test-session",
+                inventory_capabilities_session_id="api-test-session",
+            )
+            node.metadata = metadata
+            node.save(update_fields=["metadata"])
+        with mock.patch(
+            "apps.storage.services.internal.repository_capabilities."
+            "redis_store.get_agent_session", return_value="api-test-session",
+        ):
+            return run_repository_create_task(repository_task_id=repository_task.id)
 
     def test_preflight_failure_returns_error_without_repository_or_credential(self):
         from apps.storage.services.internal.s3_client import S3ClientError

@@ -38,6 +38,14 @@ from apps.task.models import Task
 
 class RepositoryCreateTaskTests(TestCase):
     def setUp(self):
+        # These tests isolate initialization and rollback behavior. Readiness
+        # and real capability snapshots are covered in the readiness suite.
+        capability = mock.patch(
+            "apps.storage.services.internal.repository_create."
+            "require_repository_ownership_capability",
+        )
+        capability.start()
+        self.addCleanup(capability.stop)
         self.org = Organization.objects.create(
             key="repository-create-org",
             name="Repository Create Org",
