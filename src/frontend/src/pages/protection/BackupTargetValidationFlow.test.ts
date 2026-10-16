@@ -58,6 +58,6 @@ describe('backup Target connection validation flow', () => {
     expect(wizard).toContain('targetValidationFailedStatus')
     expect(wizard).toContain('targetValidationRowInProgress')
     expect(wizard).toContain(':disabled="targetValidationInProgress"')
-    expect(shell).toContain(':disabled="bootstrapping || busy"')
+    expect(shell).toContain(':disabled="bootstrapping || busy || phase === \'waiting\'"')
   })
 })

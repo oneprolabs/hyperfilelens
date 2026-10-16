@@ -149,7 +149,7 @@ describe('backup configuration fast transition', () => {
   })
 
   it('blocks closing and starting backup while creation or provisioning is unresolved', () => {
-    expect(shell).toContain(':disabled="!canClose"')
+    expect(shell).toContain(':disabled="bootstrapping || !canClose"')
     expect(wizard).toContain('onBeforeRouteLeave(() => !createSubmissionActive.value)')
     expect(wizard).toContain("window.addEventListener('beforeunload', preventUnloadDuringCreate)")
     expect(page).toContain("String(config.status || '').toLowerCase() === 'active'")
