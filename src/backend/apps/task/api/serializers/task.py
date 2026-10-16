@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 from django.core.exceptions import ObjectDoesNotExist
@@ -384,3 +385,19 @@ class TaskCancelSerializer(serializers.Serializer):
 
 class TaskRetrySerializer(serializers.Serializer):
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
+class TaskStatisticsWindowSerializer(serializers.Serializer):
+    finished_after = serializers.DateTimeField()
+    finished_before = serializers.DateTimeField()
+
+    def validate(self, attrs):
+        span = attrs["finished_before"] - attrs["finished_after"]
+        if span < timedelta(0) or span > timedelta(days=2):
+            raise serializers.ValidationError("Each statistics window must span at most two days.")
+        return attrs
+
+
+class DashboardTaskStatisticsSerializer(serializers.Serializer):
+    recovery_created_after = serializers.DateTimeField()
+    windows = TaskStatisticsWindowSerializer(many=True, allow_empty=False, max_length=7)

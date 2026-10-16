@@ -145,14 +145,16 @@ def task_statistics(
         if queryset is not None
         else Task.objects.filter(organization_id=organization_id)
     )
-    counts = {
-        row["status"]: row["count"]
-        for row in queryset.order_by().values("status").annotate(count=Count("id"))
-    }
-    by_type = {
-        row["task_type"]: row["count"]
-        for row in queryset.order_by().values("task_type").annotate(count=Count("id"))
-    }
+    counts: dict[str, int] = {}
+    by_type: dict[str, int] = {}
+    for row in queryset.order_by().values("status", "task_type").annotate(count=Count("id")):
+        counts[row["status"]] = counts.get(row["status"], 0) + row["count"]
+        by_type[row["task_type"]] = by_type.get(row["task_type"], 0) + row["count"]
+    return _statistics_payload(counts, by_type)
+
+
+def _statistics_payload(counts: dict[str, int], by_type: dict[str, int]) -> dict:
+    """Keep ordinary and batched statistics on the same counting contract."""
     return {
         "total": sum(counts.values()),
         "running": counts.get(Task.Status.RUNNING, 0),
@@ -164,6 +166,59 @@ def task_statistics(
         "timeout": counts.get(Task.Status.TIMEOUT, 0),
         "by_status": counts,
         "by_task_type": by_type,
+    }
+
+
+def dashboard_task_statistics(
+    *,
+    organization_id: int,
+    queryset: QuerySet[Task],
+    windows: list[dict[str, datetime]],
+    recovery_created_after: datetime,
+) -> dict:
+    """Evaluate one authorized task set once for all Dashboard time windows."""
+    from apps.restore.models import RestoreRecord
+
+    legacy_workspace = RestoreRecord.objects.filter(
+        organization_id=organization_id,
+        purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+    ).values("task_id")
+    recovery = (
+        Q(task_type=Task.Type.RESTORE, created_at__gte=recovery_created_after)
+        & ~Q(pk__in=legacy_workspace)
+    )
+    terminal = Q(status__in=[
+        Task.Status.SUCCESS, Task.Status.FAILED,
+        Task.Status.CANCELLED, Task.Status.TIMEOUT,
+    ])
+    fields = {
+        "amount": Count("id"),
+        "recovery_amount": Count("id", filter=recovery),
+        **{
+            f"day_{index}": Count("id", filter=terminal & Q(
+                finished_at__gte=window["finished_after"],
+                finished_at__lte=window["finished_before"],
+            ))
+            for index, window in enumerate(windows)
+        },
+    }
+    rows = queryset.order_by().values("status", "task_type").annotate(**fields)
+    keys = ["amount", "recovery_amount", *(f"day_{index}" for index in range(len(windows)))]
+    counts: dict[str, dict[str, int]] = {key: {} for key in keys}
+    types: dict[str, dict[str, int]] = {key: {} for key in keys}
+    for row in rows:
+        for key in keys:
+            amount = row[key]
+            if amount:
+                counts[key][row["status"]] = counts[key].get(row["status"], 0) + amount
+                types[key][row["task_type"]] = types[key].get(row["task_type"], 0) + amount
+    return {
+        "total": _statistics_payload(counts["amount"], types["amount"]),
+        "recovery_24h": _statistics_payload(counts["recovery_amount"], types["recovery_amount"]),
+        "days": [
+            _statistics_payload(counts[f"day_{index}"], types[f"day_{index}"])
+            for index in range(len(windows))
+        ],
     }
 
 

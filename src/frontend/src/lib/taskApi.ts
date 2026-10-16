@@ -176,6 +176,23 @@ export async function taskStatistics(
   return unwrapApiPayload<TaskStatistics>(await api<unknown>(withQuery(`${base}/statistics/`, params), init))
 }
 
+export type DashboardTaskStatistics = {
+  total: TaskStatistics
+  recovery_24h: TaskStatistics
+  days: TaskStatistics[]
+}
+
+export async function dashboardTaskStatistics(
+  recoveryCreatedAfter: string,
+  windows: Array<{ finished_after: string; finished_before: string }>,
+  init?: RequestInit,
+) {
+  return unwrapApiPayload<DashboardTaskStatistics>(await api<unknown>(withQuery(`${base}/dashboard-statistics/`, {
+    recovery_created_after: recoveryCreatedAfter,
+    windows: JSON.stringify(windows),
+  }), init))
+}
+
 export async function listTaskSteps(taskUuid: string, init?: RequestInit) {
   return asList<TaskStepRow>(await api<unknown>(`${base}/${taskUuid}/steps/`, init))
 }

@@ -414,6 +414,7 @@
     "quotaTitle": "Límites de recursos",
     "quotaAllUnlimited": "Todos los límites actuales de recursos son ilimitados.",
     "quotaUnavailable": "La información de cuotas no está disponible temporalmente.",
+    "taskStatisticsUnavailable": "Las estadísticas de tareas no están disponibles temporalmente. Actualice la página para volver a intentarlo.",
     "quotaOverLimit": "Límite excedido",
     "quotaAlertPolicies": "Reglas de alerta",
     "unlimited": "Ilimitado",

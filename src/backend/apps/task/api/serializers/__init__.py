@@ -1,4 +1,5 @@
 from .task import (
+    DashboardTaskStatisticsSerializer,
     TaskCancelSerializer,
     TaskCreateSerializer,
     TaskEventSerializer,
@@ -9,6 +10,7 @@ from .task import (
 )
 
 __all__ = [
+    "DashboardTaskStatisticsSerializer",
     "TaskCancelSerializer",
     "TaskCreateSerializer",
     "TaskEventSerializer",

@@ -439,6 +439,7 @@ export const en = {
     quotaTitle: 'Resource Limits',
     quotaAllUnlimited: 'No resource limits apply.',
     quotaUnavailable: 'Quota information is temporarily unavailable.',
+    taskStatisticsUnavailable: 'Task statistics are temporarily unavailable. Refresh to try again.',
     quotaOverLimit: 'Over Limit',
     quotaAlertPolicies: 'Alert Rules',
     unlimited: 'Unlimited',
