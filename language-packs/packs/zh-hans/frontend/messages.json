@@ -9121,7 +9121,8 @@
       "lastLoginIp": "最后登录 IP",
       "registeredAt": "已注册",
       "operationalActivity": "运维活动",
-      "operationalActivityHint": "打开已过滤到该客户组织的监控视图。"
+      "operationalActivityHint": "打开已过滤到该客户组织的监控视图。",
+      "deleteConfirmWarning": "组织所有者仍拥有组织时不能删除。请先删除该组织；如需在保留数据的情况下停止登录，请停用账号。"
     }
   },
   "proxyDetail": {

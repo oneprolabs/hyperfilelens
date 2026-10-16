@@ -9121,7 +9121,8 @@
       "lastLoginIp": "IP del último inicio de sesión",
       "registeredAt": "Registrado",
       "operationalActivity": "Actividad operacional",
-      "operationalActivityHint": "Vistas abiertas de monitoreo ya filtradas a esta organización de clientes."
+      "operationalActivityHint": "Vistas abiertas de monitoreo ya filtradas a esta organización de clientes.",
+      "deleteConfirmWarning": "Los propietarios de organizaciones no se pueden eliminar mientras sean propietarios de una organización. Elimine primero la organización o desactive la cuenta para impedir el inicio de sesión sin eliminar los datos."
     }
   },
   "proxyDetail": {

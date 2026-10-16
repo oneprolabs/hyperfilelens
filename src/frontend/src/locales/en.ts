@@ -7053,6 +7053,7 @@ export const en = {
       deactivateConfirmTitle: 'Deactivate User',
       deactivateConfirmMessage: 'Deactivate {email}? This user will no longer be able to sign in. Organization workloads will continue running.',
       deactivateConfirmWarning: 'The account will lose access immediately. Existing organization data and workloads are retained.',
+      deleteConfirmWarning: 'Organization owners cannot be deleted while they own an organization. Delete the organization first, or disable the account to stop sign-in without deleting data.',
       membershipsTitle: 'Organization Memberships',
       sectionBasic: 'Basic Information',
       accountInformation: 'Account Information',
