@@ -7,6 +7,39 @@ installer="${ROOT}/src/agent/packaging/install/install.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
+# Render only the help function; no installation or service operations run.
+check_help_case() (
+	local mode="$1" agent_root="$2" command_prefix="$3"
+	# shellcheck disable=SC1090
+	source <(sed -n '/^usage() {/,/^}/p' "${installer}")
+	is_user_mode() { [[ "${mode}" == "user" ]]; }
+	DEFAULT_DATA="${agent_root}"
+	INSTALL_DIR="${agent_root}/bin"
+	local output
+	output="$(usage)"
+	grep -F '    -h, --help          Show this help' <<<"${output}" >/dev/null
+	grep -F 'Not supported for user-level installations' <<<"${output}" >/dev/null
+	grep -Fx "  Agent root           ${agent_root}" <<<"${output}" >/dev/null
+	grep -Fx "  Bin directory        ${agent_root}/bin" <<<"${output}" >/dev/null
+	grep -F 'Examples (Shell, from the bin directory):' <<<"${output}" >/dev/null
+	grep -Fx "  ${command_prefix}./install.sh --help" <<<"${output}" >/dev/null
+	grep -Fx "  ${command_prefix}./install.sh status" <<<"${output}" >/dev/null
+	grep -Fx "  ${command_prefix}./install.sh uninstall --keep-data" <<<"${output}" >/dev/null
+	grep -F 'reconcile-legacy  Complete pending legacy-layout cleanup' <<<"${output}" >/dev/null
+	if grep -E 'Managed startup lifecycle|Extracts to DATA_DIR' <<<"${output}" >/dev/null; then
+		printf 'Agent help still contains obsolete implementation details\n' >&2
+		exit 1
+	fi
+	if [[ "${mode}" == "user" ]] && grep -F 'sudo ' <<<"${output}" >/dev/null; then
+		printf 'User-level Agent help must not recommend sudo\n' >&2
+		exit 1
+	fi
+)
+check_help_case system /opt/hyperfilelens-agent 'sudo '
+check_help_case user /home/test/.local/share/hyperfilelens-agent ''
+check_help_case system '/Library/Application Support/HyperFileLens/Agent' 'sudo '
+check_help_case user '/Users/test/Library/Application Support/HyperFileLens/Agent' ''
+
 run_success_case() (
 	# Load helpers without dispatching the real installer.
 	# shellcheck disable=SC1090

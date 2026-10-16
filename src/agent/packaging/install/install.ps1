@@ -308,60 +308,68 @@ Usage: install.cmd [command] [options]
 When no command is given, equivalent to: install.cmd install
 
 Commands:
-  install           Install agent binaries and configuration
+  install           Install Agent binaries and configuration
   configure         Change this installed node's server connection
-  start             Start HyperFileLensAgent managed startup
-  stop              Stop HyperFileLensAgent managed startup
-  restart           Stop then start HyperFileLensAgent managed startup
+  start             Start HyperFileLens Agent
+  stop              Stop HyperFileLens Agent
+  restart           Restart HyperFileLens Agent
   status            Show installed version, paths, and lifecycle state
-  upgrade           In-place upgrade from another release package directory or .zip
-  uninstall         Stop managed startup and remove the complete Agent installation
+  upgrade           Upgrade from another release package directory or .zip
+  uninstall         Remove the Agent installation
 
 Options:
+  general:
+    -Help               Show this help
+
   install:
     -WssUrl URL         WebSocket control plane URL
     -ApiBase URL        HyperFileLens API base URL
     -OrgKey KEY         Organization key
-    -NodeToken TOKEN    Node enrollment token
-    -NodeId ID          Node ID (usually set after enrollment heartbeat)
-    -DataDir PATH       Data directory (default: $DefaultDataRoot)
-    -Role ROLE          Node role (default: agent)
-    -NoStart            Do not start managed startup after install
+    -NodeToken TOKEN    Agent enrollment token
+    -NodeId ID          Node ID, usually assigned after enrollment
+    -DataDir PATH       Data directory override
+                        Not supported for user-level installations
+    -Role ROLE          Node role: agent, proxy, or gateway
+    -NoStart            Install without starting the Agent
 
   configure:
     -ServerUrl URL      New HyperFileLens application address
 
   upgrade:
-    -From PATH          Path to new package directory or hfl-agent-*.zip (required)
-    -Yes                Non-interactive: continue when target version equals installed version
-                        Extracts to DATA_DIR/runtime/workspace, merges missing config/agent.env keys,
-                        migrates agent.db schema, overwrites binaries; removes workspace on success
+    -From PATH          Release package directory or .zip file (required)
+    -Yes                Continue when the package version matches
+                        the installed version
 
   uninstall:
     -KeepData           Preserve local configuration, data, and logs
-Install paths:
-  $InstallRoot         Binaries and installer scripts
-  $DefaultDataRoot     Unified Agent Root (config/, data/, logs/, cache/, mounts/, runtime/, lifecycle/, backup/)
-  ${LifecycleLabel}: $ServiceName   Managed startup registration
 
-Examples (cmd.exe):
+Install paths:
+  Agent root           $AgentRoot
+  Bin directory        $InstallRoot
+
+Examples (Command Prompt, from the bin directory):
+  install.cmd -Help
   install.cmd
-  install.cmd install -WssUrl 'wss://console.example/ws/node/agent/' -ApiBase 'https://console.example' -OrgKey 'org_xxx' -NodeToken 'tok_xxx'
+  install.cmd status
+  install.cmd configure -ServerUrl "https://console.example"
   install.cmd start
   install.cmd stop
   install.cmd restart
-  install.cmd status
-  install.cmd upgrade -From C:\path\to\hfl-agent-0.1.0-windows-amd64.zip
+  install.cmd upgrade -From "C:\path\to\hfl-agent-0.1.0-windows-amd64.zip"
   install.cmd uninstall
   install.cmd uninstall -KeepData
 
-Examples (PowerShell, same entry point):
+Examples (PowerShell, from the bin directory):
+  .\install.cmd -Help
   .\install.cmd status
+  .\install.cmd configure -ServerUrl "https://console.example"
   .\install.cmd uninstall
   .\install.cmd uninstall -KeepData
 
-Note: install.ps1 is invoked internally by install.cmd. Do not run install.ps1 directly
-(PowerShell execution policy and file association may block or open it in an editor).
+Note:
+  install.ps1 is invoked internally by install.cmd.
+  Do not run install.ps1 directly because PowerShell execution policy
+  and file association may block it or open it in an editor.
 "@
 }
 

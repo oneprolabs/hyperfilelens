@@ -8,6 +8,39 @@ import (
 	"testing"
 )
 
+func TestInstallPs1HelpUsesConsistentPathsAndShellExamples(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	start := strings.Index(source, "function Show-HflUsage {")
+	end := strings.Index(source, "if ($Help) {")
+	if start < 0 || end < start {
+		t.Fatal("install.ps1 missing help output")
+	}
+	help := source[start:end]
+	for _, want := range []string{
+		"  general:\n    -Help               Show this help",
+		"    -DataDir PATH       Data directory override\n                        Not supported for user-level installations",
+		"    -KeepData           Preserve local configuration, data, and logs\n\nInstall paths:",
+		"  Agent root           $AgentRoot\n  Bin directory        $InstallRoot",
+		"Examples (Command Prompt, from the bin directory):\n  install.cmd -Help",
+		`install.cmd upgrade -From "C:\path\to\hfl-agent-0.1.0-windows-amd64.zip"`,
+		`install.cmd configure -ServerUrl "https://console.example"`,
+		"Examples (PowerShell, from the bin directory):\n  .\\install.cmd -Help",
+		"Note:\n  install.ps1 is invoked internally by install.cmd.",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("install.ps1 help missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		"Managed startup registration", "Auto-start", "${LifecycleLabel}",
+		"Extracts to DATA_DIR", "'https://console.example'",
+	} {
+		if strings.Contains(help, unwanted) {
+			t.Fatalf("install.ps1 help contains obsolete text %q", unwanted)
+		}
+	}
+}
+
 func TestInstallPs1CompleteRemovalDoesNotRecreateDataLogDirectory(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	for _, want := range []string{

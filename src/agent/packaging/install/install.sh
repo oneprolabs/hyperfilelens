@@ -238,12 +238,9 @@ UPGRADE_CURRENT_PHASE="preparing"
 exec 3>&1 4>&2
 
 usage() {
-	local command_prefix="" lifecycle="hyperfilelens-agent.service"
+	local command_prefix=""
 	if ! is_user_mode; then
 		command_prefix="sudo "
-	fi
-	if [[ "$(uname -s)" == "Darwin" ]]; then
-		lifecycle="${LAUNCHD_LABEL}"
 	fi
 	cat <<USAGE
 Usage: install.sh [command] [options]
@@ -251,51 +248,55 @@ Usage: install.sh [command] [options]
 When no command is given, equivalent to: install.sh install
 
 Commands:
-  install           Install agent binaries and configuration (${INSTALL_DIR})
+  install           Install Agent binaries and configuration
   configure         Change this installed node's server connection
-  start             Start ${lifecycle}
-  stop              Stop ${lifecycle}
-  restart           Stop then start ${lifecycle}
+  start             Start HyperFileLens Agent
+  stop              Stop HyperFileLens Agent
+  restart           Restart HyperFileLens Agent
   status            Show installed version, paths, and service state
-  upgrade           In-place upgrade from another release package directory or .tar.gz
-  reconcile-legacy  Complete a pending legacy-layout cleanup after an upgrade
-  uninstall         Stop service and remove the complete Agent installation
+  upgrade           Upgrade from another release package directory or .tar.gz
+  reconcile-legacy  Complete pending legacy-layout cleanup
+  uninstall         Remove the Agent installation
 
 Options:
+  general:
+    -h, --help          Show this help
+
   install:
     --wss-url URL       WebSocket control plane URL
     --api-base URL      HyperFileLens API base URL
     --org-key KEY       Organization key
-    --node-token TOKEN  Node enrollment token
-    --node-id ID        Node ID (usually set after enrollment heartbeat)
-    --data-dir PATH     Data directory (default: ${DEFAULT_DATA})
-    --role ROLE         Node role (default: agent)
-    --no-start          Do not start any service after install
+    --node-token TOKEN  Agent enrollment token
+    --node-id ID        Node ID, usually assigned after enrollment
+    --data-dir PATH     Data directory override
+                        Not supported for user-level installations
+    --role ROLE         Node role: agent, proxy, or gateway
+    --no-start          Install without starting the Agent
 
   configure:
     --server-url URL    New HyperFileLens application address
 
   upgrade:
-    --from PATH         Path to new package directory or hfl-agent-*.tar.gz (required)
-                        Extracts to DATA_DIR/runtime/workspace, merges missing config/agent.env keys,
-                        migrates agent.db schema, overwrites binaries; removes workspace on success
-    --yes               Non-interactive: continue when target version equals installed version
+    --from PATH         Release package directory or .tar.gz file (required)
+    --yes               Continue when the package version matches
+                        the installed version
 
   uninstall:
     --keep-data         Preserve local configuration, data, and logs
 
 Install paths:
-  ${INSTALL_DIR}  Binaries and installer scripts
-  ${DEFAULT_DATA}  Unified Agent Root (config/, data/, logs/, cache/, mounts/, runtime/, lifecycle/, backup/)
-  ${lifecycle}  Managed startup lifecycle
+  Agent root           ${DEFAULT_DATA}
+  Bin directory        ${INSTALL_DIR}
 
-Examples:
+Examples (Shell, from the bin directory):
+  ${command_prefix}./install.sh --help
   ${command_prefix}./install.sh
-  ${command_prefix}./install.sh install --wss-url 'wss://console.example/ws/node/agent/' --api-base 'https://console.example' --org-key 'org_xxx' --node-token 'tok_xxx'
-  ${command_prefix}./install.sh start
   ${command_prefix}./install.sh status
-  ${command_prefix}./install.sh configure --server-url 'https://console.example:11443'
-  ${command_prefix}./install.sh upgrade --from /path/to/hfl-agent-0.1.0.tar.gz
+  ${command_prefix}./install.sh configure --server-url "https://console.example:11443"
+  ${command_prefix}./install.sh start
+  ${command_prefix}./install.sh stop
+  ${command_prefix}./install.sh restart
+  ${command_prefix}./install.sh upgrade --from "/path/to/hfl-agent-0.1.0.tar.gz"
   ${command_prefix}./install.sh uninstall
   ${command_prefix}./install.sh uninstall --keep-data
 USAGE

@@ -115,9 +115,49 @@ func TestLifecycleBannerUsesAlignedAsciiWordmark(t *testing.T) {
 func TestWindowsCommandBlockUsesLabelAndSeparateCommandLine(t *testing.T) {
 	var output strings.Builder
 	printCommandBlockTo(&output, "Agent status", `& 'C:\ProgramData\HyperFileLens\Agent\bin\install.cmd' status`)
-	want := "\n  Agent status:\n    & 'C:\\ProgramData\\HyperFileLens\\Agent\\bin\\install.cmd' status\n"
+	want := "  Agent status:\n    & 'C:\\ProgramData\\HyperFileLens\\Agent\\bin\\install.cmd' status\n"
 	if got := output.String(); got != want {
 		t.Fatalf("command block = %q, want %q", got, want)
+	}
+}
+
+func TestWindowsLifecycleCommandsUseHelpThenAgentStatus(t *testing.T) {
+	var output strings.Builder
+	writeWindowsLifecycleCommands(&output, `C:\ProgramData\HyperFileLens\Agent\bin\install.cmd`)
+	want := `Useful commands (PowerShell)
+  CLI path:
+    C:\ProgramData\HyperFileLens\Agent\bin\install.cmd
+  Help:
+    & 'C:\ProgramData\HyperFileLens\Agent\bin\install.cmd' -Help
+  Agent status:
+    & 'C:\ProgramData\HyperFileLens\Agent\bin\install.cmd' status
+  Uninstall:
+    & 'C:\ProgramData\HyperFileLens\Agent\bin\install.cmd' uninstall
+`
+	if got := output.String(); got != want {
+		t.Fatalf("Windows lifecycle commands = %q, want %q", got, want)
+	}
+}
+
+func TestUnixLifecycleCommandsUseHelpThenAgentStatus(t *testing.T) {
+	var output strings.Builder
+	writeUnixLifecycleCommands(
+		&output,
+		"/opt/hyperfilelens-agent/bin/install.sh",
+		`sudo "/opt/hyperfilelens-agent/bin/install.sh"`,
+	)
+	want := `Useful commands
+  CLI path:
+    /opt/hyperfilelens-agent/bin/install.sh
+  Help:
+    sudo "/opt/hyperfilelens-agent/bin/install.sh" --help
+  Agent status:
+    sudo "/opt/hyperfilelens-agent/bin/install.sh" status
+  Uninstall:
+    sudo "/opt/hyperfilelens-agent/bin/install.sh" uninstall
+`
+	if got := output.String(); got != want {
+		t.Fatalf("Unix lifecycle commands = %q, want %q", got, want)
 	}
 }
 

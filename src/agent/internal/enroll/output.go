@@ -743,45 +743,37 @@ func printAgentLifecycleCommands(info SummaryInfo) {
 func writeAgentLifecycleCommands(writer io.Writer, info SummaryInfo) {
 	if runtime.GOOS == "windows" {
 		installCmd := filepath.Join(info.InstallPath, "install.cmd")
-		command := windowsPowerShellCommand(installCmd)
-		fmt.Fprintln(writer, "Useful commands (PowerShell)")
-		printCommandBlockTo(writer, "CLI path", installCmd)
-		if vfs.UserInstallation() {
-			printCommandBlockTo(writer, "Task status", `powershell -NoProfile -Command "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Get-ScheduledTask -TaskName ('HyperFileLensAgent.User.'+$sid)"`)
-		} else {
-			printCommandBlockTo(writer, "Service status", "sc.exe query HyperFileLensAgent")
-		}
-		printCommandBlockTo(writer, "Agent status", command+" status")
-		printCommandBlockTo(writer, "Uninstall", command+" uninstall")
+		writeWindowsLifecycleCommands(writer, installCmd)
 		return
 	}
 
-	fmt.Fprintln(writer, "Useful commands")
-	printSummaryValueTo(writer, "CLI path", filepath.Join(info.InstallPath, installerScriptName()))
-	var lifecycleStatus string
-	if runtime.GOOS == "darwin" {
-		if vfs.UserInstallation() {
-			lifecycleStatus = `launchctl print "gui/$(id -u)/com.hyperfilelens.agent"`
-		} else {
-			lifecycleStatus = "launchctl print system/com.hyperfilelens.agent"
-		}
-	} else if vfs.UserInstallation() {
-		lifecycleStatus = "systemctl --user status hyperfilelens-agent"
-	} else {
-		lifecycleStatus = "systemctl status hyperfilelens-agent"
-	}
-	printSummaryValueTo(writer, "Service status", lifecycleStatus)
-	command := strconv.Quote(filepath.Join(info.InstallPath, installerScriptName()))
+	installScript := filepath.Join(info.InstallPath, installerScriptName())
+	command := strconv.Quote(installScript)
 	if !vfs.UserInstallation() {
 		command = "sudo " + command
 	}
-	printSummaryValueTo(writer, "Agent status", command+" status")
-	printSummaryValueTo(writer, "Uninstall", command+" uninstall")
-	printSummaryValueTo(writer, "Keep data", command+" uninstall --keep-data")
+	writeUnixLifecycleCommands(writer, installScript, command)
+}
+
+func writeUnixLifecycleCommands(writer io.Writer, installScript, command string) {
+	fmt.Fprintln(writer, "Useful commands")
+	printCommandBlockTo(writer, "CLI path", installScript)
+	printCommandBlockTo(writer, "Help", command+" --help")
+	printCommandBlockTo(writer, "Agent status", command+" status")
+	printCommandBlockTo(writer, "Uninstall", command+" uninstall")
+}
+
+func writeWindowsLifecycleCommands(writer io.Writer, installCmd string) {
+	command := windowsPowerShellCommand(installCmd)
+	fmt.Fprintln(writer, "Useful commands (PowerShell)")
+	printCommandBlockTo(writer, "CLI path", installCmd)
+	printCommandBlockTo(writer, "Help", command+" -Help")
+	printCommandBlockTo(writer, "Agent status", command+" status")
+	printCommandBlockTo(writer, "Uninstall", command+" uninstall")
 }
 
 func printCommandBlockTo(writer io.Writer, label, command string) {
-	fmt.Fprintf(writer, "\n  %s:\n    %s\n", label, command)
+	fmt.Fprintf(writer, "  %s:\n    %s\n", label, command)
 }
 
 // windowsPowerShellCommand returns a copyable PowerShell invocation for a
