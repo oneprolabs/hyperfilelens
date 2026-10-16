@@ -40,6 +40,7 @@ from apps.storage.services.internal.background_capacity import (
     BackgroundStorageLease,
     try_acquire_background_storage_capacity,
 )
+from apps.storage.services.internal.repository_capabilities import CAPABILITIES_NOT_READY
 from apps.storage.services.internal.repository_location import (
     invalidate_repository_location_ownership,
 )
@@ -770,6 +771,11 @@ def reconcile_repository_operations(*, limit: int = 100):
                 task__status=Task.Status.BLOCKED,
                 has_resolved_create_agent=True,
             ),
+        )
+        .exclude(
+            task__status=Task.Status.WAITING,
+            task__error_code=CAPABILITIES_NOT_READY,
+            due_at__gt=timezone.now(),
         )
         .order_by("task__updated_at", "id")
         .values_list("id", flat=True)[: max(1, int(limit))]
