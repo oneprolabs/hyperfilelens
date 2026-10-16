@@ -1114,6 +1114,34 @@ stop_sourcelens_dev() {
 	fi
 }
 
+render_sl_queue_setup_stream() {
+	local line component level
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		[[ -n "${line}" ]] || continue
+		component=sourcelens
+		level='OUT '
+		case "${line}" in
+		'[queue-config] '*)
+			component=queue-config
+			line="${line#'[queue-config] '}"
+			;;
+		'[queue-monitor] '*)
+			component=queue-monitor
+			line="${line#'[queue-monitor] '}"
+			;;
+		esac
+		case "${line}" in
+		'SL defaults and worker subscriptions are consistent'|'bundled monitoring configuration reconciled')
+			level=' OK '
+			;;
+		'ERROR: '*) level=FAIL; line="${line#'ERROR: '}" ;;
+		'WARNING: '*) level=WARN; line="${line#'WARNING: '}" ;;
+		'external SourceLens skipped') level=SKIP ;;
+		esac
+		hfl_log_emit_with_component "${level}" "${component}" "${line}"
+	done
+}
+
 configure_sl_queue_monitor_dev() {
 	[[ "${WITH_SOURCELENS}" -eq 1 ]] || return 0
 	local helper="${ROOT}/deploy/installer/configure-sl-queue-monitor.py"
@@ -1123,7 +1151,8 @@ configure_sl_queue_monitor_dev() {
 	fi
 	# SourceLens is running and the shared network exists at this stage. Publish
 	# the hot config before HFL startup; existing API mounts also see it directly.
-	python3 "${helper}" --root "${ROOT}" --dev \
+	python3 "${helper}" --root "${ROOT}" --dev 2>&1 \
+		| hfl_normalize_native_stream | render_sl_queue_setup_stream \
 		|| warn "Bundled queue-monitor setup failed; core services are unaffected"
 	return 0
 }
@@ -1131,7 +1160,8 @@ configure_sl_queue_monitor_dev() {
 verify_sl_queue_config_dev() {
 	[[ "${WITH_SOURCELENS}" -eq 1 ]] || return 0
 	python3 "${ROOT}/deploy/installer/configure-sl-queue-monitor.py" \
-		--root "${ROOT}" --dev --verify-queues --timeout 60 \
+		--root "${ROOT}" --dev --verify-queues --timeout 60 2>&1 \
+		| hfl_normalize_native_stream | render_sl_queue_setup_stream \
 		|| die "SourceLens default queue is not verified against worker subscriptions"
 }
 
