@@ -526,21 +526,19 @@ onMounted(async () => {
       </header>
 
       <div
-        v-if="loading"
-        class="p-10 text-center text-sm text-[rgb(100_116_139)]"
-      >
-        {{ t('common.loading') }}
-      </div>
-      <div
-        v-else-if="loadError"
+        v-if="loadError"
         class="p-10 text-center text-sm text-red-500"
       >
         {{ loadError }}
       </div>
 
       <div
-        v-else
+        v-if="!loadError"
+        v-loading="loading"
         class="fullscreen-form-layout add-nas-layout"
+        :aria-busy="loading"
+        :element-loading-text="t('common.loading')"
+        :inert="loading ? true : undefined"
       >
         <div class="fullscreen-form-main add-nas-main">
           <section class="add-nas-card add-nas-step-section">
@@ -985,7 +983,7 @@ onMounted(async () => {
           <div class="fullscreen-form-footer add-nas-footer">
             <div class="add-nas-footer__actions">
               <ElButton
-                :disabled="busy"
+                :disabled="loading || busy"
                 @click="handleBack"
               >
                 {{ t('repositoriesPage.btnCancel') }}
@@ -993,7 +991,7 @@ onMounted(async () => {
               <ElButton
                 type="primary"
                 :loading="busy"
-                :disabled="busy"
+                :disabled="loading || busy"
                 @click="onSubmit"
               >
                 {{ submitLabel }}
