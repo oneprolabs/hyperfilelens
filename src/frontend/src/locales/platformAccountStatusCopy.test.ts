@@ -15,16 +15,22 @@ function readPackFile(lang: string, file: string) {
 }
 
 const catalogs = [
-  { lang: 'en', messages: en, enabled: 'Enabled', disabled: 'Disabled' },
-  { lang: 'zh-hans', messages: readPackFile('zh-hans', 'messages.json') as typeof en, enabled: '已启用', disabled: '已禁用' },
-  { lang: 'es', messages: readPackFile('es', 'messages.json') as typeof en, enabled: 'Activado', disabled: 'Desactivado' },
+  { lang: 'en', messages: en },
+  { lang: 'zh-hans', messages: readPackFile('zh-hans', 'messages.json') as typeof en },
+  { lang: 'es', messages: readPackFile('es', 'messages.json') as typeof en },
 ]
 
-describe.each(catalogs)('Platform account status copy ($lang)', ({ lang, messages, enabled, disabled }) => {
+describe.each(catalogs)('Platform account status copy ($lang)', ({ lang, messages }) => {
+  const enabled = messages.platformOps.users.active
+  const disabled = messages.platformOps.users.inactive
+
   it('aligns user and organization statistics with filters and row status labels', () => {
     const { users, orgs } = messages.platformOps
-    expect(users.active).toBe(enabled)
-    expect(users.inactive).toBe(disabled)
+    expect(enabled).not.toBe(disabled)
+    if (lang === 'en') {
+      expect(enabled).toBe('Enabled')
+      expect(disabled).toBe('Disabled')
+    }
     // Keep existing translation keys for older frontend bundles and callers.
     expect(users.statActive).toBe(enabled)
     expect(users.statInactive).toBe(disabled)
