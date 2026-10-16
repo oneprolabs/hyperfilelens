@@ -32,7 +32,7 @@ import RepositoryCapacityTrend from '../../components/RepositoryCapacityTrend.vu
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import { remainingLimitExceedsAvailableStorage, repositoryCapacityParts, repositoryStorageParts } from '../../lib/repositoryCapacityDisplay'
 import { repositoryQuotaDisplay } from '../../lib/repositoryQuota'
-import { isRemovedRepositoryWithResidualLocation } from '../../lib/repositoryResidualState'
+import { isRemovedRepositoryWithResidualLocation, isRepositoryDeletionAvailable } from '../../lib/repositoryResidualState'
 import { repositoryCleanupMessage, repositoryCleanupBlockerSummary } from '../../lib/repositoryCleanupPresentation'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
@@ -1107,13 +1107,25 @@ async function reconcileRepositoryCleanupTasks() {
       const status = String(result.value.status || '').toLowerCase()
       if (status === 'success' && isRepositoryTaskWarning(result.value)) {
         repositoryCleanupPending.value.delete(repositoryId)
-        notifyRepositoryTaskFailure(
-          result.value,
-          `${pending.repositoryName}: ${t('repositoriesPage.cleanupFailed')}`,
-        )
+        if (result.value.repository_cleanup?.force) {
+          const message = `${pending.repositoryName}: ${t('repositoriesPage.cleanupRemovedWithResidue')}`
+          notifyWarning({
+            message,
+            details: { ...repositoryTaskErrorDetails(result.value, message), summary: message },
+            showDetails: true,
+            dedupeKey: `repository-task:${result.value.task_uuid}`,
+          })
+          if (detailRow.value?.id === repositoryId) drawerDetailOpen.value = false
+        } else {
+          notifyRepositoryTaskFailure(
+            result.value,
+            `${pending.repositoryName}: ${t('repositoriesPage.cleanupFailed')}`,
+          )
+        }
         terminal = true
       } else if (status === 'success') {
         repositoryCleanupPending.value.delete(repositoryId)
+        if (detailRow.value?.id === repositoryId) drawerDetailOpen.value = false
         terminal = true
       } else if (['failed', 'cancelled', 'timeout'].includes(status)) {
         repositoryCleanupPending.value.delete(repositoryId)
@@ -1364,7 +1376,7 @@ const totalFiltered = computed(() => repositoryTotal.value)
 const canDeleteSelectedRows = computed(() => (
   selectedRows.value.length > 0
   && selectedRows.value.every(
-    row => resourcePermissions.permitted('repository', row.id, 'delete') && resourcePermissions.permitted('repository', row.id, 'delete_data') && row.status !== 'removed' && row.status !== 'removing',
+    row => resourcePermissions.permitted('repository', row.id, 'delete') && resourcePermissions.permitted('repository', row.id, 'delete_data') && isRepositoryDeletionAvailable(row),
   )
 ))
 const selectedEditableRow = computed(() => {

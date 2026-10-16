@@ -2778,7 +2778,9 @@ export const en = {
     connectivityNotApplicable: 'Not applicable',
     residualAttentionTitle: 'Residual storage location requires attention',
     residualAttentionDescription:
-      'The repository record has been removed from HyperFileLens, but cleanup of its stored data could not be confirmed. Remove or otherwise handle the retained data on the storage system before releasing this location.',
+      'An earlier deletion left this storage location reserved. Select this repository and use Delete with Force Delete to finish removing it from HyperFileLens. Physical data may remain and require manual cleanup.',
+    cleanupRemovedWithResidue:
+      'The repository has been removed from HyperFileLens, but physical resource cleanup could not be confirmed. Review the task details and manually clean up any remaining resources.',
     residualReviewAction: 'Review and resolve',
     colUsage: 'Estimated Used / Capacity',
     colRepositoryUsage: 'Repository Usage',

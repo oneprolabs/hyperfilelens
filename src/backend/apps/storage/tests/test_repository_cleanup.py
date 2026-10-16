@@ -31,6 +31,7 @@ from apps.storage.services.internal.repository_cleanup import (
 from apps.storage.services.internal.repository_agent_operation import (
     RepositoryAgentOperationError,
     RepositoryAgentOperationResult,
+    RepositoryAgentOperationStateUnknown,
 )
 from apps.storage.services.internal.repository_location import (
     mark_repository_location_initializing,
@@ -489,7 +490,7 @@ class RepositoryCleanupTests(TestCase):
             repository.cleanup_result,
             Repository.CleanupResult.FORCE_SKIPPED,
         )
-        self.assertEqual(claim.state, RepositoryLocationClaim.State.RESIDUAL)
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RELEASED)
         self.assertIn(
             f"repository_location_claim:{claim.id}",
             force_result["retained_resources"],
@@ -638,7 +639,7 @@ class RepositoryCleanupTests(TestCase):
         "apps.storage.services.internal.repository_cleanup."
         "resolve_or_dispatch_repository_agent_operation"
     )
-    def test_force_bound_nas_retains_historical_direct_nas_locations(
+    def test_force_bound_nas_releases_locations_but_retains_physical_data(
         self,
         dispatch,
     ):
@@ -717,10 +718,10 @@ class RepositoryCleanupTests(TestCase):
             repository.cleanup_result,
             Repository.CleanupResult.FORCE_SKIPPED,
         )
-        self.assertEqual(bound_claim.state, RepositoryLocationClaim.State.RESIDUAL)
+        self.assertEqual(bound_claim.state, RepositoryLocationClaim.State.RELEASED)
         self.assertEqual(
             historical_claim.state,
-            RepositoryLocationClaim.State.RESIDUAL,
+            RepositoryLocationClaim.State.RELEASED,
         )
 
     @mock.patch(
@@ -2090,7 +2091,564 @@ class RepositoryCleanupTests(TestCase):
             "force_cleanup_success",
         )
         self.assertTrue(forced_task.task.result_payload["cleanup_failures"])
+        self.assertFalse(
+            repository.location_claims.exclude(
+                state=RepositoryLocationClaim.State.RELEASED,
+            ).exists()
+        )
         execute_cleanup.assert_called_once()
+
+    def _removed_residual_repository(self) -> Repository:
+        repository = self._s3_repository("legacy-removed-with-residue")
+        repository.status = Repository.Status.REMOVED
+        repository.removed_at = timezone.now()
+        repository.cleanup_result = Repository.CleanupResult.FORCE_SKIPPED
+        repository.save()
+        repository.location_claims.update(state=RepositoryLocationClaim.State.RESIDUAL)
+        return repository
+
+    def test_legacy_removed_repository_requires_force(self):
+        repository = self._removed_residual_repository()
+        preflight = repository_cleanup_preflight(repository=repository)
+        self.assertFalse(preflight["allowed"])
+        self.assertIn(
+            "removed_repository_requires_force",
+            [item["code"] for item in preflight["blockers"]],
+        )
+        with self.assertRaises(ValidationError):
+            create_repository_cleanup_task(repository=repository, dispatch=False)
+        self.assertFalse(RepositoryTask.objects.filter(repository=repository).exists())
+        self.assertTrue(
+            repository.location_claims.filter(
+                state=RepositoryLocationClaim.State.RESIDUAL,
+            ).exists()
+        )
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+        side_effect=RuntimeError("owner offline"),
+    )
+    def test_stale_preflight_and_duplicate_delete_do_not_reactivate_removed_target(
+        self,
+        physical,
+    ):
+        repository = self._s3_repository("stale-delete-request")
+        operation = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        result = run_repository_cleanup_task(repository_task_id=operation.id)
+        self.assertEqual(result["status"], "success", result)
+        target = RepositoryExecutionTarget.objects.get(repository=repository)
+        self.assertFalse(target.is_active)
+        # A request may have fetched the row before another worker finished.
+        self.assertEqual(repository.status, Repository.Status.CREATED)
+
+        preflight = repository_cleanup_preflight(repository=repository, force=True)
+        target.refresh_from_db()
+        self.assertFalse(target.is_active)
+        self.assertEqual(preflight["repository_status"], Repository.Status.REMOVED)
+        duplicate = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        self.assertEqual(duplicate.id, operation.id)
+        target.refresh_from_db()
+        self.assertFalse(target.is_active)
+        physical.assert_called_once()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup."
+        "resolve_or_dispatch_repository_agent_operation"
+    )
+    def test_force_delete_uninitialized_nas_releases_only_control_plane_location(
+        self,
+        dispatch,
+    ):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="failed-create-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.OFFLINE,
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="failed-create-target-nfs",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATE_FAILED,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+            config={"server_address": "192.0.2.153", "share_path": "/"},
+        )
+        claim = reserve_repository_location(repository)
+        claim.state = RepositoryLocationClaim.State.RESIDUAL
+        claim.save()
+        operation = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        result = run_repository_cleanup_task(repository_task_id=operation.id)
+        self.assertEqual(result["status"], "success", result)
+        self.assertFalse(result["cleanup_complete"])
+        self.assertEqual(result["physical_cleanup"], "failed")
+        self.assertIn("ownership", result["cleanup_failures"][0]["detail"])
+        claim.refresh_from_db()
+        self.assertEqual(claim.state, RepositoryLocationClaim.State.RELEASED)
+        self.assertIsNotNone(claim.released_at)
+        dispatch.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._tombstone_repository",
+        side_effect=RuntimeError("metadata finalize failed"),
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+        side_effect=RuntimeError("physical cleanup failed"),
+    )
+    def test_force_location_release_rolls_back_if_tombstone_fails(
+        self,
+        physical,
+        tombstone,
+    ):
+        repository = self._s3_repository("atomic-force-removal")
+        operation = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        result = run_repository_cleanup_task(repository_task_id=operation.id)
+        self.assertEqual(result["status"], "failed", result)
+        repository.refresh_from_db()
+        self.assertIsNone(repository.removed_at)
+        self.assertEqual(repository.status, Repository.Status.REMOVE_FAILED)
+        self.assertTrue(
+            repository.location_claims.filter(
+                state=RepositoryLocationClaim.State.OWNED,
+                released_at__isnull=True,
+            ).exists()
+        )
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup."
+        "resolve_or_dispatch_repository_agent_operation"
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_s3_repository_cleanup"
+    )
+    def test_legacy_residual_cleanup_is_local_and_idempotent(
+        self, s3_cleanup, agent_cleanup
+    ):
+        repository = self._removed_residual_repository()
+        other = self._s3_repository("unrelated", prefix="unrelated/")
+        target = _ensure_cleanup_targets(repository)[0]
+        target.is_active = False
+        target.save()
+        repository_cleanup_preflight(repository=repository, force=True)
+        target.refresh_from_db()
+        self.assertFalse(target.is_active)
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        duplicate = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        self.assertEqual(duplicate.id, repository_task.id)
+        self.assertIsNone(repository_task.execution_target_id)
+        self.assertTrue(repository_task.task.request_payload["release_residual_only"])
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+        self.assertEqual(result["status"], "success", result)
+        self.assertFalse(result["cleanup_complete"])
+        self.assertTrue(result["cleanup_failures"])
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.REMOVED)
+        self.assertFalse(
+            repository.location_claims.exclude(
+                state=RepositoryLocationClaim.State.RELEASED,
+            ).exists()
+        )
+        self.assertTrue(
+            other.location_claims.filter(
+                state=RepositoryLocationClaim.State.OWNED,
+            ).exists()
+        )
+        repeated = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        self.assertEqual(repeated.id, repository_task.id)
+        s3_cleanup.assert_not_called()
+        agent_cleanup.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_s3_repository_cleanup"
+    )
+    def test_legacy_residual_without_removed_timestamp_stays_local_on_retry(
+        self,
+        physical,
+    ):
+        repository = self._removed_residual_repository()
+        repository.removed_at = None
+        repository.save(update_fields=["removed_at"])
+        target = _ensure_cleanup_targets(repository)[0]
+        target.is_active = False
+        target.save()
+
+        preflight = repository_cleanup_preflight(repository=repository, force=True)
+        self.assertTrue(preflight["allowed"])
+        target.refresh_from_db()
+        self.assertFalse(target.is_active)
+        operation = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        self.assertTrue(operation.task.request_payload["release_residual_only"])
+        repository.refresh_from_db()
+        self.assertIsNotNone(repository.removed_at)
+        with mock.patch(
+            "apps.storage.services.internal.repository_cleanup._tombstone_repository",
+            side_effect=RuntimeError("metadata interrupted"),
+        ):
+            failed = run_repository_cleanup_task(repository_task_id=operation.id)
+        self.assertEqual(failed["status"], "failed", failed)
+
+        repository.refresh_from_db()
+        retry = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        self.assertTrue(retry.task.request_payload["release_residual_only"])
+        result = run_repository_cleanup_task(repository_task_id=retry.id)
+        self.assertEqual(result["status"], "success", result)
+        physical.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+        side_effect=RuntimeError("original physical cleanup failed"),
+    )
+    def test_legacy_cleanup_preserves_old_success_and_failure_details(self, physical):
+        repository = self._s3_repository("historical-force-delete")
+        old = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        run_repository_cleanup_task(repository_task_id=old.id)
+        old.task.refresh_from_db()
+        old_result = old.task.result_payload.copy()
+        # Simulate a task completed by an older Controller.
+        repository.location_claims.update(state=RepositoryLocationClaim.State.RESIDUAL)
+        repository.refresh_from_db()
+        with self.assertRaises(ValidationError):
+            create_repository_cleanup_task(repository=repository, dispatch=False)
+        with mock.patch(
+            "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+            wraps=_execute_physical_cleanup,
+        ):
+            recovery = create_repository_cleanup_task(
+                repository=repository,
+                force=True,
+                dispatch=False,
+            )
+            self.assertNotEqual(recovery.id, old.id)
+            result = run_repository_cleanup_task(repository_task_id=recovery.id)
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["cleanup_failures"], old_result["cleanup_failures"])
+        self.assertEqual(result["retained_resources"], old_result["retained_resources"])
+        old.task.refresh_from_db()
+        self.assertEqual(old.task.result_payload, old_result)
+        physical.assert_called_once()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_s3_repository_cleanup"
+    )
+    def test_legacy_recovery_replacement_remains_control_plane_only(self, physical):
+        repository = self._removed_residual_repository()
+        original = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        with mock.patch(
+            "apps.storage.services.internal.repository_cleanup._tombstone_repository",
+            side_effect=RuntimeError("metadata transaction interrupted"),
+        ):
+            result = run_repository_cleanup_task(repository_task_id=original.id)
+        self.assertEqual(result["status"], "failed", result)
+        replacement = _create_replacement_cleanup_task(repository_task_id=original.id)
+        self.assertIsNotNone(replacement)
+        self.assertTrue(replacement.task.request_payload["release_residual_only"])
+        self.assertIsNone(replacement.execution_target_id)
+        result = run_repository_cleanup_task(repository_task_id=replacement.id)
+        self.assertEqual(result["status"], "success", result)
+        self.assertFalse(result["cleanup_complete"])
+        physical.assert_not_called()
+
+    def test_active_remote_operation_blocks_legacy_residual_release(self):
+        repository = self._removed_residual_repository()
+        probe = self._automatic_health_probe(repository)
+        probe.kind = "repo.initialize"
+        probe.payload = {"repository_id": repository.id}
+        probe.save()
+        preflight = repository_cleanup_preflight(repository=repository, force=True)
+        self.assertFalse(preflight["allowed"])
+        with self.assertRaises(ValidationError):
+            create_repository_cleanup_task(
+                repository=repository,
+                force=True,
+                dispatch=False,
+            )
+        self.assertFalse(RepositoryTask.objects.filter(repository=repository).exists())
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup"
+    )
+    def test_force_cleanup_does_not_release_location_when_operation_appears_late(
+        self,
+        physical,
+    ):
+        repository = self._s3_repository("late-active-operation")
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+
+        def concurrent_operation(*args, **kwargs):
+            probe = self._automatic_health_probe(repository)
+            probe.kind = "repo.initialize"
+            probe.payload = {"repository": {"id": str(repository.id)}}
+            probe.save()
+            return {"physical_cleanup": "failed", "cleanup_complete": False}
+
+        physical.side_effect = concurrent_operation
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+        self.assertEqual(result["status"], "failed", result)
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.REMOVE_FAILED)
+        self.assertIsNone(repository.removed_at)
+        self.assertTrue(
+            repository.location_claims.filter(
+                state=RepositoryLocationClaim.State.OWNED,
+            ).exists()
+        )
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+        side_effect=RepositoryAgentOperationStateUnknown(
+            "Dispatched Agent task could not be found."
+        ),
+    )
+    def test_force_cleanup_keeps_location_when_remote_execution_is_unknown(
+        self,
+        physical,
+    ):
+        repository = self._s3_repository("unknown-force-execution")
+        operation = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        result = run_repository_cleanup_task(repository_task_id=operation.id)
+        self.assertEqual(result["status"], "failed", result)
+        repository.refresh_from_db()
+        self.assertIsNone(repository.removed_at)
+        self.assertFalse(
+            repository.location_claims.filter(
+                state=RepositoryLocationClaim.State.RELEASED,
+            ).exists()
+        )
+        operation.task.refresh_from_db()
+        self.assertEqual(operation.task.error_code, "CONTROL_PLANE_RESTART_INTERRUPTED")
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.verify_s3_repository_deletion_ownership",
+        side_effect=AssertionError("Do not start a fallback physical delete."),
+    )
+    def test_force_cleanup_allows_incomplete_proof_from_a_completed_command(
+        self,
+        verify_owner,
+    ):
+        repository = self._s3_repository("completed-incomplete-proof")
+        operation = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="completed-cleanup-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        remote = NodeTask.objects.create(
+            organization=self.org,
+            node=node,
+            kind="repository.operation",
+            correlation_type="repository_cleanup",
+            correlation_id=str(operation.task.task_uuid),
+            payload={
+                "repository_id": repository.id,
+                "operation_type": operation.operation_type,
+            },
+            status=NodeTask.Status.SUCCESS,
+            result={"cleanup_complete": True},
+            watchdog_deadline_at=timezone.now(),
+        )
+        operation.remote_task_id = remote.id
+        operation.save(update_fields=["remote_task_id"])
+        result = run_repository_cleanup_task(repository_task_id=operation.id)
+        self.assertEqual(result["status"], "success", result)
+        self.assertFalse(result["cleanup_complete"])
+        self.assertTrue(result["cleanup_failures"])
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.REMOVED)
+        self.assertFalse(
+            repository.location_claims.exclude(
+                state=RepositoryLocationClaim.State.RELEASED,
+            ).exists()
+        )
+        verify_owner.assert_not_called()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup"
+    )
+    def test_direct_nas_parent_does_not_release_unknown_child_execution(
+        self,
+        physical,
+    ):
+        node = Node.objects.create(
+            organization=self.org,
+            name="unknown-direct-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="unknown-direct-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            config={"server_address": "192.0.2.153", "share_path": "/"},
+        )
+        subdir = f"hp-repos/storage-{repository.id}/agent-{node.id}"
+        RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=repository.id,
+            node_id=node.id,
+            usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
+            repository_subdir=subdir,
+            status=RepositoryUsageShard.Status.SUCCESS,
+            is_active=True,
+        )
+        self._mark_owned_location(
+            repository,
+            node_id=node.id,
+            repository_subdir=subdir,
+        )
+
+        def execute(operation, **kwargs):
+            if operation.operation_type == RepositoryTask.OperationType.CLEANUP_TARGET:
+                raise RepositoryAgentOperationStateUnknown(
+                    "Direct NAS Agent task could not be found."
+                )
+            return _execute_physical_cleanup(operation, **kwargs)
+
+        physical.side_effect = execute
+        operation = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+        result = run_repository_cleanup_task(repository_task_id=operation.id)
+        self.assertEqual(result["status"], "failed", result)
+        child = RepositoryTask.objects.select_related("task").get(
+            operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
+            triggered_by_task=operation.task,
+            task__replaces_task__isnull=True,
+        )
+        self.assertEqual(child.task.status, Task.Status.FAILED)
+        self.assertEqual(child.task.error_code, "CONTROL_PLANE_RESTART_INTERRUPTED")
+        self.assertFalse(result["replacement_task_uuid"])
+        self.assertFalse(
+            repository.location_claims.filter(
+                state=RepositoryLocationClaim.State.RELEASED,
+            ).exists()
+        )
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+        side_effect=RepositoryAgentOperationStateUnknown(
+            "Agent command state unknown."
+        ),
+    )
+    def test_source_force_cleanup_keeps_its_existing_residue_contract(self, physical):
+        node = Node.objects.create(
+            organization=self.org,
+            name="source-cleanup-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="source-cleanup-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            config={"server_address": "192.0.2.153", "share_path": "/"},
+        )
+        subdir = f"hp-repos/storage-{repository.id}/agent-{node.id}"
+        RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=repository.id,
+            node_id=node.id,
+            usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
+            repository_subdir=subdir,
+            status=RepositoryUsageShard.Status.SUCCESS,
+            is_active=True,
+        )
+        self._mark_owned_location(
+            repository,
+            node_id=node.id,
+            repository_subdir=subdir,
+        )
+        parent = create_task(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Force deregister source",
+        )
+        target = _ensure_cleanup_targets(repository)[0]
+        operation = create_direct_nas_target_cleanup_task(
+            repository=repository,
+            target_id=target.id,
+            triggered_by_task=parent,
+            force=True,
+            dispatch=False,
+        )
+        result = run_repository_cleanup_task(repository_task_id=operation.id)
+        self.assertEqual(result["status"], "success", result)
+        self.assertFalse(result["cleanup_complete"])
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.CREATED)
+        self.assertTrue(
+            repository.location_claims.filter(
+                state=RepositoryLocationClaim.State.RESIDUAL,
+            ).exists()
+        )
 
     @mock.patch(
         "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
@@ -2647,6 +3205,94 @@ class RepositoryCleanupApiTests(TestCase):
             s3_bucket="cleanup-api-bucket",
             config={"prefix": "cleanup/api/"},
         )
+
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+        side_effect=RuntimeError("owner offline"),
+    )
+    def test_force_deleted_repository_disappears_but_task_keeps_residue(
+        self,
+        physical,
+        dispatch,
+    ):
+        reserve_repository_location(self.repository)
+        accepted = self.client.delete(
+            f"/api/v1/storage/repositories/{self.repository.id}/",
+            {"force": True, "confirmation": "FORCE DELETE"},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(accepted.status_code, 202, accepted.content)
+        operation = RepositoryTask.objects.get(repository=self.repository)
+        result = run_repository_cleanup_task(repository_task_id=operation.id)
+        self.assertEqual(result["status"], "success", result)
+        listed = self.client.get(
+            "/api/v1/storage/repositories/",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(listed.status_code, 200, listed.content)
+        self.assertNotIn(
+            self.repository.id, [item["id"] for item in listed.data["data"]["list"]]
+        )
+        detail = self.client.get(
+            f"/api/v1/storage/repositories/{self.repository.id}/",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(detail.status_code, 404, detail.content)
+        task = self.client.get(
+            f"/api/v1/tasks/{operation.task.task_uuid}/",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(task.status_code, 200, task.content)
+        self.assertFalse(task.data["result_payload"]["cleanup_complete"])
+        self.assertEqual(task.data["error_details"]["severity"], "warning")
+        self.assertTrue(task.data["error_details"]["cleanup_failures"])
+
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    def test_historical_residue_uses_existing_delete_confirmation(self, dispatch):
+        reserve_repository_location(self.repository)
+        self.repository.location_claims.update(
+            state=RepositoryLocationClaim.State.RESIDUAL,
+        )
+        self.repository.status = Repository.Status.REMOVED
+        self.repository.removed_at = timezone.now()
+        self.repository.save()
+        path = f"/api/v1/storage/repositories/{self.repository.id}/"
+        capabilities = self.client.post(
+            "/api/v1/iam/resource-capabilities/",
+            {"resources": [
+                {"resource_type": "repository", "resource_id": self.repository.id},
+            ]},
+            format="json", HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(capabilities.status_code, 200, capabilities.content)
+        self.assertTrue(capabilities.data["resources"][0]["delete"])
+        self.assertTrue(capabilities.data["resources"][0]["delete_data"])
+        normal = self.client.delete(
+            path, {"force": False}, format="json", HTTP_X_ORG_KEY=self.org.key
+        )
+        self.assertEqual(normal.status_code, 409, normal.content)
+        invalid = self.client.delete(
+            path,
+            {"force": True, "confirmation": "DELETE"},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(invalid.status_code, 400, invalid.content)
+        accepted = self.client.delete(
+            path,
+            {"force": True, "confirmation": "FORCE DELETE"},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(accepted.status_code, 202, accepted.content)
+        operation = RepositoryTask.objects.get(repository=self.repository)
+        self.assertTrue(operation.task.request_payload["release_residual_only"])
+        result = run_repository_cleanup_task(repository_task_id=operation.id)
+        self.assertEqual(result["status"], "success", result)
+        removed = self.client.get(path, HTTP_X_ORG_KEY=self.org.key)
+        self.assertEqual(removed.status_code, 404, removed.content)
 
     def test_force_cleanup_is_selected_on_delete_and_requires_exact_confirmation(self):
         wrong = self.client.delete(

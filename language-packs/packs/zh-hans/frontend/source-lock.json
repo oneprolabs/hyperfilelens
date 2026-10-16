@@ -4653,7 +4653,7 @@
   "repositoriesPage.healthAttentionRequired": "f98f532ad04f9c380d1b339f57deb1cd97f4a8d3b4c25c659b9d0aaa703769ea",
   "repositoriesPage.connectivityNotApplicable": "671b83330e83e170e4ddce35541d12fac7b9f765a76f62dc3481e310ed6bc033",
   "repositoriesPage.residualAttentionTitle": "c153dfeefe241805ad165c6754376f79898f29a7b389166e8ebbfeccf90aacf4",
-  "repositoriesPage.residualAttentionDescription": "d792b021ed93b39872d6d9c5be089605972b937099c387fabc06c88740ccb75a",
+  "repositoriesPage.residualAttentionDescription": "930eb76e53d1b6706f08051e8b9b110c08f5a565295d41a2110ce38dd72d83ae",
   "repositoriesPage.residualReviewAction": "da9e2e4a67ba574f51ff83e64d40b0701a92ed43235077041d654c5db364baeb",
   "repositoriesPage.colUsage": "cfe72af91c4c86852bbd6d85229da7bdd7947b4b4693f6b29a60ceda4c1a93d5",
   "repositoriesPage.colRepositoryUsage": "4589f856f36a77d1f6545c0bc34388f1a1b2f5253c630d019f0d54b98f64cff9",
@@ -8941,5 +8941,6 @@
   "ops.task.orphanSnapshots.unlinkedSource": "1f0bf8ff51dc33cc14a162d42501a3f362170df0677907fc319d843463303fa9",
   "settings.nav.accessDenied": "64d0947dc1b99f30b8930bc0a12807d3914b1b99ccf733a30c94f0bcf6dc2bc4",
   "settings.org.accessDenied": "793dbb24ef0413668efbeeef275a5a3a315f9550c1e00221d63abe9030059f90",
-  "platformOps.users.deleteConfirmWarning": "de53f57233ff265166f955c2165a7317c091b5968c1941efbfa7000c3f543927"
+  "platformOps.users.deleteConfirmWarning": "de53f57233ff265166f955c2165a7317c091b5968c1941efbfa7000c3f543927",
+  "repositoriesPage.cleanupRemovedWithResidue": "455a3c6772d4e0f0c870e27000b53d122c20ece8190416081c98bd18556ae01c"
 }
