@@ -247,7 +247,8 @@ import {
   flowSourceMemoryText,
 } from '../../lib/flowSourceDisplay'
 import { formatOfflineBackupPlanMessage } from './lib/offlineBackupPlanMessage'
-import { useResourceCapabilities, type ResourceAction } from '../../composables/useResourceCapabilities'
+import type { ResourceAction } from '../../composables/useResourceCapabilities'
+import { useBackupSourceCapabilities } from '../../composables/useBackupSourceCapabilities'
 
 const loadFlowBackupSourceDetailDrawer = () => import('./components/FlowBackupSourceDetailDrawer.vue')
 const loadBackupCreateWizard = () => import('./BackupCreateWizard.vue')
@@ -2032,13 +2033,15 @@ function sourceCapabilityReference(row: FlowSourceRow) {
     resource_id: Number(rawId),
   }
 }
-const resourcePermissions = useResourceCapabilities(computed(() => [
-  ...[...step3SourceSelection.value, ...backupSelectableRows.value, ...step2SelectableRows.value]
-    .filter((row) => sourceCapabilityReference(row).resource_id > 0)
-    .map(sourceCapabilityReference),
-  ...backupConfigRows.value.map((row) => ({ resource_type: 'backup_config' as const, resource_id: row.id })),
-  ...backupConfigRows.value.map((row) => ({ resource_type: 'repository' as const, resource_id: row.repository_id })),
-]))
+const resourcePermissions = useBackupSourceCapabilities(
+  computed(() => flowMainStep.value === 2
+    ? step3SourceList.value
+    : flowMainStep.value === 1 ? step2SelectableRows.value : backupSelectableRows.value),
+  backupConfigRows,
+  // Step 2 preserves some selections across pages. Current-page selections are
+  // already prefetched and deduplicated, so checking a row needs no new query.
+  computed(() => flowMainStep.value === 1 ? selectedFlowRows(step1Selection.value) : []),
+)
 const sourceCanAct = (row: FlowSourceRow, action: ResourceAction) => {
   const ref = sourceCapabilityReference(row)
   return resourcePermissions.permitted(ref.resource_type, ref.resource_id, action)
@@ -4897,6 +4900,7 @@ async function refreshTaskLists() {
   flowRefreshing.value = true
   try {
     await refreshFlowStepData()
+    await resourcePermissions.refresh()
   } catch (err) {
     showApiError(err)
   } finally {
@@ -10296,6 +10300,10 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       scheduleRestoreTaskReconciliation(sourceId, result.task_uuid)
     })
 
+    if (outcome.failed.some(({ error }) => toApiError(error).status === 403)) {
+      void resourcePermissions.refresh({ invalidate: true })
+    }
+
     if (!outcome.succeeded.length) {
       const errors = outcome.failed.map((item) => item.error)
       const error = errors.find((item) => restoreAlreadyRunningMeta(item))
@@ -10345,6 +10353,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       })
     })
   } catch (error) {
+    if (toApiError(error).status === 403) void resourcePermissions.refresh({ invalidate: true })
     showApiErrorI18n(error, t('errors.generic.requestFailed'))
   } finally {
     recSubmitting.value = false
