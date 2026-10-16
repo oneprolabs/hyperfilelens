@@ -4,7 +4,7 @@ import { nextTick, onMounted, watch } from 'vue'
 import { ArrowLeft, ArrowRight, Check, X } from 'lucide-vue-next'
 import WizardSteps from '../../components/WizardSteps.vue'
 
-type CreatePhase = 'form' | 'waiting' | 'done'
+type CreatePhase = 'form' | 'waiting'
 type WizardStepValue = string | number
 type WizardStepItem = {
   step: WizardStepValue
@@ -24,14 +24,10 @@ const props = withDefaults(defineProps<{
   description: string
   ariaLabel: string
   waitingText: string
-  resultTitle: string
-  resultSubtitle: string
   cancelLabel: string
   prevLabel: string
   nextLabel: string
   confirmLabel: string
-  closeLabel: string
-  goToStartBackupLabel: string
   bootstrapping?: boolean
   busy?: boolean
   canClose?: boolean
@@ -48,7 +44,6 @@ const emit = defineEmits<{
   prev: []
   next: []
   confirm: []
-  goToStartBackup: []
   visible: []
 }>()
 
@@ -98,7 +93,7 @@ watch(
           <button
             type="button"
             class="fullscreen-form-header__back"
-            :disabled="!canClose"
+            :disabled="bootstrapping || !canClose"
             @click="emit('close')"
           >
             <ArrowLeft
@@ -124,7 +119,7 @@ watch(
           }"
         >
           <WizardSteps
-            v-if="showSteps && (phase === 'form' || bootstrapping)"
+            v-if="showSteps && (phase === 'form' || phase === 'waiting' || bootstrapping)"
             as="aside"
             class="create-backup-steps"
             :steps="steps"
@@ -135,85 +130,43 @@ watch(
             :aria-label="ariaLabel"
           />
 
-          <main class="fullscreen-form-main create-backup-main">
+          <main
+            v-loading="bootstrapping"
+            class="fullscreen-form-main create-backup-main"
+            :aria-busy="bootstrapping"
+            :element-loading-text="waitingText"
+          >
             <div
-              v-if="bootstrapping"
-              class="create-backup-step-body dp-process-page create-backup-loading-pane"
-            >
-              <div class="fullscreen-form-card create-backup-loading-card">
-                <el-progress
-                  :percentage="66"
-                  :indeterminate="true"
-                  status="warning"
-                  class="mb-4"
-                />
-                <p class="text-slate-600">
-                  {{ waitingText }}
-                </p>
-              </div>
-            </div>
-
-            <div
-              v-else-if="phase === 'form'"
+              v-if="phase === 'form' || phase === 'waiting'"
               class="create-backup-step-body dp-process-page"
+              :inert="bootstrapping || phase === 'waiting' ? true : undefined"
             >
-              <slot name="form" />
-            </div>
-
-            <div
-              v-else-if="phase === 'waiting'"
-              class="create-backup-step-body dp-process-page create-backup-loading-pane"
-            >
-              <div class="fullscreen-form-card create-backup-status-card py-10 text-center">
-                <el-progress
-                  :percentage="66"
-                  :indeterminate="true"
-                  status="warning"
-                  class="mb-4"
+              <div
+                v-if="phase === 'waiting'"
+                class="create-backup-submission-status"
+                role="status"
+                aria-live="polite"
+              >
+                <span
+                  class="create-backup-submission-status__spinner"
+                  aria-hidden="true"
                 />
-                <p class="text-slate-600">
-                  {{ waitingText }}
-                </p>
+                <span>{{ waitingText }}</span>
               </div>
-            </div>
-
-            <div
-              v-else
-              class="create-backup-step-body dp-process-page create-backup-loading-pane"
-            >
-              <div class="fullscreen-form-card create-backup-status-card py-8 text-center space-y-4">
-                <el-result
-                  icon="success"
-                  :title="resultTitle"
-                  :sub-title="resultSubtitle"
-                >
-                  <template #extra>
-                    <div class="flex flex-wrap items-center justify-center gap-2">
-                      <ElButton
-                        type="primary"
-                        @click="emit('close')"
-                      >
-                        {{ closeLabel }}
-                      </ElButton>
-                      <ElButton @click="emit('goToStartBackup')">
-                        {{ goToStartBackupLabel }}
-                      </ElButton>
-                    </div>
-                  </template>
-                </el-result>
-              </div>
+              <slot name="form" />
             </div>
           </main>
         </div>
 
         <div
-          v-if="phase === 'form' || bootstrapping"
+          v-if="phase === 'form' || phase === 'waiting' || bootstrapping"
           class="fullscreen-form-footer create-backup-footer"
         >
           <div class="create-backup-footer__inner">
             <div class="create-backup-footer__actions">
               <ElButton
                 class="hfl-btn-with-icon"
+                :disabled="bootstrapping || phase === 'waiting'"
                 @click="emit('close')"
               >
                 <X :size="14" />
@@ -222,7 +175,7 @@ watch(
               <ElButton
                 v-if="canGoPrev"
                 class="hfl-btn-with-icon"
-                :disabled="bootstrapping || busy"
+                :disabled="bootstrapping || busy || phase === 'waiting'"
                 @click="emit('prev')"
               >
                 <ArrowLeft :size="14" />
@@ -233,7 +186,7 @@ watch(
                 type="primary"
                 class="hfl-btn-with-icon"
                 :loading="busy"
-                :disabled="bootstrapping || busy"
+                :disabled="bootstrapping || busy || phase === 'waiting'"
                 @click="emit('next')"
               >
                 <span>{{ nextLabel }}</span>
@@ -243,7 +196,8 @@ watch(
                 v-else
                 type="primary"
                 class="hfl-btn-with-icon"
-                :disabled="bootstrapping || busy"
+                :loading="phase === 'waiting'"
+                :disabled="bootstrapping || busy || phase === 'waiting'"
                 @click="emit('confirm')"
               >
                 <Check :size="14" />
@@ -262,6 +216,40 @@ watch(
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.create-backup-submission-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  color: var(--el-color-primary-dark-2);
+  background: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.create-backup-submission-status__spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: create-backup-spin 0.8s linear infinite;
+}
+
+@keyframes create-backup-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .create-backup-submission-status__spinner {
+    animation-duration: 2s;
+  }
 }
 
 .create-backup-layout {
@@ -315,25 +303,6 @@ watch(
   gap: 0;
   min-height: 0;
   padding: 20px;
-}
-
-.create-backup-loading-pane {
-  min-height: 360px;
-  justify-content: center;
-  padding: 20px;
-}
-
-.create-backup-loading-card {
-  width: min(100%, 520px);
-  margin: 0 auto;
-  padding: 40px 32px;
-  text-align: center;
-}
-
-.create-backup-status-card {
-  border: none;
-  box-shadow: none;
-  background: transparent;
 }
 
 .create-backup-footer__inner,

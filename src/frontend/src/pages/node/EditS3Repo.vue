@@ -39,7 +39,7 @@ const route = useRoute()
 const router = useRouter()
 
 const repositoryId = computed(() => Number(route.params.id))
-const loading = ref(false)
+const loading = ref(true)
 const pageRef = ref<HTMLElement | null>(null)
 const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 type SavingPhase = 'verifying' | 'saving'
@@ -373,15 +373,12 @@ watch(repositoryId, (id) => {
       </div>
 
       <div
-        v-if="loading"
-        class="edit-s3-loading"
-      >
-        {{ t('common.loading') || 'Loading\u2026' }}
-      </div>
-
-      <div
-        v-else-if="repo"
+        v-if="loading || repo"
+        v-loading="loading"
         class="fullscreen-form-layout"
+        :aria-busy="loading"
+        :element-loading-text="t('common.loading')"
+        :inert="loading ? true : undefined"
       >
         <!-- Main Form Area -->
         <div class="fullscreen-form-main">
@@ -717,7 +714,7 @@ watch(repositoryId, (id) => {
 
           <div class="fullscreen-form-footer add-s3-footer">
             <ElButton
-              :disabled="busy"
+              :disabled="loading || busy"
               @click="handleBack"
             >
               {{ t('repositoriesPage.btnCancel') }}
@@ -725,7 +722,7 @@ watch(repositoryId, (id) => {
             <ElButton
               type="primary"
               :loading="busy"
-              :disabled="busy"
+              :disabled="loading || busy"
               @click="onSave"
             >
               <template v-if="busy && savingPhase === 'verifying'">
@@ -905,7 +902,6 @@ watch(repositoryId, (id) => {
 <style scoped>
 /* Override add-s3 layout paddings to suit edit page; reuse add-s3-platform-btn styling */
 .edit-s3-page .fullscreen-form-main { padding-bottom: 0; }
-.edit-s3-loading { padding: 32px; color: var(--el-text-color-secondary); }
 
 .edit-s3-auth-error {
   display: flex;

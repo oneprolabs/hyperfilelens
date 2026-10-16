@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import '../../styles/fullscreen-form-styles'
-import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, reactive, ref, watch, type Component } from 'vue'
+import { computed, defineComponent, nextTick, onMounted, onUnmounted, reactive, ref, watch, type Component } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -34,7 +34,7 @@ import {
   Scale,
   Trash2,
 } from 'lucide-vue-next'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import type { ElTable, ElTree } from 'element-plus'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import ModulePage from '../../components/ModulePage.vue'
@@ -60,7 +60,7 @@ import { apiErrorMessage, apiErrorMessageI18n, isAbortError } from '../../lib/ap
 import { normalizeThrownError } from '../../lib/errors'
 import { backupPathAccessSummaryKey } from '../../lib/backupPathAccessError'
 import { openErrorDetails } from '../../lib/errors/details'
-import { notifyError } from '../../lib/notify'
+import { notifyError, notifySuccess } from '../../lib/notify'
 import { logger } from '../../lib/logger'
 import {
   createBackupConfig,
@@ -165,11 +165,7 @@ import {
 } from '../../lib/protectionPolicyFormModel'
 import type { ApiNode } from '../../types/node'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
-import {
-  buildNasRepairMountOptionsPath,
-  isSmbMountNegotiationError,
-  SMB_MOUNT_OPTION_EXAMPLES,
-} from '../../lib/nasMountTroubleshooting'
+import { buildNasRepairMountOptionsPath, isSmbMountNegotiationError } from '../../lib/nasMountTroubleshooting'
 import TargetRepositoryPicker from './components/TargetRepositoryPicker.vue'
 import TargetRepositoryDetailCard from './components/TargetRepositoryDetailCard.vue'
 import CompressionLevelSelector from './components/CompressionLevelSelector.vue'
@@ -235,53 +231,26 @@ const bindProxyLeadItems = computed(() => [
 const store = useProtectionDemoStore()
 const STEP2_SOURCES_STORAGE_KEY = 'protection-create-wizard-step2-sources'
 
-function nasRepairMountOptionsHref(repositoryId: number) {
-  return router.resolve(buildNasRepairMountOptionsPath(repositoryId)).href
-}
-
 function showBackupConfigCreateError(err: unknown, backupName: string, repositoryId: number) {
   const fallback = t('protection.backupsPage.createFailedWithName', { name: backupName })
   const message = apiErrorMessageI18n(err, t, fallback)
-  if (!repositoryId || !isSmbMountNegotiationError(message)) {
-    notifyError({
-      title: t('protection.backupsPage.createFailed'),
-      message,
-      duration: 10000,
-      dedupeKey: `backup-config-create:${repositoryId || backupName}`,
-      error: err,
-      errorDetails: { issue: message },
-      showDetails: true,
-    })
-    return
-  }
-
-  const href = nasRepairMountOptionsHref(repositoryId)
-  void ElMessageBox.alert(
-    h('div', { class: 'space-y-3 text-sm leading-6 text-[rgb(51_65_85)]' }, [
-      h('p', { class: 'font-medium text-[rgb(15_23_42)]' },
-        'The NAS SMB/CIFS mount may have failed during protocol negotiation.'),
-      h('p',
-        'Different NAS devices, SMB servers, and client kernels may support different protocol versions. Open the NAS repository connection settings and try specifying a version in Mount Options.'),
-      h('div', { class: 'flex flex-wrap gap-1.5' }, SMB_MOUNT_OPTION_EXAMPLES.map((example) =>
-        h('code', {
-          class: 'rounded border border-[rgb(203_213_225)] bg-[rgb(248_250_252)] px-1.5 py-0.5 font-mono text-xs text-[rgb(15_23_42)]',
-        }, example),
-      )),
-      h('p', { class: 'whitespace-pre-wrap rounded border border-[rgb(226_232_240)] bg-[rgb(248_250_252)] p-2 text-xs text-[rgb(71_85_105)]' }, message),
-      h('a', {
-        href,
-        target: '_blank',
-        rel: 'noopener noreferrer',
-        class: 'inline-flex font-medium text-[rgb(37_99_235)] underline underline-offset-2',
-      }, 'Modify NAS connection in a new tab'),
-    ]),
-    'Failed to create backup config',
-    {
-      confirmButtonText: 'Close',
-      dangerouslyUseHTMLString: false,
-      customClass: 'backup-config-create-error-dialog',
+  notifyError({
+    title: t('protection.backupsPage.createFailed'),
+    message,
+    duration: 10000,
+    dedupeKey: `backup-config-create:${repositoryId || backupName}`,
+    error: err,
+    errorDetails: {
+      issue: message,
+      resolutions: repositoryId && isSmbMountNegotiationError(message)
+        ? [
+            t('addNasRepo.hintMountOptionsSmb'),
+            router.resolve(buildNasRepairMountOptionsPath(repositoryId)).href,
+          ]
+        : undefined,
     },
-  )
+    showDetails: true,
+  })
 }
 
 type RealSourceRow = {
@@ -576,8 +545,6 @@ function sourceHasBackupConfig(sourceId: string) {
   return isRealSourceId(sourceId)
 }
 
-const lastCreatedConfigs = ref<BackupConfigDetail[]>([])
-
 function finishCreateAndGoToStep3(items: Array<{ sourceId: string; config: BackupConfigDetail }>) {
   const focusIds = items.map((item) => item.sourceId).filter((id) => sourceHasBackupConfig(id))
   if (focusIds.length > 0) {
@@ -585,6 +552,7 @@ function finishCreateAndGoToStep3(items: Array<{ sourceId: string; config: Backu
     step1Selection.value = step1Selection.value.filter((id) => !idSet.has(id))
     step2Sources.value = step2Sources.value.filter((id) => !idSet.has(id))
   }
+  createPhase.value = 'form'
   createOpen.value = false
   if (props.embedded) {
     emit('createCompleted', { items })
@@ -594,13 +562,6 @@ function finishCreateAndGoToStep3(items: Array<{ sourceId: string; config: Backu
     sessionStorage.setItem(FLOW_RETURN_STEP_STORAGE_KEY, '2')
   }
   void router.push({ path: '/protection/backups', query: { step: 'start-backup' } })
-}
-
-function goToStartBackupFromCreate() {
-  finishCreateAndGoToStep3(lastCreatedConfigs.value.map((config) => ({
-    sourceId: `${config.source_type}:${config.source_ref_id}`,
-    config,
-  })))
 }
 
 type BackupPathType = 'directory' | 'file' | 'unknown'
@@ -1140,7 +1101,7 @@ watch(addPolicyForm, () => {
   clearAddPolicyError('schedule')
   clearAddPolicyError('retention')
 }, { deep: true })
-const createPhase = ref<'form' | 'waiting' | 'done'>('form')
+const createPhase = ref<'form' | 'waiting'>('form')
 const createSubmissionActive = computed(() => createPhase.value === 'waiting')
 type CreateItemState = 'pending' | 'creating' | 'success' | 'failed' | 'unknown' | 'not_attempted'
 const createItemStates = ref<Record<string, CreateItemState>>({})
@@ -5707,6 +5668,7 @@ const createWizardStepItems = computed(() =>
 )
 
 async function runCreateBackup() {
+  if (createSubmissionActive.value) return
   for (let step = 0; step < createWizardSteps.value.length; step += 1) {
     if (!validateCreateStep(step)) {
       goCreateStep(step)
@@ -5816,19 +5778,18 @@ async function runCreateBackup() {
     const configured = new Set(configuredSourceIds)
     step1Selection.value = step1Selection.value.filter((id) => !configured.has(id))
     step2Sources.value = step2Sources.value.filter((id) => !configured.has(id))
-    lastCreatedConfigs.value = createdItems.map((item) => item.config)
   }
 
   const allSuccess = failedCount === 0 && !stoppedAfterUnknownResult && createdItems.length === payload.backups.length
   if (allSuccess) {
-    ElMessage.success({
+    notifySuccess({
       message: hasProvisioning
         ? t('protection.backupsPage.createProvisioning')
         : t('protection.backupsPage.createSuccess'),
-      grouping: true,
     })
-    createPhase.value = 'done'
-    nextTick(() => finishCreateAndGoToStep3(createdItems))
+    // Success is complete at this point. Return to the list instead of
+    // showing a separate full-screen result page.
+    finishCreateAndGoToStep3(createdItems)
   } else {
     if (createdItems.length > 0 && props.embedded) {
       emit('createPartial', { items: createdItems })
@@ -5971,7 +5932,8 @@ async function runEditBackupConfig() {
         await syncEditRecoveryPlans(config, backup, group)
       }
     }
-    ElMessage.success({ message: t('protection.backupsPage.msgSaveEditDemo'), grouping: true })
+    createPhase.value = 'form'
+    notifySuccess({ message: t('protection.backupsPage.msgSaveEditDemo') })
     if (props.embedded) {
       emit('editCompleted', { sourceIds: editedSourceIds })
       return
@@ -5979,7 +5941,12 @@ async function runEditBackupConfig() {
     closeCreate()
   } catch (err) {
     createPhase.value = 'form'
-    ElMessage.error({ message: apiErrorMessageI18n(err, t, editorFailureText.value), grouping: true })
+    notifyError({
+      title: editorFailureText.value,
+      message: apiErrorMessageI18n(err, t, editorFailureText.value),
+      error: err,
+      showDetails: true,
+    })
     if (normalizeThrownError(err).errorCode === 'BACKUP.ALREADY_RUNNING') {
       emit('conflict', { sourceIds: editedSourceIds })
     }
@@ -5987,6 +5954,7 @@ async function runEditBackupConfig() {
 }
 
 function submitCreateWizard() {
+  if (createSubmissionActive.value) return
   if (isEditMode.value) {
     void runEditBackupConfig()
     return
@@ -6090,7 +6058,7 @@ function preserveShallowestPathOrder(paths: string[]) {
     v-bind="backupCreateWizardShellProps"
   >
     <BackupConfigCreateWizard
-      v-if="createOpen"
+      v-if="createOpen || createBootstrapping"
       :phase="createPhase"
       :steps="createWizardStepItems"
       :current-step="createStep"
@@ -6107,19 +6075,14 @@ function preserveShallowestPathOrder(paths: string[]) {
       :busy="targetValidationInProgress"
       :can-close="!createSubmissionActive"
       :animated="!embedded"
-      :result-title="t('protection.backupsPage.resultCreateTitle')"
-      :result-subtitle="t('protection.backupsPage.resultCreateSub')"
       :cancel-label="t('protection.backupsPage.btnCancel')"
       :prev-label="t('protection.backupsPage.btnPrev')"
       :next-label="t('protection.backupsPage.btnNext')"
       :confirm-label="hasEditRequest ? t('protection.backupsPage.btnSave') : t('protection.backupsPage.btnConfirmCreate')"
-      :close-label="t('protection.backupsPage.btnClose')"
-      :go-to-start-backup-label="t('protection.backupsPage.btnGoToStartBackup')"
       @close="closeCreate"
       @prev="prevCreate"
       @next="nextCreate"
       @confirm="submitCreateWizard"
-      @go-to-start-backup="goToStartBackupFromCreate"
       @visible="emit('ready')"
     >
       <template #form>

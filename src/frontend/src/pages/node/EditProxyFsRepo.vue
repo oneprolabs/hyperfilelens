@@ -32,7 +32,7 @@ const router = useRouter()
 const repositoryId = computed(() => Number(route.params.id))
 
 /* ---------- form state ---------- */
-const loading = ref(false)
+const loading = ref(true)
 const pageRef = ref<HTMLElement | null>(null)
 const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 const busy = ref(false)
@@ -250,15 +250,12 @@ watch(repositoryId, (id) => {
       </header>
 
       <div
-        v-if="loading"
-        class="edit-proxy-fs-loading"
-      >
-        {{ t('common.loading') }}
-      </div>
-
-      <div
-        v-else-if="repo"
+        v-if="loading || repo"
+        v-loading="loading"
         class="fullscreen-form-layout add-proxy-fs-layout"
+        :aria-busy="loading"
+        :element-loading-text="t('common.loading')"
+        :inert="loading ? true : undefined"
       >
         <div class="fullscreen-form-main add-proxy-fs-main">
           <section
@@ -409,13 +406,16 @@ watch(repositoryId, (id) => {
 
           <div class="fullscreen-form-footer add-proxy-fs-footer">
             <div class="add-nas-footer__actions">
-              <ElButton @click="handleBack">
+              <ElButton
+                :disabled="loading || busy"
+                @click="handleBack"
+              >
                 {{ t('repositoriesPage.editProxyFsRepo.btnCancel') }}
               </ElButton>
               <ElButton
                 type="primary"
                 :loading="busy"
-                :disabled="busy || !dirty"
+                :disabled="loading || busy || !dirty"
                 @click="onSave"
               >
                 {{ t('repositoriesPage.editProxyFsRepo.btnSave') }}
@@ -454,11 +454,6 @@ watch(repositoryId, (id) => {
 }
 .edit-proxy-fs-locked-input--mono :deep(.el-input__inner) {
   font-family: var(--el-font-family-monospace, ui-monospace, SFMono-Regular, monospace);
-}
-
-.edit-proxy-fs-loading {
-  padding: 32px;
-  color: var(--el-text-color-secondary);
 }
 
 .edit-proxy-fs-page .fullscreen-form-main {
