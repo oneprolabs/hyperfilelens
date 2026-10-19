@@ -9,3 +9,10 @@ export function isRemovedRepositoryWithResidualLocation(
   return repository.status === 'removed'
     && repository.initialization_state === 'attention_required'
 }
+
+export function isRepositoryDeletionAvailable(
+  repository: RepositoryResidualStateInput,
+): boolean {
+  return repository.status !== 'removing'
+    && (repository.status !== 'removed' || isRemovedRepositoryWithResidualLocation(repository))
+}

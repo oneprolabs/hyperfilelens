@@ -411,7 +411,19 @@ def repository_cleanup_preflight(
             }
         )
 
-    targets = _ensure_cleanup_targets(repository)
+    # A removed repository is only eligible for control-plane residue cleanup.
+    # Serialize target materialization with deletion and read current state:
+    # another request may still hold a pre-deletion Repository instance.
+    with transaction.atomic():
+        repository = Repository.objects.select_for_update().get(
+            pk=repository.pk,
+            organization_id=repository.organization_id,
+        )
+        targets = (
+            list(repository.execution_targets.all())
+            if _repository_was_removed(repository)
+            else _ensure_cleanup_targets(repository)
+        )
     initializing_claims = repository.location_claims.filter(
         state=RepositoryLocationClaim.State.INITIALIZING,
     )
@@ -455,6 +467,22 @@ def repository_cleanup_preflight(
             warnings.append(item)
         else:
             blockers.append(item)
+    if (
+        _repository_was_removed(repository)
+        and _has_residual_locations(repository)
+        and not force
+        and not allow_associations
+    ):
+        blockers.append(
+            {
+                "code": "removed_repository_requires_force",
+                "detail": (
+                    "An earlier deletion left a residual storage location. "
+                    "Use Force Delete to finish removing the repository registration. "
+                    "Physical data may still require manual cleanup."
+                ),
+            }
+        )
     historical_direct_count = historical_direct_claims.count()
     if historical_direct_count and not allow_associations:
         item = {
@@ -597,7 +625,10 @@ def create_repository_cleanup_task(
                 "detail": "Repository already has an active cleanup task in a different mode."
             }
         )
-    if repository.status == Repository.Status.REMOVED:
+    if (
+        repository.status == Repository.Status.REMOVED
+        and not _has_residual_locations(repository)
+    ):
         latest = (
             _logical_cleanup_tasks(repository)
             .filter(
@@ -634,7 +665,11 @@ def create_repository_cleanup_task(
                     "detail": "Repository already has an active cleanup task in a different mode."
                 }
             )
-        if locked.status == Repository.Status.REMOVED:
+        residual_cleanup = (
+            _repository_was_removed(locked)
+            and _has_residual_locations(locked)
+        )
+        if locked.status == Repository.Status.REMOVED and not residual_cleanup:
             latest = (
                 _logical_cleanup_tasks(locked)
                 .filter(
@@ -645,7 +680,7 @@ def create_repository_cleanup_task(
             )
             if latest is not None:
                 return latest
-        if locked.status not in {
+        if not (residual_cleanup and force) and locked.status not in {
             Repository.Status.CREATED,
             Repository.Status.REMOVE_FAILED,
             Repository.Status.CREATE_FAILED,
@@ -660,9 +695,11 @@ def create_repository_cleanup_task(
         if not second_preflight["allowed"]:
             raise RepositoryCleanupBlocked(second_preflight)
 
-        targets = _ensure_cleanup_targets(locked)
+        targets = [] if residual_cleanup else _ensure_cleanup_targets(locked)
         target: RepositoryExecutionTarget | None
-        if locked.repo_type == Repository.Type.NAS and locked.bind_node_id is None:
+        if residual_cleanup or (
+            locked.repo_type == Repository.Type.NAS and locked.bind_node_id is None
+        ):
             target = None
         else:
             target = targets[0] if targets else None
@@ -672,7 +709,13 @@ def create_repository_cleanup_task(
                 )
 
         locked.status = Repository.Status.REMOVING
-        locked.save(update_fields=["status", "updated_at"])
+        update_fields = ["status", "updated_at"]
+        if residual_cleanup and locked.removed_at is None:
+            # Older tombstones may lack this timestamp. Persist the removal
+            # fence so a failed/retried local recovery never accesses storage.
+            locked.removed_at = timezone.now()
+            update_fields.append("removed_at")
+        locked.save(update_fields=update_fields)
         repository_task = _create_cleanup_task(
             repository=locked,
             operation_type=RepositoryTask.OperationType.CLEANUP_REPOSITORY,
@@ -680,6 +723,7 @@ def create_repository_cleanup_task(
             requested_by=requested_by,
             force=force,
             triggered_by_task=None,
+            release_residual_only=residual_cleanup,
         )
         _inherit_cleanup_owner_verification(repository_task)
         _write_cleanup_audit(
@@ -960,6 +1004,16 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
             else {"status": task.status}
         )
 
+    parent = repository_task.triggered_by_task
+    repository_delete = (
+        repository_task.operation_type == RepositoryTask.OperationType.CLEANUP_REPOSITORY
+        or (
+            parent is not None
+            and parent.task_type == Task.Type.REPOSITORY_OPERATION
+            and (parent.request_payload or {}).get("operation_type")
+            == RepositoryTask.OperationType.CLEANUP_REPOSITORY
+        )
+    )
     started_now = task.status == Task.Status.PENDING
     if started_now:
         start_task(task_uuid=task.task_uuid, organization_id=task.organization_id)
@@ -1061,7 +1115,14 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
                     }
                 physical_cleanup_complete = bool(result.get("cleanup_complete", True))
         except Exception as exc:
-            if not repository_task.force:
+            if not repository_task.force or (
+                repository_delete
+                and isinstance(exc, RepositoryAgentOperationStateUnknown)
+                and not _has_completed_cleanup_command(repository_task)
+            ):
+                # An untracked dispatched command may still be executing.
+                # Preserve the existing recovery path instead of releasing
+                # its location as if this were an ordinary cleanup failure.
                 raise
             physical_cleanup_complete = False
             safe_failure = str(
@@ -1363,6 +1424,37 @@ def _logical_cleanup_tasks(repository: Repository):
     )
 
 
+def _has_residual_locations(repository: Repository) -> bool:
+    return repository.location_claims.filter(
+        state=RepositoryLocationClaim.State.RESIDUAL,
+    ).exists()
+
+
+def _repository_was_removed(repository: Repository) -> bool:
+    return (
+        repository.status == Repository.Status.REMOVED
+        or repository.removed_at is not None
+    )
+
+
+def _has_completed_cleanup_command(repository_task: RepositoryTask) -> bool:
+    """Distinguish missing execution state from an incomplete terminal proof."""
+    if not repository_task.remote_task_id:
+        return False
+    return NodeTask.objects.filter(
+        pk=repository_task.remote_task_id,
+        organization_id=repository_task.repository.organization_id,
+        kind="repository.operation",
+        correlation_type="repository_cleanup",
+        correlation_id=str(repository_task.task.task_uuid),
+        status=NodeTask.Status.SUCCESS,
+        payload__operation_type=repository_task.operation_type,
+    ).filter(
+        Q(payload__repository_id=repository_task.repository_id)
+        | Q(payload__repository_id=str(repository_task.repository_id))
+    ).exists()
+
+
 def _active_repository_tasks(*, repository: Repository):
     resource_task_ids = TaskResource.objects.filter(
         resource_type=TaskResource.Type.REPOSITORY,
@@ -1523,6 +1615,7 @@ def _create_cleanup_task(
     force: bool,
     triggered_by_task: Task | None,
     replaces_task: Task | None = None,
+    release_residual_only: bool = False,
 ) -> RepositoryTask:
     owner_type = (
         target.owner_type if target else RepositoryExecutionTarget.OwnerType.CONTROLLER
@@ -1569,6 +1662,15 @@ def _create_cleanup_task(
             "operation_type": operation_type,
             "target_key": target.target_key if target else "",
             "force": force,
+            "release_residual_only": bool(
+                release_residual_only
+                or (
+                    replaces_task is not None
+                    and (replaces_task.request_payload or {}).get(
+                        "release_residual_only"
+                    )
+                )
+            ),
             "triggered_by_task_uuid": (
                 str(triggered_by_task.task_uuid)
                 if triggered_by_task is not None
@@ -1829,6 +1931,49 @@ def _execute_physical_cleanup(
 ) -> dict[str, Any] | RepositoryAgentOperationResult:
     repository = repository_task.repository
     target = repository_task.execution_target
+    if (repository_task.task.request_payload or {}).get("release_residual_only"):
+        if (
+            not repository_task.force
+            or repository_task.operation_type
+            != RepositoryTask.OperationType.CLEANUP_REPOSITORY
+            or repository.removed_at is None
+        ):
+            raise ValidationError("Invalid removed-repository cleanup request.")
+        # This is an explicit Force Delete of a legacy tombstone, not another
+        # attempt to access storage after its credentials/owner were removed.
+        previous = (
+            _logical_cleanup_tasks(repository)
+            .exclude(pk=repository_task.pk)
+            .filter(task__status=Task.Status.SUCCESS)
+            .select_related("task")
+            .order_by("-id")
+            .first()
+        )
+        previous_result = (
+            previous.task.result_payload
+            if previous is not None and isinstance(previous.task.result_payload, dict)
+            else {}
+        )
+        return {
+            "physical_cleanup": previous_result.get("physical_cleanup")
+            or "unconfirmed",
+            "cleanup_complete": False,
+            "cleanup_failures": previous_result.get("cleanup_failures")
+            or [
+                {
+                    "code": "REPOSITORY_PHYSICAL_CLEANUP_UNCONFIRMED",
+                    "detail": (
+                        "The repository registration was already removed. "
+                        "Physical data cleanup remains unconfirmed and may "
+                        "require manual cleanup."
+                    ),
+                }
+            ],
+            "retained_resources": (
+                previous_result.get("retained_resources")
+                or _retained_repository_resources(repository_task)
+            ),
+        }
     if target is None:
         if (
             repository.repo_type == Repository.Type.NAS
@@ -2482,6 +2627,8 @@ def _execute_direct_nas_repository_cleanup(
             waiting = True
             continue
         if child.task.status != Task.Status.SUCCESS:
+            if child.task.error_code == CONTROL_PLANE_RESTART_INTERRUPTED:
+                raise RepositoryAgentOperationStateUnknown(child.task.error_message)
             raise ValidationError(
                 child.task.error_message
                 or f"Direct NAS target {target.target_key} cleanup failed."
@@ -2593,7 +2740,24 @@ def _apply_cleanup_success(
                     repository_subdir=target.repository_subdir,
                 ).update(is_active=False)
         else:
-            if (
+            if repository_task.force:
+                # Do not release a location while another task could still
+                # write to it. The current cleanup task is the only exception.
+                blockers = repository_active_task_blockers(
+                    repository=repository,
+                    ignored_task_ids=[repository_task.task_id],
+                )
+                if blockers:
+                    raise RepositoryCleanupBlocked(
+                        {"allowed": False, "blockers": blockers}
+                    )
+                if _active_automatic_repository_health_probes(
+                    repository=repository
+                ) or _controller_repository_health_probe_active(repository=repository):
+                    raise ValidationError(
+                        "Repository health checks must finish before location release."
+                    )
+            if repository_task.force or (
                 cleanup_complete
                 and cleanup_result != Repository.CleanupResult.PRESERVED
             ):

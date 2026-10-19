@@ -63,6 +63,26 @@ describe('repository residual status UI', () => {
     expect(page).not.toContain("t('repositoriesPage.releaseResidualLocation')")
   })
 
+  it('uses the existing permission-checked Delete entry for historical residue', () => {
+    const availability = page.slice(page.indexOf('const canDeleteSelectedRows'), page.indexOf('const selectedEditableRow'))
+    expect(availability).toContain("resourcePermissions.permitted('repository', row.id, 'delete')")
+    expect(availability).toContain("resourcePermissions.permitted('repository', row.id, 'delete_data')")
+    expect(availability).toContain('isRepositoryDeletionAvailable(row)')
+    expect(en.repositoriesPage.residualAttentionDescription).toContain('Delete with Force Delete')
+  })
+
+  it('retains a task details warning and closes the deleted repository drawer', () => {
+    const polling = page.slice(page.indexOf('async function reconcileRepositoryCleanupTasks'), page.indexOf('async function reconcileRepositoryCreateTasks'))
+    expect(polling).toContain("t('repositoriesPage.cleanupRemovedWithResidue')")
+    expect(polling).toContain('notifyWarning(')
+    expect(polling).toContain('showDetails: true')
+    expect(polling).toContain('repositoryTaskErrorDetails(result.value, message)')
+    expect(polling).toContain('if (detailRow.value?.id === repositoryId) drawerDetailOpen.value = false')
+    expect(polling).toContain('if (result.value.repository_cleanup?.force)')
+    expect(polling).toContain('notifyRepositoryTaskFailure(')
+    expect(zhHans.repositoriesPage.cleanupRemovedWithResidue).toBeTruthy()
+  })
+
   it('provides English source copy and Simplified Chinese translations', () => {
     const copy = [
       ['statusResidualActionRequired', 'Residual action required'],

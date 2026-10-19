@@ -5114,7 +5114,7 @@
     "healthAttentionRequired": "Necesita atención",
     "connectivityNotApplicable": "No aplicable",
     "residualAttentionTitle": "La ubicación de almacenamiento residual requiere atención",
-    "residualAttentionDescription": "El registro del repositorio se eliminó de HyperFileLens, pero no se pudo confirmar la limpieza de los datos almacenados. Elimine o gestione los datos retenidos en el sistema de almacenamiento antes de liberar esta ubicación.",
+    "residualAttentionDescription": "Una eliminación anterior dejó esta ubicación de almacenamiento reservada. Seleccione este repositorio y use Eliminar con Eliminación forzada para terminar de retirarlo de HyperFileLens. Pueden quedar datos físicos que requieran limpieza manual.",
     "residualReviewAction": "Revisar y resolver",
     "colUsage": "Estimación de uso/capacidad",
     "colRepositoryUsage": "Uso del repositorio",
@@ -5451,7 +5451,8 @@
       "createdAtLabel": "Creado en",
       "updatedAtLabel": "Actualizado en",
       "selectedCount": "{n} seleccionado"
-    }
+    },
+    "cleanupRemovedWithResidue": "El repositorio se ha eliminado de HyperFileLens, pero no se pudo confirmar la limpieza de los recursos físicos. Revise los detalles de la tarea y limpie manualmente los recursos restantes."
   },
   "addNasRepo": {
     "stepAuthNas": "Información y autenticación NAS",

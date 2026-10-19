@@ -5114,7 +5114,7 @@
     "healthAttentionRequired": "需要处理",
     "connectivityNotApplicable": "不适用",
     "residualAttentionTitle": "残留存储位置待处理",
-    "residualAttentionDescription": "HyperFileLens 中的仓库记录已移除，但系统无法确认其存储数据已完成清理。请先在存储端删除或妥善处理相关数据，再释放该存储位置。",
+    "residualAttentionDescription": "此前的删除操作仍保留了此存储位置的占用。请选择该仓库，通过“删除”中的“强制删除”完成 HyperFileLens 控制端清理。物理数据可能仍然存在，需要手动处理。",
     "residualReviewAction": "查看并处理",
     "colUsage": "估算已用 / 容量",
     "colRepositoryUsage": "存储仓库使用",
@@ -5451,7 +5451,8 @@
       "createdAtLabel": "创建时间",
       "updatedAtLabel": "更新时间",
       "selectedCount": "已选 {n} 项"
-    }
+    },
+    "cleanupRemovedWithResidue": "仓库已从 HyperFileLens 移除，但部分物理资源未能确认清理。请查看任务详情并手动清理可能残留的资源。"
   },
   "addNasRepo": {
     "stepAuthNas": "NAS 信息与鉴权",

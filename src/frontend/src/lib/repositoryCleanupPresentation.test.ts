@@ -25,6 +25,14 @@ describe('repositoryCleanupMessage', () => {
     expect(repositoryCleanupMessage({ code: 'future_code', detail: 'Future detail' }, t))
       .toBe('Future detail')
   })
+
+  it('uses the existing residual guidance when a historical removal needs Force Delete', () => {
+    const translate = ((key: string) => key) as never
+    expect(repositoryCleanupMessage({
+      code: 'removed_repository_requires_force',
+      detail: 'Use Force Delete.',
+    }, translate)).toBe('repositoriesPage.residualAttentionDescription')
+  })
 })
 
 describe('Repository association blocker translations', () => {
