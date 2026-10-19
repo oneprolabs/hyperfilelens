@@ -6317,6 +6317,23 @@
       "deliveryHistory": "Historial de entrega"
     },
     "events": {
+      "repositoryTask": {
+        "failed": "Operación del repositorio fallida: {name}",
+        "timeout": "Tiempo de espera de la operación del repositorio agotado: {name}",
+        "reconciliationFailed": "La conciliación de instantáneas falló; no se reintentará ninguna eliminación sin confirmar."
+      },
+      "repositoryOperations": {
+        "quick": "Mantenimiento rápido",
+        "full": "Mantenimiento completo",
+        "reconcile": "Conciliación de instantáneas huérfanas",
+        "cleanupTarget": "Eliminar subrepositorio",
+        "cleanupRepository": "Eliminar repositorio",
+        "check": "Comprobar",
+        "credentials": "Actualizar credenciales",
+        "create": "Crear repositorio",
+        "bind": "Vincular proxy",
+        "remount": "Volver a montar el repositorio"
+      },
       "title": "Eventos",
       "searchPlaceholder": "Buscar eventos o recursos",
       "allCategories": "Todas las categorías",

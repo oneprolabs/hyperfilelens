@@ -73,6 +73,7 @@ export function nodeAttentionLinkForRole(role: string | undefined, nodeId: numbe
 
 export type DashboardEventItem = {
   id: string
+  event_type?: string
   title: string
   detail: string
   severity: 'information' | 'warning' | 'critical'
@@ -166,6 +167,7 @@ export type DashboardOverview = {
 
 type ApiOperationalEvent = {
   id?: string | number
+  event_type?: string
   title?: string
   details?: string
   severity?: 'information' | 'warning' | 'critical'
@@ -635,6 +637,7 @@ export async function loadDashboardOverview(
   })
   const events = eventsPage.results.map((event) => ({
     id: String(event.id ?? ''),
+    event_type: event.event_type,
     title: event.title || 'Event',
     detail: event.details || '',
     severity: event.severity || 'information',

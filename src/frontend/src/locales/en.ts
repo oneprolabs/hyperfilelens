@@ -4290,6 +4290,23 @@ export const en = {
     },
     events: {
       title: 'Events',
+      repositoryTask: {
+        failed: 'Repository operation failed: {name}',
+        timeout: 'Repository operation timeout: {name}',
+        reconciliationFailed: 'Snapshot reconciliation failed; no unconfirmed deletion will be retried.',
+      },
+      repositoryOperations: {
+        quick: 'Quick maintenance',
+        full: 'Full maintenance',
+        reconcile: 'Orphan snapshot reconciliation',
+        cleanupTarget: 'Delete subrepository',
+        cleanupRepository: 'Delete repository',
+        check: 'Check',
+        credentials: 'Update Credentials',
+        create: 'Create repository',
+        bind: 'Bind proxy',
+        remount: 'Remount repository',
+      },
       searchPlaceholder: 'Search events / resources',
       allCategories: 'All Categories',
       allSeverities: 'All Severities',
