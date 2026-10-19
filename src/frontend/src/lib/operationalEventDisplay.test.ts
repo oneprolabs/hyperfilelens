@@ -9,6 +9,8 @@ import { operationalEventDisplay } from './operationalEventDisplay'
 const zh = JSON.parse(readFileSync(
   resolve(process.cwd(), '../../language-packs/packs/zh-hans/frontend/messages.json'), 'utf8',
 ))
+const repositoryTask = zh.ops.events.repositoryTask
+const repositoryOperations = zh.ops.events.repositoryOperations
 const event = {
   event_type: 'task.failed',
   title: 'Repository operation failed: Orphan snapshot reconciliation · huawei-obs-backup-repo',
@@ -24,8 +26,8 @@ describe('operational event localization', () => {
     const original = { ...event }
     const { t } = translator()
     expect(operationalEventDisplay(event, t)).toEqual({
-      title: '存储仓库操作失败：孤立快照对账 · huawei-obs-backup-repo',
-      details: '快照对账失败；不会重试任何未经确认的删除操作。',
+      title: repositoryTask.failed.replace('{name}', `${repositoryOperations.reconcile} · huawei-obs-backup-repo`),
+      details: repositoryTask.reconciliationFailed,
     })
     expect(event).toEqual(original)
   })
@@ -35,7 +37,9 @@ describe('operational event localization', () => {
     const display = computed(() => operationalEventDisplay(event, i18n.t))
     expect(display.value).toEqual({ title: event.title, details: event.details })
     i18n.locale.value = 'zh-hans'
-    expect(display.value.title).toContain('存储仓库操作失败')
+    expect(display.value.title).toBe(
+      repositoryTask.failed.replace('{name}', `${repositoryOperations.reconcile} · huawei-obs-backup-repo`),
+    )
   })
 
   it.each([
@@ -44,12 +48,15 @@ describe('operational event localization', () => {
     'Create repository', 'Bind proxy', 'Remount repository',
   ])('translates %s while preserving the complete resource name', (action) => {
     const { t } = translator()
+    const resourceName = `repo · Check: ${repositoryOperations.check}`
     const display = operationalEventDisplay({
       event_type: 'task.timeout',
-      title: `Repository operation timeout: ${action} · repo · Check: 中文`,
+      title: `Repository operation timeout: ${action} · ${resourceName}`,
       details: 'Unknown engine diagnostic: failed with exit code 7',
     }, t)
-    expect(display.title).toMatch(/^存储仓库操作超时：.+ · repo · Check: 中文$/)
+    expect(display.title).toMatch(
+      new RegExp(`^${repositoryTask.timeout.replace('{name}', '.+')} · ${resourceName}$`),
+    )
     expect(display.title).not.toContain(`${action} · repo`)
     expect(display.details).toBe('Unknown engine diagnostic: failed with exit code 7')
   })
@@ -58,7 +65,7 @@ describe('operational event localization', () => {
     const { t } = translator()
     expect(operationalEventDisplay({
       ...event, title: 'Repository operation failed: Future operation · repo',
-    }, t).title).toBe('存储仓库操作失败：Future operation · repo')
+    }, t).title).toBe(repositoryTask.failed.replace('{name}', 'Future operation · repo'))
     for (const event_type of ['task.success', 'repository.offline', undefined]) {
       expect(operationalEventDisplay({ ...event, event_type }, t))
         .toEqual({ title: event.title, details: event.details })
