@@ -119,7 +119,24 @@ class NasRepairApiTests(TestCase):
             repository=repository,
             operation_type=operation_type,
         )
-        return run_repository_create_task(repository_task_id=repository_task.id)
+        # The API tests model connected Proxies with projected inventories.
+        # Missing/late snapshots are exercised by the readiness tests.
+        for node in Node.objects.filter(organization=self.org, role=NodeRole.PROXY):
+            metadata = dict(node.metadata or {})
+            inventory = dict(metadata.get("inventory") or {})
+            inventory.setdefault("capabilities", ["repository_ownership_v1"])
+            metadata.update(
+                inventory=inventory,
+                inventory_session_id="repair-test-session",
+                inventory_capabilities_session_id="repair-test-session",
+            )
+            node.metadata = metadata
+            node.save(update_fields=["metadata"])
+        with mock.patch(
+            "apps.storage.services.internal.repository_capabilities."
+            "redis_store.get_agent_session", return_value="repair-test-session",
+        ):
+            return run_repository_create_task(repository_task_id=repository_task.id)
 
     def _make_unbound_nas(self, *, protocol=Repository.NasProtocol.SMB):
         return Repository.objects.create(

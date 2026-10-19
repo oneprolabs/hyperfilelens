@@ -9,6 +9,7 @@ remount failures on an already-bound repository).
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Any, Iterable
 from uuid import uuid4
 
@@ -16,6 +17,7 @@ from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from apps.node.models import Node
@@ -44,6 +46,11 @@ from apps.storage.services.internal.proxy_fs_repository import (
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_CODE,
     RepositoryAlreadyExistsError,
+)
+from apps.storage.services.internal.repository_capabilities import (
+    CAPABILITIES_NOT_READY,
+    RepositoryCapabilitiesError,
+    require_repository_ownership_capability,
 )
 from apps.storage.services.internal.repository_execution_lock import (
     repository_execution_lock,
@@ -118,6 +125,8 @@ CREATE_OPERATION_TYPES = frozenset(
 # create after the short repository-operation advance lock expires.
 _CREATE_RUN_LOCK_TIMEOUT_SECONDS = 300
 _INITIALIZE_COMPLETE_PROGRESS = 85
+_CAPABILITY_WAIT_SECONDS = 60
+_CAPABILITY_RECHECK_SECONDS = 5
 
 
 def _repository_claim_locator(repository: Repository) -> dict[str, Any]:
@@ -429,7 +438,27 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
     }:
         return {"status": task.status, "idempotent": True}
 
+    if (
+        task.status == Task.Status.WAITING
+        and task.error_code == CAPABILITIES_NOT_READY
+        and repository_task.due_at
+        and repository_task.due_at > timezone.now()
+    ):
+        return {"status": task.status, "repository_task_id": repository_task.id}
+
+    capability_wait_resume = (
+        isinstance(task.result_payload, dict)
+        and "capabilities_wait_deadline" in task.result_payload
+        and task.steps.filter(
+            step_name="initialize_repository",
+            status=TaskStep.Status.PENDING,
+        ).exists()
+    )
     started_now = task.status == Task.Status.PENDING
+    # Waiting for evidence did not attempt any physical work. Use the durable
+    # checkpoint, not WAITING/error_code: a Worker can die after resuming the
+    # Task but before it has entered initialization.
+    physical_resume = not started_now and not capability_wait_resume
     if started_now:
         start_task(task_uuid=task.task_uuid, organization_id=task.organization_id)
         task.refresh_from_db()
@@ -510,7 +539,12 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
                 } and not repository_create_has_durable_agent_task(
                     repository_task=repository_task
                 ):
-                    preflight_bound_proxy(repository=repository)
+                    node = preflight_bound_proxy(repository=repository)
+                    # Even a missing child row can represent an already
+                    # dispatched command. Let the existing resolver report
+                    # its unknown outcome, not a new capability-wait failure.
+                    if not repository_task.remote_task_id:
+                        require_repository_ownership_capability(node)
             _set_create_step(
                 task, "verify_repository_owner", TaskStep.Status.SUCCESS, 35
             )
@@ -539,7 +573,7 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
                 initialization_outcome = _run_initialize(
                     repository,
                     recovery=(
-                        not started_now
+                        physical_resume
                         or repository.location_claims.filter(
                             state=RepositoryLocationClaim.State.RESIDUAL
                         ).exists()
@@ -584,6 +618,25 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
             task, "finalize_repository_create", TaskStep.Status.RUNNING, 90
         )
         return _complete_create_success(repository_task)
+    except RepositoryCapabilitiesError as exc:
+        if exc.error_code == CAPABILITIES_NOT_READY:
+            return _wait_for_repository_capabilities(repository_task, message=str(exc))
+        _fail_create_keep_row(
+            repository_task,
+            error_code=exc.error_code,
+            message=str(exc),
+            physical_initialize_done=False,
+            result_payload=_build_create_failure_result_payload(
+                repository_task=repository_task,
+                error_code=exc.error_code,
+                error_message=str(exc),
+            ),
+        )
+        return {
+            "status": "failed",
+            "repository_task_id": repository_task.id,
+            "error_code": exc.error_code,
+        }
     except RepositoryAgentOperationStateUnknown as exc:
         return _mark_create_waiting(
             repository_task,
@@ -609,7 +662,7 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
             }
             and _may_recover_existing_location(
                 repository,
-                resumed=not started_now,
+                resumed=physical_resume,
                 **_repository_claim_locator(repository),
             )
         ):
@@ -911,6 +964,92 @@ def _advance_failed_provisioning_cleanup_and_bind(
         10,
     )
     return None
+
+
+def _schedule_capability_recheck(repository_task_id: int) -> None:
+    """Best effort wakeup; the existing periodic reconciler is the fallback."""
+    from apps.storage.tasks import execute_repository_operation
+
+    try:
+        execute_repository_operation.apply_async(
+            kwargs={"repository_task_id": repository_task_id},
+            countdown=_CAPABILITY_RECHECK_SECONDS,
+        )
+    except Exception:
+        logger.exception(
+            "repository capability recheck enqueue failed repository_task_id=%s",
+            repository_task_id,
+        )
+
+
+@transaction.atomic
+def _wait_for_repository_capabilities(
+    repository_task: RepositoryTask, *, message: str
+) -> dict[str, Any]:
+    """Release the Worker while retaining one bounded, durable create task."""
+    # Match the repository -> Task lock order used by failure finalization.
+    Repository.objects.select_for_update().filter(
+        pk=repository_task.repository_id,
+    ).first()
+    task = Task.objects.select_for_update().get(pk=repository_task.task_id)
+    if task.status not in ACTIVE_TASK_STATUSES:
+        return {"status": task.status, "idempotent": True}
+    result = dict(task.result_payload or {})
+    raw_deadline = result.get("capabilities_wait_deadline")
+    try:
+        deadline = parse_datetime(raw_deadline) if isinstance(raw_deadline, str) else None
+    except ValueError:
+        deadline = None
+    now = timezone.now()
+    if deadline is None or timezone.is_naive(deadline):
+        # A malformed stored deadline must not restart a previous wait.
+        start = now if raw_deadline is None else (task.started_at or task.created_at)
+        deadline = start + timedelta(seconds=_CAPABILITY_WAIT_SECONDS)
+        result["capabilities_wait_deadline"] = deadline.isoformat()
+    if now >= deadline:
+        message = (
+            "Proxy capability synchronization timed out. Repository initialization "
+            "has not been dispatched. Retry initialization after synchronization recovers."
+        )
+        _fail_create_keep_row(
+            repository_task,
+            error_code=CAPABILITIES_NOT_READY,
+            message=message,
+            physical_initialize_done=False,
+            result_payload=_build_create_failure_result_payload(
+                repository_task=repository_task,
+                error_code=CAPABILITIES_NOT_READY,
+                error_message=message,
+            ),
+        )
+        return {
+            "status": "failed",
+            "repository_task_id": repository_task.id,
+            "error_code": CAPABILITIES_NOT_READY,
+        }
+    first_wait = raw_deadline is None
+    task.status = Task.Status.WAITING
+    task.error_code = CAPABILITIES_NOT_READY
+    task.error_message = message
+    task.result_payload = result
+    task.save(update_fields=[
+        "status", "error_code", "error_message", "result_payload", "updated_at",
+    ])
+    RepositoryTask.objects.filter(pk=repository_task.pk).update(
+        due_at=min(deadline, now + timedelta(seconds=_CAPABILITY_RECHECK_SECONDS)),
+    )
+    if first_wait:
+        append_task_event(
+            task=task,
+            message="Waiting for the Proxy capability snapshot before initialization",
+            metadata={"error_code": CAPABILITIES_NOT_READY},
+        )
+    transaction.on_commit(lambda: _schedule_capability_recheck(repository_task.id))
+    return {
+        "status": task.status,
+        "repository_task_id": repository_task.id,
+        "error_code": CAPABILITIES_NOT_READY,
+    }
 
 
 def _initialize_step_complete(task: Task) -> bool:
@@ -1250,12 +1389,8 @@ def _fail_repair_bind_already_exists(
             .filter(pk=repository_task.repository_id)
             .first()
         )
-        _set_create_step(
-            task,
-            str(task.current_step or "initialize_repository"),
-            TaskStep.Status.FAILED,
-            max(1, int(task.progress or 0)),
-        )
+        if not _fail_current_create_step(task):
+            return
         if repository is not None:
             mark_repository_location_residual(
                 repository,
@@ -1311,6 +1446,11 @@ def _build_create_failure_result_payload(
 
 
 def _create_failure_resolution(error_code: str) -> str:
+    if error_code == CAPABILITIES_NOT_READY:
+        return (
+            "Check Proxy connectivity and control-plane capability synchronization, "
+            "then retry initialization. An Agent upgrade is not implied."
+        )
     if error_code == "STORAGE.S3_VALIDATION_FAILED":
         return (
             "Open the repository form and verify the S3 connection settings, "
@@ -1352,12 +1492,8 @@ def _fail_create_already_exists(
         )
         credential_id = repository.credential_id
         organization_id = repository.organization_id
-        _set_create_step(
-            task,
-            str(task.current_step or "initialize_repository"),
-            TaskStep.Status.FAILED,
-            max(1, int(task.progress or 0)),
-        )
+        if not _fail_current_create_step(task):
+            return
         # Finalize the platform task, then detach PROTECT'd execution-target
         # links before deleting the failed repository row.
         _clear_target_active_task(repository_task)
@@ -1403,24 +1539,20 @@ def _fail_create_keep_row(
     result_payload: dict[str, Any] | None = None,
 ) -> None:
     task = repository_task.task
-    # Prefer the in-process latch from the runner: step persistence can lag
-    # behind a successful remount/initialize return. Persisted step progress is
-    # only the fallback for callers that omit the latch.
-    if physical_initialize_done is None:
-        initialize_done = _initialize_step_complete(task)
-    else:
-        initialize_done = physical_initialize_done
     with transaction.atomic():
         repository = (
             Repository.objects.select_for_update()
             .filter(pk=repository_task.repository_id)
             .first()
         )
-        _set_create_step(
-            task,
-            str(task.current_step or "initialize_repository"),
-            TaskStep.Status.FAILED,
-            max(1, int(task.progress or 0)),
+        if not _fail_current_create_step(task):
+            return
+        # Prefer the in-process latch. Persisted progress must be refreshed
+        # before using it as the fallback for callers without that latch.
+        initialize_done = (
+            _initialize_step_complete(task)
+            if physical_initialize_done is None
+            else physical_initialize_done
         )
         if repository is not None:
             if (
@@ -1492,12 +1624,8 @@ def _complete_create_failure_already_applied(
 ) -> dict[str, Any]:
     task = repository_task.task
     with transaction.atomic():
-        _set_create_step(
-            task,
-            str(task.current_step or "initialize_repository"),
-            TaskStep.Status.FAILED,
-            max(1, int(task.progress or 0)),
-        )
+        if not _fail_current_create_step(task):
+            return {"status": task.status, "idempotent": True}
         complete_task(
             task_uuid=task.task_uuid,
             organization_id=task.organization_id,
@@ -1602,6 +1730,38 @@ def _clear_target_active_task(repository_task: RepositoryTask) -> None:
         target.save(update_fields=["active_task", "updated_at"])
 
 
+def _fail_current_create_step(task: Task) -> bool:
+    """Read current state before choosing a step, never from a cached relation."""
+    current = Task.objects.select_for_update().get(pk=task.pk)
+    task.current_step = current.current_step
+    task.progress = current.progress
+    task.status = current.status
+    if current.status not in ACTIVE_TASK_STATUSES:
+        return False
+    completed = (TaskStep.Status.SUCCESS, TaskStep.Status.SKIPPED)
+    step = task.steps.filter(
+        step_name=current.current_step or "initialize_repository",
+    ).first()
+    if step is not None and step.status in completed:
+        # The error may be entering the next step, not performing the last
+        # successful one. Never turn completed physical work into a failure.
+        step = task.steps.filter(step_index__gt=step.step_index).exclude(
+            status__in=completed,
+        ).order_by("step_index", "id").first()
+    if step is not None:
+        _set_create_step(
+            task,
+            step.step_name,
+            TaskStep.Status.FAILED,
+            max(1, int(current.progress or 0), int(step.progress or 0)),
+        )
+    TaskStep.objects.filter(task=task, status=TaskStep.Status.RUNNING).update(
+        status=TaskStep.Status.FAILED,
+    )
+    return True
+
+
+@transaction.atomic
 def _set_create_step(task: Task, step_name: str, status: str, progress: int) -> None:
     from apps.storage.services.internal.repository_operations import set_task_step
 
