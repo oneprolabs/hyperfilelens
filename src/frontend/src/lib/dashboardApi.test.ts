@@ -44,6 +44,25 @@ describe('Dashboard statistics loading', () => {
     vi.useRealTimers()
   })
 
+  it('retains the event type and original text for reactive event localization', async () => {
+    const event = {
+      id: 1459,
+      event_type: 'task.failed',
+      title: 'Repository operation failed: Orphan snapshot reconciliation · repo',
+      details: 'Snapshot reconciliation failed; no unconfirmed deletion will be retried.',
+      severity: 'warning',
+    }
+    apiMock.mockImplementation(async (path) => {
+      if (path.includes('/dashboard-statistics/')) return summary()
+      if (path.includes('/monitors/events/')) return { count: 1, results: [event] }
+      return mockOtherEndpoint(path)
+    })
+    const result = await loadDashboardOverview((key) => key)
+    expect(result.events).toEqual([expect.objectContaining({
+      id: '1459', event_type: event.event_type, title: event.title, detail: event.details,
+    })])
+  })
+
   it('uses one authorized batch request for all nine statistics windows', async () => {
     apiMock.mockImplementation(async (path) => path.includes('/dashboard-statistics/')
       ? summary()

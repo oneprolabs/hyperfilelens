@@ -6318,6 +6318,23 @@
     },
     "events": {
       "title": "事件",
+      "repositoryTask": {
+        "failed": "存储仓库操作失败：{name}",
+        "timeout": "存储仓库操作超时：{name}",
+        "reconciliationFailed": "快照对账失败；不会重试任何未经确认的删除操作。"
+      },
+      "repositoryOperations": {
+        "quick": "快速维护",
+        "full": "完整维护",
+        "reconcile": "孤立快照对账",
+        "cleanupTarget": "删除子仓库",
+        "cleanupRepository": "删除存储仓库",
+        "check": "检查",
+        "credentials": "更新凭据",
+        "create": "创建存储仓库",
+        "bind": "绑定代理",
+        "remount": "重新挂载存储仓库"
+      },
       "searchPlaceholder": "搜索事件或资源",
       "allCategories": "全部类别",
       "allSeverities": "全部严重级别",

@@ -12,6 +12,7 @@ import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerW
 import { api, apiErrorMessage } from '../../lib/api'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { unwrapApiPayload } from '../../lib/parse'
+import { operationalEventDisplay } from '../../lib/operationalEventDisplay'
 
 type EventCategory = 'protection' | 'infrastructure' | 'system'
 type EventSeverity = 'information' | 'warning' | 'critical'
@@ -51,7 +52,14 @@ const { drawerSize: detailDrawerSize } = useResponsiveDrawerWidth()
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 const events = ref<OperationalEvent[]>([])
-const selectedEvent = ref<OperationalEvent | null>(null)
+const rawSelectedEvent = ref<OperationalEvent | null>(null)
+const selectedEvent = computed(() => rawSelectedEvent.value
+  ? { ...rawSelectedEvent.value, ...operationalEventDisplay(rawSelectedEvent.value, t) }
+  : null)
+const displayEvents = computed(() => events.value.map((event) => ({
+  ...event,
+  ...operationalEventDisplay(event, t),
+})))
 const detailOpen = ref(false)
 const filters = reactive({
   search: '',
@@ -149,12 +157,12 @@ function reloadFromFirstPage() {
 }
 
 function openDetail(event: OperationalEvent) {
-  selectedEvent.value = event
+  rawSelectedEvent.value = events.value.find((row) => row.id === event.id) || event
   detailOpen.value = true
 }
 
 function closeDetail() {
-  selectedEvent.value = null
+  rawSelectedEvent.value = null
   if (route.query.eventId) {
     const query = { ...route.query }
     delete query.eventId
@@ -312,7 +320,7 @@ watch(
             v-table-column-resize="'ops.events'"
             v-table-overflow-title
             v-loading="loading"
-            :data="events"
+            :data="displayEvents"
             row-key="id"
             class="hfl-list-table"
             stripe
