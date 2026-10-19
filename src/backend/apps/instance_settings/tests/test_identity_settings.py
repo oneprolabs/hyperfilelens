@@ -108,6 +108,7 @@ class PlatformIdentitySettingsCommunityTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["platform_ops_enabled"])
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(TURNSTILE_ENABLED=True)
     def test_get_masks_turnstile_when_extension_missing(self):
         response = self._get()
@@ -225,6 +226,108 @@ class PlatformIdentitySettingsEnterpriseTests(TestCase):
         self.assertFalse(response.data["has_runtime_override"])
         self.assertFalse(response.data["email_signup_enabled"])
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
+    @override_settings(TURNSTILE_ENABLED=False, TURNSTILE_SITE_KEY="", TURNSTILE_SECRET_KEY="")
+    def test_turnstile_enable_requires_keys_without_partially_saving_other_fields(self):
+        response = self._patch({"turnstile_enabled": True, "email_signup_enabled": True})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "TURNSTILE_KEYS_REQUIRED")
+        self.assertNotEqual(get_source(KEY_IDENTITY_EMAIL_SIGNUP), "runtime")
+
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
+    @override_settings(TURNSTILE_ENABLED=False, TURNSTILE_SITE_KEY="", TURNSTILE_SECRET_KEY="")
+    def test_turnstile_runtime_enable_disable_updates_public_config_immediately(self):
+        response = self._patch({
+            "turnstile_enabled": True,
+            "turnstile_site_key": "test-site-key",
+            "turnstile_secret_key": "test-secret-key",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["turnstile_enabled"])
+        self.assertEqual(response.data["turnstile_source"], "runtime")
+        self.assertNotIn("test-secret-key", str(response.data))
+        public = self.client.get("/api/v1/auth/turnstile/config", HTTP_X_HFL_SITE_ROLE="tenant")
+        self.assertTrue(public.json()["data"]["enabled"])
+        self.assertTrue(public.json()["data"]["configured"])
+        response = self._patch({"turnstile_enabled": False})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["turnstile_enabled"])
+        self.assertTrue(response.data["turnstile_secret_configured"])
+        public = self.client.get("/api/v1/auth/turnstile/config", HTTP_X_HFL_SITE_ROLE="tenant")
+        self.assertFalse(public.json()["data"]["enabled"])
+        self.assertNotIn("site_key", public.json()["data"])
+
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
+    @override_settings(TURNSTILE_ENABLED=True, TURNSTILE_SITE_KEY="deployment-site", TURNSTILE_SECRET_KEY="deployment-secret")
+    def test_turnstile_restore_defaults_restores_deployment_enabled_state(self):
+        response = self._patch({"turnstile_enabled": False})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["turnstile_enabled"])
+        response = self._patch({"clear_runtime": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["turnstile_enabled"])
+        self.assertFalse(response.data["has_runtime_override"])
+
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
+    @override_settings(TURNSTILE_ENABLED=False, TURNSTILE_SITE_KEY="deployment-site", TURNSTILE_SECRET_KEY="deployment-secret")
+    def test_turnstile_can_reuse_saved_or_deployment_secret(self):
+        response = self._patch({"turnstile_enabled": True, "turnstile_secret_key": ""})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["turnstile_enabled"])
+        response = self._patch({"turnstile_site_key": ""})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "TURNSTILE_KEYS_REQUIRED")
+        response = self._patch({"turnstile_enabled": False, "turnstile_site_key": ""})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["turnstile_enabled"])
+
+    def test_turnstile_rejects_non_boolean_flag(self):
+        for value in ("false", "true", 0, 1, None):
+            with self.subTest(value=value):
+                self.assertEqual(self._patch({"turnstile_enabled": value}).status_code, 400)
+
+    def test_turnstile_runtime_flag_requires_enterprise_extension(self):
+        with patch("apps.configuration.services.runtime_settings.enterprise_identity_enabled", return_value=False):
+            response = self._patch({"turnstile_enabled": False})
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["code"], "IDENTITY_EXTENSION_REQUIRED")
+
+    def test_non_staff_cannot_enable_turnstile(self):
+        user = User.objects.create_user(username="turnstile-ordinary", password="Pass1234")
+        self.client.force_authenticate(user=user)
+        self.assertEqual(self._patch({"turnstile_enabled": True}).status_code, 403)
+
+
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": "", "TURNSTILE_SITE_KEY": "", "TURNSTILE_SECRET_KEY": ""})
+    @override_settings(TURNSTILE_ENABLED=False, TURNSTILE_SITE_KEY="", TURNSTILE_SECRET_KEY="")
+    def test_turnstile_enforcement_changes_with_saved_flag_without_restart(self):
+        from django.test import RequestFactory
+        from apps.iam.services.turnstile_verification import verify_turnstile_for_action
+
+        request = RequestFactory().post("/", HTTP_X_HFL_SITE_ROLE="tenant", REMOTE_ADDR="203.0.113.20")
+        self.assertTrue(verify_turnstile_for_action({}, request, action="login"))
+        response = self._patch({
+            "turnstile_enabled": True,
+            "turnstile_site_key": "saved-site",
+            "turnstile_secret_key": "saved-secret",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(verify_turnstile_for_action({}, request, action="login"))
+        response = self._patch({"turnstile_enabled": False})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(verify_turnstile_for_action({}, request, action="login"))
+        response = self._patch({"turnstile_enabled": True, "turnstile_secret_key": ""})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["turnstile_enabled"])
+        self.assertFalse(verify_turnstile_for_action({}, request, action="login"))
+
+    def test_turnstile_rejects_non_string_credentials(self):
+        for field in ("turnstile_site_key", "turnstile_secret_key"):
+            for value in (True, 123, [], {}):
+                with self.subTest(field=field, value=value):
+                    self.assertEqual(self._patch({field: value}).status_code, 400)
+
+
 class PlatformEmailSettingsCommunityTests(TestCase):
     path = "/api/v1/instance-settings/email"
 
@@ -295,6 +398,7 @@ class PlatformEnvironmentSettingsCommunityTests(TestCase):
     def tearDown(self):
         invalidate_runtime_settings_cache()
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(TURNSTILE_ENABLED=True)
     def test_effective_turnstile_stays_off_without_extension(self):
         response = self.client.get(self.path, HTTP_X_HFL_SITE_ROLE="ops")

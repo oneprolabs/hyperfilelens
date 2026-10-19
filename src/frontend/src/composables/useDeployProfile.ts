@@ -9,6 +9,8 @@ export interface DeployProfile {
   platform_ops_enabled: boolean
   password_reset_available: boolean
   tenant_public_url: string
+  /** Browser navigation link, separate from tenant/Agent external access. */
+  website_public_url?: string
   tenant_public_url_source?: 'deployment' | 'runtime'
   admin_console_url: string
   /** Site-local post-login path (tenant "/" or ops AI Models / Overview). */

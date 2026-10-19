@@ -96,6 +96,7 @@ class EmailCodeLoginApiTests(APITestCase):
         assert match is not None
         return match.group(1)
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True, TRUSTED_PROXY=False,
         TURNSTILE_SITE_KEY="test-site-key", TURNSTILE_SECRET_KEY="test-secret-key",
@@ -107,6 +108,7 @@ class EmailCodeLoginApiTests(APITestCase):
         self.assertIn("turnstile_token", response.data["error"]["fields"])
         self.assertFalse(EmailVerificationCode.objects.exists())
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="test-site-key",
@@ -142,6 +144,7 @@ class EmailCodeLoginApiTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         verify.assert_not_called()
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="test-site-key",
@@ -154,6 +157,7 @@ class EmailCodeLoginApiTests(APITestCase):
         self.assertEqual(len(mail.outbox), 0)
         self.assertFalse(EmailVerificationCode.objects.exists())
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="test-site-key",
@@ -181,6 +185,7 @@ class EmailCodeLoginApiTests(APITestCase):
         self.assertEqual(len(mail.outbox), 0)
         self.assertFalse(EmailVerificationCode.objects.exists())
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(TURNSTILE_ENABLED=False)
     @patch("apps.iam.services.turnstile_verification.validate_turnstile")
     def test_disabled_turnstile_does_not_verify(self, verify):

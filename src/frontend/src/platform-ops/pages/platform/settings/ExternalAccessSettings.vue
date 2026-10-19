@@ -20,14 +20,28 @@ const saving = ref(false)
 const validationError = ref('')
 const meta = ref<PlatformExternalAccessSettings | null>(null)
 const externalAccessUrl = ref('')
+const productWebsiteUrl = ref('')
+const websiteSupported = computed(() => meta.value?.product_website_url !== undefined)
 const hasOverride = computed(
   () => meta.value?.has_runtime_override === true || meta.value?.source === 'runtime',
 )
+const hasWebsiteOverride = computed(() => websiteSupported.value
+  && Boolean(meta.value?.product_website_url?.trim()))
+const canRestoreDefaults = computed(() => hasOverride.value || hasWebsiteOverride.value)
+const externalChanged = computed(() => {
+  const value = externalAccessUrl.value.trim()
+  if (!hasOverride.value && !value) return false
+  return value !== (meta.value?.external_access_url || meta.value?.effective_url || '').trim()
+})
+const websiteChanged = computed(() => websiteSupported.value
+  && productWebsiteUrl.value.trim()
+    !== (meta.value?.product_website_url || meta.value?.default_product_website_url || '').trim())
 
 function applyPayload(payload: PlatformExternalAccessSettings) {
   meta.value = payload
   // Show the URL currently in effect (Runtime override, else Deployment/Default).
   externalAccessUrl.value = payload.external_access_url || payload.effective_url || ''
+  productWebsiteUrl.value = payload.product_website_url || payload.default_product_website_url || ''
 }
 
 async function load() {
@@ -44,14 +58,21 @@ async function load() {
   }
 }
 
-async function update(value: string | null) {
+async function update(value: string | null | undefined, website?: string) {
   if (!meta.value?.editable) return
   saving.value = true
   validationError.value = ''
+  const keepExternalDraft = value === undefined && externalChanged.value
+  const externalDraft = externalAccessUrl.value
+  const keepWebsiteDraft = website === undefined && websiteChanged.value
+  const websiteDraft = productWebsiteUrl.value
   try {
     const payload =
-      value === null ? null : value.trim()
-    applyPayload(await patchPlatformExternalAccess(payload))
+      value == null ? value : value.trim()
+    applyPayload(await patchPlatformExternalAccess(payload, website))
+    // Preserve unsaved edits to fields not included in this update.
+    if (keepExternalDraft) externalAccessUrl.value = externalDraft
+    if (keepWebsiteDraft) productWebsiteUrl.value = websiteDraft
     clearDeployProfileCache()
     try {
       await fetchDeployProfile(true)
@@ -74,15 +95,19 @@ async function update(value: string | null) {
 }
 
 function save() {
-  const trimmed = externalAccessUrl.value.trim()
-  const effective = (meta.value?.effective_url || '').trim()
-  // Empty / unchanged without a Runtime row must not create an override that
-  // blocks Deployment. Restore (null) clears; intentional empty only after
-  // an override already exists.
-  if (!hasOverride.value) {
-    if (!trimmed || trimmed === effective) return
-  }
-  void update(trimmed)
+  if (!externalChanged.value && !websiteChanged.value) return
+  void update(
+    externalChanged.value ? externalAccessUrl.value.trim() : undefined,
+    websiteChanged.value ? productWebsiteUrl.value.trim() : undefined,
+  )
+}
+
+function restoreDefaults() {
+  if (busy.value || saving.value || !canRestoreDefaults.value) return
+  void update(
+    hasOverride.value ? null : undefined,
+    hasWebsiteOverride.value ? '' : undefined,
+  )
 }
 
 onMounted(load)
@@ -133,15 +158,39 @@ onMounted(load)
                   <p class="platform-settings__hint">
                     {{ t('platformOps.settings.externalAccess.impact') }}
                   </p>
-                  <p
-                    v-if="validationError"
-                    class="platform-settings__hint platform-settings__hint--error"
-                  >
-                    {{ validationError }}
+                </div>
+              </div>
+              <div
+                v-if="websiteSupported"
+                class="platform-settings__setting-row"
+              >
+                <div class="platform-settings__setting-label">
+                  <label for="product-website-url">{{ t('platformOps.settings.externalAccess.productWebsiteUrl') }}</label>
+                </div>
+                <div class="platform-settings__setting-control">
+                  <el-input
+                    id="product-website-url"
+                    v-model="productWebsiteUrl"
+                    type="url"
+                    autocomplete="url"
+                    maxlength="2048"
+                    :disabled="!meta.editable || saving"
+                    :placeholder="meta.default_product_website_url || ''"
+                    @input="validationError = ''"
+                  />
+                  <p class="platform-settings__hint">
+                    {{ t('platformOps.settings.externalAccess.productWebsiteHint', { url: meta.default_product_website_url || '' }) }}
                   </p>
                 </div>
               </div>
             </div>
+            <p
+              v-if="validationError"
+              class="platform-settings__hint platform-settings__hint--error"
+              role="alert"
+            >
+              {{ validationError }}
+            </p>
           </section>
 
           <div
@@ -149,15 +198,15 @@ onMounted(load)
             class="platform-settings__actions"
           >
             <el-button
-              :disabled="saving || !hasOverride"
-              @click="update(null)"
+              :disabled="busy || saving || !canRestoreDefaults"
+              @click="restoreDefaults"
             >
               {{ t('platformOps.settings.externalAccess.restoreDefaults') }}
             </el-button>
             <el-button
               type="primary"
               :loading="saving"
-              :disabled="busy"
+              :disabled="busy || (!externalChanged && !websiteChanged)"
               @click="save"
             >
               {{ t('platformOps.settings.saveChanges') }}

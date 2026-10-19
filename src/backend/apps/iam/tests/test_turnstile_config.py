@@ -15,6 +15,7 @@ class TurnstileConfigViewTests(TestCase):
         invalidate_runtime_settings_cache()
         self.addCleanup(invalidate_runtime_settings_cache)
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(TURNSTILE_ENABLED=True, TRUSTED_PROXY=False)
     @patch(
         "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
@@ -30,6 +31,7 @@ class TurnstileConfigViewTests(TestCase):
                 self.assertEqual(response["Cache-Control"], "private, no-store")
                 self.assertNotIn("203.0.113.10", response.content.decode())
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(TURNSTILE_ENABLED=False)
     def test_disabled_config(self):
         response = self.client.get("/api/v1/auth/turnstile/config")
@@ -41,6 +43,7 @@ class TurnstileConfigViewTests(TestCase):
         self.assertFalse(payload["data"]["configured"])
         self.assertNotIn("site_key", payload["data"])
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="test-site-key",
@@ -59,6 +62,7 @@ class TurnstileConfigViewTests(TestCase):
         self.assertFalse(payload["data"]["configured"])
         self.assertNotIn("site_key", payload["data"])
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="test-site-key",
@@ -77,6 +81,7 @@ class TurnstileConfigViewTests(TestCase):
         self.assertTrue(payload["data"]["configured"])
         self.assertEqual(payload["data"]["site_key"], "test-site-key")
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="test-site-key",
@@ -94,6 +99,7 @@ class TurnstileConfigViewTests(TestCase):
         self.assertTrue(payload["data"]["enabled"])
         self.assertFalse(payload["data"]["configured"])
         self.assertNotIn("site_key", payload["data"])
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="test-site-key",

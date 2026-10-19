@@ -273,7 +273,8 @@
     "securityPwdRule": "La nueva contraseña debe tener entre 8 y 20 caracteres e incluir mayúsculas, minúsculas y números",
     "securityPwdMismatch": "Las nuevas contraseñas no coinciden",
     "passwordChangedRelogin": "La contraseña se ha cambiado. Vuelva a iniciar sesión.",
-    "passwordChangeFailed": "No se pudo cambiar la contraseña"
+    "passwordChangeFailed": "No se pudo cambiar la contraseña",
+    "menuProductWebsite": "Sitio web del producto"
   },
   "nav": {
     "openMenu": "Abrir navegación",
@@ -8778,9 +8779,9 @@
         "intro": "Configure las credenciales de Cloudflare Turnstile para proteger los flujos de autenticación.",
         "enabled": "Activado",
         "secretHint": "Déjelo vacío para conservar el secreto guardado.",
-        "ipAllowlist": "Direcciones IP exentas de verificación",
-        "ipAllowlistPlaceholder": "Una dirección IPv4 o IPv6 por línea",
-        "ipAllowlistHelp": "El inicio de sesión con contraseña desde estas IP omite la verificación humana, pero sigue requiriendo credenciales válidas. Déjelo vacío para no eximir ninguna IP. Máximo 100 direcciones; no se admiten rangos de red."
+        "ipAllowlist": "Direcciones IP exentas",
+        "ipAllowlistPlaceholder": "p. ej. 203.0.113.10, 2001:db8::1",
+        "ipAllowlistHelp": "El inicio de sesión con contraseña desde estas direcciones IP omite la verificación de Turnstile, pero sigue requiriendo credenciales válidas. Los demás flujos de autenticación protegidos no cambian. Déjelo vacío para no eximir ninguna dirección IP. Máximo 100 direcciones; no se admiten rangos de red."
       },
       "defaultsTitle": "Predeterminados de la plataforma",
       "externalAccessTitle": "Acceso externo",
@@ -8797,7 +8798,9 @@
         "urlHint": "Introduzca una dirección como https://ejemplo.com o https://ejemplo.com:8443. Prefiera HTTPS para el acceso remoto. Para Google OAuth, use un dominio o localhost/127.0.0.1; Google no admite URI de redirección con IP públicas.",
         "restoreDefaults": "Restaurar valores predeterminados",
         "saved": "URL actualizada",
-        "impact": "Esta URL se usa en los enlaces de instalación de Agent y Data Gateway, en sus callbacks de conexión y en el URI de redirección de Google OAuth. La Data Gateway de este servidor no se ve afectada."
+        "impact": "Esta URL se usa en los enlaces de instalación de Agent y Data Gateway, en sus callbacks de conexión y en el URI de redirección de Google OAuth. La Data Gateway de este servidor no se ve afectada.",
+        "productWebsiteUrl": "URL del sitio web del producto",
+        "productWebsiteHint": "El enlace Sitio web del producto del menú de usuario abre esta URL en una pestaña nueva. La dirección predeterminada es {url}. Esta opción solo afecta al enlace del menú."
       },
       "email": {
         "intro": "Configure el servidor SMTP saliente para las notificaciones de la plataforma y los correos de verificación.",
@@ -8825,6 +8828,8 @@
         "testRecipientPlaceholder": "ops{'@'}example.com",
         "testRecipientRequired": "Introduzca la dirección de correo del destinatario",
         "testSend": "Enviar",
+        "testSending": "Enviando…",
+        "testSavedSettingsHint": "Se utiliza la configuración de correo guardada.",
         "testSuccess": "Correo de prueba enviado a {recipient}",
         "testFailed": "No se pudo enviar el correo electrónico de prueba"
       },
@@ -8900,7 +8905,7 @@
           "indexCorruptionUnconfirmed": "Se detectó previamente corrupción de índices ({last_seen_at}); la recuperación no está confirmada.",
           "indexScanIncomplete": "El análisis de registros de errores está incompleto o su punto de control no está disponible; la integridad actual no está confirmada.",
           "indexLogsUnavailable": "La supervisión de los registros de errores de la base de datos no está disponible o es incompleta.",
-          "queueBacklog": "Acumulación en la cola \"{queue}\": {count} mensajes pendientes (umbral de advertencia: {threshold}).",
+          "queueBacklog": "La cola \"{queue}\" supera el umbral de advertencia de {threshold} mensajes.",
           "queueNotConfigured": "La supervisión de colas no está configurada.",
           "queueConfigInvalid": "La configuración de supervisión de colas no es válida.",
           "queueProbeFailed": "No se pueden consultar las métricas de las colas de SourceLens.",
@@ -8914,7 +8919,7 @@
         "noticeError": "Error",
         "databaseSummary": "Motor: {engine} · Endpoint: {endpoint}",
         "queryLatency": "Latencia de consulta: {value}",
-        "redisRoles": "Roles: Caché · Broker de tareas · Mensajería en tiempo real",
+        "redisRoles": "Caché · Broker de tareas · Mensajería en tiempo real",
         "pingLatency": "Latencia de ping: {value}",
         "status": "Estado",
         "latencyMs": "{n} ms",

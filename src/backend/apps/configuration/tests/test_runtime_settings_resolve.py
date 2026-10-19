@@ -71,3 +71,43 @@ class RuntimeSettingsResolveTests(TestCase):
         with patch.dict(os.environ, {"LANGFUSE_ENABLED": "false"}, clear=False):
             settings = insight_config.get_langfuse_settings()
             self.assertTrue(settings["enabled"])
+
+
+class TurnstileRuntimeResolveTests(TestCase):
+    def setUp(self):
+        self.env = patch.dict(os.environ, {"TURNSTILE_ENABLED": ""})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_runtime_false_overrides_enabled_deployment(self):
+        with patch.dict(os.environ, {"TURNSTILE_ENABLED": "true"}):
+            rs.set_bool(rs.KEY_IDENTITY_TURNSTILE_ENABLED, False)
+            self.assertFalse(rs.turnstile_enabled())
+            self.assertEqual(rs.get_source(rs.KEY_IDENTITY_TURNSTILE_ENABLED), "runtime")
+
+    def test_runtime_true_overrides_disabled_deployment(self):
+        with patch.dict(os.environ, {"TURNSTILE_ENABLED": "false"}):
+            rs.set_bool(rs.KEY_IDENTITY_TURNSTILE_ENABLED, True)
+            self.assertTrue(rs.turnstile_enabled())
+
+    def test_deployment_and_default_apply_without_runtime_override(self):
+        with patch.dict(os.environ, {"TURNSTILE_ENABLED": "true"}):
+            self.assertTrue(rs.turnstile_enabled())
+        with patch.dict(os.environ, {"TURNSTILE_ENABLED": "false"}):
+            self.assertFalse(rs.turnstile_enabled())
+        with self.settings(TURNSTILE_ENABLED=False):
+            self.assertFalse(rs.turnstile_enabled())
+
+    def test_reads_db_updates_without_cache_or_restart(self):
+        rs.set_bool(rs.KEY_IDENTITY_TURNSTILE_ENABLED, True)
+        self.assertTrue(rs.turnstile_enabled())
+        PlatformRuntimeSetting.objects.filter(key=rs.KEY_IDENTITY_TURNSTILE_ENABLED).update(value_text="false")
+        self.assertFalse(rs.turnstile_enabled())
+
+    def test_restore_defaults_removes_the_flag_override(self):
+        with patch.dict(os.environ, {"TURNSTILE_ENABLED": "true"}):
+            rs.set_bool(rs.KEY_IDENTITY_TURNSTILE_ENABLED, False)
+            self.assertFalse(rs.turnstile_enabled())
+            rs.clear_identity_runtime_settings()
+            self.assertTrue(rs.turnstile_enabled())
+            self.assertFalse(rs.has_runtime_override(rs.KEY_IDENTITY_TURNSTILE_ENABLED))

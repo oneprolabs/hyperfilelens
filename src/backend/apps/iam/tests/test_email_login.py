@@ -14,6 +14,7 @@ from apps.configuration.services.runtime_settings import (
 )
 
 
+@patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
 @override_settings(TURNSTILE_ENABLED=True, TRUSTED_PROXY=False)
 class AllowlistedEmailLoginTests(APITestCase):
     def setUp(self):
@@ -127,6 +128,7 @@ class EmailLoginApiTests(APITestCase):
         self.assertEqual(response.data["error"]["error_code"], "INVALID_PASSWORD")
         self.assertIn("password", response.data["error"]["fields"])
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="site-key",
@@ -153,6 +155,7 @@ class EmailLoginApiTests(APITestCase):
             "TURNSTILE_MISCONFIGURED",
         )
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="site-key",

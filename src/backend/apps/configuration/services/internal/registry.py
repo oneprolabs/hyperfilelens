@@ -54,6 +54,14 @@ def all_key_specs() -> tuple[ConfigKeySpec, ...]:
 
     return (
         _spec(
+            key=instance_settings_conf.CONFIG_KEY_PRODUCT_WEBSITE_URL,
+            category="deployment",
+            value_type=GlobalConfig.ValueType.STRING,
+            description="Product website navigation URL",
+            owning_app="instance_settings",
+            tenant_capable=False,
+        ),
+        _spec(
             key=instance_settings_conf.CONFIG_KEY_EXTERNAL_ACCESS_URL,
             category="deployment",
             value_type=GlobalConfig.ValueType.STRING,

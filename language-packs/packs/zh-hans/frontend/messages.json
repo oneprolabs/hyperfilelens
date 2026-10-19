@@ -273,7 +273,8 @@
     "securityPwdRule": "新密码必须为 8–20 个字符，并包含大写字母、小写字母和数字",
     "securityPwdMismatch": "两次输入的新密码不一致",
     "passwordChangedRelogin": "密码已更改。请重新登录。",
-    "passwordChangeFailed": "更改密码失败"
+    "passwordChangeFailed": "更改密码失败",
+    "menuProductWebsite": "产品网站"
   },
   "nav": {
     "openMenu": "打开导航",
@@ -8778,9 +8779,9 @@
         "intro": "配置 Cloudflare Turnstile 凭据以实现受保护的身份验证流程。",
         "enabled": "已启用",
         "secretHint": "留空则保留已保存的密钥。",
-        "ipAllowlist": "免验证 IP 白名单",
-        "ipAllowlistPlaceholder": "每行一个 IPv4 或 IPv6 地址",
-        "ipAllowlistHelp": "这些 IP 的账号密码登录无需人机验证，但仍需验证账号密码。留空表示不豁免任何 IP。最多 100 个地址，不支持网段。"
+        "ipAllowlist": "免人机验证 IP 地址",
+        "ipAllowlistPlaceholder": "例如 203.0.113.10, 2001:db8::1",
+        "ipAllowlistHelp": "来自这些 IP 地址的账号密码登录可跳过 Turnstile 人机验证，但仍需验证账号密码。其他受保护的认证流程不变。留空表示不豁免任何 IP 地址。最多 100 个地址，不支持网段。"
       },
       "defaultsTitle": "平台默认值",
       "externalAccessTitle": "外部访问",
@@ -8797,7 +8798,9 @@
         "urlHint": "请填写形如 https://example.com 或 https://example.com:8443 的地址。对外访问建议使用 HTTPS。若使用 Google OAuth，请使用域名或 localhost/127.0.0.1；Google 不支持公网 IP 回调地址。",
         "restoreDefaults": "恢复默认值",
         "saved": "访问地址已更新",
-        "impact": "Agent、数据网关的安装链接和连接回调，以及 Google OAuth 回调地址都会使用此地址。本机上的数据网关不受影响。"
+        "impact": "Agent、数据网关的安装链接和连接回调，以及 Google OAuth 回调地址都会使用此地址。本机上的数据网关不受影响。",
+        "productWebsiteUrl": "产品网站地址",
+        "productWebsiteHint": "用户菜单中的“产品网站”将在新标签页中打开此地址。默认地址为 {url}。此设置仅影响菜单链接。"
       },
       "email": {
         "intro": "配置平台通知与验证邮件使用的 SMTP 发信服务。",
@@ -8825,6 +8828,8 @@
         "testRecipientPlaceholder": "ops{'@'}example.com",
         "testRecipientRequired": "请输入测试收件邮箱",
         "testSend": "发送",
+        "testSending": "发送中…",
+        "testSavedSettingsHint": "使用已保存的邮件设置发送。",
         "testSuccess": "测试邮件已发送至 {recipient}",
         "testFailed": "发送测试邮件失败"
       },
@@ -8900,7 +8905,7 @@
           "indexCorruptionUnconfirmed": "此前检测到数据库索引损坏（{last_seen_at}）；尚未确认恢复。",
           "indexScanIncomplete": "数据库错误日志扫描尚未完成或无法保存扫描进度；当前完整性尚未确认。",
           "indexLogsUnavailable": "数据库错误日志监控不可用或不完整。",
-          "queueBacklog": "队列“{queue}”积压：{count} 条待处理消息（告警阈值：{threshold}）。",
+          "queueBacklog": "队列“{queue}”超过 {threshold} 条消息的告警阈值。",
           "queueNotConfigured": "尚未配置队列监控。",
           "queueConfigInvalid": "队列监控配置无效。",
           "queueProbeFailed": "无法获取 SourceLens 队列指标。",
@@ -8914,7 +8919,7 @@
         "noticeError": "错误",
         "databaseSummary": "引擎：{engine} · 端点：{endpoint}",
         "queryLatency": "查询延迟：{value}",
-        "redisRoles": "角色：缓存 · 任务 Broker · 实时消息",
+        "redisRoles": "缓存 · 任务 Broker · 实时消息",
         "pingLatency": "Ping 延迟：{value}",
         "status": "状态",
         "latencyMs": "{n} 毫秒",

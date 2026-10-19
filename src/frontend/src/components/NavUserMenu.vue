@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, LogOut, User } from 'lucide-vue-next'
+import { ChevronDown, ExternalLink, Globe, LogOut, User } from 'lucide-vue-next'
 import { confirmSignOut, performLogout } from '../lib/logout'
 import { useAuth } from '../composables/useAuth'
 import { fetchDeployProfile } from '../composables/useDeployProfile'
@@ -15,6 +15,7 @@ const { user } = useAuth()
 const { theme } = useTheme()
 const popoverRef = ref<InstanceType<typeof HflPopover> | null>(null)
 const productProfileLoaded = ref(false)
+const productWebsiteUrl = ref('')
 const productVersion = ref<string | null>(null)
 const productEdition = ref<'community' | 'enterprise'>('community')
 
@@ -67,8 +68,24 @@ function go(path: string) {
   router.push(path)
 }
 
-onMounted(async () => {
-  const profile = await fetchDeployProfile()
+let productProfileRequest = 0
+
+async function loadProductProfile(force = false) {
+  const request = ++productProfileRequest
+  const profile = await fetchDeployProfile(force)
+  if (request !== productProfileRequest) return
+  productWebsiteUrl.value = ''
+  productProfileLoaded.value = false
+  if (profile?.website_public_url) {
+    try {
+      const url = new URL(profile.website_public_url)
+      if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) {
+        productWebsiteUrl.value = url.href
+      }
+    } catch {
+      // A missing/invalid link must not become an unsafe navigation target.
+    }
+  }
   // Older backends may return a profile without the product identity fields.
   // Keep the footer hidden instead of mislabeling that instance as a dev build.
   if (
@@ -79,7 +96,9 @@ onMounted(async () => {
   productVersion.value = profile.product_version?.trim() || null
   productEdition.value = profile.edition === 'enterprise' ? 'enterprise' : 'community'
   productProfileLoaded.value = true
-})
+}
+
+onMounted(() => { void loadProductProfile() })
 
 async function confirmLogout() {
   popoverRef.value?.hide()
@@ -99,6 +118,7 @@ async function confirmLogout() {
     popper-class="nav-dropdown-popover"
     :popper-options="popperOptions"
     :offset="8"
+    @show="loadProductProfile(true)"
   >
     <template #reference>
       <button
@@ -147,6 +167,31 @@ async function confirmLogout() {
             >{{ profileSub }}</span>
           </span>
         </button>
+        <a
+          v-if="productWebsiteUrl"
+          class="nav-dropdown-panel__item nav-user-website"
+          :href="productWebsiteUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          @click="popoverRef?.hide()"
+        >
+          <span
+            class="nav-dropdown-panel__icon-box"
+            aria-hidden="true"
+          >
+            <Globe
+              :size="16"
+              stroke-width="1.75"
+            />
+          </span>
+          <span class="nav-dropdown-panel__item-text">
+            <span class="nav-dropdown-panel__item-title">{{ t('account.menuProductWebsite') }}</span>
+          </span>
+          <ExternalLink
+            :size="14"
+            aria-hidden="true"
+          />
+        </a>
       </div>
 
       <div class="nav-dropdown-panel__divider" />
@@ -190,6 +235,10 @@ async function confirmLogout() {
 </template>
 
 <style scoped>
+.nav-user-website {
+  text-decoration: none;
+}
+
 .nav-user-menu__email {
   flex: 1 1 auto;
   overflow: hidden;

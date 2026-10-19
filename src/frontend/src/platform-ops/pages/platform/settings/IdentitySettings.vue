@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
+import { Copy } from 'lucide-vue-next'
+import { copyTextToClipboard } from '../../../../lib/clipboard'
 import ModulePage from '../../../../components/ModulePage.vue'
 import { useResolvedPlatformOpsSideNav } from '../../../composables/useResolvedPlatformOpsSideNav'
 import {
@@ -17,6 +19,7 @@ const sideNav = useResolvedPlatformOpsSideNav()
 const busy = ref(false)
 const saving = ref(false)
 const meta = ref<PlatformIdentitySettings | null>(null)
+const redirectUri = computed(() => (meta.value?.google_oauth_redirect_uri || '').trim())
 const enterpriseIdentityEnabled = computed(() => Boolean(meta.value?.enterprise_identity_enabled))
 const hasRuntimeOverride = computed(() => Boolean(meta.value?.has_runtime_override))
 const form = reactive({
@@ -27,6 +30,7 @@ const form = reactive({
   google_oauth_enabled: false,
   google_client_id: '',
   google_client_secret: '',
+  turnstile_enabled: false,
   turnstile_site_key: '',
   turnstile_secret_key: '',
   turnstile_ip_allowlist: '',
@@ -46,9 +50,10 @@ function applyPayload(data: PlatformIdentitySettings) {
   form.google_oauth_enabled = data.google_oauth_enabled
   form.google_client_id = data.google_client_id || ''
   form.google_client_secret = ''
+  form.turnstile_enabled = Boolean(data.turnstile_enabled)
   form.turnstile_site_key = data.turnstile_site_key || ''
   form.turnstile_secret_key = ''
-  form.turnstile_ip_allowlist = (data.turnstile_ip_allowlist || []).join('\n')
+  form.turnstile_ip_allowlist = (data.turnstile_ip_allowlist || []).join(', ')
   form.registration_verification_code_minutes = data.iam.registration_verification_code_minutes
   form.registration_token_expiry_minutes = data.iam.registration_token_expiry_minutes
   form.password_reset_verification_code_minutes = data.iam.password_reset_verification_code_minutes
@@ -67,6 +72,37 @@ async function load() {
   }
 }
 
+async function copyRedirectUri() {
+  if (!redirectUri.value) return
+  try {
+    await copyTextToClipboard(redirectUri.value)
+    ElMessage.success({ message: t('common.copied'), grouping: true })
+  } catch {
+    ElMessage.error({ message: t('nodesDeploy.copyFailed'), grouping: true })
+  }
+}
+
+async function pasteExemptIpAddresses(event: ClipboardEvent) {
+  const text = event.clipboardData?.getData('text/plain') || ''
+  if (!/[\r\n]/.test(text)) return
+  const input = event.target
+  if (!(input instanceof HTMLInputElement)) return
+  event.preventDefault()
+  const addresses = text.split(/[,\r\n]+/).map(value => value.trim()).filter(Boolean).join(', ')
+  if (!addresses) return
+  const current = form.turnstile_ip_allowlist
+  const start = input.selectionStart ?? current.length
+  const end = input.selectionEnd ?? start
+  const prefix = current.slice(0, start)
+  const suffix = current.slice(end)
+  const before = prefix.trim() && !/,\s*$/.test(prefix) ? `${prefix.trimEnd()}, ` : prefix
+  const after = suffix.trim() && !/^\s*,/.test(suffix) ? `, ${suffix.trimStart()}` : suffix
+  form.turnstile_ip_allowlist = before + addresses + after
+  await nextTick()
+  const caret = before.length + addresses.length
+  input.setSelectionRange(caret, caret)
+}
+
 async function save() {
   saving.value = true
   try {
@@ -79,9 +115,10 @@ async function save() {
       body.google_oauth_enabled = form.google_oauth_enabled
       body.google_client_id = form.google_client_id
       if (form.google_client_secret.trim()) body.google_client_secret = form.google_client_secret
+      body.turnstile_enabled = form.turnstile_enabled
       body.turnstile_site_key = form.turnstile_site_key
       body.turnstile_ip_allowlist = form.turnstile_ip_allowlist
-        .split(/\r?\n/)
+        .split(/[,\r\n]+/)
         .map(value => value.trim())
         .filter(Boolean)
       if (form.turnstile_secret_key.trim()) body.turnstile_secret_key = form.turnstile_secret_key
@@ -260,10 +297,24 @@ onMounted(load)
                   <span>{{ t('platformOps.settings.identity.googleRedirect') }}</span>
                 </div>
                 <div class="platform-settings__setting-control">
-                  <el-input
-                    :model-value="meta?.google_oauth_redirect_uri || '—'"
-                    disabled
-                  />
+                  <div class="platform-settings__redirect-control">
+                    <el-input
+                      :model-value="redirectUri || '—'"
+                      readonly
+                    />
+                    <el-button
+                      class="platform-settings__redirect-copy"
+                      text
+                      :aria-label="t('common.copy')"
+                      :disabled="busy || !redirectUri"
+                      @click="copyRedirectUri"
+                    >
+                      <Copy
+                        :size="13"
+                        aria-hidden="true"
+                      />
+                    </el-button>
+                  </div>
                   <p class="platform-settings__hint">
                     {{ t('platformOps.settings.googleOAuth.redirectHint') }}
                   </p>
@@ -283,8 +334,8 @@ onMounted(load)
                 </div>
                 <div class="platform-settings__setting-control">
                   <el-switch
-                    :model-value="Boolean(meta?.turnstile_enabled)"
-                    disabled
+                    v-model="form.turnstile_enabled"
+                    :disabled="busy || saving"
                   />
                 </div>
               </div>
@@ -328,11 +379,10 @@ onMounted(load)
                   <el-input
                     id="turnstile-ip-allowlist"
                     v-model="form.turnstile_ip_allowlist"
-                    type="textarea"
-                    :rows="4"
                     :disabled="saving"
                     :placeholder="t('platformOps.settings.turnstile.ipAllowlistPlaceholder')"
                     aria-describedby="turnstile-ip-allowlist-help"
+                    @paste="pasteExemptIpAddresses"
                   />
                   <p
                     id="turnstile-ip-allowlist-help"
@@ -450,3 +500,23 @@ onMounted(load)
     </div>
   </ModulePage>
 </template>
+
+<style scoped>
+.platform-settings__redirect-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.platform-settings__redirect-control > .el-input {
+  flex: 1;
+  min-width: 0;
+}
+.platform-settings__redirect-copy {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: rgb(100 116 139);
+}
+</style>

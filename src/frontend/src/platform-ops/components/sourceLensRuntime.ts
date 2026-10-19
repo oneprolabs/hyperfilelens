@@ -20,11 +20,7 @@ const noticeKeys: Record<string, string> = {
 }
 
 export function sourceLensQueueDetails(probe: SourceLensRuntimeProbe, t: Translate): string[] {
-  const warned = new Set((probe.notices || [])
-    .filter(notice => notice.code === 'queue_backlog')
-    .map(notice => String(notice.params.queue || '')))
   const details = Object.entries(probe.queue_lengths || {})
-    .filter(([queue]) => !warned.has(queue))
     .map(([queue, count]) => t(
     'platformOps.settings.environment.sourceLensMonitor.queueSummary', { queue, count },
   ))
