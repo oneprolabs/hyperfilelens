@@ -10,6 +10,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from common.resource_lifecycle import notify_resource_lifecycle_changed
 from apps.node.models import NodeTask
 from apps.storage.repositories.models import (
     Repository,
@@ -538,6 +539,10 @@ def release_repository_location(
         released_at=now,
         updated_at=now,
     )
+    notify_resource_lifecycle_changed(
+        organization_id=repository.organization_id,
+        resource_type="repository", resource_id=repository.pk,
+    )
 
 
 @transaction.atomic
@@ -583,10 +588,15 @@ def release_repository_residual_locations(repository: Repository) -> int:
     claim_ids = list(claims.values_list("id", flat=True))
     if not claim_ids:
         raise ValidationError("Repository has no residual storage locations.")
-    return RepositoryLocationClaim.objects.filter(id__in=claim_ids).update(
+    count = RepositoryLocationClaim.objects.filter(id__in=claim_ids).update(
         state=RepositoryLocationClaim.State.RELEASED,
         released_at=timezone.now(),
     )
+    notify_resource_lifecycle_changed(
+        organization_id=locked.organization_id,
+        resource_type="repository", resource_id=locked.pk,
+    )
+    return count
 
 
 def repository_has_owned_location(
