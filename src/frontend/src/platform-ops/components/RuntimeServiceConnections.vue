@@ -50,18 +50,16 @@ function sourceLensOverviewRow(row: PlatformIntegration): RuntimeStatusRow {
     runtime: statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info'),
     health: !configured
       ? statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info')
-      : monitor
-      ? sourceLensStatusCell(monitor.health_status, 'health', t)
       : row.reachable
       ? statusCell(t('platformOps.integrations.healthy'), 'success')
       : statusCell(t('platformOps.settings.environment.healthUnhealthy'), 'danger'),
     availability: !configured
       ? statusCell(t('platformOps.settings.environment.statusNotConfigured'), 'info')
-      : monitor
-      ? sourceLensStatusCell(monitor.status, 'availability', t)
-      : row.business_ready
+      : !row.reachable
+      ? statusCell(t('platformOps.settings.environment.statusUnavailable'), 'danger')
+      : row.authenticated && row.business_ready
       ? statusCell(t('platformOps.settings.environment.statusOperational'), 'success')
-      : statusCell(t('platformOps.settings.environment.statusUnavailable'), 'danger'),
+      : statusCell(t('platformOps.settings.environment.statusDegraded'), 'warning'),
     details: [
       `${t('platformOps.settings.environment.deployment')}: ${formatDeploymentMode(row.mode || '')}`,
       `${t('platformOps.integrations.version')}: ${row.version || t('platformOps.integrations.unknown')}`,
@@ -71,14 +69,16 @@ function sourceLensOverviewRow(row: PlatformIntegration): RuntimeStatusRow {
       ] : []),
     ],
     notices: [
-      ...(row.warning ? [{ message: row.warning, level: 'warning' as const }] : []),
-      ...sourceLensNotices(Object.values(monitor?.components || {}), t, true),
+      ...(row.warning ? [{
+        message: row.warning,
+        level: row.reachable ? 'warning' as const : 'error' as const,
+      }] : []),
     ],
   }
 }
 
 function sourceLensContainerRows(row: PlatformIntegration): RuntimeStatusRow[] {
-  if (row.mode !== 'bundled' || !row.configured) return []
+  if (!row.configured) return []
   const aggregate = integrationStatus(row)
   const containers = [
     ['sourcelens-nginx', 'Nginx', t('platformOps.integrations.containerNginx')],
@@ -89,8 +89,20 @@ function sourceLensContainerRows(row: PlatformIntegration): RuntimeStatusRow[] {
     ['sourcelens-postgres', 'PostgreSQL', t('platformOps.integrations.containerPostgres')],
     ['sourcelens-redis', 'Redis', t('platformOps.integrations.containerRedis')],
   ]
-  return containers.map(([service, displayName, details]) => {
-    const probe = row.runtime_monitor?.components[service.replace('sourcelens-', '')]
+  const components = row.runtime_monitor?.components || {}
+  // External deployments have monitored services, not a known Docker inventory.
+  // Keep their diagnostics on component rows without inventing other containers.
+  const services = row.mode === 'bundled'
+    ? containers
+    : Object.keys(components).map(component => containers.find(
+      ([service]) => service === `sourcelens-${component}`,
+    ) || [
+      `sourcelens-${component}`,
+      component.split(/[-_]/).map(part => part ? part[0]!.toUpperCase() + part.slice(1) : '').join(' '),
+      '',
+    ])
+  return services.map(([service, displayName, details]) => {
+    const probe = components[service.replace('sourcelens-', '')]
     if (probe) {
       return {
         key: `${row.key}-${service}`,
@@ -98,7 +110,7 @@ function sourceLensContainerRows(row: PlatformIntegration): RuntimeStatusRow[] {
         runtime: statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info'),
         health: sourceLensStatusCell(probe.health_status, 'health', t),
         availability: sourceLensStatusCell(probe.availability_status, 'availability', t),
-        details: [details, ...sourceLensQueueDetails(probe, t)],
+        details: [details, ...sourceLensQueueDetails(probe, t)].filter(Boolean),
         notices: sourceLensNotices([probe], t),
       }
     }
@@ -144,23 +156,13 @@ function dataGatewayStatus(): RuntimeStatusCell {
 }
 
 function dataGatewayOverviewRows(): RuntimeStatusRow[] {
-  const value = dataGateway.value
-  const configured = value.configured === true
   return [{
     key: 'data-gateway-overview',
     service: 'Runtime',
-    runtime: !configured
-      ? statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info')
-      : statusCell(
-      value.agent_online ? t('platformOps.settings.environment.online') : t('platformOps.settings.environment.offline'),
-      value.agent_online ? 'success' : 'danger',
-    ),
-    health: !configured
-      ? statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info')
-      : statusCell(
-      value.endpoint_reachable ? t('platformOps.integrations.healthy') : t('platformOps.settings.environment.statusNotMonitored'),
-      value.endpoint_reachable ? 'success' : 'info',
-    ),
+    // No independent process or health probe exists for the Gateway bundle.
+    // Agent routing and the shared SourceLens endpoint are not bundle probes.
+    runtime: statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info'),
+    health: statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info'),
     availability: dataGatewayStatus(),
     details: dataGatewayDetails(),
     notices: dataGatewayNotices(),
@@ -245,18 +247,6 @@ function dataGatewayNotices(): RuntimeStatusNotice[] {
   }
   if (value.warning) {
     return [{ message: String(value.warning), level: 'warning' }]
-  }
-  if (!value.agent_online) {
-    return [{
-      message: t('platformOps.settings.environment.gatewayAgentOffline'),
-      level: 'error',
-    }]
-  }
-  if (!value.lensnode_online) {
-    return [{
-      message: t('platformOps.settings.environment.gatewayLensNodeOffline'),
-      level: 'error',
-    }]
   }
   return []
 }

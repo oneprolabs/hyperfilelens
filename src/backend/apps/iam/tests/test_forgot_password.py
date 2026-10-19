@@ -198,6 +198,7 @@ class ForgotPasswordApiTests(APITestCase):
         self.assertIn("email", response.data["error"]["fields"])
         self.assertEqual(len(mail.outbox), 0)
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="site-key",

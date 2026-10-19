@@ -17,8 +17,12 @@ TURNSTILE_FIELD = "turnstile_token"
 
 
 def turnstile_enabled() -> bool:
-    """Return whether this deployment requires Turnstile verification."""
-    return bool(getattr(settings, "TURNSTILE_ENABLED", False))
+    """Read the same current policy used by Admin Console and public config."""
+    from apps.configuration.services.runtime_settings import (
+        turnstile_enabled as effective_turnstile_enabled,
+    )
+
+    return effective_turnstile_enabled()
 
 
 def turnstile_configured() -> bool:

@@ -157,6 +157,7 @@ class RegistrationApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["error"]["error_code"], "EMAIL_EXISTS")
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="site-key",
@@ -173,6 +174,7 @@ class RegistrationApiTests(APITestCase):
         self.assertEqual(response.data["error"]["error_code"], "VALIDATION_ERROR")
         self.assertIn("turnstile_token", response.data["error"]["fields"])
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="site-key",

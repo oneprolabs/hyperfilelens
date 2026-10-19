@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.iam.auth.authentication import OptionalJWTAuthenticationFromCookies
+from apps.instance_settings.services.product_website import effective_product_website_url
 from common.deploy.product import product_edition, product_version
 from common.deploy.site import (
     admin_console_entry_visible,
@@ -59,6 +60,7 @@ class DeployProfileView(APIView):
                 and email_delivery_configured()
             ),
             "tenant_public_url": tenant_public_url(),
+            "website_public_url": effective_product_website_url(request),
             "tenant_public_url_source": external_access_source(),
             "admin_console_url": admin_console_public_url(request),
             # Site-local post-login path (tenant "/" vs ops AI Models / Overview).

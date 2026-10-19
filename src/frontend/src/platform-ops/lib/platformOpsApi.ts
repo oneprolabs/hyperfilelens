@@ -38,6 +38,7 @@ export interface PlatformIdentitySettings {
   platform_ops_allowed_cidrs: string[]
   platform_ops_source?: 'deployment' | 'runtime' | 'default'
   turnstile_enabled: boolean
+  turnstile_source?: 'runtime' | 'deployment' | 'default' | 'extension'
   turnstile_site_key: string
   turnstile_secret_configured: boolean
   turnstile_ip_allowlist?: string[]
@@ -72,6 +73,8 @@ export interface PlatformExternalAccessSettings {
   has_runtime_override?: boolean
   suggested_url: string
   editable: boolean
+  product_website_url?: string
+  default_product_website_url?: string
 }
 
 /** Deployment-managed services shown in Runtime Environment. */
@@ -155,13 +158,17 @@ export async function fetchPlatformExternalAccess() {
 }
 
 export async function patchPlatformExternalAccess(
-  externalAccessUrl: string | null,
+  externalAccessUrl: string | null | undefined,
+  productWebsiteUrl?: string,
 ) {
   return send<PlatformExternalAccessSettings>(
     '/api/v1/platform-ops/platform/settings/external-access',
     {
       method: 'PATCH',
-      body: JSON.stringify({ external_access_url: externalAccessUrl }),
+      body: JSON.stringify({
+        ...(externalAccessUrl !== undefined ? { external_access_url: externalAccessUrl } : {}),
+        ...(productWebsiteUrl !== undefined ? { product_website_url: productWebsiteUrl } : {}),
+      }),
     },
   )
 }

@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import TestCase, override_settings
 
 from apps.iam.services.turnstile_verification import (
     missing_turnstile_fields,
@@ -13,7 +13,7 @@ from apps.iam.services.turnstile_verification import (
 )
 
 
-class TurnstileVerificationTests(SimpleTestCase):
+class TurnstileVerificationTests(TestCase):
     def setUp(self):
         patcher = patch(
             "apps.configuration.services.runtime_settings.turnstile_ip_allowlist",
@@ -31,6 +31,7 @@ class TurnstileVerificationTests(SimpleTestCase):
         }
         return request
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(TURNSTILE_ENABLED=False)
     def test_disabled_mode_requires_no_token(self):
         request = self._request()
@@ -40,6 +41,7 @@ class TurnstileVerificationTests(SimpleTestCase):
             verify_turnstile_for_action({}, request, action="login"),
         )
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(TURNSTILE_ENABLED=True)
     @patch(
         "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
@@ -55,6 +57,7 @@ class TurnstileVerificationTests(SimpleTestCase):
             {},
         )
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(TURNSTILE_ENABLED=True)
     @patch("apps.iam.services.turnstile_verification.validate_turnstile")
     def test_ops_site_never_requires_or_verifies_turnstile(self, mock_validate):
@@ -65,6 +68,7 @@ class TurnstileVerificationTests(SimpleTestCase):
         self.assertTrue(verify_turnstile_for_action({}, request, action="login"))
         mock_validate.assert_not_called()
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="site-key",
@@ -109,6 +113,7 @@ class TurnstileVerificationTests(SimpleTestCase):
             expected_hostname="app.example.com",
         )
 
+    @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="site-key",

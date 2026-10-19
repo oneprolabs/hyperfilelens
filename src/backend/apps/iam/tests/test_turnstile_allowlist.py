@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from django.test import RequestFactory, SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 
 from apps.iam.services.turnstile_allowlist import (
     login_client_ip,
@@ -90,6 +90,7 @@ class TurnstileAllowlistValidationTests(SimpleTestCase):
                 self.assertIsNone(login_client_ip(RequestFactory().get("/", **headers)))
 
 
+@patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
 @override_settings(TURNSTILE_ENABLED=True, TRUSTED_PROXY=False)
 @patch(
     "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
@@ -99,7 +100,7 @@ class TurnstileAllowlistValidationTests(SimpleTestCase):
     "apps.configuration.services.runtime_settings.turnstile_ip_allowlist",
     return_value=["203.0.113.10", "2001:db8::1"],
 )
-class TurnstileLoginExemptionTests(SimpleTestCase):
+class TurnstileLoginExemptionTests(TestCase):
     def test_allowlisted_login_skips_token_and_siteverify(self, _list, _identity):
         for ip in ("203.0.113.10", "2001:0db8::1"):
             with self.subTest(ip=ip):

@@ -124,6 +124,7 @@ async function restoreDeployment() {
 }
 
 async function sendTest() {
+  if (busy.value || saving.value || testing.value) return
   const recipient = testRecipient.value.trim()
   if (!recipient) {
     ElMessage.warning({ message: t('platformOps.settings.email.testRecipientRequired'), grouping: true })
@@ -366,18 +367,30 @@ onMounted(load)
               <div class="platform-settings__setting-control">
                 <div class="platform-settings__inline-actions">
                   <el-input
+                    id="test-email-recipient"
                     v-model="testRecipient"
                     :placeholder="t('platformOps.settings.email.testRecipientPlaceholder')"
                     autocomplete="off"
-                    :disabled="testing"
+                    aria-describedby="test-email-settings-hint"
+                    :disabled="busy || saving || testing"
                   />
                   <el-button
+                    class="platform-settings__test-send"
                     :loading="testing"
+                    :disabled="busy || saving || testing || !testRecipient.trim()"
                     @click="sendTest"
                   >
-                    {{ t('platformOps.settings.email.testSend') }}
+                    {{ testing
+                      ? t('platformOps.settings.email.testSending')
+                      : t('platformOps.settings.email.testSend') }}
                   </el-button>
                 </div>
+                <p
+                  id="test-email-settings-hint"
+                  class="platform-settings__hint"
+                >
+                  {{ t('platformOps.settings.email.testSavedSettingsHint') }}
+                </p>
               </div>
             </div>
           </div>
@@ -408,3 +421,14 @@ onMounted(load)
     </div>
   </ModulePage>
 </template>
+
+<style scoped>
+.platform-settings__test-send {
+  flex: 0 0 112px;
+  width: 112px;
+  height: var(--el-component-size, 32px);
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 400;
+}
+</style>

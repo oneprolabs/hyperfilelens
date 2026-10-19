@@ -6,6 +6,7 @@ import os
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from django.conf import settings
@@ -36,6 +37,8 @@ def _empty_snapshot(*, status: str, error: str, warning: str) -> dict[str, Any]:
         "status": status,
         "error": error,
         "queue_depths": {},
+        "queue_warning_threshold": QUEUE_DEPTH_WARNING,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
         "redis_used_memory_bytes": 0,
         "redis_memory_limit_bytes": 0,
         "redis_memory_ratio": 0.0,
@@ -243,6 +246,8 @@ def runtime_backlog_snapshot() -> dict[str, Any]:
         "status": "degraded" if warnings else "ok",
         "error": None,
         "queue_depths": queue_depths,
+        "queue_warning_threshold": QUEUE_DEPTH_WARNING,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
         "redis_used_memory_bytes": used_memory,
         "redis_memory_limit_bytes": memory_limit,
         "redis_memory_ratio": memory_ratio,

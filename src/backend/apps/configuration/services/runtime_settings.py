@@ -31,6 +31,7 @@ KEY_IDENTITY_EMAIL_SIGNUP = "identity.email_signup_enabled"
 KEY_IDENTITY_EMAIL_CODE_LOGIN = "identity.email_code_login_enabled"
 KEY_IDENTITY_PLATFORM_OPS = "identity.platform_ops_enabled"
 KEY_IDENTITY_OPS_CIDRS = "identity.platform_ops_allowed_cidrs"
+KEY_IDENTITY_TURNSTILE_ENABLED = "identity.turnstile_enabled"
 KEY_IDENTITY_TURNSTILE_SITE = "identity.turnstile_site_key"
 KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST = "identity.turnstile_ip_allowlist"
 KEY_IDENTITY_GOOGLE_CLIENT_ID = "identity.google_client_id"
@@ -88,6 +89,7 @@ IDENTITY_RUNTIME_KEYS = (
     KEY_IDENTITY_EMAIL_CODE_LOGIN,
     KEY_IDENTITY_PLATFORM_OPS,
     KEY_IDENTITY_OPS_CIDRS,
+    KEY_IDENTITY_TURNSTILE_ENABLED,
     KEY_IDENTITY_TURNSTILE_SITE,
     KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST,
     KEY_IDENTITY_GOOGLE_CLIENT_ID,
@@ -394,8 +396,13 @@ def platform_ops_allowed_cidrs() -> list[str]:
 
 
 def turnstile_enabled() -> bool:
-    """Return the deployment-controlled Turnstile feature flag."""
-    return bool(getattr(settings, "TURNSTILE_ENABLED", False))
+    """Resolve Runtime > Deployment > Default without silently bypassing missing keys."""
+    return get_bool(
+        KEY_IDENTITY_TURNSTILE_ENABLED,
+        env_name="TURNSTILE_ENABLED",
+        settings_attr="TURNSTILE_ENABLED",
+        default=False,
+    )
 
 
 def turnstile_site_key() -> str:

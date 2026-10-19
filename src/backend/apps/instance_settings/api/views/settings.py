@@ -7,6 +7,7 @@ import os
 from collections.abc import Mapping
 
 from django.core.mail import EmailMessage, get_connection
+from django.db import transaction
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -32,8 +33,15 @@ from apps.instance_settings.services.external_access import (
     effective_external_access_url,
     external_access_source,
     has_external_access_runtime_override,
+    normalize_external_access_url,
     set_external_access_url,
     suggested_external_access_url,
+)
+from apps.instance_settings.services.product_website import (
+    configured_product_website_url,
+    default_product_website_url,
+    normalize_product_website_url,
+    set_product_website_url,
 )
 from common.platform_audit import write_platform_audit_log
 from common.platform_authz import ADMIN_USERS_MANAGE, INFRA_AI_MODELS_MANAGE
@@ -57,6 +65,7 @@ from apps.configuration.services.runtime_settings import (
     KEY_IDENTITY_GOOGLE_OAUTH,
     KEY_IDENTITY_OPS_CIDRS,
     KEY_IDENTITY_PLATFORM_OPS,
+    KEY_IDENTITY_TURNSTILE_ENABLED,
     KEY_IDENTITY_TURNSTILE_SITE,
     KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST,
     SECRET_KEY_AZURE,
@@ -91,6 +100,7 @@ from apps.configuration.services.runtime_settings import (
     sync_google_social_app,
     turnstile_enabled,
     turnstile_ip_allowlist,
+    turnstile_secret_key,
     turnstile_site_key,
     validate_email_connection_config,
 )
@@ -284,6 +294,7 @@ _EE_IDENTITY_PATCH_FIELDS = frozenset(
         "google_oauth_enabled",
         "google_client_id",
         "google_client_secret",
+        "turnstile_enabled",
         "turnstile_site_key",
         "turnstile_secret_key",
         "turnstile_ip_allowlist",
@@ -355,6 +366,11 @@ class PlatformOpsSettingsIdentityView(APIView):
                     settings_attr="HFL_PLATFORM_OPS_ENABLED",
                 ),
                 "turnstile_enabled": turnstile_enabled() if identity_enabled else False,
+                "turnstile_source": get_source(
+                    KEY_IDENTITY_TURNSTILE_ENABLED,
+                    env_name="TURNSTILE_ENABLED",
+                    settings_attr="TURNSTILE_ENABLED",
+                ) if identity_enabled else "extension",
                 "turnstile_site_key": turnstile_site_key() if identity_enabled else "",
                 "turnstile_ip_allowlist": turnstile_ip_allowlist(),
                 "turnstile_secret_configured": (
@@ -389,6 +405,7 @@ class PlatformOpsSettingsIdentityView(APIView):
             }
         )
 
+    @transaction.atomic
     def patch(self, request):
         data = request.data or {}
         if bool(data.get("clear_runtime")):
@@ -408,6 +425,35 @@ class PlatformOpsSettingsIdentityView(APIView):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
+        # Validate prospective credentials before writes. Empty secret retains
+        # the saved key; missing keys never silently disable an enabled policy.
+        if "turnstile_enabled" in data and not isinstance(data["turnstile_enabled"], bool):
+            return Response(
+                {"detail": "turnstile_enabled must be a boolean."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for field in ("turnstile_site_key", "turnstile_secret_key"):
+            if field in data and data[field] is not None and not isinstance(data[field], str):
+                return Response(
+                    {"detail": f"{field} must be a string."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        if {"turnstile_enabled", "turnstile_site_key", "turnstile_secret_key"}.intersection(data):
+            enabled = data.get("turnstile_enabled", turnstile_enabled())
+            if enabled:
+                site = (
+                    str(data["turnstile_site_key"] or "").strip()
+                    if "turnstile_site_key" in data else turnstile_site_key()
+                )
+                secret = str(data.get("turnstile_secret_key") or "").strip() or turnstile_secret_key()
+                if not site or not secret:
+                    return Response(
+                        {
+                            "detail": "Configure both Site Key and Secret Key before enabling Cloudflare Turnstile.",
+                            "code": "TURNSTILE_KEYS_REQUIRED",
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
         allowlist = None
         if "turnstile_ip_allowlist" in data:
             try:
@@ -433,6 +479,7 @@ class PlatformOpsSettingsIdentityView(APIView):
             "email_signup_enabled": KEY_IDENTITY_EMAIL_SIGNUP,
             "email_code_login_enabled": KEY_IDENTITY_EMAIL_CODE_LOGIN,
             "google_oauth_enabled": KEY_IDENTITY_GOOGLE_OAUTH,
+            "turnstile_enabled": KEY_IDENTITY_TURNSTILE_ENABLED,
             "platform_ops_enabled": KEY_IDENTITY_PLATFORM_OPS,
         }
         for field, key in bool_map.items():
@@ -760,7 +807,11 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                         env_name="HFL_GOOGLE_OAUTH_ENABLED",
                         settings_attr="HFL_GOOGLE_OAUTH_ENABLED",
                     ),
-                    "turnstile_enabled": "deployment" if identity_enabled else "extension",
+                    "turnstile_enabled": get_source(
+                        KEY_IDENTITY_TURNSTILE_ENABLED,
+                        env_name="TURNSTILE_ENABLED",
+                        settings_attr="TURNSTILE_ENABLED",
+                    ) if identity_enabled else "extension",
                     "email_host": cfg["source"],
                 },
                 "health": health,
@@ -806,7 +857,7 @@ class PlatformOpsSettingsIntegrationsView(APIView):
 
 
 class PlatformOpsSettingsExternalAccessView(APIView):
-    """Configure the canonical external tenant origin for this instance."""
+    """Configure external access and the independent product website link."""
 
     permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
 
@@ -818,6 +869,8 @@ class PlatformOpsSettingsExternalAccessView(APIView):
                 "source": external_access_source(),
                 "has_runtime_override": has_external_access_runtime_override(),
                 "suggested_url": suggested_external_access_url(request),
+                "product_website_url": configured_product_website_url(),
+                "default_product_website_url": default_product_website_url(request),
                 "editable": True,
             }
         )
@@ -832,7 +885,7 @@ class PlatformOpsSettingsExternalAccessView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if "external_access_url" not in data:
+        if not {"external_access_url", "product_website_url"}.intersection(data):
             return Response(
                 {
                     "detail": "external_access_url is required.",
@@ -840,14 +893,35 @@ class PlatformOpsSettingsExternalAccessView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # Validate both fields before changing either address. The existing
+        # external-access empty/null semantics stay independent of Website.
         try:
-            if data["external_access_url"] is None:
-                value = set_external_access_url("", user=request.user, clear=True)
-            else:
-                value = set_external_access_url(
-                    data["external_access_url"],
-                    user=request.user,
-                )
+            if "external_access_url" in data and data["external_access_url"] is not None:
+                normalize_external_access_url(data["external_access_url"])
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc), "code": "EXTERNAL_ACCESS_URL_INVALID"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            if "product_website_url" in data and data["product_website_url"] is not None:
+                normalize_product_website_url(data["product_website_url"])
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc), "code": "PRODUCT_WEBSITE_URL_INVALID"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            with transaction.atomic():
+                value = configured_external_access_url()
+                if "external_access_url" in data:
+                    value = set_external_access_url(
+                        data["external_access_url"] or "",
+                        user=request.user,
+                        clear=data["external_access_url"] is None,
+                    )
+                if "product_website_url" in data:
+                    set_product_website_url(data["product_website_url"], user=request.user)
         except ValueError as exc:
             return Response(
                 {"detail": str(exc), "code": "EXTERNAL_ACCESS_URL_INVALID"},
@@ -856,7 +930,13 @@ class PlatformOpsSettingsExternalAccessView(APIView):
         _audit(
             request,
             "platform_settings.external_access.update",
-            {"configured": bool(value)},
+            {
+                "configured": bool(value),
+                **(
+                    {"product_website_configured": bool(configured_product_website_url())}
+                    if "product_website_url" in data else {}
+                ),
+            },
         )
         return self.get(request)
 

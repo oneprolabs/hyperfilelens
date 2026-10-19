@@ -41,6 +41,7 @@ vi.mock('../composables/useDeployProfile', () => ({
 }))
 
 const HflPopoverStub = defineComponent({
+  emits: ['show'],
   methods: { hide() {} },
   template: `
     <div>
@@ -133,6 +134,99 @@ describe('NavUserMenu hover behavior', () => {
     expect(wrapper.get('.nav-user-trigger').attributes('title')).toBeUndefined()
     expect(wrapper.get('.nav-user-menu__email').attributes('title')).toBeUndefined()
     expect(wrapper.find('.nav-dropdown-panel [title]').exists()).toBe(false)
+  })
+})
+
+describe('NavUserMenu Product Website link', () => {
+  it('opens the configured website in a new tab without a native tooltip', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue({
+      product_version: '0.3.8',
+      edition: 'enterprise',
+      website_public_url: 'https://hyperfilelens.com/',
+    })
+    const wrapper = mountMenu()
+    await flushPromises()
+    const link = wrapper.get('a.nav-user-website')
+    expect(link.text()).toBe('Product Website')
+    expect(link.attributes('href')).toBe('https://hyperfilelens.com/')
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toBe('noopener noreferrer')
+    expect(link.attributes('title')).toBeUndefined()
+    expect(wrapper.find('.nav-dropdown-panel [title]').exists()).toBe(false)
+  })
+
+  it('keeps the link independent of product-version metadata', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue({
+      website_public_url: 'https://192.168.8.69:11442',
+    })
+    const wrapper = mountMenu()
+    await flushPromises()
+    expect(wrapper.get('a.nav-user-website').attributes('href')).toBe('https://192.168.8.69:11442/')
+    expect(wrapper.find('.nav-user-product').exists()).toBe(false)
+  })
+
+  it.each([undefined, '', 'javascript:alert(1)', 'data:text/html,test', '//evil.example', 'https://user:password@example.com/'])(
+    'does not render an unsafe or missing website URL: %s',
+    async (website) => {
+      mocks.fetchDeployProfile.mockResolvedValue({ website_public_url: website })
+      const wrapper = mountMenu()
+      await flushPromises()
+      expect(wrapper.find('a.nav-user-website').exists()).toBe(false)
+    },
+  )
+})
+
+describe('NavUserMenu website refresh', () => {
+  beforeEach(() => mocks.fetchDeployProfile.mockReset())
+
+  it('updates a mounted menu after saving or restoring the website setting', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue({ website_public_url: 'https://old.example/' })
+    const wrapper = mountMenu()
+    await flushPromises()
+    try {
+      expect(wrapper.get('a.nav-user-website').attributes('href')).toBe('https://old.example/')
+      mocks.fetchDeployProfile.mockResolvedValue({ website_public_url: 'https://new.example/' })
+      wrapper.getComponent(HflPopoverStub).vm.$emit('show')
+      await flushPromises()
+      expect(mocks.fetchDeployProfile).toHaveBeenLastCalledWith(true)
+      expect(wrapper.get('a.nav-user-website').attributes('href')).toBe('https://new.example/')
+      mocks.fetchDeployProfile.mockResolvedValue({ website_public_url: 'https://192.168.8.69:11442/' })
+      wrapper.getComponent(HflPopoverStub).vm.$emit('show')
+      await flushPromises()
+      expect(wrapper.get('a.nav-user-website').attributes('href')).toBe('https://192.168.8.69:11442/')
+    } finally { wrapper.unmount() }
+  })
+
+  it.each([undefined, '', 'javascript:alert(1)'])(
+    'removes an old link when the refreshed website is missing or unsafe: %s',
+    async website => {
+      mocks.fetchDeployProfile.mockResolvedValue({ website_public_url: 'https://old.example/' })
+      const wrapper = mountMenu()
+      await flushPromises()
+      try {
+        expect(wrapper.find('a.nav-user-website').exists()).toBe(true)
+        mocks.fetchDeployProfile.mockResolvedValue({ website_public_url: website })
+        wrapper.getComponent(HflPopoverStub).vm.$emit('show')
+        await flushPromises()
+        expect(wrapper.find('a.nav-user-website').exists()).toBe(false)
+      } finally { wrapper.unmount() }
+    },
+  )
+
+  it('does not overwrite a fresh website with a slower initial request', async () => {
+    let resolveInitial!: (value: { website_public_url: string }) => void
+    const initial = new Promise<{ website_public_url: string }>(resolve => { resolveInitial = resolve })
+    mocks.fetchDeployProfile.mockReturnValueOnce(initial)
+    const wrapper = mountMenu()
+    try {
+      mocks.fetchDeployProfile.mockResolvedValueOnce({ website_public_url: 'https://new.example/' })
+      wrapper.getComponent(HflPopoverStub).vm.$emit('show')
+      await flushPromises()
+      expect(wrapper.get('a.nav-user-website').attributes('href')).toBe('https://new.example/')
+      resolveInitial({ website_public_url: 'https://old.example/' })
+      await flushPromises()
+      expect(wrapper.get('a.nav-user-website').attributes('href')).toBe('https://new.example/')
+    } finally { wrapper.unmount() }
   })
 })
 

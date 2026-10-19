@@ -47,26 +47,26 @@ const editionLabel = computed(() => {
 
 const instanceHealth = computed(() =>
   aggregateStatus([
+    probeStatus(nginxProbe.value),
+    probeStatus(webProbe.value),
     probeStatus(apiProbe.value),
     probeStatus(databaseProbe.value),
-    probeStatus(redisProbe.value),
+    redisAvailabilityStatus.value,
     probeStatus(celeryProbe.value),
     probeStatus(schedulerProbe.value),
     probeStatus(sourceLensProbe.value),
     probeStatus(dataGatewayProbe.value),
   ]),
 )
-const controlPlaneHealth = computed(() =>
-  aggregateStatus([
-    probeStatus(nginxProbe.value),
-    probeStatus(webProbe.value),
-    probeStatus(apiProbe.value),
-    probeStatus(celeryProbe.value),
-    probeStatus(schedulerProbe.value),
-    probeStatus(databaseProbe.value),
-    probeStatus(redisProbe.value),
-  ]),
-)
+const redisAvailabilityStatus = computed(() => {
+  const status = probeStatus(redisProbe.value)
+  if (status !== 'ok') return status
+  const backlog = asProbe(celeryProbe.value.backlog)
+  const threshold = backlog.queue_warning_threshold
+  return typeof threshold === 'number' && threshold > 0
+    && queueEntries(backlog).some(([, count]) => count >= threshold)
+    ? 'degraded' : status
+})
 
 const controlPlaneRows = computed<RuntimeStatusRow[]>(() => [
   serviceRow('nginx', 'Nginx', nginxProbe.value, [t('platformOps.settings.environment.nginxDetail')]),
@@ -88,6 +88,7 @@ const controlPlaneRows = computed<RuntimeStatusRow[]>(() => [
     redisDetails(redisProbe.value),
     probeStatus(redisProbe.value),
     backlogNotices(celeryProbe.value.backlog),
+    redisAvailabilityStatus.value,
   ),
 ])
 
@@ -101,10 +102,11 @@ const controlPlaneOverviewRow = computed<RuntimeStatusRow>(() => {
     key: 'control-plane-runtime',
     service: 'Runtime',
     runtime: statusCell(t('platformOps.settings.environment.statusNotMonitored'), 'info'),
-    health: healthCell(controlPlaneHealth.value),
-    availability: availabilityCell(controlPlaneHealth.value),
+    // The environment API response is the core control-plane availability check.
+    // Worker, Scheduler and datastore diagnostics belong to their own rows.
+    health: healthCell(probeStatus(apiProbe.value)),
+    availability: availabilityCell(probeStatus(apiProbe.value)),
     details,
-    notices: controlPlaneNotices(),
   }
 })
 
@@ -130,6 +132,7 @@ function serviceRow(
   details: string[],
   healthStatus = probeStatus(probe),
   notices: RuntimeStatusNotice[] = [],
+  availabilityStatus = probeStatus(probe),
 ): RuntimeStatusRow {
   const probeNotice = noticeForProbe(probe)
   return {
@@ -137,7 +140,7 @@ function serviceRow(
     service,
     runtime: runtimeCell(probe),
     health: healthCell(healthStatus),
-    availability: availabilityCell(probeStatus(probe)),
+    availability: availabilityCell(availabilityStatus),
     details: probeNotice ? [] : details.filter(Boolean),
     notices: probeNotice ? [probeNotice] : notices,
   }
@@ -232,14 +235,33 @@ function formatDatabaseEngine(value: unknown): string {
   return formatText(value)
 }
 
+function queueEntries(backlog: ProbeRecord): Array<[string, number]> {
+  return Object.entries(asProbe(backlog.queue_depths))
+    .filter((entry): entry is [string, number] => (
+      typeof entry[1] === 'number' && Number.isInteger(entry[1]) && entry[1] >= 0
+    ))
+}
+
 function backlogNotices(value: unknown): RuntimeStatusNotice[] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
-  const warnings = (value as ProbeRecord).warnings
-  if (!Array.isArray(warnings)) return []
-  return warnings
+  const backlog = asProbe(value)
+  if (!Array.isArray(backlog.warnings)) return []
+  // Keep legacy warning text for other diagnostics and older API responses.
+  // Queue counts belong in the list; this notice only explains the threshold.
+  const queueWarnings = new Map<string, string>()
+  const threshold = backlog.queue_warning_threshold
+  if (typeof threshold === 'number' && threshold > 0) {
+    for (const [queue, count] of queueEntries(backlog)) {
+      if (count < threshold) continue
+      queueWarnings.set(`Celery queue ${queue} depth is ${count}.`, t(
+        'platformOps.settings.environment.sourceLensMonitor.queueBacklog',
+        { queue, threshold },
+      ))
+    }
+  }
+  return backlog.warnings
     .map((item) => String(item || '').trim())
     .filter(Boolean)
-    .map((message) => ({ message, level: 'warning' as const }))
+    .map((message) => ({ message: queueWarnings.get(message) || message, level: 'warning' as const }))
 }
 
 function workerDetails(probe: ProbeRecord): string[] {
@@ -252,23 +274,6 @@ function workerDetails(probe: ProbeRecord): string[] {
     }),
   ]
   return details
-}
-
-function controlPlaneNotices(): RuntimeStatusNotice[] {
-  const notices: RuntimeStatusNotice[] = []
-  const probes: Array<[string, ProbeRecord]> = [
-    ['Nginx', nginxProbe.value],
-    ['Web', webProbe.value],
-    ['API', apiProbe.value],
-    ['PostgreSQL', databaseProbe.value],
-    ['Redis', redisProbe.value],
-    ['Scheduler', schedulerProbe.value],
-  ]
-  probes.forEach(([name, probe]) => {
-    const notice = noticeForProbe(probe)
-    if (notice) notices.push({ ...notice, message: `${name}: ${notice.message}` })
-  })
-  return notices
 }
 
 function schedulerDetails(probe: ProbeRecord): string[] {
@@ -299,6 +304,14 @@ function redisDetails(probe: ProbeRecord): string[] {
     details.push(t('platformOps.settings.environment.pingLatency', {
       value: formatLatency(probe.latency_ms),
     }))
+  }
+  const backlog = asProbe(celeryProbe.value.backlog)
+  for (const [queue, count] of queueEntries(backlog)) {
+    details.push(t('platformOps.settings.environment.sourceLensMonitor.queueSummary', { queue, count }))
+  }
+  const collectedAt = typeof backlog.checked_at === 'string' ? backlog.checked_at : checkedAt.value
+  if (collectedAt) {
+    details.push(`${t('platformOps.settings.environment.checkedAt')}: ${formatLocalDateTime(collectedAt, '—')}`)
   }
   return details
 }

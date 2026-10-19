@@ -44,6 +44,8 @@ class RuntimeBacklogTests(SimpleTestCase):
 
         self.assertEqual(snapshot["status"], "degraded")
         self.assertEqual(snapshot["queue_depths"]["node.ingest"], 700)
+        self.assertEqual(snapshot["queue_warning_threshold"], runtime_backlog.QUEUE_DEPTH_WARNING)
+        self.assertTrue(snapshot["checked_at"])
         self.assertEqual(snapshot["uplink_oldest_pending_seconds"], 90.0)
         self.assertEqual(len(snapshot["warnings"]), 2)
         entry_age.assert_called_once_with("1000-0")
@@ -72,6 +74,9 @@ class RuntimeBacklogTests(SimpleTestCase):
 
         self.assertEqual(snapshot["status"], "error")
         self.assertEqual(snapshot["error"], "Redis is unavailable.")
+        self.assertEqual(snapshot["queue_depths"], {})
+        self.assertEqual(snapshot["queue_warning_threshold"], runtime_backlog.QUEUE_DEPTH_WARNING)
+        self.assertTrue(snapshot["checked_at"])
 
     @patch.object(runtime_backlog.redis_store, "get_redis")
     def test_missing_uplink_group_is_an_empty_healthy_queue(self, get_redis) -> None:
