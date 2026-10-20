@@ -157,6 +157,7 @@ export const enProtectionPages = {
     dirDisabledChildOfAdded: 'A parent path has been added; child paths cannot be selected again.',
     dirDisabledParentOfAdded: 'A child path has been added; parent paths cannot be selected again.',
     dirDisabledAgentInternal: 'This directory is managed by the HyperFileLens Agent and cannot be selected as a backup source.',
+    dirNotSelectable: 'Not selectable',
     btnAdd: 'Add',
     btnReload: 'Reload',
     ariaRefreshDirectory: 'Refresh directory {path}',

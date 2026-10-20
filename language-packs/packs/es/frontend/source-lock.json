@@ -634,6 +634,7 @@
   "protection.backupsPage.dirDisabledChildOfAdded": "65bc1c3b186af476391d7447f2adbc660c9a38fbbe64d99afde15c085f60ad72",
   "protection.backupsPage.dirDisabledParentOfAdded": "a18d230c12d70fac3cae6b01cb1c1a7e8267ca9edc93aa95987d28ae4faefb12",
   "protection.backupsPage.dirDisabledAgentInternal": "54d1ae5b94277294dd70b622740b6c3aeb8877e8abd80e4375298d86e4c70767",
+  "protection.backupsPage.dirNotSelectable": "35b673817dfc76b37212d05b9a620fa7c630771b70283f0859a59a5f9ad9ab06",
   "protection.backupsPage.btnAdd": "b071c943d8da1500f4663ca45e70f5bca8855790bdf13be23264a06a39121176",
   "protection.backupsPage.btnReload": "854555777b69a4b1aac20a3639e0b7877df869317463efc61dbb8bfc8d5c9589",
   "protection.backupsPage.ariaRefreshDirectory": "57e45dea88863cd964aaeb3c55f94583db36bb62e7fb1aedb229dad8a371f02e",

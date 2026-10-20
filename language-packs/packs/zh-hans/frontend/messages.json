@@ -808,6 +808,7 @@
       "dirDisabledChildOfAdded": "父级路径已添加，不能重复选择子路径",
       "dirDisabledParentOfAdded": "子路径已添加，不能重复选择父级路径",
       "dirDisabledAgentInternal": "该目录由 HyperFileLens Agent 管理，不能选作备份源。",
+      "dirNotSelectable": "不可选",
       "btnAdd": "添加",
       "btnReload": "重新加载",
       "ariaRefreshDirectory": "刷新目录 {path}",
