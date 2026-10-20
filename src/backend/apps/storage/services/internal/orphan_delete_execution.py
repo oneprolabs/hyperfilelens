@@ -158,12 +158,23 @@ class ControllerDelete:
                 candidate = RepositoryOrphanSnapshot.objects.select_for_update().get(
                     pk=self.candidate.pk
                 )
+                # Preparation may outlive another advance or recovery. Recheck
+                # exclusivity and both grace periods under the intent's locks.
+                now = timezone.now()
                 if (
                     task.status not in {Task.Status.RUNNING, Task.Status.WAITING}
                     or task.organization_id != repository.organization_id
                     or target.organization_id != repository.organization_id
                     or target.active_task_id != task.id
                     or candidate.target_id != target.id or candidate.status != "candidate"
+                    or RepositoryOrphanSnapshot.objects.filter(
+                        target_id=target.id, status="deleting",
+                    ).exists()
+                    or now - candidate.first_seen_at < timedelta(hours=24)
+                    or (
+                        candidate.delete_not_before is not None
+                        and candidate.delete_not_before > now
+                    )
                     or repository_delete_revision(repository) != self.revision
                     or backup_blocker(repository)
                     or candidate.snapshot_id in managed_ids(repository)

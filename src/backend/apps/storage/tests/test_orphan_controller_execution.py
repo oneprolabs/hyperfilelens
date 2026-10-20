@@ -85,6 +85,111 @@ class ControllerRecoveryTests(TransactionTestCase):
         RepositoryTask.objects.filter(pk=self.rt.pk).update(execution_token=attempt.id)
         return attempt
 
+    def assert_other_intent_rejected(self, *, locked: bool) -> None:
+        first = self.stopped_attempt(locked=locked)
+        second = RepositoryOrphanSnapshot.objects.create(
+            target=self.target, snapshot_id="b" * 32, source={},
+            first_seen_at=timezone.now() - timedelta(days=3),
+            last_seen_at=timezone.now(),
+        )
+        execution = ControllerDelete(self.rt, second)
+        with patch("apps.storage.services.internal.orphan_delete_execution.subprocess.Popen") as launch:
+            with self.assertRaises(OrphanReconciliationError) as caught:
+                execution.run(
+                    ["unused", "snapshot", "delete", second.snapshot_id, "--delete"],
+                    os.environ.copy(), 3,
+                )
+            self.assertEqual(caught.exception.code, "ORPHAN_DELETE_PRECONDITION_CHANGED")
+            launch.assert_not_called()
+        self.rt.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(self.rt.execution_token, first.id)
+        self.assertEqual(OrphanSnapshotDeleteAttempt.objects.count(), 1)
+        self.assertEqual(second.status, "candidate")
+        with self.assertRaises(ValidationError):
+            assert_no_orphan_cleanup(self.repository.id)
+        if not locked:
+            # A stopped but unregistered command still owns the token until
+            # recovery resolves it; rejecting another intent must not strand it.
+            with patch(
+                "apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory",
+                return_value=[ITEM, {
+                    "snapshot_id": second.snapshot_id, "source": {}, "operation_id": "",
+                }],
+            ):
+                self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "failed")
+            first.refresh_from_db()
+            self.assertEqual(first.state, "recovered")
+            assert_no_orphan_cleanup(self.repository.id)
+
+    def test_live_other_delete_cannot_be_replaced_by_new_intent(self):
+        self.assert_other_intent_rejected(locked=True)
+
+    def test_unregistered_other_delete_retains_token_and_can_recover(self):
+        self.assert_other_intent_rejected(locked=False)
+
+    def test_changed_discovery_time_is_rechecked_before_intent(self):
+        execution = ControllerDelete(self.rt, self.candidate)
+        RepositoryOrphanSnapshot.objects.filter(pk=self.candidate.pk).update(
+            first_seen_at=timezone.now(),
+        )
+        with patch("apps.storage.services.internal.orphan_delete_execution.subprocess.Popen") as launch:
+            with self.assertRaises(OrphanReconciliationError) as caught:
+                execution.run(
+                    ["unused", "snapshot", "delete", SID, "--delete"], os.environ.copy(), 3,
+                )
+            self.assertEqual(caught.exception.code, "ORPHAN_DELETE_PRECONDITION_CHANGED")
+            launch.assert_not_called()
+        self.rt.refresh_from_db()
+        self.candidate.refresh_from_db()
+        self.assertIsNone(self.rt.execution_token)
+        self.assertEqual(self.candidate.status, "candidate")
+        self.assertFalse(OrphanSnapshotDeleteAttempt.objects.exists())
+
+    def test_recovery_grace_installed_during_preparation_prevents_redispatch(self):
+        self.cli_environment()
+        observed = {}
+
+        def recover_during_preparation(*args, **kwargs):
+            observed["attempt"] = self.stopped_attempt()
+            self.assertTrue(recover_controller_deletions(self.rt, [ITEM]))
+            self.candidate.refresh_from_db()
+            observed["grace"] = self.candidate.delete_not_before
+            self.assertGreater(observed["grace"], timezone.now() + timedelta(hours=23))
+
+        with (
+            patch("apps.storage.services.internal.kopia_cli._kopia_path",
+                  return_value=self.fake_cli("pass")),
+            patch("apps.storage.services.internal.kopia_cli._connect_maintenance_repository",
+                  side_effect=recover_during_preparation),
+            patch("apps.storage.services.internal.orphan_delete_execution.subprocess.Popen",
+                  wraps=subprocess.Popen) as launch,
+        ):
+            self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "failed")
+            self.assertEqual(launch.call_count, 0)
+        self.rt.refresh_from_db()
+        self.candidate.refresh_from_db()
+        observed["attempt"].refresh_from_db()
+        self.assertEqual(observed["attempt"].state, "recovered")
+        self.assertIsNone(self.rt.execution_token)  # Normal terminal finalization.
+        self.assertEqual(self.candidate.status, "candidate")
+        self.assertEqual(self.candidate.delete_not_before, observed["grace"])
+        self.assertEqual(self.candidate.first_seen_at, self.original_discovery)
+        self.assertEqual(self.candidate.delete_attempts.count(), 1)
+        assert_no_orphan_cleanup(self.repository.id)
+
+    def test_expired_recovery_grace_allows_eligible_delete(self):
+        self.cli_environment()
+        self.candidate.delete_not_before = timezone.now() - timedelta(seconds=1)
+        self.candidate.save(update_fields=["delete_not_before"])
+        with patch("apps.storage.services.internal.kopia_cli._kopia_path",
+                   return_value=self.fake_cli("pass")):
+            self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "success")
+        self.candidate.refresh_from_db()
+        self.assertEqual(self.candidate.status, "deleted")
+        self.assertEqual(self.candidate.delete_attempts.count(), 1)
+        assert_no_orphan_cleanup(self.repository.id)
+
     def advance_past_stale_recovery(self) -> tuple[RepositoryOrphanSnapshot, ControllerDelete]:
         """Interleave two advances after loss of the shared cache lock."""
         first = self.stopped_attempt()
