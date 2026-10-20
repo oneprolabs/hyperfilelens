@@ -4244,8 +4244,8 @@ function onSourceTreeRowClick(sourceId: string, data: SourceTreeItem, event: Mou
 }
 
 function onSourceTreeClickCapture(sourceId: string, event: MouseEvent) {
-  const target = event.target instanceof HTMLElement ? event.target : null
-  if (target?.closest('.hfl-dir-tree-node__refresh')) return
+  const target = event.target instanceof Element ? event.target : null
+  if (target?.closest('.hfl-dir-tree-node__refresh, .create-dir-row__disabled-help')) return
   const nodeContent = target?.closest('.el-tree-node__content')
   if (!nodeContent) return
   const row = nodeContent.querySelector<HTMLElement>('.create-dir-row--tree[data-source-path]')
@@ -6309,7 +6309,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                               'create-dir-row--filename-encoding-warning': Boolean(data.filenameEncodingSuspected),
                             }"
                             :data-source-path="data.path"
-                            :title="sourceTreeProtectionReason(data) || data.disabledReason || undefined"
+                            :aria-disabled="Boolean(sourceTreeProtectionReason(data) || data.disabledReason || addedDirTreeDisableReason(row.id, data.path))"
                             @click="(event) => onSourceTreeRowClick(row.id, data, event)"
                           >
                             <component
@@ -6343,12 +6343,18 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 :class="{ 'is-spinning': isSourceDirectoryRefreshing(row.id, data.path) }"
                               />
                             </button>
-                            <HflHelpTip
+                            <span
                               v-if="sourceTreeProtectionReason(data) || data.disabledReason"
-                              :content="sourceTreeProtectionReason(data) || data.disabledReason"
-                              trigger-class="create-dir-row__disabled-icon"
-                              :aria-label="sourceTreeProtectionReason(data) || data.disabledReason"
-                            />
+                              class="create-dir-row__disabled-help inline-flex"
+                              @click.stop
+                            >
+                              <HflHelpTip
+                                :content="sourceTreeProtectionReason(data) || data.disabledReason"
+                                :label="t('protection.backupsPage.dirNotSelectable')"
+                                trigger-class="create-dir-row__disabled-icon"
+                                :aria-label="sourceTreeProtectionReason(data) || data.disabledReason"
+                              />
+                            </span>
                           </div>
                         </ElTooltip>
                       </template>
@@ -13514,7 +13520,7 @@ function preserveShallowestPathOrder(paths: string[]) {
   color: var(--color-info);
 }
 
-.source-dir-tree :deep(.el-tree-node__content:hover) .create-dir-row--tree {
+.source-dir-tree :deep(.el-tree-node__content:hover) .create-dir-row--tree:not(.create-dir-row--disabled) {
   background: rgba(241, 245, 249, 0.95);
 }
 
@@ -13522,7 +13528,7 @@ function preserveShallowestPathOrder(paths: string[]) {
   background: transparent;
 }
 
-.source-dir-tree :deep(.el-tree-node.is-checked > .el-tree-node__content) .create-dir-row--tree {
+.source-dir-tree :deep(.el-tree-node.is-checked > .el-tree-node__content) .create-dir-row--tree:not(.create-dir-row--disabled) {
   background: color-mix(in srgb, var(--color-primary) 14%, #fff);
 }
 
@@ -13578,36 +13584,40 @@ function preserveShallowestPathOrder(paths: string[]) {
   font-weight: 600;
 }
 
-.source-dir-tree :deep(.el-tree-node.is-disabled > .el-tree-node__content) {
+.source-dir-tree :deep(.el-tree-node.is-disabled > .el-tree-node__content),
+.source-dir-tree :deep(.el-tree-node > .el-tree-node__content:has(.create-dir-row--disabled)) {
+  background: transparent;
   cursor: not-allowed;
   pointer-events: auto;
 }
 
 .source-dir-tree :deep(.el-tree-node.is-disabled > .el-tree-node__content) .create-dir-row--tree,
-.create-dir-row--disabled {
-  border: 1px solid rgba(148, 163, 184, 0.45);
-  background: rgba(203, 213, 225, 0.7);
-  color: rgb(71 85 105);
-  opacity: 1;
+.source-dir-tree :deep(.el-tree-node__content) .create-dir-row--tree.create-dir-row--disabled {
+  border: 0;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-secondary);
+  cursor: not-allowed;
 }
 
 .source-dir-tree :deep(.el-tree-node.is-disabled > .el-tree-node__content) .create-dir-row__icon,
 .create-dir-row--disabled .create-dir-row__icon {
-  color: rgb(100 116 139);
+  color: var(--el-text-color-secondary);
 }
 
 .source-dir-tree :deep(.el-tree-node.is-disabled > .el-tree-node__content) .create-dir-row__label,
 .create-dir-row--disabled .create-dir-row__label {
-  color: rgb(51 65 85);
+  color: var(--el-text-color-secondary);
+  font-weight: 400;
 }
 
 .source-dir-tree :deep(.el-tree-node.is-disabled > .el-tree-node__content) .create-dir-row__path,
 .create-dir-row--disabled .create-dir-row__path {
-  color: rgb(71 85 105);
+  color: var(--el-text-color-secondary);
 }
 
-.source-dir-tree :deep(.el-tree-node.is-disabled > .el-tree-node__content:hover) .create-dir-row--tree {
-  background: rgba(203, 213, 225, 0.78);
+.source-dir-tree :deep(.create-dir-row__disabled-icon:focus-visible) {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .create-dir-row__icon {
@@ -13625,11 +13635,6 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 .create-dir-row__icon--file {
   color: #2563eb;
-}
-
-.source-dir-tree :deep(.el-tree-node.is-disabled > .el-tree-node__content) .create-dir-row__icon,
-.create-dir-row--disabled .create-dir-row__icon {
-  color: rgb(100 116 139);
 }
 
 .create-dir-row__body {
@@ -13669,9 +13674,9 @@ function preserveShallowestPathOrder(paths: string[]) {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 22px;
+  width: auto;
   height: 22px;
-  color: rgb(71 85 105);
+  color: var(--el-text-color-regular);
   cursor: help;
   pointer-events: auto;
 }

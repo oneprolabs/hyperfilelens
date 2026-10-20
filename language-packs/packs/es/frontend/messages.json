@@ -808,6 +808,7 @@
       "dirDisabledChildOfAdded": "Ya se ha añadido una ruta superior; sus rutas secundarias no se pueden seleccionar por separado.",
       "dirDisabledParentOfAdded": "Ya se ha añadido una ruta secundaria; no se puede volver a seleccionar su ruta principal.",
       "dirDisabledAgentInternal": "Este directorio es gestionado por el HyperFileLens Agent y no se puede seleccionar como origen de copia de seguridad.",
+      "dirNotSelectable": "No seleccionable",
       "btnAdd": "Añadir",
       "btnReload": "Volver a cargar",
       "ariaRefreshDirectory": "Actualizar el directorio {path}",
