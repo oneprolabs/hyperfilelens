@@ -545,6 +545,7 @@ class RepositoryOrphanSnapshot(models.Model):
     deleted_at = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(blank=True, default="")
     delete_node_task_id = models.UUIDField(null=True, blank=True)
+    delete_not_before = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "storage_orphan_snapshot"
@@ -556,3 +557,25 @@ class RepositoryOrphanSnapshot(models.Model):
                 fields=["target", "snapshot_id"], name="storage_orphan_target_snapshot"
             ),
         ]
+
+
+class OrphanSnapshotDeleteAttempt(models.Model):
+    """One Controller deletion intent; the execution lease outlives its Worker."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    candidate = models.ForeignKey(
+        RepositoryOrphanSnapshot, on_delete=models.CASCADE, related_name="delete_attempts"
+    )
+    repository_task = models.ForeignKey(
+        RepositoryTask, on_delete=models.CASCADE, related_name="orphan_delete_attempts"
+    )
+    observation_revision = models.CharField(max_length=64)
+    journal_root = models.CharField(max_length=500)
+    executor_identity = models.CharField(max_length=255)
+    state = models.CharField(max_length=20, default="prepared", db_index=True)
+    exit_code = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "storage_orphan_delete_attempt"

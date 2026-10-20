@@ -155,16 +155,15 @@ class OrphanTests(TestCase):
         delete.assert_not_called()
 
     @patch('apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory', return_value=[ITEM])
-    def test_unknown_delete_retains_gate_and_never_reissues(self, _inventory):
+    def test_pre_dispatch_failure_does_not_leave_deleting_state(self, _inventory):
         run_orphan_reconciliation(self.operation().id)
         RepositoryOrphanSnapshot.objects.update(first_seen_at=timezone.now() - timedelta(days=2))
         rt = self.operation()
         with patch('apps.storage.services.internal.orphan_snapshots.delete_s3_snapshots', side_effect=TimeoutError) as delete:
-            self.assertEqual(run_orphan_reconciliation(rt.id)['status'], 'waiting')
-            self.assertEqual(run_orphan_reconciliation(rt.id)['status'], 'waiting')
+            self.assertEqual(run_orphan_reconciliation(rt.id)['status'], 'retry_scheduled')
+            self.assertEqual(run_orphan_reconciliation(rt.id)['status'], 'failed')
             self.assertEqual(delete.call_count, 1)
-        with self.assertRaises(ValidationError):
-            assert_no_orphan_cleanup(self.repository.id)
+        self.assertFalse(RepositoryOrphanSnapshot.objects.filter(status="deleting").exists())
 
     def test_active_backup_blocks_reconciliation_admission(self):
         Task.objects.create(organization_id=self.org.id, task_type=Task.Type.BACKUP, status=Task.Status.RUNNING, request_payload={'repository_id': self.repository.id})

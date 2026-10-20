@@ -554,6 +554,14 @@ def _run_repository_command_unlocked(
         "--no-progress",
         *args,
     ]
+    if args[:2] == ["snapshot", "delete"]:
+        from .orphan_delete_execution import current_delete_execution
+
+        execution = current_delete_execution()
+        if execution is not None:
+            if control is not None and control() != KopiaControlDecision.CONTINUE:
+                raise KopiaExecutionLeaseLost("Deletion execution lease was lost before dispatch.")
+            return execution.run(command, env, timeout)
     process: subprocess.Popen[str] | None = None
     try:
         process = subprocess.Popen(
