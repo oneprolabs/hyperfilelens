@@ -77,14 +77,14 @@ class KnowledgeSourceSyncLeaseTests(TransactionTestCase):
             name="Sync Lease",
         )
         gateway = Node.objects.create(
-            organization=self.organization,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="sync-gateway",
             role=Node.Role.GATEWAY,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
-            organization=self.organization,
+            organization=None,
             gateway=gateway,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,
@@ -469,14 +469,14 @@ class ManagedRestorePipelineOrderTests(TestCase):
             name="Managed Restore Gateway",
         )
         gateway = Node.objects.create(
-            organization=gateway_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="gateway",
             role=Node.Role.GATEWAY,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
-            organization=gateway_org,
+            organization=None,
             gateway=gateway,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,
@@ -527,6 +527,55 @@ class ManagedRestorePipelineOrderTests(TestCase):
                 org=self.organization,
                 ks=self.knowledge_source,
             )
+
+    def test_public_manual_sync_uses_real_lifecycle_query(self):
+        from apps.node import conf as node_conf
+        from apps.node.models import NodeTask
+
+        self.knowledge_source.status = LensKnowledgeSource.Status.READY
+        self.knowledge_source.save(update_fields=["status"])
+        with (
+            patch(
+                "apps.lens_bridge.services.gateway_readiness.require_copilot_gateway",
+                autospec=True,
+            ),
+            patch(
+                "apps.lens_bridge.services.gateway_readiness.require_hfl_usable_gateway",
+                autospec=True,
+            ),
+            patch.object(
+                knowledge_source_sync, "get_node_workload_blockers",
+                autospec=True, return_value=[],
+            ),
+            patch.object(
+                knowledge_source_sync, "enqueue_knowledge_source_sync", autospec=True,
+            ) as enqueue_sync,
+        ):
+            updated = knowledge_source_sync.request_knowledge_source_sync(
+                org=self.organization, ks=self.knowledge_source, mode="full",
+            )
+            self.assertEqual(updated.status, LensKnowledgeSource.Status.SYNCING)
+            enqueue_sync.assert_called_once_with(
+                organization_id=self.organization.pk,
+                knowledge_source_id=self.knowledge_source.pk,
+                mode="full",
+            )
+
+            # A real platform lifecycle task must still block another sync.
+            updated.status = LensKnowledgeSource.Status.READY
+            updated.save(update_fields=["status"])
+            NodeTask.objects.create(
+                organization=None, node=self.gateway, kind="agent.upgrade",
+                correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+                correlation_id=f"upgrade:{self.gateway.pk}",
+                watchdog_deadline_at=timezone.now() + timedelta(minutes=10),
+            )
+            enqueue_sync.reset_mock()
+            with self.assertRaisesRegex(ValidationError, "lifecycle operation"):
+                knowledge_source_sync.request_knowledge_source_sync(
+                    org=self.organization, ks=updated,
+                )
+            enqueue_sync.assert_not_called()
 
     def test_restore_identity_is_durable_before_agent_delivery_callback(self):
         record = MagicMock(id=91)
@@ -898,6 +947,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
     )
     @patch(
         "apps.node.services.internal.node_lifecycle._active_lifecycle_task",
+        autospec=True,
         return_value=None,
     )
     @patch(
@@ -918,7 +968,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
         execution_context.return_value = MagicMock(
             gateway=self.gateway,
             gateway_link=self.gateway_link,
-            execution_organization=self.gateway.organization,
+            execution_organization_id=self.gateway.organization_id,
         )
         self.knowledge_source.status = LensKnowledgeSource.Status.READY
         self.knowledge_source.sync_state_json = {
@@ -963,6 +1013,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
     )
     @patch(
         "apps.node.services.internal.node_lifecycle._active_lifecycle_task",
+        autospec=True,
         return_value=None,
     )
     @patch(
@@ -984,7 +1035,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
         execution_context.return_value = MagicMock(
             gateway=self.gateway,
             gateway_link=self.gateway_link,
-            execution_organization=self.gateway.organization,
+            execution_organization_id=self.gateway.organization_id,
         )
         self.knowledge_source.status = LensKnowledgeSource.Status.ERROR
         self.knowledge_source.sync_state_json = {
@@ -1027,6 +1078,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
     )
     @patch(
         "apps.node.services.internal.node_lifecycle._active_lifecycle_task",
+        autospec=True,
         return_value=None,
     )
     @patch(
@@ -1047,7 +1099,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
         execution_context.return_value = MagicMock(
             gateway=self.gateway,
             gateway_link=self.gateway_link,
-            execution_organization=self.gateway.organization,
+            execution_organization_id=self.gateway.organization_id,
         )
         self.knowledge_source.status = LensKnowledgeSource.Status.ERROR
         self.knowledge_source.sync_state_json = {

@@ -48,10 +48,11 @@ def _token_matches(row: NodeToken, secret: str) -> bool:
 
 def active_enrollment_token(
     *,
-    org: Organization,
+    org: Organization | None,
     secret: str,
     role: str,
     lock: bool = False,
+    namespace: str | None = None,
 ) -> NodeToken | None:
     """Return a valid time-bounded enrollment token."""
     now = timezone.now()
@@ -63,6 +64,8 @@ def active_enrollment_token(
     if lock:
         queryset = queryset.select_for_update()
     for row in queryset.iterator():
+        if namespace is not None and (row.transport_namespace or (org.key if org else "")) != namespace:
+            continue
         if not _token_matches(row, secret):
             continue
         if row.expires_at and row.expires_at <= now:
@@ -73,10 +76,11 @@ def active_enrollment_token(
 
 def active_installation_session(
     *,
-    org: Organization,
+    org: Organization | None,
     secret: str,
     role: str,
     touch: bool = True,
+    namespace: str | None = None,
 ) -> NodeInstallationSession | None:
     """Resolve an active session secret and renew its idle lease."""
     if not secret:
@@ -84,6 +88,7 @@ def active_installation_session(
     now = timezone.now()
     rows = NodeInstallationSession.objects.select_related("enrollment_token").filter(
         organization=org,
+        enrollment_token__organization=org,
         role=role,
         status=NodeInstallationSession.Status.ACTIVE,
         secret_prefix=secret[:12],
@@ -91,6 +96,10 @@ def active_installation_session(
         absolute_expires_at__gt=now,
     )
     for row in rows.iterator():
+        if namespace is not None and (
+            row.enrollment_token.transport_namespace or (org.key if org else "")
+        ) != namespace:
+            continue
         if not row.matches(secret):
             continue
         if touch:
@@ -119,16 +128,20 @@ def active_installation_session(
 @transaction.atomic
 def release_installation_session(
     *,
-    org: Organization,
+    org: Organization | None,
     secret: str,
     role: str,
     installation_id: str,
+    namespace: str | None = None,
 ) -> bool:
     """Release an unfinished host reservation after a failed installation."""
     # Expired or already released sessions still own their Redis slot. Match
     # the actual session secret and installation identity before cleaning it.
-    sessions = NodeInstallationSession.objects.select_for_update().filter(
+    sessions = NodeInstallationSession.objects.select_for_update(of=("self",)).select_related(
+        "enrollment_token", "enrollment_token__organization",
+    ).filter(
         organization=org,
+        enrollment_token__organization=org,
         role=role,
         installation_id=installation_id.strip(),
         secret_prefix=secret[:12],
@@ -137,7 +150,11 @@ def release_installation_session(
             NodeInstallationSession.Status.RELEASED,
         ),
     )
-    session = next((row for row in sessions if row.matches(secret)), None)
+    session = next((
+        row for row in sessions
+        if row.matches(secret)
+        and (namespace is None or row.enrollment_token.transport_key == namespace)
+    ), None)
     if session is None:
         return False
     if session.status == NodeInstallationSession.Status.ACTIVE:
@@ -151,7 +168,8 @@ def release_installation_session(
             updated_at=now,
         )
     transaction.on_commit(
-        lambda org_key=org.key, session_id=session.pk: release_session_slot(
+        lambda org_key=session.enrollment_token.transport_key,
+        session_id=session.pk: release_session_slot(
             org_key, session_id
         )
     )
@@ -160,15 +178,20 @@ def release_installation_session(
 
 def resolve_enrollment_authorization(
     *,
-    org: Organization,
+    org: Organization | None,
     secret: str,
     role: str,
+    namespace: str | None = None,
 ) -> EnrollmentAuthorization | None:
     """Accept an installation session or a backward-compatible enrollment token."""
-    session = active_installation_session(org=org, secret=secret, role=role)
+    session = active_installation_session(
+        org=org, secret=secret, role=role, namespace=namespace,
+    )
     if session is not None:
         return EnrollmentAuthorization(token=session.enrollment_token, session=session)
-    token = active_enrollment_token(org=org, secret=secret, role=role)
+    token = active_enrollment_token(
+        org=org, secret=secret, role=role, namespace=namespace,
+    )
     if token is None:
         return None
     return EnrollmentAuthorization(token=token)
@@ -177,10 +200,11 @@ def resolve_enrollment_authorization(
 @transaction.atomic
 def open_installation_session(
     *,
-    org: Organization,
+    org: Organization | None,
     enrollment_secret: str,
     role: str,
     installation_id: str,
+    namespace: str | None = None,
 ) -> tuple[NodeInstallationSession, str]:
     """Issue a resumable installation session secret."""
     installation_id = installation_id.strip()
@@ -192,6 +216,7 @@ def open_installation_session(
         secret=enrollment_secret,
         role=role,
         lock=True,
+        namespace=namespace,
     )
     if token is None:
         raise PermissionError("invalid or expired enrollment token")
@@ -213,7 +238,7 @@ def open_installation_session(
         ).update(status=NodeInstallationSession.Status.RELEASED, updated_at=now)
         for session_id in expired_session_ids:
             transaction.on_commit(
-                lambda org_key=org.key, session_id=session_id: release_session_slot(
+                lambda org_key=token.transport_key, session_id=session_id: release_session_slot(
                     org_key, session_id
                 )
             )
@@ -274,21 +299,26 @@ def validate_node_credential(node: Node, secret: str, *, touch: bool = True) -> 
 
 def active_node_credential(
     *,
-    org: Organization,
+    org: Organization | None,
     secret: str,
     role: str,
     touch: bool = True,
+    namespace: str | None = None,
 ) -> NodeCredential | None:
     """Resolve an active long-lived credential by org, role, and secret."""
     if not secret:
         return None
-    rows = NodeCredential.objects.filter(
+    rows = NodeCredential.objects.select_related("node", "node__organization").filter(
         organization=org,
         role=role,
         is_active=True,
         secret_prefix=secret[:12],
     )
     for row in rows.iterator():
+        if row.node.organization_id != (org.pk if org else None) or row.node.role != role:
+            continue
+        if namespace is not None and row.node.transport_key != namespace:
+            continue
         if not row.matches(secret):
             continue
         if touch:
@@ -322,6 +352,8 @@ def legacy_enrollment_token_for_node(
         organization_id=node.organization_id,
         enrollment_mode=NodeToken.EnrollmentMode.LEGACY,
     ).iterator():
+        if row.transport_key != node.transport_key:
+            continue
         if not _token_matches(row, secret):
             continue
         if row.role != node.role:
@@ -388,7 +420,7 @@ def complete_enrollment_authorization(
             updated_at=now,
         )
         transaction.on_commit(
-            lambda org_key=authorization.token.organization.key,
+            lambda org_key=authorization.token.transport_key,
             session_id=authorization.session.pk: release_session_slot(
                 org_key, session_id
             )

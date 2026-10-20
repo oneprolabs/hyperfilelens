@@ -4,6 +4,7 @@ from django.db import models
 from django.utils import timezone
 
 from .base import NodeInstallationMode, NodeRole, OrganizationScopedModel
+from common.resource_scope import ResourceScope
 
 
 class Node(OrganizationScopedModel):
@@ -27,6 +28,7 @@ class Node(OrganizationScopedModel):
 
     Role = NodeRole
     InstallationMode = NodeInstallationMode
+    Scope = ResourceScope
 
     id = models.BigAutoField(primary_key=True)
 
@@ -34,8 +36,18 @@ class Node(OrganizationScopedModel):
         "iam.Organization",
         on_delete=models.CASCADE,
         related_name="nodes",
+        null=True,
+        blank=True,
+    )
+    scope = models.CharField(
+        max_length=16, choices=ResourceScope.choices,
+        default=ResourceScope.ORGANIZATION, db_index=True,
     )
     name = models.CharField(max_length=200)
+    transport_namespace = models.CharField(
+        max_length=128, blank=True, default="", db_index=True, editable=False,
+        help_text="Stable control-plane routing namespace for a public Gateway.",
+    )
     role = models.CharField(max_length=20, choices=Role.choices)
     installation_mode = models.CharField(
         max_length=16,
@@ -119,6 +131,28 @@ class Node(OrganizationScopedModel):
             ),
         ]
         constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(scope="organization", organization__isnull=False)
+                    | (
+                        models.Q(scope="platform", organization__isnull=True, role="gateway")
+                        & ~models.Q(transport_namespace="")
+                    )
+                ),
+                name="node_resource_scope_owner_ck",
+            ),
+            models.UniqueConstraint(
+                fields=["installation_id"],
+                condition=(
+                    models.Q(scope="platform", is_deleted=False)
+                    & ~models.Q(installation_id="")
+                ),
+                name="node_platform_install_identity",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(transport_namespace="") | models.Q(role=NodeRole.GATEWAY),
+                name="node_transport_namespace_gateway",
+            ),
             # host_fingerprint is deliberately not unique: each fresh local
             # installation keeps the old Node and creates a new record.
             models.CheckConstraint(
@@ -137,6 +171,20 @@ class Node(OrganizationScopedModel):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.role})"
+
+    @property
+    def transport_key(self) -> str:
+        """Return the installed Agent's routing identity, not resource ownership."""
+        return self.transport_namespace or self.organization.key
+
+    def save(self, *args, **kwargs) -> None:
+        if self.scope == ResourceScope.PLATFORM and not self.transport_namespace:
+            from apps.node.services.internal.transport_identity import PLATFORM_TRANSPORT_NAMESPACE
+
+            self.transport_namespace = PLATFORM_TRANSPORT_NAMESPACE
+            if kwargs.get("update_fields") is not None:
+                kwargs["update_fields"] = set(kwargs["update_fields"]) | {"transport_namespace"}
+        super().save(*args, **kwargs)
 
     def soft_delete(self) -> None:
         """Revoke the node credential as part of logical node removal."""

@@ -428,24 +428,18 @@ def collect_instance_usage_stats_with_status() -> tuple[
     return totals, incomplete
 
 
-def _exclude_platform_organization(queryset, *, platform_org_key: str):
-    """Exclude the internal organization without requiring a model relation."""
-    platform_org_ids = Organization.objects.filter(key=platform_org_key).values("id")
-    return queryset.exclude(organization_id__in=platform_org_ids)
+def _tenant_usage_queryset(queryset):
+    """Platform infrastructure has no tenant and does not consume tenant meters."""
+    return queryset.filter(organization_id__isnull=False)
 
 
 def collect_instance_meter_usage(*, usage_key: str) -> int | float:
     """
-    Sum a usage meter across all customer organizations (excludes platform org).
+    Sum a usage meter across real tenants, excluding platform infrastructure.
 
     Used to enforce the instance entitlement from live consumption. Organization
     plans and overrides are evaluated independently.
     """
-    try:
-        from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
-    except Exception:  # pragma: no cover
-        PLATFORM_ORG_KEY = "__platform_lens__"
-
     if usage_key == "organizations_count":
         from apps.subscription.services.internal.organization_count import (
             count_customer_organizations,
@@ -454,9 +448,9 @@ def collect_instance_meter_usage(*, usage_key: str) -> int | float:
         return float(count_customer_organizations())
     if usage_key == "users_count":
         return float(
-            _exclude_platform_organization(
+            _tenant_usage_queryset(
                 Membership.objects.all(),
-                platform_org_key=PLATFORM_ORG_KEY,
+
             )
             .filter(is_active=True)
             .count()
@@ -465,9 +459,9 @@ def collect_instance_meter_usage(*, usage_key: str) -> int | float:
         from apps.node.models import Node
         from apps.node.models.base import NodeRole
 
-        nodes = _exclude_platform_organization(
+        nodes = _tenant_usage_queryset(
             Node.objects.all(),
-            platform_org_key=PLATFORM_ORG_KEY,
+
         )
         roles = {
             "agents_count": NodeRole.AGENT,
@@ -484,9 +478,9 @@ def collect_instance_meter_usage(*, usage_key: str) -> int | float:
         from apps.source.models import SourceResource
 
         return float(
-            _exclude_platform_organization(
+            _tenant_usage_queryset(
                 SourceResource.objects.all(),
-                platform_org_key=PLATFORM_ORG_KEY,
+
             )
             .filter(
                 resource_type__in=(
@@ -511,9 +505,9 @@ def collect_instance_meter_usage(*, usage_key: str) -> int | float:
             "standalone_disk_count": Repository.Type.PROXY_FS,
         }
         return float(
-            _exclude_platform_organization(
+            _tenant_usage_queryset(
                 Repository.objects.all(),
-                platform_org_key=PLATFORM_ORG_KEY,
+
             )
             .filter(
                 repo_type=repository_types[usage_key],
@@ -525,17 +519,17 @@ def collect_instance_meter_usage(*, usage_key: str) -> int | float:
         from apps.protection.models.backup_config import BackupConfig
 
         return float(
-            _exclude_platform_organization(
+            _tenant_usage_queryset(
                 BackupConfig.objects.all(),
-                platform_org_key=PLATFORM_ORG_KEY,
+
             ).count()
         )
     if usage_key == "storage_used_bytes":
         from apps.storage.repositories.models import Repository
 
-        repositories = _exclude_platform_organization(
+        repositories = _tenant_usage_queryset(
             Repository.objects.all(),
-            platform_org_key=PLATFORM_ORG_KEY,
+
         ).filter(status=Repository.Status.CREATED)
         return _storage_usage_bytes(repositories)
     if usage_key == "public_gateway_capacity_used_bytes":
@@ -557,9 +551,9 @@ def collect_instance_meter_usage(*, usage_key: str) -> int | float:
         from apps.lens_bridge.models import LensUsageLedger
 
         return float(
-            _exclude_platform_organization(
+            _tenant_usage_queryset(
                 LensUsageLedger.objects.all(),
-                platform_org_key=PLATFORM_ORG_KEY,
+
             )
             .aggregate(total=Sum("total_tokens"))
             .get("total")
@@ -569,9 +563,9 @@ def collect_instance_meter_usage(*, usage_key: str) -> int | float:
         from apps.alert.models import AlertPolicy
 
         return float(
-            _exclude_platform_organization(
+            _tenant_usage_queryset(
                 AlertPolicy.objects.all(),
-                platform_org_key=PLATFORM_ORG_KEY,
+
             ).count()
         )
     raise ValueError(f"Unsupported instance quota usage meter: {usage_key}")

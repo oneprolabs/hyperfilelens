@@ -3,12 +3,23 @@ from rest_framework.test import APITestCase, APIRequestFactory
 
 from apps.iam.auth.personal_api_key import PersonalApiKeyAuthentication
 from apps.iam.models import PersonalApiKey
+from apps.iam.profile_models import Profile
 from apps.iam.services.registration_service import provision_registered_user_tenant
 
 User = get_user_model()
 
 
 class PersonalApiKeyAuthenticationTests(APITestCase):
+    def test_installation_identity_key_can_target_foreign_org_without_membership(self):
+        root = User.objects.create_user(username="key-root", is_staff=True)
+        Profile.objects.update_or_create(user=root, defaults={"is_installation_admin": True})
+        key = PersonalApiKey.objects.create(user=root, name="root")
+        request = self.factory.get(
+            "/", HTTP_X_API_KEY=key.token, HTTP_X_ORG_KEY=self.org.key,
+        )
+        user, _auth = PersonalApiKeyAuthentication().authenticate(request)
+        self.assertEqual(user.pk, root.pk)
+
     def setUp(self):
         self.factory = APIRequestFactory()
         self.user = User.objects.create_user(

@@ -198,11 +198,10 @@ class PreparationProgressTests(SimpleTestCase):
 class PreparationProgressIntegrationTests(TestCase):
     def setUp(self):
         self.org = Organization.objects.create(key="preparation-tenant", name="Tenant")
-        platform = Organization.objects.create(key="preparation-platform", name="Platform")
         user = get_user_model().objects.create_user(username="preparation@test.example")
-        node = Node.objects.create(organization=platform, name="Gateway", role=Node.Role.GATEWAY)
+        node = Node.objects.create(organization=None, scope=Node.Scope.PLATFORM, name="Gateway", role=Node.Role.GATEWAY)
         gateway = LensGatewayLink.objects.create(
-            organization=platform, gateway=node,
+            organization=None, gateway=node,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,
         )
@@ -212,7 +211,7 @@ class PreparationProgressIntegrationTests(TestCase):
         )
         binding = LensWorkspaceBinding.objects.create(
             organization=self.org, knowledge_source=self.ks, gateway_link=gateway,
-            execution_organization_id=platform.id, execution_node_id=node.id,
+            execution_organization_id=None, execution_node_id=node.id,
             workspace_kind=LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE,
             workspace_root="/workspace", relative_path="tenants/data",
         )
@@ -226,7 +225,7 @@ class PreparationProgressIntegrationTests(TestCase):
         )
         self.record = RestoreRecord.objects.create(
             organization_id=self.org.id, requesting_organization_id=self.org.id,
-            target_execution_organization_id=platform.id, target_execution_node_id=node.id,
+            target_execution_organization_id=None, target_execution_node_id=node.id,
             purpose=RestoreRecord.Purpose.LENS_WORKSPACE, workspace_binding_id=binding.id,
             idempotency_key="prepare-data", restore_uid="prepare-data",
             source_mode="manual", task_id=self.task.id, task_uuid=self.task.task_uuid,

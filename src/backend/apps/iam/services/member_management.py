@@ -19,6 +19,17 @@ ASSIGNABLE_ROLES = {
 }
 
 
+def is_organization_member_account(user: Any) -> bool:
+    """Platform Role grants do not exclude an ordinary organization identity."""
+    staff = bool(getattr(user, "is_staff", False))
+    superuser = bool(getattr(user, "is_superuser", False))
+    if (staff or superuser) and get_authz_provider() is None:
+        return False
+    if superuser and not staff:
+        return False
+    return not bool(getattr(getattr(user, "profile", None), "is_installation_admin", False))
+
+
 def membership_management_profile(request: Any) -> dict[str, Any]:
     """Describe organization-level administration, not resource Group rights."""
     actor = get_membership(request)
@@ -73,10 +84,10 @@ def membership_management_permissions(
     provider = get_authz_provider()
     role = authoritative_role(target) if role is None else role
     roles = profile["assignable_roles"]
+    account_allowed = is_organization_member_account(target.user)
     eligible = bool(
         target.organization_id == profile["organization_id"]
-        and not target.user.is_staff
-        and not target.user.is_superuser
+        and account_allowed
     )
     if provider is not None:
         eligible = eligible and target.user_id != request.user.id and role != "owner"
@@ -90,7 +101,7 @@ def membership_management_permissions(
         "can_remove": eligible and profile["can_remove"],
         "assignable_roles": roles if eligible and profile["can_assign_role"] else [],
         "protected_reason": (
-            "platform_account" if target.user.is_staff or target.user.is_superuser
+            "platform_account" if not account_allowed
             else "self" if provider is not None and target.user_id == request.user.id
             else "owner" if provider is not None and role == "owner"
             else "no_permission" if not any((profile["can_assign_role"], profile["can_manage"], profile["can_remove"]))
@@ -129,8 +140,8 @@ def assert_membership_management(
 
 
 def assert_eligible_member_account(user: Any) -> None:
-    """Do not turn tenant membership administration into platform account CRUD."""
-    if not user.is_active or user.is_staff or user.is_superuser:
+    """Affiliation changes never modify credentials or platform grants."""
+    if not user.is_active or not is_organization_member_account(user):
         raise ValidationError(
             {"email": "An eligible active account could not be found."}
         )

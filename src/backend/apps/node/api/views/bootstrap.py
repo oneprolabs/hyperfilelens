@@ -9,7 +9,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.iam.models import Organization
+from apps.node.services.internal.transport_identity import resolve_transport_scope
 from apps.instance_settings.services.external_access import (
     normalize_external_access_url,
 )
@@ -135,8 +135,9 @@ def _parse_enrollment_query(
             "api_base must match the configured HTTPS tenant origin",
         )
 
-    org = Organization.objects.filter(key=org_key, is_active=True).first()
-    if org is None:
+    transport_scope = resolve_transport_scope(org_key, secret=token)
+    org = transport_scope.organization if transport_scope else None
+    if transport_scope is None:
         if script_type in (
             "linux",
             "sh",
@@ -153,6 +154,7 @@ def _parse_enrollment_query(
         org=org,
         token=token,
         role=role,
+        namespace=org_key,
     )
     if token_row is None:
         if script_type in (
@@ -289,11 +291,14 @@ def _parse_gateway_bootstrap_query(
             "api_base must match the configured HTTPS tenant origin",
         )
 
-    org = Organization.objects.filter(key=org_key, is_active=True).first()
-    if org is None:
+    transport_scope = resolve_transport_scope(org_key, secret=token)
+    org = transport_scope.organization if transport_scope else None
+    if transport_scope is None:
         return _bootstrap_error_response("linux", "organization not found")
 
-    if not token_usable_for_bootstrap(org=org, token=token, role=role):
+    if not token_usable_for_bootstrap(
+        org=org, token=token, role=role, namespace=org_key,
+    ):
         return _bootstrap_error_response(
             "linux",
             INVALID_ENROLLMENT_LINK_MESSAGE,

@@ -897,7 +897,7 @@ def _fail_task_delivery(*, task: NodeTask, reason: str) -> NodeTask:
 
 def create_agent_task(
     *,
-    org: Organization,
+    org: Organization | None,
     node: Node,
     kind: str,
     payload: dict | None = None,
@@ -906,13 +906,24 @@ def create_agent_task(
     requesting_organization_id: int | None = None,
     parent_task: Task | None = None,
 ) -> NodeTask:
-    if node.organization_id != org.id:
+    from apps.node.services.internal.ownership import owner_id
+
+    if (
+        node.organization_id != owner_id(org)
+        or (org is None and getattr(node, "scope", None) != Node.Scope.PLATFORM)
+    ):
         raise ValueError("node/org mismatch")
+    if org is None and requesting_organization_id is None and kind not in {
+        "agent.upgrade", "agent.uninstall", "lens.gateway.browse",
+    }:
+        raise ValueError("Tenant business work requires a requesting organization")
 
     now = timezone.now()
     task = NodeTask.objects.create(
         organization=org,
-        requesting_organization_id=requesting_organization_id or org.id,
+        requesting_organization_id=(
+            requesting_organization_id if requesting_organization_id is not None else owner_id(org)
+        ),
         node=node,
         correlation_type=correlation_type or "",
         correlation_id=str(correlation_id or ""),
@@ -1342,7 +1353,7 @@ def reconcile_unaccepted_agent_tasks(*, limit: int = 200) -> dict[str, int | boo
 @transaction.atomic
 def dispatch_task(
     *,
-    org: Organization,
+    org: Organization | None,
     node: Node,
     kind: str,
     payload: dict | None = None,

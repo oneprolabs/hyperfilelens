@@ -323,7 +323,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
         )
         gateway_context.return_value = SimpleNamespace(
             gateway=gateway,
-            execution_organization=SimpleNamespace(id=20),
+            execution_organization_id=20,
         )
         lock_repositories.return_value = [SimpleNamespace(id=7)]
         resolve_reader.return_value = SimpleNamespace(
@@ -381,7 +381,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
         )
         gateway_context.return_value = SimpleNamespace(
             gateway=SimpleNamespace(id=17),
-            execution_organization=SimpleNamespace(id=20),
+            execution_organization_id=20,
         )
         lock_repositories.return_value = [SimpleNamespace(id=7)]
 
@@ -443,7 +443,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
         gateway = SimpleNamespace(id=17, organization_id=5, metadata={})
         gateway_context.return_value = SimpleNamespace(
             gateway=gateway,
-            execution_organization=SimpleNamespace(id=5),
+            execution_organization_id=5,
         )
         lock_repositories.return_value = [SimpleNamespace(id=7)]
         resolve_reader.return_value = SimpleNamespace(
@@ -498,7 +498,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
         )
         gateway_context.return_value = SimpleNamespace(
             gateway=SimpleNamespace(id=17),
-            execution_organization=SimpleNamespace(id=5),
+            execution_organization_id=5,
         )
         lock_repositories.return_value = [SimpleNamespace(id=7)]
         resolve_reader.return_value = SimpleNamespace(
@@ -569,7 +569,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
         directory_for_org.return_value = directory
         gateway_context.return_value = SimpleNamespace(
             gateway=SimpleNamespace(id=17),
-            execution_organization=SimpleNamespace(id=5),
+            execution_organization_id=5,
         )
         lock_repositories.return_value = [SimpleNamespace(id=7)]
         resolve_reader.return_value = SimpleNamespace(

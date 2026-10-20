@@ -9,7 +9,10 @@ from django.core import signing
 from django.db import transaction
 from django.utils import timezone
 
-from apps.storage.conf import provider_catalog_review_token_ttl_seconds
+from apps.storage.conf import (
+    provider_catalog_limits,
+    provider_catalog_review_token_ttl_seconds,
+)
 from apps.storage.provider_catalog.catalog import (
     default_provider_records,
     effective_provider_records,
@@ -524,9 +527,34 @@ def export_catalog(
     return catalog, canonical_json_bytes(catalog) + b"\n"
 
 
-def reset_review(*, user_id: int, provider_id: str | None = None) -> dict[str, Any]:
+@transaction.atomic
+def reset_review(
+    *,
+    user_id: int,
+    provider_id: str | None = None,
+    provider_ids: list[str] | None = None,
+) -> dict[str, Any]:
     defaults = default_provider_records()
-    if provider_id is not None:
+    if provider_ids is not None:
+        if (
+            provider_id is not None
+            or not isinstance(provider_ids, list)
+            or not provider_ids
+            or any(not isinstance(item, str) or not item for item in provider_ids)
+            or len(provider_ids) > provider_catalog_limits()["max_providers"]
+            or len(set(provider_ids)) != len(provider_ids)
+        ):
+            raise ProviderCatalogValidationError(
+                "Select a non-empty, unique list of Provider IDs."
+            )
+        provider_ids = sorted(provider_ids)
+        if any(item not in defaults for item in provider_ids):
+            _conflict(
+                "Every selected Provider must have a release default.",
+                code="PROVIDER_CATALOG_RESET_DEFAULT_MISSING",
+            )
+        scope = "selected"
+    elif provider_id is not None:
         if provider_id not in defaults:
             _conflict(
                 "Provider cannot be reset because it is absent from the release default.",
@@ -537,8 +565,17 @@ def reset_review(*, user_id: int, provider_id: str | None = None) -> dict[str, A
     else:
         provider_ids = sorted(defaults)
         scope = "all"
+    # Keep the displayed diff and signed baseline from the same locked snapshot.
+    lock_provider_ids(provider_ids)
     effective = effective_provider_records()
     states = _states(provider_ids)
+    if scope == "selected" and any(
+        not states[item]["override_exists"] for item in provider_ids
+    ):
+        _conflict(
+            "Every selected Provider must have a custom configuration to restore.",
+            code="PROVIDER_CATALOG_RESET_OVERRIDE_MISSING",
+        )
     diffs = [
         {
             **provider_diff(
@@ -580,7 +617,8 @@ def reset_confirm(*, user_id: int, reset_token: str) -> dict[str, Any]:
     )
     provider_ids = token.get("provider_ids")
     if (
-        not isinstance(provider_ids, list)
+        token.get("scope") not in {"all", "provider", "selected"}
+        or not isinstance(provider_ids, list)
         or not provider_ids
         or provider_ids != sorted(set(provider_ids))
     ):
@@ -601,7 +639,7 @@ def reset_confirm(*, user_id: int, reset_token: str) -> dict[str, Any]:
                 "The release default Provider scope changed after Review.",
                 code="PROVIDER_CATALOG_RESET_SCOPE_CHANGED",
             )
-        if token.get("scope") == "provider" and any(
+        if token.get("scope") in {"provider", "selected"} and any(
             provider_id not in defaults for provider_id in provider_ids
         ):
             _conflict(

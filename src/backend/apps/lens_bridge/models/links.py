@@ -8,6 +8,24 @@ from django.conf import settings
 from django.db import models
 
 from apps.node.models.base import OrganizationScopedModel, TimeStampedModel
+from common.resource_scope import ResourceScope
+
+
+class PlatformAISettings(TimeStampedModel):
+    """Instance-wide AI defaults, independent of tenant organizations."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    default_agent_model_ref = models.UUIDField(null=True, blank=True)
+    default_multimodal_model_ref = models.UUIDField(null=True, blank=True)
+
+    class Meta:
+        db_table = "lens_bridge_platform_ai_settings"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(id=1),
+                name="platform_ai_settings_singleton",
+            ),
+        ]
 
 
 class LensOrgLink(OrganizationScopedModel):
@@ -34,7 +52,22 @@ class LensOrgLink(OrganizationScopedModel):
 
 
 class LensOrgModelLink(OrganizationScopedModel):
-    """Maps an organization to a SourceLens LLMConfig uuid it owns."""
+    """HFL ownership and display metadata for a SourceLens AI model."""
+
+    Scope = ResourceScope
+
+    scope = models.CharField(
+        max_length=16,
+        choices=ResourceScope.choices,
+        default=ResourceScope.ORGANIZATION,
+        db_index=True,
+    )
+    organization = models.ForeignKey(
+        "iam.Organization",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
 
     sl_config_uuid = models.UUIDField(db_index=True)
     display_name = models.CharField(max_length=160, blank=True, default="")
@@ -50,6 +83,13 @@ class LensOrgModelLink(OrganizationScopedModel):
         db_table = "lens_bridge_org_model_link"
         ordering = ["created_at", "id"]
         constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(scope="platform", organization__isnull=True)
+                    | models.Q(scope="organization", organization__isnull=False)
+                ),
+                name="ai_model_scope_organization_ck",
+            ),
             models.UniqueConstraint(
                 fields=["organization", "sl_config_uuid"],
                 name="uniq_lens_bridge_org_model_org_uuid",
@@ -158,6 +198,9 @@ class LensGatewayLink(OrganizationScopedModel):
         REMOVING = "removing", "Removing"
         ERROR = "error", "Error"
 
+    organization = models.ForeignKey(
+        "iam.Organization", on_delete=models.CASCADE, null=True, blank=True,
+    )
     gateway = models.ForeignKey(
         "node.Node",
         on_delete=models.CASCADE,
@@ -220,6 +263,23 @@ class LensGatewayLink(OrganizationScopedModel):
     class Meta:
         db_table = "lens_bridge_gateway_link"
         constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(scope="platform", organization__isnull=True)
+                    | models.Q(scope__in=["organization", "user"], organization__isnull=False)
+                ),
+                name="gateway_scope_organization_ck",
+            ),
+            models.UniqueConstraint(
+                fields=["gateway"],
+                condition=models.Q(scope="platform"),
+                name="uniq_platform_gateway_node",
+            ),
+            models.UniqueConstraint(
+                fields=["is_platform_default"],
+                condition=models.Q(scope="platform", is_platform_default=True, is_deleted=False),
+                name="uniq_platform_gateway_default",
+            ),
             models.UniqueConstraint(
                 fields=["organization", "gateway"],
                 name="uniq_lens_bridge_gw_link_org_gw",
@@ -253,15 +313,6 @@ class LensGatewayLink(OrganizationScopedModel):
                 ),
                 name="lens_brgw_chat_queue_ck",
             ),
-            models.UniqueConstraint(
-                fields=["organization"],
-                condition=models.Q(
-                    scope="platform",
-                    is_platform_default=True,
-                    is_deleted=False,
-                ),
-                name="uniq_lens_brgw_org_default",
-            ),
         ]
         indexes = [
             models.Index(
@@ -277,6 +328,10 @@ class LensGatewayLink(OrganizationScopedModel):
     def resolved_workspace_root(self) -> str:
         if self.workspace_root:
             return self.workspace_root.rstrip("/")
+        if self.scope == self.GatewayScope.PLATFORM:
+            from apps.lens_bridge.services.gateway_paths import PLATFORM_WORKSPACE_ROOT
+
+            return PLATFORM_WORKSPACE_ROOT
         return f"/workspace/org-{self.organization_id}/data"
 
 
@@ -411,7 +466,7 @@ class LensWorkspaceBinding(OrganizationScopedModel):
         on_delete=models.PROTECT,
         related_name="workspace_bindings",
     )
-    execution_organization_id = models.BigIntegerField(db_index=True)
+    execution_organization_id = models.BigIntegerField(db_index=True, null=True, blank=True)
     execution_node_id = models.BigIntegerField(db_index=True)
     workspace_kind = models.CharField(
         max_length=24,

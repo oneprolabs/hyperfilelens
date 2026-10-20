@@ -23,7 +23,7 @@ def _client_ip(request) -> str | None:
 
 def write_audit_log(
     *,
-    organization: Organization,
+    organization: Organization | None,
     user=None,
     action: str,
     target_type: str = "",
@@ -105,7 +105,7 @@ def write_audit_log(
 def write_audit_log_from_request(
     request,
     *,
-    organization: Organization,
+    organization: Organization | None,
     action: str,
     resource_type: str = "",
     resource_id: str = "",

@@ -10,6 +10,7 @@ from rest_framework.renderers import JSONRenderer
 from apps.node.api.permissions import AllowAny
 from apps.node.models import Node
 from apps.node.services.internal.agent_ws_auth import validate_agent_ws_credentials
+from apps.node.services.internal.transport_identity import node_for_transport
 from apps.node.services.internal.performance_policy import (
     POLICY_KEY,
     STATUS_KEY,
@@ -38,12 +39,7 @@ class NodePerformancePolicyView(APIView):
             or len(org_key) > 128
         ):
             return None
-        node = Node.objects.filter(
-            pk=identifier,
-            organization__key=org_key,
-            organization__is_active=True,
-            is_deleted=False,
-        ).first()
+        node = node_for_transport(node_id=int(identifier), namespace=org_key)
         if node is None or not validate_agent_ws_credentials(node.id, token):
             return None
         return node

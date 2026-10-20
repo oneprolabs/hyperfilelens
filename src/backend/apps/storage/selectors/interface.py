@@ -12,6 +12,7 @@ from apps.storage.provider_catalog.catalog import (
     effective_catalog as _effective_provider_catalog,
     effective_provider as _effective_provider,
     effective_provider_records as _effective_provider_records,
+    load_default_catalog as _load_default_provider_catalog,
 )
 
 
@@ -25,6 +26,10 @@ def get_effective_storage_provider(provider_id: str) -> dict | None:
 
 def list_effective_storage_providers() -> list[dict]:
     records = _effective_provider_records()
+    default_provider_ids = {
+        provider["id"]
+        for provider in _load_default_provider_catalog()["providers"]
+    }
     return [
         {
             **record["config"],
@@ -32,6 +37,10 @@ def list_effective_storage_providers() -> list[dict]:
             "checksum": record["checksum"],
             "updated_at": record["updated_at"],
             "region_count": len(record["config"]["regions"]),
+            "can_restore_default": (
+                record["source"] == "override"
+                and record["config"]["id"] in default_provider_ids
+            ),
         }
         for record in records.values()
     ]

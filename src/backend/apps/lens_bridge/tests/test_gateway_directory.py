@@ -97,9 +97,9 @@ class GatewayDirectoryTests(TestCase):
             sl_lensnode_uuid=uuid.uuid4(),
         )
         cls.public_link = LensGatewayLink.objects.create(
-            organization=cls.org,
+            organization=None,
             gateway=Node.objects.create(
-                organization=cls.org, role="gateway", name="Public gateway"
+                organization=None, scope=Node.Scope.PLATFORM, role="gateway", name="Public gateway"
             ),
             scope="platform",
         )

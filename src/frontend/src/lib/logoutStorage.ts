@@ -21,4 +21,9 @@ export function clearLogoutBrowserStorage(): void {
 
   clearLoginLocaleSelection()
   clearPendingLoginLocale()
+  try {
+    sessionStorage.removeItem('hfl_org_key')
+  } catch {
+    /* Storage may be unavailable in privacy-restricted browser contexts. */
+  }
 }

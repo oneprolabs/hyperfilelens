@@ -38,7 +38,8 @@ export type NodeStoragePoolRow = {
 
 export type ApiNode = {
   id: number
-  organization: number
+  organization: number | null
+  transport_key?: string
   name: string
   role: NodeRole
   installation_mode?: NodeInstallationMode

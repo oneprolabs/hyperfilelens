@@ -5,9 +5,12 @@ import { api } from './api'
 import {
   applyProviderImport,
   createProviderValidationRun,
+  confirmProviderReset,
+  exportProviders,
   normalizedStorageProviderSnapshot,
   reviewProviderReset,
   type ProviderImportReview,
+  type ProviderResetReview,
 } from './storageProviderCatalogApi'
 
 vi.mock('./api', async (importOriginal) => {
@@ -71,16 +74,60 @@ describe('Storage Provider Catalog API', () => {
     })
   })
 
-  it('uses distinct server Review endpoints for Provider and all-Provider reset', async () => {
-    vi.mocked(api).mockResolvedValue({ scope: 'all' })
+  it('uses distinct review endpoints for drawer and selected-provider restoration', async () => {
+    vi.mocked(api).mockResolvedValue({ scope: 'selected' })
 
     await reviewProviderReset('aliyun')
-    await reviewProviderReset()
+    await reviewProviderReset(['aliyun'])
+    await reviewProviderReset(['aliyun', 'aws'])
 
     expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([
       '/api/v1/platform-ops/storage-providers/aliyun/reset/review',
-      '/api/v1/platform-ops/storage-providers/reset/review',
+      '/api/v1/platform-ops/storage-providers/reset-selected/review',
+      '/api/v1/platform-ops/storage-providers/reset-selected/review',
     ])
+    expect(JSON.parse(vi.mocked(api).mock.calls[2]![1]!.body as string))
+      .toEqual({ provider_ids: ['aliyun', 'aws'] })
+  })
+
+  it('never falls back to all providers for empty, missing, or duplicate selections', () => {
+    expect(() => exportProviders([])).toThrow()
+    expect(() => reviewProviderReset([])).toThrow()
+    expect(() => reviewProviderReset(['aliyun', 'aliyun'])).toThrow()
+    expect(() => reviewProviderReset(undefined as unknown as string)).toThrow()
+    expect(api).not.toHaveBeenCalled()
+  })
+
+  it('exports only explicit selected IDs', async () => {
+    vi.mocked(api).mockResolvedValue({ providers: [] })
+    await exportProviders(['aliyun', 'aws'])
+    expect(api).toHaveBeenCalledWith(
+      '/api/v1/platform-ops/storage-providers/export?provider_ids=aliyun%2Caws',
+    )
+  })
+
+  it('confirms the reviewed selection and token without using a global endpoint', async () => {
+    vi.mocked(api).mockResolvedValue({ reset: true })
+    const review: ProviderResetReview = {
+      scope: 'selected', provider_ids: ['aliyun', 'aws'], providers: [],
+      reset_token: 'selected-token', expires_at: '2099-01-01T00:00:00Z',
+    }
+    await confirmProviderReset(review)
+    expect(api).toHaveBeenCalledWith('/api/v1/platform-ops/storage-providers/reset-selected', {
+      method: 'POST',
+      body: JSON.stringify({ reset_token: 'selected-token', provider_ids: ['aliyun', 'aws'] }),
+    })
+  })
+
+  it('rejects global reviews and incompatible single-provider scopes before sending requests', () => {
+    const review: ProviderResetReview = {
+      scope: 'all', provider_ids: ['aliyun', 'aws'], providers: [],
+      reset_token: 'scope-token', expires_at: '2099-01-01T00:00:00Z',
+    }
+    expect(() => confirmProviderReset(review)).toThrow()
+    expect(() => confirmProviderReset({ ...review, scope: 'selected' }, 'aliyun')).toThrow()
+    expect(() => confirmProviderReset({ ...review, scope: 'provider', provider_ids: ['aws'] }, 'aliyun')).toThrow()
+    expect(api).not.toHaveBeenCalled()
   })
 
   it('compares validation candidates after server-equivalent string normalization', () => {

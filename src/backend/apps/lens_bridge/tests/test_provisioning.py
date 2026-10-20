@@ -361,13 +361,13 @@ class EnsureKsWorkspaceTests(SimpleTestCase):
         mock_sync.return_value = MagicMock(ok=True, task=task)
 
         org = MagicMock(id=1)
-        gateway = MagicMock(id=134)
+        gateway = MagicMock(id=134, organization=MagicMock(id=99))
         link = MagicMock(id=7)
         link.sl_lensnode_uuid = "de240f46-eccd-4e4b-868f-b1f504fbe67b"
         link.resolved_workspace_root.return_value = "/workspace/org-1"
         mock_context.return_value = MagicMock(
             gateway=gateway,
-            execution_organization=MagicMock(id=99),
+            execution_organization_id=99,
         )
         workspace_binding = MagicMock(
             gateway_link_id=7,

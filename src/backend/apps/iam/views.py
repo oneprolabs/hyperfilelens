@@ -101,15 +101,17 @@ class OrganizationViewSet(viewsets.ModelViewSet):
                     "memberships", filter=Q(memberships__is_active=True)
                 ),
             )
-            .filter(
-                memberships__user=self.request.user,
-                memberships__is_active=True,
-            )
             .distinct()
         )
+        from common.platform_staff import is_installation_admin
+
+        if not is_installation_admin(self.request.user):
+            qs = qs.filter(
+                memberships__user=self.request.user, memberships__is_active=True,
+            )
         org_key = resolve_org_key(self.request)
-        if org_key:
-            qs = qs.filter(key=org_key)
+        # This is the tenant organization surface, never a platform directory.
+        qs = qs.filter(key=org_key, is_active=True)
         return qs.order_by("id")
 
 
@@ -171,8 +173,8 @@ class MembershipViewSet(viewsets.ModelViewSet):
             ):
                 raise PermissionDenied("Organization member management is not granted.")
             targets = list(
-                Membership.objects.select_for_update()
-                .select_related("user", "organization")
+                Membership.objects.select_for_update(of=("self", "user", "organization"))
+                .select_related("user", "user__profile", "organization")
                 .filter(
                     organization_id=actor.organization_id,
                     pk__in=data["membership_ids"],
@@ -229,7 +231,7 @@ class MembershipViewSet(viewsets.ModelViewSet):
         if membership is None:
             return Membership.objects.none()
         queryset = (
-            Membership.objects.select_related("user", "organization")
+            Membership.objects.select_related("user", "user__profile", "organization")
             .filter(organization_id=membership.organization.pk)
             .order_by("id")
         )

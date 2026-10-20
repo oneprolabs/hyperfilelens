@@ -184,7 +184,7 @@ describe('Data Gateway enrollment', () => {
     vi.mocked(api).mockResolvedValue({
       token: 'platform-token',
       token_id: 17,
-      org_key: '__platform_lens__',
+      org_key: 'platform:hfl',
       gateway_scope: 'platform',
       api_base: 'https://console.example.com:11443',
       tls_verify: true,
@@ -199,7 +199,7 @@ describe('Data Gateway enrollment', () => {
     expect(result.command).not.toContain('curl -k')
     expect(result.tlsVerify).toBe(true)
     expect(result.expiresAt).toBe('2026-07-28T06:00:00Z')
-    expect(result.orgKey).toBe('__platform_lens__')
+    expect(result.orgKey).toBe('platform:hfl')
     expect(result.apiBase).toBe('https://console.example.com:11443')
     expect(result.command).not.toContain('11444')
     expect(vi.mocked(api)).toHaveBeenCalledWith(

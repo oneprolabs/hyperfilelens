@@ -31,7 +31,7 @@ const offline = computed(() => debouncedNodeStatus(props.node) !== 'online')
 const initialTab = offline.value ? 'service' : 'upgrade'
 const initialServiceAction = offline.value ? 'restart' : 'status'
 const orgKey = computed(() => (
-  props.gatewayScope === 'platform' ? '__platform_lens__' : getEffectiveOrgKey()
+  props.gatewayScope === 'platform' ? (props.node.transport_key ?? '') : getEffectiveOrgKey()
 ))
 
 async function copyCommand(command: string) {

@@ -1292,7 +1292,8 @@ online_platform_gateway_is_managed() {
 	[[ ! -L "${ONLINE_AGENT_INSTALL_DIR}" \
 		&& ! -L "${ONLINE_AGENT_ROOT}" \
 		&& -f "${env_file}" && ! -L "${env_file}" ]] || return 1
-	[[ "$(online_agent_env_value HFL_ORG_KEY)" == "__platform_lens__" \
+	[[ ( "$(online_agent_env_value HFL_ORG_KEY)" == "platform:hfl" \
+		|| "$(online_agent_env_value HFL_ORG_KEY)" == "__platform_lens__" ) \
 		&& "$(online_agent_env_value HFL_NODE_ROLE)" == "gateway" ]]
 }
 

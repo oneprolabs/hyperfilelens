@@ -171,7 +171,6 @@
   "platformOps.monitoring.totalHosts",
   "platformOps.nav.platformGoogleOAuth",
   "platformOps.nav.platformTurnstile",
-  "platformOps.nav.roles",
   "platformOps.orgs.plan",
   "platformOps.orgs.quotaFromPlan",
   "platformOps.orgs.sectionPlan",
@@ -333,5 +332,7 @@
   "settings.rolesPage.resourceLabels.insights_chats",
   "settings.subscription.limitGateways",
   "settings.subscription.planLimit",
-  "repositoriesPage.cleanupResourceSeparator"
+  "repositoriesPage.cleanupResourceSeparator",
+  "platformOps.orgGovernance.general",
+  "platformOps.orgGovernance.roles"
 ]

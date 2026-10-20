@@ -10,7 +10,6 @@ from urllib.parse import urlsplit
 from django.conf import settings
 
 from apps.lens_bridge.models import LensGatewayLink
-from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 
@@ -48,7 +47,7 @@ def is_platform_gateway(node: Node) -> bool:
     """Return whether *node* is a trusted platform-owned Gateway."""
     if (
         node.role != NodeRole.GATEWAY
-        or node.organization.key != PLATFORM_ORG_KEY
+        or node.scope != Node.Scope.PLATFORM or node.organization_id is not None
         or node.is_deleted
     ):
         return False

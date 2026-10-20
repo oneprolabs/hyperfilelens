@@ -61,14 +61,14 @@ class PlatformGatewaySelectionTests(TestCase):
         )
 
     def test_explicit_platform_default_is_selected_before_older_gateway(self):
-        org = platform_lens.get_or_create_platform_org()
+        org = None
         older_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="older-gateway",
             role=NodeRole.GATEWAY,
         )
         selected_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="selected-gateway",
             role=NodeRole.GATEWAY,
         )
@@ -99,14 +99,14 @@ class PlatformGatewaySelectionTests(TestCase):
         self.assertEqual(resolved, selected)
 
     def test_auto_selection_falls_back_when_default_is_not_copilot_ready(self):
-        org = platform_lens.get_or_create_platform_org()
+        org = None
         fallback_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="fallback-gateway",
             role=NodeRole.GATEWAY,
         )
         stale_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="stale-default-gateway",
             role=NodeRole.GATEWAY,
         )
@@ -143,15 +143,15 @@ class PlatformGatewaySelectionTests(TestCase):
         self.assertNotEqual(resolved, stale_default)
 
     def test_runtime_selection_prefers_online_gateway_over_stale_default(self):
-        org = platform_lens.get_or_create_platform_org()
+        org = None
         stale_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="stale-runtime-gateway",
             role=NodeRole.GATEWAY,
             availability=Node.Availability.OFFLINE,
         )
         online_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="online-runtime-gateway",
             role=NodeRole.GATEWAY,
             availability=Node.Availability.ONLINE,
@@ -192,9 +192,9 @@ class PlatformGatewaySelectionTests(TestCase):
         self.assertNotEqual(resolved, stale)
 
     def test_runtime_selection_includes_gateway_before_lensnode_provisioning(self):
-        org = platform_lens.get_or_create_platform_org()
+        org = None
         gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="pending-lensnode-gateway",
             role=NodeRole.GATEWAY,
             availability=Node.Availability.ONLINE,
@@ -220,14 +220,14 @@ class PlatformGatewaySelectionTests(TestCase):
         self.assertEqual(resolved, link)
 
     def test_database_rejects_multiple_live_platform_defaults(self):
-        org = platform_lens.get_or_create_platform_org()
+        org = None
         first_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="first-default",
             role=NodeRole.GATEWAY,
         )
         second_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="second-default",
             role=NodeRole.GATEWAY,
         )
@@ -252,14 +252,14 @@ class PlatformGatewaySelectionTests(TestCase):
         "apps.lens_bridge.services.platform_lens.require_hfl_usable_gateway"
     )
     def test_setting_a_new_default_clears_the_previous_default(self, _ready):
-        org = platform_lens.get_or_create_platform_org()
+        org = None
         first_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="previous-default",
             role=NodeRole.GATEWAY,
         )
         second_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="replacement-default",
             role=NodeRole.GATEWAY,
         )

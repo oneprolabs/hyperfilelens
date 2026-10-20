@@ -7,13 +7,12 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.iam.models import Organization
 from apps.lens_bridge.models import LensGatewayLink
 from apps.lens_bridge.services import provisioning
 from apps.node.api import permissions as node_permissions
-from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_ws_auth import validate_agent_ws_credentials
+from apps.node.services.internal.transport_identity import node_for_transport
 from apps.node.services.internal.gateway_observability import (
     gateway_observability_policy,
     is_platform_gateway,
@@ -48,19 +47,8 @@ class GatewayLensConfigView(APIView):
                 {"error": "invalid node_id"}, status=status.HTTP_400_BAD_REQUEST
             )
 
-        org = Organization.objects.filter(key=org_key, is_active=True).first()
-        if org is None:
-            return Response(
-                {"error": "organization not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-
-        node = Node.objects.filter(
-            organization=org,
-            pk=node_id,
-            role=NodeRole.GATEWAY,
-            is_deleted=False,
-        ).first()
-        if node is None:
+        node = node_for_transport(namespace=org_key, node_id=node_id)
+        if node is None or node.role != NodeRole.GATEWAY:
             return Response(
                 {"error": "gateway not found"}, status=status.HTTP_404_NOT_FOUND
             )
@@ -78,7 +66,7 @@ class GatewayLensConfigView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        lens = provisioning.provision_gateway_lens_on_register(org=org, gateway=node)
+        lens = provisioning.provision_gateway_lens_on_register(org=node.organization, gateway=node)
         if lens is None:
             return Response(
                 {

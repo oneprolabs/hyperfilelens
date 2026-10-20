@@ -10,9 +10,17 @@ const mocks = vi.hoisted(() => ({
   health: vi.fn(),
   platformList: vi.fn(),
   latest: vi.fn(),
+  capacities: vi.fn(),
+  patchCapacity: vi.fn(),
+  profile: vi.fn(),
+  permissions: [] as string[],
   error: vi.fn(),
   route: { path: '/insight/data-gateways', query: {} },
   lifecyclePatch: null as null | ((rows: unknown[]) => void),
+}))
+vi.mock('../../composables/useDeployProfile', () => ({
+  getCachedDeployProfile: () => ({ platform_permissions: mocks.permissions }),
+  fetchDeployProfile: () => mocks.profile(),
 }))
 
 vi.mock('vue-router', async (original) => ({
@@ -63,7 +71,8 @@ vi.mock('../../composables/useNodeLifecycleOps', () => ({
 }))
 vi.mock('../../platform-ops/lib/platformOpsApi', async (original) => ({
   ...await original<typeof import('../../platform-ops/lib/platformOpsApi')>(),
-  fetchPublicGatewayCapacities: vi.fn().mockResolvedValue({ results: [] }),
+  fetchPublicGatewayCapacities: mocks.capacities,
+  patchPublicGatewayCapacity: mocks.patchCapacity,
 }))
 
 import InsightDataGateways from './InsightDataGateways.vue'
@@ -101,6 +110,14 @@ type DirectoryTestState = {
   onPaginationPageChange: () => void
   onPaginationSizeChange: () => void
   refreshCurrentPageStatus: (force?: boolean) => void
+  canManageGateway: (row: LensGatewayInsight) => boolean
+  canManageCapacity: (row: LensGatewayInsight) => boolean
+  canUpgrade: (row: LensGatewayInsight) => boolean
+  openCapacityDialog: (row: LensGatewayInsight) => void
+  submitCapacity: () => Promise<void>
+  capacityTarget: LensGatewayInsight | null
+  capacityUnlimited: boolean
+  capacityDraft: number
 }
 
 function stateOf(wrapper: VueWrapper): DirectoryTestState {
@@ -140,6 +157,10 @@ beforeEach(() => {
   mocks.latest.mockResolvedValue(null)
   mocks.health.mockResolvedValue({ lens: { configured: true, authenticated: true } })
   mocks.platformList.mockResolvedValue([])
+  mocks.capacities.mockResolvedValue({ results: [] })
+  mocks.patchCapacity.mockResolvedValue({ gateway_id: 295, capacity_bytes: -1 })
+  mocks.permissions = ['platform.infra.public_gateway.manage', 'platform.infra.public_gateway.capacity.manage']
+  mocks.profile.mockImplementation(async () => ({ platform_permissions: mocks.permissions }))
 })
 afterEach(() => {
   for (const wrapper of wrappers.splice(0)) wrapper.unmount()
@@ -453,6 +474,56 @@ describe('private Data Gateway server pagination', () => {
     expect(state.bridgeReady).toBe(true)
     expect(wrapper.get('.test-table').text()).toBe('296')
     expect(mocks.error).not.toHaveBeenCalled()
+  })
+})
+
+describe('granular platform gateway permissions', () => {
+  it('does not restore platform operations or load the list after leaving during profile loading', async () => {
+    mocks.route.path = '/platform-ops/engine/gateways'
+    const profile = deferred<{ platform_permissions: string[] }>()
+    mocks.profile.mockReturnValueOnce(profile.promise)
+    const wrapper = mountPage()
+    wrapper.unmount()
+    profile.resolve({ platform_permissions: mocks.permissions })
+    await flushPromises()
+    expect(mocks.platformList).not.toHaveBeenCalled()
+  })
+
+  it('allows only capacity editing without gateway creation or lifecycle controls', async () => {
+    mocks.route.path = '/platform-ops/engine/gateways'
+    mocks.permissions = ['platform.infra.public_gateway.capacity.manage']
+    const row = { ...gateway(), origin: 'platform' as const }
+    mocks.platformList.mockResolvedValue([row])
+    const wrapper = mountPage()
+    await flushPromises()
+    const state = stateOf(wrapper)
+    expect(wrapper.get('.test-table').text()).toBe('295')
+    expect(wrapper.find('router-link-stub').exists()).toBe(false)
+    expect(wrapper.find('el-dropdown-stub').exists()).toBe(false)
+    expect(mocks.health).not.toHaveBeenCalled()
+    expect(mocks.latest).not.toHaveBeenCalled()
+    expect(state.canManageGateway(row)).toBe(false)
+    expect(state.canUpgrade(row)).toBe(false)
+    expect(state.canManageCapacity(row)).toBe(true)
+    expect(state.canManageCapacity({ ...row, origin: 'user' })).toBe(false)
+    state.openCapacityDialog(row)
+    await state.submitCapacity()
+    expect(mocks.patchCapacity).toHaveBeenCalledWith(295, -1)
+  })
+
+  it('does not treat gateway management as capacity permission', async () => {
+    mocks.route.path = '/platform-ops/engine/gateways'
+    mocks.permissions = ['platform.infra.public_gateway.manage']
+    const row = { ...gateway(), origin: 'platform' as const }
+    mocks.platformList.mockResolvedValue([row])
+    const wrapper = mountPage()
+    await flushPromises()
+    const state = stateOf(wrapper)
+    expect(state.canManageGateway(row)).toBe(true)
+    expect(state.canManageCapacity(row)).toBe(false)
+    state.capacityTarget = row
+    await state.submitCapacity()
+    expect(mocks.patchCapacity).not.toHaveBeenCalled()
   })
 })
 

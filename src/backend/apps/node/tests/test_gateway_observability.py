@@ -10,7 +10,7 @@ from rest_framework.test import APIRequestFactory
 
 from apps.iam.models import Organization
 from apps.lens_bridge.models import LensGatewayLink
-from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
+from apps.node.services.internal.transport_identity import PLATFORM_TRANSPORT_NAMESPACE
 from apps.node.api.views.gateway_lens import GatewayLensConfigView
 from apps.node.models import Node, NodeCredential, NodeToken
 from apps.node.models.base import NodeRole
@@ -22,11 +22,9 @@ from apps.node.services.internal.gateway_observability import (
 @override_settings(SENTRY_ENABLED=True, SENTRY_ENVIRONMENT="hfl-test")
 class GatewayObservabilityPolicyTests(TestCase):
     def setUp(self) -> None:
-        self.org = Organization.objects.create(
-            key=PLATFORM_ORG_KEY, name="Platform Lens"
-        )
+        self.org = None
         self.node = Node.objects.create(
-            organization=self.org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="platform-gateway",
             role=NodeRole.GATEWAY,
             version="main-123abcd",
@@ -109,11 +107,9 @@ class GatewayObservabilityPolicyTests(TestCase):
 class GatewayLensConfigObservabilityTests(TestCase):
     def setUp(self) -> None:
         self.factory = APIRequestFactory()
-        self.org = Organization.objects.create(
-            key=PLATFORM_ORG_KEY, name="Platform Lens"
-        )
+        self.org = None
         self.node = Node.objects.create(
-            organization=self.org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="platform-gateway",
             role=NodeRole.GATEWAY,
             version="0.2.0",
@@ -144,7 +140,7 @@ class GatewayLensConfigObservabilityTests(TestCase):
         request = self.factory.get(
             "/api/v1/node/enrollment/gateway-lens-config",
             {"node_id": self.node.id},
-            HTTP_X_ORG_KEY=self.org.key,
+            HTTP_X_ORG_KEY=PLATFORM_TRANSPORT_NAMESPACE,
             HTTP_X_NODE_TOKEN=token,
         )
         return GatewayLensConfigView.as_view()(request)
@@ -187,7 +183,7 @@ class GatewayLensConfigObservabilityTests(TestCase):
 
     def test_non_platform_gateway_token_is_rejected(self) -> None:
         wrong_scope = NodeToken.objects.create(
-            organization=self.org,
+            organization=Organization.objects.create(key="private-enrollment", name="Private"),
             role=NodeRole.GATEWAY,
             token="non-platform-gateway-token",
             gateway_scope=LensGatewayLink.GatewayScope.USER,

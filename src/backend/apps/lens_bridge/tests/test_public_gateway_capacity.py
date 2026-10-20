@@ -12,7 +12,6 @@ from apps.lens_bridge.models import (
     LensSessionLink,
     LensWorkspaceBinding,
 )
-from apps.lens_bridge.services import platform_lens
 from apps.lens_bridge.services.public_gateway_capacity import (
     assert_public_gateway_capacity,
     get_public_gateway_capacity_bytes,
@@ -26,9 +25,9 @@ from common.errors import AppError
 
 
 def _make_platform_gateway(*, name: str, capacity_bytes: int = -1) -> LensGatewayLink:
-    org = platform_lens.get_or_create_platform_org()
+    org = None
     node = Node.objects.create(
-        organization=org,
+        organization=None, scope=Node.Scope.PLATFORM,
         name=name,
         role=Node.Role.GATEWAY,
         status=Node.Status.ACTIVE,

@@ -46,6 +46,10 @@ class AuthzProvider(Protocol):
 
         Contexts must never be shared across requests. Query predicates and
         individual checks must implement identical resource authorization.
+        An installation administrator may have a valid context without a
+        tenant Role or Membership. ``authority_source`` distinguishes that
+        identity from an actual organization Owner; it must not create either
+        affiliation or an Owner assignment as a side effect.
         An optional ``filter_task_resource_queryset`` context hook may
         authorize task reads through retained source identities with current
         grants. It must not widen live resource queries or write permissions.

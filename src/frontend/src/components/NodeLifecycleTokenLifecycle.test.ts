@@ -27,7 +27,7 @@ function issued(tokenId: number, command: string) {
   }
 }
 
-function mountWizard() {
+function mountWizard(overrides: { orgKey?: string; role?: 'agent' | 'gateway'; gatewayScope?: 'user' | 'platform' } = {}) {
   const i18n = createI18n({
     legacy: false,
     locale: 'en',
@@ -41,6 +41,7 @@ function mountWizard() {
       role: 'agent',
       os: 'linux',
       installOnly: true,
+      ...overrides,
     },
     global: {
       plugins: [i18n],
@@ -63,6 +64,17 @@ describe('Node lifecycle enrollment token ownership', () => {
     vi.clearAllMocks()
     mocks.revokeEnrollmentToken.mockResolvedValue(undefined)
     mocks.revokePlatformGatewayEnrollment.mockResolvedValue(undefined)
+  })
+
+  it('issues public Gateway enrollment without a tenant organization key', async () => {
+    mocks.issuePlatformGatewayEnrollmentInstall.mockResolvedValueOnce(issued(17, 'install-public'))
+    const wrapper = mountWizard({ orgKey: '', role: 'gateway', gatewayScope: 'platform' })
+    await flushPromises()
+    expect(mocks.issuePlatformGatewayEnrollmentInstall).toHaveBeenCalledOnce()
+    expect(mocks.issueGatewayEnrollmentInstall).not.toHaveBeenCalled()
+    expect(mocks.issueEnrollmentInstall).not.toHaveBeenCalled()
+    expect(wrapper.get('.agent-install-wizard__console-pre').text()).toBe('install-public')
+    wrapper.unmount()
   })
 
   it('keeps an already displayed install command valid when the selected OS changes', async () => {

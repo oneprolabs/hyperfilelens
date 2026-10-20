@@ -225,7 +225,7 @@ class UsageStatsTests(TestCase):
                 usage_key="storage_used_bytes",
             )
 
-    def test_collect_instance_usage_excludes_internal_platform_org(self):
+    def test_collect_instance_usage_excludes_platform_infrastructure(self):
         customer_org = Organization.objects.create(
             key="usage-customer-two",
             name="Usage Customer Two",
@@ -246,20 +246,9 @@ class UsageStatsTests(TestCase):
             role=NodeRole.AGENT,
             status="online",
         )
-        platform_org = Organization.objects.create(
-            key="__platform_lens__",
-            name="Platform Lens",
-        )
-        Membership.objects.create(
-            user=self.user,
-            organization=platform_org,
-            role=Membership.Role.ADMIN,
-        )
         Node.objects.create(
-            organization=platform_org,
-            name="platform-agent",
-            role=NodeRole.AGENT,
-            status="online",
+            organization=None, scope=Node.Scope.PLATFORM,
+            name="public-gateway", role=NodeRole.GATEWAY,
         )
         Repository.objects.create(
             organization_id=customer_org.id,
@@ -269,14 +258,7 @@ class UsageStatsTests(TestCase):
             estimated_usage_bytes=2 * 1024**3,
             usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
         )
-        Repository.objects.create(
-            organization_id=platform_org.id,
-            name="platform-object-storage",
-            repo_type=Repository.Type.S3,
-            status=Repository.Status.CREATED,
-            estimated_usage_bytes=3 * 1024**3,
-            usage_probe_status=Repository.MetricProbeStatus.SUCCESS,
-        )
+
 
         usage = collect_instance_usage_stats()
 

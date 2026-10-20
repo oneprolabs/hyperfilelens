@@ -166,16 +166,10 @@ def resolve_instance_license_organization() -> Organization | None:
     Org that holds the deployment instance grant.
 
     Prefer an organization that already has a License row, otherwise the oldest
-    active customer org. Excludes Platform Lens when that key is available.
+    active customer organization. Platform infrastructure has no organization.
     """
-    try:
-        from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
-    except Exception:  # pragma: no cover
-        PLATFORM_ORG_KEY = "__platform_lens__"
-
     licensed = (
         License.objects.select_related("organization")
-        .exclude(organization__key=PLATFORM_ORG_KEY)
         .order_by("organization_id", "activated_at")
         .first()
     )
@@ -184,7 +178,6 @@ def resolve_instance_license_organization() -> Organization | None:
 
     return (
         Organization.objects.filter(is_active=True)
-        .exclude(key=PLATFORM_ORG_KEY)
         .order_by("id")
         .first()
     )
@@ -414,15 +407,6 @@ def _determine_change_type(
     return License.ChangeType.RENEWAL, "License updated"
 
 
-def _platform_org_key() -> str:
-    try:
-        from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
-
-        return PLATFORM_ORG_KEY
-    except Exception:  # pragma: no cover
-        return "__platform_lens__"
-
-
 # Stable advisory lock id for serializing instance-license activation (PostgreSQL).
 _INSTANCE_LICENSE_ADVISORY_LOCK = 874_522_301
 
@@ -441,7 +425,6 @@ def _acquire_instance_license_lock() -> None:
     # Backends without advisory locks: lock the oldest customer org row.
     (
         Organization.objects.filter(is_active=True)
-        .exclude(key=_platform_org_key())
         .order_by("id")
         .select_for_update()
         .first()
@@ -464,7 +447,7 @@ def activate_license(
     # renew/replace it. Secondary tenants are covered via EffectiveQuota.
     _acquire_instance_license_lock()
     existing_grant = (
-        License.objects.exclude(organization__key=_platform_org_key())
+        License.objects.all()
         .select_for_update()
         .order_by("organization_id", "activated_at")
         .first()

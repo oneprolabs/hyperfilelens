@@ -57,6 +57,8 @@ SOURCELENS_UPGRADE_STARTED=0
 SOURCELENS_GATE_ADOPTION_SOURCE=""
 UPGRADE_HFL_COMMITTED=0
 UPGRADE_HFL_CUTOVER_ATTEMPTED=0
+UPGRADE_EXCLUSIVE_REQUIRED=0
+UPGRADE_EXCLUSIVE_MIGRATION_STARTED=0
 UPGRADE_ARTIFACT_SHA256="${HFL_UPGRADE_ARTIFACT_SHA256:-}"
 UPGRADE_TRANSACTION_DIR=""
 UPGRADE_TRANSACTION_PHASE=""
@@ -441,6 +443,15 @@ cleanup_upgrade_and_finish() {
 recover_upgrade_services() {
 	local recovered=1
 	warn "upgrade failed after the maintenance window began; attempting best-effort service recovery"
+	if exclusive_migration_started && [[ "${UPGRADE_HFL_COMMITTED}" != "1" ]]; then
+		# Even a failed migrate command may have committed earlier migrations.
+		# Never restart old images against an indeterminate/new representation.
+		stop_exclusive_application_writers || true
+		warn "Exclusive database migration started; automatic old-image recovery is disabled."
+		warn "Application traffic remains stopped. Retry the SAME target release, or restore the verified pre-upgrade database/configuration backup offline."
+		warn "Recovery backup: ${UPGRADE_BACKUP_DIR:-$(read_exclusive_migration_state backup_dir)}"
+		return 1
+	fi
 	set +e
 	if [[ "${UPGRADE_SOURCELENS_WAS_RUNNING}" == "1" ]] && sourcelens_installed; then
 		if [[ "${SOURCELENS_UPGRADE_STARTED}" == "1" ]]; then
@@ -460,6 +471,14 @@ recover_upgrade_services() {
 	if [[ "${UPGRADE_HFL_WAS_RUNNING}" == "1" && -f "${ROOT}/.env" ]]; then
 		configure_sl_queue_monitor
 		local recovery_color
+		if [[ "${UPGRADE_EXCLUSIVE_REQUIRED}" == "1" \
+			&& "${UPGRADE_HFL_COMMITTED}" != "1" \
+			&& "${UPGRADE_PREVIOUS_COLOR}" == legacy \
+			&& -n "${UPGRADE_LEGACY_API_CID}" ]]; then
+			# The old singleton was deliberately stopped before migration.
+			# This branch is reachable only before the irreversible fence.
+			docker start "${UPGRADE_LEGACY_API_CID}" >/dev/null || recovered=0
+		fi
 		if [[ "${UPGRADE_HFL_COMMITTED}" == "1" ]]; then
 			recovery_color="${UPGRADE_TARGET_COLOR}"
 		elif [[ "${UPGRADE_PREVIOUS_COLOR}" != "legacy" ]]; then
@@ -517,6 +536,9 @@ recover_upgrade_services() {
 	fi
 	set -e
 	if [[ "${recovered}" == "1" ]]; then
+		if [[ "${UPGRADE_EXCLUSIVE_REQUIRED}" == "1" ]]; then
+			clear_exclusive_migration_state
+		fi
 		ok "best-effort service recovery command completed; database backups were not restored automatically"
 		return 0
 	else
@@ -850,6 +872,8 @@ materialize_to_install_dir() {
 			--exclude 'backup/'
 			--exclude 'logs/'
 			--exclude 'upgrade_tmp/'
+			--exclude 'deploy/upgrades/'
+			--exclude 'deploy/blue-green/exclusive-migration.json'
 			--exclude '.install-complete*'
 			--exclude '.install-in-progress*'
 		)
@@ -877,6 +901,14 @@ acquire_installation_lock() {
 
 init_install_root() {
 	local source
+	case "${SESSION_ACTION}" in
+	status | stop | manage | uninstall) ;;
+	*)
+		[[ ! -e "${INSTALL_DIR}/deploy/blue-green/exclusive-migration.json" \
+			&& ! -L "${INSTALL_DIR}/deploy/blue-green/exclusive-migration.json" ]] \
+			|| die "An exclusive migration is incomplete; use the same target release's upgrade command, not install/start/restart."
+		;;
+	esac
 	source="$(resolve_source_root)"
 	materialize_to_install_dir "${source}"
 	ROOT="${INSTALL_DIR}"
@@ -1131,6 +1163,247 @@ for item in files:
         raise SystemExit(1)
 PY
 	printf '%s' "${backup_dir}"
+}
+
+exclusive_migration_state_file() {
+	printf '%s/deploy/blue-green/exclusive-migration.json' "${ROOT}"
+}
+
+read_exclusive_migration_state() {
+	python3 - "$(exclusive_migration_state_file)" "${ROOT}/backup" "$1" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+path, backup_root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+if path.is_symlink() or not path.is_file():
+    raise SystemExit("Exclusive migration state is missing or unsafe.")
+state = json.loads(path.read_text(encoding="utf-8"))
+keys = {"schema", "artifact_sha256", "target_version", "previous_color", "target_color", "legacy_api_cid", "backup_dir", "stage"}
+if set(state) != keys or state["schema"] != 1:
+    raise SystemExit("Invalid exclusive migration state schema.")
+if not re.fullmatch(r"[0-9a-f]{64}", str(state["artifact_sha256"])):
+    raise SystemExit("Invalid exclusive migration artifact.")
+if not re.fullmatch(r"(?:[0-9]+\.[0-9]+\.[0-9]+|main-[0-9a-f]{7})", str(state["target_version"])):
+    raise SystemExit("Invalid exclusive migration version.")
+if state["previous_color"] not in {"blue", "green", "legacy"} or state["target_color"] not in {"blue", "green"}:
+    raise SystemExit("Invalid exclusive migration colors.")
+if state["legacy_api_cid"] and not re.fullmatch(r"[0-9a-f]{12,64}", state["legacy_api_cid"]):
+    raise SystemExit("Invalid legacy API identity.")
+backup = pathlib.Path(state["backup_dir"])
+if backup.parent != backup_root or not re.fullmatch(r"upgrade-[0-9]{8}-[0-9]{6}", backup.name):
+    raise SystemExit("Invalid exclusive migration backup.")
+if state["stage"] not in {"prepared", "migration_started"}:
+    raise SystemExit("Invalid exclusive migration stage.")
+print(state[sys.argv[3]])
+PY
+}
+
+write_exclusive_migration_state() {
+	local stage=$1
+	if [[ -e "$(exclusive_migration_state_file)" || -L "$(exclusive_migration_state_file)" ]]; then
+		[[ "$(read_exclusive_migration_state artifact_sha256)" == "${UPGRADE_ARTIFACT_SHA256}" \
+			&& "$(read_exclusive_migration_state target_version)" == "${UPGRADE_TARGET_VERSION}" \
+			&& "$(read_exclusive_migration_state backup_dir)" == "${UPGRADE_BACKUP_DIR}" ]] \
+			|| die "Refusing to overwrite another exclusive migration's recovery state."
+		if [[ "${stage}" == prepared ]] && exclusive_migration_started; then
+			die "Refusing to downgrade the exclusive migration safety fence."
+		fi
+	fi
+	mkdir -p "$(dirname "$(exclusive_migration_state_file)")"
+	python3 - "$(exclusive_migration_state_file)" \
+		"${UPGRADE_ARTIFACT_SHA256}" "${UPGRADE_TARGET_VERSION}" \
+		"${UPGRADE_PREVIOUS_COLOR}" "${UPGRADE_TARGET_COLOR}" \
+		"${UPGRADE_LEGACY_API_CID}" "${UPGRADE_BACKUP_DIR}" "${stage}" <<'PY'
+import json
+import os
+import pathlib
+import sys
+import tempfile
+
+path = pathlib.Path(sys.argv[1])
+state = dict(zip(
+    ("artifact_sha256", "target_version", "previous_color", "target_color", "legacy_api_cid", "backup_dir", "stage"),
+    sys.argv[2:],
+))
+state["schema"] = 1
+fd, temporary = tempfile.mkstemp(prefix=".exclusive-migration-", dir=path.parent)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as output:
+        json.dump(state, output)
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
+clear_exclusive_migration_state() {
+	local state
+	state="$(exclusive_migration_state_file)"
+	[[ ! -e "${state}" && ! -L "${state}" ]] || safe_rm_file "${state}"
+}
+
+exclusive_migration_started() {
+	[[ "${UPGRADE_EXCLUSIVE_MIGRATION_STARTED}" == "1" ]] && return 0
+	local state stage
+	state="$(exclusive_migration_state_file)"
+	if [[ -e "${state}" || -L "${state}" ]]; then
+		stage="$(read_exclusive_migration_state stage)" || return 0
+		[[ "${stage}" == migration_started ]] && return 0
+	fi
+	return 1
+}
+
+assert_no_exclusive_migration_in_progress() {
+	local state
+	state="$(exclusive_migration_state_file)"
+	[[ ! -e "${state}" && ! -L "${state}" ]] \
+		|| die "An exclusive migration is incomplete. Retry the same target release installer or restore its verified backup offline; do not start old application services."
+}
+
+resume_exclusive_migration_state() {
+	local state
+	state="$(exclusive_migration_state_file)"
+	[[ -e "${state}" || -L "${state}" ]] || return 0
+	[[ "$(read_exclusive_migration_state artifact_sha256)" == "${UPGRADE_ARTIFACT_SHA256}" \
+		&& "$(read_exclusive_migration_state target_version)" == "${UPGRADE_TARGET_VERSION}" ]] \
+		|| die "An exclusive migration for a DIFFERENT target is incomplete. Finish that release or restore its pre-upgrade backup first."
+	UPGRADE_EXCLUSIVE_REQUIRED=1
+	UPGRADE_PREVIOUS_COLOR="$(read_exclusive_migration_state previous_color)"
+	UPGRADE_TARGET_COLOR="$(read_exclusive_migration_state target_color)"
+	UPGRADE_LEGACY_API_CID="$(read_exclusive_migration_state legacy_api_cid)"
+	UPGRADE_BACKUP_DIR="$(read_exclusive_migration_state backup_dir)"
+	if exclusive_migration_started; then
+		UPGRADE_EXCLUSIVE_MIGRATION_STARTED=1
+	fi
+}
+
+platform_ownership_migration_pending() {
+	local policy
+	policy="$(compose_in_root exec -T postgres sh -c \
+		'export PGCONNECT_TIMEOUT=10 PGOPTIONS="-c statement_timeout=15000"; exec psql -X -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-hyperfilelens}" -Atc "SELECT CASE WHEN EXISTS (SELECT 1 FROM django_migrations WHERE app = '\''lens_bridge'\'' AND name = '\''0049_platform_gateway_owner_constraint'\'') THEN '\''compatible'\'' ELSE '\''exclusive'\'' END"')" \
+		|| die "Could not determine database migration compatibility; refusing to stop services or migrate."
+	case "${policy}" in
+	exclusive) return 0 ;;
+	compatible) return 1 ;;
+	*) die "Unexpected database migration compatibility response." ;;
+	esac
+}
+
+exclusive_application_services() {
+	compose_in_root config --services | grep -E '^(nginx|api|api-blue|api-green|worker|scheduler)$'
+}
+
+find_legacy_api_container() {
+	local containers cid service oneoff
+	# A failed old installer may already have replaced docker-compose.yml.
+	# Inspect all retained project containers, including stopped/orphaned APIs.
+	containers="$(compose_in_root ps -a -q)" || return 1
+	for cid in ${containers}; do
+		service="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.service" }}' "${cid}")" || return 1
+		[[ "${service}" == api ]] || continue
+		oneoff="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.oneoff" }}' "${cid}")" || return 1
+		case "${oneoff}" in true | True) continue ;; esac
+		printf '%s' "${cid}"
+		return 0
+	done
+}
+
+verify_exclusive_project_writers() {
+	local running cid service
+	# No service filter: include orphaned singleton APIs and one-off migration
+	# containers left by an interrupted client, not just the target Compose file.
+	running="$(compose_in_root ps -a --status running -q)" || return 1
+	for cid in ${running}; do
+		service="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.service" }}' "${cid}")" || return 1
+		case "${service}" in
+		api | api-blue | api-green | worker | scheduler | nginx | migration) return 1 ;;
+		esac
+	done
+}
+
+verify_exclusive_application_stopped() {
+	local services running existing
+	local -a names=()
+	services="$(exclusive_application_services)" || return 1
+	mapfile -t names <<<"${services}"
+	running="$(compose_in_root ps --status running -q "${names[@]}")" || return 1
+	[[ -z "${running}" ]] || return 1
+	if [[ -n "${UPGRADE_LEGACY_API_CID}" ]]; then
+		existing="$(docker ps -a -q --filter "id=${UPGRADE_LEGACY_API_CID}")" || return 1
+		if [[ -n "${existing}" ]]; then
+			running="$(docker inspect --format '{{.State.Running}}' "${UPGRADE_LEGACY_API_CID}")" || return 1
+			[[ "${running}" == false ]] || return 1
+		fi
+	fi
+	verify_exclusive_project_writers
+}
+
+stop_exclusive_application_writers() {
+	local services previous_cids cid hostname existing running service
+	local -a names=()
+	services="$(exclusive_application_services)" || return 1
+	mapfile -t names <<<"${services}"
+	# Retain previous-pool identities even when resuming after they were stopped.
+	# Never exclude a stopped candidate which will reuse its identity on retry.
+	if [[ "${UPGRADE_PREVIOUS_COLOR}" == legacy ]]; then
+		previous_cids="${UPGRADE_LEGACY_API_CID}"
+	else
+		previous_cids="$(compose_in_root ps -a -q "api-${UPGRADE_PREVIOUS_COLOR}")" || return 1
+	fi
+	DRAINED_WS_INSTANCES=""
+	for cid in ${previous_cids}; do
+		existing="$(docker ps -a -q --filter "id=${cid}")" || return 1
+		[[ -n "${existing}" ]] || continue
+		hostname="$(docker inspect --format '{{.Config.Hostname}}' "${cid}")" || return 1
+		DRAINED_WS_INSTANCES="${DRAINED_WS_INSTANCES:+${DRAINED_WS_INSTANCES},}${hostname}"
+	done
+	# Closing the edge also closes already accepted HTTP/SSE/WebSocket traffic.
+	compose_in_root stop --timeout 90 "${names[@]}" || return 1
+	if [[ -n "${UPGRADE_LEGACY_API_CID}" ]]; then
+		existing="$(docker ps -a -q --filter "id=${UPGRADE_LEGACY_API_CID}")" || return 1
+		if [[ -n "${existing}" ]]; then
+			docker stop --time 90 "${UPGRADE_LEGACY_API_CID}" >/dev/null || return 1
+		fi
+	fi
+	running="$(compose_in_root ps -a --status running -q)" || return 1
+	for cid in ${running}; do
+		service="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.service" }}' "${cid}")" || return 1
+		case "${service}" in
+		api | api-blue | api-green | worker | scheduler | nginx)
+			docker stop --time 90 "${cid}" >/dev/null || return 1
+			;;
+		migration)
+			warn "A previous migration container is still running; wait for it before retrying."
+			return 1
+			;;
+		esac
+	done
+	verify_exclusive_application_stopped
+}
+
+run_upgrade_database_migration() {
+	if [[ "${UPGRADE_EXCLUSIVE_REQUIRED}" == "1" ]]; then
+		verify_exclusive_application_stopped \
+			|| die "Old API/background writers are still running; refusing exclusive migration."
+		write_exclusive_migration_state migration_started \
+			|| die "Could not persist the migration safety fence; refusing database migration."
+		UPGRADE_EXCLUSIVE_MIGRATION_STARTED=1
+		compose_in_root --profile tools run --rm --no-deps \
+			-e HFL_EXCLUSIVE_PLATFORM_MIGRATION=1 migration
+	else
+		compose_in_root --profile tools run --rm --no-deps migration
+	fi
 }
 
 read_active_color() {
@@ -1474,6 +1747,7 @@ reload_stable_nginx() {
 }
 
 start_hfl_stack() {
+	assert_no_exclusive_migration_in_progress
 	local show_sections=${1:-0}
 	local color nginx_generation_before nginx_generation_after
 	ensure_blue_green_state || return 1
@@ -1582,16 +1856,26 @@ cutover_hfl_color() {
 	local previous=$1 target=$2
 	UPGRADE_HFL_CUTOVER_ATTEMPTED=1
 	ensure_stable_nginx_container || return 1
-	render_active_upstreams "${target}"
+	render_active_upstreams "${target}" || return 1
 	if ! reload_stable_nginx || ! wait_for_public_endpoints; then
-		warn "${target} cutover health failed; restoring the previous API route"
-		restore_previous_hfl_color "${previous}" "${target}" || true
+		if exclusive_migration_started; then
+			warn "${target} cutover health failed after exclusive migration; old API traffic cannot be restored."
+		else
+			warn "${target} cutover health failed; restoring the previous API route"
+			restore_previous_hfl_color "${previous}" "${target}" || true
+		fi
 		return 1
 	fi
-	drain_api_color "${previous}"
+	if [[ "${UPGRADE_EXCLUSIVE_REQUIRED}" != "1" ]]; then
+		drain_api_color "${previous}"
+	fi
 	if ! wait_for_active_task_reattach "${target}"; then
-		warn "Active task Agents did not reattach; rolling traffic back"
-		restore_previous_hfl_color "${previous}" "${target}" || true
+		if exclusive_migration_started; then
+			warn "Active task Agents did not reattach after exclusive migration; retained-state recovery is required."
+		else
+			warn "Active task Agents did not reattach; rolling traffic back"
+			restore_previous_hfl_color "${previous}" "${target}" || true
+		fi
 		return 1
 	fi
 	# Nginx reload is graceful: old workers retain already accepted HTTP/SSE
@@ -1625,6 +1909,10 @@ wait_for_active_task_reattach() {
 }
 
 restore_previous_hfl_color() {
+	if exclusive_migration_started; then
+		warn "Old-image rollback is unsafe after exclusive migration started."
+		return 1
+	fi
 	local previous=$1 target=$2 rollback_web=$1
 	[[ "${previous}" == "legacy" ]] && rollback_web="${target}"
 	ensure_stable_nginx_container || return 1
@@ -4617,7 +4905,7 @@ print_platform_gateway_summary() {
 
 	print_section "Platform Data Gateway"
 	print_value "Role" "Platform Data Gateway"
-	print_value "Organization" "${organization:-platform_lens}"
+	print_value "Organization" "${organization:-platform:hfl}"
 	print_value "Node ID" "${node_id:-unknown}"
 	print_value "Agent version" "${version:-unknown}"
 	print_value "Agent service" "${service}"
@@ -5323,7 +5611,8 @@ local_platform_gateway_agent_is_managed() {
 	[[ ! -L "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" \
 		&& ! -L "${LOCAL_PLATFORM_AGENT_DATA_DIR}" \
 		&& -f "${env_file}" && ! -L "${env_file}" ]] || return 1
-	[[ "$(read_agent_env_value HFL_ORG_KEY)" == "__platform_lens__" \
+	[[ ( "$(read_agent_env_value HFL_ORG_KEY)" == "platform:hfl" \
+		|| "$(read_agent_env_value HFL_ORG_KEY)" == "__platform_lens__" ) \
 		&& "$(read_agent_env_value HFL_NODE_ROLE)" == "gateway" ]]
 }
 
@@ -5714,8 +6003,8 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 '
 	)" || die "failed to parse local platform Gateway enrollment credentials"
 	IFS=$'\t' read -r org_key token api_base wss_url managed_node_ids <<<"${parsed}"
-	[[ "${org_key}" == "__platform_lens__" ]] \
-		|| die "local platform Gateway enrollment returned an unexpected organization"
+	[[ "${org_key}" == "platform:hfl" || "${org_key}" == "__platform_lens__" ]] \
+		|| die "local platform Gateway enrollment returned an unexpected transport namespace"
 
 	local tenant_port
 	tenant_port="$(read_env_value HFL_TENANT_PORT)"
@@ -6226,6 +6515,18 @@ cmd_status() {
 	print_status_value "Edition" "$(display_edition_from_dir "${ROOT}")"
 	print_status_value "Status" "${hfl_status}"
 	print_status_value "Install path" "${ROOT}"
+	if [[ -e "$(exclusive_migration_state_file)" || -L "$(exclusive_migration_state_file)" ]]; then
+		print_spaced_section "Upgrade recovery"
+		print_status_value "Migration" "Exclusive maintenance is incomplete"
+		local recovery_target recovery_backup
+		if recovery_target="$(read_exclusive_migration_state target_version)" \
+			&& recovery_backup="$(read_exclusive_migration_state backup_dir)"; then
+			print_status_value "Target" "${recovery_target}"
+			print_status_value "Backup" "${recovery_backup}"
+		else
+			warn "Exclusive migration state is unsafe; inspect it before any service restart."
+		fi
+	fi
 
 	print_spaced_section "Access"
 	print_status_value "HyperFileLens" "https://${host}:${tenant_port}/"
@@ -6801,6 +7102,7 @@ PY
 }
 
 restart_language_pack_services() {
+	assert_no_exclusive_migration_in_progress
 	if [[ ! -f "${ROOT}/.env" ]] || ! command -v docker >/dev/null 2>&1 \
 		|| ! docker info >/dev/null 2>&1; then
 		warn "language pack updated; restart HyperFileLens services before using it"
@@ -7596,6 +7898,7 @@ cmd_uninstall() {
 cmd_backup() {
 	[[ $# -eq 0 ]] || die "backup does not accept options" 2
 	init_existing_install_root
+	assert_no_exclusive_migration_in_progress
 	log "======== HyperFileLens managed backup ========"
 	if ! create_managed_backup "$(date +%Y%m%d-%H%M%S)" 1; then
 		die "managed backup was not created; existing valid backups were preserved"
@@ -7662,9 +7965,11 @@ cmd_upgrade() {
 		die "installed version ${cur_version} is below this package's supported upgrade baseline ${minimum_upgrade_version}"
 	fi
 	initialize_upgrade_transaction "${artifact_sha}" "${new_version}"
+	resume_exclusive_migration_state
 	transaction_status="$(read_upgrade_transaction_value status)"
 	if [[ "${transaction_status}" == "complete" && "${new_version}" == "${cur_version}" ]] \
-		&& cmp -s "${src_root}/MANIFEST.json" "${ROOT}/MANIFEST.json"; then
+		&& cmp -s "${src_root}/MANIFEST.json" "${ROOT}/MANIFEST.json" \
+		&& [[ ! -e "$(exclusive_migration_state_file)" ]]; then
 		ok "Upgrade transaction ${artifact_sha:0:12} is already complete"
 		cleanup_upgrade_tmp
 		trap finish_session EXIT
@@ -7703,9 +8008,15 @@ cmd_upgrade() {
 
 	print_section "[2/8] Backing up current configuration and data"
 	if reusable_backup="$(reusable_upgrade_backup)"; then
+		if [[ "${UPGRADE_EXCLUSIVE_REQUIRED}" == "1" ]]; then
+			[[ "${reusable_backup}" == "${UPGRADE_BACKUP_DIR}" ]] \
+				|| die "Exclusive migration backup does not match its retained recovery state."
+		fi
 		UPGRADE_BACKUP_DIR="${reusable_backup}"
 		log "Reusing verified managed backup ${UPGRADE_BACKUP_DIR}"
 	else
+		[[ "${UPGRADE_EXCLUSIVE_REQUIRED}" != "1" ]] \
+			|| die "The retained exclusive-migration backup failed validation; refusing to replace it with a post-migration backup."
 		backup_stamp="$(date +%Y%m%d-%H%M%S)"
 		create_managed_backup "${backup_stamp}" 1 \
 			|| die "managed upgrade backup failed; existing services were not stopped"
@@ -7755,17 +8066,33 @@ cmd_upgrade() {
 	if sourcelens_installed && sourcelens_compose ps -q 2>/dev/null | grep -q .; then
 		UPGRADE_SOURCELENS_WAS_RUNNING=1
 	fi
-	if ! UPGRADE_PREVIOUS_COLOR="$(read_active_color)"; then
-		UPGRADE_LEGACY_API_CID="$(compose_in_root ps -q api 2>/dev/null | head -1)"
+	if [[ "${UPGRADE_EXCLUSIVE_REQUIRED}" == "1" ]]; then
+		# The durable state, not a partially switched route, selects the retry.
+		target_color="${UPGRADE_TARGET_COLOR}"
+	elif ! UPGRADE_PREVIOUS_COLOR="$(read_active_color)"; then
+		UPGRADE_LEGACY_API_CID="$(find_legacy_api_container)" \
+			|| die "Could not identify the previous API pool; refusing database migration."
 		if [[ -n "${UPGRADE_LEGACY_API_CID}" ]]; then
 			UPGRADE_PREVIOUS_COLOR="legacy"
 		else
 			UPGRADE_PREVIOUS_COLOR="blue"
 		fi
 	fi
-	target_color="$(opposite_color "${UPGRADE_PREVIOUS_COLOR}")"
+	if [[ "${UPGRADE_EXCLUSIVE_REQUIRED}" != "1" ]]; then
+		target_color="$(opposite_color "${UPGRADE_PREVIOUS_COLOR}")"
+	fi
 	UPGRADE_TARGET_COLOR="${target_color}"
 	UPGRADE_TARGET_VERSION="${new_version}"
+	if [[ "${UPGRADE_EXCLUSIVE_REQUIRED}" != "1" ]] && platform_ownership_migration_pending; then
+		UPGRADE_EXCLUSIVE_REQUIRED=1
+	fi
+	if [[ "${UPGRADE_EXCLUSIVE_REQUIRED}" == "1" ]]; then
+		if [[ ! -e "$(exclusive_migration_state_file)" ]]; then
+			write_exclusive_migration_state prepared \
+				|| die "Could not persist exclusive upgrade preparation; existing services were not stopped."
+		fi
+		warn "This upgrade crosses the platform-ownership boundary and requires application downtime. PostgreSQL/Redis remain online."
+	fi
 	log "Blue/green plan: ${UPGRADE_PREVIOUS_COLOR} -> ${target_color}"
 	record_deployment_phase prepared "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	UPGRADE_RECOVERY_ARMED=1
@@ -7780,6 +8107,10 @@ cmd_upgrade() {
 	fi
 	[[ -z "${running_worker_ids}" ]] \
 		|| die "old worker is still running; refusing to apply task-state migrations"
+	if [[ "${UPGRADE_EXCLUSIVE_REQUIRED}" == "1" ]]; then
+		stop_exclusive_application_writers \
+			|| die "Application writers did not stop; refusing the exclusive migration."
+	fi
 	record_upgrade_transaction_phase background_paused
 
 	print_section "[6/8] Applying target files, configuration, and database migration"
@@ -7827,7 +8158,7 @@ cmd_upgrade() {
 	compose_in_root up -d --no-build --pull never --no-recreate postgres redis
 	wait_for_services_health "${HFL_HEALTH_TIMEOUT_SECONDS:-600}" postgres redis \
 		|| die "PostgreSQL/Redis must be healthy before database migration and candidate startup"
-	compose_in_root --profile tools run --rm --no-deps migration
+	run_upgrade_database_migration
 	local shared_services_before_cutover
 	shared_services_before_cutover="$(upgrade_shared_service_identity)" \
 		|| die "PostgreSQL/Redis must be running before the application cutover"
@@ -7849,7 +8180,7 @@ cmd_upgrade() {
 	record_deployment_phase candidate_ready "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	record_upgrade_transaction_phase candidate_ready
 	cutover_hfl_color "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" \
-		|| die "blue/green cutover failed; previous traffic route was restored"
+		|| die "application cutover failed; inspect the migration/recovery log before retrying"
 	assert_upgrade_shared_services_unchanged "${shared_services_before_cutover}"
 	record_deployment_phase switched "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	record_upgrade_transaction_phase hfl_switched
@@ -7863,6 +8194,9 @@ cmd_upgrade() {
 		|| die "HyperFileLens failed its post-upgrade health gate"
 	write_active_color "${target_color}"
 	UPGRADE_HFL_COMMITTED=1
+	if [[ "${UPGRADE_EXCLUSIVE_REQUIRED}" == "1" ]]; then
+		clear_exclusive_migration_state
+	fi
 	record_deployment_phase committed "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	remove_retired_color "${UPGRADE_PREVIOUS_COLOR}"
 	if online_console_enabled; then

@@ -751,10 +751,12 @@ def create_copilot_chat(
             except DjangoValidationError as exc:
                 raise ValidationError(exc.message_dict) from exc
             gateway_link = (
-                LensGatewayLink.objects.select_for_update()
+                LensGatewayLink.objects.select_for_update(of=("self", "gateway"))
                 .select_related("gateway", "organization")
                 .get(pk=gateway_link.pk)
             )
+            if gateway_link.organization_id is not None:
+                Organization.objects.select_for_update().get(pk=gateway_link.organization_id)
             existing = LensSessionLink.objects.filter(
                 organization=org,
                 hfl_user=user,

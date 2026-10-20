@@ -6,8 +6,8 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from apps.iam.models import Organization
-from apps.lens_bridge.models import LensOrgLink, LensOrgModelLink
-from apps.lens_bridge.services import org_models, platform_lens, provisioning
+from apps.lens_bridge.models import LensOrgLink, LensOrgModelLink, PlatformAISettings
+from apps.lens_bridge.services import org_models, provisioning
 
 
 class DefaultModelSelectionTests(TestCase):
@@ -47,13 +47,11 @@ class DefaultModelSelectionTests(TestCase):
         self, active_configs
     ):
         multimodal_uuid = uuid.uuid4()
-        platform_org = platform_lens.get_or_create_platform_org()
         LensOrgModelLink.objects.create(
-            organization=platform_org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=multimodal_uuid,
         )
-        LensOrgLink.objects.create(
-            organization=platform_org,
+        PlatformAISettings.objects.create(
             default_multimodal_model_ref=multimodal_uuid,
         )
         active_configs.return_value = [{"uuid": str(multimodal_uuid), "is_active": True}]
@@ -70,13 +68,12 @@ class DefaultModelSelectionTests(TestCase):
     def test_first_active_model_becomes_agent_default_when_unset(self, active_configs):
         first_uuid = uuid.uuid4()
         second_uuid = uuid.uuid4()
-        platform_org = platform_lens.get_or_create_platform_org()
         LensOrgModelLink.objects.create(
-            organization=platform_org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=first_uuid,
         )
         LensOrgModelLink.objects.create(
-            organization=platform_org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=second_uuid,
         )
         active_configs.return_value = [

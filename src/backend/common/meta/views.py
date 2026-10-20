@@ -86,6 +86,9 @@ class DeployProfileView(APIView):
 
             payload["platform_role"] = get_platform_role(request.user)
             payload["platform_permissions"] = list_platform_permissions(request.user)
+            from common.platform_staff import is_installation_admin
+
+            payload["is_installation_admin"] = is_installation_admin(request.user)
             from common.extension_spi import get_quota_provider
 
             quota_provider = get_quota_provider()
@@ -110,6 +113,7 @@ class DeployProfileView(APIView):
                 payload["support_org_key"] = None
         else:
             payload["is_staff"] = False
+            payload["is_installation_admin"] = False
             payload["platform_role"] = None
             payload["platform_permissions"] = []
             payload["enterprise_features"] = []

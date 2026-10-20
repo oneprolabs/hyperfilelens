@@ -32,9 +32,9 @@ class GatewayExecutionContextTests(TestCase):
 
     @mock.patch("apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway")
     def test_platform_gateway_keeps_tenant_data_and_uses_platform_execution(self, _ready):
-        platform_org = platform_lens.get_or_create_platform_org()
+        platform_org = None
         node = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="shared-platform-gateway",
             role=NodeRole.GATEWAY,
             status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
@@ -53,7 +53,8 @@ class GatewayExecutionContextTests(TestCase):
         )
 
         self.assertEqual(context.tenant_organization, self.tenant)
-        self.assertEqual(context.execution_organization, platform_org)
+        self.assertEqual(context.execution_organization_id, None)
+        self.assertEqual(context.execution_scope, "platform")
         self.assertTrue(context.is_platform)
 
     @mock.patch("apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway")
@@ -102,6 +103,8 @@ class GatewayExecutionContextTests(TestCase):
         )
 
         self.assertEqual(context.gateway_link, link)
+        self.assertEqual(context.execution_scope, "organization")
+        self.assertEqual(context.execution_organization_id, self.tenant.pk)
         self.assertEqual(resolved, link)
 
     @mock.patch(
@@ -137,9 +140,9 @@ class GatewayExecutionContextTests(TestCase):
         self.assertEqual(selected, link)
 
     def test_platform_gateway_removal_sees_tenant_knowledge_sources(self):
-        platform_org = platform_lens.get_or_create_platform_org()
+        platform_org = None
         node = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="platform-gateway-with-tenant-ks",
             role=NodeRole.GATEWAY,
         )

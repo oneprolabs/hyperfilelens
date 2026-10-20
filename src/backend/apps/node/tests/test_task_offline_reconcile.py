@@ -109,12 +109,8 @@ class TaskExecutionStateTests(TestCase):
         self.assertTrue(product_task_blocks_cleanup(task=self.task))
 
     def test_insight_restore_uses_cross_organization_gateway_execution_state(self):
-        platform_org = Organization.objects.create(
-            key="offline-platform-org",
-            name="Offline Platform Org",
-        )
         gateway = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="platform-gateway",
             role=NodeRole.GATEWAY,
             status=Node.Status.ACTIVE,
@@ -131,7 +127,7 @@ class TaskExecutionStateTests(TestCase):
         RestoreRecord.objects.create(
             organization_id=self.org.id,
             requesting_organization_id=self.org.id,
-            target_execution_organization_id=platform_org.id,
+            target_execution_organization_id=None,
             target_execution_node_id=gateway.id,
             purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
             idempotency_key="offline-cross-org-restore",

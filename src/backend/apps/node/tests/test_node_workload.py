@@ -34,12 +34,8 @@ class NodeWorkloadTests(TestCase):
         self.assertIn("lifecycle", row)
 
     def test_platform_gateway_is_blocked_by_tenant_insight_workspace_restore(self):
-        platform_org = Organization.objects.create(
-            key="workload-platform",
-            name="Workload Platform",
-        )
         platform_gateway = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="platform-gateway",
             role=NodeRole.GATEWAY,
             status=Node.Status.ACTIVE,
@@ -56,7 +52,7 @@ class NodeWorkloadTests(TestCase):
         RestoreRecord.objects.create(
             organization_id=self.org.id,
             requesting_organization_id=self.org.id,
-            target_execution_organization_id=platform_org.id,
+            target_execution_organization_id=None,
             target_execution_node_id=platform_gateway.id,
             purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
             idempotency_key="workload-cross-org-restore",

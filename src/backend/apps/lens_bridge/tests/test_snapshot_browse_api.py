@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.iam.models import Membership, Organization
+from apps.iam.models import Membership
 from apps.iam.services.registration_service import provision_registered_user_tenant
 from apps.lens_bridge.services import snapshot_scope_tasks
 from apps.node.models import Node, NodeTask
@@ -185,12 +185,9 @@ class SnapshotBrowseApiTests(TestCase):
         self.assertIs(payload["has_more"], True)
 
     def test_tenant_can_read_task_executed_by_shared_platform_gateway(self):
-        platform_org = Organization.objects.create(
-            key="snapshot-browse-platform",
-            name="Snapshot Browse Platform",
-        )
+        platform_org = None
         platform_gateway = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="Shared Insight gateway",
             role=Node.Role.GATEWAY,
         )

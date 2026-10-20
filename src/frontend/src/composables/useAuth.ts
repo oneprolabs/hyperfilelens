@@ -18,6 +18,7 @@ import {
 } from '../lib/sessionNotice'
 import { clearLogoutBrowserStorage } from '../lib/logoutStorage'
 import { resolveAuthenticatedLoginTarget } from '../lib/loginNavigation'
+import { readStoredOrganizationKey } from '../lib/organizationStorage'
 
 export interface User {
   id: number
@@ -32,6 +33,8 @@ export interface User {
   access_profile?: {
     org_key: string
     role: string
+    authority_source?: 'installation_admin' | 'owner' | 'role' | 'support_readonly' | ''
+    is_organization_member?: boolean
     permissions?: string[]
     group_permissions?: string[]
     visible_features: string[]
@@ -56,26 +59,24 @@ const isLoading = ref(false)
 const ORG_KEY_STORAGE = 'hfl_org_key'
 
 export function getStoredOrgKey(): string {
-  try {
-    return localStorage.getItem(ORG_KEY_STORAGE) || ''
-  } catch {
-    return ''
-  }
+  return readStoredOrganizationKey()
 }
 
 export function setStoredOrgKey(orgKey: string): void {
   try {
     if (orgKey) {
       localStorage.setItem(ORG_KEY_STORAGE, orgKey)
+      sessionStorage.setItem(ORG_KEY_STORAGE, orgKey)
     } else {
       localStorage.removeItem(ORG_KEY_STORAGE)
+      sessionStorage.removeItem(ORG_KEY_STORAGE)
     }
   } catch {
     // ignore
   }
 }
 
-/** localStorage first, then signed-in user profile; backfills storage when profile has a key. */
+/** Tab context first, then stored default and the server-verified access profile. */
 export function getEffectiveOrgKey(): string {
   const stored = getStoredOrgKey()
   if (stored) return stored
@@ -264,7 +265,10 @@ export function confirmCurrentSession(): Promise<CurrentSessionConfirmation> {
 
 function hasCompleteAccessProfile(user: User | null): boolean {
   const profile = user?.access_profile
-  return !!(profile?.org_key?.trim() && profile?.role?.trim())
+  return !!(profile?.org_key?.trim() && (
+    profile?.role?.trim() || profile?.authority_source === 'installation_admin'
+    || profile?.authority_source === 'support_readonly'
+  ))
 }
 
 // Module-level clearAuth for use by setupAuthGuard
@@ -430,6 +434,7 @@ function hasRequiredRouteRole(to: { meta: Record<string, unknown> }): boolean {
   }
   const requiredRoles = to.meta.requiredRoles
   if (!Array.isArray(requiredRoles) || requiredRoles.length === 0) return true
+  if (currentUser.value?.access_profile?.authority_source === 'installation_admin') return true
   const role = currentUser.value?.access_profile?.role?.trim() || ''
   return requiredRoles.includes(role)
 }
@@ -440,6 +445,20 @@ export function setupAuthGuard() {
     const publicPaths = ['/login', '/register', '/auth/oauth/callback', '/auth/oauth/error']
     const isPublicPath = publicPaths.some(path => to.path.startsWith(path))
     const isPlatformOpsPath = to.path.startsWith('/platform-ops')
+    // Admin Console deep links select a target, but only the backend decides
+    // whether the authenticated actor may enter it. Never infer membership.
+    const requestedOrg = typeof to.query.org === 'string' ? to.query.org.trim() : ''
+    if (!isPublicPath && !isPlatformOpsPath && requestedOrg) {
+      const previousOrg = getStoredOrgKey()
+      setStoredOrgKey(requestedOrg)
+      const verified = await fetchCurrentUser()
+      if (!verified || verified.access_profile?.org_key !== requestedOrg) {
+        setStoredOrgKey(previousOrg)
+        await fetchCurrentUser()
+        next('/')
+        return
+      }
+    }
 
     if (to.path === '/login') {
       const confirmation = isLoggedIn.value

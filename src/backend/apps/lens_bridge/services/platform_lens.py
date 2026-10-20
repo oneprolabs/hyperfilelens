@@ -1,4 +1,4 @@
-"""Platform-scoped SourceLens resources (hidden system org)."""
+"""Platform-owned Gateway selection and runtime defaults."""
 
 from __future__ import annotations
 
@@ -12,34 +12,18 @@ from apps.lens_bridge.services.gateway_readiness import (
 )
 from apps.lens_bridge.services.gateway_ownership import organization_gateway_links
 
-PLATFORM_ORG_KEY = "__platform_lens__"
-PLATFORM_ORG_NAME = "Platform Lens"
 NO_PUBLIC_DATA_GATEWAY_AVAILABLE = (
     "No public Data Gateway is available. Select a private Data Gateway "
     "or contact your administrator."
 )
 
 
-def get_or_create_platform_org() -> Organization:
-    org, created = Organization.objects.get_or_create(
-        key=PLATFORM_ORG_KEY,
-        defaults={
-            "name": PLATFORM_ORG_NAME,
-            "is_active": True,
-        },
-    )
-    if created:
-        from apps.subscription.services.interface import initialize_organization_quota
-
-        initialize_organization_quota(org)
-    return org
-
-
 def platform_gateway_links():
-    org = get_or_create_platform_org()
     return LensGatewayLink.objects.filter(
-        organization=org,
+        organization__isnull=True,
         scope=LensGatewayLink.GatewayScope.PLATFORM,
+        gateway__scope="platform",
+        gateway__organization__isnull=True,
     ).select_related("gateway")
 
 
@@ -51,11 +35,12 @@ def _first_eligible(links) -> LensGatewayLink | None:
 
 
 def _platform_gateway_links(*, require_lensnode: bool = False):
-    org = get_or_create_platform_org()
     links = (
         LensGatewayLink.objects.filter(
-            organization=org,
+            organization__isnull=True,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
+            gateway__scope="platform",
+            gateway__organization__isnull=True,
             is_deleted=False,
         )
         .select_related("gateway")
@@ -184,16 +169,17 @@ def resolve_gateway_link_for_copilot(
 
 @transaction.atomic
 def set_platform_default_gateway(*, gateway_link_id: int) -> LensGatewayLink:
-    org = get_or_create_platform_org()
-    Organization.objects.select_for_update().get(pk=org.pk)
+    from apps.node.services.internal.ownership import lock_platform_infrastructure
+
+    lock_platform_infrastructure()
     link = LensGatewayLink.objects.select_for_update().get(
         pk=gateway_link_id,
-        organization=org,
+        organization__isnull=True,
         scope=LensGatewayLink.GatewayScope.PLATFORM,
     )
     require_hfl_usable_gateway(link)
     LensGatewayLink.objects.filter(
-        organization=org,
+        organization__isnull=True,
         scope=LensGatewayLink.GatewayScope.PLATFORM,
         is_platform_default=True,
     ).exclude(pk=link.pk).update(is_platform_default=False)

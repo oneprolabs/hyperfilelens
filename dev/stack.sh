@@ -1482,14 +1482,14 @@ print_urls() {
 	fi
 	gateway_env="/opt/hyperfilelens-agent/config/agent.env"
 	gateway_node_id=""
-	gateway_org="platform_lens"
+	gateway_org="platform:hfl"
 	gateway_version="unknown"
 	gateway_service="not installed"
 	gateway_lensnode="not installed"
 	if [[ -r "${gateway_env}" ]]; then
 		gateway_node_id="$(grep -E '^HFL_NODE_ID=' "${gateway_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
 		gateway_org="$(grep -E '^HFL_ORG_KEY=' "${gateway_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
-		[[ -n "${gateway_org}" ]] || gateway_org=platform_lens
+		[[ -n "${gateway_org}" ]] || gateway_org=platform:hfl
 		if [[ -r "/opt/hyperfilelens-agent/INSTALLED_VERSION" ]]; then
 			gateway_version="$(head -1 /opt/hyperfilelens-agent/INSTALLED_VERSION | tr -d '\r' || true)"
 		fi
@@ -1774,8 +1774,8 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		return 0
 	}
 	IFS=$'\t' read -r org_key token api_base wss_url managed_node_ids <<<"${parsed}"
-	if [[ "${org_key}" != "__platform_lens__" ]]; then
-		warn "Local platform Gateway enrollment returned unexpected org ${org_key}; skipping install"
+	if [[ "${org_key}" != "platform:hfl" && "${org_key}" != "__platform_lens__" ]]; then
+		warn "Local platform Gateway enrollment returned an unexpected transport namespace ${org_key}; skipping install"
 		return 0
 	fi
 
@@ -1979,19 +1979,24 @@ sync_optional_identity_settings() {
 }
 
 run_dev_migration_gate() {
-	local output_file status=0
+	local output_file running status=0
 	log "Stopping backend services before database migration"
-	compose_logged stop api worker scheduler
+	compose_logged stop api worker scheduler || return 1
+	running="$(compose ps --status running -q api worker scheduler)" || return 1
+	if [[ -n "${running}" ]]; then
+		warn "Backend writers are still running; refusing database migration"
+		return 1
+	fi
 	log "Starting development data services"
 	HFL_COMPOSE_TIMEOUT_SECONDS="${HFL_DATA_SERVICES_HEALTH_TIMEOUT_SECONDS}" \
-		compose_logged up -d --no-build --pull never postgres redis
-	wait_for_data_services_healthy
+		compose_logged up -d --no-build --pull never postgres redis || return 1
+	wait_for_data_services_healthy || return 1
 	hfl_log_step "Applying database migrations"
 	HFL_MIGRATION_OUTPUT=compact
 	export HFL_MIGRATION_OUTPUT
 	output_file="$(mktemp "${TMPDIR:-/tmp}/hfl-migration-output.XXXXXX")" \
 		|| { unset HFL_MIGRATION_OUTPUT; return 1; }
-	compose --profile tools run --rm --no-deps migration >"${output_file}" 2>&1 || status=$?
+	compose --profile tools run --rm --no-deps -e HFL_EXCLUSIVE_PLATFORM_MIGRATION=1 migration >"${output_file}" 2>&1 || status=$?
 	hfl_normalize_native_stream <"${output_file}" | render_migration_stream
 	rm -f -- "${output_file}"
 	unset HFL_MIGRATION_OUTPUT

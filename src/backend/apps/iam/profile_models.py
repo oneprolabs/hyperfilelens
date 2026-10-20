@@ -9,6 +9,15 @@ from django.db import models
 
 
 class Profile(models.Model):
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["is_installation_admin"],
+                condition=models.Q(is_installation_admin=True),
+                name="iam_single_installation_admin",
+            ),
+        ]
+
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     registration_completed = models.BooleanField(default=False)
     requires_password_change = models.BooleanField(default=False)

@@ -25,16 +25,13 @@ class ChatRestoreStopAssessmentTests(TestCase):
             key="chat-restore-stop-tenant",
             name="Chat Restore Stop Tenant",
         )
-        self.execution_org = Organization.objects.create(
-            key="chat-restore-stop-execution",
-            name="Chat Restore Stop Execution",
-        )
+        self.execution_org = None
         self.user = get_user_model().objects.create_user(
             username="chat-restore-stop@example.test",
             email="chat-restore-stop@example.test",
         )
         self.gateway = Node.objects.create(
-            organization=self.execution_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="chat-restore-stop-gateway",
             role=Node.Role.GATEWAY,
             status=Node.Status.ACTIVE,
@@ -60,7 +57,7 @@ class ChatRestoreStopAssessmentTests(TestCase):
             organization=self.tenant,
             knowledge_source=self.knowledge_source,
             gateway_link=self.gateway_link,
-            execution_organization_id=self.execution_org.id,
+            execution_organization_id=None,
             execution_node_id=self.gateway.id,
             workspace_kind=LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE,
             workspace_root="/workspace/platform/data",
@@ -79,7 +76,7 @@ class ChatRestoreStopAssessmentTests(TestCase):
         record = RestoreRecord.objects.create(
             organization_id=self.tenant.id,
             requesting_organization_id=self.tenant.id,
-            target_execution_organization_id=self.execution_org.id,
+            target_execution_organization_id=None,
             target_execution_node_id=self.gateway.id,
             purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
             idempotency_key=f"chat-restore-stop-{uuid.uuid4()}",

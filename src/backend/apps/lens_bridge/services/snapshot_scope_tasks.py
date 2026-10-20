@@ -103,9 +103,12 @@ def active_scope_task_for_selection(
 ) -> NodeTask | None:
     """Find an in-flight scope calculation after a page/request restart."""
 
+    from django.db.models import Q
+
     gateway_exists = LensGatewayLink.objects.filter(
+        Q(organization_id=organization.id, scope__in=["organization", "user"])
+        | Q(organization__isnull=True, scope="platform"),
         pk=gateway_link_id,
-        organization_id=organization.id,
         is_deleted=False,
     ).exists()
     if not gateway_exists:
@@ -348,7 +351,7 @@ def dispatch_snapshot_operation(
         access.mode == "fallback_node"
         and access.node.id == gateway_context.gateway.id
         and access.node.organization_id
-        == gateway_context.execution_organization.id
+        == gateway_context.execution_organization_id
     ) or (
         access.mode == "bound_proxy"
         and access.node.organization_id == organization_id
@@ -375,6 +378,7 @@ def dispatch_snapshot_operation(
     }
     handle = run_agent_task_async(
         organization_id=access.node.organization_id,
+        **({"platform": True} if access.node.organization_id is None else {}),
         node_id=access.node.id,
         kind=kind,
         payload=delivery_payload,

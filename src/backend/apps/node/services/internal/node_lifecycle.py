@@ -44,6 +44,8 @@ from apps.node.services.internal.node_workload import (
     node_workload_payload,
 )
 
+from apps.node.services.internal.ownership import owner_id
+
 logger = logging.getLogger(__name__)
 
 LIFECYCLE_KIND_UPGRADE = "upgrade"
@@ -70,21 +72,22 @@ def _correlation_id(*, node_id: int, kind: str) -> str:
     return f"{kind}:{node_id}"
 
 
-def _latest_lifecycle_task(*, org: Organization, node: Node, kind: str) -> NodeTask | None:
+def _latest_lifecycle_task(*, org: Organization | None, node: Node, kind: str) -> NodeTask | None:
     return (
         node_tasks_queryset(
-            organization_id=org.id,
+            organization_id=owner_id(org),
             node_id=node.id,
             kind=_LIFECYCLE_TASK_KINDS[kind],
             correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
             correlation_id=_correlation_id(node_id=node.id, kind=kind),
         )
+        .filter(organization_id=owner_id(org))
         .select_related("parent_task")
         .first()
     )
 
 
-def _active_lifecycle_task(*, org: Organization, node: Node) -> NodeTask | None:
+def _active_lifecycle_task(*, org: Organization | None, node: Node) -> NodeTask | None:
     for kind in (LIFECYCLE_KIND_UPGRADE, LIFECYCLE_KIND_REMOVE):
         task = _latest_lifecycle_task(org=org, node=node, kind=kind)
         if task is not None and task.status in _ACTIVE_TASK_STATUSES:
@@ -252,7 +255,7 @@ def _supports_reliable_uninstall(node: Node) -> bool:
 
 def _force_purge_without_remote_uninstall(
     *,
-    org: Organization,
+    org: Organization | None,
     node: Node,
     user=None,
     reason_code: str,
@@ -580,7 +583,7 @@ def _disk_blocks_upgrade(node: Node) -> bool:
 
 def _running_lifecycle_task(
     *,
-    org: Organization,
+    org: Organization | None,
     node: Node,
     kind: str,
 ) -> NodeTask | None:
@@ -1276,7 +1279,7 @@ def _build_upgrade_timeline(*, node: Node, task: NodeTask) -> list[dict[str, Any
 
 def _upgrade_lifecycle_payload(
     *,
-    org: Organization,
+    org: Organization | None,
     node: Node,
     task: NodeTask | None,
 ) -> dict[str, Any] | None:
@@ -1551,7 +1554,7 @@ def queue_detached_remove_verification(*, node_task: NodeTask) -> bool:
     return True
 
 
-def compute_node_lifecycle(*, org: Organization, node: Node) -> dict[str, Any] | None:
+def compute_node_lifecycle(*, org: Organization | None, node: Node) -> dict[str, Any] | None:
     remove_task = _latest_lifecycle_task(org=org, node=node, kind=LIFECYCLE_KIND_REMOVE)
     upgrade_task = _latest_lifecycle_task(org=org, node=node, kind=LIFECYCLE_KIND_UPGRADE)
     candidates = [task for task in (remove_task, upgrade_task) if task is not None]
@@ -1571,7 +1574,7 @@ def compute_node_lifecycle(*, org: Organization, node: Node) -> dict[str, Any] |
 
 def advance_node_lifecycle(
     *,
-    org: Organization,
+    org: Organization | None,
     node: Node,
     user=None,
 ) -> dict[str, Any] | None:
@@ -1628,13 +1631,13 @@ def advance_node_lifecycle(
 @transaction.atomic
 def start_node_upgrade(
     *,
-    org: Organization,
+    org: Organization | None,
     node: Node,
     user=None,
 ) -> dict[str, Any]:
     node = Node.objects.select_for_update().get(
         pk=node.id,
-        organization_id=org.id,
+        organization_id=owner_id(org),
         is_deleted=False,
     )
     if node.role not in (NodeRole.AGENT, NodeRole.PROXY, NodeRole.GATEWAY):
@@ -1647,7 +1650,7 @@ def start_node_upgrade(
 
         try:
             assert_source_product_operation_allowed(
-                organization_id=org.id,
+                organization_id=owner_id(org),
                 source_type="agent",
                 source_ref_id=node.id,
             )
@@ -1763,6 +1766,7 @@ def start_node_upgrade(
         persisted_payload["source_commit"] = current_commit
     handle = run_agent_task_async(
         org=org,
+        **({"platform": True} if org is None else {}),
         node_id=node.id,
         kind="agent.upgrade",
         payload=payload,
@@ -1803,7 +1807,7 @@ def start_node_upgrade(
 
 def start_node_remove(
     *,
-    org: Organization,
+    org: Organization | None,
     node: Node,
     user=None,
     force: bool = False,
@@ -1814,7 +1818,7 @@ def start_node_remove(
     with transaction.atomic():
         locked_node = Node.objects.select_for_update().get(
             pk=node.id,
-            organization_id=org.id,
+            organization_id=owner_id(org),
             is_deleted=False,
         )
         return _start_node_remove_locked(
@@ -1830,7 +1834,7 @@ def start_node_remove(
 
 def _start_node_remove_locked(
     *,
-    org: Organization,
+    org: Organization | None,
     node: Node,
     user=None,
     force: bool,
@@ -1855,7 +1859,7 @@ def _start_node_remove_locked(
 
         try:
             assert_source_product_operation_allowed(
-                organization_id=org.id,
+                organization_id=owner_id(org),
                 source_type="agent",
                 source_ref_id=node.id,
                 allowed_task_id=triggered_by_task_id,
@@ -1869,8 +1873,8 @@ def _start_node_remove_locked(
         from apps.protection.models import SnapshotUsageLease
 
         snapshot_usage_active = SnapshotUsageLease.objects.filter(
-            organization_id=org.id,
-            snapshot__organization_id=org.id,
+            organization_id=owner_id(org),
+            snapshot__organization_id=owner_id(org),
             snapshot__source_type__in={"agent", "host"},
             snapshot__source_ref_id=node.id,
         ).exists()
@@ -1893,7 +1897,7 @@ def _start_node_remove_locked(
         from apps.node.services.internal.bindings import collect_proxy_bindings
 
         bindings = collect_proxy_bindings(
-            organization_id=org.id,
+            organization_id=owner_id(org),
             proxy_id=node.id,
         )
         if not bindings.is_empty():
@@ -1966,6 +1970,7 @@ def _start_node_remove_locked(
         )
     handle = run_agent_task_async(
         org=org,
+        **({"platform": True} if org is None else {}),
         node_id=node.id,
         kind="agent.uninstall",
         payload=uninstall_payload,
@@ -1998,7 +2003,7 @@ def _start_node_remove_locked(
 
 def preview_batch_operations(
     *,
-    org: Organization,
+    org: Organization | None,
     node_ids: list[int],
     kind: str,
 ) -> dict[str, Any]:
@@ -2007,7 +2012,7 @@ def preview_batch_operations(
 
     nodes = list(
         Node.objects.filter(
-            organization_id=org.id,
+            organization_id=owner_id(org),
             pk__in=node_ids,
             is_deleted=False,
         ).order_by("name", "id")
@@ -2096,7 +2101,7 @@ def preview_batch_operations(
                 from apps.node.services.internal.bindings import collect_proxy_bindings
 
                 bindings = collect_proxy_bindings(
-                    organization_id=org.id,
+                    organization_id=owner_id(org),
                     proxy_id=node.id,
                 )
                 if not bindings.is_empty():
@@ -2123,7 +2128,7 @@ def preview_batch_operations(
     }
 
 
-def enrich_node_row(*, org: Organization, node: Node, user=None) -> dict[str, Any]:
+def enrich_node_row(*, org: Organization | None, node: Node, user=None) -> dict[str, Any]:
     """Read-only lifecycle/workload enrichment for console list (no side effects)."""
     lifecycle = None if node.is_deleted else compute_node_lifecycle(org=org, node=node)
     workload = None if node.is_deleted else node_workload_payload(node=node)

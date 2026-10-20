@@ -149,7 +149,7 @@ def _serialize_row(
     else:
         node_payload = {
             "id": -(position + 1),
-            "organization": 0,
+            "organization": None,
             "name": str(sl_node.get("name") or sl_uuid),
             "role": "gateway",
             "status": sl_status,
@@ -612,6 +612,16 @@ def list_admin_gateway_insight_rows(*, user=None) -> list[dict[str, Any]]:
         )
         for index, sl_node in enumerate(_lensnode_rows())
     ]
+
+
+def list_platform_gateway_insight_rows(*, user=None) -> list[dict[str, Any]]:
+    """Public infrastructure facts for capacity operators, without tenant inventory."""
+    from apps.lens_bridge.services.platform_lens import platform_gateway_links
+
+    links = platform_gateway_links().filter(gateway__is_deleted=False).select_related(
+        "owner_user", "created_by", "gateway__organization",
+    ).order_by("gateway__name", "gateway_id")
+    return _serialize_organization_links(list(links), user=user)
 
 
 def list_organization_gateway_insight_rows(

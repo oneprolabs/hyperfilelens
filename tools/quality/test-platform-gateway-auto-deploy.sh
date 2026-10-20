@@ -503,4 +503,21 @@ if (cmd_platform_gateway verify --timeout --required) 2>/dev/null; then
 	exit 1
 fi
 
+# Fresh platform routing and legacy installed routing are both infrastructure
+# identities. Neither should require a tenant organization record.
+LOCAL_PLATFORM_AGENT_INSTALL_DIR="${tmp}/namespace-agent-install"
+LOCAL_PLATFORM_AGENT_DATA_DIR="${tmp}/namespace-agent-data"
+mkdir -p "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}" "${LOCAL_PLATFORM_AGENT_DATA_DIR}/config"
+for namespace in "platform:hfl" "__platform_lens__"; do
+	printf 'HFL_ORG_KEY=%s\nHFL_NODE_ROLE=gateway\n' "${namespace}" \
+		>"${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
+	local_platform_gateway_agent_is_managed
+done
+printf 'HFL_ORG_KEY=private-tenant\nHFL_NODE_ROLE=gateway\n' \
+	>"${LOCAL_PLATFORM_AGENT_DATA_DIR}/config/agent.env"
+if local_platform_gateway_agent_is_managed; then
+	printf 'ERROR: a private tenant Gateway was treated as platform infrastructure\n' >&2
+	exit 1
+fi
+
 printf 'Platform Gateway auto-deploy contracts passed.\n'

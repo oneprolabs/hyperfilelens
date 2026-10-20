@@ -19,6 +19,7 @@ from common.extension_spi import get_authz_provider
 
 
 def organization_creation_options(user: Any) -> dict:
+    from apps.iam.services.member_management import is_organization_member_account
     provider = get_authz_provider()
     owned = (
         sum(
@@ -36,8 +37,7 @@ def organization_creation_options(user: Any) -> dict:
     )
     allowed = bool(
         user.is_active
-        and not user.is_staff
-        and not user.is_superuser
+        and is_organization_member_account(user)
         and provider
         and get_config("iam.organizations.self_service_enabled", default=True)
     )

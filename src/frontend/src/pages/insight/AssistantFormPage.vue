@@ -34,7 +34,6 @@ const router = useRouter()
 
 const DEFAULT_EXCLUDE_EXTENSIONS = '.lock,.pyc,.sqlite3'
 const DEFAULT_EXCLUDE_DIRS = '.git,.venv,__pycache__,node_modules,dist,build'
-const PLATFORM_ORG_KEY = '__platform_lens__'
 
 const editingUuid = computed(() => {
   const raw = route.params.uuid
@@ -236,7 +235,7 @@ async function loadOrganizationOptions() {
         key: String(row.key || '').trim(),
         name: String(row.name || row.key || '').trim(),
       }))
-      .filter((row) => row.key && row.key !== PLATFORM_ORG_KEY)
+      .filter((row) => row.key)
       .sort((a, b) => a.name.localeCompare(b.name))
   } catch {
     organizationOptions.value = []

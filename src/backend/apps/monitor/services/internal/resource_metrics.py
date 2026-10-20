@@ -11,7 +11,7 @@ from apps.monitor.models import ResourceMetric
 
 def record_resource_metric(
     *,
-    organization_id: int,
+    organization_id: int | None,
     resource_type: str,
     resource_id: str,
     metrics: dict,
@@ -32,7 +32,7 @@ def record_resource_metric(
 
 def latest_resource_metric(
     *,
-    organization_id: int,
+    organization_id: int | None,
     resource_type: str,
     resource_id: str,
 ) -> ResourceMetric | None:
@@ -49,7 +49,7 @@ def latest_resource_metric(
 
 def metrics_in_window(
     *,
-    organization_id: int,
+    organization_id: int | None,
     resource_type: str,
     resource_id: str,
     since,

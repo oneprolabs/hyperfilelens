@@ -19,6 +19,7 @@ from rest_framework.views import APIView
 
 from apps.iam.models import Organization
 from apps.iam.permissions_org import resolve_org_key
+from apps.node.services.internal.transport_identity import resolve_transport_scope
 from apps.node.api import permissions as node_permissions
 from apps.node.api.views.enrollment_helpers import (
     resolve_artifact_download_authorization,
@@ -224,7 +225,7 @@ def issue_node_maintenance_release(
     signed = _make_release_token(
         {
             "p": artifact.artifact_path,
-            "org": node.organization.key,
+            "org": node.transport_key,
             "role": node.role,
             "maintenance_node_id": node.id,
         },
@@ -291,15 +292,18 @@ def _release_file_exists(release_path: str) -> bool:
 
 def _release_authorization_is_valid(
     *,
-    org: Organization,
+    org: Organization | None,
     role: str,
     token_id: int,
     session_id: int | None,
+    namespace: str | None = None,
 ) -> bool:
     """Validate signed authorization IDs without embedding their secrets."""
     now = timezone.now()
     if session_id is not None:
-        session = NodeInstallationSession.objects.filter(
+        session = NodeInstallationSession.objects.select_related(
+            "enrollment_token", "enrollment_token__organization",
+        ).filter(
             pk=session_id,
             organization=org,
             role=role,
@@ -309,6 +313,8 @@ def _release_authorization_is_valid(
             absolute_expires_at__gt=now,
         ).first()
         if session is None:
+            return False
+        if namespace is not None and session.enrollment_token.transport_key != namespace:
             return False
         renewed = min(
             now + timedelta(seconds=INSTALLATION_SESSION_IDLE_SECONDS),
@@ -333,6 +339,8 @@ def _release_authorization_is_valid(
     ).first()
     if token is None:
         return False
+    if namespace is not None and token.transport_key != namespace:
+        return False
     if token.enrollment_mode == NodeToken.EnrollmentMode.LEGACY:
         if token.used_at is not None:
             return True
@@ -343,21 +351,27 @@ def _release_authorization_is_valid(
 
 def _release_credential_is_valid(
     *,
-    org: Organization,
+    org: Organization | None,
     role: str,
     credential_id: int,
     node_id: int,
+    namespace: str | None = None,
 ) -> bool:
     """Validate a signed NodeCredential download without embedding the secret."""
     if credential_id <= 0 or node_id <= 0:
         return False
-    return NodeCredential.objects.filter(
+    credential = NodeCredential.objects.select_related("node", "node__organization").filter(
         pk=credential_id,
         organization=org,
         role=role,
         node_id=node_id,
         is_active=True,
-    ).exists()
+    ).first()
+    return bool(
+        credential
+        and credential.node.organization_id == (org.pk if org else None)
+        and (namespace is None or credential.node.transport_key == namespace)
+    )
 
 
 class AgentLatestReleaseView(APIView):
@@ -417,14 +431,16 @@ class AgentReleaseView(APIView):
         if not org_key or role not in dict(Node.Role.choices) or not enroll_token:
             return Response({"error": "org/role/token required"}, status=400)
 
-        org = Organization.objects.filter(key=org_key, is_active=True).first()
-        if org is None:
+        transport_scope = resolve_transport_scope(org_key, secret=enroll_token)
+        org = transport_scope.organization if transport_scope else None
+        if transport_scope is None:
             return Response({"error": "organization not found"}, status=404)
 
         authorization = resolve_artifact_download_authorization(
             org=org,
             token=enroll_token,
             role=role,
+            namespace=org_key,
         )
         if authorization is None:
             return Response({"error": "invalid enrollment token"}, status=401)
@@ -454,7 +470,7 @@ class AgentReleaseView(APIView):
         ttl = int(os.getenv("AGENT_RELEASE_URL_TTL_SECONDS", "600"))
         signed_payload: dict = {
             "p": artifact.artifact_path,
-            "org": org.key,
+            "org": org_key,
             "role": role,
         }
         if authorization.credential is not None:
@@ -545,8 +561,13 @@ class AgentReleasesAuthView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        org = Organization.objects.filter(key=org_key, is_active=True).first()
-        if org is None:
+        transport_scope = resolve_transport_scope(
+            org_key, secret=legacy_enroll,
+            node_id=payload.get("maintenance_node_id") or payload.get("node_id"),
+            token_id=payload.get("token_id"), credential_id=payload.get("credential_id"),
+        )
+        org = transport_scope.organization if transport_scope else None
+        if transport_scope is None:
             return Response(
                 {"error": "organization not found"},
                 status=status.HTTP_401_UNAUTHORIZED,
@@ -567,11 +588,14 @@ class AgentReleasesAuthView(APIView):
             maintenance_node_id = 0
 
         if maintenance_node_id > 0:
-            authorization_valid = Node.objects.filter(
+            maintenance_node = Node.objects.filter(
                 pk=maintenance_node_id,
                 organization=org,
                 role=role,
-            ).exists()
+            ).first()
+            authorization_valid = bool(
+                maintenance_node and maintenance_node.transport_key == org_key
+            )
             slot_id = f"maintenance:{maintenance_node_id}"
         elif credential_id > 0:
             authorization_valid = _release_credential_is_valid(
@@ -579,6 +603,7 @@ class AgentReleasesAuthView(APIView):
                 role=role,
                 credential_id=credential_id,
                 node_id=node_id,
+                namespace=org_key,
             )
             slot_id = f"credential:{credential_id}"
         elif token_id > 0:
@@ -587,6 +612,7 @@ class AgentReleasesAuthView(APIView):
                 role=role,
                 token_id=token_id,
                 session_id=session_id,
+                namespace=org_key,
             )
             slot_id = (
                 f"session:{session_id}"
@@ -600,6 +626,7 @@ class AgentReleasesAuthView(APIView):
                 org=org,
                 token=legacy_enroll,
                 role=role,
+                namespace=org_key,
             )
             slot_id = legacy_enroll or token
 
@@ -610,7 +637,7 @@ class AgentReleasesAuthView(APIView):
             )
 
         try:
-            ok, count = try_acquire_slot(org.key, slot_id)
+            ok, count = try_acquire_slot(org_key, slot_id)
         except DownloadSlotUnavailable:
             # auth_request only accepts 401/403 denials. Nginx maps this
             # distinguished 403 to a retryable client-facing 503.
@@ -624,7 +651,7 @@ class AgentReleasesAuthView(APIView):
         if not ok:
             logger.warning(
                 "Agent download authorization capacity reached: organization=%s active_slots=%d limit=%d",
-                org.key,
+                org_key,
                 count,
                 slot_limit(),
             )
@@ -646,15 +673,16 @@ class AgentReleasesAuthView(APIView):
             role=role,
             token_id=token_id,
             session_id=session_id,
+            namespace=org_key,
         ):
-            release_session_slot(org.key, session_id)
+            release_session_slot(org_key, session_id)
             return Response(
                 {"error": "installation session expired or is no longer active"},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
         resp = Response(status=status.HTTP_204_NO_CONTENT)
-        resp["X-Tenant-Key"] = org.key
+        resp["X-Tenant-Key"] = org_key
         return resp
 
 
