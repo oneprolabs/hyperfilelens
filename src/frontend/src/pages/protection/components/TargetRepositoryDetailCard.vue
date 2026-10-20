@@ -14,10 +14,10 @@ const props = withDefaults(defineProps<{
 const { n, t } = useI18n()
 
 function repoTypeLabel(type: string): string {
-  if (type === 'S3') return 'Object Storage'
+  if (type === 'S3') return t('protection.backupsPage.repoTypeS3')
   if (type === 'NAS') return 'NAS'
-  if (type === 'PROXY_FS') return 'Local Disk'
-  return type || 'Unknown'
+  if (type === 'PROXY_FS') return t('protection.backupsPage.repoTypeProxyFs')
+  return type || t('protection.backupsPage.targetPickerUnknown')
 }
 
 function resolveHealth(target: TargetRepositoryItem): TargetRepositoryHealth {
@@ -26,10 +26,10 @@ function resolveHealth(target: TargetRepositoryItem): TargetRepositoryHealth {
 }
 
 function healthLabel(health: TargetRepositoryHealth): string {
-  if (health === 'online') return 'Online'
-  if (health === 'offline') return 'Offline'
-  if (health === 'unverified') return 'Unverified'
-  return 'Unknown'
+  if (health === 'online') return t('protection.backupsPage.targetHealthOnline')
+  if (health === 'offline') return t('protection.backupsPage.targetHealthOffline')
+  if (health === 'unverified') return t('protection.backupsPage.targetHealthUnverified')
+  return t('protection.backupsPage.targetPickerUnknown')
 }
 
 function healthTagType(health: TargetRepositoryHealth): 'success' | 'warning' | 'danger' | 'info' {
@@ -136,7 +136,7 @@ const unverifiedReason = computed(() =>
 
     <div class="target-repository-detail__sections">
       <section class="target-repository-detail__section target-repository-detail__section--line">
-        <span class="target-repository-detail__section-title">Status:</span>
+        <span class="target-repository-detail__section-title">{{ t('protection.backupsPage.targetDetailHealth') }}</span>
         <span class="target-repository-detail__tag-row">
           <el-tag
             size="small"
@@ -172,7 +172,7 @@ const unverifiedReason = computed(() =>
       </div>
 
       <section class="target-repository-detail__section target-repository-detail__section--line">
-        <span class="target-repository-detail__section-title">Location:</span>
+        <span class="target-repository-detail__section-title">{{ t('protection.backupsPage.targetDetailLocation') }}</span>
         <span class="target-repository-detail__value target-repository-detail__value--mono">
           {{ locationForTarget(target) }}
         </span>
@@ -234,7 +234,7 @@ const unverifiedReason = computed(() =>
 .target-repository-detail {
   display: grid;
   gap: 12px;
-  color: rgb(71 85 105);
+  color: var(--el-text-color-regular);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -244,15 +244,16 @@ const unverifiedReason = computed(() =>
   min-width: 0;
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgb(226 232 240);
+  border-bottom: 1px solid var(--el-border-color);
 }
 
 .target-repository-detail__title {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: rgb(15 23 42);
+  color: var(--el-text-color-primary);
   font-size: 13px;
   font-weight: 650;
   line-height: 20px;
@@ -260,7 +261,7 @@ const unverifiedReason = computed(() =>
 
 .target-repository-detail__title-tags {
   display: inline-flex;
-  flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
@@ -299,7 +300,7 @@ const unverifiedReason = computed(() =>
   height: 20px;
   border: 1px solid var(--color-warning-border);
   border-radius: 999px;
-  background: #fff;
+  background: var(--el-bg-color-overlay);
   color: var(--color-warning);
   font-size: 11px;
   font-weight: 700;
@@ -308,7 +309,7 @@ const unverifiedReason = computed(() =>
 
 .target-repository-detail__disabled-text {
   min-width: 0;
-  color: rgb(120 75 12);
+  color: var(--el-color-warning);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -333,7 +334,7 @@ const unverifiedReason = computed(() =>
 }
 
 .target-repository-detail__section-title {
-  color: rgb(51 65 85);
+  color: var(--el-text-color-regular);
   font-size: 12px;
   font-weight: 650;
   line-height: 16px;
@@ -342,7 +343,7 @@ const unverifiedReason = computed(() =>
 .target-repository-detail__value {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: rgb(30 41 59);
+  color: var(--el-text-color-primary);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -377,7 +378,7 @@ const unverifiedReason = computed(() =>
   border: 1px solid rgba(245, 158, 11, 0.26);
   border-radius: 6px;
   background: rgba(245, 158, 11, 0.09);
-  color: rgb(146 64 14);
+  color: var(--el-color-warning);
   font-size: 12px;
   line-height: 1.45;
   padding: 7px 8px;
@@ -386,17 +387,17 @@ const unverifiedReason = computed(() =>
 .target-repository-detail__reason-icon {
   flex: 0 0 auto;
   margin-top: 1px;
-  color: rgb(180 83 9);
+  color: var(--el-color-warning);
 }
 
 .target-repository-detail__hint-icon {
   flex: 0 0 auto;
   cursor: help;
-  color: rgb(180 83 9);
+  color: var(--el-color-warning);
 }
 
 .target-repository-detail__usage {
   margin-left: 4px;
-  color: rgb(100 116 139);
+  color: var(--el-text-color-secondary);
 }
 </style>

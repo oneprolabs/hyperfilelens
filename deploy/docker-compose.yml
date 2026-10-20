@@ -25,6 +25,8 @@ x-backend-volumes: &backend-volumes
   - ./data/media:/opt/hyperfilelens/backend/media
   - ./data/staticfiles:/opt/hyperfilelens/backend/staticfiles
   - ./data/logs:/var/log/hyperfilelens
+  # Shared durable proof of bounded Controller deletion execution.
+  - orphan-executions:/var/log/hyperfilelens/.orphan-executions
   - ./data/sourcelens/logs:/var/log/sourcelens:ro
   - ./data/runtime:/opt/hyperfilelens/runtime:ro
   # Persist observation caches only; connection configs/credentials stay separate.
@@ -314,3 +316,7 @@ networks:
   bridge:
     external: true
     name: hyperfilelens-bridge
+
+volumes:
+  orphan-executions:
+    driver: local

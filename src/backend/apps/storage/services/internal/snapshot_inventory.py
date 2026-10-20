@@ -59,7 +59,7 @@ def controller_snapshot_inventory(repository):
 
     verify_s3_repository_ownership(repository, adopt_legacy=False)
     config_file = kopia_cli.usage_config_file(repository)
-    kopia_cli.connect_s3_repository(repository, config_file=config_file)
+    kopia_cli.ensure_usage_connection(repository, config_file=config_file)
     result = kopia_cli._run_repository_command(
         repository, ["manifest", "list", "--filter=type:snapshot", "--json"],
         config_file=config_file, timeout_seconds=120,

@@ -777,6 +777,11 @@ def reconcile_repository_operations(*, limit: int = 100):
             task__error_code=CAPABILITIES_NOT_READY,
             due_at__gt=timezone.now(),
         )
+        .exclude(
+            operation_type=RepositoryTask.OperationType.SNAPSHOT_RECONCILE,
+            task__error_code="ORPHAN_EXECUTION_CONFIRMING",
+            due_at__gt=timezone.now(),
+        )
         .order_by("task__updated_at", "id")
         .values_list("id", flat=True)[: max(1, int(limit))]
     )

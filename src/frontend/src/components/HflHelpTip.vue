@@ -5,6 +5,7 @@ import { Info } from 'lucide-vue-next'
 
 const props = withDefaults(defineProps<{
   content?: string
+  label?: string
   placement?: InstanceType<typeof ElTooltip>['placement']
   ariaLabel?: string
   size?: number
@@ -12,6 +13,7 @@ const props = withDefaults(defineProps<{
   triggerClass?: string
 }>(), {
   content: '',
+  label: '',
   placement: 'top',
   ariaLabel: 'More information',
   size: 14,
@@ -25,6 +27,7 @@ const hasContent = computed(() => Boolean(props.content || props.popperClass))
 <template>
   <ElTooltip
     :content="content"
+    :trigger="['hover', 'focus']"
     :placement="placement"
     :show-after="250"
     :popper-class="popperClass || undefined"
@@ -38,10 +41,12 @@ const hasContent = computed(() => Boolean(props.content || props.popperClass))
     </template>
     <button
       type="button"
+      aria-disabled="false"
       class="hfl-help-tip"
-      :class="triggerClass"
-      :aria-label="ariaLabel"
+      :class="[triggerClass, { 'hfl-help-tip--labeled': label }]"
+      :aria-label="label ? `${label}: ${ariaLabel}` : ariaLabel"
     >
+      <span v-if="label">{{ label }}</span>
       <Info
         :size="size"
         stroke-width="2.2"
@@ -73,5 +78,14 @@ const hasContent = computed(() => Boolean(props.content || props.popperClass))
   color: var(--color-primary);
   background: rgb(59 130 246 / 0.10);
   outline: none;
+}
+
+.hfl-help-tip--labeled {
+  gap: 4px;
+  width: auto;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 </style>
